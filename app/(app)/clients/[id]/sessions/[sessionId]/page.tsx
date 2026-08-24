@@ -75,6 +75,7 @@ import {
 import { MarkAppointmentCompleteControl } from "@/components/appointment/mark-complete-control";
 import { PostcareSection } from "@/components/appointment/postcare-section";
 import { ClinicalNotesSection } from "@/components/clinical-notes-section";
+import { getAppointmentSettlements } from "@/lib/billing/appointment-settlement";
 import {
   FAST_CHART_PARAM,
   resolveAutoEditBlockId,
@@ -177,6 +178,20 @@ export default async function SessionDetailPage({
   // the Finish workflow must not depend on billing-domain types, and lineage is
   // verified below against BOTH studio and client.
   const linkedAppointmentId = session.appointment_id ?? null;
+
+  // PAY-SETTLE / 0187. The live attested disposition for this visit, if any.
+  // One bounded, studio-scoped read. `undefined` on a failed read, which the
+  // card treats exactly like "not settled" — the controls stay available and
+  // the SQL command refuses a duplicate with already_settled. That is the safe
+  // direction here: it can waste a keystroke, never create a second record.
+  const settlementLoad = linkedAppointmentId
+    ? await getAppointmentSettlements(studio.id, [linkedAppointmentId])
+    : null;
+  const liveSettlement =
+    settlementLoad?.ok && linkedAppointmentId
+      ? (settlementLoad.byAppointmentId.get(linkedAppointmentId) ?? null)
+      : null;
+
   if (linkedAppointmentId) {
     const supabaseForDefault = await createClient();
     // BARE-TABLE embed, not a column hint. Migration 0151 replaced the
@@ -958,6 +973,7 @@ export default async function SessionDetailPage({
         </div>
       </section>
 
+      {/* PAY-SETTLE / 0187 — resolved above, beside the other payment reads. */}
       {/* MOVED, NOT CHANGED (Chloe's flow: chart → finish → pay). This block
           used to sit ABOVE the charting content, so payment was the first thing
           on the page and the completion it depends on was the last. It is
@@ -974,6 +990,19 @@ export default async function SessionDetailPage({
           clientId={id}
           eligibility={sessionPaymentEligibility}
           amountResult={sessionPaymentAmount}
+          // PAY-SETTLE / 0187. The SAME card, so this page gets the outcome
+          // controls without a second implementation. It is the render site
+          // AppointmentCheckoutCell never reaches: a practitioner already
+          // looking at the chart records the cash here, not by going back to
+          // the dashboard row.
+          appointmentId={linkedAppointmentId}
+          settledMethod={liveSettlement?.method ?? null}
+          settledAmountCents={liveSettlement?.amountCents ?? null}
+          // The UI's copy of the database's own rule: only a COMPLETED
+          // appointment can carry a disposition (0187 answers anything else
+          // with `not_completed`). Offering the controls on a visit that has
+          // not happened yet would be a button that always fails.
+          canRecordSettlement={finishAppt?.status === "completed"}
           // Trusted, server-derived owner flag: gates the owner-only Technical
           // payment details disclosure + the Refund button (server refund
           // authorization is unchanged; it is owner-only there too).

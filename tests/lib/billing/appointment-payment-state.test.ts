@@ -101,7 +101,16 @@ describe("loader is bounded + tenant-scoped (no N+1, no full history)", () => {
     expect(SRC).toMatch(/\.eq\("charge_reason", "session_payment"\)/);
   });
   it("reads only the coarse columns it needs (never the full payment history)", () => {
-    expect(SRC).toMatch(/\.select\("session_id, status, refund_status"\)/);
+    // PAY-SETTLE / 0187 widened this by exactly two money columns, and no
+    // further. `refund_status` alone cannot say whether ALL of the charge came
+    // back — the schema permits refund_amount_cents < amount_cents — so a
+    // partial refund was indistinguishable from a full one, and the dashboard
+    // offered a replacement-payment route on money the studio still held. The
+    // cents are the whole point; nothing else was added.
+    expect(SRC).toMatch(
+      /\.select\(\s*"session_id, status, refund_status, amount_cents, refund_amount_cents",?\s*\)/,
+    );
+    // Still bounded: no Stripe identifiers, no receipt state, no failure text.
     expect(SRC).not.toMatch(/stripe_payment_intent_id|receipt_email_to|failure_message/);
   });
   it("does not charge / write / call Stripe", () => {

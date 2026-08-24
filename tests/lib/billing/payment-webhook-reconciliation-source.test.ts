@@ -260,16 +260,48 @@ describe("payment_intent.succeeded: status-conditional reconciliation", () => {
     );
   });
 
-  it("flips ready/pending_stripe to succeeded via status-conditional UPDATE", () => {
-    expect(HELPER).toMatch(
-      /\.update\(updates\)[\s\S]{0,2000}\.in\("status",\s*\["ready",\s*"pending_stripe"\]\)/,
+  // PAY-SETTLE / 0187. THIS WRITE MOVED INTO THE DATABASE.
+  //
+  // It was the one writer that could turn a RETIRABLE state (`ready`) into
+  // money without holding the shared appointment advisory key, which left a
+  // double-collection window against settlement. The transitions did not
+  // change; where they are executed did. So these assertions follow the code
+  // rather than being deleted: the shape is pinned in SQL, and the handler is
+  // pinned to route through the command and to refuse on conflict.
+  it("flips ready/pending_stripe to succeeded through the LOCKED command", () => {
+    expect(HELPER).toMatch(/rpc\(\s*\n?\s*"reconcile_card_payment_succeeded"/);
+    // And no longer writes the status itself.
+    const succeededHandler = HELPER.slice(
+      HELPER.indexOf("reconcile_card_payment_succeeded"),
+      HELPER.indexOf("payment_intent.payment_failed"),
     );
+    expect(succeededHandler).not.toMatch(/\.update\(/);
   });
 
-  it("stamps charged_at + clears failure fields", () => {
-    expect(HELPER).toMatch(/status:\s*"succeeded"[\s\S]{0,2000}charged_at/);
-    expect(HELPER).toMatch(/failure_code:\s*null/);
-    expect(HELPER).toMatch(/failure_message_safe:\s*null/);
+  it("stamps charged_at + clears failure fields, in the command", () => {
+    const MIGRATION = readFileSync(
+      path.resolve(__dirname, "../../..", "supabase/migrations/0187_appointment_settlement.sql"),
+      "utf8",
+    );
+    const fn = MIGRATION.slice(
+      MIGRATION.indexOf(
+        "create or replace function public.reconcile_card_payment_succeeded(",
+      ),
+    ).split("$$;")[0];
+    expect(fn).toMatch(/set status = 'succeeded'/);
+    expect(fn).toMatch(/charged_at = now\(\)/);
+    expect(fn).toMatch(/failure_code = null/);
+    expect(fn).toMatch(/failure_message_safe = null/);
+    expect(fn).toMatch(/and t\.status in \('ready', 'pending_stripe'\)/);
+  });
+
+  it("refuses, loudly, when the visit was already settled outside Hone", () => {
+    expect(HELPER).toMatch(/reconcileResult === "settled_externally_conflict"/);
+    expect(HELPER).toMatch(
+      /severity:\s*"critical"[\s\S]{0,400}payment_intent_succeeded_settled_externally_conflict/,
+    );
+    // No mutation on that path.
+    expect(HELPER).toMatch(/settledExternallyConflict: true/);
   });
 });
 

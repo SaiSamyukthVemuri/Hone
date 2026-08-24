@@ -5,6 +5,11 @@ import { getSessionPaymentEligibility } from "@/lib/billing/session-payment-elig
 import { getAuthoritativeSessionPaymentAmount } from "@/lib/billing/authoritative-session-payment";
 import type { SessionPaymentAmountResult } from "@/lib/billing/session-payment-amount";
 import type { SessionPaymentEligibility } from "@/lib/billing/session-payment-types";
+import {
+  getAppointmentSettlements,
+  resolveAppointmentQuotedAmountCents,
+} from "@/lib/billing/appointment-settlement";
+import type { SettlementMethod } from "@/lib/billing/settlement-types";
 
 // Quick checkout (Chloe feedback: checkout takes too many clicks while the client
 // is waiting). This resolver is the ONLY new server logic: it turns an
@@ -18,6 +23,44 @@ import type { SessionPaymentEligibility } from "@/lib/billing/session-payment-ty
 // to a completed appointment). So checkout requires a session; if none exists the
 // resolver returns an ineligible result pointing the practitioner at the existing
 // charting workflow (it never invents a hidden clinical session).
+
+/**
+ * APPOINTMENT SETTLEMENT CONTEXT — deliberately SEPARATE from the
+ * session-dependent card-charge context below it.
+ *
+ * THE DEFECT THIS SEPARATION FIXES. Everything a practitioner could do about
+ * money used to hang off `ok: true`, and `ok: true` requires a treatment
+ * session, because a CARD CHARGE requires one (the amount comes off the
+ * treatment record). So a completed visit that was never charted returned
+ * `ok: false` with "go and chart first" — and the settlement controls, which
+ * need no session at all, went with it. The schema was anchored on the
+ * appointment precisely so cash would not require charting; the UI still
+ * required it, which defeated the point.
+ *
+ * A missing session may legitimately block CARD CHARGING. It must never block
+ * recording that the client paid cash. These are two different questions and
+ * they now have two different answers.
+ *
+ * No fake session is manufactured, and no charting requirement is weakened.
+ */
+export type AppointmentSettlementContext = {
+  appointmentId: string;
+  /**
+   * Whether a disposition may be recorded at all. Only a COMPLETED appointment
+   * can carry one — the 0187 commands refuse anything else with
+   * `not_completed`, and this is the UI's copy of that same rule.
+   */
+  canRecord: boolean;
+  /** The live attested disposition, when one exists. */
+  settledMethod: SettlementMethod | null;
+  settledAmountCents: number | null;
+  /**
+   * The authoritative price, resolved from the APPOINTMENT so it is available
+   * with no session. Pre-fills the amount; the action re-resolves and snapshots
+   * it server-side regardless.
+   */
+  quotedAmountCents: number | null;
+};
 
 export type QuickCheckoutContext =
   | {
@@ -33,6 +76,7 @@ export type QuickCheckoutContext =
       };
       eligibility: SessionPaymentEligibility;
       amountResult: SessionPaymentAmountResult | null;
+      settlement: AppointmentSettlementContext;
     }
   | {
       ok: false;
@@ -40,6 +84,11 @@ export type QuickCheckoutContext =
       // the modal can link to the existing charting workflow.
       reason: string;
       clientId: string | null;
+      // PRESENT EVEN HERE. The card path being unavailable is not a reason to
+      // withhold the honest alternative — it is the main reason to offer it.
+      // Null only when the appointment itself could not be resolved, in which
+      // case there is nothing to attest about.
+      settlement: AppointmentSettlementContext | null;
     };
 
 type Args = {
@@ -65,7 +114,12 @@ export async function resolveQuickCheckoutContext(
     .maybeSingle();
 
   if (!appt) {
-    return { ok: false, reason: "Appointment not found in this studio.", clientId: null };
+    return {
+      ok: false,
+      reason: "Appointment not found in this studio.",
+      clientId: null,
+      settlement: null,
+    };
   }
 
   const clientId = (appt.client_id as string | null) ?? null;
@@ -79,8 +133,44 @@ export async function resolveQuickCheckoutContext(
     | { name?: string | null; price_cents?: number | null }
     | null;
 
-  // 2) The treatment session for this appointment. Payment is session-scoped;
-  //    if there is no session yet, send the practitioner to charting first.
+  // 2) THE SETTLEMENT CONTEXT, resolved FIRST and independently of any session.
+  //    Everything below this point is about the CARD path.
+  //
+  //    A failed settlement read is not "nothing is settled": offering to record
+  //    an outcome over one that already exists would have the practitioner type
+  //    an amount only to be refused with already_settled. Refuse up front and
+  //    say so, for the same reason the free-visit loader refuses to infer.
+  const settlements = await getAppointmentSettlements(args.studioId, [
+    args.appointmentId,
+  ]);
+  if (!settlements.ok) {
+    return {
+      ok: false,
+      reason:
+        "We could not load this appointment's payment status. Reload and try again.",
+      clientId,
+      settlement: null,
+    };
+  }
+  const live = settlements.byAppointmentId.get(args.appointmentId) ?? null;
+  const apptStatus = (appt.status as string | null) ?? null;
+  const settlement: AppointmentSettlementContext = {
+    appointmentId: args.appointmentId,
+    // The UI's copy of the database's own rule (`not_completed`).
+    canRecord: apptStatus === "completed",
+    settledMethod: live?.method ?? null,
+    settledAmountCents: live?.amountCents ?? null,
+    quotedAmountCents: await resolveAppointmentQuotedAmountCents(
+      args.studioId,
+      args.appointmentId,
+      args.studioTimezone,
+    ),
+  };
+
+  // 3) The treatment session for this appointment. THE CARD PATH is
+  //    session-scoped; if there is no session yet, card charging is genuinely
+  //    unavailable and the practitioner is told why — but the settlement
+  //    context above travels with the refusal, so cash is still recordable.
   const { data: sessionRow } = await supabase
     .from("sessions")
     .select("id")
@@ -95,8 +185,9 @@ export async function resolveQuickCheckoutContext(
     return {
       ok: false,
       reason:
-        "No treatment session for this appointment yet. Open the client's session to start charting, then check out.",
+        "No treatment session for this appointment yet, so a card charge is not available. Open the client's session to start charting, or record how the visit was settled below.",
       clientId,
+      settlement,
     };
   }
   const sessionId = sessionRow.id as string;
@@ -132,5 +223,6 @@ export async function resolveQuickCheckoutContext(
     },
     eligibility,
     amountResult,
+    settlement,
   };
 }

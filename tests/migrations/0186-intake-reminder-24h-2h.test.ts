@@ -45,10 +45,19 @@ const CODE = SQL.split("\n")
 const STATEMENTS = CODE.replace(/'(?:[^']|'')*'/g, "''");
 
 describe("0186 — migration state", () => {
-  it("is the current repository maximum, exactly once, with nothing above it", () => {
-    expect(isRepoMax(VERSION)).toBe(true);
+  // THE HAND-OFF HAPPENED. This block used to assert isRepoMax("0186") and
+  // versionsAbove([]). 0187 (appointment settlement, PAY-SETTLE) was authored
+  // above it, so per CLAUDE.md §2 only the CURRENT maximum's own test carries
+  // the "nothing above me" tripwire. The successor assertions now live in
+  // tests/migrations/0187-appointment-settlement.test.ts. Same shape as the
+  // 0180 -> 0181 and 0176 -> 0177 hand-offs before it.
+  it("is no longer the repository maximum — 0187 was authored above it", () => {
+    expect(isRepoMax(VERSION)).toBe(false);
+    expect(versionsAbove(VERSION)).toContain("0187");
+  });
+
+  it("consumes exactly ONE number", () => {
     expect(countVersion(VERSION)).toBe(1);
-    expect(versionsAbove(VERSION)).toEqual([]);
   });
 
   it("is named for what it does", () => {
@@ -208,13 +217,38 @@ const CARRIED_0185_NOTE_SHA256 =
   "3103c7cee06dab14107c4c7f048666fb24271dd60a4c68e80586691cf07000e9";
 
 describe("0186 — current hosted state", () => {
-  it("is the APPLIED production head, with nothing pending", () => {
+  it("is the APPLIED production head — hosted state, unchanged", () => {
+    // THE HOSTED HALF IS #634's RECORD AND IS UNTOUCHED. 0186 is what
+    // production actually holds, and this branch applies nothing.
     const state = migrationState();
     expect(state.hosted_migration_max).toBe(VERSION);
-    expect(state.repo_migration_max).toBe(VERSION);
-    expect(state.repo_equals_hosted).toBe(true);
-    expect(state.pending_migrations).toEqual([]);
-    expect(state.next_free_migration).toBe("0187");
+  });
+
+  it("0187 is PENDING against it, which is migration-first ordering working", () => {
+    // WHAT CHANGED, AND WHY THIS BLOCK WAS REWRITTEN RATHER THAN DELETED.
+    //
+    // #634 recorded the moment its own state settled: repo == hosted, nothing
+    // pending, next free 0187. Every one of those is a DERIVED repo-side fact,
+    // and all three stop being true the instant ANY migration lands — which is
+    // exactly the recopying-derived-numbers problem #631 exists to end. 0187
+    // (appointment settlement, PAY-SETTLE) is simply the first to land after
+    // it.
+    //
+    // So the hosted assertion above is kept, and the repo side is stated as
+    // what it now is: 0187 exists in the repo, is deliberately NOT applied, and
+    // therefore reads as pending. That is the intended ordering — schema is
+    // applied by an authorized operator step, never by merging — and it is the
+    // same posture 0183/0184 carried while #593 was open.
+    //
+    // Derived, never pinned to a literal: whoever adds 0188 changes nothing
+    // here.
+    const state = migrationState();
+    expect(Number(state.repo_migration_max)).toBeGreaterThan(
+      Number(state.hosted_migration_max),
+    );
+    expect(state.repo_equals_hosted).toBe(false);
+    expect(state.pending_migrations).toContain("0187");
+    expect(Number(state.next_free_migration)).toBeGreaterThan(187);
   });
 
   it("the apply date/time was NOT CAPTURED, and is represented truthfully", () => {
