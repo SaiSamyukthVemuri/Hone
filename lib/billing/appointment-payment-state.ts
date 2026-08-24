@@ -3,6 +3,8 @@ import { createClient } from "@/lib/supabase/server";
 import { inferStripeLivemode } from "@/lib/stripe/server";
 import { resolveAuthoritativeSessionPaymentAmount } from "@/lib/billing/session-payment-amount";
 import { todayInTz } from "@/lib/booking/tz";
+import { getAppointmentSettlements } from "@/lib/billing/appointment-settlement";
+import type { SettlementMethod } from "@/lib/billing/settlement-types";
 
 // Bounded, tenant-scoped batch loader for the dashboard/calendar checkout cell:
 // given the visible appointment ids, return each appointment's coarse
@@ -23,7 +25,36 @@ export type AppointmentPaymentState =
   // query is not a fact, and each of those three is an affirmative claim.
   // Collapsing a failure into any of them previously rendered Checkout over an
   // unknown price, or hid a pending/paid/refunded charge behind "no session".
-  | "unavailable";
+  | "unavailable"
+  // PAY-SETTLE / 0187. A practitioner-ATTESTED disposition. Deliberately FIVE
+  // separate states rather than one "settled": the whole point of the release
+  // is that cash, an e-transfer, some other arrangement, a waiver and an
+  // outstanding balance are different financial facts, and a UI that renders
+  // them identically has re-collapsed the distinction the schema went to
+  // trouble to keep.
+  //
+  // Ranked BELOW the Hone-verified money states on purpose. If a card charge
+  // succeeded, "Paid" is the truthful badge and an attestation does not outrank
+  // it — the same precedence that already lets a succeeded charge outrank a $0
+  // price, and what makes "still owes" followed by a card payment resolve
+  // itself without anybody retiring the older record.
+  | "settled_cash"
+  | "settled_e_transfer"
+  | "settled_other"
+  | "settled_waived"
+  | "settled_owing";
+
+/** The one place the DB vocabulary maps onto the display vocabulary. */
+export const SETTLEMENT_STATE_BY_METHOD: Record<
+  SettlementMethod,
+  AppointmentPaymentState
+> = {
+  paid_cash: "settled_cash",
+  paid_e_transfer: "settled_e_transfer",
+  paid_other_external: "settled_other",
+  waived: "settled_waived",
+  still_owes: "settled_owing",
+};
 
 type AttemptRow = { status: string | null; refund_status: string | null };
 
@@ -270,6 +301,13 @@ export async function getAppointmentPaymentStates(
     return out;
   }
 
+  // PAY-SETTLE stage. Read ONCE for the whole batch, like every other read in
+  // this loader. A failed read is `unavailable` rather than "nothing is
+  // settled": an absence produced by a failed query is not a fact, and
+  // rendering Checkout over a visit already recorded as paid in cash is exactly
+  // the double-collection prompt this release removes.
+  const settlementLoad = await getAppointmentSettlements(studioId, ids);
+
   const freeLoad = await getFreeAppointmentIds(studioId, ids, studioTimezone);
 
   for (const apptId of ids) {
@@ -288,6 +326,20 @@ export async function getAppointmentPaymentStates(
       transactionOnly === "processing"
     ) {
       out.set(apptId, transactionOnly);
+      continue;
+    }
+    // Stage 2b: no Hone-verified money, so a practitioner attestation is the
+    // strongest fact available. It outranks pricing (a waived $30 visit is
+    // "Fee waived", not "No payment required") and it suppresses Checkout,
+    // which is the entire product outcome: nobody has to run a fake payment to
+    // make Checkout go away.
+    if (!settlementLoad.ok) {
+      out.set(apptId, "unavailable");
+      continue;
+    }
+    const settlement = settlementLoad.byAppointmentId.get(apptId);
+    if (settlement) {
+      out.set(apptId, SETTLEMENT_STATE_BY_METHOD[settlement.method]);
       continue;
     }
     // Stage 3: everything left depends on the current price.

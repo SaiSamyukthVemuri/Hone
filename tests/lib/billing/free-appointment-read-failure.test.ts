@@ -27,6 +27,10 @@ const responses: Record<string, Rows> = {
   // free/no_session determination is driven purely by the pricing path above.
   sessions: { data: [], error: null },
   payment_charge_attempts: { data: [], error: null },
+  // PAY-SETTLE / 0187. The loader's fourth read. Empty means "nothing is
+  // attested", which leaves every existing case driven by the pricing path
+  // exactly as before.
+  appointment_settlements: { data: [], error: null },
 };
 
 vi.mock("@/lib/supabase/server", () => ({
@@ -72,6 +76,7 @@ function baseRows(servicePriceCents: number | null) {
   // leak into the next test.
   responses.sessions = { data: [], error: null };
   responses.payment_charge_attempts = { data: [], error: null };
+  responses.appointment_settlements = { data: [], error: null };
 }
 
 beforeEach(() => {
@@ -300,5 +305,64 @@ describe("read failure is UNAVAILABLE, never an affirmative payment fact", () =>
     expect(branch).not.toMatch(/No payment required|Paid|Processing|Refunded/);
     // and the branch precedes the Checkout fallback
     expect(CELL.indexOf("CheckoutButton", idx)).toBeGreaterThan(idx);
+  });
+});
+
+// PAY-SETTLE / 0187. The SAME law, extended to the settlement read: a
+// disposition is a positive claim too, and an absence produced by a failed
+// query is not one.
+describe("a failed settlement read is UNAVAILABLE, never 'not settled'", () => {
+  it("does not fall through to Checkout when the settlement read fails", async () => {
+    baseRows(3000);
+    responses.appointment_settlements = { data: null, error: { message: "boom" } };
+    const out = await getAppointmentPaymentStates("studio-1", [APPT], TZ);
+    expect(out.get(APPT)).toBe("unavailable");
+  });
+
+  it("renders the attested outcome when the read succeeds", async () => {
+    baseRows(3000);
+    responses.appointment_settlements = {
+      data: [
+        {
+          id: "s-1",
+          appointment_id: APPT,
+          method: "paid_cash",
+          amount_cents: 3000,
+          quoted_amount_cents: 3000,
+          recorded_at: "2026-08-24T00:00:00Z",
+          supersedes_id: null,
+        },
+      ],
+      error: null,
+    };
+    const out = await getAppointmentPaymentStates("studio-1", [APPT], TZ);
+    expect(out.get(APPT)).toBe("settled_cash");
+  });
+
+  it("Hone-verified money still OUTRANKS an attestation", async () => {
+    baseRows(3000);
+    responses.sessions = { data: [{ id: "sess-1", appointment_id: APPT }], error: null };
+    responses.payment_charge_attempts = {
+      data: [{ session_id: "sess-1", status: "succeeded", refund_status: null }],
+      error: null,
+    };
+    responses.appointment_settlements = {
+      data: [
+        {
+          id: "s-1",
+          appointment_id: APPT,
+          method: "still_owes",
+          amount_cents: 3000,
+          quoted_amount_cents: 3000,
+          recorded_at: "2026-08-24T00:00:00Z",
+          supersedes_id: null,
+        },
+      ],
+      error: null,
+    };
+    const out = await getAppointmentPaymentStates("studio-1", [APPT], TZ);
+    // Paid, not "Still owes": the charge is the stronger fact, and the older
+    // record is neither contradicted nor rewritten.
+    expect(out.get(APPT)).toBe("paid");
   });
 });

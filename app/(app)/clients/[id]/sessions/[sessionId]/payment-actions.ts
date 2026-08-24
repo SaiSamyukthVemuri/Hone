@@ -22,6 +22,7 @@ import {
   decideCheckoutFinalAmount,
   OWNER_ONLY_AMOUNT_ERROR,
 } from "@/lib/billing/checkout-final-amount";
+import { getAppointmentSettlements } from "@/lib/billing/appointment-settlement";
 import {
   runSessionPaymentCharge,
   type SessionPaymentChargeResult,
@@ -92,6 +93,10 @@ const GENERIC_PRACTITIONER_ERROR =
 const NOT_AUTHORIZED_ERROR =
   "You don't have permission to prepare a session payment in this studio.";
 // PR #201: refunds are owner-only across all charge reasons.
+// PAY-SETTLE / 0187. Named for what it is: a refusal, not a failure.
+const SETTLED_EXTERNALLY_ERROR =
+  "This appointment already has a recorded outcome (paid another way, or waived). The studio owner can correct that record if a card charge is the right thing.";
+
 const OWNER_ONLY_REFUND_ERROR =
   "Only the studio owner can issue a refund.";
 // PR (Chloe workflow fix): the internal note is OPTIONAL. A blank or
@@ -199,6 +204,34 @@ export async function prepareSessionPaymentChargeAction(
   // client_id from the form.
   const clientId = eligibility.client.id;
   const appointmentId = eligibility.appointment.id ?? null;
+
+  // PAY-SETTLE / 0187. PRE-FLIGHT ONLY, NOT THE AUTHORITY.
+  //
+  // The real refusal lives in claim_session_payment_charge_attempt, which takes
+  // the shared appointment advisory lock and returns `settled_externally`. That
+  // is where a forged POST, a replayed action and a second browser tab are all
+  // stopped, and it stays the guarantee.
+  //
+  // This check exists so the practitioner is told BEFORE an attempt row is
+  // created. Without it, preparing a charge on a visit already recorded as paid
+  // in cash succeeds, the row sits in `ready`, and the refusal only arrives at
+  // Run charge — leaving a stray prepared attempt behind that then blocks
+  // recording anything else. Failing early is kinder and leaves no residue.
+  if (appointmentId) {
+    const settlements = await getAppointmentSettlements(studioId, [appointmentId]);
+    // A FAILED READ DOES NOT BLOCK. It is only a courtesy check, and the SQL
+    // authority still refuses at claim time, so treating an unreadable result
+    // as "settled" would stop a legitimate charge on no evidence.
+    const live = settlements.ok
+      ? settlements.byAppointmentId.get(appointmentId)
+      : undefined;
+    if (live && live.method !== "still_owes") {
+      return {
+        ok: false,
+        error: SETTLED_EXTERNALLY_ERROR,
+      };
+    }
+  }
 
   // THE REFERENCE PRICE. Independently re-loaded from current records, not
   // from the page's props, not from the modal's state, and not from the form.

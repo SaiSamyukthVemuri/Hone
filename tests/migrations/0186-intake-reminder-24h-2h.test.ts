@@ -43,10 +43,19 @@ const CODE = SQL.split("\n")
 const STATEMENTS = CODE.replace(/'(?:[^']|'')*'/g, "''");
 
 describe("0186 — migration state", () => {
-  it("is the current repository maximum, exactly once, with nothing above it", () => {
-    expect(isRepoMax(VERSION)).toBe(true);
+  // THE HAND-OFF HAPPENED. This block used to assert isRepoMax("0186") and
+  // versionsAbove([]). 0187 (appointment settlement, PAY-SETTLE) was authored
+  // above it, so per CLAUDE.md §2 only the CURRENT maximum's own test carries
+  // the "nothing above me" tripwire. The successor assertions now live in
+  // tests/migrations/0187-appointment-settlement.test.ts. Same shape as the
+  // 0180 -> 0181 and 0176 -> 0177 hand-offs before it.
+  it("is no longer the repository maximum — 0187 was authored above it", () => {
+    expect(isRepoMax(VERSION)).toBe(false);
+    expect(versionsAbove(VERSION)).toContain("0187");
+  });
+
+  it("consumes exactly ONE number", () => {
     expect(countVersion(VERSION)).toBe(1);
-    expect(versionsAbove(VERSION)).toEqual([]);
   });
 
   it("is named for what it does", () => {

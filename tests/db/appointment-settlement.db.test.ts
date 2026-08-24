@@ -1,0 +1,581 @@
+import { afterAll, describe, expect, it } from "vitest";
+import { Pool } from "pg";
+import {
+  adminQuery,
+  asRole,
+  asUser,
+  closePool,
+  resolveLocalDbUrl,
+  seedMember,
+} from "./helpers/harness";
+import {
+  cleanupPaymentScenario,
+  seedEligibleQuickCheckoutScenario,
+  type PaymentScenario,
+} from "./helpers/payment-seed";
+
+// PAY-SETTLE / 0187 — the BEHAVIOURAL half.
+//
+// The source-contract half (tests/migrations/0187-appointment-settlement.test.ts)
+// proves what the migration SAYS. This file proves what the migrated database
+// DOES, against the real local Postgres: that authority is re-derived rather
+// than trusted, that financial history is genuinely append-only, and — the part
+// no static test can reach — that settlement and card charging exclude each
+// other under real concurrency rather than by convention.
+
+const LIVE = true;
+const TEST_MODE = false;
+
+const created: string[] = [];
+async function scenario(opts = {}): Promise<PaymentScenario> {
+  const s = await seedEligibleQuickCheckoutScenario(opts);
+  created.push(s.studioId);
+  return s;
+}
+
+afterAll(async () => {
+  for (const studioId of created) {
+    await cleanupPaymentScenario(studioId).catch(() => undefined);
+  }
+  await closePool();
+});
+
+/** Call a settlement command as a signed-in practitioner. */
+async function record(
+  userId: string,
+  studioId: string,
+  appointmentId: string,
+  method: string,
+  amountCents = 4500,
+  livemode = LIVE,
+) {
+  return asUser(userId, async (q) => {
+    const r = await q(
+      `select * from public.record_appointment_settlement($1,$2,$3,$4,$5,$6,$7)`,
+      [studioId, appointmentId, method, amountCents, 4500, null, livemode],
+    );
+    return r.rows[0] as { result: string; settlement_id: string | null };
+  });
+}
+
+async function waive(
+  userId: string,
+  studioId: string,
+  appointmentId: string,
+  amountCents = 4500,
+) {
+  return asUser(userId, async (q) => {
+    const r = await q(
+      `select * from public.waive_appointment_fee($1,$2,$3,$4,$5,$6)`,
+      [studioId, appointmentId, amountCents, 4500, null, LIVE],
+    );
+    return r.rows[0] as { result: string; settlement_id: string | null };
+  });
+}
+
+async function liveRows(studioId: string) {
+  const r = await adminQuery(
+    `select id, method, amount_cents, superseded_at, supersedes_id, supersede_reason,
+            recorded_by_practitioner_id
+       from public.appointment_settlements
+      where studio_id = $1 order by recorded_at`,
+    [studioId],
+  );
+  return r.rows as Array<Record<string, unknown>>;
+}
+
+describe("0187 — the Checkout authority records a non-card disposition", () => {
+  it("an active practitioner of the studio may record cash, and it is not a Stripe fact", async () => {
+    const s = await scenario();
+    const member = await seedMember(
+      { studioId: s.studioId, userId: s.practitionerUserId, practitionerId: s.practitionerId, clientId: s.clientId },
+      "settle-member",
+    );
+
+    const out = await record(member.userId, s.studioId, s.appointmentId, "paid_cash");
+    expect(out.result).toBe("recorded");
+
+    const rows = await liveRows(s.studioId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].method).toBe("paid_cash");
+    // Attribution is the ACTOR's practitioner row in THIS studio, never the
+    // studio owner and never a caller-supplied id.
+    expect(rows[0].recorded_by_practitioner_id).toBe(member.practitionerId);
+
+    // NOT A PAYMENT. No charge attempt was created by recording cash.
+    const attempts = await adminQuery(
+      `select count(*)::int n from public.payment_charge_attempts where studio_id=$1`,
+      [s.studioId],
+    );
+    expect(attempts.rows[0].n).toBe(0);
+  });
+
+  it("refuses a cross-studio appointment id as not_found, never as forbidden", async () => {
+    const a = await scenario();
+    const b = await scenario();
+    const out = await record(
+      a.practitionerUserId,
+      a.studioId,
+      b.appointmentId, // another tenant's visit
+      "paid_cash",
+    );
+    expect(out.result).toBe("not_found");
+    expect(await liveRows(b.studioId)).toHaveLength(0);
+  });
+
+  it("refuses a visit that is not completed", async () => {
+    const s = await scenario({ appointmentStatus: "confirmed" });
+    const out = await record(s.practitionerUserId, s.studioId, s.appointmentId, "paid_cash");
+    expect(out.result).toBe("not_completed");
+  });
+
+  it("a user with no practitioner row in the named studio is refused", async () => {
+    const a = await scenario();
+    const b = await scenario();
+    // b's user naming a's studio.
+    await expect(
+      record(b.practitionerUserId, a.studioId, a.appointmentId, "paid_cash"),
+    ).rejects.toThrow();
+  });
+});
+
+describe("0187 — waiver and correction are owner-only, in the database", () => {
+  it("a non-owner practitioner cannot waive, by either route", async () => {
+    const s = await scenario();
+    const member = await seedMember(
+      { studioId: s.studioId, userId: s.practitionerUserId, practitionerId: s.practitionerId, clientId: s.clientId },
+      "waive-member",
+    );
+
+    // Route 1: asking the practitioner command for a waiver.
+    const viaRecord = await record(member.userId, s.studioId, s.appointmentId, "waived");
+    expect(viaRecord.result).toBe("owner_only");
+
+    // Route 2: calling the owner command directly. UI hiding is not authority,
+    // so this is the call that actually matters.
+    const viaWaive = await waive(member.userId, s.studioId, s.appointmentId);
+    expect(viaWaive.result).toBe("not_owner");
+
+    expect(await liveRows(s.studioId)).toHaveLength(0);
+  });
+
+  it("the owner may waive, and a waiver is not revenue", async () => {
+    const s = await scenario();
+    const out = await waive(s.practitionerUserId, s.studioId, s.appointmentId, 4500);
+    expect(out.result).toBe("recorded");
+    const rows = await liveRows(s.studioId);
+    expect(rows[0].method).toBe("waived");
+    // The amount is what was FORGIVEN. Nothing in the schema lets it be read as
+    // collected: it is a different method on a different table from Stripe.
+    expect(rows[0].amount_cents).toBe(4500);
+  });
+
+  it("a practitioner cannot supersede even her own record", async () => {
+    const s = await scenario();
+    const member = await seedMember(
+      { studioId: s.studioId, userId: s.practitionerUserId, practitionerId: s.practitionerId, clientId: s.clientId },
+      "supersede-member",
+    );
+    const first = await record(member.userId, s.studioId, s.appointmentId, "paid_cash");
+    expect(first.result).toBe("recorded");
+
+    const out = await asUser(member.userId, async (q) => {
+      const r = await q(
+        `select * from public.supersede_appointment_settlement($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [s.studioId, first.settlement_id, "paid_e_transfer", 4500, 4500, "wrong method", null, LIVE],
+      );
+      return r.rows[0] as { result: string };
+    });
+    expect(out.result).toBe("not_owner");
+
+    const rows = await liveRows(s.studioId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].method).toBe("paid_cash");
+  });
+});
+
+describe("0187 — financial history is append-only", () => {
+  it("a correction inserts a new record and keeps the original verbatim", async () => {
+    const s = await scenario();
+    const first = await record(s.practitionerUserId, s.studioId, s.appointmentId, "paid_cash", 4500);
+
+    const out = await asUser(s.practitionerUserId, async (q) => {
+      const r = await q(
+        `select * from public.supersede_appointment_settlement($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [s.studioId, first.settlement_id, "paid_e_transfer", 4000, 4500, "client actually e-transferred", null, LIVE],
+      );
+      return r.rows[0] as { result: string; settlement_id: string; superseded_settlement_id: string };
+    });
+    expect(out.result).toBe("corrected");
+
+    const rows = await liveRows(s.studioId);
+    expect(rows).toHaveLength(2);
+
+    const original = rows.find((r) => r.id === first.settlement_id)!;
+    // THE ORIGINAL IS UNTOUCHED. It still says what it said.
+    expect(original.method).toBe("paid_cash");
+    expect(original.amount_cents).toBe(4500);
+    expect(original.superseded_at).not.toBeNull();
+
+    const replacement = rows.find((r) => r.id === out.settlement_id)!;
+    expect(replacement.method).toBe("paid_e_transfer");
+    expect(replacement.supersedes_id).toBe(first.settlement_id);
+    expect(replacement.supersede_reason).toBe("client actually e-transferred");
+    expect(replacement.superseded_at).toBeNull();
+
+    // EXACTLY ONE live truth, throughout.
+    const live = rows.filter((r) => r.superseded_at === null);
+    expect(live).toHaveLength(1);
+  });
+
+  it("a correction without a reason is refused", async () => {
+    const s = await scenario();
+    const first = await record(s.practitionerUserId, s.studioId, s.appointmentId, "paid_cash");
+    const out = await asUser(s.practitionerUserId, async (q) => {
+      const r = await q(
+        `select * from public.supersede_appointment_settlement($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [s.studioId, first.settlement_id, "waived", 4500, 4500, "   ", null, LIVE],
+      );
+      return r.rows[0] as { result: string };
+    });
+    expect(out.result).toBe("invalid_input");
+  });
+
+  it("superseding an already-superseded record reports stale_target", async () => {
+    const s = await scenario();
+    const first = await record(s.practitionerUserId, s.studioId, s.appointmentId, "paid_cash");
+    const correct = () =>
+      asUser(s.practitionerUserId, async (q) => {
+        const r = await q(
+          `select * from public.supersede_appointment_settlement($1,$2,$3,$4,$5,$6,$7,$8)`,
+          [s.studioId, first.settlement_id, "waived", 4500, 4500, "reason", null, LIVE],
+        );
+        return r.rows[0] as { result: string };
+      });
+    expect((await correct()).result).toBe("corrected");
+    expect((await correct()).result).toBe("stale_target");
+  });
+
+  it("the disposition cannot be UPDATEd into a different one, even by the table owner", async () => {
+    const s = await scenario();
+    const first = await record(s.practitionerUserId, s.studioId, s.appointmentId, "paid_cash");
+    await expect(
+      adminQuery(`update public.appointment_settlements set method='waived' where id=$1`, [
+        first.settlement_id,
+      ]),
+    ).rejects.toThrow(/append-only/);
+  });
+
+  it("a financial record cannot be DELETEd, even by the table owner", async () => {
+    const s = await scenario();
+    const first = await record(s.practitionerUserId, s.studioId, s.appointmentId, "paid_cash");
+    await expect(
+      adminQuery(`delete from public.appointment_settlements where id=$1`, [first.settlement_id]),
+    ).rejects.toThrow(/never deleted/);
+  });
+
+  it("recorded_at is server time and cannot be supplied by the caller", async () => {
+    const s = await scenario();
+    await record(s.practitionerUserId, s.studioId, s.appointmentId, "paid_cash");
+    const rows = await liveRows(s.studioId);
+    const r = await adminQuery(
+      `select recorded_at > now() - interval '2 minutes' fresh from public.appointment_settlements where id=$1`,
+      [rows[0].id],
+    );
+    expect(r.rows[0].fresh).toBe(true);
+  });
+});
+
+describe("0187 — UNKNOWN is an absence, never a value", () => {
+  it("a completed appointment with no disposition has no row at all", async () => {
+    const s = await scenario();
+    expect(await liveRows(s.studioId)).toHaveLength(0);
+    // And nothing in the vocabulary could express it if somebody tried.
+    await expect(
+      adminQuery(
+        `insert into public.appointment_settlements
+           (studio_id, appointment_id, method, amount_cents, recorded_by_practitioner_id)
+         values ($1,$2,'unknown',0,$3)`,
+        [s.studioId, s.appointmentId, s.practitionerId],
+      ),
+    ).rejects.toThrow(/method_check/);
+  });
+
+  it("the vocabulary has no card or hone member", async () => {
+    const s = await scenario();
+    for (const forbidden of ["card", "hone", "stripe", "paid_card"]) {
+      await expect(
+        adminQuery(
+          `insert into public.appointment_settlements
+             (studio_id, appointment_id, method, amount_cents, recorded_by_practitioner_id)
+           values ($1,$2,$3,100,$4)`,
+          [s.studioId, s.appointmentId, forbidden, s.practitionerId],
+        ),
+      ).rejects.toThrow(/method_check/);
+    }
+  });
+});
+
+describe("0187 — settlement and card charging exclude each other", () => {
+  it("refuses to record cash when Hone already holds a succeeded charge", async () => {
+    const s = await scenario({ attempt: "succeeded" });
+    const out = await record(
+      s.practitionerUserId, s.studioId, s.appointmentId, "paid_cash", 4500, TEST_MODE,
+    );
+    expect(out.result).toBe("card_payment_exists");
+    expect(await liveRows(s.studioId)).toHaveLength(0);
+  });
+
+  it("PERMITS cash after a full refund, because the money went back", async () => {
+    const s = await scenario({ attempt: "refunded" });
+    const out = await record(
+      s.practitionerUserId, s.studioId, s.appointmentId, "paid_cash", 4500, TEST_MODE,
+    );
+    expect(out.result).toBe("recorded");
+    // And the refund fact itself was not touched.
+    const a = await adminQuery(
+      `select refund_status from public.payment_charge_attempts where studio_id=$1`,
+      [s.studioId],
+    );
+    expect(a.rows[0].refund_status).toBe("succeeded");
+  });
+
+  it("a lie about the deployment mode cannot unblock REAL money", async () => {
+    const s = await scenario({ attempt: "succeeded" });
+    // A live-mode attempt must also carry its Connect account (0032's
+    // live_requires_account CHECK), so this fixture builds a coherent live row
+    // rather than a half-one.
+    await adminQuery(
+      `update public.payment_charge_attempts
+          set stripe_livemode = true,
+              stripe_account_id = coalesce(stripe_account_id, 'acct_live_' || $2)
+        where studio_id = $1`,
+      [s.studioId, s.runId],
+    );
+    // The caller claims test mode, hoping the live attempt is ignored.
+    const out = await record(
+      s.practitionerUserId, s.studioId, s.appointmentId, "paid_cash", 4500, TEST_MODE,
+    );
+    expect(out.result).toBe("card_payment_exists");
+  });
+
+  it("the claim command refuses a card charge on an externally-settled visit", async () => {
+    const s = await scenario({ attempt: "ready" });
+    const attempt = await adminQuery(
+      `select id from public.payment_charge_attempts where studio_id=$1`,
+      [s.studioId],
+    );
+    const attemptId = attempt.rows[0].id as string;
+
+    await record(s.practitionerUserId, s.studioId, s.appointmentId, "paid_cash", 4500, LIVE);
+
+    const claim = await adminQuery(
+      `select result from public.claim_session_payment_charge_attempt($1,$2,$3)`,
+      [attemptId, s.practitionerId, `idem_${attemptId}`],
+    );
+    expect(claim.rows[0].result).toBe("settled_externally");
+
+    // The attempt was NOT advanced.
+    const after = await adminQuery(
+      `select status from public.payment_charge_attempts where id=$1`,
+      [attemptId],
+    );
+    expect(after.rows[0].status).toBe("ready");
+  });
+
+  it("still_owes deliberately does NOT block a later card charge", async () => {
+    const s = await scenario({ attempt: "ready" });
+    const attempt = await adminQuery(
+      `select id from public.payment_charge_attempts where studio_id=$1`,
+      [s.studioId],
+    );
+    const attemptId = attempt.rows[0].id as string;
+
+    await record(s.practitionerUserId, s.studioId, s.appointmentId, "still_owes", 4500, LIVE);
+
+    const claim = await adminQuery(
+      `select result from public.claim_session_payment_charge_attempt($1,$2,$3)`,
+      [attemptId, s.practitionerId, `idem_${attemptId}`],
+    );
+    // The debt is paid by card; the attestation is outranked, not contradicted.
+    expect(claim.rows[0].result).toBe("claimed");
+
+    // AND THE ORIGINAL RECORD SURVIVES, untouched, with its author's name on it.
+    const rows = await liveRows(s.studioId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].method).toBe("still_owes");
+    expect(rows[0].superseded_at).toBeNull();
+  });
+});
+
+describe("0187 — concurrency, on the shared appointment lock", () => {
+  // Two REAL connections, each holding an open transaction, so the interleaving
+  // is genuine rather than simulated. Neither side may rely on a pre-read or on
+  // the UI having disabled a button.
+  const pool = new Pool({ connectionString: resolveLocalDbUrl(), max: 6 });
+  afterAll(async () => {
+    await pool.end();
+  });
+
+  async function openAsUser(userId: string) {
+    const c = await pool.connect();
+    await c.query("begin");
+    await c.query("set local role authenticated");
+    await c.query("select set_config('request.jwt.claims', $1, true)", [
+      JSON.stringify({ sub: userId, role: "authenticated" }),
+    ]);
+    return c;
+  }
+
+  it("PROOF 1 — settlement holds the lock, a concurrent card claim cannot race through", async () => {
+    const s = await scenario({ attempt: "ready" });
+    const attemptId = (
+      await adminQuery(`select id from public.payment_charge_attempts where studio_id=$1`, [s.studioId])
+    ).rows[0].id as string;
+
+    const settler = await openAsUser(s.practitionerUserId);
+    const settled = await settler.query(
+      `select * from public.record_appointment_settlement($1,$2,'paid_cash',4500,4500,null,$3)`,
+      [s.studioId, s.appointmentId, LIVE],
+    );
+    expect(settled.rows[0].result).toBe("recorded");
+    // Settlement is COMMITTED-PENDING: it holds the advisory key.
+
+    const claimer = await pool.connect();
+    await claimer.query("begin");
+    let claimResolved = false;
+    const claimPromise = claimer
+      .query(`select result from public.claim_session_payment_charge_attempt($1,$2,$3)`, [
+        attemptId,
+        s.practitionerId,
+        `idem_${attemptId}`,
+      ])
+      .then((r) => {
+        claimResolved = true;
+        return r;
+      });
+
+    // It must BLOCK on the advisory key rather than proceed on a stale read.
+    await new Promise((r) => setTimeout(r, 400));
+    expect(claimResolved).toBe(false);
+
+    await settler.query("commit");
+    settler.release();
+
+    const claim = await claimPromise;
+    expect(claim.rows[0].result).toBe("settled_externally");
+    await claimer.query("rollback");
+    claimer.release();
+
+    const after = await adminQuery(`select status from public.payment_charge_attempts where id=$1`, [attemptId]);
+    expect(after.rows[0].status).toBe("ready");
+  });
+
+  it("PROOF 2 — a card claim holds the lock, a concurrent settlement cannot race through", async () => {
+    const s = await scenario({ attempt: "ready" });
+    const attemptId = (
+      await adminQuery(`select id from public.payment_charge_attempts where studio_id=$1`, [s.studioId])
+    ).rows[0].id as string;
+
+    const claimer = await pool.connect();
+    await claimer.query("begin");
+    const claim = await claimer.query(
+      `select result from public.claim_session_payment_charge_attempt($1,$2,$3)`,
+      [attemptId, s.practitionerId, `idem_${attemptId}`],
+    );
+    expect(claim.rows[0].result).toBe("claimed");
+
+    const settler = await openAsUser(s.practitionerUserId);
+    let settleResolved = false;
+    const settlePromise = settler
+      .query(`select * from public.record_appointment_settlement($1,$2,'paid_cash',4500,4500,null,$3)`, [
+        s.studioId,
+        s.appointmentId,
+        TEST_MODE,
+      ])
+      .then((r) => {
+        settleResolved = true;
+        return r;
+      });
+
+    await new Promise((r) => setTimeout(r, 400));
+    expect(settleResolved).toBe(false);
+
+    await claimer.query("commit");
+    claimer.release();
+
+    const settle = await settlePromise;
+    // The claim advanced the attempt to pending_stripe, which is money in
+    // flight, so the attestation is refused.
+    expect(settle.rows[0].result).toBe("card_payment_exists");
+    await settler.query("rollback");
+    settler.release();
+
+    expect(await liveRows(s.studioId)).toHaveLength(0);
+  });
+
+  it("PROOF 3 — two simultaneous settlements produce exactly one authoritative result", async () => {
+    const s = await scenario();
+    const [a, b] = await Promise.all([
+      record(s.practitionerUserId, s.studioId, s.appointmentId, "paid_cash", 4500),
+      record(s.practitionerUserId, s.studioId, s.appointmentId, "paid_e_transfer", 4500),
+    ]);
+    const results = [a.result, b.result].sort();
+    expect(results).toEqual(["already_settled", "recorded"]);
+    // Both callers are pointed at the record that actually holds the truth.
+    expect(a.settlement_id).toBe(b.settlement_id);
+
+    const rows = await liveRows(s.studioId);
+    expect(rows).toHaveLength(1);
+  });
+
+  it("PROOF 4 — a replay returns the same business result and creates no second record", async () => {
+    const s = await scenario();
+    const first = await record(s.practitionerUserId, s.studioId, s.appointmentId, "paid_cash", 4500);
+    expect(first.result).toBe("recorded");
+
+    // The same submission again — a double-click, a retried server action, a
+    // resent POST. No idempotency token is supplied because none exists: the
+    // natural key IS the idempotency key.
+    const replay = await record(s.practitionerUserId, s.studioId, s.appointmentId, "paid_cash", 4500);
+    expect(replay.result).toBe("already_settled");
+    expect(replay.settlement_id).toBe(first.settlement_id);
+
+    expect(await liveRows(s.studioId)).toHaveLength(1);
+  });
+});
+
+describe("0187 — privileges", () => {
+  it("anon and service_role hold no EXECUTE on any settlement command", async () => {
+    for (const role of ["anon", "service_role"] as const) {
+      const r = await asRole(role, (q) =>
+        q(
+          `select
+             has_function_privilege('record_appointment_settlement(uuid,uuid,text,integer,integer,text,boolean)','execute') a,
+             has_function_privilege('waive_appointment_fee(uuid,uuid,integer,integer,text,boolean)','execute') b,
+             has_function_privilege('supersede_appointment_settlement(uuid,uuid,text,integer,integer,text,text,boolean)','execute') c`,
+        ),
+      );
+      expect([r.rows[0].a, r.rows[0].b, r.rows[0].c]).toEqual([false, false, false]);
+    }
+  });
+
+  it("authenticated holds SELECT and nothing else on the table", async () => {
+    const r = await adminQuery(
+      `select grantee, privilege_type from information_schema.role_table_grants
+        where table_name='appointment_settlements' and grantee in ('anon','authenticated','service_role')`,
+    );
+    expect(r.rows).toEqual([{ grantee: "authenticated", privilege_type: "SELECT" }]);
+  });
+
+  it("a practitioner cannot read another studio's settlements", async () => {
+    const a = await scenario();
+    const b = await scenario();
+    await record(b.practitionerUserId, b.studioId, b.appointmentId, "paid_cash");
+
+    const seen = await asUser(a.practitionerUserId, (q) =>
+      q(`select count(*)::int n from public.appointment_settlements`),
+    );
+    expect(seen.rows[0].n).toBe(0);
+  });
+});

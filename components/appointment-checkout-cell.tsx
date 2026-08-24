@@ -7,6 +7,17 @@ import type { AppointmentPaymentState } from "@/lib/billing/appointment-payment-
 // paid/processing/refunded, so an already-paid appointment shows "Paid", not a
 // misleading Checkout. Only completed appointments are checkout-relevant;
 // cancelled / no-show / confirmed render nothing.
+// The five attested outcomes and their badge copy. Kept here, beside the
+// emerald branch it must never be confused with, rather than imported from the
+// vocabulary module — so anyone editing one is looking directly at the other.
+const SETTLED_LABEL: Partial<Record<AppointmentPaymentState, string>> = {
+  settled_cash: "Paid \u00b7 cash",
+  settled_e_transfer: "Paid \u00b7 e-transfer",
+  settled_other: "Paid \u00b7 other",
+  settled_waived: "Fee waived",
+  settled_owing: "Still owes",
+};
+
 export function AppointmentCheckoutCell({
   appointmentId,
   status,
@@ -26,6 +37,31 @@ export function AppointmentCheckoutCell({
         className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200"
       >
         <span aria-hidden>✓</span> {label}
+      </span>
+    );
+  }
+
+  // PAY-SETTLE / 0187. A practitioner-ATTESTED outcome.
+  //
+  // THE COLOUR IS THE POINT. Emerald is reserved, everywhere in this product,
+  // for money Hone actually verified — the branch above. These render in
+  // NEUTRAL, and every label names HOW the visit was settled rather than
+  // saying a bare "Paid", so a glance down the dashboard can never mistake a
+  // practitioner's word for a Stripe receipt. That distinction is the whole
+  // reason the settlement schema refuses to store a "card" method; throwing it
+  // away in the CSS would undo it at the only layer Chloe actually reads.
+  //
+  // Checkout is deliberately NOT offered here. That is the product outcome:
+  // an appointment settled in cash stops asking to be charged, without anybody
+  // having run a payment that did not happen.
+  const settled = SETTLED_LABEL[paymentState];
+  if (settled) {
+    return (
+      <span
+        data-testid={`appointment-${paymentState}`}
+        className="inline-flex items-center rounded-full bg-neutral-100 px-2.5 py-1 text-xs font-medium text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300"
+      >
+        {settled}
       </span>
     );
   }

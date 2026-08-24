@@ -32,6 +32,8 @@ import {
 import { PaymentSummaryCard } from "@/components/payment/payment-summary-card";
 import { ReceiptStatus } from "@/components/payment/receipt-status";
 import { TechnicalPaymentDetails } from "@/components/payment/technical-payment-details";
+import { AppointmentSettlementControls } from "@/components/appointment-settlement-controls";
+import type { SettlementMethod } from "@/lib/billing/settlement-types";
 
 type PrepareResult =
   | { ok: true; attemptId: string }
@@ -203,6 +205,9 @@ export function SessionPaymentPrepareCard({
   eligibility,
   amountResult = null,
   isOwner = false,
+  appointmentId = null,
+  settledMethod = null,
+  settledAmountCents = null,
   prepareAction,
   executeAction,
   sendReceiptAction,
@@ -215,6 +220,14 @@ export function SessionPaymentPrepareCard({
   // session page). Gates the owner-only Technical payment details disclosure +
   // the Refund button (refunds are ALSO server-side owner-only, unchanged).
   isOwner?: boolean;
+  // PAY-SETTLE / 0187. The appointment this session belongs to, when the
+  // caller knows it. Its PRESENCE is what enables the settlement controls: a
+  // disposition is a fact about a VISIT, and without an appointment there is
+  // nothing to attest about. Absent -> the card renders exactly as before.
+  appointmentId?: string | null;
+  // The live attested disposition, when one exists. Server-resolved.
+  settledMethod?: SettlementMethod | null;
+  settledAmountCents?: number | null;
   // PR #200: resolved booked-service / custom-pricing default for the
   // prepare form's amount field. Display default only; the field
   // stays editable and the prepare action re-validates the submitted
@@ -448,6 +461,29 @@ export function SessionPaymentPrepareCard({
 
       {eligibility.existingAttempts.length > 1 && (
         <AttemptHistory attempts={eligibility.existingAttempts} />
+      )}
+
+      {/* PAY-SETTLE / 0187. THE SECOND HALF OF CHECKOUT.
+          Placed BELOW the charge path deliberately: taking the card is still
+          the primary action, and this is the honest alternative rather than a
+          competing one.
+
+          HIDDEN once Hone holds verified card money for this session
+          (activeAttempt in succeeded / pending_stripe / ready). Offering
+          "Paid cash" beside a real charge invites exactly the double
+          collection the database refuses, and a control that always fails is
+          worse than no control. The refusal still lives in SQL — this only
+          keeps the UI from asking. */}
+      {appointmentId && !activeAttempt && (
+        <AppointmentSettlementControls
+          appointmentId={appointmentId}
+          isOwner={isOwner}
+          settledMethod={settledMethod}
+          settledAmountCents={settledAmountCents}
+          defaultAmountCents={
+            presentation.prepareFormAmount?.amountCents ?? null
+          }
+        />
       )}
     </section>
   );

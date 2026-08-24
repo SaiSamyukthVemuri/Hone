@@ -227,6 +227,9 @@ export function QuickCheckoutModal({
             <SessionPaymentPrepareCard
               sessionId={ctx.sessionId}
               clientId={ctx.clientId}
+              appointmentId={ctx.appointment.id}
+              settledMethod={ctx.settledMethod}
+              settledAmountCents={ctx.settledAmountCents}
               eligibility={ctx.eligibility}
               amountResult={ctx.amountResult}
               isOwner={ctx.isOwner}

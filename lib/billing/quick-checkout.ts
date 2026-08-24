@@ -5,6 +5,8 @@ import { getSessionPaymentEligibility } from "@/lib/billing/session-payment-elig
 import { getAuthoritativeSessionPaymentAmount } from "@/lib/billing/authoritative-session-payment";
 import type { SessionPaymentAmountResult } from "@/lib/billing/session-payment-amount";
 import type { SessionPaymentEligibility } from "@/lib/billing/session-payment-types";
+import { getAppointmentSettlements } from "@/lib/billing/appointment-settlement";
+import type { SettlementMethod } from "@/lib/billing/settlement-types";
 
 // Quick checkout (Chloe feedback: checkout takes too many clicks while the client
 // is waiting). This resolver is the ONLY new server logic: it turns an
@@ -33,6 +35,12 @@ export type QuickCheckoutContext =
       };
       eligibility: SessionPaymentEligibility;
       amountResult: SessionPaymentAmountResult | null;
+      // PAY-SETTLE / 0187. The live attested disposition, when one exists.
+      // Null means NOT SETTLED; it never means "we could not find out" — a
+      // failed read leaves the whole context ineligible rather than silently
+      // offering to record a second outcome over an existing one.
+      settledMethod: SettlementMethod | null;
+      settledAmountCents: number | null;
     }
   | {
       ok: false;
@@ -119,6 +127,24 @@ export async function resolveQuickCheckoutContext(
   });
   const amountResult = priced.ok ? priced.result : null;
 
+  // PAY-SETTLE / 0187. Whether this visit already carries an attested outcome.
+  // A FAILED READ IS NOT "no settlement": rendering the record-outcome controls
+  // over a disposition that already exists would invite a second one, and the
+  // command would then refuse it with already_settled after the practitioner
+  // had typed an amount. Refuse up front instead, and say so.
+  const settlements = await getAppointmentSettlements(args.studioId, [
+    args.appointmentId,
+  ]);
+  if (!settlements.ok) {
+    return {
+      ok: false,
+      reason:
+        "We could not load this appointment's payment status. Reload and try again.",
+      clientId,
+    };
+  }
+  const settlement = settlements.byAppointmentId.get(args.appointmentId) ?? null;
+
   return {
     ok: true,
     sessionId,
@@ -132,5 +158,7 @@ export async function resolveQuickCheckoutContext(
     },
     eligibility,
     amountResult,
+    settledMethod: settlement?.method ?? null,
+    settledAmountCents: settlement?.amountCents ?? null,
   };
 }

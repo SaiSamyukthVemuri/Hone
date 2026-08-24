@@ -1,7 +1,11 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { adminQuery, asRole, closePool } from "./helpers/harness";
 import { createHash, randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { buildPolicySnapshot } from "@/lib/booking/policy-acknowledgement";
+
+const ROOT = resolve(__dirname, "../..");
 
 // ===========================================================================
 // 0171 — public.reschedule_appointment_v2, proven on the real migrated DB.
@@ -1030,8 +1034,45 @@ describe("0171 — the financial census is complete", () => {
         "ops_alerts", //                   operator signal, ON DELETE SET NULL
         "practitioner_notifications", //   in-app notice, ON DELETE SET NULL
         "sessions", //                     clinical record, ON DELETE SET NULL
+        // APPOINTMENT-BOUND MONEY THAT THIS GATE STRUCTURALLY CANNOT MEET
+        // (PAY-SETTLE / 0187):
+        "appointment_settlements", //      see the justification below
       ].sort(),
     );
+  });
+
+  it("a settlement can never coexist with a reschedulable appointment, by STATUS", async () => {
+    // appointment_settlements IS appointment-bound money, so leaving it out of
+    // the gate needs a real argument rather than a comment.
+    //
+    // THE ARGUMENT IS STRUCTURAL, AND BOTH HALVES ARE ASSERTED HERE so it
+    // cannot rot silently:
+    //
+    //   * the reschedule command refuses anything that is not `confirmed`
+    //     (0171: `if v_orig.status <> 'confirmed' ... then` refuse);
+    //   * every 0187 settlement command refuses anything that is not
+    //     `completed` (`not_completed`).
+    //
+    // The two sets are disjoint, so a live settlement cannot exist on an
+    // appointment this command will act upon. If EITHER guard is ever widened,
+    // this test fails and the gate must be revisited — which is exactly the
+    // service the census is here to perform.
+    const reschedule171 = readFileSync(
+      join(ROOT, "supabase/migrations/0171_public_reschedule_command_v2.sql"),
+      "utf8",
+    );
+    expect(reschedule171).toMatch(/if v_orig\.status <> 'confirmed'/);
+
+    const settlement187 = readFileSync(
+      join(ROOT, "supabase/migrations/0187_appointment_settlement.sql"),
+      "utf8",
+    );
+    const notCompleted = [
+      ...settlement187.matchAll(/v_status is distinct from 'completed'/g),
+    ];
+    // record, waive. (supersede acts on an EXISTING settlement, which by
+    // induction is already on a completed appointment.)
+    expect(notCompleted.length).toBeGreaterThanOrEqual(2);
   });
 });
 
