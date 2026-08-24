@@ -247,6 +247,190 @@ test.describe("Dashboard day navigation", () => {
 });
 
 // ===========================================================================
+// DASH-SNAPSHOT-SCROLL-01 — the period filter re-cuts the numbers IN PLACE
+// ===========================================================================
+//
+// The Practice snapshot is the LAST reporting section on the Dashboard, below
+// Today, To do and Birthdays, so a practitioner reading it is always scrolled
+// down. Its period pills are ordinary query-only <Link>s, and Next's App Router
+// applies its default forward-navigation scroll to every one of them:
+// `ScrollAndFocusHandler` takes the segment's DOM node, sees its top edge is
+// above the viewport, and sets `documentElement.scrollTop = 0`
+// (node_modules/next/dist/client/components/layout-router.js). The period
+// changed correctly and the practitioner was thrown to the top of the page,
+// away from the very numbers they had just asked to re-cut.
+//
+// The proof is structural, never pixel comparison: it reads the scroll offset
+// and the snapshot heading's viewport-relative top, and it also records the
+// LOWEST scroll offset reached during the navigation — so a jump to the top
+// that something later scrolled back cannot pass as "no jump".
+
+/**
+ * Sub-pixel rounding only. The defect moves the page by the full height of
+ * everything above the snapshot (~1000px at this viewport), so this separates
+ * the two outcomes by two orders of magnitude without pinning any layout.
+ */
+const SCROLL_TOLERANCE_PX = 4;
+
+/**
+ * Start recording the LOWEST scroll offset from now on. A period click is a
+ * client-side navigation, so `window` survives it and the listener sees the
+ * reset itself rather than only its aftermath.
+ */
+async function armScrollFloor(page: Page) {
+  await page.evaluate(() => {
+    const w = window as typeof window & {
+      __honeScrollFloor?: number;
+      __honeScrollFloorArmed?: boolean;
+    };
+    w.__honeScrollFloor = window.scrollY;
+    if (w.__honeScrollFloorArmed) return;
+    w.__honeScrollFloorArmed = true;
+    window.addEventListener(
+      "scroll",
+      () => {
+        w.__honeScrollFloor = Math.min(
+          w.__honeScrollFloor ?? window.scrollY,
+          window.scrollY,
+        );
+      },
+      { passive: true },
+    );
+  });
+}
+
+/**
+ * Settle, then read the offset and the floor together.
+ *
+ * The App Router's reset runs in a layout effect (synchronous with the commit)
+ * but the scroll EVENT it triggers is dispatched before the next paint. Two
+ * animation frames means neither can still be in flight — a fixed timeout would
+ * be the flaky way to say the same thing.
+ */
+async function readScroll(page: Page): Promise<{ y: number; floor: number }> {
+  return page.evaluate(async () => {
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+    );
+    const w = window as typeof window & { __honeScrollFloor?: number };
+    return { y: window.scrollY, floor: w.__honeScrollFloor ?? window.scrollY };
+  });
+}
+
+test.describe("Practice snapshot — the period filter updates IN PLACE", () => {
+  test("Today / This week / This month re-cut the snapshot without jumping the viewport", async ({
+    page,
+  }) => {
+    const seed = await seedE2eStudio();
+    const tz = await getStudioTimezone(seed.studioId);
+    await seedOn(seed, "Snapshot Person", 90);
+    await loginAsOwner(page, seed);
+
+    // Held OFF Today for the whole run, so every period change also has to
+    // carry the selected day: the two controls share one href builder and this
+    // is the cheapest place to prove the fix did not disturb it.
+    const day = localDay(tz, 1);
+    const snapshot = heading(page, "Practice snapshot");
+    // Scoped to the snapshot's OWN control row — its next-sibling div. The
+    // day-nav group above carries a segment named "Today" too, so a page-wide
+    // by-name lookup is ambiguous for exactly the pill this fix is about.
+    const pill = (label: string) =>
+      snapshot
+        .locator("xpath=following-sibling::div[1]")
+        .getByRole("link", { name: label, exact: true });
+    // `uppercase` is a CSS transform, and whether it reaches the accessible
+    // name is a browser detail this proof has no interest in pinning.
+    const appointmentsCard = (periodLabel: string) =>
+      page.getByRole("heading", {
+        level: 3,
+        name: new RegExp(`^Appointments ${periodLabel}$`, "i"),
+      });
+
+    await page.goto(`/dashboard?day=${day}`);
+    await expect(heading(page, "Tomorrow")).toBeVisible({ timeout: T });
+
+    await test.step("16. the snapshot sits below the fold — the precondition", async () => {
+      await expect(snapshot).toBeVisible({ timeout: T });
+      // Deterministic placement rather than scrollIntoViewIfNeeded, which can
+      // leave the pills themselves at the very bottom edge — Playwright would
+      // then auto-scroll on click and move the baseline it is measuring.
+      await snapshot.evaluate((el) => {
+        window.scrollTo(0, el.getBoundingClientRect().top + window.scrollY - 120);
+      });
+      const { y } = await readScroll(page);
+      expect(y, "the Dashboard must be scrolled for this proof to mean anything")
+        .toBeGreaterThan(0);
+      // Default period, before any pill has been touched.
+      await expect(pill("This week")).toHaveAttribute("aria-current", "page");
+    });
+
+    const journey = [
+      { step: 17, label: "Today", period: "today", periodLabel: "today" },
+      { step: 18, label: "This month", period: "month", periodLabel: "this month" },
+      { step: 19, label: "This week", period: "week", periodLabel: "this week" },
+    ] as const;
+
+    for (const leg of journey) {
+      await test.step(`${leg.step}. "${leg.label}" re-cuts the numbers in place`, async () => {
+        const before = await readScroll(page);
+        const beforeTop = (await snapshot.boundingBox())!.y;
+        await armScrollFloor(page);
+
+        await pill(leg.label).click();
+
+        // 1. the period URL is the expected one, and the DAY survived it.
+        await landsOn(page, { day, period: leg.period });
+        // 2. the snapshot itself re-rendered for the new period: the server
+        //    metrics card is relabelled and the selected pill moved.
+        await expect(appointmentsCard(leg.periodLabel)).toBeVisible({ timeout: T });
+        await expect(pill(leg.label)).toHaveAttribute("aria-current", "page");
+        for (const other of ["Today", "This week", "This month"]) {
+          if (other === leg.label) continue;
+          await expect(pill(other)).not.toHaveAttribute("aria-current", "page");
+        }
+        // 3. the heading is still on screen — the roster did not come back.
+        await expect(heading(page, "Tomorrow")).toBeVisible();
+
+        const after = await readScroll(page);
+        const afterTop = (await snapshot.boundingBox())!.y;
+
+        // 4. the viewport did not jump to the top, at any point.
+        expect(after.y, "still scrolled after the period change").toBeGreaterThan(0);
+        expect(
+          after.floor,
+          "the page must never REACH the top, even transiently",
+        ).toBeGreaterThan(0);
+        expect(
+          Math.abs(after.y - before.y),
+          "scroll offset before vs after",
+        ).toBeLessThanOrEqual(SCROLL_TOLERANCE_PX);
+        // 5. and the snapshot is materially where it was on screen. Nothing
+        //    above it changes with the period, so its viewport-relative top is
+        //    the honest measure of "did the page move under the reader".
+        expect(
+          Math.abs(afterTop - beforeTop),
+          "snapshot heading's viewport position before vs after",
+        ).toBeLessThanOrEqual(SCROLL_TOLERANCE_PX);
+      });
+    }
+
+    await test.step("20. browser Back restores the PREVIOUS period, day intact", async () => {
+      await page.goBack();
+      await landsOn(page, { day, period: "month" });
+      await expect(appointmentsCard("this month")).toBeVisible({ timeout: T });
+      await expect(pill("This month")).toHaveAttribute("aria-current", "page");
+      await expect(heading(page, "Tomorrow")).toBeVisible();
+    });
+
+    await test.step("21. Forward returns to the period Back left", async () => {
+      await page.goForward();
+      await landsOn(page, { day, period: "week" });
+      await expect(pill("This week")).toHaveAttribute("aria-current", "page");
+    });
+  });
+});
+
+// ===========================================================================
 // THE LOAD-BEARING RULE: off Today, V1 asks no history question.
 // ===========================================================================
 
