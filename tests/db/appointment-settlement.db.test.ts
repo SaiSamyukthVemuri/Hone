@@ -1190,6 +1190,244 @@ describe("0187 — A REFUSED SETTLEMENT MUTATES ZERO ATTEMPT ROWS", () => {
   });
 });
 
+describe("0187 — THE WEBHOOK IS THE THIRD PARTY TO THE LOCK", () => {
+  // The webhook used to move `ready` straight to `succeeded` with no lock, and
+  // it is the ONLY writer that turns a retirable state into money. Both
+  // orderings below were broken before it took the key: one double-collected,
+  // the other lost a real Stripe success to an ops alert.
+  const pool = new Pool({ connectionString: resolveLocalDbUrl(), max: 6 });
+  afterAll(async () => {
+    await pool.end();
+  });
+
+  const attemptOf = async (studioId: string) =>
+    (
+      await adminQuery(`select id from public.payment_charge_attempts where studio_id=$1`, [
+        studioId,
+      ])
+    ).rows[0].id as string;
+
+  const rowOf = async (id: string) =>
+    (
+      await adminQuery(
+        `select status, charged_at, stripe_payment_intent_id
+           from public.payment_charge_attempts where id=$1`,
+        [id],
+      )
+    ).rows[0] as { status: string; charged_at: string | null; stripe_payment_intent_id: string | null };
+
+  const reconcile = (id: string) =>
+    adminQuery(
+      `select * from public.reconcile_card_payment_succeeded($1,$2,$3)`,
+      [id, `pi_wh_${randomUUID().slice(0, 12)}`, `ch_wh_${randomUUID().slice(0, 12)}`],
+    );
+
+  it("with no settlement, reconciliation still works exactly as before", async () => {
+    const s = await scenario({ attempt: "ready" });
+    const id = await attemptOf(s.studioId);
+    const r = await reconcile(id);
+    expect(r.rows[0].result).toBe("reconciled");
+    const row = await rowOf(id);
+    expect(row.status).toBe("succeeded");
+    expect(row.charged_at).not.toBeNull();
+    expect(row.stripe_payment_intent_id).toContain("pi_wh_");
+  });
+
+  it("ORDERING 1 — settlement holds the key; the webhook waits, then REFUSES", async () => {
+    // The double-collection ordering. Before the mutex, the webhook read a
+    // ready row, the settlement committed, and the webhook flipped it to
+    // succeeded anyway — leaving card money AND a live cash record.
+    const s = await scenario({ attempt: "ready" });
+    const id = await attemptOf(s.studioId);
+
+    const settler = await pool.connect();
+    await settler.query("begin");
+    await settler.query("set local role authenticated");
+    await settler.query("select set_config('request.jwt.claims', $1, true)", [
+      JSON.stringify({ sub: s.practitionerUserId, role: "authenticated" }),
+    ]);
+    const settled = await settler.query(
+      `select * from public.record_appointment_settlement($1,$2,'paid_cash',4500,null,$3)`,
+      [s.studioId, s.appointmentId, TEST_MODE],
+    );
+    expect(settled.rows[0].result).toBe("recorded");
+
+    const hook = await pool.connect();
+    await hook.query("begin");
+    let done = false;
+    const hookPromise = hook
+      .query(`select * from public.reconcile_card_payment_succeeded($1,$2,$3)`, [
+        id,
+        `pi_race1_${randomUUID().slice(0, 12)}`,
+        `ch_race1_${randomUUID().slice(0, 12)}`,
+      ])
+      .then((r) => {
+        done = true;
+        return r;
+      });
+
+    await new Promise((r) => setTimeout(r, 400));
+    expect(done).toBe(false); // genuinely blocked on the shared key
+
+    await settler.query("commit");
+    settler.release();
+
+    const out = await hookPromise;
+    // It sees the committed settlement and refuses to create money beside it.
+    expect(out.rows[0].result).toBe("settled_externally_conflict");
+    await hook.query("commit");
+    hook.release();
+
+    // NO DOUBLE COLLECTION: the attempt was retired by the settlement and was
+    // never flipped to succeeded.
+    const row = await rowOf(id);
+    expect(row.status).toBe("cancelled");
+    expect(row.charged_at).toBeNull();
+    const live = await liveRows(s.studioId);
+    expect(live).toHaveLength(1);
+    expect(live[0].method).toBe("paid_cash");
+  });
+
+  it("ORDERING 2 — the webhook holds the key; the settlement waits, then refuses", async () => {
+    // The lost-success ordering. Before the mutex, the settlement could retire
+    // the row out from under a real Stripe success.
+    const s = await scenario({ attempt: "ready" });
+    const id = await attemptOf(s.studioId);
+
+    const hook = await pool.connect();
+    await hook.query("begin");
+    const rec = await hook.query(
+      `select * from public.reconcile_card_payment_succeeded($1,$2,$3)`,
+      [id, `pi_race2_${randomUUID().slice(0, 12)}`, `ch_race2_${randomUUID().slice(0, 12)}`],
+    );
+    expect(rec.rows[0].result).toBe("reconciled");
+
+    const settler = await pool.connect();
+    await settler.query("begin");
+    await settler.query("set local role authenticated");
+    await settler.query("select set_config('request.jwt.claims', $1, true)", [
+      JSON.stringify({ sub: s.practitionerUserId, role: "authenticated" }),
+    ]);
+    let done = false;
+    const settlePromise = settler
+      .query(`select * from public.record_appointment_settlement($1,$2,'paid_cash',4500,null,$3)`, [
+        s.studioId,
+        s.appointmentId,
+        TEST_MODE,
+      ])
+      .then((r) => {
+        done = true;
+        return r;
+      });
+
+    await new Promise((r) => setTimeout(r, 400));
+    expect(done).toBe(false);
+
+    await hook.query("commit");
+    hook.release();
+
+    const out = await settlePromise;
+    // Real money moved. The attestation is refused rather than recorded beside
+    // it, and the succeeded row is NOT retired.
+    expect(out.rows[0].result).toBe("card_payment_exists");
+    await settler.query("commit");
+    settler.release();
+
+    const row = await rowOf(id);
+    expect(row.status).toBe("succeeded");
+    expect(row.charged_at).not.toBeNull();
+    expect(await liveRows(s.studioId)).toHaveLength(0);
+  });
+
+  it("a waived visit also refuses the webhook rather than being silently charged", async () => {
+    const s = await scenario({ attempt: "ready" });
+    const id = await attemptOf(s.studioId);
+    expect(
+      (await waive(s.practitionerUserId, s.studioId, s.appointmentId, 4500, TEST_MODE)).result,
+    ).toBe("recorded");
+    const r = await reconcile(id);
+    expect(r.rows[0].result).toBe("settled_externally_conflict");
+    expect((await rowOf(id)).status).toBe("cancelled");
+  });
+
+  it("still_owes does NOT block reconciliation — the debt was simply paid by card", async () => {
+    const s = await scenario({ attempt: "ready" });
+    const id = await attemptOf(s.studioId);
+    await record(s.practitionerUserId, s.studioId, s.appointmentId, "still_owes", 4500, TEST_MODE);
+    // The settlement retired the prepared attempt, so this one is terminal.
+    expect((await reconcile(id)).rows[0].result).toBe("terminal_mismatch");
+
+    // A charge prepared AFTER the debt was recorded reconciles normally.
+    const later = randomUUID();
+    await adminQuery(
+      `insert into public.payment_charge_attempts
+         (id, studio_id, charge_reason, client_id, session_id, appointment_id,
+          created_by_practitioner_id, amount_cents, currency, status, stripe_livemode,
+          client_payment_method_id, card_authorization_signature_id)
+       select $1::uuid, studio_id, charge_reason, client_id, session_id, appointment_id,
+              created_by_practitioner_id, amount_cents, currency, 'ready', stripe_livemode,
+              client_payment_method_id, card_authorization_signature_id
+         from public.payment_charge_attempts where id = $2::uuid`,
+      [later, id],
+    );
+    expect((await reconcile(later)).rows[0].result).toBe("reconciled");
+  });
+
+  it("a terminal row is never flipped, and an already-succeeded one is idempotent", async () => {
+    const cancelled = await scenario({ attempt: "ready" });
+    const cid = await attemptOf(cancelled.studioId);
+    await adminQuery(
+      `update public.payment_charge_attempts set status='cancelled', cancelled_at=now(),
+              cancelled_by_practitioner_id=$2, cancelled_reason='x' where id=$1`,
+      [cid, cancelled.practitionerId],
+    );
+    expect((await reconcile(cid)).rows[0].result).toBe("terminal_mismatch");
+    expect((await rowOf(cid)).status).toBe("cancelled");
+
+    const done = await scenario({ attempt: "succeeded" });
+    const did = await attemptOf(done.studioId);
+    expect((await reconcile(did)).rows[0].result).toBe("already_succeeded");
+  });
+
+  it("neither anon nor authenticated may reconcile — it is the writer that makes money", async () => {
+    for (const role of ["anon", "authenticated"] as const) {
+      const r = await asRole(role, (q) =>
+        q(
+          `select has_function_privilege('reconcile_card_payment_succeeded(uuid,text,text)','execute') x`,
+        ),
+      );
+      expect(r.rows[0].x).toBe(false);
+    }
+    const svc = await asRole("service_role", (q) =>
+      q(
+        `select has_function_privilege('reconcile_card_payment_succeeded(uuid,text,text)','execute') x`,
+      ),
+    );
+    expect(svc.rows[0].x).toBe(true);
+  });
+
+  it("CENSUS — every writer that can create card money holds the shared key", async () => {
+    // The mutex is only as good as its completeness. Any function that moves an
+    // attempt INTO 'succeeded' must take the appointment key; if a new one
+    // appears without it, the window reopens silently.
+    const r = await adminQuery(
+      `select p.proname, pg_get_functiondef(p.oid) def
+         from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+        where n.nspname = 'public'
+          and p.prokind = 'f'
+          and p.prosrc ilike '%payment_charge_attempts%'
+          and p.prosrc ilike '%succeeded%'`,
+    );
+    const makesMoney = (r.rows as Array<{ proname: string; def: string }>).filter((f) =>
+      /set\s+status\s*=\s*'succeeded'|status\s*=\s*'succeeded'\s*,/.test(f.def),
+    );
+    expect(makesMoney.length).toBeGreaterThan(0);
+    for (const f of makesMoney) {
+      expect(f.def).toContain("appointment_settlement_lock_key");
+    }
+  });
+});
+
 describe("0187 — privileges", () => {
   it("anon and service_role hold no EXECUTE on any settlement command", async () => {
     for (const role of ["anon", "service_role"] as const) {

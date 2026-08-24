@@ -512,6 +512,77 @@ describe("0187 — a prepared card charge does not dead-end settlement", () => {
   });
 });
 
+describe("0187 — the webhook joins the mutex", () => {
+  const fn = () =>
+    CODE.slice(
+      CODE.indexOf("create or replace function public.reconcile_card_payment_succeeded("),
+    ).split("$$;")[0];
+
+  it("takes the SHARED key, advisory before row lock", () => {
+    const body = fn();
+    const advisory = body.indexOf("pg_advisory_xact_lock");
+    const rowLock = body.indexOf("for update");
+    expect(advisory).toBeGreaterThan(0);
+    expect(rowLock).toBeGreaterThan(advisory);
+    expect(body).toMatch(/public\.appointment_settlement_lock_key\(/);
+  });
+
+  it("checks the blocking settlement BEFORE the status branches", () => {
+    // A settlement RETIRES the prepared row, so status-first would report
+    // terminal_mismatch and hide the real situation from whoever reads the
+    // alert. Both refuse to create money; only this order says why.
+    const body = fn();
+    const settlement = body.indexOf("appointment_has_blocking_settlement");
+    const succeededBranch = body.indexOf("v_row.status = 'succeeded'");
+    const terminalBranch = body.indexOf("v_row.status in ('failed'");
+    expect(settlement).toBeGreaterThan(0);
+    expect(succeededBranch).toBeGreaterThan(settlement);
+    expect(terminalBranch).toBeGreaterThan(settlement);
+  });
+
+  it("REFUSES rather than mutating when the visit was settled externally", () => {
+    const body = fn();
+    const conflictAt = body.indexOf("'settled_externally_conflict'");
+    const updateAt = body.indexOf("update public.payment_charge_attempts");
+    expect(conflictAt).toBeGreaterThan(0);
+    // The refusal returns before the only write in the function.
+    expect(updateAt).toBeGreaterThan(conflictAt);
+    expect(body.slice(conflictAt, updateAt)).not.toMatch(/update\s+public\./);
+  });
+
+  it("still only ever moves ready/pending_stripe to succeeded", () => {
+    const body = fn();
+    expect(body).toMatch(/set status = 'succeeded'/);
+    expect(body).toMatch(/and t\.status in \('ready', 'pending_stripe'\)/);
+    // It never writes any other status, and never deletes.
+    expect(body).not.toMatch(/status = '(failed|cancelled|blocked|ready|pending_stripe)'\s*,/);
+    expect(body).not.toMatch(/delete\s+from/i);
+  });
+
+  it("is service_role only — it is the writer that makes money", () => {
+    const sig = "public.reconcile_card_payment_succeeded(uuid, text, text)";
+    for (const role of ["public", "anon", "authenticated"]) {
+      expect(CODE).toContain(`revoke execute on function ${sig} from ${role};`);
+    }
+    expect(CODE).toContain(`grant execute on function ${sig} to service_role;`);
+    expect(CODE).not.toMatch(
+      /grant execute on function public\.reconcile_card_payment_succeeded\(uuid, text, text\) to authenticated/,
+    );
+  });
+
+  it("ALL THREE money-relevant commands share ONE key definition", () => {
+    // settlement x3, claim, reconcile.
+    const takes = [
+      ...CODE.matchAll(
+        /pg_advisory_xact_lock\(\s*\n?\s*public\.appointment_settlement_lock_key\(/g,
+      ),
+    ];
+    expect(takes).toHaveLength(5);
+    // And still exactly one place computes the hash.
+    expect([...CODE.matchAll(/hashtextextended/g)]).toHaveLength(1);
+  });
+});
+
 describe("0187 — tenancy is structural", () => {
   it("every relation on the table is a same-studio composite FK", () => {
     for (const fk of [

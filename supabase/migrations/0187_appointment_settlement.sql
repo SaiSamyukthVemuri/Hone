@@ -1330,6 +1330,181 @@ end;
 $$;
 
 -- ---------------------------------------------------------------------------
+-- THE THIRD PARTY TO THE LOCK — WEBHOOK RECONCILIATION
+-- ---------------------------------------------------------------------------
+-- THE DOUBLE-COLLECTION WINDOW THIS CLOSES.
+--
+-- Settlement and the card CLAIM already serialize on the appointment key. The
+-- Stripe webhook did not. lib/billing/payment-webhook-reconciliation.ts moved a
+-- row from `ready` straight to `succeeded` with a conditional UPDATE and no
+-- lock at all, which left two orderings that both end badly:
+--
+--   1. The settlement reads card money while the row is still `ready` with no
+--      PaymentIntent id — so it passes the blocking predicate AND the
+--      retirement filter. The webhook then commits `succeeded`. The
+--      retirement's `status = 'ready'` no longer matches, so it retires
+--      nothing, and the settlement insert proceeds anyway: a successful card
+--      charge AND a live external settlement on the same visit. The studio is
+--      paid twice, which is the exact failure this whole release exists to
+--      prevent.
+--
+--   2. The reverse: settlement retires the row first, the webhook's conditional
+--      UPDATE then matches zero rows, and a REAL Stripe success survives only
+--      as an ops alert. Money left the client and Hone has no record of it as
+--      money.
+--
+-- The fail-closed guard on execution evidence does not close this: at the
+-- moment settlement reads, the row legitimately has none, because the
+-- PaymentIntent id and the status flip land in the SAME webhook update.
+--
+-- So reconciliation becomes a command that takes THE SAME KEY. It is the third
+-- and last writer that can create card money for an appointment; the other two
+-- already hold it.
+--
+-- WHY ONLY THIS TRANSITION. A census of every writer that touches
+-- payment_charge_attempts.status:
+--
+--   session-payment-charge  pending_stripe -> succeeded / failed. SAFE without
+--                           the key: `pending_stripe` is a hard settlement
+--                           refusal that is never retired, so both the before
+--                           and after states block. The window needs a
+--                           RETIRABLE before-state, and there is none.
+--   webhook payment_failed  ready|pending_stripe -> failed. SAFE: `failed` is
+--                           terminal-non-success and blocks nothing, so the
+--                           transition only ever REDUCES blocking. Racing it
+--                           with a settlement produces a retired attempt and a
+--                           failed charge, which are two ways of saying the
+--                           same true thing.
+--   webhook refunds         refund_status only; never status.
+--   manual fee cancel       ready -> cancelled, fee reasons only.
+--   THIS ONE                ready|pending_stripe -> SUCCEEDED. The only writer
+--                           that turns a retirable state into money.
+create or replace function public.reconcile_card_payment_succeeded(
+  p_attempt_id               uuid,
+  p_stripe_payment_intent_id text,
+  p_stripe_charge_id         text
+)
+returns table (
+  result         text,
+  attempt_id     uuid,
+  appointment_id uuid,
+  studio_id      uuid,
+  client_id      uuid,
+  status_before  text
+)
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog, pg_temp
+as $$
+declare
+  v_appointment_id uuid;
+  v_row public.payment_charge_attempts%rowtype;
+begin
+  if p_attempt_id is null then
+    return query select 'not_found'::text, null::uuid, null::uuid, null::uuid,
+                        null::uuid, null::text;
+    return;
+  end if;
+
+  -- Resolve the appointment with a NON-LOCKING read so the key can be computed
+  -- before any row lock. Advisory first, row second — the same global ordering
+  -- the claim command follows, and the reason these commands cannot deadlock
+  -- against each other.
+  select coalesce(a.appointment_id, s.appointment_id)
+    into v_appointment_id
+    from public.payment_charge_attempts a
+    left join public.sessions s
+      on s.id = a.session_id
+     and s.studio_id = a.studio_id
+   where a.id = p_attempt_id;
+
+  if v_appointment_id is not null then
+    perform pg_advisory_xact_lock(
+      public.appointment_settlement_lock_key(v_appointment_id));
+  end if;
+
+  select * into v_row
+    from public.payment_charge_attempts t
+   where t.id = p_attempt_id
+   for update;
+  if not found then
+    return query select 'not_found'::text, null::uuid, null::uuid, null::uuid,
+                        null::uuid, null::text;
+    return;
+  end if;
+
+  -- THE MUTEX, AND IT IS CHECKED FIRST — BEFORE the status branches.
+  --
+  -- Read UNDER the key, so a settlement either committed before this lock was
+  -- granted (and is visible here) or is still waiting for it.
+  --
+  -- ORDER MATTERS FOR THE DIAGNOSIS, NOT ONLY FOR SAFETY. A settlement RETIRES
+  -- the prepared attempt, so by the time this command gets the lock the row is
+  -- `cancelled`. Checking the status first would report `terminal_mismatch` —
+  -- "the row is in a terminal local state" — which is true but useless: the
+  -- actual situation is that Stripe took money for a visit the studio recorded
+  -- as paid in cash, and the operator reading the alert needs to be told THAT.
+  -- Both paths refuse to create money; only this one names why.
+  --
+  -- REFUSE RATHER THAN MUTATE. Both facts cannot be collected. The row is NOT
+  -- flipped to succeeded, because doing so silently creates the double
+  -- collection. The caller raises a CRITICAL ops alert and a human decides —
+  -- refund the card, or supersede the settlement. Neither is a choice a webhook
+  -- handler may make on its own.
+  --
+  -- This also fires when the row is ALREADY succeeded beside a live settlement,
+  -- which is a contradiction that should never exist (the settlement commands
+  -- refuse while card money is held) and is worth surfacing loudly if it does.
+  if v_appointment_id is not null
+     and public.appointment_has_blocking_settlement(v_row.studio_id, v_appointment_id) then
+    return query select 'settled_externally_conflict'::text, v_row.id,
+                        v_appointment_id, v_row.studio_id, v_row.client_id,
+                        v_row.status;
+    return;
+  end if;
+
+  if v_row.status = 'succeeded' then
+    return query select 'already_succeeded'::text, v_row.id, v_appointment_id,
+                        v_row.studio_id, v_row.client_id, v_row.status;
+    return;
+  end if;
+
+  -- Carried from the runtime: a locally terminal row is never flipped.
+  if v_row.status in ('failed', 'cancelled', 'blocked') then
+    return query select 'terminal_mismatch'::text, v_row.id, v_appointment_id,
+                        v_row.studio_id, v_row.client_id, v_row.status;
+    return;
+  end if;
+
+  -- ready / pending_stripe -> succeeded. Still conditional on the status so a
+  -- concurrent action-layer write that already moved the row is not
+  -- double-stamped; the row is held FOR UPDATE, so this cannot lose a race.
+  update public.payment_charge_attempts t
+     set status = 'succeeded',
+         charged_at = now(),
+         failure_code = null,
+         failure_message_safe = null,
+         failed_at = null,
+         stripe_payment_intent_id =
+           coalesce(t.stripe_payment_intent_id, p_stripe_payment_intent_id),
+         stripe_charge_id =
+           coalesce(t.stripe_charge_id, p_stripe_charge_id)
+   where t.id = v_row.id
+     and t.status in ('ready', 'pending_stripe');
+
+  if not found then
+    return query select 'zero_rows'::text, v_row.id, v_appointment_id,
+                        v_row.studio_id, v_row.client_id, v_row.status;
+    return;
+  end if;
+
+  return query select 'reconciled'::text, v_row.id, v_appointment_id,
+                      v_row.studio_id, v_row.client_id, v_row.status;
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
 -- THE OTHER DIRECTION — CARD CHARGING MUST RESPECT AN ATTESTATION
 -- ---------------------------------------------------------------------------
 -- REPLACES public.claim_session_payment_charge_attempt (0075 -> 0083 -> 0101).
@@ -1665,6 +1840,15 @@ revoke all privileges on function public.appointment_settlements_no_delete() fro
 -- these lines change nothing today. They are here so the FINAL privilege state
 -- of a function this migration rewrote is ASSERTED by this file rather than
 -- inherited from 0101 and assumed.
+-- WEBHOOK RECONCILIATION. service_role only, like the claim command: it is
+-- called by the Stripe webhook route with the admin client and has no
+-- auth.uid() to derive authority from. `authenticated` must never hold it — it
+-- is the one command that can turn a prepared attempt into money.
+revoke execute on function public.reconcile_card_payment_succeeded(uuid, text, text) from public;
+revoke execute on function public.reconcile_card_payment_succeeded(uuid, text, text) from anon;
+revoke execute on function public.reconcile_card_payment_succeeded(uuid, text, text) from authenticated;
+grant execute on function public.reconcile_card_payment_succeeded(uuid, text, text) to service_role;
+
 revoke execute on function public.claim_session_payment_charge_attempt(uuid, uuid, text) from public;
 revoke execute on function public.claim_session_payment_charge_attempt(uuid, uuid, text) from anon;
 revoke execute on function public.claim_session_payment_charge_attempt(uuid, uuid, text) from authenticated;
@@ -1714,6 +1898,9 @@ comment on function public.waive_appointment_fee(uuid, uuid, integer, text, bool
 
 comment on function public.supersede_appointment_settlement(uuid, uuid, text, integer, text, text, boolean) is
   'Corrects a settlement by SUPERSEDING it: retires the target and inserts its replacement in ONE transaction under ONE lock, so the appointment never has zero or two live settlements. OWNER ONLY, including over a practitioner''s own record — the value of an attestation is that its author cannot quietly revise it. supersede_reason is required. p_expected_settlement_id is an optimistic target: if it was already superseded the call returns stale_target rather than correcting whatever happens to be live now. Returns corrected | stale_target | card_payment_exists | not_found | not_owner | invalid_input. authenticated only.';
+
+comment on function public.reconcile_card_payment_succeeded(uuid, text, text) is
+  'Reconciles a Stripe payment_intent.succeeded onto payment_charge_attempts UNDER the shared appointment advisory key. Exists because the webhook was the one writer that could turn a RETIRABLE state (ready) into money without holding the key: a settlement could pass its card-money check while the row was still ready, the webhook could commit succeeded, and the settlement would then insert anyway - a card charge and an external settlement on the same visit. The reverse ordering lost a real Stripe success to an ops alert. Advisory lock first, row lock second, matching the other commands so none can deadlock. If a live blocking settlement exists it returns settled_externally_conflict and DOES NOT flip the row: refunding the card or superseding the settlement is a human decision, never a webhook handler decision. Returns reconciled | already_succeeded | terminal_mismatch | settled_externally_conflict | zero_rows | not_found. service_role only.';
 
 comment on function public.claim_session_payment_charge_attempt(uuid, uuid, text) is
   'Atomically claims a prepared charge attempt for Stripe execution. Carried forward from 0101 with ONE addition (0187): before any row lock it resolves the attempt''s appointment with a non-locking read, takes the SHARED appointment advisory key, and refuses with settled_externally when a live blocking attestation exists. That is the card-side half of the settlement mutual exclusion; the settlement side refuses when this side already holds money. An attempt with no resolvable appointment takes no lock and is unaffected, because settlement is appointment-anchored and has nothing to collide with. Lock ordering is advisory first, row second. service_role only.';
