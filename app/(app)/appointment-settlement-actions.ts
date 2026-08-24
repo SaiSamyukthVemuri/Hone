@@ -4,9 +4,6 @@ import { revalidatePath } from "next/cache";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { createClient } from "@/lib/supabase/server";
 import { inferStripeLivemode } from "@/lib/stripe/server";
-// ONE price resolver, shared with the quick-checkout context so the amount the
-// modal offers and the amount the action snapshots cannot disagree.
-import { resolveAppointmentQuotedAmountCents } from "@/lib/billing/appointment-settlement";
 import {
   isPractitionerMethod,
   isSettlementMethod,
@@ -28,6 +25,13 @@ import {
 // NO STRIPE. These actions issue no Stripe call of any kind, and the settlement
 // table has no Stripe column to write. That is the structural half of "a
 // practitioner attestation can never manufacture a receipt".
+//
+// NOR DOES THIS FILE DECIDE THE SERVICE VALUE. quoted_amount_cents used to be
+// computed here and passed in. It is now derived inside the command, because
+// these commands are granted to `authenticated`: anything this file passes can
+// be passed by a hand-built PostgREST call instead, and a number a caller may
+// choose has no business in the column FIN-01A divides by. The UI still resolves
+// a SUGGESTED amount to pre-fill the form; that is display, not authority.
 
 const NOT_AUTHORIZED = "You are not authorized to do that.";
 
@@ -88,11 +92,9 @@ export async function recordAppointmentSettlementAction(
   formData: FormData,
 ): Promise<SettlementActionResult> {
   let studioId: string;
-  let studioTimezone: string;
   try {
     const { studio } = await getCurrentPractitionerWithStudio();
     studioId = studio.id;
-    studioTimezone = studio.timezone;
   } catch {
     return { ok: false, code: "unavailable", message: NOT_AUTHORIZED };
   }
@@ -110,11 +112,6 @@ export async function recordAppointmentSettlementAction(
   const note = formData.get("note") ? parseNote(formData.get("note")) : null;
   if (formData.get("note") && note === null) return failure("invalid_input");
 
-  const quoted = await resolveAppointmentQuotedAmountCents(
-    studioId,
-    appointmentId,
-    studioTimezone,
-  );
 
   const supabase = await createClient();
   const { data, error } = await supabase.rpc("record_appointment_settlement", {
@@ -122,7 +119,6 @@ export async function recordAppointmentSettlementAction(
     p_appointment_id: appointmentId,
     p_method: method,
     p_amount_cents: amountCents,
-    p_quoted_amount_cents: quoted,
     p_note: note,
     // A DEPLOYMENT fact, from the Stripe key prefix — never from the form. The
     // command trusts it asymmetrically: livemode card money always blocks
@@ -158,12 +154,10 @@ export async function waiveAppointmentFeeAction(
   formData: FormData,
 ): Promise<SettlementActionResult> {
   let studioId: string;
-  let studioTimezone: string;
   let isOwner: boolean;
   try {
     const { practitioner, studio } = await getCurrentPractitionerWithStudio();
     studioId = studio.id;
-    studioTimezone = studio.timezone;
     isOwner = practitioner.role === "owner";
   } catch {
     return { ok: false, code: "unavailable", message: NOT_AUTHORIZED };
@@ -177,18 +171,12 @@ export async function waiveAppointmentFeeAction(
   const note = formData.get("note") ? parseNote(formData.get("note")) : null;
   if (formData.get("note") && note === null) return failure("invalid_input");
 
-  const quoted = await resolveAppointmentQuotedAmountCents(
-    studioId,
-    appointmentId,
-    studioTimezone,
-  );
 
   const supabase = await createClient();
   const { data, error } = await supabase.rpc("waive_appointment_fee", {
     p_studio_id: studioId,
     p_appointment_id: appointmentId,
     p_amount_cents: amountCents,
-    p_quoted_amount_cents: quoted,
     p_note: note,
     p_livemode: inferStripeLivemode(),
   });
@@ -220,12 +208,10 @@ export async function supersedeAppointmentSettlementAction(
   formData: FormData,
 ): Promise<SettlementActionResult> {
   let studioId: string;
-  let studioTimezone: string;
   let isOwner: boolean;
   try {
     const { practitioner, studio } = await getCurrentPractitionerWithStudio();
     studioId = studio.id;
-    studioTimezone = studio.timezone;
     isOwner = practitioner.role === "owner";
   } catch {
     return { ok: false, code: "unavailable", message: NOT_AUTHORIZED };
@@ -245,9 +231,6 @@ export async function supersedeAppointmentSettlementAction(
   const note = formData.get("note") ? parseNote(formData.get("note")) : null;
   if (formData.get("note") && note === null) return failure("invalid_input");
 
-  const quoted = appointmentId
-    ? await resolveAppointmentQuotedAmountCents(studioId, appointmentId, studioTimezone)
-    : null;
 
   const supabase = await createClient();
   const { data, error } = await supabase.rpc("supersede_appointment_settlement", {
@@ -255,7 +238,6 @@ export async function supersedeAppointmentSettlementAction(
     p_expected_settlement_id: settlementId,
     p_method: method as SettlementMethod,
     p_amount_cents: amountCents,
-    p_quoted_amount_cents: quoted,
     p_reason: reason,
     p_note: note,
     p_livemode: inferStripeLivemode(),

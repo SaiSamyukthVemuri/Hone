@@ -288,9 +288,9 @@ describe("0187 — privileges", () => {
 
   it("each command revokes EXECUTE from all four roles by name, then grants one", () => {
     for (const sig of [
-      "public.record_appointment_settlement(uuid, uuid, text, integer, integer, text, boolean)",
-      "public.waive_appointment_fee(uuid, uuid, integer, integer, text, boolean)",
-      "public.supersede_appointment_settlement(uuid, uuid, text, integer, integer, text, text, boolean)",
+      "public.record_appointment_settlement(uuid, uuid, text, integer, text, boolean)",
+      "public.waive_appointment_fee(uuid, uuid, integer, text, boolean)",
+      "public.supersede_appointment_settlement(uuid, uuid, text, integer, text, text, boolean)",
     ]) {
       for (const role of ["public", "anon", "authenticated", "service_role"]) {
         expect(CODE).toContain(`revoke execute on function ${sig} from ${role};`);
@@ -304,6 +304,8 @@ describe("0187 — privileges", () => {
       "public.appointment_settlement_lock_key(uuid)",
       "public.appointment_has_live_card_money(uuid, uuid, boolean)",
       "public.appointment_has_blocking_settlement(uuid, uuid)",
+      "public.appointment_quoted_amount_cents(uuid, uuid)",
+      "public.retire_ready_card_attempts(uuid, uuid, uuid)",
       "public.appointment_settlements_server_timestamps()",
       "public.appointment_settlements_append_only()",
       "public.appointment_settlements_no_delete()",
@@ -327,6 +329,108 @@ describe("0187 — privileges", () => {
     expect(CODE).not.toMatch(
       /grant execute on function public\.claim_session_payment_charge_attempt\(uuid, uuid, text\) to authenticated/,
     );
+  });
+});
+
+describe("0187 — the caller cannot choose the service value", () => {
+  it("no granted command takes a quoted-price parameter", () => {
+    // It was one, and the commands are granted to `authenticated`, so it was
+    // forgeable straight through PostgREST into the column FIN-01A divides by.
+    for (const fn of [
+      "record_appointment_settlement",
+      "waive_appointment_fee",
+      "supersede_appointment_settlement",
+    ]) {
+      const sig = CODE.slice(
+        CODE.indexOf(`create or replace function public.${fn}(`),
+      ).split(")")[0];
+      expect(sig).not.toMatch(/quoted/i);
+    }
+    expect(CODE).not.toMatch(/p_quoted_amount_cents/);
+  });
+
+  it("every insert DERIVES the snapshot from the same helper", () => {
+    // CALL SITES only — the definition, the revoke block and the comment all
+    // name it too, and counting those would pass for the wrong reason.
+    const calls = [
+      ...CODE.matchAll(
+        /public\.appointment_quoted_amount_cents\(\s*(?:p_studio_id, p_appointment_id|p_studio_id, v_old\.appointment_id)\s*\)/g,
+      ),
+    ];
+    // record, waive, supersede: three inserts, one helper.
+    expect(calls.length).toBe(3);
+  });
+
+  it("the price law is stated ONCE, in SQL, and fails closed on ambiguity", () => {
+    const fn = CODE.slice(
+      CODE.indexOf("create or replace function public.appointment_quoted_amount_cents("),
+    ).split("$$;")[0];
+    // Studio-local date, never UTC and never a caller's.
+    expect(fn).toMatch(/now\(\) at time zone st\.timezone/);
+    // Normalized service-name match, the linkage client_pricing has always used.
+    expect(fn).toMatch(/lower\(btrim\(cp\.service_name\)\) = lower\(btrim\(v_service_name\)\)/);
+    // Only rows already in effect.
+    expect(fn).toMatch(/cp\.effective_from <= v_today/);
+    // A zero/negative custom price is "none recorded", never "charge nothing".
+    expect(fn).toMatch(/cp\.price_cents > 0/);
+    // Equally-current disagreement refuses rather than picking.
+    expect(fn).toMatch(/if v_distinct > 1 then\s+return null;/);
+    // An explicit menu 0 is authoritative; a NULL price is not.
+    expect(fn).toMatch(/if v_service_price = 0 then\s+return 0;/);
+  });
+});
+
+describe("0187 — a prepared card charge does not dead-end settlement", () => {
+  it("retirement uses the EXISTING lifecycle and invents no status", () => {
+    const fn = CODE.slice(
+      CODE.indexOf("create or replace function public.retire_ready_card_attempts("),
+    ).split("$$;")[0];
+    expect(fn).toMatch(/set status = 'cancelled'/);
+    expect(fn).toMatch(/cancelled_at = now\(\)/);
+    expect(fn).toMatch(/cancelled_by_practitioner_id = p_practitioner_id/);
+    expect(fn).toMatch(/cancelled_reason = '/);
+    // The status vocabulary is untouched.
+    expect(CODE).not.toMatch(/payment_charge_attempts_status_check/);
+  });
+
+  it("ONLY ready is retired — money in flight and money moved are not", () => {
+    const fn = CODE.slice(
+      CODE.indexOf("create or replace function public.retire_ready_card_attempts("),
+    ).split("$$;")[0];
+    expect(fn).toMatch(/and a\.status = 'ready'/);
+    // Re-asserted on the UPDATE itself against a concurrent advance.
+    expect(fn).toMatch(/and t\.status = 'ready'/);
+    for (const forbidden of ["pending_stripe", "succeeded", "failed", "blocked"]) {
+      expect(fn).not.toContain(`'${forbidden}'`);
+    }
+    // Nothing is deleted, and no money/card/Stripe column is rewritten.
+    expect(fn).not.toMatch(/delete\s+from/i);
+    expect(fn).not.toMatch(/amount_cents|stripe_|signature/i);
+  });
+
+  it("retirement happens under the shared lock, BEFORE card money is assessed", () => {
+    for (const fn of ["record_appointment_settlement", "waive_appointment_fee"]) {
+      const body = CODE.slice(
+        CODE.indexOf(`create or replace function public.${fn}(`),
+      ).split("$$;")[0];
+      const lock = body.indexOf("pg_advisory_xact_lock");
+      const retire = body.indexOf("retire_ready_card_attempts");
+      const assess = body.indexOf("appointment_has_live_card_money");
+      expect(lock).toBeGreaterThan(0);
+      expect(retire).toBeGreaterThan(lock);
+      expect(assess).toBeGreaterThan(retire);
+    }
+  });
+
+  it("the CARD claim path retires nothing", () => {
+    // Bounded to the function BODY: the revoke block and the comments below it
+    // name the helper, and an unbounded slice would run into them.
+    const claim = CODE.slice(
+      CODE.indexOf("create or replace function public.claim_session_payment_charge_attempt("),
+    ).split("$$;")[0];
+    expect(claim).not.toMatch(/retire_ready_card_attempts/);
+    // It refuses instead, leaving the row exactly as it found it.
+    expect(claim).toMatch(/'settled_externally'/);
   });
 });
 

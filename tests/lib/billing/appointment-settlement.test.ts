@@ -170,21 +170,24 @@ describe("the write path touches no Stripe surface", () => {
     expect(ACTIONS).not.toMatch(/formData\.get\("owner/);
   });
 
-  it("the quoted amount uses the SAME resolver the card path uses, defined ONCE", () => {
-    const reader = read("lib/billing/appointment-settlement.ts");
-    // The P1-B refactor moved the price snapshot here so the quick-checkout
-    // context and the write action share one definition and cannot offer one
-    // amount while snapshotting another.
-    expect(reader).toMatch(/resolveAuthoritativeSessionPaymentAmount/);
-    expect(reader).toMatch(/export async function resolveAppointmentQuotedAmountCents/);
-    expect(ACTIONS).toMatch(/resolveAppointmentQuotedAmountCents/);
-    expect(QUICK).toMatch(/resolveAppointmentQuotedAmountCents/);
-    // Exactly one definition, so there is no second copy to drift.
+  it("the write path does NOT decide the service value at all", () => {
+    // The snapshot is derived inside the SQL command now. These actions are
+    // reachable only as one caller among several — the commands are granted to
+    // `authenticated` — so anything this file could pass, a hand-built
+    // PostgREST call could pass instead.
+    expect(ACTIONS).not.toMatch(/p_quoted_amount_cents/);
+    expect(ACTIONS).not.toMatch(/resolveAppointmentQuotedAmountCents/);
     expect(ACTIONS).not.toMatch(/resolveAuthoritativeSessionPaymentAmount/);
-    // A price it cannot resolve is stored as null, never as a manufactured zero
-    // — and the ONE truthful zero is an authoritative free service.
+  });
+
+  it("the UI may still SUGGEST an amount, which is display and not authority", () => {
+    const reader = read("lib/billing/appointment-settlement.ts");
+    // Kept: the modal pre-fills the form from it. It reaches no database write.
+    expect(reader).toMatch(/export async function resolveAppointmentQuotedAmountCents/);
+    expect(QUICK).toMatch(/resolveAppointmentQuotedAmountCents/);
+    // A price it cannot resolve is null, never a manufactured zero — and the
+    // ONE truthful zero is an authoritative free service.
     expect(reader).toMatch(/if \(result\.kind === "free"\) return 0;/);
-    expect(reader).toMatch(/return null;/);
   });
 });
 

@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { Pool } from "pg";
+import { randomUUID } from "node:crypto";
 import {
   adminQuery,
   asRole,
@@ -51,8 +52,8 @@ async function record(
 ) {
   return asUser(userId, async (q) => {
     const r = await q(
-      `select * from public.record_appointment_settlement($1,$2,$3,$4,$5,$6,$7)`,
-      [studioId, appointmentId, method, amountCents, 4500, null, livemode],
+      `select * from public.record_appointment_settlement($1,$2,$3,$4,$5,$6)`,
+      [studioId, appointmentId, method, amountCents, null, livemode],
     );
     return r.rows[0] as { result: string; settlement_id: string | null };
   });
@@ -66,8 +67,8 @@ async function waive(
 ) {
   return asUser(userId, async (q) => {
     const r = await q(
-      `select * from public.waive_appointment_fee($1,$2,$3,$4,$5,$6)`,
-      [studioId, appointmentId, amountCents, 4500, null, LIVE],
+      `select * from public.waive_appointment_fee($1,$2,$3,$4,$5)`,
+      [studioId, appointmentId, amountCents, null, LIVE],
     );
     return r.rows[0] as { result: string; settlement_id: string | null };
   });
@@ -181,8 +182,8 @@ describe("0187 — waiver and correction are owner-only, in the database", () =>
 
     const out = await asUser(member.userId, async (q) => {
       const r = await q(
-        `select * from public.supersede_appointment_settlement($1,$2,$3,$4,$5,$6,$7,$8)`,
-        [s.studioId, first.settlement_id, "paid_e_transfer", 4500, 4500, "wrong method", null, LIVE],
+        `select * from public.supersede_appointment_settlement($1,$2,$3,$4,$5,$6,$7)`,
+        [s.studioId, first.settlement_id, "paid_e_transfer", 4500, "wrong method", null, LIVE],
       );
       return r.rows[0] as { result: string };
     });
@@ -201,8 +202,8 @@ describe("0187 — financial history is append-only", () => {
 
     const out = await asUser(s.practitionerUserId, async (q) => {
       const r = await q(
-        `select * from public.supersede_appointment_settlement($1,$2,$3,$4,$5,$6,$7,$8)`,
-        [s.studioId, first.settlement_id, "paid_e_transfer", 4000, 4500, "client actually e-transferred", null, LIVE],
+        `select * from public.supersede_appointment_settlement($1,$2,$3,$4,$5,$6,$7)`,
+        [s.studioId, first.settlement_id, "paid_e_transfer", 4000, "client actually e-transferred", null, LIVE],
       );
       return r.rows[0] as { result: string; settlement_id: string; superseded_settlement_id: string };
     });
@@ -233,8 +234,8 @@ describe("0187 — financial history is append-only", () => {
     const first = await record(s.practitionerUserId, s.studioId, s.appointmentId, "paid_cash");
     const out = await asUser(s.practitionerUserId, async (q) => {
       const r = await q(
-        `select * from public.supersede_appointment_settlement($1,$2,$3,$4,$5,$6,$7,$8)`,
-        [s.studioId, first.settlement_id, "waived", 4500, 4500, "   ", null, LIVE],
+        `select * from public.supersede_appointment_settlement($1,$2,$3,$4,$5,$6,$7)`,
+        [s.studioId, first.settlement_id, "waived", 4500, "   ", null, LIVE],
       );
       return r.rows[0] as { result: string };
     });
@@ -247,8 +248,8 @@ describe("0187 — financial history is append-only", () => {
     const correct = () =>
       asUser(s.practitionerUserId, async (q) => {
         const r = await q(
-          `select * from public.supersede_appointment_settlement($1,$2,$3,$4,$5,$6,$7,$8)`,
-          [s.studioId, first.settlement_id, "waived", 4500, 4500, "reason", null, LIVE],
+          `select * from public.supersede_appointment_settlement($1,$2,$3,$4,$5,$6,$7)`,
+          [s.studioId, first.settlement_id, "waived", 4500, "reason", null, LIVE],
         );
         return r.rows[0] as { result: string };
       });
@@ -386,29 +387,65 @@ describe("0187 — settlement and card charging exclude each other", () => {
     );
     expect(claim.rows[0].result).toBe("settled_externally");
 
-    // The attempt was NOT advanced.
+    // THE ATTEMPT WAS NEVER CHARGED. It was RETIRED by the settlement itself,
+    // through the existing 0073 lifecycle, rather than left `ready` forever
+    // with no cancellation path — choosing cash IS the decision not to use the
+    // prepared charge.
     const after = await adminQuery(
-      `select status from public.payment_charge_attempts where id=$1`,
+      `select status, cancelled_at, cancelled_by_practitioner_id, cancelled_reason,
+              charged_at, stripe_payment_intent_id
+         from public.payment_charge_attempts where id=$1`,
       [attemptId],
     );
-    expect(after.rows[0].status).toBe("ready");
+    expect(after.rows[0].status).toBe("cancelled");
+    expect(after.rows[0].cancelled_at).not.toBeNull();
+    expect(after.rows[0].cancelled_by_practitioner_id).toBe(s.practitionerId);
+    expect(after.rows[0].cancelled_reason).toMatch(/settled outside Hone/i);
+    // No money moved and no Stripe identity was invented.
+    expect(after.rows[0].charged_at).toBeNull();
+    expect(after.rows[0].stripe_payment_intent_id).toBeNull();
   });
 
-  it("still_owes deliberately does NOT block a later card charge", async () => {
+  it("still_owes retires the prepared attempt but does NOT block a later card charge", async () => {
     const s = await scenario({ attempt: "ready" });
-    const attempt = await adminQuery(
-      `select id from public.payment_charge_attempts where studio_id=$1`,
-      [s.studioId],
-    );
-    const attemptId = attempt.rows[0].id as string;
+    const first = (
+      await adminQuery(
+        `select id from public.payment_charge_attempts where studio_id=$1`,
+        [s.studioId],
+      )
+    ).rows[0].id as string;
 
     await record(s.practitionerUserId, s.studioId, s.appointmentId, "still_owes", 4500, LIVE);
 
+    // The prepared attempt is retired like any other non-card choice: the
+    // practitioner said the client has not paid, so that charge is not the one
+    // being taken.
+    expect(
+      (await adminQuery(`select status from public.payment_charge_attempts where id=$1`, [first]))
+        .rows[0].status,
+    ).toBe("cancelled");
+
+    // THE DEBT IS STILL COLLECTABLE BY CARD. A NEW attempt prepared afterwards
+    // claims normally — still_owes is deliberately absent from the blocking
+    // set, so the ordinary "she said she'd pay later, then paid by card"
+    // progression needs no owner correction.
+    const second = randomUUID();
+    await adminQuery(
+      `insert into public.payment_charge_attempts
+         (id, studio_id, charge_reason, client_id, session_id, appointment_id,
+          created_by_practitioner_id, amount_cents, currency, status, stripe_livemode,
+          client_payment_method_id, card_authorization_signature_id)
+       select $1, studio_id, charge_reason, client_id, session_id, appointment_id,
+              created_by_practitioner_id, amount_cents, currency, 'ready', stripe_livemode,
+              client_payment_method_id, card_authorization_signature_id
+         from public.payment_charge_attempts where id = $2`,
+      [second, first],
+    );
+
     const claim = await adminQuery(
       `select result from public.claim_session_payment_charge_attempt($1,$2,$3)`,
-      [attemptId, s.practitionerId, `idem_${attemptId}`],
+      [second, s.practitionerId, `idem_${second}`],
     );
-    // The debt is paid by card; the attestation is outranked, not contradicted.
     expect(claim.rows[0].result).toBe("claimed");
 
     // AND THE ORIGINAL RECORD SURVIVES, untouched, with its author's name on it.
@@ -619,7 +656,7 @@ describe("0187 — concurrency, on the shared appointment lock", () => {
 
     const settler = await openAsUser(s.practitionerUserId);
     const settled = await settler.query(
-      `select * from public.record_appointment_settlement($1,$2,'paid_cash',4500,4500,null,$3)`,
+      `select * from public.record_appointment_settlement($1,$2,'paid_cash',4500,null,$3)`,
       [s.studioId, s.appointmentId, LIVE],
     );
     expect(settled.rows[0].result).toBe("recorded");
@@ -651,8 +688,14 @@ describe("0187 — concurrency, on the shared appointment lock", () => {
     await claimer.query("rollback");
     claimer.release();
 
-    const after = await adminQuery(`select status from public.payment_charge_attempts where id=$1`, [attemptId]);
-    expect(after.rows[0].status).toBe("ready");
+    // Retired by the settlement inside the same locked transaction, never
+    // charged.
+    const after = await adminQuery(
+      `select status, cancelled_by_practitioner_id from public.payment_charge_attempts where id=$1`,
+      [attemptId],
+    );
+    expect(after.rows[0].status).toBe("cancelled");
+    expect(after.rows[0].cancelled_by_practitioner_id).toBe(s.practitionerId);
   });
 
   it("PROOF 2 — a card claim holds the lock, a concurrent settlement cannot race through", async () => {
@@ -672,7 +715,7 @@ describe("0187 — concurrency, on the shared appointment lock", () => {
     const settler = await openAsUser(s.practitionerUserId);
     let settleResolved = false;
     const settlePromise = settler
-      .query(`select * from public.record_appointment_settlement($1,$2,'paid_cash',4500,4500,null,$3)`, [
+      .query(`select * from public.record_appointment_settlement($1,$2,'paid_cash',4500,null,$3)`, [
         s.studioId,
         s.appointmentId,
         TEST_MODE,
@@ -729,18 +772,220 @@ describe("0187 — concurrency, on the shared appointment lock", () => {
   });
 });
 
+describe("0187 — a PREPARED card charge never dead-ends settlement", () => {
+  const statusOf = async (id: string) =>
+    (
+      await adminQuery(`select status from public.payment_charge_attempts where id=$1`, [id])
+    ).rows[0].status as string;
+
+  const onlyAttempt = async (studioId: string) =>
+    (
+      await adminQuery(
+        `select id from public.payment_charge_attempts where studio_id=$1`,
+        [studioId],
+      )
+    ).rows[0].id as string;
+
+  it("A · a ready attempt is retired, and the settlement records, in one call", async () => {
+    const s = await scenario({ attempt: "ready" });
+    const id = await onlyAttempt(s.studioId);
+
+    const out = await record(s.practitionerUserId, s.studioId, s.appointmentId, "paid_cash", 4500, TEST_MODE);
+    expect(out.result).toBe("recorded");
+    expect(await statusOf(id)).toBe("cancelled");
+    expect(await liveRows(s.studioId)).toHaveLength(1);
+
+    // A later card claim then meets the settlement, not the retired row.
+    const claim = await adminQuery(
+      `select result from public.claim_session_payment_charge_attempt($1,$2,$3)`,
+      [id, s.practitionerId, `idem_${id}`],
+    );
+    expect(claim.rows[0].result).toBe("settled_externally");
+  });
+
+  it("A · every non-card outcome retires it — this is not a cash-only affordance", async () => {
+    for (const method of ["paid_e_transfer", "paid_other_external", "still_owes"]) {
+      const s = await scenario({ attempt: "ready" });
+      const id = await onlyAttempt(s.studioId);
+      expect(
+        (await record(s.practitionerUserId, s.studioId, s.appointmentId, method, 4500, TEST_MODE)).result,
+      ).toBe("recorded");
+      expect(await statusOf(id)).toBe("cancelled");
+    }
+  });
+
+  it("A · an owner waiver retires it too", async () => {
+    const s = await scenario({ attempt: "ready" });
+    const id = await onlyAttempt(s.studioId);
+    expect((await waive(s.practitionerUserId, s.studioId, s.appointmentId)).result).toBe("recorded");
+    expect(await statusOf(id)).toBe("cancelled");
+  });
+
+  it("A · retirement writes ONLY the four cancellation columns", async () => {
+    const s = await scenario({ attempt: "ready" });
+    const id = await onlyAttempt(s.studioId);
+    const before = (
+      await adminQuery(
+        `select amount_cents, currency, client_payment_method_id,
+                card_authorization_signature_id, stripe_account_id,
+                stripe_customer_id, stripe_payment_method_id, created_by_practitioner_id
+           from public.payment_charge_attempts where id=$1`,
+        [id],
+      )
+    ).rows[0];
+
+    await record(s.practitionerUserId, s.studioId, s.appointmentId, "paid_cash", 4500, TEST_MODE);
+
+    const after = (
+      await adminQuery(
+        `select amount_cents, currency, client_payment_method_id,
+                card_authorization_signature_id, stripe_account_id,
+                stripe_customer_id, stripe_payment_method_id, created_by_practitioner_id
+           from public.payment_charge_attempts where id=$1`,
+        [id],
+      )
+    ).rows[0];
+    expect(after).toEqual(before);
+
+    // And the row still EXISTS: a prepared-then-abandoned charge is history.
+    const n = await adminQuery(
+      `select count(*)::int n from public.payment_charge_attempts where studio_id=$1`,
+      [s.studioId],
+    );
+    expect(n.rows[0].n).toBe(1);
+  });
+
+  it("D · succeeded money is NEVER retired, and still refuses", async () => {
+    const s = await scenario({ attempt: "succeeded" });
+    const id = await onlyAttempt(s.studioId);
+    expect(
+      (await record(s.practitionerUserId, s.studioId, s.appointmentId, "paid_cash", 4500, TEST_MODE)).result,
+    ).toBe("card_payment_exists");
+    expect(await statusOf(id)).toBe("succeeded");
+  });
+
+  it("E · a fully refunded succeeded attempt is untouched, and still permits a replacement", async () => {
+    const s = await scenario({ attempt: "succeeded" });
+    const id = await onlyAttempt(s.studioId);
+    await adminQuery(
+      `update public.payment_charge_attempts
+          set refund_status='succeeded', refund_amount_cents=amount_cents, refunded_at=now()
+        where id=$1`,
+      [id],
+    );
+    expect(
+      (await record(s.practitionerUserId, s.studioId, s.appointmentId, "paid_cash", 4500, TEST_MODE)).result,
+    ).toBe("recorded");
+    // Still succeeded, still refunded: no history rewritten.
+    const row = (
+      await adminQuery(
+        `select status, refund_status from public.payment_charge_attempts where id=$1`,
+        [id],
+      )
+    ).rows[0];
+    expect(row.status).toBe("succeeded");
+    expect(row.refund_status).toBe("succeeded");
+  });
+
+  it("B · a claim that wins the lock is NOT retired; the settlement waits, then refuses", async () => {
+    const s = await scenario({ attempt: "ready" });
+    const id = await onlyAttempt(s.studioId);
+
+    const pool = new Pool({ connectionString: resolveLocalDbUrl(), max: 4 });
+    try {
+      const claimer = await pool.connect();
+      await claimer.query("begin");
+      const claim = await claimer.query(
+        `select result from public.claim_session_payment_charge_attempt($1,$2,$3)`,
+        [id, s.practitionerId, `idem_${id}`],
+      );
+      expect(claim.rows[0].result).toBe("claimed");
+
+      const settler = await pool.connect();
+      await settler.query("begin");
+      await settler.query("set local role authenticated");
+      await settler.query("select set_config('request.jwt.claims', $1, true)", [
+        JSON.stringify({ sub: s.practitionerUserId, role: "authenticated" }),
+      ]);
+      let resolved = false;
+      const settle = settler
+        .query(`select * from public.record_appointment_settlement($1,$2,'paid_cash',4500,null,$3)`, [
+          s.studioId,
+          s.appointmentId,
+          TEST_MODE,
+        ])
+        .then((r) => {
+          resolved = true;
+          return r;
+        });
+
+      await new Promise((r) => setTimeout(r, 400));
+      expect(resolved).toBe(false); // blocked on the shared key
+
+      await claimer.query("commit");
+      claimer.release();
+
+      const out = await settle;
+      // The charge is IN FLIGHT at Stripe. It is not retired and not overridden.
+      expect(out.rows[0].result).toBe("card_payment_exists");
+      await settler.query("rollback");
+      settler.release();
+
+      expect(await statusOf(id)).toBe("pending_stripe");
+      expect(await liveRows(s.studioId)).toHaveLength(0);
+    } finally {
+      await pool.end();
+    }
+  });
+
+  it("C · two simultaneous settlements retire the attempt ONCE and record ONCE", async () => {
+    const s = await scenario({ attempt: "ready" });
+    const id = await onlyAttempt(s.studioId);
+
+    const [a, b] = await Promise.all([
+      record(s.practitionerUserId, s.studioId, s.appointmentId, "paid_cash", 4500, TEST_MODE),
+      record(s.practitionerUserId, s.studioId, s.appointmentId, "paid_e_transfer", 4500, TEST_MODE),
+    ]);
+    expect([a.result, b.result].sort()).toEqual(["already_settled", "recorded"]);
+    expect(a.settlement_id).toBe(b.settlement_id);
+    expect(await liveRows(s.studioId)).toHaveLength(1);
+
+    // Cancelled once, by one actor, with one timestamp.
+    const row = (
+      await adminQuery(
+        `select status, cancelled_at, cancelled_by_practitioner_id
+           from public.payment_charge_attempts where id=$1`,
+        [id],
+      )
+    ).rows[0];
+    expect(row.status).toBe("cancelled");
+    expect(row.cancelled_at).not.toBeNull();
+    expect(row.cancelled_by_practitioner_id).toBe(s.practitionerId);
+
+    // Replay returns the existing truth and retires nothing further.
+    const replay = await record(s.practitionerUserId, s.studioId, s.appointmentId, "paid_cash", 4500, TEST_MODE);
+    expect(replay.result).toBe("already_settled");
+    expect(replay.settlement_id).toBe(a.settlement_id);
+    expect(await liveRows(s.studioId)).toHaveLength(1);
+  });
+});
+
 describe("0187 — privileges", () => {
   it("anon and service_role hold no EXECUTE on any settlement command", async () => {
     for (const role of ["anon", "service_role"] as const) {
       const r = await asRole(role, (q) =>
         q(
           `select
-             has_function_privilege('record_appointment_settlement(uuid,uuid,text,integer,integer,text,boolean)','execute') a,
-             has_function_privilege('waive_appointment_fee(uuid,uuid,integer,integer,text,boolean)','execute') b,
-             has_function_privilege('supersede_appointment_settlement(uuid,uuid,text,integer,integer,text,text,boolean)','execute') c`,
+             has_function_privilege('record_appointment_settlement(uuid,uuid,text,integer,text,boolean)','execute') a,
+             has_function_privilege('waive_appointment_fee(uuid,uuid,integer,text,boolean)','execute') b,
+             has_function_privilege('supersede_appointment_settlement(uuid,uuid,text,integer,text,text,boolean)','execute') c,
+             has_function_privilege('appointment_quoted_amount_cents(uuid,uuid)','execute') d,
+             has_function_privilege('retire_ready_card_attempts(uuid,uuid,uuid)','execute') e`,
         ),
       );
-      expect([r.rows[0].a, r.rows[0].b, r.rows[0].c]).toEqual([false, false, false]);
+      expect([r.rows[0].a, r.rows[0].b, r.rows[0].c, r.rows[0].d, r.rows[0].e]).toEqual([
+        false, false, false, false, false,
+      ]);
     }
   });
 

@@ -507,6 +507,197 @@ as $$
 $$;
 
 -- ---------------------------------------------------------------------------
+-- INTERNAL — THE SERVICE-VALUE SNAPSHOT, DERIVED HERE AND ONLY HERE
+-- ---------------------------------------------------------------------------
+-- WHY THE CALLER NO LONGER SUPPLIES THIS.
+--
+-- quoted_amount_cents was a PARAMETER of the granted commands. The server
+-- action computed it correctly from the shared resolver, but the commands are
+-- granted to `authenticated`, so any practitioner could call them straight
+-- through PostgREST with an invented in-range number — and that number was
+-- stored verbatim in the column the schema calls the authoritative price
+-- snapshot, the one FIN-01A will divide by. A value a caller may choose is not
+-- an authority, however carefully the honest caller computes it.
+--
+-- So the database derives it. There is no parameter left to forge.
+--
+-- THIS REPRODUCES resolveAuthoritativeSessionPaymentAmount, STEP FOR STEP, and
+-- the two are pinned against each other by a parity matrix in
+-- tests/db/appointment-settlement.db.test.ts. The order below IS the law:
+--
+--   1. the appointment, inside the NAMED studio;
+--   2. its booked service, through the same-studio lineage;
+--   3. client_pricing matched by NORMALIZED SERVICE NAME — lower(btrim(...)) —
+--      because that linkage has always been by name, not by id;
+--   4. only rows effective ON OR BEFORE the STUDIO-LOCAL date qualify, so a
+--      price that starts tomorrow does not price today's visit;
+--   5. newest effective_from wins;
+--   6. equally-current rows that DISAGREE resolve to NULL. Never by row order:
+--      a pick there would be decided by the planner, not by anything the studio
+--      recorded;
+--   7. equally-current rows that AGREE are deterministic, and resolve;
+--   8. otherwise a POSITIVE menu price wins;
+--   9. an explicit menu price of 0 is an authoritative zero;
+--  10. a missing service, a NULL price, or ambiguity is NULL — a configuration
+--      gap is never "free", and never a manufactured number.
+--
+-- A zero or negative CUSTOM price is read as "no custom price recorded", not as
+-- "charge nothing" — the same filter the resolver applies, and the reason a bad
+-- row falls through to the menu price instead of silently zeroing a visit.
+--
+-- THE DATE COMES FROM THE STUDIO'S OWN TIMEZONE, never from UTC and never from
+-- a caller. `now() at time zone s.timezone` is the same studio-local day
+-- todayInTz() produces for the resolver.
+create or replace function public.appointment_quoted_amount_cents(
+  p_studio_id uuid,
+  p_appointment_id uuid
+)
+returns integer
+language plpgsql
+stable
+security definer
+set search_path = pg_catalog, pg_temp
+as $$
+declare
+  v_service_name  text;
+  v_service_price integer;
+  v_client_id     uuid;
+  v_today         date;
+  v_latest        date;
+  v_distinct      integer;
+  v_custom        integer;
+begin
+  select s.name, s.price_cents, a.client_id,
+         (now() at time zone st.timezone)::date
+    into v_service_name, v_service_price, v_client_id, v_today
+    from public.appointments a
+    join public.studios st
+      on st.id = a.studio_id
+    left join public.services s
+      on s.id = a.service_id
+     and s.studio_id = a.studio_id
+   where a.id = p_appointment_id
+     and a.studio_id = p_studio_id;
+
+  -- No appointment, or no booked service: nothing to price. NULL, never 0.
+  if not found or v_service_name is null then
+    return null;
+  end if;
+
+  if v_client_id is not null then
+    select max(cp.effective_from) into v_latest
+      from public.client_pricing cp
+     where cp.studio_id = p_studio_id
+       and cp.client_id = v_client_id
+       and lower(btrim(cp.service_name)) = lower(btrim(v_service_name))
+       and cp.effective_from <= v_today
+       and cp.price_cents > 0;
+
+    if v_latest is not null then
+      select count(distinct cp.price_cents), min(cp.price_cents)
+        into v_distinct, v_custom
+        from public.client_pricing cp
+       where cp.studio_id = p_studio_id
+         and cp.client_id = v_client_id
+         and lower(btrim(cp.service_name)) = lower(btrim(v_service_name))
+         and cp.effective_from = v_latest
+         and cp.price_cents > 0;
+
+      -- Equally current, disagreeing. Fail closed rather than guess.
+      if v_distinct > 1 then
+        return null;
+      end if;
+      return v_custom;
+    end if;
+  end if;
+
+  if v_service_price is not null and v_service_price > 0 then
+    return v_service_price;
+  end if;
+  -- An explicit 0 is a decision the studio made. NULL is not.
+  if v_service_price = 0 then
+    return 0;
+  end if;
+  return null;
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- INTERNAL — RETIRE A PREPARED-BUT-UNCHARGED CARD ATTEMPT
+-- ---------------------------------------------------------------------------
+-- THE DEAD END THIS REMOVES.
+--
+-- `ready` means a charge was PREPARED and Stripe has never been called. The
+-- first draft treated it as card money, so: the practitioner prepares a charge,
+-- the client then says "I'll pay cash", and every settlement command answers
+-- card_payment_exists forever while the UI hides the controls. There is no
+-- cancellation path for a ready SESSION-PAYMENT attempt anywhere in the product
+-- (the 0146 cancel action is gated to fee reasons), so the only ways out were
+-- to run the card charge that is not happening — the exact fake payment this
+-- release exists to end — or to leave Checkout on the row forever.
+--
+-- CHOOSING A NON-CARD OUTCOME *IS* THE DECISION NOT TO USE THE PREPARED
+-- ATTEMPT. It needs no second screen and no second confirmation, so the
+-- retirement happens inside the settlement command, under the SAME advisory
+-- key, in the SAME transaction, BEFORE card money is assessed.
+--
+-- EXACTLY ONE STATUS IS TOUCHED, AND NO NEW ONE IS INVENTED. The existing
+-- lifecycle from 0073 already carries cancelled + cancelled_at +
+-- cancelled_by_practitioner_id + cancelled_reason; this uses it. `ready` and
+-- nothing else:
+--
+--   pending_stripe  a charge is IN FLIGHT at Stripe. Never retired here, and it
+--                   remains a hard settlement refusal.
+--   succeeded       money moved. Never retired; refunding is the reversal
+--                   instrument and it lives in the card ledger.
+--   failed / cancelled / blocked  already terminal; nothing to retire.
+--
+-- Nothing but the four cancellation columns is written: the amount, the card,
+-- the signature and every Stripe identifier are left exactly as they were, and
+-- the row is never deleted. A cancelled attempt is a record of a charge that
+-- was prepared and deliberately not taken, which is true and worth keeping.
+create or replace function public.retire_ready_card_attempts(
+  p_studio_id uuid,
+  p_appointment_id uuid,
+  p_practitioner_id uuid
+)
+returns integer
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog, pg_temp
+as $$
+declare
+  v_count integer;
+begin
+  with target as (
+    select a.id
+      from public.payment_charge_attempts a
+      left join public.sessions s
+        on s.id = a.session_id
+       and s.studio_id = a.studio_id
+     where a.studio_id = p_studio_id
+       and a.charge_reason = 'session_payment'
+       and a.status = 'ready'
+       and coalesce(a.appointment_id, s.appointment_id) = p_appointment_id
+  )
+  update public.payment_charge_attempts t
+     set status = 'cancelled',
+         cancelled_at = now(),
+         cancelled_by_practitioner_id = p_practitioner_id,
+         cancelled_reason = 'Retired: the visit was settled outside Hone.'
+    from target
+   where t.id = target.id
+     -- Re-asserted in the UPDATE itself, so a row that advanced to
+     -- pending_stripe between the CTE and the write is not retired.
+     and t.status = 'ready';
+
+  get diagnostics v_count = row_count;
+  return v_count;
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
 -- INTERNAL — IS THERE HONE-VERIFIED CARD MONEY ON THIS APPOINTMENT?
 -- ---------------------------------------------------------------------------
 -- THE MODE IS A DEPLOYMENT FACT, AND THE DATABASE HAS NEVER KNOWN IT. Livemode
@@ -566,6 +757,11 @@ as $$
        and (a.stripe_livemode = true or p_livemode = false)
        and coalesce(a.appointment_id, s.appointment_id) = p_appointment_id
        and (
+         -- `ready` is still card money to this predicate. The settlement
+         -- commands retire a ready attempt BEFORE calling it, so by the time
+         -- this runs a ready row means one that could not be retired — and the
+         -- card claim path, which never retires anything, must still be blocked
+         -- by it.
          a.status in ('ready', 'pending_stripe')
          or (a.status = 'succeeded'
              and not (
@@ -643,7 +839,6 @@ create or replace function public.record_appointment_settlement(
   p_appointment_id      uuid,
   p_method              text,
   p_amount_cents        integer,
-  p_quoted_amount_cents integer,
   p_note                text,
   p_livemode            boolean
 )
@@ -681,9 +876,7 @@ begin
   if p_amount_cents is null
      or p_amount_cents < 0
      or p_amount_cents > 200000
-     or (v_note is not null and length(v_note) > 500)
-     or (p_quoted_amount_cents is not null
-         and (p_quoted_amount_cents < 0 or p_quoted_amount_cents > 200000)) then
+     or (v_note is not null and length(v_note) > 500) then
     return query select 'invalid_input'::text, null::uuid, null::timestamptz;
     return;
   end if;
@@ -718,6 +911,15 @@ begin
   -- database take a lock on its behalf. Released automatically at commit.
   perform pg_advisory_xact_lock(public.appointment_settlement_lock_key(p_appointment_id));
 
+  -- CHOOSING A NON-CARD OUTCOME RETIRES A PREPARED-BUT-UNCHARGED ATTEMPT.
+  -- Same lock, same transaction, and BEFORE card money is assessed — so the
+  -- practitioner does not have to find a cancellation screen that does not
+  -- exist before she can write down that the client paid cash. Only `ready` is
+  -- touched; pending_stripe and succeeded are left alone and still refuse
+  -- below.
+  perform public.retire_ready_card_attempts(
+    p_studio_id, p_appointment_id, v_practitioner);
+
   -- CARD TRUTH OUTRANKS ATTESTATION, IN BOTH TIME DIRECTIONS. Evaluated under
   -- the lock and from PERSISTED state.
   if public.appointment_has_live_card_money(p_studio_id, p_appointment_id, coalesce(p_livemode, true)) then
@@ -731,7 +933,9 @@ begin
   )
   values (
     p_studio_id, p_appointment_id, p_method, p_amount_cents,
-    p_quoted_amount_cents, v_practitioner, v_note
+    -- DERIVED, never supplied. See appointment_quoted_amount_cents.
+    public.appointment_quoted_amount_cents(p_studio_id, p_appointment_id),
+    v_practitioner, v_note
   )
   on conflict (studio_id, appointment_id) where superseded_at is null
   do nothing
@@ -771,7 +975,6 @@ create or replace function public.waive_appointment_fee(
   p_studio_id           uuid,
   p_appointment_id      uuid,
   p_amount_cents        integer,
-  p_quoted_amount_cents integer,
   p_note                text,
   p_livemode            boolean
 )
@@ -796,9 +999,7 @@ begin
   if p_amount_cents is null
      or p_amount_cents < 0
      or p_amount_cents > 200000
-     or (v_note is not null and length(v_note) > 500)
-     or (p_quoted_amount_cents is not null
-         and (p_quoted_amount_cents < 0 or p_quoted_amount_cents > 200000)) then
+     or (v_note is not null and length(v_note) > 500) then
     return query select 'invalid_input'::text, null::uuid, null::timestamptz;
     return;
   end if;
@@ -828,6 +1029,10 @@ begin
 
   perform pg_advisory_xact_lock(public.appointment_settlement_lock_key(p_appointment_id));
 
+  -- A waiver is equally a decision not to use the prepared attempt.
+  perform public.retire_ready_card_attempts(
+    p_studio_id, p_appointment_id, v_practitioner);
+
   if public.appointment_has_live_card_money(p_studio_id, p_appointment_id, coalesce(p_livemode, true)) then
     -- Money Hone actually holds cannot be waived away. Refund it first; the
     -- refund is the reversal instrument, and it lives in the card ledger.
@@ -841,7 +1046,8 @@ begin
   )
   values (
     p_studio_id, p_appointment_id, 'waived', p_amount_cents,
-    p_quoted_amount_cents, v_practitioner, v_note
+    public.appointment_quoted_amount_cents(p_studio_id, p_appointment_id),
+    v_practitioner, v_note
   )
   on conflict (studio_id, appointment_id) where superseded_at is null
   do nothing
@@ -887,7 +1093,6 @@ create or replace function public.supersede_appointment_settlement(
   p_expected_settlement_id uuid,
   p_method                 text,
   p_amount_cents           integer,
-  p_quoted_amount_cents    integer,
   p_reason                 text,
   p_note                   text,
   p_livemode               boolean
@@ -933,9 +1138,7 @@ begin
      or p_amount_cents is null
      or p_amount_cents < 0
      or p_amount_cents > 200000
-     or (v_note is not null and length(v_note) > 500)
-     or (p_quoted_amount_cents is not null
-         and (p_quoted_amount_cents < 0 or p_quoted_amount_cents > 200000)) then
+     or (v_note is not null and length(v_note) > 500) then
     return query select 'invalid_input'::text, null::uuid, null::uuid, null::timestamptz;
     return;
   end if;
@@ -981,6 +1184,9 @@ begin
   -- A correction cannot conjure external money for a visit Hone was actually
   -- paid for. Refund the card charge first if the card fact is the wrong one;
   -- the card fact is never mutated from here.
+  perform public.retire_ready_card_attempts(
+    p_studio_id, v_old.appointment_id, v_practitioner);
+
   if p_method <> 'still_owes'
      and public.appointment_has_live_card_money(p_studio_id, v_old.appointment_id, coalesce(p_livemode, true)) then
     return query select 'card_payment_exists'::text, null::uuid, v_old.id, null::timestamptz;
@@ -1008,7 +1214,8 @@ begin
   )
   values (
     v_id, p_studio_id, v_old.appointment_id, p_method, p_amount_cents,
-    p_quoted_amount_cents, v_practitioner, v_note,
+    public.appointment_quoted_amount_cents(p_studio_id, v_old.appointment_id),
+    v_practitioner, v_note,
     v_old.id, v_reason
   )
   returning appointment_settlements.recorded_at into v_at;
@@ -1282,23 +1489,23 @@ grant select on public.appointment_settlements to authenticated;
 -- auth.uid() and would be meaningless called by a role that has none. That is
 -- the opposite of 0185's choice and deliberately so — its commands serve a
 -- PUBLIC visitor with no session, these serve a signed-in practitioner.
-revoke execute on function public.record_appointment_settlement(uuid, uuid, text, integer, integer, text, boolean) from public;
-revoke execute on function public.record_appointment_settlement(uuid, uuid, text, integer, integer, text, boolean) from anon;
-revoke execute on function public.record_appointment_settlement(uuid, uuid, text, integer, integer, text, boolean) from authenticated;
-revoke execute on function public.record_appointment_settlement(uuid, uuid, text, integer, integer, text, boolean) from service_role;
-grant execute on function public.record_appointment_settlement(uuid, uuid, text, integer, integer, text, boolean) to authenticated;
+revoke execute on function public.record_appointment_settlement(uuid, uuid, text, integer, text, boolean) from public;
+revoke execute on function public.record_appointment_settlement(uuid, uuid, text, integer, text, boolean) from anon;
+revoke execute on function public.record_appointment_settlement(uuid, uuid, text, integer, text, boolean) from authenticated;
+revoke execute on function public.record_appointment_settlement(uuid, uuid, text, integer, text, boolean) from service_role;
+grant execute on function public.record_appointment_settlement(uuid, uuid, text, integer, text, boolean) to authenticated;
 
-revoke execute on function public.waive_appointment_fee(uuid, uuid, integer, integer, text, boolean) from public;
-revoke execute on function public.waive_appointment_fee(uuid, uuid, integer, integer, text, boolean) from anon;
-revoke execute on function public.waive_appointment_fee(uuid, uuid, integer, integer, text, boolean) from authenticated;
-revoke execute on function public.waive_appointment_fee(uuid, uuid, integer, integer, text, boolean) from service_role;
-grant execute on function public.waive_appointment_fee(uuid, uuid, integer, integer, text, boolean) to authenticated;
+revoke execute on function public.waive_appointment_fee(uuid, uuid, integer, text, boolean) from public;
+revoke execute on function public.waive_appointment_fee(uuid, uuid, integer, text, boolean) from anon;
+revoke execute on function public.waive_appointment_fee(uuid, uuid, integer, text, boolean) from authenticated;
+revoke execute on function public.waive_appointment_fee(uuid, uuid, integer, text, boolean) from service_role;
+grant execute on function public.waive_appointment_fee(uuid, uuid, integer, text, boolean) to authenticated;
 
-revoke execute on function public.supersede_appointment_settlement(uuid, uuid, text, integer, integer, text, text, boolean) from public;
-revoke execute on function public.supersede_appointment_settlement(uuid, uuid, text, integer, integer, text, text, boolean) from anon;
-revoke execute on function public.supersede_appointment_settlement(uuid, uuid, text, integer, integer, text, text, boolean) from authenticated;
-revoke execute on function public.supersede_appointment_settlement(uuid, uuid, text, integer, integer, text, text, boolean) from service_role;
-grant execute on function public.supersede_appointment_settlement(uuid, uuid, text, integer, integer, text, text, boolean) to authenticated;
+revoke execute on function public.supersede_appointment_settlement(uuid, uuid, text, integer, text, text, boolean) from public;
+revoke execute on function public.supersede_appointment_settlement(uuid, uuid, text, integer, text, text, boolean) from anon;
+revoke execute on function public.supersede_appointment_settlement(uuid, uuid, text, integer, text, text, boolean) from authenticated;
+revoke execute on function public.supersede_appointment_settlement(uuid, uuid, text, integer, text, text, boolean) from service_role;
+grant execute on function public.supersede_appointment_settlement(uuid, uuid, text, integer, text, text, boolean) to authenticated;
 
 -- INTERNAL HELPERS. Called only from inside the commands above (and, for the
 -- lock key, from the claim command). Nobody calls them directly, so nobody
@@ -1312,6 +1519,21 @@ revoke all privileges on function public.appointment_has_live_card_money(uuid, u
 revoke all privileges on function public.appointment_has_live_card_money(uuid, uuid, boolean) from anon;
 revoke all privileges on function public.appointment_has_live_card_money(uuid, uuid, boolean) from authenticated;
 revoke all privileges on function public.appointment_has_live_card_money(uuid, uuid, boolean) from service_role;
+
+-- THE TWO DERIVATION HELPERS. Called only from inside the settlement commands
+-- above. They are NOT new mutation surfaces: neither is granted to anybody, so
+-- `authenticated` cannot invoke the retirement directly (which would be a way
+-- to cancel a prepared charge with no settlement recorded), and neither can it
+-- probe another studio's prices through the snapshot helper.
+revoke all privileges on function public.appointment_quoted_amount_cents(uuid, uuid) from public;
+revoke all privileges on function public.appointment_quoted_amount_cents(uuid, uuid) from anon;
+revoke all privileges on function public.appointment_quoted_amount_cents(uuid, uuid) from authenticated;
+revoke all privileges on function public.appointment_quoted_amount_cents(uuid, uuid) from service_role;
+
+revoke all privileges on function public.retire_ready_card_attempts(uuid, uuid, uuid) from public;
+revoke all privileges on function public.retire_ready_card_attempts(uuid, uuid, uuid) from anon;
+revoke all privileges on function public.retire_ready_card_attempts(uuid, uuid, uuid) from authenticated;
+revoke all privileges on function public.retire_ready_card_attempts(uuid, uuid, uuid) from service_role;
 
 revoke all privileges on function public.appointment_has_blocking_settlement(uuid, uuid) from public;
 revoke all privileges on function public.appointment_has_blocking_settlement(uuid, uuid) from anon;
@@ -1356,7 +1578,7 @@ comment on column public.appointment_settlements.amount_cents is
   'What the amount MEANS is fixed by method: paid_* is the amount COLLECTED externally, waived is the amount FORGIVEN, still_owes is the amount OUTSTANDING. One column rather than three nullable ones so the row cannot be internally inconsistent. Same 0..200000 ceiling as payment_charge_attempts.amount_cents.';
 
 comment on column public.appointment_settlements.quoted_amount_cents is
-  'The authoritative service price AT THE TIME OF RECORDING, resolved by the caller from the same resolver the card path uses (resolveAuthoritativeSessionPaymentAmount). Snapshotted because the menu price is mutable: without it, repricing a service silently rewrites what past visits were worth and FIN-01A drifts away from what Checkout displayed. Null when the price could not be resolved, which is a fact worth keeping rather than a zero worth inventing.';
+  'The authoritative service price AT THE TIME OF RECORDING, DERIVED BY THE DATABASE via appointment_quoted_amount_cents and never accepted from a caller: the settlement commands are granted to authenticated, so a parameter here could be forged straight through PostgREST into the column FIN-01A divides by. Snapshotted because the menu price is mutable: without it, repricing a service silently rewrites what past visits were worth and FIN-01A drifts away from what Checkout displayed. Null when the price could not be resolved, which is a fact worth keeping rather than a zero worth inventing.';
 
 comment on column public.appointment_settlements.recorded_at is
   'Server time, forced by a BEFORE INSERT trigger rather than defaulted, because a caller able to supply it could date a cash record into a closed financial period.';
@@ -1373,13 +1595,19 @@ comment on function public.appointment_has_live_card_money(uuid, uuid, boolean) 
 comment on function public.appointment_has_blocking_settlement(uuid, uuid) is
   'True when a live attestation forbids charging a card for this appointment: paid_cash, paid_e_transfer, paid_other_external or waived. still_owes deliberately does NOT block, because "still owes" followed by "paid by card" is the ordinary progression of a debt; the still_owes row is not retired by the later charge, and the authoritative disposition is derived by ranking Hone-verified money above attestation.';
 
-comment on function public.record_appointment_settlement(uuid, uuid, text, integer, integer, text, boolean) is
+comment on function public.appointment_quoted_amount_cents(uuid, uuid) is
+  'The service-value snapshot for an appointment, DERIVED HERE so no caller can choose it. Reproduces resolveAuthoritativeSessionPaymentAmount step for step: current client_pricing matched by normalized service NAME beats the menu price; only rows effective on or before the STUDIO-LOCAL date qualify; newest effective_from wins; equally-current rows that disagree resolve to NULL rather than by row order; a positive menu price otherwise wins; an explicit menu 0 is an authoritative zero; a missing service, NULL price or ambiguity is NULL. A zero or negative CUSTOM price is read as no custom price recorded, never as charge nothing. Pinned against the TypeScript resolver by a parity matrix. Granted to nobody.';
+
+comment on function public.retire_ready_card_attempts(uuid, uuid, uuid) is
+  'Retires session_payment attempts whose status is EXACTLY ready for one appointment, through the existing 0073 cancellation lifecycle (cancelled + cancelled_at + cancelled_by_practitioner_id + cancelled_reason). No new status is invented, no row is deleted, and no amount, card, signature or Stripe column is touched. Called by the settlement commands under the shared appointment advisory lock, in the same transaction, BEFORE card money is assessed: choosing cash / e-transfer / another way / still-owes / a waiver IS the decision not to use the prepared charge, and there is no other cancellation path for a session-payment attempt in the product. pending_stripe (a charge in flight), succeeded (money moved) and every terminal status are never retired and continue to refuse settlement. Granted to nobody: it is not a standalone way to cancel a prepared charge.';
+
+comment on function public.record_appointment_settlement(uuid, uuid, text, integer, text, boolean) is
   'Records an INITIAL non-card disposition for a completed appointment. Authority is the EXISTING Checkout boundary re-derived in SQL: session_actor_practitioner(p_studio_id), i.e. an active practitioner of the NAMED studio, any role. Refuses waived unconditionally (owner_only) because a waiver changes entitlement, not payment method. Serializes on the shared appointment advisory key and refuses when Hone already holds card money for the visit. Replay and double-submit return already_settled with the id of the record that actually holds the truth, never a second row. Returns recorded | already_settled | card_payment_exists | not_completed | not_found | owner_only | invalid_input. authenticated only.';
 
-comment on function public.waive_appointment_fee(uuid, uuid, integer, integer, text, boolean) is
+comment on function public.waive_appointment_fee(uuid, uuid, integer, text, boolean) is
   'Records a WAIVED fee. OWNER ONLY, enforced here by is_studio_owner: a waiver changes what the practice is entitled to rather than how the client paid, so it is an ownership decision. A non-owner receives a deterministic not_owner result code, never an exception. Money Hone actually holds cannot be waived away (card_payment_exists) — a refund is the reversal instrument and it lives in the card ledger. Returns recorded | already_settled | card_payment_exists | not_completed | not_found | not_owner | invalid_input. authenticated only.';
 
-comment on function public.supersede_appointment_settlement(uuid, uuid, text, integer, integer, text, text, boolean) is
+comment on function public.supersede_appointment_settlement(uuid, uuid, text, integer, text, text, boolean) is
   'Corrects a settlement by SUPERSEDING it: retires the target and inserts its replacement in ONE transaction under ONE lock, so the appointment never has zero or two live settlements. OWNER ONLY, including over a practitioner''s own record — the value of an attestation is that its author cannot quietly revise it. supersede_reason is required. p_expected_settlement_id is an optimistic target: if it was already superseded the call returns stale_target rather than correcting whatever happens to be live now. Returns corrected | stale_target | card_payment_exists | not_found | not_owner | invalid_input. authenticated only.';
 
 comment on function public.claim_session_payment_charge_attempt(uuid, uuid, text) is
