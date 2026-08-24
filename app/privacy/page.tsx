@@ -13,12 +13,48 @@ export const metadata: Metadata = {
     "How Hone collects, uses, stores, shares, and protects personal information.",
 };
 
+// ===========================================================================
+// POLICY DATES
+// ===========================================================================
+//
+// EFFECTIVE_DATE is the date this policy took effect. It is DELIBERATELY
+// UNCHANGED by the WAIT-02B Stage B1 revision below, and no new one is invented
+// here, because section 13 makes the date a decision this repository cannot
+// make on its own: a MATERIAL change is communicated by email to ACCOUNT
+// HOLDERS at least 30 days before it takes effect.
+//
+// Two inputs to that rule are operator/legal calls:
+//
+//   1. whether adding prospective-client coverage is "material" FOR AN ACCOUNT
+//      HOLDER. It changes nothing about how an account holder's own data, or an
+//      existing client's data, is collected, used, shared or retained; it
+//      describes a category of person the notice previously failed to name at
+//      all. Whether that clears section 13's bar is a legal reading.
+//   2. the date the section 13 notice email is actually sent, which fixes
+//      "notice + 30 days" and cannot be known from the repository.
+//
+// If the operator determines the revision IS material, EFFECTIVE_DATE becomes
+// that notice date + 30 days and THIS CONSTANT IS THE ONE PLACE THAT CHANGES.
+//
+// This is not a blocker on publishing the text. A prospective client is
+// governed by the notice as published when they submit, and the durable
+// waitlist is activated per studio by a separate operator action against the
+// server-only allowlist in lib/booking/new-client-waitlist.ts, which ships
+// naming no studio. (The variable is named there and in the deploy-time guard,
+// not here: a closed list of files may name it, so that a config-capable file
+// acquiring it is always a visible diff.)
+const EFFECTIVE_DATE = "May 22, 2026";
+
+// When the text below was last revised. A fact about this file, not a legal
+// determination.
+const LAST_UPDATED = "August 24, 2026";
+
 export default function PrivacyPolicyPage() {
   return (
     <PolicyLayout
       title="Hone Privacy Policy"
-      effectiveDate="May 22, 2026"
-      lastUpdated="May 22, 2026"
+      effectiveDate={EFFECTIVE_DATE}
+      lastUpdated={LAST_UPDATED}
     >
       <H2 id="who-we-are">1. Who we are</H2>
       <P>
@@ -59,11 +95,20 @@ export default function PrivacyPolicyPage() {
           <strong>Clients</strong> of those practitioners whose information is
           entered into Hone by the practitioner
         </li>
+        <li>
+          <strong>Prospective clients</strong> who give a studio their details
+          through its public Hone booking page before becoming a client at all
+          &mdash; in particular by joining a studio&rsquo;s new-client waitlist.
+          You are covered by this policy from the moment you submit that form,
+          whether or not you ever book, and whether or not a practitioner has
+          ever entered anything about you
+        </li>
       </UL>
       <P>
         We process data on behalf of practitioners. Practitioners are the{" "}
-        <strong>data controllers</strong> of their clients&rsquo; information.
-        Hone is the <strong>data processor</strong>.
+        <strong>data controllers</strong> of their clients&rsquo; and
+        prospective clients&rsquo; information. Hone is the{" "}
+        <strong>data processor</strong>.
       </P>
 
       <H2 id="personal-information-we-collect">
@@ -90,6 +135,30 @@ export default function PrivacyPolicyPage() {
         <li>Emergency contact information</li>
         <li>Health intake responses</li>
       </UL>
+
+      <H3 id="from-prospective-clients">
+        From prospective clients directly
+      </H3>
+      <P>
+        When a studio is taking new clients by waitlist, its public booking page
+        offers a short form instead of the booking flow. If you fill that form
+        in, <strong>you</strong> give us the information &mdash; no practitioner
+        enters it, and you do not need an account. We collect:
+      </P>
+      <UL>
+        <li>Your name and email address</li>
+        <li>Your phone number, if you choose to give one; it is optional</li>
+        <li>Which studio&rsquo;s waitlist you joined, and when</li>
+        <li>
+          Whether you are still waiting, or have been removed from that
+          waitlist by the studio
+        </li>
+      </UL>
+      <P>
+        That is the whole list. The waitlist form does not ask for health
+        information, and joining a waitlist does not create a client record, an
+        appointment, or an intake form for you.
+      </P>
 
       <H3 id="automatically-when-you-use-hone">
         Automatically when you use Hone
@@ -160,6 +229,10 @@ export default function PrivacyPolicyPage() {
           Send appointment reminders and confirmations on behalf of
           practitioners (only when the practitioner has enabled this)
         </li>
+        <li>
+          Run a studio&rsquo;s new-client waitlist on its behalf, and let that
+          studio contact you about availability if you joined it
+        </li>
         <li>Process payments and billing</li>
         <li>Respond to support requests</li>
         <li>Detect and prevent fraud, abuse, and security incidents</li>
@@ -225,6 +298,13 @@ export default function PrivacyPolicyPage() {
         <strong>With clients of practitioners</strong>, at the
         practitioner&rsquo;s direction (e.g., appointment confirmation emails
         sent to a client).
+      </P>
+      <P>
+        <strong>With the studio whose waitlist you joined.</strong> A waitlist
+        entry belongs to that one studio: it is visible only to that studio, it
+        is emailed to that studio so it can act on it, and it is not shared with
+        any other studio on Hone. We also email you an acknowledgement that you
+        joined.
       </P>
       <P>
         <strong>In connection with a business transfer</strong>, such as a
@@ -338,6 +418,14 @@ export default function PrivacyPolicyPage() {
         data controller of your information. We will assist your practitioner
         in fulfilling your request.
       </P>
+      <P>
+        <strong>If you joined a studio&rsquo;s new-client waitlist</strong> and
+        no longer want to be on it, or want to know what that studio holds about
+        you, contact the studio &mdash; it is the controller of your entry and
+        can remove you. You may also write to{" "}
+        <strong>privacy@hone.care</strong> and we will assist. You do not need
+        an account with us to make either request.
+      </P>
 
       <H2 id="data-retention">9. Data retention</H2>
       <P>We retain personal information for as long as:</P>
@@ -372,6 +460,16 @@ export default function PrivacyPolicyPage() {
         Requests for permanent deletion are handled case by case through the
         process above, or through your practitioner where they are the
         controller of the record.
+      </P>
+      <P>
+        A <strong>new-client waitlist entry</strong> is kept for as long as the
+        studio keeps it. When a studio removes someone from its waitlist, the
+        entry is marked as removed and retained as a record that the request was
+        made and acted on, rather than erased &mdash; the same archiving
+        distinction described above. We do not currently run an automatic timed
+        purge of waitlist entries, and we do not claim any fixed retention
+        period for them. Permanent deletion is handled case by case through the
+        process above.
       </P>
       <P>
         Deletion can also be constrained by law and by professional
@@ -433,6 +531,16 @@ export default function PrivacyPolicyPage() {
         communicated via email to account holders at least 30 days before
         taking effect. The current version is always available at
         hone.care/privacy.
+      </P>
+      <P>
+        The two dates at the top of this page mean different things.{" "}
+        <strong>Effective date</strong> is when this policy took effect.{" "}
+        <strong>Last updated</strong> is when its text was last revised. Where a
+        revision is a material change, it takes effect for account holders only
+        after the 30-day notice described above; where it is not, the revised
+        text is simply the current policy from the day it is published here. We
+        do not apply a revision retroactively to information already collected
+        under an earlier version.
       </P>
 
       <H2 id="contact">14. Contact</H2>

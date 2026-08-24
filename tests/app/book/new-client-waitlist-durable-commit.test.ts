@@ -760,7 +760,7 @@ describe("PII never leaves the emails and the row", () => {
 // Point 4 is the operative one. Everything else in this suite proves the code
 // is safe while dark; this block proves the repository says WHY it must stay
 // dark, so enabling a studio cannot look like an ordinary configuration change.
-describe("Stage A records why it must stay dark", () => {
+describe("Stage B records what closed, and what is still open", () => {
   const RISKS = readFileSync(
     path.resolve(__dirname, "../../../docs/03_SECURITY_AND_PRIVACY.md"),
     "utf8",
@@ -780,31 +780,47 @@ describe("Stage A records why it must stay dark", () => {
     expect(ACTION).toContain('rpc("join_new_client_waitlist"');
   });
 
-  it("records it as a NEW personal-data class", () => {
-    expect(RISKS).toContain("New-client waitlist prospect data (Stage A, dark)");
-    expect(RISKS).toContain("NEW studio-scoped personal-data class");
+  it("still records it as a studio-scoped personal-data class", () => {
+    expect(RISKS).toContain("New-client waitlist prospect data");
+    expect(RISKS).toContain("studio-scoped personal-data class");
   });
 
-  it("records that the PUBLIC PRIVACY POLICY does not yet disclose it", () => {
-    // The half Stage A must not be silent about: the data class exists in the
-    // schema while the notice still describes only practitioners and
-    // practitioner-entered clients.
-    expect(RISKS).toContain("public privacy notice does not yet cover it");
-    expect(RISKS).toContain("a waitlist prospect is neither");
+  // WHAT STAGE B1 CLOSED. Stage A's entry said the public notice did not cover
+  // a waitlist prospect; that is now false, so the register must not keep
+  // saying it — a risk register that describes a resolved gap is as untrue as
+  // one that hides a live gap.
+  it("records the disclosure as CLOSED, and the claim is backed by the page itself", () => {
+    expect(RISKS).toContain("the public privacy notice now covers it");
+    expect(RISKS).not.toContain("public privacy notice does not yet cover it");
+    // ANTI-VACUITY. A doc claiming closure proves nothing on its own; the
+    // policy has to actually carry the coverage the register credits it with.
+    const policy = readFileSync(
+      path.resolve(__dirname, "../../../app/privacy/page.tsx"),
+      "utf8",
+    );
+    expect(policy).toContain("<strong>Prospective clients</strong>");
+    expect(policy).toContain("From prospective clients directly");
   });
 
-  it("records that there is no retention or purge policy for it", () => {
-    expect(RISKS).toContain("No retention or purge policy covers it yet");
-    expect(RISKS).toMatch(/not\*\* included in the `\/settings\/data` studio export/);
+  // WHAT STAGE B1 DID NOT CLOSE, and must therefore still say plainly.
+  it("records that the export gap and the absent purge policy are STILL OPEN", () => {
+    expect(RISKS).toMatch(/STILL OPEN — not in the `\/settings\/data` studio export/);
+    expect(RISKS).toMatch(/STILL OPEN — no timed purge/);
+    expect(RISKS).toContain("terminal `removed` transition that retains the row");
+    // And the policy states that truthfully rather than inventing a period.
+    expect(RISKS).toContain("does not invent one");
   });
 
-  it("states the CONSEQUENCE: no studio may be enabled in Stage A", () => {
-    expect(RISKS).toContain("no studio may be enabled in Stage A");
-    expect(RISKS).toContain("Willow specifically must not be");
+  it("states the CONSEQUENCE: activation stays explicit, and has not been taken", () => {
+    expect(RISKS).toContain("PRODUCTION STILL ENABLES ZERO STUDIOS");
+    expect(RISKS).toContain("Activation remains an explicit operator step");
     // ...and the same law is stated where an operator would actually go to
     // turn the flag on, not only in the risk register.
-    expect(ENV_DOC).toContain("must not be set for any studio");
-    expect(ENV_DOC).toContain("STAGE A: MUST BE EMPTY");
+    expect(ENV_DOC).toContain("PRODUCTION CURRENTLY NAMES NO STUDIO");
+    expect(ENV_DOC).toContain("release decision, never a configuration tweak");
+    // The §13 notice process is named at the point of activation, because that
+    // is the decision an operator is about to make.
+    expect(ENV_DOC).toContain("confirm the §13 notice process");
   });
 });
 
@@ -865,6 +881,9 @@ describe("no studio is enabled at merge time", () => {
       "scripts/check-production-env-gates.mjs",
       "tests/app/book/new-client-waitlist-action.test.ts",
       "tests/app/book/new-client-waitlist-durable-commit.test.ts",
+      // Stage B1. Pins that the deploy-time guard still names the variable and
+      // still refuses a list that cannot name a real studio.
+      "tests/app/privacy/waitlist-prospect-disclosure.test.ts",
       "tests/scripts/check-production-env-gates.test.ts",
     ]);
   });

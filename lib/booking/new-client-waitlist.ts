@@ -65,6 +65,22 @@ export const NEW_CLIENT_WAITLIST_SLUGS_ENV = "NEW_CLIENT_WAITLIST_STUDIO_SLUGS";
  * DEFAULT OFF, exactly like the gate: unset / empty / whitespace-only is OFF
  * for every studio, so deploying this changes nothing anywhere until an
  * operator opts a studio in, and clearing it is the whole kill switch.
+ *
+ * WAIT-02B STAGE B: THIS IS NOW THE ACTIVATION CONTROL, AND IT IS THE ONLY ONE.
+ * Stage A additionally forbade production from naming ANY studio here, enforced
+ * at deploy time by scripts/check-production-env-gates.mjs, because the public
+ * privacy notice did not yet cover a waitlist prospect. Stage B1 ships that
+ * disclosure, so the blanket prohibition is replaced by a SHAPE check: a
+ * production build still aborts if an entry cannot be a studio slug (a wildcard
+ * would match nothing here and activate silently), but a correctly named studio
+ * is now permitted. No second flag system was added for activation, and none
+ * should be — the answer to "is this studio's durable waitlist on?" must stay
+ * this one set-membership question.
+ *
+ * THERE IS NO GLOBAL ENABLE, BY CONSTRUCTION. slugIsListed() below asks only
+ * whether one server-resolved slug is a MEMBER of the parsed set. No value —
+ * "*", "all", "true" — is interpreted as "every studio", because nothing here
+ * interprets values at all. Enabling N studios costs N typed slugs.
  */
 export const NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV =
   "NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS";

@@ -143,6 +143,28 @@ test.describe("new client at a waitlisted studio", () => {
     const box = await cta.boundingBox();
     expect(box!.height).toBeGreaterThanOrEqual(44);
 
+    // --- WAIT-02B STAGE B1: THE COLLECTION NOTICE, IN A REAL BROWSER, BEFORE
+    //     ANYTHING IS SUBMITTED. This is the one thing a static render cannot
+    //     settle: that the notice is actually VISIBLE on the 390px viewport a
+    //     prospect uses, and that the policy it points at actually resolves.
+    //     A notice that is present in the markup but pushed off-screen, or that
+    //     links to a 404, is not a notice.
+    const collectionNotice = page.getByText(
+      /will store the name, email and phone number you enter here/i,
+    );
+    await expect(collectionNotice).toBeVisible();
+    const privacyLink = page.getByRole("link", { name: /privacy policy/i });
+    await expect(privacyLink).toBeVisible();
+    await expect(privacyLink).toHaveAttribute("href", "/privacy");
+
+    // The linked policy must genuinely cover the person about to submit. Fetched
+    // rather than navigated so the half-filled form is not thrown away.
+    const policy = await page.request.get("/privacy");
+    expect(policy.status()).toBe(200);
+    const policyBody = await policy.text();
+    expect(policyBody).toContain("Prospective clients");
+    expect(policyBody).toContain("From prospective clients directly");
+
     await fillAndSubmitWaitlist(page, {
       name: "E2E Waitlist Canary",
       email,
