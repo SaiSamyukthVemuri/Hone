@@ -39,6 +39,22 @@ type Props = {
   settledAmountCents?: number | null;
   /** Hidden entirely once Hone has verified card money — see the card. */
   defaultAmountCents?: number | null;
+  /**
+   * Called after a settlement is successfully recorded, BEFORE the submission
+   * stops being pending.
+   *
+   * WHY THIS EXISTS. `router.refresh()` re-renders the SERVER tree, which is
+   * enough for the session detail page — its settlement props come from a
+   * server component. It is NOT enough inside QuickCheckoutModal, which holds
+   * its trusted checkout context in CLIENT state (`ctx`) and refreshes it with
+   * its own `fetchContext`. Without this hook the modal kept its pre-record
+   * context: the buttons stayed, and the only thing stopping a second record
+   * was the command answering `already_settled` — a refusal doing a UI's job.
+   *
+   * The modal passes a silent refetch here. Optional, because a caller whose
+   * props already come from the server refresh needs nothing more.
+   */
+  onRecorded?: () => void | Promise<void>;
 };
 
 export function AppointmentSettlementControls({
@@ -47,6 +63,7 @@ export function AppointmentSettlementControls({
   settledMethod = null,
   settledAmountCents = null,
   defaultAmountCents = null,
+  onRecorded,
 }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -104,8 +121,23 @@ export function AppointmentSettlementControls({
         r = await recordAppointmentSettlementAction(fd);
       }
       if (r.ok) {
+        // 1. close the local method form
         setOpen(null);
+        // 2. refresh the server tree (enough on its own for the session page)
         router.refresh();
+        // 3. AWAIT the caller's own refresh while the submission is still
+        //    pending, so the buttons never reappear for the instant between
+        //    "recorded" and the new context arriving. A failure here must not
+        //    look like a failed RECORD — the settlement is already committed —
+        //    so it is swallowed; the worst case is the pre-existing stale view,
+        //    and the command still refuses a duplicate.
+        if (onRecorded) {
+          try {
+            await onRecorded();
+          } catch {
+            // deliberately ignored: see above
+          }
+        }
         return;
       }
       setError(r.message);

@@ -29,7 +29,11 @@ export function AppointmentCheckoutCell({
 }) {
   if (status !== "completed") return null;
 
-  if (paymentState === "paid" || paymentState === "refunded") {
+  if (
+    paymentState === "paid" ||
+    paymentState === "refunded" ||
+    paymentState === "refunded_full"
+  ) {
     const label = paymentState === "paid" ? "Paid" : "Refunded";
     const badge = (
       <span
@@ -39,7 +43,22 @@ export function AppointmentCheckoutCell({
         <span aria-hidden>✓</span> {label}
       </span>
     );
-    if (paymentState !== "refunded") return badge;
+    // THE DOOR OPENS ONLY ON A PROVEN FULL REFUND.
+    //
+    // `refunded` and `refunded_full` present identically — both are truthfully
+    // "Refunded", and both keep the card fact and the refund fact intact. They
+    // differ in one thing: whether the studio is still holding card money.
+    //
+    // A PARTIAL refund (and a refund whose amount cannot be read) stays
+    // `refunded` and gets NO settlement entry point. Offering one there would
+    // be a promise the next screen cannot keep — the payment card's cents-based
+    // check would correctly hide every control, leaving a button that opens
+    // onto nothing. Worse, it would invite recording a cash payment for money
+    // the studio has not actually given back.
+    //
+    // The row state already carries the answer, so this branch makes no second
+    // eligibility guess of its own.
+    if (paymentState !== "refunded_full") return badge;
 
     // PAY-SETTLE / 0187. A REFUNDED VISIT NEEDS A ROUTE BACK.
     //

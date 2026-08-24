@@ -133,6 +133,21 @@ export function QuickCheckoutModal({
     [fetchContext],
   );
 
+  // PAY-SETTLE / 0187. THE SAME MECHANISM the four payment actions already use,
+  // extended to settlement. `router.refresh()` inside the controls re-renders
+  // the server tree behind the modal; it does not replace `ctx`, which is the
+  // client-held value this modal actually renders from. So a recorded outcome
+  // left the buttons on screen, and the only thing preventing a second record
+  // was the command answering `already_settled` — a database refusal covering
+  // for a stale view.
+  //
+  // Silent, so the modal advances in place instead of flashing "Loading
+  // checkout…" over a completed action.
+  const refetchAfterSettlement = useCallback(
+    () => fetchContext({ silent: true }),
+    [fetchContext],
+  );
+
   if (!open) return null;
 
   return (
@@ -224,6 +239,7 @@ export function QuickCheckoutModal({
                 settledMethod={ctx.settlement.settledMethod}
                 settledAmountCents={ctx.settlement.settledAmountCents}
                 defaultAmountCents={ctx.settlement.quotedAmountCents}
+                onRecorded={refetchAfterSettlement}
               />
             )}
           </div>
@@ -257,6 +273,7 @@ export function QuickCheckoutModal({
               settledAmountCents={ctx.settlement.settledAmountCents}
               settlementQuotedAmountCents={ctx.settlement.quotedAmountCents}
               canRecordSettlement={ctx.settlement.canRecord}
+              onSettlementRecorded={refetchAfterSettlement}
               eligibility={ctx.eligibility}
               amountResult={ctx.amountResult}
               isOwner={ctx.isOwner}

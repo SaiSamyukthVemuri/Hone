@@ -42,7 +42,19 @@ export type AppointmentPaymentState =
   | "settled_e_transfer"
   | "settled_other"
   | "settled_waived"
-  | "settled_owing";
+  | "settled_owing"
+  // PAY-SETTLE / 0187. A refund that PROVABLY returned the whole charge.
+  //
+  // Split from `refunded` because the two differ in exactly one consequence:
+  // the studio is holding no card money any more, so a replacement payment can
+  // truthfully be recorded. `refunded` is kept for a refund that succeeded
+  // without proving full repayment (a partial one, or one whose amount we
+  // cannot read) and offers no such route.
+  //
+  // Both still PRESENT as "Refunded": the distinction is about what may be
+  // DONE next, not about what happened, and the card fact and the refund fact
+  // are unchanged either way.
+  | "refunded_full";
 
 /** The one place the DB vocabulary maps onto the display vocabulary. */
 export const SETTLEMENT_STATE_BY_METHOD: Record<
@@ -56,7 +68,37 @@ export const SETTLEMENT_STATE_BY_METHOD: Record<
   still_owes: "settled_owing",
 };
 
-type AttemptRow = { status: string | null; refund_status: string | null };
+type AttemptRow = {
+  status: string | null;
+  refund_status: string | null;
+  // PAY-SETTLE / 0187. The cents needed to tell a FULL refund from a partial
+  // one. OPTIONAL, and absence is treated as "cannot prove full" — the same
+  // fail-closed direction the SQL takes, and the reason a caller that omits
+  // them can never accidentally unlock the replacement-payment route.
+  amount_cents?: number | null;
+  refund_amount_cents?: number | null;
+};
+
+/**
+ * Did ALL of the money go back?
+ *
+ * `refund_status = 'succeeded'` says a refund SUCCEEDED, not that the whole
+ * charge was returned: the schema's CHECK is
+ * `refund_amount_cents <= amount_cents` and 0078 deliberately leaves room for
+ * partial refunds. This is the SAME law `appointment_has_live_card_money`
+ * applies in SQL and the payment card applies in the browser, stated once here
+ * for the row state so all three agree.
+ *
+ * An unknown amount is NOT full. Guessing "probably full" is how a studio ends
+ * up recorded as paid twice for money it is still holding.
+ */
+function isFullyRefunded(a: AttemptRow): boolean {
+  if (a.refund_status !== "succeeded") return false;
+  const amount = a.amount_cents;
+  const refunded = a.refund_amount_cents;
+  if (typeof amount !== "number" || typeof refunded !== "number") return false;
+  return refunded >= amount;
+}
 
 // Pure reducer: the strongest terminal state wins (paid/refunded > processing >
 // chargeable). Exported for unit testing without a database.
@@ -74,7 +116,8 @@ export function deriveAppointmentPaymentState(
   let processing = false;
   for (const a of attempts) {
     if (a.status === "succeeded") {
-      return a.refund_status === "succeeded" ? "refunded" : "paid";
+      if (a.refund_status !== "succeeded") return "paid";
+      return isFullyRefunded(a) ? "refunded_full" : "refunded";
     }
     if (a.status === "pending_stripe") processing = true;
   }
@@ -261,7 +304,9 @@ export async function getAppointmentPaymentStates(
   if (sessionIds.length > 0) {
     const { data: attemptRows, error: attemptError } = await supabase
       .from("payment_charge_attempts")
-      .select("session_id, status, refund_status")
+      .select(
+        "session_id, status, refund_status, amount_cents, refund_amount_cents",
+      )
       .eq("studio_id", studioId)
       .eq("charge_reason", "session_payment")
       .eq("stripe_livemode", inferStripeLivemode())
@@ -271,11 +316,18 @@ export async function getAppointmentPaymentStates(
       session_id: string;
       status: string | null;
       refund_status: string | null;
+      amount_cents: number | null;
+      refund_amount_cents: number | null;
     }>) {
       const apptId = sessionToAppt.get(a.session_id);
       if (!apptId) continue;
       const bucket = attemptsByAppt.get(apptId) ?? [];
-      bucket.push({ status: a.status, refund_status: a.refund_status });
+      bucket.push({
+        status: a.status,
+        refund_status: a.refund_status,
+        amount_cents: a.amount_cents,
+        refund_amount_cents: a.refund_amount_cents,
+      });
       attemptsByAppt.set(apptId, bucket);
     }
   }
@@ -323,6 +375,7 @@ export async function getAppointmentPaymentStates(
     if (
       transactionOnly === "paid" ||
       transactionOnly === "refunded" ||
+      transactionOnly === "refunded_full" ||
       transactionOnly === "processing"
     ) {
       out.set(apptId, transactionOnly);

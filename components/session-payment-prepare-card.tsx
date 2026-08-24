@@ -210,6 +210,7 @@ export function SessionPaymentPrepareCard({
   settledAmountCents = null,
   settlementQuotedAmountCents = null,
   canRecordSettlement = true,
+  onSettlementRecorded,
   prepareAction,
   executeAction,
   sendReceiptAction,
@@ -236,6 +237,15 @@ export function SessionPaymentPrepareCard({
   // carry a disposition. Defaults true so the session page, which only renders
   // this card for a real session, is unchanged.
   canRecordSettlement?: boolean;
+  // Pass-through to AppointmentSettlementControls, and the ONLY refresh-shaped
+  // prop this card accepts.
+  //
+  // It is not a wrapper around any payment action and it changes nothing about
+  // prepare / execute / receipt / refund, which keep their own arrangement.
+  // QuickCheckoutModal supplies a silent context refetch here because its view
+  // lives in CLIENT state that a server re-render does not reach; the session
+  // detail page omits it entirely and relies on the ordinary server refresh.
+  onSettlementRecorded?: () => void | Promise<void>;
   // PR #200: resolved booked-service / custom-pricing default for the
   // prepare form's amount field. Display default only; the field
   // stays editable and the prepare action re-validates the submitted
@@ -514,6 +524,7 @@ export function SessionPaymentPrepareCard({
             presentation.prepareFormAmount?.amountCents ??
             settlementQuotedAmountCents
           }
+          onRecorded={onSettlementRecorded}
         />
       )}
     </section>

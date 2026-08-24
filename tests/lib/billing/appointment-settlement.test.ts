@@ -12,7 +12,10 @@ import {
   isSettlementMethod,
 } from "@/lib/billing/settlement-types";
 import { settlementIsOutranked } from "@/lib/billing/appointment-settlement";
-import { SETTLEMENT_STATE_BY_METHOD } from "@/lib/billing/appointment-payment-state";
+import {
+  SETTLEMENT_STATE_BY_METHOD,
+  deriveAppointmentPaymentState,
+} from "@/lib/billing/appointment-payment-state";
 
 // PAY-SETTLE — the STATIC half of the runtime contract.
 //
@@ -110,12 +113,13 @@ describe("no attested outcome may present itself as verified money", () => {
   });
 
   it("EMERALD IS RESERVED. The settled branch of the cell renders neutral", () => {
+    void 0;
     // The emerald branch is the paid/refunded one, which is Hone-verified.
     const settledBranch = CELL.slice(CELL.indexOf("const settled = SETTLED_LABEL"));
     expect(settledBranch).not.toMatch(/emerald/);
     expect(settledBranch).toMatch(/bg-neutral-100/);
     // And the verified branch still owns emerald.
-    expect(CELL).toMatch(/paymentState === "paid" \|\| paymentState === "refunded"/);
+    expect(CELL).toMatch(/paymentState === "paid" \|\|/);
     expect(CELL.slice(0, CELL.indexOf("const settled"))).toMatch(/emerald/);
   });
 
@@ -271,16 +275,174 @@ describe("retained card money is measured in cents, not inferred from a status",
     expect(CARD).toMatch(/canRecordSettlement && !cardMoneyHeld/);
   });
 
-  it("a refunded row keeps a route to record the replacement payment", () => {
-    const refundBranch = CELL.slice(CELL.indexOf('paymentState === "paid" || paymentState === "refunded"'));
-    expect(refundBranch).toMatch(/Record outcome/);
-    expect(refundBranch).toMatch(/<CheckoutButton/);
+  it("ONLY a proven full refund keeps a route to record the replacement payment", () => {
+    const branch = CELL.slice(CELL.indexOf('paymentState === "paid" ||'));
+    expect(branch).toMatch(/Record outcome/);
+    expect(branch).toMatch(/<CheckoutButton/);
     // The card fact and the refund fact are still shown, not replaced.
-    expect(refundBranch).toMatch(/\{badge\}/);
+    expect(branch).toMatch(/\{badge\}/);
+    // THE GATE. A partial refund, an unknown-amount refund and a plain paid row
+    // all return the badge before reaching the entry point.
+    expect(branch).toMatch(/if \(paymentState !== "refunded_full"\) return badge;/);
   });
 
-  it("a PAID (unrefunded) row still offers no route — nothing is over-opened", () => {
-    const refundBranch = CELL.slice(CELL.indexOf('paymentState === "paid" || paymentState === "refunded"'));
-    expect(refundBranch).toMatch(/if \(paymentState !== "refunded"\) return badge;/);
+  it("the cell makes NO eligibility guess of its own — the row state carries it", () => {
+    const branch = CELL.slice(CELL.indexOf('paymentState === "paid" ||'));
+    // No refund arithmetic, no amounts, no second derivation in the view.
+    expect(branch).not.toMatch(/refund_amount_cents|refundAmountCents|amount_cents/);
+  });
+
+  it("full and partial refunds are DERIVED apart before the row renders", () => {
+    const state = read("lib/billing/appointment-payment-state.ts");
+    expect(state).toMatch(/function isFullyRefunded/);
+    // The same law as the SQL and the payment card: status AND cents.
+    expect(state).toMatch(/if \(a\.refund_status !== "succeeded"\) return false;/);
+    expect(state).toMatch(/return refunded >= amount;/);
+    // An unknown amount is not full.
+    expect(state).toMatch(
+      /typeof amount !== "number" \|\| typeof refunded !== "number"/,
+    );
+    expect(state).toMatch(/isFullyRefunded\(a\) \? "refunded_full" : "refunded"/);
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// P2-1 — the modal must show the recorded outcome in the SAME open modal
+// ---------------------------------------------------------------------------
+describe("recording a settlement advances the quick-checkout modal in place", () => {
+  const MODAL_SRC = read("components/quick-checkout-modal.tsx");
+  const CARD_SRC = read("components/session-payment-prepare-card.tsx");
+
+  it("the controls expose a success hook and AWAIT it while still pending", () => {
+    expect(CONTROLS).toMatch(/onRecorded\?: \(\) => void \| Promise<void>/);
+    // Awaited INSIDE the transition, so the buttons never flash back between
+    // "recorded" and the new context arriving.
+    expect(CONTROLS).toMatch(/await onRecorded\(\)/);
+    const submit = CONTROLS.slice(CONTROLS.indexOf("startTransition"));
+    expect(submit.indexOf("await onRecorded()")).toBeGreaterThan(
+      submit.indexOf("router.refresh()"),
+    );
+  });
+
+  it("a failed refresh is not reported as a failed RECORD", () => {
+    // The settlement is already committed at that point; showing an error
+    // would tell the practitioner to try again and produce a second submission.
+    expect(CONTROLS).toMatch(/try \{\s*await onRecorded\(\);\s*\} catch/);
+  });
+
+  it("BOTH modal render paths supply the silent refetch", () => {
+    expect(MODAL_SRC).toMatch(
+      /const refetchAfterSettlement = useCallback\(\s*\(\) => fetchContext\(\{ silent: true \}\)/,
+    );
+    // A. the no-session / ineligible branch, rendering the controls directly
+    const ineligible = MODAL_SRC.slice(
+      MODAL_SRC.indexOf("ctx.ok === false"),
+      MODAL_SRC.indexOf("ctx.ok === true"),
+    );
+    expect(ineligible).toMatch(/onRecorded=\{refetchAfterSettlement\}/);
+    // B. the ordinary session/card branch, through the shared card
+    const eligible = MODAL_SRC.slice(MODAL_SRC.indexOf("ctx.ok === true"));
+    expect(eligible).toMatch(/onSettlementRecorded=\{refetchAfterSettlement\}/);
+  });
+
+  it("the card forwards the hook rather than implementing its own refresh", () => {
+    expect(CARD_SRC).toMatch(/onRecorded=\{onSettlementRecorded\}/);
+    // No refetch of its own, and no knowledge of the modal's context action.
+    expect(CARD_SRC).not.toMatch(/getQuickCheckoutContextAction|fetchContext/);
+  });
+
+  it("once settled, the controls render the outcome and NO action buttons", () => {
+    // The early return is what makes a second submission unreachable through
+    // ordinary UI — `already_settled` is a backstop, not the mechanism.
+    const settledBranch = CONTROLS.slice(
+      CONTROLS.indexOf("if (settledMethod) {"),
+      CONTROLS.indexOf("const submit ="),
+    );
+    expect(settledBranch).toMatch(/appointment-settlement-recorded/);
+    expect(settledBranch).toMatch(/SETTLEMENT_BADGE_LABEL\[settledMethod\]/);
+    expect(settledBranch).not.toMatch(/settlement-open-|settlement-confirm-/);
+    expect(settledBranch).toMatch(/return \(/);
+  });
+
+  it("the session detail page needs no hook and is left alone", () => {
+    const page = read("app/(app)/clients/[id]/sessions/[sessionId]/page.tsx");
+    expect(page).not.toMatch(/onSettlementRecorded/);
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// P2-2 — the row state itself must carry the full-refund truth
+// ---------------------------------------------------------------------------
+// Behavioural, against the real reducer. The dashboard row decides whether the
+// replacement-payment door EXISTS, so the answer has to be right before
+// anything renders — a view that has to re-derive it is a second place for the
+// law to drift.
+describe("full and partial refunds are different row states", () => {
+  const attempt = (over: Record<string, unknown> = {}) => ({
+    status: "succeeded",
+    refund_status: null as string | null,
+    amount_cents: 12000,
+    refund_amount_cents: null as number | null,
+    ...over,
+  });
+
+  it("A · succeeded, no refund -> paid", () => {
+    expect(deriveAppointmentPaymentState(true, [attempt()])).toBe("paid");
+  });
+
+  it("B · succeeded + PARTIAL refund -> refunded (no replacement route)", () => {
+    expect(
+      deriveAppointmentPaymentState(true, [
+        attempt({ refund_status: "succeeded", refund_amount_cents: 6000 }),
+      ]),
+    ).toBe("refunded");
+  });
+
+  it("C · succeeded + refund with NULL amount -> refunded, failing closed", () => {
+    // Cannot prove the money went back, so it is not treated as if it had.
+    expect(
+      deriveAppointmentPaymentState(true, [
+        attempt({ refund_status: "succeeded", refund_amount_cents: null }),
+      ]),
+    ).toBe("refunded");
+  });
+
+  it("D · succeeded + FULL refund -> refunded_full (replacement route)", () => {
+    expect(
+      deriveAppointmentPaymentState(true, [
+        attempt({ refund_status: "succeeded", refund_amount_cents: 12000 }),
+      ]),
+    ).toBe("refunded_full");
+  });
+
+  it("an over-refund still counts as full", () => {
+    expect(
+      deriveAppointmentPaymentState(true, [
+        attempt({ refund_status: "succeeded", refund_amount_cents: 12500 }),
+      ]),
+    ).toBe("refunded_full");
+  });
+
+  it("a caller that omits the cents gets the closed answer, never the open one", () => {
+    // The fields are optional on AttemptRow so existing callers still compile;
+    // omitting them must never unlock the route.
+    expect(
+      deriveAppointmentPaymentState(true, [
+        { status: "succeeded", refund_status: "succeeded" },
+      ]),
+    ).toBe("refunded");
+  });
+
+  it("both refund states still rank above pricing, so neither becomes 'free'", () => {
+    for (const refundAmount of [6000, 12000]) {
+      const state = deriveAppointmentPaymentState(
+        true,
+        [attempt({ refund_status: "succeeded", refund_amount_cents: refundAmount })],
+        true, // isFree
+      );
+      expect(["refunded", "refunded_full"]).toContain(state);
+    }
   });
 });
