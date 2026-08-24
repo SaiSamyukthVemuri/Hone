@@ -97,17 +97,46 @@ export function AppointmentCheckoutCell({
   // reason the settlement schema refuses to store a "card" method; throwing it
   // away in the CSS would undo it at the only layer Chloe actually reads.
   //
-  // Checkout is deliberately NOT offered here. That is the product outcome:
-  // an appointment settled in cash stops asking to be charged, without anybody
-  // having run a payment that did not happen.
+  // Checkout is deliberately NOT offered for a COLLECTED or WAIVED outcome.
+  // That is the product outcome: an appointment settled in cash stops asking to
+  // be charged, without anybody having run a payment that did not happen.
+  //
+  // `still_owes` IS THE EXCEPTION, and it is the whole reason this branch is
+  // not a single shape. "Still owes" attests that the visit is UNPAID — which
+  // is why it is the one method absent from the SQL blocking set, why
+  // prepareSessionPaymentChargeAction lets it through, and why
+  // settlementIsOutranked exists at all. Removing Checkout here contradicted
+  // every one of those: the debt stayed collectable in the database and
+  // uncollectable from the row Chloe actually looks at, leaving the session
+  // detail page as the only way in.
+  //
+  // So the row states both facts. The badge stays NEUTRAL — an attestation is
+  // never emerald, and it is never relabelled Paid — and the ordinary
+  // CheckoutButton sits beside it. Not "Record outcome": an outcome has already
+  // been recorded, and this is the ordinary card path for money still owed.
   const settled = SETTLED_LABEL[paymentState];
   if (settled) {
-    return (
+    const badge = (
       <span
         data-testid={`appointment-${paymentState}`}
         className="inline-flex items-center rounded-full bg-neutral-100 px-2.5 py-1 text-xs font-medium text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300"
       >
         {settled}
+      </span>
+    );
+    if (paymentState !== "settled_owing") return badge;
+
+    // The SAME shared entry point every other surface uses, in the same
+    // badge-plus-control shape as the full-refund branch above. Nothing about
+    // quick checkout is duplicated or re-implemented here.
+    return (
+      <span className="inline-flex flex-wrap items-center gap-2">
+        {badge}
+        <CheckoutButton
+          appointmentId={appointmentId}
+          status={status}
+          variant="compact"
+        />
       </span>
     );
   }

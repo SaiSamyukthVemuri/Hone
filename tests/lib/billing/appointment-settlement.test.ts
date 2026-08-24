@@ -123,12 +123,33 @@ describe("no attested outcome may present itself as verified money", () => {
     expect(CELL.slice(0, CELL.indexOf("const settled"))).toMatch(/emerald/);
   });
 
-  it("the cell offers no Checkout once a visit is settled", () => {
+  it("the cell offers no Checkout once a visit is COLLECTED or WAIVED", () => {
+    // RESTATED, NOT RELAXED. This was "once a visit is settled", which held
+    // only while all five methods shared one branch. `still_owes` attests the
+    // visit is UNPAID: it is the one method absent from the SQL blocking set,
+    // the one prepareSessionPaymentChargeAction lets through, and the reason
+    // settlementIsOutranked exists. Withholding Checkout from it contradicted
+    // every layer beneath the view and left the debt collectable only from the
+    // session detail page.
+    //
+    // The invariant that actually matters is the one about MONEY ALREADY
+    // ACCOUNTED FOR: a visit paid in cash, by e-transfer, another way, or
+    // waived must never be asked to be charged again.
     const settledBranch = CELL.slice(
       CELL.indexOf("const settled = SETTLED_LABEL"),
       CELL.indexOf('if (paymentState === "processing")'),
     );
-    expect(settledBranch).not.toMatch(/CheckoutButton/);
+    // The four collected/waived states return the bare badge...
+    expect(settledBranch).toMatch(
+      /if \(paymentState !== "settled_owing"\) return badge;/,
+    );
+    // ...and the ONLY entry point below that guard is the still-owing one.
+    const afterGuard = settledBranch.slice(
+      settledBranch.indexOf('if (paymentState !== "settled_owing") return badge;'),
+    );
+    expect([...afterGuard.matchAll(/<CheckoutButton/g)]).toHaveLength(1);
+    // Behavioural coverage of every state lives in
+    // tests/components/appointment-checkout-cell-render.test.ts.
   });
 
   it("the controls say out loud that Hone did not verify this", () => {
