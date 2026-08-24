@@ -230,6 +230,39 @@ describe("the two day controls do not fight each other", () => {
     );
   });
 
+  it("the period pills decline Next's default scroll-to-top", () => {
+    // DASH-SNAPSHOT-SCROLL-01. The Practice snapshot is the LAST section on the
+    // Dashboard, so its reader is always scrolled down — and Next's App Router
+    // resets `documentElement.scrollTop` on every forward <Link> navigation
+    // unless the link declines it. The period changed correctly and threw the
+    // practitioner to the top of the page, away from the numbers they had just
+    // asked to re-cut.
+    //
+    // That the VIEWPORT actually stays put is proved in the browser
+    // (e2e/dashboard-day-navigation.spec.ts, "the period filter updates IN
+    // PLACE"). This pin is what stops the opt-out being dropped in an edit that
+    // never runs a browser lane.
+    expect((SNAPSHOT_CODE.match(/<Link\b/g) ?? []).length).toBe(1);
+    const periodLink = SNAPSHOT_CODE.slice(SNAPSHOT_CODE.indexOf("<Link"));
+    expect(periodLink).toMatch(/scroll=\{false\}/);
+    // Still server-driven query navigation, and the href/aria contract is
+    // unchanged: the same Link carries both.
+    expect(periodLink).toMatch(/href=\{dashboardDayHref\(/);
+    expect(periodLink).toMatch(/aria-current=\{metrics\.period === p\.key/);
+  });
+
+  it("the fix is the Link's own behaviour — not a client-side scroll shim", () => {
+    // The tempting repairs all trade a server-rendered section for a client
+    // one, and each of them hides the symptom somewhere the next reader cannot
+    // see it: a manual scroll restore races the paint, a stored offset outlives
+    // the navigation that justified it, and router.replace() drops the history
+    // entry that makes Back work.
+    expect(SNAPSHOT_CODE).not.toMatch(/"use client"/);
+    expect(SNAPSHOT_CODE).not.toMatch(/window\.scrollTo|scrollIntoView/);
+    expect(SNAPSHOT_CODE).not.toMatch(/sessionStorage|localStorage/);
+    expect(SNAPSHOT_CODE).not.toMatch(/useRouter|router\.replace|router\.push/);
+  });
+
   it("the outward control is disabled at the horizon, never a rejected link", () => {
     expect(CODE).toMatch(/\{canGoBack \? \(/);
     expect(CODE).toMatch(/\{canGoForward \? \(/);

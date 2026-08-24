@@ -82,6 +82,16 @@ export function PracticeSnapshot({
                period pill was clicked — silently, because the day simply
                vanishes rather than erroring. The two controls must not fight. */
             href={dashboardDayHref({ day: selectedDay, todayLocal, period: p.key })}
+            /* The snapshot is the LAST section on the Dashboard, so a
+               practitioner re-cutting these numbers is always scrolled down.
+               Next's App Router applies a forward-navigation scroll to every
+               <Link> by default: it takes the segment's DOM node, sees its top
+               edge is above the viewport and sets
+               `documentElement.scrollTop = 0`. The period changed correctly and
+               the reader was thrown to the top of the page, away from the very
+               numbers they had just asked for. This stays server-driven
+               query navigation — only the scroll reset is declined. */
+            scroll={false}
             aria-current={metrics.period === p.key ? "page" : undefined}
             className={
               metrics.period === p.key
