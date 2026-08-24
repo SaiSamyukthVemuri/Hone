@@ -241,10 +241,17 @@ describe("#598 survives on every day", () => {
   it("card status and the consultation action are outside the history block", () => {
     // They describe the client NOW, so they are true on any day. If either
     // moved inside the `{workflow && …}` block it would vanish on tomorrow.
-    const historyBlock = CODE.slice(
-      CODE.indexOf("{workflow && ("),
-      CODE.indexOf("</Link>", CODE.indexOf("{workflow && (")),
-    );
+    // Bounded by the row-body link's own closing tag, whatever that element is
+    // called: UI-01C swapped it to PendingContainerLink, and a hard-coded
+    // `</Link>` then ran past it to the next ordinary link on the page and
+    // swept the whole actions column into "the history block".
+    const fromWorkflow = CODE.slice(CODE.indexOf("{workflow && ("));
+    const rowBodyEnd = fromWorkflow.search(/<\/\w*Link>/);
+    expect(
+      rowBodyEnd,
+      "the row-body link must close after the history block",
+    ).toBeGreaterThan(-1);
+    const historyBlock = fromWorkflow.slice(0, rowBodyEnd);
     expect(historyBlock).not.toMatch(/CardOnFilePill|resolveCardOnFileStatus/);
     expect(historyBlock).not.toMatch(/tab=consultation/);
     expect(CODE).toMatch(/<CardOnFilePill status=\{cardOnFile\}/);

@@ -124,8 +124,13 @@ describe("the client boundary carries only the visible projection", () => {
     expect(COMPONENT).toMatch(/type="button"/);
     expect(COMPONENT).toMatch(/aria-expanded=\{open\}/);
     expect(COMPONENT).toMatch(/aria-controls=\{regionId\}/);
-    // Outside the row's <Link>: no nested interactive elements.
-    expect(PAGE_CODE).toMatch(/<\/Link>[\s\S]{0,600}<DashboardTreatmentMemory/);
+    // Outside the row's link: no nested interactive elements. Matched on any
+    // *Link closing tag, not one spelling — UI-01C swapped the row body to
+    // PendingContainerLink, which is the same anchor with an out-of-flow
+    // pending presentation inside it, and cannot move this boundary.
+    expect(PAGE_CODE).toMatch(
+      /<\/\w*Link>[\s\S]{0,600}<DashboardTreatmentMemory/,
+    );
   });
 });
 

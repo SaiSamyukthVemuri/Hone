@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { PendingLink } from "@/components/pending-link";
 
 // Week | Month segmented control for the calendar header. Plain
 // server component so the active state survives a full page
@@ -16,6 +16,14 @@ import Link from "next/link";
 //
 // Defaults are computed by the caller (page.tsx) since "today" is
 // timezone-sensitive and that's the server's responsibility.
+//
+// UI-01C: PendingLink, not Link — the same primitive the rest of the
+// toolbar uses, for the same reason. Switching view changes only
+// `?view=`, so no route boundary can render and the tab under the
+// finger is the only thing on screen able to say the request left.
+// The mark is absolutely positioned and the label only fades, so the
+// segmented control does not resize mid-tap, which is the promise
+// its two equal-width tabs are making.
 export function CalendarViewToggle({
   currentView,
   weekHref,
@@ -41,10 +49,12 @@ export function CalendarViewToggle({
       {tabs.map((tab) => {
         const active = tab.value === currentView;
         return (
-          <Link
+          <PendingLink
             key={tab.value}
             href={tab.href}
             aria-current={active ? "page" : undefined}
+            data-testid={`calendar-view-${tab.value}`}
+            pendingLabel="Loading view…"
             className={
               active
                 ? "rounded-[5px] bg-white px-3 py-1 font-medium text-neutral-900 shadow-sm dark:bg-neutral-950 dark:text-neutral-100"
@@ -52,7 +62,7 @@ export function CalendarViewToggle({
             }
           >
             {tab.label}
-          </Link>
+          </PendingLink>
         );
       })}
     </nav>

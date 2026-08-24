@@ -1,5 +1,8 @@
 import Link from "next/link";
-import { PendingLink } from "@/components/pending-link";
+import {
+  PendingContainerLink,
+  PendingLink,
+} from "@/components/pending-link";
 import { createClient } from "@/lib/supabase/server";
 import { inferStripeLivemode } from "@/lib/stripe/server";
 import { AppointmentCheckoutCell } from "@/components/appointment-checkout-cell";
@@ -1158,8 +1161,22 @@ function AppointmentRow({
           is where it already appeared. The row body still opens the
           appointment; the disclosure is simply no longer part of it. */}
       <div className="flex min-w-0 flex-1 basis-64 flex-col">
-        <Link
+        {/* UI-01C: PendingContainerLink, not Link. This is the LAST navigation
+            on the Dashboard with no acknowledgement, and it was deliberately
+            left out of UI-01A/B because the shipped PendingLink could not
+            serve it: the row body is itself the flex container below, and
+            PendingLink wraps children in one span, which would collapse the
+            time cell and the text column into a single track.
+
+            The container form adds nothing in flow — the scrim and the live
+            region are both absolutely positioned, and an absolutely positioned
+            child of a flex container is not a flex item — so these two
+            children are laid out exactly as they were. `relative` comes from
+            the component, not from here. */}
+        <PendingContainerLink
           href={`/calendar/${appt.id}`}
+          data-testid="today-row-body"
+          pendingLabel="Opening appointment…"
           className="flex min-w-0 gap-4"
         >
           <div className="w-14 flex-none text-sm font-medium tabular-nums text-neutral-700 dark:text-neutral-300">
@@ -1324,7 +1341,7 @@ function AppointmentRow({
               </div>
             )}
           </div>
-        </Link>
+        </PendingContainerLink>
         {/* Dashboard V2 Part 2A: the previous treatment in place. Compact by
             default (one line naming the visit) and expandable to the complete
             #517 card WITHOUT leaving Today. Rendered only for a client who HAS
