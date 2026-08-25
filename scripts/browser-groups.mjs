@@ -166,6 +166,12 @@ export const BROWSER_GROUPS = {
     specs: [
       "invitation-reconciliation.spec.ts",
       "invite-only.spec.ts",
+      // OWNER-CAP Slice 1: /dashboard/capacity. This group's stated scope is
+      // already "owner/admin, onboarding, studio setup AND CAPACITY", and the
+      // spec is exactly an owner-authority surface — an owner reaches the
+      // briefing, an ordinary practitioner is refused it, and the owner-only
+      // entry is not advertised in search. No new group: the taxonomy fits.
+      "owner-practice-capacity.spec.ts",
       // REL-001: the authenticated app-shell error boundary, including the
       // auth-gate invariants (anonymous still bounces to /login, redirect() and
       // notFound() are not converted into a generic retry screen). It sits with
@@ -245,7 +251,14 @@ const PATH_TO_GROUP = [
   { group: "booking", patterns: [/booking/i, /appointments?/i, /reschedule/i, /\bbook\b/i, /treatment-plans/i] },
   { group: "sessions", patterns: [/sessions?\//i, /charting/i, /electrolysis/i, /laser/i, /session[-_]?block/i, /probe/i, /observation[-_]?chip/i, /treatment[-_]?memory/i, /clinical[-_]?note/i] },
   { group: "calendar", patterns: [/calendar/i, /\bservices?\b/i, /disinfectant/i] },
-  { group: "owner_admin", patterns: [/onboarding/i, /invitation/i, /invite/i, /\badmin\b/i, /practitioner/i, /studio/i, /import/i] },
+  // OWNER-CAP Slice 1. Registering the SPEC in the group above is only half the
+  // job: selection maps CHANGED PATHS to groups, and the capacity page matched
+  // no rule at all, so a diff touching it fell through to the unattributed
+  // EXTENDED fallback and the new spec would only ever have run as part of
+  // "everything". These two patterns are deliberately anchored//specific rather
+  // than a bare /capacity/i, which would also catch the unrelated studio
+  // capacity-toggle helpers.
+  { group: "owner_admin", patterns: [/^app\/\(app\)\/dashboard\/capacity\//, /owner-capacity/i, /owner-practice-capacity/i, /onboarding/i, /invitation/i, /invite/i, /\badmin\b/i, /practitioner/i, /studio/i, /import/i] },
   { group: "marketing", patterns: [/^app\/\(marketing\)/, /marketing/i] },
   { group: "google", patterns: [/google[-_]?calendar/i] },
   { group: "responsive", patterns: [/mobile/i, /responsive/i] },
