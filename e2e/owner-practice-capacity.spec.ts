@@ -232,12 +232,35 @@ test("an ordinary practitioner is refused the owner aggregate", async ({ page })
     page.getByText("Only studio owners can see practice capacity."),
   ).toBeVisible();
 
-  // And none of the aggregate reaches them.
+  // AND NONE OF THE AGGREGATE REACHES THEM — all THREE sections, not one.
+  //
+  // This is the authority test, and it previously checked a single section
+  // heading. A gate regression that rendered the refusal banner AND leaked the
+  // Clients cards beneath it would have passed while the test's name claimed
+  // the whole aggregate was refused. A partial leak is precisely what this test
+  // exists to catch.
+  for (const section of [
+    "Clients",
+    "Future treatment booking depth",
+    "Future treatment time for current clients",
+  ]) {
+    await expect(
+      page.getByRole("heading", { name: section, exact: true }),
+      `the ${section} section must not reach a practitioner`,
+    ).toHaveCount(0);
+  }
+
+  // Not one aggregate FIGURE either. `Figure` renders this element for every
+  // known value on the briefing, so zero of them is the strongest single
+  // statement that no number leaked — including from a card whose heading was
+  // renamed.
+  await expect(page.locator("p.tabular-nums")).toHaveCount(0);
+
+  // And no client identity: neither the worklist nor a name nor a record link.
   await expect(page.getByText("Who to rebook")).toHaveCount(0);
   await expect(page.getByText(REBOOK)).toHaveCount(0);
-  await expect(
-    page.getByRole("heading", { name: "Future treatment booking depth" }),
-  ).toHaveCount(0);
+  await expect(page.getByText(CONSULT)).toHaveCount(0);
+  await expect(page.locator('a[href^="/clients/"]')).toHaveCount(0);
 });
 
 // ---------------------------------------------------------------------------
