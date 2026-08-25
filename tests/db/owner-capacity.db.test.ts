@@ -383,6 +383,45 @@ describe("owner capacity briefing", () => {
     expect(b.depth.known).toBe(false);
   });
 
+  it("names WHO to rebook, against real rows, and the count is that list's length", async () => {
+    const b = await getOwnerCapacityBriefing(studio, ownerClient);
+    if (!b.rebookingWorklist.known) throw new Error("expected a known worklist");
+    const list = b.rebookingWorklist.value;
+    const named = list.map((c) => c.name).sort();
+
+    // Quiet (nothing at all), Consulting (a consultation is NOT treatment) and
+    // Cancelled (the studio is not committed to it) all still need booking.
+    expect(named).toEqual(["Cancelled", "Consulting", "Quiet"]);
+    // Booked holds two future treatments, so they are absent...
+    expect(named).not.toContain("Booked");
+    // ...as is the archived client, who is outside the snapshot entirely even
+    // though they hold an open plan.
+    expect(named).not.toContain("Archived");
+    // ...and the client with no plan at all.
+    expect(named).not.toContain("No plan");
+
+    // ONE SET, TWO REPRESENTATIONS.
+    expect(b.clients.activeTreatmentWithoutFutureBooking).toEqual({
+      known: true,
+      value: list.length,
+    });
+    if (!b.depth.known) throw new Error("unreachable");
+    expect(b.depth.value.zero).toBe(list.length);
+
+    // Every row carries what the link needs.
+    for (const c of list) {
+      expect(c.clientId).toMatch(/^[0-9a-f-]{36}$/);
+      expect(c.name.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("a studio with no treatment plans has an UNKNOWN worklist, never an empty one", async () => {
+    // An empty call list and an unanswerable one look identical on screen if
+    // the difference is not preserved here.
+    const b = await getOwnerCapacityBriefing(planlessStudio, planlessClient);
+    expect(b.rebookingWorklist.known).toBe(false);
+  });
+
   it("states the basis for the active-treatment figure on the briefing itself", async () => {
     const b = await getOwnerCapacityBriefing(studio, ownerClient);
     expect(b.clients.activeTreatmentBasis).toMatch(/open treatment plan/i);
@@ -536,6 +575,23 @@ describe("owner capacity briefing", () => {
     expect(markup).toContain("1 or more treatments");
     expect(markup).toContain("2 or more treatments");
     expect(markup).toContain("3 or more treatments");
+
+    // WHO, not just how many: the rebooking names render as links into the
+    // existing client records, and the count matches what is on screen.
+    const b = await getOwnerCapacityBriefing(studio, ownerClient);
+    if (!b.rebookingWorklist.known) throw new Error("expected a known worklist");
+    expect(markup).toContain("Who to rebook");
+    for (const c of b.rebookingWorklist.value) {
+      expect(markup).toContain(`/clients/${c.clientId}`);
+      expect(markup).toContain(c.name);
+    }
+    // Count === rendered list length.
+    const rendered = markup.split('href="/clients/').length - 1;
+    expect(rendered).toBe(b.rebookingWorklist.value.length);
+    expect(b.clients.activeTreatmentWithoutFutureBooking).toEqual({
+      known: true,
+      value: rendered,
+    });
   }, 30_000);
 
   it("refuses an ordinary practitioner, and issues NO studio-wide analytics query for them", async () => {

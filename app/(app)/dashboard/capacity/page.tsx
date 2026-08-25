@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import { SectionLabel } from "@/components/ui/section-label";
 import {
   getOwnerCapacityBriefing,
@@ -102,7 +104,7 @@ function Card({
 }
 
 function CapacityBriefing({ briefing }: { briefing: OwnerCapacityBriefing }) {
-  const { clients, depth, futureTreatmentMinutes } = briefing;
+  const { clients, depth, futureTreatmentMinutes, rebookingWorklist } = briefing;
   return (
     <div className="space-y-8">
       <header>
@@ -132,6 +134,34 @@ function CapacityBriefing({ briefing }: { briefing: OwnerCapacityBriefing }) {
             <Figure fact={clients.activeTreatmentWithoutFutureBooking} />
           </Card>
         </div>
+
+        {/* WHO, not just HOW MANY. A count tells the owner there is work; it
+            does not tell them whose, and this page exists to answer that. The
+            list and the figure above are the SAME set — the count is published
+            as this list's length — so they cannot disagree.
+
+            It is rendered only when the figure is KNOWN. A partial call list
+            shown as if complete would walk the owner straight past the clients
+            it dropped, which is worse than showing nothing. */}
+        {rebookingWorklist.known && rebookingWorklist.value.length > 0 && (
+          <div className="mt-4 rounded-lg border border-line p-4">
+            <SectionLabel size="caption" as="h3">
+              Who to rebook
+            </SectionLabel>
+            <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-2 text-sm">
+              {rebookingWorklist.value.map((c) => (
+                <li key={c.clientId}>
+                  <Link
+                    href={`/clients/${c.clientId}`}
+                    className="underline underline-offset-4 hover:text-fg"
+                  >
+                    {c.name}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
       </section>
 
       <section>

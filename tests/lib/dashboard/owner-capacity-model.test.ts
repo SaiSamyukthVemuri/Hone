@@ -149,6 +149,8 @@ type StubBooking = {
 
 type StubClient = {
   id: string;
+  /** Display name. Defaults to the id so existing cases need no change. */
+  name?: string;
   /** Open plans for this client. A COUNT in the real read, never rows. */
   plans: number;
   /**
@@ -200,6 +202,7 @@ function stubClient(stub: Stub): {
       calls.push({ table, range: [lo, hi] });
       const rows = stub.clients.slice(lo, hi + 1).map((c) => ({
         id: c.id,
+        name: c.name ?? c.id,
         plan_count:
           c.planCountEmbed !== undefined ? c.planCountEmbed : [{ count: c.plans }],
         bookings: c.bookings,
@@ -389,6 +392,147 @@ describe("getOwnerCapacityBriefing — one statement, one snapshot", () => {
     expect(b.clients.activeTreatmentWithoutFutureBooking.known).toBe(false);
     expect(b.depth.known).toBe(false);
     expect(b.clients.totalRecords).toEqual({ known: true, value: 1 });
+  });
+
+  // -------------------------------------------------------------------------
+  // The rebooking worklist — WHO, not just how many
+  // -------------------------------------------------------------------------
+
+  const listOf = (b: Awaited<ReturnType<typeof getOwnerCapacityBriefing>>) => {
+    if (!b.rebookingWorklist.known) throw new Error("expected a known worklist");
+    return b.rebookingWorklist.value;
+  };
+
+  it("zero to rebook yields an EMPTY list, not an absent one", async () => {
+    const { client } = stubClient({
+      clients: [{ id: "c0", name: "Booked Bea", plans: 1, bookings: [booking()] }],
+    });
+    const b = await getOwnerCapacityBriefing(STUDIO, client);
+    expect(b.clients.activeTreatmentWithoutFutureBooking).toEqual({
+      known: true,
+      value: 0,
+    });
+    expect(listOf(b)).toEqual([]);
+  });
+
+  it("one to rebook yields that exact client, with the id the link needs", async () => {
+    const { client } = stubClient({
+      clients: [{ id: "c-quiet", name: "Quiet Quinn", plans: 1, bookings: [] }],
+    });
+    const b = await getOwnerCapacityBriefing(STUDIO, client);
+    expect(listOf(b)).toEqual([{ clientId: "c-quiet", name: "Quiet Quinn" }]);
+    expect(b.clients.activeTreatmentWithoutFutureBooking).toEqual({
+      known: true,
+      value: 1,
+    });
+  });
+
+  it("several to rebook yields exactly those members and no extras", async () => {
+    const { client } = stubClient({
+      clients: [
+        { id: "c1", name: "Zara", plans: 1, bookings: [] },
+        { id: "c2", name: "Booked Bea", plans: 1, bookings: [booking()] },
+        { id: "c3", name: "Amara", plans: 1, bookings: [] },
+        { id: "c4", name: "No Plan Nell", plans: 0, bookings: [] },
+      ],
+    });
+    const b = await getOwnerCapacityBriefing(STUDIO, client);
+    // Ordered by name — deterministic, and the order an owner reads a call list.
+    expect(listOf(b)).toEqual([
+      { clientId: "c3", name: "Amara" },
+      { clientId: "c1", name: "Zara" },
+    ]);
+    // The booked client and the client with no open plan are both absent.
+    expect(listOf(b).map((c) => c.clientId)).not.toContain("c2");
+    expect(listOf(b).map((c) => c.clientId)).not.toContain("c4");
+  });
+
+  it("a CONSULTATION-only client stays on the rebooking list", async () => {
+    // The whole reason the list exists: something is booked, but it is not
+    // treatment, so this client still needs a treatment appointment.
+    const { client } = stubClient({
+      clients: [
+        {
+          id: "c-consult",
+          name: "Consult Cara",
+          plans: 1,
+          bookings: [booking({ service: { modality: "consultation", name: "Consult" } })],
+        },
+      ],
+    });
+    const b = await getOwnerCapacityBriefing(STUDIO, client);
+    expect(listOf(b)).toEqual([{ clientId: "c-consult", name: "Consult Cara" }]);
+  });
+
+  it("a client with future TREATMENT is absent from the list", async () => {
+    const { client } = stubClient({
+      clients: [{ id: "c-booked", name: "Booked Bea", plans: 1, bookings: [booking()] }],
+    });
+    expect(listOf(await getOwnerCapacityBriefing(STUDIO, client))).toEqual([]);
+  });
+
+  it("an ARCHIVED client is absent — they are not in the snapshot at all", async () => {
+    // The root is current clients, so an archived client cannot reach the list
+    // even while holding an open plan. Modelled the way the read returns it.
+    const { client } = stubClient({
+      clients: [{ id: "c-current", name: "Current Cass", plans: 1, bookings: [] }],
+    });
+    const b = await getOwnerCapacityBriefing(STUDIO, client);
+    expect(listOf(b).map((c) => c.clientId)).toEqual(["c-current"]);
+  });
+
+  it("the count and the list are two representations of ONE set", async () => {
+    const { client } = stubClient({
+      clients: [
+        { id: "a", name: "Ann", plans: 1, bookings: [] },
+        { id: "b", name: "Ben", plans: 1, bookings: [] },
+        { id: "c", name: "Cal", plans: 1, bookings: [booking()] },
+      ],
+    });
+    const b = await getOwnerCapacityBriefing(STUDIO, client);
+    if (!b.clients.activeTreatmentWithoutFutureBooking.known) throw new Error("unreachable");
+    if (!b.depth.known) throw new Error("unreachable");
+    expect(b.clients.activeTreatmentWithoutFutureBooking.value).toBe(listOf(b).length);
+    // ...and the depth band agrees with both.
+    expect(b.depth.value.zero).toBe(listOf(b).length);
+  });
+
+  it("MISSING PLAN evidence makes the list UNKNOWN, not partial", async () => {
+    const { client } = stubClient({
+      clients: [
+        { id: "a", name: "Ann", plans: 1, bookings: [] },
+        { id: "b", name: "Ben", plans: 0, planCountEmbed: [], bookings: [] },
+      ],
+    });
+    const b = await getOwnerCapacityBriefing(STUDIO, client);
+    expect(b.rebookingWorklist.known).toBe(false);
+    expect(b.clients.activeTreatmentWithoutFutureBooking.known).toBe(false);
+  });
+
+  it("INCOMPLETE BOOKING evidence makes the list UNKNOWN, not partial", async () => {
+    const { client } = stubClient({
+      clients: [
+        { id: "a", name: "Ann", plans: 1, bookings: [booking()], trueBookingCount: 1100 },
+      ],
+    });
+    const b = await getOwnerCapacityBriefing(STUDIO, client);
+    expect(b.rebookingWorklist.known).toBe(false);
+    expect(b.clients.activeTreatmentWithoutFutureBooking.known).toBe(false);
+  });
+
+  it("a truncated ROOT makes the list UNKNOWN — the population was never in hand", async () => {
+    const { client } = stubClient({ clients: manyClients(1000), count: 1050 });
+    const b = await getOwnerCapacityBriefing(STUDIO, client);
+    expect(b.rebookingWorklist.known).toBe(false);
+  });
+
+  it("the worklist costs NO additional Data API request", async () => {
+    const { client, calls } = stubClient({
+      clients: [{ id: "c0", name: "Quiet Quinn", plans: 1, bookings: [] }],
+    });
+    const b = await getOwnerCapacityBriefing(STUDIO, client);
+    expect(listOf(b)).toHaveLength(1);
+    expect(calls).toEqual([{ table: "clients", range: [0, 999] }]);
   });
 
   // -------------------------------------------------------------------------

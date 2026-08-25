@@ -15,6 +15,7 @@ import {
   type BriefingAppointment,
   type ClientSnapshot,
   type Fact,
+  type RebookingClient,
   type PlanEvidence,
   type ServiceClassification,
 } from "./owner-capacity-model";
@@ -122,6 +123,15 @@ export type OwnerCapacityBriefing = {
     activeTreatmentBasis: string;
   };
 
+  /**
+   * WHO to chase, not just how many. The same set
+   * `activeTreatmentWithoutFutureBooking` counts — that figure is published as
+   * this list's length, so a rendered list and the number above it cannot
+   * disagree. UNKNOWN exactly when the count is unknown; a partial call list
+   * presented as complete would send the owner past the clients it dropped.
+   */
+  rebookingWorklist: Fact<ReadonlyArray<RebookingClient>>;
+
   /** How deeply the active treatment clients are booked. */
   depth: Fact<BookingDepth>;
   /** Real treatment time already on the calendar, in minutes. Excludes buffers. */
@@ -146,6 +156,7 @@ type CountEmbed = ReadonlyArray<{ count: number }>;
 
 type ClientRow = {
   id: string;
+  name: string;
   plan_count: CountEmbed;
   bookings: BookingRow[];
   booking_count: CountEmbed;
@@ -164,6 +175,7 @@ type ClientRow = {
  */
 const CAPACITY_SELECT = `
   id,
+  name,
   plan_count:treatment_plans(count),
   bookings:appointments(id, starts_at, ends_at, status, service:services(modality, name)),
   booking_count:appointments(count)
@@ -282,6 +294,7 @@ async function readSnapshot(
     const trueBookings = embeddedCount(row.booking_count);
     return {
       clientId: row.id,
+      name: row.name,
       // Three states. An unreadable count is not evidence of absence.
       planEvidence: planEvidenceOf(row.plan_count),
       // No count to check against is the same as a short read: not established.
@@ -400,9 +413,17 @@ export async function getOwnerCapacityBriefing(
         ? unknown(CLIPPED_BOOKINGS)
         : known(summarizeBookingDepth(activeIds, summary.treatmentCountByClient));
 
-  const activeTreatmentWithoutFutureBooking: Fact<number> = depth.known
-    ? known(depth.value.zero)
+  // ONE SOURCE OF TRUTH, deliberately. The worklist is gated on exactly the
+  // evidence `depth` is gated on, and the COUNT is then published as that
+  // list's length rather than derived a second time — so "7" and seven names
+  // cannot drift apart.
+  const rebookingWorklist: Fact<ReadonlyArray<RebookingClient>> = depth.known
+    ? known(summary.rebookingWorklist)
     : unknown(depth.reason);
+
+  const activeTreatmentWithoutFutureBooking: Fact<number> = rebookingWorklist.known
+    ? known(rebookingWorklist.value.length)
+    : unknown(rebookingWorklist.reason);
 
   return {
     timezone: tz,
@@ -414,6 +435,7 @@ export async function getOwnerCapacityBriefing(
       activeTreatmentWithoutFutureBooking,
       activeTreatmentBasis: ACTIVE_TREATMENT_BASIS,
     },
+    rebookingWorklist,
     depth,
     futureTreatmentMinutes,
   };

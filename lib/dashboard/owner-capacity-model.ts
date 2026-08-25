@@ -204,6 +204,8 @@ export type PlanEvidence = "open" | "none" | "unknown";
 
 export type ClientSnapshot = {
   clientId: string;
+  /** Display name, carried so the worklist can name who to chase. */
+  name: string;
   /** Open-plan evidence, derived from a COUNT and never from rows. */
   planEvidence: PlanEvidence;
   /** False when this client's booking rows were clipped by the embed ceiling. */
@@ -211,8 +213,27 @@ export type ClientSnapshot = {
   bookings: ReadonlyArray<BriefingAppointment>;
 };
 
+/** One row of the rebooking worklist: who to chase, and where to open them. */
+export type RebookingClient = {
+  readonly clientId: string;
+  readonly name: string;
+};
+
 export type SnapshotSummary = {
   readonly activeTreatmentClientIds: ReadonlySet<string>;
+  /**
+   * The active-treatment clients holding NO future treatment appointment —
+   * the same set the "no treatment booked" figure counts, as a LIST.
+   *
+   * It is not a parallel derivation: the count is published as this array's
+   * length, so the two cannot drift. A number the owner cannot act on is a
+   * signal that there is work without saying whose, and this screen exists to
+   * answer "who".
+   *
+   * Ordered by name, then by id to break ties — deterministic for a given
+   * snapshot, and in the order an owner would read a call list.
+   */
+  readonly rebookingWorklist: ReadonlyArray<RebookingClient>;
   /**
    * False when ANY current client's plan evidence could not be established.
    *
@@ -246,6 +267,18 @@ export function summarizeSnapshot(
       clients.filter((c) => c.planEvidence === "open").map((c) => c.clientId),
     ),
     planEvidenceComplete: clients.every((c) => c.planEvidence !== "unknown"),
+    rebookingWorklist: clients
+      // EXACTLY the predicate summarizeBookingDepth uses for its zero band: an
+      // open plan, and no future TREATMENT booking. A consultation is not
+      // treatment, so a client holding only one stays on the list — they are
+      // precisely who an owner still needs to book.
+      .filter(
+        (c) =>
+          c.planEvidence === "open" &&
+          (treatment.countByClient.get(c.clientId) ?? 0) === 0,
+      )
+      .map((c) => ({ clientId: c.clientId, name: c.name }))
+      .sort((a, b) => a.name.localeCompare(b.name) || a.clientId.localeCompare(b.clientId)),
     treatmentCountByClient: treatment.countByClient,
     treatmentMinutes: treatment.minutes,
     unclassifiedClientIds: treatment.unclassifiedClientIds,
