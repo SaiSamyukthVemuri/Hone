@@ -17,14 +17,15 @@ import {
 //
 // The deferred coverage for the capacity briefing. Its unit and DB suites
 // already prove the derivations and the read soundness; what only a browser can
-// prove is that an owner actually REACHES the page, that an ordinary
-// practitioner does not receive the aggregate, and that the rebooking names are
-// real links landing on the right client.
+// prove is that an owner actually REACHES the page through both discovery
+// surfaces (search and the dashboard CTA), that an ordinary practitioner gets
+// neither the aggregate nor either entry point, and that the rebooking names
+// are real links landing on the right client.
 //
 // THE POPULATION SEEDED HERE IS THE ONE SLICE 1 DEFINES: a current
 // (non-archived) client with an OPEN treatment plan and no future TREATMENT
-// appointment. Each of the three cases below is one axis of that definition,
-// with a control:
+// appointment. Each of the four cases below is one axis of that definition,
+// two qualifying and two excluded for DIFFERENT reasons:
 //
 //   Rebook Rita   open plan, nothing booked          -> on the list
 //   Consult Cara  open plan, future CONSULTATION     -> on the list (a
@@ -447,17 +448,51 @@ test("an owner can find the capacity page from search", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Practice capacity" })).toBeVisible();
 });
 
-test("an ordinary practitioner is not offered the owner-only entry", async ({ page }) => {
+test("the dashboard offers the owner a capacity CTA that reaches the page", async ({
+  page,
+}) => {
+  // The SECOND discovery surface. Search is proved above; this is the link the
+  // dashboard renders under `isOwner`, and nothing else in this spec covered
+  // it — a regression exposing or breaking it would have gone unnoticed.
+  await loginAsOwner(page, seed);
+  await page.goto("/dashboard");
+
+  // The CTA's accessible name concatenates its two spans, so match on the
+  // distinctive part and require exactly one — a `.first()` would hide a
+  // duplicate CTA.
+  const cta = page.getByRole("link", { name: /Practice capacity/ });
+  await expect(cta).toHaveCount(1);
+  await expect(cta).toHaveAttribute("href", "/dashboard/capacity");
+
+  // WHERE IT GOES, not just that it exists.
+  await cta.click();
+  await page.waitForURL("**/dashboard/capacity");
+  await expect(page.getByRole("heading", { name: "Practice capacity" })).toBeVisible();
+});
+
+test("an ordinary practitioner is offered the capacity entry neither in search nor on the dashboard", async ({
+  page,
+}) => {
   await loginByMagicLink(page, member.email);
+
+  // (1) SEARCH. Owner entries are filtered BEFORE matching, so the surface is
+  // not advertised — there is no "no permission" row either.
   await page.goto("/clients");
   await page
     .getByPlaceholder("Search clients, appointments, notes...")
     .fill("capacity");
-
-  // Owner entries are filtered BEFORE matching, so the surface is not
-  // advertised at all — there is no "no permission" row either.
   await expect(page.getByRole("link", { name: /Practice capacity/ })).toHaveCount(0);
   // The search did run: it reports an empty result rather than silently
   // rendering nothing, which is what makes the absence meaningful.
   await expect(page.getByText("No results found.")).toBeVisible();
+
+  // (2) THE DASHBOARD CTA — asserted on the dashboard ITSELF. Absence from
+  // search says nothing about the dashboard, and this test's name previously
+  // claimed both while proving only the first.
+  await page.goto("/dashboard");
+  await expect(page.getByRole("heading", { name: "Today" }).first()).toBeVisible();
+  await expect(page.getByRole("link", { name: /Practice capacity/ })).toHaveCount(0);
+  // By destination as well as by name: a CTA relabelled but still pointing at
+  // the owner surface would be the same leak.
+  await expect(page.locator('a[href="/dashboard/capacity"]')).toHaveCount(0);
 });
