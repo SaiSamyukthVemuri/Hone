@@ -256,10 +256,14 @@ test("an ordinary practitioner is refused the owner aggregate", async ({ page })
   // renamed.
   await expect(page.locator("p.tabular-nums")).toHaveCount(0);
 
-  // And no client identity: neither the worklist nor a name nor a record link.
+  // And no client identity: not the worklist, not ANY seeded name, not a record
+  // link. All four names, as TEXT — a leak that rendered a client as plain text
+  // rather than as a link would otherwise satisfy the link check while the
+  // comment claimed no identity reached them at all.
   await expect(page.getByText("Who to rebook")).toHaveCount(0);
-  await expect(page.getByText(REBOOK)).toHaveCount(0);
-  await expect(page.getByText(CONSULT)).toHaveCount(0);
+  for (const name of [REBOOK, CONSULT, BOOKED, NOPLAN]) {
+    await expect(page.getByText(name), `${name} must not reach a practitioner`).toHaveCount(0);
+  }
   await expect(page.locator('a[href^="/clients/"]')).toHaveCount(0);
 });
 
@@ -313,8 +317,12 @@ test("a client with a future TREATMENT is not on the rebooking list", async ({ p
   await expect(page.getByRole("heading", { name: "Who to rebook" })).toBeVisible();
   // The claim the title makes: absent from the LIST.
   await expect(worklistOf(page).getByRole("link", { name: BOOKED })).toHaveCount(0);
-  // And, strictly stronger, absent from the page entirely.
+  // And absent from the page entirely — as TEXT, not merely as a link. The
+  // link-only check was labelled "strictly stronger" and was not: a worklist
+  // that regressed to rendering her name as plain text would have satisfied
+  // both link counts.
   await expect(page.getByRole("link", { name: BOOKED })).toHaveCount(0);
+  await expect(page.getByText(BOOKED)).toHaveCount(0);
 
   // ABSENCE IS ONLY MEANINGFUL IF SHE EXISTS. An unseeded client is absent from
   // the worklist too, so this test would pass on a broken fixture — the exact
@@ -454,12 +462,20 @@ test("an owner can find the capacity page from search", async ({ page }) => {
   // "Practice capacity" CTA link, which would satisfy the assertion below
   // without search having matched anything at all.
   await page.goto("/clients");
-  await page
-    .getByPlaceholder("Search clients, appointments, notes...")
-    .fill("capacity");
-  // Exactly one, not `.first()`: a `.first()` here would pass even if the page
+  const searchBox = page.getByPlaceholder("Search clients, appointments, notes...");
+  await searchBox.fill("capacity");
+  // SCOPED TO THE SEARCH WIDGET, not the page. The results panel is a sibling
+  // of the input inside GlobalSearch's own container, so the input's parent
+  // bounds both. Page-wide, this proved only that SOME link with that name and
+  // destination existed after typing: if the registry stopped returning the
+  // entry while /clients gained a shell link with the same name, the count, the
+  // href, the click and the landing assertion would all still have passed —
+  // the same defect already fixed for the dashboard CTA, which I did not carry
+  // across to the test beside it.
+  const searchWidget = searchBox.locator("..");
+  // Exactly one, not `.first()`: a `.first()` here would pass even if the panel
   // were rendering duplicate or unrelated capacity links.
-  const result = page.getByRole("link", { name: /Practice capacity/ });
+  const result = searchWidget.getByRole("link", { name: /Practice capacity/ });
   await expect(result).toHaveCount(1);
   await expect(result).toBeVisible();
   // WHERE IT GOES, not just that it exists. If the registry kept the title and
