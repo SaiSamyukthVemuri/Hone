@@ -184,9 +184,10 @@ describe("privacy policy — prospective client / waitlist coverage", () => {
   });
 
   // -------------------------------------------------------------------------
-  // CODEX (#637), FOURTH PASS — P2. The paragraph above previously ended "If
-  // the message is not accepted, we tell you the request did not go through",
-  // which collapses THREE runtime outcomes into two. WAIT-01 has:
+  // CODEX (#637), FOURTH PASS — P2. The paragraph above once ended, in wording
+  // now removed: "If the message is not accepted, we tell you the request did
+  // not go through" (SWEEP-EXEMPT: quoted, not asserted).
+  // That collapses THREE runtime outcomes into two. WAIT-01 has:
   //
   //   no recipient          -> SUBMIT_FAILED       "we couldn't record it"
   //   definite refusal      -> SUBMIT_FAILED       "we couldn't record it"
@@ -199,16 +200,19 @@ describe("privacy policy — prospective client / waitlist coverage", () => {
   // because the outcome is unknowable.
   // -------------------------------------------------------------------------
   it("splits DEFINITE failure from an UNCERTAIN outcome, as the code does", () => {
-    // 1. The definite branch — and only it — may say "did not go through".
+    // 1. The definite branch is described by WHAT HONE KNOWS — a known
+    //    non-send — with causes as EXAMPLES, not as an exhaustive list. An
+    //    enumeration is what went stale last time: it named provider refusal
+    //    and no-recipient, and missed the locally-rejected sends.
     expect(PRIVACY).toMatch(
-      /If the email service definitely\s+refuses the message, or the studio has no email address for us to send\s+to, we tell you the request did not go through/,
+      /If we know the request was not sent\s+&mdash; for example because there is no studio email address available,\s+or because the send cannot be started or is refused &mdash; we tell you\s+the request did not go through/,
     );
     // 2. The uncertain branch says "could not confirm", never "failed".
     expect(PRIVACY).toMatch(
-      /If the outcome is\s+uncertain instead[\s\S]{0,120}we tell you we could not confirm your request, and ask\s+you to contact the studio before trying again/,
+      /If the outcome is uncertain instead,\s+meaning we tried and could not establish what happened, we tell you we\s+could not confirm your request, and ask you to contact the studio\s+before trying again/,
     );
     // 3. Stated as a rule, so the distinction cannot be read as incidental.
-    expect(PRIVACY).toMatch(/We do not describe an\s+uncertain outcome as a failure/);
+    expect(PRIVACY).toMatch(/We do not describe an uncertain outcome as a\s+failure/);
     // ...and neither branch claims a join.
     expect(PRIVACY).toMatch(/in neither case do we tell you that\s+you joined/);
     // No internal vocabulary leaks into the WAITLIST copy. Scoped to §6's
@@ -257,6 +261,22 @@ describe("privacy policy — prospective client / waitlist coverage", () => {
     expect(action).toMatch(
       /new_client_waitlist_no_studio_recipient[\s\S]{0,200}NEW_CLIENT_WAITLIST_SUBMIT_FAILED/,
     );
+    // AND THE LOCALLY-KNOWN NON-SEND, which is why the policy describes a
+    // CATEGORY rather than listing causes. With no transport configured the
+    // sender rejects before contacting anything, so a definite failure occurs
+    // with no provider refusal and a perfectly good studio address. An
+    // enumeration of "refusal or no recipient" missed exactly this.
+    const sender = read("lib/email/new-client-waitlist-send.ts");
+    expect(sender).toMatch(
+      /if \(!transport\) return \{ status: "rejected", code: "not_configured" \};/,
+    );
+    // "rejected" is neither "ambiguous" nor "accepted", so it lands in the
+    // definite branch above — the same treatment as a refusal.
+    expect(sender).toMatch(/\| \{ status: "rejected"; code: string \| null \}/);
+    // Sibling local rejections share that status, so the category holds for
+    // them too rather than needing another clause each.
+    expect(sender).toMatch(/status: "rejected", code: "invalid_recipient"/);
+    expect(sender).toMatch(/status: "rejected", code: "missing_tenant_scope"/);
     // And the two visitor-facing strings really are different messages: one
     // says we could not RECORD it, the other that we could not CONFIRM it.
     const failed = lib.match(/NEW_CLIENT_WAITLIST_SUBMIT_FAILED =\s*\n\s*"([^"]+)"/)?.[1];
@@ -704,6 +724,116 @@ describe("public waitlist form — notice at the point of collection", () => {
     // it anything that could vary with which database outcome occurred.
     expect(FORM).toMatch(/NewClientWaitlistJoinedPanel\(\{ studioName \}: \{ studioName: string \}\)/);
     expect(FORM).not.toMatch(/JoinedPanel[\s\S]{0,400}COLLECTION_NOTICE/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// E. THE SAME-CLAIM SWEEP
+// ---------------------------------------------------------------------------
+//
+// FOUR REVIEW ROUNDS, AND TWICE THE SAME SHAPE OF DEFECT: the behaviour was
+// repaired and an old DESCRIPTION of that behaviour was left standing in
+// another file. Round four found the WAIT-01 failure taxonomy stated the old
+// way in the risk register, and the withdrawn hard-fail gate still promised in
+// the runtime module comment — and a manual sweep then found it a THIRD time,
+// in this suite's sibling test header.
+//
+// Every negative control before this one is scoped to a single file, so none of
+// them could see any of that. This one is scoped to the CONTRACT, across every
+// file PR #637 owns.
+//
+// HOW HISTORY IS ALLOWED. Narrating a repaired defect is legitimate and worth
+// keeping — it is why the current wording is what it is. Two things keep such
+// prose out of the way here:
+//
+//   1. the patterns match the claim only in the PRESENT tense, so "a production
+//      build aborted while..." and "an earlier draft aborted the build" pass
+//      untouched, while "the build aborts if..." does not;
+//   2. a line carrying the token SWEEP-EXEMPT is skipped outright. That covers
+//      the two cases where the words have to appear verbatim and are not a
+//      claim: a comment quoting the old sentence, and this suite's own
+//      representative fixtures.
+//
+// Adding a file to #637 means adding it here.
+// ---------------------------------------------------------------------------
+describe("no file states a repaired WAIT-02B contract the old way", () => {
+  const OWNED = [
+    "app/privacy/page.tsx",
+    "app/book/[slug]/NewClientWaitlistForm.tsx",
+    "docs/03_SECURITY_AND_PRIVACY.md",
+    "docs/10_DEPLOYMENT_AND_ENV.md",
+    "lib/booking/new-client-waitlist.ts",
+    "scripts/check-production-env-gates.mjs",
+    "e2e/new-client-waitlist.spec.ts",
+    "tests/app/privacy/waitlist-prospect-disclosure.test.ts",
+    "tests/scripts/check-production-env-gates.test.ts",
+    "tests/lib/booking/new-client-waitlist-flag.test.ts",
+    "tests/app/book/new-client-waitlist-durable-commit.test.ts",
+  ];
+
+  /** FAMILY A — the WAIT-01 failure / delivery taxonomy. */
+  const FAILURE_TAXONOMY = [
+    /(?:any|every|a) (?:message|submission|send|request)[^.\n]{0,60}not accepted[^.\n]{0,60}(?:is|are) reported as (?:a )?fail/i,
+    /not accepted[^.\n]{0,40}we tell you the request did not go through/i,
+    /we can tell you that (?:such )?a (?:mailbox )?copy exists/i,
+    /(?:we|hone) can always (?:tell|determine) which handling/i,
+  ];
+
+  /** FAMILY B — the Stage-B activation-gate semantics. */
+  const GATE_SEMANTICS = [
+    /production build (?:still )?aborts (?:if|when) an entry/i,
+    /build aborts (?:if|when|on)[^.\n]{0,60}(?:studio slug|slug convention)/i,
+    /green (?:check|gate|build) proves activation/i,
+    /wildcard[^.\n]{0,40}enables every studio/i,
+  ];
+
+  function scan(patterns: RegExp[]): string[] {
+    const hits: string[] = [];
+    for (const rel of OWNED) {
+      read(rel).split("\n").forEach((line, i) => {
+        if (line.includes("SWEEP-EXEMPT")) return;
+        for (const p of patterns) {
+          if (p.test(line)) hits.push(`${rel}:${i + 1}: ${line.trim().slice(0, 120)}`);
+        }
+      });
+    }
+    return hits;
+  }
+
+  it("ANTI-VACUITY: every owned file is readable and non-trivial", () => {
+    // A typo in a path would silently scan nothing and pass forever.
+    for (const rel of OWNED) {
+      expect(read(rel).length, `${rel} must be readable`).toBeGreaterThan(200);
+    }
+  });
+
+  it("FAMILY A: no file reports every non-accepted send as a definite failure", () => {
+    expect(scan(FAILURE_TAXONOMY)).toEqual([]);
+  });
+
+  it("FAMILY B: no file claims the build aborts over an allowlist entry", () => {
+    expect(scan(GATE_SEMANTICS)).toEqual([]);
+  });
+
+  it("ANTI-VACUITY: the representative stale claims really would be caught", () => {
+    // If these ever stop matching, the two tests above are decorative. This is
+    // the check that the patterns have teeth, done in memory rather than by
+    // editing a file.
+    const A = "any message not accepted is reported as failed"; // SWEEP-EXEMPT
+    const B = "production build aborts when an entry cannot be a studio slug"; // SWEEP-EXEMPT
+    expect(FAILURE_TAXONOMY.some((p) => p.test(A)), `family A must catch: ${A}`).toBe(true);
+    expect(GATE_SEMANTICS.some((p) => p.test(B)), `family B must catch: ${B}`).toBe(true);
+    // ...and past-tense narration of the same facts must NOT be caught.
+    for (const historical of [
+      "a production build aborted while the allowlist named any studio",
+      "an earlier draft aborted the build on any entry outside the shape",
+      "Under Stage A this exact case aborted the build.",
+    ]) {
+      expect(
+        GATE_SEMANTICS.some((p) => p.test(historical)),
+        `history must stay legal: ${historical}`,
+      ).toBe(false);
+    }
   });
 });
 

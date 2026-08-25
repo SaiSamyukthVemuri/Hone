@@ -134,8 +134,12 @@
  * ships with production holding exactly that. Turning a studio on is a separate,
  * explicit operator action against a build that already carries the disclosure.
  *
- * NO BYPASS, AND NO PER-STUDIO EXCEPTION, IN EITHER DIRECTION. No studio is
- * carved out of the shape check by name, and there is no flag that skips it.
+ * NO PER-STUDIO EXCEPTION, AND NOTHING TO BYPASS. There is no flag that alters
+ * how this variable is handled, and no studio is named anywhere in this file.
+ * Note there is no longer a block to bypass either: the convention check WARNS
+ * and does not fail, so the only thing an operator could "get past" is a
+ * message. The gates that DO fail a build (Upstash, ops-alert delivery, Google
+ * Calendar) keep their no-bypass property in the ordinary sense.
  *
  * Off-production is untouched: local, CI and preview still set the reserved e2e
  * slug so the browser lane can exercise the feature.

@@ -219,18 +219,26 @@ describe("check-production-env-gates script (PR #262)", () => {
 // one would have put personal data outside every disclosed category. Stage B1
 // ships that disclosure (pinned by
 // tests/app/privacy/waitlist-prospect-disclosure.test.ts), so the prohibition
-// is replaced by a SHAPE check.
+// is gone and this gate is REPORT-ONLY for the durable allowlist: it describes
+// the value and cannot fail a build over it.
 //
-// What must remain true after the swap, and is asserted below:
+// (A later draft did hard-fail on anything outside the current writer slug
+// shape. That was withdrawn: the shape is what today's WRITERS enforce, not the
+// domain of studios.slug, which has a UNIQUE constraint and no shape or length
+// check — so the gate was stricter than the runtime and would have blocked a
+// legitimate activation.)
+//
+// What must remain true, and is asserted below:
 //
 //   * unset / empty / whitespace / comma-only  -> zero studios, PASS, dark.
-//     This is the state Stage B1 ships to production.
-//   * an explicitly named, well-formed slug     -> PASS. Activation is now
-//     possible without another code release.
-//   * anything that CANNOT be a studio slug     -> FAIL. Exact-match membership
-//     means a wildcard activates nothing; without this gate it would deploy
-//     green and silently do nothing, which is worse than refusing it.
-//   * no slug value, valid or rejected, ever reaches stdout/stderr.
+//     This is the state Stage B1 ships to production, and the ONE studio-level
+//     claim this script can actually prove.
+//   * an explicitly named slug                 -> PASS, reported as CONFIGURED
+//     NORMALISED ENTRIES. Activation is now possible without a code release,
+//     but this script never proves it happened.
+//   * anything outside the writer convention   -> WARN, build still succeeds.
+//     Never FAIL, and never a claim that no studio matches.
+//   * no slug value, of any shape, ever reaches stdout/stderr.
 //   * off-production is untouched.
 const VALID_SLUG_SENTINEL = "willowlike-studio-must-never-be-printed";
 // Held as NAMED CONSTANTS, never inlined at the assignment site. A repository

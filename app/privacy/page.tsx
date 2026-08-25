@@ -339,14 +339,14 @@ export default function PrivacyPolicyPage() {
       </P>
       <P>
         <strong>What we tell you when that attempt does not clearly succeed</strong>{" "}
-        depends on what we actually know. If the email service definitely
-        refuses the message, or the studio has no email address for us to send
-        to, we tell you the request did not go through. If the outcome is
-        uncertain instead &mdash; we tried, and could not establish what
-        happened &mdash; we tell you we could not confirm your request, and ask
-        you to contact the studio before trying again. We do not describe an
-        uncertain outcome as a failure, and in neither case do we tell you that
-        you joined.
+        depends on what we actually know. If we know the request was not sent
+        &mdash; for example because there is no studio email address available,
+        or because the send cannot be started or is refused &mdash; we tell you
+        the request did not go through. If the outcome is uncertain instead,
+        meaning we tried and could not establish what happened, we tell you we
+        could not confirm your request, and ask you to contact the studio
+        before trying again. We do not describe an uncertain outcome as a
+        failure, and in neither case do we tell you that you joined.
       </P>
       <P>
         Under either handling, joining a waitlist does not create an

@@ -849,6 +849,44 @@ describe("Stage B records what closed, and what is still open", () => {
   // would have blocked activation for a legacy studio whose slug the column
   // still permits. The doc an operator reads must record that it no longer
   // adjudicates.
+  // CODEX (#637) round 4. The register summarised WAIT-01 as two outcomes —
+  // accepted, or "not accepted therefore failed" — after §6 had already been
+  // corrected to three. A readiness record that contradicts the published
+  // policy is worse than one that says less.
+  it("records all THREE WAIT-01 outcomes, not two", () => {
+    expect(RISKS).toContain("It states all three WAIT-01 outcomes, not two");
+    expect(RISKS).toContain("where Hone knows the request was not sent");
+    expect(RISKS).toContain("an ambiguous send is deliberately");
+    expect(RISKS).toMatch(/\*\*not\*\* reported as a failure/);
+    // ...and the old two-way summary is gone.
+    expect(RISKS).not.toContain("is not accepted is reported as failed");
+    // ANTI-VACUITY: the policy really does carry the same three-way split.
+    const policy = readFileSync(
+      path.resolve(__dirname, "../../../app/privacy/page.tsx"),
+      "utf8",
+    );
+    expect(policy).toContain("If we know the request was not sent");
+    expect(policy).toContain("If the outcome is uncertain instead");
+    expect(policy).toContain("accepted the message for sending");
+  });
+
+  // The runtime module promised a deploy-time protection that had been
+  // deliberately withdrawn — a maintainer reading it would rely on it.
+  it("the runtime module describes the gate as report-only", () => {
+    const mod = readFileSync(
+      path.resolve(__dirname, "../../../lib/booking/new-client-waitlist.ts"),
+      "utf8",
+    );
+    expect(mod).toContain("WHAT REPLACED IT IS REPORT-ONLY");
+    expect(mod).toContain("it cannot fail a build over it");
+    expect(mod).toMatch(/DO NOT RELY ON THE GATE TO CATCH A MISTYPED SLUG/);
+    // The withdrawn promise is gone, in the present tense.
+    expect(mod).not.toMatch(/production build (?:still )?aborts/i);
+    // ...while the properties that ARE still true survive.
+    expect(mod).toMatch(/THERE IS NO GLOBAL ENABLE, BY CONSTRUCTION/);
+    expect(mod).toMatch(/DEFAULT OFF/);
+  });
+
   it("records that the deploy-time check is report-only, not an adjudicator", () => {
     expect(ENV_DOC).toContain("report-only");
     expect(ENV_DOC).toContain("not the domain of `studios.slug`");

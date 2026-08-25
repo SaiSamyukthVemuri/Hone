@@ -70,10 +70,23 @@ export const NEW_CLIENT_WAITLIST_SLUGS_ENV = "NEW_CLIENT_WAITLIST_STUDIO_SLUGS";
  * Stage A additionally forbade production from naming ANY studio here, enforced
  * at deploy time by scripts/check-production-env-gates.mjs, because the public
  * privacy notice did not yet cover a waitlist prospect. Stage B1 ships that
- * disclosure, so the blanket prohibition is replaced by a SHAPE check: a
- * production build still aborts if an entry cannot be a studio slug (a wildcard
- * would match nothing here and activate silently), but a correctly named studio
- * is now permitted. No second flag system was added for activation, and none
+ * disclosure, so the prohibition is gone and a correctly named studio is now
+ * permitted.
+ *
+ * WHAT REPLACED IT IS REPORT-ONLY. That script no longer gates this variable at
+ * all — it cannot fail a build over it. It has no database access, so it can
+ * prove neither that an entry identifies a studio nor that anything is
+ * activated; it reports the NORMALISED CONFIGURED ENTRIES it would parse, and
+ * WARNS on a value outside the shape current writers give a slug. That warning
+ * does NOT block: `studios.slug` carries a UNIQUE constraint and no shape or
+ * length check, so a legacy or directly-created row can sit outside that shape
+ * and still be matched exactly HERE — refusing such a value would make the
+ * build gate stricter than this module, and would block a legitimate
+ * activation. The one thing an empty value does prove is that nothing is
+ * enabled. DO NOT RELY ON THE GATE TO CATCH A MISTYPED SLUG: nothing does, and
+ * only the product can confirm an activation.
+ *
+ * No second flag system was added for activation, and none
  * should be — the answer to "is this studio's durable waitlist on?" must stay
  * this one set-membership question.
  *

@@ -177,9 +177,11 @@ describe("validateWaitlistSubmission", () => {
 //
 // Stage A held the durable prospect record shut with a deploy-time prohibition
 // on this variable naming ANY studio. Stage B1 ships the public disclosure and
-// replaces that with a shape check, which makes THIS predicate the whole of
-// activation. Being right in both directions now decides whether a real
-// person's details are committed to a table.
+// removes that prohibition, which makes THIS predicate the whole of activation.
+// Nothing at deploy time gates it any more — the env-gate script is REPORT-ONLY
+// for this variable and cannot fail a build over it — so being right in both
+// directions here is what decides whether a real person's details are committed
+// to a table.
 //
 // Its semantics are deliberately identical to the gate above (same parser, same
 // exact-match membership), so the boundaries are re-pinned here rather than
