@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Locator, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 
 import { loginAsOwner, loginByMagicLink } from "./helpers/flows";
@@ -57,6 +57,22 @@ let rebookClientId: string;
 let noplanClientId: string;
 /** A second studio that keeps NO treatment plans — the fail-closed fixture. */
 let planless: E2eSeed;
+
+/**
+ * The product's own card container: SectionLabel renders the label as an <h3>
+ * that is a DIRECT child of the card div, so the heading's parent IS the card.
+ * Scoping this way binds an assertion to one named card rather than to a grid
+ * ancestor that happens to contain it.
+ */
+const cardFor = (page: Page, label: string) =>
+  page.getByRole("heading", { name: label, exact: true }).locator("..");
+
+/**
+ * The numeric figure inside a card. `Figure` renders exactly this element when
+ * a value is KNOWN and renders NO such element when it is unknown, so its
+ * presence/absence is itself the known/unknown distinction.
+ */
+const figureIn = (card: Locator) => card.locator("p.tabular-nums");
 
 async function newClient(studioId: string, name: string): Promise<string> {
   const rows = await sql<{ id: string }>(
@@ -276,11 +292,24 @@ test("the worklist holds exactly the qualifying clients, and matches its own cou
   await expect(page.getByRole("heading", { name: NOPLAN })).toBeVisible();
 
   // And the rendered list is exactly as long as the figure above it claims.
+  //
+  // BOUND TO ONE EXACT CARD. An earlier revision matched /^No treatment booked/
+  // with `page.locator("div").first()`, which is the booking-depth ZERO BAND
+  // rather than the client card above the list — and a bare `div` ancestor can
+  // resolve to the whole grid, so a matching digit in any depth card satisfied
+  // it. This scopes to the client card by its own heading, then to that card's
+  // own figure element, and asserts exact equality with the link count.
   await page.goto("/dashboard/capacity");
   const rendered = await page.locator('a[href^="/clients/"]').count();
   expect(rendered).toBe(2);
-  const card = page.locator("div").filter({ hasText: /^No treatment booked/ }).first();
-  await expect(card).toContainText("2");
+
+  const countCard = cardFor(page, "No future treatment booked");
+  // Its note is unique to the CLIENT card; the depth band carries none. This
+  // pins that the assertion below is reading the intended card.
+  await expect(countCard).toContainText(
+    "Active treatment clients with no upcoming treatment appointment",
+  );
+  await expect(figureIn(countCard)).toHaveText(String(rendered));
 });
 
 // ---------------------------------------------------------------------------
@@ -298,13 +327,40 @@ test("a studio with no treatment plans shows no figure and no partial list", asy
   await page.goto("/dashboard/capacity");
 
   await expect(page.getByRole("heading", { name: "Practice capacity" })).toBeVisible();
-  await expect(page.getByText("Not enough evidence yet").first()).toBeVisible();
-  // The reason repeats across every figure that inherits the absence — the
-  // count, the no-future-booking figure and all four depth bands. That
-  // repetition IS the fail-closed behaviour, so assert on the first and pin the
-  // propagation separately below.
+
+  // EVERY action-driving figure must suppress — asserted one card at a time.
+  // A bare `> 1` proved only that two placeholders rendered, so the four depth
+  // bands could have regressed to known-looking zeroes and still passed.
+  const SUPPRESSED = [
+    "Active treatment clients",
+    "No future treatment booked",
+    "No treatment booked",
+    "1 or more treatments",
+    "2 or more treatments",
+    "3 or more treatments",
+  ];
+  for (const label of SUPPRESSED) {
+    const card = cardFor(page, label);
+    await expect(card, `${label} must say why it cannot answer`).toContainText(
+      "Not enough evidence yet",
+    );
+    // No numeric figure AT ALL — not a zero, which on this screen would read as
+    // "nobody needs booking".
+    await expect(figureIn(card), `${label} must render no number`).toHaveCount(0);
+  }
+  // Exactly six, so a seventh suppression (or a missing one) is a failure too.
+  await expect(page.getByText("Not enough evidence yet")).toHaveCount(
+    SUPPRESSED.length,
+  );
   await expect(page.getByText(/It is not zero/).first()).toBeVisible();
-  expect(await page.getByText("Not enough evidence yet").count()).toBeGreaterThan(1);
+
+  // ...and the figures that are legitimately KNOWN still render, so this is a
+  // statement about evidence rather than a blanket "everything is unknown".
+  for (const known of ["Client records", "Treatment time booked"]) {
+    const card = cardFor(page, known);
+    await expect(card).not.toContainText("Not enough evidence yet");
+    await expect(figureIn(card)).toHaveCount(1);
+  }
 
   // No worklist at all — not an empty one presented as complete.
   await expect(page.getByRole("heading", { name: "Who to rebook" })).toHaveCount(0);
