@@ -62,12 +62,22 @@ describe("0187 — migration state", () => {
     expect(isRepoMax(VERSION)).toBe(true);
   });
 
-  it("is pending against hosted state, because it has not been applied", () => {
-    // 0187 is deliberately unapplied while this lands: migration-first ordering
-    // means the apply is a separate, authorized operator step.
+  it("IS APPLIED to production, and hosted has caught up with the repo", () => {
+    // WHAT CHANGED AND WHY THIS WAS REWRITTEN RATHER THAN DELETED. This block
+    // asserted the migration-first posture while 0187 sat unapplied: hosted was
+    // strictly BELOW repo, and 0187 read as pending. That was true and is now
+    // history — 0187 was applied on 2026-08-24 from the exact reviewed #636
+    // head, BEFORE that PR merged, and hosted caught up.
+    //
+    // Derived, never pinned to a literal: whoever adds 0188 changes nothing
+    // here, because repo/hosted equality is read from the canonical record
+    // rather than from a number typed into this file.
     const state = migrationState();
     expect(state.repo_migration_max).toBe(VERSION);
-    expect(Number(state.hosted_migration_max)).toBeLessThan(Number(VERSION));
+    expect(state.hosted_migration_max).toBe(VERSION);
+    expect(state.repo_equals_hosted).toBe(true);
+    expect(state.pending_migrations).toEqual([]);
+    expect(state.next_free_migration).toBe("0188");
   });
 });
 
@@ -614,5 +624,281 @@ describe("0187 — the file is frozen once applied", () => {
   it("carries a stable digest so a later edit is visible", () => {
     const digest = createHash("sha256").update(SQL, "utf8").digest("hex");
     expect(digest).toMatch(/^[0-9a-f]{64}$/);
+  });
+});
+
+// ===========================================================================
+// CURRENT HOSTED STATE — 0187 OWNS IT NOW
+// ===========================================================================
+//
+// Inherited from 0186's file at the apply hand-off. Whichever migration is the
+// applied head owns these facts; a superseded migration's file must not keep
+// deciding them, or it has to be rewritten on every future apply.
+//
+// Deliberately small. This block records WHAT PRODUCTION HAS RUN and nothing
+// else: it does not police the wording of the record's prose, and it makes no
+// claim about email, SMS or cron, none of which is needed to establish hosted
+// migration state.
+
+function canonicalRecord(): {
+  hosted_migration_max: string;
+  /** NULLABLE — null right now, because no SERVER apply timestamp was captured. */
+  hosted_applied_at: string | null;
+  hosted_applied_at_precision: string;
+  hosted_note: string;
+} {
+  return JSON.parse(
+    readFileSync(path.join(ROOT, "docs/production/migration-state.json"), "utf8"),
+  );
+}
+
+/**
+ * THE ONE DELIMITER between the 0187 head record and the frozen 0186 record it
+ * carries. The carried record contains this same phrase (0186 carried its own
+ * chain forward), so the FIRST occurrence is the boundary.
+ */
+const CARRIED_RECORD_BOUNDARY =
+  "CARRIES THE FULL CHECKSUM CHAIN FORWARD so no earlier apply record is dropped: ";
+
+/** The phrase a current-record claim is made with. Counted, never merely found. */
+const CURRENT_RECORD_PHRASE = "as the CURRENT hosted-state record";
+/** Captures WHICH record an active supersession names. */
+const SUPERSESSION = /SUPERSEDES the (\d{4}) record as the CURRENT hosted-state record/g;
+
+/**
+ * sha256 of the ENTIRE `hosted_note` as it stood on this PR's production base,
+ * f9ad0f727503ec7aaa6208aa4aa7e5c84ad5eb1e — i.e. the complete frozen 0186
+ * record — 13,269 UTF-8 bytes — covering 0185, 0184, 0183, 0182, 0181, 0180,
+ * 0179, 0178, 0177, 0176, 0175, 0174, 0173, 0172 and the 0171 tail with every
+ * checksum and the exact ordering.
+ *
+ * Derived mechanically: `git show <base>:docs/production/migration-state.json`,
+ * parse `hosted_note`, sha256 the exact UTF-8 bytes. Not copied from prose, not
+ * taken from this branch's own suffix, no whitespace normalisation.
+ */
+const CARRIED_0186_NOTE_SHA256 =
+  "bd8846224fa42596dd98efae112dd2e796611493a0c6a01c5db0f2daed5c757f";
+
+describe("0187 — current hosted state", () => {
+  it("is the APPLIED production head", () => {
+    const state = migrationState();
+    expect(state.hosted_migration_max).toBe(VERSION);
+    expect(canonicalRecord().hosted_migration_max).toBe(VERSION);
+  });
+
+  it("hosted == repo, nothing pending, next free 0188 and UNCLAIMED", () => {
+    // All four are DERIVED repo-side facts read from the canonical utility, so
+    // whoever adds 0188 moves the last assertion by adding a file, not by
+    // editing a number here.
+    const state = migrationState();
+    expect(state.repo_equals_hosted).toBe(true);
+    expect(state.pending_migrations).toEqual([]);
+    expect(state.next_free_migration).toBe("0188");
+    expect(state.versions).not.toContain("0188");
+  });
+
+  it("NO SERVER APPLY TIMESTAMP was captured, and the window is not passed off as one", () => {
+    // THE PRECISION LAW. `hosted_applied_at` stays null because no
+    // server-generated apply instant was ever read. An operator-observed
+    // client-side window WAS captured, and it lives in the precision field
+    // where it is explicitly labelled — never in `hosted_applied_at`, which a
+    // future reader would take for server time.
+    const rec = canonicalRecord();
+    expect(rec.hosted_applied_at).toBeNull();
+    expect(migrationState().hosted_applied_at).toBeNull();
+
+    const p = rec.hosted_applied_at_precision;
+    expect(p).toContain("NO SERVER-GENERATED APPLY TIMESTAMP WAS CAPTURED");
+    expect(p).toContain("OPERATOR-OBSERVED CLIENT-SIDE WINDOW");
+    expect(p).toContain("2026-08-24T23:36:31.509Z");
+    expect(p).toContain("2026-08-24T23:36:51.291Z");
+    expect(p).toContain("19.782 seconds");
+    // ...and it says, in as many words, that the window must not be promoted.
+    expect(p).toContain("NOT a server-side apply time");
+  });
+
+  it("NEGATIVE CONTROL: promoting the window into hosted_applied_at is refused", () => {
+    // Codex's shape, applied to this record: the failure mode is not a missing
+    // value, it is a PLAUSIBLE one. Mutates a copy; the real record is never
+    // touched.
+    const rec = canonicalRecord();
+    const poisoned = { ...rec, hosted_applied_at: "2026-08-24T23:36:51.291Z" };
+    expect(poisoned.hosted_applied_at).not.toBeNull();
+    // The live record must never look like that.
+    expect(rec.hosted_applied_at).toBeNull();
+    expect(rec.hosted_applied_at).not.toBe("2026-08-24T23:36:51.291Z");
+    expect(rec.hosted_applied_at).not.toBe("2026-08-24T23:36:31.509Z");
+  });
+
+  it("the canonical record is 0187's, and carries its production checksum", () => {
+    const rec = canonicalRecord();
+    const digest = createHash("sha256").update(SQL, "utf8").digest("hex");
+    expect(digest).toBe(
+      "0201f9b8f9e2ca7c5c8f9c702bc020f6bfd5a4046c0490ae3d7be495509e5dc0",
+    );
+    expect(Buffer.byteLength(SQL, "utf8")).toBe(98309);
+    expect(rec.hosted_note).toContain(digest);
+    expect(rec.hosted_note).toContain(`${FILE} APPLIED to production`);
+  });
+
+  it("records the apply ORDERING truthfully: applied BEFORE the merge existed", () => {
+    // The one claim a later reader could most easily invert. 0187 was applied
+    // from the reviewed head; the merge commit came afterwards.
+    const note = canonicalRecord().hosted_note;
+    expect(note).toContain("eb7e824031fb715f23b0c6da6def4e7ea97fc4de");
+    expect(note).toContain("APPLIED BEFORE #636 MERGED");
+    expect(note).toContain("f9ad0f727503ec7aaa6208aa4aa7e5c84ad5eb1e");
+    expect(note).toContain("PUSH EXIT CODE 0 EXPLICITLY CAPTURED");
+    expect(note).toContain("DRY-RUN EXIT 0");
+  });
+
+  it("carries the earlier apply records forward, unedited", () => {
+    // THE INTEGRITY BOUNDARY IS THE DIGEST, NOT AN ENUMERATION. Deleting a
+    // whole carried clause drops that record's checksum while every individual
+    // `toContain` anchor survives, so an enumeration passes on a chain that is
+    // no longer intact. `toContain` is also order-blind.
+    //
+    // The expected value is the sha256 of the ENTIRE hosted_note as it stood on
+    // this PR's production base, f9ad0f72 — derived mechanically from that
+    // commit, not transcribed.
+    const note = canonicalRecord().hosted_note;
+    const at = note.indexOf(CARRIED_RECORD_BOUNDARY);
+    expect(at, "the note carries no 0186 record boundary").toBeGreaterThan(-1);
+    const carried = note.slice(at + CARRIED_RECORD_BOUNDARY.length);
+
+    // BYTES, NOT CHARACTERS. The carried record contains em dashes and curly
+    // quotes, so String.length would under-report the UTF-8 encoding.
+    expect(Buffer.byteLength(carried, "utf8")).toBe(13269);
+    expect(
+      createHash("sha256").update(carried, "utf8").digest("hex"),
+      "the carried 0186 record is no longer byte-identical to the production-base " +
+        "hosted_note: apply history has been edited, truncated or reordered",
+    ).toBe(CARRIED_0186_NOTE_SHA256);
+  });
+
+  it("THE HEAD NAMES EXACTLY ONE CURRENT RECORD, and it supersedes 0186", () => {
+    // THE OTHER HALF OF THE SAME INVARIANT. The digest above freezes the
+    // carried SUFFIX; it says nothing about the head, and a bare `toContain`
+    // on the supersession phrase says almost nothing either — a second,
+    // contradictory claim could sit alongside the real one and both checks
+    // would stay green.
+    //
+    // POSITIONAL, NOT GLOBAL. The count is taken over the HEAD ONLY. Carried
+    // history legitimately contains older CURRENT wording — 0186's supersession
+    // of 0185, 0185's of 0184, and 0184's of 0183 — which is frozen evidence
+    // and must never be rewritten to satisfy a guard.
+    const note = canonicalRecord().hosted_note;
+    const head = note.slice(0, note.indexOf(CARRIED_RECORD_BOUNDARY));
+
+    expect(
+      head.split(CURRENT_RECORD_PHRASE).length - 1,
+      "the head must name exactly ONE current hosted-state record",
+    ).toBe(1);
+
+    const claims = [...head.matchAll(SUPERSESSION)].map((m) => m[1]);
+    expect(claims).toEqual(["0186"]);
+
+    // ...and the global count is deliberately GREATER than one, which is what
+    // makes the positional law different from counting occurrences.
+    expect(note.split(CURRENT_RECORD_PHRASE).length - 1).toBeGreaterThan(1);
+  });
+
+  it("NEGATIVE CONTROL: a second CURRENT claim in the head turns this red", () => {
+    // Mutates a copy; the real record is never touched.
+    const note = canonicalRecord().hosted_note;
+    const at = note.indexOf(CARRIED_RECORD_BOUNDARY);
+    const head = note.slice(0, at);
+    const real = "SUPERSEDES the 0186 record as the CURRENT hosted-state record";
+    expect(head).toContain(real);
+
+    const poisonedHead = head.replace(
+      real,
+      `${real} and also the 0183 record as the CURRENT hosted-state record`,
+    );
+    expect(poisonedHead).not.toEqual(head);
+
+    // THE COUNT IS THE PRIMARY LAW, and this is why. The injected claim never
+    // says "SUPERSEDES", so the target regex still reports a single, correct
+    // ["0186"] — a guard built only on that regex would pass. Counting the
+    // PHRASE is what catches a second current-record claim however it is
+    // worded.
+    expect(poisonedHead.split(CURRENT_RECORD_PHRASE).length - 1).toBe(2);
+    expect([...poisonedHead.matchAll(SUPERSESSION)].map((m) => m[1])).toEqual([
+      "0186",
+    ]);
+
+    // The target check is load-bearing too, for the other mutation: a single
+    // claim that names the WRONG record.
+    const wrongTarget = head.replace(
+      real,
+      "SUPERSEDES the 0183 record as the CURRENT hosted-state record",
+    );
+    expect(wrongTarget.split(CURRENT_RECORD_PHRASE).length - 1).toBe(1);
+    expect([...wrongTarget.matchAll(SUPERSESSION)].map((m) => m[1])).toEqual([
+      "0183",
+    ]);
+
+    // ...while the carried suffix is untouched, which is exactly why the digest
+    // alone could never have caught this.
+    const poisoned = poisonedHead + note.slice(at);
+    const carried = poisoned.slice(
+      poisoned.indexOf(CARRIED_RECORD_BOUNDARY) + CARRIED_RECORD_BOUNDARY.length,
+    );
+    expect(Buffer.byteLength(carried, "utf8")).toBe(13269);
+    expect(createHash("sha256").update(carried, "utf8").digest("hex")).toBe(
+      CARRIED_0186_NOTE_SHA256,
+    );
+
+    // Restored byte-identically -> green again.
+    expect(head.split(CURRENT_RECORD_PHRASE).length - 1).toBe(1);
+    expect([...head.matchAll(SUPERSESSION)].map((m) => m[1])).toEqual(["0186"]);
+  });
+
+  it("NEGATIVE CONTROL: a mid-chain deletion turns the digest red", () => {
+    // Remove the whole carried 0180 clause: every checksum anchor an
+    // enumeration would list survives, so the enumeration stays green — and the
+    // digest does not. Mutates a copy; the real record is never touched.
+    const note = canonicalRecord().hosted_note;
+    const at = note.indexOf(CARRIED_RECORD_BOUNDARY);
+    const carried = note.slice(at + CARRIED_RECORD_BOUNDARY.length);
+    const digest = (s: string) => createHash("sha256").update(s, "utf8").digest("hex");
+
+    const from = carried.indexOf("the 0180 record (");
+    const to = carried.indexOf("the 0179 record (");
+    expect(from).toBeGreaterThan(-1);
+    expect(to).toBeGreaterThan(from);
+    const mutated = carried.slice(0, from) + carried.slice(to);
+
+    // It really is the shape an enumeration misses: shorter, 0180's checksum
+    // gone, every previously-anchored checksum still present.
+    expect(mutated.length).toBeLessThan(carried.length);
+    expect(mutated).not.toContain(
+      "d5d8271da38588a89e0727ce7a2a5c417ee8e079ad283acdc1fa55f90727eb8d",
+    );
+    for (const sha of [
+      "4041b38653198976233e5bf1ea41b68b349a587ed2c1fa43c251d9c6c629e66e",
+      "663a5d826d4c9e610c3bf7ec599dea577772ba521326488add77153f39a14ffc",
+      "aa110edadd459e0f11062e3904ea7ad54a54a75c31d9342b762a533ecc07694c",
+      "a7b8926832747319024d7c89213688b68fb363d09e88317e3bba6dbb17c6fbeb",
+      "f4e8535093721c6fb9c677925a3e4a8f202e3f2ad56b6d6208da608f5d2a62e6",
+    ]) {
+      expect(mutated).toContain(sha);
+    }
+
+    // The digest is what actually catches it.
+    expect(digest(mutated)).not.toBe(CARRIED_0186_NOTE_SHA256);
+    // Restored byte-identically -> green again.
+    expect(digest(carried)).toBe(CARRIED_0186_NOTE_SHA256);
+  });
+
+  it("NEGATIVE CONTROL: reverting hosted max to 0186 contradicts the record", () => {
+    // The single most likely regression in a future edit: the ledger prose
+    // advances while the canonical number is left behind, or vice versa. The
+    // two must agree, and the note must name the head it claims.
+    const rec = canonicalRecord();
+    expect(rec.hosted_migration_max).not.toBe("0186");
+    expect(migrationState().hosted_migration_max).toBe(rec.hosted_migration_max);
+    const stale = { ...rec, hosted_migration_max: "0186" };
+    expect(stale.hosted_migration_max).not.toBe(migrationState().repo_migration_max);
   });
 });
