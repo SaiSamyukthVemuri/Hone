@@ -4,6 +4,7 @@ import { useCallback, useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import { SessionPaymentPrepareCard } from "@/components/session-payment-prepare-card";
+import { AppointmentSettlementControls } from "@/components/appointment-settlement-controls";
 import {
   prepareSessionPaymentChargeAction,
   executeSessionPaymentChargeAction,
@@ -132,6 +133,21 @@ export function QuickCheckoutModal({
     [fetchContext],
   );
 
+  // PAY-SETTLE / 0187. THE SAME MECHANISM the four payment actions already use,
+  // extended to settlement. `router.refresh()` inside the controls re-renders
+  // the server tree behind the modal; it does not replace `ctx`, which is the
+  // client-held value this modal actually renders from. So a recorded outcome
+  // left the buttons on screen, and the only thing preventing a second record
+  // was the command answering `already_settled` — a database refusal covering
+  // for a stale view.
+  //
+  // Silent, so the modal advances in place instead of flashing "Loading
+  // checkout…" over a completed action.
+  const refetchAfterSettlement = useCallback(
+    () => fetchContext({ silent: true }),
+    [fetchContext],
+  );
+
   if (!open) return null;
 
   return (
@@ -201,6 +217,31 @@ export function QuickCheckoutModal({
                 Open the client&apos;s sessions
               </Link>
             )}
+
+            {/* PAY-SETTLE / 0187 — THE CARD PATH BEING UNAVAILABLE IS THE MAIN
+                REASON TO OFFER THIS, NOT A REASON TO WITHHOLD IT.
+
+                A completed appointment that was never charted cannot be
+                charged: the amount comes off the treatment record. It CAN be
+                paid in cash, and until now the only way to stop it asking for
+                payment forever was to chart it and run a card charge that never
+                happened.
+
+                The SAME component the payment card renders, so there is one
+                settlement implementation reachable from Dashboard, Calendar and
+                the session page rather than three. The charting requirement for
+                CARD charging is untouched, and the reason above still names it
+                truthfully. */}
+            {ctx.settlement?.canRecord && (
+              <AppointmentSettlementControls
+                appointmentId={ctx.settlement.appointmentId}
+                isOwner={ctx.isOwner}
+                settledMethod={ctx.settlement.settledMethod}
+                settledAmountCents={ctx.settlement.settledAmountCents}
+                defaultAmountCents={ctx.settlement.quotedAmountCents}
+                onRecorded={refetchAfterSettlement}
+              />
+            )}
           </div>
         )}
 
@@ -227,6 +268,12 @@ export function QuickCheckoutModal({
             <SessionPaymentPrepareCard
               sessionId={ctx.sessionId}
               clientId={ctx.clientId}
+              appointmentId={ctx.appointment.id}
+              settledMethod={ctx.settlement.settledMethod}
+              settledAmountCents={ctx.settlement.settledAmountCents}
+              settlementQuotedAmountCents={ctx.settlement.quotedAmountCents}
+              canRecordSettlement={ctx.settlement.canRecord}
+              onSettlementRecorded={refetchAfterSettlement}
               eligibility={ctx.eligibility}
               amountResult={ctx.amountResult}
               isOwner={ctx.isOwner}

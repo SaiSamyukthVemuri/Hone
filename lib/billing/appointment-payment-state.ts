@@ -3,6 +3,8 @@ import { createClient } from "@/lib/supabase/server";
 import { inferStripeLivemode } from "@/lib/stripe/server";
 import { resolveAuthoritativeSessionPaymentAmount } from "@/lib/billing/session-payment-amount";
 import { todayInTz } from "@/lib/booking/tz";
+import { getAppointmentSettlements } from "@/lib/billing/appointment-settlement";
+import type { SettlementMethod } from "@/lib/billing/settlement-types";
 
 // Bounded, tenant-scoped batch loader for the dashboard/calendar checkout cell:
 // given the visible appointment ids, return each appointment's coarse
@@ -23,9 +25,80 @@ export type AppointmentPaymentState =
   // query is not a fact, and each of those three is an affirmative claim.
   // Collapsing a failure into any of them previously rendered Checkout over an
   // unknown price, or hid a pending/paid/refunded charge behind "no session".
-  | "unavailable";
+  | "unavailable"
+  // PAY-SETTLE / 0187. A practitioner-ATTESTED disposition. Deliberately FIVE
+  // separate states rather than one "settled": the whole point of the release
+  // is that cash, an e-transfer, some other arrangement, a waiver and an
+  // outstanding balance are different financial facts, and a UI that renders
+  // them identically has re-collapsed the distinction the schema went to
+  // trouble to keep.
+  //
+  // Ranked BELOW the Hone-verified money states on purpose. If a card charge
+  // succeeded, "Paid" is the truthful badge and an attestation does not outrank
+  // it — the same precedence that already lets a succeeded charge outrank a $0
+  // price, and what makes "still owes" followed by a card payment resolve
+  // itself without anybody retiring the older record.
+  | "settled_cash"
+  | "settled_e_transfer"
+  | "settled_other"
+  | "settled_waived"
+  | "settled_owing"
+  // PAY-SETTLE / 0187. A refund that PROVABLY returned the whole charge.
+  //
+  // Split from `refunded` because the two differ in exactly one consequence:
+  // the studio is holding no card money any more, so a replacement payment can
+  // truthfully be recorded. `refunded` is kept for a refund that succeeded
+  // without proving full repayment (a partial one, or one whose amount we
+  // cannot read) and offers no such route.
+  //
+  // Both still PRESENT as "Refunded": the distinction is about what may be
+  // DONE next, not about what happened, and the card fact and the refund fact
+  // are unchanged either way.
+  | "refunded_full";
 
-type AttemptRow = { status: string | null; refund_status: string | null };
+/** The one place the DB vocabulary maps onto the display vocabulary. */
+export const SETTLEMENT_STATE_BY_METHOD: Record<
+  SettlementMethod,
+  AppointmentPaymentState
+> = {
+  paid_cash: "settled_cash",
+  paid_e_transfer: "settled_e_transfer",
+  paid_other_external: "settled_other",
+  waived: "settled_waived",
+  still_owes: "settled_owing",
+};
+
+type AttemptRow = {
+  status: string | null;
+  refund_status: string | null;
+  // PAY-SETTLE / 0187. The cents needed to tell a FULL refund from a partial
+  // one. OPTIONAL, and absence is treated as "cannot prove full" — the same
+  // fail-closed direction the SQL takes, and the reason a caller that omits
+  // them can never accidentally unlock the replacement-payment route.
+  amount_cents?: number | null;
+  refund_amount_cents?: number | null;
+};
+
+/**
+ * Did ALL of the money go back?
+ *
+ * `refund_status = 'succeeded'` says a refund SUCCEEDED, not that the whole
+ * charge was returned: the schema's CHECK is
+ * `refund_amount_cents <= amount_cents` and 0078 deliberately leaves room for
+ * partial refunds. This is the SAME law `appointment_has_live_card_money`
+ * applies in SQL and the payment card applies in the browser, stated once here
+ * for the row state so all three agree.
+ *
+ * An unknown amount is NOT full. Guessing "probably full" is how a studio ends
+ * up recorded as paid twice for money it is still holding.
+ */
+function isFullyRefunded(a: AttemptRow): boolean {
+  if (a.refund_status !== "succeeded") return false;
+  const amount = a.amount_cents;
+  const refunded = a.refund_amount_cents;
+  if (typeof amount !== "number" || typeof refunded !== "number") return false;
+  return refunded >= amount;
+}
 
 // Pure reducer: the strongest terminal state wins (paid/refunded > processing >
 // chargeable). Exported for unit testing without a database.
@@ -43,7 +116,8 @@ export function deriveAppointmentPaymentState(
   let processing = false;
   for (const a of attempts) {
     if (a.status === "succeeded") {
-      return a.refund_status === "succeeded" ? "refunded" : "paid";
+      if (a.refund_status !== "succeeded") return "paid";
+      return isFullyRefunded(a) ? "refunded_full" : "refunded";
     }
     if (a.status === "pending_stripe") processing = true;
   }
@@ -230,7 +304,9 @@ export async function getAppointmentPaymentStates(
   if (sessionIds.length > 0) {
     const { data: attemptRows, error: attemptError } = await supabase
       .from("payment_charge_attempts")
-      .select("session_id, status, refund_status")
+      .select(
+        "session_id, status, refund_status, amount_cents, refund_amount_cents",
+      )
       .eq("studio_id", studioId)
       .eq("charge_reason", "session_payment")
       .eq("stripe_livemode", inferStripeLivemode())
@@ -240,11 +316,18 @@ export async function getAppointmentPaymentStates(
       session_id: string;
       status: string | null;
       refund_status: string | null;
+      amount_cents: number | null;
+      refund_amount_cents: number | null;
     }>) {
       const apptId = sessionToAppt.get(a.session_id);
       if (!apptId) continue;
       const bucket = attemptsByAppt.get(apptId) ?? [];
-      bucket.push({ status: a.status, refund_status: a.refund_status });
+      bucket.push({
+        status: a.status,
+        refund_status: a.refund_status,
+        amount_cents: a.amount_cents,
+        refund_amount_cents: a.refund_amount_cents,
+      });
       attemptsByAppt.set(apptId, bucket);
     }
   }
@@ -270,6 +353,13 @@ export async function getAppointmentPaymentStates(
     return out;
   }
 
+  // PAY-SETTLE stage. Read ONCE for the whole batch, like every other read in
+  // this loader. A failed read is `unavailable` rather than "nothing is
+  // settled": an absence produced by a failed query is not a fact, and
+  // rendering Checkout over a visit already recorded as paid in cash is exactly
+  // the double-collection prompt this release removes.
+  const settlementLoad = await getAppointmentSettlements(studioId, ids);
+
   const freeLoad = await getFreeAppointmentIds(studioId, ids, studioTimezone);
 
   for (const apptId of ids) {
@@ -285,9 +375,24 @@ export async function getAppointmentPaymentStates(
     if (
       transactionOnly === "paid" ||
       transactionOnly === "refunded" ||
+      transactionOnly === "refunded_full" ||
       transactionOnly === "processing"
     ) {
       out.set(apptId, transactionOnly);
+      continue;
+    }
+    // Stage 2b: no Hone-verified money, so a practitioner attestation is the
+    // strongest fact available. It outranks pricing (a waived $30 visit is
+    // "Fee waived", not "No payment required") and it suppresses Checkout,
+    // which is the entire product outcome: nobody has to run a fake payment to
+    // make Checkout go away.
+    if (!settlementLoad.ok) {
+      out.set(apptId, "unavailable");
+      continue;
+    }
+    const settlement = settlementLoad.byAppointmentId.get(apptId);
+    if (settlement) {
+      out.set(apptId, SETTLEMENT_STATE_BY_METHOD[settlement.method]);
       continue;
     }
     // Stage 3: everything left depends on the current price.

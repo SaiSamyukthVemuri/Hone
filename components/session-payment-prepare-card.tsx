@@ -32,6 +32,8 @@ import {
 import { PaymentSummaryCard } from "@/components/payment/payment-summary-card";
 import { ReceiptStatus } from "@/components/payment/receipt-status";
 import { TechnicalPaymentDetails } from "@/components/payment/technical-payment-details";
+import { AppointmentSettlementControls } from "@/components/appointment-settlement-controls";
+import type { SettlementMethod } from "@/lib/billing/settlement-types";
 
 type PrepareResult =
   | { ok: true; attemptId: string }
@@ -203,6 +205,12 @@ export function SessionPaymentPrepareCard({
   eligibility,
   amountResult = null,
   isOwner = false,
+  appointmentId = null,
+  settledMethod = null,
+  settledAmountCents = null,
+  settlementQuotedAmountCents = null,
+  canRecordSettlement = true,
+  onSettlementRecorded,
   prepareAction,
   executeAction,
   sendReceiptAction,
@@ -215,6 +223,29 @@ export function SessionPaymentPrepareCard({
   // session page). Gates the owner-only Technical payment details disclosure +
   // the Refund button (refunds are ALSO server-side owner-only, unchanged).
   isOwner?: boolean;
+  // PAY-SETTLE / 0187. The appointment this session belongs to, when the
+  // caller knows it. Its PRESENCE is what enables the settlement controls: a
+  // disposition is a fact about a VISIT, and without an appointment there is
+  // nothing to attest about. Absent -> the card renders exactly as before.
+  appointmentId?: string | null;
+  // The live attested disposition, when one exists. Server-resolved.
+  settledMethod?: SettlementMethod | null;
+  settledAmountCents?: number | null;
+  // The appointment-resolved price, available with or without a session.
+  settlementQuotedAmountCents?: number | null;
+  // The UI's copy of the database's own rule: only a COMPLETED appointment can
+  // carry a disposition. Defaults true so the session page, which only renders
+  // this card for a real session, is unchanged.
+  canRecordSettlement?: boolean;
+  // Pass-through to AppointmentSettlementControls, and the ONLY refresh-shaped
+  // prop this card accepts.
+  //
+  // It is not a wrapper around any payment action and it changes nothing about
+  // prepare / execute / receipt / refund, which keep their own arrangement.
+  // QuickCheckoutModal supplies a silent context refetch here because its view
+  // lives in CLIENT state that a server re-render does not reach; the session
+  // detail page omits it entirely and relies on the ordinary server refresh.
+  onSettlementRecorded?: () => void | Promise<void>;
   // PR #200: resolved booked-service / custom-pricing default for the
   // prepare form's amount field. Display default only; the field
   // stays editable and the prepare action re-validates the submitted
@@ -262,6 +293,28 @@ export function SessionPaymentPrepareCard({
     ) ?? null;
   const latestHistoricalAttempt =
     eligibility.existingAttempts[0] ?? null;
+  // PAY-SETTLE / 0187. WHETHER HONE STILL HOLDS CARD MONEY — which is a
+  // different question from "is there an active attempt".
+  //
+  // A fully refunded charge keeps `status = 'succeeded'` forever (the card fact
+  // is history and is never rewritten), so it stays an `activeAttempt` and used
+  // to hide the settlement controls permanently. But the money went BACK: the
+  // SQL deliberately permits recording that the client then paid cash, and the
+  // UI has to agree or there is no route to record the replacement payment at
+  // all — the dashboard just says "Refunded" forever.
+  //
+  // FULL MEANS FULL, IN CENTS. `refundStatus === "succeeded"` says a refund
+  // succeeded, not that all of it went back; the schema allows
+  // refundAmountCents < amountCents. A PARTIAL refund therefore still counts as
+  // money held, exactly as the database computes it, so nobody can be recorded
+  // as paying cash for money the studio is still holding on a card.
+  const fullyRefunded =
+    activeAttempt !== null &&
+    activeAttempt.status === "succeeded" &&
+    activeAttempt.refundStatus === "succeeded" &&
+    (activeAttempt.refundAmountCents ?? 0) >= activeAttempt.amountCents;
+  const cardMoneyHeld = activeAttempt !== null && !fullyRefunded;
+
   const previousTerminalAttempt =
     !activeAttempt &&
     latestHistoricalAttempt &&
@@ -448,6 +501,31 @@ export function SessionPaymentPrepareCard({
 
       {eligibility.existingAttempts.length > 1 && (
         <AttemptHistory attempts={eligibility.existingAttempts} />
+      )}
+
+      {/* PAY-SETTLE / 0187. THE SECOND HALF OF CHECKOUT.
+          Placed BELOW the charge path deliberately: taking the card is still
+          the primary action, and this is the honest alternative rather than a
+          competing one.
+
+          HIDDEN once Hone holds verified card money for this session
+          (activeAttempt in succeeded / pending_stripe / ready). Offering
+          "Paid cash" beside a real charge invites exactly the double
+          collection the database refuses, and a control that always fails is
+          worse than no control. The refusal still lives in SQL — this only
+          keeps the UI from asking. */}
+      {appointmentId && canRecordSettlement && !cardMoneyHeld && (
+        <AppointmentSettlementControls
+          appointmentId={appointmentId}
+          isOwner={isOwner}
+          settledMethod={settledMethod}
+          settledAmountCents={settledAmountCents}
+          defaultAmountCents={
+            presentation.prepareFormAmount?.amountCents ??
+            settlementQuotedAmountCents
+          }
+          onRecorded={onSettlementRecorded}
+        />
       )}
     </section>
   );

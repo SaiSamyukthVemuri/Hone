@@ -75,8 +75,42 @@ describe("quick checkout: in-place advance after a successful action", () => {
 describe("quick checkout fix is isolated to the modal", () => {
   it("does NOT thread a modal-specific refresh prop into the shared card", () => {
     // The shared SessionPaymentPrepareCard is used by BOTH the modal and the
-    // session detail page; the fix must not change its prop surface.
-    expect(CARD).not.toMatch(/onMutated|onRefresh|refetchContext|withRefresh/);
+    // session detail page, so a modal-shaped refresh must not leak into the
+    // payment surface.
+    //
+    // WHAT THIS FORBIDS, restated after PAY-SETTLE / 0187. The rule was always
+    // about the PAYMENT ACTIONS: the card must not learn that its caller
+    // re-fetches anything, and prepare / execute / receipt / refund must reach
+    // it unwrapped. 0187 adds exactly one authorized pass-through,
+    // `onSettlementRecorded`, for a control the card renders but does not own
+    // — the modal's view lives in client state that a server re-render cannot
+    // reach, which is the same reason the modal already wraps its four payment
+    // actions.
+    //
+    // So the assertion is scoped to the four payment action props rather than
+    // to any occurrence of the word, and the exception is named rather than
+    // silently allowed.
+    expect(CARD).not.toMatch(/onMutated|onRefresh|refetchContext/);
+    for (const action of [
+      "prepareAction",
+      "executeAction",
+      "sendReceiptAction",
+      "refundAction",
+    ]) {
+      // Declared and forwarded plainly; never re-wrapped inside the card.
+      expect(CARD).toMatch(new RegExp(`${action}[?]?:`));
+      expect(CARD).not.toMatch(new RegExp(`${action}\\s*=\\s*\\w+\\(`));
+    }
+    // The one authorized settlement pass-through, and only that one. Ordinary
+    // DOM handlers (onChange / onClick) and the card's own form callback
+    // (onSubmit) are not caller-refresh hooks and are excluded by name.
+    const DOM_OR_LOCAL = new Set(["onChange", "onClick", "onSubmit"]);
+    const callerHooks = [
+      ...new Set([...CARD.matchAll(/\bon[A-Z]\w*/g)].map((m) => m[0])),
+    ]
+      .filter((n) => !DOM_OR_LOCAL.has(n))
+      .sort();
+    expect(callerHooks).toEqual(["onRecorded", "onSettlementRecorded"]);
   });
 
   it("the session detail page passes the canonical actions unchanged (no wrapper)", () => {

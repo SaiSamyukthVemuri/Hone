@@ -12,10 +12,17 @@ export function CheckoutButton({
   appointmentId,
   status,
   variant = "primary",
+  // PAY-SETTLE / 0187. The same entry point, honestly labelled for the one
+  // case where "Checkout" would be a lie: a fully refunded visit is not
+  // awaiting checkout, but it DOES need a route to record how it was settled
+  // instead. Defaults to the historical label so every existing call site is
+  // unchanged.
+  label = "Checkout",
 }: {
   appointmentId: string;
   status: string | null;
   variant?: "primary" | "compact";
+  label?: string;
 }) {
   const [open, setOpen] = useState(false);
   if (status !== "completed") return null;
@@ -33,7 +40,7 @@ export function CheckoutButton({
         onClick={() => setOpen(true)}
         className={cls}
       >
-        Checkout
+        {label}
       </button>
       <QuickCheckoutModal
         appointmentId={appointmentId}
