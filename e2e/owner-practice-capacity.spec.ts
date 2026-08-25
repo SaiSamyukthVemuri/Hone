@@ -352,13 +352,18 @@ test("the worklist holds exactly the qualifying clients, and matches its own cou
 // Fail-closed presentation
 // ---------------------------------------------------------------------------
 
-test("a studio with no treatment plans shows no figure and no partial list", async ({
+test("a studio with no treatment plans suppresses the six plan-dependent figures, and offers no list", async ({
   page,
 }) => {
   // A deterministic incomplete-evidence fixture that needs NO product-only test
   // seam: a studio that simply keeps no treatment plans cannot establish who is
   // in active treatment, so the briefing must refuse rather than print 0 and an
   // empty-but-actionable call list.
+  //
+  // SCOPED TO THE PLAN-DEPENDENT FIGURES, and named that way. Client records and
+  // treatment time booked do NOT depend on plan evidence and are asserted BELOW
+  // to still render — an earlier name promised "no figure", which contradicted
+  // those very controls and would have misled anyone diagnosing a failure here.
   await loginAsOwner(page, planless);
   await page.goto("/dashboard/capacity");
 
