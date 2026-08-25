@@ -91,11 +91,28 @@ export default async function AppLayout({
             >
               Hone
             </Link>
-            {/* PR #228: the full horizontal nav is DESKTOP/TABLET
-                only. On phones the whitespace-nowrap row was wider
-                than the viewport and dragged the whole page sideways;
-                small screens use the compact menu below instead. */}
-            <nav className="hidden items-center gap-0.5 whitespace-nowrap text-sm md:flex md:gap-1">
+            {/* PR #228: the full horizontal nav is DESKTOP-ONLY. On
+                phones the whitespace-nowrap row was wider than the
+                viewport and dragged the whole page sideways; smaller
+                screens use the compact menu below instead.
+
+                THE MODE BOUNDARY IS `lg` (1024px), NOT `md`, and this
+                class is one of the four that decide it — see the
+                header-mode note above the compact controls below.
+                MEASURED: at md the row of five primary items plus
+                search/bell/account needs 830px with an ordinary owner
+                name and 913px with one that fills the account button's
+                12ch cap, so 768-1023 overflowed the page by up to
+                145px. At 1024 both fit with room to spare. */}
+            {/* Two <nav> landmarks exist in this shell (this row and the
+                Menu sheet), so each carries its own accessible name. The
+                mobile one has always been labelled; naming this one makes the
+                pair distinguishable to a screen reader — and lets a test bind
+                to "the primary navigation" rather than to a DOM position. */}
+            <nav
+              aria-label="Primary navigation"
+              className="hidden items-center gap-0.5 whitespace-nowrap text-sm lg:flex lg:gap-1"
+            >
               {/* PR #208: the landing page is the practice Dashboard
                   (it contains the Today section). */}
               <Link
@@ -131,12 +148,44 @@ export default async function AppLayout({
               >
                 Records
               </Link>
+              {/* OWNER-CAP follow-up: a PERMANENT owner entry point.
+                  Labelled "Business", not "Capacity": capacity is the
+                  first owner operating surface, not the whole domain,
+                  so financials and the rest of the owner business
+                  intelligence can land behind this same word without
+                  renaming the tab under owners who learned it. Today
+                  it goes straight to the one surface that exists;
+                  there is deliberately no /business hub standing empty.
+
+                  OWNER-ONLY PRESENTATION, and only that. The role comes
+                  from the practitioner this layout ALREADY resolved — no
+                  second lookup, no extra query. Hiding the tab protects
+                  nothing: /dashboard/capacity keeps its own server-side
+                  owner check, which is the authority, and a practitioner
+                  typing the route still meets it. This just stops
+                  advertising a surface they cannot use, rather than
+                  offering a disabled item or a permission placeholder. */}
+              {practitioner.role === "owner" && (
+                <Link
+                  href="/dashboard/capacity"
+                  className="rounded-md px-3 py-2 hover:bg-neutral-100 dark:hover:bg-neutral-900"
+                >
+                  Business
+                </Link>
+              )}
               {/* PR #231: Settings and Admin moved into the account
-                  dropdown; the primary nav is the four working
-                  surfaces. */}
+                  dropdown; the primary nav is the working surfaces. */}
             </nav>
           </div>
-          <div className="hidden items-center gap-3 md:flex">
+          {/* HEADER MODE, in one place. Exactly four classes choose
+              between the full desktop shell and the compact one: this
+              container, the primary nav above, the compact container
+              below, and MobileMenu's own root. All four switch at `lg`
+              so there is no width where both appear and none where
+              neither does — 1023px is wholly compact, 1024px wholly
+              desktop. The `md:px-8` on the row and on <main> is padding,
+              not mode, and deliberately stays at md. */}
+          <div className="hidden items-center gap-3 lg:flex">
             {/* PR #232: global search (clients, appointments, treatment
                 memory, records, page shortcuts). Studio-scoped,
                 authenticated-only; see global-search-actions.ts. */}
@@ -159,7 +208,7 @@ export default async function AppLayout({
               taps (the no-JS details element from PR #228 stayed
               open across client-side navigations because this
               layout persists). */}
-          <div className="flex items-center gap-1.5 md:hidden">
+          <div className="flex items-center gap-1.5 lg:hidden">
             <GlobalSearch variant="mobile" />
             <NotificationsBell unread={unreadNotifications} />
             <MobileMenu
