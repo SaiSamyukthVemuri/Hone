@@ -186,7 +186,7 @@ describe("privacy policy — prospective client / waitlist coverage", () => {
   // -------------------------------------------------------------------------
   // CODEX (#637), FOURTH PASS — P2. The paragraph above once ended, in wording
   // now removed: "If the message is not accepted, we tell you the request did
-  // not go through" (SWEEP-EXEMPT: quoted, not asserted).
+  // not go through".
   // That collapses THREE runtime outcomes into two. WAIT-01 has:
   //
   //   no recipient          -> SUBMIT_FAILED       "we couldn't record it"
@@ -726,292 +726,111 @@ describe("public waitlist form — notice at the point of collection", () => {
     expect(FORM).not.toMatch(/JoinedPanel[\s\S]{0,400}COLLECTION_NOTICE/);
   });
 });
-
 // ---------------------------------------------------------------------------
-// E. THE SAME-CLAIM SWEEP
+// E. THE CANONICAL CONTRACT, PINNED VERBATIM
 // ---------------------------------------------------------------------------
 //
-// FOUR REVIEW ROUNDS, AND TWICE THE SAME SHAPE OF DEFECT: the behaviour was
-// repaired and an old DESCRIPTION of that behaviour was left standing in
-// another file. Round four found the WAIT-01 failure taxonomy stated the old
-// way in the risk register, and the withdrawn hard-fail gate still promised in
-// the runtime module comment — and a manual sweep then found it a THIRD time,
-// in this suite's sibling test header.
+// WHAT WAS HERE, AND WHY IT IS GONE. Six review rounds found the same class of
+// defect: a contract was repaired in code and an older description of it was
+// left standing in prose. The answer here used to be a detector — patterns for
+// the wrong sentences, then broader patterns, then authority ROLES with tense,
+// negation and subject-adjacency heuristics. Every round it was defeated by
+// ordinary English:
 //
-// Every negative control before this one is scoped to a single file, so none of
-// them could see any of that. This one is scoped to the CONTRACT, across every
-// file PR #637 owns.
+//   round 4  it knew "aborts", so the next claim said "refuses"
+//   round 5  it knew "refuses", so the next said "is enforced"
+//   round 6  "the gate is, in every production build, enforced" escaped the
+//            passive test, and "the report does not, under any circumstances,
+//            block activation" — which is TRUE — was flagged as a violation
 //
-// HOW HISTORY IS ALLOWED. Narrating a repaired defect is legitimate and worth
-// keeping — it is why the current wording is what it is. Two things keep such
-// prose out of the way here:
+// Unsound in both directions, and each fix was a wider window or another verb.
+// Hone does not need to solve English. The detector is deleted, not tuned.
 //
-//   1. the patterns match the claim only in the PRESENT tense, so "a production
-//      build aborted while..." and "an earlier draft aborted the build" pass
-//      untouched, while "the build aborts if..." does not;
-//   2. a line carrying the token SWEEP-EXEMPT is skipped outright. That covers
-//      the two cases where the words have to appear verbatim and are not a
-//      claim: a comment quoting the old sentence, and this suite's own
-//      representative fixtures.
+// WHAT REPLACES IT. The contract is a small, closed set of sentences, so they
+// are pinned VERBATIM where an operator actually reads them. Rewriting one
+// fails a test and needs a human decision; prose ANYWHERE ELSE is not parsed,
+// and historical narration is not policed at all.
 //
-// Adding a file to #637 means adding it here.
+// The division of labour is deliberate:
+//   * executable tests prove BEHAVIOUR (see the suites named below);
+//   * these pins prove the OPERATOR-FACING EXPLANATION has not drifted from it.
 // ---------------------------------------------------------------------------
-describe("no file states a repaired WAIT-02B contract the old way", () => {
-  const OWNED = [
-    "app/privacy/page.tsx",
-    "app/book/[slug]/NewClientWaitlistForm.tsx",
-    "docs/03_SECURITY_AND_PRIVACY.md",
-    "docs/10_DEPLOYMENT_AND_ENV.md",
-    "lib/booking/new-client-waitlist.ts",
-    "scripts/check-production-env-gates.mjs",
-    "e2e/new-client-waitlist.spec.ts",
-    "tests/app/privacy/waitlist-prospect-disclosure.test.ts",
-    "tests/scripts/check-production-env-gates.test.ts",
-    "tests/lib/booking/new-client-waitlist-flag.test.ts",
-    "tests/app/book/new-client-waitlist-durable-commit.test.ts",
-  ];
-
+describe("the Stage-B contract is stated verbatim where operators read it", () => {
   /**
-   * FAMILY A — the WAIT-01 failure / delivery taxonomy.
-   *
-   * Kept as phrasings: this contract has not recurred, and its violations are
-   * specific sentences rather than a role being attributed to a subject.
+   * The eight authoritative sentences. Sourced from the GATE 4 CONTRACT block
+   * in scripts/check-production-env-gates.mjs, which is the single place they
+   * are authored; everything else mirrors a subset.
    */
-  const FAILURE_TAXONOMY = [
-    /(?:any|every|a) (?:message|submission|send|request)[^.\n]{0,60}not accepted[^.\n]{0,60}(?:is|are) reported as (?:a )?fail/i,
-    /not accepted[^.\n]{0,60}(?:treated|counted|reported) as (?:a )?fail/i,
-    /not accepted[^.\n]{0,40}we tell you the request did not go through/i,
-    /we can tell you that (?:such )?a (?:mailbox )?copy exists/i,
-    /(?:we|hone) can always (?:tell|determine) which handling/i,
-  ];
+  const CONTRACT = {
+    role: "Gate 4 is report-only.",
+    failure:
+      "It does not fail the build solely because of\n *      NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS.",
+    existence:
+      "The report does not prove a configured entry names an existing studio.",
+    activation: "The report does not prove that a studio is activated.",
+    runtime: "Runtime exact-membership is the activation control.",
+    wildcard:
+      "Configured values are literal; there is no wildcard or global-enable\n *      interpretation.",
+    dark:
+      "An empty normalized durable allowlist leaves every studio on the\n *      non-durable path.",
+    skip:
+      "The production-only configuration report is skipped outside production,\n *      while runtime membership still applies.",
+  } as const;
 
-  // -------------------------------------------------------------------------
-  // WHY THIS IS NOT A LIST OF PHRASINGS ANY MORE.
-  //
-  // Two consecutive reviews defeated the previous design by VOCABULARY, not by
-  // substance (SWEEP-EXEMPT: quoting the escapes): it knew a build that
-  // "aborts", so the next instance said the gate "refuses"; it then knew
-  // "refuses", so the next said the guard is "enforced". Extending a phrase list one synonym per review round is a
-  // losing game — the list is a guess about English, and the reviewer only ever
-  // has to find a word not in it.
-  //
-  // The replacement inverts the two dimensions. Instead of NARROW phrasings
-  // applied to WHOLE FILES, it applies a BROAD set of authority ROLES to a
-  // TIGHT region — only prose that is actually about Gate 4. Being broad is
-  // what makes it survive a new synonym; being scoped is what stops the breadth
-  // producing false positives, since "a submission the server gate declines" and
-  // "the build aborts if any fails" (gates 1–3) are both true and both outside
-  // the region (SWEEP-EXEMPT: quoting the examples).
-  //
-  // A claim is a violation when, inside a Gate 4 region, the gate is given
-  // AUTHORITY it does not have (SWEEP-EXEMPT: describing the rule) — in any of
-  // three roles:
-  //
-  //   ENFORCE  it enforces / is enforced
-  //   BLOCK    it blocks, refuses, rejects, declines, forbids, prevents,
-  //            aborts, stops, bars, vetoes, fails a build
-  //   PROVE    it proves / guarantees / is proof of activation or existence
-  //
-  // and the claim is stated as CURRENT and UNNEGATED. Truthful statements use
-  // exactly the same words in negated form ("never blocks", "does not enforce
-  // activation"), which is why negation is a first-class exemption rather than
-  // an afterthought.
-  // -------------------------------------------------------------------------
-
-  /**
-   * The three roles Gate 4 must never be described as having. Deliberately
-   * broad — a role, not a phrasing — because that is what survives the next
-   * synonym.
-   */
-  const AUTHORITY_ROLE =
-    /\b(?:enforc\w+|blocks?|blocking|refus\w+|reject\w+|declin\w+|forbid\w+|prevent\w+|aborts?|aborting|veto\w*|hard stop|proves?|proof of|guarantees?)\b/i;
-
-  /**
-   * The BUILD-TIME thing the role would be attributed to. Breadth in the roles
-   * only works with a subject: "today's writers ENFORCE this shape" and "a
-   * submission the server gate DECLINES" are both true, and both have no
-   * build-time subject in front of the verb.
-   */
-  const GATE4_SUBJECT_NEAR =
-    /\b(?:gate ?4|activation guard|deploy-?time (?:check|gate|report)|build-?time (?:check|gate|report)|production build|(?:this|the|a|an)\s+(?:\w+\s+){0,3}(?:gate|guard|check|report|script|build))\b/i;
-
-  /**
-   * Negators, checked in a TIGHT window immediately before the role word.
-   *
-   * Tight because a negation elsewhere in the sentence does not make the claim
-   * true: "This gate CANNOT loosen that; it only REFUSES to ship a list" is the
-   * round-five defect, and a whole-sentence negation test would have excused it
-   * on the strength of "cannot loosen".
-   */
-  const NEGATORS =
-    /\b(?:never|not|no|non-?|cannot|can't|won't|doesn't|nor|neither|without)\s*\S{0,12}\s*$/i;
-
-  /** Markers that make a sentence a description of the PAST. */
-  const HISTORICAL =
-    /\b(?:previously|formerly|earlier|used to|once|no longer|withdrawn|superseded|Stage A|an earlier|a later|first draft|original)\b/i;
-
-  /**
-   * An -ed role word is ambiguous: "the guard ABORTED the build" is narration,
-   * but "the guard IS ENFORCED" is a present claim in the passive voice — which
-   * is exactly how round six's finding was phrased. Tense is decided by what
-   * precedes the word, not by the word.
-   */
-  const PAST_ROLE = /^(?:enforced|blocked|refused|rejected|declined|forbade|prevented|aborted|vetoed|proved|guaranteed)$/i;
-  const PRESENT_PASSIVE = /\b(?:is|are|'s|being|gets?|remains?|stays?)\s+$/i;
-
-  /** Names the durable report specifically, for files other than the script. */
-  const DURABLE_TOKEN =
-    /NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS|stage-[ab]-durable-waitlist-env|durable (?:waitlist|allowlist|list)|activation (?:guard|control|report)|Gate ?4/i;
-
-  /**
-   * The regions where a Gate 4 authority claim can live.
-   *
-   * In the gate script that is its own documentation section plus main(), where
-   * the SKIP line lives — a per-paragraph noun test would miss "This gate ...
-   * only refuses", whose paragraph never repeats the word "durable". Everywhere
-   * else it is any paragraph naming the report.
-   */
-  function gate4Regions(rel: string, src: string): string[] {
-    if (rel.endsWith("check-production-env-gates.mjs")) {
-      const docStart = src.indexOf("Gate 4, WAIT-02B");
-      const docEnd = src.indexOf("Secrets:", docStart);
-      const main = src.indexOf("function main()");
-      return [src.slice(docStart, docEnd), src.slice(main)].filter((x) => x.length > 0);
-    }
-    return src
-      .split(/\n\s*\n/)
-      .map((b) => b.replace(/^\s*(?:\/\/|\*|#+)\s?/gm, ""))
-      .filter((b) => DURABLE_TOKEN.test(b));
-  }
-
-  /** Active voice names the gate; passive voice names what it acts on. */
-  function attributedToGate4(before: string): boolean {
-    const near = before.slice(-70);
-    if (GATE4_SUBJECT_NEAR.test(near)) return true;
-    return PRESENT_PASSIVE.test(before) && DURABLE_OBJECT.test(near);
-  }
-
-  const DURABLE_OBJECT =
-    /\b(?:durable (?:allowlist|list|waitlist)|allowlist|configured (?:list|entries|entry)|NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS)\b/i;
-
-  function authorityClaims(): string[] {
-    const hits: string[] = [];
-    for (const rel of OWNED) {
-      for (const region of gate4Regions(rel, read(rel))) {
-        // Reconstitute template-literal concatenation first: `so it does not `
-        // + `prove ...` is one sentence, and splitting it would sever "not"
-        // from the verb it negates.
-        const flat = region
-          .replace(/^\s*(?:\/\/|\*|#+)\s?/gm, "")
-          .replace(/`\s*\+\s*`/g, "")
-          .replace(/\s+/g, " ");
-        for (const sentence of flat.split(/(?<=\.)\s+/)) {
-          if (sentence.includes("SWEEP-EXEMPT")) continue;
-          if (HISTORICAL.test(sentence)) continue;
-          const m = AUTHORITY_ROLE.exec(sentence);
-          if (!m) continue;
-          const before = sentence.slice(0, m.index);
-          if (PAST_ROLE.test(m[0]) && !PRESENT_PASSIVE.test(before)) continue;
-          if (NEGATORS.test(before)) continue;
-          // The role must be attributed to the BUILD-TIME thing, close by —
-          // or, in the passive, applied TO the durable list with the agent left
-          // out ("a malformed durable allowlist is rejected at deploy time"),
-          // which is how the same claim reads with no gate named at all.
-          if (!attributedToGate4(before)) continue;
-          hits.push(`${rel}: ${sentence.trim().slice(0, 130)}`);
-        }
-      }
-    }
-    return hits;
-  }
-
-  function scan(patterns: RegExp[]): string[] {
-    const hits: string[] = [];
-    for (const rel of OWNED) {
-      read(rel).split("\n").forEach((line, i) => {
-        if (line.includes("SWEEP-EXEMPT")) return;
-        for (const p of patterns) {
-          if (p.test(line)) hits.push(`${rel}:${i + 1}: ${line.trim().slice(0, 120)}`);
-        }
-      });
-    }
-    return hits;
-  }
-
-  it("ANTI-VACUITY: every owned file is readable and non-trivial", () => {
-    // A typo in a path would silently scan nothing and pass forever.
-    for (const rel of OWNED) {
-      expect(read(rel).length, `${rel} must be readable`).toBeGreaterThan(200);
+  // The eight are pinned at their source, with an executable proof beside each,
+  // in tests/scripts/check-production-env-gates.test.ts. What is checked HERE is
+  // that every place which MIRRORS a sentence still mirrors it exactly — that is
+  // where six rounds of drift actually happened.
+  it("the gate script is still the single place they are authored", () => {
+    const gate = read("scripts/check-production-env-gates.mjs");
+    expect(gate).toContain("GATE 4 CONTRACT");
+    for (const [name, sentence] of Object.entries(CONTRACT)) {
+      expect(gate, `contract sentence missing: ${name}`).toContain(sentence);
     }
   });
 
-  it("FAMILY A: no file reports every non-accepted send as a definite failure", () => {
-    expect(scan(FAILURE_TAXONOMY)).toEqual([]);
+  it("the runtime module repeats the three an implementer needs", () => {
+    const lib = read("lib/booking/new-client-waitlist.ts");
+    expect(lib).toContain(CONTRACT.role);
+    expect(lib).toContain(
+      "It does not fail the\n * build solely because of NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS.",
+    );
+    expect(lib).toContain(CONTRACT.runtime);
   });
 
-  it("GATE 4 AUTHORITY: no file gives the report power it does not have", () => {
-    expect(authorityClaims()).toEqual([]);
+  it("the deployment guide repeats the four an operator needs", () => {
+    const doc = read("docs/10_DEPLOYMENT_AND_ENV.md");
+    expect(doc).toContain(CONTRACT.role);
+    expect(doc).toContain(
+      "It does not fail the build solely because of `NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS`.",
+    );
+    expect(doc).toContain(CONTRACT.runtime);
+    expect(doc).toContain(
+      "The production-only configuration report is skipped outside production, while runtime membership still applies.",
+    );
   });
 
-  it("ANTI-VACUITY: family A's representative claims really would be caught", () => {
-    for (const claim of [
-      "any message not accepted is reported as failed", // SWEEP-EXEMPT
-      "any message not accepted is treated as a failure", // SWEEP-EXEMPT
-    ]) {
-      expect(FAILURE_TAXONOMY.some((p) => p.test(claim)), `family A must catch: ${claim}`).toBe(true);
-    }
+  it("the risk register repeats the three a reviewer needs", () => {
+    const risks = read("docs/03_SECURITY_AND_PRIVACY.md");
+    expect(risks).toContain(CONTRACT.existence);
+    expect(risks).toContain(CONTRACT.activation);
+    expect(risks).toContain(CONTRACT.runtime);
   });
 
-  it("ANTI-VACUITY: the authority guard catches all three roles, and permits the truth", () => {
-    // Rebuilt from the same parts the guard uses, so changing those parts
-    // exercises this rather than a parallel copy of them.
-    const violates = (sentence: string): boolean => {
-      if (HISTORICAL.test(sentence)) return false;
-      const m = AUTHORITY_ROLE.exec(sentence);
-      if (!m) return false;
-      const before = sentence.slice(0, m.index);
-      if (PAST_ROLE.test(m[0]) && !PRESENT_PASSIVE.test(before)) return false;
-      if (NEGATORS.test(before)) return false;
-      return attributedToGate4(before);
-    };
-
-    for (const claim of [
-      // The three required RED cases, one per authority role.
-      "the guard is enforced in production", // SWEEP-EXEMPT
-      "the guard blocks the production deploy", // SWEEP-EXEMPT
-      "the report proves activation", // SWEEP-EXEMPT
-      "a green report proves activation", // SWEEP-EXEMPT
-      // The two phrasings that actually escaped, in the rounds they escaped.
-      // Both must now fall to the SAME rule rather than to a pattern added for
-      // each one after the fact.
-      // The full sentence as it actually stood, because the subject sits in the
-      // first clause — which is precisely why a per-clause test missed it.
-      "This gate cannot loosen that; it only refuses to ship a list that cannot mean what it appears to mean.", // SWEEP-EXEMPT
-      "the activation guard is enforced only on Vercel production builds", // SWEEP-EXEMPT
-      // And shapes no verb list was ever going to reach: a noun, a passive,
-      // and a claim with distance between the negator and the verb.
-      "this durable waitlist gate is a hard stop for a malformed list", // SWEEP-EXEMPT
-      "a malformed durable allowlist is rejected at deploy time", // SWEEP-EXEMPT
-      "the gate does, in fact, refuse a durable list it cannot parse", // SWEEP-EXEMPT
-    ]) {
-      expect(violates(claim), `must be caught: ${claim}`).toBe(true);
-    }
-
-    for (const legal of [
-      // The truthful present tense — same words, negated.
-      "the report never blocks activation",
-      "Gate 4 is report-only and never blocks",
-      "this activation report does not enforce activation",
-      "runtime membership is the activation control, not this script",
-      // Explicitly historical narration.
-      "Stage A enforced a blanket prohibition on the durable allowlist",
-      "an earlier draft refused a durable list that could not name a studio",
-      "the activation guard previously aborted the build",
-    ]) {
-      expect(violates(legal), `must stay legal: ${legal}`).toBe(false);
-    }
+  it("the SKIP path states both halves, and denies neither", () => {
+    const gate = read("scripts/check-production-env-gates.mjs");
+    expect(gate).toContain(
+      "the production-only durable-waitlist ` +\n        `configuration report does not run for this build. Runtime exact-membership ` +\n        `remains the activation control.",
+    );
+    // The over-correction that made round six's third finding: the runtime
+    // check DOES exist, and slugIsListed() is it.
+    expect(gate).not.toContain("has no check here or anywhere");
+    expect(read("lib/booking/new-client-waitlist.ts")).toContain(
+      "return slugIsListed(NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV, studioSlug);",
+    );
   });
 });
+
 
 // ---------------------------------------------------------------------------
 // D. THE COUPLING: the gate may only be permissive while the disclosure exists

@@ -859,7 +859,7 @@ describe("Stage B records what closed, and what is still open", () => {
     expect(RISKS).toContain("an ambiguous send is deliberately");
     expect(RISKS).toMatch(/\*\*not\*\* reported as a failure/);
     // ...and the old two-way summary is gone.
-    expect(RISKS).not.toContain("is not accepted is reported as failed"); // SWEEP-EXEMPT
+    expect(RISKS).not.toContain("is not accepted is reported as failed");
     // ANTI-VACUITY: the policy really does carry the same three-way split.
     const policy = readFileSync(
       path.resolve(__dirname, "../../../app/privacy/page.tsx"),
@@ -878,7 +878,12 @@ describe("Stage B records what closed, and what is still open", () => {
       "utf8",
     );
     expect(mod).toContain("WHAT REPLACED IT IS REPORT-ONLY");
-    expect(mod).toContain("it cannot fail a build over it");
+    // The canonical sentences, verbatim — same text the gate script authors.
+    expect(mod).toContain("Gate 4 is report-only.");
+    expect(mod).toContain(
+      "It does not fail the\n * build solely because of NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS.",
+    );
+    expect(mod).toContain("Runtime exact-membership is the activation control.");
     expect(mod).toMatch(/DO NOT RELY ON THE GATE TO CATCH A MISTYPED SLUG/);
     // The withdrawn promise is gone, in the present tense.
     expect(mod).not.toMatch(/production build (?:still )?aborts/i);

@@ -56,7 +56,29 @@
  * to >=1 recipient. This is operations reliability hardening before live
  * payments. It does NOT send any email or read alert content.
  *
- * Gate 4, WAIT-02B STAGE-B DURABLE WAITLIST ACTIVATION GUARD:
+ * ---------------------------------------------------------------------------
+ * GATE 4 CONTRACT
+ * ---------------------------------------------------------------------------
+ * The authoritative statement of what this gate is. Pinned VERBATIM by
+ * tests/scripts/check-production-env-gates.test.ts. Editing a line here fails
+ * that test, which is the point: these eight sentences are what an operator
+ * relies on, and six review rounds showed they drift silently otherwise.
+ *
+ *   1. Gate 4 is report-only.
+ *   2. It does not fail the build solely because of
+ *      NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS.
+ *   3. The report does not prove a configured entry names an existing studio.
+ *   4. The report does not prove that a studio is activated.
+ *   5. Runtime exact-membership is the activation control.
+ *   6. Configured values are literal; there is no wildcard or global-enable
+ *      interpretation.
+ *   7. An empty normalized durable allowlist leaves every studio on the
+ *      non-durable path.
+ *   8. The production-only configuration report is skipped outside production,
+ *      while runtime membership still applies.
+ * ---------------------------------------------------------------------------
+ *
+ * Gate 4, WAIT-02B STAGE-B DURABLE WAITLIST CONFIGURATION REPORT:
  * This one is a different SHAPE to the others. They fail when required config
  * is MISSING. This one validates OPTIONAL config that, when present, turns on a
  * personal-data collection point.
@@ -333,10 +355,9 @@ function main() {
         `(VERCEL_ENV=${process.env.VERCEL_ENV ?? "unset"}). ` +
         `Required production env vars (Upstash rate-limit + ${OPS_ALERT_DELIVERY_ENV_VAR} ` +
         `critical-alert delivery) are checked only on Vercel production builds.\n` +
-        `${DURABLE_WAITLIST_ENV_VAR} has no check here or anywhere: it gets a ` +
-        `production-only REPORT that may warn and never fails a build. What turns a studio ` +
-        `on is exact set membership at runtime, in EVERY environment — that is the ` +
-        `activation control, not this script.\n`,
+        `SKIP stage-b-durable-waitlist-env: the production-only durable-waitlist ` +
+        `configuration report does not run for this build. Runtime exact-membership ` +
+        `remains the activation control.\n`,
     );
     process.exit(0);
   }

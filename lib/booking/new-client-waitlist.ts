@@ -73,8 +73,11 @@ export const NEW_CLIENT_WAITLIST_SLUGS_ENV = "NEW_CLIENT_WAITLIST_STUDIO_SLUGS";
  * disclosure, so the prohibition is gone and a correctly named studio is now
  * permitted.
  *
- * WHAT REPLACED IT IS REPORT-ONLY. That script no longer gates this variable at
- * all — it cannot fail a build over it. It has no database access, so it can
+ * WHAT REPLACED IT IS REPORT-ONLY. Gate 4 is report-only. It does not fail the
+ * build solely because of NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS.
+ * Runtime exact-membership is the activation control.
+ * That control is slugIsListed() below, and it runs in EVERY environment —
+ * including the local and CI builds where the report never runs at all. It has no database access, so it can
  * prove neither that an entry identifies a studio nor that anything is
  * activated; it reports the NORMALISED CONFIGURED ENTRIES it would parse, and
  * WARNS on a value outside the shape current writers give a slug. That warning

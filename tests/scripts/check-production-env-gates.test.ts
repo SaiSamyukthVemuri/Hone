@@ -232,8 +232,7 @@ describe("check-production-env-gates script (PR #262)", () => {
 //
 //   * unset / empty / whitespace / comma-only  -> zero studios, PASS, dark.
 //     This is the state Stage B1 ships to production, and the ONE studio-level
-//     claim this script can actually prove (SWEEP-EXEMPT: this one really IS
-//     proven, which is why it is the single exception worth naming) — an empty
+//     claim this script can actually prove — an empty
 //     set makes membership false for every slug, with no database needed.
 //   * an explicitly named slug                 -> PASS, reported as CONFIGURED
 //     NORMALISED ENTRIES. Activation is now possible without a code release,
@@ -711,6 +710,83 @@ describe("gate and runtime normalise the allowlist identically", () => {
       expect(runtimeEnabledCount(global, [A, B]), `${global} must enable nobody`).toBe(0);
     }
   });
+});
+
+// ---------------------------------------------------------------------------
+// THE GATE 4 CONTRACT, PINNED VERBATIM
+// ---------------------------------------------------------------------------
+//
+// These eight sentences are authored in the GATE 4 CONTRACT block of
+// scripts/check-production-env-gates.mjs and are what an operator relies on.
+// Six review rounds showed that prose describing this gate drifts silently
+// while the behaviour below stays correct, so the sentences are pinned as
+// TEXT and the behaviour is proved separately by the executable suites above.
+//
+// This deliberately does NOT try to recognise a false paraphrase. Earlier
+// attempts to detect wrong sentences were unsound in both directions — they
+// missed "the gate is, in every production build, enforced" and flagged the
+// truthful "the report does not, under any circumstances, block activation".
+// Rewriting a pinned sentence simply fails, and a human decides.
+// ---------------------------------------------------------------------------
+describe("GATE 4 CONTRACT is stated verbatim in the script", () => {
+  const CONTRACT: Record<string, string> = {
+    "1 role": "Gate 4 is report-only.",
+    "2 failure authority":
+      "It does not fail the build solely because of\n *      NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS.",
+    "3 existence limit":
+      "The report does not prove a configured entry names an existing studio.",
+    "4 activation limit": "The report does not prove that a studio is activated.",
+    "5 runtime authority": "Runtime exact-membership is the activation control.",
+    "6 wildcard law":
+      "Configured values are literal; there is no wildcard or global-enable\n *      interpretation.",
+    "7 dark law":
+      "An empty normalized durable allowlist leaves every studio on the\n *      non-durable path.",
+    "8 skip law":
+      "The production-only configuration report is skipped outside production,\n *      while runtime membership still applies.",
+  };
+
+  it("carries all eight sentences, verbatim, in one authored block", () => {
+    expect(SCRIPT_SOURCE).toContain("GATE 4 CONTRACT");
+    for (const [name, sentence] of Object.entries(CONTRACT)) {
+      expect(SCRIPT_SOURCE, `contract sentence missing: ${name}`).toContain(sentence);
+    }
+  });
+
+  // ANTI-VACUITY. A pin is only worth having if the behaviour it describes is
+  // actually true, so each sentence is tied to the executable proof that
+  // establishes it. If a pin and its proof ever disagree, the proof wins.
+  it("each pinned sentence has an executable proof, and the proofs hold", () => {
+    // 1, 2 — report-only: no populated value fails the build.
+    for (const value of ["", " , , ", VALID_SLUG_SENTINEL, "*", "a".repeat(65)]) {
+      const r = run({
+        ...PRODUCTION_BASELINE,
+        NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS: value,
+      });
+      expect(r.status, `${JSON.stringify(value)}: ${r.stdout}${r.stderr}`).toBe(0);
+    }
+    // 3, 4 — the report claims neither existence nor activation.
+    const populated = run({
+      ...PRODUCTION_BASELINE,
+      NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS: VALID_SLUG_SENTINEL,
+    });
+    const out = populated.stdout + populated.stderr;
+    expect(out).toMatch(/does not\s+prove any entry identifies a studio/);
+    expect(out).toMatch(/not as a\s+count of studios activated/);
+    // 7 — empty is dark, and says so.
+    expect(run(PRODUCTION_BASELINE).stdout).toMatch(/names no studio/);
+    // 8 — off-production the report does not run at all.
+    const skipped = run({ ...PRODUCTION_BASELINE, VERCEL_ENV: "preview" });
+    expect(skipped.status).toBe(0);
+    expect(skipped.stdout).toMatch(/^SKIP stage-b-durable-waitlist-env/m);
+    expect(skipped.stdout).not.toMatch(/^(?:PASS|WARN|FAIL) stage-b-durable-waitlist-env/m);
+    // ...and says the runtime control still applies, rather than denying it.
+    expect(skipped.stdout).toContain("Runtime exact-membership");
+    expect(skipped.stdout).not.toContain("no check here or anywhere");
+  });
+
+  // 5, 6 are runtime properties and are proved in
+  // tests/lib/booking/new-client-waitlist-flag.test.ts and in the parity block
+  // above; pinned here only as the operator-facing words.
 });
 
 describe("check-production-env-gates contract is pinned in source", () => {
