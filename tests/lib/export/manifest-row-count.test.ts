@@ -124,20 +124,36 @@ describe("the export derives manifest counts from rows, never from bytes", () =>
   );
 
   it("counts come from the row collection handed to rowsToCsv", () => {
-    expect(ACTIONS).toMatch(/manifestCounts\[name\] = rows\.length;/);
+    expect(ACTIONS).toMatch(/manifestCounts\[spec\.file\] = rows\.length;/);
   });
 
+  // TRUTH-01A. `countedCsv(name, headers, rows)` became `writeCsv(resource,
+  // rows)`: the filename and the header row now come from the export resource
+  // registry rather than from a literal at each call site, so the count, the
+  // archive entry, the README line and the audit row all key off one
+  // declaration. The count is still taken from the row collection, which is
+  // what this file exists to protect.
   it("every CSV written goes through the counting wrapper", () => {
-    // A file written with a bare rowsToCsv would be missing from the manifest.
-    // 15 as of migration 0183, which added client_budget_context.csv.
-    const zipCsvWrites = ACTIONS.match(/zip\.file\(\n\s+[^\n]+,\n\s+countedCsv\(/g) ?? [];
-    expect(zipCsvWrites.length).toBe(15);
+    const writes = ACTIONS.match(/\bwriteCsv\(\n?\s*"[a-z_]+"/g) ?? [];
+    expect(writes.length).toBe(15);
+    // Exactly one place puts a CSV into the archive, and it is the wrapper.
+    const zipWrites = ACTIONS.match(/zip\.file\(/g) ?? [];
+    expect(zipWrites.length).toBe(3); // the wrapper, manifest.json, README.txt
     // No CSV may bypass it.
-    expect(ACTIONS).not.toMatch(/zip\.file\(\n\s+[^\n]+,\n\s+rowsToCsv\(/);
+    expect(ACTIONS).not.toMatch(/zip\.file\([^\n]*\.csv"/);
+    // rowsToCsv is reachable from the wrapper and nowhere else.
+    const csvCalls = ACTIONS.match(/rowsToCsv\(/g) ?? [];
+    expect(csvCalls.length).toBe(1);
   });
 
-  it("and the export refuses if a CSV was written without a recorded count", () => {
-    expect(ACTIONS).toMatch(/was written without a recorded/);
+  it("and the export refuses when the archive and the registry disagree", () => {
+    // This REPLACES the old one-directional "written without a recorded count"
+    // refusal. The behavioural proof — build the archive, compare both
+    // directions — lives in
+    // tests/app/settings/data/export-emission-parity.test.ts.
+    expect(ACTIONS).toMatch(/auditEmissionParity\(writtenCsvNames, toleratedOmissions\)/);
+    expect(ACTIONS).toMatch(/emissionParityError\(parity\)/);
+    expect(ACTIONS).not.toMatch(/was written without a recorded/);
   });
 
   it("the byte-splitting counter is gone from the shared helper", () => {

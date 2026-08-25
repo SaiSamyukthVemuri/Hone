@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { exportSpec } from "@/lib/export/resource-registry";
 
 // Product claims must not outrun the product (security review findings #6, #7,
 // #8, and the #4 backup overclaim).
@@ -185,7 +186,11 @@ describe("#4 — the export is not sold as a database backup", () => {
   });
 
   it("the data page says what it actually is", () => {
-    expect(DATA_PAGE).toMatch(/portable copy of your supported studio records/i);
+    // TRUTH-01A. "a portable copy of your supported studio records" was
+    // technically hedged and practically read as "your records". The page now
+    // says NAMED SUBSET in as many words, and lists what is missing.
+    expect(DATA_PAGE).toMatch(/copy of the\s*\n?\s*studio records listed below/i);
+    expect(DATA_PAGE).toMatch(/NAMED SUBSET, not everything Hone holds/);
     expect(DATA_PAGE).toMatch(/not a transactional database backup/i);
   });
 
@@ -199,9 +204,20 @@ describe("#4 — the export is not sold as a database backup", () => {
   it("the Included list names the sources that were added later", () => {
     // Record-keeping and clinical notes are exported but were missing from the
     // list, so the page under-described what the ZIP actually contains.
-    expect(DATA_PAGE).toMatch(/Consultation notes/i);
-    expect(DATA_PAGE).toMatch(/Record-keeping logs/i);
-    expect(DATA_PAGE).toMatch(/Exposure-incident log/i);
+    // TRUTH-01A. The list is GENERATED from the export resource registry, so
+    // the page renders one bullet per exported file and can no longer
+    // under-describe the ZIP by omission. The pins move to the descriptions
+    // that generate it.
+    expect(DATA_PAGE).toMatch(/included\.map\(/);
+    expect(exportSpec("client_clinical_notes").description).toMatch(
+      /consultation notes/i,
+    );
+    expect(exportSpec("record_keeping_sterile_items").description).toMatch(
+      /Sterile-supply inspection log/i,
+    );
+    expect(exportSpec("record_keeping_exposure_incidents").description).toMatch(
+      /Exposure-incident log/i,
+    );
     expect(DATA_PAGE).toMatch(/manifest\.json/);
   });
 });

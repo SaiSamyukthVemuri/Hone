@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { exportSpec } from "@/lib/export/resource-registry";
 
 // CLIENT BUDGET CONTEXT — Chloe pilot feedback.
 //
@@ -450,7 +451,12 @@ describe("treatment plan: no longer a budget authority", () => {
     );
     // Still selected into, and still a column of, treatment_plans.csv.
     expect(exportSrc).toContain("treatment_goal_minutes_override, budget_notes");
-    expect(exportSrc).toMatch(/"budget_notes",/);
+    // TRUTH-01A: the emitted header row moved to the export resource registry.
+    // The invariant is the same — treatment_plans.csv still carries the legacy
+    // budget column — and is now asserted against the declaration the exporter
+    // actually reads.
+    expect(exportSpec("treatment_plans").csvHeaders).toContain("budget_notes");
+    expect(exportSpec("treatment_plans").includedColumns).toContain("budget_notes");
   });
 
   it("there is exactly ONE writer of client budget context, repo-wide", () => {

@@ -46,7 +46,9 @@ const INCLUDED: string[] = [
   "Treatment memory, the Before Today briefing on every returning client",
   "Private treatment photos and procedure records",
   "Client follow-up, postcare, and the client portal",
-  "Full data export, any time",
+  // TRUTH-01A: "Full data export" overstated a named-subset export. See
+  // lib/export/resource-registry.ts for the authoritative contents.
+  "CSV data export, any time, listing exactly what it includes",
 ];
 
 const FAQ: { q: string; a: string }[] = [
