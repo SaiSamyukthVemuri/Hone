@@ -334,10 +334,19 @@ export default function PrivacyPolicyPage() {
         rather than a notification about a record on our side. What we can
         confirm is that our email service accepted the message for sending; that
         is not the same as the studio receiving it, and we cannot promise it
-        arrives. If the message is not accepted, we tell you the request did not
-        go through rather than telling you that you joined. Where it does
-        arrive, the studio may keep it under its own practices &mdash; but we
-        cannot tell you that such a copy exists.
+        arrives. Where it does arrive, the studio may keep it under its own
+        practices &mdash; but we cannot tell you that such a copy exists.
+      </P>
+      <P>
+        <strong>What we tell you when that attempt does not clearly succeed</strong>{" "}
+        depends on what we actually know. If the email service definitely
+        refuses the message, or the studio has no email address for us to send
+        to, we tell you the request did not go through. If the outcome is
+        uncertain instead &mdash; we tried, and could not establish what
+        happened &mdash; we tell you we could not confirm your request, and ask
+        you to contact the studio before trying again. We do not describe an
+        uncertain outcome as a failure, and in neither case do we tell you that
+        you joined.
       </P>
       <P>
         Under either handling, joining a waitlist does not create an

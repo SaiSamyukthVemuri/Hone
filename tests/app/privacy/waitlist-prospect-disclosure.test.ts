@@ -181,11 +181,92 @@ describe("privacy policy — prospective client / waitlist coverage", () => {
     expect(PRIVACY).toMatch(
       /that message is the request itself\s+rather than a notification about a record on our side/,
     );
-    // And the refusal semantics the code actually has: told it failed, never
-    // told they joined.
+  });
+
+  // -------------------------------------------------------------------------
+  // CODEX (#637), FOURTH PASS — P2. The paragraph above previously ended "If
+  // the message is not accepted, we tell you the request did not go through",
+  // which collapses THREE runtime outcomes into two. WAIT-01 has:
+  //
+  //   no recipient          -> SUBMIT_FAILED       "we couldn't record it"
+  //   definite refusal      -> SUBMIT_FAILED       "we couldn't record it"
+  //   AMBIGUOUS (timeout /  -> SUBMIT_UNCONFIRMED  "we couldn't CONFIRM it —
+  //   concurrent / no id)                           contact the studio"
+  //
+  // The third is also "not accepted", but Hone does NOT tell the visitor the
+  // request failed there — it says it could not establish what happened. The
+  // categorical sentence was therefore false in exactly the branch that exists
+  // because the outcome is unknowable.
+  // -------------------------------------------------------------------------
+  it("splits DEFINITE failure from an UNCERTAIN outcome, as the code does", () => {
+    // 1. The definite branch — and only it — may say "did not go through".
     expect(PRIVACY).toMatch(
-      /If the message is not accepted, we tell you the request did not\s+go through rather than telling you that you joined/,
+      /If the email service definitely\s+refuses the message, or the studio has no email address for us to send\s+to, we tell you the request did not go through/,
     );
+    // 2. The uncertain branch says "could not confirm", never "failed".
+    expect(PRIVACY).toMatch(
+      /If the outcome is\s+uncertain instead[\s\S]{0,120}we tell you we could not confirm your request, and ask\s+you to contact the studio before trying again/,
+    );
+    // 3. Stated as a rule, so the distinction cannot be read as incidental.
+    expect(PRIVACY).toMatch(/We do not describe an\s+uncertain outcome as a failure/);
+    // ...and neither branch claims a join.
+    expect(PRIVACY).toMatch(/in neither case do we tell you that\s+you joined/);
+    // No internal vocabulary leaks into the WAITLIST copy. Scoped to §6's
+    // waitlist paragraphs on purpose: the subprocessor list higher up in §6
+    // names the email provider, and that is a required disclosure which
+    // predates this PR — it must not be collateral damage of this check.
+    const waitlist = PRIVACY.slice(
+      PRIVACY.indexOf("<strong>With the studio whose waitlist you joined.</strong>"),
+      PRIVACY.indexOf("<strong>In connection with a business transfer</strong>"),
+    );
+    expect(waitlist.length).toBeGreaterThan(500); // anti-vacuity
+    for (const internal of [
+      "SUBMIT_FAILED", "SUBMIT_UNCONFIRMED", "message id", "message ID",
+      "idempotency", "Resend", "ambiguous", "provider",
+    ]) {
+      expect(waitlist, `waitlist copy must not expose "${internal}"`).not.toContain(internal);
+    }
+    // ...and the pre-existing subprocessor disclosure is still there.
+    expect(PRIVACY).toContain("Resend (transactional email delivery)");
+  });
+
+  it("NEGATIVE CONTROL: 'not accepted' may never be reported as definite failure", () => {
+    for (const banned of [
+      /\bIf the message is not accepted\b/i,
+      /\bif (?:it|the message|the email) is not accepted\b/i,
+      /\bnot accepted, we tell you\b/i,
+      /\bevery (?:message|send|attempt|request)[^.]{0,40}not accepted\b/i,
+      /\banything not accepted\b/i,
+    ]) {
+      expect(PRIVACY, `must not collapse the uncertain branch: ${banned}`).not.toMatch(banned);
+    }
+  });
+
+  it("ANTI-VACUITY: the runtime really does return two different results", () => {
+    const action = read("app/book/[slug]/waitlist-actions.ts");
+    const lib = read("lib/booking/new-client-waitlist.ts");
+    // The ambiguous branch is checked FIRST and returns UNCONFIRMED...
+    expect(action).toMatch(
+      /if \(studioSend\.status === "ambiguous"\)[\s\S]{0,260}return \{ ok: false, error: NEW_CLIENT_WAITLIST_SUBMIT_UNCONFIRMED \};/,
+    );
+    // ...and only a DEFINITE non-acceptance falls through to FAILED.
+    expect(action).toMatch(
+      /if \(studioSend\.status !== "accepted"\)[\s\S]{0,320}return \{ ok: false, error: NEW_CLIENT_WAITLIST_SUBMIT_FAILED \};/,
+    );
+    // The no-recipient case is the other definite one.
+    expect(action).toMatch(
+      /new_client_waitlist_no_studio_recipient[\s\S]{0,200}NEW_CLIENT_WAITLIST_SUBMIT_FAILED/,
+    );
+    // And the two visitor-facing strings really are different messages: one
+    // says we could not RECORD it, the other that we could not CONFIRM it.
+    const failed = lib.match(/NEW_CLIENT_WAITLIST_SUBMIT_FAILED =\s*\n\s*"([^"]+)"/)?.[1];
+    const unconfirmed = lib.match(/NEW_CLIENT_WAITLIST_SUBMIT_UNCONFIRMED =\s*\n\s*"([^"]+)"/)?.[1];
+    expect(failed).toBeTruthy();
+    expect(unconfirmed).toBeTruthy();
+    expect(failed).not.toBe(unconfirmed);
+    expect(failed as string).toMatch(/couldn.t record/i);
+    expect(unconfirmed as string).toMatch(/couldn.t confirm/i);
+    expect(unconfirmed as string).toMatch(/contact the studio/i);
   });
 
   // -------------------------------------------------------------------------
@@ -236,7 +317,7 @@ describe("privacy policy — prospective client / waitlist coverage", () => {
     }
     // Hedged forms are the point, so they must survive: "may remain", "may keep".
     expect(PRIVACY).toMatch(/copies of it may remain in/);
-    expect(PRIVACY).toMatch(/the studio may keep it under its own practices/);
+    expect(PRIVACY).toMatch(/the studio may keep it under its own\s+practices/);
   });
 
   it("ANTI-VACUITY: provider acceptance really is all the code knows", () => {
