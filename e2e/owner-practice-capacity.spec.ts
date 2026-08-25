@@ -74,6 +74,18 @@ const cardFor = (page: Page, label: string) =>
  */
 const figureIn = (card: Locator) => card.locator("p.tabular-nums");
 
+/**
+ * The rebooking list container. Same one-hop rule as `cardFor`: the "Who to
+ * rebook" label is an <h3> rendered as a direct child of the list's own div.
+ *
+ * Membership assertions are scoped through this rather than through the page,
+ * because "there is a link with this name SOMEWHERE" is a weaker claim than
+ * "this client is on the rebooking list" — and it is the latter that every test
+ * here is actually about.
+ */
+const worklistOf = (page: Page) =>
+  page.getByRole("heading", { name: "Who to rebook", exact: true }).locator("..");
+
 async function newClient(studioId: string, name: string): Promise<string> {
   const rows = await sql<{ id: string }>(
     `insert into public.clients (id, studio_id, name)
@@ -252,8 +264,10 @@ test("a CONSULTATION-only client is still on the rebooking list", async ({ page 
   await page.goto("/dashboard/capacity");
 
   // Something IS booked for this client — it is simply not treatment, which is
-  // exactly why they still need a treatment appointment.
-  await expect(page.getByRole("link", { name: CONSULT })).toBeVisible();
+  // exactly why they still need a treatment appointment. Scoped to the
+  // worklist: a link bearing this name anywhere on the page would not have
+  // proved membership of the rebooking list.
+  await expect(worklistOf(page).getByRole("link", { name: CONSULT })).toBeVisible();
 
   // ...and the page never describes this population as having nothing booked.
   await expect(page.getByText(/nothing booked/i)).toHaveCount(0);
@@ -267,6 +281,9 @@ test("a client with a future TREATMENT is not on the rebooking list", async ({ p
   await page.goto("/dashboard/capacity");
 
   await expect(page.getByRole("heading", { name: "Who to rebook" })).toBeVisible();
+  // The claim the title makes: absent from the LIST.
+  await expect(worklistOf(page).getByRole("link", { name: BOOKED })).toHaveCount(0);
+  // And, strictly stronger, absent from the page entirely.
   await expect(page.getByRole("link", { name: BOOKED })).toHaveCount(0);
 });
 
@@ -341,18 +358,27 @@ test("a studio with no treatment plans shows no figure and no partial list", asy
   ];
   for (const label of SUPPRESSED) {
     const card = cardFor(page, label);
-    await expect(card, `${label} must say why it cannot answer`).toContainText(
+    await expect(card, `${label} must refuse to answer`).toContainText(
       "Not enough evidence yet",
+    );
+    // ...AND carry its own reason. Asserted INSIDE the card: a page-wide
+    // `.first()` check proved only that one reason existed somewhere, so five
+    // cards could have kept the placeholder and lost the explanation while
+    // every assertion here still passed. The message above used to promise
+    // this and the code did not deliver it.
+    await expect(card, `${label} must say WHY it cannot answer`).toContainText(
+      "It is not zero",
     );
     // No numeric figure AT ALL — not a zero, which on this screen would read as
     // "nobody needs booking".
     await expect(figureIn(card), `${label} must render no number`).toHaveCount(0);
   }
-  // Exactly six, so a seventh suppression (or a missing one) is a failure too.
+  // Exactly six of each, so a seventh suppression — or a card that keeps the
+  // placeholder while dropping the reason — is a failure too.
   await expect(page.getByText("Not enough evidence yet")).toHaveCount(
     SUPPRESSED.length,
   );
-  await expect(page.getByText(/It is not zero/).first()).toBeVisible();
+  await expect(page.getByText(/It is not zero/)).toHaveCount(SUPPRESSED.length);
 
   // ...and the figures that are legitimately KNOWN still render, so this is a
   // statement about evidence rather than a blanket "everything is unknown".
@@ -380,9 +406,10 @@ test("an owner can find the capacity page from search", async ({ page }) => {
   await page
     .getByPlaceholder("Search clients, appointments, notes...")
     .fill("capacity");
-  await expect(
-    page.getByRole("link", { name: /Practice capacity/ }).first(),
-  ).toBeVisible();
+  // Exactly one, not `.first()`: a `.first()` here would pass even if the page
+  // were rendering duplicate or unrelated capacity links.
+  await expect(page.getByRole("link", { name: /Practice capacity/ })).toHaveCount(1);
+  await expect(page.getByRole("link", { name: /Practice capacity/ })).toBeVisible();
 });
 
 test("an ordinary practitioner is not offered the owner-only entry", async ({ page }) => {
