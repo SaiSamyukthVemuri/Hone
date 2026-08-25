@@ -19,7 +19,9 @@ import { fetchAllRows, EXPORT_PAGE_SIZE } from "@/lib/export/paginate";
 // file list, the manifest's count-check coverage — is derived from it now.
 import {
   auditEmissionParity,
+  auditExportedFilenames,
   auditSourceCountCoverage,
+  duplicateFilenameError,
   emissionParityError,
   excludedResources,
   exportedResources,
@@ -457,6 +459,17 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
   // the file the manifest counts, the file the audit row names and the file the
   // Data settings page advertises are all the same declaration. There is no
   // second list to fall behind.
+  // TWO RESOURCES MAY NEVER DECLARE THE SAME FILENAME, and it is checked HERE -
+  // before the first write, before any Set collapses them, and before JSZip
+  // keeps one entry per path. A collision would otherwise be invisible: the
+  // second writeCsv overwrites the first's rows AND its manifest count, and
+  // emission parity, the manifest and the audit row would all agree on a file
+  // whose data is simply gone.
+  const filenames = auditExportedFilenames();
+  if (!filenames.ok) {
+    return { ok: false, error: duplicateFilenameError(filenames) };
+  }
+
   const manifestCounts: Record<string, number> = {};
   const writeCsv = (
     resource: string,

@@ -1,4 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
 
 import {
   auditColumnCoverage,
@@ -36,6 +38,68 @@ import { adminQuery, closePool } from "@/tests/db/helpers/harness";
 // Nothing here writes. The one test that creates a table does so inside a
 // transaction that is ALWAYS rolled back, because this stack is shared with
 // every other suite in the lane.
+
+
+// ---------------------------------------------------------------------------
+// Does APPLICATION code reference a symbol?
+//
+// Comments are stripped so prose describing a table does not count as using it,
+// and the registry itself is skipped: naming every table is its entire job.
+// ---------------------------------------------------------------------------
+const APP_ROOTS = ["app", "lib", "components"] as const;
+const NOT_A_REFERENCE = new Set([
+  "lib/export/resource-registry.ts",
+  "lib/types/database.ts",
+]);
+
+function walkTs(dir: string): string[] {
+  const out: string[] = [];
+  let entries: string[];
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return out;
+  }
+  for (const name of entries) {
+    if (name === "node_modules" || name === ".next") continue;
+    const full = join(dir, name);
+    if (statSync(full).isDirectory()) out.push(...walkTs(full));
+    else if (/\.tsx?$/.test(name)) out.push(full);
+  }
+  return out;
+}
+
+let APP_SOURCES: Array<{ rel: string; code: string }> | null = null;
+
+function appSources(): Array<{ rel: string; code: string }> {
+  if (APP_SOURCES) return APP_SOURCES;
+  APP_SOURCES = [];
+  for (const root of APP_ROOTS) {
+    for (const rel of walkTs(root)) {
+      if (NOT_A_REFERENCE.has(rel)) continue;
+      const raw = readFileSync(rel, "utf8");
+      const code = raw
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .split("\n")
+        .filter((line) => !/^\s*\/\//.test(line))
+        .join("\n");
+      APP_SOURCES.push({ rel, code });
+    }
+  }
+  return APP_SOURCES;
+}
+
+/** Files that use `symbol` as a real string literal, not as prose. */
+function referencedBy(symbol: string): string[] {
+  return appSources()
+    .filter(
+      ({ code }) =>
+        code.includes(`"${symbol}"`) ||
+        code.includes(`'${symbol}'`) ||
+        code.includes(`\`${symbol}\``),
+    )
+    .map(({ rel }) => rel);
+}
 
 let liveTables: string[] = [];
 let liveBuckets: string[] = [];
@@ -308,6 +372,89 @@ describe("what is excluded, and on what grounds", () => {
         ).not.toContain(column);
         expect(disposition.includedColumns).not.toContain(column);
       }
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // "DEAD" IS A CLAIM ABOUT THE RUNTIME, AND IT IS NOW CHECKED
+  // -------------------------------------------------------------------------
+  //
+  // Codex P2 on head 25c066ab: stripe_account_provisioning_attempts and
+  // stripe_customer_provisioning_attempts were classified `dead`. They are not.
+  // Both are written by SECURITY DEFINER functions the application calls, and
+  // the mistake came from a liveness check that looked only for direct table
+  // access. A table written exclusively through an RPC was invisible to it —
+  // and the false claim was being PRINTED into the generated README and
+  // settings page, which is the precise class of untruth this registry exists
+  // to remove.
+  //
+  // So the claim is now mechanical, and it uses pg_proc rather than the
+  // migration text: for every `dead` resource, no application module may
+  // reference the table, and no function that WRITES the table may be invoked
+  // from application code.
+  async function unreachabilityOffenders(resources: readonly string[]): Promise<string[]> {
+    const procs = await adminQuery(
+      `select p.proname, p.prosrc
+         from pg_proc p
+         join pg_namespace n on n.oid = p.pronamespace
+        where n.nspname = 'public'`,
+    );
+    const functions = procs.rows as Array<{ proname: string; prosrc: string }>;
+    const offenders: string[] = [];
+    for (const resource of resources) {
+      const writes = new RegExp(
+        String.raw`(insert\s+into|update|delete\s+from)\s+public\.${resource}\b`,
+        "i",
+      );
+      const writers = [
+        ...new Set(functions.filter((f) => writes.test(f.prosrc)).map((f) => f.proname)),
+      ];
+      for (const symbol of [resource, ...writers]) {
+        const hits = referencedBy(symbol);
+        if (hits.length > 0) {
+          offenders.push(`${resource} is reachable via "${symbol}" from ${hits.join(", ")}`);
+        }
+      }
+    }
+    return offenders;
+  }
+
+  it("no resource classified dead is reachable from application code", async () => {
+    const dead = Object.entries(EXPORT_RESOURCE_REGISTRY)
+      .filter(([, d]) => d.kind === "excluded" && d.category === "dead")
+      .map(([resource]) => resource);
+    expect(dead.length).toBeGreaterThan(0);
+    expect(
+      await unreachabilityOffenders(dead),
+      "classified dead, but application code reaches it — reclassify as pending",
+    ).toEqual([]);
+  });
+
+  // NEGATIVE CONTROL. Run the same detection over a table that IS live and
+  // require RED, so a guard that has quietly stopped discriminating cannot sit
+  // green forever. These are the two resources the check would have caught on
+  // head 25c066ab, had it existed.
+  it("RED if a live Stripe provisioning ledger were classified dead", async () => {
+    const offenders = await unreachabilityOffenders([
+      "stripe_account_provisioning_attempts",
+      "stripe_customer_provisioning_attempts",
+    ]);
+    expect(offenders.length).toBeGreaterThan(0);
+    expect(offenders.join(" ")).toMatch(/lib\/stripe\/account\.ts/);
+    expect(offenders.join(" ")).toMatch(/lib\/stripe\/setup-intent\.ts/);
+  });
+
+  it("the two Stripe provisioning ledgers Codex found are pending, not dead", () => {
+    for (const resource of [
+      "stripe_account_provisioning_attempts",
+      "stripe_customer_provisioning_attempts",
+    ]) {
+      const disposition = EXPORT_RESOURCE_REGISTRY[resource];
+      expect(disposition.kind, `${resource}`).toBe("pending");
+      expect(
+        disposition.kind === "pending" && disposition.fieldReviewRequired,
+        `${resource} carries provider identifiers and must not be dumped raw`,
+      ).toBe(true);
     }
   });
 

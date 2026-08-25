@@ -137,6 +137,20 @@ export type ExcludedColumn = {
   readonly note?: string;
 };
 
+/**
+ * An included column that reaches the CSV under a DIFFERENT header name, or
+ * under several.
+ *
+ * Without this, "included" and "emitted" could only be compared for columns
+ * that happen to keep their own name, and the two files that rename or flatten
+ * would have had to be exempted wholesale - which is how an exemption becomes a
+ * hole. Declaring the mapping makes the rename checkable instead.
+ */
+export type EmittedAs = {
+  readonly headers: readonly string[];
+  readonly note: string;
+};
+
 export type ExportedDisposition = {
   readonly kind: "exported";
   readonly file: string;
@@ -152,6 +166,21 @@ export type ExportedDisposition = {
   readonly includedColumns: readonly string[];
   /** Every other column of this table, each with the reason it is absent. */
   readonly excludedColumns: readonly ExcludedColumn[];
+  /**
+   * Included columns whose value lands under a different header, keyed by
+   * column name. Every included column NOT listed here must appear in
+   * `csvHeaders` under its own name.
+   */
+  readonly emittedAs?: Readonly<Record<string, EmittedAs>>;
+  /**
+   * Headers that are NOT columns of this table: joined labels and fields lifted
+   * from a related table. Keyed by header, valued with where it comes from.
+   *
+   * Declared so the emission contract can be checked in BOTH directions. A
+   * header that is neither a column of this table, nor an `emittedAs` target,
+   * nor declared here, is an unexplained column in a financial-grade artifact.
+   */
+  readonly derivedHeaders?: Readonly<Record<string, string>>;
   /** Which ROWS are in scope. Column accounting says nothing about this. */
   readonly rowScope: string;
   readonly sourceCountCheck: SourceCountCheck;
@@ -382,6 +411,20 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
       { column: "delete_reason", reason: "pending_review", note: "See deleted_at." },
     ],
     sourceCountCheck: { kind: "via_parent", parent: "sessions", reason: "The table carries no studio_id (RLS reaches it through the parent session), so no safe studio-scoped count query exists. Rows are filtered against the exported session ids, so completeness follows the sessions check." },
+    derivedHeaders: {
+      block_primary_area: "session_blocks.primary_area, joined by block_id",
+      block_side: "session_blocks.side, joined by block_id",
+      block_areas: "session_block_areas for the block, joined into one label by blockAreasLabel",
+      block_custom_area_detail: "session_blocks.custom_area_detail, joined by block_id",
+      probe_key: "session_blocks.probe_key, joined by block_id",
+      probe_brand: "session_blocks.probe_brand, joined by block_id",
+      probe_material: "session_blocks.probe_material, joined by block_id",
+      probe_piece_type: "session_blocks.probe_piece_type, joined by block_id",
+      probe_shank: "session_blocks.probe_shank, joined by block_id",
+      probe_size_value: "session_blocks.probe_size_value, joined by block_id",
+      probe_length: "session_blocks.probe_length, joined by block_id",
+      probe_label: "session_blocks.probe_label, joined by block_id",
+    },
     rowScope: "Entries whose parent session is in sessions.csv. The entry's own soft-delete state is neither filtered nor emitted.",
     description:
       "Every electrolysis entry with area, mode, energy level, modality, machine frequency, pulse count, hairs treated, blend/galvanic and thermolysis readings (galvanic mA/duration/intensity, thermolysis intensity/duration, units of lye), the structured probe (brand, material, piece type, shank, size, length), the treatment area (primary area, side, specifics), structured observation chips, and free-text comments.",
@@ -417,6 +460,10 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
       { column: "delete_reason", reason: "pending_review", note: "See deleted_at." },
     ],
     sourceCountCheck: { kind: "via_parent", parent: "sessions", reason: "The table carries no studio_id (RLS reaches it through the parent session), so no safe studio-scoped count query exists. Rows are filtered against the exported session ids, so completeness follows the sessions check." },
+    emittedAs: {
+      session_number: { headers: ["treatment_number"], note: "Emitted under the practitioner-facing name." },
+      equipment_params: { headers: ["fluence", "pulse_width", "spot_size"], note: "The jsonb blob is FLATTENED into three top-level columns so a spreadsheet shows plain fields. Any key the blob holds beyond these three does not reach the CSV." },
+    },
     rowScope: "Entries whose parent session is in sessions.csv. The entry's own soft-delete state is neither filtered nor emitted.",
     description:
       "Every laser entry with zone, fluence, pulse width, treatment number, observations.",
@@ -576,6 +623,11 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
       { column: "outside_availability_authorized_at", reason: "pending_review", note: "Override authorization (migration 0174)." },
     ],
     sourceCountCheck: { kind: "studio_scoped" },
+    derivedHeaders: {
+      client_name: "clients.name, resolved from an in-memory map",
+      practitioner_name: "practitioners.display_name, resolved from an in-memory map",
+      service_name: "services.name, resolved from an in-memory map",
+    },
     rowScope: "Every appointment this studio holds, in every status.",
     description:
       "One row per appointment with client, practitioner, and service (IDs plus readable names), start/end times, duration, status, appointment notes, and cancellation details.",
@@ -625,6 +677,9 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
       { column: "studio_id", reason: "tenant_key" },
     ],
     sourceCountCheck: { kind: "none", reason: "No source-side count query is issued for this file today, so its row count is recorded but NOT verified against the database. Adding the check is TRUTH-01B; declaring the gap here is what stops the manifest reading as though every file were verified." },
+    derivedHeaders: {
+      client_name: "clients.name, resolved from an in-memory map",
+    },
     rowScope: "Every plan this studio holds, open and closed.",
     description:
       "One row per treatment plan with client, name, primary area, all treatment areas (pipe-joined), estimated timeline months window, status, estimated visit count, treatment-goal minutes override, and plan/budget notes.",
@@ -666,6 +721,11 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
       { column: "studio_id", reason: "tenant_key" },
     ],
     sourceCountCheck: { kind: "none", reason: "No source-side count query is issued for this file today, so its row count is recorded but NOT verified against the database. Adding the check is TRUTH-01B; declaring the gap here is what stops the manifest reading as though every file were verified." },
+    derivedHeaders: {
+      plan_name: "treatment_plans.name for the parent plan",
+      client_id: "treatment_plans.client_id for the parent plan",
+      client_name: "clients.name for the parent plan's client",
+    },
     rowScope: "Every stage of every exported plan.",
     description:
       "Schedule stages for treatment plans (cadence, visit length, stage length, notes), with the parent plan and client for reference.",
@@ -846,6 +906,10 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
       { column: "studio_id", reason: "tenant_key" },
     ],
     sourceCountCheck: { kind: "studio_scoped" },
+    derivedHeaders: {
+      client_name: "clients.name, resolved by buildClinicalNoteExportRows",
+      practitioner_display_name: "practitioners.display_name, resolved by buildClinicalNoteExportRows",
+    },
     rowScope: "Every clinical note this studio holds, INCLUDING superseded revisions: the table is append-only and a correction is its own row.",
     description:
       "The clinical narrative for every client: consultation notes and skin/hair analyses, with the authoring practitioner, the treatment areas tagged, when the note describes (occurred_at) and when it was recorded (created_at). FULL HISTORY: these records are append-only, so a correction appears as its own row whose supersedes_note_id points at the note it revised, and the superseded note is kept.",
@@ -875,6 +939,9 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
       { column: "studio_id", reason: "tenant_key" },
     ],
     sourceCountCheck: { kind: "none", reason: "No source-side count query is issued for this file today, so its row count is recorded but NOT verified against the database. Adding the check is TRUTH-01B; declaring the gap here is what stops the manifest reading as though every file were verified." },
+    derivedHeaders: {
+      client_name: "clients.name, resolved from an in-memory map",
+    },
     rowScope: "One row per client for whom budget context was recorded.",
     description:
       "The client's CURRENT budget context as recorded by the practitioner: a broad budget level (no_stated_limit / somewhat_limited / severely_limited, or empty when none was recorded) and free-text budget notes, with who last updated it and when. One row per client, and only for clients where something was recorded. This is practitioner-authored planning context, not a financial assessment of the client: it holds no income, no affordability score and no payment data, and it never affected pricing or charges. Historical plan-scoped budget notes written before this record existed remain in treatment_plans.csv and were deliberately not copied here.",
@@ -985,61 +1052,49 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     kind: "excluded",
     category: "dead",
     reason:
-      "Created by migration 0032 and never written by any runtime code path. Zero readers, zero writers; the live payment ledger is payment_charge_attempts.",
+      "Created by migration 0032 and unreachable from application code: no module opens the table directly, and no SECURITY DEFINER function that writes it is invoked from the application. Zero readers, zero writers; the live payment ledger is payment_charge_attempts.",
   },
   payment_consents: {
     kind: "excluded",
     category: "dead",
     reason:
-      "Created by migration 0032 and never written by any runtime code path.",
+      "Created by migration 0032 and unreachable from application code: no module opens the table directly, and no SECURITY DEFINER function that writes it is invoked from the application.",
   },
   pending_booking_payment_sessions: {
     kind: "excluded",
     category: "dead",
     reason:
-      "Created by migration 0032 for public-booking card collection, which is off and unwired. Never written.",
-  },
-  stripe_account_provisioning_attempts: {
-    kind: "excluded",
-    category: "dead",
-    reason:
-      "Created by migration 0032 and never written by any runtime code path.",
+      "Created by migration 0032 for public-booking card collection, which is off and unwired. Unreachable from application code: no module opens the table directly, and none of the nine SECURITY DEFINER functions that write it is invoked from the application.",
   },
   stripe_charge_attempts: {
     kind: "excluded",
     category: "dead",
     reason:
-      "Created by migration 0032 and never written by any runtime code path.",
-  },
-  stripe_customer_provisioning_attempts: {
-    kind: "excluded",
-    category: "dead",
-    reason:
-      "Created by migration 0032 and never written by any runtime code path.",
+      "Created by migration 0032 and unreachable from application code: no module opens the table directly, and no SECURITY DEFINER function that writes it is invoked from the application.",
   },
   stripe_disputes: {
     kind: "excluded",
     category: "dead",
     reason:
-      "Created by migration 0032 and never written by any runtime code path. Dispute handling is alert-only via ops_alerts.",
+      "Created by migration 0032 and unreachable from application code: no module opens the table directly, and no SECURITY DEFINER function that writes it is invoked from the application. Dispute handling is alert-only via ops_alerts.",
   },
   stripe_payment_audit: {
     kind: "excluded",
     category: "dead",
     reason:
-      "Created by migration 0032 and never written by any runtime code path.",
+      "Created by migration 0032 and unreachable from application code: no module opens the table directly, and no SECURITY DEFINER function that writes it is invoked from the application.",
   },
   stripe_refund_attempts: {
     kind: "excluded",
     category: "dead",
     reason:
-      "Created by migration 0032 and never written by any runtime code path. Live refund state lives on payment_charge_attempts.refund_*.",
+      "Created by migration 0032 and unreachable from application code: no module opens the table directly, and no SECURITY DEFINER function that writes it is invoked from the application. Live refund state lives on payment_charge_attempts.refund_*.",
   },
   stripe_refunds: {
     kind: "excluded",
     category: "dead",
     reason:
-      "Created by migration 0032 and never written by any runtime code path. Live refund state lives on payment_charge_attempts.refund_*.",
+      "Created by migration 0032 and unreachable from application code: no module opens the table directly, and no SECURITY DEFINER function that writes it is invoked from the application. Live refund state lives on payment_charge_attempts.refund_*.",
   },
 
   // deliberate_privacy
@@ -1348,6 +1403,22 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "Stripe customer identifiers per client. Provider identifiers; review before export.",
   },
+  stripe_account_provisioning_attempts: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    fieldReviewRequired: true,
+    reason:
+      "The Stripe Connect onboarding attempt ledger, and it is LIVE: create_or_claim_stripe_account_provisioning, complete_stripe_account_provisioning and mark_stripe_account_provisioning_failed are all invoked from lib/stripe/account.ts, which the payment settings actions and the return/refresh pages drive. It was classified `dead` on the first TRUTH-01A head, which was wrong - the liveness check looked for direct table access and could not see a SECURITY DEFINER writer - and that error would have printed a false statement into the generated README and settings page. Field review before any export: the row carries the Stripe account identifier, the onboarding claim token and provider failure detail, none of which a studio can act on outside Hone.",
+  },
+  stripe_customer_provisioning_attempts: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    fieldReviewRequired: true,
+    reason:
+      "The Stripe customer provisioning ledger, and it is LIVE: create_or_claim_stripe_customer_provisioning and complete_stripe_customer_provisioning are invoked from lib/stripe/setup-intent.ts, which app/portal/payment-method-actions.ts drives when a client saves a card. Same mis-classification and same correction as stripe_account_provisioning_attempts. Field review before any export: it is per-client provider linkage, so it carries a Stripe customer identifier and nothing independently useful.",
+  },
   studio_payment_settings: {
     kind: "pending",
     ticket: "TRUTH-01B",
@@ -1624,6 +1695,236 @@ export function auditColumnCoverage(
     }
   }
   return { ok: problems.length === 0, problems };
+}
+
+// ---------------------------------------------------------------------------
+// GUARD 2b - THE EMISSION CONTRACT
+// ---------------------------------------------------------------------------
+//
+// WHY GUARD 2 ALONE WAS NOT ENOUGH (Codex P1 on 25c066ab).
+//
+// Guard 2 is set arithmetic: included UNION excluded must equal the live column
+// set. Nothing in it connects `includedColumns` to what the CSV actually
+// carries. So a migration adds a column, somebody adds its NAME to
+// includedColumns, Guard 2 goes green, and the studio is told it receives a
+// field that reaches no file. That is the exact silent omission the registry
+// exists to prevent, wearing the registry's own approval.
+//
+// This closes the declaration end of the chain in both directions:
+//
+//   every INCLUDED column resolves to at least one real header - itself, or the
+//   headers its `emittedAs` entry names;
+//   every EXCLUDED column is absent from the headers under its own name, so
+//   "excluded" cannot describe a column the file is in fact emitting;
+//   every HEADER is accounted for - an included column, an emittedAs target, or
+//   a declared derivation.
+//
+// The value end of the chain - that the column is actually SELECTED and its
+// value actually lands in the cell - is proved separately and against real
+// rows, by tests/db/export-column-round-trip.db.test.ts. Declaration arithmetic
+// cannot prove a value moved, and this function does not pretend to.
+
+export type EmissionContractAudit = {
+  readonly ok: boolean;
+  readonly problems: ReadonlyArray<{
+    readonly resource: string;
+    readonly kind:
+      | "included_not_emitted"
+      | "excluded_but_emitted"
+      | "unexplained_header"
+      | "emitted_as_unknown_column"
+      | "emitted_as_missing_header"
+      | "derived_header_shadows_column";
+    readonly detail: string;
+  }>;
+};
+
+export function auditEmissionContract(
+  resources: ReadonlyArray<RegistryEntry<ExportedDisposition>> = exportedResources(),
+): EmissionContractAudit {
+  const problems: Array<{
+    resource: string;
+    kind: EmissionContractAudit["problems"][number]["kind"];
+    detail: string;
+  }> = [];
+
+  for (const { resource, disposition } of resources) {
+    const headers = new Set(disposition.csvHeaders);
+    const included = new Set(disposition.includedColumns);
+    const excluded = new Set(disposition.excludedColumns.map((c) => c.column));
+    const emittedAs = disposition.emittedAs ?? {};
+    const derived = disposition.derivedHeaders ?? {};
+
+    // A rename may only be declared for a column that is actually included, and
+    // it must land somewhere real.
+    for (const [column, mapping] of Object.entries(emittedAs)) {
+      if (!included.has(column)) {
+        problems.push({
+          resource,
+          kind: "emitted_as_unknown_column",
+          detail: `emittedAs names "${column}", which is not an included column`,
+        });
+      }
+      if (mapping.headers.length === 0) {
+        problems.push({
+          resource,
+          kind: "emitted_as_missing_header",
+          detail: `emittedAs for "${column}" names no header at all`,
+        });
+      }
+      for (const header of mapping.headers) {
+        if (!headers.has(header)) {
+          problems.push({
+            resource,
+            kind: "emitted_as_missing_header",
+            detail: `emittedAs maps "${column}" to "${header}", which is not in csvHeaders`,
+          });
+        }
+      }
+    }
+
+    // THE P1 CHECK. Included means emitted.
+    for (const column of disposition.includedColumns) {
+      if (headers.has(column)) continue;
+      const mapping = emittedAs[column];
+      if (mapping && mapping.headers.length > 0 && mapping.headers.every((h) => headers.has(h))) {
+        continue;
+      }
+      problems.push({
+        resource,
+        kind: "included_not_emitted",
+        detail: `"${column}" is declared included but reaches no header: it is not in csvHeaders and has no emittedAs mapping`,
+      });
+    }
+
+    // The reverse: a column cannot be called excluded while the file emits it.
+    for (const column of disposition.excludedColumns) {
+      if (headers.has(column.column)) {
+        problems.push({
+          resource,
+          kind: "excluded_but_emitted",
+          detail: `"${column.column}" is declared excluded (${column.reason}) but appears in csvHeaders`,
+        });
+      }
+    }
+
+    // And no header may be unexplained.
+    const emittedTargets = new Set(
+      Object.values(emittedAs).flatMap((m) => [...m.headers]),
+    );
+    for (const header of disposition.csvHeaders) {
+      if (included.has(header) || emittedTargets.has(header) || header in derived) {
+        continue;
+      }
+      problems.push({
+        resource,
+        kind: "unexplained_header",
+        detail: `header "${header}" is neither an included column, an emittedAs target, nor a declared derivation`,
+      });
+    }
+
+    // A derivation must not quietly stand in for a real column of this table:
+    // that would let a genuine column be marked excluded while its name is
+    // filled from somewhere else.
+    for (const header of Object.keys(derived)) {
+      if (included.has(header) || excluded.has(header)) {
+        problems.push({
+          resource,
+          kind: "derived_header_shadows_column",
+          detail: `"${header}" is declared derived but is also a real column of this table`,
+        });
+      }
+    }
+  }
+  return { ok: problems.length === 0, problems };
+}
+
+// ---------------------------------------------------------------------------
+// GUARD 2c - THE MIDDLE LINK: IS THE COLUMN ACTUALLY ASKED FOR?
+// ---------------------------------------------------------------------------
+//
+// A column can be declared included, appear in csvHeaders, and STILL never
+// reach the studio - because the exporter's explicit `.select()` list does not
+// ask PostgREST for it. The cell would simply be empty, and every declaration
+// check above would be satisfied.
+//
+// The caller supplies the column list the exporter actually requested, captured
+// from the real `.select()` call rather than read out of the source. A regex
+// over actions.ts would happily pass for a select string that is built and
+// never used.
+export type SelectedColumnAudit = {
+  readonly ok: boolean;
+  /** `resource.column` pairs declared included that the exporter never asks for. */
+  readonly notSelected: readonly string[];
+  /** Exported resources for which no SELECT was observed at all. */
+  readonly notObserved: readonly string[];
+};
+
+export function auditSelectedColumns(
+  selectedByResource: Readonly<Record<string, readonly string[]>>,
+  resources: ReadonlyArray<RegistryEntry<ExportedDisposition>> = exportedResources(),
+): SelectedColumnAudit {
+  const notSelected: string[] = [];
+  const notObserved: string[] = [];
+  for (const { resource, disposition } of resources) {
+    const selected = selectedByResource[resource];
+    if (!selected) {
+      notObserved.push(resource);
+      continue;
+    }
+    const have = new Set(selected);
+    for (const column of disposition.includedColumns) {
+      if (!have.has(column)) notSelected.push(`${resource}.${column}`);
+    }
+  }
+  return {
+    ok: notSelected.length === 0 && notObserved.length === 0,
+    notSelected: notSelected.sort(),
+    notObserved: notObserved.sort(),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// GUARD 3a - EXPORTED FILENAMES MUST BE UNIQUE
+// ---------------------------------------------------------------------------
+//
+// Codex P2 on 25c066ab. `expectedCsvFiles()` collapses to a Set and JSZip keeps
+// one entry per path, so two resources declaring the same `file` would produce:
+// the second writeCsv silently overwriting the first's rows AND its manifest
+// count, while emission parity still sees the expected filename and passes.
+// Every downstream check would agree, and one resource's data would simply be
+// gone.
+//
+// Checked BEFORE any Set or archive operation can collapse them.
+export type FilenameAudit = {
+  readonly ok: boolean;
+  readonly duplicates: ReadonlyArray<{ file: string; resources: readonly string[] }>;
+};
+
+export function auditExportedFilenames(
+  resources: ReadonlyArray<RegistryEntry<ExportedDisposition>> = exportedResources(),
+): FilenameAudit {
+  const byFile = new Map<string, string[]>();
+  for (const { resource, disposition } of resources) {
+    const bucket = byFile.get(disposition.file) ?? [];
+    bucket.push(resource);
+    byFile.set(disposition.file, bucket);
+  }
+  const duplicates = [...byFile.entries()]
+    .filter(([, resourceNames]) => resourceNames.length > 1)
+    .map(([file, resourceNames]) => ({ file, resources: [...resourceNames].sort() }))
+    .sort((a, b) => a.file.localeCompare(b.file));
+  return { ok: duplicates.length === 0, duplicates };
+}
+
+export function duplicateFilenameError(audit: FilenameAudit): string {
+  const detail = audit.duplicates
+    .map((d) => `${d.file} is declared by ${d.resources.join(" and ")}`)
+    .join("; ");
+  return (
+    `Export aborted: the export registry declares the same filename twice (${detail}). ` +
+    "One resource's rows would overwrite the other's. No export was produced."
+  );
 }
 
 // ---------------------------------------------------------------------------

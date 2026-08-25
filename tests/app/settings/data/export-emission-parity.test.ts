@@ -4,7 +4,10 @@ import path from "node:path";
 import JSZip from "jszip";
 
 import {
+  auditEmissionContract,
   auditEmissionParity,
+  auditExportedFilenames,
+  auditSelectedColumns,
   auditSourceCountCoverage,
   exportedResources,
   expectedCsvFiles,
@@ -54,15 +57,34 @@ const BASE_CSV_HEADERS: Readonly<Record<string, readonly string[]>> = {
 type StubResult = { data: unknown[] | null; error: unknown; count?: number | null };
 
 let auditInsert: Record<string, unknown> | null = null;
+/**
+ * The column list the action ACTUALLY asks PostgREST for, per table. Recorded
+ * from the real `.select()` call rather than read out of the source, so this is
+ * observed behaviour and not a text scan of our own file.
+ */
+let selectsByTable: Record<string, string[]> = {};
 
-function builder(result: StubResult): unknown {
+function builder(result: StubResult, table: string): unknown {
   const target = {
     then: (resolve: (v: StubResult) => unknown) => Promise.resolve(result).then(resolve),
   };
   return new Proxy(target, {
     get(t, prop) {
       if (prop === "then") return t.then;
-      return () => builder(result);
+      return (...args: unknown[]) => {
+        if (prop === "select" && typeof args[0] === "string") {
+          // Embedded selects like `service:services(name)` are not plain
+          // columns; keep only the top-level bare column names.
+          const cols = (args[0] as string)
+            .split(",")
+            .map((c) => c.trim())
+            .filter((c) => /^[a-z_][a-z0-9_]*$/.test(c));
+          selectsByTable[table] = [
+            ...new Set([...(selectsByTable[table] ?? []), ...cols]),
+          ];
+        }
+        return builder(result, table);
+      };
     },
   });
 }
@@ -78,7 +100,7 @@ function makeClient() {
           },
         };
       }
-      return builder({ data: [], error: null, count: 0 });
+      return builder({ data: [], error: null, count: 0 }, table);
     },
   };
 }
@@ -113,6 +135,7 @@ function csvNames(zip: JSZip): string[] {
 describe("guard 3: the archive and the registry agree, both ways", () => {
   beforeEach(() => {
     auditInsert = null;
+    selectsByTable = {};
   });
 
   it("every file the registry declares exported is in the archive", async () => {
@@ -135,6 +158,54 @@ describe("guard 3: the archive and the registry agree, both ways", () => {
     expect(csvNames(zip)).toEqual([...expectedCsvFiles()].sort());
     expect(zip.files["manifest.json"]).toBeDefined();
     expect(zip.files["README.txt"]).toBeDefined();
+  });
+});
+
+// ===========================================================================
+// THE CHAIN — live column -> accounting -> actual SELECT -> emitted header
+// ===========================================================================
+//
+// Codex P1 on 25c066ab: Guard 2 is set arithmetic and never connects
+// `includedColumns` to what the CSV carries, so a column could be DECLARED
+// included while reaching no file. Three links close it, and this suite owns
+// the middle one:
+//
+//   live DB column  -> included/excluded accounting
+//                        tests/db/export-resource-registry.db.test.ts (Guard 2)
+//   accounting      -> emitted header contract
+//                        auditEmissionContract, below and in the DB suite
+//   accounting      -> the column the exporter ACTUALLY ASKS FOR
+//                        HERE, from the recorded .select() call
+//   mapped value    -> the cell it lands in
+//                        tests/db/export-column-round-trip.db.test.ts
+//
+// The SELECT is captured from the real call the action makes, not read out of
+// the source: a regex over actions.ts would pass for a select string that is
+// built but never used.
+describe("the chain: every included column is actually selected", () => {
+  it("records a SELECT for each exported resource", async () => {
+    await buildArchive();
+    for (const { resource } of exportedResources()) {
+      expect(
+        selectsByTable[resource],
+        `no SELECT was observed for ${resource}`,
+      ).toBeDefined();
+    }
+  });
+
+  it("every declared included column appears in the observed SELECT", async () => {
+    await buildArchive();
+    const audit = auditSelectedColumns(selectsByTable);
+    expect(
+      audit.notSelected,
+      "declared INCLUDED but never asked for, so the cell would be empty",
+    ).toEqual([]);
+    expect(audit.notObserved).toEqual([]);
+  });
+
+  it("and the emission contract holds: included means emitted", () => {
+    const audit = auditEmissionContract();
+    expect(audit.problems, JSON.stringify(audit.problems, null, 2)).toEqual([]);
   });
 });
 
@@ -355,13 +426,21 @@ describe("the registry cannot read the database", () => {
     "utf8",
   );
 
+  // Comments are stripped first: the registry DOCUMENTS the exporter's
+  // `.select()` behaviour in prose, and prose is not a query. The invariant is
+  // about executable code.
+  const code = source
+    .split("\n")
+    .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
+    .join("\n");
+
   it("imports no Supabase client, admin or otherwise", () => {
-    expect(source).not.toMatch(/@\/lib\/supabase/);
-    expect(source).not.toMatch(/createAdminClient|createClient|service_role/);
+    expect(code).not.toMatch(/@\/lib\/supabase/);
+    expect(code).not.toMatch(/createAdminClient|createClient|service_role/);
   });
 
   it("issues no query and calls no RPC", () => {
-    expect(source).not.toMatch(/\.from\(|\.rpc\(|\.select\(/);
+    expect(code).not.toMatch(/\.from\(|\.rpc\(|\.select\(/);
   });
 
   it("depends only on the clinical-notes CSV constants it re-declares", () => {
