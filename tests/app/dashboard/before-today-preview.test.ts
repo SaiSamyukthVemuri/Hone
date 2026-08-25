@@ -19,6 +19,9 @@ const OVERVIEW = read("app/(app)/clients/[id]/page.tsx");
 
 function briefing(over: Partial<BeforeToday> = {}): BeforeToday {
   return {
+    // CLIN-01-B: the dashboard preview path never sets this; a briefing it
+    // compacts is one that was READ successfully.
+    unavailable: false,
     hasHistory: true,
     lastTreated: {
       startedAt: "2026-06-11T00:54:00Z",
