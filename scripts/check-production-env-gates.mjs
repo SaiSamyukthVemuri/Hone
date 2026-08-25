@@ -332,8 +332,11 @@ function main() {
       `SKIP public-rate-limit-env: not a production deploy ` +
         `(VERCEL_ENV=${process.env.VERCEL_ENV ?? "unset"}). ` +
         `Required production env vars (Upstash rate-limit + ${OPS_ALERT_DELIVERY_ENV_VAR} ` +
-        `critical-alert delivery) and the ${DURABLE_WAITLIST_ENV_VAR} activation guard ` +
-        `are enforced only on Vercel production builds.\n`,
+        `critical-alert delivery) are checked only on Vercel production builds.\n` +
+        `${DURABLE_WAITLIST_ENV_VAR} has no check here or anywhere: it gets a ` +
+        `production-only REPORT that may warn and never fails a build. What turns a studio ` +
+        `on is exact set membership at runtime, in EVERY environment — that is the ` +
+        `activation control, not this script.\n`,
     );
     process.exit(0);
   }

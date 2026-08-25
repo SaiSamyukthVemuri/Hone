@@ -232,7 +232,9 @@ describe("check-production-env-gates script (PR #262)", () => {
 //
 //   * unset / empty / whitespace / comma-only  -> zero studios, PASS, dark.
 //     This is the state Stage B1 ships to production, and the ONE studio-level
-//     claim this script can actually prove.
+//     claim this script can actually prove (SWEEP-EXEMPT: this one really IS
+//     proven, which is why it is the single exception worth naming) — an empty
+//     set makes membership false for every slug, with no database needed.
 //   * an explicitly named slug                 -> PASS, reported as CONFIGURED
 //     NORMALISED ENTRIES. Activation is now possible without a code release,
 //     but this script never proves it happened.
