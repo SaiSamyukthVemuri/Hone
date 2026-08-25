@@ -31,7 +31,15 @@ import {
 //                                                       consultation is not
 //                                                       treatment)
 //   Booked Bella  open plan, future TREATMENT        -> NOT on the list
-//   (seeded client) no plan at all                   -> not in the population
+//   Noplan Nadia  NO plan, nothing booked            -> NOT on the list
+//
+// NADIA IS LOAD-BEARING, and an earlier revision of this spec did not seed her.
+// It claimed the studio seed provided a plan-less client; `seedE2eStudio()`
+// computes a client name but never inserts the row, so no such client existed.
+// Without her, the open-plan requirement is not proved at all: Bella is already
+// excluded by her appointment, so a build that ignored plan eligibility
+// entirely would still leave exactly Rita and Cara on the list and every
+// assertion here would pass for the wrong reason.
 //
 // SAFETY: fresh synthetic studios on the LOCAL stack. Never Willow. This spec
 // only reads through the UI; the only writes are its own seed rows.
@@ -41,10 +49,12 @@ test.describe.configure({ mode: "serial" });
 const REBOOK = `Rebook Rita ${randomUUID().slice(0, 6)}`;
 const CONSULT = `Consult Cara ${randomUUID().slice(0, 6)}`;
 const BOOKED = `Booked Bella ${randomUUID().slice(0, 6)}`;
+const NOPLAN = `Noplan Nadia ${randomUUID().slice(0, 6)}`;
 
 let seed: E2eSeed;
 let member: { email: string; displayName: string; practitionerId: string };
 let rebookClientId: string;
+let noplanClientId: string;
 /** A second studio that keeps NO treatment plans — the fail-closed fixture. */
 let planless: E2eSeed;
 
@@ -150,6 +160,10 @@ test.beforeAll(async () => {
     9,
   );
 
+  // Current, non-archived, and NO treatment plan — deliberately no openPlan()
+  // call. She is the control that makes the open-plan requirement falsifiable.
+  noplanClientId = await newClient(seed.studioId, NOPLAN);
+
   // A studio that records NO treatment plans at all.
   planless = await seedE2eStudio();
 });
@@ -240,13 +254,30 @@ test("a client with a future TREATMENT is not on the rebooking list", async ({ p
   await expect(page.getByRole("link", { name: BOOKED })).toHaveCount(0);
 });
 
-test("the rendered worklist length matches the count above it", async ({ page }) => {
+test("the worklist holds exactly the qualifying clients, and matches its own count", async ({
+  page,
+}) => {
   await loginAsOwner(page, seed);
   await page.goto("/dashboard/capacity");
 
+  const worklist = page.getByRole("heading", { name: "Who to rebook" }).locator("..");
+
+  // Included: an open plan and no future TREATMENT.
+  await expect(worklist.getByRole("link", { name: REBOOK })).toBeVisible();
+  await expect(worklist.getByRole("link", { name: CONSULT })).toBeVisible();
+
+  // Excluded for two DIFFERENT reasons, which is the point of having both:
+  // Bella has treatment booked; Nadia has no open plan at all.
+  await expect(worklist.getByRole("link", { name: BOOKED })).toHaveCount(0);
+  await expect(worklist.getByRole("link", { name: NOPLAN })).toHaveCount(0);
+  // Nadia is genuinely in the studio and genuinely current — her absence is a
+  // decision about plan evidence, not a missing fixture row.
+  await page.goto(`/clients/${noplanClientId}`);
+  await expect(page.getByRole("heading", { name: NOPLAN })).toBeVisible();
+
+  // And the rendered list is exactly as long as the figure above it claims.
+  await page.goto("/dashboard/capacity");
   const rendered = await page.locator('a[href^="/clients/"]').count();
-  // Rebook Rita and Consult Cara; Booked Bella and the plan-less seeded client
-  // are both out.
   expect(rendered).toBe(2);
   const card = page.locator("div").filter({ hasText: /^No treatment booked/ }).first();
   await expect(card).toContainText("2");
