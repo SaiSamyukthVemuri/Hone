@@ -76,12 +76,17 @@
  *      non-durable path.
  *   8. The production-only configuration report is skipped outside production,
  *      while runtime membership still applies.
+ *   9. Naming a studio in NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS activates
+ *      nothing unless that studio is also named in
+ *      NEW_CLIENT_WAITLIST_STUDIO_SLUGS.
  * ---------------------------------------------------------------------------
  *
  * Gate 4, WAIT-02B STAGE-B DURABLE WAITLIST CONFIGURATION REPORT:
  * This one is a different SHAPE to the others. They fail when required config
- * is MISSING. This one validates OPTIONAL config that, when present, turns on a
- * personal-data collection point.
+ * is MISSING. This one describes OPTIONAL config that selects the commit point
+ * for an already-waitlisted studio, and so can turn on a personal-data
+ * collection point — but only together with the admission allowlist; see
+ * contract sentence 9.
  *
  * WHAT STAGE A DID, AND WHY IT IS GONE. Stage A shipped the durable new-client
  * waitlist DARK behind a BLANKET PROHIBITION: a production build aborted while
@@ -210,8 +215,12 @@ function opsAlertRecipientCount() {
 
 // WAIT-02B: the durable new-client waitlist allowlist. Read at runtime by
 // isNewClientWaitlistDurableEnabled() in lib/booking/new-client-waitlist.ts.
-// Under Stage B this is the ACTIVATION control: naming a studio here turns on
-// its durable prospect record. Unset means every studio stays dark.
+// Under Stage B this selects the COMMIT POINT for a studio whose new-client
+// intake is ALREADY waitlisted. It is not admission control and does not grant
+// it: naming a studio in NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS activates
+// nothing unless that studio is also named in NEW_CLIENT_WAITLIST_STUDIO_SLUGS,
+// because submit returns at isNewClientWaitlistEnabled() before this list is
+// ever consulted. Unset means every studio stays dark.
 const DURABLE_WAITLIST_ENV_VAR = "NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS";
 
 // NAMED HERE, DELIBERATELY NEVER READ. The admission-control allowlist that the

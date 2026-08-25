@@ -743,6 +743,13 @@ describe("GATE 4 CONTRACT is stated verbatim in the script", () => {
       "An empty normalized durable allowlist leaves every studio on the\n *      non-durable path.",
     "8 skip law":
       "The production-only configuration report is skipped outside production,\n *      while runtime membership still applies.",
+    // CODEX (#637) round 8. The set covered what Gate 4 IS and what the runtime
+    // laws ARE, but nothing stated the ADMISSION PREREQUISITE — so the script's
+    // own comment could say "naming a studio here turns on its durable record"
+    // while the next constant, eight lines down, correctly said the opposite.
+    // Two contradictory activation descriptions, neither of them pinned.
+    "9 admission prerequisite":
+      "Naming a studio in NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS activates\n *      nothing unless that studio is also named in\n *      NEW_CLIENT_WAITLIST_STUDIO_SLUGS.",
   };
 
   it("carries all eight sentences, verbatim, in one authored block", () => {
@@ -782,6 +789,34 @@ describe("GATE 4 CONTRACT is stated verbatim in the script", () => {
     // ...and says the runtime control still applies, rather than denying it.
     expect(skipped.stdout).toContain("Runtime exact-membership");
     expect(skipped.stdout).not.toContain("no check here or anywhere");
+  });
+
+  // 9 is a RUNTIME ORDERING property, so its proof lives with the runtime: the
+  // submit path must consult admission control BEFORE the durable list, and
+  // must return on refusal. Pinned structurally so the sentence cannot outlive
+  // the ordering it describes.
+  it("the admission prerequisite is real: submit refuses before it reads the durable list", () => {
+    const action = readFileSync(
+      path.resolve(REPO_ROOT, "app/book/[slug]/waitlist-actions.ts"),
+      "utf8",
+    );
+    const gateCheck = action.indexOf("if (!isNewClientWaitlistEnabled(studio.slug))");
+    const durableCheck = action.indexOf("return isNewClientWaitlistDurableEnabled(studio.slug)");
+    expect(gateCheck, "admission check must exist").toBeGreaterThan(-1);
+    expect(durableCheck, "durable branch must exist").toBeGreaterThan(-1);
+    // ORDER: admission first...
+    expect(gateCheck).toBeLessThan(durableCheck);
+    // ...and it RETURNS, so the durable list is never reached when it refuses.
+    expect(action.slice(gateCheck, gateCheck + 160)).toMatch(
+      /return \{ ok: false, error: NEW_CLIENT_WAITLIST_SUBMIT_FAILED \};/,
+    );
+    // And the two allowlists really are different variables.
+    const lib = readFileSync(
+      path.resolve(REPO_ROOT, "lib/booking/new-client-waitlist.ts"),
+      "utf8",
+    );
+    expect(lib).toContain('NEW_CLIENT_WAITLIST_SLUGS_ENV = "NEW_CLIENT_WAITLIST_STUDIO_SLUGS"');
+    expect(lib).toContain('"NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS"');
   });
 
   // 5, 6 are runtime properties and are proved in

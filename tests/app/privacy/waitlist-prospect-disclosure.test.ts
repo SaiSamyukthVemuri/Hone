@@ -775,6 +775,8 @@ describe("the Stage-B contract is stated verbatim where operators read it", () =
       "An empty normalized durable allowlist leaves every studio on the\n *      non-durable path.",
     skip:
       "The production-only configuration report is skipped outside production,\n *      while runtime membership still applies.",
+    admission:
+      "Naming a studio in NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS activates\n *      nothing unless that studio is also named in\n *      NEW_CLIENT_WAITLIST_STUDIO_SLUGS.",
   } as const;
 
   // The eight are pinned at their source, with an executable proof beside each,
@@ -796,6 +798,11 @@ describe("the Stage-B contract is stated verbatim where operators read it", () =
       "It does not fail the\n * build solely because of NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS.",
     );
     expect(lib).toContain(CONTRACT.runtime);
+    // ...and the admission prerequisite, which is the one an implementer is
+    // most likely to get wrong: this module owns BOTH allowlists.
+    expect(lib).toContain(
+      "Naming a studio in NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS\n * activates nothing unless that studio is also named in\n * NEW_CLIENT_WAITLIST_STUDIO_SLUGS",
+    );
   });
 
   it("the deployment guide repeats the four an operator needs", () => {
@@ -807,6 +814,9 @@ describe("the Stage-B contract is stated verbatim where operators read it", () =
     expect(doc).toContain(CONTRACT.runtime);
     expect(doc).toContain(
       "The production-only configuration report is skipped outside production, while runtime membership still applies.",
+    );
+    expect(doc).toContain(
+      "Naming a studio in `NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS` activates nothing unless that studio is also named in `NEW_CLIENT_WAITLIST_STUDIO_SLUGS`.",
     );
   });
 

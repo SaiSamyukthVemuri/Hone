@@ -66,7 +66,12 @@ export const NEW_CLIENT_WAITLIST_SLUGS_ENV = "NEW_CLIENT_WAITLIST_STUDIO_SLUGS";
  * for every studio, so deploying this changes nothing anywhere until an
  * operator opts a studio in, and clearing it is the whole kill switch.
  *
- * WAIT-02B STAGE B: THIS IS NOW THE ACTIVATION CONTROL, AND IT IS THE ONLY ONE.
+ * WAIT-02B STAGE B: THIS IS THE ONLY COMMIT-POINT CONTROL — AND IT IS NOT
+ * ADMISSION CONTROL. Naming a studio in NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS
+ * activates nothing unless that studio is also named in
+ * NEW_CLIENT_WAITLIST_STUDIO_SLUGS: the submit path reaches this question only
+ * after isNewClientWaitlistEnabled() has already said yes. No SECOND flag system
+ * was added for the commit point, and none should be.
  * Stage A additionally forbade production from naming ANY studio here, enforced
  * at deploy time by scripts/check-production-env-gates.mjs, because the public
  * privacy notice did not yet cover a waitlist prospect. Stage B1 ships that
