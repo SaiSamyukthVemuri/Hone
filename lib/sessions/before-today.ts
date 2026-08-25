@@ -42,9 +42,25 @@ export type BeforeTodayInput = {
     phone: string | null;
     address: string | null;
   };
+  // CLIN-01-B. TRUE only when the caller's session_blocks read FAILED, so
+  // `lastTreatment`, `watchPlan` and `intelligence` carry NOTHING KNOWN rather
+  // than nothing recorded. Optional and defaulting to false so the dashboard
+  // preview caller, which carries unavailability on its own prep summary, is
+  // untouched.
+  //
+  // This does NOT redefine what a charted treatment is. Selection is unchanged;
+  // this records only whether the read feeding selection succeeded.
+  clinicalUnavailable?: boolean;
 };
 
 export type BeforeToday = {
+  // CLIN-01-B. Read this FIRST. When true every clinical field below is
+  // UNKNOWN, not absent — including `hasHistory: false`, which here means "we
+  // could not find out", never "this client has none". A consumer that branches
+  // on `hasHistory` without checking this turns a failed read back into a
+  // confident clinical denial, which is the defect this field exists to
+  // prevent.
+  unavailable: boolean;
   hasHistory: boolean;
   lastTreated: {
     startedAt: string;
@@ -106,11 +122,41 @@ const EMPTY_RESPONSE = {
   hasAny: false,
 };
 
+// Reminders that come from the CLIENT RECORD, loaded by a different read that
+// succeeded. They stay true, and stay shown, even when the clinical read
+// failed: nothing here is derived from session_blocks.
+function clientRecordReminders(client: BeforeTodayInput["client"]): string[] {
+  const reminders: string[] = [];
+  if (!client.dateOfBirth) reminders.push("Client date of birth not recorded");
+  if (!client.phone?.trim()) reminders.push("Client phone not recorded");
+  if (!client.address?.trim()) reminders.push("Client address not recorded");
+  return reminders;
+}
+
 export function buildBeforeToday(input: BeforeTodayInput): BeforeToday {
   const { lastTreatment, watchPlan, intelligence, client } = input;
 
+  // CLIN-01-B: the clinical read failed. Every clinical claim this builder
+  // would otherwise make is unknown, so none is made — in particular the
+  // procedure-record reminders, whose EMPTINESS the card renders as "Procedure
+  // record looks complete based on recorded fields.", a completeness claim
+  // nobody can make about a history that was not read.
+  if (input.clinicalUnavailable) {
+    return {
+      unavailable: true,
+      hasHistory: false,
+      lastTreated: null,
+      remember: { ...EMPTY_REMEMBER },
+      response: { ...EMPTY_RESPONSE },
+      setup: null,
+      latestSetupLine: null,
+      reminders: clientRecordReminders(client),
+    };
+  }
+
   if (!lastTreatment) {
     return {
+      unavailable: false,
       hasHistory: false,
       lastTreated: null,
       remember: { ...EMPTY_REMEMBER, watchLines: [] },
@@ -204,11 +250,10 @@ export function buildBeforeToday(input: BeforeTodayInput): BeforeToday {
   if (!lastTreatment.aftercareExplainedAt) {
     reminders.push("Aftercare/risks not marked on the last session");
   }
-  if (!client.dateOfBirth) reminders.push("Client date of birth not recorded");
-  if (!client.phone?.trim()) reminders.push("Client phone not recorded");
-  if (!client.address?.trim()) reminders.push("Client address not recorded");
+  reminders.push(...clientRecordReminders(client));
 
   return {
+    unavailable: false,
     hasHistory: true,
     lastTreated: {
       startedAt: lastTreatment.startedAt,

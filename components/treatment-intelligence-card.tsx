@@ -1,3 +1,4 @@
+import { ClinicalUnavailableNotice } from "@/components/clinical-unavailable-notice";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import type {
   AreaIntelligence,
@@ -80,8 +81,17 @@ function AreaCard({ area }: { area: AreaIntelligence }) {
 
 export function TreatmentIntelligenceCard({
   intelligence,
+  unavailable,
 }: {
   intelligence: TreatmentIntelligence;
+  // CLIN-01-B. TRUE only when the session_blocks read behind this card FAILED.
+  // The page builds a `blocks: []` intelligence value BEFORE that read, and
+  // `blocks: []` is byte-identical to what a client with no charted history
+  // yields: every stat renders as a known zero and `charted` renders "No
+  // charted treatment history yet.". Checked before `intelligence.charted` for
+  // that reason. An unavailable read must never be converted back into a
+  // known-empty clinical result.
+  unavailable: boolean;
 }) {
   const o = intelligence.overall;
   return (
@@ -96,7 +106,9 @@ export function TreatmentIntelligenceCard({
         </p>
       </header>
 
-      {!intelligence.charted ? (
+      {unavailable ? (
+        <ClinicalUnavailableNotice testId="treatment-intelligence-unavailable" />
+      ) : !intelligence.charted ? (
         <p className="rounded-md border border-dashed border-neutral-300 px-4 py-6 text-sm text-neutral-500 dark:border-neutral-700">
           No charted treatment history yet.
         </p>
