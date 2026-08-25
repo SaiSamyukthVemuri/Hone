@@ -85,8 +85,22 @@ describe("refund outcome writes detect zero rows (payment-refund.ts)", () => {
 // Webhook reconciliation: the four payment-outcome reconcile UPDATEs.
 // ---------------------------------------------------------------------------
 describe("webhook reconcile outcome writes detect zero rows (payment-webhook-reconciliation.ts)", () => {
-  it("all four reconcile UPDATEs prove a row was affected via .select(\"id\")", () => {
-    expect(count(RECON, /\.select\("id"\)/g)).toBeGreaterThanOrEqual(4);
+  it("every DIRECT reconcile UPDATE proves a row was affected via .select(\"id\")", () => {
+    // PAY-SETTLE / 0187 moved ONE of the four — payment_intent.succeeded —
+    // into a database command, because it was the only writer that could turn
+    // a retirable `ready` row into money without holding the shared appointment
+    // advisory key. The remaining three are still direct UPDATEs and still
+    // carry their own zero-row detection.
+    expect(count(RECON, /\.select\("id"\)/g)).toBeGreaterThanOrEqual(3);
+  });
+
+  it("the succeeded reconcile proves the same thing through the command's result", () => {
+    // The invariant is unchanged — never report a reconciliation that did not
+    // happen — only its mechanism moved. The command returns `zero_rows` when
+    // its status-conditional UPDATE matches nothing, and the caller treats that
+    // exactly as it treated an empty .select("id").
+    expect(RECON).toMatch(/rpc\(\s*\n?\s*"reconcile_card_payment_succeeded"/);
+    expect(RECON).toMatch(/reconcileResult === "zero_rows"/);
   });
 
   it("each reconcile returns zeroRowNoMutation instead of claiming a reconcile that did not happen", () => {

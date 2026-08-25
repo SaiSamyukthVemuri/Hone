@@ -760,7 +760,7 @@ describe("PII never leaves the emails and the row", () => {
 // Point 4 is the operative one. Everything else in this suite proves the code
 // is safe while dark; this block proves the repository says WHY it must stay
 // dark, so enabling a studio cannot look like an ordinary configuration change.
-describe("Stage A records why it must stay dark", () => {
+describe("Stage B records what closed, and what is still open", () => {
   const RISKS = readFileSync(
     path.resolve(__dirname, "../../../docs/03_SECURITY_AND_PRIVACY.md"),
     "utf8",
@@ -780,31 +780,152 @@ describe("Stage A records why it must stay dark", () => {
     expect(ACTION).toContain('rpc("join_new_client_waitlist"');
   });
 
-  it("records it as a NEW personal-data class", () => {
-    expect(RISKS).toContain("New-client waitlist prospect data (Stage A, dark)");
-    expect(RISKS).toContain("NEW studio-scoped personal-data class");
+  it("still records it as a studio-scoped personal-data class", () => {
+    expect(RISKS).toContain("New-client waitlist prospect data");
+    expect(RISKS).toContain("studio-scoped personal-data class");
   });
 
-  it("records that the PUBLIC PRIVACY POLICY does not yet disclose it", () => {
-    // The half Stage A must not be silent about: the data class exists in the
-    // schema while the notice still describes only practitioners and
-    // practitioner-entered clients.
-    expect(RISKS).toContain("public privacy notice does not yet cover it");
-    expect(RISKS).toContain("a waitlist prospect is neither");
+  // WHAT STAGE B1 CLOSED. Stage A's entry said the public notice did not cover
+  // a waitlist prospect; that is now false, so the register must not keep
+  // saying it — a risk register that describes a resolved gap is as untrue as
+  // one that hides a live gap.
+  it("records the disclosure as CLOSED, and the claim is backed by the page itself", () => {
+    expect(RISKS).toContain("the public privacy notice now covers it");
+    expect(RISKS).not.toContain("public privacy notice does not yet cover it");
+    // ANTI-VACUITY. A doc claiming closure proves nothing on its own; the
+    // policy has to actually carry the coverage the register credits it with.
+    const policy = readFileSync(
+      path.resolve(__dirname, "../../../app/privacy/page.tsx"),
+      "utf8",
+    );
+    expect(policy).toContain("<strong>Prospective clients</strong>");
+    expect(policy).toContain("From prospective clients directly");
   });
 
-  it("records that there is no retention or purge policy for it", () => {
-    expect(RISKS).toContain("No retention or purge policy covers it yet");
-    expect(RISKS).toMatch(/not\*\* included in the `\/settings\/data` studio export/);
+  // WHAT STAGE B1 DID NOT CLOSE, and must therefore still say plainly.
+  it("records that the export gap and the absent purge policy are STILL OPEN", () => {
+    expect(RISKS).toMatch(/STILL OPEN — not in the `\/settings\/data` studio export/);
+    expect(RISKS).toMatch(/STILL OPEN — no timed purge/);
+    expect(RISKS).toContain("terminal `removed` transition that retains the row");
+    // And the policy states that truthfully rather than inventing a period.
+    expect(RISKS).toContain("does not invent one");
   });
 
-  it("states the CONSEQUENCE: no studio may be enabled in Stage A", () => {
-    expect(RISKS).toContain("no studio may be enabled in Stage A");
-    expect(RISKS).toContain("Willow specifically must not be");
+  // CODEX (#637). Two claims in this PR were true of the DURABLE path and
+  // asserted of everything. The register and the env doc are where an operator
+  // reads them, so both corrections have to survive there, not only in the
+  // artefacts they describe.
+  it("records that the notice distinguishes the two commit points", () => {
+    expect(RISKS).toContain(
+      "distinguishes the two commit points rather than claiming one for everybody",
+    );
+    expect(RISKS).toContain("gets no record on Hone's side at all");
+    // ANTI-VACUITY: the policy really does carry the distinction the register
+    // credits it with, on both sides of it.
+    const policy = readFileSync(
+      path.resolve(__dirname, "../../../app/privacy/page.tsx"),
+      "utf8",
+    );
+    expect(policy).toContain("<strong>Where the waitlist is kept with us</strong>");
+    expect(policy).toContain("<strong>Where it is not kept with us</strong>");
+    expect(policy).not.toContain("we store it for that studio");
+  });
+
+  it("warns that a green deploy-time check is NOT proof of activation", () => {
+    expect(ENV_DOC).toContain("A green check is not proof of activation.");
+    expect(ENV_DOC).toContain("CONFIGURED NORMALISED ENTRIES");
+    expect(ENV_DOC).toContain("upper bound on what could activate");
+    // ANTI-VACUITY: the script really does report entries rather than studios.
+    const gate = readFileSync(
+      path.resolve(__dirname, "../../../scripts/check-production-env-gates.mjs"),
+      "utf8",
+    );
+    expect(gate).toContain("distinct normalised configuration");
+    expect(gate).not.toMatch(/explicitly enables/);
+  });
+
+  // CODEX (#637) P2-B. The gate treated the current app-writer slug shape as
+  // the database's domain and FAILED a build on anything outside it, which
+  // would have blocked activation for a legacy studio whose slug the column
+  // still permits. The doc an operator reads must record that it no longer
+  // adjudicates.
+  // CODEX (#637) round 4. The register summarised WAIT-01 as two outcomes —
+  // accepted, or "not accepted therefore failed" — after §6 had already been
+  // corrected to three. A readiness record that contradicts the published
+  // policy is worse than one that says less.
+  it("records all THREE WAIT-01 outcomes, not two", () => {
+    expect(RISKS).toContain("It states all three WAIT-01 outcomes, not two");
+    expect(RISKS).toContain("where Hone knows the request was not sent");
+    expect(RISKS).toContain("an ambiguous send is deliberately");
+    expect(RISKS).toMatch(/\*\*not\*\* reported as a failure/);
+    // ...and the old two-way summary is gone.
+    expect(RISKS).not.toContain("is not accepted is reported as failed");
+    // ANTI-VACUITY: the policy really does carry the same three-way split.
+    const policy = readFileSync(
+      path.resolve(__dirname, "../../../app/privacy/page.tsx"),
+      "utf8",
+    );
+    expect(policy).toContain("If we know the request was not sent");
+    expect(policy).toContain("If the outcome is uncertain instead");
+    expect(policy).toContain("accepted the message for sending");
+  });
+
+  // The runtime module promised a deploy-time protection that had been
+  // deliberately withdrawn — a maintainer reading it would rely on it.
+  it("the runtime module describes the gate as report-only", () => {
+    const mod = readFileSync(
+      path.resolve(__dirname, "../../../lib/booking/new-client-waitlist.ts"),
+      "utf8",
+    );
+    expect(mod).toContain("WHAT REPLACED IT IS REPORT-ONLY");
+    // The canonical sentences, verbatim — same text the gate script authors.
+    expect(mod).toContain("Gate 4 is report-only.");
+    expect(mod).toContain(
+      "It does not fail the\n * build solely because of NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS.",
+    );
+    expect(mod).toContain("Runtime exact-membership is the activation control.");
+    expect(mod).toMatch(/DO NOT RELY ON THE GATE TO CATCH A MISTYPED SLUG/);
+    // The withdrawn promise is gone, in the present tense.
+    expect(mod).not.toMatch(/production build (?:still )?aborts/i);
+    // ...while the properties that ARE still true survive.
+    expect(mod).toMatch(/THERE IS NO GLOBAL ENABLE, BY CONSTRUCTION/);
+    expect(mod).toMatch(/DEFAULT OFF/);
+  });
+
+  it("records that the deploy-time check is report-only, not an adjudicator", () => {
+    expect(ENV_DOC).toContain("report-only");
+    expect(ENV_DOC).toContain("not the domain of `studios.slug`");
+    expect(ENV_DOC).toContain("non-blocking WARNING");
+    expect(RISKS).toContain("report-only");
+    // ANTI-VACUITY: the script really cannot fail on this variable any more.
+    const gate = readFileSync(
+      path.resolve(__dirname, "../../../scripts/check-production-env-gates.mjs"),
+      "utf8",
+    );
+    const guard = gate.slice(gate.indexOf("Gate 4, WAIT-02B Stage-B durable waitlist"));
+    expect(guard).toMatch(/WARN stage-b-durable-waitlist-env/);
+    expect(guard).not.toMatch(/failed = true/);
+    expect(guard).not.toMatch(/FAIL stage-b-durable-waitlist-env/);
+    // ...and the premise the fix rests on is recorded where it can be checked.
+    const m0010 = readFileSync(
+      path.resolve(__dirname, "../../../supabase/migrations/0010_booking_v1.sql"),
+      "utf8",
+    );
+    expect(m0010).toContain("add column if not exists slug text");
+    expect(m0010).toContain("add constraint studios_slug_unique unique (slug)");
+    expect(m0010).not.toMatch(/studios_slug_(?:format|shape|length)_check/);
+  });
+
+  it("states the CONSEQUENCE: activation stays explicit, and has not been taken", () => {
+    expect(RISKS).toContain("PRODUCTION STILL ENABLES ZERO STUDIOS");
+    expect(RISKS).toContain("Activation remains an explicit operator step");
     // ...and the same law is stated where an operator would actually go to
     // turn the flag on, not only in the risk register.
-    expect(ENV_DOC).toContain("must not be set for any studio");
-    expect(ENV_DOC).toContain("STAGE A: MUST BE EMPTY");
+    expect(ENV_DOC).toContain("PRODUCTION CURRENTLY NAMES NO STUDIO");
+    expect(ENV_DOC).toContain("release decision, never a configuration tweak");
+    // The §13 notice process is named at the point of activation, because that
+    // is the decision an operator is about to make.
+    expect(ENV_DOC).toContain("confirm the §13 notice process");
   });
 });
 
@@ -865,6 +986,9 @@ describe("no studio is enabled at merge time", () => {
       "scripts/check-production-env-gates.mjs",
       "tests/app/book/new-client-waitlist-action.test.ts",
       "tests/app/book/new-client-waitlist-durable-commit.test.ts",
+      // Stage B1. Pins that the deploy-time report still names the variable,
+      // and that it describes the configured list rather than adjudicating it.
+      "tests/app/privacy/waitlist-prospect-disclosure.test.ts",
       "tests/scripts/check-production-env-gates.test.ts",
     ]);
   });
