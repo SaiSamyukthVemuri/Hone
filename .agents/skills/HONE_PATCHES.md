@@ -44,23 +44,34 @@ git diff da430f79 HEAD -- .agents/skills   # exactly the deviations listed below
 ## Layer 2 — Hone patch layer
 
 **The current tree is therefore NOT byte-identical to upstream.** Exactly two
-files carry local changes, applied in a single reviewed commit on top of the
-vendoring commit:
+files carry local changes, applied in reviewed commits on top of the vendoring
+commit:
 
 - `.agents/skills/prototype/PICKER.md`
 - `.agents/skills/emil-design-eng/SKILL.md`
 
 The other eight vendored files remain byte-identical to Layer 1.
 
+| Patch | Commit | Scope |
+|---|---|---|
+| 1 | `1a6ba35e` | the three original Codex P2s — deviations 1, 2, 3 below |
+| 2 | child of `1a6ba35e` on this branch, subject *"validate the whole `?v` parameter"* | deviation 4 below — a regression introduced by patch 1 |
+
+A commit cannot contain its own hash, so patch 2 is pinned above by parentage and
+subject; its literal SHA is recorded in the PR body and resolvable with
+`git rev-list 1a6ba35e..HEAD`.
+
 ### Why patch rather than take upstream as-is
 
 These skills are instructional: agents copy the snippets in them into real
 product code. A defect in an example propagates into whatever it is copied into,
-so a wrong example is a latent defect generator, not a cosmetic typo. All three
-were found by Codex review on this PR (reviews `5013504323` and `5018583953`),
-rated P2, and each is a genuine deviation from the skill's own stated contract.
+so a wrong example is a latent defect generator, not a cosmetic typo. All were
+found by Codex review on this PR (reviews `5013504323`, `5018583953`,
+`5019308492`), rated P2, and each is a genuine deviation from a stated contract —
+deviations 1-3 from upstream's own contracts, deviation 4 from the contract
+patch 1 had just tightened.
 
-### The three deviations
+### The deviations
 
 #### 1. Picker restores an out-of-range variant into a blank stage
 
@@ -100,6 +111,34 @@ rated P2, and each is a genuine deviation from the skill's own stated contract.
 - **Contract agreement**: the prose now states the `MotionValue`-not-number rule
   and names the failure mode, so example and prose agree.
 
+#### 4. Picker accepted partially-numeric `?v` values (regression in patch 1)
+
+- **File**: `prototype/PICKER.md` — reference wiring, initial restore
+- **Codex finding**: `3853324003` (P2)
+- **Introduced by**: patch 1 (`1a6ba35e`), not by upstream. Deviation 1 added the
+  range check but left `parseInt` as the parser in front of it.
+- **Why `parseInt` was insufficient**: it reads a *leading numeric prefix* and
+  silently discards the rest, so `parseInt('2abc', 10)` and `parseInt('2.5', 10)`
+  both return `2`. `Number.isInteger(2)` then passes, the range check passes, and
+  a malformed parameter restored **variant 2** instead of falling back to variant
+  1. The range validation was right; the parsing ahead of it was not. Confirmed
+  failing inputs: `?v=2abc`, `?v=2.5`, `?v=3xyz`, `?v=%202`.
+- **Hone**: validate the *whole* raw string before any conversion —
+  `raw !== null && /^\d+$/.test(raw) ? Number(raw) : NaN` — then
+  `Number.isSafeInteger` and the `1..variants.length` range check. Anything else
+  falls back to variant 1.
+- **Deliberate decision on leading zeros**: `/^\d+$/` accepts `02`, and that is
+  intended — `?v=02` is an unambiguous decimal `2` and restores variant 2. Stated
+  in the code comment and the behaviour contract, and pinned by its own case
+  assertion, so it is a decision rather than an accident.
+- **Rejected**: whitespace (`%202`, `2%20`), decimals (`2.5`), prefixes (`abc2`),
+  suffixes (`2abc`, `3xyz`), exponent notation (`1e2`, `1e0`), hex (`0x2`),
+  `Infinity`, `NaN`, negatives (`-2`), empty, missing, `0`, out-of-range (`4`, `5`
+  at N=3), and values beyond `Number.MAX_SAFE_INTEGER` (20 digits, `2^53+1`).
+- **Contract agreement**: the contract bullet now names the accepted shape — a
+  complete decimal-integer string, `02` accepted, `2abc`/`2.5`/`1e2`/`%202`/`-2`
+  rejected — so prose and code agree.
+
 ## Note on `skills-lock.json`
 
 `skills-lock.json` was **left untouched** by the patch layer, deliberately.
@@ -117,6 +156,6 @@ patch, and `prototype/PICKER.md` is not referenced by the lockfile at all.
 
 ## Maintaining this
 
-On any future upstream re-pull, re-apply these three deviations or consciously
+On any future upstream re-pull, re-apply these deviations or consciously
 retire them, and update this file in the same commit. If a deviation is accepted
 upstream, drop it here and note the upstream revision that absorbed it.

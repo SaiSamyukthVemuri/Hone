@@ -134,7 +134,7 @@ The contract is fixed regardless of how the harness renders:
 
 - Number keys `1–N` and `←`/`→` switch variants; `R` replays. Ignore key events when focus is in an input, textarea, select, or contenteditable, or when a modifier is held.
 - Clicking an item switches to it; exactly one item carries `data-active` and `aria-current="true"` at all times, and the highlight slides to it.
-- Selection persists across reload via a URL param (`?v=2`). A missing, malformed, or out-of-range value falls back to **variant 1**, not to the nearest endpoint — the stage is never left blank. The highlight takes its initial position without animating (`data-ready` is added after first paint).
+- Selection persists across reload via a URL param (`?v=2`). Only a complete decimal-integer string counts — `02` is accepted, while `2abc`, `2.5`, `1e2`, `%202` and `-2` are not. A missing, malformed, or out-of-range value falls back to **variant 1**, not to the nearest endpoint — the stage is never left blank. The highlight takes its initial position without animating (`data-ready` is added after first paint).
 - Switching re-mounts the variant (so entrance animations re-run); the replay key re-mounts without switching.
 
 ## Reference wiring
@@ -193,8 +193,12 @@ document.addEventListener('keydown', (e) => {
 
 // Restore the persisted selection. Missing, malformed, < 1, or > N all fall back
 // to variant 1 — never to an arbitrary endpoint, and never to a blank stage.
-const requested = parseInt(new URLSearchParams(location.search).get('v'), 10);
-const initial = Number.isInteger(requested) && requested >= 1 && requested <= variants.length
+// Validate the WHOLE raw value, not a prefix of it: parseInt('2abc') returns 2
+// and would silently restore variant 2. Leading zeros ('02') are accepted as
+// ordinary decimal; ' 2', '2.5', '1e2', 'Infinity' and '-2' are not.
+const raw = new URLSearchParams(location.search).get('v');
+const requested = raw !== null && /^\d+$/.test(raw) ? Number(raw) : NaN;
+const initial = Number.isSafeInteger(requested) && requested >= 1 && requested <= variants.length
   ? requested - 1
   : 0;
 setActive(initial);
