@@ -111,7 +111,11 @@ privilege that survived 0183's by-name denylist:
 | `authenticated` | **true** | false | false | false | false | false | false | **false** |
 | `service_role` | false | false | false | false | false | false | false | **false** |
 
-**No role holds any table-write privilege, and none should be inferred.**
+**None of the three application roles holds any table-write privilege, and
+none should be inferred for them.** That scope is deliberate: the `relacl`
+above shows `postgres=arwdDxtm/postgres`, so the **owner** does hold the full
+set — as every table's owner does. Only `anon`, `authenticated` and
+`service_role` were checked, and only they are claimed.
 
 **Functions**, each evaluated for `anon` / `authenticated` / `service_role` /
 `PUBLIC`:
@@ -184,8 +188,13 @@ outbound surface to reach the network with, and no such action was performed.
    500; the public booking page 200 while rendering **live service rows** through
    the newly deployed runtime; no schema or runtime mismatch marker on any
    surface;
-8. production counters re-read after that smoke were **unchanged**, so it mutated
-   nothing.
+8. the same production counters were re-read after that smoke and were
+   **unchanged**. **That is the measurement, not a proof of no mutation** — an
+   `UPDATE` leaves a row count untouched, and an offsetting create and delete
+   would too. No mutation audit and no before/after content comparison was
+   performed, so only the unchanged counters are claimed. Separately, and as a
+   statement about what the smoke *did*: it issued **GET requests only** — no
+   `POST`, no form submission, no server action invoked.
 
 **Not observed, and therefore not claimed:** the **authenticated** application
 shell and the **Checkout and settlement surfaces** were never rendered, because

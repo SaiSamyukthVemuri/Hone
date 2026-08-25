@@ -679,6 +679,27 @@ const SUPERSESSION = /SUPERSEDES the (\d{4}) record as the CURRENT hosted-state 
 const CARRIED_0186_NOTE_SHA256 =
   "bd8846224fa42596dd98efae112dd2e796611493a0c6a01c5db0f2daed5c757f";
 
+/**
+ * sha256 of the 0187 HEAD record — everything from the start of `hosted_note`
+ * up to and including the carried-record boundary — 12,220 UTF-8 bytes.
+ *
+ * WHY THIS EXISTS, AND WHAT IT CAUGHT. The carried digest below freezes the
+ * SUFFIX; for one release the head itself — the newly recorded 0187 apply
+ * history — was guarded only by a handful of `toContain` anchors plus the
+ * exactly-one-current-record count. That is the enumeration failure this whole
+ * architecture was built to end, one level up: the project ref, the notice
+ * counts, the business row counts, the ACL matrix and the ordering claims are
+ * all UNANCHORED, so any of them could be changed, or contradictory prose
+ * added, while every required substring survived and both guards stayed green.
+ *
+ * 0187 IS FROZEN, so its record is frozen too. Correcting it is a deliberate
+ * act that must move this constant, exactly as correcting apply history must
+ * move the carried digest. When 0188 lands, this head becomes the successor's
+ * carried suffix and this pin becomes 0187's own permanent evidence.
+ */
+const HEAD_0187_NOTE_SHA256 =
+  "4123029f3ddd4537d6508a0aa0f4647a1ec10a00569ba7cef002d4cd45f159f0";
+
 describe("0187 — current hosted state", () => {
   it("is the APPLIED production head", () => {
     const state = migrationState();
@@ -774,6 +795,55 @@ describe("0187 — current hosted state", () => {
       "the carried 0186 record is no longer byte-identical to the production-base " +
         "hosted_note: apply history has been edited, truncated or reordered",
     ).toBe(CARRIED_0186_NOTE_SHA256);
+  });
+
+  it("PINS THE 0187 HEAD RECORD ITSELF, not merely the suffix it carries", () => {
+    // THE OTHER END OF THE SAME LAW. Without this, every fact in the newly
+    // recorded apply history is unanchored: swap the project ref, halve the
+    // notice count, edit a business row count, or bolt contradictory timestamp
+    // prose onto the end, and the carried digest is untouched while the
+    // required substrings all still match.
+    const note = canonicalRecord().hosted_note;
+    const at = note.indexOf(CARRIED_RECORD_BOUNDARY);
+    expect(at).toBeGreaterThan(-1);
+    const head = note.slice(0, at + CARRIED_RECORD_BOUNDARY.length);
+
+    expect(Buffer.byteLength(head, "utf8")).toBe(12220);
+    expect(
+      createHash("sha256").update(head, "utf8").digest("hex"),
+      "the 0187 head record has been edited: production apply history is frozen, " +
+        "so a deliberate correction must move HEAD_0187_NOTE_SHA256 with it",
+    ).toBe(HEAD_0187_NOTE_SHA256);
+  });
+
+  it("NEGATIVE CONTROL: editing an UNANCHORED head fact turns the head digest red", () => {
+    // Codex's exact reproduction. The project ref is named nowhere in the
+    // substring anchors, so before the head digest existed this mutation was
+    // invisible to every guard in this file. Mutates a copy; the real record is
+    // never touched.
+    const note = canonicalRecord().hosted_note;
+    const at = note.indexOf(CARRIED_RECORD_BOUNDARY);
+    const head = note.slice(0, at + CARRIED_RECORD_BOUNDARY.length);
+    const carried = note.slice(at + CARRIED_RECORD_BOUNDARY.length);
+    const digest = (x: string) => createHash("sha256").update(x, "utf8").digest("hex");
+
+    const poisoned = head.replace("alhhybgqdmcdyzpybykj", "wrongprojectref00000");
+    expect(poisoned).not.toEqual(head);
+
+    // Everything the older guards looked at still passes on the poisoned head.
+    expect(poisoned.split(CURRENT_RECORD_PHRASE).length - 1).toBe(1);
+    expect([...poisoned.matchAll(SUPERSESSION)].map((m) => m[1])).toEqual(["0186"]);
+    expect(poisoned).toContain("APPLIED BEFORE #636 MERGED");
+    expect(poisoned).toContain("PUSH EXIT CODE 0 EXPLICITLY CAPTURED");
+    expect(poisoned).toContain(
+      "0201f9b8f9e2ca7c5c8f9c702bc020f6bfd5a4046c0490ae3d7be495509e5dc0",
+    );
+    expect(digest(carried)).toBe(CARRIED_0186_NOTE_SHA256);
+
+    // The head digest is the only thing that catches it.
+    expect(digest(poisoned)).not.toBe(HEAD_0187_NOTE_SHA256);
+    // Restored byte-identically -> green again.
+    expect(digest(head)).toBe(HEAD_0187_NOTE_SHA256);
   });
 
   it("THE HEAD NAMES EXACTLY ONE CURRENT RECORD, and it supersedes 0186", () => {
