@@ -189,6 +189,38 @@ export const NAV_ENTRIES: readonly NavEntry[] = [
     visibility: "practitioner",
     priority: 90,
   },
+  {
+    id: "dashboard-capacity",
+    title: "Practice capacity",
+    category: "Navigation",
+    href: "/dashboard/capacity",
+    description: "Who is in active treatment, and who has no treatment booked",
+    // Phrased the way an owner asks the question, not the way the page is
+    // titled. "who hasn't booked" and "rebook" are the searches that actually
+    // bring someone here; "capacity" alone would only be found by the person
+    // who already knew the page existed.
+    keywords: [
+      "capacity",
+      "practice capacity",
+      "how booked am i",
+      "who hasn't booked",
+      "who has not booked",
+      // Kept as SEARCH ALIASES, not as claims: an owner may well type the
+      // broader phrase, and the entry should still be found. The description
+      // above is what the product asserts.
+      "nothing booked",
+      "no treatment booked",
+      "no future booking",
+      "rebook",
+      "rebooking",
+      "active treatment clients",
+      "treatment plans",
+      "latent demand",
+      "quiet clients",
+    ],
+    visibility: "owner",
+    priority: 95,
+  },
 
   // --- Record Keeping sections ------------------------------------------
   // Exposure Incidents is deliberately absent; see NON_SEARCHABLE_ROUTES.
