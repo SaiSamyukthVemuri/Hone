@@ -54,6 +54,8 @@ const NOPLAN = `Noplan Nadia ${randomUUID().slice(0, 6)}`;
 let seed: E2eSeed;
 let member: { email: string; displayName: string; practitionerId: string };
 let rebookClientId: string;
+let consultClientId: string;
+let bookedClientId: string;
 let noplanClientId: string;
 /** A second studio that keeps NO treatment plans — the fail-closed fixture. */
 let planless: E2eSeed;
@@ -167,7 +169,7 @@ test.beforeAll(async () => {
   await openPlan(seed.studioId, rebookClientId);
 
   // Open plan, a future CONSULTATION and no treatment. Still needs booking.
-  const consultClientId = await newClient(seed.studioId, CONSULT);
+  consultClientId = await newClient(seed.studioId, CONSULT);
   await openPlan(seed.studioId, consultClientId);
   await seedFutureWithService(
     seed.studioId,
@@ -178,7 +180,7 @@ test.beforeAll(async () => {
   );
 
   // Open plan and a future TREATMENT. The control.
-  const bookedClientId = await newClient(seed.studioId, BOOKED);
+  bookedClientId = await newClient(seed.studioId, BOOKED);
   await openPlan(seed.studioId, bookedClientId);
   await seedFutureWithService(
     seed.studioId,
@@ -248,7 +250,7 @@ test("the worklist names who to rebook, and the name opens that client", async (
   await page.goto("/dashboard/capacity");
 
   await expect(page.getByRole("heading", { name: "Who to rebook" })).toBeVisible();
-  const link = page.getByRole("link", { name: REBOOK });
+  const link = worklistOf(page).getByRole("link", { name: REBOOK });
   await expect(link).toBeVisible();
   await expect(link).toHaveAttribute("href", `/clients/${rebookClientId}`);
 
@@ -267,7 +269,11 @@ test("a CONSULTATION-only client is still on the rebooking list", async ({ page 
   // exactly why they still need a treatment appointment. Scoped to the
   // worklist: a link bearing this name anywhere on the page would not have
   // proved membership of the rebooking list.
-  await expect(worklistOf(page).getByRole("link", { name: CONSULT })).toBeVisible();
+  const consultLink = worklistOf(page).getByRole("link", { name: CONSULT });
+  await expect(consultLink).toBeVisible();
+  // Pinned to the right client, for the same reason the rebook link is: a
+  // visible name proves membership, not that the row is actionable.
+  await expect(consultLink).toHaveAttribute("href", `/clients/${consultClientId}`);
 
   // ...and the page never describes this population as having nothing booked.
   await expect(page.getByText(/nothing booked/i)).toHaveCount(0);
@@ -285,6 +291,13 @@ test("a client with a future TREATMENT is not on the rebooking list", async ({ p
   await expect(worklistOf(page).getByRole("link", { name: BOOKED })).toHaveCount(0);
   // And, strictly stronger, absent from the page entirely.
   await expect(page.getByRole("link", { name: BOOKED })).toHaveCount(0);
+
+  // ABSENCE IS ONLY MEANINGFUL IF SHE EXISTS. An unseeded client is absent from
+  // the worklist too, so this test would pass on a broken fixture — the exact
+  // failure that hid the missing no-plan control. Nadia already carries this
+  // proof; Bella now does as well.
+  await page.goto(`/clients/${bookedClientId}`);
+  await expect(page.getByRole("heading", { name: BOOKED })).toBeVisible();
 });
 
 test("the worklist holds exactly the qualifying clients, and matches its own count", async ({
@@ -296,8 +309,14 @@ test("the worklist holds exactly the qualifying clients, and matches its own cou
   const worklist = page.getByRole("heading", { name: "Who to rebook" }).locator("..");
 
   // Included: an open plan and no future TREATMENT.
-  await expect(worklist.getByRole("link", { name: REBOOK })).toBeVisible();
-  await expect(worklist.getByRole("link", { name: CONSULT })).toBeVisible();
+  await expect(worklist.getByRole("link", { name: REBOOK })).toHaveAttribute(
+    "href",
+    `/clients/${rebookClientId}`,
+  );
+  await expect(worklist.getByRole("link", { name: CONSULT })).toHaveAttribute(
+    "href",
+    `/clients/${consultClientId}`,
+  );
 
   // Excluded for two DIFFERENT reasons, which is the point of having both:
   // Bella has treatment booked; Nadia has no open plan at all.
@@ -361,13 +380,14 @@ test("a studio with no treatment plans shows no figure and no partial list", asy
     await expect(card, `${label} must refuse to answer`).toContainText(
       "Not enough evidence yet",
     );
-    // ...AND carry its own reason. Asserted INSIDE the card: a page-wide
-    // `.first()` check proved only that one reason existed somewhere, so five
-    // cards could have kept the placeholder and lost the explanation while
-    // every assertion here still passed. The message above used to promise
-    // this and the code did not deliver it.
+    // ...AND carry its own reason, matched as the CAUSAL CLAUSE rather than
+    // the trailing conclusion. Pinning only "It is not zero" was still too
+    // weak: the explanation could have vanished from all six cards while that
+    // final sentence remained, and every scoped assertion plus both exact-six
+    // counts would still have passed. The whole sentence is asserted, so the
+    // card has to actually explain itself.
     await expect(card, `${label} must say WHY it cannot answer`).toContainText(
-      "It is not zero",
+      "No open treatment plan for a current client is on file, so who is in active treatment cannot be established. It is not zero.",
     );
     // No numeric figure AT ALL — not a zero, which on this screen would read as
     // "nobody needs booking".
@@ -378,7 +398,9 @@ test("a studio with no treatment plans shows no figure and no partial list", asy
   await expect(page.getByText("Not enough evidence yet")).toHaveCount(
     SUPPRESSED.length,
   );
-  await expect(page.getByText(/It is not zero/)).toHaveCount(SUPPRESSED.length);
+  await expect(
+    page.getByText(/No open treatment plan for a current client is on file/),
+  ).toHaveCount(SUPPRESSED.length);
 
   // ...and the figures that are legitimately KNOWN still render, so this is a
   // statement about evidence rather than a blanket "everything is unknown".
@@ -408,8 +430,16 @@ test("an owner can find the capacity page from search", async ({ page }) => {
     .fill("capacity");
   // Exactly one, not `.first()`: a `.first()` here would pass even if the page
   // were rendering duplicate or unrelated capacity links.
-  await expect(page.getByRole("link", { name: /Practice capacity/ })).toHaveCount(1);
-  await expect(page.getByRole("link", { name: /Practice capacity/ })).toBeVisible();
+  const result = page.getByRole("link", { name: /Practice capacity/ });
+  await expect(result).toHaveCount(1);
+  await expect(result).toBeVisible();
+  // WHERE IT GOES, not just that it exists. If the registry kept the title and
+  // its href regressed, a test named "can find the capacity page" would have
+  // passed while the result no longer reached the page.
+  await expect(result).toHaveAttribute("href", "/dashboard/capacity");
+  await result.click();
+  await page.waitForURL("**/dashboard/capacity");
+  await expect(page.getByRole("heading", { name: "Practice capacity" })).toBeVisible();
 });
 
 test("an ordinary practitioner is not offered the owner-only entry", async ({ page }) => {
