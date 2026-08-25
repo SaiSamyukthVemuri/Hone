@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import {
   seedE2eStudio,
   seedE2eDraftElectrolysisSession,
@@ -14,6 +14,27 @@ import { loginAsOwner } from "./helpers/flows";
 // its own laterality; the DB rows + the reload are ground truth.
 
 test.use({ viewport: { width: 820, height: 1180 }, isMobile: true, hasTouch: true });
+
+/**
+ * The header search input at THIS spec's 820px viewport.
+ *
+ * The authenticated shell is COMPACT below `lg` (1024px), so at 820 the header
+ * carries a search BUTTON and mounts the input only once the sheet is open —
+ * where a desktop-width spec would find the input directly. The steps below are
+ * about Global Search RECALL, not about which affordance opens it, so opening
+ * is done here rather than repeated (and forgotten) in each step.
+ *
+ * Idempotent on purpose: consecutive steps reuse an already-open sheet, and one
+ * step closes it with Escape.
+ */
+async function openHeaderSearch(page: Page) {
+  const input = page.getByRole("searchbox", { name: "Search Hone" });
+  if (!(await input.isVisible().catch(() => false))) {
+    await page.getByRole("button", { name: "Search Hone" }).click();
+  }
+  await expect(input).toBeVisible();
+  return input;
+}
 
 const T = 20_000;
 
@@ -70,8 +91,7 @@ test("one settings block treats multiple areas with independent laterality", asy
     // "Sideburns" cannot have come from the direct path.
     expect(await getBlockPrimaryArea(sessionId)).toBe("Cheeks");
 
-    const search = page.getByRole("searchbox", { name: "Search Hone" });
-    await search.click();
+    const search = await openHeaderSearch(page);
     await search.fill("Sideburns");
     const memoryResults = page.getByRole("link", { name: /Left Cheeks · Right Sideburns/ });
     await expect(memoryResults).toHaveCount(1, { timeout: T });
@@ -90,7 +110,7 @@ test("one settings block treats multiple areas with independent laterality", asy
   });
 
   await test.step("searching the PRIMARY area returns the same treatment once, not twice", async () => {
-    const search = page.getByRole("searchbox", { name: "Search Hone" });
+    const search = await openHeaderSearch(page);
     await search.fill("Cheeks");
     await expect(
       page.getByRole("link", { name: /Left Cheeks · Right Sideburns/ }),
@@ -98,7 +118,7 @@ test("one settings block treats multiple areas with independent laterality", asy
   });
 
   await test.step("selecting the result navigates to the correct session", async () => {
-    const search = page.getByRole("searchbox", { name: "Search Hone" });
+    const search = await openHeaderSearch(page);
     await search.fill("Sideburns");
     await page
       .getByRole("link", { name: /Left Cheeks · Right Sideburns/ })
@@ -126,7 +146,7 @@ test("one settings block treats multiple areas with independent laterality", asy
     });
     await seedE2eInactivateSession(voided.sessionId, { recordStatus: "void" });
 
-    const search = page.getByRole("searchbox", { name: "Search Hone" });
+    const search = await openHeaderSearch(page);
     await search.fill("Sideburns");
     // The valid multi-area treatment is still there...
     const valid = page.getByRole("link", { name: /Left Cheeks · Right Sideburns/ });
@@ -157,7 +177,7 @@ test("one settings block treats multiple areas with independent laterality", asy
         { area: "Coccyx", laterality: "midline" },
       ],
     });
-    const search = page.getByRole("searchbox", { name: "Search Hone" });
+    const search = await openHeaderSearch(page);
     await search.fill("Coccyx");
     await expect(page.getByText("No results found.")).toBeVisible({ timeout: T });
     await page.keyboard.press("Escape");
