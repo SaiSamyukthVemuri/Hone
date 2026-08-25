@@ -39,6 +39,22 @@ import { submitNewClientBookingWaitlistAction } from "./waitlist-actions";
 // queue size, lead times, conversion rates or practitioner workload. Nothing
 // promises a date, a position, priority or acceptance.
 //
+// WAIT-02B STAGE B1: THE COLLECTION NOTICE SITS WITH THE COLLECTION.
+// This form is the ONLY place a prospective client hands Hone their details,
+// and until Stage B the public privacy notice did not describe that collection
+// at all. app/privacy/page.tsx now does; this surface carries the short version
+// at the point of submission, in the same 13px secondary type as the
+// not-a-reservation line, immediately below the CTA rather than folded behind a
+// disclosure widget or dropped into a footer.
+//
+// NO CONSENT CHECKBOX, DELIBERATELY. Nothing collected here is sensitive health
+// information, the person is typing it in themselves for one obvious stated
+// purpose, and Hone's privacy architecture requires an affirmative tick only
+// where a use is OPTIONAL and separable — marketing/analytics on the booking
+// form is the existing example. Storing the waitlist request is not separable
+// from making the request, so a checkbox here would be a consent theatre that
+// gates the only action on the page.
+//
 // Uses the public booking page's existing design language rather than
 // introducing a new one.
 // ===========================================================================
@@ -49,6 +65,26 @@ const INK = "#0A0A0A";
 const MUTED = "#6B6B6B";
 
 const NOT_A_RESERVATION = "Joining the waitlist does not reserve an appointment.";
+
+/**
+ * Plain-language collection notice, split around the studio name so the
+ * sentence names the studio the details actually go to. Says WHO handles it,
+ * WHAT is collected, WHY, and links to the full notice — nothing more; every
+ * further claim would need the policy to support it.
+ *
+ * "USE", NOT "STORE", AND THAT IS NOT A HEDGE. There are two commit points
+ * (see app/book/[slug]/waitlist-actions.ts), chosen per studio by the
+ * server-only durable allowlist: a studio on WAIT-02 gets a stored row, a
+ * studio on WAIT-01 gets an email to the studio and NO record on our side.
+ * Production currently names no studio, so "Hone will store this" is false for
+ * every submission this form takes today. This component is a client component
+ * and deliberately does not learn which path applies — that would put a
+ * server-only activation fact into the browser bundle for a caption. So the
+ * notice states what is true under BOTH paths, and app/privacy/page.tsx §6
+ * carries the distinction, one link away.
+ */
+const COLLECTION_NOTICE =
+  "use the name, email and phone number you enter here to manage this waitlist and contact you about availability.";
 
 /**
  * The confirmation surface. Exported so it can be rendered and compared
@@ -234,6 +270,19 @@ export function NewClientWaitlistForm({
           </button>
           <p className="text-[13px] leading-[1.6]" style={{ color: MUTED }}>
             {NOT_A_RESERVATION}
+          </p>
+          <p className="text-[13px] leading-[1.6]" style={{ color: MUTED }}>
+            {studioName} and Hone {COLLECTION_NOTICE} See Hone&rsquo;s{" "}
+            <a
+              href="/privacy"
+              target="_blank"
+              rel="noreferrer"
+              className="underline"
+              style={{ color: INK }}
+            >
+              Privacy Policy
+            </a>
+            .
           </p>
           {error && (
             <span role="alert" className="text-[13px] text-red-600">
