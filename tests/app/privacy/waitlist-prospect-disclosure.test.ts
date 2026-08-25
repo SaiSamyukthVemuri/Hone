@@ -771,20 +771,48 @@ describe("no file states a repaired WAIT-02B contract the old way", () => {
     "tests/app/book/new-client-waitlist-durable-commit.test.ts",
   ];
 
+  /**
+   * Negation guard. Round five's finding was phrased as a REFUSAL to ship a
+   * list (SWEEP-EXEMPT: quoted, not asserted) rather than as an abort, and the
+   * abort-only patterns walked straight past it — so the verbs
+   * below are deliberately broad. Broad verbs need this, or the CORRECT
+   * sentences would fire: "the check is report-only and never blocks" is the
+   * truth, not a violation.
+   */
+  const NOT_NEGATED =
+    "(?<!never )(?<!not )(?<!cannot )(?<!can't )(?<!no longer )(?<!does not )(?<!doesn't )";
+  const BLOCK_VERB = "(?:refuses|rejects|declines|blocks|forbids)";
+
   /** FAMILY A — the WAIT-01 failure / delivery taxonomy. */
   const FAILURE_TAXONOMY = [
     /(?:any|every|a) (?:message|submission|send|request)[^.\n]{0,60}not accepted[^.\n]{0,60}(?:is|are) reported as (?:a )?fail/i,
+    /not accepted[^.\n]{0,60}(?:treated|counted|reported) as (?:a )?fail/i,
     /not accepted[^.\n]{0,40}we tell you the request did not go through/i,
     /we can tell you that (?:such )?a (?:mailbox )?copy exists/i,
     /(?:we|hone) can always (?:tell|determine) which handling/i,
   ];
 
-  /** FAMILY B — the Stage-B activation-gate semantics. */
+  /**
+   * FAMILY B — the Stage-B activation-gate semantics.
+   *
+   * Two shapes: the build ABORTING, and the gate REFUSING. The second was
+   * missing until round five found the claim stated that way, in a file this
+   * sweep was already scanning.
+   */
   const GATE_SEMANTICS = [
     /production build (?:still )?aborts (?:if|when) an entry/i,
     /build aborts (?:if|when|on)[^.\n]{0,60}(?:studio slug|slug convention)/i,
     /green (?:check|gate|build) proves activation/i,
     /wildcard[^.\n]{0,40}enables every studio/i,
+    // The VERB plus what it acts on. Requiring an object is what keeps this
+    // family about the BUILD-TIME gate: "a submission the server gate declines"
+    // is a true statement about runtime admission control, and matching a bare
+    // "gate ... declines" would have flagged it.
+    new RegExp(
+      `\\b${NOT_NEGATED}${BLOCK_VERB}\\b[^.\\n]{0,40}\\b(?:a|an|the|any) (?:list|entry|entries|allowlist|value|slug|activation|deploy|build)\\b`,
+      "i",
+    ),
+    new RegExp(`\\b${NOT_NEGATED}(?:refuses|rejects|declines)\\b[^.\\n]{0,20}\\bship\\b`, "i"),
   ];
 
   function scan(patterns: RegExp[]): string[] {
@@ -819,19 +847,41 @@ describe("no file states a repaired WAIT-02B contract the old way", () => {
     // If these ever stop matching, the two tests above are decorative. This is
     // the check that the patterns have teeth, done in memory rather than by
     // editing a file.
-    const A = "any message not accepted is reported as failed"; // SWEEP-EXEMPT
-    const B = "production build aborts when an entry cannot be a studio slug"; // SWEEP-EXEMPT
-    expect(FAILURE_TAXONOMY.some((p) => p.test(A)), `family A must catch: ${A}`).toBe(true);
-    expect(GATE_SEMANTICS.some((p) => p.test(B)), `family B must catch: ${B}`).toBe(true);
-    // ...and past-tense narration of the same facts must NOT be caught.
-    for (const historical of [
+    for (const claim of [
+      "any message not accepted is reported as failed", // SWEEP-EXEMPT
+      "any message not accepted is treated as a failure", // SWEEP-EXEMPT
+    ]) {
+      expect(FAILURE_TAXONOMY.some((p) => p.test(claim)), `family A must catch: ${claim}`).toBe(true);
+    }
+    for (const claim of [
+      "production build aborts when an entry cannot be a studio slug", // SWEEP-EXEMPT
+      // Round five's finding: a REFUSAL, not an abort. The original patterns
+      // missed exactly this, which is why the verbs above were widened.
+      "it only refuses to ship a list that cannot mean what it appears to mean", // SWEEP-EXEMPT
+      "the guard still refuses a list that cannot name a real studio", // SWEEP-EXEMPT
+      "this gate blocks a deploy whose allowlist is malformed", // SWEEP-EXEMPT
+      "the check rejects an entry outside the slug convention", // SWEEP-EXEMPT
+    ]) {
+      expect(GATE_SEMANTICS.some((p) => p.test(claim)), `family B must catch: ${claim}`).toBe(true);
+    }
+    // ...and the sentences that are CORRECT must stay legal. Past-tense
+    // narration, and — since the verbs are now broad — negated statements of
+    // the very same thing, which are the truth rather than a violation.
+    for (const legal of [
       "a production build aborted while the allowlist named any studio",
       "an earlier draft aborted the build on any entry outside the shape",
       "Under Stage A this exact case aborted the build.",
+      "an earlier draft refused a list that could not name a studio",
+      "The deploy-time check is report-only and never blocks",
+      "it does not refuse a list, it warns",
+      "this gate cannot refuse a deploy any more",
+      // A TRUE statement about the RUNTIME admission gate, which this family
+      // is not about. Requiring an object keeps it out.
+      "a submission the server gate declines shows no success and writes no row",
     ]) {
       expect(
-        GATE_SEMANTICS.some((p) => p.test(historical)),
-        `history must stay legal: ${historical}`,
+        [...GATE_SEMANTICS, ...FAILURE_TAXONOMY].some((p) => p.test(legal)),
+        `must stay legal: ${legal}`,
       ).toBe(false);
     }
   });

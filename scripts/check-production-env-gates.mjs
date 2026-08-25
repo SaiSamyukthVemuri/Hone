@@ -124,8 +124,8 @@
  * THERE IS NO GLOBAL ENABLE TO GUARD AGAINST, BY CONSTRUCTION. Nothing in the
  * runtime turns any value into "all studios": the only question it asks is
  * set-membership of one server-resolved slug. Enabling N studios costs N typed
- * slugs. This gate cannot loosen that; it only refuses to ship a list that
- * cannot mean what it appears to mean.
+ * slugs. This gate cannot loosen that, and it no longer tightens it either:
+ * it describes the list and lets the deploy proceed.
  *
  * UNSET IS STILL DARK, AND THAT IS STILL THE SHIPPING STATE. Normalisation
  * mirrors parseWaitlistSlugs() (split "," / trim / lowercase / drop empties), so

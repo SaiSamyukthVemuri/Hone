@@ -859,7 +859,7 @@ describe("Stage B records what closed, and what is still open", () => {
     expect(RISKS).toContain("an ambiguous send is deliberately");
     expect(RISKS).toMatch(/\*\*not\*\* reported as a failure/);
     // ...and the old two-way summary is gone.
-    expect(RISKS).not.toContain("is not accepted is reported as failed");
+    expect(RISKS).not.toContain("is not accepted is reported as failed"); // SWEEP-EXEMPT
     // ANTI-VACUITY: the policy really does carry the same three-way split.
     const policy = readFileSync(
       path.resolve(__dirname, "../../../app/privacy/page.tsx"),
@@ -981,8 +981,8 @@ describe("no studio is enabled at merge time", () => {
       "scripts/check-production-env-gates.mjs",
       "tests/app/book/new-client-waitlist-action.test.ts",
       "tests/app/book/new-client-waitlist-durable-commit.test.ts",
-      // Stage B1. Pins that the deploy-time guard still names the variable and
-      // still refuses a list that cannot name a real studio.
+      // Stage B1. Pins that the deploy-time report still names the variable,
+      // and that it describes the configured list rather than adjudicating it.
       "tests/app/privacy/waitlist-prospect-disclosure.test.ts",
       "tests/scripts/check-production-env-gates.test.ts",
     ]);
