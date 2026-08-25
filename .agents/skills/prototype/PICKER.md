@@ -134,7 +134,7 @@ The contract is fixed regardless of how the harness renders:
 
 - Number keys `1–N` and `←`/`→` switch variants; `R` replays. Ignore key events when focus is in an input, textarea, select, or contenteditable, or when a modifier is held.
 - Clicking an item switches to it; exactly one item carries `data-active` and `aria-current="true"` at all times, and the highlight slides to it.
-- Selection persists across reload via a URL param (`?v=2`), falling back to variant 1. The highlight takes its initial position without animating (`data-ready` is added after first paint).
+- Selection persists across reload via a URL param (`?v=2`). A missing, malformed, or out-of-range value falls back to **variant 1**, not to the nearest endpoint — the stage is never left blank. The highlight takes its initial position without animating (`data-ready` is added after first paint).
 - Switching re-mounts the variant (so entrance animations re-run); the replay key re-mounts without switching.
 
 ## Reference wiring
@@ -183,7 +183,7 @@ window.addEventListener('resize', moveHighlight);
 
 document.addEventListener('keydown', (e) => {
   if (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || e.target.isContentEditable) return;
-  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
   const num = parseInt(e.key, 10);
   if (num >= 1 && num <= variants.length) setActive(num - 1);
   else if (e.key === 'ArrowRight') setActive((current + 1) % variants.length);
@@ -191,7 +191,13 @@ document.addEventListener('keydown', (e) => {
   else if (e.key === 'r' || e.key === 'R') mount(current);
 });
 
-setActive((parseInt(new URLSearchParams(location.search).get('v'), 10) || 1) - 1);
+// Restore the persisted selection. Missing, malformed, < 1, or > N all fall back
+// to variant 1 — never to an arbitrary endpoint, and never to a blank stage.
+const requested = parseInt(new URLSearchParams(location.search).get('v'), 10);
+const initial = Number.isInteger(requested) && requested >= 1 && requested <= variants.length
+  ? requested - 1
+  : 0;
+setActive(initial);
 // Enable the slide only after first paint, so load doesn't animate.
 requestAnimationFrame(() => requestAnimationFrame(() => picker.setAttribute('data-ready', '')));
 ```
