@@ -57,7 +57,10 @@ export function MobileMenu({
   const close = () => setOpen(false);
 
   return (
-    <div ref={rootRef} className="relative md:hidden">
+    // `lg:hidden`, matching the three header-mode classes in layout.tsx: the
+    // compact shell owns every width below 1024px, where five primary items
+    // plus search/bell/account could not fit on one line.
+    <div ref={rootRef} className="relative lg:hidden">
       <button
         type="button"
         aria-label="Open navigation menu"
@@ -98,6 +101,20 @@ export function MobileMenu({
             { href: "/clients", label: "Clients" },
             { href: "/calendar", label: "Calendar" },
             { href: "/records", label: "Records" },
+            // OWNER-CAP follow-up: the owner's permanent Business entry, the
+            // phone half of the desktop tab in layout.tsx. It belongs HERE, in
+            // the working-surface section, and not below the divider with
+            // Settings / Getting Started / Admin: Business is somewhere the
+            // owner works, not an account preference.
+            //
+            // Gated on the `role` this component is ALREADY given — no second
+            // authority query, and nothing rendered-but-disabled for a
+            // practitioner, who simply has no such item. The presentation gate
+            // is not the boundary: /dashboard/capacity keeps its own
+            // server-side owner check.
+            ...(role === "owner"
+              ? [{ href: "/dashboard/capacity", label: "Business" }]
+              : []),
           ].map((item) => (
             <Link
               key={item.href}
