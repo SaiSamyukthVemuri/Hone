@@ -457,12 +457,19 @@ test("the dashboard offers the owner a capacity CTA that reaches the page", asyn
   await loginAsOwner(page, seed);
   await page.goto("/dashboard");
 
-  // The CTA's accessible name concatenates its two spans, so match on the
-  // distinctive part and require exactly one — a `.first()` would hide a
-  // duplicate CTA.
-  const cta = page.getByRole("link", { name: /Practice capacity/ });
+  // SCOPED TO THE DASHBOARD'S OWN CONTENT, not the page. A page-wide locator
+  // proved only that SOME link named "Practice capacity" existed after
+  // /dashboard loaded: if the CTA were removed while a persistent shell or menu
+  // link with the same name and destination existed, the count, the href, the
+  // click and the landing assertion would all still have passed.
+  const main = page.getByRole("main");
+  const cta = main.getByRole("link", { name: /Practice capacity/ });
   await expect(cta).toHaveCount(1);
   await expect(cta).toHaveAttribute("href", "/dashboard/capacity");
+  // BY DESTINATION TOO. Counting by NAME cannot see a second, relabelled link
+  // to the same route — which is what the old comment claimed to protect
+  // against and did not.
+  await expect(main.locator('a[href="/dashboard/capacity"]')).toHaveCount(1);
 
   // WHERE IT GOES, not just that it exists.
   await cta.click();
@@ -491,8 +498,13 @@ test("an ordinary practitioner is offered the capacity entry neither in search n
   // claimed both while proving only the first.
   await page.goto("/dashboard");
   await expect(page.getByRole("heading", { name: "Today" }).first()).toBeVisible();
+  // Scoped to the dashboard content for symmetry with the owner test...
+  const main = page.getByRole("main");
+  await expect(main.getByRole("link", { name: /Practice capacity/ })).toHaveCount(0);
+  await expect(main.locator('a[href="/dashboard/capacity"]')).toHaveCount(0);
+  // ...and page-wide as well, which is strictly stronger: the entry must not
+  // reach them through a shell or menu either. By destination as much as by
+  // name, since a relabelled link to the owner surface is the same leak.
   await expect(page.getByRole("link", { name: /Practice capacity/ })).toHaveCount(0);
-  // By destination as well as by name: a CTA relabelled but still pointing at
-  // the owner surface would be the same leak.
   await expect(page.locator('a[href="/dashboard/capacity"]')).toHaveCount(0);
 });
