@@ -25,7 +25,7 @@ import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 // READ-ONLY. No form, no action, no mutation.
 //
 // SCOPE — OWNER-CAP Slice 1. It answers ONE question: which active treatment
-// clients have nothing booked. Treatment access ("how soon could I see someone
+// clients have no TREATMENT booked. Treatment access ("how soon could I see someone
 // new"), weekly capacity, new-client demand and conversion are later slices,
 // and are absent rather than stubbed.
 
@@ -108,7 +108,8 @@ function CapacityBriefing({ briefing }: { briefing: OwnerCapacityBriefing }) {
       <header>
         <h1 className="text-xl font-semibold">Practice capacity</h1>
         <p className="mt-1 text-sm text-fg-muted">
-          Who is in treatment, and who has nothing booked. Times are {briefing.timezone}.
+          Who is in treatment, and who has no treatment booked. Times are{" "}
+          {briefing.timezone}.
         </p>
       </header>
 
@@ -137,11 +138,16 @@ function CapacityBriefing({ briefing }: { briefing: OwnerCapacityBriefing }) {
         {/* EVERY LABEL HERE SAYS "TREATMENT" ON PURPOSE. The bands are folded by
             summarizeFutureTreatment, which deliberately excludes consultations —
             so an active client whose only future booking is a consultation
-            belongs in the zero band. The copy used to say "every future
-            appointment" and the zero card used to read "Nothing booked", which
-            told the owner the opposite of what the number does and would prompt
-            a follow-up call to someone already in the diary. Something IS
-            booked; it is simply not treatment. */}
+            belongs in the zero band. The copy used to describe the bands as
+            spanning all future appointments, and the zero card claimed the client
+            held no booking of any kind. Both told the owner the opposite of what
+            the number does, and would prompt a follow-up call to someone already
+            in the diary. Something IS booked; it is simply not treatment.
+
+            The old wording is described rather than quoted, because
+            tests/source-guards/owner-capacity-copy-guards.test.ts bans the
+            literal phrasing across this whole surface — comments included, since
+            a comment stating the wrong product rule is how it comes back. */}
         <SectionLabel as="h2">Future treatment booking depth</SectionLabel>
         <p className="mt-1 text-xs text-fg-muted">
           Counted across future treatment appointments only, cumulatively — a client
@@ -189,9 +195,9 @@ function CapacityBriefing({ briefing }: { briefing: OwnerCapacityBriefing }) {
       </section>
 
       <p className="text-xs text-fg-muted">
-        Read-only. This page answers who is in treatment and who has nothing booked. It
-        does not yet report how soon a new client could be seen, weekly capacity, or
-        new-client demand.
+        Read-only. This page answers who is in treatment and who has no treatment
+        booked — a booked consultation is not treatment. It does not yet report how
+        soon a new client could be seen, weekly capacity, or new-client demand.
       </p>
     </div>
   );

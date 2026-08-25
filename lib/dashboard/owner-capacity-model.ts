@@ -4,7 +4,7 @@
 //
 // The owner briefing at /dashboard/capacity answers one operational question
 // from current studio truth: which of the studio's active treatment clients
-// have nothing on the calendar. This module holds every rule it applies; the
+// have no TREATMENT on the calendar. This module holds every rule it applies; the
 // loader beside it holds every read.
 //
 // THE ONE DISCIPLINE THIS FILE EXISTS TO ENFORCE: an absent input is UNKNOWN,
@@ -52,7 +52,7 @@ export function unknown<T>(reason: string): Fact<T> {
  * wearing a fact's clothes, and it fails in the direction that matters: a
  * consultation whose service was later deleted was counted as booked treatment,
  * which both inflated committed treatment minutes and removed its client from
- * the "nothing booked" list an owner uses to decide who to chase.
+ * the no-treatment-booked list an owner uses to decide who to chase.
  */
 export type ServiceClassification = "consultation" | "treatment" | "unknown";
 
@@ -123,7 +123,7 @@ export function summarizeFutureTreatment(
   for (const a of upcoming) {
     if (!isActiveBooking(a)) continue;
     // NEITHER counted NOR discarded. Skipping it silently would report the
-    // client as having nothing booked; counting it would report time the studio
+    // client as having no treatment booked; counting it would report time the studio
     // may never spend treating. Record who it belongs to and let the caller
     // degrade the affected figure instead.
     if (a.serviceClass === "unknown") {

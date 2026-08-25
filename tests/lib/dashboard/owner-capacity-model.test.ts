@@ -241,7 +241,7 @@ const manyClients = (n: number): StubClient[] =>
 describe("getOwnerCapacityBriefing — one statement, one snapshot", () => {
   it("FAILS CLOSED when the read errors, rather than reporting an idle studio", async () => {
     // supabase-js RESOLVES with { data: null, error } on a transient failure.
-    // Read as an empty row set that becomes "no active clients, nothing booked"
+    // Read as an empty row set that becomes "no active clients, no treatment booked"
     // — a confident, wrong screen.
     const { client } = stubClient({ clients: [], error: { code: "57014" } });
     await expect(getOwnerCapacityBriefing(STUDIO, client)).rejects.toThrow(
@@ -535,7 +535,7 @@ describe("getOwnerCapacityBriefing — one statement, one snapshot", () => {
     // so the classification genuinely cannot be made. Calling it treatment was a
     // guess wearing a fact's clothes, and it failed in the direction that
     // matters: a consultation whose service was deleted counted as booked
-    // treatment and removed its client from the "nothing booked" list.
+    // treatment and removed its client from the no-treatment-booked list.
     const { client } = stubClient({
       clients: [{ id: "c0", plans: 1, bookings: [booking({ service: null })] }],
     });

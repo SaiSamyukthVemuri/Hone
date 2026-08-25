@@ -276,7 +276,7 @@ beforeAll(async () => {
     status: "confirmed",
   });
 
-  // quiet: an active treatment client with nothing on the calendar. THE number.
+  // quiet: an active treatment client with no treatment on the calendar. THE number.
   const quiet = await newClient(studio.id, "Quiet");
   await openPlan(studio.id, quiet);
 
@@ -354,7 +354,7 @@ describe("owner capacity briefing", () => {
     expect(b.clients.activeTreatment).toEqual({ known: true, value: 4 });
   });
 
-  it("puts the client with nothing booked in the no-future group, and the booked one outside it", async () => {
+  it("puts the client with no TREATMENT booked in the no-future group, and the booked one outside it", async () => {
     const b = await getOwnerCapacityBriefing(studio, ownerClient);
     // quiet, consulting (consultation only) and cancelled (not committed).
     expect(b.clients.activeTreatmentWithoutFutureBooking).toEqual({
@@ -522,11 +522,14 @@ describe("owner capacity briefing", () => {
 
     // BOOKING DEPTH IS TREATMENT-ONLY, and every visible label must say so.
     // The bands exclude consultations, so a client whose only future booking is
-    // a consultation sits in the zero band — calling that "Nothing booked" told
+    // a consultation sits in the zero band — a bare "booked nothing" label told
     // the owner the opposite of what the number does, and would prompt a
     // follow-up call to someone already in the diary.
+    // The whole claim class, not the three strings that happened to be found:
+    // rendered copy may never promise "nothing booked" anywhere on this page.
+    expect(markup).not.toMatch(/nothing\s+(?:booked|on the calendar)/i);
     expect(markup).not.toContain("every future appointment");
-    expect(markup).not.toContain("Nothing booked");
+    expect(markup).toMatch(/who has no treatment booked/i);
     expect(markup).toMatch(/Counted across future treatment appointments only/);
     expect(markup).toMatch(/Consultations do not count/);
     expect(markup).toContain("No treatment booked");

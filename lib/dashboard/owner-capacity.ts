@@ -50,7 +50,7 @@ import {
 //     the returned length against a larger app-side cap proves nothing: a
 //     studio with 1,200 clients looks complete at 1,000 rows, and every client
 //     beyond the ceiling silently stops existing — including, on this screen,
-//     the ones who have nothing booked. The returned length is checked against
+//     the ones who have no treatment booked. The returned length is checked against
 //     the exact count PostgREST reports in Content-Range, which the ceiling
 //     does not bound.
 //
@@ -74,14 +74,14 @@ import {
 //
 //   * A FAILED READ. supabase-js RESOLVES with `{ data: null, error }` rather
 //     than rejecting, so a discarded error becomes an empty row set: no active
-//     clients, nothing booked, and a confident, wrong screen. The read fails
+//     clients, no treatment booked, and a confident, wrong screen. The read fails
 //     closed with a safe code and no row data, because no answer is better than
 //     a wrong one here.
 //
 // WHAT SURVIVES THE CEILING, AND WHAT DOES NOT. The EXACT COUNT is reported in
 // Content-Range and is not bounded by the row ceiling, so a studio too large to
 // enumerate still gets a truthful `totalRecords`. Everything that needs the
-// IDENTIFIERS — who is in active treatment, who has nothing booked, how deeply
+// IDENTIFIERS — who is in active treatment, who has no treatment booked, how deeply
 // anyone is booked — goes UNKNOWN, because the population those figures are
 // computed over was never fully in hand.
 //

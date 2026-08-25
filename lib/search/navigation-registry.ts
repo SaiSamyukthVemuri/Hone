@@ -194,7 +194,7 @@ export const NAV_ENTRIES: readonly NavEntry[] = [
     title: "Practice capacity",
     category: "Navigation",
     href: "/dashboard/capacity",
-    description: "Who is in active treatment, and who has nothing booked",
+    description: "Who is in active treatment, and who has no treatment booked",
     // Phrased the way an owner asks the question, not the way the page is
     // titled. "who hasn't booked" and "rebook" are the searches that actually
     // bring someone here; "capacity" alone would only be found by the person
@@ -205,7 +205,11 @@ export const NAV_ENTRIES: readonly NavEntry[] = [
       "how booked am i",
       "who hasn't booked",
       "who has not booked",
+      // Kept as SEARCH ALIASES, not as claims: an owner may well type the
+      // broader phrase, and the entry should still be found. The description
+      // above is what the product asserts.
       "nothing booked",
+      "no treatment booked",
       "no future booking",
       "rebook",
       "rebooking",

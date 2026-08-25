@@ -921,7 +921,7 @@ export default async function DashboardPage({
         >
           <span className="font-medium">Practice capacity</span>
           <span className="text-fg-muted">
-            Who is in treatment, and who has nothing booked &rarr;
+            Who is in treatment, and who has no treatment booked &rarr;
           </span>
         </Link>
       )}
