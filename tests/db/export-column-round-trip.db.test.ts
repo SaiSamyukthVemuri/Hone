@@ -63,6 +63,15 @@ vi.mock("next/cache", () => ({ revalidatePath: () => undefined }));
 // includes a comma and a quote on purpose so this is exercised rather than
 // assumed.
 // ---------------------------------------------------------------------------
+// TRUTH-01B-1 seed ids.
+let deletedElectEntryId = "";
+let serviceId = "";
+let consentSignatureId = "";
+let probeLotId = "";
+let servicePractitionerId = "";
+let treatmentGoalId = "";
+let otherStudioJoinId = "";
+
 function parseCsv(text: string): string[][] {
   const rows: string[][] = [];
   let row: string[] = [];
@@ -226,6 +235,96 @@ beforeAll(async () => {
     ],
   );
 
+  // ---------------------------------------------------------------------
+  // TRUTH-01B-1 seeds.
+  // ---------------------------------------------------------------------
+  // A SOFT-DELETED entry beside the live one. Before this slice both reached
+  // the archive looking identical, because the entry reads are not filtered on
+  // deleted_at (only the parent session is) and the column was not emitted.
+  deletedElectEntryId = randomUUID();
+  await adminQuery(
+    `insert into public.electrolysis_entries
+       (id, session_id, area, mode, pulse_count, comments, deleted_at, delete_reason)
+     values ($1,$2,'Deleted Area','blend',1,'entry that was removed', now(), 'seeded for the honesty control')`,
+    [deletedElectEntryId, sessionId],
+  );
+
+  serviceId = randomUUID();
+  await adminQuery(
+    `insert into public.services
+       (id, studio_id, name, description, default_duration_minutes, price_cents,
+        active, modality, sort_order, pre_care_instructions, calendar_color)
+     values ($1,$2,'Round Trip Service','A service, described',45,0,true,'electrolysis',3,'Arrive with clean skin','violet')`,
+    [serviceId, studioId],
+  );
+
+  const templateId = randomUUID();
+  await adminQuery(
+    `insert into public.consent_form_templates (id, studio_id, title, body, version)
+     values ($1,$2,'Consent Template','The full consent body the client agreed to.',2)`,
+    [templateId, studioId],
+  );
+  consentSignatureId = randomUUID();
+  await adminQuery(
+    `insert into public.client_consent_signatures
+       (id, studio_id, client_id, template_id, template_title_snapshot,
+        template_body_snapshot, template_version, template_hash, signature_name,
+        signed_at, ip_hash, user_agent_hash, response, response_label_snapshot)
+     values ($1,$2,$3,$4,'Consent Template','The full consent body the client agreed to.',2,
+             'HASH-TEMPLATE-MUST-NOT-EXPORT','Ada Signer', now(),
+             'HASH-IP-MUST-NOT-EXPORT','HASH-UA-MUST-NOT-EXPORT','accepted','Yes, I agree')`,
+    [consentSignatureId, studioId, clientId, templateId],
+  );
+
+  probeLotId = randomUUID();
+  await adminQuery(
+    `insert into public.probe_lots (id, studio_id, probe_size, lot_number, expiry_date, active, notes)
+     values ($1,$2,'F2','LOT-01B-1', current_date + 90, true, 'seeded lot')`,
+    [probeLotId, studioId],
+  );
+
+  // services_default_eligibility_trg already created the join row when the
+  // service was inserted, so the archive is checked against the row the PRODUCT
+  // makes rather than one invented by the harness.
+  servicePractitionerId = (
+    await adminQuery(
+      `select id from public.service_practitioners
+        where studio_id = $1 and service_id = $2 and practitioner_id = $3`,
+      [studioId, serviceId, ownerId],
+    )
+  ).rows[0].id as string;
+
+  treatmentGoalId = randomUUID();
+  await adminQuery(
+    `insert into public.treatment_goals
+       (id, studio_id, client_id, estimated_total_minutes, notes, status, created_by)
+     values ($1,$2,$3,600,'Reach the goal','active',$4)`,
+    [treatmentGoalId, studioId, clientId, ownerId],
+  );
+
+  // A SECOND studio with its own service, practitioner and join row. None of it
+  // may appear in this studio's archive.
+  const other = await seedStudio(`rt-other-${randomUUID().slice(0, 6)}`);
+  const otherPractitionerId = randomUUID();
+  await adminQuery(
+    `insert into public.practitioners (id, studio_id, display_name, email, role, active)
+     values ($1,$2,'Other Owner',$3,'owner',true)`,
+    [otherPractitionerId, other.studioId, `rt-other-${randomUUID().slice(0, 8)}@harness.local`],
+  );
+  const otherServiceId = randomUUID();
+  await adminQuery(
+    `insert into public.services (id, studio_id, name, default_duration_minutes, active, calendar_color)
+     values ($1,$2,'Other Studio Service',30,true,'violet')`,
+    [otherServiceId, other.studioId],
+  );
+  otherStudioJoinId = (
+    await adminQuery(
+      `select id from public.service_practitioners
+        where studio_id = $1 and service_id = $2 and practitioner_id = $3`,
+      [other.studioId, otherServiceId, otherPractitionerId],
+    )
+  ).rows[0].id as string;
+
   const token = await fetch(`${E2E_SUPABASE_URL}/auth/v1/token?grant_type=password`, {
     method: "POST",
     headers: { apikey: ANON, "Content-Type": "application/json" },
@@ -387,5 +486,158 @@ describe("the export still refuses to describe what it did not write", () => {
       (c: { table: string }) => c.table === "clients",
     );
     expect(clientsCheck.status).toBe("matched");
+  });
+});
+
+// ===========================================================================
+// TRUTH-01B-1 — the archive becomes joinable and honest
+// ===========================================================================
+
+describe("SOFT-DELETE HONESTY: a removed entry never looks live", () => {
+  it("both the live and the deleted entry are in the archive", async () => {
+    const t = await table("electrolysis_entries");
+    const ids = t.rows.map((r) => r.id);
+    expect(ids).toContain(electEntryId);
+    expect(ids).toContain(deletedElectEntryId);
+  });
+
+  it("CONTROL — the deleted entry carries its deletion state, the live one does not", async () => {
+    // The whole point. Before this slice deleted_at reached no cell, so these
+    // two rows were indistinguishable in the CSV.
+    const live = await rowById("electrolysis_entries", electEntryId);
+    const gone = await rowById("electrolysis_entries", deletedElectEntryId);
+    expect(live.deleted_at).toBe("");
+    expect(gone.deleted_at).not.toBe("");
+    expect(gone.deleted_at.length).toBeGreaterThan(10);
+  });
+
+  it("laser entries carry the same column, for the same reason", async () => {
+    expect(exportSpec("laser_entries").csvHeaders).toContain("deleted_at");
+  });
+});
+
+describe("JOINABILITY: the exported files can be joined to each other", () => {
+  it("sessions carry the appointment and treatment-plan keys", async () => {
+    const headers = exportSpec("sessions").csvHeaders;
+    expect(headers).toContain("appointment_id");
+    expect(headers).toContain("treatment_plan_id");
+  });
+
+  it("pulse_delay_seconds was already fetched and now reaches its cell", async () => {
+    expect(exportSpec("electrolysis_entries").csvHeaders).toContain("pulse_delay_seconds");
+  });
+});
+
+describe("TRUTH-01B-1 new files carry their seeded rows", () => {
+  it("services holds the catalogue, including an authoritative zero price", async () => {
+    const row = await rowById("services", serviceId);
+    expect(row.name).toBe("Round Trip Service");
+    expect(row.default_duration_minutes).toBe("45");
+    // A real recorded zero must survive as "0", never as an empty cell.
+    expect(row.price_cents).toBe("0");
+    expect(row.pre_care_instructions).toBe("Arrive with clean skin");
+  });
+
+  it("probe_lots resolves the lot ids the charting files already carry", async () => {
+    const row = await rowById("probe_lots", probeLotId);
+    expect(row.lot_number).toBe("LOT-01B-1");
+  });
+
+  it("treatment_goals carries the goal, and withholds creator attribution", async () => {
+    const row = await rowById("treatment_goals", treatmentGoalId);
+    expect(row.estimated_total_minutes).toBe("600");
+    expect(row.notes).toBe("Reach the goal");
+    expect(Object.keys(row)).not.toContain("created_by");
+  });
+
+  it("consent signatures carry the exact template text that was agreed", async () => {
+    const row = await rowById("client_consent_signatures", consentSignatureId);
+    expect(row.signature_name).toBe("Ada Signer");
+    expect(row.template_body_snapshot).toBe("The full consent body the client agreed to.");
+    expect(row.template_version).toBe("2");
+    expect(row.response).toBe("accepted");
+    expect(row.response_label_snapshot).toBe("Yes, I agree");
+  });
+
+  it("CONTROL — no consent hash reaches the archive, in any column or cell", async () => {
+    const headers = exportSpec("client_consent_signatures").csvHeaders;
+    for (const forbidden of ["ip_hash", "user_agent_hash", "template_hash"]) {
+      expect(headers, `${forbidden} must not be a header`).not.toContain(forbidden);
+    }
+    // And not smuggled into some other cell either: scan the whole file.
+    const raw = await archive.files[exportSpec("client_consent_signatures").file].async("string");
+    for (const value of [
+      "HASH-IP-MUST-NOT-EXPORT",
+      "HASH-UA-MUST-NOT-EXPORT",
+      "HASH-TEMPLATE-MUST-NOT-EXPORT",
+    ]) {
+      expect(raw, `${value} reached the CSV`).not.toContain(value);
+    }
+  });
+
+  it("the archive holds this studio's join rows and not another studio's", async () => {
+    const t = await table("service_practitioners");
+    const ids = t.rows.map((r) => r.id);
+    expect(ids).toContain(servicePractitionerId);
+    // The other studio's join row exists in the database and is absent here.
+    expect(ids).not.toContain(otherStudioJoinId);
+    const services = await table("services");
+    expect(services.rows.map((r) => r.name)).not.toContain("Other Studio Service");
+  });
+
+  it("CONTROL — the join is structurally incapable of crossing studios", async () => {
+    // WHAT ACTUALLY ENFORCES THE ABOVE, stated honestly. Removing the export's
+    // `.eq("studio_id", ...)` does NOT change the archive: the read runs under
+    // a real authenticated session, so RLS already confines it. The outcome
+    // assertion above therefore cannot tell a working filter from a working
+    // policy, and on its own it would pass for a reason it does not name.
+    //
+    // The durable guarantee is in the schema: BOTH foreign keys are COMPOSITE
+    // on studio_id, so a row whose service and practitioner belong to different
+    // studios cannot be written at all. That is what this checks, from the live
+    // catalogue.
+    const fks = await adminQuery(
+      `select pg_get_constraintdef(con.oid) as def
+         from pg_constraint con
+         join pg_class c on c.oid = con.conrelid
+         join pg_namespace n on n.oid = c.relnamespace
+        where n.nspname = 'public' and c.relname = 'service_practitioners'
+          and con.contype = 'f'`,
+    );
+    const defs = (fks.rows as Array<{ def: string }>).map((r) => r.def);
+    const composite = (cols: string) =>
+      defs.some((d) => d.includes(cols) && d.includes(", studio_id)"));
+    expect(composite("FOREIGN KEY (service_id, studio_id)"), defs.join(" | ")).toBe(true);
+    expect(composite("FOREIGN KEY (practitioner_id, studio_id)"), defs.join(" | ")).toBe(true);
+
+    // ANTI-VACUITY: the same predicate must REJECT a plain single-column FK,
+    // or it would pass for any table at all. client_consent_signatures.client_id
+    // is exactly that shape.
+    const plain = await adminQuery(
+      `select pg_get_constraintdef(con.oid) as def
+         from pg_constraint con
+         join pg_class c on c.oid = con.conrelid
+         join pg_namespace n on n.oid = c.relnamespace
+        where n.nspname = 'public' and c.relname = 'client_consent_signatures'
+          and con.contype = 'f'`,
+    );
+    const plainDefs = (plain.rows as Array<{ def: string }>).map((r) => r.def);
+    expect(
+      plainDefs.some((d) => d.includes("FOREIGN KEY (client_id)") && !d.includes(", studio_id)")),
+      "expected a single-column FK to exist so the predicate is shown to discriminate",
+    ).toBe(true);
+  });
+
+  it("CONTROL — every newly authorized file is actually in the archive", async () => {
+    for (const resource of [
+      "services",
+      "client_consent_signatures",
+      "probe_lots",
+      "service_practitioners",
+      "treatment_goals",
+    ]) {
+      const file = exportSpec(resource).file;
+      expect(archive.files[file], `${file} is missing from the archive`).toBeDefined();
+    }
   });
 });

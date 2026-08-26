@@ -32,19 +32,24 @@ import {
 // rather than by hand. This is the payload pin: TRUTH-01A moved the header
 // arrays into the registry, and if a single column moved with them, this fails.
 const BASE_CSV_HEADERS: Readonly<Record<string, readonly string[]>> = {
-  "appointments.csv": ["id", "client_id", "client_name", "practitioner_id", "practitioner_name", "service_id", "service_name", "starts_at", "ends_at", "duration_minutes", "status", "notes", "cancellation_reason", "cancelled_at", "cancelled_by", "created_at", "updated_at"],
+  "client_consent_signatures.csv": ["id", "client_id", "template_id", "template_title_snapshot", "template_body_snapshot", "template_version", "signature_name", "signed_at", "response", "response_label_snapshot", "created_at"],
+  "probe_lots.csv": ["id", "probe_size", "lot_number", "expiry_date", "active", "notes", "created_at"],
+  "service_practitioners.csv": ["id", "service_id", "practitioner_id", "created_at"],
+  "services.csv": ["id", "name", "description", "default_duration_minutes", "price_cents", "active", "modality", "sort_order", "pre_care_instructions", "calendar_color", "created_at", "updated_at"],
+  "treatment_goals.csv": ["id", "client_id", "estimated_total_minutes", "notes", "status", "created_at", "updated_at"],
+  "appointments.csv": ["id", "client_id", "client_name", "practitioner_id", "practitioner_name", "service_id", "service_name", "starts_at", "ends_at", "duration_minutes", "status", "notes", "cancellation_reason", "cancelled_at", "cancelled_by", "created_at", "updated_at", "referral_source", "rescheduled_from_appointment_id", "rescheduled_to_appointment_id", "cancellation_kind", "booked_outside_availability"],
   "client_budget_context.csv": ["client_id", "client_name", "budget_level", "budget_notes", "updated_by_practitioner_id", "created_at", "updated_at"],
   "client_clinical_notes.csv": ["id", "client_id", "client_name", "practitioner_id", "practitioner_display_name", "kind", "body", "areas", "occurred_at", "created_at", "supersedes_note_id"],
   "client_pricing.csv": ["id", "client_id", "service_name", "price_cents", "notes", "effective_from"],
-  "clients.csv": ["id", "name", "pronouns", "date_of_birth", "fitzpatrick_type", "allergies", "skin_notes", "emergency_contact_name", "emergency_contact_phone", "email", "phone", "created_at"],
-  "electrolysis_entries.csv": ["id", "session_id", "area", "areas", "probe_size", "probe_lot_id", "mode", "intensity", "duration_seconds", "pulse_count", "comments", "created_at", "block_id", "energy_level", "apilus_modality", "machine_frequency", "minutes_performed", "probe_type", "hairs_treated", "galvanic_ma", "galvanic_duration_seconds", "galvanic_intensity_percent", "thermolysis_intensity_percent", "thermolysis_duration_seconds", "units_of_lye", "observation_chips", "block_primary_area", "block_side", "block_areas", "block_custom_area_detail", "probe_key", "probe_brand", "probe_material", "probe_piece_type", "probe_shank", "probe_size_value", "probe_length", "probe_label"],
-  "laser_entries.csv": ["id", "session_id", "zone", "treatment_number", "fluence", "pulse_width", "spot_size", "observation_notes", "created_at"],
-  "practitioners.csv": ["id", "display_name", "email", "role", "active", "created_at"],
+  "clients.csv": ["id", "name", "pronouns", "date_of_birth", "fitzpatrick_type", "allergies", "skin_notes", "emergency_contact_name", "emergency_contact_phone", "email", "phone", "created_at", "address", "contraindications", "photo_consent", "sms_consent_at", "sms_consent_source", "sms_opted_out_at", "sms_opt_out_source", "archived_at"],
+  "electrolysis_entries.csv": ["id", "session_id", "area", "areas", "probe_size", "probe_lot_id", "mode", "intensity", "duration_seconds", "pulse_count", "comments", "created_at", "block_id", "energy_level", "apilus_modality", "machine_frequency", "minutes_performed", "probe_type", "hairs_treated", "galvanic_ma", "galvanic_duration_seconds", "galvanic_intensity_percent", "thermolysis_intensity_percent", "thermolysis_duration_seconds", "units_of_lye", "observation_chips", "block_primary_area", "block_side", "block_areas", "block_custom_area_detail", "probe_key", "probe_brand", "probe_material", "probe_piece_type", "probe_shank", "probe_size_value", "probe_length", "probe_label", "pulse_delay_seconds", "deleted_at"],
+  "laser_entries.csv": ["id", "session_id", "zone", "treatment_number", "fluence", "pulse_width", "spot_size", "observation_notes", "created_at", "ejection_results", "deleted_at"],
+  "practitioners.csv": ["id", "display_name", "email", "role", "active", "created_at", "color", "default_machine_frequency"],
   "record_keeping_audit_events.csv": ["id", "record_type", "record_id", "action", "changed_fields", "actor_practitioner_id", "actor_display_name", "created_at"],
   "record_keeping_disinfectants.csv": ["id", "date_prepared", "disinfectant_name", "concentration", "date_discarded", "discard_due_date", "operator_practitioner_id", "operator_name", "notes", "created_by_practitioner_id", "created_at", "updated_at"],
   "record_keeping_exposure_incidents.csv": ["id", "incident_date", "exposed_person_full_name", "exposed_person_address", "exposed_person_phone", "exposure_details", "action_taken", "staff_involved_name", "notes", "created_by_practitioner_id", "created_at", "updated_at"],
-  "record_keeping_sterile_items.csv": ["id", "date_purchased", "item_description", "manufacturer_name", "amount_purchased", "lot_number", "expiry_date", "date_discarded", "notes", "created_by_practitioner_id", "created_at", "updated_at"],
-  "sessions.csv": ["id", "client_id", "practitioner_id", "performed_by_practitioner_id", "modality", "started_at", "ended_at", "price_paid_cents", "session_notes", "created_at"],
+  "record_keeping_sterile_items.csv": ["id", "date_purchased", "item_description", "manufacturer_name", "amount_purchased", "lot_number", "expiry_date", "date_discarded", "notes", "created_by_practitioner_id", "created_at", "updated_at", "probe_key"],
+  "sessions.csv": ["id", "client_id", "practitioner_id", "performed_by_practitioner_id", "modality", "started_at", "ended_at", "price_paid_cents", "session_notes", "created_at", "appointment_id", "treatment_plan_id", "started_at_original", "next_session_note", "aftercare_and_risks_explained_at", "record_origin", "legacy_classification"],
   "treatment_plan_stages.csv": ["id", "plan_id", "plan_name", "client_id", "client_name", "sort_order", "name", "how_often_unit", "visit_length_minutes", "stage_length_value", "stage_length_unit", "notes", "created_at", "updated_at"],
   "treatment_plans.csv": ["id", "client_id", "client_name", "name", "primary_area", "treatment_areas", "estimated_timeline_months_min", "estimated_timeline_months_max", "status", "suggested_visit_count", "treatment_goal_minutes_override", "budget_notes", "practitioner_notes", "created_by_practitioner_id", "closed_by_practitioner_id", "created_at", "closed_at"],
 };
@@ -406,13 +411,16 @@ describe("the manifest describes itself honestly", () => {
     }
   });
 
-  it("names treatment photos and the service menu among the omissions", async () => {
+  it("names the real remaining omissions, and no longer the service menu", async () => {
     const zip = await buildArchive();
     const manifest = JSON.parse(await zip.files["manifest.json"].async("string"));
     const named = manifest.not_exported.map((r: { resource: string }) => r.resource);
     expect(named).toContain("storage:treatment-images");
-    expect(named).toContain("services");
     expect(named).toContain("client_intake_forms");
+    expect(named).toContain("session_blocks");
+    // TRUTH-01B-1 EXPORTS the service menu, so it must no longer be listed as
+    // something the archive withholds. A file cannot be both.
+    expect(named).not.toContain("services");
   });
 
   it("the export format version is unchanged by this slice", async () => {
