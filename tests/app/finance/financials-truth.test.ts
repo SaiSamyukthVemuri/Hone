@@ -350,7 +350,8 @@ const resolveImport = (spec: string, fromFile: string): string | null => {
  * TypeScript AST rather than matched by regex.
  *
  * ESM ONLY, and that is the contract rather than a limitation — see
- * `commonJsViolations` below for why CommonJS is not analysed here at all.
+ * `scanDependencies` below for why CommonJS is not analysed here at all, and
+ * why a dependency this cannot READ is a violation rather than an absence.
  *
  * This replaced a regex that recognised only `import … from "x"` and
  * `import("x")`. Codex raised the gap on PR #646 as a P2 and it was right: a
@@ -387,86 +388,44 @@ const resolveImport = (spec: string, fromFile: string): string | null => {
  * still uses `codeOnly`, because these files legitimately DISCUSS the tables
  * they must never reach.
  */
-function specifiersOfSource(source: string, fileName: string): string[] {
-  const sf = ts.createSourceFile(
-    fileName,
-    source,
-    ts.ScriptTarget.Latest,
-    /* setParentNodes */ true,
-    fileName.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
-  );
-  const specs: string[] = [];
-  const take = (node: ts.Node | undefined) => {
-    if (node && ts.isStringLiteralLike(node)) specs.push(node.text);
-  };
-  const visit = (node: ts.Node): void => {
-    if (ts.isImportDeclaration(node)) {
-      // Side-effect imports land here too: no importClause, but a specifier.
-      take(node.moduleSpecifier);
-    } else if (ts.isExportDeclaration(node)) {
-      // Covers `export * as ns from "m"`, which the scanner-based cross-check
-      // below does not report at all — one reason the AST stays the authority.
-      take(node.moduleSpecifier);
-    } else if (
-      ts.isImportEqualsDeclaration(node) &&
-      ts.isExternalModuleReference(node.moduleReference)
-    ) {
-      take(node.moduleReference.expression);
-    } else if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument)) {
-      take(node.argument.literal);
-    } else if (
-      ts.isCallExpression(node) &&
-      node.expression.kind === ts.SyntaxKind.ImportKeyword
-    ) {
-      // `import("m")` — the callee is a keyword, not an identifier, and it
-      // needs no normalisation: `(import)("m")` is a PARSE ERROR, measured, so
-      // no wrapped spelling of it can execute.
-      take(node.arguments[0]);
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(sf);
-  return specs;
-}
-
-/** The same extraction, for a file on disk. */
-function moduleSpecifiers(file: string): string[] {
-  return specifiersOfSource(readFileSync(file, "utf8"), file);
-}
-
 /**
- * Executable CommonJS loading anywhere in a FIN module. Its PRESENCE is the
- * violation; which module it would load is never asked.
+ * ONE pass over a module, classifying every dependency-bearing site as exactly
+ * one of RESOLVED, FORBIDDEN or UNRESOLVED. There is deliberately no fourth
+ * outcome, and in particular no silent one.
  *
- * WHY THE QUESTION CHANGED. Four repairs in a row tried to answer "does this
- * expression load a module?" for CommonJS, and Codex defeated each one with a
- * new spelling: `require`, then `(require)`, then
- * `((require as <T>(id: string) => T)<any>)`, then
- * `(flag ? require : require)`. The first three were semantically TRANSPARENT
- * wrappers and reading the emitted output did close that class. The fourth is
- * not a wrapper at all — a conditional genuinely changes what is called, and it
- * escapes anyway because BOTH branches happen to be `require`. Following that
- * further means deciding which JavaScript expressions can evaluate to `require`,
- * which is writing an evaluator, and FIN Slice 1 does not need one.
+ * WHY THE SHAPE MATTERS MORE THAN THE RULES. Seven escapes were reported on
+ * this guard. The first five were CommonJS spellings and were settled by
+ * refusing to analyse CommonJS at all — see FORBIDDEN below. The last two were
+ * the same underlying bug in a different disguise: a dependency site the walker
+ * could not READ was treated as a site that did not EXIST.
+ * `module["require"]("…")` matched no branch, and `import("../a/" + "b")`
+ * handed the extractor a BinaryExpression which it quietly dropped. Both
+ * recorded no edge and raised no violation, so the money module could execute
+ * with every assertion green.
  *
- * So the contract changed instead: THE FIN CLOSURE IS ESM-ONLY. Dependencies
- * must be expressed in the import and export forms the walker above already
- * understands. Any executable CommonJS in a reached module is forbidden
- * outright, which makes the unanswerable question irrelevant — the escape is
- * rejected BEFORE anyone asks what it loads. `(flag ? require : require)("x")`
- * is red because `require` is there, not because we worked out what it does.
+ * The default is now inverted. Anything this cannot read is a VIOLATION, not a
+ * no-op, so the next unreadable form fails closed instead of opening a hole.
+ * That is why `unreadable()` exists and why nothing calls `push` on `resolved`
+ * without going through `specifier()`.
  *
- * This is only safe because it is true today: the closure was audited before
- * the rule was imposed and contains no CommonJS at all, so nothing legitimate
- * is being outlawed. If a FIN module ever genuinely needs CommonJS, that is a
- * decision to take deliberately, not something to smuggle past a guard.
+ * WHAT IS DELIBERATELY NOT HERE. No constant folding, no evaluation of
+ * concatenations, no data flow, no TypeChecker, no callee-expression analysis,
+ * no emitted-output resolution. Those were tried and each bought exactly one
+ * review cycle. `import("../a/" + "b")` is red because it is not a literal, not
+ * because anyone worked out that it names the money module.
  *
- * VALUE POSITION ONLY. `require` inside a type — `NodeRequire`, or a parameter
- * typed `typeof require` — declares a shape and loads nothing, and the same
- * word in a string or a comment is not code at all. The AST separates those
- * three from an executable reference; a text scan could not.
+ * ORDINARY CALLS ARE NOT DEPENDENCY SYNTAX and are never examined. The closure
+ * uses 25 computed element accesses (`UNKNOWN_LABEL[cause]` and friends); only
+ * a LITERAL `require` key is forbidden, so ordinary indexing is untouched.
  */
-function commonJsViolations(source: string, fileName: string): string[] {
+type DependencyScan = {
+  /** Module specifiers the file statically and legibly depends on. */
+  resolved: string[];
+  /** Dependency syntax that is forbidden outright, or that cannot be read. */
+  violations: string[];
+};
+
+function scanDependencies(source: string, fileName: string): DependencyScan {
   const sf = ts.createSourceFile(
     fileName,
     source,
@@ -475,18 +434,26 @@ function commonJsViolations(source: string, fileName: string): string[] {
     fileName.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
   );
 
+  const resolved: string[] = [];
   const violations: string[] = [];
-  const report = (node: ts.Node, what: string) => {
-    const { line } = sf.getLineAndCharacterOfPosition(node.getStart(sf));
-    violations.push(`line ${line + 1}: ${what}`);
-  };
+  const at = (node: ts.Node) => sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1;
+  const forbid = (node: ts.Node, what: string) => violations.push(`line ${at(node)}: ${what}`);
+  const unreadable = (node: ts.Node, what: string) =>
+    violations.push(
+      `line ${at(node)}: ${what} — the specifier is not a literal, so this dependency ` +
+        `cannot be followed and is rejected rather than ignored`,
+    );
 
   /**
-   * True when this identifier is only NAMING something — a binding being
-   * declared, or an object key — rather than referring to the loader.
-   *
-   * `{ require }` shorthand is deliberately NOT here: that reads the value.
+   * The ONLY route into `resolved`. A specifier that is not a literal string
+   * is an unreadable dependency, never an absent one.
    */
+  const specifier = (node: ts.Node | undefined, what: string, site: ts.Node) => {
+    if (node && ts.isStringLiteralLike(node)) resolved.push(node.text);
+    else unreadable(site, what);
+  };
+
+  /** True when this identifier only NAMES something rather than referring to it. */
   const isJustAName = (node: ts.Identifier): boolean => {
     const parent = node.parent;
     if (!parent) return false;
@@ -511,52 +478,113 @@ function commonJsViolations(source: string, fileName: string): string[] {
     );
   };
 
-  const visit = (node: ts.Node): void => {
+  /**
+   * `inType` tracks whether this node sits inside a type, where `require` names
+   * a shape and loads nothing. It is a FLAG rather than an early return, and
+   * that distinction is load-bearing: returning early on type subtrees would
+   * stop the walk before a nested `import("m")` type position deeper inside
+   * one — `Foo<import("m").Bar>` — was ever seen. That is the same fail-open
+   * this change exists to remove, so the walk always continues and only the
+   * CommonJS checks are suppressed.
+   */
+  const visit = (node: ts.Node, inType: boolean): void => {
     // An instantiation expression is a TypeNode by kind, but its `.expression`
-    // half is ordinary code — `(require<any>)(…)` calls the loader. Descend
-    // into that half only, and never into the type arguments.
+    // half is ordinary code: `(require<any>)(…)` calls the loader.
     if (ts.isExpressionWithTypeArguments(node)) {
-      visit(node.expression);
+      visit(node.expression, inType);
+      for (const typeArgument of node.typeArguments ?? []) visit(typeArgument, true);
       return;
     }
-    // Any other type subtree DECLARES a shape and loads nothing. `NodeRequire`,
-    // `typeof require`, `require` inside an `as` clause: all skipped wholesale,
-    // which is why a text scan could not do this job.
-    if (ts.isTypeNode(node)) return;
 
-    if (ts.isIdentifier(node) && !isJustAName(node)) {
+    // ---- RESOLVED, or UNRESOLVED. Static ESM is the only legal dependency. --
+    // Never gated on `inType`: a type-only edge is still an edge here, by
+    // deliberate contract.
+    if (ts.isImportDeclaration(node)) {
+      // Side-effect imports land here too: no importClause, but a specifier.
+      specifier(node.moduleSpecifier, "import declaration", node);
+    } else if (ts.isExportDeclaration(node)) {
+      // `export * as ns from "m"` included. A bare `export { a }` re-exports
+      // nothing from elsewhere and is not a dependency site at all.
+      if (node.moduleSpecifier) specifier(node.moduleSpecifier, "export-from declaration", node);
+    } else if (ts.isImportTypeNode(node)) {
+      // Type-only edges are followed too, deliberately stricter than runtime.
+      if (ts.isLiteralTypeNode(node.argument)) {
+        specifier(node.argument.literal, "import type position", node);
+      } else {
+        unreadable(node, "import type position");
+      }
+    } else if (
+      ts.isCallExpression(node) &&
+      node.expression.kind === ts.SyntaxKind.ImportKeyword
+    ) {
+      // `import("m")`. The callee is a keyword, and `(import)("m")` is a PARSE
+      // ERROR — measured — so no wrapped spelling of it can execute. The
+      // ARGUMENT is the part that can hide something: a concatenation, a
+      // template with substitutions or a variable is rejected here.
+      specifier(node.arguments[0], "dynamic import", node);
+    }
+
+    // ---- FORBIDDEN. CommonJS in any spelling, without asking what it loads. --
+    else if (
+      !inType &&
+      ts.isImportEqualsDeclaration(node) &&
+      ts.isExternalModuleReference(node.moduleReference)
+    ) {
+      // Spells `require` as SYNTAX, with no identifier node to find.
+      forbid(node, "`import … = require(…)` — CommonJS");
+    } else if (!inType && ts.isPropertyAccessExpression(node) && node.name.text === "require") {
+      forbid(node, `\`${node.getText(sf).slice(0, 40)}\` — a member named require`);
+    } else if (
+      !inType &&
+      ts.isElementAccessExpression(node) &&
+      node.argumentExpression &&
+      ts.isStringLiteralLike(node.argumentExpression) &&
+      node.argumentExpression.text === "require"
+    ) {
+      // `module["require"](…)`. No FIN runtime code needs a member called
+      // require, so the SYNTAX is forbidden and the receiver is never examined.
+      forbid(node, `\`${node.getText(sf).slice(0, 40)}\` — a member named require`);
+    } else if (!inType && ts.isIdentifier(node) && !isJustAName(node)) {
       if (node.text === "require") {
         // ANY value-position mention: called, aliased, passed, returned, or a
         // branch of a conditional. No expression analysis, so no spelling
         // escapes — which is the entire point of refusing the question.
-        report(node, "executable `require`");
+        forbid(node, "executable `require` — CommonJS");
       } else if (node.text === "createRequire") {
-        report(node, "`createRequire`");
+        forbid(node, "`createRequire` — CommonJS");
       }
-    } else if (ts.isPropertyAccessExpression(node) && node.name.text === "require") {
-      // `module.require(…)`, and every other object carrying a loader.
-      report(node, `\`${node.getText(sf).slice(0, 40)}\``);
-    } else if (
-      ts.isImportEqualsDeclaration(node) &&
-      ts.isExternalModuleReference(node.moduleReference)
-    ) {
-      // `import x = require("m")` spells `require` as SYNTAX, not as an
-      // identifier node, so nothing above would ever see it.
-      report(node, "`import … = require(…)`");
     }
 
-    ts.forEachChild(node, visit);
+    ts.forEachChild(node, (child) =>
+      visit(child, inType || (ts.isTypeNode(child) && !ts.isExpressionWithTypeArguments(child))),
+    );
   };
-  visit(sf);
+  visit(sf, /* inType */ false);
 
-  // Importing Node's loader facility at all, however it is then spelled.
-  for (const spec of specifiersOfSource(source, fileName)) {
+  // Node's loader facility itself, however it is later spelled.
+  for (const spec of resolved) {
     if (spec === "module" || spec === "node:module") {
       violations.push(`imports "${spec}" — Node's createRequire facility`);
     }
   }
-  return violations;
+  return { resolved, violations };
 }
+
+/** The specifiers a source legibly depends on. Unreadable sites are violations. */
+function specifiersOfSource(source: string, fileName: string): string[] {
+  return scanDependencies(source, fileName).resolved;
+}
+
+/** Forbidden CommonJS, and dependency syntax that cannot be read. */
+function dependencyViolations(source: string, fileName: string): string[] {
+  return scanDependencies(source, fileName).violations;
+}
+
+/** The same extraction, for a file on disk. */
+function moduleSpecifiers(file: string): string[] {
+  return specifiersOfSource(readFileSync(file, "utf8"), file);
+}
+
 
 /**
  * The same question asked by a DIFFERENT implementation: TypeScript's own
@@ -690,9 +718,13 @@ const MODULE_REFERENCE_SHAPES: Shape[] = [
   ["dynamic import", 'const p = import("m");', ["m"]],
   ["awaited dynamic import", 'async function f() { await import("m"); }', ["m"]],
   ["dynamic import, template literal", "const p = import(`m`);", ["m"]],
-  // A declaration with a literal specifier, so it is an edge. It is ALSO
-  // forbidden as CommonJS by NC-esm; both are true.
-  ["import-equals-require", 'import x = require("m");', ["m"]],
+  // Nested inside a type argument. An earlier draft of the scanner returned
+  // early on type subtrees and lost this one silently — the same fail-open
+  // this change exists to remove, reintroduced by the fix for it.
+  ["import type nested in a type argument", 'type X = Foo<import("m").Bar>;', ["m"]],
+  // Not an edge: it is CommonJS, so it is FORBIDDEN rather than resolved. One
+  // outcome per dependency site — see NC-esm.
+  ["import-equals-require is forbidden, not resolved", 'import x = require("m");', []],
   // Type-only edges are followed too, deliberately: see the block comment above.
   ["import type", 'import type { T } from "m";', ["m"]],
   ["inline type specifier", 'import { type T } from "m";', ["m"]],
@@ -702,7 +734,12 @@ const MODULE_REFERENCE_SHAPES: Shape[] = [
   ["line-commented import", '// import "m";', []],
   ["block-commented import", '/* import "m"; */', []],
   ["a string that spells one", `const s = 'import "m"';`, []],
+  // Not edges — and not silently absent either. Each is a VIOLATION, pinned in
+  // the table below. Recording nothing here is only safe because of that.
   ["a non-literal dynamic import", "const p = import(dynamicName);", []],
+  ["a concatenated dynamic import", 'const p = import("../a/" + "b");', []],
+  ["a substituted template dynamic import", "const p = import(`../a/${n}`);", []],
+  ["a conditional dynamic import", 'const p = import(f ? "./a" : "./b");', []],
   // Not extracted as edges any more — CommonJS is rejected, not resolved.
   ["require is not an edge", 'const r = require("m");', []],
   ["parenthesized require is not an edge", '(require)("m");', []],
@@ -753,7 +790,7 @@ describe("NC-reach — the extractor sees every ESM module reference", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 9. The FIN closure is ESM-only
+// 9. Static ESM only, and nothing unreadable
 // ---------------------------------------------------------------------------
 //
 // Four repairs tried to answer "does this expression load a module?" for
@@ -770,8 +807,18 @@ describe("NC-reach — the extractor sees every ESM module reference", () => {
 // no spelling of it can create an untracked money path because no spelling of
 // it is allowed. Audited before the rule was imposed: the closure contained
 // none, so nothing legitimate was outlawed.
+//
+// Two more escapes then showed that refusing the question was not enough on its
+// own, because the walk still had somewhere to put an answer it did not have.
+// `module["require"](…)` matched no branch, and `import("../a/" + "b")` handed
+// the extractor a BinaryExpression it silently dropped. Neither recorded an
+// edge and neither raised anything: an unreadable dependency became an ABSENT
+// dependency. The default is now inverted — a site this cannot read is a
+// violation — so the next unreadable form fails closed rather than open.
+// Audited too: no member named `require` and no non-literal dynamic import
+// anywhere in the closure.
 
-const COMMONJS_SHAPES: Array<[string, string, boolean]> = [
+const DEPENDENCY_VIOLATION_SHAPES: Array<[string, string, boolean]> = [
   // Executable CommonJS — every one of these is a violation, and NONE of them
   // required working out which module it loads.
   ["direct require", 'const r = require("m");', true],
@@ -793,6 +840,23 @@ const COMMONJS_SHAPES: Array<[string, string, boolean]> = [
   ["require returned", "function f() { return require; }", true],
   ["module.require", 'module.require("m");', true],
   ["parenthesized module.require", '(module.require)("m");', true],
+  // Bracket access. No FIN runtime code needs a member called require, so the
+  // SYNTAX is forbidden and the receiver is never examined — no evaluator.
+  ['module["require"]', 'module["require"]("m");', true],
+  ["module['require'] single-quoted", "module['require'](\"m\");", true],
+  ['globalThis["require"]', 'globalThis["require"]("m");', true],
+  ['someObject["require"]', 'someObject["require"]("m");', true],
+  ["someObject.require", 'someObject.require("m");', true],
+  ['a bracket require behind parens', '(module["require"])("m");', true],
+  // UNRESOLVABLE DEPENDENCY SYNTAX. Not CommonJS at all — an ESM dynamic
+  // import whose specifier cannot be read. Forbidden rather than ignored,
+  // without folding constants or evaluating anything.
+  ["concatenated dynamic import", 'import("../dashboard/" + "practice-metrics");', true],
+  ["variable dynamic import", 'const s = "./x"; import(s);', true],
+  ["conditional dynamic import", 'import(c ? "./safe" : "../dashboard/practice-metrics");', true],
+  ["substituted template dynamic import", "import(`../dashboard/${name}`);", true],
+  ["dynamic import with no argument", "import();", true],
+  ["unreadable import type position", "type X = import(SomeAlias).Y;", true],
   ["createRequire", 'const r = createRequire(u); r("m");', true],
   ["import of node:module", 'import { createRequire } from "node:module";', true],
   ["import-equals-require", 'import x = require("m");', true],
@@ -812,11 +876,20 @@ const COMMONJS_SHAPES: Array<[string, string, boolean]> = [
   ["a conditional of safe functions", '(flag ? safeFn : otherFn)("m");', false],
   ["a property NAMED require on some object", "const o = { require: 1 };", false],
   ["a local parameter named require", "function f(require) { return 1; }", false],
+  // Ordinary indexing must survive: the closure uses 25 computed element
+  // accesses. Only a LITERAL `require` key is forbidden.
+  ["computed element access", "const v = UNKNOWN_LABEL[cause];", false],
+  ["element access with another literal key", 'const v = o["safe"];', false],
+  ["a member named something else", 'other.request("m");', false],
+  ["a string used as an element key elsewhere", 'const k = "require"; const v = o[k];', false],
+  // Literal dynamic imports stay legal — that is the whole legible form.
+  ["literal dynamic import", 'import("../safe/module");', false],
+  ["template-literal dynamic import", "import(`../safe/module`);", false],
 ];
 
-describe("NC-esm — the FIN closure is ESM-only, so no CommonJS spelling matters", () => {
-  it.each(COMMONJS_SHAPES)("%s", (_name, source, isViolation) => {
-    const found = commonJsViolations(source, path.join(ROOT, "probe.ts"));
+describe("NC-esm — static ESM only: CommonJS and unreadable dependencies both fail", () => {
+  it.each(DEPENDENCY_VIOLATION_SHAPES)("%s", (_name, source, isViolation) => {
+    const found = dependencyViolations(source, path.join(ROOT, "probe.ts"));
     expect(found.length > 0, `${source} -> ${JSON.stringify(found)}`).toBe(isViolation);
   });
 
@@ -826,20 +899,84 @@ describe("NC-esm — the FIN closure is ESM-only, so no CommonJS spelling matter
     // load. It is red because `require` appears in value position at all.
     const escape = '(flag ? require : require)("@/lib/dashboard/practice-metrics");';
     const probe = path.join(ROOT, "probe.ts");
-    expect(commonJsViolations(escape, probe)).not.toEqual([]);
+    expect(dependencyViolations(escape, probe)).not.toEqual([]);
     // ...and the walker deliberately does NOT resolve it to an edge, which is
     // the whole point: the question was refused, not answered.
     expect(specifiersOfSource(escape, probe)).toEqual([]);
   });
 
-  it("NO MODULE IN THE FIN CLOSURE USES COMMONJS", () => {
-    // The invariant itself, over the real tree. Audited before this rule was
-    // written: the answer was already none, so the rule outlaws nothing that
-    // FIN legitimately does today.
+  it("THE BRACKET ESCAPE: forbidden as syntax, without examining the receiver", () => {
+    // Nothing here decides whether `module` is Node's module object. No FIN
+    // runtime code needs a member called require — audited before the rule was
+    // imposed — so the spelling itself is the violation.
+    const probe = path.join(ROOT, "probe.ts");
+    for (const escape of [
+      'module["require"]("@/lib/dashboard/practice-metrics");',
+      'globalThis["require"]("@/lib/dashboard/practice-metrics");',
+      'anything["require"]("@/lib/dashboard/practice-metrics");',
+    ]) {
+      expect(dependencyViolations(escape, probe), escape).not.toEqual([]);
+      expect(specifiersOfSource(escape, probe), escape).toEqual([]);
+    }
+  });
+
+  it("FAIL CLOSED: an unreadable dependency is a violation, never an absence", () => {
+    // The design flaw behind the last two findings, asserted directly. Both of
+    // these record no edge — that part is unchanged and correct, because
+    // neither specifier can be read. What changed is that recording no edge is
+    // no longer the END of it: each is reported, so a dependency site can never
+    // become "nothing happened" again.
+    const probe = path.join(ROOT, "probe.ts");
+    for (const unreadable of [
+      'import("../dashboard/" + "practice-metrics");',
+      "const s = \"../dashboard/practice-metrics\"; import(s);",
+      'import(cond ? "./safe" : "../dashboard/practice-metrics");',
+      "import(`../dashboard/${name}`);",
+    ]) {
+      const scan = scanDependencies(unreadable, probe);
+      expect(scan.resolved, unreadable).toEqual([]);
+      expect(scan.violations, unreadable).not.toEqual([]);
+      // ...and the reason names the actual problem, so a reader is not left
+      // guessing why a legal-looking import is red.
+      expect(scan.violations.join(" ")).toMatch(/not a literal/);
+    }
+    // No constant folding happened: a concatenation that spells a SAFE module
+    // is rejected too. Legibility is the rule, not the destination.
+    const safe = scanDependencies('import("../safe/" + "module");', probe);
+    expect(safe.resolved).toEqual([]);
+    expect(safe.violations).not.toEqual([]);
+  });
+
+  it("EVERY DEPENDENCY SITE HAS EXACTLY ONE OUTCOME", () => {
+    // Resolved, forbidden or unreadable — never none of the three. Asserted by
+    // construction over a source that contains one of each.
+    const probe = path.join(ROOT, "probe.ts");
+    const resolvedOnly = scanDependencies('import "./a";', probe);
+    expect(resolvedOnly.resolved).toEqual(["./a"]);
+    expect(resolvedOnly.violations).toEqual([]);
+
+    const forbiddenOnly = scanDependencies('module["require"]("./a");', probe);
+    expect(forbiddenOnly.resolved).toEqual([]);
+    expect(forbiddenOnly.violations).toHaveLength(1);
+
+    const unreadableOnly = scanDependencies("import(x);", probe);
+    expect(unreadableOnly.resolved).toEqual([]);
+    expect(unreadableOnly.violations).toHaveLength(1);
+
+    // ...and a file mixing all three loses none of them.
+    const mixed = scanDependencies('import "./a";\nmodule["require"]("./b");\nimport(x);', probe);
+    expect(mixed.resolved).toEqual(["./a"]);
+    expect(mixed.violations).toHaveLength(2);
+  });
+
+  it("NO MODULE IN THE FIN CLOSURE USES COMMONJS OR AN UNREADABLE DEPENDENCY", () => {
+    // The invariant itself, over the real tree. Audited before either rule was
+    // written — no executable member named `require`, no non-literal dynamic
+    // import — so neither outlaws anything FIN legitimately does today.
     const offences: string[] = [];
     for (const [file, via] of CLOSURE) {
       const rel = path.relative(ROOT, file);
-      for (const violation of commonJsViolations(readFileSync(file, "utf8"), file)) {
+      for (const violation of dependencyViolations(readFileSync(file, "utf8"), file)) {
         offences.push(`${rel} ${violation} (reached via ${via ?? "entry point"})`);
       }
     }
@@ -848,17 +985,19 @@ describe("NC-esm — the FIN closure is ESM-only, so no CommonJS spelling matter
 
   it("ANTI-VACUITY: the guard really does fire on a module in this closure", () => {
     // A guard that found nothing because it looks at nothing would pass the
-    // assertion above. Take a file that IS in the closure, append the escape,
-    // and require that the guard reports it.
+    // assertion above. Take a file that IS in the closure and append each
+    // escape in turn.
     const rel = "lib/finance/financial-briefing-model.ts";
     const real = read(rel);
-    expect(commonJsViolations(real, path.join(ROOT, rel))).toEqual([]);
-    expect(
-      commonJsViolations(
-        `${real}\n(flag ? require : require)("@/lib/dashboard/practice-metrics");\n`,
-        path.join(ROOT, rel),
-      ),
-    ).not.toEqual([]);
+    const where = path.join(ROOT, rel);
+    expect(dependencyViolations(real, where)).toEqual([]);
+    for (const escape of [
+      '(flag ? require : require)("@/lib/dashboard/practice-metrics");',
+      'module["require"]("@/lib/dashboard/practice-metrics");',
+      'import("../dashboard/" + "practice-metrics");',
+    ]) {
+      expect(dependencyViolations(`${real}\n${escape}\n`, where), escape).not.toEqual([]);
+    }
   });
 });
 
