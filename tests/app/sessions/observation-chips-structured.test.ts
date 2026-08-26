@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { exportSpec } from "@/lib/export/resource-registry";
+import { EXPORT_SELECTS } from "@/lib/export/export-selects";
 
 // Structured observation chips (migration 0108). vitest env is "node" (no DOM),
 // so the UI/save wiring is verified by source pins. The behavioral guarantees
@@ -78,7 +79,11 @@ describe("entry-row — chips render as their own pills; legacy rows unaffected"
 
 describe("data export — record-keeping includes structured chips", () => {
   it("selects, flattens (unified with a folded reaction), and columns observation_chips (comments still exported separately)", () => {
-    expect(EXPORT).toMatch(/comments, observation_chips, created_at/); // in the SELECT
+    // TRUTH-01A/F4: the SELECT is declared in EXPORT_SELECTS, keyed by the
+    // resource whose CSV those rows become.
+    expect(EXPORT_SELECTS.electrolysis_entries).toMatch(
+      /comments, observation_chips, created_at/,
+    );
     // Charting unification: the export flattens the UNIFIED findings — the entry's
     // observation_chips PLUS a folded legacy reaction_type from its block — joined
     // for CSV (semicolons, since CSV's delimiter is a comma). Still structured, not

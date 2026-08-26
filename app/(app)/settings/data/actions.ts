@@ -12,6 +12,10 @@ import {
   type ClinicalNoteExportSource,
 } from "@/lib/export/clinical-notes";
 import { fetchAllRows, EXPORT_PAGE_SIZE } from "@/lib/export/paginate";
+// F4. The SELECT that produces each exported file's rows, keyed by the resource
+// it feeds. Lives in its own module because a "use server" file may export only
+// async functions - and because the tests read the same map the export uses.
+import { EXPORT_SELECTS } from "@/lib/export/export-selects";
 // TRUTH-01A. The canonical export resource registry: one declaration per
 // studio-owned resource, and the ONLY place a filename, a header row, a
 // source-count expectation or a file description lives. Everything this module
@@ -20,10 +24,12 @@ import { fetchAllRows, EXPORT_PAGE_SIZE } from "@/lib/export/paginate";
 import {
   auditEmissionParity,
   auditExportedFilenames,
+  auditSelectedColumns,
   auditSourceCountCoverage,
   duplicateFilenameError,
   emissionParityError,
   excludedResources,
+  selectedColumnError,
   exportedResources,
   exportSpec,
   pendingResources,
@@ -106,9 +112,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     fetchAllRows((from, to) =>
       supabase
         .from("clients")
-        .select(
-          "id, name, pronouns, date_of_birth, fitzpatrick_type, allergies, skin_notes, emergency_contact_name, emergency_contact_phone, email, phone, created_at",
-        )
+        .select(EXPORT_SELECTS.clients)
         .eq("studio_id", studio.id)
         .order("name", { ascending: true })
         .order("id", { ascending: true })
@@ -117,9 +121,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     fetchAllRows((from, to) =>
       supabase
         .from("sessions")
-        .select(
-          "id, client_id, practitioner_id, performed_by_practitioner_id, modality, started_at, ended_at, price_paid_cents, session_notes, created_at",
-        )
+        .select(EXPORT_SELECTS.sessions)
         .eq("studio_id", studio.id)
         .is("deleted_at", null)
         .order("started_at", { ascending: false })
@@ -129,9 +131,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     fetchAllRows((from, to) =>
       supabase
         .from("electrolysis_entries")
-        .select(
-          "id, session_id, area, areas, probe_size, probe_lot_id, mode, intensity, duration_seconds, pulse_count, pulse_delay_seconds, comments, observation_chips, created_at, block_id, energy_level, apilus_modality, machine_frequency, minutes_performed, probe_type, hairs_treated, galvanic_ma, galvanic_duration_seconds, galvanic_intensity_percent, thermolysis_intensity_percent, thermolysis_duration_seconds, units_of_lye",
-        )
+        .select(EXPORT_SELECTS.electrolysis_entries)
         .order("created_at", { ascending: false })
         .order("id", { ascending: true })
         .range(from, to),
@@ -139,9 +139,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     fetchAllRows((from, to) =>
       supabase
         .from("laser_entries")
-        .select(
-          "id, session_id, zone, session_number, equipment_params, observation_notes, created_at",
-        )
+        .select(EXPORT_SELECTS.laser_entries)
         .order("created_at", { ascending: false })
         .order("id", { ascending: true })
         .range(from, to),
@@ -149,7 +147,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     fetchAllRows((from, to) =>
       supabase
         .from("practitioners")
-        .select("id, display_name, email, role, active, created_at")
+        .select(EXPORT_SELECTS.practitioners)
         .eq("studio_id", studio.id)
         .eq("active", true)
         .order("display_name", { ascending: true })
@@ -159,7 +157,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     fetchAllRows((from, to) =>
       supabase
         .from("client_pricing")
-        .select("id, client_id, service_name, price_cents, notes, effective_from")
+        .select(EXPORT_SELECTS.client_pricing)
         .eq("studio_id", studio.id)
         .order("effective_from", { ascending: false })
         .order("id", { ascending: true })
@@ -187,9 +185,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     fetchAllRows((from, to) =>
       supabase
         .from("appointments")
-        .select(
-          "id, client_id, practitioner_id, service_id, starts_at, ends_at, duration_minutes, status, notes, cancellation_reason, cancelled_at, cancelled_by, created_at, updated_at",
-        )
+        .select(EXPORT_SELECTS.appointments)
         .eq("studio_id", studio.id)
         .order("starts_at", { ascending: false })
         .order("id", { ascending: true })
@@ -202,9 +198,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     fetchAllRows((from, to) =>
       supabase
         .from("treatment_plans")
-        .select(
-          "id, client_id, name, primary_area, treatment_areas, estimated_timeline_months_min, estimated_timeline_months_max, status, suggested_visit_count, treatment_goal_minutes_override, budget_notes, practitioner_notes, created_by_practitioner_id, closed_by_practitioner_id, created_at, closed_at",
-        )
+        .select(EXPORT_SELECTS.treatment_plans)
         .eq("studio_id", studio.id)
         .order("created_at", { ascending: false })
         .order("id", { ascending: true })
@@ -215,9 +209,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     fetchAllRows((from, to) =>
       supabase
         .from("treatment_plan_stages")
-        .select(
-          "id, plan_id, sort_order, name, how_often_unit, visit_length_minutes, stage_length_value, stage_length_unit, notes, created_at, updated_at",
-        )
+        .select(EXPORT_SELECTS.treatment_plan_stages)
         .eq("studio_id", studio.id)
         .order("plan_id", { ascending: true })
         .order("sort_order", { ascending: true })
@@ -255,9 +247,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
         // HISTORICAL and is deliberately NOT filtered on it — a discarded item
         // stays in the export, now carrying the lifecycle fact that explains
         // why an expired row needs no action.
-        .select(
-          "id, date_purchased, item_description, manufacturer_name, amount_purchased, lot_number, expiry_date, date_discarded, notes, created_by_practitioner_id, created_at, updated_at",
-        )
+        .select(EXPORT_SELECTS.record_keeping_sterile_items)
         .eq("studio_id", studio.id)
         .order("date_purchased", { ascending: false })
         .order("id", { ascending: true })
@@ -266,9 +256,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     fetchAllRows((from, to) =>
       supabase
         .from("record_keeping_disinfectants")
-        .select(
-          "id, date_prepared, disinfectant_name, concentration, date_discarded, discard_due_date, operator_practitioner_id, operator_name, notes, created_by_practitioner_id, created_at, updated_at",
-        )
+        .select(EXPORT_SELECTS.record_keeping_disinfectants)
         .eq("studio_id", studio.id)
         .order("date_prepared", { ascending: false })
         .order("id", { ascending: true })
@@ -280,9 +268,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     fetchAllRows((from, to) =>
       supabase
         .from("record_keeping_exposure_incidents")
-        .select(
-          "id, incident_date, exposed_person_full_name, exposed_person_address, exposed_person_phone, exposure_details, action_taken, staff_involved_name, notes, created_by_practitioner_id, created_at, updated_at",
-        )
+        .select(EXPORT_SELECTS.record_keeping_exposure_incidents)
         .eq("studio_id", studio.id)
         .order("incident_date", { ascending: false })
         .order("id", { ascending: true })
@@ -295,9 +281,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     fetchAllRows((from, to) =>
       supabase
         .from("record_keeping_audit_events")
-        .select(
-          "id, record_type, record_id, action, changed_fields, actor_practitioner_id, actor_display_name, created_at",
-        )
+        .select(EXPORT_SELECTS.record_keeping_audit_events)
         .eq("studio_id", studio.id)
         .order("created_at", { ascending: false })
         .order("id", { ascending: true })
@@ -322,9 +306,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     fetchAllRows((from, to) =>
       supabase
         .from("client_clinical_notes")
-        .select(
-          "id, client_id, practitioner_id, kind, body, areas, occurred_at, supersedes_note_id, created_at",
-        )
+        .select(EXPORT_SELECTS.client_clinical_notes)
         .eq("studio_id", studio.id)
         .order("occurred_at", { ascending: false })
         .order("id", { ascending: true })
@@ -336,9 +318,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     fetchAllRows((from, to) =>
       supabase
         .from("client_budget_context")
-        .select(
-          "client_id, budget_level, budget_notes, updated_by_practitioner_id, created_at, updated_at",
-        )
+        .select(EXPORT_SELECTS.client_budget_context)
         .eq("studio_id", studio.id)
         // client_id is the PRIMARY KEY (one row per client), so ordering on
         // it alone is already unique and deterministic — no tiebreak needed.
@@ -459,6 +439,29 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
   // the file the manifest counts, the file the audit row names and the file the
   // Data settings page advertises are all the same declaration. There is no
   // second list to fall behind.
+  // F4. THE QUERY THAT PRODUCES EACH FILE MUST ASK FOR EVERY COLUMN THE
+  // REGISTRY SAYS THAT FILE CARRIES.
+  //
+  // Checked against EXPORT_SELECTS, which is keyed by the resource each query
+  // FEEDS — not against every select observed on the table. `practitioners` is
+  // read twice and only the export read is in that map, so the display-name
+  // lookup can no longer satisfy the contract on the export query's behalf.
+  //
+  // Enforced here, at run time, and not only in a test: a column declared
+  // included but never selected produces a blank cell, and a blank cell is
+  // indistinguishable from a studio that recorded nothing.
+  const selected = auditSelectedColumns(
+    Object.fromEntries(
+      Object.entries(EXPORT_SELECTS).map(([resource, columns]) => [
+        resource,
+        columns.split(",").map((c) => c.trim()).filter(Boolean),
+      ]),
+    ),
+  );
+  if (!selected.ok) {
+    return { ok: false, error: selectedColumnError(selected) };
+  }
+
   // TWO RESOURCES MAY NEVER DECLARE THE SAME FILENAME, and it is checked HERE -
   // before the first write, before any Set collapses them, and before JSZip
   // keeps one entry per path. A collision would otherwise be invisible: the
@@ -527,6 +530,28 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
       .order("id", { ascending: true })
       .range(from, to),
   );
+  // F5. FAIL CLOSED.
+  //
+  // This read is issued separately, AFTER the all-or-nothing guard above, and
+  // its error was never checked — so `?? []` turned a failed read into "this
+  // studio recorded no treatment areas". Every block_areas cell then came back
+  // blank or fell back to the legacy primary-area projection, the archive still
+  // built, the manifest still declared electrolysis completeness as following
+  // the sessions count, and the README still said a failed page aborts the
+  // export. All three were false together, and the owner had no way to tell.
+  //
+  // A derived column is still charting data. It gets the same all-or-nothing
+  // treatment as the sources it is derived from: no warning, no fallback, no
+  // partial archive, and no successful manifest or audit claim for the run.
+  if (areaRowsRes.error) {
+    return {
+      ok: false,
+      error:
+        "Could not read the treatment areas recorded against your session blocks, " +
+        "so the export was not produced. Nothing partial was written. Please try again.",
+    };
+  }
+
   const areasByBlock = new Map<string, BlockArea[]>();
   for (const r of (areaRowsRes.data ?? []) as Array<{
     session_block_id: string;

@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import JSZip from "jszip";
 
+import { EXPORT_SELECTS } from "@/lib/export/export-selects";
 import {
   auditEmissionContract,
   auditEmissionParity,
@@ -63,6 +64,8 @@ let auditInsert: Record<string, unknown> | null = null;
  * observed behaviour and not a text scan of our own file.
  */
 let selectsByTable: Record<string, string[]> = {};
+/** Tables whose read should come back as a PostgREST error for this build. */
+let failingTables = new Set<string>();
 
 function builder(result: StubResult, table: string): unknown {
   const target = {
@@ -100,7 +103,12 @@ function makeClient() {
           },
         };
       }
-      return builder({ data: [], error: null, count: 0 }, table);
+      return failingTables.has(table)
+        ? builder(
+            { data: null, error: { message: `simulated failure on ${table}` }, count: null },
+            table,
+          )
+        : builder({ data: [], error: null, count: 0 }, table);
     },
   };
 }
@@ -136,6 +144,7 @@ describe("guard 3: the archive and the registry agree, both ways", () => {
   beforeEach(() => {
     auditInsert = null;
     selectsByTable = {};
+    failingTables = new Set();
   });
 
   it("every file the registry declares exported is in the archive", async () => {
@@ -162,45 +171,74 @@ describe("guard 3: the archive and the registry agree, both ways", () => {
 });
 
 // ===========================================================================
-// THE CHAIN — live column -> accounting -> actual SELECT -> emitted header
+// THE CHAIN — live column -> accounting -> the query that feeds THIS file -> cell
 // ===========================================================================
 //
 // Codex P1 on 25c066ab: Guard 2 is set arithmetic and never connects
-// `includedColumns` to what the CSV carries, so a column could be DECLARED
-// included while reaching no file. Three links close it, and this suite owns
-// the middle one:
+// `includedColumns` to what the CSV carries. Codex P2 on 535b2e22: the first
+// repair collected observed SELECTs BY TABLE and unioned them, so a second
+// query on the same table could satisfy the contract for the export query —
+// concretely, `practitioners` is read twice and the display-name lookup could
+// cover for an export query that had lost `display_name`.
 //
-//   live DB column  -> included/excluded accounting
-//                        tests/db/export-resource-registry.db.test.ts (Guard 2)
-//   accounting      -> emitted header contract
-//                        auditEmissionContract, below and in the DB suite
-//   accounting      -> the column the exporter ACTUALLY ASKS FOR
-//                        HERE, from the recorded .select() call
-//   mapped value    -> the cell it lands in
-//                        tests/db/export-column-round-trip.db.test.ts
+// The authority is now EXPORT_SELECTS, keyed by the resource each query FEEDS.
+// This suite proves three things about it:
 //
-// The SELECT is captured from the real call the action makes, not read out of
-// the source: a regex over actions.ts would pass for a select string that is
-// built but never used.
-describe("the chain: every included column is actually selected", () => {
-  it("records a SELECT for each exported resource", async () => {
+//   1. it satisfies the registry (and the action refuses at run time if not);
+//   2. it is not fiction — each declared string is really sent to that table;
+//   3. the two practitioners queries stay distinguishable.
+describe("the chain: the query that feeds each file selects every included column", () => {
+  const declared = Object.fromEntries(
+    Object.entries(EXPORT_SELECTS).map(([resource, columns]) => [
+      resource,
+      columns.split(",").map((c) => c.trim()).filter(Boolean),
+    ]),
+  );
+
+  it("declares a select for every exported resource, and nothing else", () => {
+    expect(Object.keys(declared).sort()).toEqual(
+      exportedResources().map((e) => e.resource).sort(),
+    );
+  });
+
+  it("every declared included column is selected by the query that feeds its file", () => {
+    const audit = auditSelectedColumns(declared);
+    expect(audit.notSelected, "declared INCLUDED but never asked for").toEqual([]);
+    expect(audit.notObserved).toEqual([]);
+  });
+
+  it("the declared select is really the one sent to that table, not a fiction", async () => {
     await buildArchive();
-    for (const { resource } of exportedResources()) {
-      expect(
-        selectsByTable[resource],
-        `no SELECT was observed for ${resource}`,
-      ).toBeDefined();
+    for (const [resource, columns] of Object.entries(declared)) {
+      const observed = new Set(selectsByTable[resource] ?? []);
+      expect(observed.size, `no query was observed against ${resource}`).toBeGreaterThan(0);
+      for (const column of columns) {
+        expect(
+          observed.has(column),
+          `${resource}: EXPORT_SELECTS declares "${column}" but no query against that table asked for it`,
+        ).toBe(true);
+      }
     }
   });
 
-  it("every declared included column appears in the observed SELECT", async () => {
+  it("the practitioners LOOKUP query is not in the map and cannot cover for the export query", async () => {
     await buildArchive();
-    const audit = auditSelectedColumns(selectsByTable);
-    expect(
-      audit.notSelected,
-      "declared INCLUDED but never asked for, so the cell would be empty",
-    ).toEqual([]);
-    expect(audit.notObserved).toEqual([]);
+    // Both queries hit the same table, so the observed union holds the union of
+    // their columns. The map holds ONLY the export query's, which is the whole
+    // point of the repair.
+    expect(declared.practitioners).toEqual([
+      "id",
+      "display_name",
+      "email",
+      "role",
+      "active",
+      "created_at",
+    ]);
+    // The lookup selects two columns; the union therefore cannot be used to
+    // distinguish them, and the map is what the audit reads.
+    expect(selectsByTable.practitioners).toEqual(
+      expect.arrayContaining(["id", "display_name"]),
+    );
   });
 
   it("and the emission contract holds: included means emitted", () => {
@@ -457,5 +495,53 @@ describe("the registry cannot read the database", () => {
     );
     expect(actions).not.toMatch(/createAdminClient|admin-server/);
     expect(actions).toMatch(/from "@\/lib\/supabase\/server"/);
+  });
+});
+
+// ===========================================================================
+// F5 — A FAILED DERIVED-AREA READ MUST FAIL THE WHOLE EXPORT
+// ===========================================================================
+//
+// Codex P2 on 535b2e22. `session_block_areas` is read after the all-or-nothing
+// guard and its error was consumed as `?? []`, so a transient PostgREST or RLS
+// failure blanked every block_areas cell while the manifest still declared
+// electrolysis completeness as following the sessions count and the README
+// still promised that a failed page aborts the export.
+describe("a failed session_block_areas read fails closed", () => {
+  beforeEach(() => {
+    auditInsert = null;
+    selectsByTable = {};
+    failingTables = new Set();
+  });
+
+  it("refuses, and says nothing partial was written", async () => {
+    failingTables = new Set(["session_block_areas"]);
+    const { exportStudioDataAction } = await import(
+      "@/app/(app)/settings/data/actions"
+    );
+    const result = await exportStudioDataAction();
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatch(/treatment areas recorded against your session blocks/i);
+    expect(result.error).toMatch(/Nothing partial was written/i);
+  });
+
+  it("emits no archive and no audit claim for that run", async () => {
+    failingTables = new Set(["session_block_areas"]);
+    const { exportStudioDataAction } = await import(
+      "@/app/(app)/settings/data/actions"
+    );
+    const result = await exportStudioDataAction();
+    expect(result.ok).toBe(false);
+    expect((result as { base64?: string }).base64).toBeUndefined();
+    // The audit row is written only on success, so a refused run leaves no
+    // record claiming an export happened.
+    expect(auditInsert).toBeNull();
+  });
+
+  it("and the SUCCESS path is unchanged: the same archive is still produced", async () => {
+    const zip = await buildArchive();
+    expect(csvNames(zip)).toEqual([...expectedCsvFiles()].sort());
+    expect(auditInsert).not.toBeNull();
   });
 });

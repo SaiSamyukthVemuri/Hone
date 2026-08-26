@@ -1048,53 +1048,47 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
   },
 
   // dead
-  appointment_payments: {
-    kind: "excluded",
-    category: "dead",
-    reason:
-      "Created by migration 0032 and unreachable from application code: no module opens the table directly, and no SECURITY DEFINER function that writes it is invoked from the application. Zero readers, zero writers; the live payment ledger is payment_charge_attempts.",
-  },
   payment_consents: {
     kind: "excluded",
     category: "dead",
     reason:
-      "Created by migration 0032 and unreachable from application code: no module opens the table directly, and no SECURITY DEFINER function that writes it is invoked from the application.",
+      "Created by migration 0032 and unreachable from application code: no module opens the table directly, and no database function that READS OR WRITES it is invoked from the application. Reads count, and saying so is the correction: the first version of this claim reasoned only about writers, and a table can be perfectly live as the thing a live decision is made FROM. Checked mechanically against pg_proc, not asserted.",
   },
   pending_booking_payment_sessions: {
     kind: "excluded",
     category: "dead",
     reason:
-      "Created by migration 0032 for public-booking card collection, which is off and unwired. Unreachable from application code: no module opens the table directly, and none of the nine SECURITY DEFINER functions that write it is invoked from the application.",
+      "Created by migration 0032 for public-booking card collection, which is off and unwired. Unreachable from application code: no module opens the table directly, and none of the nine database functions that reference it - readers as well as writers - is invoked from the application. Checked mechanically against pg_proc, not asserted.",
   },
   stripe_charge_attempts: {
     kind: "excluded",
     category: "dead",
     reason:
-      "Created by migration 0032 and unreachable from application code: no module opens the table directly, and no SECURITY DEFINER function that writes it is invoked from the application.",
+      "Created by migration 0032 and unreachable from application code: no module opens the table directly, and no database function that READS OR WRITES it is invoked from the application. Reads count, and saying so is the correction: the first version of this claim reasoned only about writers, and a table can be perfectly live as the thing a live decision is made FROM. Checked mechanically against pg_proc, not asserted.",
   },
   stripe_disputes: {
     kind: "excluded",
     category: "dead",
     reason:
-      "Created by migration 0032 and unreachable from application code: no module opens the table directly, and no SECURITY DEFINER function that writes it is invoked from the application. Dispute handling is alert-only via ops_alerts.",
+      "Created by migration 0032 and unreachable from application code: no module opens the table directly, and no database function that READS OR WRITES it is invoked from the application. Reads count, and saying so is the correction: the first version of this claim reasoned only about writers, and a table can be perfectly live as the thing a live decision is made FROM. Checked mechanically against pg_proc, not asserted. Dispute handling is alert-only via ops_alerts.",
   },
   stripe_payment_audit: {
     kind: "excluded",
     category: "dead",
     reason:
-      "Created by migration 0032 and unreachable from application code: no module opens the table directly, and no SECURITY DEFINER function that writes it is invoked from the application.",
+      "Created by migration 0032 and unreachable from application code: no module opens the table directly, and no database function that READS OR WRITES it is invoked from the application. Reads count, and saying so is the correction: the first version of this claim reasoned only about writers, and a table can be perfectly live as the thing a live decision is made FROM. Checked mechanically against pg_proc, not asserted.",
   },
   stripe_refund_attempts: {
     kind: "excluded",
     category: "dead",
     reason:
-      "Created by migration 0032 and unreachable from application code: no module opens the table directly, and no SECURITY DEFINER function that writes it is invoked from the application. Live refund state lives on payment_charge_attempts.refund_*.",
+      "Created by migration 0032 and unreachable from application code: no module opens the table directly, and no database function that READS OR WRITES it is invoked from the application. Reads count, and saying so is the correction: the first version of this claim reasoned only about writers, and a table can be perfectly live as the thing a live decision is made FROM. Checked mechanically against pg_proc, not asserted. Live refund state lives on payment_charge_attempts.refund_*.",
   },
   stripe_refunds: {
     kind: "excluded",
     category: "dead",
     reason:
-      "Created by migration 0032 and unreachable from application code: no module opens the table directly, and no SECURITY DEFINER function that writes it is invoked from the application. Live refund state lives on payment_charge_attempts.refund_*.",
+      "Created by migration 0032 and unreachable from application code: no module opens the table directly, and no database function that READS OR WRITES it is invoked from the application. Reads count, and saying so is the correction: the first version of this claim reasoned only about writers, and a table can be perfectly live as the thing a live decision is made FROM. Checked mechanically against pg_proc, not asserted. Live refund state lives on payment_charge_attempts.refund_*.",
   },
 
   // deliberate_privacy
@@ -1323,6 +1317,14 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
   },
 
   // tier 2
+  appointment_payments: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    fieldReviewRequired: true,
+    reason:
+      "Created by migration 0032, and NOT dead. Nothing writes it from the application, but two database functions READ it and both are invoked from live user paths: reschedule_appointment_v2 (app/reschedule/[token]/actions.ts) and appointment_has_blocking_dependents (app/(app)/calendar/appointment-repair-actions.ts). Its contents decide whether a client may reschedule and whether an appointment outcome may be reverted, so a studio's own operations depend on it. An earlier revision classified it dead and said so in this very list - a false statement that reached the ZIP README and the settings page, which is exactly the class of untruth this registry exists to remove. Field review before any export: the row is Stripe-linked provider state, and whether a studio can act on any of it outside Hone is the question TRUTH-01B has to answer, not this slice.",
+  },
   payment_charge_attempts: {
     kind: "pending",
     ticket: "TRUTH-01B",
@@ -1859,6 +1861,25 @@ export type SelectedColumnAudit = {
   /** Exported resources for which no SELECT was observed at all. */
   readonly notObserved: readonly string[];
 };
+
+/**
+ * The refusal when the query that produces a file does not ask for a column the
+ * registry says that file carries. Fails the export rather than shipping a CSV
+ * with a silently blank column, which is indistinguishable from "the studio
+ * recorded nothing there".
+ */
+export function selectedColumnError(audit: SelectedColumnAudit): string {
+  const parts: string[] = [];
+  if (audit.notSelected.length > 0) {
+    parts.push(
+      `${audit.notSelected.join(", ")} ${audit.notSelected.length === 1 ? "is" : "are"} declared in the export registry but the query that builds the file does not select ${audit.notSelected.length === 1 ? "it" : "them"}`,
+    );
+  }
+  if (audit.notObserved.length > 0) {
+    parts.push(`no select is declared for ${audit.notObserved.join(", ")}`);
+  }
+  return `Export aborted: ${parts.join("; ")}. No partial export was produced.`;
+}
 
 export function auditSelectedColumns(
   selectedByResource: Readonly<Record<string, readonly string[]>>,

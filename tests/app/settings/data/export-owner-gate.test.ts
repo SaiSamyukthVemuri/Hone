@@ -5,6 +5,7 @@ import {
   exportSpec,
 } from "@/lib/export/resource-registry";
 import path from "node:path";
+import { EXPORT_SELECTS } from "@/lib/export/export-selects";
 
 // PR #189. exportStudioDataAction previously let ANY active
 // practitioner pull the entire studio dataset (every client's
@@ -138,7 +139,11 @@ describe("PR #312: record-keeping / inspection CSVs", () => {
     const from = CODE.indexOf('.from("record_keeping_sterile_items")');
     expect(from).toBeGreaterThan(-1);
     const load = CODE.slice(from, from + 500);
-    expect(load).toMatch(/date_discarded/);
+    // TRUTH-01A/F4: the SELECT is declared in EXPORT_SELECTS, keyed by the
+    // resource it feeds. The lifecycle column must be in that declaration...
+    expect(EXPORT_SELECTS.record_keeping_sterile_items).toMatch(/date_discarded/);
+    // ...and the read must still point at it.
+    expect(load).toMatch(/EXPORT_SELECTS\.record_keeping_sterile_items/);
     // HISTORICAL surface: a discarded row must still be exported. A lifecycle
     // predicate here would silently drop stock from a health-inspection record.
     expect(load).not.toMatch(/\.is\("date_discarded"/);
@@ -189,9 +194,12 @@ describe("PR #312: record-keeping / inspection CSVs", () => {
       CODE.indexOf('.from("record_keeping_audit_events")'),
       CODE.indexOf('.from("record_keeping_audit_events")') + 400,
     );
-    expect(load).toMatch(/changed_fields/);
-    expect(load).not.toMatch(/\bchanges\b/);
-    expect(load).not.toMatch(/\bmetadata\b/);
+    // TRUTH-01A/F4: the reduced column list lives in EXPORT_SELECTS now.
+    const reduced = EXPORT_SELECTS.record_keeping_audit_events;
+    expect(reduced).toMatch(/changed_fields/);
+    expect(reduced).not.toMatch(/\bchanges\b/);
+    expect(reduced).not.toMatch(/\bmetadata\b/);
+    expect(load).toMatch(/EXPORT_SELECTS\.record_keeping_audit_events/);
     // And the CSV header omits them too.
     const csv = CODE.slice(
       CODE.indexOf('"record_keeping_audit_events.csv"'),

@@ -392,31 +392,58 @@ describe("what is excluded, and on what grounds", () => {
   // migration text: for every `dead` resource, no application module may
   // reference the table, and no function that WRITES the table may be invoked
   // from application code.
-  async function unreachabilityOffenders(resources: readonly string[]): Promise<string[]> {
+  /**
+   * A resource may be called DEAD only when BOTH hold:
+   *   1. no application module reaches the table directly; AND
+   *   2. no application-reachable database function REFERENCES it — read or
+   *      write.
+   *
+   * Codex P2 on 535b2e22: the first version keyed on INSERT/UPDATE/DELETE and
+   * therefore missed readers. `appointment_payments` is READ by
+   * reschedule_appointment_v2 and appointment_has_blocking_dependents, both
+   * invoked from live user paths, and its contents decide whether a reschedule
+   * or an outcome revert is allowed. A table can be entirely live as the thing
+   * a live decision is made FROM, and the guard now says so: ANY reference from
+   * an application-reachable function is disqualifying.
+   *
+   * Both inputs are injectable so the controls below can drive the same rule
+   * with fixtures instead of mutating the shared local database.
+   */
+  function deadClaimOffenders(
+    resources: readonly string[],
+    functions: ReadonlyArray<{ proname: string; prosrc: string }>,
+    refs: (symbol: string) => readonly string[] = referencedBy,
+  ): string[] {
+    const offenders: string[] = [];
+    for (const resource of resources) {
+      // Any mention at all, qualified or not, in any verb position. A dead
+      // claim is a strong claim; the evidence for it is deliberately broad.
+      const mentions = new RegExp(String.raw`\b${resource}\b`, "i");
+      const touching = [
+        ...new Set(functions.filter((f) => mentions.test(f.prosrc)).map((f) => f.proname)),
+      ].sort();
+      const direct = refs(resource);
+      if (direct.length > 0) {
+        offenders.push(`${resource} is referenced directly by ${direct.join(", ")}`);
+      }
+      for (const fn of touching) {
+        const hits = refs(fn);
+        if (hits.length > 0) {
+          offenders.push(`${resource} is reached through ${fn}(), invoked by ${hits.join(", ")}`);
+        }
+      }
+    }
+    return offenders;
+  }
+
+  async function publicFunctions(): Promise<Array<{ proname: string; prosrc: string }>> {
     const procs = await adminQuery(
       `select p.proname, p.prosrc
          from pg_proc p
          join pg_namespace n on n.oid = p.pronamespace
         where n.nspname = 'public'`,
     );
-    const functions = procs.rows as Array<{ proname: string; prosrc: string }>;
-    const offenders: string[] = [];
-    for (const resource of resources) {
-      const writes = new RegExp(
-        String.raw`(insert\s+into|update|delete\s+from)\s+public\.${resource}\b`,
-        "i",
-      );
-      const writers = [
-        ...new Set(functions.filter((f) => writes.test(f.prosrc)).map((f) => f.proname)),
-      ];
-      for (const symbol of [resource, ...writers]) {
-        const hits = referencedBy(symbol);
-        if (hits.length > 0) {
-          offenders.push(`${resource} is reachable via "${symbol}" from ${hits.join(", ")}`);
-        }
-      }
-    }
-    return offenders;
+    return procs.rows as Array<{ proname: string; prosrc: string }>;
   }
 
   it("no resource classified dead is reachable from application code", async () => {
@@ -425,23 +452,73 @@ describe("what is excluded, and on what grounds", () => {
       .map(([resource]) => resource);
     expect(dead.length).toBeGreaterThan(0);
     expect(
-      await unreachabilityOffenders(dead),
+      deadClaimOffenders(dead, await publicFunctions()),
       "classified dead, but application code reaches it — reclassify as pending",
     ).toEqual([]);
   });
 
-  // NEGATIVE CONTROL. Run the same detection over a table that IS live and
-  // require RED, so a guard that has quietly stopped discriminating cannot sit
-  // green forever. These are the two resources the check would have caught on
-  // head 25c066ab, had it existed.
-  it("RED if a live Stripe provisioning ledger were classified dead", async () => {
-    const offenders = await unreachabilityOffenders([
-      "stripe_account_provisioning_attempts",
-      "stripe_customer_provisioning_attempts",
-    ]);
+  // CONTROL 1 — a READ-ONLY RPC the application calls. This is the exact shape
+  // the writer-only rule missed, run against the real catalogue.
+  it("RED when a read-only RPC the app calls references a dead resource", async () => {
+    const offenders = deadClaimOffenders(
+      ["appointment_payments"],
+      await publicFunctions(),
+    );
     expect(offenders.length).toBeGreaterThan(0);
-    expect(offenders.join(" ")).toMatch(/lib\/stripe\/account\.ts/);
-    expect(offenders.join(" ")).toMatch(/lib\/stripe\/setup-intent\.ts/);
+    const joined = offenders.join(" ");
+    expect(joined).toMatch(/reschedule_appointment_v2/);
+    expect(joined).toMatch(/appointment_has_blocking_dependents/);
+    // And neither of those functions WRITES the table, which is why the old
+    // rule passed: this control is meaningless unless that stays true.
+    const writers = (await publicFunctions()).filter(
+      (f) =>
+        /reschedule_appointment_v2|appointment_has_blocking_dependents/.test(f.proname) &&
+        /(insert\s+into|update|delete\s+from)\s+public\.appointment_payments\b/i.test(f.prosrc),
+    );
+    expect(writers).toEqual([]);
+  });
+
+  // CONTROL 2 — the application opens the table itself.
+  it("RED when application code references a dead resource directly", () => {
+    const offenders = deadClaimOffenders(
+      ["stripe_refunds"],
+      [],
+      (symbol) => (symbol === "stripe_refunds" ? ["lib/fixture/pretend-reader.ts"] : []),
+    );
+    expect(offenders).toEqual([
+      "stripe_refunds is referenced directly by lib/fixture/pretend-reader.ts",
+    ]);
+  });
+
+  // CONTROL 3 — a live WRITER dependency, the case the original rule did catch.
+  it("RED when a live writer dependency exists", () => {
+    const offenders = deadClaimOffenders(
+      ["stripe_refunds"],
+      [{ proname: "fixture_writer", prosrc: "insert into public.stripe_refunds values (1)" }],
+      (symbol) => (symbol === "fixture_writer" ? ["lib/fixture/writer-caller.ts"] : []),
+    );
+    expect(offenders).toEqual([
+      "stripe_refunds is reached through fixture_writer(), invoked by lib/fixture/writer-caller.ts",
+    ]);
+  });
+
+  // CONTROL 4 — a function that touches it but which nothing in the app calls.
+  it("GREEN when the only functions touching it are unreachable from the app", () => {
+    const offenders = deadClaimOffenders(
+      ["stripe_refunds"],
+      [{ proname: "orphan_fn", prosrc: "select * from public.stripe_refunds" }],
+      () => [],
+    );
+    expect(offenders).toEqual([]);
+  });
+
+  it("appointment_payments is pending with field review, not dead", () => {
+    const disposition = EXPORT_RESOURCE_REGISTRY.appointment_payments;
+    expect(disposition.kind).toBe("pending");
+    expect(disposition.kind === "pending" && disposition.fieldReviewRequired).toBe(true);
+    expect(disposition.kind === "pending" && disposition.reason).toMatch(
+      /reschedule_appointment_v2/,
+    );
   });
 
   it("the two Stripe provisioning ledgers Codex found are pending, not dead", () => {
@@ -455,6 +532,17 @@ describe("what is excluded, and on what grounds", () => {
         disposition.kind === "pending" && disposition.fieldReviewRequired,
         `${resource} carries provider identifiers and must not be dumped raw`,
       ).toBe(true);
+    }
+  });
+
+  // No emitted reason may make a zero-readers/zero-writers claim: that sentence
+  // was printed to owners about appointment_payments and was false.
+  it("no owner-facing reason claims zero readers or zero writers", () => {
+    for (const [resource, disposition] of Object.entries(EXPORT_RESOURCE_REGISTRY)) {
+      const reason =
+        disposition.kind === "exported" ? disposition.description : disposition.reason;
+      expect(reason, `${resource}`).not.toMatch(/zero (readers|writers)/i);
+      expect(reason, `${resource}`).not.toMatch(/no readers/i);
     }
   });
 
