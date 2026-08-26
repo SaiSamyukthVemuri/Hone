@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { exportSpec } from "@/lib/export/resource-registry";
 
 // Structured observation chips (migration 0108). vitest env is "node" (no DOM),
 // so the UI/save wiring is verified by source pins. The behavioral guarantees
@@ -77,7 +78,14 @@ describe("entry-row — chips render as their own pills; legacy rows unaffected"
 
 describe("data export — record-keeping includes structured chips", () => {
   it("selects, flattens (unified with a folded reaction), and columns observation_chips (comments still exported separately)", () => {
-    expect(EXPORT).toMatch(/comments, observation_chips, created_at/); // in the SELECT
+    // TRUTH-01A/F4: the SELECT is declared in EXPORT_SELECTS, keyed by the
+    // resource whose CSV those rows become.
+    // TRUTH-01A/F7: there is no static select map any more — the audited
+    // SELECT is the one the query executes. The durable pin is the registry
+    // declaration, which the exporter refuses to contradict at run time.
+    for (const column of ["comments", "observation_chips", "created_at"]) {
+      expect(exportSpec("electrolysis_entries").includedColumns).toContain(column);
+    }
     // Charting unification: the export flattens the UNIFIED findings — the entry's
     // observation_chips PLUS a folded legacy reaction_type from its block — joined
     // for CSV (semicolons, since CSV's delimiter is a comma). Still structured, not
@@ -86,7 +94,12 @@ describe("data export — record-keeping includes structured chips", () => {
       /observation_chips: mergeReactionIntoChips\(\s*\n?\s*e\.observation_chips,\s*\n?\s*b\?\.reaction_type \?\? null,?\s*\n?\s*\)\.join\("; "\)/,
     );
     expect(EXPORT).toMatch(/from "@\/lib\/observation-chips"/); // uses the shared merge contract
-    expect(EXPORT).toMatch(/"observation_chips",/); // CSV header
-    expect(EXPORT).toMatch(/structured observation chips/); // README copy
+    // TRUTH-01A: the CSV header row and the README line are declared in the
+    // export resource registry now. The chip column is still emitted, and
+    // still separate from the free-text comments column.
+    const spec = exportSpec("electrolysis_entries");
+    expect(spec.csvHeaders).toContain("observation_chips");
+    expect(spec.csvHeaders).toContain("comments");
+    expect(spec.description).toMatch(/structured observation chips/);
   });
 });

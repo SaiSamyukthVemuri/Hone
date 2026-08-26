@@ -82,8 +82,13 @@ describe("audit table + immutability (migration 0086)", () => {
       .split("\n")
       .filter(Boolean)
       .sort();
+    // TRUTH-01A adds the export resource registry, which NAMES this table in
+    // order to record its export disposition. It is a declaration, not an
+    // access path: no client, no query, no DML — and the loop below proves
+    // that for every file in this list, this one included.
     expect(refs).toEqual([
       "app/(app)/settings/data/actions.ts",
+      "lib/export/resource-registry.ts",
       "lib/record-keeping/queries.ts",
     ]);
     // No referencing file inserts/updates/deletes the audit table.

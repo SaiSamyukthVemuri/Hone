@@ -20,8 +20,15 @@ import { WALKTHROUGH, ANALYTICS_EVENTS } from "@/lib/marketing/content";
 import { marketingMetadata } from "@/lib/marketing/metadata";
 
 // Feature: /features/charting-records. Intent: electrolysis charting / treatment
-// records. All LIVE. "Print/export" = print-friendly views + full studio data
-// export (there is no CSV/PDF file export of charting, do not imply one).
+// records. All LIVE. "Print/export" = print-friendly views + the CSV data export
+// (there is no PDF file export of charting, do not imply one).
+//
+// TRUTH-01A: this comment used to say "full studio data export" and the page
+// body said "full studio history". Both overstated a named-subset export whose
+// contents are declared in lib/export/resource-registry.ts. Charting reaches the
+// export as electrolysis_entries.csv and laser_entries.csv; the session BLOCK
+// that groups them has no file of its own yet, so do not imply the charting
+// record leaves whole.
 
 export const metadata: Metadata = marketingMetadata("/features/charting-records");
 
@@ -102,7 +109,7 @@ export default function ChartingRecordsPage() {
               <Lede className="mt-5">
                 Because charting is structured, not a free-text blob, the record you make
                 today becomes the treatment memory you rely on next time, the procedure record
-                you print for an inspection, and part of the full studio history you can export
+                you print for an inspection, and part of the CSV data export you can download
                 any time.
               </Lede>
               <p className="mt-4 text-[0.9375rem] leading-[1.6] text-muted">

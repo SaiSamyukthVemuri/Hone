@@ -53,7 +53,14 @@ const TRUST_POINTS: { title: string; body: string }[] = [
   { title: "No advertising use of health records", body: "Client health information is never used for advertising." },
   { title: "No AI training on your records", body: "Hone does not train AI models on practitioner or client records." },
   { title: "Payments handled by Stripe", body: "Card details go straight to Stripe; Hone never stores full card numbers. Payments are enabled during guided onboarding." },
-  { title: "Your data is exportable", body: "Export your full studio history any time; if you cancel, your data goes with you." },
+  // TRUTH-01A. This said "Export your full studio history any time". The
+  // export is a named subset - clients, sessions, charting, appointments,
+  // plans, clinical notes, record-keeping logs - and it does not yet carry
+  // treatment photos, intake forms, signed consents, the service menu or
+  // payment records. The claim is now the one the product can keep, and the
+  // scope is stated rather than implied. lib/export/resource-registry.ts is
+  // the authority on what is and is not included.
+  { title: "Data export", body: "Download your clients, sessions, charting, appointments, treatment plans and record-keeping logs as CSV, any time. The export names in writing what it does and does not yet include." },
 ];
 
 export default function HomePage() {
