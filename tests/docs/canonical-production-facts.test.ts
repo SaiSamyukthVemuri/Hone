@@ -95,12 +95,32 @@ const GIT_AVAILABLE = git("rev-parse", "--git-dir") !== null;
 const SHALLOW = git("rev-parse", "--is-shallow-repository") === "true";
 const GIT_USABLE = GIT_AVAILABLE && !SHALLOW;
 
-/** Paths whose change means the deployed RUNTIME changed. */
-const RUNTIME_PATHS = [
-  "app", "lib", "components", "supabase", "scripts",
-  "middleware.ts", "next.config.ts", "vercel.json",
-  "package.json", "package-lock.json", "tsconfig.json",
-];
+// ---------------------------------------------------------------------------
+// RUNTIME-BEARING CLASSIFICATION IS NOT DEFINED HERE.
+//
+// It was, once: a hand-written path list that omitted instrumentation.ts,
+// instrumentation-client.ts, the Sentry edge/server configs, public/, hooks/
+// and types/. A commit touching only instrumentation.ts produced an empty diff
+// against that list, so A3 passed while the deployed runtime had changed.
+//
+// The repository already owns this taxonomy - scripts/classify-changes.mjs is
+// the same map CI and `npm run ci:plan` use, and CLAUDE.md §3 states outright
+// that there is "deliberately no second competing map". A partial copy here
+// was exactly that second map. It is gone; the authority is imported.
+//
+// `classify(files).docs_only` is the repository's own answer to "does this
+// change nothing that ships". Test files are the one documented exception:
+// the classifier deliberately routes them to a CI lane (they are `.ts`, so the
+// `application` catch-all claims them) but no test file is in the deployed
+// bundle. That exception is named here, scoped to `tests/`, and is the ONLY
+// path judgement this file makes.
+// ---------------------------------------------------------------------------
+const NOT_DEPLOYED = /^tests\//;
+
+async function loadClassifier(): Promise<(files: string[]) => { docs_only: boolean }> {
+  const mod = await import(path.join(ROOT, "scripts/classify-changes.mjs"));
+  return (mod as { classify: (f: string[]) => { docs_only: boolean } }).classify;
+}
 
 // ---------------------------------------------------------------------------
 // Frozen-region handling
@@ -136,13 +156,46 @@ const CURRENT_MAX_PATTERNS: readonly RegExp[] = [
   /\bmax\b\s*=\s*(?:\w+\s+max\s*=\s*)?\*{0,2}`?(0\d{3})\b/gi,
 ];
 
+/**
+ * CURRENT-POSITION assertions that never say "max".
+ *
+ * Every pattern above requires the literal word `max`, so "Production is
+ * currently at migration 0165" and "Hosted production stands at 0165" asserted
+ * exactly the fact this guard exists to ban and sailed straight through.
+ *
+ * The fix is NOT a growing phrase list. It is one shape: a SUBJECT from a
+ * closed set, a POSITION VERB from a closed set, and a four-digit version -
+ * with the whole thing confined to a single clause so an unrelated sentence
+ * cannot be stitched into a false match. Both vocabularies are small and
+ * closed on purpose; adding to them should feel like a decision.
+ */
+const POSITION_SUBJECT = String.raw`(?:production|hosted|repo(?:sitory)?|current\s+hosted|current\s+production)`;
+// PRESENT TENSE ONLY. `was` is deliberately absent: "it read 0160 while
+// production was at 0185" is a narrative ABOUT past drift, which these
+// documents must be free to tell. Past tense is the marker of history, not of
+// a current assertion, and banning it would turn the guard into a number ban.
+const POSITION_VERB = String.raw`(?:is|are|sits|stands|remains|rests)`;
+const CURRENT_POSITION_PATTERNS: readonly RegExp[] = [
+  // "Production is currently at migration 0165" · "Hosted production stands at 0165"
+  new RegExp(
+    String.raw`\b${POSITION_SUBJECT}\b[^.\n|;]{0,30}?\b${POSITION_VERB}\b\s*(?:\bnow\b|\bcurrently\b)?\s*(?:\bat\b|\bon\b)\s*(?:\bmigration\b\s*)?\*{0,2}\`?(0\d{3})\b`,
+    "gi",
+  ),
+  // "Current hosted migration is 0165" · "the production migration is now 0165"
+  new RegExp(
+    String.raw`\b(?:current|hosted|production|repo(?:sitory)?)\b[^.\n|;]{0,24}?\bmigration\b\s*${POSITION_VERB}\s*(?:\bnow\b|\bcurrently\b)?\s*\*{0,2}\`?(0\d{3})\b`,
+    "gi",
+  ),
+];
+
 /** "next free / next migration number is 0186" — a derived fact, never prose. */
 const NEXT_FREE_PATTERNS: readonly RegExp[] = [
   /\bnext\s+(?:free\s+)?migration\s+(?:number\s+)?(?:\bis\b|=|:)\s*\*{0,2}`?(0\d{3})\b/gi,
   /\bnext\s+free\s+(?:migration\s+)?number\s+(?:\bis\b|=|:)\s*\*{0,2}`?(0\d{3})\b/gi,
 ];
 
-export const findCurrentMaxAssertions = (t: string) => matchAll(t, CURRENT_MAX_PATTERNS);
+export const findCurrentMaxAssertions = (t: string) =>
+  matchAll(t, [...CURRENT_MAX_PATTERNS, ...CURRENT_POSITION_PATTERNS]);
 export const findNextFreeAssertions = (t: string) => matchAll(t, NEXT_FREE_PATTERNS);
 
 // ---------------------------------------------------------------------------
@@ -204,6 +257,24 @@ const L2_TITLE = /^##\s+L2\s+—\s+No real production whole-session copy has eve
 // Rule 3 — synthetic rows presented as real-customer activity
 // ---------------------------------------------------------------------------
 
+/**
+ * Every tenant row in §0, by slug, read from the register itself.
+ *
+ * The trap this exists to close: subtracting the Synthetic Twin from the
+ * all-tenant totals does NOT yield real-customer activity, because the
+ * controlled test studio is still in the remainder. §0 says so in words; this
+ * makes the arithmetic checkable. A sentence claiming "real-customer activity:
+ * 79 clients, 241 appointments" is false for exactly that reason, and the
+ * earlier guard - which was handed only the all-tenant pair - passed it.
+ */
+function tenantRow(slug: string): number[] | null {
+  const row = currentProse(CURRENT_STATE)
+    .split("\n")
+    .find((l) => l.includes(`\`${slug}\``) && l.trim().startsWith("|"));
+  if (!row) return null;
+  return [...row.matchAll(/\|\s*\*{0,2}(\d+)\*{0,2}\s*(?=\|)/g)].map((m) => Number(m[1]));
+}
+
 /** The all-tenant totals, read from the register itself rather than hardcoded. */
 function allTenantTotals(): { clients: number; appointments: number } {
   const row = currentProse(CURRENT_STATE)
@@ -227,10 +298,17 @@ export function findSyntheticAsCustomer(text: string, totals: number[]): string[
   const hits: string[] = [];
   for (const line of text.split("\n")) {
     if (!/\b(?:real[\s-]customer|customer activity|Willow)\b/i.test(line)) continue;
-    // A line may legally NAME a total while labelling it as all-tenant.
-    if (/\ball[\s-]tenants?\b|\bincludes?\s+synthetic\b|\bnot\s+a\s+customer\b/i.test(line)) {
-      continue;
-    }
+    // A line may legally NAME a forbidden figure in order to LABEL or DISCLAIM
+    // it. §0's own reading rule does exactly that: it names the Twin-subtracted
+    // remainder precisely to say the remainder is not customer activity. The
+    // exemption is therefore "is this line disclaiming?", not a list of the
+    // three sentences that happened to exist when it was written - a
+    // disclaimer being flagged as the claim it warns against is a false
+    // positive that teaches people to delete the warning.
+    const LABELLED = /\ball[\s-]tenants?\b|\bincludes?\s+synthetic\b/i;
+    const DISCLAIMED =
+      /\bnot\b[^.]{0,48}\bcustomer\b|\bnever\s+present\b|\bremainder\b|\bis not the same as\b/i;
+    if (LABELLED.test(line) || DISCLAIMED.test(line)) continue;
     for (const total of totals) {
       if (new RegExp(`\\b${total}\\b`).test(line)) {
         hits.push(line.replace(/\s+/g, " ").trim().slice(0, 140));
@@ -431,6 +509,22 @@ describe("canonical production docs: whole-session copy is exercised, and L2 sta
 describe("canonical production docs: synthetic rows are never customer activity", () => {
   const totals = allTenantTotals();
 
+  /**
+   * Figures that are NOT real-customer activity but are arithmetically
+   * derivable from §0, so a plausible-looking sentence can reach for one:
+   *   - the all-tenant totals (include the Twin AND the controlled studio);
+   *   - the Twin-subtracted remainder (still includes the controlled studio).
+   * Derived, never hardcoded, so a re-measurement moves them automatically.
+   */
+  function forbiddenCustomerFigures(): number[] {
+    const out = [totals.clients, totals.appointments];
+    const twin = tenantRow("hone-synthetic-twin");
+    if (twin && twin.length >= 2) {
+      out.push(totals.clients - twin[0], totals.appointments - twin[1]);
+    }
+    return [...new Set(out)].filter((n) => Number.isFinite(n) && n > 0);
+  }
+
   it("current-state §0 classifies every tenant, naming the synthetic one", () => {
     const register = currentProse(CURRENT_STATE);
     expect(register, "the tenant register must exist").toMatch(/^##\s+0\.\s+Tenant register/m);
@@ -449,13 +543,26 @@ describe("canonical production docs: synthetic rows are never customer activity"
     ).toMatch(/Non-synthetic is not the same as real-customer/i);
   });
 
+  it("the stated real-customer figures are the WILLOW row, not a subtraction", () => {
+    const willow = tenantRow("willow-electrolysis");
+    expect(willow, "§0 must carry a willow-electrolysis row with numbers").toBeTruthy();
+    const [clients, appts] = willow as number[];
+    const rule = currentProse(CURRENT_STATE).match(
+      /Real-customer activity is `willow-electrolysis` only:\s*\*{0,2}(\d+)\*{0,2}\s*clients,\s*\*{0,2}(\d+)\*{0,2}\s*appointments/i,
+    );
+    expect(
+      rule,
+      "§0's reading rule must state the customer figures explicitly, so they are tied to the " +
+        "customer-classified tenant rather than inferred by subtracting the Twin",
+    ).toBeTruthy();
+    expect(Number(rule?.[1]), "customer clients must equal the Willow row").toBe(clients);
+    expect(Number(rule?.[2]), "customer appointments must equal the Willow row").toBe(appts);
+  });
+
   it("no CURRENT-state doc labels an all-tenant total as customer activity", () => {
     // Changelog rows excluded for the same reason as above: THEN-state history.
     for (const [name, doc] of NO_CURRENT_MAX_DOCS) {
-      const hits = findSyntheticAsCustomer(currentProse(doc), [
-        totals.clients,
-        totals.appointments,
-      ]);
+      const hits = findSyntheticAsCustomer(currentProse(doc), forbiddenCustomerFigures());
       expect(
         hits,
         `${name} presents an all-tenant total (which includes the Synthetic Twin) as ` +
@@ -759,22 +866,50 @@ describe("RULE A — current-state.md pins a real, current production SHA", () =
     ).toBe("");
   });
 
-  it("A3: nothing newer than the pinned SHA changes the runtime — the derivation, executed", () => {
+  it("A3: nothing newer than the pinned SHA changes the runtime — via the repo's own classifier", async () => {
     const pinned = pinnedRuntimeSha();
     if (!GIT_USABLE || !pinned) {
       expect(GIT_USABLE && !!pinned, "shallow clone or no git — A3 could not run").toBe(false);
       return;
     }
-    const changed = git("diff", "--name-only", `${pinned}`, "HEAD", "--", ...RUNTIME_PATHS);
-    const files = (changed ?? "").split("\n").filter(Boolean);
+    const changed = (git("diff", "--name-only", pinned, "HEAD") ?? "")
+      .split("\n")
+      .filter(Boolean);
+
+    // Files that ship nothing: the classifier's own docs set, plus tests.
+    const classify = await loadClassifier();
+    const deployed = changed.filter((f) => !NOT_DEPLOYED.test(f) && !classify([f]).docs_only);
+
     expect(
-      files,
+      deployed,
       `current-state.md pins ${pinned.slice(0, 8)} as the runtime-bearing baseline, but ` +
-        `${files.length} runtime file(s) have changed since it. Either the pin is stale, or this ` +
-        "branch carries runtime changes it should not. This is the check the document's own " +
-        '"verified mechanically, not asserted" sentence describes. Changed: ' +
-        JSON.stringify(files.slice(0, 12)),
+        `${deployed.length} file(s) changed since it are classified as runtime-bearing by ` +
+        "scripts/classify-changes.mjs. Either the pin is stale, or this branch carries runtime " +
+        'changes it should not. This is the check the document\'s own "verified mechanically, ' +
+        'not asserted" sentence describes. Changed: ' + JSON.stringify(deployed.slice(0, 12)),
     ).toEqual([]);
+  });
+
+  it("A3 uses the repository's classifier, not a private path list", async () => {
+    // Guard-on-the-guard. If someone reintroduces a hand-written runtime list,
+    // this fails and points at CLAUDE.md §3's "no second competing map" rule.
+    const classify = await loadClassifier();
+    for (const f of [
+      "instrumentation.ts",
+      "instrumentation-client.ts",
+      "sentry.server.config.ts",
+      "sentry.edge.config.ts",
+      "public/favicon.ico",
+      "hooks/use-thing.ts",
+      "types/thing.ts",
+    ]) {
+      expect(
+        classify([f]).docs_only,
+        `${f} must be recognised as runtime-bearing by the shared classifier - it was ` +
+          "omitted by the hand-written list this rule used to carry",
+      ).toBe(false);
+    }
+    expect(classify(["docs/production/current-state.md"]).docs_only).toBe(true);
   });
 });
 
@@ -805,6 +940,52 @@ export function declaredOpenPrs(): string[] {
 
 const SHIPPED_WORD = /\b(?:deployed|shipped|is live|in production|production[\s-]exercised|merged to production)\b/i;
 
+// ===========================================================================
+// RULE A4 — the runtime-bearing SHA has exactly ONE canonical home
+//
+// current-state.md, capability-register.md and known-limitations.md each
+// carried the same 40-hex pin. Only current-state.md's copy was validated, so
+// after the next deployment either of the other two could drift silently -
+// reproducing, for the fourth derived fact, precisely the defect this whole
+// reconciliation exists to close for the first three.
+//
+// The migration numbers were fixed by REMOVING the copies rather than
+// correcting them. This does the same: the other two documents reference
+// current-state.md instead of restating the SHA, and this rule keeps it that
+// way. A guard that merely banned the phrase "runtime-bearing head is" would
+// be satisfied by any other wording around the same literal.
+// ===========================================================================
+
+describe("RULE A4 — only current-state.md pins the runtime-bearing SHA", () => {
+  const SHA_FREE_DOCS = [
+    ["docs/production/capability-register.md", CAPABILITY_REGISTER],
+    ["docs/production/known-limitations.md", KNOWN_LIMITATIONS],
+  ] as const;
+
+  it.each(SHA_FREE_DOCS.map(([n, d]) => [n, d] as const))(
+    "%s contains no 40-hex commit SHA at all",
+    (name, doc) => {
+      const shas = shasIn(currentProse(doc));
+      expect(
+        shas,
+        `${name} names a commit SHA. Only current-state.md may pin one; every other canonical ` +
+          "document must reference it, because a second copy is a second thing to go stale and " +
+          `nothing validates this one. Offending: ${JSON.stringify(shas)}`,
+      ).toEqual([]);
+    },
+  );
+
+  it("both documents actually point at the authority rather than just omitting it", () => {
+    for (const [name, doc] of SHA_FREE_DOCS) {
+      expect(
+        doc,
+        `${name} must reference current-state.md for the runtime-bearing baseline. Silently ` +
+          "dropping the SHA without saying where it lives leaves the reader with nothing",
+      ).toMatch(/current-state\.md/);
+    }
+  });
+});
+
 describe("RULE F — open PRs are declared, and never described as shipped", () => {
   it("current-state.md declares its open set explicitly", () => {
     expect(
@@ -829,12 +1010,12 @@ describe("RULE F — open PRs are declared, and never described as shipped", () 
     }
   });
 
-  it("no canonical doc describes a declared-open PR as shipped", () => {
+  it("no canonical doc OUTSIDE the declaration describes a declared-open PR as shipped", () => {
     const open = declaredOpenPrs();
-    const excluded = openPrSection();
+    const declaration = openPrSection();
     for (const [name, doc] of NO_CURRENT_MAX_DOCS) {
       for (const line of currentProse(doc).split("\n")) {
-        if (excluded.includes(line) && line.trim() !== "") continue;
+        if (line.trim() !== "" && declaration.includes(line)) continue; // rows checked below
         for (const pr of open) {
           if (!new RegExp(`#${pr}\\b`).test(line)) continue;
           expect(
@@ -843,6 +1024,45 @@ describe("RULE F — open PRs are declared, and never described as shipped", () 
               `however green its CI. Offending line: ${line.trim().slice(0, 160)}`,
           ).toBe(false);
         }
+      }
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // The declaration table is the LIKELIEST place for this defect, so it is the
+  // one place the rule may not skip.
+  //
+  // The earlier revision excluded the whole section from the shipped-word scan,
+  // which meant `| #646 | OPEN | deployed in production |` passed: the state
+  // cell said OPEN, and nothing ever read the third cell.
+  //
+  // Scanning the row for shipped WORDS alone does not work either - a truthful
+  // row legitimately says "nothing it adds is live" and "byte-for-byte
+  // unchanged, so nothing here is live". Both contain a shipped word, negated.
+  //
+  // So the rule is clause-scoped: split the row on clause boundaries, and any
+  // clause carrying a shipped word must also carry a NEGATOR. Two small closed
+  // vocabularies, not a phrase list, and it generalises to wordings nobody has
+  // written yet.
+  // -------------------------------------------------------------------------
+  const NEGATOR = /\b(?:not|no|nothing|never|neither|nor|un\w+|cannot|without|yet to)\b/i;
+
+  it("every open-PR ROW is scanned, and a shipped claim there must be negated", () => {
+    const rows = openPrSection()
+      .split("\n")
+      .filter((l) => l.trim().startsWith("|") && /#\d{3,5}\b|IN DEVELOPMENT/i.test(l))
+      .filter((l) => !/^\|\s*-{2,}/.test(l));
+    expect(rows.length, "the declaration must contain rows to scan").toBeGreaterThan(0);
+
+    for (const row of rows) {
+      for (const clause of row.split(/[|.;]/)) {
+        if (!SHIPPED_WORD.test(clause)) continue;
+        expect(
+          NEGATOR.test(clause),
+          "an open-PR row asserts, unnegated, that the PR is shipped. This is the exact " +
+            "defect Rule F exists to prevent, in the row that is supposed to deny it. " +
+            `Offending clause: ${JSON.stringify(clause.trim().slice(0, 140))}`,
+        ).toBe(true);
       }
     }
   });
@@ -1003,13 +1223,28 @@ describe("RULE D+ — open limitations persist, closed ones stay labelled", () =
     },
   );
 
-  it("F-RET-001 is recorded as P1 and OPEN, in words, not just by absence of CLOSED", () => {
-    const section = KNOWN_LIMITATIONS.slice(KNOWN_LIMITATIONS.indexOf("## L27"));
-    expect(section, "L27 must state its severity").toMatch(/\*\*P1\b[^|]*OPEN\*\*|\*\*P1 — OPEN\.\*\*/i);
+  it("F-RET-001 states a severity, and says it is downgraded rather than closed", () => {
+    // The severity pinned here is P2, re-derived at 6786b07b. It was P1 while
+    // the published policy still promised a 30-day hard delete and a 90-day
+    // backup purge; commit 0acc6773 retired both, so the published-breach
+    // driver is gone and what remains is a capability gap. The pin exists so
+    // that number cannot move again without this line moving with it.
+    const start = KNOWN_LIMITATIONS.indexOf("## L27");
+    const rest = KNOWN_LIMITATIONS.slice(start);
+    const end = rest.indexOf("\n## ");
+    const section = end === -1 ? rest : rest.slice(0, end);
+    expect(section, "L27 must state its severity explicitly").toMatch(/\*\*P2 — OPEN\.\*\*/);
     expect(
-      section.slice(0, section.indexOf("\n## ") === -1 ? undefined : section.indexOf("\n## ")),
-      "L27 must state that this reconciliation did not close, narrow or downgrade it",
-    ).toMatch(/remains OPEN and is not closed, narrowed or downgraded/i);
+      section,
+      "L27 must record that the P1 framing was WITHDRAWN, not merely edited away - " +
+        "a severity that drops without its reason is indistinguishable from one dropped to " +
+        "make a gate go green",
+    ).toMatch(/WITHDRAWN|withdrawn/);
+    expect(
+      section,
+      "L27 must state that it is downgraded rather than closed, and that the implementation " +
+        "gap is untouched",
+    ).toMatch(/downgraded, not closed/i);
   });
 
   it.each(MUST_BE_MARKED_CLOSED)(
@@ -1053,6 +1288,26 @@ describe("RULE D+ — open limitations persist, closed ones stay labelled", () =
 //
 //   A1  same document, unchanged, in a `--depth 1` clone            -> GREEN (skips)
 //   A1  fabricated SHA, in a FULL clone                             -> RED
+//
+// Second remediation round (Codex review of 5f659927), one defect fact at a
+// time, each producing EXACTLY ONE failure and that failure naming the rule
+// under test - a control that goes red because something unrelated broke
+// proves nothing:
+//
+//   F    open-PR row rewritten to "deployed in production"          -> RED (row scan)
+//   H3   "Production is currently at migration 0165"                -> RED (current-position)
+//   H3   "Hosted production stands at 0165"                         -> RED (current-position)
+//   H3   "Current hosted migration is 0165"                         -> RED (current-position)
+//   H4   "Real-customer activity: 79 clients and 241 appointments"  -> RED (Twin remainder)
+//   A4   duplicate SHA reintroduced in known-limitations.md         -> RED (single authority)
+//   A4   duplicate SHA reintroduced in capability-register.md       -> RED (single authority)
+//   A3   pin moved back one merge, runtime changed since            -> RED (via classifier)
+//
+// Positive controls, proving the rules are not simply always-red: this branch
+// changes only documentation and tests after the pinned SHA, and A3 stays
+// green throughout; the past-tense narrative "it read 0160 while production
+// was at 0185" stays legal; and §0's own warning naming the Twin-subtracted
+// remainder in order to disclaim it is exempt rather than flagged.
 //
 // A1 originally guarded on GIT_AVAILABLE and went red on its first CI run
 // against three SHAs that were all genuine. `fetch-depth: 1` leaves one commit

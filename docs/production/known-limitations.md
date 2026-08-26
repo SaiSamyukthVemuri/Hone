@@ -1,8 +1,11 @@
 # Hone — Known Limitations
 
-**Verified residual limitations as of 2026-08-26**, against the last runtime-bearing application
-HEAD `6786b07be57a9c01ff4421378f22d7dbca68a5c9` (PR #644). **Repo and hosted migration state are
-at parity, with nothing pending** — the reconciling *numbers* are deliberately not written here.
+**Verified residual limitations as of 2026-08-26**, against the runtime-bearing application HEAD
+recorded in [current-state.md](./current-state.md) *Reconciliation header* — **the single
+authority for that SHA, which is deliberately not copied here.** A second copy is a second thing
+to go stale, and the fourth derived fact drifted for exactly that reason. **Repo and hosted
+migration state are at parity, with nothing pending** — the reconciling *numbers* are likewise
+not written here.
 Hosted max is declared once in [`migration-state.json`](./migration-state.json); repo max and the
 next free number are derived by `npm run migration:state`; the reconciled position with apply
 evidence is [migration-ledger.md](./migration-ledger.md). (`0158` is permanently skipped.)
@@ -149,7 +152,7 @@ selling to additional studios · `Neither` = accepted, tracked, not blocking tod
 | Field | Value |
 |---|---|
 | **Impact** | A studio cannot onboard itself. Practitioner signup is invite-only. Onboarding v2 is enabled on one non-production studio. |
-| **Evidence** | `onboarding_v2_enabled` true on the controlled test studio only; 1 `studio_onboarding` row; 11 `pending_invitations`. No self-serve studio-creation path exists. |
+| **Evidence** | `onboarding_v2_enabled` true on the controlled test studio only; 1 `studio_onboarding` row; **12 `pending_invitations` all-tenant, 5 at Willow** *(last measured 2026-08-23; not re-measured at this reconciliation)*. No self-serve studio-creation path exists. *(This row read `11` while `capability-register.md` and `current-state.md` both read 12 for the same dated measurement; reconciled to the tenant-scoped figure.)* |
 | **Current mitigation** | New studios are provisioned through the operator runbook (`docs/20_NEW_STUDIO_SETUP_RUNBOOK.md`). Invite-only signup is a deliberate pilot posture. |
 | **Owner** | Sam |
 | **Next gate** | Onboarding nudges + analytics remain deferred; broad rollout follows the audit. |
@@ -194,7 +197,7 @@ selling to additional studios · `Neither` = accepted, tracked, not blocking tod
 |---|---|
 | **Impact** | Whether Sentry and PostHog are actually receiving production events — and whether `NEXT_PUBLIC_POSTHOG_*` is set in the Vercel environment — could not be confirmed in this reconciliation. |
 | **Evidence** | **Unknown pending verification.** The integration code is merged and deployed with hardened settings (`sendDefaultPii` off, deny-by-default scrubbers, Replay/Logs off; PostHog recording/autocapture/exception off, opaque-id identify). The console state itself requires an authenticated dashboard session. |
-| **Current mitigation** | `ops_alerts` is a first-party, in-database alerting path that does not depend on either vendor. It currently holds **4 unresolved alerts** *(2026-08-23)* — see **L26**; the path is working, and the queue is not empty. |
+| **Current mitigation** | `ops_alerts` is a first-party, in-database alerting path that does not depend on either vendor. **When last measured, 2026-08-23, it held 4 unresolved alerts** — see **L26**. That is evidence the path was writing on that date; it is **not** a claim about the queue today. This document re-measured no production data at this reconciliation, so the alerts may since have been resolved, and *"currently holds"* / *"the queue is not empty"* — the wording this row used to carry — would assert something nobody checked. |
 | **Owner** | Sam |
 | **Next gate** | Confirm in the Vercel and PostHog consoles during the deep audit. Do not assert either way until then. |
 | **Blocks** | Neither. |
@@ -482,19 +485,31 @@ documentation, because no evidence supports them:
   `session_copy_operations`, `admin_action_events` and `client_portal_access_events`, with actor
   attribution and timestamps.
 
-## L27 — `F-RET-001`: published 30-day / 90-day retention and deletion commitments have NO implementing code
+## L27 — `F-RET-001`: no automated retention or permanent-deletion lifecycle exists
+
+> **⚠️ SEVERITY AND RATIONALE CORRECTED 2026-08-26, and the correction is the point.** An earlier
+> revision of this entry recorded `F-RET-001` as **P1 / WILLOW_NOW** on the grounds that
+> `app/privacy/page.tsx` and `app/terms/page.tsx` publicly promised a **30-day hard delete** and a
+> **90-day backup purge** the product did not perform. **That rationale was copied from the
+> 2026-07-30 audit register rather than re-derived at `6786b07b`, and it is false at this head.**
+> Those promises were retired by commit `0acc6773` ("align residency, retention, and commercial
+> claims with reality"). Writing an obsolete quotation into a limitation about documents asserting
+> what they cannot prove is the same defect this file exists to catch, committed in the entry that
+> closes it — recorded here rather than quietly fixed.
 
 | Field | Value |
 |---|---|
-| **Recorded** | 2026-07-30 (audit register `F-RET-001` / `HN-022`) · **re-verified at `6786b07b` on 2026-08-26** |
-| **Severity** | **P1 — OPEN.** Gate: **WILLOW_NOW.** |
-| **Impact** | `app/privacy/page.tsx` commits publicly to retaining data while an account is active, then: *"When a practitioner closes their account, we retain data for 30 days to allow account recovery, then delete it"*, and *"When a client is deleted by their practitioner in Hone, their record is soft-deleted … for 30 days, then hard-deleted from active systems. Backups are purged within 90 days."* `app/terms/page.tsx` (DPA 7.7) commits to deleting Client Data within 30 days of termination. **None of it is implemented.** There is no purge job, no hard-delete path, no legal hold and no cross-system lifecycle. This is a live published claim the product does not honour, made to a health practitioner already holding real client data. |
-| **Evidence (re-derived 2026-08-26 from the repository, not from an earlier document)** | `vercel.json` registers exactly **three** crons — `materialize-recurring-breaks`, `calendar-reconcile`, `calendar-sync` — **none retention-related**. `app/api/cron/` contains exactly five routes — those three plus `appointment-reminders` and `no-show-check` — **none retention-related**. A repository search for `legal_hold` / `legalHold` / `retention_policy` / `hard_delete` / `purge` finds them only in `app/privacy/page.tsx` and `app/terms/page.tsx` (the claims themselves) and in two unrelated migrations (`0115`, `0125`). |
-| **Related and inseparable** | `archiveTreatmentImageAction` stamps `deleted_at` without removing the storage object — see **L28**. A 30-day hard-delete commitment cannot be honoured while archive never deletes bytes. |
-| **Current mitigation** | **None.** The commitment is live and unhonoured. |
+| **Recorded** | 2026-07-30 (audit register `F-RET-001` / `HN-022`) · **severity and rationale re-derived 2026-08-26 at `6786b07b`** |
+| **Severity** | **P2 — OPEN.** Gate: **BEFORE_TEN_STUDIOS.** *(Was P1 / WILLOW_NOW. The downgrade is not a judgement that the gap shrank — it is that the **published-breach** driver no longer exists, so what remains is a capability gap, not a live false claim.)* |
+| **What the published policy says NOW** | The opposite of what this entry used to quote. `app/privacy/page.tsx`: *"We do not currently operate an automatic timed purge that permanently erases archived records or expires backup copies on a fixed schedule. Requests for permanent deletion are handled case by case through the process above."* `app/terms/page.tsx` §7.7: *"Client Data is then archived and removed from everyday use. We do not currently operate an automatic timed purge."* Both distinguish **archiving** from **permanent erasure** explicitly. **The documents are accurate about the absence.** |
+| **Guarded, not merely changed** | `tests/app/settings/data-truthfulness.test.ts` §6 pins the removal in both directions: the old phrases (`then hard-deleted from active systems`, `Backups are purged within`, `we will delete Client Data within 30 days`) must be **absent**, and the phrase `do not currently operate an automatic timed purge` must be **present** in both documents. Reflow-tolerant by design. So the retirement cannot silently regress. |
+| **A. THE IMPLEMENTATION GAP — real, and unchanged** | There is **no automated retention or purge lifecycle**: no purge job, no hard-delete path, no legal hold, no cross-system deletion. Re-derived 2026-08-26 from the repository: `vercel.json` registers exactly **three** crons (`materialize-recurring-breaks`, `calendar-reconcile`, `calendar-sync`) and `app/api/cron/` holds exactly **five** routes (those three plus `appointment-reminders`, `no-show-check`) — **none retention-related**. A search for `legal_hold` / `legalHold` / `retention_policy` / `hard_delete` / `purge` finds them only in the two policy documents and in two unrelated migrations (`0115`, `0125`). |
+| **B. THE PUBLISHED-BREACH CLAIM — WITHDRAWN** | There is no live timed-deletion commitment to breach. **Do not restore this framing** without re-reading both policy documents at the then-current head. |
+| **What IS still exposed, stated narrowly** | The policy says an archived record stays *"unless and until it is permanently deleted following a request we have reviewed and actioned."* **No implemented mechanism exists to action one.** Archiving stamps `deleted_at`; nothing erases a row or a storage object (see **L28**). So the process the policy describes can be *reviewed* but not *completed* in the product today. That becomes live on the **first permanent-deletion request or first offboarding**, not before — which is why the gate is BEFORE_TEN_STUDIOS rather than WILLOW_NOW. |
+| **Current mitigation** | The published wording is truthful about the absence, and requests route to a human at `privacy@hone.care` rather than to an automated path that does not exist. That makes the claim honest; it does not make the capability present. |
 | **Owner** | Sam |
-| **Next gate** | Sequenced **after** a complete export (an owner must be able to take their data before anything deletes it — see **L29**) and **jointly with** offboarding, which is the process a retention lifecycle hangs off. Not started. |
-| **Blocks** | **Willow now**, as a published-claim exposure rather than a functional defect. **This limitation remains OPEN and is not closed, narrowed or downgraded by this reconciliation.** |
+| **Next gate** | Sequenced **after** a complete export (**L29** — an owner must be able to take their data before anything deletes it) and **jointly with** offboarding, which is the process a retention lifecycle hangs off. Not started. |
+| **Blocks** | **Broader launch**, not Willow today. **This limitation remains OPEN. It is downgraded, not closed, and the implementation gap in row A is untouched by this reconciliation.** |
 
 ## L28 — Treatment-image archive is soft-only and no storage reconciler exists
 

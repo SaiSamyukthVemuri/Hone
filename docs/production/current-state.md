@@ -74,7 +74,7 @@ claim about today, and a later reader must re-measure before treating it as one.
 | PR | State | Why it is not production |
 |---|---|---|
 | **#646** — FIN, owner financial truth surface | **OPEN**, not draft | Its head is **not an ancestor of `6786b07b`**. Carries **no migration**. Nothing it adds is live. |
-| **TRUTH-01B-1** — the first export-payload slice | **IN DEVELOPMENT**, no PR merged | TRUTH-01A shipped the registry and the disclosure; **the export payload is byte-for-byte unchanged**. See §12. |
+| **TRUTH-01B-1** — the first export-payload slice | **IN DEVELOPMENT**, no PR merged | The registry and the disclosure landed in TRUTH-01A; **the export payload is byte-for-byte unchanged**, so nothing here is live. See §12. |
 | **#631** — this reconciliation | **OPEN** | Documentation and tests only. |
 
 > **No head SHA is recorded for an open PR, deliberately.** An open branch's head moves whenever
@@ -254,7 +254,7 @@ artifact and the reintroduction bar:
 | Phase 2 — corrections & amendments backend (0120) | **RETIRED.** `clinical_corrections_enabled` is **false on all studios** and pinned false by `studios_clinical_corrections_retired`. **Never production-exercised** — 0 amendments, 0 clinical audit events, and `INSERT` is now refused on all three signed-record ledgers, so none can ever be produced. The generic 3-field correction UX was never approved, and no full-chart correction workspace will be built. |
 | Reliability/observability (PR #402) | **RETIRED with Phase 2.** The amendment path it instrumented is unreachable. |
 | Practitioner-facing Finalize / signed-record Correction controls | **REMOVED — both from the database and from the deployed source.** Migration 0159 pinned both flags `false` by validated CHECK constraint and revoked `EXECUTE` from every runtime role; PR #482 then deleted `FinalizeSessionCard`, `RecordVersionsPanel`, `finalize-actions.ts` and `correction-actions.ts`, and deployed successfully on 2026-07-30 (merge `d77d44346addd98f4829f757531011bc7ca0c0d1`). There is no Finalize or signed-Correction surface in the running application, and no runtime role can invoke the RPCs. |
-| Append-only clinical notes (0126/0127) | **Live for all studios, no flag** — 1 production row. **Unrelated to the above and NOT retired** — a correction here is a new row (`supersedes_note_id`), never a signed snapshot. |
+| Append-only clinical notes (0126/0127) | **Live for all studios, no flag** — **Willow 52, Synthetic Twin 3, 55 all-tenant** *(last measured 2026-08-23; not re-measured at this reconciliation)*. **Unrelated to the above and NOT retired** — a correction here is a new row (`supersedes_note_id`), never a signed snapshot. |
 
 **Migration 0159 drops nothing.** The 0119/0120 objects stay in place so those migrations remain
 replayable, and the guards that protect the one legacy artifact are deliberately kept on. The
@@ -267,10 +267,18 @@ the `hone.correction_session_id` GUC permit is **removed** — `set_config` on a
 available to any role, so once the correction RPCs were `EXECUTE`-revoked the permit stopped being a
 guarded escape and became an open one (reproduced as plain `authenticated`). Verified gone in
 production: the guard body no longer references it, or `current_setting` at all. It does NOT stop
-ordinary direct DML:
-`authenticated` still holds row INSERT/UPDATE/DELETE on `sessions`, `session_blocks`,
-`electrolysis_entries`, `laser_entries` and `treatment_images`, restricted only by RLS to
-same-studio rows — see known-limitations L18. Ordinary operational audit trails
+ordinary direct DML.
+
+> ⚠️ **CORRECTED 2026-08-26.** This passage previously continued: *"`authenticated` still holds
+> row INSERT/UPDATE/DELETE on `sessions`, `session_blocks`, `electrolysis_entries`,
+> `laser_entries` and `treatment_images`, restricted only by RLS to same-studio rows — see
+> known-limitations L18."* **That was true when written and is false at `6786b07b`.** Migration
+> **0169** (applied 2026-08-03) revokes `insert, update, delete` from `authenticated` on all six
+> of those tables by name; `authenticated` retains **SELECT only**, and every writer goes through
+> one of the sixteen reviewed commands. **L18 is CLOSED**, so the sentence and the reference it
+> cited contradicted each other on a security boundary — a reader auditing the write surface got
+> opposite answers from two canonical documents. The correct statement is that the removed GUC
+> permit was never what stopped direct DML; **0169** is. Ordinary operational audit trails
 (`session_audit`, `record_keeping_audit_events`, `session_copy_operations`,
 `admin_action_events`, `client_portal_access_events`), actor attribution, timestamps,
 treatment-history integrity, whole-session-copy provenance and tenant isolation are all
@@ -801,10 +809,12 @@ independent dimensions, and only an explicit statement from Chloe closes the sec
 5. **WAIT-02B Stage B2 (activation)** — requires an explicit per-studio operator GO and human
    activation smoke. The disclosure blocker is closed; the authorization is not granted. See
    §5b and **L25**.
-6. **Retention and deletion (F-RET-001)** — the published 30-day deletion and 90-day
-   backup-purge commitments still have no implementing code. This is **P1 and open**; see
-   [known-limitations.md](./known-limitations.md) **L26**. It is sequenced after a complete
-   export and jointly with offboarding.
+6. **Retention and deletion (F-RET-001)** — there is still **no automated retention or
+   permanent-deletion lifecycle**: no purge job, no hard-delete path, no legal hold. The
+   published policy is **accurate about that absence** — it says plainly that no automatic timed
+   purge runs — so this is a **capability gap, not a breached commitment**. **P2 and open**; see
+   [known-limitations.md](./known-limitations.md) **L27**, which records why the earlier
+   P1 framing was withdrawn. Sequenced after a complete export and jointly with offboarding.
 
 The direct new-client consultation booking route is **not** on this list. It is deferred by
 product decision — a separate matter from the waitlist that is live today (§5b).

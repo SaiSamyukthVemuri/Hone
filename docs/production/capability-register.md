@@ -5,10 +5,13 @@
 production; neither document is evidence for the other.
 
 - **Reconciled:** 2026-08-26
-- **Runtime-bearing baseline:** application HEAD `6786b07be57a9c01ff4421378f22d7dbca68a5c9`
-  (PR #644 merge, TRUTH-01A). At this reconciliation the branch HEAD and the runtime-bearing
-  HEAD **are the same commit** — #644 changes eight runtime files — which is unusual enough to
-  state rather than leave implied.
+- **Runtime-bearing baseline:** the application HEAD recorded in
+  [current-state.md](./current-state.md) *Reconciliation header* — **the single authority for
+  that SHA, which is deliberately not copied here.** At this reconciliation the branch HEAD and
+  the runtime-bearing HEAD are the **same commit** (PR #644, TRUTH-01A, which changes eight
+  runtime files), which is unusual enough to state rather than leave implied. The *fact* of
+  their coincidence is safe to restate; the *identifier* is not, because a second copy is a
+  second thing to go stale.
 - **What this pass measured:** it re-derived every status below from the repository and the Git
   graph and **re-measured nothing in the production database or at any provider.** Counts
   carrying a 2026-08-23 stamp are **dated evidence, not current readings**; see
