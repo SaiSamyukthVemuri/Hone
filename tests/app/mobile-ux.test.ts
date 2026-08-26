@@ -18,10 +18,61 @@ const CALENDAR_PAGE = read("app/(app)/calendar/page.tsx");
 const GLOBALS = read("app/globals.css");
 
 describe("app shell: responsive navigation", () => {
-  it("the full nav row is desktop-only (hidden below md)", () => {
+  it("the full nav row is desktop-only (hidden below lg)", () => {
+    // `[^>]*` rather than a literal `<nav className=`: the primary nav now also
+    // carries an accessible name, and the original regex pinned attribute
+    // ADJACENCY, not the property this test is about. It would have gone red on
+    // an aria-label — a strictly better nav — while a row that genuinely lost
+    // its hidden/flex pair could still have satisfied it by keeping className
+    // first. This matches the opening tag however its attributes are ordered.
+    //
+    // The boundary is `lg`, not `md`: see the header-mode test below.
     expect(LAYOUT).toMatch(
-      /<nav className="hidden items-center gap-0\.5 whitespace-nowrap text-sm md:flex/,
+      /<nav[^>]*className="hidden items-center gap-0\.5 whitespace-nowrap text-sm lg:flex/,
     );
+  });
+
+  it("EVERY header-mode class switches at lg, and none is left behind at md", () => {
+    // THE DEAD-ZONE / DOUBLE-SHELL GUARD, stated as a property of the files
+    // rather than as four snapshots of four class strings.
+    //
+    // Exactly four classes choose between the full desktop shell and the
+    // compact one. If any single one were left at `md`, the 768-1023 band would
+    // either show BOTH shells (two navigations, two search affordances,
+    // duplicate Business links) or NEITHER (no navigation at all). Both are
+    // invisible to a test that only checks the class it expects to find, so
+    // this asserts the ABSENCE of md-based mode switching across the whole
+    // shell — which is the invariant, and which no future edit can satisfy by
+    // accident.
+    //
+    // MEASURED reason for lg: five primary items plus search/bell/account need
+    // 830px with an ordinary owner name and 913px with one that fills the
+    // account button's 12ch cap. At md that overflowed the page by up to 145px.
+    const MENU = read("app/(app)/MobileMenu.tsx");
+    expect(LAYOUT).toMatch(/className="hidden items-center gap-0\.5[^"]*lg:flex/); // primary nav
+    expect(LAYOUT).toMatch(/className="hidden items-center gap-3 lg:flex"/); // desktop controls
+    expect(LAYOUT).toMatch(/className="flex items-center gap-1\.5 lg:hidden"/); // compact controls
+    expect(MENU).toMatch(/className="relative lg:hidden"/); // MobileMenu root
+
+    for (const [name, src] of [
+      ["layout", LAYOUT],
+      ["mobile menu", MENU],
+    ] as const) {
+      // Strip comments first: the explanatory notes legitimately mention the
+      // old boundary, and a guard that its own rationale can break is a bad
+      // guard.
+      const code = src
+        .split("\n")
+        .filter((l) => !/^\s*(\/\/|\*|\{\/\*)/.test(l))
+        .join("\n");
+      expect(
+        code,
+        `${name} must not switch header mode at md`,
+      ).not.toMatch(/md:(flex|hidden)/);
+    }
+    // `md:px-8` / `md:py-10` are PADDING, not mode, and deliberately stay.
+    expect(LAYOUT).toMatch(/px-4 py-3 md:px-8/);
+    expect(LAYOUT).toMatch(/px-5 py-8 md:px-8 md:py-10/);
   });
 
   it("the mobile menu is a client component with an accessible, stateful button", () => {

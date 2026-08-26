@@ -1,3 +1,4 @@
+import { ClinicalUnavailableNotice } from "@/components/clinical-unavailable-notice";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import type { BeforeToday } from "@/lib/sessions/before-today";
 import {
@@ -62,7 +63,34 @@ export function BeforeTodayCard({
         </p>
       </header>
 
-      {!briefing.hasHistory ? (
+      {/* CLIN-01-B: `unavailable` is checked BEFORE `hasHistory`, and the order
+          is load-bearing. Under a failed clinical read `hasHistory` is false
+          because nothing could be READ, so the next branch would say "No
+          charted treatment history yet." about a client who may have forty
+          visits. The reminders survive because they come from the client
+          record, which loaded; they render only when non-empty, so the
+          "Procedure record looks complete" sentence never appears here. */}
+      {briefing.unavailable ? (
+        <div className="flex flex-col gap-4">
+          <ClinicalUnavailableNotice testId="before-today-unavailable" />
+          {briefing.reminders.length > 0 && (
+            <div>
+              {/* Deliberately a DIFFERENT label from the procedure-record one
+                  used below: the only reminders that survive an unavailable
+                  clinical read are the client-record ones, and reusing that
+                  label would imply the procedure record had been checked. */}
+              <SectionLabel>Client record reminders</SectionLabel>
+              <ul className="mt-1 list-disc pl-5 text-sm text-neutral-700 dark:text-neutral-300">
+                {briefing.reminders.map((r) => (
+                  <li key={r} className="break-words">
+                    {r}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      ) : !briefing.hasHistory ? (
         <div className="rounded-md border border-dashed border-neutral-300 px-4 py-5 text-sm text-neutral-500 dark:border-neutral-700">
           <p>No charted treatment history yet.</p>
           <p className="mt-1 text-xs">

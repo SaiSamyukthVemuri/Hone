@@ -647,6 +647,21 @@ test("mobile: shell, core pages, calendar touch safety", async ({
     await expect(
       ipadPage.getByRole("button", { name: /open quick-book draft/i }).first(),
     ).toBeAttached();
+    // THE COMPACT SHELL OWNS THIS WIDTH. The authenticated header switches at
+    // `lg` (1024px), not `md`: once the owner's primary row gained a fifth item
+    // it needed 830-913px on one line depending on the account name's length,
+    // and this very assertion is what caught it (scrollWidth 830 vs clientWidth
+    // 810). Pinning the MODE here, not only its consequence, means a future
+    // move back to md fails on the shape of the header rather than on whatever
+    // overflow it happens to produce that day.
+    await expect(
+      ipadPage.getByRole("navigation", { name: "Primary navigation" }),
+      "iPad: the desktop primary row must not render below lg",
+    ).toHaveCount(0);
+    await expect(
+      ipadPage.getByRole("button", { name: "Open navigation menu" }),
+      "iPad: the compact Menu must be the navigation below lg",
+    ).toBeVisible();
     await expectNoPageOverflow(ipadPage, "iPad calendar");
     // PR #235: the charting page fits iPad width too.
     await ipadPage.goto(sessionPath);
@@ -682,6 +697,13 @@ test("mobile: shell, core pages, calendar touch safety", async ({
     }
     await expect(
       header.getByRole("link", { name: "Settings", exact: true }),
+    ).toHaveCount(0);
+    // ...and the OTHER half of the mode boundary: at 1280 the compact Menu is
+    // gone. Asserted alongside the iPad pin above so both directions of the
+    // switch are covered — a shell stuck in one mode fails one of the two.
+    await expect(
+      desktopPage.getByRole("button", { name: "Open navigation menu" }),
+      "desktop: the compact Menu must not render at lg and above",
     ).toHaveCount(0);
     await expect(
       desktopPage.getByRole("link", { name: /^Notifications/ }),
