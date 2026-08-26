@@ -65,6 +65,43 @@ export const NEW_CLIENT_WAITLIST_SLUGS_ENV = "NEW_CLIENT_WAITLIST_STUDIO_SLUGS";
  * DEFAULT OFF, exactly like the gate: unset / empty / whitespace-only is OFF
  * for every studio, so deploying this changes nothing anywhere until an
  * operator opts a studio in, and clearing it is the whole kill switch.
+ *
+ * WAIT-02B STAGE B: THIS IS THE ONLY COMMIT-POINT CONTROL — AND IT IS NOT
+ * ADMISSION CONTROL. Naming a studio in NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS
+ * activates nothing unless that studio is also named in
+ * NEW_CLIENT_WAITLIST_STUDIO_SLUGS: the submit path reaches this question only
+ * after isNewClientWaitlistEnabled() has already said yes. No SECOND flag system
+ * was added for the commit point, and none should be.
+ * Stage A additionally forbade production from naming ANY studio here, enforced
+ * at deploy time by scripts/check-production-env-gates.mjs, because the public
+ * privacy notice did not yet cover a waitlist prospect. Stage B1 ships that
+ * disclosure, so the prohibition is gone and a correctly named studio is now
+ * permitted.
+ *
+ * WHAT REPLACED IT IS REPORT-ONLY. Gate 4 is report-only. It does not fail the
+ * build solely because of NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS.
+ * Runtime exact-membership is the activation control.
+ * That control is slugIsListed() below, and it runs in EVERY environment —
+ * including the local and CI builds where the report never runs at all. It has no database access, so it can
+ * prove neither that an entry identifies a studio nor that anything is
+ * activated; it reports the NORMALISED CONFIGURED ENTRIES it would parse, and
+ * WARNS on a value outside the shape current writers give a slug. That warning
+ * does NOT block: `studios.slug` carries a UNIQUE constraint and no shape or
+ * length check, so a legacy or directly-created row can sit outside that shape
+ * and still be matched exactly HERE — refusing such a value would make the
+ * build gate stricter than this module, and would block a legitimate
+ * activation. The one thing an empty value does prove is that nothing is
+ * enabled. DO NOT RELY ON THE GATE TO CATCH A MISTYPED SLUG: nothing does, and
+ * only the product can confirm an activation.
+ *
+ * No second flag system was added for activation, and none
+ * should be — the answer to "is this studio's durable waitlist on?" must stay
+ * this one set-membership question.
+ *
+ * THERE IS NO GLOBAL ENABLE, BY CONSTRUCTION. slugIsListed() below asks only
+ * whether one server-resolved slug is a MEMBER of the parsed set. No value —
+ * "*", "all", "true" — is interpreted as "every studio", because nothing here
+ * interprets values at all. Enabling N studios costs N typed slugs.
  */
 export const NEW_CLIENT_WAITLIST_DURABLE_SLUGS_ENV =
   "NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS";

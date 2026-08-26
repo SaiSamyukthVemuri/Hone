@@ -65,17 +65,23 @@ describe("0184: file and numbering", () => {
     // life. It first asserted the pre-apply state (hosted 0183, pending
     // ["0184"]); then, once 0184 shipped, that 0184 was the hosted maximum with
     // 0185 claimed-but-unapplied. 0185 was applied on 2026-08-23, so BOTH of
-    // those are now historical and current-state ownership moves to 0185.
+    // those are now historical. 0186 was applied on 2026-08-24, so current-state
+    // ownership has moved on again — which is exactly why the exact-head pin
+    // that used to sit below is gone: replacing one head pin with another made
+    // this file go red over a fact it does not own. "Applied, and below the
+    // head" is the permanent claim.
     //
     // 0184 remains applied — that fact is permanent and is what the rest of
     // this file protects. What is no longer true is that it is the LATEST
     // thing production has run.
     const state = migrationState();
-    expect(state.hosted_migration_max).toBe("0185");
-    expect(state.repo_migration_max).toBe("0185");
-    expect(state.repo_equals_hosted).toBe(true);
-    expect(state.pending_migrations).toEqual([]);
-    expect(state.next_free_migration).toBe("0186");
+    // WHAT THIS BLOCK OWNS is 0184's own status: applied, and no longer the
+    // head. The REPO-side current state (repo max, pending, next free) is
+    // deliberately NOT asserted here - it belongs to whichever migration is
+    // currently the repository maximum, and pinning it in this file is what
+    // made every older per-migration test go red on each new number.
+    expect(Number(state.hosted_migration_max)).toBeGreaterThan(184);
+    expect(state.pending_migrations).not.toContain("0184");
     // 0184 is still in the applied chain, below the head.
     expect(Number(state.hosted_migration_max)).toBeGreaterThan(Number(VERSION));
   });
@@ -95,13 +101,16 @@ describe("0184: file and numbering", () => {
     );
     expect(note).toContain("APPLY observed 2026-08-17T12:02:40Z through 12:03:01Z");
     expect(note).toContain("PUSH EXIT CODE 0 EXPLICITLY CAPTURED");
-    // ...and the precision qualifier is still stated for whatever IS current,
-    // so no apply in this repository is ever recorded as a server timestamp.
+    // ...and whatever IS current still travels with a precision qualifier.
+    // The exact wording is NOT pinned: it was "operator-observed" for 0183,
+    // 0184 and 0185, and 0186's apply session was never observed at all, so
+    // requiring that phrase would fail a more cautious record for not using a
+    // word it has no right to.
     const state = migrationState();
-    expect(state.hosted_applied_at_precision).toMatch(/operator-observed/i);
-    expect(state.hosted_applied_at_precision).toMatch(
-      /NOT a server-generated migration timestamp/i,
-    );
+    expect(
+      state.hosted_applied_at_precision,
+      "every hosted_applied_at must travel with a precision qualifier",
+    ).toBeTruthy();
   });
 
   it("the canonical record carries 0184's apply evidence, honestly", () => {
@@ -157,16 +166,18 @@ describe("0184: file and numbering", () => {
     );
   });
 
-  it("0185 is now APPLIED, exactly once, and 0186 is the free number", () => {
+  it("0185 is APPLIED and remains a single file", () => {
     // This block has tracked 0185 through its whole life from the migration
     // that used to guard the number: free -> claimed -> applied. It is applied
-    // now, so "claimed but not in production" is no longer the truth to hold.
+    // now, and that is the last transition this file needs to witness. The
+    // NEXT free number is not asserted here: it moves on every new migration
+    // and is derived by scripts/migration-state.mjs, whose own tests own it.
     const state = migrationState();
     expect(countVersion("0185")).toBe(1);
-    expect(state.hosted_migration_max).toBe("0185");
-    expect(state.pending_migrations).toEqual([]);
-    expect(state.next_free_migration).toBe("0186");
-    expect(countVersion("0186")).toBe(0);
+    // Applied and at-or-below the head — true forever. 0185 stopped being the
+    // head when 0186 was applied.
+    expect(Number(state.hosted_migration_max)).toBeGreaterThanOrEqual(185);
+    expect(state.pending_migrations).not.toContain("0185");
   });
 
   it("never reintroduces 0158, which is permanently skipped", () => {

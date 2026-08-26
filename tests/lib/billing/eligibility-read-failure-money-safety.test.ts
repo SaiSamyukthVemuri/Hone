@@ -69,6 +69,18 @@ vi.mock("@/lib/consent/current-card-authorization", () => ({
   }),
 }));
 
+// PAY-SETTLE / 0187. Prepare's new pre-flight settlement read. It is NOT a
+// tripwire: it is a read, it moves nothing, and a failed one must never block a
+// legitimate charge — the SQL claim command remains the authority. Returning a
+// clean empty load keeps every assertion in this file about the failure it was
+// written to prove.
+vi.mock("@/lib/billing/appointment-settlement", () => ({
+  getAppointmentSettlements: async () => ({
+    ok: true,
+    byAppointmentId: new Map(),
+  }),
+}));
+
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
 vi.mock("@/lib/analytics/server", () => ({ captureServerEvent: async () => {} }));
 

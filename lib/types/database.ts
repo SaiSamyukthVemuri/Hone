@@ -68,6 +68,11 @@ export type Studio = {
   send_confirmation_emails: boolean;
   send_24h_reminders: boolean;
   send_2h_reminders: boolean;
+  // Migration 0186: intake-form reminders, INDEPENDENT of the two toggles
+  // above. Defaults true in the database. Optional here for rows loaded via
+  // `select *` before 0186 is applied, so the runtime reads it as
+  // `!== false` - absent means enabled, which is the shipped default.
+  send_intake_reminders?: boolean;
   auto_mark_no_shows: boolean;
   send_no_show_followup: boolean;
   // Migration 0026: opt-in display of client treatment time in emails.

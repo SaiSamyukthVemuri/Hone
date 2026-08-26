@@ -308,10 +308,18 @@ describe("row hygiene", () => {
     // The row body is an <a>; a <button>/<a> inside it is invalid HTML with
     // undefined activation behaviour (the CHLOE D1 defect). Both new controls
     // live in the sibling actions column.
-    const linkStart = ROW.indexOf("<Link\n          href={`/calendar/");
-    const linkEnd = ROW.indexOf("</Link>", linkStart);
+    //
+    // Located by the property (an element whose name ends in `Link`, carrying
+    // the calendar href), not by one spelling: UI-01C swapped this control to
+    // PendingContainerLink, which is the same anchor with a pending
+    // presentation added as an out-of-flow sibling. The rule guarded here is
+    // about what is NESTED inside the row body, and that is unchanged.
+    const opening = /<(\w*Link)\n\s+href=\{`\/calendar\//.exec(ROW);
+    expect(opening, "the row-body calendar link must exist").not.toBeNull();
+    const linkStart = opening!.index;
+    const linkEnd = ROW.indexOf(`</${opening![1]}>`, linkStart);
     const body = ROW.slice(linkStart, linkEnd);
-    expect(linkStart).toBeGreaterThan(-1);
+    expect(linkEnd).toBeGreaterThan(linkStart);
     expect(body).not.toMatch(/<button|TodayPortalLinkButton|onClick/);
     expect(body).toMatch(/<CardOnFilePill status=\{cardOnFile\} \/>/);
     expect(body).toMatch(/<CurrentPill \/>/);

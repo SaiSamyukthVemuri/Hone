@@ -5,9 +5,7 @@ import path from "node:path";
 import {
   countVersion,
   fileForVersion,
-  isRepoMax,
   migrationState,
-  versionsAbove,
 } from "./helpers/migration-state";
 
 // 0185 — the durable, studio-scoped new-client waitlist (WAIT-02).
@@ -53,10 +51,12 @@ const STATEMENTS = CODE.replace(/'(?:[^']|'')*'/g, "''");
 const TABLE = "public.new_client_waitlist_entries";
 
 describe("0185 — migration state", () => {
-  it("is the current repository maximum, exactly once, with nothing above it", () => {
-    expect(isRepoMax(VERSION)).toBe(true);
+  // The "nothing above me" tripwire moved to 0186 when it landed: per
+  // CLAUDE.md only the CURRENT repository maximum may assert isRepoMax, so
+  // that a new migration does not turn every older per-migration test red.
+  // Uniqueness of this version is still this file's own business.
+  it("exists exactly once", () => {
     expect(countVersion(VERSION)).toBe(1);
-    expect(versionsAbove(VERSION)).toEqual([]);
   });
 
   it("is named for what it creates", () => {
@@ -423,19 +423,21 @@ describe("0185 — blast radius", () => {
 });
 
 // ===========================================================================
-// CURRENT HOSTED STATE — 0185 OWNS IT NOW
+// 0185 — APPLIED, AND NO LONGER THE CURRENT RECORD
 // ===========================================================================
 //
-// Inherited from 0184's block at the apply hand-off. Whichever migration is
-// the applied head owns these facts; a superseded migration's file must not
-// keep deciding them, or it has to be rewritten on every future apply.
+// THE 0186 HAND-OFF HAPPENED. This file used to own the current-hosted-state
+// block, inherited from 0184 at the previous hand-off and built to be handed on
+// in turn: whichever migration is the applied head owns those facts, or a
+// superseded migration's file has to be rewritten on every future apply.
 //
-// 0185 was applied to production on 2026-08-23. It is now FROZEN: any
-// correction is a NEW migration.
+// 0186 was applied on 2026-08-24, so that ownership moved to
+// tests/migrations/0186-intake-reminder-24h-2h.test.ts. What stays here is
+// 0185's own permanent evidence, which no later apply can change.
 
 function canonicalRecord(): {
   hosted_migration_max: string;
-  hosted_applied_at: string;
+  hosted_applied_at: string | null;
   hosted_applied_at_precision: string;
   hosted_note: string;
 } {
@@ -444,171 +446,17 @@ function canonicalRecord(): {
   );
 }
 
-/** The marker that separates the head record from the carried history. */
+/** 0185's own record, as it read while 0185 was the head. */
+const OWN_RECORD_OPENING =
+  "0185_new_client_waitlist_entries.sql APPLIED to production 2026-08-23";
 
-/**
- * The frozen checksums the carried history must never lose, head to oldest.
- * Exactly the anchors the retired 0184 helper protected. A record that drops
- * one has truncated production apply history, however well-formed its head
- * still reads.
- */
-/**
- * THE INTEGRITY BOUNDARY: a digest of the ENTIRE carried 0184 record.
- *
- * Four named anchors were not enough, and the way they failed is worth keeping
- * written down. They closed suffix truncation but said nothing about the middle
- * of the chain: deleting the whole 0180 clause drops 261 characters and that
- * record's checksum while leaving all four anchors present, so an enumeration
- * passed while apply history was gone. `toContain` is also order-blind.
- *
- * Enumerating all thirteen carried records would just be a longer list with the
- * same shape of gap — the next omission would be mine again. So the boundary is
- * now ONE invariant that cannot be partially satisfied: the carried record must
- * be byte-identical to the 0184 `hosted_note` as it existed on this PR's
- * production base, 48f0238900c07bd5d2dfed5c1ebbd832e77fdc50.
- *
- * Derived mechanically from that commit — `git show <base>:docs/production/
- * migration-state.json`, parse `hosted_note`, sha256 the exact UTF-8 bytes. Not
- * copied from prose, not taken from this branch's own suffix, no whitespace
- * normalisation, no trimming.
- *
- * It covers the 0184 narrative and every link behind it — 0183, 0182, 0181,
- * 0180, 0179, 0178, 0177, 0176, 0175, 0174, 0173, 0172 and the 0171 tail —
- * with every checksum, every evidence statement and the exact ordering.
- */
-const CARRIED_0184_NOTE_SHA256 =
-  "a65f858e18b997279dc56a53161669480881eb525e1674c490554335827c68be";
-
-/**
- * THE ONE DELIMITER. Where the 0185 head stops and the frozen 0184 record
- * begins, used by BOTH the positional current-state guard and the whole-record
- * digest — there is deliberately no second definition.
- *
- * There briefly was. `splitNote` searched the bare prefix "CARRIES THE FULL
- * CHECKSUM CHAIN FORWARD" while the digest searched this full phrase, so the
- * two guards split the note at different points. A stray mention of the bare
- * words inside the head ended `head` early, and a second current-record claim
- * placed after that mention but before the real delimiter fell into neither
- * guard's view: the uniqueness check never saw it, and the digest — reading
- * from the later, real delimiter — was still correct. Two definitions of one
- * boundary is the whole defect, so there is now one.
- *
- * The carried record contains this same phrase (0184 carried its own chain
- * forward), so the FIRST occurrence is the boundary.
- */
-const CARRIED_RECORD_BOUNDARY =
-  "CARRIES THE FULL CHECKSUM CHAIN FORWARD so no earlier apply record is dropped: ";
-
-/**
- * Readable landmarks only. These are no longer the integrity boundary — the
- * digest above is — but they name what a reader should expect to find, and a
- * failure here is easier to interpret than a digest mismatch.
- */
-const CARRIED_CHAIN_ANCHORS: ReadonlyArray<readonly [string, string]> = [
-  ["0183", "a7b8926832747319024d7c89213688b68fb363d09e88317e3bba6dbb17c6fbeb"],
-  ["0182", "07ee23e1254329168e205f42b47c351205ebb306afc0f7d524b69c8d14ecda57"],
-  ["0181", "2f5bcbd5854b1201835f6151debffa940e98035e6a4d88865da1d86fb3da195f"],
-  ["0171", "f4e8535093721c6fb9c677925a3e4a8f202e3f2ad56b6d6208da608f5d2a62e6"],
-];
-const SUPERSESSION = /SUPERSEDES the (\d{4}) record as the CURRENT hosted-state record/;
-
-/**
- * Split the canonical note into the HEAD record and the carried CHAIN.
- *
- * The note is written newest-first: the active record, then the chain-forward
- * marker, then every superseded record verbatim. That ordering is what makes
- * "active" separable from "historical" without rewriting history.
- */
-function splitNote(note: string): { head: string; chain: string } {
-  const at = note.indexOf(CARRIED_RECORD_BOUNDARY);
-  if (at < 0) throw new Error("canonical note carries no 0184 record boundary");
-  return { head: note.slice(0, at), chain: note.slice(at) };
-}
-
-/** The frozen 0184 record carried inside the current note, exactly. */
-function carriedRecord(note: string): string {
-  const at = note.indexOf(CARRIED_RECORD_BOUNDARY);
-  if (at < 0) throw new Error("canonical note carries no 0184 record boundary");
-  return note.slice(at + CARRIED_RECORD_BOUNDARY.length);
-}
-
-/** THE integrity boundary. One invariant, impossible to partially satisfy. */
-function assertCarriedRecordIntact(note: string): void {
-  const digest = createHash("sha256")
-    .update(carriedRecord(note), "utf8")
-    .digest("hex");
-  expect(
-    digest,
-    "the carried 0184 record is no longer byte-identical to the production-base " +
-      "hosted_note: apply history has been edited, truncated or reordered",
-  ).toBe(CARRIED_0184_NOTE_SHA256);
-}
-
-/**
- * THE ACTIVE-RECORD INVARIANT.
- *
- * Deliberately NOT "the phrase appears exactly once in the note". Historical
- * records may — and now do — truthfully preserve the exact words they used
- * while they were current; 0184's own supersession of 0183 is immutable
- * evidence and must survive verbatim. Counting occurrences globally would
- * force a rewrite of frozen history to satisfy a guard, which is backwards.
- *
- * So the law is positional: the HEAD names exactly one current record, and it
- * is 0185 superseding 0184. Everything after the chain marker is history and
- * may say whatever it truthfully said at the time.
- */
-function assertActiveRecordIs(note: string, expectedSuperseded: string): void {
-  const { head, chain } = splitNote(note);
-
-  const inHead = [...head.matchAll(new RegExp(SUPERSESSION, "g"))];
-  expect(
-    inHead.length,
-    "the HEAD of the canonical note must name exactly ONE current hosted record",
-  ).toBe(1);
-  expect(
-    inHead[0][1],
-    "the active supersession must name the migration being replaced",
-  ).toBe(expectedSuperseded);
-
-  // No stray "X is CURRENT" claim in the head beyond that one supersession.
-  const currentClaims = head.split("as the CURRENT hosted-state record").length - 1;
-  expect(currentClaims, "a second current-record claim in the head").toBe(1);
-
-  // The head must be the record for the migration that is actually applied.
-  expect(head).toContain(`${fileForVersion(VERSION)} APPLIED to production`);
-
-  // AND THE CARRIED RECORD MUST BE BYTE-IDENTICAL TO THE FROZEN ORIGINAL.
-  // This is the integrity boundary; the anchors below are landmarks.
-  assertCarriedRecordIntact(note);
-
-  // Landmarks, kept for readability.
-  for (const [label, sha] of CARRIED_CHAIN_ANCHORS) {
-    expect(chain, `carried chain lost its ${label} checksum anchor`).toContain(sha);
-  }
-}
-
-describe("0185 — current hosted state", () => {
-  it("is the APPLIED production head", () => {
+describe("0185 — applied, and handed the hosted maximum over", () => {
+  it("IS applied to production, and is no longer the head", () => {
+    // The two facts that stay true forever: 0185 ran, so it must never appear
+    // as pending again; and the head has moved past it.
     const state = migrationState();
-    expect(state.hosted_migration_max).toBe(VERSION);
-    expect(state.repo_migration_max).toBe(VERSION);
-    expect(state.repo_equals_hosted).toBe(true);
-    expect(state.pending_migrations).toEqual([]);
-    expect(state.next_free_migration).toBe("0186");
-    expect(countVersion("0186")).toBe(0);
-  });
-
-  it("the canonical apply record is 0185's, and its precision is stated", () => {
-    const rec = canonicalRecord();
-    expect(rec.hosted_migration_max).toBe(VERSION);
-    // Operator-observed close of the apply window, NEVER a server timestamp.
-    expect(rec.hosted_applied_at).toBe("2026-08-23T20:31:39Z");
-    expect(rec.hosted_applied_at_precision).toMatch(/operator-observed/i);
-    expect(rec.hosted_applied_at_precision).toMatch(
-      /NOT a server-generated migration timestamp/i,
-    );
-    expect(rec.hosted_note).toMatch(/PUSH EXIT CODE 0 EXPLICITLY CAPTURED/);
-    expect(rec.hosted_note).toMatch(/DRY-RUN EXIT 0/);
+    expect(state.pending_migrations).not.toContain(VERSION);
+    expect(Number(state.hosted_migration_max)).toBeGreaterThan(185);
   });
 
   it("carries 0185's production checksum, matching the file on disk", () => {
@@ -619,216 +467,32 @@ describe("0185 — current hosted state", () => {
     expect(canonicalRecord().hosted_note).toContain(digest);
   });
 
-  it("records the dark-state facts, so a reader cannot infer activation", () => {
+  it("0185's OWN apply evidence survives verbatim in the carried record", () => {
+    // Apply telemetry is the one kind of evidence that cannot be reconstructed
+    // later. 0185's is not lost, it MOVED: it is immutable history inside the
+    // note its successor carries forward.
     const note = canonicalRecord().hosted_note;
-    expect(note).toMatch(/ROW COUNT 0/);
-    expect(note).toMatch(/NO synthetic production prospect was inserted/i);
-    expect(note).toMatch(/WILLOW IS NOT ENABLED/);
-    expect(note).toMatch(/PUBLIC PRIVACY POLICY IS\s+UNCHANGED/);
-    expect(note).toMatch(/ABSENT from the Vercel Production environment/i);
-  });
-
-  it("THE ACTIVE RECORD IS 0185 SUPERSEDING 0184", () => {
-    assertActiveRecordIs(canonicalRecord().hosted_note, "0184");
-  });
-
-  it("carried HISTORY may keep its original current-record wording", () => {
-    // The point of the positional law. 0184's own supersession of 0183 is
-    // frozen evidence living in the chain; it must NOT have to be rewritten,
-    // and its presence must NOT fail the guard.
-    const { chain } = splitNote(canonicalRecord().hosted_note);
-    expect(chain).toContain(
-      "SUPERSEDES the 0183 record as the CURRENT hosted-state record",
-    );
-    expect(() =>
-      assertActiveRecordIs(canonicalRecord().hosted_note, "0184"),
-    ).not.toThrow();
-  });
-
-  it("ANTI-VACUITY: a wrong or duplicated ACTIVE record is caught", () => {
-    // Mutates a COPY. The real record is never touched.
-    const note = canonicalRecord().hosted_note;
-    expect(() => assertActiveRecordIs(note, "0184")).not.toThrow();
-
-    // (a) the active transition naming the wrong migration
-    const wrongTarget = note.replace(
-      "SUPERSEDES the 0184 record as the CURRENT",
-      "SUPERSEDES the 0183 record as the CURRENT",
-    );
-    expect(wrongTarget).not.toEqual(note);
-    expect(() => assertActiveRecordIs(wrongTarget, "0184")).toThrow();
-
-    // (b) a SECOND current-record claim injected into the head
-    const doubled = note.replace(
+    expect(note).toContain(OWN_RECORD_OPENING);
+    expect(note).toContain("APPLY observed 2026-08-23T20:31:19Z through 20:31:39Z");
+    expect(note).toContain("PUSH EXIT CODE 0 EXPLICITLY CAPTURED");
+    expect(note).toContain("DRY-RUN EXIT 0");
+    expect(note).toContain(
       "SUPERSEDES the 0184 record as the CURRENT hosted-state record",
-      "SUPERSEDES the 0184 record as the CURRENT hosted-state record and also " +
-        "the 0182 record as the CURRENT hosted-state record",
     );
-    expect(doubled).not.toEqual(note);
-    expect(() => assertActiveRecordIs(doubled, "0184")).toThrow();
-
-    // (c) the chain truncated away entirely
-    const truncated = note.slice(
-      0,
-      note.indexOf(CARRIED_RECORD_BOUNDARY) + CARRIED_RECORD_BOUNDARY.length + 10,
-    );
-    expect(() => assertActiveRecordIs(truncated, "0184")).toThrow();
   });
 
-  it("ANTI-VACUITY: truncating the chain after the 0184 -> 0183 handoff is caught", () => {
-    // The exact case a character-count threshold missed. Cut the note right
-    // after the historical 0184 -> 0183 supersession: the head is untouched,
-    // that wording survives, and ~3,500 characters remain — so a length check
-    // passes while 0183, 0182, 0181 and 0171 have all been dropped.
+  it("0185's record sits BELOW the head, not at it", () => {
+    // Stated by ordering alone, so this file needs no second definition of
+    // where the head record stops.
     const note = canonicalRecord().hosted_note;
-    const clause = "SUPERSEDES the 0183 record as the CURRENT hosted-state record";
-    const truncated = note.slice(0, note.indexOf(clause) + clause.length);
-
-    // The truncation really is the shape that used to slip through.
-    const { chain } = splitNote(truncated);
-    expect(chain.length).toBeGreaterThan(500);
-    expect(chain).toContain(clause);
-    for (const [, sha] of CARRIED_CHAIN_ANCHORS) {
-      expect(truncated).not.toContain(sha);
-    }
-
-    // ...and it now fails.
-    expect(() => assertActiveRecordIs(truncated, "0184")).toThrow();
+    const own = note.indexOf(OWN_RECORD_OPENING);
+    expect(own).toBeGreaterThan(0);
   });
 
-  it("CONTROL 0 — a stray mention of the bare phrase cannot hide a second claim", () => {
-    // The defect this unification closes, reproduced end to end.
-    //
-    // When `splitNote` searched the bare prefix and the digest searched the
-    // full delimiter, the two guards split the note at DIFFERENT points. Put a
-    // bare "CARRIES THE FULL CHECKSUM CHAIN FORWARD" inside the head, then a
-    // second current-record claim after it but still before the real
-    // delimiter, and that claim landed in the gap: the uniqueness check never
-    // saw it, and the digest — reading from the later, real delimiter — was
-    // still perfectly correct.
-    const note = canonicalRecord().hosted_note;
-    const anchor = "0185 IS NOW FROZEN.";
-    expect(note).toContain(anchor);
-    const injection =
-      "This record CARRIES THE FULL CHECKSUM CHAIN FORWARD. It also names " +
-      "the 0182 record as the CURRENT hosted-state record. ";
-    const mutated = note.replace(anchor, injection + anchor);
-    expect(mutated).not.toEqual(note);
-
-    // The mutation really is the reported shape.
-    const BARE = "CARRIES THE FULL CHECKSUM CHAIN FORWARD";
-    const bareAt = mutated.indexOf(BARE);
-    const realAt = mutated.indexOf(CARRIED_RECORD_BOUNDARY);
-    expect(bareAt).toBeGreaterThan(-1);
-    expect(realAt).toBeGreaterThan(bareAt); // the stray mention comes FIRST
-
-    // (a) THE OLD SPLIT WOULD HAVE HIDDEN IT. Cutting at the bare prefix
-    //     produces a head containing ZERO current-record claims, while two are
-    //     genuinely present before the real delimiter.
-    const oldHead = mutated.slice(0, bareAt);
-    const trueHead = mutated.slice(0, realAt);
-    expect(oldHead.split("as the CURRENT hosted-state record").length - 1).toBe(0);
-    expect(trueHead.split("as the CURRENT hosted-state record").length - 1).toBe(2);
-
-    // (b) THE CARRIED DIGEST IS UNAFFECTED, which is why the digest alone could
-    //     never have caught this.
-    expect(() => assertCarriedRecordIntact(mutated)).not.toThrow();
-    for (const [, sha] of CARRIED_CHAIN_ANCHORS) {
-      expect(mutated).toContain(sha);
-    }
-
-    // (c) THE UNIFIED BOUNDARY SEES IT. Both guards now split at the same
-    //     delimiter, so the second claim is inside HEAD and is rejected.
-    expect(splitNote(mutated).head).toBe(trueHead);
-    expect(() => assertActiveRecordIs(mutated, "0184")).toThrow();
-  });
-
-  it("CONTROL 3 — the real carried record matches the frozen digest", () => {
-    const note = canonicalRecord().hosted_note;
-    const carried = carriedRecord(note);
-    expect(carried.length).toBe(6101);
-    expect(createHash("sha256").update(carried, "utf8").digest("hex")).toBe(
-      CARRIED_0184_NOTE_SHA256,
-    );
-    expect(() => assertCarriedRecordIntact(note)).not.toThrow();
-  });
-
-  it("CONTROL 1 — MID-CHAIN DELETION is caught (the exact reported case)", () => {
-    // Codex's reproduction: remove the whole 0180 clause. All four landmark
-    // anchors survive, so the enumeration this replaced still passed while that
-    // record's checksum and evidence were gone.
-    const note = canonicalRecord().hosted_note;
-    const from = note.indexOf("the 0180 record (");
-    const to = note.indexOf("the 0179 record (");
-    expect(from).toBeGreaterThan(-1);
-    expect(to).toBeGreaterThan(from);
-    const mutated = note.slice(0, from) + note.slice(to);
-
-    // It really is the reported shape: shorter, 0180's checksum gone, and every
-    // landmark anchor still present.
-    expect(mutated.length).toBeLessThan(note.length);
-    expect(mutated).not.toContain(
-      "d5d8271da38588a89e0727ce7a2a5c417ee8e079ad283acdc1fa55f90727eb8d",
-    );
-    for (const [, sha] of CARRIED_CHAIN_ANCHORS) {
-      expect(mutated).toContain(sha);
-    }
-
-    // ...and the digest catches it.
-    expect(() => assertCarriedRecordIntact(mutated)).toThrow();
-    expect(() => assertActiveRecordIs(mutated, "0184")).toThrow();
-  });
-
-  it("CONTROL 2 — REORDERING carried links is caught", () => {
-    // Same bytes, different order. Every anchor is present and nothing is
-    // missing, so no containment check could ever see this.
-    const note = canonicalRecord().hosted_note;
-    const a = "the 0177 record (";
-    const b = "the 0176 record (";
-    const c = "the 0175 record (";
-    const ia = note.indexOf(a), ib = note.indexOf(b), ic = note.indexOf(c);
-    expect(ia).toBeGreaterThan(-1);
-    expect(ib).toBeGreaterThan(ia);
-    expect(ic).toBeGreaterThan(ib);
-    const swapped =
-      note.slice(0, ia) + note.slice(ib, ic) + note.slice(ia, ib) + note.slice(ic);
-
-    // Nothing lost — identical length, and every anchor still present.
-    expect(swapped.length).toBe(note.length);
-    expect(swapped).not.toEqual(note);
-    for (const [, sha] of CARRIED_CHAIN_ANCHORS) {
-      expect(swapped).toContain(sha);
-    }
-
-    // ...and the digest catches it.
-    expect(() => assertCarriedRecordIntact(swapped)).toThrow();
-  });
-
-  it("each carried anchor is load-bearing on its own", () => {
-    // Dropping any SINGLE checksum must fail, not just wholesale truncation.
-    const note = canonicalRecord().hosted_note;
-    for (const [label, sha] of CARRIED_CHAIN_ANCHORS) {
-      const without = note.split(sha).join("REMOVED");
-      expect(without, label).not.toEqual(note);
-      expect(
-        () => assertActiveRecordIs(without, "0184"),
-        `losing the ${label} anchor went undetected`,
-      ).toThrow();
-    }
-  });
-
-  it("the positional law is NOT a global phrase count", () => {
-    // What separates the positional law from counting: the real record already
-    // contains a SECOND "as the CURRENT hosted-state record" — 0184's own
-    // supersession of 0183, frozen inside the carried chain — and the guard
-    // passes anyway. A global count would fail here and would force frozen
-    // history to be rewritten on every apply.
-    const note = canonicalRecord().hosted_note;
-    expect(note.split("as the CURRENT hosted-state record").length - 1).toBeGreaterThan(1);
-    expect(() => assertActiveRecordIs(note, "0184")).not.toThrow();
-
-    // (Appending to the chain is no longer a legitimate operation to tolerate:
-    // the carried record is byte-frozen by digest, and the controls below prove
-    // that any edit to it — deletion, reordering — is caught.)
+  it("THE CURRENT-RECORD CLAIM IS NO LONGER 0185'S, by construction", () => {
+    // Proof the retirement is real rather than an excuse to stop checking.
+    const rec = canonicalRecord();
+    expect(Number(rec.hosted_migration_max)).toBeGreaterThan(185);
+    expect(rec.hosted_applied_at).not.toBe("2026-08-23T20:31:39Z");
   });
 });

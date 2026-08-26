@@ -44,6 +44,12 @@ export type ReminderSmsInput = {
   startsAt: Date;
   timezone: string;
   manageUrl: string | null;
+  // A FRESH secure intake link, or null/absent. Non-null ONLY when the cron
+  // decided, against LIVE intake state read after the appointment re-check,
+  // that this message should carry the intake CTA. Same convention the
+  // booking-confirmation SMS has always used. Optional so existing callers
+  // and tests that build a plain reminder need no change.
+  intakeUrl?: string | null;
 };
 
 // Compact phrase for the appointment moment used by every template:
@@ -92,8 +98,13 @@ export function buildBookingConfirmationSms(
 export function build24hReminderSms(p: ReminderSmsInput): string {
   const moment = appointmentMoment(p.startsAt, p.timezone);
   const head = `Reminder from ${p.studioName}: appointment ${moment}`;
+  // Neutral on a lock screen: it asks for the form, it never states that the
+  // form is incomplete and carries no clinical or health detail.
+  const intake = p.intakeUrl
+    ? `Please complete your intake form before your visit: ${p.intakeUrl}`
+    : null;
   const manage = p.manageUrl ? `Manage appointment: ${p.manageUrl}` : null;
-  const body = joinParts([head, manage]);
+  const body = joinParts([head, intake, manage]);
   return `${body}. ${REPLY_DISCLOSURE}`;
 }
 
@@ -103,7 +114,10 @@ export function build2hReminderSms(p: ReminderSmsInput): string {
   const head = `Today's appointment with ${p.studioName} is at ${
     localTimeString12h(p.startsAt, p.timezone)
   }`;
+  const intake = p.intakeUrl
+    ? `If you haven't already, please complete your intake form: ${p.intakeUrl}`
+    : null;
   const manage = p.manageUrl ? `Manage appointment: ${p.manageUrl}` : null;
-  const body = joinParts([head, manage]);
+  const body = joinParts([head, intake, manage]);
   return `${body}. ${REPLY_DISCLOSURE}`;
 }

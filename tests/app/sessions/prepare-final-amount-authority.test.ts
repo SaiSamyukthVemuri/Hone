@@ -40,6 +40,18 @@ vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
 vi.mock("@/lib/analytics/server", () => ({ captureServerEvent: async () => {} }));
 vi.mock("@/lib/stripe/server", () => ({ inferStripeLivemode: () => false }));
 
+// PAY-SETTLE / 0187. Prepare now asks whether this visit already carries an
+// attested outcome, so that a practitioner is told BEFORE a `ready` attempt is
+// created rather than at Run charge. Default: nothing is settled, which is the
+// shape every pre-existing case in this file assumes. `settlements` is
+// overridden by the one case that exercises the refusal.
+const settlements = vi.hoisted(() => ({
+  load: { ok: true, byAppointmentId: new Map() } as unknown,
+}));
+vi.mock("@/lib/billing/appointment-settlement", () => ({
+  getAppointmentSettlements: async () => settlements.load,
+}));
+
 // THE ORACLE. Every rejection must leave this at zero calls; every success
 // must leave exactly one payload whose amount_cents is asserted explicitly.
 const inserted: Array<Record<string, unknown>> = [];
@@ -771,5 +783,53 @@ describe("adjustment audit context and the internal note share one column", () =
     );
     expect(res.ok).toBe(false);
     expect(inserted).toHaveLength(0);
+  });
+});
+
+// PAY-SETTLE / 0187. The pre-flight is mocked away above so the rest of this
+// file stays about amount authority — which would leave the new behaviour
+// untested. These two cases arm it.
+describe("prepare refuses a visit that already has an attested outcome", () => {
+  const settled = (method: string) => ({
+    ok: true,
+    byAppointmentId: new Map([
+      [
+        "appt-1",
+        {
+          id: "s-1",
+          appointmentId: "appt-1",
+          method,
+          amountCents: 4500,
+          quotedAmountCents: 4500,
+          recordedAt: "2026-08-24T00:00:00Z",
+          supersedesId: null,
+        },
+      ],
+    ]),
+  });
+
+  afterEach(() => {
+    settlements.load = { ok: true, byAppointmentId: new Map() };
+  });
+
+  it("creates NO attempt when the visit was recorded as paid in cash", async () => {
+    settlements.load = settled("paid_cash");
+    const before = inserted.length;
+    // An otherwise PERFECTLY VALID prepare — same form every passing case in
+    // this file uses. The only reason it is refused is the recorded outcome.
+    const r = await prepareSessionPaymentChargeAction(form({ final: "120.00" }));
+    expect(r.ok).toBe(false);
+    expect(inserted.length).toBe(before);
+    if (!r.ok) expect(r.error).toMatch(/already has a recorded outcome/);
+  });
+
+  it("still allows a charge when the visit is only recorded as still owing", async () => {
+    // A debt followed by a card payment is the ordinary progression, so this
+    // must NOT be blocked — the SQL claim command agrees.
+    settlements.load = settled("still_owes");
+    const before = inserted.length;
+    const r = await prepareSessionPaymentChargeAction(form({ final: "120.00" }));
+    expect(r.ok).toBe(true);
+    expect(inserted.length).toBe(before + 1);
   });
 });

@@ -4,13 +4,39 @@ import JSZip from "jszip";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { rowsToCsv } from "@/lib/csv";
+// The clinical-notes filename and header row are still owned by this module;
+// the export registry imports them from here, and this module reaches them
+// through the registry like every other file. One definition, one consumer.
 import {
   buildClinicalNoteExportRows,
-  CLINICAL_NOTES_CSV_FILENAME,
-  CLINICAL_NOTES_CSV_HEADERS,
   type ClinicalNoteExportSource,
 } from "@/lib/export/clinical-notes";
 import { fetchAllRows, EXPORT_PAGE_SIZE } from "@/lib/export/paginate";
+import {
+  fetchExportRows,
+  mapExportRows,
+  rowsForResource,
+  selectedColumnsByResource,
+  type ExportRead,
+} from "@/lib/export/provenance";
+// TRUTH-01A. The canonical export resource registry: one declaration per
+// studio-owned resource, and the ONLY place a filename, a header row, a
+// source-count expectation or a file description lives. Everything this module
+// used to hard-code — the CSV names, the README file list, the audit metadata
+// file list, the manifest's count-check coverage — is derived from it now.
+import {
+  auditEmissionParity,
+  auditExportedFilenames,
+  auditSelectedColumns,
+  auditSourceCountCoverage,
+  duplicateFilenameError,
+  emissionParityError,
+  excludedResources,
+  selectedColumnError,
+  exportedResources,
+  exportSpec,
+  pendingResources,
+} from "@/lib/export/resource-registry";
 // One decision point for the budget read, backed by the SAME narrow
 // migration-skew classifier the Consultation page uses, so the two surfaces
 // cannot drift into tolerating different sets of errors.
@@ -56,6 +82,32 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
 
   const supabase = await createClient();
 
+  // ---------------------------------------------------------------------
+  // F7. THE SELECT THAT IS EXECUTED IS THE SELECT THAT IS AUDITED — and it is
+  // now read off the REQUEST, not off a wrapper.
+  //
+  // Three earlier attempts failed, each closer than the last. Unioning observed
+  // selects BY TABLE let the practitioners display-name LOOKUP satisfy the
+  // practitioners EXPORT contract. A static per-resource map fixed the union
+  // but not the substance: a declaration says what a query SHOULD select, so
+  // swapping a call site to an inline literal left the map correct and the CSV
+  // column blank. Recording the literal AT `.select()` was closer still, and
+  // Codex found the remaining gap: postgrest-js keeps `select` in the request
+  // URL and a LATER `.select()` REPLACES it, so the recorder could hold
+  // "id, name, email" while the request asked for "id".
+  //
+  // `fetchExportRows` reads `select` off the built request instead — the only
+  // copy PostgREST can act on — and returns the rows in an envelope carrying
+  // both that select and the resource whose CSV they become. The audit reads
+  // the envelope's select; `writeCsv` reads its resource. One object, so the
+  // two halves cannot drift the way a declaration and its call site did.
+  //
+  // A read that does not feed an exported CSV — the practitioners lookup, the
+  // session_blocks and services reads — uses plain `fetchAllRows`, carries no
+  // envelope, and therefore can neither satisfy an export's select contract nor
+  // be written as an exported resource.
+  // ---------------------------------------------------------------------
+
   // electrolysis_entries and laser_entries don't carry studio_id directly;
   // RLS scopes them through the parent session, so a plain select is safe.
   const [
@@ -86,7 +138,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     // guard below — see the comment there.
     budgetContextRes,
   ] = await Promise.all([
-    fetchAllRows((from, to) =>
+    fetchExportRows("clients", (from, to) =>
       supabase
         .from("clients")
         .select(
@@ -97,7 +149,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
         .order("id", { ascending: true })
         .range(from, to),
     ),
-    fetchAllRows((from, to) =>
+    fetchExportRows("sessions", (from, to) =>
       supabase
         .from("sessions")
         .select(
@@ -109,7 +161,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
         .order("id", { ascending: true })
         .range(from, to),
     ),
-    fetchAllRows((from, to) =>
+    fetchExportRows("electrolysis_entries", (from, to) =>
       supabase
         .from("electrolysis_entries")
         .select(
@@ -119,7 +171,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
         .order("id", { ascending: true })
         .range(from, to),
     ),
-    fetchAllRows((from, to) =>
+    fetchExportRows("laser_entries", (from, to) =>
       supabase
         .from("laser_entries")
         .select(
@@ -129,20 +181,24 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
         .order("id", { ascending: true })
         .range(from, to),
     ),
-    fetchAllRows((from, to) =>
+    fetchExportRows("practitioners", (from, to) =>
       supabase
         .from("practitioners")
-        .select("id, display_name, email, role, active, created_at")
+        .select(
+          "id, display_name, email, role, active, created_at",
+        )
         .eq("studio_id", studio.id)
         .eq("active", true)
         .order("display_name", { ascending: true })
         .order("id", { ascending: true })
         .range(from, to),
     ),
-    fetchAllRows((from, to) =>
+    fetchExportRows("client_pricing", (from, to) =>
       supabase
         .from("client_pricing")
-        .select("id, client_id, service_name, price_cents, notes, effective_from")
+        .select(
+          "id, client_id, service_name, price_cents, notes, effective_from",
+        )
         .eq("studio_id", studio.id)
         .order("effective_from", { ascending: false })
         .order("id", { ascending: true })
@@ -167,7 +223,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     // internal scheduling snapshots (buffer_minutes_snapshot,
     // blocked_ends_at) are deliberately NOT selected: backup of human
     // booking data only, never opaque tokens or trigger-managed mechanics.
-    fetchAllRows((from, to) =>
+    fetchExportRows("appointments", (from, to) =>
       supabase
         .from("appointments")
         .select(
@@ -182,7 +238,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     // practitioner_notes live on this table and ARE plan data; private
     // warnings + personal notes live on the separate client_personal_notes
     // table and are never read here.
-    fetchAllRows((from, to) =>
+    fetchExportRows("treatment_plans", (from, to) =>
       supabase
         .from("treatment_plans")
         .select(
@@ -195,7 +251,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     ),
     // Treatment plan stages (read-only). studio_id is denormalized on this
     // child table (migration 0034), so a direct studio-scoped read is safe.
-    fetchAllRows((from, to) =>
+    fetchExportRows("treatment_plan_stages", (from, to) =>
       supabase
         .from("treatment_plan_stages")
         .select(
@@ -231,7 +287,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     // audit rows) remain OWNER-ONLY per migration 0088, enforced twice: the
     // action's role==="owner" gate above AND the owner-only RLS SELECT policy.
     // No image binaries / storage paths / payment tables here.
-    fetchAllRows((from, to) =>
+    fetchExportRows("record_keeping_sterile_items", (from, to) =>
       supabase
         .from("record_keeping_sterile_items")
         // 0182: date_discarded is part of the inspection record. The export is
@@ -246,7 +302,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
         .order("id", { ascending: true })
         .range(from, to),
     ),
-    fetchAllRows((from, to) =>
+    fetchExportRows("record_keeping_disinfectants", (from, to) =>
       supabase
         .from("record_keeping_disinfectants")
         .select(
@@ -260,7 +316,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     // Exposure incidents carry sensitive PII (exposed-person name/address/
     // phone). SELECT is owner-only (0088); the RLS client returns them ONLY
     // because this action runs as the owner. Never switch to the admin client.
-    fetchAllRows((from, to) =>
+    fetchExportRows("record_keeping_exposure_incidents", (from, to) =>
       supabase
         .from("record_keeping_exposure_incidents")
         .select(
@@ -275,7 +331,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     // action + changed-field NAMES + actor + timestamp only. The full `changes`
     // value-snapshot JSON and free-form `metadata` are DELIBERATELY NOT selected
     // that avoids duplicating exposure-incident PII into a second file.
-    fetchAllRows((from, to) =>
+    fetchExportRows("record_keeping_audit_events", (from, to) =>
       supabase
         .from("record_keeping_audit_events")
         .select(
@@ -302,7 +358,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     // Ordered by the clinical event time, with `id` as a deterministic
     // tiebreak so two notes sharing a backdated occurred_at export in a stable
     // order rather than whatever the planner returns.
-    fetchAllRows((from, to) =>
+    fetchExportRows("client_clinical_notes", (from, to) =>
       supabase
         .from("client_clinical_notes")
         .select(
@@ -316,7 +372,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     // Current client budget context (0183). One row per client, so this is
     // small; still paginated to exhaustion like every other read. `id` is the
     // deterministic tiebreak.
-    fetchAllRows((from, to) =>
+    fetchExportRows("client_budget_context", (from, to) =>
       supabase
         .from("client_budget_context")
         .select(
@@ -359,6 +415,42 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     }
   }
 
+  // F7. THE EXECUTED QUERY MUST ASK FOR EVERY COLUMN THE REGISTRY SAYS ITS FILE
+  // CARRIES — and "executed" means the select on the request PostgREST received.
+  //
+  // Each envelope carries the select read off its OWN built request, keyed by
+  // the resource whose CSV its rows become. Nothing else contributes: the
+  // practitioners lookup, the session_blocks read and the services read use
+  // plain `fetchAllRows`, produce no envelope, and so cannot stand in for an
+  // export query. A resource that was never read has no entry at all, so the
+  // audit refuses on the ABSENCE rather than on a mismatch.
+  //
+  // Run here, after every read has executed and before a single row is
+  // serialized. A column declared included but never asked for produces a blank
+  // cell, and a blank cell is indistinguishable from a studio that recorded
+  // nothing there.
+  const exportReads: ReadonlyArray<ExportRead<unknown>> = [
+    clientsRes,
+    sessionsRes,
+    electRes,
+    laserRes,
+    practitionersRes,
+    pricingRes,
+    appointmentsRes,
+    treatmentPlansRes,
+    treatmentPlanStagesRes,
+    sterileItemsRes,
+    disinfectantsRes,
+    exposureIncidentsRes,
+    auditEventsRes,
+    clinicalNotesRes,
+    budgetContextRes,
+  ];
+  const selected = auditSelectedColumns(selectedColumnsByResource(exportReads));
+  if (!selected.ok) {
+    return { ok: false, error: selectedColumnError(selected) };
+  }
+
   // client_budget_context (0183) gets exactly ONE tolerated failure: the
   // proven "this relation does not exist" condition, which is the
   // migration-first window where the new application runs against a database
@@ -389,12 +481,16 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
   const activeSessionIds = new Set(
     ((sessionsRes.data ?? []) as { id: string }[]).map((s) => s.id),
   );
-  const filteredElectrolysis = (
-    (electRes.data ?? []) as { session_id: string }[]
-  ).filter((e) => activeSessionIds.has(e.session_id));
-  const filteredLaser = (
-    (laserRes.data ?? []) as { session_id: string }[]
-  ).filter((e) => activeSessionIds.has(e.session_id));
+  const filteredElectrolysis = mapExportRows(electRes, (rows) =>
+    (rows as { session_id: string }[]).filter((e) =>
+      activeSessionIds.has(e.session_id),
+    ),
+  );
+  const filteredLaser = mapExportRows(laserRes, (rows) =>
+    (rows as { session_id: string }[]).filter((e) =>
+      activeSessionIds.has(e.session_id),
+    ),
+  );
 
   // Flatten the laser equipment_params JSON into top-level CSV columns so
   // spreadsheets show fluence / pulse_width / spot_size as plain fields.
@@ -407,22 +503,24 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     observation_notes: string | null;
     created_at: string;
   };
-  const laserRows = (filteredLaser as unknown as LaserRow[]).map((e) => {
-    const params = (e.equipment_params ?? {}) as Record<string, unknown>;
-    return {
-      id: e.id,
-      session_id: e.session_id,
-      zone: e.zone,
-      treatment_number: e.session_number,
-      fluence: typeof params.fluence === "string" ? params.fluence : null,
-      pulse_width:
-        typeof params.pulse_width === "string" ? params.pulse_width : null,
-      spot_size:
-        typeof params.spot_size === "string" ? params.spot_size : null,
-      observation_notes: e.observation_notes,
-      created_at: e.created_at,
-    };
-  });
+  const laserRows = mapExportRows(filteredLaser, (rows) =>
+    (rows as unknown as LaserRow[]).map((e) => {
+      const params = (e.equipment_params ?? {}) as Record<string, unknown>;
+      return {
+        id: e.id,
+        session_id: e.session_id,
+        zone: e.zone,
+        treatment_number: e.session_number,
+        fluence: typeof params.fluence === "string" ? params.fluence : null,
+        pulse_width:
+          typeof params.pulse_width === "string" ? params.pulse_width : null,
+        spot_size:
+          typeof params.spot_size === "string" ? params.spot_size : null,
+        observation_notes: e.observation_notes,
+        created_at: e.created_at,
+      };
+    }),
+  );
 
   const zip = new JSZip();
 
@@ -436,57 +534,45 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
   // over-report it in the very artifact whose job is to tell the owner how much
   // data they have. `rows.length` is the record count by construction, so this
   // needs no CSV parser and cannot disagree with what was written.
+  //
+  // TRUTH-01A: the filename and the header row are no longer written here.
+  // Both come from the export resource registry, so the file the ZIP contains,
+  // the file the manifest counts, the file the audit row names and the file the
+  // Data settings page advertises are all the same declaration. There is no
+  // second list to fall behind.
+  // TWO RESOURCES MAY NEVER DECLARE THE SAME FILENAME, and it is checked HERE -
+  // before the first write, before any Set collapses them, and before JSZip
+  // keeps one entry per path. A collision would otherwise be invisible: the
+  // second writeCsv overwrites the first's rows AND its manifest count, and
+  // emission parity, the manifest and the audit row would all agree on a file
+  // whose data is simply gone.
+  const filenames = auditExportedFilenames();
+  if (!filenames.ok) {
+    return { ok: false, error: duplicateFilenameError(filenames) };
+  }
+
   const manifestCounts: Record<string, number> = {};
-  const countedCsv = (
-    name: string,
-    headers: ReadonlyArray<string>,
-    rows: ReadonlyArray<Record<string, unknown>>,
-  ): string => {
-    manifestCounts[name] = rows.length;
-    return rowsToCsv(headers, rows);
+  const writeCsv = (
+    resource: string,
+    read: ExportRead<Record<string, unknown>>,
+  ): void => {
+    // The second half of the chain, and the answer to "bind written rows to
+    // their recorded query". Rows may only be serialized for the resource whose
+    // query produced them. The envelope is branded with a symbol, so neither a
+    // bare array nor rows fetched for a different resource can satisfy it —
+    // previously any array was accepted as long as the DESTINATION happened to
+    // have a recorded select, which is exactly the swap this now refuses.
+    // `mapExportRows` carries the brand across the display-name joins that sit
+    // between reading and writing.
+    const rows = rowsForResource(resource, read);
+    const spec = exportSpec(resource);
+    manifestCounts[spec.file] = rows.length;
+    zip.file(spec.file, rowsToCsv(spec.csvHeaders, rows));
   };
 
-  zip.file(
-    "clients.csv",
-    countedCsv(
-      "clients.csv",
-      [
-        "id",
-        "name",
-        "pronouns",
-        "date_of_birth",
-        "fitzpatrick_type",
-        "allergies",
-        "skin_notes",
-        "emergency_contact_name",
-        "emergency_contact_phone",
-        "email",
-        "phone",
-        "created_at",
-      ],
-      clientsRes.data ?? [],
-    ),
-  );
+  writeCsv("clients", clientsRes);
 
-  zip.file(
-    "sessions.csv",
-    countedCsv(
-      "sessions.csv",
-      [
-        "id",
-        "client_id",
-        "practitioner_id",
-        "performed_by_practitioner_id",
-        "modality",
-        "started_at",
-        "ended_at",
-        "price_paid_cents",
-        "session_notes",
-        "created_at",
-      ],
-      sessionsRes.data ?? [],
-    ),
-  );
+  writeCsv("sessions", sessionsRes);
 
   // Block-level structured area + probe metadata, keyed by id for an
   // in-app merge onto each entry via block_id (no SQL join needed).
@@ -531,6 +617,28 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
       .order("id", { ascending: true })
       .range(from, to),
   );
+  // F5. FAIL CLOSED.
+  //
+  // This read is issued separately, AFTER the all-or-nothing guard above, and
+  // its error was never checked — so `?? []` turned a failed read into "this
+  // studio recorded no treatment areas". Every block_areas cell then came back
+  // blank or fell back to the legacy primary-area projection, the archive still
+  // built, the manifest still declared electrolysis completeness as following
+  // the sessions count, and the README still said a failed page aborts the
+  // export. All three were false together, and the owner had no way to tell.
+  //
+  // A derived column is still charting data. It gets the same all-or-nothing
+  // treatment as the sources it is derived from: no warning, no fallback, no
+  // partial archive, and no successful manifest or audit claim for the run.
+  if (areaRowsRes.error) {
+    return {
+      ok: false,
+      error:
+        "Could not read the treatment areas recorded against your session blocks, " +
+        "so the export was not produced. Nothing partial was written. Please try again.",
+    };
+  }
+
   const areasByBlock = new Map<string, BlockArea[]>();
   for (const r of (areaRowsRes.data ?? []) as Array<{
     session_block_id: string;
@@ -554,136 +662,51 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     block_id: string | null;
     [k: string]: unknown;
   };
-  const electRows = (filteredElectrolysis as unknown as ElectRow[]).map((e) => {
-    const b = e.block_id ? blocksById.get(e.block_id) : undefined;
-    return {
-      ...e,
-      areas: Array.isArray(e.areas) ? e.areas.join("; ") : "",
-      // Migration 0108 + charting unification: flatten the UNIFIED findings,
-      // observation chips PLUS a folded legacy reaction_type from the entry's
-      // block: to a semicolon-separated string (CSV's own delimiter is a comma),
-      // so the export presents the reaction as one concept.
-      observation_chips: mergeReactionIntoChips(
-        e.observation_chips,
-        b?.reaction_type ?? null,
-      ).join("; "),
-      block_primary_area: b?.primary_area ?? null,
-      block_side: b?.side ?? null,
-      // Migration 0128: the full ordered multi-area label ("Left cheek; Right
-      // sideburn"). Legacy single-area blocks fall back to primary_area + side,
-      // so no exported record ever collapses to only the first of several areas.
-      block_areas: b
-        ? blockAreasLabel(areasByBlock.get(b.id) ?? null, {
-            primary_area: b.primary_area,
-            side: b.side,
-          })?.replace(/ · /g, "; ") ?? null
-        : null,
-      block_custom_area_detail: b?.custom_area_detail ?? null,
-      probe_key: b?.probe_key ?? null,
-      probe_brand: b?.probe_brand ?? null,
-      probe_material: b?.probe_material ?? null,
-      probe_piece_type: b?.probe_piece_type ?? null,
-      probe_shank: b?.probe_shank ?? null,
-      probe_size_value: b?.probe_size_value ?? null,
-      probe_length: b?.probe_length ?? null,
-      probe_label: b?.probe_label ?? null,
-    };
-  });
-
-  zip.file(
-    "electrolysis_entries.csv",
-    countedCsv(
-      "electrolysis_entries.csv",
-      [
-        // Existing columns kept in their original order for compatibility.
-        "id",
-        "session_id",
-        "area",
-        "areas",
-        "probe_size",
-        "probe_lot_id",
-        "mode",
-        "intensity",
-        "duration_seconds",
-        "pulse_count",
-        "comments",
-        "created_at",
-        // Appended: existing entry-level charting fields that weren't exported.
-        "block_id",
-        "energy_level",
-        "apilus_modality",
-        "machine_frequency",
-        "minutes_performed",
-        "probe_type",
-        "hairs_treated",
-        // Appended: blend / galvanic readings (migration 0042).
-        "galvanic_ma",
-        "galvanic_duration_seconds",
-        "galvanic_intensity_percent",
-        "thermolysis_intensity_percent",
-        "thermolysis_duration_seconds",
-        "units_of_lye",
-        // Appended: structured treatment-observation chips (migration 0108),
-        // semicolon-separated. Free-text notes stay in the `comments` column.
-        "observation_chips",
-        // Appended: structured area + probe from the entry's session block
-        // (migrations 0039 / 0041).
-        "block_primary_area",
-        "block_side",
-        // Appended: the full multi-area set + laterality (migration 0128),
-        // semicolon-separated ("Left cheek; Right sideburn"). block_primary_area
-        // stays for back-compat; this is the complete, non-lossy area record.
-        "block_areas",
-        "block_custom_area_detail",
-        "probe_key",
-        "probe_brand",
-        "probe_material",
-        "probe_piece_type",
-        "probe_shank",
-        "probe_size_value",
-        "probe_length",
-        "probe_label",
-      ],
-      electRows,
-    ),
+  const electRows = mapExportRows(filteredElectrolysis, (rows) =>
+    (rows as unknown as ElectRow[]).map((e) => {
+      const b = e.block_id ? blocksById.get(e.block_id) : undefined;
+      return {
+        ...e,
+        areas: Array.isArray(e.areas) ? e.areas.join("; ") : "",
+        // Migration 0108 + charting unification: flatten the UNIFIED findings,
+        // observation chips PLUS a folded legacy reaction_type from the entry's
+        // block: to a semicolon-separated string (CSV's own delimiter is a comma),
+        // so the export presents the reaction as one concept.
+        observation_chips: mergeReactionIntoChips(
+          e.observation_chips,
+          b?.reaction_type ?? null,
+        ).join("; "),
+        block_primary_area: b?.primary_area ?? null,
+        block_side: b?.side ?? null,
+        // Migration 0128: the full ordered multi-area label ("Left cheek; Right
+        // sideburn"). Legacy single-area blocks fall back to primary_area + side,
+        // so no exported record ever collapses to only the first of several areas.
+        block_areas: b
+          ? blockAreasLabel(areasByBlock.get(b.id) ?? null, {
+              primary_area: b.primary_area,
+              side: b.side,
+            })?.replace(/ · /g, "; ") ?? null
+          : null,
+        block_custom_area_detail: b?.custom_area_detail ?? null,
+        probe_key: b?.probe_key ?? null,
+        probe_brand: b?.probe_brand ?? null,
+        probe_material: b?.probe_material ?? null,
+        probe_piece_type: b?.probe_piece_type ?? null,
+        probe_shank: b?.probe_shank ?? null,
+        probe_size_value: b?.probe_size_value ?? null,
+        probe_length: b?.probe_length ?? null,
+        probe_label: b?.probe_label ?? null,
+      };
+    }),
   );
 
-  zip.file(
-    "laser_entries.csv",
-    countedCsv(
-      "laser_entries.csv",
-      [
-        "id",
-        "session_id",
-        "zone",
-        "treatment_number",
-        "fluence",
-        "pulse_width",
-        "spot_size",
-        "observation_notes",
-        "created_at",
-      ],
-      laserRows,
-    ),
-  );
+  writeCsv("electrolysis_entries", electRows);
 
-  zip.file(
-    "practitioners.csv",
-    countedCsv(
-      "practitioners.csv",
-      ["id", "display_name", "email", "role", "active", "created_at"],
-      practitionersRes.data ?? [],
-    ),
-  );
+  writeCsv("laser_entries", laserRows);
 
-  zip.file(
-    "client_pricing.csv",
-    countedCsv(
-      "client_pricing.csv",
-      ["id", "client_id", "service_name", "price_cents", "notes", "effective_from"],
-      pricingRes.data ?? [],
-    ),
-  );
+  writeCsv("practitioners", practitionersRes);
+
+  writeCsv("client_pricing", pricingRes);
 
   // ---------------------------------------------------------------------
   // Appointments + treatment plans + stages (export/backup readiness).
@@ -714,45 +737,20 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     service_id: string | null;
     [k: string]: unknown;
   };
-  const appointmentRows = (
-    (appointmentsRes.data ?? []) as AppointmentExportRow[]
-  ).map((a) => ({
-    ...a,
-    client_name: a.client_id ? clientNameById.get(a.client_id) ?? null : null,
-    practitioner_name: a.practitioner_id
-      ? practitionerNameById.get(a.practitioner_id) ?? null
-      : null,
-    service_name: a.service_id
-      ? serviceNameById.get(a.service_id) ?? null
-      : null,
-  }));
-
-  zip.file(
-    "appointments.csv",
-    countedCsv(
-      "appointments.csv",
-      [
-        "id",
-        "client_id",
-        "client_name",
-        "practitioner_id",
-        "practitioner_name",
-        "service_id",
-        "service_name",
-        "starts_at",
-        "ends_at",
-        "duration_minutes",
-        "status",
-        "notes",
-        "cancellation_reason",
-        "cancelled_at",
-        "cancelled_by",
-        "created_at",
-        "updated_at",
-      ],
-      appointmentRows,
-    ),
+  const appointmentRows = mapExportRows(appointmentsRes, (rows) =>
+    (rows as AppointmentExportRow[]).map((a) => ({
+      ...a,
+      client_name: a.client_id ? clientNameById.get(a.client_id) ?? null : null,
+      practitioner_name: a.practitioner_id
+        ? practitionerNameById.get(a.practitioner_id) ?? null
+        : null,
+      service_name: a.service_id
+        ? serviceNameById.get(a.service_id) ?? null
+        : null,
+    })),
   );
+
+  writeCsv("appointments", appointmentRows);
 
   // Plan lookup for the stages file (plan_name + client_id/client_name).
   type PlanExportRow = {
@@ -766,203 +764,78 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     plansById.set(p.id, p);
   }
 
-  const treatmentPlanRows = (
-    (treatmentPlansRes.data ?? []) as PlanExportRow[]
-  ).map((p) => {
-    // Migration 0051: treatment_areas is a text[] on the row, which
-    // rowsToCsv would coerce to "Chin,Jawline" without quoting. Flatten
-    // explicitly here so the column shows up as a pipe-joined list,
-    // which round-trips cleanly through any spreadsheet tool ("Chin |
-    // Jawline").
-    const rawAreas = (p as PlanExportRow & {
-      treatment_areas?: string[] | null;
-    }).treatment_areas;
-    const treatment_areas_joined =
-      Array.isArray(rawAreas) && rawAreas.length > 0
-        ? rawAreas.join(" | ")
-        : null;
-    return {
-      ...p,
-      client_name: p.client_id ? clientNameById.get(p.client_id) ?? null : null,
-      treatment_areas: treatment_areas_joined,
-    };
-  });
-
-  zip.file(
-    "treatment_plans.csv",
-    countedCsv(
-      "treatment_plans.csv",
-      [
-        "id",
-        "client_id",
-        "client_name",
-        "name",
-        "primary_area",
-        "treatment_areas",
-        "estimated_timeline_months_min",
-        "estimated_timeline_months_max",
-        "status",
-        "suggested_visit_count",
-        "treatment_goal_minutes_override",
-        "budget_notes",
-        "practitioner_notes",
-        "created_by_practitioner_id",
-        "closed_by_practitioner_id",
-        "created_at",
-        "closed_at",
-      ],
-      treatmentPlanRows,
-    ),
+  const treatmentPlanRows = mapExportRows(treatmentPlansRes, (rows) =>
+    (rows as PlanExportRow[]).map((p) => {
+      // Migration 0051: treatment_areas is a text[] on the row, which
+      // rowsToCsv would coerce to "Chin,Jawline" without quoting. Flatten
+      // explicitly here so the column shows up as a pipe-joined list,
+      // which round-trips cleanly through any spreadsheet tool ("Chin |
+      // Jawline").
+      const rawAreas = (p as PlanExportRow & {
+        treatment_areas?: string[] | null;
+      }).treatment_areas;
+      const treatment_areas_joined =
+        Array.isArray(rawAreas) && rawAreas.length > 0
+          ? rawAreas.join(" | ")
+          : null;
+      return {
+        ...p,
+        client_name: p.client_id ? clientNameById.get(p.client_id) ?? null : null,
+        treatment_areas: treatment_areas_joined,
+      };
+    }),
   );
+
+  writeCsv("treatment_plans", treatmentPlanRows);
 
   type StageExportRow = {
     id: string;
     plan_id: string;
     [k: string]: unknown;
   };
-  const treatmentPlanStageRows = (
-    (treatmentPlanStagesRes.data ?? []) as StageExportRow[]
-  ).map((st) => {
-    const plan = plansById.get(st.plan_id);
-    const planClientId = plan?.client_id ?? null;
-    return {
-      ...st,
-      plan_name: plan?.name ?? null,
-      client_id: planClientId,
-      client_name: planClientId
-        ? clientNameById.get(planClientId) ?? null
-        : null,
-    };
-  });
-
-  zip.file(
-    "treatment_plan_stages.csv",
-    countedCsv(
-      "treatment_plan_stages.csv",
-      [
-        "id",
-        "plan_id",
-        "plan_name",
-        "client_id",
-        "client_name",
-        "sort_order",
-        "name",
-        "how_often_unit",
-        "visit_length_minutes",
-        "stage_length_value",
-        "stage_length_unit",
-        "notes",
-        "created_at",
-        "updated_at",
-      ],
-      treatmentPlanStageRows,
-    ),
+  const treatmentPlanStageRows = mapExportRows(treatmentPlanStagesRes, (rows) =>
+    (rows as StageExportRow[]).map((st) => {
+      const plan = plansById.get(st.plan_id);
+      const planClientId = plan?.client_id ?? null;
+      return {
+        ...st,
+        plan_name: plan?.name ?? null,
+        client_id: planClientId,
+        client_name: planClientId
+          ? clientNameById.get(planClientId) ?? null
+          : null,
+      };
+    }),
   );
+
+  writeCsv("treatment_plan_stages", treatmentPlanStageRows);
 
   // PR #312: record-keeping / inspection CSVs. Each is studio-scoped + read
   // through the owner's RLS client (see loads above). Column lists are explicit
   // so no image path / binary / payment field can slip in.
-  zip.file(
-    "record_keeping_sterile_items.csv",
-    countedCsv(
-      "record_keeping_sterile_items.csv",
-      [
-        "id",
-        "date_purchased",
-        "item_description",
-        "manufacturer_name",
-        "amount_purchased",
-        "lot_number",
-        "expiry_date",
-        "date_discarded",
-        "notes",
-        "created_by_practitioner_id",
-        "created_at",
-        "updated_at",
-      ],
-      (sterileItemsRes.data ?? []) as Record<string, unknown>[],
-    ),
-  );
+  writeCsv("record_keeping_sterile_items", sterileItemsRes);
 
-  zip.file(
-    "record_keeping_disinfectants.csv",
-    countedCsv(
-      "record_keeping_disinfectants.csv",
-      [
-        "id",
-        "date_prepared",
-        "disinfectant_name",
-        "concentration",
-        "date_discarded",
-        "discard_due_date",
-        "operator_practitioner_id",
-        "operator_name",
-        "notes",
-        "created_by_practitioner_id",
-        "created_at",
-        "updated_at",
-      ],
-      (disinfectantsRes.data ?? []) as Record<string, unknown>[],
-    ),
-  );
+  writeCsv("record_keeping_disinfectants", disinfectantsRes);
 
   // Owner-only (0088 RLS + the action's owner gate). Contains sensitive PII.
-  zip.file(
-    "record_keeping_exposure_incidents.csv",
-    countedCsv(
-      "record_keeping_exposure_incidents.csv",
-      [
-        "id",
-        "incident_date",
-        "exposed_person_full_name",
-        "exposed_person_address",
-        "exposed_person_phone",
-        "exposure_details",
-        "action_taken",
-        "staff_involved_name",
-        "notes",
-        "created_by_practitioner_id",
-        "created_at",
-        "updated_at",
-      ],
-      (exposureIncidentsRes.data ?? []) as Record<string, unknown>[],
-    ),
-  );
+  writeCsv("record_keeping_exposure_incidents", exposureIncidentsRes);
 
   // Reduced: identity + action + changed-field NAMES + actor + timestamp only.
   // No `changes` value-snapshot JSON, no free-form `metadata` (see load above).
-  zip.file(
-    "record_keeping_audit_events.csv",
-    countedCsv(
-      "record_keeping_audit_events.csv",
-      [
-        "id",
-        "record_type",
-        "record_id",
-        "action",
-        "changed_fields",
-        "actor_practitioner_id",
-        "actor_display_name",
-        "created_at",
-      ],
-      (auditEventsRes.data ?? []) as Record<string, unknown>[],
-    ),
-  );
+  writeCsv("record_keeping_audit_events", auditEventsRes);
 
   // The clinical narrative. Shaped by the pure builder so history retention,
   // lineage and author attribution are unit-testable; serialized through the
   // SAME rowsToCsv chokepoint as every other file, so the formula-injection
   // neutralization and RFC-4180 quoting in lib/csv.ts apply unchanged. Note
   // bodies routinely contain commas, quotation marks and line breaks.
-  zip.file(
-    CLINICAL_NOTES_CSV_FILENAME,
-    countedCsv(
-      CLINICAL_NOTES_CSV_FILENAME,
-      CLINICAL_NOTES_CSV_HEADERS,
-      buildClinicalNoteExportRows(
-        (clinicalNotesRes.data ?? []) as ClinicalNoteExportSource[],
-        { clientNameById, practitionerNameById },
-      ),
+  writeCsv(
+    "client_clinical_notes",
+    mapExportRows(clinicalNotesRes, (rows) =>
+      buildClinicalNoteExportRows(rows as ClinicalNoteExportSource[], {
+        clientNameById,
+        practitionerNameById,
+      }),
     ),
   );
 
@@ -977,29 +850,16 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
   // with a manifest count of 0 — "zero rows" must never be conflated with
   // "could not read rows".
   if (budgetDecision.kind === "export") {
-    const budgetContextRows = budgetDecision.rows.map((row) => ({
-      ...row,
-      client_name:
-        typeof row.client_id === "string"
-          ? clientNameById.get(row.client_id) ?? null
-          : null,
-    }));
-    zip.file(
-      "client_budget_context.csv",
-      countedCsv(
-        "client_budget_context.csv",
-        [
-          "client_id",
-          "client_name",
-          "budget_level",
-          "budget_notes",
-          "updated_by_practitioner_id",
-          "created_at",
-          "updated_at",
-        ],
-        budgetContextRows,
-      ),
+    const budgetContextRows = mapExportRows(budgetContextRes, (rows) =>
+      (rows as typeof budgetDecision.rows).map((row) => ({
+        ...row,
+        client_name:
+          typeof row.client_id === "string"
+            ? clientNameById.get(row.client_id) ?? null
+            : null,
+      })),
     );
+    writeCsv("client_budget_context", budgetContextRows);
   }
 
   // ---------------------------------------------------------------------
@@ -1071,6 +931,30 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     },
   ];
 
+  // R2 — COUNT COVERAGE PARITY.
+  //
+  // The checks performed above must be exactly the ones the registry declares
+  // `studio_scoped`. Without this the coverage drifts the quiet way: a file is
+  // added, the manifest lists it with a row count, and nothing anywhere says
+  // that count was never compared against the database. Declaring a check and
+  // not running it fails here; running one nothing declares fails here too.
+  const coverage = auditSourceCountCoverage(countChecks.map((c) => c.table));
+  if (!coverage.ok) {
+    return {
+      ok: false,
+      error:
+        "Export aborted: the source-count checks performed do not match the export " +
+        "registry's declared coverage" +
+        (coverage.uncovered.length > 0
+          ? `; declared but not checked: ${coverage.uncovered.join(", ")}`
+          : "") +
+        (coverage.undeclared.length > 0
+          ? `; checked but not declared: ${coverage.undeclared.join(", ")}`
+          : "") +
+        ". No partial export was produced.",
+    };
+  }
+
   const countMismatch = countChecks.find(
     (c) => c.expected !== null && c.expected !== c.fetched,
   );
@@ -1096,21 +980,29 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
   // spread over several physical lines and every affected file was
   // over-reported.
   //
-  // A file written without `countedCsv` would be missing here rather than
-  // silently wrong, so the guard below fails the export instead of shipping an
-  // incomplete manifest.
+  // GUARD 3 — EMISSION PARITY, BOTH DIRECTIONS.
+  //
+  // This REPLACES the older "was every written file counted?" check, which
+  // looked only one way. A file the registry promised and the archive never
+  // contained passed it happily, and so did a file nothing had declared. Two
+  // half-checks against two authorities are now one check against one:
+  //
+  //   registry declares it, archive lacks it  -> refuse
+  //   archive holds it, registry declares it nowhere -> refuse
+  //
+  // The single tolerated omission is client_budget_context.csv when migration
+  // 0183 is not applied, and it is passed in per-RUN rather than exempted in
+  // the registry, so on a migrated database its absence is still a failure.
   // ---------------------------------------------------------------------
   const writtenCsvNames = Object.entries(zip.files)
     .filter(([name, entry]) => name.endsWith(".csv") && !entry.dir)
     .map(([name]) => name);
-  const uncounted = writtenCsvNames.filter((n) => !(n in manifestCounts));
-  if (uncounted.length > 0) {
-    return {
-      ok: false,
-      error:
-        `Export aborted: ${uncounted.join(", ")} was written without a recorded ` +
-        `row count, so the manifest would be incomplete.`,
-    };
+  const toleratedOmissions = budgetContextExported
+    ? []
+    : [exportSpec("client_budget_context").file];
+  const parity = auditEmissionParity(writtenCsvNames, toleratedOmissions);
+  if (!parity.ok) {
+    return { ok: false, error: emissionParityError(parity) };
   }
 
   const manifest = {
@@ -1124,38 +1016,81 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     // written: on its own it does not prove the file matches the database.
     files: manifestCounts,
     // Source-side checks, recorded SEPARATELY from the counts above and never
-    // merged into them. `status` is explicit in all three directions so a
-    // failed count query can never read as a passed one.
-    source_count_checks: countChecks.map((c) => ({
-      table: c.table,
-      exported_rows: c.fetched,
-      studio_row_count: c.expected,
-      status:
-        c.expected === null
-          ? "unavailable"
-          : c.expected === c.fetched
-            ? "matched"
-            : "mismatched",
-      ...(c.expected === null
-        ? {
-            unavailable_reason:
-              c.error ??
-              "The source count query did not return a count; completeness was NOT verified against the database for this table.",
-          }
-        : {}),
-    })),
+    // merged into them. `status` is explicit in every direction so a failed
+    // count query can never read as a passed one.
+    //
+    // TRUTH-01A: this now covers EVERY exported file, not only the four the
+    // export happens to count. Nine files carried a row count here with nothing
+    // saying the count was never compared against the database, which reads as
+    // verification and is not. `not_checked` says so in the artifact itself,
+    // and the reason comes from the registry entry that declares it.
+    source_count_checks: exportedResources().map(({ resource, disposition }) => {
+      const performed = countChecks.find((c) => c.table === resource);
+      const exportedRows = manifestCounts[disposition.file] ?? null;
+      if (!performed) {
+        const check = disposition.sourceCountCheck;
+        return {
+          table: resource,
+          file: disposition.file,
+          exported_rows: exportedRows,
+          studio_row_count: null,
+          status: check.kind === "via_parent" ? "follows_parent" : "not_checked",
+          not_checked_reason: check.kind === "none" ? check.reason : undefined,
+          follows_parent: check.kind === "via_parent" ? check.parent : undefined,
+          follows_parent_reason: check.kind === "via_parent" ? check.reason : undefined,
+        };
+      }
+      return {
+        table: resource,
+        file: disposition.file,
+        exported_rows: performed.fetched,
+        studio_row_count: performed.expected,
+        status:
+          performed.expected === null
+            ? "unavailable"
+            : performed.expected === performed.fetched
+              ? "matched"
+              : "mismatched",
+        ...(performed.expected === null
+          ? {
+              unavailable_reason:
+                performed.error ??
+                "The source count query did not return a count; completeness was NOT verified against the database for this table.",
+            }
+          : {}),
+      };
+    }),
+    // Derived from the same registry declarations as the checks above, so the
+    // list of tables with no studio-scoped count cannot fall out of step with
+    // the entries that say why.
     source_count_not_available: {
-      tables: ["electrolysis_entries", "laser_entries"],
+      tables: exportedResources()
+        .filter(({ disposition }) => disposition.sourceCountCheck.kind !== "studio_scoped")
+        .map(({ resource }) => resource),
       reason:
-        "Neither table carries studio_id; RLS reaches them through the parent session, " +
-        "so no safe studio-scoped count query exists. Their rows are filtered against the " +
-        "exported session ids, so their completeness follows the sessions check above.",
+        "These files carry no studio-scoped source count. See each entry's status in " +
+        "source_count_checks: `follows_parent` means the table has no studio_id and its " +
+        "completeness follows its parent's check; `not_checked` means no count query is " +
+        "issued for it today and its row count is therefore recorded but unverified.",
     },
+    // WHAT THIS ARCHIVE DOES NOT CONTAIN, stated inside the archive.
+    //
+    // The ZIP outlives the settings page that described it. A studio reading it
+    // a year after leaving cannot consult a web page to learn what it never
+    // received, so the omissions travel with the export - and they come from
+    // the same registry that decides what the export writes, so the two cannot
+    // disagree.
+    not_exported: pendingResources().map(({ resource, disposition }) => ({
+      resource,
+      ticket: disposition.ticket,
+      tier: disposition.tier,
+      reason: disposition.reason,
+    })),
     ...(budgetContextExported
       ? {}
       : {
           omitted_files: {
-            files: ["client_budget_context.csv"],
+            files: [exportSpec("client_budget_context").file],
             reason:
               "The client_budget_context table does not exist in this database, which " +
               "means migration 0183 has not been applied yet. This is the ONLY read " +
@@ -1169,48 +1104,68 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     completeness_contract: [
       "Every supported source is read with pagination to exhaustion; a failed page fails the whole export rather than producing a partial file.",
       "`files` records the number of rows actually exported to each CSV.",
-      "`source_count_checks` records what could be compared against the database, and says so explicitly when a check was unavailable.",
+      "`source_count_checks` covers EVERY file above and states, per file, whether its row count was compared against the database (`matched`), could not be (`unavailable`), follows its parent table's check (`follows_parent`), or is simply not checked today (`not_checked`).",
+      "`not_exported` lists the studio-owned resources this export does NOT contain. It is generated from the same registry that decides what the export writes, so this archive can be read on its own without trusting a web page to be current.",
       "This export is NOT point-in-time transactionally consistent: each table is read independently, so rows written during the export may appear in some files and not others.",
       "It is therefore not a transactional database backup and does not replace Hone's or our infrastructure provider's disaster-recovery backups.",
     ],
   };
   zip.file("manifest.json", JSON.stringify(manifest, null, 2));
 
+  // TRUTH-01A. The file list and the omission list are GENERATED from the export
+  // resource registry. They used to be two hand-maintained prose blocks in this
+  // template, which is how the README came to describe thirteen files while the
+  // ZIP contained fifteen, and to name three omitted categories where the real
+  // answer is forty resources.
+  const includedLines = exportedResources()
+    .filter(({ disposition }) => disposition.file in manifestCounts)
+    .map(({ disposition }) => `- ${disposition.file}: ${disposition.description}`)
+    .join("\n");
+  const notExportedLines = pendingResources()
+    .map(({ resource, disposition }) => `- ${resource} (${disposition.ticket}): ${disposition.reason}`)
+    .join("\n");
+  const withheldLines = excludedResources()
+    .map(({ resource, disposition }) => `- ${resource} (${disposition.category}): ${disposition.reason}`)
+    .join("\n");
+
   const readme = `Hone Data Export
 Generated: ${generatedAt}
 Studio: ${studio.name}
 
-This is a portable copy of the supported Hone studio records listed below. Every
-listed source is exported in full: reads are paginated, and the export refuses
-rather than hand over a partial file.
+This is a portable copy of the Hone studio records listed under FILES INCLUDED
+below, and only those. Every listed source is exported in full: reads are
+paginated, and the export refuses rather than hand over a partial file.
+
+IT IS NOT EVERYTHING HONE HOLDS FOR YOUR STUDIO. The NOT INCLUDED section below
+lists, by name, every studio-owned record type this export does not yet carry -
+most importantly your treatment photos, your intake forms, your signed consents,
+your service menu and your payment records. That list is generated from the same
+source that decides what gets written here, so it cannot quietly fall behind.
 
 WHAT THIS IS NOT: it is not a transactional database backup and it is NOT
 point-in-time consistent. Each table is read independently, so records written
-while the export runs may appear in some files and not others. It also does not
-include uploaded images, payment records, or authentication data, and it does not
+while the export runs may appear in some files and not others. It does not
 replace Hone's or our infrastructure provider's disaster-recovery backups.
 
-Files included:
-- manifest.json: Export format/version, generation time, studio, the number of rows actually exported to each CSV, and (recorded separately) whichever source-side count checks were available. It records what was exported; it is not by itself proof that the export matches the database at any single instant.
-- clients.csv: Client master list with names, contact info, allergies, skin notes, Fitzpatrick type, emergency contacts.
-- sessions.csv: One row per session: client, performer, started_at, ended_at, price_paid_cents, session_notes.
-- electrolysis_entries.csv: Every electrolysis entry with area, mode, energy level, modality, machine frequency, pulse count, hairs treated, blend/galvanic and thermolysis readings (galvanic mA/duration/intensity, thermolysis intensity/duration, units of lye), the structured probe (brand, material, piece type, shank, size, length), the treatment area (primary area, side, specifics), structured observation chips, and free-text comments.
-- laser_entries.csv: Every laser entry with zone, fluence, pulse width, treatment number, observations.
-- practitioners.csv: Active practitioners at your studio.
-- client_pricing.csv: Per-client custom pricing.
-- appointments.csv: One row per appointment with client, practitioner, and service (IDs plus readable names), start/end times, duration, status, appointment notes, and cancellation details.
-- treatment_plans.csv: One row per treatment plan with client, name, primary area, all treatment areas (pipe-joined), estimated timeline months window, status, estimated visit count, treatment-goal minutes override, and plan/budget notes.
-- treatment_plan_stages.csv: Schedule stages for treatment plans (cadence, visit length, stage length, notes), with the parent plan and client for reference.
-- record_keeping_sterile_items.csv: Sterile-supply inspection log: item, manufacturer, amount, lot number, purchase/expiry/discarded dates, notes. Expiry status is derivable from the expiry_date column (a date on or before today is expired); the in-app Records list and the print view flag expired / expires-today / expires-soon items. A date_discarded value means the practitioner recorded that this stock was physically thrown away on that date: it is then no longer current inventory (it raises no expiry reminder and is not offered as a probe lot), but the record and every treatment that used it are kept in full. An empty date_discarded means no discard was recorded.
-- record_keeping_disinfectants.csv: Disinfectant preparation log: name, concentration, prepared/discarded/discard-due dates, operator, notes.
-- record_keeping_exposure_incidents.csv: Exposure-incident log (OWNER-ONLY). Contains sensitive personal information about the exposed person (name, address, phone) and incident details.
-- record_keeping_audit_events.csv: Record-keeping change history: record type/id, action, which fields changed, who made the change, and when. (Reduced: it does not include the before/after value snapshots.)
-- client_clinical_notes.csv: The clinical narrative for every client: consultation notes and skin/hair analyses, with the authoring practitioner, the treatment areas tagged, when the note describes (occurred_at) and when it was recorded (created_at). FULL HISTORY: these records are append-only, so a correction appears as its own row whose supersedes_note_id points at the note it revised, and the superseded note is kept.
-- client_budget_context.csv: The client's CURRENT budget context as recorded by the practitioner: a broad budget level (no_stated_limit / somewhat_limited / severely_limited, or empty when none was recorded) and free-text budget notes, with who last updated it and when. One row per client, and only for clients where something was recorded. This is practitioner-authored planning context, not a financial assessment of the client: it holds no income, no affordability score and no payment data, and it never affected pricing or charges. Historical plan-scoped budget notes written before this record existed remain in treatment_plans.csv and were deliberately not copied here.
+FILES INCLUDED
+- manifest.json: Export format/version, generation time, studio, the number of rows actually exported to each CSV, the per-file source-count status, and the machine-readable list of what is NOT included. It records what was exported; it is not by itself proof that the export matches the database at any single instant.
+${includedLines}
 
-IMPORTANT: SENSITIVE DATA: This ZIP now includes record-keeping / inspection data, including an exposure-incident log with personal information about exposed individuals. Store, transmit, and dispose of this export securely, and only share it with parties who are authorized to receive it (e.g. an inspector). Only a studio owner can generate this export.
+NOT INCLUDED - studio-owned records this export does not yet carry
+${notExportedLines}
 
-Your data is yours. This export can be opened in Excel, Numbers, Google Sheets, or any spreadsheet tool. If you ever leave Hone, your records leave with you.
+DELIBERATELY WITHHELD - not studio content, or unsafe to hand over
+${withheldLines}
+
+IMPORTANT: SENSITIVE DATA: This ZIP includes record-keeping / inspection data,
+including an exposure-incident log with personal information about exposed
+individuals. Store, transmit, and dispose of this export securely, and only
+share it with parties who are authorized to receive it (e.g. an inspector). Only
+a studio owner can generate this export.
+
+Your data is yours. This export can be opened in Excel, Numbers, Google Sheets,
+or any spreadsheet tool. If you are leaving Hone, read the NOT INCLUDED list
+first and contact hello@hone.care for the records it names.
 
 Hone
 hone.care
@@ -1235,40 +1190,30 @@ hello@hone.care
     entity_id: studio.id,
     metadata: {
       filename,
-      files: [
-        "clients.csv",
-        "sessions.csv",
-        "electrolysis_entries.csv",
-        "laser_entries.csv",
-        "practitioners.csv",
-        "client_pricing.csv",
-        "appointments.csv",
-        "treatment_plans.csv",
-        "treatment_plan_stages.csv",
-        "client_clinical_notes.csv",
-        ...(budgetContextExported ? ["client_budget_context.csv"] : []),
-        "README.txt",
-      ],
-      row_counts: {
-        clients: (clientsRes.data ?? []).length,
-        sessions: (sessionsRes.data ?? []).length,
-        electrolysis_entries: filteredElectrolysis.length,
-        laser_entries: laserRows.length,
-        practitioners: (practitionersRes.data ?? []).length,
-        client_pricing: (pricingRes.data ?? []).length,
-        appointments: appointmentRows.length,
-        treatment_plans: treatmentPlanRows.length,
-        treatment_plan_stages: treatmentPlanStageRows.length,
-        client_clinical_notes: (clinicalNotesRes.data ?? []).length,
-        ...(budgetContextExported
-          ? {
-              client_budget_context:
-                budgetDecision.kind === "export"
-                  ? budgetDecision.rows.length
-                  : 0,
-            }
-          : {}),
-      },
+      // R2. THE AUDIT ROW AND THE ARCHIVE NOW COME FROM ONE SOURCE.
+      //
+      // This used to be a hand-written literal, and it had drifted: it named
+      // ten CSVs while the ZIP held fifteen, omitting all four
+      // record_keeping_*.csv files and manifest.json. The studio's own audit
+      // trail therefore UNDERSTATED what left the building — and the file it
+      // failed to record was the exposure-incident log, the most sensitive
+      // thing in the archive and the one carrying a third party's name,
+      // address and phone number.
+      //
+      // `writtenCsvNames` is read back off the built archive, so this cannot
+      // describe a file the ZIP does not contain, and the emission-parity
+      // guard above has already proved that set equals the registry's.
+      files: [...writtenCsvNames, "manifest.json", "README.txt"],
+      // Keyed by RESOURCE, valued from the same manifestCounts the archive and
+      // manifest were built from. No per-table expression to forget to add.
+      row_counts: Object.fromEntries(
+        exportedResources()
+          .filter(({ disposition }) => disposition.file in manifestCounts)
+          .map(({ resource, disposition }) => [
+            resource,
+            manifestCounts[disposition.file],
+          ]),
+      ),
     },
   });
   if (auditError) {

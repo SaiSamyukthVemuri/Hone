@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
+import {
+  expectedCsvFiles,
+  exportSpec,
+} from "@/lib/export/resource-registry";
 import path from "node:path";
 
 // PR #189. exportStudioDataAction previously let ANY active
@@ -58,8 +62,16 @@ describe("export: audit trail", () => {
     expect(CODE).toMatch(/entity_type: "studio",/);
     expect(CODE).toMatch(/entity_id: studio\.id,/);
     expect(CODE).toMatch(/filename,/);
-    expect(CODE).toMatch(/row_counts: \{/);
-    expect(CODE).toMatch(/clients: \(clientsRes\.data \?\? \[\]\)\.length,/);
+    // TRUTH-01A. `files` and `row_counts` were hand-written literals and had
+    // drifted: the list named ten CSVs while the ZIP held fifteen, omitting all
+    // four record_keeping_*.csv — the exposure-incident log among them. Both are
+    // now DERIVED, `files` from the archive that was actually built and
+    // `row_counts` from the same manifest counts. The behavioural proof that
+    // they describe the real ZIP is in
+    // tests/app/settings/data/export-emission-parity.test.ts.
+    expect(CODE).toMatch(/row_counts: Object\.fromEntries\(/);
+    expect(CODE).toMatch(/files: \[\.\.\.writtenCsvNames, "manifest\.json", "README\.txt"\]/);
+    expect(CODE).not.toMatch(/"record_keeping_sterile_items\.csv",\s*\n\s*"record_keeping/);
   });
 
   it("audit insert happens after the zip is built and before the success return", () => {
@@ -100,11 +112,22 @@ describe("PR #189 boundaries (export action)", () => {
 });
 
 describe("PR #312: record-keeping / inspection CSVs", () => {
+  // TRUTH-01A. Filenames left this module for the export resource registry, so
+  // the pin moves with them — and gets stronger: the registry is what the
+  // exporter, the manifest, the README and the audit row all read, and the
+  // emission-parity guard proves the built archive matches it exactly.
   it("the ZIP includes all four record-keeping CSVs", () => {
-    expect(CODE).toMatch(/zip\.file\(\s*\n?\s*"record_keeping_sterile_items\.csv"/);
-    expect(CODE).toMatch(/zip\.file\(\s*\n?\s*"record_keeping_disinfectants\.csv"/);
-    expect(CODE).toMatch(/zip\.file\(\s*\n?\s*"record_keeping_exposure_incidents\.csv"/);
-    expect(CODE).toMatch(/zip\.file\(\s*\n?\s*"record_keeping_audit_events\.csv"/);
+    for (const resource of [
+      "record_keeping_sterile_items",
+      "record_keeping_disinfectants",
+      "record_keeping_exposure_incidents",
+      "record_keeping_audit_events",
+    ]) {
+      expect(CODE).toContain(`writeCsv("${resource}"`);
+      const spec = exportSpec(resource);
+      expect(spec.file).toBe(`${resource}.csv`);
+      expect(expectedCsvFiles().has(spec.file)).toBe(true);
+    }
   });
 
   // Migration 0182: the discard lifecycle must reach the inspection export.
@@ -112,20 +135,33 @@ describe("PR #312: record-keeping / inspection CSVs", () => {
     // Scoped to the sterile load + its CSV writer. The export uses an EXPLICIT
     // column list in both places, so a new column reaches the inspector only if
     // it is named twice — this pin is the reason that cannot be half-done.
-    const from = CODE.indexOf('.from("record_keeping_sterile_items")');
+    const from = CODE.indexOf('fetchExportRows("record_keeping_sterile_items"');
     expect(from).toBeGreaterThan(-1);
     const load = CODE.slice(from, from + 500);
+    // TRUTH-01A: the registry declares what the file carries, and the run-time
+    // audit compares it against the SELECT the request actually sent...
+    expect(exportSpec("record_keeping_sterile_items").includedColumns).toContain(
+      "date_discarded",
+    );
+    // ...and the read must go through the provenance-carrying reader, which is
+    // what binds the SELECT the request actually sent to this resource's audit.
+    expect(load).toMatch(/fetchExportRows\(\s*"record_keeping_sterile_items"/);
     expect(load).toMatch(/date_discarded/);
     // HISTORICAL surface: a discarded row must still be exported. A lifecycle
     // predicate here would silently drop stock from a health-inspection record.
     expect(load).not.toMatch(/\.is\("date_discarded"/);
     expect(load).not.toMatch(/\.not\("date_discarded"/);
 
-    const writer = CODE.indexOf('"record_keeping_sterile_items.csv"');
-    expect(writer).toBeGreaterThan(-1);
-    const header = CODE.slice(writer, writer + 700);
-    expect(header).toMatch(/"date_discarded"/);
-    expect(header).toMatch(/"expiry_date"/);
+    // The emitted header row now lives in the registry, and the registry also
+    // records — per column — what the inspector does NOT get and why. Both
+    // halves are asserted: the column is emitted, and it is not quietly sitting
+    // in the excluded list.
+    const spec = exportSpec("record_keeping_sterile_items");
+    expect(spec.csvHeaders).toContain("date_discarded");
+    expect(spec.csvHeaders).toContain("expiry_date");
+    expect(spec.includedColumns).toContain("date_discarded");
+    expect(spec.excludedColumns.map((c) => c.column)).not.toContain("date_discarded");
+    expect(spec.rowScope).toMatch(/discarded stock included/i);
   });
 
   it("reads each record-keeping table via the RLS client, studio-scoped", () => {
@@ -138,7 +174,10 @@ describe("PR #312: record-keeping / inspection CSVs", () => {
       // The load block: `.from("<table>") ... .eq("studio_id", studio.id)`.
       const from = CODE.indexOf(`.from("${table}")`);
       expect(from, `missing load for ${table}`).toBeGreaterThan(-1);
-      const slice = CODE.slice(from, from + 400);
+      // Widened for TRUTH-01A: the select literal sits on its own lines, which
+      // pushes the studio filter further down the block. The invariant is
+      // unchanged — the read is studio-scoped.
+      const slice = CODE.slice(from, from + 700);
       expect(slice, `${table} not studio-scoped`).toMatch(
         /\.eq\("studio_id", studio\.id\)/,
       );
@@ -158,12 +197,16 @@ describe("PR #312: record-keeping / inspection CSVs", () => {
   it("audit export is REDUCED — no full changes value-snapshot JSON or metadata", () => {
     // The audit load selects changed_fields (names) but NOT `changes` / `metadata`.
     const load = CODE.slice(
-      CODE.indexOf('.from("record_keeping_audit_events")'),
-      CODE.indexOf('.from("record_keeping_audit_events")') + 400,
+      CODE.indexOf('fetchExportRows("record_keeping_audit_events"'),
+      CODE.indexOf('fetchExportRows("record_keeping_audit_events"') + 500,
     );
-    expect(load).toMatch(/changed_fields/);
-    expect(load).not.toMatch(/\bchanges\b/);
-    expect(load).not.toMatch(/\bmetadata\b/);
+    // TRUTH-01A: the reduced column list is declared by the registry, and the
+    // run-time audit holds the executed request to it.
+    const reduced = exportSpec("record_keeping_audit_events").includedColumns;
+    expect(reduced).toContain("changed_fields");
+    expect(reduced).not.toContain("changes");
+    expect(reduced).not.toContain("metadata");
+    expect(load).toMatch(/fetchExportRows\(\s*"record_keeping_audit_events"/);
     // And the CSV header omits them too.
     const csv = CODE.slice(
       CODE.indexOf('"record_keeping_audit_events.csv"'),
@@ -181,8 +224,16 @@ describe("PR #312: record-keeping / inspection CSVs", () => {
   it("README warns the export contains sensitive record-keeping data", () => {
     expect(ACTIONS).toMatch(/SENSITIVE DATA/);
     expect(ACTIONS).toMatch(/exposure-incident log/i);
-    expect(ACTIONS).toMatch(/record_keeping_sterile_items\.csv:/);
-    expect(ACTIONS).toMatch(/record_keeping_exposure_incidents\.csv:.*OWNER-ONLY/);
+    // The per-file README lines are GENERATED from the registry descriptions,
+    // so the warning is pinned where the text now lives. The generated README
+    // is asserted end-to-end in the emission-parity suite.
+    expect(ACTIONS).toMatch(/\$\{disposition\.file\}: \$\{disposition\.description\}/);
+    expect(exportSpec("record_keeping_exposure_incidents").description).toMatch(
+      /OWNER-ONLY/,
+    );
+    expect(exportSpec("record_keeping_sterile_items").description.length).toBeGreaterThan(
+      40,
+    );
   });
 
   it("no migration/schema/RLS change ships from the action (source is read-only)", () => {

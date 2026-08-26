@@ -106,7 +106,7 @@ describe("reminder route preserves claim-before-send, idempotency, and auth", ()
 
   it("claims BEFORE sending and records the result AFTER", () => {
     const claimIdx = ROUTE_CODE.indexOf("claimEmailSend(");
-    const sendIdx = ROUTE_CODE.indexOf("const result = await sendFn(");
+    const sendIdx = ROUTE_CODE.indexOf("result = await sendFn(");
     const recordIdx = ROUTE_CODE.indexOf("recordEmailResult(admin, appt.id, emailType, result.ok)");
     expect(claimIdx).toBeGreaterThan(-1);
     expect(sendIdx).toBeGreaterThan(claimIdx);
@@ -124,7 +124,12 @@ describe("reminder route preserves claim-before-send, idempotency, and auth", ()
     // The alert helper's body must carry NO client PII / token / free-text
     // error — only studio/appointment ids + reminder type/attempt metadata.
     const start = ROUTE_CODE.indexOf("async function alertIfReminderExhausted");
-    const end = ROUTE_CODE.indexOf("async function sendReminderPass", start);
+    // End at the NEXT function, whatever it is, so inserting a helper between
+    // this one and the pass cannot silently widen the slice and turn an
+    // unrelated body into a false PII hit.
+    const end = ROUTE_CODE.indexOf("async function ", start + 1);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
     const body = ROUTE_CODE.slice(start, end);
     expect(body).toMatch(/reminder_type/);
     expect(body).toMatch(/attempt_count/);

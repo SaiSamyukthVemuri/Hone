@@ -33,6 +33,7 @@ function signals(over: Partial<GettingStartedSignals> = {}): GettingStartedSigna
     hasProbeLot: true,
     hasReactionOrTolerance: true,
     hasNextVisitNote: true,
+    liveTreatmentConsent: true,
     sterileItems: 1,
     disinfectants: 1,
     paymentAttempts: 2,

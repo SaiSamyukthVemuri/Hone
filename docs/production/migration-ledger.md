@@ -14,7 +14,245 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-08-23, post-0185 apply)
+## Current state (verified 2026-08-24, post-0187 apply)
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0187** (`0187_appointment_settlement.sql`) |
+| **Repo migration max** | **0187** — **hosted == repo.** Nothing pending. Next free number is **0188** (available, **not claimed**). |
+| **Total migrations in repo** | **186** (`0001` … `0157`, `0159` … `0187` — **no `0158`**) — derived by `npm run migration:state` |
+| **Apply timestamp** | ⚠️ **NO SERVER-GENERATED APPLY TIMESTAMP WAS CAPTURED**, so `hosted_applied_at` is `null`. The **operator-observed client-side window** is `2026-08-24T23:36:31.509Z` – `2026-08-24T23:36:51.291Z`, **19.782 s**, read from the apply host's clock around the CLI invocation. **That window is not a server apply time and is never represented as one.** |
+| **Verified applied** | **2026-08-24** |
+| **Applied from** | the exact reviewed **PR #636** head `eb7e824031fb715f23b0c6da6def4e7ea97fc4de` — **applied BEFORE #636 merged**, so the merge commit did not exist at apply time |
+| **Application merge (after the apply)** | `f9ad0f727503ec7aaa6208aa4aa7e5c84ad5eb1e` — a normal two-parent merge of `4b9636f6…` and `eb7e8240…` |
+| **`0187` raw checksum (frozen)** | `0201f9b8f9e2ca7c5c8f9c702bc020f6bfd5a4046c0490ae3d7be495509e5dc0` — **98,309 bytes**, derived from the reviewed head's blob and independently from the GitHub raw contents API at that ref, not copied from console history |
+| **Project ref** | `alhhybgqdmcdyzpybykj` — confirmed from the apply checkout's `supabase/.temp/project-ref` before every command |
+| **Supabase CLI / PostgreSQL** | **2.102.0** / reported **17.6.1.121** |
+| **Where the apply ran** | `/srv/hone/worktrees/apply-0187-final` on the `hone-dev-01` repository host — a **throwaway worktree DETACHED at the exact reviewed SHA**, carrying no branch, linked specifically for this authorized apply. The long-lived checkout was deliberately **not** used: it sat at `ecb6a1ce…`, one merge behind production, and held **no `0187` file at all**. Same posture as the 0178 apply. |
+| **Dry run** | `2026-08-24T23:36:07Z` – `23:36:12Z`; proposed `0187_appointment_settlement.sql` **and nothing else**; **DRY-RUN EXIT 0** |
+| **Pre-apply remote state** | `0186 \| 0186` applied, `0187` pending with a **blank** remote column, **no** other pending row, **no** remote-only row. **185** versions carried a populated remote column in that listing — a count of the CLI's reported remote rows, **not** a row count of `supabase_migrations.schema_migrations`, which was never queried. |
+| **Apply exit status** | ✅ **PUSH EXIT CODE 0 EXPLICITLY CAPTURED** from `$?`, not inferred from output text. Output: `Applying migration 0187_appointment_settlement.sql...` → `Finished supabase db push.` |
+| **Confirmation prompt** | The CLI printed `Do you want to push these migrations? [Y/n]` and, with stdin at `/dev/null`, **took the default yes**. The operator's authorization preceded the command, but **no human typed that keystroke** — recorded rather than glossed. |
+| **Observed notices** | exactly **13** `NOTICE (00000)` — **8** `constraint … does not exist, skipping`, **4** `trigger … does not exist, skipping`, **1** `policy … does not exist, skipping`. All 13 were predicted beforehand: they are the file's own re-runnability `drop … if exists` guards firing against a table created moments earlier in the same transaction. |
+| **Observed error classes** | **No `ERROR`, no `25P01`, no `55P03`.** That is a statement about **those specific classes** — not a claim that no conceivable warning of any kind occurred. |
+| **Post-apply verification** | `0186 \| 0186`, `0187 \| 0187`, **zero pending**, no remote-only row, nothing above `0187`; **186** versions carried a populated remote column, one more than the 185 read before. |
+
+### What 0187 establishes
+
+The **PAY-SETTLE** settlement authority: `public.appointment_settlements` plus
+`record_appointment_settlement`, `waive_appointment_fee` and
+`supersede_appointment_settlement`; the new `service_role` reconciliation
+authority `reconcile_card_payment_succeeded`; five internal helpers and three
+trigger functions.
+
+It is **not purely additive**. It **replaces one existing function** —
+`claim_session_payment_charge_attempt(uuid, uuid, text)` (`0075` → `0083` →
+`0101` → `0187`) — with a **byte-identical signature** and an **unchanged ACL**.
+The replacement body is the `0101` body plus exactly one addition: a non-locking
+appointment resolve, the shared appointment advisory lock, and a
+`settled_externally` refusal.
+
+The structural guarantee is the **absence of a value**: `method` has **no `card`
+and no `hone` member**, so an attestation that a card was charged is
+*unrepresentable* rather than merely discouraged.
+
+### Verified structural result (read-only, production)
+
+| Property | Verified value |
+|---|---|
+| `public.appointment_settlements` | exists |
+| Columns | **16** — `id`, `studio_id`, `appointment_id`, `method`, `amount_cents`, `currency`, `quoted_amount_cents`, `recorded_by_practitioner_id`, `recorded_at`, `created_at`, `updated_at`, `note`, `supersedes_id`, `superseded_at`, `superseded_by_settlement_id`, `supersede_reason` |
+| CHECK constraints | **8** |
+| Foreign keys | **5** |
+| Indexes | **5** |
+| User triggers (`not tgisinternal`) | **4** — `set_updated_at`, `server_timestamps`, `append_only`, `no_delete` |
+| RLS | **enabled** |
+| Policies | **exactly 1** — `appointment_settlements_member_select`, `polcmd` `'r'` (SELECT), roles `{authenticated}`, `USING is_studio_member(studio_id)`. No INSERT, UPDATE or DELETE policy for any role. |
+| **Row count** | **0** |
+
+**The closed vocabulary landed intact**, transcribed from `pg_get_constraintdef`:
+
+```sql
+CHECK ((method = ANY (ARRAY['paid_cash'::text, 'paid_e_transfer'::text,
+                            'paid_other_external'::text, 'waived'::text,
+                            'still_owes'::text])))
+```
+
+**The five foreign keys**, transcribed — tenancy is structural, not merely
+policed:
+
+- `appointment_settlements_appointment_same_studio_fk` — `FOREIGN KEY (appointment_id, studio_id) REFERENCES appointments(id, studio_id) ON DELETE RESTRICT`
+- `appointment_settlements_actor_same_studio_fk` — `FOREIGN KEY (recorded_by_practitioner_id, studio_id) REFERENCES practitioners(id, studio_id) ON DELETE RESTRICT`
+- `appointment_settlements_studio_id_fkey` — `FOREIGN KEY (studio_id) REFERENCES studios(id) ON DELETE CASCADE`
+- `appointment_settlements_supersedes_id_fkey` — `FOREIGN KEY (supersedes_id) REFERENCES appointment_settlements(id) ON DELETE RESTRICT`
+- `appointment_settlements_superseded_by_fk` — `FOREIGN KEY (superseded_by_settlement_id) REFERENCES appointment_settlements(id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED`, with `condeferrable` **and** `condeferred` both **true** — the deferral the single-transaction correction path depends on
+
+**The two single-truth indexes**, transcribed:
+
+```sql
+CREATE UNIQUE INDEX appointment_settlements_one_live_per_appointment
+  ON public.appointment_settlements USING btree (studio_id, appointment_id)
+  WHERE (superseded_at IS NULL);
+CREATE UNIQUE INDEX appointment_settlements_one_successor_per_row
+  ON public.appointment_settlements USING btree (supersedes_id)
+  WHERE (supersedes_id IS NOT NULL);
+```
+
+### Verified ACL — transcribed from the production query output, not paraphrased
+
+**Table.** `relacl` reads `{postgres=arwdDxtm/postgres,authenticated=r/postgres}`,
+so **PUBLIC holds no entry at all**. `has_table_privilege` was evaluated
+explicitly for all eight verbs **including `MAINTAIN`** — the PostgreSQL 17
+privilege that survived 0183's by-name denylist:
+
+| Role | SELECT | INSERT | UPDATE | DELETE | TRUNCATE | REFERENCES | TRIGGER | **MAINTAIN** |
+|---|---|---|---|---|---|---|---|---|
+| `anon` | false | false | false | false | false | false | false | **false** |
+| `authenticated` | **true** | false | false | false | false | false | false | **false** |
+| `service_role` | false | false | false | false | false | false | false | **false** |
+
+**None of the three application roles holds any table-write privilege, and
+none should be inferred for them.** That scope is deliberate: the `relacl`
+above shows `postgres=arwdDxtm/postgres`, so the **owner** does hold the full
+set — as every table's owner does. Only `anon`, `authenticated` and
+`service_role` were checked, and only they are claimed.
+
+**Functions**, each evaluated for `anon` / `authenticated` / `service_role` /
+`PUBLIC`:
+
+| Function | anon | authenticated | service_role | PUBLIC |
+|---|---|---|---|---|
+| `record_appointment_settlement(uuid, uuid, text, integer, text, boolean)` | false | **true** | false | false |
+| `waive_appointment_fee(uuid, uuid, integer, text, boolean)` | false | **true** | false | false |
+| `supersede_appointment_settlement(uuid, uuid, text, integer, text, text, boolean)` | false | **true** | false | false |
+| `reconcile_card_payment_succeeded(uuid, text, text)` | false | false | **true** | false |
+| `claim_session_payment_charge_attempt(uuid, uuid, text)` | false | false | **true** | false |
+| `appointment_settlement_lock_key(uuid)` | false | false | false | false |
+| `appointment_quoted_amount_cents(uuid, uuid)` | false | false | false | false |
+| `retire_ready_card_attempts(uuid, uuid, uuid)` | false | false | false | false |
+| `appointment_has_live_card_money(uuid, uuid, boolean)` | false | false | false | false |
+| `appointment_has_blocking_settlement(uuid, uuid)` | false | false | false | false |
+| `appointment_settlements_server_timestamps()` | false | false | false | false |
+| `appointment_settlements_append_only()` | false | false | false | false |
+| `appointment_settlements_no_delete()` | false | false | false | false |
+
+Three intended **`authenticated`** commands; two **`service_role`-only** payment
+authorities (the reconciler and the claim authority); **eight** helpers and
+trigger functions granted to **nobody** among the application roles.
+
+### Business-data observations — measured before and after
+
+| Table | Before → after |
+|---|---|
+| `appointment_settlements` | created **empty**, row count **0** |
+| `payment_charge_attempts` | **40 → 40** (`succeeded` **36 → 36**, `failed` **4 → 4**) |
+| `payment_charge_attempts` in `ready` / `pending_stripe` / `cancelled` / `blocked` | **0 → 0** |
+| `appointments` | **382 → 382** |
+| `practitioners` | **7 → 7** |
+| `studios` | **6 → 6** |
+
+No attempt was **created**, **retired** or **cancelled** by this apply, and no
+settlement was recorded — `unknown` remains the **absence of a row** for every
+appointment in production history.
+
+**Precision, deliberately not overstated.** These are measured row-count
+observations paired with the migration's **source contract**: the file's
+executable apply path contains **zero top-level DML** across its 124 statements,
+its only `INSERT` and `UPDATE` statements sitting inside function bodies that run
+at RPC call time and never during the apply. **They are not a claim that
+concurrent production traffic was globally absent** during the window; that was
+not measured. `public.clients` was read only **after** the apply (129) and
+therefore carries **no** before/after claim.
+
+### Outbound effects
+
+**Stripe calls 0 · emails 0 · SMS 0.** Stated as an executable-contract fact plus
+observed zero actions: a pre-apply scan of the exact applied bytes found **no**
+apply-time invocation of `pg_net`, `net.http`, `extensions.http`, `http_post`,
+`create extension`, `pg_cron`, `cron.schedule`, `dblink`,
+`COPY … FROM PROGRAM`, `pg_read_file` or `pg_ls_dir` — the migration has no
+outbound surface to reach the network with, and no such action was performed.
+
+### The order of events
+
+1. the exact reviewed **#636** head `eb7e8240` was CI-green on every applicable
+   lane and carried a **clean exact-head Codex review**, zero findings raised
+   against that SHA;
+2. **0187 was applied** from that exact **detached** reviewed head;
+3. 0187 was **verified** in production;
+4. **only then** did #636 merge, pinned to that exact head;
+5. application production advanced to `f9ad0f727503ec7aaa6208aa4aa7e5c84ad5eb1e`;
+6. the **Vercel Production deployment for that exact production SHA succeeded**;
+7. a **read-only** production smoke was clean — `/` and `/login` both 200;
+   `/dashboard`, `/clients` and `/calendar` each **307 to `/login`** rather than
+   500; the public booking page 200 while rendering **live service rows** through
+   the newly deployed runtime; no schema or runtime mismatch marker on any
+   surface;
+8. the same production counters were re-read after that smoke and were
+   **unchanged**. **That is the measurement, not a proof of no mutation** — an
+   `UPDATE` leaves a row count untouched, and an offsetting create and delete
+   would too. No mutation audit and no before/after content comparison was
+   performed, so only the unchanged counters are claimed. Separately, and as a
+   statement about what the smoke *did*: it issued **GET requests only** — no
+   `POST`, no form submission, no server action invoked.
+
+**Not observed, and therefore not claimed:** the **authenticated** application
+shell and the **Checkout and settlement surfaces** were never rendered, because
+the verifying session held no production credential. The **synthetic settlement
+smoke was not run** and requires its own authorization.
+
+**`0187` IS NOW FROZEN.** Its bytes are production truth; any correction is a
+NEW migration. `0188` is available and **not claimed**.
+
+## Previous state (verified 2026-08-24, post-0186 apply)
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0186** (`0186_intake_reminder_24h_2h.sql`) |
+| **Repo migration max** | **0186** — **hosted == repo.** Nothing pending. Next free number is **0187** (available, **not claimed**). |
+| **Total migrations in repo** | **185** (`0001` … `0157`, `0159` … `0186` — **no `0158`**) — derived by `npm run migration:state` |
+| **Apply date/time** | ⚠️ **NOT CAPTURED** — `hosted_applied_at` is `null`. No apply instant, no apply window and no calendar date were captured, and none is invented. |
+| **Verified applied** | **2026-08-24** — when the applied state was read and recorded. |
+| **Applied from** | application production `5bbd37a5ceaeb105e65840971392823a2e68aabd` (the **PR #632** merge commit) |
+| **`0186` raw checksum (frozen)** | `4041b38653198976233e5bf1ea41b68b349a587ed2c1fa43c251d9c6c629e66e` — derived from the production blob, not copied from console history |
+| **Also not captured** | dry-run output and exit code, push exit code, server-generated migration timestamp, CLI version, project ref, and where the apply ran. **None of it is invented.** |
+| **Post-apply verification** | hosted maximum reads **`0186`** with **zero pending**; the new column was read and is recorded below. |
+
+### The one thing 0186 adds
+
+```sql
+alter table public.studios
+  add column if not exists send_intake_reminders boolean not null default true;
+```
+
+Executable surface: `begin` · `set local lock_timeout` ·
+`alter table … add column if not exists` · `comment on column` · `commit`.
+**No `INSERT`, `UPDATE`, `DELETE` or `TRUNCATE` anywhere in the migration** — a
+statement about the file, pinned by
+`tests/migrations/0186-intake-reminder-24h-2h.test.ts`, not a measured
+production row count.
+
+### Verified structural result (read-only, production)
+
+| Property | Verified value |
+|---|---|
+| `public.studios.send_intake_reminders` | exists |
+| Type | `boolean` |
+| Nullability | **`NOT NULL`** |
+| Default | **`true`** |
+| Existing rows | **6 studios — 6 `true`, 0 `null`** |
+
+### The 0098 7d/3d state is preserved, not reinterpreted
+
+`intake_reminder_7d_*` and `intake_reminder_3d_*` — the columns, their partial
+indexes, and the two `claim_email_send` / `record_email_result` branches from
+`0098` — **remain intact** and are **historical**. The application simply stops
+writing them; removing them is a separate, later change.
+
+**`0186` IS NOW FROZEN.** Its bytes are production truth; any correction is a
+NEW migration. `0187` is available and **not claimed**.
+
+## Previous state (verified 2026-08-23, post-0185 apply)
 
 | Field | Value |
 |---|---|

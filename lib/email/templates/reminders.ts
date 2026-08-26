@@ -1,4 +1,12 @@
 import { localTimeString12h } from "@/lib/booking/tz";
+import {
+  INTAKE_CTA_LABEL,
+  INTAKE_IGNORE_LINE,
+  INTAKE_LINK_FALLBACK_LINE,
+  INTAKE_SECTION_COPY,
+  type IntakeReminderKind,
+  type IntakeSectionCopy,
+} from "@/lib/email/templates/intake-reminder";
 
 function escapeHtml(s: string): string {
   return s
@@ -45,6 +53,11 @@ type ReminderProps = {
   portalLoginUrl?: string | null;
   preCareInstructions: string | null;
   treatmentTimeLine: string | null;
+  // A FRESH secure intake link, or null. Non-null ONLY when the studio has
+  // intake reminders on AND the client's latest intake was still in_progress
+  // at the send decision. Optional (like portalLoginUrl) so the callers and
+  // tests that build a plain reminder need no change.
+  intakeUrl?: string | null;
 };
 
 function reminderHtml(opts: {
@@ -52,8 +65,9 @@ function reminderHtml(opts: {
   lead: string;
   subject: string;
   p: ReminderProps;
+  intake: IntakeSectionCopy | null;
 }): string {
-  const { headline, lead, p } = opts;
+  const { headline, lead, p, intake } = opts;
   const dayStr = dayLabel(p.startsAt, p.timezone);
   const timeStr = rangeLabel(p.startsAt, p.endsAt, p.timezone);
   const safeClient = escapeHtml(p.clientName);
@@ -86,6 +100,43 @@ function reminderHtml(opts: {
           ${safeAddress ? `<br/><br/>${safeAddress}` : ""}
           ${p.treatmentTimeLine ? `<br/><br/><span style="font-family:Georgia, serif; font-style:italic; color:#6B6B6B;">${escapeHtml(p.treatmentTimeLine)}</span>` : ""}
         </td></tr>
+        ${
+          // PLACEMENT IS A PRIVACY CONSTRAINT, not a layout preference.
+          // These templates carry no preheader element, so mail clients
+          // derive preview text from the FIRST visible nodes - brand,
+          // headline, greeting, lead. Keeping the intake section below the
+          // appointment details keeps intake-completion state off the
+          // recipient's lock screen while leaving it the first thing read
+          // after the facts.
+          //
+          // THE CAVEAT IS LOAD-BEARING, not politeness. Intake state is read
+          // LIVE before the send decision, but the client can still submit
+          // between that read and provider delivery - a race the cron cannot
+          // close. INTAKE_IGNORE_LINE is what keeps this section truthful when
+          // it loses that race, so every branch carrying the CTA must carry it
+          // too. Same constant the standalone intake email uses; no second
+          // wording exists to drift.
+          intake && p.intakeUrl
+            ? `<tr><td style="padding:24px 0 0 0; font-family:-apple-system, system-ui, sans-serif; font-size:16px; font-weight:600; line-height:1.5;">
+                ${escapeHtml(intake.heading)}
+              </td></tr>
+              <tr><td style="padding:8px 0 16px 0; font-family:-apple-system, system-ui, sans-serif; font-size:15px; line-height:1.6;">
+                ${escapeHtml(intake.body)}
+              </td></tr>
+              <tr><td style="padding-bottom:8px;">
+                <a href="${p.intakeUrl}" style="display:inline-block; padding:12px 20px; background:#0A0A0A; color:#FFFFFF; font-family:-apple-system, system-ui, sans-serif; font-size:14px; font-weight:500; text-decoration:none; border-radius:6px;">
+                  ${escapeHtml(INTAKE_CTA_LABEL)}
+                </a>
+              </td></tr>
+              <tr><td style="padding-bottom:8px; font-family:-apple-system, system-ui, sans-serif; font-size:13px; line-height:1.6; color:#6B6B6B;">
+                ${escapeHtml(INTAKE_LINK_FALLBACK_LINE)}<br />
+                <span style="word-break:break-all;">${escapeHtml(p.intakeUrl)}</span>
+              </td></tr>
+              <tr><td style="padding-bottom:8px; font-family:-apple-system, system-ui, sans-serif; font-size:13px; line-height:1.6; color:#6B6B6B;">
+                ${escapeHtml(INTAKE_IGNORE_LINE)}
+              </td></tr>`
+            : ""
+        }
         ${
           p.preCareInstructions
             ? `<tr><td style="padding:20px 0;">
@@ -128,8 +179,9 @@ function reminderText(opts: {
   headline: string;
   lead: string;
   p: ReminderProps;
+  intake: IntakeSectionCopy | null;
 }): string {
-  const { headline, lead, p } = opts;
+  const { headline, lead, p, intake } = opts;
   const dayStr = dayLabel(p.startsAt, p.timezone);
   const timeStr = rangeLabel(p.startsAt, p.endsAt, p.timezone);
   return `${headline}
@@ -144,10 +196,21 @@ ${timeStr} (${p.timezone})
 Duration: ${p.durationMinutes} minutes
 ${p.studioAddress ? `\n${p.studioAddress}\n` : ""}
 ${p.treatmentTimeLine ? `\n${p.treatmentTimeLine}\n` : ""}
+${intake && p.intakeUrl ? `\n${intake.heading}\n\n${intake.body}\n\n${INTAKE_CTA_LABEL}: ${p.intakeUrl}\n\n${INTAKE_IGNORE_LINE}\n` : ""}
 ${p.preCareInstructions ? `\nBefore your appointment:\n${p.preCareInstructions}\n` : ""}
 ${p.rescheduleUrl ? `Reschedule: ${p.rescheduleUrl}\n` : ""}
 Cancel: ${p.cancellationUrl}
 ${p.portalLoginUrl ? `\nView your forms, appointments, and care instructions in your secure client portal:\n${p.portalLoginUrl}\n` : ""}`;
+}
+
+// The intake section renders only when the cron actually minted a link for
+// this send. `intakeUrl` non-null IS the decision - the template never
+// re-derives eligibility, so there is exactly one place that decides.
+function intakeSectionFor(
+  kind: IntakeReminderKind,
+  p: ReminderProps,
+): IntakeSectionCopy | null {
+  return p.intakeUrl ? INTAKE_SECTION_COPY[kind] : null;
 }
 
 export function build24hReminderEmail(p: ReminderProps): {
@@ -163,10 +226,11 @@ export function build24hReminderEmail(p: ReminderProps): {
   const headline = "Your appointment is tomorrow.";
   const lead =
     "This is a reminder that you have an appointment with us tomorrow.";
+  const intake = intakeSectionFor("24h", p);
   return {
     subject,
-    html: reminderHtml({ headline, lead, subject, p }),
-    text: reminderText({ headline, lead, p }),
+    html: reminderHtml({ headline, lead, subject, p, intake }),
+    text: reminderText({ headline, lead, p, intake }),
   };
 }
 
@@ -180,10 +244,11 @@ export function build2hReminderEmail(p: ReminderProps): {
   const subject = `Reminder: ${p.serviceName} today at ${timeStr}`;
   const headline = "See you soon.";
   const lead = "Your appointment is in about 2 hours.";
+  const intake = intakeSectionFor("2h", p);
   return {
     subject,
-    html: reminderHtml({ headline, lead, subject, p }),
-    text: reminderText({ headline, lead, p }),
+    html: reminderHtml({ headline, lead, subject, p, intake }),
+    text: reminderText({ headline, lead, p, intake }),
   };
 }
 

@@ -13,7 +13,10 @@ import {
 } from "@/lib/email/templates/reminders";
 import { buildPostcareEmail } from "@/lib/email/templates/postcare";
 import { buildIntakeRequestEmail } from "@/lib/email/templates/intake-request";
-import { buildIntakeReminderEmail } from "@/lib/email/templates/intake-reminder";
+import {
+  buildIntakeReminderEmail,
+  type IntakeReminderKind,
+} from "@/lib/email/templates/intake-reminder";
 import { buildIcs } from "@/lib/booking/ical";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import type { Appointment, Service, Studio } from "@/lib/types/database";
@@ -496,6 +499,11 @@ type ReminderInput = {
   cancellationUrl: string;
   rescheduleUrl: string | null;
   treatmentTimeLine: string | null;
+  // A FRESH secure intake link, or null. The reminder cron passes non-null
+  // ONLY when it decided, against LIVE intake state read after the claim,
+  // that this send should carry the intake CTA. The template does not
+  // re-derive eligibility.
+  intakeUrl?: string | null;
 };
 
 export async function send24hReminderToClient(
@@ -521,6 +529,7 @@ export async function send24hReminderToClient(
     portalLoginUrl: portalLoginUrlForStudio(p.studio),
     preCareInstructions: p.service?.pre_care_instructions ?? null,
     treatmentTimeLine: p.treatmentTimeLine,
+    intakeUrl: p.intakeUrl ?? null,
   });
   return sendEmailSafely({ to: p.clientEmail, subject, html, text });
 }
@@ -548,16 +557,22 @@ export async function send2hReminderToClient(
     portalLoginUrl: portalLoginUrlForStudio(p.studio),
     preCareInstructions: p.service?.pre_care_instructions ?? null,
     treatmentTimeLine: p.treatmentTimeLine,
+    intakeUrl: p.intakeUrl ?? null,
   });
   return sendEmailSafely({ to: p.clientEmail, subject, html, text });
 }
 
-// PR #306: automated intake-form reminder (sent by the cron ~7d / ~3d before a
-// confirmed appointment when the latest intake is still in_progress). Carries a
-// FRESH secure intake link minted + stamped by the caller; this function only
-// builds + sends the reminder-specific copy. No PII in the subject, no medical
-// claims, no delivery overclaim.
+// STANDALONE intake-form reminder, sent by the reminder cron at the ~24h or
+// ~2h window when the studio has that appointment reminder OFF but intake
+// reminders ON and the latest intake is still in_progress. When the
+// appointment reminder is ON the intake nudge is COMPOSED into it instead
+// (send24hReminderToClient / send2hReminderToClient take `intakeUrl`), so at
+// most one email is sent per appointment per window. Carries a FRESH secure
+// link minted + stamped by the caller; this function only builds + sends.
+// No PII and no completion state in the subject, no medical claim, no
+// delivery overclaim.
 export async function sendIntakeReminderToClient(p: {
+  kind: IntakeReminderKind;
   clientEmail: string;
   studioName: string;
   startsAt: Date;
@@ -568,6 +583,7 @@ export async function sendIntakeReminderToClient(p: {
     return { ok: false, error: "No client email on file", retryable: false };
   }
   const { subject, html, text } = buildIntakeReminderEmail({
+    kind: p.kind,
     studioName: p.studioName,
     intakeUrl: p.intakeUrl,
     startsAt: p.startsAt,

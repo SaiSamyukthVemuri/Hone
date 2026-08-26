@@ -1,6 +1,10 @@
 import { createClient } from "@/lib/supabase/server";
 import { inferStripeLivemode } from "@/lib/stripe/server";
 import { getActiveServices } from "@/lib/booking/queries";
+import {
+  CONSENT_SETTINGS_HREF,
+  getTreatmentConsentReadiness,
+} from "@/lib/consent/launch-readiness";
 import { hasAnyReaction } from "@/lib/sessions/reaction-unified";
 
 // PR #215: Getting Started / onboarding checklist. A practical setup
@@ -50,6 +54,11 @@ export type GettingStartedSignals = {
   hasProbeLot: boolean;
   hasReactionOrTolerance: boolean;
   hasNextVisitNote: boolean;
+  // F-CONSENT-GAP. Tri-state on purpose: true / false are facts, `null` means
+  // the readiness read failed. Collapsing null to false would tell an owner to
+  // create a consent form they already have. Derived by the ONE authority,
+  // lib/consent/launch-readiness.ts.
+  liveTreatmentConsent: boolean | null;
   sterileItems: number;
   disinfectants: number;
   // CURRENT-mode payment attempt count (scoped by inferStripeLivemode();
@@ -133,6 +142,26 @@ export function buildGettingStarted(
           "Open a test intake and check the questions fit your practice.",
           "/clients",
         ),
+        // F-CONSENT-GAP. Auto-detected from the SAME rule the launch checklist
+        // uses (lib/consent/launch-readiness.ts); this file never re-derives
+        // it. `null` means the read failed, which is a "review" item rather
+        // than a "todo": an unreadable count must not be reported as an
+        // authoritative absence. A live template means the intake has a form
+        // to present; it is not a claim about legal enforceability.
+        s.liveTreatmentConsent === null
+          ? review(
+              "treatment-consent",
+              "Treatment consent form",
+              "Couldn't check your consent forms just now. Open Consent forms to confirm one is live.",
+              CONSENT_SETTINGS_HREF,
+            )
+          : auto(
+              "treatment-consent",
+              "Treatment consent form is live",
+              "Without a live treatment consent form, the intake asks new clients for no consent.",
+              s.liveTreatmentConsent,
+              CONSENT_SETTINGS_HREF,
+            ),
         review(
           "emails-review",
           "Confirmation/reminder emails reviewed",
@@ -365,6 +394,9 @@ export async function getGettingStartedSignals(
     sterile,
     disinfectants,
     payments,
+    // One bounded existence read, in the SAME Promise.all as everything else:
+    // no additional round trip and no per-item query.
+    treatmentConsent,
     { data: blockRows },
     { data: noteRows },
   ] = await Promise.all([
@@ -378,6 +410,7 @@ export async function getGettingStartedSignals(
       .select("id", { count: "exact", head: true })
       .eq("studio_id", studio.id)
       .eq("stripe_livemode", inferStripeLivemode()),
+    getTreatmentConsentReadiness(studio.id),
     supabase
       .from("session_blocks")
       // Charting unification: reactions may live as chips in the block's live
@@ -435,6 +468,9 @@ export async function getGettingStartedSignals(
         ) || b.tolerance_rating != null,
     ),
     hasNextVisitNote: notes.some((n) => !!n.next_session_note?.trim()),
+    // `null` preserves "could not establish" all the way to the item; it is
+    // never coerced to false here.
+    liveTreatmentConsent: treatmentConsent.ok ? treatmentConsent.ready : null,
     sterileItems: sterile.count ?? 0,
     disinfectants: disinfectants.count ?? 0,
     paymentAttempts: payments.count ?? 0,

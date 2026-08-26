@@ -1,5 +1,11 @@
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import {
+  excludedResources,
+  exportedResources,
+  pendingResources,
+} from "@/lib/export/resource-registry";
+
 import { ExportButton } from "./ExportButton";
 
 async function loadCounts(studioId: string): Promise<{
@@ -40,6 +46,11 @@ export default async function DataSettingsPage() {
   const { studio } = await getCurrentPractitionerWithStudio();
   const { clientCount, sessionCount, entryCount } = await loadCounts(studio.id);
 
+  // One source for what this page claims and what the ZIP contains.
+  const included = exportedResources();
+  const pending = pendingResources();
+  const withheld = excludedResources();
+
   return (
     <div className="flex flex-col gap-10">
       <section className="flex flex-col gap-5">
@@ -62,85 +73,121 @@ export default async function DataSettingsPage() {
           <a href="/privacy" className="underline">
             Privacy Policy
           </a>{" "}
-          for current hosting and subprocessors. You can download a portable
-          copy of your supported studio records at any time, import existing
-          records from CSV (coming soon), or delete everything permanently
-          (coming soon).
+          for current hosting and subprocessors. You can download a copy of the
+          studio records listed below at any time, import existing records from
+          CSV (coming soon), or delete everything permanently (coming soon).
         </p>
       </section>
 
+      {/* TRUTH-01A. The three lists below are GENERATED from
+          lib/export/resource-registry.ts, the same declaration the exporter
+          reads to decide what to write. They used to be hand-written bullets,
+          and they had drifted the way hand-written lists do: the "Included"
+          list described the export loosely, and "Not included" named exactly
+          two omissions when the real answer was forty resources - which read,
+          to an owner about to rely on this as a backup, as "everything else is
+          in there". A page and an exporter cannot disagree when there is only
+          one list. */}
       <DataCard
         anchorId="export-data"
         title="Export your data"
-        body="Download a portable copy of your supported studio records as a ZIP. Reads are paginated to exhaustion, so no file is silently truncated, and manifest.json records how many rows each file received. It is not point-in-time consistent and is not a transactional database backup. It does not replace Hone's disaster-recovery backups."
+        body="Download a copy of the studio records listed below as a ZIP of CSV files. It is a NAMED SUBSET, not everything Hone holds for you: the second list says what it does not yet carry, and the same list travels inside the ZIP so the archive can be read on its own later. Reads are paginated to exhaustion, so no file is silently truncated, and manifest.json records how many rows each file received and whether that number was checked against the database. It is not point-in-time consistent and is not a transactional database backup. It does not replace Hone's disaster-recovery backups."
       >
         <div className="flex flex-col gap-5">
           <div>
             <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">
-              Included
+              Included · {included.length} files
             </p>
             <ul className="mt-1.5 flex max-w-[600px] list-disc flex-col gap-1 pl-5 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
+              {included.map(({ resource, disposition }) => (
+                <li key={resource}>
+                  <span className="font-medium text-neutral-800 dark:text-neutral-200">
+                    {disposition.file}
+                  </span>{" "}
+                  {disposition.description}
+                </li>
+              ))}
               <li>
-                Clients: contact info, allergies, skin notes, Fitzpatrick
-                type, emergency contacts
-              </li>
-              <li>
-                Electrolysis &amp; laser sessions: notes, times, price, who
-                performed them
-              </li>
-              <li>
-                Electrolysis charting: treatment area, machine settings,
-                blend/galvanic &amp; thermolysis readings, probe details, pulse
-                count, hairs treated, observation chips, comments
-              </li>
-              <li>Laser entries</li>
-              <li>Practitioners</li>
-              <li>Per-client custom pricing</li>
-              <li>
-                Appointments: client, practitioner, service, start/end
-                times, status, and appointment notes
-              </li>
-              <li>
-                Treatment plans: primary area, status, estimated visits,
-                and plan notes
-              </li>
-              <li>Treatment plan schedule stages</li>
-              <li>
-                Consultation notes &amp; skin/hair analyses: the full
-                append-only clinical narrative, including superseded revisions
-              </li>
-              <li>
-                Record-keeping logs: sterile supplies, disinfectants, and the
-                record-keeping change history
-              </li>
-              <li>
-                Exposure-incident log (owner-only): contains personal
-                information about the exposed person: handle securely
-              </li>
-              <li>
-                manifest.json: how many rows were exported to each file, plus
-                whichever source-side count checks were available
+                <span className="font-medium text-neutral-800 dark:text-neutral-200">
+                  manifest.json
+                </span>{" "}
+                How many rows went into each file, whether that count was checked
+                against the database, and the machine-readable list of what is
+                not included.
               </li>
             </ul>
           </div>
 
           <div>
             <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">
-              Not included
+              Not included yet · {pending.length} record types
             </p>
-            <p className="mt-1.5 max-w-[600px] text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
-              Private warnings and personal notes are intentionally excluded
-              from this general export.
+            <p className="mt-1.5 max-w-[620px] text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
+              These are your records and they are safe in Hone, but this export
+              does not carry them yet. Most important:{" "}
+              <span className="font-medium text-neutral-800 dark:text-neutral-200">
+                treatment photos, intake forms, signed consents, your service
+                menu and payment records
+              </span>
+              . If you need any of them, email hello@hone.care and we will get
+              them to you.
             </p>
+            <details className="mt-2 max-w-[620px]">
+              <summary className="cursor-pointer text-sm text-neutral-700 underline dark:text-neutral-300">
+                See all {pending.length}
+              </summary>
+              <ul className="mt-2 flex list-disc flex-col gap-1.5 pl-5 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
+                {pending.map(({ resource, disposition }) => (
+                  <li key={resource}>
+                    <span className="font-medium text-neutral-800 dark:text-neutral-200">
+                      {resource}
+                    </span>{" "}
+                    {disposition.reason}
+                  </li>
+                ))}
+              </ul>
+            </details>
           </div>
 
-          <p className="max-w-[600px] text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
+          <div>
+            <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+              Deliberately withheld · {withheld.length}
+            </p>
+            <p className="mt-1.5 max-w-[620px] text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
+              Private practitioner notes and warnings are kept out of this
+              general export on purpose. So are login credentials, connection
+              secrets and Hone&rsquo;s own platform records, which are not your
+              studio&rsquo;s content and are never safe to hand over in a file.
+            </p>
+            <details className="mt-2 max-w-[620px]">
+              <summary className="cursor-pointer text-sm text-neutral-700 underline dark:text-neutral-300">
+                See all {withheld.length}
+              </summary>
+              <ul className="mt-2 flex list-disc flex-col gap-1.5 pl-5 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
+                {withheld.map(({ resource, disposition }) => (
+                  <li key={resource}>
+                    <span className="font-medium text-neutral-800 dark:text-neutral-200">
+                      {resource}
+                    </span>{" "}
+                    <span className="uppercase tracking-wide text-[0.7rem] text-neutral-500">
+                      {disposition.category.replace(/_/g, " ")}
+                    </span>{" "}
+                    {disposition.reason}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          </div>
+
+          <p className="max-w-[620px] text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
             <span className="font-medium text-neutral-800 dark:text-neutral-200">
-              Pilot tip:
+              Keeping your own copy:
             </span>{" "}
-            after your first real charting day, download an export and keep
-            your own copy of it somewhere safe. It is a portable record of your
-            studio data, not a substitute for Hone&rsquo;s own backups.
+            downloading an export after a real charting day is worth doing, and
+            it is a genuine copy of the files listed above. It is not a full
+            backup of your studio: it leaves out the record types in the second
+            list, and it does not include sessions you have deleted. Hone keeps
+            its own disaster-recovery backups separately.
           </p>
 
           <ExportButton />

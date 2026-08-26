@@ -230,6 +230,39 @@ describe("the two day controls do not fight each other", () => {
     );
   });
 
+  it("the period pills decline Next's default scroll-to-top", () => {
+    // DASH-SNAPSHOT-SCROLL-01. The Practice snapshot is the LAST section on the
+    // Dashboard, so its reader is always scrolled down — and Next's App Router
+    // resets `documentElement.scrollTop` on every forward <Link> navigation
+    // unless the link declines it. The period changed correctly and threw the
+    // practitioner to the top of the page, away from the numbers they had just
+    // asked to re-cut.
+    //
+    // That the VIEWPORT actually stays put is proved in the browser
+    // (e2e/dashboard-day-navigation.spec.ts, "the period filter updates IN
+    // PLACE"). This pin is what stops the opt-out being dropped in an edit that
+    // never runs a browser lane.
+    expect((SNAPSHOT_CODE.match(/<Link\b/g) ?? []).length).toBe(1);
+    const periodLink = SNAPSHOT_CODE.slice(SNAPSHOT_CODE.indexOf("<Link"));
+    expect(periodLink).toMatch(/scroll=\{false\}/);
+    // Still server-driven query navigation, and the href/aria contract is
+    // unchanged: the same Link carries both.
+    expect(periodLink).toMatch(/href=\{dashboardDayHref\(/);
+    expect(periodLink).toMatch(/aria-current=\{metrics\.period === p\.key/);
+  });
+
+  it("the fix is the Link's own behaviour — not a client-side scroll shim", () => {
+    // The tempting repairs all trade a server-rendered section for a client
+    // one, and each of them hides the symptom somewhere the next reader cannot
+    // see it: a manual scroll restore races the paint, a stored offset outlives
+    // the navigation that justified it, and router.replace() drops the history
+    // entry that makes Back work.
+    expect(SNAPSHOT_CODE).not.toMatch(/"use client"/);
+    expect(SNAPSHOT_CODE).not.toMatch(/window\.scrollTo|scrollIntoView/);
+    expect(SNAPSHOT_CODE).not.toMatch(/sessionStorage|localStorage/);
+    expect(SNAPSHOT_CODE).not.toMatch(/useRouter|router\.replace|router\.push/);
+  });
+
   it("the outward control is disabled at the horizon, never a rejected link", () => {
     expect(CODE).toMatch(/\{canGoBack \? \(/);
     expect(CODE).toMatch(/\{canGoForward \? \(/);
@@ -241,10 +274,17 @@ describe("#598 survives on every day", () => {
   it("card status and the consultation action are outside the history block", () => {
     // They describe the client NOW, so they are true on any day. If either
     // moved inside the `{workflow && …}` block it would vanish on tomorrow.
-    const historyBlock = CODE.slice(
-      CODE.indexOf("{workflow && ("),
-      CODE.indexOf("</Link>", CODE.indexOf("{workflow && (")),
-    );
+    // Bounded by the row-body link's own closing tag, whatever that element is
+    // called: UI-01C swapped it to PendingContainerLink, and a hard-coded
+    // `</Link>` then ran past it to the next ordinary link on the page and
+    // swept the whole actions column into "the history block".
+    const fromWorkflow = CODE.slice(CODE.indexOf("{workflow && ("));
+    const rowBodyEnd = fromWorkflow.search(/<\/\w*Link>/);
+    expect(
+      rowBodyEnd,
+      "the row-body link must close after the history block",
+    ).toBeGreaterThan(-1);
+    const historyBlock = fromWorkflow.slice(0, rowBodyEnd);
     expect(historyBlock).not.toMatch(/CardOnFilePill|resolveCardOnFileStatus/);
     expect(historyBlock).not.toMatch(/tab=consultation/);
     expect(CODE).toMatch(/<CardOnFilePill status=\{cardOnFile\}/);

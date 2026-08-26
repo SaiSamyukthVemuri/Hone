@@ -38,16 +38,47 @@ Appointment rows carry attempt counters and stamped timestamps:
 - `reminder_2h_send_attempts` + `reminder_2h_sent_at`
 - `no_show_email_send_attempts` + `no_show_email_sent_at`
 - `postcare_email_send_attempts` + `postcare_email_sent_at` (+ `_claimed_at` / `_failed_at` / `_last_error` / `_last_attempt_at`, migration 0100) — PR #311
-- `intake_reminder_7d_send_attempts` + `intake_reminder_7d_sent_at` (+ `_claimed_at`) — PR #306
-- `intake_reminder_3d_send_attempts` + `intake_reminder_3d_sent_at` (+ `_claimed_at`) — PR #306
+- `intake_reminder_7d_send_attempts` + `intake_reminder_7d_sent_at` (+ `_claimed_at`) — PR #306, **RETIRED by 0186: retained, no longer written**
+- `intake_reminder_3d_send_attempts` + `intake_reminder_3d_sent_at` (+ `_claimed_at`) — PR #306, **RETIRED by 0186: retained, no longer written**
 
 Truthful-reporting rule: stamp the `*_sent_at` **only** when the Resend call actually delivered. The 3-strike pattern is on every transactional path: each attempt increments `_attempts`; once Resend confirms success the `_sent_at` is set; if attempts exceed 3 without delivery the cron stops retrying and logs a sanitized failure for the operator.
 
 **Postcare send-state correctness (PR #311, migration 0100).** The manual postcare send (`sendPostcareEmailAction`) previously used `postcare_email_sent_at` as **both** the atomic first-send claim **and** the "sent" marker, stamping it **before** the Resend call — so a provider failure left a false "Postcare sent" (a P1 overclaim). It now mirrors the reminder claim discipline with per-appointment columns: the first send **claims `postcare_email_claimed_at`** (guarded by `sent_at IS NULL` + no fresh claim; ~5-min stale-reclaim window) and sets `postcare_email_last_attempt_at` + increments attempts **without** stamping `sent_at`; `postcare_email_sent_at` is stamped **only after Resend confirms success** (which also clears `_failed_at`/`_last_error`/`_claimed_at`). A provider **failure** sets `postcare_email_failed_at` + a **safe/generic** `postcare_email_last_error` (never the raw provider payload, client email/name, health data, or exception details) and clears the claim, leaving `sent_at` NULL on a first send (a failed **resend** keeps any prior real `sent_at`). The appointment-detail UI shows Sent / **Send failed — try again** / Sending… / Not-sent, and "sent" means **handed to the provider**, never delivered/received/opened. Postcare still bypasses `record_email_attempt` (single-request, no scheduler race). Additive/backfill-safe; existing historical `postcare_email_sent_at` rows are unchanged.
 
-### Intake-form reminders (PR #306, migration 0098)
+### Intake-form reminders — ~24h / ~2h, COMPOSED into the window message (migration 0186)
 
-The appointment-reminders cron also sends **intake-form reminder emails ~7 days and ~3 days before a confirmed appointment**, but only when the client's latest intake is still `in_progress`. It **reuses the exact 24h/2h idempotency machinery**: two new per-appointment column trios (`intake_reminder_7d_sent_at`/`_send_attempts`/`_claimed_at` and the `3d` set, migration 0098, additive/backfill-safe), two partial due-window indexes, and **two new branches on `claim_email_send` / `record_email_result`** (existing confirmation/reminder_24h/reminder_2h branches reproduced byte-for-byte). Each `sendIntakeReminderPass` (kind `7d`/`3d`, 2-hour windows centered on the target day via `intakeReminderWindowIso`, ≥ the 15-min cadence so no offset is missed): loads confirmed appointments in the window (`sent_at IS NULL`, `attempts < 3`), resolves the client's **latest intake with the admin client, studio+client scoped** (isolation preserved), **skips** if the intake is missing / submitted / reviewed or the client has no email, **claims before send**, re-checks the appointment is still confirmed, **always mints a fresh valid link** (`generateIntakeLinkUrl`, now + 14-day TTL; signed token stays authoritative; saved answers preserved — reuses the existing intake row), sends the reminder-specific copy (`buildIntakeReminderEmail` / `sendIntakeReminderToClient`), records the outcome via `record_email_result`, and on success stamps the PR #303 intake-link metadata (`stampIntakeLinkIssued({ emailed: true })`). Logs carry only appointment/studio ids + kind — **never a raw token or client PII**. No per-studio toggle (the per-appointment dedupe + skip-submitted + 7d/3d cadence keep it non-spammy); no SMS, no extra cadence. Email copy: subject "Reminder: please complete your intake form before your appointment" (no PII/date in the subject), body mentions the appointment date/time, says the form helps the practitioner prepare safely, carries the fresh link, and says "If you've already completed it, you can ignore this message." — no medical claims, no delivery/receipt overclaim.
+**Cadence.** Intake reminders fire at the **~24h and ~2h reminder windows**, not the retired 7d/3d ones. The old windows only ever reached bookings made a week or more ahead; a client who booked Tuesday for Thursday got nothing. Both windows reuse `REMINDER_WINDOW_MINUTES` (`24h` = `[23h, 25h]`, `2h` = `[105, 135]`) — no intake-specific window constant exists, so the already-proven cadence invariants cover intake by construction.
+
+**One message per appointment per window, per channel.** The intake nudge is **composed into** the appointment reminder rather than sent as a second message. Whatever the pass decides to compose, it claims the **existing** slot — `claim_email_send('reminder_24h' | 'reminder_2h')` for email, `claim_sms_send` for SMS. AT MOST ONE EMAIL and AT MOST ONE SMS per appointment per window is therefore a property of one conditional UPDATE, not a behaviour two send paths have to be trusted to respect. Two slots could not give that: two independent conditional UPDATEs are not atomic with respect to each other, so a toggle flip or an intake submission landing between two overlapping cron runs would let each run win a different slot and send. Email and SMS remain independent channels: one email **and** one SMS is allowed.
+
+**Settings.** `studios.send_intake_reminders` (migration 0186, **default true**) is the master intake-reminder toggle and is **independent** of `send_24h_reminders` / `send_2h_reminders`. It is exposed in the practitioner email-settings UI alongside them. For SMS it is necessary but **not sufficient**: the window's existing `send_24h_sms_reminders` / `send_2h_sms_reminders` toggle must also be on, so enabling intake reminders can never open a new SMS channel. The SMS consent model is untouched (phone + `sms_consent_at` + no `sms_opted_out_at`).
+
+**The six-case email law**, per window (`R` = that window's reminder toggle, `I` = `send_intake_reminders`, intake state re-read LIVE):
+
+| | R | I | intake | result |
+|---|---|---|---|---|
+| 1 | on | on | incomplete | ONE reminder carrying the intake CTA |
+| 2 | on | on | complete | ONE plain reminder |
+| 3 | on | off | not read | ONE plain reminder |
+| 4 | off | on | incomplete | ONE standalone intake reminder |
+| 5 | off | on | complete | nothing, and **no claim** (so no attempt is spent) |
+| 6 | off | off | not read | nothing, no read, no claim |
+
+SMS has no case-4 equivalent: if the window's SMS toggle is off the row is skipped before any intake work, so no intake SMS is ever sent on its own.
+
+**"Incomplete" means exactly**: the client's **latest non-deleted** `client_intake_forms` row for `(studio_id, client_id)` has `status = 'in_progress'`. `submitted` and `reviewed` are complete; a **missing** row is skipped (the cron never creates one).
+
+**Nothing is inferred from an earlier query.** Both passes re-read appointment `status = 'confirmed'` **and** re-read intake state immediately before the send decision, each as its own query. Cases 4/5 additionally probe intake **before** claiming, because there the claim decision itself depends on intake state and claiming first would spend an attempt off the 3-strike cap on a row that sends nothing. An intake read failure **fails safe to no-CTA** and never throws: losing the time-critical appointment reminder because an intake lookup blipped would be strictly worse.
+
+**Secure link.** Every send that carries the CTA mints a **fresh** `generateIntakeLinkUrl` token (now + 14-day TTL; the signed token stays the authoritative expiry) against the **existing** intake row — saved answers preserved, no second row created, raw token never logged.
+
+**Link accounting is truthful per channel.** `stampIntakeLinkIssued` runs **only** when the message that actually sent carried the link. A plain appointment reminder never stamps. The email pass stamps `{ emailed: true }`; the SMS pass stamps `{ emailed: false }`, because `intake_link_last_sent_at` renders as *"Intake link emailed …"* in the practitioner UI and an SMS must not claim the email channel sent it. `intake_link_send_count` is channel-agnostic and counts links actually issued.
+
+**The retired 7d/3d state is preserved, not reinterpreted.** The 0098 columns, indexes and `claim_email_send` / `record_email_result` branches are retained untouched; the application simply stops writing them. A stamped `intake_reminder_7d_sent_at` still means "we emailed this client seven days out". Reusing those columns would have made every in-flight row that already carried a 7d stamp permanently ineligible for the 24h nudge — a silent, unalertable delivery loss — and would have rewritten frozen history. **0186 creates no function**, so the `ALTER DEFAULT PRIVILEGES` grant-enumeration failure class (0129 / 0164 / 0183-0184) cannot occur in it.
+
+**"24-hour reminder" became "24-hour email" in the appointment-detail Email activity panel.** Since these columns are now the per-window *email* slot, a case-4 send would otherwise display "24-hour reminder — Sent" for a studio whose reminder is off — the same overclaim class as the pre-0100 postcare badge.
+
+Pinned by `tests/migrations/0186-intake-reminder-24h-2h.test.ts`, `tests/app/api/cron/reminder-window-composition.test.ts`, `tests/db/reminder-window-composition.db.test.ts`, `tests/lib/email/reminder-intake-cta.test.ts`, `tests/lib/email/intake-reminder-template.test.ts` and `tests/lib/sms/reminder-intake-cta.test.ts`.
 
 ### Reminder email claim (PR #189, migration 0080)
 

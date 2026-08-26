@@ -61,7 +61,7 @@ const T = 30_000;
 async function holdNavigation(
   page: Page,
   matches: (url: URL) => boolean,
-  opts: { blockPrefetch?: boolean } = {},
+  opts: { blockPrefetch?: boolean; holdPrefetch?: boolean } = {},
 ) {
   let open!: () => void;
   const gate = new Promise<void>((resolve) => {
@@ -69,6 +69,7 @@ async function holdNavigation(
   });
   let held = 0;
   let prefetchesBlocked = 0;
+  let prefetchesHeld = 0;
 
   await page.route(
     (url) => matches(url),
@@ -79,14 +80,31 @@ async function holdNavigation(
         // the viewport, and for a different pathname that prefetch can satisfy
         // the whole navigation — the click then issues NO request and there is
         // nothing to hold. A proof built on that window would be describing a
-        // coincidence. Blocking the speculative fetch leaves the cache empty so
-        // the tap must make a cold request we control, which is also the only
-        // case where perceived speed matters. Query-only navigation does not
-        // need this: the destination is the same pathname we are already on.
+        // coincidence. So the speculative fetch has to be neutralised, and
+        // there are two ways to do it. Query-only navigation needs neither: the
+        // destination is the same pathname we are already on.
+        //
+        // ABORT leaves the router cache empty and, for the /clients/ segment
+        // below, the tap then makes the cold request this gate holds.
         if (opts.blockPrefetch) {
           prefetchesBlocked += 1;
           await route.abort();
           return;
+        }
+        // HOLD does the same thing without failing anything, and it is what
+        // UI-01C's destinations require. MEASURED on /calendar/<id>: with the
+        // prefetch aborted, the tap did not make a client navigation at all —
+        // two aborted prefetches, then a plain DOCUMENT request carrying no
+        // `RSC` header, i.e. a full page load. There is no client transition in
+        // that sequence, so there is nothing for any pending presentation to
+        // report, and a test built on it would be asserting against a fallback
+        // production never takes. Holding the speculative request keeps the
+        // cache just as empty while leaving every request successful, so the
+        // tap performs the ordinary soft navigation this file exists to observe.
+        if (opts.holdPrefetch) {
+          prefetchesHeld += 1;
+          held += 1;
+          await gate;
         }
       } else if (headers["rsc"] === "1") {
         held += 1;
@@ -99,6 +117,7 @@ async function holdNavigation(
   return {
     held: () => held,
     prefetchesBlocked: () => prefetchesBlocked,
+    prefetchesHeld: () => prefetchesHeld,
     /**
      * Let the held request through. Deliberately does NOT unroute: with the
      * gate open the handler is a pass-through, and removing interception in
@@ -119,7 +138,7 @@ function tapAcknowledgement(control: Locator): Locator {
 
 async function seedTodayVisit(seed: E2eSeed, label: string) {
   const client = await seedE2eDashboardClient(seed, { label });
-  await seedE2eTodayAppointment(seed, {
+  const { appointmentId } = await seedE2eTodayAppointment(seed, {
     clientId: client.clientId,
     // Local morning + 90 minutes is still today in the seeded studio's
     // timezone, which is the same assumption dashboard-day-navigation makes.
@@ -127,7 +146,7 @@ async function seedTodayVisit(seed: E2eSeed, label: string) {
     endsMinutesFromNow: 135,
     withService: true,
   });
-  return client;
+  return { ...client, appointmentId };
 }
 
 /**
@@ -388,5 +407,392 @@ test.describe("UI-01 perceived speed — 390px", () => {
         expect(doc.scrollWidth).toBeLessThanOrEqual(doc.clientWidth);
       },
     });
+  });
+});
+
+// ===========================================================================
+// UI-01C — the two surfaces UI-01A/B deliberately left behind
+// ===========================================================================
+//
+// Both were known and both were postponed for a stated reason, not overlooked:
+//
+//   * THE APPOINTMENT ROW BODY (Dashboard -> /calendar/<id>) could not use the
+//     shipped label form, because the row body is itself a flex container over
+//     a fixed time cell and a `min-w-0 flex-1` text column, and that form wraps
+//     children in one span — which would collapse both into a single track. It
+//     now uses the CONTAINER form, whose entire claim is that it changes no
+//     layout at all. That claim is what the geometry step below measures.
+//
+//   * THE CALENDAR TOOLBAR is the same family as the dashboard day nav: five
+//     of its six controls change only the query on a pathname the practitioner
+//     is already on, so no route boundary can render for them either.
+//
+// Same primitive, same `data-link-pending` hook, same live region. There is one
+// pending-navigation mechanism in this app and these two surfaces joined it.
+
+/**
+ * The row body's own box, and the boxes of its IN-FLOW children.
+ *
+ * STRUCTURAL, not pixel-matched. A screenshot comparison of a clinical row
+ * would fail on the scrim itself — which is the point of the feature — and
+ * would say nothing about WHY. This reads the layout the browser actually
+ * computed:
+ *
+ *   * `inFlowCount` is the direct test of the collapse the container form
+ *     exists to avoid. Two children means the time cell and the text column
+ *     are still two flex items; one would mean something wrapped them, and
+ *     three would mean the acknowledgement became a track of its own.
+ *   * child offsets are measured RELATIVE to the anchor, so page scroll cannot
+ *     perturb the comparison — only real layout movement can.
+ */
+type RowGeometry = {
+  display: string;
+  inFlowCount: number;
+  self: { w: number; h: number };
+  children: Array<{ dx: number; dy: number; w: number; h: number }>;
+};
+
+async function rowBodyGeometry(row: Locator): Promise<RowGeometry> {
+  return row.evaluate((el) => {
+    const round = (n: number) => Math.round(n * 100) / 100;
+    const origin = el.getBoundingClientRect();
+    // Absolutely positioned children are not flex items and do not participate
+    // in flex layout, which is exactly why the scrim and the live region may
+    // live inside this anchor. Filtering on the COMPUTED position asserts that
+    // property against the browser rather than against a class name.
+    const inFlow = [...el.children].filter(
+      (c) => getComputedStyle(c).position === "static",
+    );
+    return {
+      display: getComputedStyle(el).display,
+      inFlowCount: inFlow.length,
+      self: { w: round(origin.width), h: round(origin.height) },
+      children: inFlow.map((c) => {
+        const r = c.getBoundingClientRect();
+        return {
+          dx: round(r.x - origin.x),
+          dy: round(r.y - origin.y),
+          w: round(r.width),
+          h: round(r.height),
+        };
+      }),
+    };
+  });
+}
+
+/**
+ * The shared body of the desktop and 390px row-body runs.
+ *
+ * A phone is where this matters most: the row body is the largest touch target
+ * on the Dashboard and the one a practitioner reaches for while a client is in
+ * front of her.
+ */
+async function provesTheRowBodyAcknowledges(
+  page: Page,
+  opts: { whilePending?: (page: Page) => Promise<void> } = {},
+) {
+  const seed = await seedE2eStudio();
+  const client = await seedTodayVisit(seed, "Row Body");
+  await loginAsOwner(page, seed);
+
+  const appointmentPath = `/calendar/${client.appointmentId}`;
+
+  // Installed BEFORE the dashboard renders, so the appointment detail is never
+  // prefetched and the tap must issue a cold request this test controls.
+  const gate = await holdNavigation(
+    page,
+    (url) => url.pathname === appointmentPath,
+    { holdPrefetch: true },
+  );
+
+  await page.goto("/dashboard");
+
+  const row = page.getByTestId("today-row-body").first();
+  const dashboardHeading = page.getByRole("heading", {
+    level: 1,
+    name: "Dashboard",
+  });
+  await expect(row).toBeVisible({ timeout: T });
+  await expect(dashboardHeading).toBeVisible();
+  const dashboardUrl = page.url();
+
+  // The live region exists and is empty before anything is pending.
+  const liveRegion = row.locator('[role="status"]');
+  await expect(liveRegion).toBeAttached();
+  await expect(liveRegion).toHaveText("");
+
+  const resting = await rowBodyGeometry(row);
+  // The row body is the flex container the label form could not serve, and its
+  // two children are the reason. If this ever stops being true the geometry
+  // comparison below would be comparing something else.
+  expect(resting.display).toBe("flex");
+  expect(resting.inFlowCount).toBe(2);
+
+  await row.click();
+
+  await test.step("the row the finger is on acknowledges, before the appointment exists", async () => {
+    await expect(tapAcknowledgement(row)).toBeVisible({ timeout: T });
+    // Anti-vacuity: this destination really is in flight and this test really is
+    // the thing holding it. Without that, "pending appeared" would be a claim
+    // about a window that was never opened.
+    expect(gate.held()).toBeGreaterThan(0);
+    expect(gate.prefetchesHeld()).toBeGreaterThan(0);
+
+    // The old Dashboard is still mounted, which is what leaves the row on
+    // screen and able to speak.
+    await expect(dashboardHeading).toBeVisible();
+    // The transition has not committed, so the URL has not moved.
+    expect(page.url()).toBe(dashboardUrl);
+
+    // The request is described, never an outcome.
+    await expect(liveRegion).toHaveText("Opening appointment…");
+
+    // NOTHING WAS HIDDEN. A label may fade to opacity-0 because its accessible
+    // name survives; a treatment row may not, because its content is the
+    // client's name and the caution line. The row still reads, and still names
+    // itself to a screen reader.
+    await expect(row).toContainText(client.name);
+    await expect(row).toHaveAccessibleName(new RegExp(client.name));
+
+    if (opts.whilePending) await opts.whilePending(page);
+  });
+
+  await test.step("...and the pending presentation moved no layout at all", async () => {
+    const pending = await rowBodyGeometry(row);
+    // Still two flex items: the scrim did not become a track, and nothing
+    // wrapped the children into one.
+    expect(pending.inFlowCount).toBe(2);
+    // Identical, not merely close — every number here is measured relative to
+    // the anchor, so there is no legitimate source of drift between the two
+    // reads. `toEqual` on the whole shape also catches a child that moved by
+    // exactly as much as its sibling.
+    expect(pending).toEqual(resting);
+  });
+
+  await test.step("the appointment arrives, exactly once, and the row returns to rest", async () => {
+    gate.release();
+    await expect(page).toHaveURL(new RegExp(`${appointmentPath}$`), {
+      timeout: T,
+    });
+    await expect(page.locator("[data-link-pending]")).toHaveCount(0);
+
+    // EXACTLY ONE navigation. A pending presentation that also started a
+    // navigation of its own — an onClick beside the anchor's own activation —
+    // would push two entries, and Back would land on a second copy of the
+    // appointment instead of on the Dashboard.
+    await page.goBack();
+    await expect(dashboardHeading).toBeVisible({ timeout: T });
+  });
+}
+
+test.describe("UI-01C row body — desktop", () => {
+  test("the appointment row acknowledges the tap without moving", async ({
+    page,
+  }) => {
+    await provesTheRowBodyAcknowledges(page);
+  });
+});
+
+test.describe("UI-01C row body — 390px", () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+
+  test("the same acknowledgement, and the same geometry, on a phone", async ({
+    page,
+  }) => {
+    await provesTheRowBodyAcknowledges(page, {
+      whilePending: async (p) => {
+        // An overlay stretched over a control that was already sized to fit is
+        // one way a loading state ships a horizontal scrollbar the resting page
+        // never had.
+        const doc = await p.evaluate(() => ({
+          scrollWidth: document.documentElement.scrollWidth,
+          clientWidth: document.documentElement.clientWidth,
+        }));
+        expect(doc.scrollWidth).toBeLessThanOrEqual(doc.clientWidth);
+      },
+    });
+  });
+});
+
+test.describe("UI-01C row body — keyboard", () => {
+  test("Enter on the focused row is acknowledged and navigates once", async ({
+    page,
+  }) => {
+    // A pending presentation built on a click handler would be silent here, and
+    // one built on an overlay that swallowed events would break activation
+    // outright. This is still a real anchor: it takes focus, Enter activates it,
+    // and the same acknowledgement appears.
+    const seed = await seedE2eStudio();
+    const client = await seedTodayVisit(seed, "Row Keyboard");
+    await loginAsOwner(page, seed);
+
+    const appointmentPath = `/calendar/${client.appointmentId}`;
+    const gate = await holdNavigation(
+      page,
+      (url) => url.pathname === appointmentPath,
+      { holdPrefetch: true },
+    );
+
+    await page.goto("/dashboard");
+    const row = page.getByTestId("today-row-body").first();
+    await expect(row).toBeVisible({ timeout: T });
+
+    await row.focus();
+    await expect(row).toBeFocused();
+    await page.keyboard.press("Enter");
+
+    await expect(tapAcknowledgement(row)).toBeVisible({ timeout: T });
+    expect(gate.held()).toBeGreaterThan(0);
+    await expect(row.locator('[role="status"]')).toHaveText(
+      "Opening appointment…",
+    );
+
+    gate.release();
+    await expect(page).toHaveURL(new RegExp(`${appointmentPath}$`), {
+      timeout: T,
+    });
+    await expect(page.locator("[data-link-pending]")).toHaveCount(0);
+  });
+});
+
+/**
+ * UI-01C — the CALENDAR TOOLBAR.
+ *
+ * Desktop only, and deliberately: on the week view the step nav is
+ * `hidden md:flex`, because the mobile day view owns day navigation there. The
+ * controls this test drives do not exist at 390px on that surface, so a phone
+ * run would assert nothing.
+ *
+ * Date navigation is the regression risk here, not the acknowledgement — this
+ * is the one surface where a wrong href silently shows the wrong week. So every
+ * step reads the control's OWN href first and then asserts the URL it landed
+ * on, which proves both that the destination is untouched and that the tap
+ * navigated exactly once.
+ */
+async function provesTheToolbarAcknowledges(page: Page) {
+  const seed = await seedE2eStudio();
+  await loginAsOwner(page, seed);
+
+  await page.goto("/calendar");
+  const range = page.getByRole("heading", { level: 1 });
+  await expect(range).toBeVisible({ timeout: T });
+
+  const urlPath = () => {
+    const u = new URL(page.url());
+    return `${u.pathname}${u.search}`;
+  };
+  const thisWeekRange = (await range.textContent())!.trim();
+
+  const next = page.getByTestId("calendar-next");
+  const prev = page.getByTestId("calendar-prev");
+
+  await test.step("full speed first: the step nav still navigates, and leaves nothing behind", async () => {
+    // The normal-speed control. A mechanism that leaks pending UI fails here,
+    // before anything is held — and this is also the date-navigation
+    // regression check: one tap moves exactly one week, to the href the
+    // toolbar itself was rendering.
+    const nextHref = await next.getAttribute("href");
+    expect(nextHref).toMatch(/^\/calendar\?week=\d{4}-\d{2}-\d{2}$/);
+    await next.click();
+    await expect(range).not.toHaveText(thisWeekRange, { timeout: T });
+    expect(urlPath()).toBe(nextHref);
+    await expect(page.locator("[data-link-pending]")).toHaveCount(0);
+  });
+
+  const nextWeekRange = (await range.textContent())!.trim();
+  const backHref = await prev.getAttribute("href");
+
+  const gate = await holdNavigation(page, (url) => url.pathname === "/calendar");
+  const restingBox = await prev.boundingBox();
+  expect(restingBox).not.toBeNull();
+  const liveRegion = prev.locator('[role="status"]');
+  await expect(liveRegion).toHaveText("");
+
+  await prev.click();
+
+  await test.step("the arrow the finger is on says the calendar is loading", async () => {
+    await expect(tapAcknowledgement(prev)).toBeVisible({ timeout: T });
+    expect(gate.held()).toBeGreaterThan(0);
+
+    // Still the old week. The acknowledgement is about the REQUEST and makes no
+    // claim about which dates are arriving; the heading proves nothing moved.
+    await expect(range).toHaveText(nextWeekRange);
+    await expect(liveRegion).toHaveText("Loading calendar…");
+
+    // The words that say what the control does survive the pending state, and
+    // the arrow does not move under the finger — this is a segmented control
+    // whose two arrows sit against each other inside one rounded border.
+    await expect(prev).toHaveAccessibleName(/Previous/);
+    expect(await prev.boundingBox()).toEqual(restingBox);
+  });
+
+  await test.step("the week arrives, on the href the control was rendering", async () => {
+    gate.release();
+    await expect(range).toHaveText(thisWeekRange, { timeout: T });
+    expect(urlPath()).toBe(backHref);
+    await expect(page.locator("[data-link-pending]")).toHaveCount(0);
+    await expect(liveRegion).toHaveText("");
+  });
+
+  await test.step("the view toggle acknowledges too, and keeps its own semantics", async () => {
+    await page.unrouteAll({ behavior: "wait" });
+    const monthGate = await holdNavigation(
+      page,
+      (url) => url.pathname === "/calendar",
+    );
+    const month = page.getByTestId("calendar-view-month");
+    const monthHref = await month.getAttribute("href");
+    await month.click();
+
+    await expect(tapAcknowledgement(month)).toBeVisible({ timeout: T });
+    expect(monthGate.held()).toBeGreaterThan(0);
+    await expect(month.locator('[role="status"]')).toHaveText("Loading view…");
+    // Still the week view underneath: the tab has not become current yet,
+    // because the navigation has not committed.
+    await expect(page.getByTestId("calendar-view-week")).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+
+    monthGate.release();
+    await expect(month).toHaveAttribute("aria-current", "page", { timeout: T });
+    expect(urlPath()).toBe(monthHref);
+    await expect(page.locator("[data-link-pending]")).toHaveCount(0);
+  });
+
+  await test.step("Upcoming is a SEGMENT change, and is acknowledged the same way", async () => {
+    await page.unrouteAll({ behavior: "wait" });
+    const upcomingGate = await holdNavigation(
+      page,
+      (url) => url.pathname === "/calendar/upcoming",
+      { holdPrefetch: true },
+    );
+    await page.goto("/calendar");
+    const upcoming = page.getByTestId("calendar-upcoming");
+    await expect(upcoming).toBeVisible({ timeout: T });
+    const beforeUrl = page.url();
+
+    await upcoming.click();
+    await expect(tapAcknowledgement(upcoming)).toBeVisible({ timeout: T });
+    expect(upcomingGate.held()).toBeGreaterThan(0);
+    await expect(upcoming.locator('[role="status"]')).toHaveText(
+      "Opening upcoming…",
+    );
+    // The old calendar is still mounted and the URL has not moved.
+    expect(page.url()).toBe(beforeUrl);
+
+    upcomingGate.release();
+    await expect(
+      page.getByRole("heading", { level: 1, name: "Upcoming" }),
+    ).toBeVisible({ timeout: T });
+    await expect(page.locator("[data-link-pending]")).toHaveCount(0);
+  });
+}
+
+test.describe("UI-01C calendar toolbar — desktop", () => {
+  test("every toolbar navigation acknowledges the tap, and moves no dates it should not", async ({
+    page,
+  }) => {
+    await provesTheToolbarAcknowledges(page);
   });
 });
