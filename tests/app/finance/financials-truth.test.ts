@@ -346,8 +346,8 @@ const resolveImport = (spec: string, fromFile: string): string | null => {
 };
 
 /**
- * EVERY module specifier a file statically depends on, read from the TypeScript
- * AST rather than matched by regex.
+ * EVERY module specifier a source text statically depends on, read from the
+ * TypeScript AST rather than matched by regex.
  *
  * This replaced a regex that recognised only `import … from "x"` and
  * `import("x")`. Codex raised the gap on PR #646 as a P2 and it was right: a
@@ -355,15 +355,33 @@ const resolveImport = (spec: string, fromFile: string): string | null => {
  * module specifier but no import clause and therefore no `from`, so the regex
  * skipped the edge entirely. The module executed at runtime while never
  * entering CLOSURE, and every reachability assertion below stayed green.
- * Reproduced before the fix, and it is now Control A.
+ * Reproduced before the fix, and it is now a control in the table below.
  *
- * `ts.isImportDeclaration` is true for that form as it is for every other, so
- * asking the compiler removes the whole class of defect rather than patching
- * one shape of it. Covered by construction:
+ * Codex then raised the SAME failure a second time in a different spelling:
+ * `require("@/lib/dashboard/practice-metrics")`. That is a CallExpression whose
+ * callee is the identifier `require` — not the `ImportKeyword` the dynamic
+ * import branch tests for, and not a declaration at all — so an AST walk built
+ * only out of import and export declarations skipped the edge while the module
+ * still executed. Reproduced the same way before this fix: appended to a FIN
+ * entry file, all 55 assertions stayed green.
  *
- *   import x from "m"            import { a } from "m"      import type { T } from "m"
- *   import * as ns from "m"      import "m"   <-- the gap   export { a } from "m"
- *   export * from "m"            import("m")                import x = require("m")
+ * Every executable literal module reference is now covered by construction, and
+ * each shape is pinned individually in MODULE_REFERENCE_SHAPES:
+ *
+ *   import x from "m"        import { a } from "m"       import * as ns from "m"
+ *   import "m"               import type { T } from "m"  export { a } from "m"
+ *   export * from "m"        export * as ns from "m"     import("m")
+ *   import x = require("m")  require("m")                import("m").T
+ *
+ * `isStringLiteralLike` rather than `isStringLiteral`, because the backtick
+ * forms of `require` and `import` are NoSubstitutionTemplateLiterals and every
+ * bit as executable.
+ *
+ * TYPE-ONLY EDGES REMAIN EDGES, exactly as the block comment above declares:
+ * following them is deliberately STRICTER than the runtime graph, because the
+ * contract is about what this surface is COUPLED to. `import("m")` in type
+ * position is that same edge spelled as an ImportTypeNode, so it is followed
+ * for the same reason rather than becoming the next way out.
  *
  * PARSED FROM RAW SOURCE, not from `codeOnly`. The compiler already knows what
  * a comment is, so a commented-out import is correctly NOT an edge — and
@@ -371,35 +389,41 @@ const resolveImport = (spec: string, fromFile: string): string | null => {
  * still uses `codeOnly`, because these files legitimately DISCUSS the tables
  * they must never reach.
  */
-function moduleSpecifiers(file: string): string[] {
-  const source = readFileSync(file, "utf8");
+function specifiersOfSource(source: string, fileName: string): string[] {
   const sf = ts.createSourceFile(
-    file,
+    fileName,
     source,
     ts.ScriptTarget.Latest,
     /* setParentNodes */ true,
-    file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+    fileName.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
   );
   const specs: string[] = [];
   const take = (node: ts.Node | undefined) => {
-    if (node && ts.isStringLiteral(node)) specs.push(node.text);
+    if (node && ts.isStringLiteralLike(node)) specs.push(node.text);
   };
   const visit = (node: ts.Node): void => {
     if (ts.isImportDeclaration(node)) {
       // Side-effect imports land here too: no importClause, but a specifier.
       take(node.moduleSpecifier);
     } else if (ts.isExportDeclaration(node)) {
+      // Covers `export * as ns from "m"`, which the scanner-based cross-check
+      // below does not report at all — one reason the AST stays the authority.
       take(node.moduleSpecifier);
     } else if (
       ts.isImportEqualsDeclaration(node) &&
       ts.isExternalModuleReference(node.moduleReference)
     ) {
       take(node.moduleReference.expression);
-    } else if (
-      ts.isCallExpression(node) &&
-      node.expression.kind === ts.SyntaxKind.ImportKeyword
-    ) {
-      take(node.arguments[0]);
+    } else if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument)) {
+      take(node.argument.literal);
+    } else if (ts.isCallExpression(node)) {
+      if (node.expression.kind === ts.SyntaxKind.ImportKeyword) {
+        // `import("m")` — the callee is a keyword, not an identifier.
+        take(node.arguments[0]);
+      } else if (ts.isIdentifier(node.expression) && node.expression.text === "require") {
+        // `require("m")` — executable CommonJS, and the gap this repair closes.
+        take(node.arguments[0]);
+      }
     }
     ts.forEachChild(node, visit);
   };
@@ -407,30 +431,66 @@ function moduleSpecifiers(file: string): string[] {
   return specs;
 }
 
-/**
- * A crude textual lower bound on how many edges a file declares, used ONLY to
- * cross-check the parser with an independent method. If the extractor ever goes
- * blind to a shape again, it finds fewer specifiers than there are import
- * statements and the anti-vacuity assertion fails — which is the check that was
- * missing when the side-effect gap shipped.
- */
-function textualImportCount(file: string): number {
-  const code = codeOnly(readFileSync(file, "utf8"));
-  return (
-    (code.match(/^\s*import\s/gm) ?? []).length +
-    (code.match(/^\s*export\s[\s\S]{0,200}?\sfrom\s*["']/gm) ?? []).length
-  );
+/** The same extraction, for a file on disk. */
+function moduleSpecifiers(file: string): string[] {
+  return specifiersOfSource(readFileSync(file, "utf8"), file);
 }
 
-/** file -> the importer that first reached it, so a failure names a chain. */
-function walkFrom(entries: readonly string[]): Map<string, string | null> {
+/**
+ * The same question asked by a DIFFERENT implementation: TypeScript's own
+ * scanner-based preprocessor, which this repo already uses for exactly this job
+ * in tests/source-guards/self-hosted-fonts-guards.test.ts. It replaces a crude
+ * `^\s*import\s` line count that was itself blind to `require` — the very shape
+ * this repair is about — and so could never have caught it.
+ *
+ * It is the CROSS-CHECK and not the extractor, because measurement puts it
+ * wrong in both directions:
+ *
+ *   - it does not report `export * as ns from "m"` at all; and
+ *   - having no JSX mode, it scans JSX TEXT as code, so prose reading
+ *     `<p>you must import "x" first</p>` is reported as an edge — and both
+ *     entry components here are prose about the tables they must never read.
+ *
+ * Resolving each specifier against the repo discards the invented ones, which
+ * name no file, and keeps every real one. That makes it a sound LOWER BOUND on
+ * the walker: whatever it can resolve, the walker must also have found.
+ */
+function independentSpecifiers(file: string): string[] {
+  return ts
+    .preProcessFile(readFileSync(file, "utf8"), /* readImportFiles */ true, /* detectJs */ true)
+    .importedFiles.map((f) => f.fileName);
+}
+
+/** Specifiers that resolve to a file inside this repo, deduplicated. */
+function resolvedEdges(specs: readonly string[], fromFile: string): string[] {
+  const out = new Set<string>();
+  for (const spec of specs) {
+    const target = resolveImport(spec, fromFile);
+    if (target) out.add(target);
+  }
+  return [...out];
+}
+
+/**
+ * file -> the importer that first reached it, so a failure names a chain.
+ *
+ * `specifiersOf` is injectable for ONE reason: the traversal itself has to be
+ * provable. Recognising a `require` specifier and enqueuing its target are two
+ * different things, and a walker that did the first but not the second would
+ * satisfy every shape assertion while the chain behind it still executed.
+ * Production callers take the default and read from disk.
+ */
+function walkFrom(
+  entries: readonly string[],
+  specifiersOf: (file: string) => string[] = moduleSpecifiers,
+): Map<string, string | null> {
   const reached = new Map<string, string | null>();
   const queue: Array<[string, string | null]> = entries.map((e) => [path.join(ROOT, e), null]);
   while (queue.length > 0) {
     const [file, via] = queue.shift()!;
     if (reached.has(file)) continue;
     reached.set(file, via);
-    for (const spec of moduleSpecifiers(file)) {
+    for (const spec of specifiersOf(file)) {
       const target = resolveImport(spec, file);
       if (target && !reached.has(target)) queue.push([target, path.relative(ROOT, file)]);
     }
@@ -477,6 +537,97 @@ const FORBIDDEN_ON_THE_PATH = [
  */
 const TYPE_DECLARATION_ONLY = new Set(["lib/types/database.ts"]);
 
+/**
+ * Every shape of module reference the extractor must see, with the answer
+ * WRITTEN DOWN rather than computed.
+ *
+ * This table is the one check in the file that cannot go blind alongside the
+ * walker. Everything else in this block asks the extractor about the extractor:
+ * CLOSURE IS CLOSED walks the graph with the same function that built it, so a
+ * shape it cannot see is absent from both sides and the assertion passes while
+ * the module executes. That is not hypothetical — it is exactly how the
+ * side-effect gap shipped, and then how `require` shipped after it.
+ *
+ * `.ts` and `.tsx` are both exercised: the entry components are TSX, and
+ * ScriptKind changes how the source is parsed.
+ */
+const MODULE_REFERENCE_SHAPES: ReadonlyArray<readonly [string, string, string[]]> = [
+  // Executable ES module references.
+  ["default import", 'import x from "m";', ["m"]],
+  ["named import", 'import { a } from "m";', ["m"]],
+  ["namespace import", 'import * as ns from "m";', ["m"]],
+  ["side-effect import", 'import "m";', ["m"]],
+  ["export-from", 'export { a } from "m";', ["m"]],
+  ["export-star", 'export * from "m";', ["m"]],
+  ["export-star-as", 'export * as ns from "m";', ["m"]],
+  ["dynamic import", 'const p = import("m");', ["m"]],
+  ["awaited dynamic import", 'async function f() { await import("m"); }', ["m"]],
+  // Executable CommonJS — the shape this repair added.
+  ["require", 'const r = require("m");', ["m"]],
+  ["require, member-accessed", 'const r = require("m").thing;', ["m"]],
+  ["require, nested in a branch", 'function f() { if (x) { require("m"); } }', ["m"]],
+  ["require, template literal", "const r = require(`m`);", ["m"]],
+  ["import-equals-require", 'import x = require("m");', ["m"]],
+  // Type-only edges are followed too, deliberately: see the block comment above.
+  ["import type", 'import type { T } from "m";', ["m"]],
+  ["inline type specifier", 'import { type T } from "m";', ["m"]],
+  ["export type from", 'export type { T } from "m";', ["m"]],
+  ["import type position", 'type X = import("m").Y;', ["m"]],
+  // ...and what must NOT become an edge.
+  ["line-commented import", '// import "m";', []],
+  ["block-commented require", '/* const r = require("m"); */', []],
+  ["a string that spells one", `const s = 'require("m")';`, []],
+  ["a require on another object", 'const r = obj.require("m");', []],
+  ["a non-literal require", 'const r = require(dynamicName);', []],
+];
+
+describe("NC-reach — the extractor sees every executable module reference", () => {
+  it.each(MODULE_REFERENCE_SHAPES)("%s", (_name, source, expected) => {
+    expect(specifiersOfSource(source, path.join(ROOT, "probe.ts"))).toEqual(expected);
+    expect(specifiersOfSource(source, path.join(ROOT, "probe.tsx"))).toEqual(expected);
+  });
+
+  it("THE ESCAPE ITSELF: a require of the money module resolves to the money module", () => {
+    // Not a shape in the abstract. This is the exact line that, appended to a
+    // FIN entry file before this repair, executed lib/dashboard/practice-metrics
+    // — a `services(price_cents)` read and a payment_charge_attempts query —
+    // while all 55 assertions in this file stayed green.
+    const entry = path.join(ROOT, FILES.model);
+    const specs = specifiersOfSource('require("@/lib/dashboard/practice-metrics");', entry);
+    expect(specs).toEqual(["@/lib/dashboard/practice-metrics"]);
+
+    const resolved = resolveImport(specs[0], entry);
+    expect(resolved).not.toBeNull();
+    expect(path.relative(ROOT, resolved ?? "")).toBe("lib/dashboard/practice-metrics.ts");
+
+    // ...and the module it reaches is genuinely a money path, so the control is
+    // not a rehearsal against an innocent file that would prove nothing.
+    const money = codeOnly(read("lib/dashboard/practice-metrics.ts"));
+    expect(FORBIDDEN_ON_THE_PATH.filter((id) => money.includes(id))).not.toEqual([]);
+  });
+
+  it("a require edge is walked TRANSITIVELY, not just recognised at the entry", () => {
+    // Recognising a specifier is half the job: the queue must also FOLLOW it.
+    // A walker that saw `require` but never enqueued its target would satisfy
+    // every shape above while the whole chain behind it still executed.
+    //
+    // Real files as nodes so resolution is real, synthetic edges so the thing
+    // under test is the traversal and not what any file happens to import.
+    const CHAIN: Record<string, string> = {
+      [FILES.model]: 'require("@/lib/finance/financial-copy");',
+      "lib/finance/financial-copy.ts": 'require("@/lib/dashboard/practice-metrics");',
+    };
+    const reached = walkFrom([FILES.model], (file) =>
+      specifiersOfSource(CHAIN[path.relative(ROOT, file)] ?? "", file),
+    );
+    expect([...reached.keys()].map((f) => path.relative(ROOT, f))).toEqual([
+      FILES.model,
+      "lib/finance/financial-copy.ts",
+      "lib/dashboard/practice-metrics.ts",
+    ]);
+  });
+});
+
 describe("NC-reach — no money path is reachable from FIN Slice 1, transitively", () => {
   it("ANTI-VACUITY: the walk actually resolved a real graph", () => {
     // A walker that silently resolves nothing would pass every assertion below.
@@ -487,19 +638,34 @@ describe("NC-reach — no money path is reachable from FIN Slice 1, transitively
     expect(CLOSURE_REL).toContain("lib/types/database.ts");
   });
 
-  it("ANTI-BLINDNESS: the parser finds at least as many edges as the text does", () => {
-    // An independent count. The side-effect gap was invisible precisely because
-    // nothing compared the extractor against a second method — the graph stayed
-    // populated, so every other assertion still passed while an edge vanished.
+  it("ANTI-BLINDNESS: a second, independent extractor finds no edge the walker missed", () => {
+    // The side-effect gap was invisible precisely because nothing compared the
+    // extractor against a second method — the graph stayed populated, so every
+    // other assertion still passed while an edge vanished. `require` was the
+    // same failure a second time, and the old cross-check here was a line count
+    // that could not see `require` either, so it agreed with the blindness.
+    //
+    // Compared on RESOLVED in-repo edges, which is the only thing reachability
+    // is about, and which discards the specifiers the scanner invents out of
+    // JSX prose because they name no file.
     const blind: string[] = [];
+    let independentEdges = 0;
     for (const file of CLOSURE.keys()) {
-      const parsed = moduleSpecifiers(file).length;
-      const textual = textualImportCount(file);
-      if (parsed < textual) {
-        blind.push(`${path.relative(ROOT, file)}: parser saw ${parsed}, text shows ${textual}`);
+      const walked = new Set(resolvedEdges(moduleSpecifiers(file), file));
+      for (const spec of independentSpecifiers(file)) {
+        const target = resolveImport(spec, file);
+        if (!target) continue;
+        independentEdges += 1;
+        if (!walked.has(target)) {
+          blind.push(`${path.relative(ROOT, file)} -> ${spec}: walker did not see this edge`);
+        }
       }
     }
     expect(blind).toEqual([]);
+    // ...and the cross-check is not itself asleep: a method that resolved
+    // nothing would agree with any extractor, however blind. It must find at
+    // least one edge per non-entry file, or it never discovered this graph.
+    expect(independentEdges).toBeGreaterThanOrEqual(CLOSURE.size - FIN_ENTRIES.length);
   });
 
   it("CLOSURE IS CLOSED: every in-repo edge of a reached file is itself reached", () => {
