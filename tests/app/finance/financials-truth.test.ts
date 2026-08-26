@@ -346,6 +346,74 @@ const resolveImport = (spec: string, fromFile: string): string | null => {
 };
 
 /**
+ * The expression a call actually invokes, with TypeScript's semantically
+ * TRANSPARENT wrappers removed.
+ *
+ * Codex raised `(require)("@/lib/dashboard/practice-metrics")` as a P2 on #646
+ * and was right. It was the third report of ONE root cause, not a third bug:
+ * the extractor was testing the callee NODE against a list of recognised
+ * shapes, so each repair closed the spelling that had been named and left the
+ * next one open. A normalisation step is the fix for the class — decide what
+ * the callee EVALUATES to first, then ask a single question about it.
+ *
+ * Every wrapper below was measured against the repository's own TypeScript
+ * before being listed here, not assumed. `(require)(…)` parses as
+ * ParenthesizedExpression > Identifier; the rest nest the same way:
+ *
+ *   (require)(…)                      ParenthesizedExpression
+ *   ((require))(…)                    …nested, so this must loop, not peel once
+ *   (require!)(…)                     NonNullExpression
+ *   (require as typeof require)(…)    AsExpression
+ *   (require satisfies unknown)(…)    SatisfiesExpression
+ *   (<any>require)(…)                 TypeAssertionExpression (.ts only; this
+ *                                     spelling is a parse error in .tsx)
+ *
+ * A COMMA SEQUENCE evaluates to its RIGHTMOST operand, which is the entire
+ * point of the `(0, require)(…)` idiom — it strips the callee's `this` binding
+ * while still calling require. So the walk follows `.right`, and follows it
+ * recursively, which is what makes `(0, ((require)))(…)` an edge too.
+ *
+ * The direction matters and is load-bearing: `(require, 0)(…)` evaluates to
+ * `0`, is not a require call, and must NOT become an edge. Pinned below.
+ *
+ * DELIBERATELY NOT GENERALISED. This resolves transparent SYNTAX, never
+ * values. `module.require(…)`, `createRequire(…)(…)`, `eval("require(…)")` and
+ * any aliased binding are all outside it by construction — they normalise to
+ * something that is not the `require` identifier and simply do not match. None
+ * of them appears anywhere in the FIN closure today; if one ever does it is a
+ * separate finding, not something this rule should be stretched to cover.
+ *
+ * One measured note, so nobody mistakes the boundary for a guarantee: a BARE
+ * `module.require("m")` does not slip through silently — `ts.preProcessFile`
+ * reports it, so the anti-blindness assertion below fails with "walker did not
+ * see this edge". Parenthesise it and the scanner stops reporting it too, and
+ * the pair goes quiet. That is a property of the cross-check, not of this rule.
+ */
+function effectiveCallee(expression: ts.Expression): ts.Expression {
+  let node: ts.Expression = expression;
+  // Each branch descends to a child, so the AST's finite depth bounds the loop.
+  for (;;) {
+    if (ts.isParenthesizedExpression(node)) node = node.expression;
+    else if (ts.isNonNullExpression(node)) node = node.expression;
+    else if (ts.isAsExpression(node)) node = node.expression;
+    else if (ts.isSatisfiesExpression(node)) node = node.expression;
+    else if (ts.isTypeAssertionExpression(node)) node = node.expression;
+    else if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.CommaToken
+    ) {
+      node = node.right;
+    } else return node;
+  }
+}
+
+/** Whether a call expression's callee evaluates to the `require` identifier. */
+function callsRequire(expression: ts.Expression): boolean {
+  const callee = effectiveCallee(expression);
+  return ts.isIdentifier(callee) && callee.text === "require";
+}
+
+/**
  * EVERY module specifier a source text statically depends on, read from the
  * TypeScript AST rather than matched by regex.
  *
@@ -418,10 +486,12 @@ function specifiersOfSource(source: string, fileName: string): string[] {
       take(node.argument.literal);
     } else if (ts.isCallExpression(node)) {
       if (node.expression.kind === ts.SyntaxKind.ImportKeyword) {
-        // `import("m")` — the callee is a keyword, not an identifier.
+        // `import("m")` — the callee is a keyword, not an identifier, and it
+        // needs no normalisation: `(import)("m")` is a PARSE ERROR, measured,
+        // so no wrapped spelling of it can execute.
         take(node.arguments[0]);
-      } else if (ts.isIdentifier(node.expression) && node.expression.text === "require") {
-        // `require("m")` — executable CommonJS, and the gap this repair closes.
+      } else if (callsRequire(node.expression)) {
+        // Executable CommonJS, in every spelling that evaluates to `require`.
         take(node.arguments[0]);
       }
     }
@@ -551,7 +621,9 @@ const TYPE_DECLARATION_ONLY = new Set(["lib/types/database.ts"]);
  * `.ts` and `.tsx` are both exercised: the entry components are TSX, and
  * ScriptKind changes how the source is parsed.
  */
-const MODULE_REFERENCE_SHAPES: ReadonlyArray<readonly [string, string, string[]]> = [
+type Shape = [name: string, source: string, expected: string[], tsOnly?: true];
+
+const MODULE_REFERENCE_SHAPES: Shape[] = [
   // Executable ES module references.
   ["default import", 'import x from "m";', ["m"]],
   ["named import", 'import { a } from "m";', ["m"]],
@@ -562,29 +634,62 @@ const MODULE_REFERENCE_SHAPES: ReadonlyArray<readonly [string, string, string[]]
   ["export-star-as", 'export * as ns from "m";', ["m"]],
   ["dynamic import", 'const p = import("m");', ["m"]],
   ["awaited dynamic import", 'async function f() { await import("m"); }', ["m"]],
-  // Executable CommonJS — the shape this repair added.
+  // Executable CommonJS, plain.
   ["require", 'const r = require("m");', ["m"]],
   ["require, member-accessed", 'const r = require("m").thing;', ["m"]],
   ["require, nested in a branch", 'function f() { if (x) { require("m"); } }', ["m"]],
   ["require, template literal", "const r = require(`m`);", ["m"]],
   ["import-equals-require", 'import x = require("m");', ["m"]],
+  // Executable CommonJS behind a TRANSPARENT callee wrapper. Every one of
+  // these calls the same function; only the syntax differs. Each was measured
+  // against this repository's TypeScript before being listed.
+  ["parenthesized require", '(require)("m");', ["m"]],
+  ["doubly parenthesized require", '((require))("m");', ["m"]],
+  ["non-null asserted require", '(require!)("m");', ["m"]],
+  ["as-cast require", '(require as typeof require)("m");', ["m"]],
+  ["satisfies require", '(require satisfies unknown)("m");', ["m"]],
+  // `<any>require` is a parse error in .tsx, where the same text is JSX.
+  ["angle-cast require", '(<any>require)("m");', ["m"], true],
+  // A comma sequence evaluates to its RIGHTMOST operand — the whole point of
+  // the idiom, which strips the `this` binding while still calling require.
+  ["sequence require", '(0, require)("m");', ["m"]],
+  ["sequence with nested parens", '(0, ((require)))("m");', ["m"]],
+  ["sequence of three", '(0, 1, require)("m");', ["m"]],
   // Type-only edges are followed too, deliberately: see the block comment above.
   ["import type", 'import type { T } from "m";', ["m"]],
   ["inline type specifier", 'import { type T } from "m";', ["m"]],
   ["export type from", 'export type { T } from "m";', ["m"]],
   ["import type position", 'type X = import("m").Y;', ["m"]],
-  // ...and what must NOT become an edge.
+  // ...and what must NOT become an edge. Normalising the callee resolves
+  // transparent SYNTAX, never values, so none of these can manufacture one.
   ["line-commented import", '// import "m";', []],
   ["block-commented require", '/* const r = require("m"); */', []],
+  ["line-commented parenthesized require", '// (require)("m");', []],
   ["a string that spells one", `const s = 'require("m")';`, []],
+  ["a string that spells the wrapped one", `const s = '(require)("m")';`, []],
   ["a require on another object", 'const r = obj.require("m");', []],
+  ["a parenthesized member require", '(obj.require)("m");', []],
+  ["module.require", 'module.require("m");', []],
+  ["createRequire, then call", 'createRequire(url)("m");', []],
+  ["eval of require text", `eval('require("m")');`, []],
   ["a non-literal require", 'const r = require(dynamicName);', []],
+  // The sequence rule is DIRECTIONAL. `(require, 0)` evaluates to 0, so it is
+  // an ordinary call of a number, not a require — reversing this would be the
+  // easiest way to turn the fix into a false-positive machine.
+  ["REVERSED sequence is not a require", '(require, 0)("m");', []],
+  ["parenthesized ordinary call", '(safeFn)("m");', []],
+  ["sequence of an ordinary function", '(0, safeFn)("m");', []],
 ];
 
 describe("NC-reach — the extractor sees every executable module reference", () => {
-  it.each(MODULE_REFERENCE_SHAPES)("%s", (_name, source, expected) => {
+  it.each(MODULE_REFERENCE_SHAPES)("%s", (_name, source, expected, tsOnly) => {
     expect(specifiersOfSource(source, path.join(ROOT, "probe.ts"))).toEqual(expected);
-    expect(specifiersOfSource(source, path.join(ROOT, "probe.tsx"))).toEqual(expected);
+    // Both script kinds, because the entry components are TSX and ScriptKind
+    // changes the parse — except where the SPELLING is .ts-only, which is a
+    // fact about the language rather than a gap in the extractor.
+    if (!tsOnly) {
+      expect(specifiersOfSource(source, path.join(ROOT, "probe.tsx"))).toEqual(expected);
+    }
   });
 
   it("THE ESCAPE ITSELF: a require of the money module resolves to the money module", () => {
@@ -606,25 +711,66 @@ describe("NC-reach — the extractor sees every executable module reference", ()
     expect(FORBIDDEN_ON_THE_PATH.filter((id) => money.includes(id))).not.toEqual([]);
   });
 
-  it("a require edge is walked TRANSITIVELY, not just recognised at the entry", () => {
-    // Recognising a specifier is half the job: the queue must also FOLLOW it.
-    // A walker that saw `require` but never enqueued its target would satisfy
-    // every shape above while the whole chain behind it still executed.
-    //
-    // Real files as nodes so resolution is real, synthetic edges so the thing
-    // under test is the traversal and not what any file happens to import.
-    const CHAIN: Record<string, string> = {
-      [FILES.model]: 'require("@/lib/finance/financial-copy");',
-      "lib/finance/financial-copy.ts": 'require("@/lib/dashboard/practice-metrics");',
-    };
-    const reached = walkFrom([FILES.model], (file) =>
-      specifiersOfSource(CHAIN[path.relative(ROOT, file)] ?? "", file),
-    );
-    expect([...reached.keys()].map((f) => path.relative(ROOT, f))).toEqual([
-      FILES.model,
-      "lib/finance/financial-copy.ts",
-      "lib/dashboard/practice-metrics.ts",
-    ]);
+  // Every spelling that evaluates to `require`, driven through the REAL walker
+  // rather than the extractor alone. Recognising a specifier is half the job:
+  // the queue must also FOLLOW it, and the money-path assertions run on what
+  // the queue produced. A walker that recognised a wrapped `require` but never
+  // enqueued its target would satisfy every shape above while the entire chain
+  // behind it still executed.
+  const REQUIRE_SPELLINGS = [
+    ["plain", "require"],
+    ["parenthesized", "(require)"],
+    ["doubly parenthesized", "((require))"],
+    ["non-null asserted", "(require!)"],
+    ["as-cast", "(require as typeof require)"],
+    ["satisfies", "(require satisfies unknown)"],
+    ["comma sequence", "(0, require)"],
+    ["comma sequence, nested parens", "(0, ((require)))"],
+  ] as const;
+
+  it.each(REQUIRE_SPELLINGS)(
+    "a %s require is WALKED transitively to the money module",
+    (_label, callee) => {
+      // Real files as nodes so resolution is real; synthetic edges so the thing
+      // under test is the traversal, not what any file happens to import.
+      const CHAIN: Record<string, string> = {
+        [FILES.model]: `${callee}("@/lib/finance/financial-copy");`,
+        "lib/finance/financial-copy.ts": `${callee}("@/lib/dashboard/practice-metrics");`,
+      };
+      const reached = walkFrom([FILES.model], (file) =>
+        specifiersOfSource(CHAIN[path.relative(ROOT, file)] ?? "", file),
+      );
+      expect([...reached.keys()].map((f) => path.relative(ROOT, f))).toEqual([
+        FILES.model,
+        "lib/finance/financial-copy.ts",
+        "lib/dashboard/practice-metrics.ts",
+      ]);
+    },
+  );
+
+  it("the FINAL money-path assertion turns red on a wrapped require, not just the walk", () => {
+    // The end of the chain, asserted the way the real guard asserts it: build a
+    // closure through a wrapped `require` and run the forbidden-identifier scan
+    // over it. This is what makes the shape table load-bearing rather than
+    // decorative — it fails at the same place a real escape would.
+    for (const [, callee] of REQUIRE_SPELLINGS) {
+      const CHAIN: Record<string, string> = {
+        [FILES.model]: `${callee}("@/lib/dashboard/practice-metrics");`,
+      };
+      const reached = walkFrom([FILES.model], (file) =>
+        specifiersOfSource(CHAIN[path.relative(ROOT, file)] ?? "", file),
+      );
+      const offences: string[] = [];
+      for (const file of reached.keys()) {
+        const rel = path.relative(ROOT, file);
+        if (TYPE_DECLARATION_ONLY.has(rel)) continue;
+        const code = codeOnly(readFileSync(file, "utf8"));
+        for (const id of FORBIDDEN_ON_THE_PATH) {
+          if (code.includes(id)) offences.push(`${rel} contains "${id}"`);
+        }
+      }
+      expect(offences, `${callee} must reach a forbidden identifier`).not.toEqual([]);
+    }
   });
 });
 
@@ -642,8 +788,17 @@ describe("NC-reach — no money path is reachable from FIN Slice 1, transitively
     // The side-effect gap was invisible precisely because nothing compared the
     // extractor against a second method — the graph stayed populated, so every
     // other assertion still passed while an edge vanished. `require` was the
-    // same failure a second time, and the old cross-check here was a line count
-    // that could not see `require` either, so it agreed with the blindness.
+    // same failure a second time, and the cross-check before it was a line
+    // count that could not see `require` either, so it agreed with the
+    // blindness.
+    //
+    // KNOW WHAT THIS CHECK IS NOT. `ts.preProcessFile` was measured against
+    // `(require)("m")` and does not report it either, so it CANNOT be the
+    // proof that the wrapped spellings are handled — it shares that blind spot.
+    // What proves those is the shape table above and the walker-level controls
+    // beside it, which state their expected answers instead of computing them.
+    // This assertion covers a different failure: the walker silently losing an
+    // edge shape that a second implementation still sees.
     //
     // Compared on RESOLVED in-repo edges, which is the only thing reachability
     // is about, and which discards the specifiers the scanner invents out of
