@@ -191,11 +191,130 @@ describe("NC7/NC8 — the causes are not collapsed at the render boundary", () =
 // Nothing caught it because every test asserted `partition.closed` — the model
 // fact — and none asserted what the SENTENCE told the owner. These do.
 
-describe("NC-claim — the partition note states status coverage, not row layout", () => {
-  const NOTE = CODE.spine.slice(
-    CODE.spine.indexOf("function PartitionNote"),
-    CODE.spine.indexOf("function PartitionNote") + 1200,
+/**
+ * The two sentences `PartitionNote` can render, extracted INDEPENDENTLY of each
+ * other from the AST.
+ *
+ * The first version of this guard searched a 1200-character slice of the source
+ * around `PartitionNote`, which spans BOTH return branches. Codex raised it on
+ * #646 and was right: a status word deleted from one sentence still appeared in
+ * the other, so the assertion could not fail. Verified before repairing —
+ * removing `completed` from the coverage sentence, `cancelled` from it, or
+ * `no-show` from the withdrawal sentence each left the suite green.
+ *
+ * Worse, my own negative control had hidden it. The control that was meant to
+ * prove the four-status assertion removed a status AND the next-section pointer
+ * in one edit, so it went red for the pointer and read as though the status
+ * assertion had fired. A control that changes two facts proves neither.
+ *
+ * So the branches are now separated structurally rather than by proximity: the
+ * coverage message is the return inside `if (partition.closed)`, the withdrawal
+ * message is the function's final return, and each is asserted on its own text.
+ * One branch cannot borrow a word from the other.
+ */
+function partitionMessages(): { coverage: string; withdrawal: string } {
+  const sf = ts.createSourceFile(
+    FILES.spine,
+    SOURCE.spine,
+    ts.ScriptTarget.Latest,
+    /* setParentNodes */ true,
+    ts.ScriptKind.TSX,
   );
+
+  let fn: ts.FunctionDeclaration | undefined;
+  const findFn = (node: ts.Node): void => {
+    if (ts.isFunctionDeclaration(node) && node.name?.text === "PartitionNote") fn = node;
+    ts.forEachChild(node, findFn);
+  };
+  findFn(sf);
+  if (!fn?.body) throw new Error("PartitionNote not found — this guard cannot run");
+
+  /** The prose a viewer reads: JSX text only, whitespace collapsed. */
+  const visibleText = (node: ts.Node): string => {
+    const parts: string[] = [];
+    const walk = (n: ts.Node): void => {
+      if (ts.isJsxText(n)) parts.push(n.text);
+      ts.forEachChild(n, walk);
+    };
+    walk(node);
+    return parts.join(" ").replace(/\s+/g, " ").trim();
+  };
+
+  let coverage: string | undefined;
+  let withdrawal: string | undefined;
+  for (const statement of fn.body.statements) {
+    if (
+      ts.isIfStatement(statement) &&
+      statement.expression.getText(sf).includes("partition.closed")
+    ) {
+      coverage = visibleText(statement.thenStatement);
+    } else if (ts.isReturnStatement(statement) && statement.expression) {
+      withdrawal = visibleText(statement);
+    }
+  }
+  if (!coverage) throw new Error("no `if (partition.closed)` branch — the gate is gone");
+  if (!withdrawal) throw new Error("no withdrawal branch — the retraction is gone");
+  return { coverage, withdrawal };
+}
+
+/**
+ * The CLAIM sentence within a message: the one that says what accounts for what.
+ *
+ * Asserting the statuses against the whole coverage message was still too
+ * loose, and a one-fact-at-a-time control caught it: deleting `completed` from
+ * the enumeration left the message false — "Still to happen, cancelled and
+ * no-show account for every appointment booked" — while the word survived in
+ * the pointer sentence, "Completed is counted in the next section", so the
+ * assertion stayed green. The enumeration is the thing making the claim, so the
+ * enumeration is what gets asserted.
+ */
+function claimSentence(message: string): string {
+  const sentence = message
+    .split(/(?<=\.)\s+/)
+    .find((part) => /account for every appointment/i.test(part));
+  if (!sentence) throw new Error(`no claim sentence in: ${message}`);
+  return sentence;
+}
+
+/**
+ * The four statuses AS THE OWNER SEES THEM.
+ *
+ * `confirmed` is deliberately absent. The screen never uses that word: the row
+ * is labelled "Still to happen", and `stillToHappen: count("confirmed")` is
+ * where the model does the translation. Asserting "confirmed" would force copy
+ * to satisfy a test rather than describe the product, so the vocabulary here is
+ * the rendered one and matches the row labels above it.
+ */
+const PARTITION_STATUS_WORDS = ["still to happen", "completed", "cancelled", "no-show"];
+
+describe("NC-claim — the partition note states status coverage, not row layout", () => {
+  const messages = partitionMessages();
+  const normalise = (text: string) => text.toLowerCase();
+
+  it("EXTRACTION IS REAL: the two messages are distinct, non-trivial prose", () => {
+    // If extraction silently returned "" for either branch, every assertion
+    // below would pass vacuously — which is the shape of the bug being fixed.
+    expect(messages.coverage.length).toBeGreaterThan(40);
+    expect(messages.withdrawal.length).toBeGreaterThan(40);
+    expect(messages.coverage).not.toEqual(messages.withdrawal);
+    // ...and neither contains the other, so "independent" is literal.
+    expect(messages.coverage.includes(messages.withdrawal)).toBe(false);
+    expect(messages.withdrawal.includes(messages.coverage)).toBe(false);
+  });
+
+  it.each(PARTITION_STATUS_WORDS)("the COVERAGE claim enumerates %s", (word) => {
+    // The CLAIM sentence, not the whole message: the pointer sentence also says
+    // "Completed", and letting that satisfy this would re-open the hole.
+    const claim = claimSentence(messages.coverage);
+    expect(normalise(claim), claim).toContain(word);
+  });
+
+  it.each(PARTITION_STATUS_WORDS)("the WITHDRAWAL claim enumerates %s", (word) => {
+    // Asserted against the withdrawal text ALONE. Before this repair the same
+    // word in the coverage sentence would have satisfied it.
+    const claim = claimSentence(messages.withdrawal);
+    expect(normalise(claim), claim).toContain(word);
+  });
 
   it("makes no claim that a line-by-line reading is exact", () => {
     // The exact false sentence, and the family it belongs to. A layout claim is
@@ -205,39 +324,33 @@ describe("NC-claim — the partition note states status coverage, not row layout
     expect(CODE.spine).not.toMatch(/each appointment appears once/i);
   });
 
-  it("names all four statuses, because all four are what the claim is about", () => {
-    // `booked` is the TOTAL, not a fifth category, so the claim can only be
-    // about the four statuses that partition it. Naming them is what stops the
-    // sentence drifting back into a statement about the rows on screen.
-    for (const status of ["Still to happen", "completed", "cancelled", "no-show"]) {
-      expect(NOTE, status).toContain(status);
-    }
-  });
-
-  it("says where the fourth count is shown, since it is NOT in that section", () => {
+  it("the COVERAGE message says where the fourth count is shown", () => {
     // `completed` is rendered in "Work actually completed". A claim covering it
     // that did not say so would send the owner looking for a row that is not
-    // there.
-    expect(NOTE).toMatch(/next section/i);
+    // there. Deliberately a SEPARATE test from the status words, so removing
+    // the pointer can never read as proof that a status assertion fired.
+    expect(normalise(messages.coverage)).toMatch(/next section/);
+  });
+
+  it("the calendar section really does NOT carry a completed row", () => {
     const calendarSection = CODE.spine.indexOf("The calendar");
     const completedSection = CODE.spine.indexOf("Work actually completed");
     expect(calendarSection).toBeGreaterThan(-1);
     expect(completedSection).toBeGreaterThan(calendarSection);
-    // ...and the calendar section really does NOT carry a completed row.
     const calendarRows = CODE.spine.slice(calendarSection, completedSection);
     expect(calendarRows).toContain('label="Booked in this period"');
     expect(calendarRows).not.toContain('label="Completed"');
   });
 
   it("the claim is printed ONLY when the model says it holds", () => {
-    expect(NOTE).toContain("if (partition.closed)");
-    expect(NOTE).toContain("if (!booked.known) return null;");
+    expect(CODE.spine).toContain("if (partition.closed)");
+    expect(CODE.spine).toContain("if (!booked.known) return null;");
   });
 
   it("THE FACT ITSELF: the four statuses really do sum to booked when closed", () => {
-    // The arithmetic the sentence now asserts, proved against the model rather
-    // than assumed from its name. Note there is no `if (known)` guard here: an
-    // unknown fact must FAIL this, not silently skip it.
+    // The arithmetic the sentence asserts, proved against the model rather than
+    // assumed from its name. No `if (known)` guard: an unknown fact must FAIL
+    // this, not silently skip it.
     for (const statuses of [
       ["confirmed", "completed", "cancelled", "no_show"],
       ["completed", "completed", "completed"],
@@ -259,15 +372,14 @@ describe("NC-claim — the partition note states status coverage, not row layout
     }
   });
 
-  it("and the withdrawal is printed when it does NOT hold", () => {
+  it("and the withdrawal is what the model asks for when it does NOT hold", () => {
     const census = summarizeCalendar([{ status: "rescheduled" }, { status: "completed" }]);
     expect(census.partition.closed).toBe(false);
     expect(census.partition.unrecognisedStatuses).toEqual(["rescheduled"]);
-    // The negative branch names the same four statuses, so the two sentences
-    // cannot disagree about what is being accounted for.
-    expect(NOTE).toMatch(/do not account for every\s+appointment booked/);
+    expect(normalise(messages.withdrawal)).toMatch(/do not account for every appointment booked/);
   });
 });
+
 
 // ---------------------------------------------------------------------------
 // 4. Authority
