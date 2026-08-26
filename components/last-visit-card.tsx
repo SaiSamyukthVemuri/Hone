@@ -5,6 +5,7 @@ import {
   FromLastVisitForToday,
   hasFromLastVisitContent,
 } from "@/components/last-session-summary";
+import { ClinicalUnavailableNotice } from "@/components/clinical-unavailable-notice";
 import type { LastSessionSummary } from "@/lib/sessions/clinical-summary";
 
 // "Last visit / what we did last time", a scannable, retrospective
@@ -53,6 +54,13 @@ type LastVisitCardProps = {
   isLatestSession: boolean;
   // The strictly-last-session summary (buildLastSessionSummary output).
   summary: LastSessionSummary | null;
+  // CLIN-01-B. TRUE only when the profile's session_blocks read FAILED, so
+  // nothing below is known: not the areas, not the watch note, and not whether
+  // a treatment exists at all. Checked BEFORE `sessionId`, because a failed
+  // read leaves `sessionId` null for exactly the clients whose history is
+  // longest. "No recorded visits yet." is a clinical claim, reserved for a read
+  // that SUCCEEDED and found nothing.
+  unavailable: boolean;
 };
 
 export function LastVisitCard({
@@ -65,6 +73,7 @@ export function LastVisitCard({
   totalMinutes,
   isLatestSession,
   summary,
+  unavailable,
 }: LastVisitCardProps) {
   return (
     <section className="flex flex-col gap-2">
@@ -76,7 +85,13 @@ export function LastVisitCard({
           What we did last time
         </p>
       </div>
-      {sessionId && startedAt ? (
+      {/* CLIN-01-B: unavailable first. A partial card is not an option here
+          either: the watch/next-visit band comes from the same failed read, so
+          a header with the band silently missing reads as "nothing to watch
+          for". */}
+      {unavailable ? (
+        <ClinicalUnavailableNotice testId="last-visit-unavailable" />
+      ) : sessionId && startedAt ? (
         <div className="rounded-lg border border-neutral-200 dark:border-neutral-800">
           <div className="p-5">
             <div className="flex flex-wrap items-baseline justify-between gap-3">
