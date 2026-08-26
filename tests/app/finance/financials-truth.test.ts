@@ -1,6 +1,7 @@
 import { readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import ts from "typescript";
 
 import { UNKNOWN_EXPLANATION, UNKNOWN_LABEL, PERMANENT_LINES } from "@/lib/finance/financial-copy";
 import type { FinancialUnknownCause } from "@/lib/finance/financial-fact";
@@ -344,6 +345,83 @@ const resolveImport = (spec: string, fromFile: string): string | null => {
   return null;
 };
 
+/**
+ * EVERY module specifier a file statically depends on, read from the TypeScript
+ * AST rather than matched by regex.
+ *
+ * This replaced a regex that recognised only `import … from "x"` and
+ * `import("x")`. Codex raised the gap on PR #646 as a P2 and it was right: a
+ * SIDE-EFFECT import — `import "@/lib/dashboard/practice-metrics";` — has a
+ * module specifier but no import clause and therefore no `from`, so the regex
+ * skipped the edge entirely. The module executed at runtime while never
+ * entering CLOSURE, and every reachability assertion below stayed green.
+ * Reproduced before the fix, and it is now Control A.
+ *
+ * `ts.isImportDeclaration` is true for that form as it is for every other, so
+ * asking the compiler removes the whole class of defect rather than patching
+ * one shape of it. Covered by construction:
+ *
+ *   import x from "m"            import { a } from "m"      import type { T } from "m"
+ *   import * as ns from "m"      import "m"   <-- the gap   export { a } from "m"
+ *   export * from "m"            import("m")                import x = require("m")
+ *
+ * PARSED FROM RAW SOURCE, not from `codeOnly`. The compiler already knows what
+ * a comment is, so a commented-out import is correctly NOT an edge — and
+ * stripping first would only risk corrupting what it reads. The identifier scan
+ * still uses `codeOnly`, because these files legitimately DISCUSS the tables
+ * they must never reach.
+ */
+function moduleSpecifiers(file: string): string[] {
+  const source = readFileSync(file, "utf8");
+  const sf = ts.createSourceFile(
+    file,
+    source,
+    ts.ScriptTarget.Latest,
+    /* setParentNodes */ true,
+    file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+  );
+  const specs: string[] = [];
+  const take = (node: ts.Node | undefined) => {
+    if (node && ts.isStringLiteral(node)) specs.push(node.text);
+  };
+  const visit = (node: ts.Node): void => {
+    if (ts.isImportDeclaration(node)) {
+      // Side-effect imports land here too: no importClause, but a specifier.
+      take(node.moduleSpecifier);
+    } else if (ts.isExportDeclaration(node)) {
+      take(node.moduleSpecifier);
+    } else if (
+      ts.isImportEqualsDeclaration(node) &&
+      ts.isExternalModuleReference(node.moduleReference)
+    ) {
+      take(node.moduleReference.expression);
+    } else if (
+      ts.isCallExpression(node) &&
+      node.expression.kind === ts.SyntaxKind.ImportKeyword
+    ) {
+      take(node.arguments[0]);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return specs;
+}
+
+/**
+ * A crude textual lower bound on how many edges a file declares, used ONLY to
+ * cross-check the parser with an independent method. If the extractor ever goes
+ * blind to a shape again, it finds fewer specifiers than there are import
+ * statements and the anti-vacuity assertion fails — which is the check that was
+ * missing when the side-effect gap shipped.
+ */
+function textualImportCount(file: string): number {
+  const code = codeOnly(readFileSync(file, "utf8"));
+  return (
+    (code.match(/^\s*import\s/gm) ?? []).length +
+    (code.match(/^\s*export\s[\s\S]{0,200}?\sfrom\s*["']/gm) ?? []).length
+  );
+}
+
 /** file -> the importer that first reached it, so a failure names a chain. */
 function walkFrom(entries: readonly string[]): Map<string, string | null> {
   const reached = new Map<string, string | null>();
@@ -352,12 +430,7 @@ function walkFrom(entries: readonly string[]): Map<string, string | null> {
     const [file, via] = queue.shift()!;
     if (reached.has(file)) continue;
     reached.set(file, via);
-    const code = codeOnly(readFileSync(file, "utf8"));
-    const specs = [
-      ...[...code.matchAll(/(?:^|\n)\s*(?:import|export)[\s\S]*?from\s*["']([^"']+)["']/g)].map((m) => m[1]),
-      ...[...code.matchAll(/\bimport\s*\(\s*["']([^"']+)["']\s*\)/g)].map((m) => m[1]),
-    ];
-    for (const spec of specs) {
+    for (const spec of moduleSpecifiers(file)) {
       const target = resolveImport(spec, file);
       if (target && !reached.has(target)) queue.push([target, path.relative(ROOT, file)]);
     }
@@ -412,6 +485,34 @@ describe("NC-reach — no money path is reachable from FIN Slice 1, transitively
     expect(CLOSURE_REL).toContain("lib/booking/tz.ts");
     expect(CLOSURE_REL).toContain("lib/supabase/queries.ts");
     expect(CLOSURE_REL).toContain("lib/types/database.ts");
+  });
+
+  it("ANTI-BLINDNESS: the parser finds at least as many edges as the text does", () => {
+    // An independent count. The side-effect gap was invisible precisely because
+    // nothing compared the extractor against a second method — the graph stayed
+    // populated, so every other assertion still passed while an edge vanished.
+    const blind: string[] = [];
+    for (const file of CLOSURE.keys()) {
+      const parsed = moduleSpecifiers(file).length;
+      const textual = textualImportCount(file);
+      if (parsed < textual) {
+        blind.push(`${path.relative(ROOT, file)}: parser saw ${parsed}, text shows ${textual}`);
+      }
+    }
+    expect(blind).toEqual([]);
+  });
+
+  it("CLOSURE IS CLOSED: every in-repo edge of a reached file is itself reached", () => {
+    const escaped: string[] = [];
+    for (const file of CLOSURE.keys()) {
+      for (const spec of moduleSpecifiers(file)) {
+        const target = resolveImport(spec, file);
+        if (target && !CLOSURE.has(target)) {
+          escaped.push(`${path.relative(ROOT, file)} -> ${spec}`);
+        }
+      }
+    }
+    expect(escaped).toEqual([]);
   });
 
   it("THE P2 ITSELF: the money module is not reachable from /financials", () => {
