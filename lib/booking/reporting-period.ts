@@ -10,10 +10,15 @@ import { addDays, startOfWeek } from "./tz";
 // WHY IT LIVES HERE AND NOT BESIDE A CONSUMER. It was previously defined in
 // lib/dashboard/practice-metrics.ts, whose executable module also reads
 // service prices and payment_charge_attempts. That made every importer of the
-// period vocabulary — including the owner Financials surface, which is
-// contractually forbidden a live-price or payment path even transitively —
-// depend on a money module to ask what "this week" means. Codex raised it on
-// PR #646 as a P2 and it was accepted.
+// period vocabulary — including the owner Financials surface, whose contract
+// forbids a live-price or payment path — depend on a money module to ask what
+// "this week" means. Codex raised it on PR #646 as a P2 and it was accepted.
+//
+// The evidence for that contract is scoped, and worth naming precisely rather
+// than implying more: FIN's guard proves the compiler-resolved STATIC ESM
+// closure of the financials surface contains no money module. It does not
+// prove anything about runtime module acquisition in shared dependencies. This
+// module is in that closure, which is why it must stay pure.
 //
 // So the contract moved DOWN to the pure layer rather than being copied
 // sideways. It sits beside ./tz because that is the module owning the studio's
