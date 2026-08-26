@@ -457,7 +457,7 @@ function callsRequire(expression: ts.Expression): boolean {
  * still uses `codeOnly`, because these files legitimately DISCUSS the tables
  * they must never reach.
  */
-function specifiersOfSource(source: string, fileName: string): string[] {
+function sourceAstSpecifiers(source: string, fileName: string): string[] {
   const sf = ts.createSourceFile(
     fileName,
     source,
@@ -498,6 +498,145 @@ function specifiersOfSource(source: string, fileName: string): string[] {
     ts.forEachChild(node, visit);
   };
   visit(sf);
+  return specs;
+}
+
+/**
+ * Literal `require("m")` calls in the module's EMITTED RUNTIME SHAPE.
+ *
+ * This exists because enumerating source spellings does not converge. Three
+ * repairs in a row closed the shape Codex had just named — side-effect import,
+ * then `require`, then `(require)` — and each time the next spelling was still
+ * open. `effectiveCallee` above narrowed the enumeration from callee nodes to
+ * wrapper KINDS, which was better but still a hand-written list, and Codex
+ * promptly found `((require as <T>(id: string) => T)<any>)(…)`: an
+ * ExpressionWithTypeArguments the list did not mention.
+ *
+ * Asking the compiler what the module actually BECOMES ends that loop. Every
+ * TypeScript-only wrapper is erased by emit, so the whole family collapses:
+ *
+ *   (require!)(…)                                 ->  (require)(…)
+ *   (require as typeof require)(…)                ->  require(…)
+ *   (require satisfies unknown)(…)                ->  require(…)
+ *   (<any>require)(…)                             ->  require(…)
+ *   ((require as <T>(id: string) => T)<any>)(…)   ->  (require)(…)
+ *   (require<any>)(…)                             ->  (require)(…)
+ *
+ * What survives emit is only JavaScript's own transparent callee syntax:
+ * parentheses and the comma operator. That set is CLOSED — the language has no
+ * third way to wrap a callee without changing what is called — so peeling those
+ * two is complete rather than merely current. `(require, 0)(…)` still evaluates
+ * to `0` and is still not a require call.
+ *
+ * MODULE SEMANTICS ARE LOAD-BEARING, and were measured before being chosen.
+ * Under `module: CommonJS` the emitter rewrites EVERY ES import into a
+ * `require` call — `import x from "m"` becomes `require("m")` — which would
+ * make this detector claim a CommonJS edge for every ordinary import in the
+ * repository. `ESNext` leaves import and export statements exactly as written
+ * and touches `require` calls not at all, which is the distinction this needs.
+ * JSX is compiled away with the classic transform, which injects no import of
+ * its own and, unlike the scanner cross-check, cannot mistake prose inside a
+ * `<p>` for a module specifier.
+ *
+ * Deliberately still literal-only: a non-literal argument is not a static edge,
+ * and `module.require`, `createRequire` and `eval` stay out of scope because
+ * none of them emits a bare `require` identifier call.
+ */
+const emittedCache = new Map<string, string[]>();
+
+function emittedRequireSpecifiers(source: string, fileName: string): string[] {
+  const key = `${fileName} ${source}`;
+  const cached = emittedCache.get(key);
+  if (cached) return cached;
+
+  const emitted = ts.transpileModule(source, {
+    fileName,
+    reportDiagnostics: true,
+    compilerOptions: {
+      module: ts.ModuleKind.ESNext,
+      target: ts.ScriptTarget.ESNext,
+      jsx: ts.JsxEmit.React,
+      isolatedModules: true,
+    },
+  });
+  // A file this cannot emit would silently contribute no edges, which is the
+  // exact failure mode this block exists to prevent. Fail loudly instead.
+  const errors = (emitted.diagnostics ?? []).filter(
+    (d) => d.category === ts.DiagnosticCategory.Error,
+  );
+  if (errors.length > 0) {
+    throw new Error(
+      `${fileName}: emit failed, so its require edges cannot be proved — ` +
+        errors.map((d) => ts.flattenDiagnosticMessageText(d.messageText, " ")).join("; "),
+    );
+  }
+
+  const js = ts.createSourceFile(
+    `${fileName}.emitted.js`,
+    emitted.outputText,
+    ts.ScriptTarget.Latest,
+    /* setParentNodes */ true,
+    ts.ScriptKind.JS,
+  );
+
+  /** JavaScript's only two transparent callee wrappers. A closed set. */
+  const unwrapJs = (expression: ts.Expression): ts.Expression => {
+    let node = expression;
+    for (;;) {
+      if (ts.isParenthesizedExpression(node)) node = node.expression;
+      else if (
+        ts.isBinaryExpression(node) &&
+        node.operatorToken.kind === ts.SyntaxKind.CommaToken
+      ) {
+        node = node.right;
+      } else return node;
+    }
+  };
+
+  const specs: string[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node)) {
+      const callee = unwrapJs(node.expression);
+      const arg = node.arguments[0];
+      if (
+        ts.isIdentifier(callee) &&
+        callee.text === "require" &&
+        arg &&
+        ts.isStringLiteralLike(arg)
+      ) {
+        specs.push(arg.text);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(js);
+
+  emittedCache.set(key, specs);
+  return specs;
+}
+
+/**
+ * The module specifiers a source text depends on: what the SOURCE says, plus
+ * what the EMITTED module actually calls.
+ *
+ * Two methods rather than one, because they fail differently. The source walk
+ * sees import and export declarations, type-only edges and dynamic imports,
+ * none of which survive emit as such. The emitted walk sees CommonJS in every
+ * spelling, without needing to know what the spellings are. Neither is asked to
+ * cover the other's ground, and the union is what reachability is computed on.
+ */
+function specifiersOfSource(source: string, fileName: string): string[] {
+  const seen = new Set<string>();
+  const specs: string[] = [];
+  for (const spec of [
+    ...sourceAstSpecifiers(source, fileName),
+    ...emittedRequireSpecifiers(source, fileName),
+  ]) {
+    if (!seen.has(spec)) {
+      seen.add(spec);
+      specs.push(spec);
+    }
+  }
   return specs;
 }
 
@@ -655,6 +794,25 @@ const MODULE_REFERENCE_SHAPES: Shape[] = [
   ["sequence require", '(0, require)("m");', ["m"]],
   ["sequence with nested parens", '(0, ((require)))("m");', ["m"]],
   ["sequence of three", '(0, 1, require)("m");', ["m"]],
+  // INSTANTIATION EXPRESSIONS. The source walk above does not know this kind
+  // and is not being taught it -- these are caught by what the module EMITS,
+  // which is the point of having a second method that erases type syntax.
+  ["instantiated require", '(require<any>)("m");', ["m"]],
+  [
+    "instantiated as-cast require",
+    '((require as <T>(id: string) => T)<any>)("m");',
+    ["m"],
+  ],
+  [
+    "nested instantiated require",
+    '(((require as <T>(id: string) => T)<any>))("m");',
+    ["m"],
+  ],
+  [
+    "sequence of an instantiated require",
+    '(0, ((require as <T>(id: string) => T)<any>))("m");',
+    ["m"],
+  ],
   // Type-only edges are followed too, deliberately: see the block comment above.
   ["import type", 'import type { T } from "m";', ["m"]],
   ["inline type specifier", 'import { type T } from "m";', ["m"]],
@@ -726,6 +884,10 @@ describe("NC-reach — the extractor sees every executable module reference", ()
     ["satisfies", "(require satisfies unknown)"],
     ["comma sequence", "(0, require)"],
     ["comma sequence, nested parens", "(0, ((require)))"],
+    ["instantiated", "(require<any>)"],
+    ["instantiated as-cast", "((require as <T>(id: string) => T)<any>)"],
+    ["nested instantiated", "(((require as <T>(id: string) => T)<any>))"],
+    ["sequence of instantiated", "(0, ((require as <T>(id: string) => T)<any>))"],
   ] as const;
 
   it.each(REQUIRE_SPELLINGS)(
@@ -747,6 +909,95 @@ describe("NC-reach — the extractor sees every executable module reference", ()
       ]);
     },
   );
+
+  it("INDEPENDENCE: the emitted detector alone closes what the source walk misses", () => {
+    // The load-bearing claim of this whole block, asserted rather than argued.
+    //
+    // `effectiveCallee` was NOT taught about instantiation expressions, on
+    // purpose. If it had been, this would be a fourth entry on a list and the
+    // fifth spelling would still be open. So the source walk genuinely still
+    // misses the escape Codex found — that is pinned here as a fact — and the
+    // guard is closed by the other method entirely.
+    const escape = '((require as <T>(id: string) => T)<any>)("@/lib/dashboard/practice-metrics");';
+    const entry = path.join(ROOT, FILES.model);
+
+    // 1. The source walk misses it. Pinned, so nobody "fixes" this by hand and
+    //    quietly removes the reason the emitted detector exists.
+    expect(sourceAstSpecifiers(escape, entry)).toEqual([]);
+
+    // 2. The scanner cross-check misses it too — measured, and the reason
+    //    ts.preProcessFile cannot be what proves this class.
+    expect(ts.preProcessFile(escape, true, true).importedFiles.map((f) => f.fileName)).toEqual(
+      [],
+    );
+
+    // 3. The emitted runtime shape catches it, because the compiler erased the
+    //    type syntax and what is left is an ordinary parenthesized require.
+    expect(emittedRequireSpecifiers(escape, entry)).toEqual([
+      "@/lib/dashboard/practice-metrics",
+    ]);
+
+    // 4. And the REAL money-path closure goes red on it — the walk reaches the
+    //    money module and the forbidden-identifier scan finds it there.
+    const reached = walkFrom([FILES.model], (file) =>
+      specifiersOfSource(path.relative(ROOT, file) === FILES.model ? escape : "", file),
+    );
+    expect([...reached.keys()].map((f) => path.relative(ROOT, f))).toContain(
+      "lib/dashboard/practice-metrics.ts",
+    );
+    const offences: string[] = [];
+    for (const file of reached.keys()) {
+      const rel = path.relative(ROOT, file);
+      if (TYPE_DECLARATION_ONLY.has(rel)) continue;
+      const code = codeOnly(readFileSync(file, "utf8"));
+      for (const id of FORBIDDEN_ON_THE_PATH) {
+        if (code.includes(id)) offences.push(`${rel} contains "${id}"`);
+      }
+    }
+    expect(offences).not.toEqual([]);
+  });
+
+  it("the emitted detector does not invent CommonJS out of ordinary ES imports", () => {
+    // The one way this method could go badly wrong. Under `module: CommonJS`
+    // the emitter turns every `import x from "m"` into `require("m")`, and a
+    // detector reading THAT output would report a CommonJS edge for every
+    // import in the repository — indistinguishable from a real escape. The
+    // chosen module setting is what prevents it, so it is pinned here.
+    const entry = path.join(ROOT, FILES.model);
+    for (const form of [
+      'import x from "m";',
+      'import { y } from "m";',
+      'import * as ns from "m";',
+      'import "m";',
+      'export { y } from "m";',
+      'export * from "m";',
+      'export const p = import("m");',
+      'import type { T } from "m";',
+    ]) {
+      expect(emittedRequireSpecifiers(form, entry), form).toEqual([]);
+    }
+    // ...while the source walk still sees every one of them, so the union loses
+    // nothing by the emitted half staying quiet here.
+    expect(sourceAstSpecifiers('import x from "m";', entry)).toEqual(["m"]);
+  });
+
+  it("ANTI-VACUITY: the emitted detector actually emits for every reached file", () => {
+    // If `transpileModule` silently produced nothing, this method would agree
+    // with any escape. It throws on an emit error by construction; this proves
+    // the happy path is real on the actual tree.
+    for (const file of CLOSURE.keys()) {
+      const emitted = ts.transpileModule(readFileSync(file, "utf8"), {
+        fileName: file,
+        compilerOptions: {
+          module: ts.ModuleKind.ESNext,
+          target: ts.ScriptTarget.ESNext,
+          jsx: ts.JsxEmit.React,
+          isolatedModules: true,
+        },
+      }).outputText;
+      expect(emitted.length, path.relative(ROOT, file)).toBeGreaterThan(0);
+    }
+  });
 
   it("the FINAL money-path assertion turns red on a wrapped require, not just the walk", () => {
     // The end of the chain, asserted the way the real guard asserts it: build a
@@ -793,12 +1044,13 @@ describe("NC-reach — no money path is reachable from FIN Slice 1, transitively
     // blindness.
     //
     // KNOW WHAT THIS CHECK IS NOT. `ts.preProcessFile` was measured against
-    // `(require)("m")` and does not report it either, so it CANNOT be the
-    // proof that the wrapped spellings are handled — it shares that blind spot.
-    // What proves those is the shape table above and the walker-level controls
-    // beside it, which state their expected answers instead of computing them.
-    // This assertion covers a different failure: the walker silently losing an
-    // edge shape that a second implementation still sees.
+    // `(require)("m")` and against the instantiated form, and reports neither,
+    // so it CANNOT be the proof that wrapped CommonJS is handled — it shares
+    // those blind spots. What proves that class is `emittedRequireSpecifiers`,
+    // which reads what the compiler actually produces, together with the shape
+    // table and walker controls above that state their answers rather than
+    // computing them. This assertion covers a different failure: the walker
+    // silently losing an edge shape a second implementation still sees.
     //
     // Compared on RESOLVED in-repo edges, which is the only thing reachability
     // is about, and which discards the specifiers the scanner invents out of
