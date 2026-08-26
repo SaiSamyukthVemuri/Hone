@@ -52,9 +52,11 @@ const eslintConfig = [
     // honest move is the smaller claim, not a longer list.
     //
     // `createRequire` is deliberately NOT in no-restricted-globals: it is never
-    // a global, so the entry it actually has into FIN code is the node:module
-    // import, which no-restricted-imports catches. Listing it there would have
-    // looked like coverage and been none.
+    // a global, so listing it there would have looked like coverage and been
+    // none. The acquisition path these rules DO reject is the static
+    // node:module import. That is not the only path it has — the two gaps above
+    // are others, and they are uncovered — so this is stated as one rejected
+    // form rather than as the entry.
     files: ["app/(app)/financials/**/*.{ts,tsx}", "lib/finance/**/*.{ts,tsx}"],
     rules: {
       "no-restricted-globals": [

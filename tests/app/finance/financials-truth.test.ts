@@ -26,6 +26,9 @@ const codeOnly = (src: string) =>
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/^\s*\/\/.*$/gm, "");
 
+/** This guard reads its own source, to pin the wording it carries. */
+const FILES_SELF = "tests/app/finance/financials-truth.test.ts";
+
 const FILES = {
   fact: "lib/finance/financial-fact.ts",
   copy: "lib/finance/financial-copy.ts",
@@ -1104,9 +1107,24 @@ describe("NC-reach — no money path is in FIN Slice 1's static ESM closure", ()
 // ---------------------------------------------------------------------------
 //
 // This is the OTHER half of the architecture, and it is a CONSTRAINT rather
-// than a proof. eslint.config.mjs restricts FIN-owned source from naming the
-// CommonJS loader globals, importing node:module, or reaching
-// process.getBuiltinModule. `npm run lint` runs it on every diff.
+// than a proof. In app/(app)/financials/** and lib/finance/**, eslint.config.mjs
+// rejects exactly three syntactic forms, and the constraint is not larger than
+// the list:
+//
+//   * a value-position `require`, `module` or `exports`, in any expression
+//     shape;
+//   * a STATIC import or re-export of "node:module" or "module", type-only
+//     included;
+//   * `process.getBuiltinModule`, dotted or with a literal computed key.
+//
+// `npm run lint` runs it on every diff.
+//
+// NOT covered, and therefore not claimed here: `import("node:module")`, and
+// `globalThis.process.getBuiltinModule(...)` or an aliased `process`. The
+// DOCUMENTED GAP tests below pin both as uncovered. This header said
+// "importing node:module, or reaching process.getBuiltinModule" until Codex
+// pointed out that a reader arriving here met the broad claim the rest of the
+// file had already withdrawn.
 //
 // Tested here for one reason: a lint rule nobody exercises is a comment. Each
 // assertion below names the RULE it expects, so a control cannot pass because
@@ -1114,8 +1132,90 @@ describe("NC-reach — no money path is in FIN Slice 1's static ESM closure", ()
 //
 // The scope is honest and narrow. These rules bind app/(app)/financials/** and
 // lib/finance/** — the six modules FIN owns. The other eleven in the closure
-// are shared infrastructure, and the last test here proves the rules do NOT
-// reach them, so nobody mistakes this for a repository-wide boundary.
+// are shared infrastructure, and a test below proves the rules do NOT reach
+// them, so nobody mistakes this for a repository-wide boundary.
+
+/**
+ * The artifacts that describe the lint constraint, read as text.
+ *
+ * Three separate places said the constraint was broader than the rules are, and
+ * each was found one at a time: the rule-level comment, this file's own §11
+ * header, and the PR body. Narrowing the line a review points at is not the
+ * same as sweeping the class — a lesson TRUTH-01A recorded in production
+ * (#644, 5a2826cc) and one this PR then repeated.
+ *
+ * So the wording is pinned. The patterns below are the exact unqualified
+ * summaries that were written or that the operator named, not an attempt to
+ * parse English: a bounded blacklist, plus the qualifiers that must survive.
+ */
+/**
+ * COMMENT PROSE ONLY, with markers stripped and whitespace collapsed.
+ *
+ * Two reasons, both learned by getting it wrong on the first run. The claims
+ * live in comments, while the blacklist below is CODE — scanning raw source
+ * made this guard match its own patterns and fail against itself. And a
+ * qualifier that wraps across two comment lines is still one sentence to a
+ * reader, so the text is normalised before matching rather than the wording
+ * being bent to fit a regex.
+ */
+const proseOf = (text: string): string =>
+  text
+    .split("\n")
+    .filter((line) => /^\s*(\/\/|\*)/.test(line))
+    .map((line) => line.replace(/^\s*(\/\/+|\*)\s?/, ""))
+    .join(" ")
+    .replace(/\s+/g, " ");
+
+const CLAIM_ARTIFACTS: Array<[string, string]> = [
+  ["eslint.config.mjs", proseOf(read("eslint.config.mjs"))],
+  ["tests/app/finance/financials-truth.test.ts", proseOf(read(FILES_SELF))],
+];
+
+/** Summaries that assert cover the three rules do not have. */
+const UNQUALIFIED_LOADER_CLAIMS: Array<[string, RegExp]> = [
+  ["restricts … importing node:module", /restricts[^.]{0,120}importing node:module/i],
+  ["the entry it actually has", /the entry it actually has/i],
+  ["all node:module imports", /all node:module imports/i],
+  ["every createRequire entry", /every createRequire entry/i],
+  ["all module-loader access", /all module[- ]loader access/i],
+  ["runtime loaders are blocked", /runtime loaders are blocked/i],
+  ["no loader can enter", /no loader can enter/i],
+];
+
+/** Qualifiers whose deletion would silently widen the claim. */
+const REQUIRED_QUALIFIERS: Array<[string, RegExp]> = [
+  ["names the STATIC restriction", /STATIC import or re-export/],
+  ["names the property-form limit", /dotted or with a literal computed key/],
+  ["names the dynamic-import gap", /import\("node:module"\)/],
+  ["names the qualified-process gap", /globalThis\.process\.getBuiltinModule/],
+];
+
+describe("NC-parity — the prose claims exactly what the rules reject", () => {
+  it.each(CLAIM_ARTIFACTS)("%s carries no unqualified loader summary", (name, text) => {
+    const found = UNQUALIFIED_LOADER_CLAIMS.filter(([, re]) => re.test(text)).map(([n]) => n);
+    expect(found, `${name} still claims: ${found.join(", ")}`).toEqual([]);
+  });
+
+  it.each(CLAIM_ARTIFACTS)("%s keeps the qualifiers that bound the claim", (name, text) => {
+    const missing = REQUIRED_QUALIFIERS.filter(([, re]) => !re.test(text)).map(([n]) => n);
+    expect(missing, `${name} lost: ${missing.join(", ")}`).toEqual([]);
+  });
+
+  it("the constraint list and the fixture list are the same length", () => {
+    // If someone adds a rule without a fixture, or advertises a form with no
+    // rule behind it, these drift apart. Three rules, three named forms.
+    const config = read("eslint.config.mjs");
+    for (const rule of [
+      "no-restricted-globals",
+      "no-restricted-imports",
+      "no-restricted-properties",
+    ]) {
+      expect(config, rule).toContain(`"${rule}"`);
+    }
+    // ...and no fourth rule appeared without the prose being widened with it.
+    expect(config).not.toContain('"no-restricted-syntax"');
+  });
+});
 
 const FIN_OWNED_PROBE = path.join(ROOT, "lib/finance/__lint_probe.ts");
 const SHARED_PROBE = path.join(ROOT, "lib/booking/__lint_probe.ts");
