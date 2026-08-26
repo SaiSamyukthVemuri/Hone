@@ -29,6 +29,15 @@ const NEW_SYMBOLS = [
 const SCAN_DIRS = ["app", "lib", "components"];
 const ALLOWED_TYPE_FILE = join("lib", "types", "database.ts");
 const WORKER_CORE_DIR = join("lib", "google-calendar", "sync");
+// TRUTH-01A. The export resource registry NAMES every table in the schema,
+// including these, because its job is to record an export disposition for each
+// one — and `calendar_event_links` and `calendar_sync_outbox` are both recorded
+// there as excluded. Naming a table in a declaration is not referencing it: the
+// registry issues no query, imports no client and calls no RPC. Excluding it
+// here keeps the dormancy invariant meaningful rather than making the registry
+// unable to account for a dormant table, which is the one outcome that would
+// let a dormant table quietly become an exported one.
+const EXPORT_REGISTRY_FILE = join("lib", "export", "resource-registry.ts");
 
 function walk(dir: string): string[] {
   const abs = join(ROOT, dir);
@@ -57,7 +66,12 @@ describe("PR B1 — outbound sync is dormant (no runtime behavior)", () => {
     const offenders: string[] = [];
     for (const dir of SCAN_DIRS) {
       for (const rel of walk(dir)) {
-        if (rel === ALLOWED_TYPE_FILE || rel.startsWith(WORKER_CORE_DIR)) continue;
+        if (
+          rel === ALLOWED_TYPE_FILE ||
+          rel === EXPORT_REGISTRY_FILE ||
+          rel.startsWith(WORKER_CORE_DIR)
+        )
+          continue;
         const src = readFileSync(join(ROOT, rel), "utf8");
         for (const sym of NEW_SYMBOLS) {
           if (src.includes(sym)) offenders.push(`${rel} → ${sym}`);

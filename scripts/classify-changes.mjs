@@ -40,7 +40,14 @@ const DOCS = [
 ];
 
 const RULES = [
-  { key: "database", patterns: [/^supabase\/migrations\//, /^supabase\/.*\.sql$/, /^tests\/db\//, /^tests\/migrations\//, /^scripts\/migration-state\.mjs$/, /^scripts\/check-migration-extension/, /^scripts\/check-fresh-managed/] },
+  // TRUTH-01A adds lib/export/resource-registry.ts here deliberately. Its
+  // correctness is a claim ABOUT THE SCHEMA - every table has a disposition,
+  // every column of an exported table is accounted for - and the only place
+  // that claim can be checked is the database lane, which introspects the
+  // migrated local schema. Classifying a registry edit as application-only
+  // would let someone retire a disposition without the guard that proves the
+  // retirement is honest ever running.
+  { key: "database", patterns: [/^supabase\/migrations\//, /^supabase\/.*\.sql$/, /^tests\/db\//, /^tests\/migrations\//, /^scripts\/migration-state\.mjs$/, /^scripts\/check-migration-extension/, /^scripts\/check-fresh-managed/, /^lib\/export\/resource-registry\.ts$/] },
   { key: "security", patterns: [/^tests\/security\//, /^lib\/security\//, /^lib\/observability\//, /^scripts\/check-.*gates/] },
   { key: "payment", patterns: [/payment/i, /stripe/i, /^lib\/billing\//, /^e2e-payment\//, /^playwright\.payment\.config/] },
   { key: "google_calendar", patterns: [/google[-_]?calendar/i, /^lib\/google-calendar\//, /^e2e-google\//, /^playwright\.google\.config/, /^app\/api\/cron\/calendar/] },

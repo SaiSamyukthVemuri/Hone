@@ -57,6 +57,17 @@ describe("classifier — database / migration PRs", () => {
     expect(c("tests/db/entry-create-commands.db.test.ts").database).toBe(true);
   });
 
+  // TRUTH-01A. The export resource registry asserts things about the SCHEMA -
+  // that every table has a disposition and every column of an exported table is
+  // accounted for - and only the database lane can check them. If a registry
+  // edit ever classifies as application-only again, a disposition could be
+  // retired without the guard that proves the retirement honest ever running.
+  it("an export-registry edit runs the database lane, not application only", () => {
+    const r = c("lib/export/resource-registry.ts");
+    expect(r.database).toBe(true);
+    expect(r.application).toBe(true);
+  });
+
   it("a security guard counts as security", () => {
     expect(c("tests/security/entry-direct-dml-guard.test.ts").security).toBe(true);
   });

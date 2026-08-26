@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { CLINICAL_NOTES_CSV_HEADERS } from "@/lib/export/clinical-notes";
+import {
+  CLINICAL_NOTES_CSV_FILENAME,
+  CLINICAL_NOTES_CSV_HEADERS,
+} from "@/lib/export/clinical-notes";
+import {
+  expectedCsvFiles,
+  exportSpec,
+} from "@/lib/export/resource-registry";
 
 // The BEHAVIOUR of the clinical-note rows (history retention, lineage,
 // attribution, serialization) is proven against the real builder and the real
@@ -59,7 +66,10 @@ describe("export wiring: client_clinical_notes reaches the ZIP", () => {
   });
 
   it("selects every column the export contract promises", () => {
-    const q = clinicalNotesQuery();
+    // TRUTH-01A/F4: the column list moved into EXPORT_SELECTS, keyed by the
+    // resource the query feeds, so the pin sits on the declaration the export
+    // actually issues rather than on a literal in the action body.
+    const q = exportSpec("client_clinical_notes").includedColumns.join(", ");
     for (const col of [
       "id",
       "client_id",
@@ -76,13 +86,22 @@ describe("export wiring: client_clinical_notes reaches the ZIP", () => {
   });
 
   it("the CSV is added to the ZIP through the shared rowsToCsv chokepoint", () => {
-    // The chokepoint is unchanged; it is now reached through `countedCsv`,
-    // the wrapper that records the manifest row count from the exact row
-    // collection before delegating to rowsToCsv. Escaping the wrapper would
-    // leave this file out of the manifest, which the export now refuses.
+    // TRUTH-01A. The chokepoint is unchanged; it is now reached through
+    // `writeCsv`, which takes the filename and the header row from the export
+    // resource registry and records the manifest count from the exact row
+    // collection before delegating to rowsToCsv. Escaping the wrapper would put
+    // a file in the archive that the registry does not declare, which the
+    // emission-parity guard refuses in both directions.
+    // The rows now travel inside their query's envelope, so the builder runs
+    // INSIDE mapExportRows and the provenance survives the display-name join.
     expect(CODE).toMatch(
-      /zip\.file\(\s*CLINICAL_NOTES_CSV_FILENAME,\s*countedCsv\(\s*CLINICAL_NOTES_CSV_FILENAME,\s*CLINICAL_NOTES_CSV_HEADERS,\s*buildClinicalNoteExportRows\(/,
+      /writeCsv\(\s*"client_clinical_notes",\s*mapExportRows\(\s*clinicalNotesRes,[\s\S]{0,80}?buildClinicalNoteExportRows\(/,
     );
+    // The registry still points at the module that owns the filename and
+    // headers, so there is exactly one definition of both.
+    const spec = exportSpec("client_clinical_notes");
+    expect(spec.file).toBe(CLINICAL_NOTES_CSV_FILENAME);
+    expect(spec.csvHeaders).toEqual([...CLINICAL_NOTES_CSV_HEADERS]);
   });
 
   it("a query error fails the whole export rather than shipping a silent gap", () => {
@@ -91,9 +110,15 @@ describe("export wiring: client_clinical_notes reaches the ZIP", () => {
   });
 
   it("the README and the audit manifest both name the new file", () => {
-    expect(ACTIONS).toMatch(/- client_clinical_notes\.csv:/);
-    expect(CODE).toMatch(/"client_clinical_notes\.csv",/);
-    expect(CODE).toMatch(/client_clinical_notes: \(clinicalNotesRes\.data \?\? \[\]\)\.length/);
+    // Both are now GENERATED from the registry entry, so naming the file is no
+    // longer something a future author can forget to do in two more places.
+    // The end-to-end proof that the README lists it and the audit row counts it
+    // is in tests/app/settings/data/export-emission-parity.test.ts.
+    const spec = exportSpec("client_clinical_notes");
+    expect(spec.description).toMatch(/clinical narrative/i);
+    expect(spec.description).toMatch(/FULL HISTORY/);
+    expect(ACTIONS).toMatch(/\$\{disposition\.file\}: \$\{disposition\.description\}/);
+    expect(CODE).toMatch(/row_counts: Object\.fromEntries\(/);
   });
 
   it("(10) the pre-existing export files are all still written", () => {
@@ -114,7 +139,13 @@ describe("export wiring: client_clinical_notes reaches the ZIP", () => {
       "record_keeping_audit_events.csv",
       "README.txt",
     ]) {
-      expect(CODE, `${f} must still be written`).toContain(`"${f}"`);
+      // README.txt is still a literal in the action; every CSV is now declared
+      // in the registry and written through the single wrapper.
+      const stillWritten =
+        f === "README.txt"
+          ? CODE.includes('"README.txt"')
+          : expectedCsvFiles().has(f) && CODE.includes(`writeCsv("${f.replace(".csv", "")}"`);
+      expect(stillWritten, `${f} must still be written`).toBe(true);
     }
   });
 

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { exportSpec } from "@/lib/export/resource-registry";
 
 // PR #316 (Chloe feedback): manufacturer dropdown (Protec/Ballet/Sterex/Other),
 // copy-last (never copies the lot number), expiry states in Records, and a
@@ -159,9 +160,15 @@ describe("PR #317: print expiry marker + export note", () => {
     expect(PRINT).not.toMatch(/records\s*\.filter\([^)]*date_discarded/);
   });
   it("the export README notes expiry is derivable from expiry_date (no CSV schema change)", () => {
-    expect(EXPORT).toMatch(/Expiry status is derivable from the expiry_date column/);
+    // TRUTH-01A: the per-file README prose and the emitted header row both
+    // moved to the export resource registry entry that generates them, so the
+    // pins follow the text rather than the file it used to live in.
+    const spec = exportSpec("record_keeping_sterile_items");
+    expect(spec.description).toMatch(
+      /Expiry status is derivable from the expiry_date column/,
+    );
     // CSV header still carries the same columns (schema unchanged).
-    expect(EXPORT).toMatch(/"expiry_date",/);
+    expect(spec.csvHeaders).toContain("expiry_date");
   });
 });
 
