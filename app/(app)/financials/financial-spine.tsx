@@ -237,9 +237,24 @@ export function FinancialSpine({ briefing }: { briefing: FinancialBriefing }) {
 }
 
 /**
- * The partition claim, printed only when it is TRUE.
+ * The partition claim, printed only when it is TRUE — and stating the claim the
+ * model actually makes.
  *
- * A status this build does not recognise leaves the four counts above perfectly
+ * `partition.closed` means every appointment fell into one of the four known
+ * statuses, so `stillToHappen + completed + cancelled + noShow === booked`.
+ * That is a fact about STATUS COVERAGE. An earlier version of this note printed
+ * it as a fact about LAYOUT — "every appointment in this period is on exactly
+ * one line above" — and that was false twice over: `Booked in this period` is
+ * the TOTAL, so every appointment is on that line AND on its status line; and
+ * `completed` has no line in this section at all, because Direction B gives the
+ * work that actually happened its own. Codex raised it on PR #646 and was
+ * right. The owner was shown an exactness the screen does not have.
+ *
+ * The two claims are easy to confuse and were: one is about which statuses
+ * exist, the other about which rows are drawn. The sentence now names the four
+ * statuses it is actually about, and says where the fourth is shown.
+ *
+ * A status this build does not recognise leaves the four counts perfectly
  * correct while making them no longer a complete account of what was booked —
  * so the claim is withdrawn and the reason named, rather than the row being
  * dropped to keep a total looking tidy.
@@ -250,16 +265,18 @@ function PartitionNote({ briefing }: { briefing: FinancialBriefing }) {
   if (partition.closed) {
     return (
       <p className="text-xs text-fg">
-        Every appointment in this period is on exactly one line above.
+        Still to happen, completed, cancelled and no-show account for every appointment
+        booked in this period. Completed is counted in the next section.
       </p>
     );
   }
+  const count = partition.unrecognisedStatuses.length;
   return (
     <p className="text-xs text-warning-fg">
-      {partition.unrecognisedStatuses.length} appointment status
-      {partition.unrecognisedStatuses.length === 1 ? "" : "es"} on this period are ones
-      this version of Hone does not recognise, so the lines above do not account for
-      every booking.
+      {count} appointment status{count === 1 ? "" : "es"} in this period{" "}
+      {count === 1 ? "is one" : "are ones"} this version of Hone does not recognise, so
+      still to happen, completed, cancelled and no-show do not account for every
+      appointment booked.
     </p>
   );
 }

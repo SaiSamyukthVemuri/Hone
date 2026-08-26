@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import ts from "typescript";
 
 import { UNKNOWN_EXPLANATION, UNKNOWN_LABEL, PERMANENT_LINES } from "@/lib/finance/financial-copy";
+import { summarizeCalendar } from "@/lib/finance/financial-briefing-model";
 import type { FinancialUnknownCause } from "@/lib/finance/financial-fact";
 
 // ===========================================================================
@@ -172,6 +173,99 @@ describe("NC7/NC8 — the causes are not collapsed at the render boundary", () =
     // explicitly declines to claim.
     expect(SOURCE.copy).not.toMatch(/\b20\d\d-\d\d-\d\d\b/);
     expect(CODE.copy).not.toMatch(/\b(August|September|October)\b/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 3b. The screen claims only what the model guarantees
+// ---------------------------------------------------------------------------
+//
+// The partition note printed "Every appointment in this period is on exactly
+// one line above" whenever `partition.closed`. Codex raised it on PR #646 and
+// was right: `closed` means every appointment fell into one of the four KNOWN
+// STATUSES, which is a claim about status coverage, while the sentence asserted
+// a claim about ROW LAYOUT — and that one was false twice over. `Booked in this
+// period` is the total, so every appointment is on that line AND on its status
+// line; and `completed` has no line in that section at all.
+//
+// Nothing caught it because every test asserted `partition.closed` — the model
+// fact — and none asserted what the SENTENCE told the owner. These do.
+
+describe("NC-claim — the partition note states status coverage, not row layout", () => {
+  const NOTE = CODE.spine.slice(
+    CODE.spine.indexOf("function PartitionNote"),
+    CODE.spine.indexOf("function PartitionNote") + 1200,
+  );
+
+  it("makes no claim that a line-by-line reading is exact", () => {
+    // The exact false sentence, and the family it belongs to. A layout claim is
+    // unprovable from a status census however it is phrased.
+    expect(CODE.spine).not.toMatch(/exactly one line/i);
+    expect(CODE.spine).not.toMatch(/on (exactly )?one (line|row)/i);
+    expect(CODE.spine).not.toMatch(/each appointment appears once/i);
+  });
+
+  it("names all four statuses, because all four are what the claim is about", () => {
+    // `booked` is the TOTAL, not a fifth category, so the claim can only be
+    // about the four statuses that partition it. Naming them is what stops the
+    // sentence drifting back into a statement about the rows on screen.
+    for (const status of ["Still to happen", "completed", "cancelled", "no-show"]) {
+      expect(NOTE, status).toContain(status);
+    }
+  });
+
+  it("says where the fourth count is shown, since it is NOT in that section", () => {
+    // `completed` is rendered in "Work actually completed". A claim covering it
+    // that did not say so would send the owner looking for a row that is not
+    // there.
+    expect(NOTE).toMatch(/next section/i);
+    const calendarSection = CODE.spine.indexOf("The calendar");
+    const completedSection = CODE.spine.indexOf("Work actually completed");
+    expect(calendarSection).toBeGreaterThan(-1);
+    expect(completedSection).toBeGreaterThan(calendarSection);
+    // ...and the calendar section really does NOT carry a completed row.
+    const calendarRows = CODE.spine.slice(calendarSection, completedSection);
+    expect(calendarRows).toContain('label="Booked in this period"');
+    expect(calendarRows).not.toContain('label="Completed"');
+  });
+
+  it("the claim is printed ONLY when the model says it holds", () => {
+    expect(NOTE).toContain("if (partition.closed)");
+    expect(NOTE).toContain("if (!booked.known) return null;");
+  });
+
+  it("THE FACT ITSELF: the four statuses really do sum to booked when closed", () => {
+    // The arithmetic the sentence now asserts, proved against the model rather
+    // than assumed from its name. Note there is no `if (known)` guard here: an
+    // unknown fact must FAIL this, not silently skip it.
+    for (const statuses of [
+      ["confirmed", "completed", "cancelled", "no_show"],
+      ["completed", "completed", "completed"],
+      [],
+      ["cancelled", "no_show", "no_show", "confirmed", "completed", "completed"],
+    ]) {
+      const census = summarizeCalendar(statuses.map((status) => ({ status })));
+      expect(census.partition.closed, statuses.join(",")).toBe(true);
+      const parts = [
+        census.stillToHappen,
+        census.completed,
+        census.cancelled,
+        census.noShow,
+      ];
+      expect(parts.every((f) => f.known)).toBe(true);
+      expect(census.booked.known).toBe(true);
+      const sum = parts.reduce((total, f) => total + (f.known ? f.value : NaN), 0);
+      expect(sum, statuses.join(",")).toBe(census.booked.known ? census.booked.value : NaN);
+    }
+  });
+
+  it("and the withdrawal is printed when it does NOT hold", () => {
+    const census = summarizeCalendar([{ status: "rescheduled" }, { status: "completed" }]);
+    expect(census.partition.closed).toBe(false);
+    expect(census.partition.unrecognisedStatuses).toEqual(["rescheduled"]);
+    // The negative branch names the same four statuses, so the two sentences
+    // cannot disagree about what is being accounted for.
+    expect(NOTE).toMatch(/do not account for every\s+appointment booked/);
   });
 });
 
