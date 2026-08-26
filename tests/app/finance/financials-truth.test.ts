@@ -452,6 +452,68 @@ type DependencySite = {
 /** The CommonJS mechanism itself. Executable use of any of these is forbidden. */
 const COMMONJS_GLOBALS = new Set(["require", "module", "exports", "createRequire"]);
 
+/**
+ * Node's CommonJS loader facility, banned AT THE IMPORT BOUNDARY.
+ *
+ * Codex found `import * as nodeModule from "node:module"; nodeModule
+ * .createRequire(import.meta.url)`. It escaped because `createRequire` in
+ * property position is a NAME, and the name exemption that lets object keys
+ * through suppressed the identifier rule. That was the eleventh escape on this
+ * guard and the second of its kind: not a missing spelling, but an EXEMPTION
+ * that had no other branch.
+ *
+ * Chasing the call site means enumerating every way a namespace object can be
+ * aliased, destructured, passed or re-exported before `.createRequire` is
+ * finally reached — property analysis, then data flow. Refused, for the same
+ * reason CommonJS callee analysis was refused.
+ *
+ * Instead the facility is rejected where it ENTERS the module. FIN Slice 1 is
+ * ESM-only and has no legitimate use for Node's loader; audited before the rule
+ * was imposed, the seventeen-module closure imports neither specifier and never
+ * mentions `createRequire`. So an import of it is the violation, and what the
+ * module would later have done with the namespace never has to be decided.
+ *
+ * `"module"` is banned alongside `"node:module"` because it is the same
+ * facility under its unprefixed name.
+ */
+const LOADER_FACILITY_SPECIFIERS = new Set(["node:module", "module"]);
+
+/** Member names that would hand back a CommonJS loader. */
+const LOADER_MEMBERS = new Set(["require", "createRequire"]);
+
+/**
+ * Whether an import or re-export is ERASED at emit, and so cannot execute the
+ * module it names.
+ *
+ * Measured against this repository's compiler options rather than assumed:
+ * `verbatimModuleSyntax` is not set, so `import type { X } from "m"`,
+ * `import { type X } from "m"`, `import type * as ns from "m"` and
+ * `export type { X } from "m"` all emit nothing at all. A form that emits
+ * nothing cannot reach a loader, so banning it would be punishing a spelling.
+ *
+ * A clause with NO named bindings is not erased — `import "m"` and
+ * `import {} from "m"` both execute the module for its side effects.
+ */
+const isErasedModuleReference = (node: ts.ImportDeclaration | ts.ExportDeclaration): boolean => {
+  if (ts.isImportDeclaration(node)) {
+    const clause = node.importClause;
+    if (!clause) return false; // side-effect import: executes
+    if (clause.isTypeOnly) return true;
+    const bindings = clause.namedBindings;
+    if (clause.name) return false; // a default binding is a value
+    if (bindings && ts.isNamedImports(bindings)) {
+      return bindings.elements.length > 0 && bindings.elements.every((e) => e.isTypeOnly);
+    }
+    return false; // namespace import, or nothing to inspect
+  }
+  if (node.isTypeOnly) return true;
+  const clause = node.exportClause;
+  if (clause && ts.isNamedExports(clause)) {
+    return clause.elements.length > 0 && clause.elements.every((e) => e.isTypeOnly);
+  }
+  return false; // `export * from "m"` executes
+};
+
 function scanDependencies(
   source: string,
   fileName: string,
@@ -487,6 +549,22 @@ function scanDependencies(
       return;
     }
     const specifier = specifierNode.text;
+
+    // THE LOADER FACILITY, rejected where it enters rather than where it is
+    // used. Deliberately BEFORE resolution, so this does not depend on whether
+    // `node:module` happens to resolve in this repository — it does not today,
+    // and a guard that leaned on that accident would open the moment @types/node
+    // reached the resolution path.
+    if (!typeOnly && LOADER_FACILITY_SPECIFIERS.has(specifier)) {
+      sites.push({
+        kind: "forbidden_commonjs",
+        syntax,
+        detail: `line ${at(site)}: ${syntax} "${specifier}" — Node's CommonJS loader facility`,
+        specifier,
+      });
+      return;
+    }
+
     const resolution = resolver(specifier, fileName);
     if (resolution.kind === "unresolved") {
       sites.push({
@@ -560,12 +638,11 @@ function scanDependencies(
     }
 
     if (ts.isImportDeclaration(node)) {
-      const typeOnly = node.importClause?.isTypeOnly === true;
-      dependency(node.moduleSpecifier, "import", node, typeOnly);
+      dependency(node.moduleSpecifier, "import", node, isErasedModuleReference(node));
     } else if (ts.isExportDeclaration(node)) {
       // A bare `export { a }` re-exports nothing from elsewhere: not a site.
       if (node.moduleSpecifier) {
-        dependency(node.moduleSpecifier, "export-from", node, node.isTypeOnly);
+        dependency(node.moduleSpecifier, "export-from", node, isErasedModuleReference(node));
       }
     } else if (ts.isImportTypeNode(node)) {
       dependency(
@@ -587,19 +664,25 @@ function scanDependencies(
       ts.isExternalModuleReference(node.moduleReference)
     ) {
       forbid(node, "import-equals", "`import … = require(…)` — CommonJS");
-    } else if (!inType && ts.isPropertyAccessExpression(node) && node.name.text === "require") {
-      // A member named `require` on ANY receiver. Kept alongside the global ban
-      // below because the two cover different things: this catches
-      // `someObject.require(…)`, the global ban catches `module[anything](…)`.
-      forbid(node, "commonjs-global", `\`${node.getText(sf).slice(0, 40)}\` — a member named require`);
+    } else if (!inType && ts.isPropertyAccessExpression(node) && LOADER_MEMBERS.has(node.name.text)) {
+      // A member named `require` or `createRequire` on ANY receiver. DEFENCE IN
+      // DEPTH, not the proof: the import-boundary ban above is what actually
+      // closes `nodeModule.createRequire(…)`, because it never lets the
+      // namespace into the module. This catches a loader arriving by some other
+      // future route without resolving any property or following any value.
+      forbid(node, "commonjs-global", `\`${node.getText(sf).slice(0, 40)}\` — a member named ${node.name.text}`);
     } else if (
       !inType &&
       ts.isElementAccessExpression(node) &&
       node.argumentExpression &&
       ts.isStringLiteralLike(node.argumentExpression) &&
-      node.argumentExpression.text === "require"
+      LOADER_MEMBERS.has(node.argumentExpression.text)
     ) {
-      forbid(node, "commonjs-global", `\`${node.getText(sf).slice(0, 40)}\` — a member named require`);
+      forbid(
+        node,
+        "commonjs-global",
+        `\`${node.getText(sf).slice(0, 40)}\` — a member named ${node.argumentExpression.text}`,
+      );
     } else if (!inType && ts.isIdentifier(node) && COMMONJS_GLOBALS.has(node.text) && !isJustAName(node)) {
       // THE MECHANISM, NOT ITS SPELLINGS. Forbidding executable `module` is why
       // `module.require(…)`, `module["require"](…)`, `module["requ" + "ire"](…)`
@@ -928,7 +1011,30 @@ const DEPENDENCY_VIOLATION_SHAPES: Array<[string, string, boolean]> = [
   ["dynamic import with no argument", "import();", true],
   ["unreadable import type position", "type X = import(SomeAlias).Y;", true],
   ["createRequire", 'const r = createRequire(u); r("m");', true],
-  ["import of node:module", 'import { createRequire } from "node:module";', true],
+  // THE LOADER FACILITY, rejected at the import boundary. None of these needs
+  // anyone to work out what the module would later do with the namespace.
+  ["named import of node:module", 'import { createRequire } from "node:module";', true],
+  ["renamed named import of node:module", 'import { createRequire as cr } from "node:module";', true],
+  ["namespace import of node:module", 'import * as nm from "node:module";', true],
+  ["default import of node:module", 'import nm from "node:module";', true],
+  ["side-effect import of node:module", 'import "node:module";', true],
+  ["namespace import of bare module", 'import * as nm from "module";', true],
+  ["named import of bare module", 'import { createRequire } from "module";', true],
+  ["dynamic import of node:module", 'const p = import("node:module");', true],
+  ["dynamic import of bare module", 'const p = import("module");', true],
+  ["re-export from node:module", 'export { createRequire } from "node:module";', true],
+  ["re-export star from node:module", 'export * from "node:module";', true],
+  // ...and the exact Codex reproduction, whole.
+  [
+    "THE CODEX REPRODUCTION",
+    'import * as nodeModule from "node:module";\nconst load = nodeModule.createRequire(import.meta.url);\nload("@/lib/dashboard/practice-metrics");',
+    true,
+  ],
+  // Defence in depth: a loader arriving by some other route.
+  ["namespace-qualified createRequire", "ns.createRequire(u);", true],
+  ["bracketed createRequire member", 'ns["createRequire"](u);', true],
+  ["bare createRequire", "const load = createRequire(u);", true],
+  ["createRequire aliased to a const", "const cr = createRequire;", true],
   ["import-equals-require", 'import x = require("m");', true],
   // ...and what is NOT executable CommonJS.
   ["a string containing require", `const s = 'require("@/x")';`, false],
@@ -957,6 +1063,19 @@ const DEPENDENCY_VIOLATION_SHAPES: Array<[string, string, boolean]> = [
   // resolution, to the .ts file. It is a real edge, so it is not a violation.
   ["an explicit .js specifier that resolves", 'import "@/lib/finance/financial-fact.js";', false],
   ["an installed external package", 'import * as React from "react";', false],
+  // TYPE-ONLY IS NOT PERSECUTED FOR ITS SPELLING. Measured against this repo's
+  // options: with `verbatimModuleSyntax` unset, every one of these emits
+  // nothing, so none can reach a loader.
+  ["type-only import of a package", 'import type { FC } from "react";', false],
+  ["inline type specifier of a package", 'import { type FC } from "react";', false],
+  ["type-only namespace import", 'import type * as React from "react";', false],
+  ["export type from a package", 'export type { FC } from "react";', false],
+  ["import type position", 'type X = import("react").FC;', false],
+  // Text is not code.
+  ["a string naming node:module", `const s = 'import "node:module"';`, false],
+  ["a comment naming node:module", '// import { createRequire } from "node:module";', false],
+  ["a comment naming createRequire", "/* createRequire(u) */ export const a = 1;", false],
+  ["an object key named createRequire", "const o = { createRequire: 1 };", false],
   ["element access with another literal key", 'const v = o["safe"];', false],
   ["a member named something else", 'other.request("@/lib/finance/financial-fact");', false],
   ["a string used as an element key elsewhere", 'const k = "require"; const v = o[k];', false],
@@ -1077,6 +1196,79 @@ describe("NC-esm — static ESM only: CommonJS and unreadable dependencies both 
     expect(mixed).toHaveLength(5);
   });
 
+  it("THE LOADER FACILITY: banned where it ENTERS, not where it is used", () => {
+    // The eleventh escape, and the second caused by an EXEMPTION rather than a
+    // missing spelling: `createRequire` in property position is a name, and the
+    // name exemption that lets object keys through suppressed the identifier
+    // rule. Chasing the call site means property analysis and then data flow.
+    //
+    // So the namespace never gets in. Note what is NOT asserted below: nothing
+    // claims to know what `nodeModule` is or what `.createRequire` would
+    // return. The import is the violation.
+    const probe = path.join(ROOT, "lib/finance/probe.ts");
+    const codexReproduction = [
+      'import * as nodeModule from "node:module";',
+      "const load = nodeModule.createRequire(import.meta.url);",
+      'load("@/lib/dashboard/practice-metrics");',
+    ].join("\n");
+
+    const sites = scanDependencies(codexReproduction, probe);
+    expect(sites.some((s) => s.kind === "forbidden_commonjs")).toBe(true);
+    expect(violationsOf(sites).join(" ")).toMatch(/loader facility/);
+    // The import is rejected on its own, before the call site is even reached.
+    const importAlone = scanDependencies('import * as nodeModule from "node:module";', probe);
+    expect(importAlone.map((s) => s.kind)).toEqual(["forbidden_commonjs"]);
+  });
+
+  it("the loader ban does NOT depend on whether node:module resolves", () => {
+    // It does not resolve in this repository — no @types/node on the resolution
+    // path — so a ban placed after resolution would be caught by the
+    // unresolved-site rule instead and would silently open the day @types/node
+    // arrived. This pins that the ban fires FIRST, by its own reason.
+    const probe = path.join(ROOT, "lib/finance/probe.ts");
+    const sites = scanDependencies('import * as nm from "node:module";', probe, () => ({
+      // a resolver that CAN resolve it, standing in for a future @types/node
+      kind: "external",
+      file: "/somewhere/node_modules/@types/node/module.d.ts",
+    }));
+    expect(sites.map((s) => s.kind)).toEqual(["forbidden_commonjs"]);
+    expect(violationsOf(sites).join(" ")).toMatch(/loader facility/);
+  });
+
+  it("TYPE-ONLY BOUNDARY: erased references are not executable violations", () => {
+    // Measured, not assumed: with `verbatimModuleSyntax` unset every form below
+    // emits nothing, so none of them can reach a loader. Banning them would be
+    // punishing a spelling, which the contract explicitly refuses to do.
+    const probe = path.join(ROOT, "lib/finance/probe.ts");
+    for (const erased of [
+      'import type { createRequire } from "node:module";',
+      'import { type createRequire } from "node:module";',
+      'import type * as nm from "node:module";',
+      'export type { createRequire } from "node:module";',
+      'type X = import("node:module").RequireResolve;',
+    ]) {
+      const kinds = scanDependencies(erased, probe).map((s) => s.kind);
+      expect(kinds, erased).not.toContain("forbidden_commonjs");
+    }
+
+    // ...and the same forms against a RESOLVABLE package land in TYPE_ONLY,
+    // which is the category the contract says governs them. The node:module
+    // forms above are `unresolved` only because that specifier does not resolve
+    // here at all — a fact about this repo, not a judgement about type imports.
+    for (const erased of [
+      'import type { FC } from "react";',
+      'import { type FC } from "react";',
+      'import type * as React from "react";',
+    ]) {
+      expect(scanDependencies(erased, probe).map((s) => s.kind), erased).toEqual(["type_only"]);
+    }
+    expect(
+      scanDependencies('import type { createRequire } from "node:module";', probe).map(
+        (s) => s.kind,
+      ),
+    ).toEqual(["unresolved"]);
+  });
+
   it("NO MODULE IN THE FIN CLOSURE USES COMMONJS OR AN UNREADABLE DEPENDENCY", () => {
     // The invariant itself, over the real tree. Audited before either rule was
     // written — no executable member named `require`, no non-literal dynamic
@@ -1103,6 +1295,10 @@ describe("NC-esm — static ESM only: CommonJS and unreadable dependencies both 
       '(flag ? require : require)("@/lib/dashboard/practice-metrics");',
       'module["require"]("@/lib/dashboard/practice-metrics");',
       'import("../dashboard/" + "practice-metrics");',
+      'import * as nodeModule from "node:module";',
+      // NOTE: `import "../dashboard/practice-metrics.js"` is deliberately NOT
+      // here. It RESOLVES, so it is a legitimate edge and no violation — what
+      // it breaks is reachability, caught by the money-path assertion instead.
     ]) {
       expect(dependencyViolations(`${real}\n${escape}\n`, where), escape).not.toEqual([]);
     }
