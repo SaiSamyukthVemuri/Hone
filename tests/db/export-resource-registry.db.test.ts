@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 import {
@@ -788,6 +788,103 @@ describe("what is excluded, and on what grounds", () => {
     expect(counts.derived ?? 0).toBeGreaterThan(0);
     expect(counts.deliberate_privacy ?? 0).toBeGreaterThan(0);
     expect(counts.dead ?? 0).toBe(0);
+  });
+
+  // -------------------------------------------------------------------------
+  // THE SEVEN CONSERVATIVE REASONS ARE PINNED EXACTLY
+  // -------------------------------------------------------------------------
+  //
+  // These reasons render to owners in the ZIP README and the settings page, and
+  // three review rounds in a row found an unprovable claim hiding in them: first
+  // "unreachable from application code", then "no runtime code writes it", then
+  // "not wired into any shipped flow". Each time the fix was to ban the phrase,
+  // and each time the next phrasing walked through — because a pattern list can
+  // only ever recognise the wording someone already thought of.
+  //
+  // So these seven are not policed by pattern any more. They are PINNED to their
+  // exact approved text. Changing one is then a deliberate, review-visible edit
+  // to this file rather than something that slips past an enumeration of English
+  // synonyms for "unreachable".
+  //
+  // The approved text states only what can be established without reading
+  // application source: the migration that introduced the table, that it is not
+  // in the export, that TRUTH-01A makes NO finding about what reaches it, that
+  // the decision belongs to TRUTH-01B — plus, for
+  // pending_booking_payment_sessions, the pg_constraint cascade fact.
+  const APPROVED_CONSERVATIVE_REASONS: Readonly<Record<string, string>> = {
+    payment_consents:
+      "Introduced by migration 0032. NOT included in the TRUTH-01A CSV export. TRUTH-01A makes NO FINDING about which code paths reach this table: the analysis that would have supported such a finding was withdrawn as insufficiently robust and nothing replaces it, so this record neither claims nor denies that anything uses it. The export decision belongs to TRUTH-01B, after a field review of the payment-consent decisions and the metadata recorded with them.",
+    stripe_charge_attempts:
+      "Introduced by migration 0032. NOT included in the TRUTH-01A CSV export. TRUTH-01A makes NO FINDING about which code paths reach this table: the analysis that would have supported such a finding was withdrawn as insufficiently robust and nothing replaces it, so this record neither claims nor denies that anything uses it. The export decision belongs to TRUTH-01B, after a field review of the Stripe charge identifiers and provider failure detail it carries.",
+    stripe_disputes:
+      "Introduced by migration 0032. NOT included in the TRUTH-01A CSV export. TRUTH-01A makes NO FINDING about which code paths reach this table: the analysis that would have supported such a finding was withdrawn as insufficiently robust and nothing replaces it, so this record neither claims nor denies that anything uses it. The export decision belongs to TRUTH-01B, after a field review of the Stripe dispute identifiers and provider detail it carries.",
+    stripe_payment_audit:
+      "Introduced by migration 0032. NOT included in the TRUTH-01A CSV export. TRUTH-01A makes NO FINDING about which code paths reach this table: the analysis that would have supported such a finding was withdrawn as insufficiently robust and nothing replaces it, so this record neither claims nor denies that anything uses it. The export decision belongs to TRUTH-01B, after a field review of the free-form provider audit payloads it carries.",
+    stripe_refund_attempts:
+      "Introduced by migration 0032. NOT included in the TRUTH-01A CSV export. TRUTH-01A makes NO FINDING about which code paths reach this table: the analysis that would have supported such a finding was withdrawn as insufficiently robust and nothing replaces it, so this record neither claims nor denies that anything uses it. The export decision belongs to TRUTH-01B, after a field review of the Stripe refund identifiers and provider failure detail it carries.",
+    stripe_refunds:
+      "Introduced by migration 0032. NOT included in the TRUTH-01A CSV export. TRUTH-01A makes NO FINDING about which code paths reach this table: the analysis that would have supported such a finding was withdrawn as insufficiently robust and nothing replaces it, so this record neither claims nor denies that anything uses it. The export decision belongs to TRUTH-01B, after a field review of the Stripe refund identifiers it carries.",
+    pending_booking_payment_sessions:
+      "Introduced by migration 0032. NOT included in the TRUTH-01A CSV export. TRUTH-01A makes NO FINDING about which code paths reach this table: the analysis that would have supported such a finding was withdrawn as insufficiently robust and nothing replaces it, so this record neither claims nor denies that anything uses it. What IS established comes from the database rather than from reading application code: studio_id carries ON DELETE CASCADE from studios, read from pg_constraint, so PostgreSQL removes these rows when a studio row is deleted. The export decision belongs to TRUTH-01B, after a field review of the public-booking payment session state and provider identifiers it carries.",
+  };
+
+  it("DESCOPE CONTROL A — each of the seven carries its EXACT approved conservative reason", () => {
+    for (const [resource, approved] of Object.entries(APPROVED_CONSERVATIVE_REASONS)) {
+      const disposition = EXPORT_RESOURCE_REGISTRY[resource];
+      expect(disposition, resource).toBeDefined();
+      expect(
+        disposition.kind === "pending" && disposition.reason,
+        resource + ": owner-facing reason changed — approve it here deliberately",
+      ).toBe(approved);
+    }
+  });
+
+  it("DESCOPE CONTROL B — the six withdrawn-dead resources stay pending/TRUTH-01B/tier 2/field review", () => {
+    for (const resource of ["payment_consents","stripe_charge_attempts","stripe_disputes","stripe_payment_audit","stripe_refund_attempts","stripe_refunds"]) {
+      const d = EXPORT_RESOURCE_REGISTRY[resource];
+      expect(d.kind, resource).toBe("pending");
+      expect(d.kind === "pending" && d.ticket, resource).toBe("TRUTH-01B");
+      expect(d.kind === "pending" && d.tier, resource).toBe(2);
+      expect(d.kind === "pending" && d.fieldReviewRequired, resource).toBe(true);
+    }
+  });
+
+  it("DESCOPE CONTROL C — the dead category is still empty", () => {
+    const dead = Object.entries(EXPORT_RESOURCE_REGISTRY)
+      .filter(([, d]) => d.kind === "excluded" && d.category === "dead")
+      .map(([r]) => r);
+    expect(dead).toEqual([]);
+  });
+
+  it("DESCOPE CONTROL D — the independent exclusion grounds are unchanged, exactly", () => {
+    const counts: Record<string, number> = {};
+    for (const d of Object.values(EXPORT_RESOURCE_REGISTRY)) {
+      if (d.kind !== "excluded") continue;
+      counts[d.category] = (counts[d.category] ?? 0) + 1;
+    }
+    // Exact, not "greater than zero": a silent drift in either direction is a
+    // change to what Hone tells owners it withholds.
+    expect(counts).toEqual({
+      security: 5,
+      platform: 4,
+      derived: 6,
+      deliberate_privacy: 2,
+    });
+  });
+
+  it("DESCOPE CONTROL E — no application-source reachability analyser has returned", () => {
+    // The withdrawal has to stay withdrawn: reinstating the analyser would
+    // restore the ability to certify a resource unreachable, which is the claim
+    // this repair removed.
+    //
+    // Deliberately just the file. A source scan for its symbols would match
+    // THIS test's own text — the self-referential guard that has bitten this
+    // repository before — and it would add nothing: a suite that imports a
+    // module which does not exist fails to compile long before it runs.
+    expect(
+      existsSync("tests/db/helpers/app-tables.ts"),
+      "the application-source AST resolver is back",
+    ).toBe(false);
   });
 
   // Positive assertions that some code path does NOT touch a table. Every one

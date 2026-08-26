@@ -1054,7 +1054,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     tier: 2,
     fieldReviewRequired: true,
     reason:
-      "Created by migration 0032 for the card-payment surface, which is not wired into any shipped flow, so the capability appears dormant. TRUTH-01A DOES NOT CERTIFY IT INERT: the evidence that would support such a certification came from an application-source analysis that has been WITHDRAWN as insufficiently robust - it missed indirect table-name expressions and failed silently rather than reporting that it could not tell - so this record asserts nothing about which code touches the table. Unknown reachability is not the same as dead, and the honest disposition is pending. Field review before any export: it records payment-consent decisions and the metadata captured with them.",
+      "Introduced by migration 0032. NOT included in the TRUTH-01A CSV export. TRUTH-01A makes NO FINDING about which code paths reach this table: the analysis that would have supported such a finding was withdrawn as insufficiently robust and nothing replaces it, so this record neither claims nor denies that anything uses it. The export decision belongs to TRUTH-01B, after a field review of the payment-consent decisions and the metadata recorded with them.",
   },
   pending_booking_payment_sessions: {
     kind: "pending",
@@ -1062,7 +1062,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     tier: 2,
     fieldReviewRequired: true,
     reason:
-      "Created by migration 0032 for public-booking card collection, which is not wired into any shipped flow, so the capability appears dormant. It was once classified `dead`; it is not, and the reason is a DATABASE fact that stands on its own: pending_booking_payment_sessions.studio_id carries ON DELETE CASCADE from studios, read from pg_constraint, so deleting a studio makes PostgreSQL delete these rows. A table the database will mutate is not inert, whatever the application does. TRUTH-01A makes NO claim here about which application paths reach it: the application-source analysis that would have supported one has been withdrawn as insufficiently robust. Dormant at the feature level, mutable at the schema level, unknown at the application level - so pending, not excluded. Field review before any export: it carries public-booking payment session state and provider identifiers, none of it independently actionable by a studio.",
+      "Introduced by migration 0032. NOT included in the TRUTH-01A CSV export. TRUTH-01A makes NO FINDING about which code paths reach this table: the analysis that would have supported such a finding was withdrawn as insufficiently robust and nothing replaces it, so this record neither claims nor denies that anything uses it. What IS established comes from the database rather than from reading application code: studio_id carries ON DELETE CASCADE from studios, read from pg_constraint, so PostgreSQL removes these rows when a studio row is deleted. The export decision belongs to TRUTH-01B, after a field review of the public-booking payment session state and provider identifiers it carries.",
   },
   stripe_charge_attempts: {
     kind: "pending",
@@ -1070,7 +1070,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     tier: 2,
     fieldReviewRequired: true,
     reason:
-      "Created by migration 0032 for the card-payment surface, which is not wired into any shipped flow, so the capability appears dormant. TRUTH-01A DOES NOT CERTIFY IT INERT: the evidence that would support such a certification came from an application-source analysis that has been WITHDRAWN as insufficiently robust - it missed indirect table-name expressions and failed silently rather than reporting that it could not tell - so this record asserts nothing about which code touches the table. Unknown reachability is not the same as dead, and the honest disposition is pending. Field review before any export: it carries Stripe charge identifiers and provider failure detail.",
+      "Introduced by migration 0032. NOT included in the TRUTH-01A CSV export. TRUTH-01A makes NO FINDING about which code paths reach this table: the analysis that would have supported such a finding was withdrawn as insufficiently robust and nothing replaces it, so this record neither claims nor denies that anything uses it. The export decision belongs to TRUTH-01B, after a field review of the Stripe charge identifiers and provider failure detail it carries.",
   },
   stripe_disputes: {
     kind: "pending",
@@ -1078,7 +1078,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     tier: 2,
     fieldReviewRequired: true,
     reason:
-      "Created by migration 0032 for the card-payment surface, which is not wired into any shipped flow, so the capability appears dormant. TRUTH-01A DOES NOT CERTIFY IT INERT: the evidence that would support such a certification came from an application-source analysis that has been WITHDRAWN as insufficiently robust - it missed indirect table-name expressions and failed silently rather than reporting that it could not tell - so this record asserts nothing about which code touches the table. Unknown reachability is not the same as dead, and the honest disposition is pending. Dispute handling is alert-only via ops_alerts, which is independently true and unaffected by the withdrawn analysis. Field review before any export: it carries Stripe dispute identifiers and provider detail.",
+      "Introduced by migration 0032. NOT included in the TRUTH-01A CSV export. TRUTH-01A makes NO FINDING about which code paths reach this table: the analysis that would have supported such a finding was withdrawn as insufficiently robust and nothing replaces it, so this record neither claims nor denies that anything uses it. The export decision belongs to TRUTH-01B, after a field review of the Stripe dispute identifiers and provider detail it carries.",
   },
   stripe_payment_audit: {
     kind: "pending",
@@ -1086,7 +1086,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     tier: 2,
     fieldReviewRequired: true,
     reason:
-      "Created by migration 0032 for the card-payment surface, which is not wired into any shipped flow, so the capability appears dormant. TRUTH-01A DOES NOT CERTIFY IT INERT: the evidence that would support such a certification came from an application-source analysis that has been WITHDRAWN as insufficiently robust - it missed indirect table-name expressions and failed silently rather than reporting that it could not tell - so this record asserts nothing about which code touches the table. Unknown reachability is not the same as dead, and the honest disposition is pending. Field review before any export: it carries free-form provider audit payloads.",
+      "Introduced by migration 0032. NOT included in the TRUTH-01A CSV export. TRUTH-01A makes NO FINDING about which code paths reach this table: the analysis that would have supported such a finding was withdrawn as insufficiently robust and nothing replaces it, so this record neither claims nor denies that anything uses it. The export decision belongs to TRUTH-01B, after a field review of the free-form provider audit payloads it carries.",
   },
   stripe_refund_attempts: {
     kind: "pending",
@@ -1094,7 +1094,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     tier: 2,
     fieldReviewRequired: true,
     reason:
-      "Created by migration 0032 for the card-payment surface, which is not wired into any shipped flow, so the capability appears dormant. TRUTH-01A DOES NOT CERTIFY IT INERT: the evidence that would support such a certification came from an application-source analysis that has been WITHDRAWN as insufficiently robust - it missed indirect table-name expressions and failed silently rather than reporting that it could not tell - so this record asserts nothing about which code touches the table. Unknown reachability is not the same as dead, and the honest disposition is pending. Live refund state lives on payment_charge_attempts.refund_*, which is independently true and unaffected by the withdrawn analysis. Field review before any export: it carries Stripe refund identifiers and provider failure detail.",
+      "Introduced by migration 0032. NOT included in the TRUTH-01A CSV export. TRUTH-01A makes NO FINDING about which code paths reach this table: the analysis that would have supported such a finding was withdrawn as insufficiently robust and nothing replaces it, so this record neither claims nor denies that anything uses it. The export decision belongs to TRUTH-01B, after a field review of the Stripe refund identifiers and provider failure detail it carries.",
   },
   stripe_refunds: {
     kind: "pending",
@@ -1102,7 +1102,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     tier: 2,
     fieldReviewRequired: true,
     reason:
-      "Created by migration 0032 for the card-payment surface, which is not wired into any shipped flow, so the capability appears dormant. TRUTH-01A DOES NOT CERTIFY IT INERT: the evidence that would support such a certification came from an application-source analysis that has been WITHDRAWN as insufficiently robust - it missed indirect table-name expressions and failed silently rather than reporting that it could not tell - so this record asserts nothing about which code touches the table. Unknown reachability is not the same as dead, and the honest disposition is pending. Live refund state lives on payment_charge_attempts.refund_*, which is independently true and unaffected by the withdrawn analysis. Field review before any export: it carries Stripe refund identifiers.",
+      "Introduced by migration 0032. NOT included in the TRUTH-01A CSV export. TRUTH-01A makes NO FINDING about which code paths reach this table: the analysis that would have supported such a finding was withdrawn as insufficiently robust and nothing replaces it, so this record neither claims nor denies that anything uses it. The export decision belongs to TRUTH-01B, after a field review of the Stripe refund identifiers it carries.",
   },
 
   // deliberate_privacy
