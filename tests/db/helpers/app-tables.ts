@@ -171,62 +171,149 @@ export function scanFromEntrypoints(
     return out;
   }
 
-  function resolve(expr: ts.Expression, depth = 0): string[] | null {
-    if (depth > MAX_ALIAS_HOPS) return null;
-    if (isStringish(expr)) return [expr.text];
-
-    if (ts.isIdentifier(expr)) {
-      const direct = identifierValues(expr.text);
-      if (direct.length > 0) return direct;
-
-      // A parameter: its type may enumerate the tables, and failing that its
-      // call sites supply them.
-      const fn = enclosingFunction(expr);
-      if (fn) {
-        const index = fn.parameters.findIndex(
-          (p) => ts.isIdentifier(p.name) && p.name.text === expr.text,
+  /**
+   * The INNERMOST declaration an identifier refers to.
+   *
+   * Codex P2 on 9c460a44. Resolution used to consult the name-keyed const map
+   * FIRST and return on a hit, so an unrelated `const table = "clients"`
+   * anywhere in the scanned sources captured every `.from(table)` parameter:
+   * a helper invoked as `read("dead_resource")` reported `clients`, with NO
+   * `unresolved` entry, and the dead table vanished silently. Same shape as the
+   * TSX mis-parse — a shrunken closure that looks clean.
+   *
+   * Walking outward from the identifier gives the parameter binding precedence
+   * over a same-named global, which is what the language does. The name-keyed
+   * map is now only the FALLBACK, for the case it actually exists to serve: an
+   * identifier with no local binding, i.e. imported from another module.
+   */
+  function innermostBinding(
+    id: ts.Identifier,
+  ):
+    | { kind: "param"; fn: ts.SignatureDeclaration; index: number }
+    | { kind: "value"; declaration: ts.VariableDeclaration }
+    | null {
+    for (let cur: ts.Node | undefined = id.parent; cur; cur = cur.parent) {
+      if (
+        ts.isFunctionDeclaration(cur) ||
+        ts.isArrowFunction(cur) ||
+        ts.isFunctionExpression(cur) ||
+        ts.isMethodDeclaration(cur)
+      ) {
+        const index = cur.parameters.findIndex(
+          (p) => ts.isIdentifier(p.name) && p.name.text === id.text,
         );
-        if (index >= 0) {
-          const fromType = unionTypeValues(fn.parameters[index]);
-          if (fromType.length > 0) return fromType;
-
-          const name = functionName(fn);
-          const args = name ? callArgs.get(name)?.get(index) : undefined;
-          if (args && args.size > 0) {
-            const out = new Set<string>();
-            for (const arg of args) {
-              const resolved = resolve(arg, depth + 1);
-              if (!resolved) return null; // one unresolvable call site poisons it
-              resolved.forEach((v) => out.add(v));
+        if (index >= 0) return { kind: "param", fn: cur, index };
+      }
+      if (ts.isBlock(cur) || ts.isSourceFile(cur) || ts.isModuleBlock(cur)) {
+        for (const statement of cur.statements) {
+          if (!ts.isVariableStatement(statement)) continue;
+          for (const declaration of statement.declarationList.declarations) {
+            if (
+              ts.isIdentifier(declaration.name) &&
+              declaration.name.text === id.text &&
+              declaration.initializer
+            ) {
+              return { kind: "value", declaration };
             }
-            return [...out];
           }
         }
       }
-      return null;
     }
     return null;
+  }
+
+  function resolveParameter(
+    fn: ts.SignatureDeclaration,
+    index: number,
+    depth: number,
+  ): string[] | null {
+    const fromType = unionTypeValues(fn.parameters[index]);
+    if (fromType.length > 0) return fromType;
+
+    const name = functionName(fn);
+    const args = name ? callArgs.get(name)?.get(index) : undefined;
+    if (!args || args.size === 0) return null;
+
+    const out = new Set<string>();
+    for (const arg of args) {
+      const resolved = resolve(arg, depth + 1);
+      if (!resolved) return null; // one unresolvable call site poisons it
+      resolved.forEach((v) => out.add(v));
+    }
+    return [...out];
+  }
+
+  function resolve(expr: ts.Expression, depth = 0): string[] | null {
+    if (depth > MAX_ALIAS_HOPS) return null;
+    if (isStringish(expr)) return [expr.text];
+    if (!ts.isIdentifier(expr)) return null;
+
+    // Scope first. A parameter never falls back to a same-named global.
+    const binding = innermostBinding(expr);
+    if (binding?.kind === "param") {
+      return resolveParameter(binding.fn, binding.index, depth);
+    }
+    if (binding?.kind === "value") {
+      return resolve(binding.declaration.initializer!, depth + 1);
+    }
+
+    // No local binding: an import, so the cross-module name-keyed map applies.
+    const byName = identifierValues(expr.text);
+    return byName.length > 0 ? byName : null;
   }
 
   // ---- pass 2: every `.from(...)` that could be a Supabase read -------------
   const tables = new Set<string>();
   const unresolved: Array<{ file: string; expression: string }> = [];
 
+  /**
+   * The member name being called, and whether it was written as a computed
+   * member the scan could not read.
+   *
+   * Codex P2 on 9c460a44. Matching only `PropertyAccessExpression` meant the
+   * equally valid `db["from"]("dead_resource")` — an `ElementAccessExpression`
+   * — was skipped ENTIRELY: no resolved table and no `unresolved` entry, so the
+   * fail-closed assertions stayed green while a dead-classified table was
+   * reachable. A literal computed member is now read like the dotted form, and
+   * a NON-literal one (`db[key](...)`) is reported rather than dropped, because
+   * the scan cannot know it is not "from".
+   */
+  function calleeMember(
+    expression: ts.Expression,
+  ): { receiver: ts.Expression; name: string | null } | null {
+    if (ts.isPropertyAccessExpression(expression)) {
+      return { receiver: expression.expression, name: expression.name.text };
+    }
+    if (ts.isElementAccessExpression(expression)) {
+      const arg = expression.argumentExpression;
+      return {
+        receiver: expression.expression,
+        name: arg && isStringish(arg) ? arg.text : null,
+      };
+    }
+    return null;
+  }
+
   for (const { rel, sf } of sources) {
     const visit = (node: ts.Node): void => {
-      if (
-        ts.isCallExpression(node) &&
-        ts.isPropertyAccessExpression(node.expression) &&
-        node.expression.name.text === "from" &&
-        node.arguments.length > 0
-      ) {
-        const receiver = node.expression.expression;
-        if (!receiverIsBuiltin(receiver) && !isStorageReceiver(receiver)) {
-          const resolved = resolve(node.arguments[0]);
-          if (resolved) {
-            resolved.forEach((t) => tables.add(t));
-          } else {
-            unresolved.push({ file: rel, expression: node.arguments[0].getText(sf) });
+      if (ts.isCallExpression(node)) {
+        const callee = calleeMember(node.expression);
+        if (
+          callee &&
+          !receiverIsBuiltin(callee.receiver) &&
+          !isStorageReceiver(callee.receiver)
+        ) {
+          if (callee.name === null) {
+            // An unreadable member name. It MIGHT be "from", and assuming it is
+            // not is the assumption that loses tables.
+            unresolved.push({ file: rel, expression: node.expression.getText(sf) });
+          } else if (callee.name === "from" && node.arguments.length > 0) {
+            const resolved = resolve(node.arguments[0]);
+            if (resolved) {
+              resolved.forEach((t) => tables.add(t));
+            } else {
+              unresolved.push({ file: rel, expression: node.arguments[0].getText(sf) });
+            }
           }
         }
       }

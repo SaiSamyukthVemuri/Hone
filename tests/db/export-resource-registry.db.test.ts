@@ -671,6 +671,80 @@ describe("what is excluded, and on what grounds", () => {
     expect(scan.unresolved).toEqual([]);
   });
 
+  it("CONTROL X — a PARAMETER is not captured by an unrelated same-named const", () => {
+    // Resolution once consulted the name-keyed const map first and returned on
+    // a hit, so any `const table = "clients"` anywhere in the tree hijacked
+    // every `.from(table)` parameter — reporting the wrong table with NO
+    // unresolved entry. Scope decides now: the parameter binding wins.
+    const scan = scanFromEntrypoints([
+      { rel: "lib/unrelated.ts", code: `const table = "clients";` },
+      {
+        rel: "app/x.ts",
+        code: `const read = (table) => db.from(table).select("id");
+               export const go = () => read("dead_resource");`,
+      },
+    ]);
+    expect(scan.tables).toContain("dead_resource");
+    expect(scan.unresolved).toEqual([]);
+  });
+
+  it("CONTROL X2 — a local const still shadows the global map, and imports still resolve", () => {
+    // The inner binding wins...
+    const shadowed = scanFromEntrypoints([
+      { rel: "lib/unrelated.ts", code: `const REL = "clients";` },
+      {
+        rel: "app/x.ts",
+        code: `export function q() { const REL = "dead_resource"; return db.from(REL); }`,
+      },
+    ]);
+    expect(shadowed.tables).toContain("dead_resource");
+    // ...and an identifier with NO local binding still resolves across modules,
+    // which is the case the name-keyed map exists to serve.
+    const imported = scanFromEntrypoints([
+      { rel: "lib/levels.ts", code: `export const REL2 = "dead_resource";` },
+      {
+        rel: "app/y.ts",
+        code: `import { REL2 } from "./levels";
+               export const q = () => db.from(REL2).select("id");`,
+      },
+    ]);
+    expect(imported.tables).toContain("dead_resource");
+  });
+
+  it("CONTROL X3 — an unresolvable parameter does NOT fall back to a same-named global", () => {
+    // No call sites and no union type: the honest answer is "unresolved", not
+    // the value of an unrelated const with the same name.
+    const scan = scanFromEntrypoints([
+      { rel: "lib/unrelated.ts", code: `const table = "clients";` },
+      { rel: "app/x.ts", code: `export const read = (table) => db.from(table).select("id");` },
+    ]);
+    expect(scan.tables).not.toContain("clients");
+    expect(scan.unresolved).toEqual([{ file: "app/x.ts", expression: "table" }]);
+  });
+
+  it("CONTROL Y — a computed-member .from is read like the dotted form", () => {
+    const scan = scanOne(`export const q = () => db["from"]("dead_resource").select("id");`);
+    expect(scan.tables).toEqual(["dead_resource"]);
+    expect(scan.unresolved).toEqual([]);
+  });
+
+  it("CONTROL Y2 — an UNREADABLE computed member is reported, not skipped", () => {
+    // db[key](...) might be "from". Assuming it is not is the assumption that
+    // loses tables, so it is reported and the dead guard refuses.
+    const scan = scanOne(`export const q = (key: string) => db[key]("dead_resource");`);
+    expect(scan.tables).toEqual([]);
+    expect(scan.unresolved).toEqual([{ file: "app/x.ts", expression: "db[key]" }]);
+  });
+
+  it("CONTROL Y3 — computed access on a BUILT-IN still invents nothing and reports nothing", () => {
+    const scan = scanOne(`
+      const a = Buffer["from"]("x");
+      const b = supabase.storage["from"](BUCKET);
+    `);
+    expect(scan.tables).toEqual([]);
+    expect(scan.unresolved).toEqual([]);
+  });
+
   it("CONTROL W — an UNRESOLVABLE dynamic .from is reported, never dropped", () => {
     const scan = scanOne(`
       export const q = (db: Db, key: string) => db.from(lookup[key]).select("id");
