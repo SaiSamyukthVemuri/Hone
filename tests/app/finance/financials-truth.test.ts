@@ -550,10 +550,26 @@ describe("NC-scope — the later slices are absent, and say so", () => {
 //
 // ENFORCED AS A CODING CONSTRAINT, NOT PROVEN HERE
 //
-//   FIN-OWNED source — app/(app)/financials/** and lib/finance/** — may not
-//   name the CommonJS loader globals, import node:module, or reach
-//   process.getBuiltinModule. That lives in eslint.config.mjs, runs under
-//   `npm run lint` on every diff, and is exercised by NC-lint below.
+//   In FIN-OWNED source — app/(app)/financials/** and lib/finance/** — three
+//   stable ESLint rules reject exactly these forms, and the constraint is not
+//   larger than this list:
+//
+//     * a value-position `require`, `module` or `exports`, in any expression
+//       shape (called, aliased, parenthesised, instantiated, conditional,
+//       comma-sequenced, or as the object of a dotted, computed or
+//       concatenated member);
+//     * a STATIC import or re-export of "node:module" or "module", type-only
+//       included;
+//     * `process.getBuiltinModule`, dotted or with a literal computed key.
+//
+//   That lives in eslint.config.mjs, runs under `npm run lint` on every diff,
+//   and NC-lint below pins one fixture per form BY RULE ID.
+//
+//   NOT covered by those rules, and therefore not claimed: `import("node:module")`
+//   — core no-restricted-imports visits static declarations only — and
+//   `globalThis.process.getBuiltinModule(...)` or an aliased `process`, since
+//   no-restricted-properties matches only the literal `process` object. NC-lint
+//   pins both gaps so they stay documented facts rather than surprises.
 //
 // NOT CLAIMED
 //
@@ -1114,27 +1130,86 @@ async function lintRuleIds(source: string, filePath: string): Promise<string[]> 
     .filter((id): id is string => id !== null);
 }
 
-describe("NC-lint — FIN-owned source may not name the runtime loader", () => {
+describe("NC-lint — the FIN-owned constraint covers exactly these forms", () => {
+  // ONE FIXTURE PER CLAIMED FORM, asserted BY RULE ID so a control cannot pass
+  // because some unrelated rule fired on the fixture.
   it.each([
-    ["direct require", 'export const a = require("@/lib/dashboard/practice-metrics");', "no-restricted-globals"],
-    ["require aliased to a const", "export const a = require;", "no-restricted-globals"],
-    ["conditional require", "declare const f: boolean;\nexport const a = (f ? require : require)(\"x\");", "no-restricted-globals"],
-    ["comma-sequence require", 'export const a = (0, require)("x");', "no-restricted-globals"],
-    ["module member access", 'export const a = module["require"]("x");', "no-restricted-globals"],
-    ["module with a computed key", 'export const a = module["requ" + "ire"]("x");', "no-restricted-globals"],
-    ["exports assignment", "exports.x = 1;", "no-restricted-globals"],
-    ["named import of node:module", 'import { createRequire } from "node:module";\nexport const a = createRequire;', "no-restricted-imports"],
-    ["renamed import of node:module", 'import { createRequire as cr } from "node:module";\nexport const a = cr;', "no-restricted-imports"],
-    ["namespace import of node:module", 'import * as nm from "node:module";\nexport const a = nm;', "no-restricted-imports"],
-    ["default import of bare module", 'import m from "module";\nexport const a = m;', "no-restricted-imports"],
+    // no-restricted-globals: any value-position use, whatever the shape.
+    ["require, called", 'export const a = require("x");', "no-restricted-globals"],
+    ["require, aliased", "export const a = require;", "no-restricted-globals"],
+    ["require, parenthesized", 'export const a = (require)("x");', "no-restricted-globals"],
+    ["require, instantiated", 'export const a = ((require as <T>(i: string) => T)<string>)("x");', "no-restricted-globals"],
+    ["require, conditional", 'declare const f: boolean;\nexport const a = (f ? require : require)("x");', "no-restricted-globals"],
+    ["require, comma sequence", 'export const a = (0, require)("x");', "no-restricted-globals"],
+    ["module, dotted member", 'export const a = module.require("x");', "no-restricted-globals"],
+    ["module, computed member", 'export const a = module["require"]("x");', "no-restricted-globals"],
+    ["module, concatenated key", 'export const a = module["requ" + "ire"]("x");', "no-restricted-globals"],
+    ["module, bare reference", "export const a = module;", "no-restricted-globals"],
+    ["exports, assigned", "exports.x = 1;", "no-restricted-globals"],
+    // no-restricted-imports: STATIC forms only, type-only included.
+    ["static named import", 'import { createRequire } from "node:module";\nexport const a = createRequire;', "no-restricted-imports"],
+    ["static renamed import", 'import { createRequire as cr } from "node:module";\nexport const a = cr;', "no-restricted-imports"],
+    ["static namespace import", 'import * as nm from "node:module";\nexport const a = nm;', "no-restricted-imports"],
+    ["static default import", 'import nm from "node:module";\nexport const a = nm;', "no-restricted-imports"],
+    ["static side-effect import", 'import "node:module";', "no-restricted-imports"],
+    ["static import of bare module", 'import m from "module";\nexport const a = m;', "no-restricted-imports"],
+    ["re-export from node:module", 'export { createRequire } from "node:module";', "no-restricted-imports"],
+    ["type-only import", 'import type { RequireResolve } from "node:module";\nexport type A = RequireResolve;', "no-restricted-imports"],
+    // no-restricted-properties: the literal `process` object.
     ["process.getBuiltinModule", 'export const a = process.getBuiltinModule("module");', "no-restricted-properties"],
+    ['process["getBuiltinModule"]', 'export const a = process["getBuiltinModule"]("module");', "no-restricted-properties"],
   ])("%s is rejected in FIN-owned source", async (_name, source, expectedRule) => {
     const ruleIds = await lintRuleIds(source, FIN_OWNED_PROBE);
     expect(ruleIds, `${source} -> ${ruleIds.join(", ")}`).toContain(expectedRule);
   });
 
+  // THE GAPS, PINNED AS FACTS.
+  //
+  // Codex raised both against an earlier wording that implied wider cover, and
+  // was right. They are recorded here rather than closed because closing them
+  // means a hand-written selector list, which is the enumeration this
+  // architecture was adopted to stop, and no existing general rule covers the
+  // class. If one of these ever starts failing, the CONSTRAINT GOT STRONGER and
+  // the prose in eslint.config.mjs, this file's header and the PR body must be
+  // widened to match — that is the point of asserting it.
+  it.each([
+    ["dynamic import of node:module", 'export const a = import("node:module");'],
+    ["dynamic import of bare module", 'export const a = import("module");'],
+    ["globalThis.process.getBuiltinModule", 'export const a = globalThis.process.getBuiltinModule("module");'],
+    ["an aliased process", 'const p = process;\nexport const a = p.getBuiltinModule("module");'],
+  ])("DOCUMENTED GAP: %s is NOT rejected by these rules", async (_name, source) => {
+    // Asserted against EVERY rule, not just the three this file names. An
+    // earlier draft listed only those three, so adding a no-restricted-syntax
+    // selector would have covered the form while this test kept passing — the
+    // claim beside it ("if this fails the constraint got stronger") would then
+    // have been false. Caught by driving exactly that mutation.
+    const ruleIds = await lintRuleIds(source, FIN_OWNED_PROBE);
+    expect(ruleIds, `${source} -> ${ruleIds.join(", ")}`).toEqual([]);
+  });
+
+  it("the dynamic-loader gap is not secretly covered by module resolution either", () => {
+    // The static guard DOES flag `import("node:module")` today — but only
+    // because that specifier does not RESOLVE in this repository, which would
+    // stop being true the moment @types/node reached the resolution path. It is
+    // an accident of resolution, not a loader rule, so it is not claimed as one.
+    const probe = path.join(ROOT, "lib/finance/probe.ts");
+    const sites = scanDependencies('export const a = import("node:module");', probe);
+    expect(sites.map((s) => s.kind)).toEqual(["unresolved"]);
+    expect(compilerResolver("node:module", probe).kind).toBe("unresolved");
+  });
+
+  it("a locally bound `require` is correctly NOT flagged", async () => {
+    // Not a gap: a parameter named `require` is a local binding, not the
+    // loader. Flagging it would be a false positive, and no-restricted-globals
+    // is right to ignore it.
+    const ruleIds = await lintRuleIds(
+      'export function f(require: (i: string) => unknown) { return require("x"); }',
+      FIN_OWNED_PROBE,
+    );
+    expect(ruleIds).not.toContain("no-restricted-globals");
+  });
+
   it("approved FIN ESM source stays clean", async () => {
-    // The control that stops the rules being satisfied by banning everything.
     const ruleIds = await lintRuleIds(
       'import { known } from "@/lib/finance/financial-fact";\nexport const a = known(1);\n',
       FIN_OWNED_PROBE,
@@ -1142,11 +1217,17 @@ describe("NC-lint — FIN-owned source may not name the runtime loader", () => {
     expect(ruleIds).toEqual([]);
   });
 
+  it("an object KEY named require or module is not a use of one", async () => {
+    const ruleIds = await lintRuleIds(
+      "export const o = { require: 1, module: 2 };",
+      FIN_OWNED_PROBE,
+    );
+    expect(ruleIds).toEqual([]);
+  });
+
   it("SCOPE IS NARROW, and the limit is stated rather than hidden", async () => {
-    // The same source in a SHARED module raises none of the FIN rules. Eleven
-    // of the seventeen modules in CLOSURE are shared, so this constraint covers
-    // six of them. That is the honest boundary of the claim, and it is asserted
-    // here so the claim cannot quietly widen.
+    // Eleven of the seventeen modules in CLOSURE are shared, so this constraint
+    // covers six. Asserted so the claim cannot quietly widen.
     const ruleIds = await lintRuleIds(
       'import * as nm from "node:module";\nexport const a = nm;',
       SHARED_PROBE,
@@ -1155,8 +1236,6 @@ describe("NC-lint — FIN-owned source may not name the runtime loader", () => {
   });
 
   it("FIN-owned source contains none of these today", async () => {
-    // The rules outlaw nothing FIN currently does — established before they
-    // were imposed, and re-established here against the real files.
     for (const rel of FIN_ENTRIES) {
       const ruleIds = await lintRuleIds(read(rel), path.join(ROOT, rel));
       expect(ruleIds, rel).toEqual([]);
