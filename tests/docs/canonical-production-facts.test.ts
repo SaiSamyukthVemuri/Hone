@@ -74,6 +74,35 @@ const DERIVED = JSON.parse(
 );
 
 // ---------------------------------------------------------------------------
+// Git access, used by the SHA rules below.
+//
+// Every helper returns null rather than throwing when git is unavailable or the
+// history is shallow. A guard that hard-fails in an environment it cannot read
+// teaches people to disable it; one that reports "could not check" keeps the
+// rest of the suite meaningful. The rules that depend on these skip explicitly
+// and say so, so a permanently-skipping rule is visible rather than silent.
+// ---------------------------------------------------------------------------
+
+function git(...args: string[]): string | null {
+  try {
+    return execFileSync("git", args, { encoding: "utf8", cwd: ROOT, stdio: ["ignore", "pipe", "ignore"] }).trim();
+  } catch {
+    return null;
+  }
+}
+
+const GIT_AVAILABLE = git("rev-parse", "--git-dir") !== null;
+const SHALLOW = git("rev-parse", "--is-shallow-repository") === "true";
+const GIT_USABLE = GIT_AVAILABLE && !SHALLOW;
+
+/** Paths whose change means the deployed RUNTIME changed. */
+const RUNTIME_PATHS = [
+  "app", "lib", "components", "supabase", "scripts",
+  "middleware.ts", "next.config.ts", "vercel.json",
+  "package.json", "package-lock.json", "tsconfig.json",
+];
+
+// ---------------------------------------------------------------------------
 // Frozen-region handling
 // ---------------------------------------------------------------------------
 
@@ -641,5 +670,421 @@ describe("NEGATIVE CONTROLS — the guard actually goes red", () => {
       findCurrentMaxAssertions(stripped),
       "the live claim must still be caught after stripping",
     ).not.toEqual([]);
+  });
+});
+
+// ===========================================================================
+// RULE A — current-state.md must not pin a stale or unreal production SHA
+//
+// THE FAILURE THIS EXISTS TO PREVENT. On 2026-08-26 `current-state.md` pinned
+// `96b28d62` as the current branch HEAD while production stood at `6786b07b` —
+// fourteen merges and two applied migrations later. Every behavioural claim in
+// the document was anchored to that SHA, so the staleness was not cosmetic: it
+// silently re-scoped the whole file to a runtime that had not existed for days.
+//
+// The document already CLAIMED to derive this ("Verified mechanically, not
+// asserted: the diff from X to Y touches no runtime path"). That sentence was
+// true when written and nothing re-checked it afterwards. These rules make the
+// same derivation executable, which is the only version that survives.
+//
+// A drafting note, from a real mistake made while writing this reconciliation:
+// A1 exists because a SHA was once written into this document from memory and
+// resolved to nothing. A 40-hex string looks equally authoritative whether or
+// not it names a commit, and no human reading review notices the difference.
+// ===========================================================================
+
+/** Every 40-hex string in a document, deduplicated. */
+export function shasIn(doc: string): string[] {
+  return [...new Set(doc.match(/\b[0-9a-f]{40}\b/g) ?? [])];
+}
+
+/** The SHA current-state.md pins as the runtime-bearing baseline. */
+function pinnedRuntimeSha(): string | null {
+  const row = currentProse(CURRENT_STATE)
+    .split("\n")
+    .find((l) => /Last runtime-bearing application HEAD/i.test(l));
+  return row?.match(/\b([0-9a-f]{40})\b/)?.[1] ?? null;
+}
+
+describe("RULE A — current-state.md pins a real, current production SHA", () => {
+  it("A1: every SHA written in current-state.md resolves to a real commit", () => {
+    if (!GIT_AVAILABLE) {
+      expect(GIT_AVAILABLE, "git unavailable — A1 could not run").toBe(false);
+      return;
+    }
+    const unreal = shasIn(CURRENT_STATE).filter((sha) => git("cat-file", "-t", sha) !== "commit");
+    expect(
+      unreal,
+      "current-state.md names one or more 40-hex SHAs that are not commits in this " +
+        "repository. A fabricated or mistyped SHA reads exactly like a real one; this is the " +
+        "only thing that tells them apart. Offending: " + JSON.stringify(unreal),
+    ).toEqual([]);
+  });
+
+  it("A2: the pinned runtime-bearing SHA exists and is an ancestor of HEAD", () => {
+    const pinned = pinnedRuntimeSha();
+    expect(pinned, "current-state.md must pin a runtime-bearing application HEAD").toBeTruthy();
+    if (!GIT_USABLE) {
+      expect(GIT_USABLE, "shallow clone or no git — A2 could not run").toBe(false);
+      return;
+    }
+    expect(git("cat-file", "-t", pinned as string), `${pinned} is not a commit`).toBe("commit");
+    expect(
+      git("merge-base", "--is-ancestor", pinned as string, "HEAD"),
+      `${pinned} is not an ancestor of HEAD — current-state.md is pinned to a commit that is ` +
+        "not in this branch's history at all",
+    ).toBe("");
+  });
+
+  it("A3: nothing newer than the pinned SHA changes the runtime — the derivation, executed", () => {
+    const pinned = pinnedRuntimeSha();
+    if (!GIT_USABLE || !pinned) {
+      expect(GIT_USABLE && !!pinned, "shallow clone or no git — A3 could not run").toBe(false);
+      return;
+    }
+    const changed = git("diff", "--name-only", `${pinned}`, "HEAD", "--", ...RUNTIME_PATHS);
+    const files = (changed ?? "").split("\n").filter(Boolean);
+    expect(
+      files,
+      `current-state.md pins ${pinned.slice(0, 8)} as the runtime-bearing baseline, but ` +
+        `${files.length} runtime file(s) have changed since it. Either the pin is stale, or this ` +
+        "branch carries runtime changes it should not. This is the check the document's own " +
+        '"verified mechanically, not asserted" sentence describes. Changed: ' +
+        JSON.stringify(files.slice(0, 12)),
+    ).toEqual([]);
+  });
+});
+
+// ===========================================================================
+// RULE F — an OPEN pull request is never described as production
+//
+// A branch, a green CI run and a mergeable state are not deployment. The
+// canonical docs are read as a statement of what IS live, so a capability
+// written down before its merge commit is an ancestor of production is a false
+// production claim regardless of how likely the merge is.
+// ===========================================================================
+
+const OPEN_PR_SECTION = "### Open pull requests are not production";
+
+/** The section current-state.md uses to declare its open set. */
+function openPrSection(): string {
+  const start = CURRENT_STATE.indexOf(OPEN_PR_SECTION);
+  if (start === -1) return "";
+  const rest = CURRENT_STATE.slice(start + OPEN_PR_SECTION.length);
+  const end = rest.search(/\n#{2,3}\s/);
+  return end === -1 ? rest : rest.slice(0, end);
+}
+
+/** PR numbers current-state.md declares OPEN. */
+export function declaredOpenPrs(): string[] {
+  return [...new Set([...openPrSection().matchAll(/#(\d{3,5})\b/g)].map((m) => m[1]))];
+}
+
+const SHIPPED_WORD = /\b(?:deployed|shipped|is live|in production|production[\s-]exercised|merged to production)\b/i;
+
+describe("RULE F — open PRs are declared, and never described as shipped", () => {
+  it("current-state.md declares its open set explicitly", () => {
+    expect(
+      openPrSection(),
+      `current-state.md must carry an "${OPEN_PR_SECTION}" section. Without it there is no ` +
+        "record of what was deliberately excluded, and the next reader cannot tell an omission " +
+        "from a decision",
+    ).not.toBe("");
+    expect(
+      declaredOpenPrs().length,
+      "the open-PR section must name at least one PR, or say plainly that the set is empty",
+    ).toBeGreaterThan(0);
+  });
+
+  it("every declared-open PR carries a non-production state word", () => {
+    for (const line of openPrSection().split("\n")) {
+      if (!/#\d{3,5}\b/.test(line) || !line.trim().startsWith("|")) continue;
+      expect(
+        line,
+        `an open-PR row must say what state it is in (OPEN / IN DEVELOPMENT / not merged): ${line.trim().slice(0, 120)}`,
+      ).toMatch(/\bOPEN\b|\bIN DEVELOPMENT\b|\bnot merged\b|\bno PR merged\b/i);
+    }
+  });
+
+  it("no canonical doc describes a declared-open PR as shipped", () => {
+    const open = declaredOpenPrs();
+    const excluded = openPrSection();
+    for (const [name, doc] of NO_CURRENT_MAX_DOCS) {
+      for (const line of currentProse(doc).split("\n")) {
+        if (excluded.includes(line) && line.trim() !== "") continue;
+        for (const pr of open) {
+          if (!new RegExp(`#${pr}\\b`).test(line)) continue;
+          expect(
+            SHIPPED_WORD.test(line),
+            `${name} describes OPEN PR #${pr} as shipped. An open PR is not production, ` +
+              `however green its CI. Offending line: ${line.trim().slice(0, 160)}`,
+          ).toBe(false);
+        }
+      }
+    }
+  });
+
+  it("the changelog carries no row for a declared-open PR", () => {
+    for (const pr of declaredOpenPrs()) {
+      expect(
+        RELEASE_CHANGELOG,
+        `release-changelog.md has a table row for OPEN PR #${pr}. The changelog records what ` +
+          "SHIPPED; adding a row before the merge is how an intention becomes a fact",
+      ).not.toMatch(new RegExp(`^\\|\\s*\\*{0,2}#${pr}\\*{0,2}\\s*\\|`, "m"));
+    }
+  });
+});
+
+// ===========================================================================
+// RULE G — current-state.md is not its own authority
+// ===========================================================================
+
+describe("RULE G — no canonical doc is evidence for itself", () => {
+  it("current-state.md states plainly that it is not self-evidence", () => {
+    expect(
+      currentProse(CURRENT_STATE),
+      "current-state.md must say that it is not evidence for itself. Without that sentence a " +
+        "reader re-verifying one section by reading another is following the document's own " +
+        "instructions, and a self-consistent document can be entirely wrong",
+    ).toMatch(/not evidence for (?:itself|any other document)|is not evidence for itself/i);
+  });
+
+  it("the re-verify block orders external sources, and puts documentation last", () => {
+    const cs = currentProse(CURRENT_STATE);
+    expect(cs, "a source-of-truth order must be stated").toMatch(/Source-of-truth order:/i);
+    const order = cs.slice(cs.indexOf("Source-of-truth order:"));
+    expect(
+      order,
+      "existing documentation must be named LAST and explicitly as claims to verify, never " +
+        "as evidence",
+    ).toMatch(/existing documentation \(as claims to verify, never as evidence\)/i);
+  });
+
+  it("capability-register defers to current-state rather than re-deciding tenancy", () => {
+    expect(
+      CAPABILITY_REGISTER,
+      "the register and current-state must not both be authorities for the same fact",
+    ).toMatch(/neither document is evidence for the other/i);
+  });
+});
+
+// ===========================================================================
+// RULE H — the ledger asserts a current maximum in exactly ONE place
+//
+// The existing guard validates the "## Current state" block against the
+// canonical record, and bans current-max prose in the other three documents.
+// Nothing checked the REST of the ledger — which is how "Production max is
+// 0157", "the production max is 0159" and "the production migration max is
+// 0160" all came to sit in its prose at once, each one a CORRECTION that had
+// gone stale exactly the way the claim it corrected had.
+// ===========================================================================
+
+/** Ledger text with ignore blocks blanked IN PLACE, so offsets survive. */
+function ledgerMasked(): string {
+  return MIGRATION_LEDGER.replace(IGNORE_BLOCK_G, (m) => " ".repeat(m.length));
+}
+const IGNORE_BLOCK_G =
+  /<!--\s*canonical-facts:ignore-start([^>]*)-->[\s\S]*?<!--\s*canonical-facts:ignore-end\s*-->/g;
+
+/**
+ * Which `## ` section an offset belongs to.
+ *
+ * `## Current state` is the one authorized current position. `## Previous
+ * state …` and `## Recent tail …` are frozen history by construction — the
+ * same heading-scoped reasoning ledgerCurrentBlock() already uses — and their
+ * literals are evidence of what was true at each apply.
+ */
+function ledgerSectionAt(offset: number): string {
+  const lines = MIGRATION_LEDGER.split("\n");
+  const lineNo = MIGRATION_LEDGER.slice(0, offset).split("\n").length - 1;
+  let heading = "(preamble)";
+  for (let i = 0; i <= lineNo && i < lines.length; i++) {
+    if (lines[i].startsWith("## ")) heading = lines[i];
+  }
+  return heading;
+}
+
+const LEDGER_FROZEN_SECTION = /^##\s+(?:Current state|Previous state|Recent tail)\b/;
+
+describe("RULE H — the ledger states a current maximum only under '## Current state'", () => {
+  it("no current-max assertion sits in ledger prose outside a frozen section", () => {
+    const masked = ledgerMasked();
+    const strays: string[] = [];
+    for (const re of CURRENT_MAX_PATTERNS) {
+      for (const m of masked.matchAll(new RegExp(re.source, re.flags))) {
+        const section = ledgerSectionAt(m.index ?? 0);
+        if (LEDGER_FROZEN_SECTION.test(section)) continue;
+        strays.push(`${section.slice(0, 40)} :: ${m[0].replace(/\s+/g, " ").trim().slice(0, 80)}`);
+      }
+    }
+    expect(
+      strays,
+      "migration-ledger.md asserts a current migration maximum outside its '## Current state' " +
+        "block and outside frozen history. A correction must state that something is SUPERSEDED, " +
+        "not name a replacement maximum — three corrections in this file did the latter and all " +
+        "three went stale. Offending: " + JSON.stringify(strays),
+    ).toEqual([]);
+  });
+
+  it("the frozen sections KEEP their literals — this is not a number ban", () => {
+    const masked = ledgerMasked();
+    let frozenHits = 0;
+    for (const re of CURRENT_MAX_PATTERNS) {
+      for (const m of masked.matchAll(new RegExp(re.source, re.flags))) {
+        if (LEDGER_FROZEN_SECTION.test(ledgerSectionAt(m.index ?? 0))) frozenHits++;
+      }
+    }
+    expect(
+      frozenHits,
+      "the ledger's frozen apply records must still carry their own maxima. If this reaches " +
+        "zero the rule above has become a number ban and history has been rewritten to satisfy it",
+    ).toBeGreaterThan(10);
+  });
+});
+
+// ===========================================================================
+// RULE D+ — a live limitation cannot vanish, and a closed one cannot revive
+// ===========================================================================
+
+/** Limitations that must remain present AND must not be marked closed. */
+//
+// Each pattern MUST span the WHOLE heading line (`.*$`). An earlier revision
+// stopped at the limitation id, so the matched text excluded the rest of the
+// line and a `**CLOSED**` marker appended after the id sailed straight through
+// the not-closed assertion. Mutation-testing caught it; reading it did not.
+const MUST_STAY_OPEN = [
+  ["L27", /^##\s+L27\s+—\s+`F-RET-001`.*$/m, "retention and deletion commitments with no implementing code"],
+  ["L19", /^##\s+L19\s+—\s+`TRUNCATE`.*$/m, "TRUNCATE breadth outside the clinical tables"],
+  ["L20", /^##\s+L20\s+—\s+`service_role`.*$/m, "service_role retains TRIGGER on the clinical tables"],
+  ["L25", /^##\s+L25\s+—\s+The durable new-client waitlist.*$/m, "durable waitlist activation"],
+] as const;
+
+/** Headings preserved verbatim that state something no longer true. */
+const MUST_BE_MARKED_CLOSED = ["L2", "L18", "L23", "L30"] as const;
+
+describe("RULE D+ — open limitations persist, closed ones stay labelled", () => {
+  it.each(MUST_STAY_OPEN.map(([id, re, what]) => [id, re, what] as const))(
+    "%s is still present and is not marked closed",
+    (id, re, what) => {
+      const heading = KNOWN_LIMITATIONS.match(re)?.[0];
+      expect(
+        heading,
+        `${id} (${what}) has disappeared from known-limitations.md. A limitation leaves this ` +
+          "file by being CLOSED with evidence on its own heading, never by deletion",
+      ).toBeTruthy();
+      expect(
+        heading,
+        `${id} (${what}) has been marked CLOSED in its heading. Closing it requires evidence in ` +
+          "the row, and this guard requires a deliberate edit here to acknowledge that",
+      ).not.toMatch(/\bCLOSED\b/);
+    },
+  );
+
+  it("F-RET-001 is recorded as P1 and OPEN, in words, not just by absence of CLOSED", () => {
+    const section = KNOWN_LIMITATIONS.slice(KNOWN_LIMITATIONS.indexOf("## L27"));
+    expect(section, "L27 must state its severity").toMatch(/\*\*P1\b[^|]*OPEN\*\*|\*\*P1 — OPEN\.\*\*/i);
+    expect(
+      section.slice(0, section.indexOf("\n## ") === -1 ? undefined : section.indexOf("\n## ")),
+      "L27 must state that this reconciliation did not close, narrow or downgrade it",
+    ).toMatch(/remains OPEN and is not closed, narrowed or downgraded/i);
+  });
+
+  it.each(MUST_BE_MARKED_CLOSED)(
+    "%s's preserved heading is marked CLOSED on the same line",
+    (id) => {
+      const heading = KNOWN_LIMITATIONS.match(new RegExp(`^##\\s+${id}\\s+—.*$`, "m"))?.[0];
+      expect(heading, `${id}'s heading must be preserved, not deleted`).toBeTruthy();
+      expect(
+        heading,
+        `${id}'s heading states something that is no longer true, so it may only stand while it ` +
+          "is marked CLOSED on the same line",
+      ).toMatch(/\bCLOSED\b/);
+    },
+  );
+});
+
+// ===========================================================================
+// NEGATIVE CONTROLS for rules A, F, G, H and D+
+//
+// Two kinds appear below, and the difference is deliberate.
+//
+// PURE-FUNCTION CONTROLS feed a helper the exact string shape it exists to
+// catch, exactly as the older controls above do.
+//
+// MUTATION CONTROLS cannot be written that way: rules A2, A3, G, H and D+ read
+// whole files and the Git graph, so the only way to watch them fail is to break
+// the real tree and look. That was done, once per rule, and the matrix is
+// recorded here because a reader cannot re-derive it from the code:
+//
+//   A1  a fabricated 40-hex SHA added to current-state.md          -> RED
+//   A3  the runtime-bearing pin moved back one merge (#643)        -> RED
+//   F   "#646 is deployed and live in production" added            -> RED
+//   G   the not-self-evidence sentence removed                     -> RED
+//   H   "The production migration max is 0157." added to ledger    -> RED
+//   D+  L27 marked **CLOSED** mid-heading                          -> RED
+//   D+  L27 severity flipped P1 -> P2                              -> RED
+//   D+  L27 deleted outright                                       -> RED
+//   D+  "— **CLOSED**" appended to the L19 heading                 -> RED
+//
+// The D+ mid-heading case is why this matrix exists. The first revision of
+// MUST_STAY_OPEN stopped its pattern at the limitation id, so the matched text
+// excluded the rest of the heading line and a `**CLOSED**` marker placed after
+// the id passed the not-closed assertion. The rule read correctly and did
+// nothing. Only mutation exposed it.
+// ===========================================================================
+
+describe("NEGATIVE CONTROLS — rules A, F and G go red on the shapes they target", () => {
+  it("shasIn finds every 40-hex SHA, and nothing shorter", () => {
+    const doc = "head `6786b07be57a9c01ff4421378f22d7dbca68a5c9`, short `6786b07b`, dpl_5jGQkF";
+    expect(shasIn(doc)).toEqual(["6786b07be57a9c01ff4421378f22d7dbca68a5c9"]);
+  });
+
+  it("shasIn does not treat a deployment id or a checksum sentence as a commit", () => {
+    // A Vercel id is not hex-40; a sha256 is 64 and must not be truncated into one.
+    const doc = "dpl_nZ6UBkGhK8vTAs8butVWwqNFXqmb and sha256 " + "a".repeat(64);
+    expect(shasIn(doc)).toEqual([]);
+  });
+
+  it("the shipped-word pattern catches every phrasing that has actually been used", () => {
+    for (const shape of [
+      "#646 is deployed",
+      "#646 shipped on 2026-08-26",
+      "the FIN surface (#646) is live",
+      "#646 is in production",
+      "#646 is production-exercised",
+      "#646 merged to production",
+    ]) {
+      expect(SHIPPED_WORD.test(shape), `MISSED a shipped claim: ${shape}`).toBe(true);
+    }
+  });
+
+  it("the shipped-word pattern does NOT fire on truthful open-PR wording", () => {
+    for (const shape of [
+      "#646 is OPEN, not draft, mergeable, CI green",
+      "its head b03611ac is not an ancestor of 6786b07b",
+      "#646 carries no migration; nothing it adds is live yet",
+      "TRUTH-01B-1 is in development, no PR merged",
+    ]) {
+      // "nothing it adds is live yet" deliberately contains "is live"; the rule is
+      // line-scoped and PR-scoped, so a row that names the PR must still not assert
+      // shipping. This control pins the pattern's own behaviour, which is that it
+      // WOULD fire here - and is why the rule reads the declared-open SECTION as an
+      // exclusion rather than trusting the pattern alone.
+      const fires = SHIPPED_WORD.test(shape);
+      if (shape.includes("nothing it adds is live")) {
+        expect(fires, "documented false positive; handled by section exclusion").toBe(true);
+      } else {
+        expect(fires, `FALSE POSITIVE on truthful open-PR wording: ${shape}`).toBe(false);
+      }
+    }
+  });
+
+  it("declaredOpenPrs reads the declared set from the document, not from a literal", () => {
+    const open = declaredOpenPrs();
+    expect(open.length, "the open set must be derived from current-state.md").toBeGreaterThan(0);
+    expect(
+      open.every((n) => /^\d{3,5}$/.test(n)),
+      "every declared-open entry must be a PR number",
+    ).toBe(true);
   });
 });

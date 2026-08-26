@@ -4,10 +4,15 @@
 [current-state.md](./current-state.md). Where the two disagree, re-verify both against
 production; neither document is evidence for the other.
 
-- **Reconciled:** 2026-08-23
-- **Runtime-bearing baseline:** application HEAD `48f0238900c07bd5d2dfed5c1ebbd832e77fdc50`
-  (PR #629 merge, WAIT-02B Stage A). The branch HEAD is above it at
-  `b9e0003fa5809b328fffeb8d352af319138bd531`, which is documentation-and-tests only.
+- **Reconciled:** 2026-08-26
+- **Runtime-bearing baseline:** application HEAD `6786b07be57a9c01ff4421378f22d7dbca68a5c9`
+  (PR #644 merge, TRUTH-01A). At this reconciliation the branch HEAD and the runtime-bearing
+  HEAD **are the same commit** — #644 changes eight runtime files — which is unusual enough to
+  state rather than leave implied.
+- **What this pass measured:** it re-derived every status below from the repository and the Git
+  graph and **re-measured nothing in the production database or at any provider.** Counts
+  carrying a 2026-08-23 stamp are **dated evidence, not current readings**; see
+  [current-state.md](./current-state.md) *What this reconciliation did and did not measure*.
 - **Migration state:** **not restated here.** Hosted max is declared once in
   [`migration-state.json`](./migration-state.json); repo max and the next free number are
   derived by `npm run migration:state`; the reconciled position with apply evidence is
@@ -263,7 +268,7 @@ commit point is an email. WAIT-02B Stage A is deployed and reachable by nobody.
 | Waitlist | **WAIT-02B Stage A — durable studio-scoped waitlist** (PR #629, `48f02389`) | Merged | ✅ **0185 applied 2026-08-23**, frozen | Deployed | ❌ **NOT ENABLED anywhere** — `NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS` **absent from Vercel Production**; **Willow not enabled** | ❌ **never** — `new_client_waitlist_entries` = **0 rows** at apply verification and **0 now** *(2026-08-23)* | n/a at this stage | migration 0185; `lib/booking/new-client-waitlist.ts`; env var **names** only | **DORMANT.** A table existing is not data being collected. See **L25** |
 | Waitlist | `join_new_client_waitlist` / `remove_new_client_waitlist_entry` | Merged | ✅ present, SECURITY DEFINER | Deployed | ❌ unreachable — no studio on the durable allowlist | ❌ never invoked | n/a | 0185 body; EXECUTE held by `postgres` and `service_role` only — `anon` and `authenticated` hold none | — |
 | Waitlist | Studio-scoped duplicate rule | Merged | ✅ generated `email_normalized` + partial unique index on `(studio_id, email_normalized) WHERE status='waiting'` | Deployed | ❌ | ❌ no row has ever existed to test it against | n/a | migration 0185 | **No global email uniqueness** — tenancy is structural |
-| Waitlist | Stage-A kill switch (**inverted build gate**) | Merged | no migration | Deployed | ✅ **active and enforcing** | ✅ every production build since `48f02389` has passed it | n/a | `scripts/check-production-env-gates.mjs` Gate 4 | A Vercel **production build FAILS** while the durable allowlist enables any studio. *"No bypass and no per-studio exception."* Stage B is a code-and-release action, not an env flip |
+| Waitlist | Stage-B configuration report (**was** the Stage-A inverted build gate) | Merged (#637) | no migration | Deployed | ⚠️ **report-only — it no longer fails a build** | n/a | n/a | `scripts/check-production-env-gates.mjs` Gate 4, contract sentences 1-2 and 9 | ⚠️ **CORRECTED 2026-08-26.** This row previously read *"A Vercel production build FAILS while the durable allowlist enables any studio. No bypass and no per-studio exception."* **That is no longer true.** Stage B1 replaced the prohibition with a report; the contract's own first two sentences are *"Gate 4 is report-only. It does not fail the build solely because of `NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS`."* What guards activation now is **runtime membership of TWO allowlists** (sentence 9) — a weaker, configuration-level guarantee, recorded as such. See [known-limitations.md](./known-limitations.md) **L25** |
 | Waitlist | **WAIT-02B Stage B — durable collection enabled** | — | — | — | **NOT STARTED** | ❌ | — | — | Blocked on the public privacy disclosure for prospects, the policy's `lastUpdated` + a future `effectiveDate`, explicit studio-enablement GO, and human activation smoke |
 
 **Overall new-client waitlist posture: WAIT-01 enabled and exercised at one studio; WAIT-02B
@@ -272,14 +277,35 @@ the durable waitlist as live, enabled, active, or collecting.
 
 ---
 
+## 15. Capabilities added since the 2026-08-23 reconciliation
+
+Fourteen production merges landed between `b9e0003f` and `6786b07b`. Six carry a capability that
+belongs in this register; the rest are UI, documentation or test work. **None of the six is
+production-exercised**, and each is recorded with the evidence that decides its status rather
+than with a status word alone.
+
+| Capability | PR / migration | Status | Evidence that decides it |
+|---|---|---|---|
+| **Intake reminders at 24h / 2h** | #632 · **0186** | **DB applied · deployed · enabled by default** | 0186 adds exactly one column — `studios.send_intake_reminders`, boolean NOT NULL DEFAULT TRUE — plus a comment. No function, index, policy, constraint, trigger, and **no DML anywhere in the file**. The 0098 7d/3d columns, partial indexes and both `claim_email_send` / `record_email_result` branches **remain intact and are historical**; the application simply stops writing them. |
+| **Non-card appointment settlement** | #636 · **0187** | **DB applied · deployed · enabled · NOT production-exercised** | `public.appointment_settlements` **holds 0 rows** — created empty, backfilled nothing *(post-apply verification 2026-08-24; not re-measured 2026-08-26)*. The structural guarantee is an **absence**: `method` has no `card` and no `hone` member, so an attestation that a card was charged is *unrepresentable*. Verified ACL: `authenticated` SELECT-only; `anon` and `service_role` FALSE on all eight verbs including `MAINTAIN`. |
+| **WAIT-02B Stage B1** | #637 · none | **Deployed · NO STUDIO ENABLED · NOT exercised** | `app/privacy/page.tsx` covers **Prospective clients** (`effectiveDate` May 22 2026, `lastUpdated` August 24 2026). Gate 4 of `scripts/check-production-env-gates.mjs` is now **report-only** — its pinned contract says so in its first two sentences. Activation requires **two** allowlists, not one. |
+| **Owner practice capacity** | #638, #641, #645 · none | **Deployed · enabled for owners · NOT exercised** | `app/(app)/dashboard/capacity/page.tsx` checks `practitioner.role !== "owner"` **before any capacity read is issued** and refuses **in place** rather than redirecting. Nine browser tests prove owner reach, practitioner refusal, and that rebooking links land on the right client. Nav visibility (#645) is presentation only. |
+| **Clinical read truth** | #642 · none | **Deployed · enabled for all studios** | Four client-profile surfaces now check `unavailable` **before** `hasHistory`, so a failed `session_blocks` read renders *could not be loaded* instead of *no history*. `caution_for_next_session` / `caution_note` protected on both tabs. Recorded non-change: `attachStructuredAreas` still throws — loud, not a false absence. |
+| **Export completeness accountability** | #644 · none | **Deployed · enabled** | `lib/export/resource-registry.ts` is the one place a disposition is decided; a missing decision is a **build failure**; schema authority is `information_schema`, not parsed SQL. **The payload is byte-for-byte unchanged** — pinned column-for-column against base `a1639a84`. Roughly fifty-nine studio-owned resources remain **pending**, each ticketed. |
+
+**Studio launch readiness additionally gained a consent requirement** (#643): readiness now
+requires at least one form with server-resolved `studio_id`, `form_type = 'treatment_consent'`,
+`status = 'active'` **and** `is_live = true`. Draft, archived and active-but-not-live forms do
+not satisfy it, so *ready* now means the intake will actually present a consent.
+
 ## Capability register summary
 
 | Bucket | Count | Examples |
 |---|---|---|
 | Deployed + enabled + production-exercised + in routine operator use | ~21 | booking, charting core, portal, intake, consent, photos, live session payments, record keeping, **whole-session copy** |
 | Deployed + enabled + **human acceptance pending** | 8 | Phase A charting (unified box, galvanic retirement, 0.733 precision, pulse relabel, notes sizing), whole-session copy *(now also production-exercised — the two are independent)*, numbing notes, probe-lot linkage |
-| Deployed + **DB applied** + **never production-exercised** | 5 | refunds (current baseline), disputes, public-booking card collection, probe-lot linkage, **the durable new-client waitlist (WAIT-02B Stage A)**. **Whole-session copy has left this bucket** — 24 production operations |
-| Deployed + **dormant** (flag off / no worker / no eligible tenant) | 8 | all Google Calendar sync phases, capacity on Willow, onboarding v2 on Willow, **the durable new-client waitlist on every studio** |
+| Deployed + **DB applied** + **never production-exercised** | 7 | refunds (current baseline), disputes, public-booking card collection, probe-lot linkage, **the durable new-client waitlist (WAIT-02B)**, **non-card appointment settlement (0187 — 0 rows)**, **`/dashboard/capacity` (no usage measured)**. **Whole-session copy has left this bucket** — 24 production operations |
+| Deployed + **dormant** (flag off / no worker / no eligible tenant) | 8 | all Google Calendar sync phases, capacity on Willow, onboarding v2 on Willow, **the durable new-client waitlist on every studio** *(dormant by allowlist configuration since Stage B1 — no longer by a build-time prohibition; see §14)* |
 | **Held** behind a deliberate server-side gate | 3 | live manual fees, public-booking card collection, public practitioner assignment |
 | **Deferred** by product decision | 1 | direct new-client consultation booking route *(distinct from the WAIT-01 waitlist, which is live at Willow — see §14)* |
 | **RETIRED** by product decision (terminal; DB-enforced) | 5 | signed/finalized clinical records (0119), signed-record corrections/amendments (0120), amendment-path observability (PR #402), `clinical_audit_events`, finalized-photo content immutability — see §3 |

@@ -1537,7 +1537,8 @@ These shipped behaviour with **no migration**, so they never advance the migrati
   **Code-only — no migration, no data operation, no flag change.**
 
 (Numbers not listed in the 0100–0107 band, e.g. 0100/0102/0104, are documented per-PR in
-`docs/13` / `docs/14`; all are applied. Production max is **0157**.)
+`docs/13` / `docs/14`; all are applied. For the current maximum see **Current state** at the
+top of this file.)
 
 ---
 
@@ -1581,11 +1582,12 @@ Superseded claims you may still encounter in dated material:
   point of carrying **three different numbers in a single table cell**. The copies are removed,
   not corrected. **Historical apply records in this file keep their literal numbers** — they
   are evidence of what was true at each apply and are never rewritten.
-<!-- canonical-facts:ignore-end -->
 
 - "0096 not yet applied" / "0095 NOT yet applied" / "0093 / 0094 must not be applied until
   approved" — **all applied.**
-- "production max is 0112 / 0113 / 0124 / 0132 / 0133 / 0157" — **the production max is 0159.**
+- "production max is 0112 / 0113 / 0124 / 0132 / 0133 / 0157" — **all superseded.** The
+  correction that used to stand here named a maximum of its own and went stale in turn; see
+  **Current state** at the top of this file.
 - "0133 repo-added, hosted apply pending" — **0133 is applied.**
 - "0157 is pending / unapplied / awaiting authorization" — **0157 was applied
   2026-07-27T02:01:29Z**, before PR #478 merged.
@@ -1597,11 +1599,23 @@ Superseded claims you may still encounter in dated material:
 - "production max is 0159" / "hosted max 0159, repo max 0160" / "0160 is not applied / pending /
   not authorized" / "apply 0160 first" / "0160 needs migration-only authorization" / "PR #483
   contains an unapplied migration" / "the same-studio lineage defect remains open" — **all
-  superseded. `0160` was applied 2026-07-30T17:52:48Z–17:52:51Z and independently verified; the
-  production migration max is 0160**, and the lineage defect is database-enforced.
+  superseded. `0160` was applied 2026-07-30T17:52:48Z–17:52:51Z and independently verified**,
+  and the lineage defect is database-enforced. *(This bullet previously ended by restating a
+  current maximum of its own — the same defect it was written to correct. The apply timestamp is
+  history and stays; the maximum is derived and lives in **Current state**.)*
 - "`calendar_sync_outbox` and `calendar_event_links` are 0 rows" — each holds **one row**
   from the single controlled Google Calendar validation on 2026-07-18. See
   [capability-register.md](./capability-register.md) §9.
+<!-- canonical-facts:ignore-end -->
+
+> **Why the whole list above is inside a frozen-region marker.** Every bullet **quotes a
+> superseded claim verbatim** so the correction stays auditable — that is the marker's documented
+> purpose. It also has to be frozen for a reason this file learned the hard way: three of these
+> corrections each **named a replacement maximum of its own**, and every one of the three then
+> went stale exactly the way the claim it was correcting had. **A correction must state that
+> something is superseded; it must not name the replacement.** The one current position lives in
+> **Current state** at the top of this file and nowhere else — that is what makes it the single
+> prose authority rather than the newest of several competing ones.
 
 ## 0173 — appointment repair commands (applied 2026-08-09T12:06:37Z–12:06:47Z)
 

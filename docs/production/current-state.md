@@ -23,26 +23,69 @@ not a PR diary — per-capability evidence lives in
 
 | Field | Value |
 |---|---|
-| **Reconciliation date** | 2026-08-23 |
+| **Reconciliation date** | 2026-08-26 |
 | **Production branch** | `claude/build-hone-saas-hOex7` |
-| **Current Git branch HEAD** | `b9e0003fa5809b328fffeb8d352af319138bd531` at reconciliation — the PR #630 merge, which changed **documentation and tests only**. Query GitHub for the live value; documentation-only commits may have advanced it since. |
-| **Last runtime-bearing application HEAD** | **`48f0238900c07bd5d2dfed5c1ebbd832e77fdc50`** — the PR #629 merge (WAIT-02B Stage A). **This is the baseline for every behavioural claim in this document.** Verified mechanically, not asserted: the diff from `48f02389` to `b9e0003f` touches no runtime path — no `app/`, `lib/`, `components/`, `supabase/`, `scripts/` or config file. |
-| **Current Vercel Production deployment** | `dpl_5jGQkF4PjsoyiyKJCqRc6o4bsxwu` — status **Ready**, target production, built from `b9e0003f`, aliased to `hone.care` and `www.hone.care`, created 2026-08-23T22:38:40Z. Because `b9e0003f` is documentation-only, this deployment serves the **same runtime** as the one below. |
-| **Last runtime-bearing Vercel Production deployment** | `dpl_8iRpfwjbYQHXmbNqrUJnnvFjqH35` — status **Ready**, target production, built from `48f02389`, created 2026-08-23T19:51:53Z. |
+| **Current Git branch HEAD** | `6786b07be57a9c01ff4421378f22d7dbca68a5c9` — the PR #644 merge (TRUTH-01A, the export resource registry). Query GitHub for the live value; documentation-only commits may have advanced it since. |
+| **Last runtime-bearing application HEAD** | **`6786b07be57a9c01ff4421378f22d7dbca68a5c9` — the same commit.** For this reconciliation the branch HEAD and the runtime-bearing HEAD **coincide**, which is not the usual case and is therefore stated rather than assumed. Derived mechanically, not asserted: `#644` changes eight runtime files — `app/(app)/settings/data/{actions,page}.tsx`, `app/features/charting-records/page.tsx`, `app/page.tsx`, `app/pricing/page.tsx`, `lib/export/{provenance,resource-registry}.ts` and `scripts/classify-changes.mjs`. **This is the baseline for every behavioural claim in this document.** |
+| **Current Vercel Production deployment** | ⚠️ **NOT VERIFIED AT THIS RECONCILIATION.** No Vercel record was read on 2026-08-26, so no deployment id, status or alias is asserted for `6786b07b`. The last id this document recorded (`dpl_5jGQkF4PjsoyiyKJCqRc6o4bsxwu`, built from `b9e0003f`) is **fourteen merges stale and is not the current deployment**; it is dropped rather than carried forward looking current. Re-read it with the Vercel record before relying on one. |
 | **Migration state** | **This document deliberately states no migration number.** Hosted max is declared once, machine-readably, in [`migration-state.json`](./migration-state.json). Repository max, total applied and the next free number are **derived** — run `npm run migration:state`. The current reconciled position, with checksums and apply evidence, is [migration-ledger.md](./migration-ledger.md) under *Current state*. A number copied into this table is a number that goes stale on the next apply; that is how the `0160`/`0163`/`0165` divergence happened. |
-| **Database vs. application skew** | **None** — repository and hosted migration state reconcile, with nothing pending and nothing remote-only. The reconciling numbers are **not** restated here; see [migration-ledger.md](./migration-ledger.md). |
+| **Database vs. application skew** | **None** — repository and hosted migration state reconcile, with nothing pending and nothing remote-only. Verified by `npm run migration:state` at this reconciliation. The reconciling numbers are **not** restated here; see [migration-ledger.md](./migration-ledger.md). |
 | **Production Supabase project** | The single production project. Always re-read the linked ref from `supabase/.temp/project-ref` (gitignored) and verify with `supabase migration list --linked` before trusting any number here. **No credentials are recorded in documentation.** (The project ref itself appears in at least one older repo document, so treat it as an operational identifier rather than a secret — but do not add new copies of it.) |
-| **Health** | `hone.care` **200** · `/login` **200** · `/dashboard` **307** (auth redirect) · `/api/health` **307**. All non-5xx *(as of 2026-08-23, read-only probe)*. `ops_alerts` unresolved: **4** — see §13. This is **not** zero, and the previously recorded zero is corrected. |
-| **Tenant posture** | **Six studios in three classes — one real-customer, one controlled test, one synthetic, three empty.** Real-customer activity is **Willow Electrolysis only**. See **§0**, which is the canonical tenant register; do not restate its counts elsewhere. |
-| **Next operational gate** | The **deep production / security / code audit** (not yet performed against this baseline). **Chloe's human acceptance testing** of the Phase A charting correction and whole-session copy is also outstanding, but it is **independent and does not block the audit** — see §16. |
+| **Health** | ⚠️ **NOT RE-PROBED AT THIS RECONCILIATION.** The last probe was **2026-08-23**: `hone.care` **200** · `/login` **200** · `/dashboard` **307** (auth redirect) · `/api/health` **307**, all non-5xx, `ops_alerts` unresolved **4** (§13). Those readings describe a runtime **fourteen merges old** and are retained as dated evidence, not as current health. |
+| **Tenant posture** | **Six studios in three classes — one real-customer, one controlled test, one synthetic, three empty.** Real-customer activity is **Willow Electrolysis only**. See **§0**, which is the canonical tenant register; do not restate its counts elsewhere. ⚠️ **Every tenant count in §0 was measured 2026-08-23 and was NOT re-measured on 2026-08-26** — see *What this reconciliation did and did not measure* below. |
+| **Next operational gate** | The **deep production / security / code audit** (still not performed against this baseline). **Chloe's human acceptance testing** remains outstanding and is **independent** — see §15. |
 
 ### Immediately preceding runtime baseline
 
-`1dfea98c2ec5c783a816b534db8c1cd31658b334` — the PR #627 merge (booking slot pure-core
-refactor), deployed as `dpl_21mH3PciVhuMexDVEmJUpWZ1Lsea`. Its deployment has since been
-superseded by PR #629's, but its code remains live because #629 was built on top of it.
+`9eb3c3174762c733ff553220e9c72341fc9032c5` — the PR #643 merge (studio launch consent
+readiness). Its code remains live because #644 was built on top of it.
 
----
+### What this reconciliation did and did not measure
+
+**This reconciliation is a documentation lane.** It re-derived what can be derived from the
+repository and the Git graph, and it re-measured **nothing** in the production database, at
+Vercel, or at any provider. Read the two lists as a boundary, not as a caveat:
+
+**Re-derived on 2026-08-26, from the repository at `6786b07b`:**
+
+- the production branch head and the full merge ancestry back to `b9e0003f` (fourteen merges);
+- which of those merges are runtime-bearing, by changed-path analysis;
+- repository migration max, total, next free number and pending set (`npm run migration:state`);
+- hosted migration max as **declared** in [`migration-state.json`](./migration-state.json);
+- every capability status below that rests on merged source, migrations or tests.
+
+**NOT measured on 2026-08-26, and therefore carried forward with their original 2026-08-23
+stamps rather than restated as current:**
+
+- every per-studio row count in §0, and every derived figure that depends on them;
+- payment counts, stored payment methods and Connect account status (§7);
+- portal, intake and consent counts (§6);
+- `ops_alerts` rows and the admin audit event count (§13);
+- treatment-image counts (§12);
+- HTTP health, the Vercel deployment record, and whether Sentry or PostHog is receiving events.
+
+A figure with a 2026-08-23 stamp is **evidence of what was true on 2026-08-23**. It is not a
+claim about today, and a later reader must re-measure before treating it as one.
+
+### Open pull requests are not production
+
+**No open PR is described as shipped anywhere in this document.** At this reconciliation:
+
+| PR | State | Why it is not production |
+|---|---|---|
+| **#646** — FIN, owner financial truth surface | **OPEN**, not draft | Its head is **not an ancestor of `6786b07b`**. Carries **no migration**. Nothing it adds is live. |
+| **TRUTH-01B-1** — the first export-payload slice | **IN DEVELOPMENT**, no PR merged | TRUTH-01A shipped the registry and the disclosure; **the export payload is byte-for-byte unchanged**. See §12. |
+| **#631** — this reconciliation | **OPEN** | Documentation and tests only. |
+
+> **No head SHA is recorded for an open PR, deliberately.** An open branch's head moves whenever
+> it is pushed to, so a SHA written here is stale the moment it is useful — the same defect this
+> reconciliation exists to close, reintroduced in a table about not reintroducing it. This was
+> not hypothetical: a draft of this very section pinned `#646` at a head that had already been
+> superseded before the section was finished. **The durable property is the relationship, not the
+> identifier**: check it with
+> `git merge-base --is-ancestor <pr-head> <production-head>`, which answers *is this shipped?*
+> whatever the head happens to be today. CI state is likewise omitted — it is a property of a
+> SHA, not of a PR, and it is not evidence of deployment in any case.
 
 ## 0. Tenant register — real, controlled-test, synthetic
 
@@ -121,6 +164,27 @@ is deployed and reachable:
 Also deployed on this baseline: conditional numbing notes (0156, kept only when
 `numbing_status='used'`), inventory-backed probe-lot linkage (0155), and the in-form
 "Copy settings" prefill (PR #473).
+
+### Clinical read truth — a failed read is never "no history" (CLIN-01-B)
+
+**Implemented · merged (PR #642, `a3b85af2`) · deployed · enabled for all studios.**
+**No migration.**
+
+The client profile ran two `session_blocks` reads that consumed `data` and **dropped `error`**,
+so a failed read became `null ?? []` — byte-identical to a client with no charted history. Four
+surfaces then made affirmative clinical statements nobody had read: *Last visit* said
+`No recorded visits yet.`, *Last treatment* said `No charted treatments yet.`, *Treatment
+Intelligence* reported every stat as a known zero, and *Before today* reported no watch or plan
+notes and a complete procedure record.
+
+At `6786b07b` all four check `unavailable` **before** `hasHistory`, and
+`session_blocks.caution_for_next_session` / `caution_note` — which reach the practitioner only
+through the Watch/Plan band built from that same read — are protected on both the Overview and
+Sessions tabs. Read failure now renders *clinical history could not be loaded*.
+
+**Deliberate non-change, recorded so it is not mistaken for a gap:** `attachStructuredAreas`
+still **throws** on a `session_block_areas` read failure, surfacing the error boundary. That is
+loud, not a false absence, and was left alone.
 
 ## 2. Whole-session copy
 
@@ -354,19 +418,49 @@ NOT ENABLED · NOT production exercised.** Human acceptance is **not applicable*
   the exact failure the gate exists to prevent.
 - **The public privacy policy is unchanged.**
 
-**Stage B has not started, and is structurally blocked rather than merely unscheduled.**
-`scripts/check-production-env-gates.mjs` carries an **inverted** build gate: a Vercel
-**production build fails** while `NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS` enables one or more
-studios, because the durable table would store personal information for prospects that the
-current public privacy notice does not cover. The gate states it has *"no bypass and no
-per-studio exception."* **Enabling a studio is therefore a code-and-release action, not an
-environment-variable flip.** Stage B additionally requires the truthful public disclosure for
-waitlist prospects, the policy's `lastUpdated` and a future `effectiveDate` consistent with the
-notice process that policy requires, explicit studio-enablement GO, and human activation smoke.
-Tracked as **L25** in [known-limitations.md](./known-limitations.md).
+### WAIT-02B Stage B1 — disclosure shipped, activation still ungranted. SHIPPED · NOT ACTIVATED.
 
-> **Never describe the durable waitlist as "live".** It is *deployed* and *dormant*. The
-> capability that is live for new clients today is WAIT-01, and its commit point is an email.
+**Implemented · merged (PR #637, `1013a97b`) · deployed · NO STUDIO ENABLED · NOT production
+exercised.** **No migration.** Merging it enabled nothing, for anybody.
+
+Stage B1 changed **two** things, and the difference between them matters:
+
+1. **The public privacy notice now covers waitlist prospects.** `app/privacy/page.tsx` names
+   **Prospective clients** as a covered category, describes what the waitlist form collects,
+   states the purpose, says the request goes to one studio and no other, gives an account-free
+   removal route, and describes waitlist retention. Policy `effectiveDate` **May 22, 2026**,
+   `lastUpdated` **August 24, 2026** *(read from the deployed source at `6786b07b`)*. This is
+   the defect Stage A's blanket prohibition existed to hold shut, and it is now closed.
+2. **The Stage-A build prohibition is GONE, replaced by a Stage-B configuration report.**
+
+> ⚠️ **CORRECTION — this section previously said the opposite, and it was carried forward
+> unverified.** It stated that *"a Vercel production build fails while
+> `NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS` enables one or more studios"* and that the gate has
+> *"no bypass and no per-studio exception."* **Neither is true at `6786b07b`.** Gate 4 of
+> `scripts/check-production-env-gates.mjs` is now **report-only** and its pinned contract says so
+> in its own first two sentences: *"Gate 4 is report-only. It does not fail the build solely
+> because of `NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS`."* A reader relying on the old sentence
+> would believe a build-time stop still guards prospect collection. It does not.
+
+**What guards activation now is runtime membership, and it takes TWO allowlists, not one.**
+Gate 4's contract, sentence 9: *"Naming a studio in `NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS`
+activates nothing unless that studio is also named in `NEW_CLIENT_WAITLIST_STUDIO_SLUGS`."* The
+durable variable selects the **commit point** for a studio that is *already* on the admission
+waitlist; it cannot by itself put a studio onto one. An empty durable allowlist leaves every
+studio on the non-durable (WAIT-01, email) path.
+
+**Current posture: NOT ACTIVATED.** `NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS` was **absent from
+the Vercel Production environment** when last read *(2026-08-23, variable names only)* and was
+**not re-read on 2026-08-26** — so absence is carried forward as dated evidence, not re-asserted.
+**Willow is not enabled on the durable path** and continues to serve WAIT-01.
+
+**Stage B2 — activation — has not been granted and remains blocked.** It requires an explicit
+per-studio operator GO and human activation smoke. Tracked as **L25** in
+[known-limitations.md](./known-limitations.md).
+
+> **Never describe the durable waitlist as "live".** It is *deployed*, *disclosed*, and
+> *dormant*. The capability live for new clients today is WAIT-01, and its commit point is an
+> email.
 
 ## 6. Client portal and intake
 
@@ -377,6 +471,14 @@ versioned consent with e-signatures.
 **Willow, the real-customer studio** *(as of 2026-08-23, read-only per-studio query)*: **32
 portal sessions · 2 portal messages · 72 intake forms · 49 consent signatures.** Controlled test
 studio: 6 · 9 · 6 · 3. Synthetic Twin: 0 · 0 · 50 · 0 — **not customer activity**.
+
+**Launch readiness now requires a live treatment consent** (PR #643, `9eb3c317`, deployed,
+**no migration**). A new studio starts with **zero** consent templates and nothing seeded one,
+so the launch checklist could read *Done* on every row while the intake presented no consent at
+all. `lib/consent/launch-readiness.ts` now requires at least one form with server-resolved
+`studio_id`, `form_type = 'treatment_consent'`, `status = 'active'` **and** `is_live = true`.
+Draft, archived, and active-but-not-live forms do not satisfy readiness. "Ready" therefore means
+something operational: **the intake will actually present a treatment consent.**
 
 ⚠️ Consent template wording is **draft**. Lawyer review is required before relying on
 enforceability. Hone's documentation does not claim signatures are legally binding.
@@ -404,6 +506,19 @@ enforceability. Hone's documentation does not claim signatures are legally bindi
   only `session_payment` charges live. Willow's 3 test-mode charge attempts all succeeded;
   the **per-reason** split of those test-mode charges was **not re-measured** at this
   reconciliation and is not restated — see [known-limitations.md](./known-limitations.md).
+- **Non-card settlement is recorded, not faked** (PR #636, `f9ad0f72`, migration **0187**,
+  applied 2026-08-24). A completed appointment previously had exactly one way to stop showing
+  *Checkout* — run a card charge — so a cash, e-transfer, waived or still-owing visit invited a
+  **fabricated Stripe charge on a real client's card record**. `public.appointment_settlements`
+  records the disposition instead. **The structural guarantee is the absence of a value:**
+  `method` has **no `card`** and **no `hone`** member, so an attestation that a card was charged
+  is *unrepresentable*, not merely discouraged. Stripe truth stays in `payment_charge_attempts`
+  and nowhere else, so the two can never be summed into one another.
+- **`unknown` is an absence, never a value.** 0187 wrote **zero rows** and backfilled nothing;
+  every historical appointment keeps no disposition, which is the truthful answer. The table was
+  created empty and held **0 rows** at post-apply verification *(2026-08-24; not re-measured
+  2026-08-26)*. **No settlement has been recorded in production**, so this capability is
+  **deployed and enabled but not production-exercised.**
 - **Public-booking card collection is OFF and unwired.**
 - **Deposits, packages and partial payments are not built.**
 - **Broad self-serve live payments are not ready** — a new studio starts in test mode and is
@@ -433,6 +548,14 @@ the run, not that the fail-open Upstash heartbeat persisted). Until those are re
 describe reminder delivery as **running in production, ownership unattested** — see the
 ownership register in
 [docs/08_EMAIL_SMS_AND_CRON.md](../08_EMAIL_SMS_AND_CRON.md).
+
+**Intake reminders moved to a 24h / 2h cadence** (PR #632, `5bbd37a5`, migration **0186**,
+applied and verified 2026-08-24). 0186 adds exactly one column — `studios.send_intake_reminders`,
+boolean NOT NULL DEFAULT TRUE — plus a comment; no function, index, policy, constraint or
+trigger, and no DML anywhere in the file. **The 0098 7d/3d state is preserved, not
+reinterpreted**: `intake_reminder_7d_*` / `intake_reminder_3d_*`, their partial indexes and both
+`claim_email_send` / `record_email_result` branches remain intact and are **historical**. The
+application simply stops writing them.
 
 **SMS is pilot scale only**, env-gated on `TWILIO_*` with a per-studio toggle and per-client
 consent, STOP/HELP handled. Broad-SaaS SMS (A2P/10DLC registration, sender strategy, rate
@@ -491,6 +614,37 @@ Willow, enabling any outbound flag, activating the worker, and starting inbound/
 **Schema and code existing is not launch readiness.** Broad multi-practitioner rollout
 requires the deep audit and explicit authorization.
 
+## 10b. Owner business surfaces (OWNER-CAP)
+
+**Implemented · merged (PRs #638 `6e5283db`, #641 `a1639a84`, #645 `14be8198`) · deployed ·
+enabled for owners of every studio.** **No migration. No RPC.**
+
+`/dashboard/capacity` answers one question Chloe could not previously ask: **which of her active
+treatment clients have fallen off the calendar** — the re-book worklist. Nothing else in
+production answers it; `clients-needing-attention.ts` is clinical memory and
+`practice-metrics.ts` is period-scoped service value.
+
+- **Owner-only, and the server is the authority.** `app/(app)/dashboard/capacity/page.tsx`
+  checks `practitioner.role !== "owner"` **before any capacity read is issued** and renders a
+  refusal in place — it does not redirect. A practitioner who types the route sees no figures,
+  no worklist and no client identity.
+- **One Data API statement, one snapshot**, rooted on the studio's current non-archived clients
+  with open-plan evidence embedded as a `count` rather than rows.
+- **Owners have a permanent `Business` nav entry** (#645) on desktop and in the compact Menu,
+  pointing at `/dashboard/capacity`. A practitioner sees no such item — absent, not disabled.
+  It is named *Business* rather than *Capacity* deliberately, so later owner surfaces land
+  behind the same word without renaming a tab under owners who already learned it. **Nav
+  visibility is presentation only and protects nothing**; the route's own server check remains
+  the authority.
+- **Browser coverage** (#641): nine tests prove an owner reaches the page, an ordinary
+  practitioner is refused **in place**, and the rebooking names are real links landing on the
+  right client.
+- **Slices 2 and 4 are not started.** Slice 2 (new-client demand and conversion) and Slice 4
+  (treatment access and weekly capacity) exist only as an approved decomposition.
+
+**Not production-exercised as a measured fact.** No usage of `/dashboard/capacity` was measured
+at this reconciliation, and none is claimed.
+
 ## 11. Studio onboarding and self-service
 
 Practitioner signup is **invite-only** — magic-link login creates an account only for an
@@ -510,6 +664,46 @@ Private `treatment-images` bucket, service-role-only access with short-TTL signe
 per-file EXIF stripping, tenant-scoped paths, multi-file upload (3 `treatment_images` across
 all tenants — 1 at Willow, 2 on the controlled test studio, **0 synthetic**, as of 2026-08-23).
 Per-client procedure record pull with filtered print is live.
+
+### Studio data export — completeness is now machine-accountable (TRUTH-01A)
+
+**Implemented · merged (PR #644, `6786b07b`) · deployed · enabled.** **No migration.**
+
+The export was an **implicit allowlist** — whatever somebody remembered to add. Nothing was
+required to have an opinion about a table, so every migration that created one widened the gap
+in silence while the product described the result as a *full* export.
+
+`lib/export/resource-registry.ts` is now the one place a resource's export disposition is
+decided, and the guards beside it make a **missing decision a build failure**. Schema authority
+is the **database, not the file**: the guards take the live resource and column lists as
+arguments, supplied by `information_schema` introspection on the fully migrated stack. Nothing
+parses migration SQL.
+
+Every resource carries exactly one of three dispositions, and the counts are **deliberately
+recorded here as a shape rather than as three exact integers** — the registry is the authority
+and a hand-copied count is the very drift this whole reconciliation exists to stop:
+
+- **exported** — in the ZIP, with its file, headers, in-scope columns and row-count verification
+  stated. Roughly **sixteen** resources.
+- **excluded** — a decision on the record with its reason. Roughly **eighteen**.
+- **pending** — studio-owned, **not** exported, and nobody pretending otherwise. Roughly
+  **fifty-nine**, each carrying a ticket (`TRUTH-01B`, or `TRUTH-01C` for a small tail) and a
+  tier. The Data settings page and the in-ZIP manifest **render this list**, so an owner is told
+  what the archive does not carry.
+
+> ⚠️ **The export PAYLOAD is byte-for-byte unchanged.** TRUTH-01A added no file, no table and no
+> column. `tests/app/settings/data/export-emission-parity.test.ts` builds a real archive and
+> pins every header row against base `a1639a84` column-for-column. **The export is still
+> partial.** What changed is that its incompleteness is now declared, tested and shown to the
+> owner instead of being invisible. **TRUTH-01B is what changes the payload, and it is not
+> shipped.**
+
+**Two withdrawals are recorded rather than glossed.** The application-source reachability
+analyser TRUTH-01A originally carried was **withdrawn** as insufficiently robust, and nothing
+replaces it. Pending entries therefore say *"TRUTH-01A makes no finding about which code paths
+reach this table"* — neither claiming nor denying that anything uses it. Where a fact survives,
+it comes from the database (for example `ON DELETE CASCADE` read from `pg_constraint`), not from
+reading application code.
 
 Finalized-record photo **content** immutability was never implemented, and is now **moot**:
 signed/finalized clinical records are retired (§3), so no record is ever finalized and there is
@@ -548,9 +742,16 @@ Full register with impact, mitigation, owner and next gate:
 live manual no-show / late-cancellation fees · public-booking card collection · public
 practitioner selection and assignment.
 
-**Dormant** (deployed but structurally unable to act): all Google Calendar sync phases ·
-practitioner capacity at Willow · onboarding v2 at Willow · **the durable new-client waitlist
-(WAIT-02B Stage A) on every studio** — see §5b.
+**Dormant** (deployed but not acting): all Google Calendar sync phases · practitioner capacity
+at Willow · onboarding v2 at Willow · **the durable new-client waitlist (WAIT-02B) on every
+studio** — see §5b. *(The parenthetical above previously read "structurally unable to act". For
+the durable waitlist that is no longer accurate: Stage B1 replaced the build-time prohibition
+with a report-only gate, so what keeps it dormant is now **runtime allowlist membership**, and
+it takes two allowlists rather than one. It is dormant by configuration, not by structure.)*
+
+**Shipped since the previous reconciliation, and NOT production-exercised:** non-card
+appointment settlement (§7 — 0 rows) · `/dashboard/capacity` (§10b — no usage measured) ·
+WAIT-02B Stage B1 (§5b — no studio enabled).
 
 **Retired by product decision (2026-07-29), enforced by migration 0159:** signed / finalized
 clinical records · signed-record corrections and amendments · practitioner-facing Finalize and
@@ -590,16 +791,23 @@ independent dimensions, and only an explicit statement from Chloe closes the sec
 
 1. **Chloe's human acceptance testing** — may happen separately and later; it does not block
    the audit.
-2. **The deep production / security / code audit.** Not yet performed against this baseline.
-   This is the next substantive engineering and governance work.
-3. **Broader second-studio and multi-practitioner rollout** — only after the audit and
-   explicit authorization.
-
-4. **WAIT-02B Stage B** — only in an authorized release that carries the public privacy
-   disclosure for waitlist prospects and the explicit activation GO. See §5b and **L25**.
+2. **The deep production / security / code audit.** Still not performed against this baseline.
+   This remains the next substantive engineering and governance work.
+3. **TRUTH-01B — change the export payload.** TRUTH-01A made the gap declared and testable;
+   roughly fifty-nine studio-owned resources are still unexported and each carries a ticket.
+   See §12.
+4. **Broader second-studio and multi-practitioner rollout** — only after the audit and explicit
+   authorization.
+5. **WAIT-02B Stage B2 (activation)** — requires an explicit per-studio operator GO and human
+   activation smoke. The disclosure blocker is closed; the authorization is not granted. See
+   §5b and **L25**.
+6. **Retention and deletion (F-RET-001)** — the published 30-day deletion and 90-day
+   backup-purge commitments still have no implementing code. This is **P1 and open**; see
+   [known-limitations.md](./known-limitations.md) **L26**. It is sequenced after a complete
+   export and jointly with offboarding.
 
 The direct new-client consultation booking route is **not** on this list. It is deferred by
-product decision — which is a separate matter from the waitlist that is live today (§5b).
+product decision — a separate matter from the waitlist that is live today (§5b).
 
 ---
 
@@ -619,6 +827,13 @@ any other document.
    neither is not a fact, it is a fossil.
 3. **Real-customer activity means Willow only.** All-tenant totals include the Synthetic Twin
    and must say so. See §0.
+4. **An open PR is never production.** A branch, a green CI run and a mergeable state are not
+   deployment. Before writing a capability down as shipped, confirm its merge commit is an
+   **ancestor of the production head**. The open set at this reconciliation is listed under
+   *Open pull requests are not production* above.
+5. **This document is not evidence for itself.** No assertion here may be verified by citing
+   another line of this file, and a figure carried forward from an earlier reconciliation is
+   dated evidence rather than a current reading. Re-derive from the sources below, in order.
 
 ```bash
 # 1. Production branch head

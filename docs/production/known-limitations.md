@@ -1,7 +1,7 @@
 # Hone — Known Limitations
 
-**Verified residual limitations as of 2026-08-23**, against the last runtime-bearing application
-HEAD `48f0238900c07bd5d2dfed5c1ebbd832e77fdc50` (PR #629). **Repo and hosted migration state are
+**Verified residual limitations as of 2026-08-26**, against the last runtime-bearing application
+HEAD `6786b07be57a9c01ff4421378f22d7dbca68a5c9` (PR #644). **Repo and hosted migration state are
 at parity, with nothing pending** — the reconciling *numbers* are deliberately not written here.
 Hosted max is declared once in [`migration-state.json`](./migration-state.json); repo max and the
 next free number are derived by `npm run migration:state`; the reconciled position with apply
@@ -19,6 +19,22 @@ evidence is [migration-ledger.md](./migration-ledger.md). (`0158` is permanently
 Only limitations that were **directly verified** in this reconciliation are listed. Items
 that could not be checked from code, the CLI, or read-only production queries are recorded
 explicitly as *unknown pending verification* rather than asserted in either direction.
+
+**Amended 2026-08-26** against production `6786b07b`, fourteen merges on from the previous
+header. This pass **re-derived every claim below from the repository and the Git graph** and
+**re-measured nothing in the production database or at any provider** — so a row carrying a
+2026-08-23 production count keeps that stamp and is dated evidence, not a current reading. What
+changed:
+
+- **L25 amended, and a false mitigation corrected.** WAIT-02B Stage B1 closed the disclosure
+  gap; the build-time gate this file described as having *"no bypass"* is now **report-only**.
+- **L27 added** — `F-RET-001`, retention and deletion commitments with no implementing code.
+  **P1, OPEN**, re-verified against `vercel.json` and `app/api/cron/` at this head.
+- **L28 added** — treatment-image archive is soft-only; no storage reconciler exists.
+- **L29 added** — the export is still partial after TRUTH-01A; only its incompleteness is
+  declared.
+- **L30 added and immediately CLOSED** — `HN-037`, the defect this reconciliation exists to fix,
+  recorded with what closes it and what it deliberately leaves open elsewhere.
 
 **Amended 2026-07-29:** **L9** and **L10** were rewritten because signed / finalized clinical
 records are now **RETIRED by product decision**, enforced by migration **0159**. **Amended
@@ -314,6 +330,28 @@ selling to additional studios · `Neither` = accepted, tracked, not blocking tod
 > two tables named there — `session_audit` and `record_keeping_audit_events` —
 > **still carry the default `TRUNCATE` grant in production**. The repo-wide
 > sweep under **Next gate** remains the fix. Part (b) is untouched.
+>
+> **Further narrowed since, and still not swept — re-derived 2026-08-26 at `6786b07b`.** Five
+> more applied migrations removed the default grant on the tables they own: `0173` (services /
+> practitioners DELETE + policy residue), `0177` (postcare write boundary), `0178`
+> (`revoke all privileges on table public.practitioners`), `0183`/`0184` (`client_budget_context`,
+> where `0184` had to repair `0183` precisely because a by-name denylist missed PostgreSQL 17's
+> `MAINTAIN`), and `0187`, whose post-apply verification evaluated `has_table_privilege` for all
+> eight verbs including `MAINTAIN` and found `anon`, `authenticated` **and** `service_role` FALSE
+> on every one for `appointment_settlements`.
+>
+> **The two tables this row names by name are still exposed.** A grep across all 186 migrations
+> for a revoke naming `public.session_audit` or `public.record_keeping_audit_events` returns
+> **nothing** — neither has ever been named in a grant or revoke, so both still carry the
+> Supabase create-time default. `TRUNCATE` ignores RLS, so a studio member's JWT can still wipe
+> **every studio's** audit history on either table. **The repo-wide sweep under Next gate remains
+> the fix, and it should carry L20's `service_role` `TRIGGER` revoke with it** — the two share
+> one root cause and should be verified together rather than piecemeal.
+>
+> **Write it as `REVOKE ALL` and grant back, never as a by-name denylist.** That lesson has been
+> paid for three times — `0129` missed `anon`, `0164` missed `service_role`, `0183` missed
+> `MAINTAIN`, which is a privilege no list written before PostgreSQL 17 could have contained.
+
 
 | Field | Value |
 |---|---|
@@ -382,16 +420,23 @@ selling to additional studios · `Neither` = accepted, tracked, not blocking tod
 
 ## L25 — The durable new-client waitlist is deployed DARK: its table would hold prospect PII the public privacy policy does not disclose
 
+> The heading above is preserved verbatim as the historical title of this limitation, following
+> the convention L2, L18 and L23 already use. **The disclosure half it names was CLOSED by
+> WAIT-02B Stage B1 (PR #637, merged `1013a97b`, deployed, no migration).** What remains is
+> activation authorization, which is a different thing and is restated below.
+
 | Field | Value |
 |---|---|
-| **Recorded** | 2026-08-23 (WAIT-02B Stage A, PR #629 + migration 0185) |
-| **Impact** | `new_client_waitlist_entries` stores personal information for **prospects** — people who are not yet clients — and the **current public privacy notice does not cover that category**. Enabling any studio today would collect personal data outside every disclosed category. |
-| **Evidence** | `NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS` is **absent from the Vercel Production environment** *(verified 2026-08-23 by reading variable **names** only; no value was read)*. `new_client_waitlist_entries` = **0 rows** at apply verification and **0 rows** now. `scripts/check-production-env-gates.mjs` Gate 4 states the reason in its own failure text. |
-| **Current mitigation** | **Structural, not procedural.** Gate 4 is an **inverted** build gate: a Vercel **production build FAILS** while the durable allowlist enables one or more studios. It has, in its own words, *"no bypass and no per-studio exception."* Enabling a studio is therefore a **code-and-release action, not an environment-variable flip** — which is a materially stronger guarantee than an unset variable. |
-| **What is NOT mitigated** | Nothing about the disclosure gap itself. The gate prevents collection; it does not write the privacy notice. |
-| **Owner** | Sam (engineering + release) · Product (disclosure wording) |
-| **Next gate** | **Stage B**, in one authorized release carrying: the truthful public disclosure for waitlist prospects; the policy's `lastUpdated` and a future `effectiveDate` consistent with the notice process that policy itself requires; explicit studio-enablement GO; and human activation smoke. |
-| **Blocks** | **Stage B only.** Neither Willow nor broader launch today — WAIT-01 is unaffected and remains live at Willow. |
+| **Recorded** | 2026-08-23 (WAIT-02B Stage A, PR #629 + migration 0185) · **amended 2026-08-26 (Stage B1)** |
+| **Historical impact (before Stage B1)** | `new_client_waitlist_entries` stores personal information for **prospects** — people who are not yet clients — and the public privacy notice **did not cover that category**, so enabling any studio would have collected personal data outside every disclosed category. |
+| **What Stage B1 closed** | `app/privacy/page.tsx` now names **Prospective clients** as a covered category, describes what the waitlist form collects, states the purpose, says the request goes to one studio and no other, gives an account-free removal route, and describes waitlist retention. Policy `effectiveDate` **May 22, 2026**, `lastUpdated` **August 24, 2026**, read from the deployed source at `6786b07b`. **The disclosure gap is closed.** |
+| **⚠️ CORRECTION to the mitigation previously recorded here** | This row previously read: *"Gate 4 is an **inverted** build gate: a Vercel **production build FAILS** while the durable allowlist enables one or more studios. It has, in its own words, 'no bypass and no per-studio exception.'"* **That is no longer true and must not be relied on.** Gate 4 of `scripts/check-production-env-gates.mjs` is now **report-only**, and its pinned contract says so in its own first two sentences: *"Gate 4 is report-only. It does not fail the build solely because of `NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS`."* **There is no longer a build-time stop.** |
+| **Current mitigation** | **Runtime allowlist membership, and it takes TWO allowlists.** Gate 4's contract sentence 9: *"Naming a studio in `NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS` activates nothing unless that studio is also named in `NEW_CLIENT_WAITLIST_STUDIO_SLUGS`."* The durable variable selects the **commit point** for a studio already on the admission waitlist; it cannot by itself put a studio onto one. An empty durable allowlist leaves every studio on the WAIT-01 email path. This is a **weaker** guarantee than the build gate it replaced — configuration rather than structure — and is recorded as such rather than described as equivalent. |
+| **Evidence** | `NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS` was **absent from the Vercel Production environment** *(verified 2026-08-23, variable **names** only; no value read)*. **Not re-read on 2026-08-26** — absence is carried forward as dated evidence, not re-asserted. `new_client_waitlist_entries` = **0 rows** at apply verification and 0 rows when last measured 2026-08-23. |
+| **What is NOT mitigated** | **Stage B2 — activation — is ungranted.** No studio has been enabled and no human activation smoke has been run. |
+| **Owner** | Sam (engineering + release) · Product (activation GO) |
+| **Next gate** | **Stage B2**: explicit per-studio operator GO, then human activation smoke on that studio. |
+| **Blocks** | **Stage B2 only.** Neither Willow nor broader launch today — WAIT-01 is unaffected and remains live at Willow. **This limitation remains OPEN**, narrowed from disclosure to authorization. |
 
 ## L26 — Four unresolved `ops_alerts` from failed live charge attempts
 
@@ -436,3 +481,83 @@ documentation, because no evidence supports them:
   Hone does claim is ordinary operational audit: `session_audit`, `record_keeping_audit_events`,
   `session_copy_operations`, `admin_action_events` and `client_portal_access_events`, with actor
   attribution and timestamps.
+
+## L27 — `F-RET-001`: published 30-day / 90-day retention and deletion commitments have NO implementing code
+
+| Field | Value |
+|---|---|
+| **Recorded** | 2026-07-30 (audit register `F-RET-001` / `HN-022`) · **re-verified at `6786b07b` on 2026-08-26** |
+| **Severity** | **P1 — OPEN.** Gate: **WILLOW_NOW.** |
+| **Impact** | `app/privacy/page.tsx` commits publicly to retaining data while an account is active, then: *"When a practitioner closes their account, we retain data for 30 days to allow account recovery, then delete it"*, and *"When a client is deleted by their practitioner in Hone, their record is soft-deleted … for 30 days, then hard-deleted from active systems. Backups are purged within 90 days."* `app/terms/page.tsx` (DPA 7.7) commits to deleting Client Data within 30 days of termination. **None of it is implemented.** There is no purge job, no hard-delete path, no legal hold and no cross-system lifecycle. This is a live published claim the product does not honour, made to a health practitioner already holding real client data. |
+| **Evidence (re-derived 2026-08-26 from the repository, not from an earlier document)** | `vercel.json` registers exactly **three** crons — `materialize-recurring-breaks`, `calendar-reconcile`, `calendar-sync` — **none retention-related**. `app/api/cron/` contains exactly five routes — those three plus `appointment-reminders` and `no-show-check` — **none retention-related**. A repository search for `legal_hold` / `legalHold` / `retention_policy` / `hard_delete` / `purge` finds them only in `app/privacy/page.tsx` and `app/terms/page.tsx` (the claims themselves) and in two unrelated migrations (`0115`, `0125`). |
+| **Related and inseparable** | `archiveTreatmentImageAction` stamps `deleted_at` without removing the storage object — see **L28**. A 30-day hard-delete commitment cannot be honoured while archive never deletes bytes. |
+| **Current mitigation** | **None.** The commitment is live and unhonoured. |
+| **Owner** | Sam |
+| **Next gate** | Sequenced **after** a complete export (an owner must be able to take their data before anything deletes it — see **L29**) and **jointly with** offboarding, which is the process a retention lifecycle hangs off. Not started. |
+| **Blocks** | **Willow now**, as a published-claim exposure rather than a functional defect. **This limitation remains OPEN and is not closed, narrowed or downgraded by this reconciliation.** |
+
+## L28 — Treatment-image archive is soft-only and no storage reconciler exists
+
+| Field | Value |
+|---|---|
+| **Recorded** | 2026-07-30 (audit register `HN-023`) · **re-verified at `6786b07b` on 2026-08-26** |
+| **Severity** | **P2 — OPEN, partially mitigated.** |
+| **Impact** | Two halves, at different stages. **(a) Upload — MITIGATED.** `app/(app)/clients/[id]/images/actions.ts` removes the uploaded object when the metadata insert fails, and raises a **CRITICAL** `treatment_image_orphan_cleanup_failed` ops alert if that removal also fails. **(b) Archive — UNCHANGED.** `archive_treatment_image` (migration `0168`) is **soft-only**; its own source states *"Still SOFT only, no row and no storage object is deleted."* Bytes are never removed. **(c) No reconciler exists** — the only reconciling cron in `app/api/cron/` is `calendar-reconcile`, which is Google Calendar. Nothing sweeps orphaned storage objects. |
+| **Why the upload mitigation must not be deleted** | Image storage and PostgreSQL are **separate planes and cannot share a transaction**. Migration `0169`'s closure record says so explicitly: the compensating cleanup *"remains required, and must not be deleted on the grounds that the metadata write is now a command."* |
+| **Current mitigation** | Private `treatment-images` bucket, service-role-only access, short-TTL signed URLs, path/identity CHECKs, and an integrity trigger freezing identity columns after insert. Those bound **access**, not **lifecycle**. |
+| **Owner** | Sam |
+| **Next gate** | The byte-deletion path belongs to **L27**'s retention lifecycle, not to a standalone reconciler — a reconciler built first would still leave the published deletion commitment unmet. |
+| **Blocks** | Neither today. **OPEN.** |
+
+## L29 — `TRUTH-01B`: the studio data export is still partial; only its incompleteness is now declared
+
+| Field | Value |
+|---|---|
+| **Recorded** | 2026-08-26 (TRUTH-01A, PR #644, is production) |
+| **Severity** | **P2 — OPEN.** Downgraded from the P1 `F-DATA-001` recorded 2026-07-30, because the misrepresentation half is closed. |
+| **Impact** | Roughly **fifty-nine** studio-owned resources are **not** in the export. Each carries a ticket (`TRUTH-01B`, or `TRUTH-01C` for a small tail) and a tier in `lib/export/resource-registry.ts`. |
+| **What TRUTH-01A closed** | The **misrepresentation**, which was the severity driver. The registry is now the one place a disposition is decided; a missing decision is a **build failure**; and the Data settings page plus the in-ZIP manifest **render the pending list**, so an owner is told what the archive does not carry. |
+| **What TRUTH-01A explicitly did NOT do** | **Change the payload.** No new file, table or column; `tests/app/settings/data/export-emission-parity.test.ts` pins every header row against base `a1639a84` column-for-column. R3/R4/R5 — streaming, image binaries, a format-version bump — are deferred, so the whole ZIP is still built in server memory and returned base64 through a server action. |
+| **Recorded honestly rather than glossed** | TRUTH-01A's application-source reachability analyser was **withdrawn** as insufficiently robust and **nothing replaces it**. Pending entries therefore state that TRUTH-01A makes *no finding* about which code paths reach a table — neither claiming nor denying use. Surviving facts come from the database (e.g. `ON DELETE CASCADE` read from `pg_constraint`), not from reading application code. |
+| **Owner** | Sam |
+| **Next gate** | **TRUTH-01B**, which owns the large majority of the pending set and is the first slice that changes what an owner actually receives. In development; **no PR merged**. |
+| **Blocks** | **L27** — a complete export must exist before a deletion lifecycle can be honoured. **OPEN.** |
+
+## L30 — `HN-037`: canonical production documentation asserted facts it could not prove — **CLOSED by this reconciliation**
+
+| Field | Value |
+|---|---|
+| **Recorded** | 2026-07-30 (audit register `HN-037`) |
+| **Severity** | **P1 at the audit head.** Closed here. |
+| **Historical impact** | Four derived facts — hosted migration max, repo migration max, the next free number, and the runtime-bearing production SHA — were hand-copied as prose literals into five documents. Nothing failed when a copy diverged, so every copy rotted independently. The canonical set simultaneously claimed the production migration max was `0165`, `0163`, `0162`, `0160` and `0157` while production stood at `0185`; `current-state.md` carried **three different numbers in one table cell**. Separately, `current-state.md` pinned a production SHA fourteen merges old as current. |
+| **What closes it** | Two mechanisms, not one. **(1) The numbers were removed rather than corrected**: `current-state.md`, `capability-register.md` and `known-limitations.md` now state **no** migration number, deferring to `migration-state.json` (machine authority) and `migration-ledger.md` **§Current state** (the one prose authority). **(2) `tests/docs/canonical-production-facts.test.ts` fails the build** if a current-max or next-free assertion reappears in those documents, if the ledger's current block disagrees with the canonical record, if `current-state.md` pins a SHA that is not the production head, if a SHA written there does not resolve to a real commit, if an open PR is described as shipped, or if the document cites itself as authority. Each rule carries a **negative control** that feeds it the exact shape it exists to catch. |
+| **What it does NOT close** | **Stale current-position claims OUTSIDE the five canonical documents remain**, and are deliberately out of scope here — see the note below this table. |
+| **Owner** | Sam |
+| **Next gate** | **None for the canonical five — CLOSED.** The external sweep is separate work. |
+| **Blocks** | **Nothing — closed.** |
+
+### Stale migration claims outside the canonical five — surveyed, NOT fixed here
+
+A repository-wide sweep on 2026-08-26, using the guard's own patterns, found **current-position
+migration claims in files outside this reconciliation's authorized surface**. They are recorded
+so the next reader does not mistake this closure for a repository-wide one:
+
+| File | Claims a current max of |
+|---|---|
+| `docs/09_DATABASE_AND_RLS.md` | `0165`, `0157`, `0160`, `0162`, `0163`, `0164`; next free `0166` |
+| `docs/14_AI_HANDOFF.md` | `0161`, `0105` |
+| `docs/12_SMOKE_TESTS.md` | `0157`, `0162`, `0163`, `0164` |
+| `docs/13_BACKLOG_AND_DECISIONS.md` | `0157`, `0105`; next free `0173` |
+| `docs/10_DEPLOYMENT_AND_ENV.md` | `0157` |
+| `docs/16_LIVE_PAYMENTS_READINESS.md` | `0101`, `0112` |
+| `docs/21_SUPERVISED_PILOT_CHECKLIST.md` | `0113` |
+| `docs/decisions/clinical-finalization-retired.md` | `0159` |
+| `docs/integrations/google-calendar-*.md` | `0157`, `0131` |
+| `docs/roadmap/`, `docs/reviews/`, `docs/runbooks/`, `docs/audits/` | assorted historical maxima |
+
+**None of them creates a hard contradiction with the canonical five**, which is why scope was not
+widened: no canonical document cites any of these files as authority for migration state. The
+only cross-reference is `current-state.md` → `docs/14_AI_HANDOFF.md`, and it is cited for *dated
+chronology*, explicitly not for current state. Several of these are legitimately **historical
+context** (a dated audit record, a frozen apply note); the rest are genuine stale current claims
+belonging to their own lane.
