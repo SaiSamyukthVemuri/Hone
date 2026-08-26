@@ -1049,10 +1049,12 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
 
   // dead
   payment_consents: {
-    kind: "excluded",
-    category: "dead",
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    fieldReviewRequired: true,
     reason:
-      "Created by migration 0032 and unreachable from application code: no module opens the table directly, and no database function that READS OR WRITES it is invoked from the application. Reads count, and saying so is the correction: the first version of this claim reasoned only about writers, and a table can be perfectly live as the thing a live decision is made FROM. Checked mechanically against pg_proc, not asserted.",
+      "Created by migration 0032 for the card-payment surface, which is not wired into any shipped flow, so the capability appears dormant. TRUTH-01A DOES NOT CERTIFY IT UNREACHABLE: the claim that no application path reaches it rested on an application-source analysis that has been WITHDRAWN as insufficiently robust - it missed indirect table-name expressions and failed silently rather than reporting that it could not tell - so no claim is made here about readers or writers. Unknown reachability is not the same as dead, and the honest disposition is pending. Field review before any export: it records payment-consent decisions and the metadata captured with them.",
   },
   pending_booking_payment_sessions: {
     kind: "pending",
@@ -1060,37 +1062,47 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     tier: 2,
     fieldReviewRequired: true,
     reason:
-      "Created by migration 0032 for public-booking card collection, which is off and unwired: no application module opens the table, and none of the nine database functions that reference it - readers as well as writers - is invoked from the application. That much is unchanged, and it is why the FEATURE is dormant. It was nevertheless classified `dead`, which was wrong, and the reachability closure now proves why: pending_booking_payment_sessions.studio_id carries ON DELETE CASCADE from studios, a table the application opens directly, so deleting a studio makes PostgreSQL delete these rows on the application's behalf. A table the database will mutate for us is not unreachable - the write travels through the schema instead of through a function name, which is exactly the path a writers-and-readers scan cannot see. Dormant at the feature level, reachable at the schema level, so it is pending rather than dead. Field review before any export: the row carries public-booking payment session state and provider identifiers, and nothing in it is independently actionable by a studio.",
+      "Created by migration 0032 for public-booking card collection, which is not wired into any shipped flow, so the capability appears dormant. It was once classified `dead`; it is not, and the reason is a DATABASE fact that stands on its own: pending_booking_payment_sessions.studio_id carries ON DELETE CASCADE from studios, read from pg_constraint, so deleting a studio makes PostgreSQL delete these rows. A table the database will mutate is not inert, whatever the application does. TRUTH-01A makes NO claim here about which application paths reach it: the application-source analysis that would have supported one has been withdrawn as insufficiently robust. Dormant at the feature level, mutable at the schema level, unknown at the application level - so pending, not excluded. Field review before any export: it carries public-booking payment session state and provider identifiers, none of it independently actionable by a studio.",
   },
   stripe_charge_attempts: {
-    kind: "excluded",
-    category: "dead",
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    fieldReviewRequired: true,
     reason:
-      "Created by migration 0032 and unreachable from application code: no module opens the table directly, and no database function that READS OR WRITES it is invoked from the application. Reads count, and saying so is the correction: the first version of this claim reasoned only about writers, and a table can be perfectly live as the thing a live decision is made FROM. Checked mechanically against pg_proc, not asserted.",
+      "Created by migration 0032 for the card-payment surface, which is not wired into any shipped flow, so the capability appears dormant. TRUTH-01A DOES NOT CERTIFY IT UNREACHABLE: the claim that no application path reaches it rested on an application-source analysis that has been WITHDRAWN as insufficiently robust - it missed indirect table-name expressions and failed silently rather than reporting that it could not tell - so no claim is made here about readers or writers. Unknown reachability is not the same as dead, and the honest disposition is pending. Field review before any export: it carries Stripe charge identifiers and provider failure detail.",
   },
   stripe_disputes: {
-    kind: "excluded",
-    category: "dead",
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    fieldReviewRequired: true,
     reason:
-      "Created by migration 0032 and unreachable from application code: no module opens the table directly, and no database function that READS OR WRITES it is invoked from the application. Reads count, and saying so is the correction: the first version of this claim reasoned only about writers, and a table can be perfectly live as the thing a live decision is made FROM. Checked mechanically against pg_proc, not asserted. Dispute handling is alert-only via ops_alerts.",
+      "Created by migration 0032 for the card-payment surface, which is not wired into any shipped flow, so the capability appears dormant. TRUTH-01A DOES NOT CERTIFY IT UNREACHABLE: the claim that no application path reaches it rested on an application-source analysis that has been WITHDRAWN as insufficiently robust - it missed indirect table-name expressions and failed silently rather than reporting that it could not tell - so no claim is made here about readers or writers. Unknown reachability is not the same as dead, and the honest disposition is pending. Dispute handling is alert-only via ops_alerts, which is independently true and unaffected by the withdrawn analysis. Field review before any export: it carries Stripe dispute identifiers and provider detail.",
   },
   stripe_payment_audit: {
-    kind: "excluded",
-    category: "dead",
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    fieldReviewRequired: true,
     reason:
-      "Created by migration 0032 and unreachable from application code: no module opens the table directly, and no database function that READS OR WRITES it is invoked from the application. Reads count, and saying so is the correction: the first version of this claim reasoned only about writers, and a table can be perfectly live as the thing a live decision is made FROM. Checked mechanically against pg_proc, not asserted.",
+      "Created by migration 0032 for the card-payment surface, which is not wired into any shipped flow, so the capability appears dormant. TRUTH-01A DOES NOT CERTIFY IT UNREACHABLE: the claim that no application path reaches it rested on an application-source analysis that has been WITHDRAWN as insufficiently robust - it missed indirect table-name expressions and failed silently rather than reporting that it could not tell - so no claim is made here about readers or writers. Unknown reachability is not the same as dead, and the honest disposition is pending. Field review before any export: it carries free-form provider audit payloads.",
   },
   stripe_refund_attempts: {
-    kind: "excluded",
-    category: "dead",
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    fieldReviewRequired: true,
     reason:
-      "Created by migration 0032 and unreachable from application code: no module opens the table directly, and no database function that READS OR WRITES it is invoked from the application. Reads count, and saying so is the correction: the first version of this claim reasoned only about writers, and a table can be perfectly live as the thing a live decision is made FROM. Checked mechanically against pg_proc, not asserted. Live refund state lives on payment_charge_attempts.refund_*.",
+      "Created by migration 0032 for the card-payment surface, which is not wired into any shipped flow, so the capability appears dormant. TRUTH-01A DOES NOT CERTIFY IT UNREACHABLE: the claim that no application path reaches it rested on an application-source analysis that has been WITHDRAWN as insufficiently robust - it missed indirect table-name expressions and failed silently rather than reporting that it could not tell - so no claim is made here about readers or writers. Unknown reachability is not the same as dead, and the honest disposition is pending. Live refund state lives on payment_charge_attempts.refund_*, which is independently true and unaffected by the withdrawn analysis. Field review before any export: it carries Stripe refund identifiers and provider failure detail.",
   },
   stripe_refunds: {
-    kind: "excluded",
-    category: "dead",
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    fieldReviewRequired: true,
     reason:
-      "Created by migration 0032 and unreachable from application code: no module opens the table directly, and no database function that READS OR WRITES it is invoked from the application. Reads count, and saying so is the correction: the first version of this claim reasoned only about writers, and a table can be perfectly live as the thing a live decision is made FROM. Checked mechanically against pg_proc, not asserted. Live refund state lives on payment_charge_attempts.refund_*.",
+      "Created by migration 0032 for the card-payment surface, which is not wired into any shipped flow, so the capability appears dormant. TRUTH-01A DOES NOT CERTIFY IT UNREACHABLE: the claim that no application path reaches it rested on an application-source analysis that has been WITHDRAWN as insufficiently robust - it missed indirect table-name expressions and failed silently rather than reporting that it could not tell - so no claim is made here about readers or writers. Unknown reachability is not the same as dead, and the honest disposition is pending. Live refund state lives on payment_charge_attempts.refund_*, which is independently true and unaffected by the withdrawn analysis. Field review before any export: it carries Stripe refund identifiers.",
   },
 
   // deliberate_privacy

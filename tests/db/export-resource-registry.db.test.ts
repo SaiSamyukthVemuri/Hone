@@ -13,7 +13,6 @@ import {
   STORAGE_RESOURCE_PREFIX,
 } from "@/lib/export/resource-registry";
 import { adminQuery, closePool } from "@/tests/db/helpers/harness";
-import { scanFromEntrypoints } from "@/tests/db/helpers/app-tables";
 import {
   fkActionEdges,
   type FkConstraintRow,
@@ -79,9 +78,9 @@ function walkTs(dir: string): string[] {
   return out;
 }
 
-let APP_SOURCES: Array<{ rel: string; code: string; raw: string }> | null = null;
+let APP_SOURCES: Array<{ rel: string; code: string }> | null = null;
 
-function appSources(): Array<{ rel: string; code: string; raw: string }> {
+function appSources(): Array<{ rel: string; code: string }> {
   if (APP_SOURCES) return APP_SOURCES;
   APP_SOURCES = [];
   for (const root of APP_ROOTS) {
@@ -93,11 +92,7 @@ function appSources(): Array<{ rel: string; code: string; raw: string }> {
         .split("\n")
         .filter((line) => !/^\s*\/\//.test(line))
         .join("\n");
-      // `code` is comment-stripped for the string-literal RPC heuristic below;
-      // `raw` is the real file, because stripping comments with a regex
-      // corrupts syntax (an apostrophe in a comment, a `//` inside JSX) and a
-      // corrupted parse silently drops entrypoints.
-      APP_SOURCES.push({ rel, code, raw });
+      APP_SOURCES.push({ rel, code });
     }
   }
   return APP_SOURCES;
@@ -485,29 +480,22 @@ describe("what is excluded, and on what grounds", () => {
       (tableTriggers[row.table_name] ??= []).push(row.fn);
     }
 
-    // Application entrypoints. RPC names are string literals; TABLES are
-    // resolved through the TypeScript AST, because `.from(...)` in this
-    // repository is not always a literal: a const imported from another module
-    // (.from(CLIENT_BUDGET_CONTEXT_RELATION)), a helper parameter fed literals
-    // at its call sites (const count = (table: string) => .from(table)) and a
-    // parameter whose TYPE enumerates its tables all occur. A regex sees none
-    // of them. See tests/db/helpers/app-tables.ts.
+    // APPLICATION TABLE ENTRYPOINTS ARE DELIBERATELY ABSENT.
+    //
+    // TRUTH-01A once resolved `.from(...)` through the TypeScript AST so it
+    // could certify a table unreachable. That analyser was WITHDRAWN: three
+    // review rounds each found another syntactic form it dropped silently -
+    // producing neither a table nor an `unresolved` entry - and every one of
+    // them shrank the closure, which is the direction that makes `dead` easier
+    // to claim. It is not replaced. Nothing in this file certifies a resource
+    // unreachable from application source any more, and no registry entry
+    // depends on such a claim.
+    //
+    // What remains is DATABASE-NATIVE and needs no application source: RPC
+    // names the application uses as string literals, function -> function,
+    // function -> table, table -> trigger function, and foreign-key mutation
+    // edges. Every one of those comes from pg_catalog.
     const appFunctions = fnNames.filter((n) => referencedBy(n).length > 0);
-    const scan = scanFromEntrypoints(
-      appSources().map(({ rel, raw }) => ({ rel, code: raw })),
-    );
-    // FAIL CLOSED. An unresolvable argument, or a file the parser could not
-    // read, can only SHRINK the closure — the one direction that makes `dead`
-    // EASIER to claim. Refuse rather than quietly weaken the claim.
-    expect(
-      scan.unparsed,
-      "application sources failed to parse; a truncated AST hides entrypoints",
-    ).toEqual([]);
-    expect(
-      scan.unresolved,
-      "unresolvable .from(...) argument(s); no dead claim can be trusted until they resolve",
-    ).toEqual([]);
-    const appTables = scan.tables.filter((t) => tableNames.includes(t));
 
     return {
       functionCalls,
@@ -515,60 +503,36 @@ describe("what is excluded, and on what grounds", () => {
       tableTriggers,
       tableFkActions,
       appFunctions,
-      appTables,
+      appTables: [],
     };
   }
 
-  it("the live graph really has application entrypoints (anti-vacuity)", async () => {
+  it("the live DATABASE graph is real, and the traversal expands over it", async () => {
+    // Anti-vacuity for what survives: the pg_catalog extraction produced a
+    // graph with genuine edges, and the closure walks beyond its seeds. This
+    // asserts the machinery works; it does NOT certify any resource dead.
     const graph = await buildLiveGraph();
     expect(graph.appFunctions.length).toBeGreaterThan(50);
-    expect(graph.appTables.length).toBeGreaterThan(20);
+    expect(Object.keys(graph.functionCalls).length).toBeGreaterThan(50);
+    expect(Object.keys(graph.tableTriggers).length).toBeGreaterThan(10);
+    expect(Object.keys(graph.tableFkActions).length).toBeGreaterThan(5);
     const reach = computeReachability(graph);
-    // If the closure reached almost nothing, every dead claim below would pass
-    // for the wrong reason.
     expect(reach.functions.size).toBeGreaterThan(graph.appFunctions.length);
-    expect(reach.tables.size).toBeGreaterThan(graph.appTables.length);
+    expect(reach.tables.size).toBeGreaterThan(0);
   });
 
-  it("no resource classified dead is reachable from the application, at any depth", async () => {
-    const dead = Object.entries(EXPORT_RESOURCE_REGISTRY)
-      .filter(([, d]) => d.kind === "excluded" && d.category === "dead")
-      .map(([resource]) => resource);
-    expect(dead.length).toBeGreaterThan(0);
-    const reach = computeReachability(await buildLiveGraph());
-    expect(
-      deadClaimViolations(dead, reach),
-      "classified dead, but an application path reaches it — reclassify as pending",
-    ).toEqual([]);
-  });
-
-  it("CONTROL H — the LIVE studios -> pending_booking_payment_sessions cascade is in the graph", async () => {
-    // The concrete path that corrected this registry. studios is opened
-    // directly by the application; pending_booking_payment_sessions.studio_id
-    // is ON DELETE CASCADE from it, so deleting a studio makes PostgreSQL
-    // delete these rows. Asserted against the LIVE catalogue, not a fixture.
+  it("the LIVE studios -> pending_booking_payment_sessions cascade is a pg_constraint fact", async () => {
+    // This is the evidence behind that resource's classification, and it
+    // survives the withdrawal because it never needed application source:
+    // studio_id is ON DELETE CASCADE from studios, read from pg_constraint, so
+    // PostgreSQL deletes these rows when a studio goes. No claim is made here
+    // about which application paths reach studios.
     const graph = await buildLiveGraph();
-    expect(graph.appTables).toContain("studios");
     expect(graph.tableFkActions["studios"] ?? []).toContain(
       "pending_booking_payment_sessions",
     );
-    const reach = computeReachability(graph);
-    expect(reach.tables.has("pending_booking_payment_sessions")).toBe(true);
-    expect(reach.pathTo.get("pending_booking_payment_sessions")).toContain("studios");
-    // And it is no longer claimed dead.
     const entry = EXPORT_RESOURCE_REGISTRY["pending_booking_payment_sessions"];
     expect(entry.kind).toBe("pending");
-    expect("category" in entry && entry.category === "dead").toBe(false);
-  });
-
-  it("the closure would still catch the direct reader case that started this", async () => {
-    // appointment_payments is no longer classified dead, so the real sweep
-    // cannot exercise it. Ask the closure about it directly instead.
-    const reach = computeReachability(await buildLiveGraph());
-    expect(reach.tables.has("appointment_payments")).toBe(true);
-    expect(reach.pathTo.get("appointment_payments")).toMatch(
-      /reschedule_appointment_v2|appointment_has_blocking_dependents/,
-    );
   });
 
   // ---------------------------------------------------------------------
@@ -595,174 +559,6 @@ describe("what is excluded, and on what grounds", () => {
   // deliberately not edges. The live builder derives the direction and the
   // action from pg_constraint; these fixtures pin the traversal itself.
   // ---------------------------------------------------------------------
-  // ---------------------------------------------------------------------
-  // CONTROLS R-W — INDIRECT `.from(...)` ENTRYPOINTS.
-  //
-  // Source fixtures, so each shape is exercised whether or not the repository
-  // currently contains one. A missed entrypoint shrinks the closure, and a
-  // shrunken closure makes `dead` easier to claim — so every one of these is a
-  // guard against the SAFE-looking failure.
-  // ---------------------------------------------------------------------
-  const scanOne = (code: string) => scanFromEntrypoints([{ rel: "app/x.ts", code }]);
-
-  it("CONTROL R — a const identifier resolves (.from(DEAD_TABLE))", () => {
-    const scan = scanOne(`
-      const DEAD_TABLE = "dead_resource";
-      export async function f(db: Db) { return db.from(DEAD_TABLE).select("id"); }
-    `);
-    expect(scan.tables).toContain("dead_resource");
-    expect(scan.unresolved).toEqual([]);
-  });
-
-  it("CONTROL S — a const resolves ACROSS modules, by name", () => {
-    const scan = scanFromEntrypoints([
-      { rel: "lib/levels.ts", code: `export const REL = "dead_resource";` },
-      {
-        rel: "lib/queries.ts",
-        code: `import { REL } from "./levels";
-               export const q = (db: Db) => db.from(REL).select("id");`,
-      },
-    ]);
-    expect(scan.tables).toContain("dead_resource");
-  });
-
-  it("CONTROL T — a two-hop const alias chain resolves", () => {
-    const scan = scanOne(`
-      const BASE = "dead_resource";
-      const ALIAS = BASE;
-      const ALIAS2 = ALIAS;
-      export const q = (db: Db) => db.from(ALIAS2).select("id");
-    `);
-    expect(scan.tables).toContain("dead_resource");
-  });
-
-  it("CONTROL U — a helper PARAMETER resolves from its call sites", () => {
-    const scan = scanOne(`
-      const count = (table: string) => db.from(table).select("id");
-      export function go() { return [count("appointments"), count("dead_resource")]; }
-    `);
-    expect(scan.tables).toEqual(
-      expect.arrayContaining(["appointments", "dead_resource"]),
-    );
-    expect(scan.unresolved).toEqual([]);
-  });
-
-  it("CONTROL U2 — a parameter whose TYPE enumerates its tables resolves", () => {
-    const scan = scanOne(`
-      async function softDeleteEntry(table: "electrolysis_entries" | "dead_resource") {
-        return db.from(table).update({});
-      }
-    `);
-    expect(scan.tables).toEqual(
-      expect.arrayContaining(["electrolysis_entries", "dead_resource"]),
-    );
-  });
-
-  it("CONTROL V — the ordinary literal case is still detected, and built-ins are not tables", () => {
-    const scan = scanOne(`
-      export const q = (db: Db) => db.from("dead_resource").select("id");
-      const b = Buffer.from(provided);
-      const a = Array.from({ length: 7 });
-      const bucket = supabase.storage.from(TREATMENT_IMAGES_BUCKET);
-    `);
-    expect(scan.tables).toEqual(["dead_resource"]);
-    // Buffer/Array/storage are not Supabase reads, so they invent no edge and
-    // — just as importantly — raise no false "unresolved".
-    expect(scan.unresolved).toEqual([]);
-  });
-
-  it("CONTROL X — a PARAMETER is not captured by an unrelated same-named const", () => {
-    // Resolution once consulted the name-keyed const map first and returned on
-    // a hit, so any `const table = "clients"` anywhere in the tree hijacked
-    // every `.from(table)` parameter — reporting the wrong table with NO
-    // unresolved entry. Scope decides now: the parameter binding wins.
-    const scan = scanFromEntrypoints([
-      { rel: "lib/unrelated.ts", code: `const table = "clients";` },
-      {
-        rel: "app/x.ts",
-        code: `const read = (table) => db.from(table).select("id");
-               export const go = () => read("dead_resource");`,
-      },
-    ]);
-    expect(scan.tables).toContain("dead_resource");
-    expect(scan.unresolved).toEqual([]);
-  });
-
-  it("CONTROL X2 — a local const still shadows the global map, and imports still resolve", () => {
-    // The inner binding wins...
-    const shadowed = scanFromEntrypoints([
-      { rel: "lib/unrelated.ts", code: `const REL = "clients";` },
-      {
-        rel: "app/x.ts",
-        code: `export function q() { const REL = "dead_resource"; return db.from(REL); }`,
-      },
-    ]);
-    expect(shadowed.tables).toContain("dead_resource");
-    // ...and an identifier with NO local binding still resolves across modules,
-    // which is the case the name-keyed map exists to serve.
-    const imported = scanFromEntrypoints([
-      { rel: "lib/levels.ts", code: `export const REL2 = "dead_resource";` },
-      {
-        rel: "app/y.ts",
-        code: `import { REL2 } from "./levels";
-               export const q = () => db.from(REL2).select("id");`,
-      },
-    ]);
-    expect(imported.tables).toContain("dead_resource");
-  });
-
-  it("CONTROL X3 — an unresolvable parameter does NOT fall back to a same-named global", () => {
-    // No call sites and no union type: the honest answer is "unresolved", not
-    // the value of an unrelated const with the same name.
-    const scan = scanFromEntrypoints([
-      { rel: "lib/unrelated.ts", code: `const table = "clients";` },
-      { rel: "app/x.ts", code: `export const read = (table) => db.from(table).select("id");` },
-    ]);
-    expect(scan.tables).not.toContain("clients");
-    expect(scan.unresolved).toEqual([{ file: "app/x.ts", expression: "table" }]);
-  });
-
-  it("CONTROL Y — a computed-member .from is read like the dotted form", () => {
-    const scan = scanOne(`export const q = () => db["from"]("dead_resource").select("id");`);
-    expect(scan.tables).toEqual(["dead_resource"]);
-    expect(scan.unresolved).toEqual([]);
-  });
-
-  it("CONTROL Y2 — an UNREADABLE computed member is reported, not skipped", () => {
-    // db[key](...) might be "from". Assuming it is not is the assumption that
-    // loses tables, so it is reported and the dead guard refuses.
-    const scan = scanOne(`export const q = (key: string) => db[key]("dead_resource");`);
-    expect(scan.tables).toEqual([]);
-    expect(scan.unresolved).toEqual([{ file: "app/x.ts", expression: "db[key]" }]);
-  });
-
-  it("CONTROL Y3 — computed access on a BUILT-IN still invents nothing and reports nothing", () => {
-    const scan = scanOne(`
-      const a = Buffer["from"]("x");
-      const b = supabase.storage["from"](BUCKET);
-    `);
-    expect(scan.tables).toEqual([]);
-    expect(scan.unresolved).toEqual([]);
-  });
-
-  it("CONTROL W — an UNRESOLVABLE dynamic .from is reported, never dropped", () => {
-    const scan = scanOne(`
-      export const q = (db: Db, key: string) => db.from(lookup[key]).select("id");
-    `);
-    expect(scan.tables).toEqual([]);
-    expect(scan.unresolved).toEqual([
-      { file: "app/x.ts", expression: "lookup[key]" },
-    ]);
-  });
-
-  it("CONTROL W2 — a file the parser cannot read is reported, never absorbed", () => {
-    // A truncated AST silently hides every entrypoint after the break. That is
-    // exactly what parsing .ts as TSX did to a real file.
-    const scan = scanOne(`export const broken = (`);
-    expect(scan.unparsed.length).toBe(1);
-    expect(scan.unparsed[0].file).toBe("app/x.ts");
-  });
-
   const fkRow = (confdeltype: string, confupdtype = "a"): FkConstraintRow => ({
     parent_table: "parent_t",
     child_table: "dead_resource",
@@ -945,6 +741,79 @@ describe("what is excluded, and on what grounds", () => {
     expect(v.length).toBe(1);
     expect(v[0]).toContain("dead_resource");
     expect(Date.now() - started).toBeLessThan(2000);
+  });
+
+  // -------------------------------------------------------------------------
+  // UNKNOWN REACHABILITY IS NOT DEAD
+  // -------------------------------------------------------------------------
+  //
+  // `dead` was the one exclusion category that asserted something about
+  // APPLICATION SOURCE — "no application path reaches this table". The analyser
+  // that produced that evidence has been withdrawn: three review rounds each
+  // found another `.from(...)` form it dropped silently, and every one shrank
+  // the reachable set, which is the direction that makes `dead` EASIER to
+  // claim. It was least able to prove the very thing it was there to prove.
+  //
+  // Nothing replaces it. TRUTH-01A now makes no unreachability claim at all, so
+  // no resource may sit in `dead`, and the six that did are `pending` under
+  // TRUTH-01B. A dormant-looking capability that cannot be cheaply and robustly
+  // proved inert is PENDING, not excluded. That is the truth model working
+  // rather than a gap in it.
+  //
+  // Reinstating `dead` requires evidence that does not depend on parsing
+  // application source, and a deliberate edit to this test — which is the
+  // conversation this guard exists to force.
+  it("no resource is classified `dead`, because nothing here can prove it", () => {
+    const dead = Object.entries(EXPORT_RESOURCE_REGISTRY)
+      .filter(([, d]) => d.kind === "excluded" && d.category === "dead")
+      .map(([resource]) => resource);
+    expect(
+      dead,
+      "classified dead, but TRUTH-01A holds no unreachability evidence — use pending/TRUTH-01B",
+    ).toEqual([]);
+  });
+
+  it("the INDEPENDENT exclusion grounds are preserved, not bulk-converted", () => {
+    // The withdrawal removes exactly one category. Exclusions that never rested
+    // on application-source reachability — security material, platform-owned
+    // rows, derived projections, deliberate privacy — stand entirely
+    // unaffected, and sweeping them into `pending` would be its own falsehood.
+    const counts: Record<string, number> = {};
+    for (const disposition of Object.values(EXPORT_RESOURCE_REGISTRY)) {
+      if (disposition.kind !== "excluded") continue;
+      counts[disposition.category] = (counts[disposition.category] ?? 0) + 1;
+    }
+    expect(counts.security ?? 0).toBeGreaterThan(0);
+    expect(counts.platform ?? 0).toBeGreaterThan(0);
+    expect(counts.derived ?? 0).toBeGreaterThan(0);
+    expect(counts.deliberate_privacy ?? 0).toBeGreaterThan(0);
+    expect(counts.dead ?? 0).toBe(0);
+  });
+
+  it("the six withdrawn dead claims are pending, ticketed, and field-reviewed", () => {
+    for (const resource of [
+      "payment_consents",
+      "stripe_charge_attempts",
+      "stripe_disputes",
+      "stripe_payment_audit",
+      "stripe_refund_attempts",
+      "stripe_refunds",
+    ]) {
+      const disposition = EXPORT_RESOURCE_REGISTRY[resource];
+      expect(disposition.kind, resource).toBe("pending");
+      expect(disposition.kind === "pending" && disposition.ticket, resource).toBe(
+        "TRUTH-01B",
+      );
+      expect(
+        disposition.kind === "pending" && disposition.fieldReviewRequired,
+        resource + " carries provider/audit content and must not be dumped raw",
+      ).toBe(true);
+      // And the reason must not resurrect the withdrawn claim.
+      expect(
+        disposition.kind === "pending" && disposition.reason,
+        resource + " must not claim unreachability",
+      ).not.toMatch(/unreachable from application code/i);
+    }
   });
 
   it("appointment_payments is pending with field review, not dead", () => {
