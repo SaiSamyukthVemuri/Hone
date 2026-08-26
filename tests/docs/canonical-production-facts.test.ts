@@ -707,9 +707,32 @@ function pinnedRuntimeSha(): string | null {
 }
 
 describe("RULE A — current-state.md pins a real, current production SHA", () => {
+  // WHERE THIS RULE ACTUALLY ENFORCES, stated so nobody mistakes a green CI run
+  // for a checked one. All three A-rules need real history. CI clones with
+  // `fetch-depth: 1`, so in CI they SKIP and this test records that they did.
+  // They enforce where a full clone exists: a developer's checkout, and so
+  // `npm run verify:changed` / `verify:prepush` before every push. That is not
+  // a weakness dressed up as a feature - it is a real gap, and closing it means
+  // raising the checkout depth in the CI workflow, which is deliberately out of
+  // this change's authorized file surface and belongs to its own PR.
+  it("A0: records whether the A-rules could run at all in this environment", () => {
+    const mode = !GIT_AVAILABLE ? "no-git" : SHALLOW ? "shallow (A-rules SKIPPED)" : "full history (A-rules ENFORCED)";
+    expect(
+      ["no-git", "shallow (A-rules SKIPPED)", "full history (A-rules ENFORCED)"],
+      `git environment: ${mode}`,
+    ).toContain(mode);
+  });
+
   it("A1: every SHA written in current-state.md resolves to a real commit", () => {
-    if (!GIT_AVAILABLE) {
-      expect(GIT_AVAILABLE, "git unavailable — A1 could not run").toBe(false);
+    // GIT_USABLE, not GIT_AVAILABLE. This rule shipped guarding on the latter
+    // and went red on its first CI run against a document whose three SHAs were
+    // all genuine: `.github/workflows/ci.yml` checks out with `fetch-depth: 1`,
+    // so a shallow clone holds ONE commit and every SHA a document names is
+    // absent — including the production head the checkout is derived from.
+    // "Not in this clone" and "not a commit" are different claims and only the
+    // second is a defect.
+    if (!GIT_USABLE) {
+      expect(GIT_USABLE, "shallow clone or no git — A1 could not run").toBe(false);
       return;
     }
     const unreal = shasIn(CURRENT_STATE).filter((sha) => git("cat-file", "-t", sha) !== "commit");
@@ -1025,6 +1048,17 @@ describe("RULE D+ — open limitations persist, closed ones stay labelled", () =
 //   D+  L27 severity flipped P1 -> P2                              -> RED
 //   D+  L27 deleted outright                                       -> RED
 //   D+  "— **CLOSED**" appended to the L19 heading                 -> RED
+//
+// And one environment case, added after CI proved it the hard way:
+//
+//   A1  same document, unchanged, in a `--depth 1` clone            -> GREEN (skips)
+//   A1  fabricated SHA, in a FULL clone                             -> RED
+//
+// A1 originally guarded on GIT_AVAILABLE and went red on its first CI run
+// against three SHAs that were all genuine. `fetch-depth: 1` leaves one commit
+// in the clone, so every SHA a document names is absent — the production head
+// included. Reproduced locally with `git clone --depth 1` before the fix was
+// trusted, rather than fixed by reasoning about it.
 //
 // The D+ mid-heading case is why this matrix exists. The first revision of
 // MUST_STAY_OPEN stopped its pattern at the limitation id, so the matched text
