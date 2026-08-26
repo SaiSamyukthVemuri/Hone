@@ -3,7 +3,6 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import JSZip from "jszip";
 
-import { EXPORT_SELECTS } from "@/lib/export/export-selects";
 import {
   auditEmissionContract,
   auditEmissionParity,
@@ -63,7 +62,6 @@ let auditInsert: Record<string, unknown> | null = null;
  * from the real `.select()` call rather than read out of the source, so this is
  * observed behaviour and not a text scan of our own file.
  */
-let selectsByTable: Record<string, string[]> = {};
 /** Tables whose read should come back as a PostgREST error for this build. */
 let failingTables = new Set<string>();
 
@@ -74,20 +72,7 @@ function builder(result: StubResult, table: string): unknown {
   return new Proxy(target, {
     get(t, prop) {
       if (prop === "then") return t.then;
-      return (...args: unknown[]) => {
-        if (prop === "select" && typeof args[0] === "string") {
-          // Embedded selects like `service:services(name)` are not plain
-          // columns; keep only the top-level bare column names.
-          const cols = (args[0] as string)
-            .split(",")
-            .map((c) => c.trim())
-            .filter((c) => /^[a-z_][a-z0-9_]*$/.test(c));
-          selectsByTable[table] = [
-            ...new Set([...(selectsByTable[table] ?? []), ...cols]),
-          ];
-        }
-        return builder(result, table);
-      };
+      return () => builder(result, table);
     },
   });
 }
@@ -143,7 +128,6 @@ function csvNames(zip: JSZip): string[] {
 describe("guard 3: the archive and the registry agree, both ways", () => {
   beforeEach(() => {
     auditInsert = null;
-    selectsByTable = {};
     failingTables = new Set();
   });
 
@@ -171,79 +155,50 @@ describe("guard 3: the archive and the registry agree, both ways", () => {
 });
 
 // ===========================================================================
-// THE CHAIN — live column -> accounting -> the query that feeds THIS file -> cell
+// THE CHAIN — live column -> accounting -> the query THAT RAN -> the cell
 // ===========================================================================
 //
-// Codex P1 on 25c066ab: Guard 2 is set arithmetic and never connects
-// `includedColumns` to what the CSV carries. Codex P2 on 535b2e22: the first
-// repair collected observed SELECTs BY TABLE and unioned them, so a second
-// query on the same table could satisfy the contract for the export query —
-// concretely, `practitioners` is read twice and the display-name lookup could
-// cover for an export query that had lost `display_name`.
+// Three passes were needed to get this right, and the two failures are the
+// reason the controls below exist:
 //
-// The authority is now EXPORT_SELECTS, keyed by the resource each query FEEDS.
-// This suite proves three things about it:
+//   union BY TABLE      the practitioners display-name LOOKUP satisfied the
+//                       contract for the practitioners EXPORT query;
+//   a static map        a declaration says what a query SHOULD select, so an
+//                       inline literal at the call site left the map correct,
+//                       the audit green, and the CSV column blank.
 //
-//   1. it satisfies the registry (and the action refuses at run time if not);
-//   2. it is not fiction — each declared string is really sent to that table;
-//   3. the two practitioners queries stay distinguishable.
-describe("the chain: the query that feeds each file selects every included column", () => {
-  const declared = Object.fromEntries(
-    Object.entries(EXPORT_SELECTS).map(([resource, columns]) => [
-      resource,
-      columns.split(",").map((c) => c.trim()).filter(Boolean),
-    ]),
-  );
-
-  it("declares a select for every exported resource, and nothing else", () => {
-    expect(Object.keys(declared).sort()).toEqual(
-      exportedResources().map((e) => e.resource).sort(),
-    );
-  });
-
-  it("every declared included column is selected by the query that feeds its file", () => {
-    const audit = auditSelectedColumns(declared);
-    expect(audit.notSelected, "declared INCLUDED but never asked for").toEqual([]);
-    expect(audit.notObserved).toEqual([]);
-  });
-
-  it("the declared select is really the one sent to that table, not a fiction", async () => {
-    await buildArchive();
-    for (const [resource, columns] of Object.entries(declared)) {
-      const observed = new Set(selectsByTable[resource] ?? []);
-      expect(observed.size, `no query was observed against ${resource}`).toBeGreaterThan(0);
-      for (const column of columns) {
-        expect(
-          observed.has(column),
-          `${resource}: EXPORT_SELECTS declares "${column}" but no query against that table asked for it`,
-        ).toBe(true);
-      }
-    }
-  });
-
-  it("the practitioners LOOKUP query is not in the map and cannot cover for the export query", async () => {
-    await buildArchive();
-    // Both queries hit the same table, so the observed union holds the union of
-    // their columns. The map holds ONLY the export query's, which is the whole
-    // point of the repair.
-    expect(declared.practitioners).toEqual([
-      "id",
-      "display_name",
-      "email",
-      "role",
-      "active",
-      "created_at",
-    ]);
-    // The lookup selects two columns; the union therefore cannot be used to
-    // distinguish them, and the map is what the audit reads.
-    expect(selectsByTable.practitioners).toEqual(
-      expect.arrayContaining(["id", "display_name"]),
-    );
-  });
-
-  it("and the emission contract holds: included means emitted", () => {
+// The authority is now the string handed to `.select()` at execution, recorded
+// under the resource whose CSV those rows become. There is no table-level union
+// anywhere in this file any more, and no second declaration to drift: the
+// literal the recorder receives IS the literal the query runs.
+//
+// Every control here is BEHAVIOURAL — it mutates the real export and asserts
+// the real refusal — because that is the only thing that can distinguish "the
+// query changed" from "the description of the query changed".
+describe("the chain: the query that ran must ask for what its file carries", () => {
+  it("the emission contract holds: included means emitted", () => {
     const audit = auditEmissionContract();
     expect(audit.problems, JSON.stringify(audit.problems, null, 2)).toEqual([]);
+  });
+
+  it("CONTROL E — the real export, unmutated, succeeds", async () => {
+    const zip = await buildArchive();
+    expect(csvNames(zip)).toEqual([...expectedCsvFiles()].sort());
+  });
+
+  it("no table-level union of SELECTs survives, here or in the exporter", () => {
+    // Needle assembled at run time so this assertion is not itself a match.
+    const needle = ["selects", "By", "Table"].join("");
+    const self = readFileSync(__filename, "utf8");
+    const action = readFileSync(
+      path.resolve(__dirname, "../../../../app/(app)/settings/data/actions.ts"),
+      "utf8",
+    );
+    expect(self.includes(needle)).toBe(false);
+    expect(action.includes(needle)).toBe(false);
+    // And the exporter audits the RECORDED execution, not a declaration.
+    expect(action).toMatch(/auditSelectedColumns\(executedSelects\)/);
+    expect(action).not.toMatch(/EXPORT_SELECTS/);
   });
 });
 
@@ -510,7 +465,6 @@ describe("the registry cannot read the database", () => {
 describe("a failed session_block_areas read fails closed", () => {
   beforeEach(() => {
     auditInsert = null;
-    selectsByTable = {};
     failingTables = new Set();
   });
 

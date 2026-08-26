@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { exportSpec } from "@/lib/export/resource-registry";
-import { EXPORT_SELECTS } from "@/lib/export/export-selects";
 
 // CLIENT BUDGET CONTEXT — Chloe pilot feedback.
 //
@@ -453,8 +452,13 @@ describe("treatment plan: no longer a budget authority", () => {
     // Still selected into, and still a column of, treatment_plans.csv.
     // TRUTH-01A/F4: the export SELECT moved to EXPORT_SELECTS, keyed by the
     // resource the query feeds. Pinned against that map rather than the file.
-    expect(EXPORT_SELECTS.treatment_plans).toContain("treatment_goal_minutes_override");
-    expect(EXPORT_SELECTS.treatment_plans).toContain("budget_notes");
+    // TRUTH-01A/F7: there is no static select map any more — the audited
+    // SELECT is the one the query executes. The durable pin is the registry
+    // declaration, which the exporter refuses to contradict at run time.
+    expect(exportSpec("treatment_plans").includedColumns).toContain(
+      "treatment_goal_minutes_override",
+    );
+    expect(exportSpec("treatment_plans").includedColumns).toContain("budget_notes");
     // TRUTH-01A: the emitted header row moved to the export resource registry.
     // The invariant is the same — treatment_plans.csv still carries the legacy
     // budget column — and is now asserted against the declaration the exporter

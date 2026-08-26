@@ -12,10 +12,6 @@ import {
   type ClinicalNoteExportSource,
 } from "@/lib/export/clinical-notes";
 import { fetchAllRows, EXPORT_PAGE_SIZE } from "@/lib/export/paginate";
-// F4. The SELECT that produces each exported file's rows, keyed by the resource
-// it feeds. Lives in its own module because a "use server" file may export only
-// async functions - and because the tests read the same map the export uses.
-import { EXPORT_SELECTS } from "@/lib/export/export-selects";
 // TRUTH-01A. The canonical export resource registry: one declaration per
 // studio-owned resource, and the ONLY place a filename, a header row, a
 // source-count expectation or a file description lives. Everything this module
@@ -79,6 +75,41 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
 
   const supabase = await createClient();
 
+  // ---------------------------------------------------------------------
+  // F7. THE SELECT THAT IS EXECUTED IS THE SELECT THAT IS AUDITED.
+  //
+  // Two earlier attempts were not enough, and the reason is worth keeping.
+  // First the observed selects were unioned BY TABLE, so the practitioners
+  // display-name LOOKUP could satisfy the contract for the practitioners
+  // EXPORT query. Then a static map declared them per resource — but a
+  // declaration only says what a query SHOULD select, so swapping a call site
+  // to an inline literal left the map correct, the audit green, and the CSV
+  // column blank. Both were checking something adjacent to the truth.
+  //
+  // This records the STRING THAT IS HANDED TO `.select()`, at the moment it is
+  // handed over, under the resource whose CSV those rows become. There is no
+  // second copy to drift from, because there is no second copy: the literal
+  // passed here IS the literal the query runs.
+  //
+  // Two consequences, and they are the whole point:
+  //   * an inline literal that bypasses this wrapper records NOTHING for that
+  //     resource, and the audit refuses on the absence;
+  //   * a query that does not feed an exported CSV — the practitioners lookup
+  //     below, the session_blocks and services reads — never calls this, so it
+  //     can never stand in for an export query.
+  //
+  // `Q extends string` matters: supabase-js infers row types from the select
+  // STRING, so the wrapper has to return the literal type, not `string`.
+  // ---------------------------------------------------------------------
+  const executedSelects: Record<string, string[]> = {};
+  const exportSelect = <Q extends string>(resource: string, columns: Q): Q => {
+    executedSelects[resource] = columns
+      .split(",")
+      .map((c) => c.trim())
+      .filter((c) => c.length > 0);
+    return columns;
+  };
+
   // electrolysis_entries and laser_entries don't carry studio_id directly;
   // RLS scopes them through the parent session, so a plain select is safe.
   const [
@@ -112,7 +143,12 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     fetchAllRows((from, to) =>
       supabase
         .from("clients")
-        .select(EXPORT_SELECTS.clients)
+        .select(
+          exportSelect(
+            "clients",
+            "id, name, pronouns, date_of_birth, fitzpatrick_type, allergies, skin_notes, emergency_contact_name, emergency_contact_phone, email, phone, created_at",
+          ),
+        )
         .eq("studio_id", studio.id)
         .order("name", { ascending: true })
         .order("id", { ascending: true })
@@ -121,7 +157,12 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     fetchAllRows((from, to) =>
       supabase
         .from("sessions")
-        .select(EXPORT_SELECTS.sessions)
+        .select(
+          exportSelect(
+            "sessions",
+            "id, client_id, practitioner_id, performed_by_practitioner_id, modality, started_at, ended_at, price_paid_cents, session_notes, created_at",
+          ),
+        )
         .eq("studio_id", studio.id)
         .is("deleted_at", null)
         .order("started_at", { ascending: false })
@@ -131,7 +172,12 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     fetchAllRows((from, to) =>
       supabase
         .from("electrolysis_entries")
-        .select(EXPORT_SELECTS.electrolysis_entries)
+        .select(
+          exportSelect(
+            "electrolysis_entries",
+            "id, session_id, area, areas, probe_size, probe_lot_id, mode, intensity, duration_seconds, pulse_count, pulse_delay_seconds, comments, observation_chips, created_at, block_id, energy_level, apilus_modality, machine_frequency, minutes_performed, probe_type, hairs_treated, galvanic_ma, galvanic_duration_seconds, galvanic_intensity_percent, thermolysis_intensity_percent, thermolysis_duration_seconds, units_of_lye",
+          ),
+        )
         .order("created_at", { ascending: false })
         .order("id", { ascending: true })
         .range(from, to),
@@ -139,7 +185,12 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     fetchAllRows((from, to) =>
       supabase
         .from("laser_entries")
-        .select(EXPORT_SELECTS.laser_entries)
+        .select(
+          exportSelect(
+            "laser_entries",
+            "id, session_id, zone, session_number, equipment_params, observation_notes, created_at",
+          ),
+        )
         .order("created_at", { ascending: false })
         .order("id", { ascending: true })
         .range(from, to),
@@ -147,7 +198,12 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     fetchAllRows((from, to) =>
       supabase
         .from("practitioners")
-        .select(EXPORT_SELECTS.practitioners)
+        .select(
+          exportSelect(
+            "practitioners",
+            "id, display_name, email, role, active, created_at",
+          ),
+        )
         .eq("studio_id", studio.id)
         .eq("active", true)
         .order("display_name", { ascending: true })
@@ -157,7 +213,12 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     fetchAllRows((from, to) =>
       supabase
         .from("client_pricing")
-        .select(EXPORT_SELECTS.client_pricing)
+        .select(
+          exportSelect(
+            "client_pricing",
+            "id, client_id, service_name, price_cents, notes, effective_from",
+          ),
+        )
         .eq("studio_id", studio.id)
         .order("effective_from", { ascending: false })
         .order("id", { ascending: true })
@@ -185,7 +246,12 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     fetchAllRows((from, to) =>
       supabase
         .from("appointments")
-        .select(EXPORT_SELECTS.appointments)
+        .select(
+          exportSelect(
+            "appointments",
+            "id, client_id, practitioner_id, service_id, starts_at, ends_at, duration_minutes, status, notes, cancellation_reason, cancelled_at, cancelled_by, created_at, updated_at",
+          ),
+        )
         .eq("studio_id", studio.id)
         .order("starts_at", { ascending: false })
         .order("id", { ascending: true })
@@ -198,7 +264,12 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     fetchAllRows((from, to) =>
       supabase
         .from("treatment_plans")
-        .select(EXPORT_SELECTS.treatment_plans)
+        .select(
+          exportSelect(
+            "treatment_plans",
+            "id, client_id, name, primary_area, treatment_areas, estimated_timeline_months_min, estimated_timeline_months_max, status, suggested_visit_count, treatment_goal_minutes_override, budget_notes, practitioner_notes, created_by_practitioner_id, closed_by_practitioner_id, created_at, closed_at",
+          ),
+        )
         .eq("studio_id", studio.id)
         .order("created_at", { ascending: false })
         .order("id", { ascending: true })
@@ -209,7 +280,12 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     fetchAllRows((from, to) =>
       supabase
         .from("treatment_plan_stages")
-        .select(EXPORT_SELECTS.treatment_plan_stages)
+        .select(
+          exportSelect(
+            "treatment_plan_stages",
+            "id, plan_id, sort_order, name, how_often_unit, visit_length_minutes, stage_length_value, stage_length_unit, notes, created_at, updated_at",
+          ),
+        )
         .eq("studio_id", studio.id)
         .order("plan_id", { ascending: true })
         .order("sort_order", { ascending: true })
@@ -247,7 +323,12 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
         // HISTORICAL and is deliberately NOT filtered on it — a discarded item
         // stays in the export, now carrying the lifecycle fact that explains
         // why an expired row needs no action.
-        .select(EXPORT_SELECTS.record_keeping_sterile_items)
+        .select(
+          exportSelect(
+            "record_keeping_sterile_items",
+            "id, date_purchased, item_description, manufacturer_name, amount_purchased, lot_number, expiry_date, date_discarded, notes, created_by_practitioner_id, created_at, updated_at",
+          ),
+        )
         .eq("studio_id", studio.id)
         .order("date_purchased", { ascending: false })
         .order("id", { ascending: true })
@@ -256,7 +337,12 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     fetchAllRows((from, to) =>
       supabase
         .from("record_keeping_disinfectants")
-        .select(EXPORT_SELECTS.record_keeping_disinfectants)
+        .select(
+          exportSelect(
+            "record_keeping_disinfectants",
+            "id, date_prepared, disinfectant_name, concentration, date_discarded, discard_due_date, operator_practitioner_id, operator_name, notes, created_by_practitioner_id, created_at, updated_at",
+          ),
+        )
         .eq("studio_id", studio.id)
         .order("date_prepared", { ascending: false })
         .order("id", { ascending: true })
@@ -268,7 +354,12 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     fetchAllRows((from, to) =>
       supabase
         .from("record_keeping_exposure_incidents")
-        .select(EXPORT_SELECTS.record_keeping_exposure_incidents)
+        .select(
+          exportSelect(
+            "record_keeping_exposure_incidents",
+            "id, incident_date, exposed_person_full_name, exposed_person_address, exposed_person_phone, exposure_details, action_taken, staff_involved_name, notes, created_by_practitioner_id, created_at, updated_at",
+          ),
+        )
         .eq("studio_id", studio.id)
         .order("incident_date", { ascending: false })
         .order("id", { ascending: true })
@@ -281,7 +372,12 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     fetchAllRows((from, to) =>
       supabase
         .from("record_keeping_audit_events")
-        .select(EXPORT_SELECTS.record_keeping_audit_events)
+        .select(
+          exportSelect(
+            "record_keeping_audit_events",
+            "id, record_type, record_id, action, changed_fields, actor_practitioner_id, actor_display_name, created_at",
+          ),
+        )
         .eq("studio_id", studio.id)
         .order("created_at", { ascending: false })
         .order("id", { ascending: true })
@@ -306,7 +402,12 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     fetchAllRows((from, to) =>
       supabase
         .from("client_clinical_notes")
-        .select(EXPORT_SELECTS.client_clinical_notes)
+        .select(
+          exportSelect(
+            "client_clinical_notes",
+            "id, client_id, practitioner_id, kind, body, areas, occurred_at, supersedes_note_id, created_at",
+          ),
+        )
         .eq("studio_id", studio.id)
         .order("occurred_at", { ascending: false })
         .order("id", { ascending: true })
@@ -318,7 +419,12 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     fetchAllRows((from, to) =>
       supabase
         .from("client_budget_context")
-        .select(EXPORT_SELECTS.client_budget_context)
+        .select(
+          exportSelect(
+            "client_budget_context",
+            "client_id, budget_level, budget_notes, updated_by_practitioner_id, created_at, updated_at",
+          ),
+        )
         .eq("studio_id", studio.id)
         // client_id is the PRIMARY KEY (one row per client), so ordering on
         // it alone is already unique and deterministic — no tiebreak needed.
@@ -354,6 +460,25 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
         error: `Failed to load data for export: ${r.error.message}`,
       };
     }
+  }
+
+  // F7. THE EXECUTED QUERY MUST ASK FOR EVERY COLUMN THE REGISTRY SAYS ITS FILE
+  // CARRIES.
+  //
+  // `executedSelects` holds the string each export query actually handed to
+  // `.select()`, recorded at the moment it was handed over and keyed by the
+  // resource whose CSV those rows become. Nothing else contributes: an
+  // auxiliary lookup on the same table never calls the recorder, and a call
+  // site that bypasses the recorder registers nothing at all and fails on the
+  // absence rather than on a mismatch.
+  //
+  // Run here, after every read has executed and before a single row is
+  // serialized. A column declared included but never asked for produces a blank
+  // cell, and a blank cell is indistinguishable from a studio that recorded
+  // nothing there.
+  const selected = auditSelectedColumns(executedSelects);
+  if (!selected.ok) {
+    return { ok: false, error: selectedColumnError(selected) };
   }
 
   // client_budget_context (0183) gets exactly ONE tolerated failure: the
@@ -439,29 +564,6 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
   // the file the manifest counts, the file the audit row names and the file the
   // Data settings page advertises are all the same declaration. There is no
   // second list to fall behind.
-  // F4. THE QUERY THAT PRODUCES EACH FILE MUST ASK FOR EVERY COLUMN THE
-  // REGISTRY SAYS THAT FILE CARRIES.
-  //
-  // Checked against EXPORT_SELECTS, which is keyed by the resource each query
-  // FEEDS — not against every select observed on the table. `practitioners` is
-  // read twice and only the export read is in that map, so the display-name
-  // lookup can no longer satisfy the contract on the export query's behalf.
-  //
-  // Enforced here, at run time, and not only in a test: a column declared
-  // included but never selected produces a blank cell, and a blank cell is
-  // indistinguishable from a studio that recorded nothing.
-  const selected = auditSelectedColumns(
-    Object.fromEntries(
-      Object.entries(EXPORT_SELECTS).map(([resource, columns]) => [
-        resource,
-        columns.split(",").map((c) => c.trim()).filter(Boolean),
-      ]),
-    ),
-  );
-  if (!selected.ok) {
-    return { ok: false, error: selectedColumnError(selected) };
-  }
-
   // TWO RESOURCES MAY NEVER DECLARE THE SAME FILENAME, and it is checked HERE -
   // before the first write, before any Set collapses them, and before JSZip
   // keeps one entry per path. A collision would otherwise be invisible: the
@@ -478,6 +580,15 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     resource: string,
     rows: ReadonlyArray<Record<string, unknown>>,
   ): void => {
+    // The second half of the F7 chain: a file may only be written for a
+    // resource whose query was recorded and audited above. Unreachable while
+    // the audit runs first, and kept so the two cannot be separated by a later
+    // edit that moves one of them.
+    if (!executedSelects[resource]) {
+      throw new Error(
+        `export: ${resource} has no recorded SELECT, so its rows cannot be attributed to a query`,
+      );
+    }
     const spec = exportSpec(resource);
     manifestCounts[spec.file] = rows.length;
     zip.file(spec.file, rowsToCsv(spec.csvHeaders, rows));

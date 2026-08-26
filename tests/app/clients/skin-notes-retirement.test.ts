@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { EXPORT_SELECTS } from "@/lib/export/export-selects";
+import { exportSpec } from "@/lib/export/resource-registry";
 import {
   describeSites,
   supabaseWriteSites,
@@ -217,7 +217,10 @@ describe("legacy data is preserved and clearly labelled", () => {
     // value from what a studio can export.
     // TRUTH-01A/F4: the export SELECT lives in EXPORT_SELECTS now. The
     // retention promise is unchanged and is pinned where the query is.
-    expect(EXPORT_SELECTS.clients).toContain("skin_notes");
+    // TRUTH-01A/F7: there is no static select map any more — the audited
+    // SELECT is the one the query executes. The durable pin is the registry
+    // declaration, which the exporter refuses to contradict at run time.
+    expect(exportSpec("clients").includedColumns).toContain("skin_notes");
   });
 
   it("nothing copies legacy text into the append-only clinical record", () => {

@@ -88,7 +88,6 @@ describe("audit table + immutability (migration 0086)", () => {
     // that for every file in this list, this one included.
     expect(refs).toEqual([
       "app/(app)/settings/data/actions.ts",
-      "lib/export/export-selects.ts",
       "lib/export/resource-registry.ts",
       "lib/record-keeping/queries.ts",
     ]);

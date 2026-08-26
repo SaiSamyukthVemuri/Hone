@@ -5,7 +5,6 @@ import {
   CLINICAL_NOTES_CSV_FILENAME,
   CLINICAL_NOTES_CSV_HEADERS,
 } from "@/lib/export/clinical-notes";
-import { EXPORT_SELECTS } from "@/lib/export/export-selects";
 import {
   expectedCsvFiles,
   exportSpec,
@@ -70,7 +69,7 @@ describe("export wiring: client_clinical_notes reaches the ZIP", () => {
     // TRUTH-01A/F4: the column list moved into EXPORT_SELECTS, keyed by the
     // resource the query feeds, so the pin sits on the declaration the export
     // actually issues rather than on a literal in the action body.
-    const q = EXPORT_SELECTS.client_clinical_notes;
+    const q = exportSpec("client_clinical_notes").includedColumns.join(", ");
     for (const col of [
       "id",
       "client_id",

@@ -13,6 +13,11 @@ import {
   STORAGE_RESOURCE_PREFIX,
 } from "@/lib/export/resource-registry";
 import { adminQuery, closePool } from "@/tests/db/helpers/harness";
+import {
+  computeReachability,
+  deadClaimViolations,
+  type ReachabilityGraph,
+} from "@/tests/db/helpers/reachability";
 
 // ===========================================================================
 // GUARDS 1 AND 2 — proved against the REAL migrated schema
@@ -392,124 +397,217 @@ describe("what is excluded, and on what grounds", () => {
   // migration text: for every `dead` resource, no application module may
   // reference the table, and no function that WRITES the table may be invoked
   // from application code.
-  /**
-   * A resource may be called DEAD only when BOTH hold:
-   *   1. no application module reaches the table directly; AND
-   *   2. no application-reachable database function REFERENCES it — read or
-   *      write.
-   *
-   * Codex P2 on 535b2e22: the first version keyed on INSERT/UPDATE/DELETE and
-   * therefore missed readers. `appointment_payments` is READ by
-   * reschedule_appointment_v2 and appointment_has_blocking_dependents, both
-   * invoked from live user paths, and its contents decide whether a reschedule
-   * or an outcome revert is allowed. A table can be entirely live as the thing
-   * a live decision is made FROM, and the guard now says so: ANY reference from
-   * an application-reachable function is disqualifying.
-   *
-   * Both inputs are injectable so the controls below can drive the same rule
-   * with fixtures instead of mutating the shared local database.
-   */
-  function deadClaimOffenders(
-    resources: readonly string[],
-    functions: ReadonlyArray<{ proname: string; prosrc: string }>,
-    refs: (symbol: string) => readonly string[] = referencedBy,
-  ): string[] {
-    const offenders: string[] = [];
-    for (const resource of resources) {
-      // Any mention at all, qualified or not, in any verb position. A dead
-      // claim is a strong claim; the evidence for it is deliberately broad.
-      const mentions = new RegExp(String.raw`\b${resource}\b`, "i");
-      const touching = [
-        ...new Set(functions.filter((f) => mentions.test(f.prosrc)).map((f) => f.proname)),
-      ].sort();
-      const direct = refs(resource);
-      if (direct.length > 0) {
-        offenders.push(`${resource} is referenced directly by ${direct.join(", ")}`);
-      }
-      for (const fn of touching) {
-        const hits = refs(fn);
-        if (hits.length > 0) {
-          offenders.push(`${resource} is reached through ${fn}(), invoked by ${hits.join(", ")}`);
-        }
-      }
-    }
-    return offenders;
-  }
-
-  async function publicFunctions(): Promise<Array<{ proname: string; prosrc: string }>> {
+  // -------------------------------------------------------------------------
+  // DEAD IS A TRANSITIVE CLAIM, AND IT IS NOW CHECKED TRANSITIVELY
+  // -------------------------------------------------------------------------
+  //
+  // Two narrower versions were caught in review. Writers-only missed
+  // appointment_payments, which is READ by two application-called RPCs.
+  // Direct-only missed indirection entirely: an application RPC that reaches a
+  // resource through a helper, or an application write whose TRIGGER function
+  // reaches it, because the function that actually touches the table is never
+  // named in application source.
+  //
+  // The graph is built from the LIVE catalogue — pg_proc bodies, pg_trigger,
+  // pg_class — never from migration text, and the closure lives in
+  // tests/db/helpers/reachability.ts so the same algorithm can be driven by
+  // fixtures for the shapes this schema happens not to contain.
+  async function buildLiveGraph(): Promise<ReachabilityGraph> {
     const procs = await adminQuery(
       `select p.proname, p.prosrc
-         from pg_proc p
-         join pg_namespace n on n.oid = p.pronamespace
+         from pg_proc p join pg_namespace n on n.oid = p.pronamespace
         where n.nspname = 'public'`,
     );
-    return procs.rows as Array<{ proname: string; prosrc: string }>;
+    const functions = procs.rows as Array<{ proname: string; prosrc: string }>;
+    const fnNames = [...new Set(functions.map((f) => f.proname))];
+
+    const tablesRes = await adminQuery(
+      `select table_name from information_schema.tables
+        where table_schema = 'public' and table_type = 'BASE TABLE'`,
+    );
+    const tableNames = (tablesRes.rows as Array<{ table_name: string }>).map(
+      (r) => r.table_name,
+    );
+
+    const trg = await adminQuery(
+      `select c.relname as table_name, p.proname as fn
+         from pg_trigger t
+         join pg_class c on c.oid = t.tgrelid
+         join pg_proc p on p.oid = t.tgfoid
+         join pg_namespace n on n.oid = c.relnamespace
+        where n.nspname = 'public' and not t.tgisinternal`,
+    );
+
+    const bodyByFn = new Map<string, string>();
+    for (const f of functions) {
+      bodyByFn.set(f.proname, (bodyByFn.get(f.proname) ?? "") + " " + f.prosrc);
+    }
+
+    const functionCalls: Record<string, string[]> = {};
+    const functionTables: Record<string, string[]> = {};
+    for (const [name, body] of bodyByFn) {
+      functionCalls[name] = fnNames.filter(
+        (other) => other !== name && new RegExp(String.raw`\b${other}\b`).test(body),
+      );
+      functionTables[name] = tableNames.filter((t) =>
+        new RegExp(String.raw`\b${t}\b`).test(body),
+      );
+    }
+
+    const tableTriggers: Record<string, string[]> = {};
+    for (const row of trg.rows as Array<{ table_name: string; fn: string }>) {
+      (tableTriggers[row.table_name] ??= []).push(row.fn);
+    }
+
+    // Application entrypoints, from source: an RPC name used as a string
+    // literal, and a table opened with .from("...").
+    const appFunctions = fnNames.filter((n) => referencedBy(n).length > 0);
+    const appTables = [
+      ...new Set(
+        appSources().flatMap(({ code }) =>
+          [...code.matchAll(/\.from\("([a-z_]+)"\)/g)].map((m) => m[1]),
+        ),
+      ),
+    ].filter((t) => tableNames.includes(t));
+
+    return { functionCalls, functionTables, tableTriggers, appFunctions, appTables };
   }
 
-  it("no resource classified dead is reachable from application code", async () => {
+  it("the live graph really has application entrypoints (anti-vacuity)", async () => {
+    const graph = await buildLiveGraph();
+    expect(graph.appFunctions.length).toBeGreaterThan(50);
+    expect(graph.appTables.length).toBeGreaterThan(20);
+    const reach = computeReachability(graph);
+    // If the closure reached almost nothing, every dead claim below would pass
+    // for the wrong reason.
+    expect(reach.functions.size).toBeGreaterThan(graph.appFunctions.length);
+    expect(reach.tables.size).toBeGreaterThan(graph.appTables.length);
+  });
+
+  it("no resource classified dead is reachable from the application, at any depth", async () => {
     const dead = Object.entries(EXPORT_RESOURCE_REGISTRY)
       .filter(([, d]) => d.kind === "excluded" && d.category === "dead")
       .map(([resource]) => resource);
     expect(dead.length).toBeGreaterThan(0);
+    const reach = computeReachability(await buildLiveGraph());
     expect(
-      deadClaimOffenders(dead, await publicFunctions()),
-      "classified dead, but application code reaches it — reclassify as pending",
+      deadClaimViolations(dead, reach),
+      "classified dead, but an application path reaches it — reclassify as pending",
     ).toEqual([]);
   });
 
-  // CONTROL 1 — a READ-ONLY RPC the application calls. This is the exact shape
-  // the writer-only rule missed, run against the real catalogue.
-  it("RED when a read-only RPC the app calls references a dead resource", async () => {
-    const offenders = deadClaimOffenders(
-      ["appointment_payments"],
-      await publicFunctions(),
+  it("the closure would still catch the direct reader case that started this", async () => {
+    // appointment_payments is no longer classified dead, so the real sweep
+    // cannot exercise it. Ask the closure about it directly instead.
+    const reach = computeReachability(await buildLiveGraph());
+    expect(reach.tables.has("appointment_payments")).toBe(true);
+    expect(reach.pathTo.get("appointment_payments")).toMatch(
+      /reschedule_appointment_v2|appointment_has_blocking_dependents/,
     );
-    expect(offenders.length).toBeGreaterThan(0);
-    const joined = offenders.join(" ");
-    expect(joined).toMatch(/reschedule_appointment_v2/);
-    expect(joined).toMatch(/appointment_has_blocking_dependents/);
-    // And neither of those functions WRITES the table, which is why the old
-    // rule passed: this control is meaningless unless that stays true.
-    const writers = (await publicFunctions()).filter(
-      (f) =>
-        /reschedule_appointment_v2|appointment_has_blocking_dependents/.test(f.proname) &&
-        /(insert\s+into|update|delete\s+from)\s+public\.appointment_payments\b/i.test(f.prosrc),
-    );
-    expect(writers).toEqual([]);
   });
 
-  // CONTROL 2 — the application opens the table itself.
-  it("RED when application code references a dead resource directly", () => {
-    const offenders = deadClaimOffenders(
-      ["stripe_refunds"],
-      [],
-      (symbol) => (symbol === "stripe_refunds" ? ["lib/fixture/pretend-reader.ts"] : []),
+  // ---------------------------------------------------------------------
+  // CONTROLS A-I. Fixture graphs, so every shape is exercised whether or not
+  // the installed schema happens to contain one.
+  // ---------------------------------------------------------------------
+  const empty: ReachabilityGraph = {
+    functionCalls: {},
+    functionTables: {},
+    tableTriggers: {},
+    appFunctions: [],
+    appTables: [],
+  };
+  const violations = (g: Partial<ReachabilityGraph>) =>
+    deadClaimViolations(["dead_resource"], computeReachability({ ...empty, ...g }));
+
+  it("CONTROL A — app -> RPC -> helper -> resource is RED", () => {
+    expect(
+      violations({
+        appFunctions: ["rpc_a"],
+        functionCalls: { rpc_a: ["helper_b"] },
+        functionTables: { helper_b: ["dead_resource"] },
+      }),
+    ).toEqual(["dead_resource is reachable: app -> rpc_a -> helper_b -> dead_resource"]);
+  });
+
+  it("CONTROL B — app -> RPC -> helper -> helper -> resource is RED", () => {
+    const v = violations({
+      appFunctions: ["rpc_a"],
+      functionCalls: { rpc_a: ["helper_b"], helper_b: ["helper_c"] },
+      functionTables: { helper_c: ["dead_resource"] },
+    });
+    expect(v.length).toBe(1);
+    expect(v[0]).toContain("rpc_a -> helper_b -> helper_c -> dead_resource");
+  });
+
+  it("CONTROL C — app write -> trigger -> trigger function -> resource is RED", () => {
+    const v = violations({
+      appTables: ["appointments"],
+      tableTriggers: { appointments: ["trg_fn"] },
+      functionTables: { trg_fn: ["dead_resource"] },
+    });
+    expect(v.length).toBe(1);
+    expect(v[0]).toContain("appointments -> trg_fn -> dead_resource");
+  });
+
+  it("CONTROL D — app -> RPC -> helper -> written table -> trigger fn -> resource is RED", () => {
+    const v = violations({
+      appFunctions: ["rpc_a"],
+      functionCalls: { rpc_a: ["helper_b"], trg_fn: ["deep_fn"] },
+      functionTables: { helper_b: ["sessions"], deep_fn: ["dead_resource"] },
+      tableTriggers: { sessions: ["trg_fn"] },
+    });
+    expect(v.length).toBe(1);
+    expect(v[0]).toContain(
+      "rpc_a -> helper_b -> sessions -> trg_fn -> deep_fn -> dead_resource",
     );
-    expect(offenders).toEqual([
-      "stripe_refunds is referenced directly by lib/fixture/pretend-reader.ts",
+  });
+
+  it("CONTROL E — the application opens the resource directly is RED", () => {
+    expect(violations({ appTables: ["dead_resource"] })).toEqual([
+      "dead_resource is reachable: app -> dead_resource",
     ]);
   });
 
-  // CONTROL 3 — a live WRITER dependency, the case the original rule did catch.
-  it("RED when a live writer dependency exists", () => {
-    const offenders = deadClaimOffenders(
-      ["stripe_refunds"],
-      [{ proname: "fixture_writer", prosrc: "insert into public.stripe_refunds values (1)" }],
-      (symbol) => (symbol === "fixture_writer" ? ["lib/fixture/writer-caller.ts"] : []),
-    );
-    expect(offenders).toEqual([
-      "stripe_refunds is reached through fixture_writer(), invoked by lib/fixture/writer-caller.ts",
-    ]);
+  it("CONTROL F — app -> live writer function -> resource is RED", () => {
+    expect(
+      violations({
+        appFunctions: ["writer_fn"],
+        functionTables: { writer_fn: ["dead_resource"] },
+      }),
+    ).toEqual(["dead_resource is reachable: app -> writer_fn -> dead_resource"]);
   });
 
-  // CONTROL 4 — a function that touches it but which nothing in the app calls.
-  it("GREEN when the only functions touching it are unreachable from the app", () => {
-    const offenders = deadClaimOffenders(
-      ["stripe_refunds"],
-      [{ proname: "orphan_fn", prosrc: "select * from public.stripe_refunds" }],
-      () => [],
-    );
-    expect(offenders).toEqual([]);
+  it("CONTROL G — a helper chain with NO application entrypoint is GREEN", () => {
+    expect(
+      violations({
+        functionCalls: { orphan_a: ["orphan_b"] },
+        functionTables: { orphan_b: ["dead_resource"] },
+      }),
+    ).toEqual([]);
+  });
+
+  it("CONTROL H — a cycle with no application entrypoint is GREEN and terminates", () => {
+    const started = Date.now();
+    expect(
+      violations({
+        functionCalls: { cyc_a: ["cyc_b"], cyc_b: ["cyc_c"], cyc_c: ["cyc_a"] },
+        functionTables: { cyc_c: ["dead_resource"] },
+      }),
+    ).toEqual([]);
+    expect(Date.now() - started).toBeLessThan(2000);
+  });
+
+  it("CONTROL I — a cycle reachable from the app that touches the resource is RED and terminates", () => {
+    const started = Date.now();
+    const v = violations({
+      appFunctions: ["cyc_a"],
+      functionCalls: { cyc_a: ["cyc_b"], cyc_b: ["cyc_c"], cyc_c: ["cyc_a", "cyc_b"] },
+      functionTables: { cyc_c: ["dead_resource"] },
+    });
+    expect(v.length).toBe(1);
+    expect(v[0]).toContain("dead_resource");
+    expect(Date.now() - started).toBeLessThan(2000);
   });
 
   it("appointment_payments is pending with field review, not dead", () => {
