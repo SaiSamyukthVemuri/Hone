@@ -92,8 +92,10 @@ describe("export wiring: client_clinical_notes reaches the ZIP", () => {
     // collection before delegating to rowsToCsv. Escaping the wrapper would put
     // a file in the archive that the registry does not declare, which the
     // emission-parity guard refuses in both directions.
+    // The rows now travel inside their query's envelope, so the builder runs
+    // INSIDE mapExportRows and the provenance survives the display-name join.
     expect(CODE).toMatch(
-      /writeCsv\(\s*"client_clinical_notes",\s*buildClinicalNoteExportRows\(/,
+      /writeCsv\(\s*"client_clinical_notes",\s*mapExportRows\(\s*clinicalNotesRes,[\s\S]{0,80}?buildClinicalNoteExportRows\(/,
     );
     // The registry still points at the module that owns the filename and
     // headers, so there is exactly one definition of both.

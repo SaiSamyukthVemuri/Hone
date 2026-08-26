@@ -12,6 +12,13 @@ import {
   type ClinicalNoteExportSource,
 } from "@/lib/export/clinical-notes";
 import { fetchAllRows, EXPORT_PAGE_SIZE } from "@/lib/export/paginate";
+import {
+  fetchExportRows,
+  mapExportRows,
+  rowsForResource,
+  selectedColumnsByResource,
+  type ExportRead,
+} from "@/lib/export/provenance";
 // TRUTH-01A. The canonical export resource registry: one declaration per
 // studio-owned resource, and the ONLY place a filename, a header row, a
 // source-count expectation or a file description lives. Everything this module
@@ -76,39 +83,30 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
   const supabase = await createClient();
 
   // ---------------------------------------------------------------------
-  // F7. THE SELECT THAT IS EXECUTED IS THE SELECT THAT IS AUDITED.
+  // F7. THE SELECT THAT IS EXECUTED IS THE SELECT THAT IS AUDITED — and it is
+  // now read off the REQUEST, not off a wrapper.
   //
-  // Two earlier attempts were not enough, and the reason is worth keeping.
-  // First the observed selects were unioned BY TABLE, so the practitioners
-  // display-name LOOKUP could satisfy the contract for the practitioners
-  // EXPORT query. Then a static map declared them per resource — but a
-  // declaration only says what a query SHOULD select, so swapping a call site
-  // to an inline literal left the map correct, the audit green, and the CSV
-  // column blank. Both were checking something adjacent to the truth.
+  // Three earlier attempts failed, each closer than the last. Unioning observed
+  // selects BY TABLE let the practitioners display-name LOOKUP satisfy the
+  // practitioners EXPORT contract. A static per-resource map fixed the union
+  // but not the substance: a declaration says what a query SHOULD select, so
+  // swapping a call site to an inline literal left the map correct and the CSV
+  // column blank. Recording the literal AT `.select()` was closer still, and
+  // Codex found the remaining gap: postgrest-js keeps `select` in the request
+  // URL and a LATER `.select()` REPLACES it, so the recorder could hold
+  // "id, name, email" while the request asked for "id".
   //
-  // This records the STRING THAT IS HANDED TO `.select()`, at the moment it is
-  // handed over, under the resource whose CSV those rows become. There is no
-  // second copy to drift from, because there is no second copy: the literal
-  // passed here IS the literal the query runs.
+  // `fetchExportRows` reads `select` off the built request instead — the only
+  // copy PostgREST can act on — and returns the rows in an envelope carrying
+  // both that select and the resource whose CSV they become. The audit reads
+  // the envelope's select; `writeCsv` reads its resource. One object, so the
+  // two halves cannot drift the way a declaration and its call site did.
   //
-  // Two consequences, and they are the whole point:
-  //   * an inline literal that bypasses this wrapper records NOTHING for that
-  //     resource, and the audit refuses on the absence;
-  //   * a query that does not feed an exported CSV — the practitioners lookup
-  //     below, the session_blocks and services reads — never calls this, so it
-  //     can never stand in for an export query.
-  //
-  // `Q extends string` matters: supabase-js infers row types from the select
-  // STRING, so the wrapper has to return the literal type, not `string`.
+  // A read that does not feed an exported CSV — the practitioners lookup, the
+  // session_blocks and services reads — uses plain `fetchAllRows`, carries no
+  // envelope, and therefore can neither satisfy an export's select contract nor
+  // be written as an exported resource.
   // ---------------------------------------------------------------------
-  const executedSelects: Record<string, string[]> = {};
-  const exportSelect = <Q extends string>(resource: string, columns: Q): Q => {
-    executedSelects[resource] = columns
-      .split(",")
-      .map((c) => c.trim())
-      .filter((c) => c.length > 0);
-    return columns;
-  };
 
   // electrolysis_entries and laser_entries don't carry studio_id directly;
   // RLS scopes them through the parent session, so a plain select is safe.
@@ -140,28 +138,22 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     // guard below — see the comment there.
     budgetContextRes,
   ] = await Promise.all([
-    fetchAllRows((from, to) =>
+    fetchExportRows("clients", (from, to) =>
       supabase
         .from("clients")
         .select(
-          exportSelect(
-            "clients",
-            "id, name, pronouns, date_of_birth, fitzpatrick_type, allergies, skin_notes, emergency_contact_name, emergency_contact_phone, email, phone, created_at",
-          ),
+          "id, name, pronouns, date_of_birth, fitzpatrick_type, allergies, skin_notes, emergency_contact_name, emergency_contact_phone, email, phone, created_at",
         )
         .eq("studio_id", studio.id)
         .order("name", { ascending: true })
         .order("id", { ascending: true })
         .range(from, to),
     ),
-    fetchAllRows((from, to) =>
+    fetchExportRows("sessions", (from, to) =>
       supabase
         .from("sessions")
         .select(
-          exportSelect(
-            "sessions",
-            "id, client_id, practitioner_id, performed_by_practitioner_id, modality, started_at, ended_at, price_paid_cents, session_notes, created_at",
-          ),
+          "id, client_id, practitioner_id, performed_by_practitioner_id, modality, started_at, ended_at, price_paid_cents, session_notes, created_at",
         )
         .eq("studio_id", studio.id)
         .is("deleted_at", null)
@@ -169,40 +161,31 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
         .order("id", { ascending: true })
         .range(from, to),
     ),
-    fetchAllRows((from, to) =>
+    fetchExportRows("electrolysis_entries", (from, to) =>
       supabase
         .from("electrolysis_entries")
         .select(
-          exportSelect(
-            "electrolysis_entries",
-            "id, session_id, area, areas, probe_size, probe_lot_id, mode, intensity, duration_seconds, pulse_count, pulse_delay_seconds, comments, observation_chips, created_at, block_id, energy_level, apilus_modality, machine_frequency, minutes_performed, probe_type, hairs_treated, galvanic_ma, galvanic_duration_seconds, galvanic_intensity_percent, thermolysis_intensity_percent, thermolysis_duration_seconds, units_of_lye",
-          ),
+          "id, session_id, area, areas, probe_size, probe_lot_id, mode, intensity, duration_seconds, pulse_count, pulse_delay_seconds, comments, observation_chips, created_at, block_id, energy_level, apilus_modality, machine_frequency, minutes_performed, probe_type, hairs_treated, galvanic_ma, galvanic_duration_seconds, galvanic_intensity_percent, thermolysis_intensity_percent, thermolysis_duration_seconds, units_of_lye",
         )
         .order("created_at", { ascending: false })
         .order("id", { ascending: true })
         .range(from, to),
     ),
-    fetchAllRows((from, to) =>
+    fetchExportRows("laser_entries", (from, to) =>
       supabase
         .from("laser_entries")
         .select(
-          exportSelect(
-            "laser_entries",
-            "id, session_id, zone, session_number, equipment_params, observation_notes, created_at",
-          ),
+          "id, session_id, zone, session_number, equipment_params, observation_notes, created_at",
         )
         .order("created_at", { ascending: false })
         .order("id", { ascending: true })
         .range(from, to),
     ),
-    fetchAllRows((from, to) =>
+    fetchExportRows("practitioners", (from, to) =>
       supabase
         .from("practitioners")
         .select(
-          exportSelect(
-            "practitioners",
-            "id, display_name, email, role, active, created_at",
-          ),
+          "id, display_name, email, role, active, created_at",
         )
         .eq("studio_id", studio.id)
         .eq("active", true)
@@ -210,14 +193,11 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
         .order("id", { ascending: true })
         .range(from, to),
     ),
-    fetchAllRows((from, to) =>
+    fetchExportRows("client_pricing", (from, to) =>
       supabase
         .from("client_pricing")
         .select(
-          exportSelect(
-            "client_pricing",
-            "id, client_id, service_name, price_cents, notes, effective_from",
-          ),
+          "id, client_id, service_name, price_cents, notes, effective_from",
         )
         .eq("studio_id", studio.id)
         .order("effective_from", { ascending: false })
@@ -243,14 +223,11 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     // internal scheduling snapshots (buffer_minutes_snapshot,
     // blocked_ends_at) are deliberately NOT selected: backup of human
     // booking data only, never opaque tokens or trigger-managed mechanics.
-    fetchAllRows((from, to) =>
+    fetchExportRows("appointments", (from, to) =>
       supabase
         .from("appointments")
         .select(
-          exportSelect(
-            "appointments",
-            "id, client_id, practitioner_id, service_id, starts_at, ends_at, duration_minutes, status, notes, cancellation_reason, cancelled_at, cancelled_by, created_at, updated_at",
-          ),
+          "id, client_id, practitioner_id, service_id, starts_at, ends_at, duration_minutes, status, notes, cancellation_reason, cancelled_at, cancelled_by, created_at, updated_at",
         )
         .eq("studio_id", studio.id)
         .order("starts_at", { ascending: false })
@@ -261,14 +238,11 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     // practitioner_notes live on this table and ARE plan data; private
     // warnings + personal notes live on the separate client_personal_notes
     // table and are never read here.
-    fetchAllRows((from, to) =>
+    fetchExportRows("treatment_plans", (from, to) =>
       supabase
         .from("treatment_plans")
         .select(
-          exportSelect(
-            "treatment_plans",
-            "id, client_id, name, primary_area, treatment_areas, estimated_timeline_months_min, estimated_timeline_months_max, status, suggested_visit_count, treatment_goal_minutes_override, budget_notes, practitioner_notes, created_by_practitioner_id, closed_by_practitioner_id, created_at, closed_at",
-          ),
+          "id, client_id, name, primary_area, treatment_areas, estimated_timeline_months_min, estimated_timeline_months_max, status, suggested_visit_count, treatment_goal_minutes_override, budget_notes, practitioner_notes, created_by_practitioner_id, closed_by_practitioner_id, created_at, closed_at",
         )
         .eq("studio_id", studio.id)
         .order("created_at", { ascending: false })
@@ -277,14 +251,11 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     ),
     // Treatment plan stages (read-only). studio_id is denormalized on this
     // child table (migration 0034), so a direct studio-scoped read is safe.
-    fetchAllRows((from, to) =>
+    fetchExportRows("treatment_plan_stages", (from, to) =>
       supabase
         .from("treatment_plan_stages")
         .select(
-          exportSelect(
-            "treatment_plan_stages",
-            "id, plan_id, sort_order, name, how_often_unit, visit_length_minutes, stage_length_value, stage_length_unit, notes, created_at, updated_at",
-          ),
+          "id, plan_id, sort_order, name, how_often_unit, visit_length_minutes, stage_length_value, stage_length_unit, notes, created_at, updated_at",
         )
         .eq("studio_id", studio.id)
         .order("plan_id", { ascending: true })
@@ -316,7 +287,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     // audit rows) remain OWNER-ONLY per migration 0088, enforced twice: the
     // action's role==="owner" gate above AND the owner-only RLS SELECT policy.
     // No image binaries / storage paths / payment tables here.
-    fetchAllRows((from, to) =>
+    fetchExportRows("record_keeping_sterile_items", (from, to) =>
       supabase
         .from("record_keeping_sterile_items")
         // 0182: date_discarded is part of the inspection record. The export is
@@ -324,24 +295,18 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
         // stays in the export, now carrying the lifecycle fact that explains
         // why an expired row needs no action.
         .select(
-          exportSelect(
-            "record_keeping_sterile_items",
-            "id, date_purchased, item_description, manufacturer_name, amount_purchased, lot_number, expiry_date, date_discarded, notes, created_by_practitioner_id, created_at, updated_at",
-          ),
+          "id, date_purchased, item_description, manufacturer_name, amount_purchased, lot_number, expiry_date, date_discarded, notes, created_by_practitioner_id, created_at, updated_at",
         )
         .eq("studio_id", studio.id)
         .order("date_purchased", { ascending: false })
         .order("id", { ascending: true })
         .range(from, to),
     ),
-    fetchAllRows((from, to) =>
+    fetchExportRows("record_keeping_disinfectants", (from, to) =>
       supabase
         .from("record_keeping_disinfectants")
         .select(
-          exportSelect(
-            "record_keeping_disinfectants",
-            "id, date_prepared, disinfectant_name, concentration, date_discarded, discard_due_date, operator_practitioner_id, operator_name, notes, created_by_practitioner_id, created_at, updated_at",
-          ),
+          "id, date_prepared, disinfectant_name, concentration, date_discarded, discard_due_date, operator_practitioner_id, operator_name, notes, created_by_practitioner_id, created_at, updated_at",
         )
         .eq("studio_id", studio.id)
         .order("date_prepared", { ascending: false })
@@ -351,14 +316,11 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     // Exposure incidents carry sensitive PII (exposed-person name/address/
     // phone). SELECT is owner-only (0088); the RLS client returns them ONLY
     // because this action runs as the owner. Never switch to the admin client.
-    fetchAllRows((from, to) =>
+    fetchExportRows("record_keeping_exposure_incidents", (from, to) =>
       supabase
         .from("record_keeping_exposure_incidents")
         .select(
-          exportSelect(
-            "record_keeping_exposure_incidents",
-            "id, incident_date, exposed_person_full_name, exposed_person_address, exposed_person_phone, exposure_details, action_taken, staff_involved_name, notes, created_by_practitioner_id, created_at, updated_at",
-          ),
+          "id, incident_date, exposed_person_full_name, exposed_person_address, exposed_person_phone, exposure_details, action_taken, staff_involved_name, notes, created_by_practitioner_id, created_at, updated_at",
         )
         .eq("studio_id", studio.id)
         .order("incident_date", { ascending: false })
@@ -369,14 +331,11 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     // action + changed-field NAMES + actor + timestamp only. The full `changes`
     // value-snapshot JSON and free-form `metadata` are DELIBERATELY NOT selected
     // that avoids duplicating exposure-incident PII into a second file.
-    fetchAllRows((from, to) =>
+    fetchExportRows("record_keeping_audit_events", (from, to) =>
       supabase
         .from("record_keeping_audit_events")
         .select(
-          exportSelect(
-            "record_keeping_audit_events",
-            "id, record_type, record_id, action, changed_fields, actor_practitioner_id, actor_display_name, created_at",
-          ),
+          "id, record_type, record_id, action, changed_fields, actor_practitioner_id, actor_display_name, created_at",
         )
         .eq("studio_id", studio.id)
         .order("created_at", { ascending: false })
@@ -399,14 +358,11 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     // Ordered by the clinical event time, with `id` as a deterministic
     // tiebreak so two notes sharing a backdated occurred_at export in a stable
     // order rather than whatever the planner returns.
-    fetchAllRows((from, to) =>
+    fetchExportRows("client_clinical_notes", (from, to) =>
       supabase
         .from("client_clinical_notes")
         .select(
-          exportSelect(
-            "client_clinical_notes",
-            "id, client_id, practitioner_id, kind, body, areas, occurred_at, supersedes_note_id, created_at",
-          ),
+          "id, client_id, practitioner_id, kind, body, areas, occurred_at, supersedes_note_id, created_at",
         )
         .eq("studio_id", studio.id)
         .order("occurred_at", { ascending: false })
@@ -416,14 +372,11 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     // Current client budget context (0183). One row per client, so this is
     // small; still paginated to exhaustion like every other read. `id` is the
     // deterministic tiebreak.
-    fetchAllRows((from, to) =>
+    fetchExportRows("client_budget_context", (from, to) =>
       supabase
         .from("client_budget_context")
         .select(
-          exportSelect(
-            "client_budget_context",
-            "client_id, budget_level, budget_notes, updated_by_practitioner_id, created_at, updated_at",
-          ),
+          "client_id, budget_level, budget_notes, updated_by_practitioner_id, created_at, updated_at",
         )
         .eq("studio_id", studio.id)
         // client_id is the PRIMARY KEY (one row per client), so ordering on
@@ -463,20 +416,37 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
   }
 
   // F7. THE EXECUTED QUERY MUST ASK FOR EVERY COLUMN THE REGISTRY SAYS ITS FILE
-  // CARRIES.
+  // CARRIES — and "executed" means the select on the request PostgREST received.
   //
-  // `executedSelects` holds the string each export query actually handed to
-  // `.select()`, recorded at the moment it was handed over and keyed by the
-  // resource whose CSV those rows become. Nothing else contributes: an
-  // auxiliary lookup on the same table never calls the recorder, and a call
-  // site that bypasses the recorder registers nothing at all and fails on the
-  // absence rather than on a mismatch.
+  // Each envelope carries the select read off its OWN built request, keyed by
+  // the resource whose CSV its rows become. Nothing else contributes: the
+  // practitioners lookup, the session_blocks read and the services read use
+  // plain `fetchAllRows`, produce no envelope, and so cannot stand in for an
+  // export query. A resource that was never read has no entry at all, so the
+  // audit refuses on the ABSENCE rather than on a mismatch.
   //
   // Run here, after every read has executed and before a single row is
   // serialized. A column declared included but never asked for produces a blank
   // cell, and a blank cell is indistinguishable from a studio that recorded
   // nothing there.
-  const selected = auditSelectedColumns(executedSelects);
+  const exportReads: ReadonlyArray<ExportRead<unknown>> = [
+    clientsRes,
+    sessionsRes,
+    electRes,
+    laserRes,
+    practitionersRes,
+    pricingRes,
+    appointmentsRes,
+    treatmentPlansRes,
+    treatmentPlanStagesRes,
+    sterileItemsRes,
+    disinfectantsRes,
+    exposureIncidentsRes,
+    auditEventsRes,
+    clinicalNotesRes,
+    budgetContextRes,
+  ];
+  const selected = auditSelectedColumns(selectedColumnsByResource(exportReads));
   if (!selected.ok) {
     return { ok: false, error: selectedColumnError(selected) };
   }
@@ -511,12 +481,16 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
   const activeSessionIds = new Set(
     ((sessionsRes.data ?? []) as { id: string }[]).map((s) => s.id),
   );
-  const filteredElectrolysis = (
-    (electRes.data ?? []) as { session_id: string }[]
-  ).filter((e) => activeSessionIds.has(e.session_id));
-  const filteredLaser = (
-    (laserRes.data ?? []) as { session_id: string }[]
-  ).filter((e) => activeSessionIds.has(e.session_id));
+  const filteredElectrolysis = mapExportRows(electRes, (rows) =>
+    (rows as { session_id: string }[]).filter((e) =>
+      activeSessionIds.has(e.session_id),
+    ),
+  );
+  const filteredLaser = mapExportRows(laserRes, (rows) =>
+    (rows as { session_id: string }[]).filter((e) =>
+      activeSessionIds.has(e.session_id),
+    ),
+  );
 
   // Flatten the laser equipment_params JSON into top-level CSV columns so
   // spreadsheets show fluence / pulse_width / spot_size as plain fields.
@@ -529,22 +503,24 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     observation_notes: string | null;
     created_at: string;
   };
-  const laserRows = (filteredLaser as unknown as LaserRow[]).map((e) => {
-    const params = (e.equipment_params ?? {}) as Record<string, unknown>;
-    return {
-      id: e.id,
-      session_id: e.session_id,
-      zone: e.zone,
-      treatment_number: e.session_number,
-      fluence: typeof params.fluence === "string" ? params.fluence : null,
-      pulse_width:
-        typeof params.pulse_width === "string" ? params.pulse_width : null,
-      spot_size:
-        typeof params.spot_size === "string" ? params.spot_size : null,
-      observation_notes: e.observation_notes,
-      created_at: e.created_at,
-    };
-  });
+  const laserRows = mapExportRows(filteredLaser, (rows) =>
+    (rows as unknown as LaserRow[]).map((e) => {
+      const params = (e.equipment_params ?? {}) as Record<string, unknown>;
+      return {
+        id: e.id,
+        session_id: e.session_id,
+        zone: e.zone,
+        treatment_number: e.session_number,
+        fluence: typeof params.fluence === "string" ? params.fluence : null,
+        pulse_width:
+          typeof params.pulse_width === "string" ? params.pulse_width : null,
+        spot_size:
+          typeof params.spot_size === "string" ? params.spot_size : null,
+        observation_notes: e.observation_notes,
+        created_at: e.created_at,
+      };
+    }),
+  );
 
   const zip = new JSZip();
 
@@ -578,25 +554,25 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
   const manifestCounts: Record<string, number> = {};
   const writeCsv = (
     resource: string,
-    rows: ReadonlyArray<Record<string, unknown>>,
+    read: ExportRead<Record<string, unknown>>,
   ): void => {
-    // The second half of the F7 chain: a file may only be written for a
-    // resource whose query was recorded and audited above. Unreachable while
-    // the audit runs first, and kept so the two cannot be separated by a later
-    // edit that moves one of them.
-    if (!executedSelects[resource]) {
-      throw new Error(
-        `export: ${resource} has no recorded SELECT, so its rows cannot be attributed to a query`,
-      );
-    }
+    // The second half of the chain, and the answer to "bind written rows to
+    // their recorded query". Rows may only be serialized for the resource whose
+    // query produced them. The envelope is branded with a symbol, so neither a
+    // bare array nor rows fetched for a different resource can satisfy it —
+    // previously any array was accepted as long as the DESTINATION happened to
+    // have a recorded select, which is exactly the swap this now refuses.
+    // `mapExportRows` carries the brand across the display-name joins that sit
+    // between reading and writing.
+    const rows = rowsForResource(resource, read);
     const spec = exportSpec(resource);
     manifestCounts[spec.file] = rows.length;
     zip.file(spec.file, rowsToCsv(spec.csvHeaders, rows));
   };
 
-  writeCsv("clients", clientsRes.data ?? []);
+  writeCsv("clients", clientsRes);
 
-  writeCsv("sessions", sessionsRes.data ?? []);
+  writeCsv("sessions", sessionsRes);
 
   // Block-level structured area + probe metadata, keyed by id for an
   // in-app merge onto each entry via block_id (no SQL join needed).
@@ -686,49 +662,51 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     block_id: string | null;
     [k: string]: unknown;
   };
-  const electRows = (filteredElectrolysis as unknown as ElectRow[]).map((e) => {
-    const b = e.block_id ? blocksById.get(e.block_id) : undefined;
-    return {
-      ...e,
-      areas: Array.isArray(e.areas) ? e.areas.join("; ") : "",
-      // Migration 0108 + charting unification: flatten the UNIFIED findings,
-      // observation chips PLUS a folded legacy reaction_type from the entry's
-      // block: to a semicolon-separated string (CSV's own delimiter is a comma),
-      // so the export presents the reaction as one concept.
-      observation_chips: mergeReactionIntoChips(
-        e.observation_chips,
-        b?.reaction_type ?? null,
-      ).join("; "),
-      block_primary_area: b?.primary_area ?? null,
-      block_side: b?.side ?? null,
-      // Migration 0128: the full ordered multi-area label ("Left cheek; Right
-      // sideburn"). Legacy single-area blocks fall back to primary_area + side,
-      // so no exported record ever collapses to only the first of several areas.
-      block_areas: b
-        ? blockAreasLabel(areasByBlock.get(b.id) ?? null, {
-            primary_area: b.primary_area,
-            side: b.side,
-          })?.replace(/ · /g, "; ") ?? null
-        : null,
-      block_custom_area_detail: b?.custom_area_detail ?? null,
-      probe_key: b?.probe_key ?? null,
-      probe_brand: b?.probe_brand ?? null,
-      probe_material: b?.probe_material ?? null,
-      probe_piece_type: b?.probe_piece_type ?? null,
-      probe_shank: b?.probe_shank ?? null,
-      probe_size_value: b?.probe_size_value ?? null,
-      probe_length: b?.probe_length ?? null,
-      probe_label: b?.probe_label ?? null,
-    };
-  });
+  const electRows = mapExportRows(filteredElectrolysis, (rows) =>
+    (rows as unknown as ElectRow[]).map((e) => {
+      const b = e.block_id ? blocksById.get(e.block_id) : undefined;
+      return {
+        ...e,
+        areas: Array.isArray(e.areas) ? e.areas.join("; ") : "",
+        // Migration 0108 + charting unification: flatten the UNIFIED findings,
+        // observation chips PLUS a folded legacy reaction_type from the entry's
+        // block: to a semicolon-separated string (CSV's own delimiter is a comma),
+        // so the export presents the reaction as one concept.
+        observation_chips: mergeReactionIntoChips(
+          e.observation_chips,
+          b?.reaction_type ?? null,
+        ).join("; "),
+        block_primary_area: b?.primary_area ?? null,
+        block_side: b?.side ?? null,
+        // Migration 0128: the full ordered multi-area label ("Left cheek; Right
+        // sideburn"). Legacy single-area blocks fall back to primary_area + side,
+        // so no exported record ever collapses to only the first of several areas.
+        block_areas: b
+          ? blockAreasLabel(areasByBlock.get(b.id) ?? null, {
+              primary_area: b.primary_area,
+              side: b.side,
+            })?.replace(/ · /g, "; ") ?? null
+          : null,
+        block_custom_area_detail: b?.custom_area_detail ?? null,
+        probe_key: b?.probe_key ?? null,
+        probe_brand: b?.probe_brand ?? null,
+        probe_material: b?.probe_material ?? null,
+        probe_piece_type: b?.probe_piece_type ?? null,
+        probe_shank: b?.probe_shank ?? null,
+        probe_size_value: b?.probe_size_value ?? null,
+        probe_length: b?.probe_length ?? null,
+        probe_label: b?.probe_label ?? null,
+      };
+    }),
+  );
 
   writeCsv("electrolysis_entries", electRows);
 
   writeCsv("laser_entries", laserRows);
 
-  writeCsv("practitioners", practitionersRes.data ?? []);
+  writeCsv("practitioners", practitionersRes);
 
-  writeCsv("client_pricing", pricingRes.data ?? []);
+  writeCsv("client_pricing", pricingRes);
 
   // ---------------------------------------------------------------------
   // Appointments + treatment plans + stages (export/backup readiness).
@@ -759,18 +737,18 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     service_id: string | null;
     [k: string]: unknown;
   };
-  const appointmentRows = (
-    (appointmentsRes.data ?? []) as AppointmentExportRow[]
-  ).map((a) => ({
-    ...a,
-    client_name: a.client_id ? clientNameById.get(a.client_id) ?? null : null,
-    practitioner_name: a.practitioner_id
-      ? practitionerNameById.get(a.practitioner_id) ?? null
-      : null,
-    service_name: a.service_id
-      ? serviceNameById.get(a.service_id) ?? null
-      : null,
-  }));
+  const appointmentRows = mapExportRows(appointmentsRes, (rows) =>
+    (rows as AppointmentExportRow[]).map((a) => ({
+      ...a,
+      client_name: a.client_id ? clientNameById.get(a.client_id) ?? null : null,
+      practitioner_name: a.practitioner_id
+        ? practitionerNameById.get(a.practitioner_id) ?? null
+        : null,
+      service_name: a.service_id
+        ? serviceNameById.get(a.service_id) ?? null
+        : null,
+    })),
+  );
 
   writeCsv("appointments", appointmentRows);
 
@@ -786,27 +764,27 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     plansById.set(p.id, p);
   }
 
-  const treatmentPlanRows = (
-    (treatmentPlansRes.data ?? []) as PlanExportRow[]
-  ).map((p) => {
-    // Migration 0051: treatment_areas is a text[] on the row, which
-    // rowsToCsv would coerce to "Chin,Jawline" without quoting. Flatten
-    // explicitly here so the column shows up as a pipe-joined list,
-    // which round-trips cleanly through any spreadsheet tool ("Chin |
-    // Jawline").
-    const rawAreas = (p as PlanExportRow & {
-      treatment_areas?: string[] | null;
-    }).treatment_areas;
-    const treatment_areas_joined =
-      Array.isArray(rawAreas) && rawAreas.length > 0
-        ? rawAreas.join(" | ")
-        : null;
-    return {
-      ...p,
-      client_name: p.client_id ? clientNameById.get(p.client_id) ?? null : null,
-      treatment_areas: treatment_areas_joined,
-    };
-  });
+  const treatmentPlanRows = mapExportRows(treatmentPlansRes, (rows) =>
+    (rows as PlanExportRow[]).map((p) => {
+      // Migration 0051: treatment_areas is a text[] on the row, which
+      // rowsToCsv would coerce to "Chin,Jawline" without quoting. Flatten
+      // explicitly here so the column shows up as a pipe-joined list,
+      // which round-trips cleanly through any spreadsheet tool ("Chin |
+      // Jawline").
+      const rawAreas = (p as PlanExportRow & {
+        treatment_areas?: string[] | null;
+      }).treatment_areas;
+      const treatment_areas_joined =
+        Array.isArray(rawAreas) && rawAreas.length > 0
+          ? rawAreas.join(" | ")
+          : null;
+      return {
+        ...p,
+        client_name: p.client_id ? clientNameById.get(p.client_id) ?? null : null,
+        treatment_areas: treatment_areas_joined,
+      };
+    }),
+  );
 
   writeCsv("treatment_plans", treatmentPlanRows);
 
@@ -815,36 +793,36 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     plan_id: string;
     [k: string]: unknown;
   };
-  const treatmentPlanStageRows = (
-    (treatmentPlanStagesRes.data ?? []) as StageExportRow[]
-  ).map((st) => {
-    const plan = plansById.get(st.plan_id);
-    const planClientId = plan?.client_id ?? null;
-    return {
-      ...st,
-      plan_name: plan?.name ?? null,
-      client_id: planClientId,
-      client_name: planClientId
-        ? clientNameById.get(planClientId) ?? null
-        : null,
-    };
-  });
+  const treatmentPlanStageRows = mapExportRows(treatmentPlanStagesRes, (rows) =>
+    (rows as StageExportRow[]).map((st) => {
+      const plan = plansById.get(st.plan_id);
+      const planClientId = plan?.client_id ?? null;
+      return {
+        ...st,
+        plan_name: plan?.name ?? null,
+        client_id: planClientId,
+        client_name: planClientId
+          ? clientNameById.get(planClientId) ?? null
+          : null,
+      };
+    }),
+  );
 
   writeCsv("treatment_plan_stages", treatmentPlanStageRows);
 
   // PR #312: record-keeping / inspection CSVs. Each is studio-scoped + read
   // through the owner's RLS client (see loads above). Column lists are explicit
   // so no image path / binary / payment field can slip in.
-  writeCsv("record_keeping_sterile_items", (sterileItemsRes.data ?? []) as Record<string, unknown>[]);
+  writeCsv("record_keeping_sterile_items", sterileItemsRes);
 
-  writeCsv("record_keeping_disinfectants", (disinfectantsRes.data ?? []) as Record<string, unknown>[]);
+  writeCsv("record_keeping_disinfectants", disinfectantsRes);
 
   // Owner-only (0088 RLS + the action's owner gate). Contains sensitive PII.
-  writeCsv("record_keeping_exposure_incidents", (exposureIncidentsRes.data ?? []) as Record<string, unknown>[]);
+  writeCsv("record_keeping_exposure_incidents", exposureIncidentsRes);
 
   // Reduced: identity + action + changed-field NAMES + actor + timestamp only.
   // No `changes` value-snapshot JSON, no free-form `metadata` (see load above).
-  writeCsv("record_keeping_audit_events", (auditEventsRes.data ?? []) as Record<string, unknown>[]);
+  writeCsv("record_keeping_audit_events", auditEventsRes);
 
   // The clinical narrative. Shaped by the pure builder so history retention,
   // lineage and author attribution are unit-testable; serialized through the
@@ -853,9 +831,11 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
   // bodies routinely contain commas, quotation marks and line breaks.
   writeCsv(
     "client_clinical_notes",
-    buildClinicalNoteExportRows(
-      (clinicalNotesRes.data ?? []) as ClinicalNoteExportSource[],
-      { clientNameById, practitionerNameById },
+    mapExportRows(clinicalNotesRes, (rows) =>
+      buildClinicalNoteExportRows(rows as ClinicalNoteExportSource[], {
+        clientNameById,
+        practitionerNameById,
+      }),
     ),
   );
 
@@ -870,13 +850,15 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
   // with a manifest count of 0 — "zero rows" must never be conflated with
   // "could not read rows".
   if (budgetDecision.kind === "export") {
-    const budgetContextRows = budgetDecision.rows.map((row) => ({
-      ...row,
-      client_name:
-        typeof row.client_id === "string"
-          ? clientNameById.get(row.client_id) ?? null
-          : null,
-    }));
+    const budgetContextRows = mapExportRows(budgetContextRes, (rows) =>
+      (rows as typeof budgetDecision.rows).map((row) => ({
+        ...row,
+        client_name:
+          typeof row.client_id === "string"
+            ? clientNameById.get(row.client_id) ?? null
+            : null,
+      })),
+    );
     writeCsv("client_budget_context", budgetContextRows);
   }
 

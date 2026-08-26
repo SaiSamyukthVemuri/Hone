@@ -13,6 +13,11 @@ import {
   STORAGE_RESOURCE_PREFIX,
 } from "@/lib/export/resource-registry";
 import { adminQuery, closePool } from "@/tests/db/helpers/harness";
+import { scanFromEntrypoints } from "@/tests/db/helpers/app-tables";
+import {
+  fkActionEdges,
+  type FkConstraintRow,
+} from "@/tests/db/helpers/reachability";
 import {
   computeReachability,
   deadClaimViolations,
@@ -74,9 +79,9 @@ function walkTs(dir: string): string[] {
   return out;
 }
 
-let APP_SOURCES: Array<{ rel: string; code: string }> | null = null;
+let APP_SOURCES: Array<{ rel: string; code: string; raw: string }> | null = null;
 
-function appSources(): Array<{ rel: string; code: string }> {
+function appSources(): Array<{ rel: string; code: string; raw: string }> {
   if (APP_SOURCES) return APP_SOURCES;
   APP_SOURCES = [];
   for (const root of APP_ROOTS) {
@@ -88,7 +93,11 @@ function appSources(): Array<{ rel: string; code: string }> {
         .split("\n")
         .filter((line) => !/^\s*\/\//.test(line))
         .join("\n");
-      APP_SOURCES.push({ rel, code });
+      // `code` is comment-stripped for the string-literal RPC heuristic below;
+      // `raw` is the real file, because stripping comments with a regex
+      // corrupts syntax (an apostrophe in a comment, a `//` inside JSX) and a
+      // corrupted parse silently drops entrypoints.
+      APP_SOURCES.push({ rel, code, raw });
     }
   }
   return APP_SOURCES;
@@ -454,23 +463,60 @@ describe("what is excluded, and on what grounds", () => {
       );
     }
 
+    // FOREIGN-KEY ACTIONS, FROM pg_constraint — never from migration text.
+    // confdeltype/confupdtype: c = CASCADE, n = SET NULL, d = SET DEFAULT all
+    // MUTATE the child; a = NO ACTION and r = RESTRICT raise instead, so they
+    // are not edges. The edge runs parent -> child, the direction the write
+    // actually travels.
+    const fks = await adminQuery(
+      `select parent.relname as parent_table,
+              child.relname  as child_table,
+              con.confdeltype, con.confupdtype
+         from pg_constraint con
+         join pg_class child  on child.oid  = con.conrelid
+         join pg_class parent on parent.oid = con.confrelid
+         join pg_namespace n  on n.oid      = child.relnamespace
+        where con.contype = 'f' and n.nspname = 'public'`,
+    );
+    const tableFkActions = fkActionEdges(fks.rows as FkConstraintRow[]);
+
     const tableTriggers: Record<string, string[]> = {};
     for (const row of trg.rows as Array<{ table_name: string; fn: string }>) {
       (tableTriggers[row.table_name] ??= []).push(row.fn);
     }
 
-    // Application entrypoints, from source: an RPC name used as a string
-    // literal, and a table opened with .from("...").
+    // Application entrypoints. RPC names are string literals; TABLES are
+    // resolved through the TypeScript AST, because `.from(...)` in this
+    // repository is not always a literal: a const imported from another module
+    // (.from(CLIENT_BUDGET_CONTEXT_RELATION)), a helper parameter fed literals
+    // at its call sites (const count = (table: string) => .from(table)) and a
+    // parameter whose TYPE enumerates its tables all occur. A regex sees none
+    // of them. See tests/db/helpers/app-tables.ts.
     const appFunctions = fnNames.filter((n) => referencedBy(n).length > 0);
-    const appTables = [
-      ...new Set(
-        appSources().flatMap(({ code }) =>
-          [...code.matchAll(/\.from\("([a-z_]+)"\)/g)].map((m) => m[1]),
-        ),
-      ),
-    ].filter((t) => tableNames.includes(t));
+    const scan = scanFromEntrypoints(
+      appSources().map(({ rel, raw }) => ({ rel, code: raw })),
+    );
+    // FAIL CLOSED. An unresolvable argument, or a file the parser could not
+    // read, can only SHRINK the closure — the one direction that makes `dead`
+    // EASIER to claim. Refuse rather than quietly weaken the claim.
+    expect(
+      scan.unparsed,
+      "application sources failed to parse; a truncated AST hides entrypoints",
+    ).toEqual([]);
+    expect(
+      scan.unresolved,
+      "unresolvable .from(...) argument(s); no dead claim can be trusted until they resolve",
+    ).toEqual([]);
+    const appTables = scan.tables.filter((t) => tableNames.includes(t));
 
-    return { functionCalls, functionTables, tableTriggers, appFunctions, appTables };
+    return {
+      functionCalls,
+      functionTables,
+      tableTriggers,
+      tableFkActions,
+      appFunctions,
+      appTables,
+    };
   }
 
   it("the live graph really has application entrypoints (anti-vacuity)", async () => {
@@ -496,6 +542,25 @@ describe("what is excluded, and on what grounds", () => {
     ).toEqual([]);
   });
 
+  it("CONTROL H — the LIVE studios -> pending_booking_payment_sessions cascade is in the graph", async () => {
+    // The concrete path that corrected this registry. studios is opened
+    // directly by the application; pending_booking_payment_sessions.studio_id
+    // is ON DELETE CASCADE from it, so deleting a studio makes PostgreSQL
+    // delete these rows. Asserted against the LIVE catalogue, not a fixture.
+    const graph = await buildLiveGraph();
+    expect(graph.appTables).toContain("studios");
+    expect(graph.tableFkActions["studios"] ?? []).toContain(
+      "pending_booking_payment_sessions",
+    );
+    const reach = computeReachability(graph);
+    expect(reach.tables.has("pending_booking_payment_sessions")).toBe(true);
+    expect(reach.pathTo.get("pending_booking_payment_sessions")).toContain("studios");
+    // And it is no longer claimed dead.
+    const entry = EXPORT_RESOURCE_REGISTRY["pending_booking_payment_sessions"];
+    expect(entry.kind).toBe("pending");
+    expect("category" in entry && entry.category === "dead").toBe(false);
+  });
+
   it("the closure would still catch the direct reader case that started this", async () => {
     // appointment_payments is no longer classified dead, so the real sweep
     // cannot exercise it. Ask the closure about it directly instead.
@@ -514,11 +579,209 @@ describe("what is excluded, and on what grounds", () => {
     functionCalls: {},
     functionTables: {},
     tableTriggers: {},
+    tableFkActions: {},
     appFunctions: [],
     appTables: [],
   };
   const violations = (g: Partial<ReachabilityGraph>) =>
     deadClaimViolations(["dead_resource"], computeReachability({ ...empty, ...g }));
+
+  // ---------------------------------------------------------------------
+  // CONTROLS J-Q — FOREIGN-KEY ACTIONS ARE GRAPH EDGES.
+  //
+  // A reachable PARENT can mutate a child through ON DELETE / ON UPDATE
+  // CASCADE, SET NULL or SET DEFAULT without the application naming the child
+  // anywhere. RESTRICT and NO ACTION raise instead of mutating, so they are
+  // deliberately not edges. The live builder derives the direction and the
+  // action from pg_constraint; these fixtures pin the traversal itself.
+  // ---------------------------------------------------------------------
+  // ---------------------------------------------------------------------
+  // CONTROLS R-W — INDIRECT `.from(...)` ENTRYPOINTS.
+  //
+  // Source fixtures, so each shape is exercised whether or not the repository
+  // currently contains one. A missed entrypoint shrinks the closure, and a
+  // shrunken closure makes `dead` easier to claim — so every one of these is a
+  // guard against the SAFE-looking failure.
+  // ---------------------------------------------------------------------
+  const scanOne = (code: string) => scanFromEntrypoints([{ rel: "app/x.ts", code }]);
+
+  it("CONTROL R — a const identifier resolves (.from(DEAD_TABLE))", () => {
+    const scan = scanOne(`
+      const DEAD_TABLE = "dead_resource";
+      export async function f(db: Db) { return db.from(DEAD_TABLE).select("id"); }
+    `);
+    expect(scan.tables).toContain("dead_resource");
+    expect(scan.unresolved).toEqual([]);
+  });
+
+  it("CONTROL S — a const resolves ACROSS modules, by name", () => {
+    const scan = scanFromEntrypoints([
+      { rel: "lib/levels.ts", code: `export const REL = "dead_resource";` },
+      {
+        rel: "lib/queries.ts",
+        code: `import { REL } from "./levels";
+               export const q = (db: Db) => db.from(REL).select("id");`,
+      },
+    ]);
+    expect(scan.tables).toContain("dead_resource");
+  });
+
+  it("CONTROL T — a two-hop const alias chain resolves", () => {
+    const scan = scanOne(`
+      const BASE = "dead_resource";
+      const ALIAS = BASE;
+      const ALIAS2 = ALIAS;
+      export const q = (db: Db) => db.from(ALIAS2).select("id");
+    `);
+    expect(scan.tables).toContain("dead_resource");
+  });
+
+  it("CONTROL U — a helper PARAMETER resolves from its call sites", () => {
+    const scan = scanOne(`
+      const count = (table: string) => db.from(table).select("id");
+      export function go() { return [count("appointments"), count("dead_resource")]; }
+    `);
+    expect(scan.tables).toEqual(
+      expect.arrayContaining(["appointments", "dead_resource"]),
+    );
+    expect(scan.unresolved).toEqual([]);
+  });
+
+  it("CONTROL U2 — a parameter whose TYPE enumerates its tables resolves", () => {
+    const scan = scanOne(`
+      async function softDeleteEntry(table: "electrolysis_entries" | "dead_resource") {
+        return db.from(table).update({});
+      }
+    `);
+    expect(scan.tables).toEqual(
+      expect.arrayContaining(["electrolysis_entries", "dead_resource"]),
+    );
+  });
+
+  it("CONTROL V — the ordinary literal case is still detected, and built-ins are not tables", () => {
+    const scan = scanOne(`
+      export const q = (db: Db) => db.from("dead_resource").select("id");
+      const b = Buffer.from(provided);
+      const a = Array.from({ length: 7 });
+      const bucket = supabase.storage.from(TREATMENT_IMAGES_BUCKET);
+    `);
+    expect(scan.tables).toEqual(["dead_resource"]);
+    // Buffer/Array/storage are not Supabase reads, so they invent no edge and
+    // — just as importantly — raise no false "unresolved".
+    expect(scan.unresolved).toEqual([]);
+  });
+
+  it("CONTROL W — an UNRESOLVABLE dynamic .from is reported, never dropped", () => {
+    const scan = scanOne(`
+      export const q = (db: Db, key: string) => db.from(lookup[key]).select("id");
+    `);
+    expect(scan.tables).toEqual([]);
+    expect(scan.unresolved).toEqual([
+      { file: "app/x.ts", expression: "lookup[key]" },
+    ]);
+  });
+
+  it("CONTROL W2 — a file the parser cannot read is reported, never absorbed", () => {
+    // A truncated AST silently hides every entrypoint after the break. That is
+    // exactly what parsing .ts as TSX did to a real file.
+    const scan = scanOne(`export const broken = (`);
+    expect(scan.unparsed.length).toBe(1);
+    expect(scan.unparsed[0].file).toBe("app/x.ts");
+  });
+
+  const fkRow = (confdeltype: string, confupdtype = "a"): FkConstraintRow => ({
+    parent_table: "parent_t",
+    child_table: "dead_resource",
+    confdeltype,
+    confupdtype,
+  });
+
+  it("CONTROL Q — only MUTATING foreign-key actions become edges", () => {
+    // The whole point of the distinction: CASCADE/SET NULL/SET DEFAULT write
+    // the child, NO ACTION and RESTRICT raise and leave it untouched. Treating
+    // the latter as edges would make every FK a write path and the dead claim
+    // meaningless; missing the former is how this resource was mis-classified.
+    expect(fkActionEdges([fkRow("c")])).toEqual({ parent_t: ["dead_resource"] });
+    expect(fkActionEdges([fkRow("n")])).toEqual({ parent_t: ["dead_resource"] });
+    expect(fkActionEdges([fkRow("d")])).toEqual({ parent_t: ["dead_resource"] });
+    // ON UPDATE carries the same actions and the same consequence.
+    expect(fkActionEdges([fkRow("a", "c")])).toEqual({ parent_t: ["dead_resource"] });
+    expect(fkActionEdges([fkRow("a", "n")])).toEqual({ parent_t: ["dead_resource"] });
+    // NO ACTION / RESTRICT on both sides: no edge at all.
+    expect(fkActionEdges([fkRow("a", "a")])).toEqual({});
+    expect(fkActionEdges([fkRow("r", "r")])).toEqual({});
+    expect(fkActionEdges([fkRow("r", "a")])).toEqual({});
+  });
+
+  it("CONTROL Q2 — a RESTRICT-only parent leaves the child unreachable end to end", () => {
+    const edges = fkActionEdges([fkRow("r", "a")]);
+    expect(
+      violations({ appTables: ["parent_t"], tableFkActions: edges }),
+    ).toEqual([]);
+    // ...and flipping the SAME constraint to CASCADE makes it reachable, so the
+    // green above is the action's doing and not a broken fixture.
+    expect(
+      violations({ appTables: ["parent_t"], tableFkActions: fkActionEdges([fkRow("c")]) }),
+    ).toEqual(["dead_resource is reachable: app -> parent_t -> dead_resource"]);
+  });
+
+  it("CONTROL J — reached parent + ON DELETE CASCADE child is RED", () => {
+    expect(
+      violations({
+        appTables: ["studios"],
+        tableFkActions: { studios: ["dead_resource"] },
+      }),
+    ).toEqual(["dead_resource is reachable: app -> studios -> dead_resource"]);
+  });
+
+  it("CONTROL K — a SET NULL child is reachable (same edge, modelled by the builder)", () => {
+    // The action kind is decided when the edge is BUILT; once an edge exists
+    // the traversal treats it identically. Both are pinned end-to-end by the
+    // live-catalogue test below.
+    expect(
+      violations({
+        appFunctions: ["rpc_a"],
+        functionTables: { rpc_a: ["parent_t"] },
+        tableFkActions: { parent_t: ["dead_resource"] },
+      }).length,
+    ).toBe(1);
+  });
+
+  it("CONTROL M — a multi-hop FK chain terminates and reaches the final child", () => {
+    const v = violations({
+      appTables: ["a_t"],
+      tableFkActions: { a_t: ["b_t"], b_t: ["c_t"], c_t: ["dead_resource"] },
+    });
+    expect(v).toEqual([
+      "dead_resource is reachable: app -> a_t -> b_t -> c_t -> dead_resource",
+    ]);
+  });
+
+  it("CONTROL N — an FK cycle terminates rather than spinning", () => {
+    const v = violations({
+      appTables: ["a_t"],
+      tableFkActions: { a_t: ["b_t"], b_t: ["a_t", "dead_resource"] },
+    });
+    expect(v.length).toBe(1);
+  });
+
+  it("CONTROL O — an FK path the application never enters stays GREEN", () => {
+    expect(
+      violations({ tableFkActions: { orphan_parent: ["dead_resource"] } }),
+    ).toEqual([]);
+  });
+
+  it("CONTROL P — an FK child reached through a TRIGGER's write is RED", () => {
+    // app writes appointments -> trigger fn -> parent_t -> FK action -> child.
+    const v = violations({
+      appTables: ["appointments"],
+      tableTriggers: { appointments: ["trg_fn"] },
+      functionTables: { trg_fn: ["parent_t"] },
+      tableFkActions: { parent_t: ["dead_resource"] },
+    });
+    expect(v.length).toBe(1);
+    expect(v[0]).toContain("appointments -> trg_fn -> parent_t -> dead_resource");
+  });
 
   it("CONTROL A — app -> RPC -> helper -> resource is RED", () => {
     expect(

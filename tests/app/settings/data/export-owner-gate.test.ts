@@ -135,17 +135,17 @@ describe("PR #312: record-keeping / inspection CSVs", () => {
     // Scoped to the sterile load + its CSV writer. The export uses an EXPLICIT
     // column list in both places, so a new column reaches the inspector only if
     // it is named twice — this pin is the reason that cannot be half-done.
-    const from = CODE.indexOf('.from("record_keeping_sterile_items")');
+    const from = CODE.indexOf('fetchExportRows("record_keeping_sterile_items"');
     expect(from).toBeGreaterThan(-1);
     const load = CODE.slice(from, from + 500);
-    // TRUTH-01A/F4: the SELECT is declared in EXPORT_SELECTS, keyed by the
-    // resource it feeds. The lifecycle column must be in that declaration...
+    // TRUTH-01A: the registry declares what the file carries, and the run-time
+    // audit compares it against the SELECT the request actually sent...
     expect(exportSpec("record_keeping_sterile_items").includedColumns).toContain(
       "date_discarded",
     );
-    // ...and the read must ask for it through the recorder, which is what the
-    // run-time audit compares against the registry.
-    expect(load).toMatch(/exportSelect\(\s*\n?\s*"record_keeping_sterile_items"/);
+    // ...and the read must go through the provenance-carrying reader, which is
+    // what binds the SELECT the request actually sent to this resource's audit.
+    expect(load).toMatch(/fetchExportRows\(\s*"record_keeping_sterile_items"/);
     expect(load).toMatch(/date_discarded/);
     // HISTORICAL surface: a discarded row must still be exported. A lifecycle
     // predicate here would silently drop stock from a health-inspection record.
@@ -174,9 +174,9 @@ describe("PR #312: record-keeping / inspection CSVs", () => {
       // The load block: `.from("<table>") ... .eq("studio_id", studio.id)`.
       const from = CODE.indexOf(`.from("${table}")`);
       expect(from, `missing load for ${table}`).toBeGreaterThan(-1);
-      // Widened for TRUTH-01A/F7: the select literal now sits inside an
-      // exportSelect(...) call, which pushes the studio filter further down the
-      // block. The invariant is unchanged — the read is studio-scoped.
+      // Widened for TRUTH-01A: the select literal sits on its own lines, which
+      // pushes the studio filter further down the block. The invariant is
+      // unchanged — the read is studio-scoped.
       const slice = CODE.slice(from, from + 700);
       expect(slice, `${table} not studio-scoped`).toMatch(
         /\.eq\("studio_id", studio\.id\)/,
@@ -197,15 +197,16 @@ describe("PR #312: record-keeping / inspection CSVs", () => {
   it("audit export is REDUCED — no full changes value-snapshot JSON or metadata", () => {
     // The audit load selects changed_fields (names) but NOT `changes` / `metadata`.
     const load = CODE.slice(
-      CODE.indexOf('.from("record_keeping_audit_events")'),
-      CODE.indexOf('.from("record_keeping_audit_events")') + 400,
+      CODE.indexOf('fetchExportRows("record_keeping_audit_events"'),
+      CODE.indexOf('fetchExportRows("record_keeping_audit_events"') + 500,
     );
-    // TRUTH-01A/F4: the reduced column list lives in EXPORT_SELECTS now.
+    // TRUTH-01A: the reduced column list is declared by the registry, and the
+    // run-time audit holds the executed request to it.
     const reduced = exportSpec("record_keeping_audit_events").includedColumns;
     expect(reduced).toContain("changed_fields");
     expect(reduced).not.toContain("changes");
     expect(reduced).not.toContain("metadata");
-    expect(load).toMatch(/exportSelect\(\s*\n?\s*"record_keeping_audit_events"/);
+    expect(load).toMatch(/fetchExportRows\(\s*"record_keeping_audit_events"/);
     // And the CSV header omits them too.
     const csv = CODE.slice(
       CODE.indexOf('"record_keeping_audit_events.csv"'),

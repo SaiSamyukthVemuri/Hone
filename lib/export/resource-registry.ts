@@ -1055,10 +1055,12 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
       "Created by migration 0032 and unreachable from application code: no module opens the table directly, and no database function that READS OR WRITES it is invoked from the application. Reads count, and saying so is the correction: the first version of this claim reasoned only about writers, and a table can be perfectly live as the thing a live decision is made FROM. Checked mechanically against pg_proc, not asserted.",
   },
   pending_booking_payment_sessions: {
-    kind: "excluded",
-    category: "dead",
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    fieldReviewRequired: true,
     reason:
-      "Created by migration 0032 for public-booking card collection, which is off and unwired. Unreachable from application code: no module opens the table directly, and none of the nine database functions that reference it - readers as well as writers - is invoked from the application. Checked mechanically against pg_proc, not asserted.",
+      "Created by migration 0032 for public-booking card collection, which is off and unwired: no application module opens the table, and none of the nine database functions that reference it - readers as well as writers - is invoked from the application. That much is unchanged, and it is why the FEATURE is dormant. It was nevertheless classified `dead`, which was wrong, and the reachability closure now proves why: pending_booking_payment_sessions.studio_id carries ON DELETE CASCADE from studios, a table the application opens directly, so deleting a studio makes PostgreSQL delete these rows on the application's behalf. A table the database will mutate for us is not unreachable - the write travels through the schema instead of through a function name, which is exactly the path a writers-and-readers scan cannot see. Dormant at the feature level, reachable at the schema level, so it is pending rather than dead. Field review before any export: the row carries public-booking payment session state and provider identifiers, and nothing in it is independently actionable by a studio.",
   },
   stripe_charge_attempts: {
     kind: "excluded",

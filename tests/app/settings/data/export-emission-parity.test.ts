@@ -64,15 +64,41 @@ let auditInsert: Record<string, unknown> | null = null;
  */
 /** Tables whose read should come back as a PostgREST error for this build. */
 let failingTables = new Set<string>();
+/**
+ * Rewrites the selection a table's query ends up sending, so a control can
+ * reproduce "a later .select() replaced it" or "someone edited the literal"
+ * WITHOUT editing the exporter. The stub applies it exactly where postgrest-js
+ * would: on the way into the request URL.
+ */
+let mutateSelect: ((table: string, columns: string) => string) | null = null;
 
-function builder(result: StubResult, table: string): unknown {
+function builder(
+  result: StubResult,
+  table: string,
+  url: URL = new URL(`http://stub/${table}`),
+): unknown {
   const target = {
+    url,
     then: (resolve: (v: StubResult) => unknown) => Promise.resolve(result).then(resolve),
   };
   return new Proxy(target, {
     get(t, prop) {
       if (prop === "then") return t.then;
-      return () => builder(result, table);
+      // postgrest-js keeps the selection in the REQUEST URL, and a later
+      // .select() on the same builder REPLACES it. The stub models that
+      // exactly, because that replacement is the behaviour the export's
+      // select audit now has to survive: reading the string handed to the
+      // FIRST .select() was precisely the gap Codex found.
+      if (prop === "url") return t.url;
+      if (prop === "select") {
+        return (columns: unknown) => {
+          const asked = String(columns);
+          const sent = mutateSelect ? mutateSelect(table, asked) : asked;
+          url.searchParams.set("select", sent.replace(/\s+/g, ""));
+          return builder(result, table, url);
+        };
+      }
+      return () => builder(result, table, url);
     },
   });
 }
@@ -176,6 +202,12 @@ describe("guard 3: the archive and the registry agree, both ways", () => {
 // the real refusal — because that is the only thing that can distinguish "the
 // query changed" from "the description of the query changed".
 describe("the chain: the query that ran must ask for what its file carries", () => {
+  beforeEach(() => {
+    auditInsert = null;
+    failingTables = new Set();
+    mutateSelect = null;
+  });
+
   it("the emission contract holds: included means emitted", () => {
     const audit = auditEmissionContract();
     expect(audit.problems, JSON.stringify(audit.problems, null, 2)).toEqual([]);
@@ -186,7 +218,7 @@ describe("the chain: the query that ran must ask for what its file carries", () 
     expect(csvNames(zip)).toEqual([...expectedCsvFiles()].sort());
   });
 
-  it("no table-level union of SELECTs survives, here or in the exporter", () => {
+  it("no table-level union or static declaration survives, here or in the exporter", () => {
     // Needle assembled at run time so this assertion is not itself a match.
     const needle = ["selects", "By", "Table"].join("");
     const self = readFileSync(__filename, "utf8");
@@ -196,9 +228,70 @@ describe("the chain: the query that ran must ask for what its file carries", () 
     );
     expect(self.includes(needle)).toBe(false);
     expect(action.includes(needle)).toBe(false);
-    // And the exporter audits the RECORDED execution, not a declaration.
-    expect(action).toMatch(/auditSelectedColumns\(executedSelects\)/);
+    // The exporter audits what the REQUEST carried, not a wrapper's argument
+    // and not a declaration. Both earlier designs are gone by name.
+    expect(action).toMatch(
+      /auditSelectedColumns\(selectedColumnsByResource\(exportReads\)\)/,
+    );
     expect(action).not.toMatch(/EXPORT_SELECTS/);
+    expect(action).not.toMatch(/exportSelect/);
+  });
+
+  // -------------------------------------------------------------------------
+  // CONTROLS A-C — the audit must follow the REQUEST, not the call site.
+  //
+  // Each mutates what the query ends up sending and asserts the real export
+  // refuses. Under the previous design every one of these was GREEN: the
+  // recorder held the string from the first `.select()` while the request
+  // carried something narrower.
+  // -------------------------------------------------------------------------
+  const dropColumn = (table: string, column: string, onlyIfHas?: string) =>
+    (t: string, columns: string): string => {
+      if (t !== table) return columns;
+      if (onlyIfHas && !columns.includes(onlyIfHas)) return columns;
+      return columns
+        .split(",")
+        .map((c) => c.trim())
+        .filter((c) => c !== column)
+        .join(", ");
+    };
+
+  it("CONTROL A — a narrower second .select() on the audited query is caught", async () => {
+    // The shape postgrest-js actually permits: .select(wide).select(narrow).
+    mutateSelect = (table, columns) => (table === "clients" ? "id" : columns);
+    await expect(buildArchive()).rejects.toThrow(/clients\./);
+  });
+
+  it("CONTROL B — a later inline .select() dropping ONE included column is caught", async () => {
+    mutateSelect = dropColumn("clients", "email");
+    await expect(buildArchive()).rejects.toThrow(/clients\.email/);
+  });
+
+  it("CONTROL C — practitioners EXPORT drops display_name while the LOOKUP still selects it", async () => {
+    // Both queries read the same table. Only the export query is narrowed
+    // (`role` appears in the export selection and not in the lookup's
+    // "id, display_name"), so the lookup still asks for display_name — and it
+    // must not be able to satisfy the export's contract on its behalf. This is
+    // the exact confusion the by-table union had.
+    mutateSelect = dropColumn("practitioners", "display_name", "role");
+    await expect(buildArchive()).rejects.toThrow(/practitioners\.display_name/);
+  });
+
+  it("CONTROL D — the correct final query still succeeds", async () => {
+    mutateSelect = null;
+    const zip = await buildArchive();
+    expect(csvNames(zip)).toEqual([...expectedCsvFiles()].sort());
+  });
+
+  it("CONTROL F — an unreadable request FAILS CLOSED rather than auditing nothing", async () => {
+    // A builder whose request cannot be inspected must refuse, not silently
+    // record "selected no columns" and pass the absence check.
+    const { fetchExportRows } = await import("@/lib/export/provenance");
+    const opaque = await fetchExportRows("clients", () =>
+      Promise.resolve({ data: [], error: null }),
+    );
+    expect(opaque.error?.message).toMatch(/could not read the executed SELECT/);
+    expect(opaque.data).toBeNull();
   });
 });
 
