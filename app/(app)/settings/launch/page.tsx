@@ -6,6 +6,10 @@ import {
 } from "@/lib/booking/queries";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import {
+  CONSENT_SETTINGS_HREF,
+  getTreatmentConsentReadiness,
+} from "@/lib/consent/launch-readiness";
+import {
   StatusPill,
   type StatusTone,
 } from "@/components/ui/status-pill";
@@ -23,8 +27,27 @@ import {
 // row that is never "Ready". This avoids the misleading impression
 // that payments are live; PR #93/#94 keep card collection off and
 // require_card_on_file untouched.
+//
+// Consent readiness (F-CONSENT-GAP) is derived, never assumed. A new
+// studio starts with ZERO consent templates and nothing seeds one, so
+// before this row the checklist could read "Done" throughout while the
+// intake presented no consent at all. The rule lives in ONE place,
+// lib/consent/launch-readiness.ts, shared with the getting-started
+// checklist; this page must never re-derive it. A live template means
+// the intake has a form to present — it is NOT a claim that the wording
+// is lawyer-reviewed or legally enforceable.
 
-type Status = "ready" | "needs_setup" | "optional" | "not_enabled" | "manual";
+type Status =
+  | "ready"
+  | "needs_setup"
+  | "optional"
+  | "not_enabled"
+  | "manual"
+  // A fact this page could not establish. Distinct from "needs_setup" on
+  // purpose: telling an owner to create a consent form they already have
+  // is a different lie from telling them they are ready. Excluded from
+  // both counters below, because it is neither done nor to do.
+  | "unknown";
 
 type Row = {
   title: string;
@@ -45,9 +68,12 @@ function nonEmpty(s: string | null | undefined): boolean {
 
 export default async function LaunchChecklistPage() {
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
-  const [services, availabilityDefaults] = await Promise.all([
+  // One extra bounded existence read, issued alongside the two that were
+  // already here rather than after them: no added round trip, no N+1.
+  const [services, availabilityDefaults, treatmentConsent] = await Promise.all([
     getActiveServices(studio.id),
     getAvailabilityDefaults(studio.id),
+    getTreatmentConsentReadiness(studio.id),
   ]);
 
   const hasConsultation = services.some(
@@ -121,6 +147,23 @@ export default async function LaunchChecklistPage() {
         label: "Open Forms & Policies",
         href: "/settings/intake",
       },
+    },
+    // Sits directly under the intake row because that is where the form is
+    // presented: with no live treatment consent, the intake a client completes
+    // asks for no consent at all.
+    {
+      title: "Treatment consent form",
+      status: !treatmentConsent.ok
+        ? "unknown"
+        : treatmentConsent.ready
+          ? "ready"
+          : "needs_setup",
+      detail: !treatmentConsent.ok
+        ? "Couldn't check your consent forms just now. Open Consent forms to confirm."
+        : treatmentConsent.ready
+          ? "A treatment consent form is live in the client portal, so the intake presents it."
+          : "Create a treatment consent form and make it live. Until you do, the intake asks new clients for no consent.",
+      cta: { label: "Open Consent forms", href: CONSENT_SETTINGS_HREF },
     },
     {
       title: "Postcare email content",
@@ -311,6 +354,10 @@ function ChecklistStatusPill({ status }: { status: Status }) {
         return { label: "Not enabled", tone: "neutral" };
       case "manual":
         return { label: "Manual", tone: "info" };
+      // Not "To do": this page could not establish the fact, and saying
+      // "To do" would assert an absence it did not observe.
+      case "unknown":
+        return { label: "Check", tone: "warning" };
     }
   })();
   return <StatusPill tone={tone}>{label}</StatusPill>;
