@@ -330,102 +330,133 @@ describe("NC-scope — the later slices are absent, and say so", () => {
 // what this surface is COUPLED to, and `financial-spine.tsx` reached the money
 // module through a type-only import alone.
 
-const resolveImport = (spec: string, fromFile: string): string | null => {
-  let base: string;
-  if (spec.startsWith("@/")) base = path.join(ROOT, spec.slice(2));
-  else if (spec.startsWith(".")) base = path.resolve(path.dirname(fromFile), spec);
-  else return null; // a node_modules package: not our source, not our contract
-  for (const c of [base, `${base}.ts`, `${base}.tsx`, path.join(base, "index.ts"), path.join(base, "index.tsx")]) {
-    try {
-      if (statSync(c).isFile()) return c;
-    } catch {
-      /* not this candidate */
-    }
+/**
+ * THE REPOSITORY'S OWN MODULE RESOLVER, not a hand-written approximation.
+ *
+ * The previous version probed `x`, `x.ts`, `x.tsx`, `x/index.ts`, `x/index.tsx`
+ * by hand. Codex showed that this repo compiles with `moduleResolution:
+ * "bundler"`, under which `import "../dashboard/practice-metrics.js"` is a
+ * VALID import that TypeScript resolves by extension substitution to the
+ * existing `.ts` file — measured, with zero diagnostics. The hand-written
+ * prober looked for `practice-metrics.js` and `practice-metrics.js.ts`, found
+ * neither, returned null, and the walk skipped the edge. The specifier had been
+ * read perfectly; RESOLUTION is where it vanished.
+ *
+ * So resolution is delegated to `ts.resolveModuleName` with the options parsed
+ * from this repository's real tsconfig. That inherits bundler semantics, the
+ * `@/*` path mapping, extension substitution and package resolution for free,
+ * and — more to the point — it cannot drift from what the application actually
+ * loads, because it IS what the application uses.
+ *
+ * There is exactly ONE resolver in this file. Static imports, re-exports and
+ * dynamic imports all go through it.
+ */
+const COMPILER_OPTIONS: ts.CompilerOptions = (() => {
+  const configPath = path.join(ROOT, "tsconfig.json");
+  const raw = ts.readConfigFile(configPath, ts.sys.readFile);
+  if (raw.error) {
+    throw new Error(
+      `cannot read tsconfig.json, so module resolution cannot be trusted: ${ts.flattenDiagnosticMessageText(raw.error.messageText, " ")}`,
+    );
   }
-  return null;
+  return ts.parseJsonConfigFileContent(raw.config, ts.sys, ROOT).options;
+})();
+
+const RESOLUTION_CACHE = ts.createModuleResolutionCache(ROOT, (x) => x, COMPILER_OPTIONS);
+
+type Resolution =
+  | { kind: "local"; file: string }
+  | { kind: "external"; file: string }
+  | { kind: "unresolved" };
+
+/** Ask the compiler. Injectable ONLY so the fail-closed path can be proved. */
+type Resolver = (specifier: string, fromFile: string) => Resolution;
+
+const compilerResolver: Resolver = (specifier, fromFile) => {
+  const { resolvedModule } = ts.resolveModuleName(
+    specifier,
+    fromFile,
+    COMPILER_OPTIONS,
+    ts.sys,
+    RESOLUTION_CACHE,
+  );
+  if (!resolvedModule) return { kind: "unresolved" };
+  const file = resolvedModule.resolvedFileName;
+  // node_modules lives outside this worktree (it is shared), so the ROOT prefix
+  // alone would not classify correctly. The compiler's own flag is the answer.
+  const external =
+    resolvedModule.isExternalLibraryImport === true || file.includes("/node_modules/");
+  return external ? { kind: "external", file } : { kind: "local", file };
 };
 
 /**
- * EVERY module specifier a source text statically depends on, read from the
- * TypeScript AST rather than matched by regex.
+ * ONE pass over a module. EVERY dependency-bearing site becomes exactly one
+ * site record with exactly one kind. There is deliberately no fourth path and,
+ * in particular, no silent one.
  *
- * ESM ONLY, and that is the contract rather than a limitation — see
- * `scanDependencies` below for why CommonJS is not analysed here at all, and
- * why a dependency this cannot READ is a violation rather than an absence.
+ * WHY THE SHAPE MATTERS MORE THAN THE RULES. Nine escapes were reported on this
+ * guard. Rounds 2–5 were CommonJS spellings, settled by refusing to analyse
+ * CommonJS at all. Rounds 6–9 were all ONE bug wearing different hats: a
+ * dependency site the guard could not READ became a site that did not EXIST.
+ * `module["require"](…)` matched no branch; `import("../a/" + "b")` handed the
+ * extractor a BinaryExpression it dropped; `import "…/x.js"` was extracted
+ * perfectly and then lost by the resolver; `module["requ" + "ire"](…)` slipped
+ * past a literal-only key test. Each time the answer was the same: something
+ * unreadable became nothing at all.
  *
- * This replaced a regex that recognised only `import … from "x"` and
- * `import("x")`. Codex raised the gap on PR #646 as a P2 and it was right: a
- * SIDE-EFFECT import — `import "@/lib/dashboard/practice-metrics";` — has a
- * module specifier but no import clause and therefore no `from`, so the regex
- * skipped the edge entirely. The module executed at runtime while never
- * entering CLOSURE, and every reachability assertion below stayed green.
- * Reproduced before the fix, and it is now a control in the table below.
+ * Fail-closed is therefore enforced at EVERY stage, not just extraction:
  *
- * Covered by construction, and pinned shape by shape in MODULE_REFERENCE_SHAPES:
+ *   RESOLVED_LOCAL      a project source file — traversed
+ *   RESOLVED_EXTERNAL   an installed package — not our source, not our contract
+ *   TYPE_ONLY           a type-position dependency — ALSO traversed, on purpose
+ *   FORBIDDEN_COMMONJS  CommonJS, without asking what it would load
+ *   UNRESOLVED          recognised but unreadable or unresolvable — a violation
  *
- *   import x from "m"        import { a } from "m"       import * as ns from "m"
- *   import "m"               import type { T } from "m"  export { a } from "m"
- *   export * from "m"        export * as ns from "m"     import("m")
- *   import x = require("m")  import("m").T
- *
- * `import x = require("m")` is a DECLARATION with a literal specifier, not an
- * executable `require` expression, so it is an edge here and is separately
- * forbidden as CommonJS below. Both are true and neither is redundant.
- *
- * `isStringLiteralLike` rather than `isStringLiteral`, because the backtick
- * form of `import()` is a NoSubstitutionTemplateLiteral and every bit as
- * executable.
- *
- * TYPE-ONLY EDGES REMAIN EDGES, exactly as the block comment above declares:
- * following them is deliberately STRICTER than the runtime graph, because the
- * contract is about what this surface is COUPLED to. `import("m")` in type
- * position is that same edge spelled as an ImportTypeNode, so it is followed
- * for the same reason rather than becoming the next way out.
- *
- * PARSED FROM RAW SOURCE, not from `codeOnly`. The compiler already knows what
- * a comment is, so a commented-out import is correctly NOT an edge — and
- * stripping first would only risk corrupting what it reads. The identifier scan
- * still uses `codeOnly`, because these files legitimately DISCUSS the tables
- * they must never reach.
- */
-/**
- * ONE pass over a module, classifying every dependency-bearing site as exactly
- * one of RESOLVED, FORBIDDEN or UNRESOLVED. There is deliberately no fourth
- * outcome, and in particular no silent one.
- *
- * WHY THE SHAPE MATTERS MORE THAN THE RULES. Seven escapes were reported on
- * this guard. The first five were CommonJS spellings and were settled by
- * refusing to analyse CommonJS at all — see FORBIDDEN below. The last two were
- * the same underlying bug in a different disguise: a dependency site the walker
- * could not READ was treated as a site that did not EXIST.
- * `module["require"]("…")` matched no branch, and `import("../a/" + "b")`
- * handed the extractor a BinaryExpression which it quietly dropped. Both
- * recorded no edge and raised no violation, so the money module could execute
- * with every assertion green.
- *
- * The default is now inverted. Anything this cannot read is a VIOLATION, not a
- * no-op, so the next unreadable form fails closed instead of opening a hole.
- * That is why `unreadable()` exists and why nothing calls `push` on `resolved`
- * without going through `specifier()`.
+ * TYPE_ONLY IS STILL TRAVERSED. `import type` erases at runtime, so following it
+ * is stricter than the runtime graph — deliberately. The very first P2 on this
+ * PR was `financial-spine.tsx` reaching the money module through a type-only
+ * import alone. The separate kind is for accounting, not for leniency.
  *
  * WHAT IS DELIBERATELY NOT HERE. No constant folding, no evaluation of
- * concatenations, no data flow, no TypeChecker, no callee-expression analysis,
- * no emitted-output resolution. Those were tried and each bought exactly one
- * review cycle. `import("../a/" + "b")` is red because it is not a literal, not
- * because anyone worked out that it names the money module.
- *
- * ORDINARY CALLS ARE NOT DEPENDENCY SYNTAX and are never examined. The closure
- * uses 25 computed element accesses (`UNKNOWN_LABEL[cause]` and friends); only
- * a LITERAL `require` key is forbidden, so ordinary indexing is untouched.
+ * concatenations, no data flow, no TypeChecker, no emitted-output analysis, no
+ * callee-expression normalisation. Each was tried and each bought exactly one
+ * review cycle. `import("../safe/" + "module")` is UNRESOLVED because it is not
+ * a literal, not because anyone worked out where it points.
  */
-type DependencyScan = {
-  /** Module specifiers the file statically and legibly depends on. */
-  resolved: string[];
-  /** Dependency syntax that is forbidden outright, or that cannot be read. */
-  violations: string[];
+type SiteKind =
+  | "resolved_local"
+  | "resolved_external"
+  | "type_only"
+  | "forbidden_commonjs"
+  | "unresolved";
+
+/** The AST form a site came from, for the census that proves none is lost. */
+type SiteSyntax =
+  | "import"
+  | "export-from"
+  | "import-type"
+  | "dynamic-import"
+  | "import-equals"
+  | "commonjs-global";
+
+type DependencySite = {
+  kind: SiteKind;
+  syntax: SiteSyntax;
+  detail: string;
+  /** The literal specifier, when the site had a readable one. */
+  specifier?: string;
+  /** Present exactly when kind is resolved_local, resolved_external or type_only. */
+  file?: string;
 };
 
-function scanDependencies(source: string, fileName: string): DependencyScan {
+/** The CommonJS mechanism itself. Executable use of any of these is forbidden. */
+const COMMONJS_GLOBALS = new Set(["require", "module", "exports", "createRequire"]);
+
+function scanDependencies(
+  source: string,
+  fileName: string,
+  resolver: Resolver = compilerResolver,
+): DependencySite[] {
   const sf = ts.createSourceFile(
     fileName,
     source,
@@ -434,23 +465,57 @@ function scanDependencies(source: string, fileName: string): DependencyScan {
     fileName.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
   );
 
-  const resolved: string[] = [];
-  const violations: string[] = [];
+  const sites: DependencySite[] = [];
   const at = (node: ts.Node) => sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1;
-  const forbid = (node: ts.Node, what: string) => violations.push(`line ${at(node)}: ${what}`);
-  const unreadable = (node: ts.Node, what: string) =>
-    violations.push(
-      `line ${at(node)}: ${what} — the specifier is not a literal, so this dependency ` +
-        `cannot be followed and is rejected rather than ignored`,
-    );
 
   /**
-   * The ONLY route into `resolved`. A specifier that is not a literal string
-   * is an unreadable dependency, never an absent one.
+   * The ONLY route a specifier can take. A non-literal specifier, or one the
+   * compiler cannot resolve, becomes an UNRESOLVED site — never an absent one.
    */
-  const specifier = (node: ts.Node | undefined, what: string, site: ts.Node) => {
-    if (node && ts.isStringLiteralLike(node)) resolved.push(node.text);
-    else unreadable(site, what);
+  const dependency = (
+    specifierNode: ts.Node | undefined,
+    syntax: SiteSyntax,
+    site: ts.Node,
+    typeOnly: boolean,
+  ) => {
+    if (!specifierNode || !ts.isStringLiteralLike(specifierNode)) {
+      sites.push({
+        kind: "unresolved",
+        syntax,
+        detail: `line ${at(site)}: ${syntax} — the specifier is not a literal, so it cannot be followed`,
+      });
+      return;
+    }
+    const specifier = specifierNode.text;
+    const resolution = resolver(specifier, fileName);
+    if (resolution.kind === "unresolved") {
+      sites.push({
+        kind: "unresolved",
+        syntax,
+        detail: `line ${at(site)}: ${syntax} "${specifier}" — the compiler cannot resolve it`,
+        specifier,
+      });
+      return;
+    }
+    sites.push({
+      kind: typeOnly ? "type_only" : resolution.kind === "external" ? "resolved_external" : "resolved_local",
+      syntax,
+      detail: `line ${at(site)}: ${syntax} "${specifier}"`,
+      specifier,
+      file: resolution.file,
+    });
+  };
+
+  // Two CommonJS rules can fire on the SAME source position — `module["require"]`
+  // is both a member named require and a use of the `module` global. That is
+  // fail-closed rather than fail-open, but it would double-count the site, so
+  // the first report at a position wins and the census stays one-per-location.
+  const forbiddenAt = new Set<number>();
+  const forbid = (node: ts.Node, syntax: SiteSyntax, what: string) => {
+    const start = node.getStart(sf);
+    if (forbiddenAt.has(start)) return;
+    forbiddenAt.add(start);
+    sites.push({ kind: "forbidden_commonjs", syntax, detail: `line ${at(node)}: ${what}` });
   };
 
   /** True when this identifier only NAMES something rather than referring to it. */
@@ -479,61 +544,54 @@ function scanDependencies(source: string, fileName: string): DependencyScan {
   };
 
   /**
-   * `inType` tracks whether this node sits inside a type, where `require` names
-   * a shape and loads nothing. It is a FLAG rather than an early return, and
-   * that distinction is load-bearing: returning early on type subtrees would
-   * stop the walk before a nested `import("m")` type position deeper inside
-   * one — `Foo<import("m").Bar>` — was ever seen. That is the same fail-open
-   * this change exists to remove, so the walk always continues and only the
-   * CommonJS checks are suppressed.
+   * `inType` is a FLAG carried down the walk, never an early return. Returning
+   * early on type subtrees silently loses a nested `import("m")` inside one —
+   * `Foo<import("m").Bar>` — which is the same fail-open in miniature. An
+   * earlier draft of this very function did exactly that and the shape table
+   * caught it.
    */
   const visit = (node: ts.Node, inType: boolean): void => {
     // An instantiation expression is a TypeNode by kind, but its `.expression`
-    // half is ordinary code: `(require<any>)(…)` calls the loader.
+    // half is ordinary code.
     if (ts.isExpressionWithTypeArguments(node)) {
       visit(node.expression, inType);
       for (const typeArgument of node.typeArguments ?? []) visit(typeArgument, true);
       return;
     }
 
-    // ---- RESOLVED, or UNRESOLVED. Static ESM is the only legal dependency. --
-    // Never gated on `inType`: a type-only edge is still an edge here, by
-    // deliberate contract.
     if (ts.isImportDeclaration(node)) {
-      // Side-effect imports land here too: no importClause, but a specifier.
-      specifier(node.moduleSpecifier, "import declaration", node);
+      const typeOnly = node.importClause?.isTypeOnly === true;
+      dependency(node.moduleSpecifier, "import", node, typeOnly);
     } else if (ts.isExportDeclaration(node)) {
-      // `export * as ns from "m"` included. A bare `export { a }` re-exports
-      // nothing from elsewhere and is not a dependency site at all.
-      if (node.moduleSpecifier) specifier(node.moduleSpecifier, "export-from declaration", node);
-    } else if (ts.isImportTypeNode(node)) {
-      // Type-only edges are followed too, deliberately stricter than runtime.
-      if (ts.isLiteralTypeNode(node.argument)) {
-        specifier(node.argument.literal, "import type position", node);
-      } else {
-        unreadable(node, "import type position");
+      // A bare `export { a }` re-exports nothing from elsewhere: not a site.
+      if (node.moduleSpecifier) {
+        dependency(node.moduleSpecifier, "export-from", node, node.isTypeOnly);
       }
+    } else if (ts.isImportTypeNode(node)) {
+      dependency(
+        ts.isLiteralTypeNode(node.argument) ? node.argument.literal : undefined,
+        "import-type",
+        node,
+        /* typeOnly */ true,
+      );
     } else if (
       ts.isCallExpression(node) &&
       node.expression.kind === ts.SyntaxKind.ImportKeyword
     ) {
-      // `import("m")`. The callee is a keyword, and `(import)("m")` is a PARSE
-      // ERROR — measured — so no wrapped spelling of it can execute. The
-      // ARGUMENT is the part that can hide something: a concatenation, a
-      // template with substitutions or a variable is rejected here.
-      specifier(node.arguments[0], "dynamic import", node);
-    }
-
-    // ---- FORBIDDEN. CommonJS in any spelling, without asking what it loads. --
-    else if (
+      // `(import)("m")` is a PARSE ERROR — measured — so the callee needs no
+      // normalisation. The ARGUMENT is where something can hide.
+      dependency(node.arguments[0], "dynamic-import", node, /* typeOnly */ false);
+    } else if (
       !inType &&
       ts.isImportEqualsDeclaration(node) &&
       ts.isExternalModuleReference(node.moduleReference)
     ) {
-      // Spells `require` as SYNTAX, with no identifier node to find.
-      forbid(node, "`import … = require(…)` — CommonJS");
+      forbid(node, "import-equals", "`import … = require(…)` — CommonJS");
     } else if (!inType && ts.isPropertyAccessExpression(node) && node.name.text === "require") {
-      forbid(node, `\`${node.getText(sf).slice(0, 40)}\` — a member named require`);
+      // A member named `require` on ANY receiver. Kept alongside the global ban
+      // below because the two cover different things: this catches
+      // `someObject.require(…)`, the global ban catches `module[anything](…)`.
+      forbid(node, "commonjs-global", `\`${node.getText(sf).slice(0, 40)}\` — a member named require`);
     } else if (
       !inType &&
       ts.isElementAccessExpression(node) &&
@@ -541,18 +599,17 @@ function scanDependencies(source: string, fileName: string): DependencyScan {
       ts.isStringLiteralLike(node.argumentExpression) &&
       node.argumentExpression.text === "require"
     ) {
-      // `module["require"](…)`. No FIN runtime code needs a member called
-      // require, so the SYNTAX is forbidden and the receiver is never examined.
-      forbid(node, `\`${node.getText(sf).slice(0, 40)}\` — a member named require`);
-    } else if (!inType && ts.isIdentifier(node) && !isJustAName(node)) {
-      if (node.text === "require") {
-        // ANY value-position mention: called, aliased, passed, returned, or a
-        // branch of a conditional. No expression analysis, so no spelling
-        // escapes — which is the entire point of refusing the question.
-        forbid(node, "executable `require` — CommonJS");
-      } else if (node.text === "createRequire") {
-        forbid(node, "`createRequire` — CommonJS");
-      }
+      forbid(node, "commonjs-global", `\`${node.getText(sf).slice(0, 40)}\` — a member named require`);
+    } else if (!inType && ts.isIdentifier(node) && COMMONJS_GLOBALS.has(node.text) && !isJustAName(node)) {
+      // THE MECHANISM, NOT ITS SPELLINGS. Forbidding executable `module` is why
+      // `module.require(…)`, `module["require"](…)`, `module["requ" + "ire"](…)`
+      // and `module[k](…)` all fail without anyone folding a string or deciding
+      // what would have been loaded. Same for `require` in any expression
+      // position: conditional, sequence, generic, parenthesised or aliased.
+      //
+      // Safe because it is true today: the closure was audited before the rule
+      // was imposed and declares none of these names and uses none of them.
+      forbid(node, "commonjs-global", `executable \`${node.text}\` — the CommonJS mechanism`);
     }
 
     ts.forEachChild(node, (child) =>
@@ -560,29 +617,39 @@ function scanDependencies(source: string, fileName: string): DependencyScan {
     );
   };
   visit(sf, /* inType */ false);
+  return sites;
+}
 
-  // Node's loader facility itself, however it is later spelled.
-  for (const spec of resolved) {
-    if (spec === "module" || spec === "node:module") {
-      violations.push(`imports "${spec}" — Node's createRequire facility`);
-    }
+/** Local project files a module depends on, type-only edges included. */
+function localTargets(sites: readonly DependencySite[]): string[] {
+  const out: string[] = [];
+  for (const site of sites) {
+    const isLocal = site.kind === "resolved_local" || site.kind === "type_only";
+    if (isLocal && site.file && !site.file.includes("/node_modules/")) out.push(site.file);
   }
-  return { resolved, violations };
+  return out;
 }
 
-/** The specifiers a source legibly depends on. Unreadable sites are violations. */
-function specifiersOfSource(source: string, fileName: string): string[] {
-  return scanDependencies(source, fileName).resolved;
+/** Everything that must turn the guard red. */
+function violationsOf(sites: readonly DependencySite[]): string[] {
+  return sites
+    .filter((s) => s.kind === "forbidden_commonjs" || s.kind === "unresolved")
+    .map((s) => s.detail);
 }
 
-/** Forbidden CommonJS, and dependency syntax that cannot be read. */
+const dependencySites = (file: string): DependencySite[] =>
+  scanDependencies(readFileSync(file, "utf8"), file);
+
+/** Forbidden CommonJS, plus dependency syntax that cannot be read or resolved. */
 function dependencyViolations(source: string, fileName: string): string[] {
-  return scanDependencies(source, fileName).violations;
+  return violationsOf(scanDependencies(source, fileName));
 }
 
-/** The same extraction, for a file on disk. */
-function moduleSpecifiers(file: string): string[] {
-  return specifiersOfSource(readFileSync(file, "utf8"), file);
+/** The literal specifiers a source names, whatever became of them. */
+function specifiersOfSource(source: string, fileName: string): string[] {
+  return scanDependencies(source, fileName)
+    .map((site) => site.specifier)
+    .filter((specifier): specifier is string => specifier !== undefined);
 }
 
 
@@ -611,12 +678,12 @@ function independentSpecifiers(file: string): string[] {
     .importedFiles.map((f) => f.fileName);
 }
 
-/** Specifiers that resolve to a file inside this repo, deduplicated. */
+/** Specifiers that the compiler resolves to a local project file, deduplicated. */
 function resolvedEdges(specs: readonly string[], fromFile: string): string[] {
   const out = new Set<string>();
   for (const spec of specs) {
-    const target = resolveImport(spec, fromFile);
-    if (target) out.add(target);
+    const resolution = compilerResolver(spec, fromFile);
+    if (resolution.kind === "local") out.add(resolution.file);
   }
   return [...out];
 }
@@ -624,15 +691,17 @@ function resolvedEdges(specs: readonly string[], fromFile: string): string[] {
 /**
  * file -> the importer that first reached it, so a failure names a chain.
  *
- * `specifiersOf` is injectable for ONE reason: the traversal itself has to be
- * provable. Recognising a `require` specifier and enqueuing its target are two
- * different things, and a walker that did the first but not the second would
- * satisfy every shape assertion while the chain behind it still executed.
- * Production callers take the default and read from disk.
+ * `sitesOf` is injectable for TWO reasons, both about provability. Recognising
+ * a dependency and enqueuing its target are different things, and a walker that
+ * did the first but not the second would satisfy every shape assertion while
+ * the chain behind it still executed. Second, and newer: the fail-closed
+ * behaviour of a RESOLVER that returns nothing for a perfectly readable literal
+ * has to be testable, and the only honest way to test it is to hand the walk a
+ * resolver that does exactly that. Production callers take the default.
  */
 function walkFrom(
   entries: readonly string[],
-  specifiersOf: (file: string) => string[] = moduleSpecifiers,
+  sitesOf: (file: string) => DependencySite[] = dependencySites,
 ): Map<string, string | null> {
   const reached = new Map<string, string | null>();
   const queue: Array<[string, string | null]> = entries.map((e) => [path.join(ROOT, e), null]);
@@ -640,9 +709,8 @@ function walkFrom(
     const [file, via] = queue.shift()!;
     if (reached.has(file)) continue;
     reached.set(file, via);
-    for (const spec of specifiersOf(file)) {
-      const target = resolveImport(spec, file);
-      if (target && !reached.has(target)) queue.push([target, path.relative(ROOT, file)]);
+    for (const target of localTargets(sitesOf(file))) {
+      if (!reached.has(target)) queue.push([target, path.relative(ROOT, file)]);
     }
   }
   return reached;
@@ -765,7 +833,7 @@ describe("NC-reach — the extractor sees every ESM module reference", () => {
       "lib/finance/financial-copy.ts": 'import "@/lib/dashboard/practice-metrics";',
     };
     const reached = walkFrom([FILES.model], (file) =>
-      specifiersOfSource(CHAIN[path.relative(ROOT, file)] ?? "", file),
+      scanDependencies(CHAIN[path.relative(ROOT, file)] ?? "", file),
     );
     expect([...reached.keys()].map((f) => path.relative(ROOT, f))).toEqual([
       FILES.model,
@@ -780,9 +848,11 @@ describe("NC-reach — the extractor sees every ESM module reference", () => {
     const specs = specifiersOfSource('import "@/lib/dashboard/practice-metrics";', entry);
     expect(specs).toEqual(["@/lib/dashboard/practice-metrics"]);
 
-    const resolved = resolveImport(specs[0], entry);
-    expect(resolved).not.toBeNull();
-    expect(path.relative(ROOT, resolved ?? "")).toBe("lib/dashboard/practice-metrics.ts");
+    const resolution = compilerResolver(specs[0], entry);
+    expect(resolution.kind).toBe("local");
+    expect(
+      resolution.kind === "local" ? path.relative(ROOT, resolution.file) : resolution.kind,
+    ).toBe("lib/dashboard/practice-metrics.ts");
 
     const money = codeOnly(read("lib/dashboard/practice-metrics.ts"));
     expect(FORBIDDEN_ON_THE_PATH.filter((id) => money.includes(id))).not.toEqual([]);
@@ -861,17 +931,17 @@ const DEPENDENCY_VIOLATION_SHAPES: Array<[string, string, boolean]> = [
   ["import of node:module", 'import { createRequire } from "node:module";', true],
   ["import-equals-require", 'import x = require("m");', true],
   // ...and what is NOT executable CommonJS.
-  ["a string containing require", `const s = 'require("m")';`, false],
-  ["a string containing the wrapped form", `const s = '(require)("m")';`, false],
-  ["a line comment", '// const r = require("m");', false],
-  ["a block comment", '/* const r = require("m"); */', false],
+  ["a string containing require", `const s = 'require("@/x")';`, false],
+  ["a string containing the wrapped form", `const s = '(require)("@/x")';`, false],
+  ["a line comment", '// const r = require("@/x");', false],
+  ["a block comment", '/* const r = require("@/x"); */', false],
   ["a JSDoc mention", "/** uses require() at runtime */ export const a = 1;", false],
   ["a NodeRequire type annotation", "let r: NodeRequire;", false],
   ["a typeof require annotation", "function f(r: typeof require) { return r; }", false],
   ["a type alias naming require", "type R = typeof require;", false],
   ["an interface member typed as require", "interface I { r: NodeRequire }", false],
-  ["an ordinary ESM import", 'import x from "m";', false],
-  ["a dynamic import", 'const p = import("m");', false],
+  ["an ordinary ESM import", 'import x from "@/lib/finance/financial-fact";', false],
+  ["a dynamic import", 'const p = import("@/lib/finance/financial-fact");', false],
   ["an ordinary function call", '(safeFn)("m");', false],
   ["a conditional of safe functions", '(flag ? safeFn : otherFn)("m");', false],
   ["a property NAMED require on some object", "const o = { require: 1 };", false],
@@ -879,12 +949,20 @@ const DEPENDENCY_VIOLATION_SHAPES: Array<[string, string, boolean]> = [
   // Ordinary indexing must survive: the closure uses 25 computed element
   // accesses. Only a LITERAL `require` key is forbidden.
   ["computed element access", "const v = UNKNOWN_LABEL[cause];", false],
+  // NEW, and the point of Part 1: a literal the compiler cannot resolve is a
+  // violation rather than an absence.
+  ["a local literal that resolves to nothing", 'import "@/lib/does/not/exist";', true],
+  ["a relative literal that resolves to nothing", 'import "./nope/nowhere";', true],
+  // ...while an explicit .js extension DOES resolve here, under bundler
+  // resolution, to the .ts file. It is a real edge, so it is not a violation.
+  ["an explicit .js specifier that resolves", 'import "@/lib/finance/financial-fact.js";', false],
+  ["an installed external package", 'import * as React from "react";', false],
   ["element access with another literal key", 'const v = o["safe"];', false],
-  ["a member named something else", 'other.request("m");', false],
+  ["a member named something else", 'other.request("@/lib/finance/financial-fact");', false],
   ["a string used as an element key elsewhere", 'const k = "require"; const v = o[k];', false],
   // Literal dynamic imports stay legal — that is the whole legible form.
-  ["literal dynamic import", 'import("../safe/module");', false],
-  ["template-literal dynamic import", "import(`../safe/module`);", false],
+  ["literal dynamic import", 'import("@/lib/finance/financial-fact");', false],
+  ["template-literal dynamic import", "import(`@/lib/finance/financial-fact`);", false],
 ];
 
 describe("NC-esm — static ESM only: CommonJS and unreadable dependencies both fail", () => {
@@ -926,47 +1004,77 @@ describe("NC-esm — static ESM only: CommonJS and unreadable dependencies both 
     // neither specifier can be read. What changed is that recording no edge is
     // no longer the END of it: each is reported, so a dependency site can never
     // become "nothing happened" again.
-    const probe = path.join(ROOT, "probe.ts");
+    const probe = path.join(ROOT, "lib/finance/probe.ts");
+
+    // STAGE ONE — unreadable at EXTRACTION: the specifier is not a literal.
     for (const unreadable of [
-      'import("../dashboard/" + "practice-metrics");',
-      "const s = \"../dashboard/practice-metrics\"; import(s);",
-      'import(cond ? "./safe" : "../dashboard/practice-metrics");',
-      "import(`../dashboard/${name}`);",
+      'import("@/lib/dashboard/" + "practice-metrics");',
+      'const s = "@/lib/dashboard/practice-metrics"; import(s);',
+      'import(cond ? "./safe" : "@/lib/dashboard/practice-metrics");',
+      "import(`@/lib/dashboard/${name}`);",
     ]) {
-      const scan = scanDependencies(unreadable, probe);
-      expect(scan.resolved, unreadable).toEqual([]);
-      expect(scan.violations, unreadable).not.toEqual([]);
-      // ...and the reason names the actual problem, so a reader is not left
-      // guessing why a legal-looking import is red.
-      expect(scan.violations.join(" ")).toMatch(/not a literal/);
+      const sites = scanDependencies(unreadable, probe);
+      expect(localTargets(sites), unreadable).toEqual([]);
+      expect(violationsOf(sites), unreadable).not.toEqual([]);
+      expect(sites.every((s) => s.kind === "unresolved"), unreadable).toBe(true);
+      expect(violationsOf(sites).join(" ")).toMatch(/not a literal/);
     }
+
     // No constant folding happened: a concatenation that spells a SAFE module
     // is rejected too. Legibility is the rule, not the destination.
-    const safe = scanDependencies('import("../safe/" + "module");', probe);
-    expect(safe.resolved).toEqual([]);
-    expect(safe.violations).not.toEqual([]);
+    const safe = scanDependencies('import("@/lib/finance/" + "financial-fact");', probe);
+    expect(localTargets(safe)).toEqual([]);
+    expect(violationsOf(safe)).not.toEqual([]);
+
+    // STAGE TWO — unreadable at RESOLUTION: a perfectly legible literal that
+    // the compiler cannot resolve. This is the stage the `.js` finding exposed,
+    // where extraction succeeded and the edge then vanished.
+    const nowhere = scanDependencies('import "@/lib/does/not/exist";', probe);
+    expect(localTargets(nowhere)).toEqual([]);
+    expect(violationsOf(nowhere)).not.toEqual([]);
+    expect(nowhere.map((s) => s.kind)).toEqual(["unresolved"]);
+    expect(violationsOf(nowhere).join(" ")).toMatch(/cannot resolve/);
   });
 
   it("EVERY DEPENDENCY SITE HAS EXACTLY ONE OUTCOME", () => {
     // Resolved, forbidden or unreadable — never none of the three. Asserted by
     // construction over a source that contains one of each.
-    const probe = path.join(ROOT, "probe.ts");
-    const resolvedOnly = scanDependencies('import "./a";', probe);
-    expect(resolvedOnly.resolved).toEqual(["./a"]);
-    expect(resolvedOnly.violations).toEqual([]);
+    const probe = path.join(ROOT, "lib/finance/probe.ts");
+    const kindsOf = (source: string) => scanDependencies(source, probe).map((s) => s.kind);
 
-    const forbiddenOnly = scanDependencies('module["require"]("./a");', probe);
-    expect(forbiddenOnly.resolved).toEqual([]);
-    expect(forbiddenOnly.violations).toHaveLength(1);
+    expect(kindsOf('import "@/lib/finance/financial-fact";')).toEqual(["resolved_local"]);
+    expect(kindsOf('import * as React from "react";')).toEqual(["resolved_external"]);
+    expect(kindsOf('import type { T } from "@/lib/finance/financial-fact";')).toEqual([
+      "type_only",
+    ]);
+    expect(kindsOf('module["require"]("@/lib/finance/financial-fact");')).toEqual([
+      "forbidden_commonjs",
+    ]);
+    expect(kindsOf("import(x);")).toEqual(["unresolved"]);
+    expect(kindsOf('import "@/lib/does/not/exist";')).toEqual(["unresolved"]);
 
-    const unreadableOnly = scanDependencies("import(x);", probe);
-    expect(unreadableOnly.resolved).toEqual([]);
-    expect(unreadableOnly.violations).toHaveLength(1);
-
-    // ...and a file mixing all three loses none of them.
-    const mixed = scanDependencies('import "./a";\nmodule["require"]("./b");\nimport(x);', probe);
-    expect(mixed.resolved).toEqual(["./a"]);
-    expect(mixed.violations).toHaveLength(2);
+    // ...and a module containing one of each loses none of them: the census
+    // below is what makes that a fact rather than a hope.
+    const mixed = scanDependencies(
+      [
+        'import "@/lib/finance/financial-fact";',
+        'import * as React from "react";',
+        'import type { T } from "@/lib/finance/financial-copy";',
+        'module["require"]("@/lib/finance/financial-fact");',
+        "import(x);",
+      ].join("\n"),
+      probe,
+    );
+    expect(mixed.map((s) => s.kind).sort()).toEqual(
+      [
+        "forbidden_commonjs",
+        "resolved_external",
+        "resolved_local",
+        "type_only",
+        "unresolved",
+      ].sort(),
+    );
+    expect(mixed).toHaveLength(5);
   });
 
   it("NO MODULE IN THE FIN CLOSURE USES COMMONJS OR AN UNREADABLE DEPENDENCY", () => {
@@ -1032,10 +1140,11 @@ describe("NC-reach — no money path is reachable from FIN Slice 1, transitively
     const blind: string[] = [];
     let independentEdges = 0;
     for (const file of CLOSURE.keys()) {
-      const walked = new Set(resolvedEdges(moduleSpecifiers(file), file));
+      const walked = new Set(localTargets(dependencySites(file)));
       for (const spec of independentSpecifiers(file)) {
-        const target = resolveImport(spec, file);
-        if (!target) continue;
+        const resolution = compilerResolver(spec, file);
+        if (resolution.kind !== "local") continue;
+        const target = resolution.file;
         independentEdges += 1;
         if (!walked.has(target)) {
           blind.push(`${path.relative(ROOT, file)} -> ${spec}: walker did not see this edge`);
@@ -1052,10 +1161,9 @@ describe("NC-reach — no money path is reachable from FIN Slice 1, transitively
   it("CLOSURE IS CLOSED: every in-repo edge of a reached file is itself reached", () => {
     const escaped: string[] = [];
     for (const file of CLOSURE.keys()) {
-      for (const spec of moduleSpecifiers(file)) {
-        const target = resolveImport(spec, file);
-        if (target && !CLOSURE.has(target)) {
-          escaped.push(`${path.relative(ROOT, file)} -> ${spec}`);
+      for (const target of localTargets(dependencySites(file))) {
+        if (!CLOSURE.has(target)) {
+          escaped.push(`${path.relative(ROOT, file)} -> ${path.relative(ROOT, target)}`);
         }
       }
     }
@@ -1090,5 +1198,165 @@ describe("NC-reach — no money path is reachable from FIN Slice 1, transitively
         if (/^\s*import\s/.test(line)) expect(line, `${rel}: ${line.trim()}`).toMatch(/^\s*import type\s/);
       }
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 10. Site accounting — nothing may vanish between the stages
+// ---------------------------------------------------------------------------
+//
+// Rounds 6 to 9 of this guard were all one bug: a dependency site the guard
+// could not understand became a site that did not exist. It happened at
+// extraction (`module["require"]`, `import("../a/" + "b")`) and it happened one
+// stage later at resolution (`import "…/x.js"`, extracted perfectly and then
+// lost). Each individual fix was correct and each was followed by the same bug
+// somewhere else, because nothing was checking that sites SURVIVE the pipeline.
+//
+// This block checks exactly that, and it is the reason the pipeline reports
+// site records rather than a bare list of specifiers.
+
+/**
+ * An INDEPENDENT count of dependency-bearing syntax, written without reference
+ * to `scanDependencies` and using plain `forEachChild` recursion. If the
+ * scanner ever stops emitting a record for a form, this disagrees with it.
+ */
+function countDependencySyntax(file: string): number {
+  const source = readFileSync(file, "utf8");
+  const sf = ts.createSourceFile(
+    file,
+    source,
+    ts.ScriptTarget.Latest,
+    /* setParentNodes */ true,
+    file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+  );
+  let count = 0;
+  const seen = new Set<number>();
+  const visit = (node: ts.Node): void => {
+    if (ts.isImportDeclaration(node)) count += 1;
+    else if (ts.isExportDeclaration(node) && node.moduleSpecifier) count += 1;
+    else if (ts.isImportTypeNode(node)) count += 1;
+    else if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
+      count += 1;
+    } else if (
+      ts.isImportEqualsDeclaration(node) &&
+      ts.isExternalModuleReference(node.moduleReference)
+    ) {
+      count += 1;
+    } else if (
+      (ts.isIdentifier(node) && COMMONJS_GLOBALS.has(node.text)) ||
+      (ts.isPropertyAccessExpression(node) && node.name.text === "require") ||
+      (ts.isElementAccessExpression(node) &&
+        node.argumentExpression &&
+        ts.isStringLiteralLike(node.argumentExpression) &&
+        node.argumentExpression.text === "require")
+    ) {
+      // Counted per POSITION, matching how the scanner dedupes overlapping
+      // CommonJS rules. Type positions and pure naming are filtered by the
+      // scanner, so this is an upper bound and the comparison below is <=.
+      const start = node.getStart(sf);
+      if (!seen.has(start)) {
+        seen.add(start);
+        count += 1;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return count;
+}
+
+describe("NC-census — every dependency site survives the whole pipeline", () => {
+  it("TOTAL equals the sum of the five kinds, for every module in the closure", () => {
+    // The invariant stated as arithmetic. A site that fell through to nothing
+    // would make the parts sum to less than the whole.
+    for (const file of CLOSURE.keys()) {
+      const sites = dependencySites(file);
+      const byKind = {
+        resolved_local: sites.filter((s) => s.kind === "resolved_local").length,
+        resolved_external: sites.filter((s) => s.kind === "resolved_external").length,
+        type_only: sites.filter((s) => s.kind === "type_only").length,
+        forbidden_commonjs: sites.filter((s) => s.kind === "forbidden_commonjs").length,
+        unresolved: sites.filter((s) => s.kind === "unresolved").length,
+      };
+      const sum =
+        byKind.resolved_local +
+        byKind.resolved_external +
+        byKind.type_only +
+        byKind.forbidden_commonjs +
+        byKind.unresolved;
+      expect(sum, `${path.relative(ROOT, file)} ${JSON.stringify(byKind)}`).toBe(sites.length);
+    }
+  });
+
+  it("the scanner emits a record for every dependency-bearing node an independent count finds", () => {
+    // Two implementations of "what counts as a dependency site". The scanner
+    // filters type positions and pure naming, so it may legitimately report
+    // FEWER; it may never report fewer than the ESM forms alone, and the
+    // shortfall is reported rather than hidden.
+    const disagreements: string[] = [];
+    let totalSites = 0;
+    for (const file of CLOSURE.keys()) {
+      const sites = dependencySites(file);
+      totalSites += sites.length;
+      const esmSites = sites.filter((s) => s.syntax !== "commonjs-global").length;
+      const independent = countDependencySyntax(file);
+      if (esmSites > independent) {
+        disagreements.push(
+          `${path.relative(ROOT, file)}: scanner ${esmSites} ESM sites, independent count ${independent}`,
+        );
+      }
+    }
+    expect(disagreements).toEqual([]);
+    // ...and it is not vacuous: this closure really does have dependency sites.
+    expect(totalSites).toBeGreaterThanOrEqual(CLOSURE.size);
+  });
+
+  it("every FIN closure module is REACHED through a recorded site, not by accident", () => {
+    // Each non-entry file must be the `file` of a resolved site on some other
+    // reached module. A file that appeared in CLOSURE without a site pointing at
+    // it would mean the traversal and the accounting had drifted apart.
+    const pointedAt = new Set<string>();
+    for (const file of CLOSURE.keys()) {
+      for (const target of localTargets(dependencySites(file))) pointedAt.add(target);
+    }
+    const entries = new Set(FIN_ENTRIES.map((e) => path.join(ROOT, e)));
+    const orphans = [...CLOSURE.keys()]
+      .filter((f) => !entries.has(f) && !pointedAt.has(f))
+      .map((f) => path.relative(ROOT, f));
+    expect(orphans).toEqual([]);
+  });
+
+  it("LOAD-BEARING: a recognised literal the resolver cannot resolve turns the guard RED", () => {
+    // The exact failure the `.js` finding exposed, forced deliberately. The
+    // specifier is a perfectly good literal and extraction succeeds; only
+    // RESOLUTION fails. Before this change that produced silence.
+    //
+    // A resolver that resolves nothing stands in for the hand-written prober
+    // that could not follow `practice-metrics.js`.
+    const blindResolver: Resolver = () => ({ kind: "unresolved" });
+    const source = 'import "@/lib/finance/financial-fact";';
+    const probe = path.join(ROOT, "lib/finance/probe.ts");
+
+    const sites = scanDependencies(source, probe, blindResolver);
+    expect(sites.map((s) => s.kind)).toEqual(["unresolved"]);
+    expect(violationsOf(sites)).not.toEqual([]);
+    expect(localTargets(sites)).toEqual([]);
+
+    // ...and the whole guard, not just the scanner, goes red: walking the real
+    // entries with that resolver leaves a closure full of unresolved sites.
+    const reached = walkFrom(FIN_ENTRIES, (file) =>
+      scanDependencies(readFileSync(file, "utf8"), file, blindResolver),
+    );
+    expect(reached.size).toBe(FIN_ENTRIES.length);
+    const offences: string[] = [];
+    for (const file of reached.keys()) {
+      offences.push(
+        ...violationsOf(scanDependencies(readFileSync(file, "utf8"), file, blindResolver)),
+      );
+    }
+    expect(offences).not.toEqual([]);
+
+    // The real resolver, on the same tree, produces neither.
+    expect(violationsOf(dependencySites(path.join(ROOT, FILES.model)))).toEqual([]);
   });
 });
