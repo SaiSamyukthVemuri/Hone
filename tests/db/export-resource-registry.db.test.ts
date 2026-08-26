@@ -790,6 +790,50 @@ describe("what is excluded, and on what grounds", () => {
     expect(counts.dead ?? 0).toBe(0);
   });
 
+  // Positive assertions that some code path does NOT touch a table. Every one
+  // of these is a claim about application source, which is exactly what the
+  // withdrawn analyser used to supply and what nothing here can supply now.
+  //
+  // A single exact phrase was not enough, and that was a real hole: the first
+  // version of this guard banned "unreachable from application code" only, so
+  // rewording to "no module opens this table" sailed through — and one such
+  // clause HAD survived the withdrawal, on an `excluded / security` entry that
+  // still said "no runtime code writes it". These reasons render to owners in
+  // the ZIP README and the settings page, so a false one is published.
+  //
+  // Applied to EVERY reason, not just the reclassified ones: the residue was
+  // found in a different category than the one being repaired.
+  const UNREACHABILITY_ASSERTIONS: readonly RegExp[] = [
+    /\bno runtime code\b/i,
+    /\bno module opens\b/i,
+    /\bno application path\b/i,
+    /\bunreachable from\b/i,
+    /\bnot reachable from\b/i,
+    /\bnothing (?:reads|writes|opens|touches) it\b/i,
+    /\bno database function that\b/i,
+    /\bno (?:application |runtime |app )?(?:code|module)\b[^.]{0,40}\b(?:writes|reads|opens|touches)\b/i,
+    /\bnever (?:read|written|opened) by\b/i,
+  ];
+
+  it("NO reason anywhere asserts that code does not reach a table", () => {
+    const offenders: string[] = [];
+    for (const [resource, disposition] of Object.entries(EXPORT_RESOURCE_REGISTRY)) {
+      // Excluded/pending entries publish `reason`; exported entries publish
+      // `description`. Both reach the ZIP README and the settings page, so both
+      // are held to the same standard.
+      const prose =
+        disposition.kind === "exported" ? disposition.description : disposition.reason;
+      for (const pattern of UNREACHABILITY_ASSERTIONS) {
+        const hit = prose.match(pattern);
+        if (hit) offenders.push(`${resource}: "${hit[0]}"`);
+      }
+    }
+    expect(
+      offenders,
+      "a reason asserts unreachability, which nothing in TRUTH-01A can prove since the application-source analyser was withdrawn",
+    ).toEqual([]);
+  });
+
   it("the six withdrawn dead claims are pending, ticketed, and field-reviewed", () => {
     for (const resource of [
       "payment_consents",
@@ -808,11 +852,15 @@ describe("what is excluded, and on what grounds", () => {
         disposition.kind === "pending" && disposition.fieldReviewRequired,
         resource + " carries provider/audit content and must not be dumped raw",
       ).toBe(true);
-      // And the reason must not resurrect the withdrawn claim.
+      // Tier 2 is the declared disposition — operational data needing a field
+      // review first — and it must not be silently reprioritised to tier 1,
+      // which the generic pending test would happily accept.
       expect(
-        disposition.kind === "pending" && disposition.reason,
-        resource + " must not claim unreachability",
-      ).not.toMatch(/unreachable from application code/i);
+        disposition.kind === "pending" && disposition.tier,
+        resource + " must stay tier 2 (field review before export)",
+      ).toBe(2);
+      // Resurrecting the withdrawn claim in ANY wording is caught by the
+      // registry-wide guard above, which covers this reason too.
     }
   });
 

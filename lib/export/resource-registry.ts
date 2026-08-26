@@ -980,7 +980,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     kind: "excluded",
     category: "security",
     reason:
-      "Payment-recovery credential material from migration 0032. Credential category governs regardless of the fact that no runtime code writes it.",
+      "Payment-recovery credential material from migration 0032. The credential category is the entire ground for excluding it, and it does not depend on anything being established about which code touches the table.",
   },
 
   // platform
@@ -1054,7 +1054,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     tier: 2,
     fieldReviewRequired: true,
     reason:
-      "Created by migration 0032 for the card-payment surface, which is not wired into any shipped flow, so the capability appears dormant. TRUTH-01A DOES NOT CERTIFY IT UNREACHABLE: the claim that no application path reaches it rested on an application-source analysis that has been WITHDRAWN as insufficiently robust - it missed indirect table-name expressions and failed silently rather than reporting that it could not tell - so no claim is made here about readers or writers. Unknown reachability is not the same as dead, and the honest disposition is pending. Field review before any export: it records payment-consent decisions and the metadata captured with them.",
+      "Created by migration 0032 for the card-payment surface, which is not wired into any shipped flow, so the capability appears dormant. TRUTH-01A DOES NOT CERTIFY IT INERT: the evidence that would support such a certification came from an application-source analysis that has been WITHDRAWN as insufficiently robust - it missed indirect table-name expressions and failed silently rather than reporting that it could not tell - so this record asserts nothing about which code touches the table. Unknown reachability is not the same as dead, and the honest disposition is pending. Field review before any export: it records payment-consent decisions and the metadata captured with them.",
   },
   pending_booking_payment_sessions: {
     kind: "pending",
@@ -1070,7 +1070,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     tier: 2,
     fieldReviewRequired: true,
     reason:
-      "Created by migration 0032 for the card-payment surface, which is not wired into any shipped flow, so the capability appears dormant. TRUTH-01A DOES NOT CERTIFY IT UNREACHABLE: the claim that no application path reaches it rested on an application-source analysis that has been WITHDRAWN as insufficiently robust - it missed indirect table-name expressions and failed silently rather than reporting that it could not tell - so no claim is made here about readers or writers. Unknown reachability is not the same as dead, and the honest disposition is pending. Field review before any export: it carries Stripe charge identifiers and provider failure detail.",
+      "Created by migration 0032 for the card-payment surface, which is not wired into any shipped flow, so the capability appears dormant. TRUTH-01A DOES NOT CERTIFY IT INERT: the evidence that would support such a certification came from an application-source analysis that has been WITHDRAWN as insufficiently robust - it missed indirect table-name expressions and failed silently rather than reporting that it could not tell - so this record asserts nothing about which code touches the table. Unknown reachability is not the same as dead, and the honest disposition is pending. Field review before any export: it carries Stripe charge identifiers and provider failure detail.",
   },
   stripe_disputes: {
     kind: "pending",
@@ -1078,7 +1078,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     tier: 2,
     fieldReviewRequired: true,
     reason:
-      "Created by migration 0032 for the card-payment surface, which is not wired into any shipped flow, so the capability appears dormant. TRUTH-01A DOES NOT CERTIFY IT UNREACHABLE: the claim that no application path reaches it rested on an application-source analysis that has been WITHDRAWN as insufficiently robust - it missed indirect table-name expressions and failed silently rather than reporting that it could not tell - so no claim is made here about readers or writers. Unknown reachability is not the same as dead, and the honest disposition is pending. Dispute handling is alert-only via ops_alerts, which is independently true and unaffected by the withdrawn analysis. Field review before any export: it carries Stripe dispute identifiers and provider detail.",
+      "Created by migration 0032 for the card-payment surface, which is not wired into any shipped flow, so the capability appears dormant. TRUTH-01A DOES NOT CERTIFY IT INERT: the evidence that would support such a certification came from an application-source analysis that has been WITHDRAWN as insufficiently robust - it missed indirect table-name expressions and failed silently rather than reporting that it could not tell - so this record asserts nothing about which code touches the table. Unknown reachability is not the same as dead, and the honest disposition is pending. Dispute handling is alert-only via ops_alerts, which is independently true and unaffected by the withdrawn analysis. Field review before any export: it carries Stripe dispute identifiers and provider detail.",
   },
   stripe_payment_audit: {
     kind: "pending",
@@ -1086,7 +1086,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     tier: 2,
     fieldReviewRequired: true,
     reason:
-      "Created by migration 0032 for the card-payment surface, which is not wired into any shipped flow, so the capability appears dormant. TRUTH-01A DOES NOT CERTIFY IT UNREACHABLE: the claim that no application path reaches it rested on an application-source analysis that has been WITHDRAWN as insufficiently robust - it missed indirect table-name expressions and failed silently rather than reporting that it could not tell - so no claim is made here about readers or writers. Unknown reachability is not the same as dead, and the honest disposition is pending. Field review before any export: it carries free-form provider audit payloads.",
+      "Created by migration 0032 for the card-payment surface, which is not wired into any shipped flow, so the capability appears dormant. TRUTH-01A DOES NOT CERTIFY IT INERT: the evidence that would support such a certification came from an application-source analysis that has been WITHDRAWN as insufficiently robust - it missed indirect table-name expressions and failed silently rather than reporting that it could not tell - so this record asserts nothing about which code touches the table. Unknown reachability is not the same as dead, and the honest disposition is pending. Field review before any export: it carries free-form provider audit payloads.",
   },
   stripe_refund_attempts: {
     kind: "pending",
@@ -1094,7 +1094,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     tier: 2,
     fieldReviewRequired: true,
     reason:
-      "Created by migration 0032 for the card-payment surface, which is not wired into any shipped flow, so the capability appears dormant. TRUTH-01A DOES NOT CERTIFY IT UNREACHABLE: the claim that no application path reaches it rested on an application-source analysis that has been WITHDRAWN as insufficiently robust - it missed indirect table-name expressions and failed silently rather than reporting that it could not tell - so no claim is made here about readers or writers. Unknown reachability is not the same as dead, and the honest disposition is pending. Live refund state lives on payment_charge_attempts.refund_*, which is independently true and unaffected by the withdrawn analysis. Field review before any export: it carries Stripe refund identifiers and provider failure detail.",
+      "Created by migration 0032 for the card-payment surface, which is not wired into any shipped flow, so the capability appears dormant. TRUTH-01A DOES NOT CERTIFY IT INERT: the evidence that would support such a certification came from an application-source analysis that has been WITHDRAWN as insufficiently robust - it missed indirect table-name expressions and failed silently rather than reporting that it could not tell - so this record asserts nothing about which code touches the table. Unknown reachability is not the same as dead, and the honest disposition is pending. Live refund state lives on payment_charge_attempts.refund_*, which is independently true and unaffected by the withdrawn analysis. Field review before any export: it carries Stripe refund identifiers and provider failure detail.",
   },
   stripe_refunds: {
     kind: "pending",
@@ -1102,7 +1102,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     tier: 2,
     fieldReviewRequired: true,
     reason:
-      "Created by migration 0032 for the card-payment surface, which is not wired into any shipped flow, so the capability appears dormant. TRUTH-01A DOES NOT CERTIFY IT UNREACHABLE: the claim that no application path reaches it rested on an application-source analysis that has been WITHDRAWN as insufficiently robust - it missed indirect table-name expressions and failed silently rather than reporting that it could not tell - so no claim is made here about readers or writers. Unknown reachability is not the same as dead, and the honest disposition is pending. Live refund state lives on payment_charge_attempts.refund_*, which is independently true and unaffected by the withdrawn analysis. Field review before any export: it carries Stripe refund identifiers.",
+      "Created by migration 0032 for the card-payment surface, which is not wired into any shipped flow, so the capability appears dormant. TRUTH-01A DOES NOT CERTIFY IT INERT: the evidence that would support such a certification came from an application-source analysis that has been WITHDRAWN as insufficiently robust - it missed indirect table-name expressions and failed silently rather than reporting that it could not tell - so this record asserts nothing about which code touches the table. Unknown reachability is not the same as dead, and the honest disposition is pending. Live refund state lives on payment_charge_attempts.refund_*, which is independently true and unaffected by the withdrawn analysis. Field review before any export: it carries Stripe refund identifiers.",
   },
 
   // deliberate_privacy
@@ -1337,7 +1337,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     tier: 2,
     fieldReviewRequired: true,
     reason:
-      "Created by migration 0032, and NOT dead. Nothing writes it from the application, but two database functions READ it and both are invoked from live user paths: reschedule_appointment_v2 (app/reschedule/[token]/actions.ts) and appointment_has_blocking_dependents (app/(app)/calendar/appointment-repair-actions.ts). Its contents decide whether a client may reschedule and whether an appointment outcome may be reverted, so a studio's own operations depend on it. An earlier revision classified it dead and said so in this very list - a false statement that reached the ZIP README and the settings page, which is exactly the class of untruth this registry exists to remove. Field review before any export: the row is Stripe-linked provider state, and whether a studio can act on any of it outside Hone is the question TRUTH-01B has to answer, not this slice.",
+      "Created by migration 0032, and NOT dead. Two database functions READ it and both are invoked from live user paths: reschedule_appointment_v2 (app/reschedule/[token]/actions.ts) and appointment_has_blocking_dependents (app/(app)/calendar/appointment-repair-actions.ts). Its contents decide whether a client may reschedule and whether an appointment outcome may be reverted, so a studio's own operations depend on it. An earlier revision classified it dead and said so in this very list - a false statement that reached the ZIP README and the settings page, which is exactly the class of untruth this registry exists to remove. Field review before any export: the row is Stripe-linked provider state, and whether a studio can act on any of it outside Hone is the question TRUTH-01B has to answer, not this slice.",
   },
   payment_charge_attempts: {
     kind: "pending",
