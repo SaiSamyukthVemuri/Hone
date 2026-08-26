@@ -10,7 +10,7 @@ import {
   UNKNOWN_LABEL,
 } from "@/lib/finance/financial-copy";
 import type { Fact, FinancialUnknownCause } from "@/lib/finance/financial-fact";
-import type { DashboardPeriod } from "@/lib/dashboard/practice-metrics";
+import type { ReportingPeriod } from "@/lib/booking/reporting-period";
 
 // ===========================================================================
 // FIN-01A — Direction B's spine
@@ -31,7 +31,7 @@ import type { DashboardPeriod } from "@/lib/dashboard/practice-metrics";
 // colour and a written label. Remove the colour and the meaning survives;
 // remove the shape and it still survives, because the label is a sentence.
 
-const PERIODS: ReadonlyArray<{ key: DashboardPeriod; label: string }> = [
+const PERIODS: ReadonlyArray<{ key: ReportingPeriod; label: string }> = [
   { key: "today", label: "Day" },
   { key: "week", label: "Week" },
   { key: "month", label: "Month" },

@@ -3,10 +3,10 @@ import { dayHeading, emptyDayMessage } from "@/lib/dashboard/day-navigation";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-  resolvePeriodRange,
   summarizeAppointments,
   summarizeProcedureCompleteness,
 } from "@/lib/dashboard/practice-metrics";
+import { resolvePeriodRange } from "@/lib/booking/reporting-period";
 import type { ClientProcedureRecord } from "@/lib/record-keeping/queries";
 
 // PR #208: Practice Dashboard V1. Read-only metrics over existing

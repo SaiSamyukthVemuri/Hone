@@ -1,7 +1,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { addDays, todayInTz, utcInstantFromLocal } from "@/lib/booking/tz";
-import { resolvePeriodRange, type DashboardPeriod } from "@/lib/dashboard/practice-metrics";
+import {
+  resolvePeriodRange,
+  type ReportingPeriod,
+} from "@/lib/booking/reporting-period";
 import { createClient } from "@/lib/supabase/server";
 import type { Studio } from "@/lib/types/database";
 
@@ -44,7 +47,7 @@ const API_PAGE_SIZE = 1_000;
 
 export type FinancialBriefing = {
   readonly timezone: string;
-  readonly period: DashboardPeriod;
+  readonly period: ReportingPeriod;
   /** Studio-local calendar dates. The browser's timezone never participates. */
   readonly startLocal: string;
   /** What a human reads ("to 31 May"). */
@@ -70,7 +73,7 @@ export type FinancialsView =
 export async function loadFinancialsView(
   practitioner: { readonly role: string },
   studio: Studio,
-  period: DashboardPeriod,
+  period: ReportingPeriod,
   supabaseClient: SupabaseClient | undefined = undefined,
 ): Promise<FinancialsView> {
   // FIRST STATEMENT, and it must stay first. Everything below this line — the

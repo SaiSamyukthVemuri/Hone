@@ -1,4 +1,7 @@
-import { isDashboardPeriod, type DashboardPeriod } from "@/lib/dashboard/practice-metrics";
+import {
+  isReportingPeriod,
+  type ReportingPeriod,
+} from "@/lib/booking/reporting-period";
 import { loadFinancialsView } from "@/lib/finance/financial-briefing";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 
@@ -43,7 +46,7 @@ export default async function FinancialsPage({
   // An unrecognised period falls back to the day rather than refusing: the
   // owner asked for this screen, and a bad query string is not a reason to
   // withhold it. It is never an unbounded window.
-  const period: DashboardPeriod = isDashboardPeriod(requested) ? requested : "today";
+  const period: ReportingPeriod = isReportingPeriod(requested) ? requested : "today";
 
   const view = await loadFinancialsView(practitioner, studio, period);
 

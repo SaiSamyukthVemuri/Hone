@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -306,5 +306,141 @@ describe("NC-scope — the later slices are absent, and say so", () => {
     expect(registry).toContain('route: "/financials"');
     const navEntries = registry.slice(0, registry.indexOf("NON_SEARCHABLE_ROUTES"));
     expect(navEntries).not.toContain("/financials");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 8. Reachability — the boundary the leaf scan above could not prove
+// ---------------------------------------------------------------------------
+//
+// Everything above scans six enumerated leaf files and never follows an import.
+// Codex raised that on PR #646 as a P2 and it was right: FIN imported its period
+// helpers from lib/dashboard/practice-metrics.ts, whose executable module also
+// reads `services(price_cents)` and queries `payment_charge_attempts`, so a
+// forbidden path was reachable while every assertion above stayed green.
+//
+// This block closes that gap with the smallest mechanism that actually proves
+// the claim: walk FIN Slice 1's static import graph and scan everything it
+// reaches. Deliberately NOT a general dependency framework — no cycle
+// reporting, no visualiser, no config. One walk, one scan, four assertions.
+//
+// TYPE IMPORTS ARE FOLLOWED TOO. `import type` erases at runtime, so following
+// it is stricter than the runtime graph — on purpose. The contract is about
+// what this surface is COUPLED to, and `financial-spine.tsx` reached the money
+// module through a type-only import alone.
+
+const resolveImport = (spec: string, fromFile: string): string | null => {
+  let base: string;
+  if (spec.startsWith("@/")) base = path.join(ROOT, spec.slice(2));
+  else if (spec.startsWith(".")) base = path.resolve(path.dirname(fromFile), spec);
+  else return null; // a node_modules package: not our source, not our contract
+  for (const c of [base, `${base}.ts`, `${base}.tsx`, path.join(base, "index.ts"), path.join(base, "index.tsx")]) {
+    try {
+      if (statSync(c).isFile()) return c;
+    } catch {
+      /* not this candidate */
+    }
+  }
+  return null;
+};
+
+/** file -> the importer that first reached it, so a failure names a chain. */
+function walkFrom(entries: readonly string[]): Map<string, string | null> {
+  const reached = new Map<string, string | null>();
+  const queue: Array<[string, string | null]> = entries.map((e) => [path.join(ROOT, e), null]);
+  while (queue.length > 0) {
+    const [file, via] = queue.shift()!;
+    if (reached.has(file)) continue;
+    reached.set(file, via);
+    const code = codeOnly(readFileSync(file, "utf8"));
+    const specs = [
+      ...[...code.matchAll(/(?:^|\n)\s*(?:import|export)[\s\S]*?from\s*["']([^"']+)["']/g)].map((m) => m[1]),
+      ...[...code.matchAll(/\bimport\s*\(\s*["']([^"']+)["']\s*\)/g)].map((m) => m[1]),
+    ];
+    for (const spec of specs) {
+      const target = resolveImport(spec, file);
+      if (target && !reached.has(target)) queue.push([target, path.relative(ROOT, file)]);
+    }
+  }
+  return reached;
+}
+
+const FIN_ENTRIES = Object.values(FILES);
+const CLOSURE = walkFrom(FIN_ENTRIES);
+const CLOSURE_REL = [...CLOSURE.keys()].map((f) => path.relative(ROOT, f)).sort();
+
+/**
+ * The FIN-01A truth contract's banned identifiers, as *reachability* rules.
+ * Service value, practitioner-attested settlement and Hone-verified money — the
+ * three classes Slice 1 answers none of — plus the dormant and legacy decoys.
+ */
+const FORBIDDEN_ON_THE_PATH = [
+  "price_cents",
+  "price_paid_cents",
+  "quoted_amount_cents",
+  "amount_cents",
+  "payment_charge_attempts",
+  "appointment_settlements",
+  "manual_fee_charge_attempts",
+  "stripe_charge_attempts",
+  "appointment_payments",
+  "stripe_refunds",
+  "stripe_refund_attempts",
+  "charged_at",
+  "refunded_at",
+  "refund_status",
+  "stripe_livemode",
+  "inferStripeLivemode",
+];
+
+/**
+ * ONE exemption, and it is narrow enough to state in a sentence: a module that
+ * only DECLARES the shape of a row names its columns, and naming a column is
+ * not reading one. `lib/types/database.ts` is where `Studio` lives.
+ *
+ * The exemption is not taken on trust — the assertion below proves the file
+ * still cannot execute a read. If someone puts a query in it, the exemption
+ * fails rather than silently widening.
+ */
+const TYPE_DECLARATION_ONLY = new Set(["lib/types/database.ts"]);
+
+describe("NC-reach — no money path is reachable from FIN Slice 1, transitively", () => {
+  it("ANTI-VACUITY: the walk actually resolved a real graph", () => {
+    // A walker that silently resolves nothing would pass every assertion below.
+    expect(CLOSURE.size).toBeGreaterThanOrEqual(12);
+    expect(CLOSURE_REL).toContain("lib/booking/reporting-period.ts");
+    expect(CLOSURE_REL).toContain("lib/booking/tz.ts");
+    expect(CLOSURE_REL).toContain("lib/supabase/queries.ts");
+    expect(CLOSURE_REL).toContain("lib/types/database.ts");
+  });
+
+  it("THE P2 ITSELF: the money module is not reachable from /financials", () => {
+    expect(CLOSURE_REL).not.toContain("lib/dashboard/practice-metrics.ts");
+    expect(CLOSURE_REL.filter((f) => f.startsWith("lib/dashboard/"))).toEqual([]);
+  });
+
+  it("no module on the reachable path contains a forbidden identifier", () => {
+    const offences: string[] = [];
+    for (const [file, via] of CLOSURE) {
+      const rel = path.relative(ROOT, file);
+      if (TYPE_DECLARATION_ONLY.has(rel)) continue;
+      const code = codeOnly(readFileSync(file, "utf8"));
+      for (const id of FORBIDDEN_ON_THE_PATH) {
+        if (code.includes(id)) offences.push(`${rel} contains "${id}" (reached via ${via ?? "entry point"})`);
+      }
+    }
+    expect(offences).toEqual([]);
+  });
+
+  it("the type-declaration exemption cannot hide a read", () => {
+    for (const rel of TYPE_DECLARATION_ONLY) {
+      const code = codeOnly(readFileSync(path.join(ROOT, rel), "utf8"));
+      // No client, no query, no RPC: it declares shapes and nothing else.
+      expect(code, rel).not.toMatch(/\.from\(|\.rpc\(|createClient|supabase/i);
+      // Every import it makes is type-only, so it drags no runtime module in.
+      for (const line of code.split("\n")) {
+        if (/^\s*import\s/.test(line)) expect(line, `${rel}: ${line.trim()}`).toMatch(/^\s*import type\s/);
+      }
+    }
   });
 });
