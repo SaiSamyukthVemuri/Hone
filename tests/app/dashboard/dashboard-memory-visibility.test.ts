@@ -137,7 +137,17 @@ describe("nothing else on the dashboard changed", () => {
     // The action footer tightened to `gap-1 self-start`: on a phone this
     // column wraps onto its own full-width line, where centring it against a
     // tall text column opened dead space with nothing in it.
-    expect(PAGE).toMatch(/flex flex-col items-end gap-1 self-start/);
+    //
+    // MOBILE-UI-01 made the ALIGNMENT of that wrapped column responsive. The
+    // claim this line exists for — a column, tight gap, top-aligned, never
+    // centred — is unchanged and still pinned below. What changed is that
+    // `items-end` was right-aligning variable-width controls inside a
+    // left-aligned card, so each one's LEFT edge landed at
+    // `rightEdge - itsOwnWidth`: measured x=107 and x=37 against a body at 109.
+    // Phone width now aligns them to the body; `sm:` restores the right-aligned
+    // desktop footer. The geometry itself is proved in e2e/mobile-ux.spec.ts.
+    expect(PAGE).toMatch(/flex w-full flex-col items-start gap-1 self-start/);
+    expect(PAGE).toMatch(/sm:w-auto sm:items-end sm:pl-0/);
     expect(PAGE).toMatch(/className="min-w-0 flex-1"/);
   });
 });
