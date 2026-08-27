@@ -131,13 +131,39 @@ const NON_SHIPPING_ROOTS: ReadonlyArray<readonly [RegExp, string]> = [
   [/^tests\//, "unit, DB and migration tests: run in CI, absent from the bundle"],
   [/^e2e[a-z-]*\//, "Playwright specs and their fixtures: run against a build, never part of one"],
   [/^\.github\//, "workflows and templates: they decide what CI does, not what production serves"],
-  [/^scripts\//, "build-time and operator tooling (verify-prepush, migration-state, gate checks)"],
+  // NOTE: scripts/ is NOT blanket-exempt. See PRODUCTION_BUILD_SCRIPTS below -
+  // a script the production `build` command executes can change what the
+  // deployment does, and is subtracted from this exemption.
+  [/^scripts\//, "operator and CI tooling — except those the production build runs"],
   [/^playwright(\.[\w.-]+)?\.config\./, "test-runner configuration"],
   [/^vitest(\.[\w.-]+)?\.config\./, "test-runner configuration"],
   [/^eslint\.config\./, "linter configuration: gates the build, never served by it"],
 ];
 
+/**
+ * Scripts the PRODUCTION BUILD executes, derived from package.json.
+ *
+ * Exempting all of `scripts/` was too broad. `package.json` runs
+ * `node scripts/check-production-env-gates.mjs && next build`, so that file
+ * decides whether a production build proceeds at all - and these very documents
+ * treat its fail-versus-report-only behaviour as a deployed capability fact
+ * (known-limitations L25). A change to it after the pinned SHA must invalidate
+ * the pin; a change to an operator utility beside it must not.
+ *
+ * Derived from the repository rather than listed here, so adding a gate to the
+ * build brings it under this rule automatically. Scope is deliberately the
+ * DIRECT build command: what it shells out to in turn is not traced, and that
+ * limit is stated rather than hidden.
+ */
+function productionBuildScripts(): string[] {
+  const pkg = JSON.parse(read("package.json")) as { scripts?: Record<string, string> };
+  const build = pkg.scripts?.build ?? "";
+  return [...build.matchAll(/\bscripts\/[\w./-]+\.(?:mjs|cjs|js|ts)\b/g)].map((m) => m[0]);
+}
+const PRODUCTION_BUILD_SCRIPTS = productionBuildScripts();
+
 function nonShippingReason(file: string): string | null {
+  if (PRODUCTION_BUILD_SCRIPTS.includes(file)) return null; // the build runs it: it ships
   for (const [re, why] of NON_SHIPPING_ROOTS) if (re.test(file)) return why;
   return null;
 }
@@ -976,6 +1002,16 @@ describe("RULE A — current-state.md pins a real, current production SHA", () =
       expect(deployed(f), `${f} must count as deployed runtime`).toBe(true);
     }
 
+    // B - a script the PRODUCTION BUILD runs. Derived from package.json, and
+    // asserted non-empty so this control cannot pass by finding nothing.
+    expect(
+      PRODUCTION_BUILD_SCRIPTS.length,
+      "package.json's build command must name at least one script for this rule to have work",
+    ).toBeGreaterThan(0);
+    for (const f of PRODUCTION_BUILD_SCRIPTS) {
+      expect(deployed(f), `${f} runs in the production build and must count as deployed`).toBe(true);
+    }
+
     // DOES NOT SHIP - a change to any of these must NOT demand a new baseline.
     for (const f of [
       ".github/workflows/ci.yml",
@@ -1100,12 +1136,32 @@ const PRE_0169_DML =
   /(?:\bstill\s+holds\b[^.\n|]{0,60}\b(?:DML|INSERT)|(?:row\s+)?DML\b[^.\n|]{0,40}\bis\s+NOT\s+revoked\b|\bis\s+NOT\s+revoked\b[^.\n|]{0,40}\bDML\b)/i;
 const CORRECTION_MARKER = /\bCORRECTED\b|\bcorrected\b|\bpreviously\s+(?:read|continued)\b|\bused\s+to\s+(?:read|carry)\b/;
 
+/**
+ * Blank out QUOTED SPANS, preserving offsets and line structure.
+ *
+ * C2 used to exempt the whole Markdown line whenever a correction marker
+ * appeared anywhere on it. That is far too coarse, and it is porous in exactly
+ * the place these documents are densest - a single-line table row, where one
+ * legitimate historical correction licensed every other assertion in the row.
+ * `CORRECTED: authenticated still holds row INSERT/UPDATE/DELETE` passed while
+ * stating the defect as current fact.
+ *
+ * The narrower rule: a correction stays auditable by QUOTING what it replaces,
+ * so the historical text is the quoted span and nothing else. Mask the quotes;
+ * whatever is left on the line is being asserted in the document's own voice.
+ * Bounded span reasoning, not a Markdown parser.
+ */
+function maskQuotedSpans(text: string): string {
+  return text.replace(/"[^"\n]*"|“[^”\n]*”/g, (m) => " ".repeat(m.length));
+}
+
 describe("RULE C2 — no canonical doc says authenticated still holds clinical row DML", () => {
   it.each(NO_CURRENT_MAX_DOCS)("%s carries no live pre-0169 assertion", (name, doc) => {
     const offenders = currentProse(doc)
       .split("\n")
-      .filter((l) => PRE_0169_DML.test(l))
-      .filter((l) => !CORRECTION_MARKER.test(l))
+      // Quoted text is the correction's evidence; the rest of the line is the
+      // document speaking. Mask the quotes and judge only what remains.
+      .filter((l) => PRE_0169_DML.test(maskQuotedSpans(l)))
       // A preserved historical heading is legal while it is marked CLOSED -
       // the same convention L2, L18 and L23 already use.
       .filter((l) => !(/^##\s/.test(l) && /\bCLOSED\b/.test(l)))
@@ -1120,11 +1176,202 @@ describe("RULE C2 — no canonical doc says authenticated still holds clinical r
     ).toEqual([]);
   });
 
+  it("C2 controls: the exemption covers the quoted span, and nothing else", () => {
+    const live = (line: string) => PRE_0169_DML.test(maskQuotedSpans(line));
+
+    // A - bare assertion.
+    expect(live("`authenticated` still holds INSERT/UPDATE/DELETE on the clinical tables")).toBe(true);
+
+    // B - a correction MARKER does not launder an unquoted assertion. This is
+    // the hole: the marker was enough on its own.
+    expect(live("CORRECTED: authenticated still holds row INSERT/UPDATE/DELETE")).toBe(true);
+
+    // C - the genuine shape, quoted and past-tense.
+    expect(
+      live('Previous wording: "authenticated still held INSERT/UPDATE/DELETE before 0169"'),
+    ).toBe(false);
+
+    // D - a row carrying a legitimate quoted correction AND a separate live
+    // assertion outside the quotes. The row must still fail.
+    expect(
+      live(
+        '| Clinical | ⚠️ corrected: this read *"row DML is NOT revoked"* | and row DML on the five app-written tables is NOT revoked |',
+      ),
+    ).toBe(true);
+
+    // E - current, correct post-0169 wording.
+    expect(
+      live("`0169` revoked insert, update and delete from `authenticated` on all six tables"),
+    ).toBe(false);
+  });
+
   it("L18 is still recorded as CLOSED, so the correction has something to point at", () => {
     expect(
       KNOWN_LIMITATIONS,
       "L18's heading must remain, marked CLOSED by 0169",
     ).toMatch(/^##\s+L18\s+—[^\n]*\bCLOSED\b[^\n]*0169/m);
+  });
+});
+
+// ===========================================================================
+// RULE X — CROSS-DOCUMENT PARITY
+//
+// THE PATTERN THIS EXISTS TO BREAK. Three review rounds found the same shape:
+// a class was fixed thoroughly in current-state.md and left standing in a
+// sibling. F-RET-001 was re-derived to P2 in L27 while a summary bullet four
+// hundred lines above still said P1. The capability register kept naming
+// "PR #644 ... eight runtime files" across two production moves. A dated
+// waitlist zero was corrected in one document and stayed present-tense in two
+// others.
+//
+// Every rule above this one reads ONE document at a time, which is exactly why
+// none of them caught it. These read ACROSS documents and fail when two
+// canonical files disagree about one fact - so fixing the cited line and
+// leaving its twin is red, not green.
+// ===========================================================================
+
+/** All five canonical documents, for rules that must see the whole set. */
+const CANONICAL_SET = [
+  ["docs/production/current-state.md", CURRENT_STATE],
+  ["docs/production/capability-register.md", CAPABILITY_REGISTER],
+  ["docs/production/known-limitations.md", KNOWN_LIMITATIONS],
+  ["docs/production/release-changelog.md", RELEASE_CHANGELOG],
+  ["docs/production/migration-ledger.md", MIGRATION_LEDGER],
+] as const;
+
+/** Spelled-out counts these documents use, and their values. */
+const NUMBER_WORDS: Readonly<Record<string, number>> = {
+  four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11,
+  twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16,
+  seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20,
+};
+const isCountWord = (w: string) => w.toLowerCase() in NUMBER_WORDS;
+
+describe("RULE X — canonical documents agree with each other", () => {
+  it("X1: F-RET-001's severity is stated in L27 and matched wherever else it appears", () => {
+    const sectionStart = KNOWN_LIMITATIONS.indexOf("## L27");
+    expect(sectionStart, "L27 must exist").toBeGreaterThan(-1);
+    const authority = KNOWN_LIMITATIONS.slice(sectionStart).match(/\*\*(P\d) — OPEN\.\*\*/)?.[1];
+    expect(authority, "L27 must state a severity in the form **Pn — OPEN.**").toBeTruthy();
+
+    const wrong: string[] = [];
+    for (const [name, doc] of CANONICAL_SET) {
+      for (const line of currentProse(doc).split("\n")) {
+        if (!/F-RET-001/.test(line)) continue;
+        if (!/\bP\d\b/.test(line)) continue;
+        if (CORRECTION_MARKER.test(line) || /revision of this entry|\bWas P\d\b/i.test(line)) continue;
+        const levels = [...line.matchAll(/\bP(\d)\b/g)].map((m) => "P" + m[1]);
+        if (levels.some((l) => l !== authority)) wrong.push(`${name}: ${line.trim().slice(0, 130)}`);
+      }
+    }
+    expect(
+      wrong,
+      `a canonical document states an F-RET-001 severity other than L27's ${authority}. L27 is ` +
+        "the authority; every other mention must match it or be marked as the withdrawn wording. " +
+        `Offending: ${JSON.stringify(wrong)}`,
+    ).toEqual([]);
+  });
+
+  it("X2: only current-state.md names WHICH PR is the current runtime baseline", () => {
+    // A4 stops a second document copying the SHA. The PR number and the runtime
+    // file count are the same fact wearing different clothes, and they rotted
+    // for two production moves while the SHA beside them stayed correct.
+    const offenders: string[] = [];
+    for (const [name, doc] of CANONICAL_SET) {
+      if (name.endsWith("current-state.md") || name.endsWith("release-changelog.md")) continue;
+      for (const line of currentProse(doc).split("\n")) {
+        if (!/runtime[- ]bearing/i.test(line)) continue;
+        if (CORRECTION_MARKER.test(line)) continue;
+        if (/#\d{3,4}\b/.test(line) || /\b(?:four|eight|twelve|\d+)\s+(?:runtime|deployed)\s+files?\b/i.test(line)) {
+          offenders.push(`${name}: ${line.trim().slice(0, 130)}`);
+        }
+      }
+    }
+    expect(
+      offenders,
+      "a canonical document other than current-state.md names the PR or the runtime file count " +
+        "of the current baseline. That is the same derived fact as the SHA and rots the same way. " +
+        `Reference current-state.md instead. Offending: ${JSON.stringify(offenders)}`,
+    ).toEqual([]);
+  });
+
+  it("X3: no canonical document turns a dated measurement into a present-tense one", () => {
+    const PRESENT_TENSE_MEASURE =
+      /\b(?:currently\s+(?:holds|has|stands|contains)|holds?\s+\*{0,2}\d[^.\n|]{0,24}\bnow\b|\bis\s+being\s+collected\b)/i;
+    const offenders: string[] = [];
+    for (const [name, doc] of CANONICAL_SET) {
+      for (const line of currentProse(doc).split("\n")) {
+        if (!PRESENT_TENSE_MEASURE.test(line)) continue;
+        if (CORRECTION_MARKER.test(line) || /used to read|\bnot\b[^.]{0,30}being collected/i.test(line)) continue;
+        offenders.push(`${name}: ${line.trim().slice(0, 130)}`);
+      }
+    }
+    expect(
+      offenders,
+      "a canonical document states a measured figure in the present tense. Every production count " +
+        "in this set is dated evidence - none was re-measured at this reconciliation - so say when " +
+        `it was measured, not that it holds now. Offending: ${JSON.stringify(offenders)}`,
+    ).toEqual([]);
+  });
+
+  it("X4: the capability register's merge count matches current-state's", () => {
+    const cs = currentProse(CURRENT_STATE).match(
+      /full merge ancestry back to `b9e0003f` \((\w+) merges\)/i,
+    )?.[1];
+    const cr = currentProse(CAPABILITY_REGISTER).match(
+      /\*{0,2}(\w+)\*{0,2}\s+production merges landed between `b9e0003f`/i,
+    )?.[1];
+    expect(cs, "current-state must state the merge count").toBeTruthy();
+    expect(cr, "capability-register must state the merge count").toBeTruthy();
+    expect(isCountWord(cs as string), `unexpected count word: ${cs}`).toBe(true);
+    expect(
+      (cr as string).toLowerCase(),
+      "the two documents count the same merges since the same baseline and must agree. The " +
+        "register sat at 'fourteen' through two production moves while current-state advanced.",
+    ).toBe((cs as string).toLowerCase());
+  });
+
+  it("X5: the register's capability section counts what it actually lists, contiguously", () => {
+    // The real defect had two halves and neither was a counting error alone:
+    // section 15 said "Six" while production had moved twice past it, AND the
+    // #646 row was appended after a BLANK LINE, which severs a Markdown table -
+    // the row rendered outside it and was excluded from every count.
+    //
+    // This deliberately does NOT try to decide which merges are "capabilities".
+    // That is an editorial judgement; a stated count disagreeing with the rows
+    // beneath it, or a table broken in half, is not.
+    const start = CAPABILITY_REGISTER.indexOf("## 15. Capabilities added");
+    expect(start, "the register must carry its capability section").toBeGreaterThan(-1);
+    const rest = CAPABILITY_REGISTER.slice(start);
+    const end = rest.indexOf("\n## ", 1);
+    const section = end === -1 ? rest : rest.slice(0, end);
+
+    // `\s+` throughout: the prose wraps, so "**Eight** carry\na capability" is
+    // one sentence across two lines and a literal space would miss it.
+    const stated = section.match(/\*{0,2}(\w+)\*{0,2}\s+carry\s+a\s+capability/i)?.[1];
+    expect(stated, "the section must state how many capabilities it carries").toBeTruthy();
+    expect(isCountWord(stated as string), `unexpected count word: ${stated}`).toBe(true);
+
+    const lines = section.split("\n");
+    const headerIdx = lines.findIndex((l) => /^\|\s*Capability\s*\|/i.test(l));
+    expect(headerIdx, "the section must carry a capability table").toBeGreaterThan(-1);
+
+    // Walk from the header: the table ends at the first non-table line. A blank
+    // line inside it is the orphan bug, and it ends the table here too.
+    let rows = 0;
+    for (let k = headerIdx + 1; k < lines.length; k++) {
+      const l = lines[k];
+      if (!l.trim().startsWith("|")) break;
+      if (/^\|\s*-{2,}/.test(l)) continue;
+      rows++;
+    }
+
+    expect(
+      rows,
+      `section 15 says it carries ${stated} capabilities but its table holds ${rows} contiguous ` +
+        "row(s). Either the count is stale, or a row was appended after a blank line and fell " +
+        "out of the table - both have happened here.",
+    ).toBe(NUMBER_WORDS[(stated as string).toLowerCase()]);
   });
 });
 
@@ -1557,6 +1804,39 @@ describe("RULE D+ — open limitations persist, closed ones stay labelled", () =
 // other way, and is what a production move produces BY DEFAULT. #646 sat there
 // merged and only a human noticed. It is decided from the Git graph rather
 // than from GitHub, so it works offline and in CI.
+//
+// Sixth round - the six fresh P2s from the review of 00fdbf43, repaired as
+// THREE CLASSES rather than six lines, because three consecutive rounds found
+// the same shape: a class fixed thoroughly in current-state.md and left
+// standing in a sibling.
+//
+// CLASS A got cross-document rules (X1-X5), which is the structural answer to
+// that pattern. Every rule before them reads ONE document, which is exactly why
+// none of them caught it:
+//
+//   X2   register restates the baseline as "PR #644 ... eight runtime files"  -> RED
+//   X4   register merge count diverges from current-state                     -> RED
+//   X1   F-RET-001 severity stated as P1 in a sibling while L27 says P2       -> RED
+//   X3   "currently holds 0 rows" on a dated measurement                      -> RED
+//   X5   a section-15 row orphaned by a blank line, count vs rows             -> RED
+//
+// CLASS B: C2's exemption was the whole Markdown LINE whenever a correction
+// marker appeared, so `CORRECTED: authenticated still holds row
+// INSERT/UPDATE/DELETE` passed while stating the defect as current fact. It now
+// masks QUOTED SPANS only - a correction stays auditable by quoting what it
+// replaces, so the quote is the historical part and the rest of the line is the
+// document speaking. Five controls (A-E) pin the boundary directly.
+//
+//   B    "CORRECTED: authenticated still holds ..." added to a document       -> RED
+//
+// CLASS C: A3 exempted every scripts/ path, but package.json runs
+// `node scripts/check-production-env-gates.mjs && next build`, and these
+// documents treat that gate's fail-versus-report-only behaviour as a deployed
+// capability fact (L25). Build scripts are now DERIVED from package.json and
+// subtracted from the exemption, so adding a gate to the build brings it under
+// the rule automatically. Operator utilities beside it stay exempt.
+//
+// All seven earlier controls were re-proved unchanged on this tree.
 //
 // declaredOpenPrs() was also repaired here, by this refresh rather than by
 // review: it scraped every `#NNN` in the open-PR block, so the moment a row's

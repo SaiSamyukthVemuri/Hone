@@ -8,10 +8,13 @@ production; neither document is evidence for the other.
 - **Runtime-bearing baseline:** the application HEAD recorded in
   [current-state.md](./current-state.md) *Reconciliation header* — **the single authority for
   that SHA, which is deliberately not copied here.** At this reconciliation the branch HEAD and
-  the runtime-bearing HEAD are the **same commit** (PR #644, TRUTH-01A, which changes eight
-  runtime files), which is unusual enough to state rather than leave implied. The *fact* of
-  their coincidence is safe to restate; the *identifier* is not, because a second copy is a
-  second thing to go stale.
+  the runtime-bearing HEAD are the **same commit**, which is unusual enough to state rather than
+  leave implied. *(⚠️ **Corrected 2026-08-27.** This bullet used to name the PR and its runtime
+  file count — "PR #644, TRUTH-01A, which changes eight runtime files" — and went stale across
+  two production moves while the SHA beside it was correctly referenced rather than copied. The
+  **identifier** was not the only thing that could rot: any restated particular can. Only the
+  *fact of coincidence* is safe to repeat, because it does not name a commit. Which PR and how
+  many files live in [current-state.md](./current-state.md) alone.)*
 - **What this pass measured:** it re-derived every status below from the repository and the Git
   graph and **re-measured nothing in the production database or at any provider.** Counts
   carrying a 2026-08-23 stamp are **dated evidence, not current readings**; see
@@ -268,24 +271,31 @@ commit point is an email. WAIT-02B Stage A is deployed and reachable by nobody.
 | Domain | Capability | Code state | DB state | Deployment | Enablement | Production exercise | Human acceptance | Evidence | Limitations / next gate |
 |---|---|---|---|---|---|---|---|---|---|
 | Waitlist | **WAIT-01 — email-delivered new-client waitlist** (PR #601) | Merged | no migration | Deployed | ✅ **ENABLED for one studio** — `NEW_CLIENT_WAITLIST_STUDIO_SLUGS` present on the Vercel **Production** target only *(names read, no value)* | ✅ pilot activated 2026-08-19; one controlled canary submission at release | ⚠️ operator-observed at release; no separate acceptance record since | `/book/willow-electrolysis` renders `newClientWaitlistEnabled: true` *(2026-08-23)*; [release record](./releases/2026-08-19-willow-new-client-waitlist.md) | Commit point is the **studio notification email**, not a row. Clearing the env var is the whole kill switch |
-| Waitlist | **WAIT-02B Stage A — durable studio-scoped waitlist** (PR #629, `48f02389`) | Merged | ✅ **0185 applied 2026-08-23**, frozen | Deployed | ❌ **NOT ENABLED anywhere** — `NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS` **absent from Vercel Production**; **Willow not enabled** | ❌ **never** — `new_client_waitlist_entries` = **0 rows** at apply verification and **0 now** *(2026-08-23)* | n/a at this stage | migration 0185; `lib/booking/new-client-waitlist.ts`; env var **names** only | **DORMANT.** A table existing is not data being collected. See **L25** |
+| Waitlist | **WAIT-02B Stage A — durable studio-scoped waitlist** (PR #629, `48f02389`) | Merged | ✅ **0185 applied 2026-08-23**, frozen | Deployed | ❌ **NOT ENABLED anywhere** — `NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS` **absent from Vercel Production**; **Willow not enabled** | ❌ **never** — `new_client_waitlist_entries` = **0 rows** at apply verification and **0 when last measured** *(2026-08-23)* | n/a at this stage | migration 0185; `lib/booking/new-client-waitlist.ts`; env var **names** only | **DORMANT.** A table existing is not data being collected. See **L25** |
 | Waitlist | `join_new_client_waitlist` / `remove_new_client_waitlist_entry` | Merged | ✅ present, SECURITY DEFINER | Deployed | ❌ unreachable — no studio on the durable allowlist | ❌ never invoked | n/a | 0185 body; EXECUTE held by `postgres` and `service_role` only — `anon` and `authenticated` hold none | — |
 | Waitlist | Studio-scoped duplicate rule | Merged | ✅ generated `email_normalized` + partial unique index on `(studio_id, email_normalized) WHERE status='waiting'` | Deployed | ❌ | ❌ no row has ever existed to test it against | n/a | migration 0185 | **No global email uniqueness** — tenancy is structural |
 | Waitlist | Stage-B configuration report (**was** the Stage-A inverted build gate) | Merged (#637) | no migration | Deployed | ⚠️ **report-only — it no longer fails a build** | n/a | n/a | `scripts/check-production-env-gates.mjs` Gate 4, contract sentences 1-2 and 9 | ⚠️ **CORRECTED 2026-08-26.** This row previously read *"A Vercel production build FAILS while the durable allowlist enables any studio. No bypass and no per-studio exception."* **That is no longer true.** Stage B1 replaced the prohibition with a report; the contract's own first two sentences are *"Gate 4 is report-only. It does not fail the build solely because of `NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS`."* What guards activation now is **runtime membership of TWO allowlists** (sentence 9) — a weaker, configuration-level guarantee, recorded as such. See [known-limitations.md](./known-limitations.md) **L25** |
 | Waitlist | **WAIT-02B Stage B — durable collection enabled** | — | — | — | **NOT STARTED** | ❌ | — | — | Blocked on the public privacy disclosure for prospects, the policy's `lastUpdated` + a future `effectiveDate`, explicit studio-enablement GO, and human activation smoke |
 
 **Overall new-client waitlist posture: WAIT-01 enabled and exercised at one studio; WAIT-02B
-Stage A DB applied + deployed + DORMANT with zero rows; Stage B not started.** Never describe
-the durable waitlist as live, enabled, active, or collecting.
+Stage A DB applied + deployed + DORMANT, with zero rows *when last measured 2026-08-23*; Stage B
+not started.** Never describe the durable waitlist as live, enabled, active, or collecting —
+and equally, do not restate that dated zero as a present-tense fact: it is evidence for
+2026-08-23, not for today.
 
 ---
 
 ## 15. Capabilities added since the 2026-08-23 reconciliation
 
-Fourteen production merges landed between `b9e0003f` and `6786b07b`. Six carry a capability that
-belongs in this register; the rest are UI, documentation or test work. **None of the six is
-production-exercised**, and each is recorded with the evidence that decides its status rather
-than with a status word alone.
+**Sixteen** production merges landed between `b9e0003f` and the current baseline. **Eight** carry
+a capability that belongs in this register; the rest are UI, documentation or test work. **None
+of the eight is production-exercised**, and each is recorded with the evidence that decides its
+status rather than with a status word alone.
+
+*(⚠️ **Corrected 2026-08-27.** This section stopped at fourteen merges and six capabilities and
+had no row for `#648` at all, two production moves after it was written. The count and the head
+are both derived facts and neither was re-derived when the baseline moved — the same class as
+the bullet corrected at the top of this file.)*
 
 | Capability | PR / migration | Status | Evidence that decides it |
 |---|---|---|---|
@@ -295,7 +305,7 @@ than with a status word alone.
 | **Owner practice capacity** | #638, #641, #645 · none | **Deployed · enabled for owners · NOT exercised** | `app/(app)/dashboard/capacity/page.tsx` checks `practitioner.role !== "owner"` **before any capacity read is issued** and refuses **in place** rather than redirecting. Nine browser tests prove owner reach, practitioner refusal, and that rebooking links land on the right client. Nav visibility (#645) is presentation only. |
 | **Clinical read truth** | #642 · none | **Deployed · enabled for all studios** | Four client-profile surfaces now check `unavailable` **before** `hasHistory`, so a failed `session_blocks` read renders *could not be loaded* instead of *no history*. `caution_for_next_session` / `caution_note` protected on both tabs. Recorded non-change: `attachStructuredAreas` still throws — loud, not a false absence. |
 | **Export completeness accountability** | #644 · none | **Deployed · enabled** | `lib/export/resource-registry.ts` is the one place a disposition is decided; a missing decision is a **build failure**; schema authority is `information_schema`, not parsed SQL. **The payload is byte-for-byte unchanged** — pinned column-for-column against base `a1639a84`. Roughly fifty-nine studio-owned resources remain **pending**, each ticketed. |
-
+| **Dashboard clinical read truth (F2)** | #648 · none | **Deployed · enabled for all studios** | The Dashboard *Before today* pipeline's four reads destructured `data` alone — `error` did not appear in `lib/dashboard/before-today-previews.ts`. All four now pass one wrapper retaining PostgREST `error` **and** a rejected invocation, classified into two independent facts: `clinicalUnavailable` (three clinical reads) and `clientRecordUnavailable` (the clients read). `compactBeforeToday` checks `unavailable` **before** `hasHistory`. **Explicit non-claim carried forward:** `DASHBOARD_RETURNING_AS_NEW = NOT_PROVEN`. **F3** (recency/tie authority) is a separate confirmed **P2, open**; **F4** latent and deferred; **HIST-01A** untouched. |
 | **Owner financial truth surface (FIN-01A Slice 1)** | #646 · none | **Deployed · owner-only · NOT production-exercised** | `/financials` answers what the calendar held in one studio-local period and how those appointments divided. The role refusal is the **first statement** of `loadFinancialsView`, before a Supabase client is constructed, so a practitioner causes no studio-wide query at all. The route is **withheld from search** (`NON_SEARCHABLE_ROUTES`, no `NAV_ENTRIES` row). **No money arithmetic** — a source guard pins the absence of all three truth classes' ledger identifiers, and the slice reads exactly one table; the anchor is in **visits, not service value**, which is Slice 2. Unknown is a **closed cause vocabulary** (`not_recorded` / `unavailable` / `unknowable` / `not_yet_supported` / `not_enumerable`) and `known(0)` is the only route to a zero. **No migration, RPC, schema or external side effect; 0187 untouched.** |
 
 **Studio launch readiness additionally gained a consent requirement** (#643): readiness now

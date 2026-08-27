@@ -460,9 +460,17 @@ NOT ENABLED · NOT production exercised.** Human acceptance is **not applicable*
   (`join_new_client_waitlist`, `remove_new_client_waitlist_entry`) **exist in production
   schema**. Migration 0185 is applied and frozen — evidence in
   [migration-ledger.md](./migration-ledger.md).
-- **The table holds 0 rows.** It held 0 at apply verification and holds **0 now**
-  *(as of 2026-08-23, read-only query)*. **No prospect data is being collected.** A table
-  existing is not data being collected, and this document does not imply otherwise.
+- **The table held 0 rows when last measured.** It held 0 at apply verification and **0 on
+  2026-08-23** *(read-only query)*, and **has not been re-measured since**. ⚠️ That is evidence
+  for 2026-08-23 and **not** a claim about today: it does not prove the table is empty now, nor
+  that no prospect entry has been created since.
+<!-- canonical-facts:ignore-start reason=quotes-the-superseded-present-tense-waitlist-row -->
+  This row used to read *"holds **0 now** … **No prospect data is being collected**"*, which
+  converted a dated measurement into a standing fact.
+<!-- canonical-facts:ignore-end -->
+  The second half compounded it, because the allowlist absence that would license that inference
+  is **also** only verified to 2026-08-23. A table existing is not data being collected; a dated
+  zero is not a present-tense one.
 - **`NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS` is absent from the Vercel Production
   environment** *(verified 2026-08-23, variable names only)*. **No studio is enabled. Willow is
   not enabled.** Willow's public booking page continues to serve the WAIT-01 behaviour above.
@@ -571,8 +579,8 @@ enforceability. Hone's documentation does not claim signatures are legally bindi
   and nowhere else, so the two can never be summed into one another.
 - **`unknown` is an absence, never a value.** 0187 wrote **zero rows** and backfilled nothing;
   every historical appointment keeps no disposition, which is the truthful answer. The table was
-  created empty and held **0 rows** at post-apply verification *(2026-08-24; not re-measured
-  2026-08-26)*. **No settlement has been recorded in production**, so this capability is
+  created empty and held **0 rows** at post-apply verification *(2026-08-24; not re-measured at any
+  later reconciliation)*. **No settlement has been recorded in production**, so this capability is
   **deployed and enabled but not production-exercised.**
 - **Public-booking card collection is OFF and unwired.**
 - **Deposits, packages and partial payments are not built.**

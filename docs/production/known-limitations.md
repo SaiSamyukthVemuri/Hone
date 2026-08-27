@@ -24,15 +24,19 @@ that could not be checked from code, the CLI, or read-only production queries ar
 explicitly as *unknown pending verification* rather than asserted in either direction.
 
 **Amended 2026-08-26** against production `6786b07b`, fourteen merges on from the previous
-header, and **refreshed 2026-08-27** to production `8418a755` when `#648` shipped. This pass **re-derived every claim below from the repository and the Git graph** and
+header, then **refreshed twice on 2026-08-27** — to `8418a755` when `#648` shipped and to
+the current baseline when `#646` shipped. The baseline SHA itself is recorded in
+[current-state.md](./current-state.md) and deliberately not copied here. This pass **re-derived every claim below from the repository and the Git graph** and
 **re-measured nothing in the production database or at any provider** — so a row carrying a
 2026-08-23 production count keeps that stamp and is dated evidence, not a current reading. What
 changed:
 
 - **L25 amended, and a false mitigation corrected.** WAIT-02B Stage B1 closed the disclosure
   gap; the build-time gate this file described as having *"no bypass"* is now **report-only**.
-- **L27 added** — `F-RET-001`, retention and deletion commitments with no implementing code.
-  **P1, OPEN**, re-verified against `vercel.json` and `app/api/cron/` at this head.
+- **L27 added** — `F-RET-001`, no automated retention or permanent-deletion lifecycle,
+  re-verified against `vercel.json` and `app/api/cron/`. **Its severity is stated in L27 and
+  nowhere else** — this summary used to repeat it as *"P1, OPEN"* and was left behind when L27
+  was re-derived to P2, so a reader scanning the summary got the withdrawn severity.
 - **L28 added** — treatment-image archive is soft-only; no storage reconciler exists.
 - **L29 added** — the export is still partial after TRUTH-01A; only its incompleteness is
   declared.
@@ -475,7 +479,9 @@ documentation, because no evidence supports them:
   is still not acceptance. Exercise and acceptance are independent, and only Chloe closes the
   second one.
 - Any claim that the durable new-client waitlist has been switched on, or is gathering prospect
-  data. It is **deployed and dormant**, its table holds **0 rows**, and no studio is enabled (L25).
+  data. It is **deployed and dormant**; its table held **0 rows** and no studio was enabled
+  **when last measured, 2026-08-23** (L25). Neither was re-measured after that date, so state
+  the dated evidence — not a present-tense zero.
 - That real-customer activity figures include the Synthetic Twin. They do not, and an
   all-tenant total is never presented as a customer figure — see
   [current-state.md](./current-state.md) §0.
