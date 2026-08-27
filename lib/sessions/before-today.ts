@@ -51,6 +51,19 @@ export type BeforeTodayInput = {
   // This does NOT redefine what a charted treatment is. Selection is unchanged;
   // this records only whether the read feeding selection succeeded.
   clinicalUnavailable?: boolean;
+  // CLIN-BEFORE-TODAY-F2. TRUE only when the caller's CLIENTS read failed, so
+  // the three fields above are UNKNOWN rather than blank. A blank field is a
+  // record gap worth showing; an unread one is not, and "Client phone not
+  // recorded" states something about a row nobody looked at.
+  //
+  // Deliberately INDEPENDENT of `clinicalUnavailable`: these are two different
+  // reads and either can fail while the other returns. A failed clinical read
+  // must not suppress true record reminders, and a failed client read must not
+  // blank a history that was read.
+  //
+  // Optional and defaulting to false, so callers that load the client row on
+  // the same query as everything else are untouched.
+  clientRecordUnavailable?: boolean;
 };
 
 export type BeforeToday = {
@@ -122,10 +135,19 @@ const EMPTY_RESPONSE = {
   hasAny: false,
 };
 
-// Reminders that come from the CLIENT RECORD, loaded by a different read that
-// succeeded. They stay true, and stay shown, even when the clinical read
-// failed: nothing here is derived from session_blocks.
-function clientRecordReminders(client: BeforeTodayInput["client"]): string[] {
+// Reminders that come from the CLIENT RECORD, loaded by a DIFFERENT read. They
+// stay true, and stay shown, even when the clinical read failed: nothing here
+// is derived from session_blocks.
+//
+// The converse holds too, and is why the outcome of that read is a parameter
+// rather than an assumption. Every field arrives `null` when the clients read
+// fails, so an unguarded sweep emits all three reminders at once and the row
+// reports a record gap that nobody has established.
+function clientRecordReminders(
+  client: BeforeTodayInput["client"],
+  unavailable: boolean,
+): string[] {
+  if (unavailable) return [];
   const reminders: string[] = [];
   if (!client.dateOfBirth) reminders.push("Client date of birth not recorded");
   if (!client.phone?.trim()) reminders.push("Client phone not recorded");
@@ -135,6 +157,7 @@ function clientRecordReminders(client: BeforeTodayInput["client"]): string[] {
 
 export function buildBeforeToday(input: BeforeTodayInput): BeforeToday {
   const { lastTreatment, watchPlan, intelligence, client } = input;
+  const clientRecordUnavailable = input.clientRecordUnavailable === true;
 
   // CLIN-01-B: the clinical read failed. Every clinical claim this builder
   // would otherwise make is unknown, so none is made — in particular the
@@ -150,7 +173,7 @@ export function buildBeforeToday(input: BeforeTodayInput): BeforeToday {
       response: { ...EMPTY_RESPONSE },
       setup: null,
       latestSetupLine: null,
-      reminders: clientRecordReminders(client),
+      reminders: clientRecordReminders(client, clientRecordUnavailable),
     };
   }
 
@@ -250,7 +273,7 @@ export function buildBeforeToday(input: BeforeTodayInput): BeforeToday {
   if (!lastTreatment.aftercareExplainedAt) {
     reminders.push("Aftercare/risks not marked on the last session");
   }
-  reminders.push(...clientRecordReminders(client));
+  reminders.push(...clientRecordReminders(client, clientRecordUnavailable));
 
   return {
     unavailable: false,

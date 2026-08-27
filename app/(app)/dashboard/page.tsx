@@ -60,6 +60,7 @@ import {
   getBeforeTodayPreviews,
   type BeforeTodayPreview,
 } from "@/lib/dashboard/before-today-previews";
+import { CLINICAL_UNAVAILABLE_HEADLINE } from "@/components/clinical-unavailable-notice";
 import { getClientsNeedingAttention } from "@/lib/dashboard/clients-needing-attention";
 import {
   loadLastChartedTreatmentsForClients,
@@ -570,6 +571,11 @@ export default async function DashboardPage({
         timeLabel: localTimeString12h(new Date(appt.starts_at), studio.timezone),
         status: appt.status,
         serviceName: appt.service?.name ?? null,
+        // CLIN-BEFORE-TODAY-F2. The Before-today reads report their own
+        // outcome now, and the row derivation is where that outcome has to
+        // land: `hasHistory` is false both for a client with nothing charted
+        // and for a client whose history could not be read.
+        unavailable: preview?.unavailable ?? false,
         hasHistory: preview?.hasHistory ?? false,
         nextVisitNote: preview?.nextVisitNote ?? null,
         cautionNote: preview?.cautionNote ?? null,
@@ -1273,7 +1279,30 @@ function AppointmentRow({
                 <span className="text-[10px] font-semibold uppercase tracking-wider text-neutral-400">
                   Before today
                 </span>
-                {!workflow.hasHistory &&
+                {workflow.unavailable ? (
+                  // CLIN-BEFORE-TODAY-F2. FIRST, before either authority is
+                  // consulted, because both arms below state something about
+                  // what is recorded and this row's Before-today read did not
+                  // come back.
+                  //
+                  // `hasHistory` is false here for the same reason it is false
+                  // for a first-visit client, so a branch that reads it first
+                  // cannot tell the two apart — which is precisely how a failed
+                  // read used to print "No watch/plan note." and "Latest setup:
+                  // Not recorded" over a client with live charted history.
+                  //
+                  // ONE line, in the row's own voice, reusing the profile's
+                  // clinical-unavailable copy so the two surfaces cannot drift.
+                  // Not the profile's amber notice: that is a card-sized
+                  // surface, and this failure belongs to a page load rather
+                  // than to the client.
+                  <span
+                    data-testid="today-before-today-unavailable"
+                    className="text-neutral-500"
+                  >
+                    {CLINICAL_UNAVAILABLE_HEADLINE}
+                  </span>
+                ) : !workflow.hasHistory &&
                 !prepSummary.hasTreatment &&
                 !prepSummary.unavailable ? (
                   // ONE relationship line, not "New client" here and "No prior
