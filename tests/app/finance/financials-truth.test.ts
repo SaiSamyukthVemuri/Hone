@@ -898,8 +898,17 @@ const FORBIDDEN_ON_THE_PATH = [
  * so the file passes on its merits and the exemption set is gone.
  *
  * Comments are excluded by construction — only nodes that carry text are
- * inspected, and a comment is not one. Template parts and JSX text ARE
- * inspected, so the scan loses none of the reach the previous text search had.
+ * inspected, and a comment is not one. Template parts, JSX text, private
+ * identifiers and the expression of a class `extends` clause ARE inspected.
+ *
+ * The contract is narrower than "every money reference", and deliberately so:
+ * the scan covers the runtime identifier forms represented by the TypeScript
+ * syntax classes its controls exercise, while excluding the type-only
+ * positions those same controls pin. It previously claimed to lose "none of
+ * the reach" of the text search it replaced; review then found two forms it
+ * had silently dropped — the runtime expression of an `extends` clause, and
+ * every PrivateIdentifier. Both are covered below. The claim is not restored,
+ * because what disproved it was a syntax class nobody had thought to list.
  */
 function forbiddenValueOccurrences(source: string, fileName: string): string[] {
   const sf = ts.createSourceFile(
@@ -918,6 +927,11 @@ function forbiddenValueOccurrences(source: string, fileName: string): string[] {
       ts.isInterfaceDeclaration(node);
     const carriesText =
       ts.isIdentifier(node) ||
+      // A PrivateIdentifier is NOT an Identifier — `ts.isIdentifier` is false
+      // for it — and its `.text` keeps the `#`. Without this arm a class that
+      // held money in `#price_cents` escaped at the declaration AND at every
+      // `this.#…` read.
+      ts.isPrivateIdentifier(node) ||
       ts.isStringLiteralLike(node) ||
       ts.isTemplateHead(node) ||
       ts.isTemplateMiddle(node) ||
@@ -930,6 +944,22 @@ function forbiddenValueOccurrences(source: string, fileName: string): string[] {
           hits.push(`line ${line + 1}: "${id}"`);
         }
       }
+    }
+    // `ts.isTypeNode` answers TRUE for an ExpressionWithTypeArguments — the
+    // node a heritage clause entry is — so the rule above erases the whole
+    // entry. For `extends` that is wrong: in `class C extends makeBase(x) {}`
+    // the ENTRY'S EXPRESSION runs, and only its type ARGUMENTS are erased.
+    // `implements` stays erased entirely, and an interface's `extends` is
+    // already in-type by the time it is reached, so it stays erased too.
+    if (ts.isHeritageClause(node)) {
+      const erased = nowInType || node.token !== ts.SyntaxKind.ExtendsKeyword;
+      for (const entry of node.types) {
+        visit(entry.expression, erased);
+        for (const typeArgument of entry.typeArguments ?? []) {
+          visit(typeArgument, /* inType */ true);
+        }
+      }
+      return; // forEachChild(HeritageClause) visits exactly `types`; covered.
     }
     ts.forEachChild(node, (child) => visit(child, nowInType));
   };
@@ -1160,6 +1190,73 @@ describe("NC-reach — no money path is in FIN Slice 1's static ESM closure", ()
     ).not.toEqual([]);
   });
 
+  it("HERITAGE: a class `extends` EXPRESSION runs; its type ARGUMENTS do not", () => {
+    // Found by review, not by us. `ts.isTypeNode` is TRUE for an
+    // ExpressionWithTypeArguments, so "type node ⇒ erased" hid every money
+    // read underneath an extends clause — the scan reported GREEN on a real
+    // runtime call. These assert the scanner directly, not the closure, so a
+    // regression here fails on its own rather than behind another assertion.
+    const probe = path.join(ROOT, "lib/finance/probe.ts");
+    for (const runtime of [
+      "class C extends makeBase(row.price_cents) {}",
+      "class C extends (flag ? makeBase(row.price_cents) : Other) {}",
+      "const K = class extends makeBase(row.price_cents) {};",
+    ]) {
+      expect(forbiddenValueOccurrences(runtime, probe), runtime).not.toEqual([]);
+    }
+    // ...and the erased half of the very same clause stays erased. Widening
+    // `extends` must not drag type arguments or `implements` along with it.
+    for (const erased of [
+      "class C extends Base<price_cents> {}",
+      "class C extends makeBase<price_cents>() {}",
+      "class C implements price_cents {}",
+      "interface I extends Base<price_cents> {}",
+      "class C extends Base {}",
+    ]) {
+      expect(forbiddenValueOccurrences(erased, probe), erased).toEqual([]);
+    }
+  });
+
+  it("PRIVATE FIELDS: `#price_cents` is a runtime name the scan must see", () => {
+    // Also found by review. `ts.isIdentifier` is false for a PrivateIdentifier,
+    // so money kept in a private field was invisible at the declaration and at
+    // every read of it.
+    const probe = path.join(ROOT, "lib/finance/probe.ts");
+    for (const runtime of [
+      "class C { #price_cents = 1 }",
+      "class C {\n  #price_cents = 1;\n  read() { return this.#price_cents; }\n}",
+      "class C { #price_cents = 1; has(o: object) { return #price_cents in o; } }",
+    ]) {
+      expect(forbiddenValueOccurrences(runtime, probe), runtime).not.toEqual([]);
+    }
+    // A private field is not forbidden for being private.
+    const safe = "class C {\n  #safe_field = 1;\n  read() { return this.#safe_field; }\n}";
+    expect(forbiddenValueOccurrences(safe, probe), safe).toEqual([]);
+  });
+
+  it("COUNTERWEIGHT: a name in a true type POSITION is still erased", () => {
+    // The two repairs above widen the scan; this is what stops them widening
+    // it into "every name inside a type is a read". Each entry below is a
+    // genuine ts.TypeNode, which is the property the erasure rule keys on.
+    //
+    // NOT a claim of zero false positives. Measured exception: a type-only
+    // import or export SPECIFIER (`import type { price_cents } from …`) is an
+    // Identifier in no TypeNode, so the scan reports it. That predates these
+    // repairs and is unchanged by them, it errs towards reporting rather than
+    // missing, and no file in the closure trips it — so it is recorded here
+    // rather than silently fixed inside a bounded repair.
+    const probe = path.join(ROOT, "lib/finance/probe.ts");
+    for (const erased of [
+      "declare const x: { price_cents: number }; export const y = 1;",
+      "export const y = new Map<string, price_cents>();",
+      "export function f<T extends price_cents>(t: T) { return t }",
+      "export const y = ({} as unknown) as { price_cents: number };",
+      "export function g(x: unknown): x is price_cents { return true }",
+      "export type Q = typeof price_cents; export const z = 1;",
+    ]) {
+      expect(forbiddenValueOccurrences(erased, probe), erased).toEqual([]);
+    }
+  });
 
   it("TOTAL equals the sum of the kinds, for every module in the closure", () => {
     // What this proves: every site object the scanner DID emit carries one of
