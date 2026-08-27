@@ -195,6 +195,83 @@ describe("STILL TO HAPPEN is a claim about TIME, not only about status", () => {
   });
 });
 
+describe("THE TOTAL counts every appointment record, whatever became of it", () => {
+  // The arithmetic these pin is UNCHANGED by FIN-01B — that ticket repaired the
+  // owner-facing LABEL, which called this figure "Booked in this period" while
+  // it counted cancellations too. These controls exist so the label and the
+  // count can never drift apart again: if someone later makes the total exclude
+  // cancelled or no-show, the screen's new wording stops being true and this
+  // fails.
+
+  it("a CANCELLED appointment is still counted in the total", () => {
+    const c = summarizeCalendar([at("cancelled", AN_HOUR_AFTER)], NOW);
+    expect(c.booked).toEqual({ known: true, value: 1 });
+    expect(c.cancelled).toEqual({ known: true, value: 1 });
+    // ...and it is on no other line.
+    expect(c.stillToHappen).toEqual({ known: true, value: 0 });
+    expect(c.pastConfirmed).toEqual({ known: true, value: 0 });
+    expect(c.completed).toEqual({ known: true, value: 0 });
+    expect(c.noShow).toEqual({ known: true, value: 0 });
+  });
+
+  it("a NO-SHOW appointment is still counted in the total", () => {
+    const c = summarizeCalendar([at("no_show", AN_HOUR_BEFORE)], NOW);
+    expect(c.booked).toEqual({ known: true, value: 1 });
+    expect(c.noShow).toEqual({ known: true, value: 1 });
+    expect(c.stillToHappen).toEqual({ known: true, value: 0 });
+    expect(c.pastConfirmed).toEqual({ known: true, value: 0 });
+    expect(c.completed).toEqual({ known: true, value: 0 });
+    expect(c.cancelled).toEqual({ known: true, value: 0 });
+  });
+
+  it("THE PROPORTION THE LABEL WAS HIDING: cancellations can be a large share", () => {
+    // Production shape, 2026-08-27: August held 92 appointments of which 18
+    // were cancelled. Rendered as "Booked in this period: 92" that read as a
+    // month's work; roughly a fifth of it had been called off. The total is
+    // deliberately unchanged — the label is what was wrong.
+    const rows: CensusRow[] = [
+      ...Array.from({ length: 18 }, () => at("cancelled", AN_HOUR_BEFORE)),
+      ...Array.from({ length: 54 }, () => at("completed", AN_HOUR_BEFORE)),
+      ...Array.from({ length: 19 }, () => at("confirmed", AN_HOUR_AFTER)),
+      at("no_show", AN_HOUR_BEFORE),
+    ];
+    const c = summarizeCalendar(rows, NOW);
+    expect(c.booked).toEqual({ known: true, value: 92 });
+    expect(c.cancelled).toEqual({ known: true, value: 18 });
+    expect(c.completed).toEqual({ known: true, value: 54 });
+    expect(c.stillToHappen).toEqual({ known: true, value: 19 });
+    expect(c.noShow).toEqual({ known: true, value: 1 });
+    expect(c.partition.closed).toBe(true);
+  });
+
+  it("a row whose status this build does not recognise is counted in the total too", () => {
+    // It reaches no category line, so the total is strictly larger than the sum
+    // of the five — which is exactly when the completeness claim is withdrawn.
+    const c = summarizeCalendar(
+      [at("rescheduled", AN_HOUR_AFTER), at("completed", AN_HOUR_BEFORE)],
+      NOW,
+    );
+    expect(c.booked).toEqual({ known: true, value: 2 });
+    expect(c.completed).toEqual({ known: true, value: 1 });
+    expect(c.partition.closed).toBe(false);
+  });
+
+  it("FIN-01B CHANGED NO ARITHMETIC: the temporal split from #650 is intact", () => {
+    // Guards the previous repair against being undone by a copy change.
+    const c = summarizeCalendar(
+      [
+        at("confirmed", AN_HOUR_AFTER),
+        at("confirmed", EXACTLY_NOW),
+        at("confirmed", AN_HOUR_BEFORE),
+      ],
+      NOW,
+    );
+    expect(c.stillToHappen).toEqual({ known: true, value: 2 });
+    expect(c.pastConfirmed).toEqual({ known: true, value: 1 });
+    expect(c.booked).toEqual({ known: true, value: 3 });
+  });
+});
+
 describe("unreadableCalendar — an absence never becomes a partial answer", () => {
   it("A FAILED READ IS NOT A ZERO on any line", () => {
     const c = unreadableCalendar("unavailable");
