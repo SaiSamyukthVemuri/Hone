@@ -1,9 +1,7 @@
 import Link from "next/link";
 import { dashboardDayHref } from "@/lib/dashboard/day-navigation";
-import type {
-  DashboardPeriod,
-  PracticeDashboardMetrics,
-} from "@/lib/dashboard/practice-metrics";
+import type { PracticeDashboardMetrics } from "@/lib/dashboard/practice-metrics";
+import type { ReportingPeriod } from "@/lib/booking/reporting-period";
 
 // PR #208: Practice Dashboard V1 snapshot. Plain, iPad-friendly cards:
 // appointment counts, booked/completed SERVICE VALUE (service-menu
@@ -12,7 +10,7 @@ import type {
 // payments status card that keeps the test-mode posture explicit, and
 // Hone-specific action cards linking into Record Keeping.
 
-const PERIODS: Array<{ key: DashboardPeriod; label: string }> = [
+const PERIODS: Array<{ key: ReportingPeriod; label: string }> = [
   { key: "today", label: "Today" },
   { key: "week", label: "This week" },
   { key: "month", label: "This month" },

@@ -49,11 +49,11 @@ import {
 } from "@/lib/booking/tz";
 import { FormattedToday } from "@/components/formatted-date-time";
 import { PracticeSnapshot } from "./practice-snapshot";
+import { getPracticeDashboardMetrics } from "@/lib/dashboard/practice-metrics";
 import {
-  getPracticeDashboardMetrics,
-  isDashboardPeriod,
-  type DashboardPeriod,
-} from "@/lib/dashboard/practice-metrics";
+  isReportingPeriod,
+  type ReportingPeriod,
+} from "@/lib/booking/reporting-period";
 import {
 } from "@/lib/dashboard/next-action";
 import {
@@ -199,7 +199,7 @@ export default async function DashboardPage({
 }) {
   const sp = await searchParams;
   // PR #208: practice-snapshot period filter. Default: this week.
-  const period: DashboardPeriod = isDashboardPeriod(sp.period)
+  const period: ReportingPeriod = isReportingPeriod(sp.period)
     ? sp.period
     : "week";
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
