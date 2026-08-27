@@ -25,9 +25,9 @@ not a PR diary — per-capability evidence lives in
 |---|---|
 | **Reconciliation date** | 2026-08-27 |
 | **Production branch** | `claude/build-hone-saas-hOex7` |
-| **Current Git branch HEAD** | `5ad81129abfa0cd1f48bc8b51feb15a0738922db` — the PR #646 merge (FIN-01A Slice 1, the owner financial truth surface). Query GitHub for the live value; documentation-only commits may have advanced it since. |
-| **Last runtime-bearing application HEAD** | **`5ad81129abfa0cd1f48bc8b51feb15a0738922db` — the same commit.** The branch HEAD and the runtime-bearing HEAD **coincide** again, which is not the usual case and is therefore stated rather than assumed. Derived mechanically, not asserted: `#646` changes **twelve** deployed files across `app/(app)/financials/`, `app/(app)/dashboard/`, `lib/finance/`, `lib/dashboard/`, `lib/booking/reporting-period.ts` and `lib/search/navigation-registry.ts`, classified by `scripts/classify-changes.mjs`, the same map CI uses. **This is the baseline for every behavioural claim in this document.** |
-| **Current Vercel Production deployment** | ⚠️ **NO DEPLOYMENT ID READ.** The commit status for `5ad81129` is the evidence that a production deployment for this head succeeded — no deployment id, alias or runtime probe was read, and none is asserted. |
+| **Current Git branch HEAD** | `4fee652fe67f9fdc06b7d5e719cdb73d5e6d294b` — the PR #649 merge (UI-01D, Client Profile tab acknowledgement). Query GitHub for the live value; documentation-only commits may have advanced it since. |
+| **Last runtime-bearing application HEAD** | **`4fee652fe67f9fdc06b7d5e719cdb73d5e6d294b` — the same commit.** Derived mechanically, not asserted: the two merges since `5ad81129` (`#650`, then `#649`) change **five** deployed files — `app/(app)/financials/financial-spine.tsx`, `components/profile-tab-bar.tsx` and three under `lib/finance/` — classified by `scripts/classify-changes.mjs`, the same map CI uses. **This is the baseline for every behavioural claim in this document.** |
+| **Current Vercel Production deployment** | ⚠️ **NO DEPLOYMENT ID READ.** The commit status for `4fee652f` is the evidence that a production deployment for this head succeeded — no deployment id, alias or runtime probe was read, and none is asserted. |
 | **Migration state** | **This document deliberately states no migration number.** Hosted max is declared once, machine-readably, in [`migration-state.json`](./migration-state.json). Repository max, total applied and the next free number are **derived** — run `npm run migration:state`. The current reconciled position, with checksums and apply evidence, is [migration-ledger.md](./migration-ledger.md) under *Current state*. A number copied into this table is a number that goes stale on the next apply; that is how the `0160`/`0163`/`0165` divergence happened. |
 | **Database vs. application skew** | **None** — repository and hosted migration state reconcile, with nothing pending and nothing remote-only. Verified by `npm run migration:state` at this reconciliation. The reconciling numbers are **not** restated here; see [migration-ledger.md](./migration-ledger.md). |
 | **Production Supabase project** | The single production project. Always re-read the linked ref from `supabase/.temp/project-ref` (gitignored) and verify with `supabase migration list --linked` before trusting any number here. **No credentials are recorded in documentation.** (The project ref itself appears in at least one older repo document, so treat it as an operational identifier rather than a secret — but do not add new copies of it.) |
@@ -37,21 +37,21 @@ not a PR diary — per-capability evidence lives in
 
 ### Immediately preceding runtime baseline
 
-`8418a75507f0006efded89ce1439faab63b73890` — the PR #648 merge (clinical *Before today*
-fail-closed). Its code remains live because #646 was built on top of it.
+`5ad81129abfa0cd1f48bc8b51feb15a0738922db` — the PR #646 merge (FIN-01A Slice 1, the owner
+financial truth surface). Its code remains live because #650 and #649 were built on top of it.
 
 ### What this reconciliation did and did not measure
 
 **This reconciliation is a documentation lane.** It re-derived what can be derived from the
 repository and the Git graph, and it re-measured **nothing** in the production database, at
-Vercel, or at any provider. It was refreshed to `8418a755` when `#648` shipped and again to
-`5ad81129` when `#646` shipped, both on 2026-08-27; **the measurement boundary below is
+Vercel, or at any provider. It has been refreshed to each production head in turn —
+`8418a755` (#648), `5ad81129` (#646) and `4fee652f` (#650, #649), all on 2026-08-27 — **the measurement boundary below is
 unchanged by either refresh — production moving is not a reason to restate a figure nobody
 re-read.** Read the two lists as a boundary, not as a caveat:
 
-**Re-derived on 2026-08-27, from the repository at `5ad81129`:**
+**Re-derived on 2026-08-27, from the repository at `4fee652f`:**
 
-- the production branch head and the full merge ancestry back to `b9e0003f` (sixteen merges);
+- the production branch head and the full merge ancestry back to `b9e0003f` (eighteen merges);
 - which of those merges are runtime-bearing, by changed-path analysis;
 - repository migration max, total, next free number and pending set (`npm run migration:state`);
 - hosted migration max as **declared** in [`migration-state.json`](./migration-state.json);
@@ -180,7 +180,7 @@ surfaces then made affirmative clinical statements nobody had read: *Last visit*
 Intelligence* reported every stat as a known zero, and *Before today* reported no watch or plan
 notes and a complete procedure record.
 
-At `5ad81129` all four check `unavailable` **before** `hasHistory`, and
+At `4fee652f` all four check `unavailable` **before** `hasHistory`, and
 `session_blocks.caution_for_next_session` / `caution_note` — which reach the practitioner only
 through the Watch/Plan band built from that same read — are protected on both the Overview and
 Sessions tabs. Read failure now renders *clinical history could not be loaded*.
@@ -259,7 +259,7 @@ Behaviour:
 - **Galvanic intensity is forced to a literal `NULL`** at the destination, and is excluded
   from the source fingerprint — so a forged spec cannot reintroduce it.
 
-**Production exercise: yes.** `session_copy_operations` holds **24 rows, all 24 on
+**Production exercise: yes** *(measured 2026-08-23; not re-measured since)*. `session_copy_operations` held **24 rows, all 24 on
 `willow-electrolysis`**, from **2026-07-28T20:39:54Z** through **2026-08-23T19:40:49Z**
 *(as of 2026-08-23, read-only query)*. The commit path and the provenance ledger have executed
 repeatedly against real production data at Willow.
@@ -580,7 +580,7 @@ enforceability. Hone's documentation does not claim signatures are legally bindi
 - **`unknown` is an absence, never a value.** 0187 wrote **zero rows** and backfilled nothing;
   every historical appointment keeps no disposition, which is the truthful answer. The table was
   created empty and held **0 rows** at post-apply verification *(2026-08-24; not re-measured at any
-  later reconciliation)*. **No settlement has been recorded in production**, so this capability is
+  later reconciliation)*. **no settlement had been recorded in production when last measured**, so this capability is
   **deployed and enabled but not production-exercised.**
 - **Public-booking card collection is OFF and unwired.**
 - **Deposits, packages and partial payments are not built.**
@@ -740,6 +740,28 @@ partition claim printed only when it is true.
   one is a type error. OWNER-CAP's type is left alone.
 - **No external side effect** — no write, no Stripe call, no email, SMS, Google or analytics
   path. No browser E2E was added, deliberately: an `e2e/` spec would trip the spec-count pin.
+
+**#650 made `Still to happen` temporally truthful.** Slice 1 counted `status = 'confirmed'` and
+nothing else — and **status alone cannot say whether something is still ahead**. `confirmed`
+means *on the calendar, not closed out either way*, and **nothing in Hone writes a terminal
+status when an appointment elapses**, so a visit that came and went without being closed out
+reported as upcoming indefinitely. The query selected only `status`, so the model could not
+compute the right answer even in principle.
+
+The whole widening is `.select("status")` → `.select("status, starts_at")`: still one table,
+still no price, payment, settlement, charge, refund or Stripe column, still the owner gate before
+a Supabase client is constructed, still the half-open studio-local window. `confirmed` now splits
+on time into **`Still to happen`** (at or after the reference instant) and **`Past, still
+confirmed`** (already started).
+
+> **The new line is a fact about the RECORD, not about the visit.** It is not evidence the visit
+> happened, was missed, or was cancelled. *"missed"*, *"no-show"*, *"completed"* and *"needs
+> action"* are deliberately absent — no authority in production writes them.
+
+⚠️ **The production figures behind that repair were measured by #650's own read-only audit on
+2026-08-27, not by this reconciliation:** 29 of Willow's appointments were past and still
+confirmed, oldest `2026-05-17`, with the live error at 1 row in 19 for the current month. They
+are recorded here as that audit's dated evidence and were **not** re-measured.
 
 **Slice 2 and beyond are not shipped.** The disposition chain and the two money bridges each
 render one sentence naming the release rather than a zero or a stub.

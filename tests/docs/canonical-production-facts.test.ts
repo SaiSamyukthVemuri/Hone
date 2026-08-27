@@ -1134,7 +1134,8 @@ const SHIPPED_WORD = /\b(?:deployed|shipped|is live|in production|production[\s-
 
 const PRE_0169_DML =
   /(?:\bstill\s+holds\b[^.\n|]{0,60}\b(?:DML|INSERT)|(?:row\s+)?DML\b[^.\n|]{0,40}\bis\s+NOT\s+revoked\b|\bis\s+NOT\s+revoked\b[^.\n|]{0,40}\bDML\b)/i;
-const CORRECTION_MARKER = /\bCORRECTED\b|\bcorrected\b|\bpreviously\s+(?:read|continued)\b|\bused\s+to\s+(?:read|carry)\b/;
+const CORRECTION_MARKER =
+  /\bCORRECTED\b|\bcorrected\b|\bpreviously\s+(?:read|continued|said)\b|\bused\s+to\s+(?:read|carry|say)\b|\bprevious\s+wording\b|\bthis\s+(?:row|passage|clause|bullet|section|entry)\s+(?:previously|used\s+to)\b|\bwithdrawn\s+wording\b/i;
 
 /**
  * Blank out QUOTED SPANS, preserving offsets and line structure.
@@ -1152,7 +1153,29 @@ const CORRECTION_MARKER = /\bCORRECTED\b|\bcorrected\b|\bpreviously\s+(?:read|co
  * Bounded span reasoning, not a Markdown parser.
  */
 function maskQuotedSpans(text: string): string {
-  return text.replace(/"[^"\n]*"|“[^”\n]*”/g, (m) => " ".repeat(m.length));
+  // A quote is masked only when a correction/history marker INTRODUCES it -
+  // i.e. the marker appears earlier on the same line than the quote does.
+  //
+  // Masking every quotation was the previous revision, and it was worse than
+  // the line-wide exemption it replaced: `Current posture: "authenticated still
+  // holds row INSERT/UPDATE/DELETE"` was erased and passed. Quotation marks
+  // attribute and emphasise CURRENT claims at least as often as they preserve
+  // superseded ones, so quoting cannot itself be the signal.
+  //
+  // "Introduced by" is the bounded version of "belongs to": a correction says
+  // what it is replacing and then shows it. A live claim that happens to be
+  // quoted has no such preamble, and a row carrying a real correction plus a
+  // separate live assertion still fails on the assertion, which sits outside
+  // any marker-introduced quote.
+  let out = text;
+  for (const m of [...text.matchAll(/"[^"\n]*"|“[^”\n]*”/g)]) {
+    const start = m.index ?? 0;
+    const lineStart = text.lastIndexOf("\n", start) + 1;
+    const preamble = text.slice(lineStart, start);
+    if (!CORRECTION_MARKER.test(preamble)) continue;
+    out = out.slice(0, start) + " ".repeat(m[0].length) + out.slice(start + m[0].length);
+  }
+  return out;
 }
 
 describe("RULE C2 — no canonical doc says authenticated still holds clinical row DML", () => {
@@ -1198,6 +1221,15 @@ describe("RULE C2 — no canonical doc says authenticated still holds clinical r
         '| Clinical | ⚠️ corrected: this read *"row DML is NOT revoked"* | and row DML on the five app-written tables is NOT revoked |',
       ),
     ).toBe(true);
+
+    // F - Codex's bypass: a quotation that ATTRIBUTES a live claim rather than
+    // preserving a superseded one. No marker introduces it, so it is not masked.
+    expect(live('Current posture: "authenticated still holds row INSERT/UPDATE/DELETE"')).toBe(true);
+
+    // G - the same sentence, genuinely introduced as history, stays legal.
+    expect(
+      live('This row previously read: "authenticated still holds row INSERT/UPDATE/DELETE"'),
+    ).toBe(false);
 
     // E - current, correct post-0169 wording.
     expect(
@@ -1246,6 +1278,29 @@ const NUMBER_WORDS: Readonly<Record<string, number>> = {
   seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20,
 };
 const isCountWord = (w: string) => w.toLowerCase() in NUMBER_WORDS;
+
+/**
+ * Split a document into units a CLAIM can live in.
+ *
+ * A table row is one unit - it is one statement, however long. Ordinary prose
+ * is unwrapped paragraph-first and then split on sentence terminators, because
+ * these files wrap at ~95 columns and a claim is routinely separated from the
+ * qualification that withdraws it by nothing but a newline.
+ */
+function sentenceUnits(doc: string): string[] {
+  const units: string[] = [];
+  for (const block of doc.split(/\n\s*\n/)) {
+    const lines = block.split("\n");
+    if (lines.some((l) => l.trim().startsWith("|"))) {
+      units.push(...lines);
+      continue;
+    }
+    const joined = lines.join(" ").replace(/\s+/g, " ").trim();
+    if (!joined) continue;
+    units.push(...joined.split(/(?<=[.;])\s+/));
+  }
+  return units;
+}
 
 describe("RULE X — canonical documents agree with each other", () => {
   it("X1: F-RET-001's severity is stated in L27 and matched wherever else it appears", () => {
@@ -1296,13 +1351,57 @@ describe("RULE X — canonical documents agree with each other", () => {
   });
 
   it("X3: no canonical document turns a dated measurement into a present-tense one", () => {
-    const PRESENT_TENSE_MEASURE =
-      /\b(?:currently\s+(?:holds|has|stands|contains)|holds?\s+\*{0,2}\d[^.\n|]{0,24}\bnow\b|\bis\s+being\s+collected\b)/i;
+    // THREE REMEMBERED PHRASES WAS NOT A CLASS. The first revision matched only
+    // "currently holds/has/stands/contains", "holds ... now" and "is being
+    // collected", and three live claims walked straight through it:
+    //   "that count is currently **4 unresolved ops_alerts rows** (2026-08-23)"
+    //   the settlement table "holds 0 rows"
+    //   "No settlement has been recorded in production"
+    //
+    // The shape that actually matters is a PRESENT-TENSE STATE VERB carrying a
+    // COUNT - including zero, and including zero expressed as a negation, which
+    // is the form that hides best. Every production figure in this set is dated
+    // evidence, so the tense is the defect regardless of the noun.
+    const COUNT = String.raw`(?:\*{0,2}(?:\d+|zero|no)\b)`;
+    const STATE_VERB = String.raw`(?:holds?|has|have|contains?|stands?\s+at|is|are|remains?)`;
+    const PRESENT_TENSE_MEASURE = new RegExp(
+      [
+        // "currently holds 4" · "is currently 4 unresolved rows" · "now holds 0 rows"
+        String.raw`\b(?:currently|now)\b[^.\n|]{0,20}\b${STATE_VERB}\b[^.\n|]{0,20}${COUNT}`,
+        String.raw`\b${STATE_VERB}\b[^.\n|]{0,20}\b(?:currently|now)\b[^.\n|]{0,20}${COUNT}`,
+        // "holds 0 rows" · "contains 4 rows" - a bare present-tense row count
+        String.raw`\b(?:holds?|contains?)\s+${COUNT}\s*(?:rows?|entries|records)\b`,
+        // "No settlement has been recorded" - a zero stated as a negation
+        String.raw`\b(?:no|zero)\s+\w[\w-]{2,}(?:\s+\w[\w-]{2,})?\s+(?:has|have)\s+been\s+(?:recorded|created|collected|made)\b`,
+        // the original inference form
+        String.raw`\bis\s+being\s+collected\b`,
+      ].join("|"),
+      "i",
+    );
+    // SENTENCE-SCOPED, NOT LINE-SCOPED. These documents wrap prose at ~95
+    // columns, so a claim and the disclaimer that qualifies it routinely land on
+    // different lines - "it does not prove the table is empty now, nor / that no
+    // prospect entry has been created since" is one sentence and two lines. A
+    // line-scoped rule reported the second half as a claim while the first half
+    // withdrew it. Table rows stay single units, which is also correct: a row is
+    // one statement.
     const offenders: string[] = [];
     for (const [name, doc] of CANONICAL_SET) {
-      for (const line of currentProse(doc).split("\n")) {
+      for (const line of sentenceUnits(currentProse(doc))) {
         if (!PRESENT_TENSE_MEASURE.test(line)) continue;
-        if (CORRECTION_MARKER.test(line) || /used to read|\bnot\b[^.]{0,30}being collected/i.test(line)) continue;
+        // A date beside the figure does NOT license the present tense - that was
+        // the whole defect. Only an explicit correction, or a negated form
+        // ("no prospect data is NOT being collected" style disclaimers), is
+        // exempt. `when last measured` is the sanctioned past-tense phrasing and
+        // never matches the pattern in the first place.
+        // A DISCLAIMER is not a claim. "it does not prove the table is empty
+        // now, nor that no prospect entry has been created since" states the
+        // absence of knowledge, and the negated-count shape above matches it by
+        // construction. Flagging a warning as the claim it warns against is the
+        // false positive that teaches people to delete the warning.
+        const DISCLAIMER =
+          /\bdoes\s+not\s+prove\b|\bnor\s+that\b|\bis\s+not\s+a\s+claim\b|\bnever\s+a\s+claim\b|\bcannot\s+(?:be\s+)?(?:known|assumed)\b/i;
+        if (CORRECTION_MARKER.test(line) || DISCLAIMER.test(line)) continue;
         offenders.push(`${name}: ${line.trim().slice(0, 130)}`);
       }
     }
@@ -1331,6 +1430,32 @@ describe("RULE X — canonical documents agree with each other", () => {
     ).toBe((cs as string).toLowerCase());
   });
 
+  it("X6: the changelog's coverage statements match the PR rows it actually carries", () => {
+    // Two sentences four lines apart said "#632-#645" and "#632-#646" while the
+    // table held #648 too. A coverage claim is a derived fact like any other,
+    // and it went stale the same way - immediately after a sweep that was meant
+    // to catch exactly this.
+    const rows = [...RELEASE_CHANGELOG.matchAll(/^\|\s*\*{0,2}#(\d{3,4})\*{0,2}\s*\|/gm)]
+      .map((m) => Number(m[1]))
+      .filter((n) => n >= 632);
+    expect(rows.length, "the changelog must carry rows in the reconciled range").toBeGreaterThan(0);
+    const highest = Math.max(...rows);
+
+    const claims = [...RELEASE_CHANGELOG.matchAll(/#632[–-]#?(\d{3,4})/g)].map((m) => Number(m[1]));
+    expect(
+      claims.length,
+      "the changelog must state the range it covers, so the claim can be checked",
+    ).toBeGreaterThan(0);
+
+    const wrong = claims.filter((c) => c !== highest);
+    expect(
+      wrong,
+      `the changelog claims coverage through #${JSON.stringify(wrong)} while its highest ` +
+        `reconciled row is #${highest}. Every coverage sentence states the same derived fact and ` +
+        "they must agree with the table and with each other.",
+    ).toEqual([]);
+  });
+
   it("X5: the register's capability section counts what it actually lists, contiguously", () => {
     // The real defect had two halves and neither was a counting error alone:
     // section 15 said "Six" while production had moved twice past it, AND the
@@ -1356,15 +1481,31 @@ describe("RULE X — canonical documents agree with each other", () => {
     const headerIdx = lines.findIndex((l) => /^\|\s*Capability\s*\|/i.test(l));
     expect(headerIdx, "the section must carry a capability table").toBeGreaterThan(-1);
 
-    // Walk from the header: the table ends at the first non-table line. A blank
-    // line inside it is the orphan bug, and it ends the table here too.
+    // Walk from the header: the contiguous table ends at the first non-table
+    // line. THEN keep looking. Stopping at the break made this rule REPRODUCE
+    // the orphaning bug instead of detecting it - six rows, a blank line, an
+    // orphan seventh, count says six, equality passes. That is the exact old
+    // #646 layout, and the rule written to catch it would have signed it off.
     let rows = 0;
-    for (let k = headerIdx + 1; k < lines.length; k++) {
+    let k = headerIdx + 1;
+    for (; k < lines.length; k++) {
       const l = lines[k];
       if (!l.trim().startsWith("|")) break;
       if (/^\|\s*-{2,}/.test(l)) continue;
       rows++;
     }
+
+    const orphans = lines
+      .slice(k)
+      .filter((l) => l.trim().startsWith("|"))
+      .filter((l) => !/^\|\s*-{2,}/.test(l))
+      .map((l) => l.trim().slice(0, 110));
+    expect(
+      orphans,
+      "section 15 has table row(s) AFTER its table ends. A blank line severs a Markdown table, " +
+        "so these render outside it and no count includes them - which is how the #646 row went " +
+        `missing. Re-attach them to the table above. Offending: ${JSON.stringify(orphans)}`,
+    ).toEqual([]);
 
     expect(
       rows,

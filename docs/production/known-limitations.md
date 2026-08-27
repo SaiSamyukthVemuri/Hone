@@ -466,8 +466,8 @@ To keep this register honest, the following are **not** asserted anywhere in Hon
 documentation, because no evidence supports them:
 
 - That Hone has had "zero incidents". The verified statement is a **count read at a stated
-  time**, and that count is currently **4 unresolved `ops_alerts` rows** *(2026-08-23)*, not
-  zero. A previous version of this bullet named zero as the verified statement and was carried
+  time**, and that count was **4 unresolved `ops_alerts` rows when last measured, 2026-08-23**,
+  not zero. A previous version of this bullet named zero as the verified statement and was carried
   for four weeks without being re-read — the lesson is the *"read it at a stated time"* half,
   not the number.
 - That Hone is "fully compliant" with any regulatory regime. No compliance assessment exists.
