@@ -42,25 +42,35 @@ const SUMMARY = read("components/last-session-summary.tsx");
 
 type Candidate = {
   id: string;
+  started_at: string;
   electrolysis_entries: ReadonlyArray<unknown>;
   laser_entries: ReadonlyArray<unknown>;
 };
 
+// F3: `started_at` is now REQUIRED and is what establishes order. These fixtures
+// used to encode "newest" by array position alone, which is precisely the
+// assumption the selector no longer makes — it sorts by the shared recency rule
+// itself, so a caller cannot decide the winner by handing rows over in a
+// particular sequence.
 function session(
   id: string,
-  opts: { electro?: number; laser?: number } = {},
+  opts: { electro?: number; laser?: number; at?: string } = {},
 ): Candidate {
   return {
     id,
+    started_at: opts.at ?? "2026-01-01T10:00:00Z",
     electrolysis_entries: Array.from({ length: opts.electro ?? 0 }, () => ({})),
     laser_entries: Array.from({ length: opts.laser ?? 0 }, () => ({})),
   };
 }
 
+const NEWER = "2026-03-10T10:00:00Z";
+const OLDER = "2026-01-10T10:00:00Z";
+
 describe("pickLastTreatment: most recent session with actual treatment details", () => {
   it("newest session has no entries/areas; the older charted session wins", () => {
-    const newestEmpty = session("new");
-    const olderCharted = session("old");
+    const newestEmpty = session("new", { at: NEWER });
+    const olderCharted = session("old", { at: OLDER });
     const blocks = new Map([["old", [{}, {}]]]);
     expect(pickLastTreatment([newestEmpty, olderCharted], blocks)).toBe(
       olderCharted,
@@ -68,8 +78,8 @@ describe("pickLastTreatment: most recent session with actual treatment details",
   });
 
   it("newest session has treatment areas; it wins", () => {
-    const newest = session("new");
-    const older = session("old");
+    const newest = session("new", { at: NEWER });
+    const older = session("old", { at: OLDER });
     const blocks = new Map([
       ["new", [{}]],
       ["old", [{}]],
@@ -79,25 +89,28 @@ describe("pickLastTreatment: most recent session with actual treatment details",
 
   it("no charted sessions at all returns null (empty state)", () => {
     expect(
-      pickLastTreatment([session("a"), session("b")], new Map()),
+      pickLastTreatment(
+        [session("a", { at: NEWER }), session("b", { at: OLDER })],
+        new Map(),
+      ),
     ).toBeNull();
   });
 
   it("legacy sessions qualify via raw electrolysis/laser entries", () => {
-    const newestEmpty = session("new");
-    const legacyElectro = session("e", { electro: 3 });
+    const newestEmpty = session("new", { at: NEWER });
+    const legacyElectro = session("e", { electro: 3, at: OLDER });
     expect(pickLastTreatment([newestEmpty, legacyElectro], new Map())).toBe(
       legacyElectro,
     );
-    const legacyLaser = session("l", { laser: 1 });
+    const legacyLaser = session("l", { laser: 1, at: OLDER });
     expect(pickLastTreatment([newestEmpty, legacyLaser], new Map())).toBe(
       legacyLaser,
     );
   });
 
   it("an empty blocks list does not count as charted", () => {
-    const newest = session("new");
-    const older = session("old", { electro: 1 });
+    const newest = session("new", { at: NEWER });
+    const older = session("old", { electro: 1, at: OLDER });
     const blocks = new Map([["new", [] as ReadonlyArray<unknown>]]);
     expect(pickLastTreatment([newest, older], blocks)).toBe(older);
   });

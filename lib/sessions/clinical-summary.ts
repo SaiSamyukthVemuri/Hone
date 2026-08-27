@@ -3,6 +3,7 @@ import { blockAreasLabel } from "@/lib/sessions/block-areas";
 import { apilusModalityLabel } from "@/lib/constants";
 import { toleranceLabel } from "@/lib/sessions/clinical-response";
 import { unifiedReactionLabels } from "@/lib/sessions/reaction-unified";
+import { orderByRecency } from "@/lib/sessions/charted-session";
 
 // PR #190 introduced this helper; PR #191 reshaped it after Chloe's
 // practitioner smoke: a first-area-only compact line made multi-area
@@ -165,20 +166,42 @@ export function buildLastSessionSummary(input: {
 // pre-appointment card could read as empty while a useful charted
 // treatment sat one row below. This picks the most recent session
 // that actually has treatment details: charted areas (session_blocks)
-// or, for laser/legacy sessions, raw entries. Sessions must already
-// be ordered newest-first (the profile loader's order). Pure; no I/O.
+// or, for laser/legacy sessions, raw entries. Pure; no I/O.
+//
+// F3. IT NO LONGER TRUSTS THE CALLER'S ORDER.
+//
+// It used to be documented as "sessions must already be ordered newest-first"
+// and to `.find()` straight down whatever array it was handed. Both callers do
+// order by `started_at desc` in SQL — but `ORDER BY started_at DESC` with no
+// secondary key is not a total order, and Postgres does not specify which of
+// two rows sharing an exact `started_at` comes back first. That ambiguity
+// reached the screen: the Client Profile "Last treatment" card and the
+// dashboard "Before today" lines could name a different session than the
+// appointment-prep card, which sorts with an explicit tie-break, and could name
+// a different one again between renders.
+//
+// The tie is reachable, not theoretical: the "Edit time" control writes a
+// `datetime-local` value, so a corrected timestamp carries `:00.000` seconds
+// and two sessions corrected to the same minute are byte-identical.
+//
+// It now applies `compareChartedRecency` itself — THE shared rule, the same one
+// pickNewestChartedSession uses and the same one migration 0157 encodes in SQL.
+// Callers may pass rows in any order; the answer is identical either way.
 export type LastTreatmentCandidate = {
   id: string;
+  // Required so this selector can establish its own order. Both callers already
+  // select it; it is not a new read.
+  started_at: string;
   electrolysis_entries: ReadonlyArray<unknown>;
   laser_entries: ReadonlyArray<unknown>;
 };
 
 export function pickLastTreatment<T extends LastTreatmentCandidate>(
-  sessionsNewestFirst: ReadonlyArray<T>,
+  sessions: ReadonlyArray<T>,
   blocksBySession: ReadonlyMap<string, ReadonlyArray<unknown>>,
 ): T | null {
   return (
-    sessionsNewestFirst.find(
+    orderByRecency(sessions).find(
       (s) =>
         (blocksBySession.get(s.id)?.length ?? 0) > 0 ||
         s.electrolysis_entries.length > 0 ||
@@ -195,15 +218,20 @@ export function pickLastTreatment<T extends LastTreatmentCandidate>(
 // session that carries ANY watch/plan content, i.e. a non-empty
 // next_session_note or a treatment area flagged with caution data.
 // In particular, a newer charted session WITHOUT notes no longer
-// hides the previous session's still-relevant guidance. Sessions
-// must be ordered newest-first. Pure; no I/O.
+// hides the previous session's still-relevant guidance. Pure; no I/O.
+//
+// F3: orders by the shared rule itself, for the same reason as
+// pickLastTreatment above. This selector picks the source of the WATCH/PLAN
+// band, which sits directly beneath the last-treatment card — the two reading
+// from differently-resolved ties is exactly the contradiction to avoid.
 export type WatchPlanCandidate = {
   id: string;
+  started_at: string;
   next_session_note?: string | null;
 };
 
 export function pickPreClientWatchPlanSource<T extends WatchPlanCandidate>(
-  sessionsNewestFirst: ReadonlyArray<T>,
+  sessions: ReadonlyArray<T>,
   blocksBySession: ReadonlyMap<
     string,
     ReadonlyArray<
@@ -212,7 +240,7 @@ export function pickPreClientWatchPlanSource<T extends WatchPlanCandidate>(
   >,
 ): T | null {
   return (
-    sessionsNewestFirst.find((s) => {
+    orderByRecency(sessions).find((s) => {
       if (s.next_session_note?.trim()) return true;
       const blocks = blocksBySession.get(s.id) ?? [];
       return blocks.some(

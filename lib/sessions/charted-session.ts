@@ -95,18 +95,55 @@ function liveCount(
   return n;
 }
 
-// Newest first, with a deterministic tie-break so two sessions sharing an exact
-// started_at always resolve the same way (id descending, matching the
-// `order by ps.started_at desc, ps.id desc` the 0157 copy-source function uses).
+// THE recency rule, exported so it has exactly one definition.
+//
+// Newest first by CLINICAL OCCURRENCE TIME (`started_at`), with `id` descending
+// as the tie-break — matching `order by ps.started_at desc, ps.id desc`, which
+// the 0157 copy-source function already uses, so the SQL and JS rules are the
+// same rule rather than two that happen to agree.
+//
+// `created_at` is deliberately NOT consulted, here or anywhere on a recency
+// path. It is row-insert time, and a backfilled row entered today describing a
+// treatment from years ago must never outrank a real recent treatment. That
+// omission is load-bearing, not an oversight.
+//
+// Exported because a second selector (clinical-summary's pickLastTreatment)
+// used to trust its caller's order instead, which meant PostgREST's unspecified
+// order among equal `started_at` values reached the screen. Two callers need
+// this exact rule, which is the whole reason it is shared rather than inlined.
+export function compareChartedRecency(
+  a: Pick<ChartedSessionCandidate, "id" | "started_at">,
+  b: Pick<ChartedSessionCandidate, "id" | "started_at">,
+): number {
+  const at = new Date(a.started_at).getTime();
+  const bt = new Date(b.started_at).getTime();
+  // The finiteness guard is what keeps this a TOTAL order. An unparseable
+  // started_at yields NaN; `bt !== at` is true for two NaNs, and the returned
+  // NaN is treated as 0 by Array#sort — silently restoring the input-order
+  // dependence the id tie-break exists to remove. The schema makes this
+  // unreachable (`started_at timestamptz not null default now()`), so this
+  // costs nothing today and cannot decay into that failure tomorrow.
+  const aTimed = Number.isFinite(at);
+  const bTimed = Number.isFinite(bt);
+  if (aTimed && bTimed && bt !== at) return bt - at;
+  // A row we can place in time always outranks one we cannot.
+  if (aTimed !== bTimed) return aTimed ? -1 : 1;
+  return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
+}
+
+// Newest first, applying the rule above. Sorts a COPY: callers routinely hold
+// the array the data layer returned and must not have it reordered underneath
+// them.
+export function orderByRecency<
+  T extends Pick<ChartedSessionCandidate, "id" | "started_at">,
+>(sessions: ReadonlyArray<T>): T[] {
+  return [...sessions].sort(compareChartedRecency);
+}
+
 function newestFirst<T extends ChartedSessionCandidate>(
   sessions: ReadonlyArray<T>,
 ): T[] {
-  return [...sessions].sort((a, b) => {
-    const at = new Date(a.started_at).getTime();
-    const bt = new Date(b.started_at).getTime();
-    if (bt !== at) return bt - at;
-    return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
-  });
+  return orderByRecency(sessions);
 }
 
 // The filters a `LIMIT 1` cannot express, applied to a candidate row. Content is
