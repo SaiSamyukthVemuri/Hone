@@ -551,8 +551,7 @@ describe("NC-scope — the later slices are absent, and say so", () => {
 // ENFORCED AS A CODING CONSTRAINT, NOT PROVEN HERE
 //
 //   In FIN-OWNED source — app/(app)/financials/** and lib/finance/** — three
-//   stable ESLint rules reject exactly these forms, and the constraint is not
-//   larger than this list:
+//   stable ESLint rules reject loader forms including:
 //
 //     * a value-position `require`, `module` or `exports`, in any expression
 //       shape (called, aliased, parenthesised, instantiated, conditional,
@@ -562,14 +561,17 @@ describe("NC-scope — the later slices are absent, and say so", () => {
 //       included;
 //     * `process.getBuiltinModule`, dotted or with a literal computed key.
 //
-//   That lives in eslint.config.mjs, runs under `npm run lint` on every diff,
-//   and NC-lint below pins one fixture per form BY RULE ID.
+//   That lives in eslint.config.mjs and runs under `npm run lint` on every
+//   diff. NC-lint below asserts the expected RULE ID fires for each example,
+//   which shows those examples are rejected — not that the list is complete.
 //
 //   NOT covered by those rules, and therefore not claimed: `import("node:module")`
 //   — core no-restricted-imports visits static declarations only — and
 //   `globalThis.process.getBuiltinModule(...)` or an aliased `process`, since
-//   no-restricted-properties matches only the literal `process` object. NC-lint
-//   pins both gaps so they stay documented facts rather than surprises.
+//   no-restricted-properties matches only the literal `process` object. Those
+//   are observations about the rules as configured today, not invariants: a
+//   later lint change may start rejecting either, and nothing here defends the
+//   gap.
 //
 // NOT CLAIMED
 //

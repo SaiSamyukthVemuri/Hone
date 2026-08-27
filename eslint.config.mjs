@@ -19,9 +19,10 @@ const eslintConfig = [
     // FIN-scoped rule can bind. The static side is proved separately by
     // compiler-backed module resolution in tests/app/finance/financials-truth.test.ts.
     //
-    // WHAT THESE THREE RULES MECHANICALLY REJECT, measured form by form and
-    // pinned one fixture each in NC-lint. This list is the constraint; the
-    // constraint is not larger than this list.
+    // FORMS THESE THREE RULES ARE KNOWN TO REJECT, each with a fixture in
+    // NC-lint that asserts the expected rule id fires. The fixtures show these
+    // examples are rejected; they are not a survey of everything the rules
+    // reject, and the constraint may grow.
     //
     //   no-restricted-globals    a value-position `require`, `module` or
     //                            `exports` in ANY expression shape — called,
