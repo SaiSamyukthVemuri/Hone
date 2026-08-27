@@ -52,6 +52,23 @@ export const EXTERNAL_PAYMENTS_UNKNOWN_NOT_ZERO =
 export const HISTORY_BEFORE_OUTCOMES =
   "Before Hone could record cash, e-transfer and waived fees, no such record exists for a visit. Those visits are unknown, not zero.";
 
+/**
+ * What "Past, still confirmed" IS, and — more importantly — what it is NOT.
+ *
+ * The row counts appointments whose start has passed while the record still
+ * says `confirmed`. That is the ONLY established truth about them. It is not
+ * evidence that the visit happened, that it was missed, or that it was
+ * cancelled: nothing in Hone writes a terminal status when an appointment
+ * elapses, so the row means the record was never closed out and nothing more.
+ *
+ * The words "missed", "no-show", "completed" and "needs action" are all
+ * DELIBERATELY ABSENT. Each is an outcome claim, and no authority on this
+ * screen establishes any of them. Naming one would replace a true statement
+ * about a record with a false statement about a person's visit.
+ */
+export const PAST_STILL_CONFIRMED_IS_A_RECORD_STATE =
+  "Past, still confirmed counts appointments whose start time has passed while the record still says confirmed. That describes the record, not the visit: it does not mean the visit happened, was missed, or was cancelled.";
+
 /** The three above, in reading order, for the one component that renders them. */
 export const PERMANENT_LINES = [
   SERVICE_VALUE_IS_NOT_MONEY,

@@ -7,13 +7,21 @@ import type { Studio } from "@/lib/types/database";
 type Filter = { op: string; args: unknown[] };
 
 /**
+ * Far enough either side of any real clock that these are deterministic without
+ * injecting a reference instant into the loader. The TIE and the exact boundary
+ * are pinned in the model test, where the instant IS a parameter.
+ */
+const LONG_PAST = "2000-01-01T00:00:00.000Z";
+const FAR_FUTURE = "2099-01-01T00:00:00.000Z";
+
+/**
  * A thenable builder proxy, the same shape tests/lib/dashboard/owner-capacity-model
  * uses. It records the table and every filter so the window this module builds
  * can be asserted, and it records whether it was touched AT ALL — which is the
  * security-relevant claim for a non-owner.
  */
 function stubClient(stub: {
-  rows?: Array<{ status: string }>;
+  rows?: Array<{ status: string; starts_at: string }>;
   count?: number | null;
   error?: { code: string } | null;
 }) {
@@ -61,13 +69,13 @@ const argOf = (filters: Filter[], op: string, column: string): string | undefine
 
 describe("the owner gate is authority, and it runs before anything is read", () => {
   it("an owner is granted the briefing", async () => {
-    const { client } = stubClient({ rows: [{ status: "completed" }] });
+    const { client } = stubClient({ rows: [{ status: "completed", starts_at: LONG_PAST }] });
     const view = await loadFinancialsView(OWNER, studio("America/Toronto"), "today", client);
     expect(view.access).toBe("granted");
   });
 
   it("a practitioner is REFUSED", async () => {
-    const { client } = stubClient({ rows: [{ status: "completed" }] });
+    const { client } = stubClient({ rows: [{ status: "completed", starts_at: LONG_PAST }] });
     const view = await loadFinancialsView(
       { role: "practitioner" },
       studio("America/Toronto"),
@@ -81,7 +89,7 @@ describe("the owner gate is authority, and it runs before anything is read", () 
     // The claim is stronger than "is not shown the total". No studio-wide query
     // is issued, so there is no aggregate payload in the response for anything
     // downstream to leak.
-    const { client, tables, filters } = stubClient({ rows: [{ status: "completed" }] });
+    const { client, tables, filters } = stubClient({ rows: [{ status: "completed", starts_at: LONG_PAST }] });
     const view = await loadFinancialsView(
       { role: "practitioner" },
       studio("America/Toronto"),
@@ -101,6 +109,56 @@ describe("the owner gate is authority, and it runs before anything is read", () 
       expect(view.access, role).toBe("refused");
       expect(tables, role).toEqual([]);
     }
+  });
+});
+
+describe("the read projects enough to answer 'still to happen' truthfully", () => {
+  it("SELECTS starts_at ALONGSIDE status, and nothing financial", async () => {
+    // Status alone cannot distinguish an upcoming appointment from one that
+    // passed and was never closed out, so the projection is the fix's load
+    // bearing half. It must widen by exactly one temporal column.
+    const { client, filters, tables } = stubClient({ rows: [] });
+    await loadFinancialsView(OWNER, studio("America/Toronto"), "month", client);
+
+    const select = filters.find((f) => f.op === "select");
+    expect(select).toBeDefined();
+    const projection = String(select!.args[0]);
+    expect(projection).toContain("status");
+    expect(projection).toContain("starts_at");
+    // Still ONE table, and still no money.
+    expect(tables).toEqual(["appointments"]);
+    for (const forbidden of [
+      "price",
+      "amount",
+      "cents",
+      "payment",
+      "settlement",
+      "charge",
+      "refund",
+      "stripe",
+    ]) {
+      expect(projection.toLowerCase(), projection).not.toContain(forbidden);
+    }
+  });
+
+  it("a PAST confirmed appointment does not reach the owner as 'still to happen'", async () => {
+    const { client } = stubClient({
+      rows: [
+        { status: "confirmed", starts_at: LONG_PAST },
+        { status: "confirmed", starts_at: FAR_FUTURE },
+      ],
+    });
+    const view = await loadFinancialsView(OWNER, studio("America/Toronto"), "month", client);
+    if (view.access !== "granted") throw new Error("expected granted");
+    const { calendar } = view.briefing;
+
+    expect(calendar.stillToHappen).toEqual({ known: true, value: 1 });
+    expect(calendar.pastConfirmed).toEqual({ known: true, value: 1 });
+    // Neither row is dropped, and neither gains an outcome it did not earn.
+    expect(calendar.booked).toEqual({ known: true, value: 2 });
+    expect(calendar.completed).toEqual({ known: true, value: 0 });
+    expect(calendar.noShow).toEqual({ known: true, value: 0 });
+    expect(calendar.partition.closed).toBe(true);
   });
 });
 
@@ -190,7 +248,7 @@ describe("a read that did not succeed never becomes a zero", () => {
     // clips before any app-side limit. The exact Content-Range count is what
     // exposes it; a shorter row set with a larger count is a short read.
     const { client } = stubClient({
-      rows: Array.from({ length: 1_000 }, () => ({ status: "completed" })),
+      rows: Array.from({ length: 1_000 }, () => ({ status: "completed", starts_at: LONG_PAST })),
       count: 4_210,
     });
     const view = await loadFinancialsView(OWNER, studio("UTC"), "month", client);
@@ -201,7 +259,7 @@ describe("a read that did not succeed never becomes a zero", () => {
   });
 
   it("NO COUNT IS NOT A MATCHING COUNT: a missing Content-Range is a short read", async () => {
-    const { client } = stubClient({ rows: [{ status: "completed" }], count: null });
+    const { client } = stubClient({ rows: [{ status: "completed", starts_at: LONG_PAST }], count: null });
     const view = await loadFinancialsView(OWNER, studio("UTC"), "today", client);
     if (view.access !== "granted") throw new Error("expected granted");
     expect(view.briefing.calendar.booked.known).toBe(false);

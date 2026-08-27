@@ -91,8 +91,22 @@ describe("NC1-3 — Slice 1 contains no money, from any of the three truth class
     expect(ALL_CODE.match(/\.from\(/g) ?? []).toHaveLength(1);
   });
 
-  it("selects only the status column — no amount, no price, no join", () => {
-    expect(CODE.loader).toContain('.select("status", { count: "exact" })');
+  it("selects only status and starts_at — no amount, no price, no join", () => {
+    // `starts_at` joined `status` when "still to happen" became a claim about
+    // TIME rather than a restatement of `status = 'confirmed'`. The projection
+    // is pinned EXACTLY, so widening it again is a decision someone has to make
+    // here in the open rather than a column that quietly appears.
+    expect(CODE.loader).toContain('.select("status, starts_at", { count: "exact" })');
+
+    // ...and the intent the exact string is standing in for, asserted
+    // independently of its spelling: exactly two columns, neither financial.
+    const projection = CODE.loader.match(/\.select\("([^"]+)"/)?.[1] ?? "";
+    const columns = projection.split(",").map((c) => c.trim());
+    expect(columns).toEqual(["status", "starts_at"]);
+    for (const forbidden of ["price", "amount", "cent", "payment", "charge", "refund", "settle", "stripe"]) {
+      expect(projection.toLowerCase(), projection).not.toContain(forbidden);
+    }
+    expect(projection).not.toContain("(");
   });
 });
 
@@ -347,20 +361,34 @@ describe("NC-claim — the partition note states status coverage, not row layout
     expect(CODE.spine).toContain("if (!booked.known) return null;");
   });
 
-  it("THE FACT ITSELF: the four statuses really do sum to booked when closed", () => {
+  it("THE FACT ITSELF: the five categories really do sum to booked when closed", () => {
     // The arithmetic the sentence asserts, proved against the model rather than
     // assumed from its name. No `if (known)` guard: an unknown fact must FAIL
     // this, not silently skip it.
+    //
+    // FIVE, not four: `confirmed` now splits on time into still-to-happen and
+    // past-still-confirmed, so a four-term sum would no longer reach `booked`.
+    // Each fixture below is placed on BOTH sides of the reference instant, so
+    // the identity is asserted over a census that actually exercises the split
+    // rather than one that keeps every row on one side of it.
+    const REF = new Date("2026-08-27T12:00:00.000Z");
+    const BEFORE = "2026-08-27T11:00:00.000Z";
+    const AFTER = "2026-08-27T13:00:00.000Z";
     for (const statuses of [
       ["confirmed", "completed", "cancelled", "no_show"],
       ["completed", "completed", "completed"],
       [],
       ["cancelled", "no_show", "no_show", "confirmed", "completed", "completed"],
+      ["confirmed", "confirmed", "confirmed"],
     ]) {
-      const census = summarizeCalendar(statuses.map((status) => ({ status })));
+      const census = summarizeCalendar(
+        statuses.map((status, i) => ({ status, starts_at: i % 2 === 0 ? BEFORE : AFTER })),
+        REF,
+      );
       expect(census.partition.closed, statuses.join(",")).toBe(true);
       const parts = [
         census.stillToHappen,
+        census.pastConfirmed,
         census.completed,
         census.cancelled,
         census.noShow,
@@ -373,7 +401,13 @@ describe("NC-claim — the partition note states status coverage, not row layout
   });
 
   it("and the withdrawal is what the model asks for when it does NOT hold", () => {
-    const census = summarizeCalendar([{ status: "rescheduled" }, { status: "completed" }]);
+    const census = summarizeCalendar(
+      [
+        { status: "rescheduled", starts_at: "2026-08-27T13:00:00.000Z" },
+        { status: "completed", starts_at: "2026-08-27T11:00:00.000Z" },
+      ],
+      new Date("2026-08-27T12:00:00.000Z"),
+    );
     expect(census.partition.closed).toBe(false);
     expect(census.partition.unrecognisedStatuses).toEqual(["rescheduled"]);
     expect(normalise(messages.withdrawal)).toMatch(/do not account for every appointment booked/);
