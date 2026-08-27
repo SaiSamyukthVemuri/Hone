@@ -542,11 +542,17 @@ describe("NC-scope — the later slices are absent, and say so", () => {
 //   The TypeScript compiler, using this repository's own tsconfig, resolves
 //   FIN's static ESM dependency graph — bundler semantics, `@/*` aliases,
 //   extension substitution and package resolution all inherited rather than
-//   imitated. Every module in the resulting closure is scanned, and none
-//   contains a forbidden money identifier. A dependency site the compiler
-//   cannot resolve is a VIOLATION rather than an absence, so the closure cannot
-//   shrink silently — which is the failure mode that produced four of the
-//   eleven rounds.
+//   imitated. Every module in the resulting closure is scanned for forbidden
+//   money identifiers, and none contains one OUTSIDE the declaration-only
+//   exemption. That qualifier is load-bearing rather than decorative:
+//   `lib/types/database.ts` is in the closure and does contain `price_cents`,
+//   `price_paid_cents` and `stripe_livemode`, because a file that DECLARES the
+//   shape of a row names its columns. The scan skips it by name and a separate
+//   assertion proves it cannot execute a read — see TYPE_DECLARATION_ONLY.
+//
+//   A dependency site the compiler cannot resolve is a VIOLATION rather than an
+//   absence, so the closure cannot shrink silently — which is the failure mode
+//   that produced four of the eleven rounds.
 //
 // ENFORCED AS A CODING CONSTRAINT, NOT PROVEN HERE
 //
@@ -636,17 +642,29 @@ const compilerResolver: Resolver = (specifier, fromFile) => {
 };
 
 /**
- * Every dependency-bearing site in a module, classified into exactly one state.
- * There is no fourth path and, in particular, no silent one.
+ * Every STATIC ESM reference this scanner extracts, classified into exactly one
+ * state. Within that set there is no fourth path and no silent one.
  *
  *   RESOLVED_LOCAL      a project source file — traversed
  *   RESOLVED_EXTERNAL   an installed package — not our source, not our contract
  *   TYPE_ONLY           an erased dependency — ALSO traversed, on purpose
  *   UNRESOLVED          unreadable or unresolvable — a violation
+ *
+ * THE QUALIFIER MATTERS. CommonJS is not extracted here at all, so
+ * `require("./local")` in a reached module produces NO site — measured, not
+ * assumed. The census below therefore cannot notice it either: it compares the
+ * kind counts against `sites.length`, which already excludes syntax the scanner
+ * never emitted. What the census proves is that nothing is lost BETWEEN
+ * extraction and classification, not that every module reference in the file
+ * reached extraction.
+ *
+ * That gap is the deliberate boundary of this architecture, not an oversight:
+ * `require` in FIN-owned source is an ESLint error, and in shared modules it is
+ * outside what this file claims. See the block comment above.
  */
 type SiteKind = "resolved_local" | "resolved_external" | "type_only" | "unresolved";
 
-/** The AST form a site came from, for the census that proves none is lost. */
+/** The AST form a site came from, for the census over extracted sites. */
 type SiteSyntax = "import" | "export-from" | "import-type" | "dynamic-import";
 
 type DependencySite = {
