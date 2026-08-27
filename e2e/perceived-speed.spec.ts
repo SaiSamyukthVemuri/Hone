@@ -370,7 +370,16 @@ async function provesSegmentChangeIsAcknowledged(page: Page) {
       page.getByRole("heading", { level: 1, name: client.name }),
     ).toBeVisible({ timeout: T });
     await expect(page.locator("[data-link-pending]")).toHaveCount(0);
-    await expect(page.locator('[role="status"]')).toHaveCount(0);
+    // "Nothing is announcing", not "no region exists".
+    //
+    // The destination is the Client Profile, and since UI-01D its tab bar
+    // mounts a live region AT ALL TIMES — a polite region has to exist before
+    // its text changes, or the message it is inserted holding is not reliably
+    // announced. So an empty `[role="status"]` on this page is correct, and a
+    // count of zero would now be asserting the opposite of the contract.
+    // `:not(:empty)` keeps the original claim intact and makes it stricter: a
+    // stale "Opening…" left behind by any mechanism still fails here.
+    await expect(page.locator('[role="status"]:not(:empty)')).toHaveCount(0);
   });
 }
 
@@ -794,5 +803,127 @@ test.describe("UI-01C calendar toolbar — desktop", () => {
     page,
   }) => {
     await provesTheToolbarAcknowledges(page);
+  });
+});
+
+// ===========================================================================
+// UI-01D — the Client Profile tab bar
+// ===========================================================================
+//
+// WHAT THIS ADDS THAT tests/components/profile-tab-bar.test.ts CANNOT
+// -------------------------------------------------------------------
+// That file pins the state machine by rendering the component with the
+// transition forced, which is precise but is not a navigation. This one holds
+// a REAL query-only RSC request and asserts the three things only a browser
+// can show: that the acknowledgement is on screen before the destination
+// exists, that `aria-current` does not move until the transition commits, and
+// that keyboard focus survives the pending window.
+//
+// That last one is the regression with teeth. The tab bar used to set
+// `disabled={pending && !isActive}`, and a browser blurs an element the moment
+// it becomes disabled — so pressing Enter on a tab dropped focus to <body> and
+// Tab restarted from the top of the page. No render assertion sees that; it is
+// a live-DOM behaviour.
+//
+// WHY THE TAB BAR NEEDS THIS FILE'S GATE AND NOT A ROUTE BOUNDARY
+// ---------------------------------------------------------------
+// `?tab=` changes only the query, so the segment is unchanged, React reuses
+// the tree, and no route fallback can render — the same structural reason
+// UI-01A gave for the day navigation. Query-only navigation also needs neither
+// `blockPrefetch` nor `holdPrefetch`: the destination is the pathname we are
+// already on.
+
+test.describe("UI-01D Client Profile tabs — desktop", () => {
+  test("a held tab change acknowledges the target without making it current", async ({
+    page,
+  }) => {
+    const seed = await seedE2eStudio();
+    const client = await seedE2eDashboardClient(seed, { label: "Tab Nav" });
+    await loginAsOwner(page, seed);
+
+    await page.goto(`/clients/${client.clientId}`);
+
+    const tabRow = page.getByRole("navigation", {
+      name: "Client profile sections",
+    });
+    const overview = tabRow.getByRole("button", { name: "Overview" });
+    const sessions = tabRow.getByRole("button", { name: "Sessions" });
+    const liveRegion = tabRow.locator('[role="status"]');
+
+    await expect(overview).toBeVisible({ timeout: T });
+    await expect(overview).toHaveAttribute("aria-current", "page");
+    await expect(sessions).not.toHaveAttribute("aria-current", "page");
+    // Mounted before it has anything to say — a polite region inserted
+    // already holding its message is not reliably announced.
+    await expect(liveRegion).toBeAttached();
+    await expect(liveRegion).toHaveText("");
+
+    const resting = await sessions.boundingBox();
+    expect(resting).not.toBeNull();
+
+    const gate = await holdNavigation(
+      page,
+      (url) => url.pathname === `/clients/${client.clientId}`,
+    );
+
+    // Activate from the KEYBOARD, so the focus assertion below is about a real
+    // keyboard journey rather than a synthetic click.
+    await sessions.focus();
+    await page.keyboard.press("Enter");
+
+    await test.step("pending: the target is busy, the current tab is still current", async () => {
+      await expect(sessions).toHaveAttribute("aria-busy", "true");
+      expect(gate.held()).toBeGreaterThan(0);
+
+      // The contract, in two assertions: the tab being LEFT is still the
+      // current one, and the tab being OPENED has not become current.
+      await expect(overview).toHaveAttribute("aria-current", "page");
+      await expect(sessions).not.toHaveAttribute("aria-current", "page");
+
+      // No tab is disabled. This is what keeps focus where the practitioner
+      // put it, and what lets them change their mind mid-flight.
+      await expect(sessions).toBeEnabled();
+      await expect(overview).toBeEnabled();
+      await expect(
+        tabRow.locator("button[disabled]"),
+      ).toHaveCount(0);
+
+      // Focus never left the control that was activated.
+      await expect(sessions).toBeFocused();
+
+      // The request is described, never an outcome.
+      await expect(liveRegion).toHaveText("Opening Sessions…");
+
+      // Accessible name survives the fade; the tab neither moves nor resizes.
+      await expect(sessions).toHaveAccessibleName(/Sessions/);
+      expect(await sessions.boundingBox()).toEqual(resting);
+
+      // Query-only navigation invents no route-level loading state: the tab
+      // bar is still mounted and the URL has not moved.
+      await expect(tabRow).toBeVisible();
+      expect(new URL(page.url()).searchParams.get("tab")).toBeNull();
+    });
+
+    await test.step("commit: the target becomes current and pending clears", async () => {
+      gate.release();
+      await expect(sessions).toHaveAttribute("aria-current", "page", {
+        timeout: T,
+      });
+      expect(new URL(page.url()).searchParams.get("tab")).toBe("sessions");
+      await expect(overview).not.toHaveAttribute("aria-current", "page");
+      await expect(tabRow.locator("[aria-busy]")).toHaveCount(0);
+      await expect(liveRegion).toHaveText("");
+    });
+
+    await test.step("a second, unheld tab change leaves nothing behind", async () => {
+      await page.unrouteAll({ behavior: "wait" });
+      const personal = tabRow.getByRole("button", { name: "Personal Notes" });
+      await personal.click();
+      await expect(personal).toHaveAttribute("aria-current", "page", {
+        timeout: T,
+      });
+      await expect(tabRow.locator("[aria-busy]")).toHaveCount(0);
+      await expect(liveRegion).toHaveText("");
+    });
   });
 });
