@@ -2823,6 +2823,12 @@ export async function seedE2eTodayAppointment(
     endsMinutesFromNow: number;
     status?: "confirmed" | "completed" | "cancelled" | "no_show";
     withService?: boolean;
+    /**
+     * Rename the seeded consultation service. Exists for the hostile-text
+     * proofs: a studio names its own services, so an unbroken 200-character
+     * service name is user-controlled input reaching the Dashboard card.
+     */
+    serviceName?: string;
   },
 ): Promise<{ appointmentId: string }> {
   const practitionerId = (
@@ -2839,6 +2845,12 @@ export async function seedE2eTodayAppointment(
         )
       )[0]?.id ?? null
     : null;
+  if (serviceId && opts.serviceName) {
+    await sql(`update public.services set name = $1 where id = $2`, [
+      opts.serviceName,
+      serviceId,
+    ]);
+  }
   const starts = new Date(Date.now() + opts.startsMinutesFromNow * 60_000);
   const ends = new Date(Date.now() + opts.endsMinutesFromNow * 60_000);
   const durationMinutes = Math.max(

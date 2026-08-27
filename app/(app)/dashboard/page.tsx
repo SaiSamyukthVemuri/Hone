@@ -1180,7 +1180,7 @@ function AppointmentRow({
           nested <button> are still invalid content for <a>, and native anchor
           activation is not a React synthetic event. So the disclosure is
           HOISTED OUT of the link instead, and sits directly beneath it in the
-          same text column (pl-[4.5rem] = the w-14 time cell + the gap-4), which
+          same text column (pl-24 = the w-20 time cell + the gap-4), which
           is where it already appeared. The row body still opens the
           appointment; the disclosure is simply no longer part of it. */}
       <div className="flex min-w-0 flex-1 basis-64 flex-col">
@@ -1202,7 +1202,7 @@ function AppointmentRow({
           pendingLabel="Opening appointment…"
           className="flex min-w-0 gap-4"
         >
-          <div className="w-14 flex-none text-sm font-medium tabular-nums text-neutral-700 dark:text-neutral-300">
+          <div className="w-20 flex-none text-sm font-medium tabular-nums text-neutral-700 dark:text-neutral-300">
             {time}
           </div>
           <div className="min-w-0 flex-1">
@@ -1228,7 +1228,7 @@ function AppointmentRow({
                 </span>
               )}
             </div>
-            <div className="mt-0.5 truncate text-xs text-neutral-500">
+            <div className="mt-0.5 break-words text-xs text-neutral-500">
               {serviceName && <span>{serviceName}</span>}
               {modality && <span>{serviceName ? " · " : ""}{modality}</span>}
               <span>
@@ -1419,7 +1419,7 @@ function AppointmentRow({
             the narrative to survive both "nothing charted" and a failed block
             read, so a note-only visit still reaches her. */}
         {!workflow && prepSummary.remember && (
-          <div className="pl-[4.5rem] text-xs">
+          <div className="pl-24 text-xs">
             <span
               data-testid="dashboard-prep-remember"
               className="whitespace-pre-wrap break-words text-blue-900 dark:text-blue-200"
@@ -1430,7 +1430,7 @@ function AppointmentRow({
           </div>
         )}
         {(prepSummary.hasTreatment || prepSummary.unavailable) && (
-          <div className="pl-[4.5rem] text-xs">
+          <div className="pl-24 text-xs">
             <DashboardTreatmentMemory
               appointmentId={appt.id}
               clientId={appt.client_id}
@@ -1448,7 +1448,7 @@ function AppointmentRow({
           `gap-2` + `self-center`: on a phone this column wraps onto its own
           full-width line, where centring it against a tall text column opened
           dead space above and below with nothing in it. */}
-      <div className="flex flex-col items-end gap-1 self-start">
+      <div className="flex w-full flex-col items-start gap-1 self-start pl-24 sm:w-auto sm:items-end sm:pl-0">
         {/* Quick checkout (Chloe): take payment from the roster without opening
             charting. Paid/Processing/Refunded show a status badge instead. */}
         <AppointmentCheckoutCell
@@ -1487,7 +1487,7 @@ function AppointmentRow({
             each item is quiet, borderless, and never competes with the resolved
             primary action or the checkout cell above. Every item here is a
             SIBLING of the row-body link, never nested inside it. */}
-        <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1">
+        <div className="flex flex-wrap items-center justify-start gap-x-3 gap-y-1 sm:justify-end">
           {/* Chloe: consultation notes in ONE TAP from the Dashboard. It
               NAVIGATES to the canonical practitioner writer
               (/clients/<id>?tab=consultation, client_clinical_notes) exactly as
@@ -1499,7 +1499,7 @@ function AppointmentRow({
             href={`/clients/${appt.client_id}?tab=consultation`}
             data-testid="today-consultation-notes"
             pendingLabel="Opening client…"
-            className="inline-flex min-h-[44px] items-center rounded-md px-3 py-1.5 text-right text-xs font-medium text-neutral-600 underline-offset-2 hover:text-neutral-900 hover:underline dark:text-neutral-400 dark:hover:text-neutral-100"
+            className="inline-flex min-h-[44px] items-center rounded-md px-0 py-1.5 text-xs font-medium text-neutral-600 sm:px-3 underline-offset-2 hover:text-neutral-900 hover:underline dark:text-neutral-400 dark:hover:text-neutral-100"
           >
             {isConsultationVisit
               ? "Start consultation notes"
@@ -1510,7 +1510,7 @@ function AppointmentRow({
               href={intakeAction.href}
               data-testid="today-review-intake"
               pendingLabel="Opening intake…"
-              className="inline-flex min-h-[44px] items-center rounded-md px-3 py-1.5 text-right text-xs font-medium text-neutral-600 underline-offset-2 hover:text-neutral-900 hover:underline dark:text-neutral-400 dark:hover:text-neutral-100"
+              className="inline-flex min-h-[44px] items-center rounded-md px-0 py-1.5 text-xs font-medium text-neutral-600 sm:px-3 underline-offset-2 hover:text-neutral-900 hover:underline dark:text-neutral-400 dark:hover:text-neutral-100"
             >
               {intakeAction.label}
             </PendingLink>

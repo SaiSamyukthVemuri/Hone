@@ -127,7 +127,7 @@ export function ClinicalNotesSection({
           {printHref && (
             <a
               href={printHref}
-              className="font-medium text-neutral-600 underline dark:text-neutral-300"
+              className="inline-flex items-center min-h-[44px] min-w-[44px] font-medium text-neutral-600 underline dark:text-neutral-300"
             >
               Print / export
             </a>
@@ -135,7 +135,7 @@ export function ClinicalNotesSection({
           {profileHref && compact && (
             <a
               href={profileHref}
-              className="font-medium text-neutral-600 underline dark:text-neutral-300"
+              className="inline-flex items-center min-h-[44px] min-w-[44px] font-medium text-neutral-600 underline dark:text-neutral-300"
             >
               Open in profile
             </a>
