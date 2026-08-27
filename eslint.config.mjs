@@ -37,19 +37,19 @@ const eslintConfig = [
     //
     //   * `import("node:module")` — core no-restricted-imports visits static
     //     declarations only, so a dynamic import of the loader raises nothing
-    //     here. The static ESM guard happens to flag it today, but only because
-    //     `node:module` does not RESOLVE in this repository; that would stop
-    //     being true the moment @types/node reached the resolution path, so it
-    //     is not a loader rule and is not claimed as one.
+    //     here.
     //   * `globalThis.process.getBuiltinModule(...)`, or aliasing `process`
     //     first — no-restricted-properties matches only when the immediate
     //     object identifier is literally `process`.
     //
     // Both were raised by Codex against an earlier wording that implied wider
-    // cover. NO no-restricted-syntax SELECTORS WERE ADDED TO CHASE THEM: a
+    // cover. No no-restricted-syntax selectors were added to chase them: a
     // hand-written selector list is the enumeration this architecture was
-    // adopted to stop, and no existing general rule closes the class. The
-    // honest move is the smaller claim, not a longer list.
+    // adopted to stop. The honest move is the smaller claim, not a longer list.
+    //
+    // These gaps are recorded as the measured state of these rules, not as an
+    // invariant. A future lint improvement that starts covering them is welcome
+    // and breaks nothing here.
     //
     // `createRequire` is deliberately NOT in no-restricted-globals: it is never
     // a global, so listing it there would have looked like coverage and been
