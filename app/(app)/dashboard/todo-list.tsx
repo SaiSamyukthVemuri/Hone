@@ -90,7 +90,7 @@ export function DashboardTodoList({ todo }: { todo: DashboardTodo }) {
                 </span>
               </div>
               {item.detail && (
-                <p className="mt-0.5 truncate text-xs text-neutral-500 dark:text-neutral-500">
+                <p className="mt-0.5 text-xs text-neutral-500 dark:text-neutral-500">
                   {item.detail}
                 </p>
               )}
