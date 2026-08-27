@@ -1,6 +1,6 @@
 # Hone — Known Limitations
 
-**Verified residual limitations as of 2026-08-26**, against the runtime-bearing application HEAD
+**Verified residual limitations as of 2026-08-27**, against the runtime-bearing application HEAD
 recorded in [current-state.md](./current-state.md) *Reconciliation header* — **the single
 authority for that SHA, which is deliberately not copied here.** A second copy is a second thing
 to go stale, and the fourth derived fact drifted for exactly that reason. **Repo and hosted
@@ -24,7 +24,7 @@ that could not be checked from code, the CLI, or read-only production queries ar
 explicitly as *unknown pending verification* rather than asserted in either direction.
 
 **Amended 2026-08-26** against production `6786b07b`, fourteen merges on from the previous
-header. This pass **re-derived every claim below from the repository and the Git graph** and
+header, and **refreshed 2026-08-27** to production `8418a755` when `#648` shipped. This pass **re-derived every claim below from the repository and the Git graph** and
 **re-measured nothing in the production database or at any provider** — so a row carrying a
 2026-08-23 production count keeps that stamp and is dated evidence, not a current reading. What
 changed:

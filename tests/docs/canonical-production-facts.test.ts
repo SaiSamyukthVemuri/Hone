@@ -887,6 +887,32 @@ describe("RULE A — current-state.md pins a real, current production SHA", () =
     ).toEqual([]);
   });
 
+  it("A1b: every abbreviated SHA presented as the CURRENT baseline matches the pin", () => {
+    // The header pins the runtime-bearing SHA; the capability sections then say
+    // "At `<short sha>` ..." when describing what is true NOW. Those are two
+    // statements of one fact, so they can drift - and a section pinned to a
+    // superseded head reads as current while describing a runtime that has
+    // moved. This ties them: an abbreviated SHA introduced by "At `...`" must
+    // be a prefix of the full pin.
+    //
+    // Scoped to that one phrasing on purpose. Historical references elsewhere
+    // ("merged `a3b85af2`", "superseded by `6786b07b`") are evidence of past
+    // events and must stay free to name any commit.
+    const pinned = pinnedRuntimeSha();
+    expect(pinned, "current-state.md must pin a runtime-bearing HEAD").toBeTruthy();
+    const claims = [...currentProse(CURRENT_STATE).matchAll(/\bAt\s+`([0-9a-f]{7,40})`/g)].map(
+      (m) => m[1],
+    );
+    const stale = claims.filter((c) => !(pinned as string).startsWith(c));
+    expect(
+      stale,
+      'a section says "At `<sha>` ..." about CURRENT behaviour using a commit that is not the ' +
+        `pinned runtime baseline ${(pinned as string).slice(0, 8)}. Re-pin the section or the ` +
+        `header - they are one fact. Offending: ${JSON.stringify(stale)}`,
+    ).toEqual([]);
+    expect(claims.length, "at least one section should tie itself to the pin").toBeGreaterThan(0);
+  });
+
   it("A2: the pinned runtime-bearing SHA exists and is an ancestor of HEAD", () => {
     const pinned = pinnedRuntimeSha();
     expect(pinned, "current-state.md must pin a runtime-bearing application HEAD").toBeTruthy();
@@ -1010,9 +1036,26 @@ function openPrSection(): string {
   return end === -1 ? rest : rest.slice(0, end);
 }
 
-/** PR numbers current-state.md declares OPEN. */
+/**
+ * PR numbers current-state.md declares OPEN.
+ *
+ * Read from each row's SUBJECT CELL - the first `|`-delimited column, which is
+ * what the row is ABOUT - and not from anywhere in the section. An earlier
+ * revision scraped every `#NNN` in the block, so the moment a row's prose
+ * referenced another PR ("#648 records it as untouched") that PR was treated as
+ * declared-open, and Rule F then flagged every truthful mention of it - and its
+ * changelog row - as describing an open PR as shipped.
+ *
+ * A row may legitimately cite a MERGED PR to explain itself. Only the subject
+ * of the row is a declaration about that PR's state.
+ */
 export function declaredOpenPrs(): string[] {
-  return [...new Set([...openPrSection().matchAll(/#(\d{3,5})\b/g)].map((m) => m[1]))];
+  const subjects = openPrSection()
+    .split("\n")
+    .filter((l) => l.trim().startsWith("|") && !/^\|\s*-{2,}/.test(l))
+    .map((l) => l.split("|")[1] ?? "")
+    .filter((cell) => !/^\s*PR\s*$/i.test(cell));
+  return [...new Set(subjects.flatMap((c) => [...c.matchAll(/#(\d{3,5})\b/g)].map((m) => m[1])))];
 }
 
 const SHIPPED_WORD = /\b(?:deployed|shipped|is live|in production|production[\s-]exercised|merged to production)\b/i;
@@ -1448,6 +1491,32 @@ describe("RULE D+ — open limitations persist, closed ones stay labelled", () =
 //   H3   "Production currently runs migration 0165"                  -> RED (verb was missing)
 //   H3   "Production has reached migration 0165"                     -> RED (present perfect)
 //   A3   pin moved back one merge                                    -> RED (unchanged)
+//
+// Fourth round - the local refresh onto production 8418a755 (#648). This one
+// is different in kind: it is the first time the guard met a REAL production
+// move rather than a synthetic mutation, and A3 fired on its own, naming all
+// four deployed files, before any documentation was touched. Re-proved on the
+// refreshed tree:
+//
+//   C2   pre-0169 DML claim reintroduced                              -> RED
+//   A3   pin rolled back to the pre-#648 head                         -> RED (with A1b)
+//   H4   "Real-customer activity is the remainder: 79 clients ..."    -> RED
+//   F    "deployed in production under PR #646"                       -> RED
+//   H3   "Production currently runs migration 0165"                   -> RED
+//   H3   "Production has reached migration 0165"                      -> RED
+//   A1b  section 1 says "At `6786b07b`" while the header pins 8418a755 -> RED
+//
+// A1b is new, and exists because the refresh created the failure mode: the
+// header pins the runtime SHA and the capability sections then say "At
+// `<short sha>` ..." about current behaviour. Two statements of one fact drift,
+// and a section pinned to a superseded head reads as current while describing a
+// runtime that has moved.
+//
+// declaredOpenPrs() was also repaired here, by this refresh rather than by
+// review: it scraped every `#NNN` in the open-PR block, so the moment a row's
+// prose cited another PR ("#648 records it as untouched") that PR counted as
+// declared-open and Rule F flagged every truthful mention of it, changelog row
+// included. It now reads only each row's SUBJECT CELL.
 //
 // C2 exists because the previous round fixed ONE of three copies of the same
 // false sentence and believed the class was swept. It is a class check over

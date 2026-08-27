@@ -23,11 +23,11 @@ not a PR diary — per-capability evidence lives in
 
 | Field | Value |
 |---|---|
-| **Reconciliation date** | 2026-08-26 |
+| **Reconciliation date** | 2026-08-27 |
 | **Production branch** | `claude/build-hone-saas-hOex7` |
-| **Current Git branch HEAD** | `6786b07be57a9c01ff4421378f22d7dbca68a5c9` — the PR #644 merge (TRUTH-01A, the export resource registry). Query GitHub for the live value; documentation-only commits may have advanced it since. |
-| **Last runtime-bearing application HEAD** | **`6786b07be57a9c01ff4421378f22d7dbca68a5c9` — the same commit.** For this reconciliation the branch HEAD and the runtime-bearing HEAD **coincide**, which is not the usual case and is therefore stated rather than assumed. Derived mechanically, not asserted: `#644` changes eight runtime files — `app/(app)/settings/data/{actions,page}.tsx`, `app/features/charting-records/page.tsx`, `app/page.tsx`, `app/pricing/page.tsx`, `lib/export/{provenance,resource-registry}.ts` and `scripts/classify-changes.mjs`. **This is the baseline for every behavioural claim in this document.** |
-| **Current Vercel Production deployment** | ⚠️ **NOT VERIFIED AT THIS RECONCILIATION.** No Vercel record was read on 2026-08-26, so no deployment id, status or alias is asserted for `6786b07b`. The last id this document recorded (`dpl_5jGQkF4PjsoyiyKJCqRc6o4bsxwu`, built from `b9e0003f`) is **fourteen merges stale and is not the current deployment**; it is dropped rather than carried forward looking current. Re-read it with the Vercel record before relying on one. |
+| **Current Git branch HEAD** | `8418a75507f0006efded89ce1439faab63b73890` — the PR #648 merge (clinical *Before today* fail-closed). Query GitHub for the live value; documentation-only commits may have advanced it since. |
+| **Last runtime-bearing application HEAD** | **`8418a75507f0006efded89ce1439faab63b73890` — the same commit.** The branch HEAD and the runtime-bearing HEAD **coincide** again, which is not the usual case and is therefore stated rather than assumed. Derived mechanically, not asserted: `#648` changes **four** deployed files — `app/(app)/dashboard/page.tsx`, `lib/dashboard/before-today-previews.ts`, `lib/dashboard/today-workflow.ts` and `lib/sessions/before-today.ts` — classified by `scripts/classify-changes.mjs`, the same map CI uses. **This is the baseline for every behavioural claim in this document.** |
+| **Current Vercel Production deployment** | ⚠️ **NO DEPLOYMENT ID READ.** The commit status for `8418a755` reports the **Vercel check as `success`**, so a production deployment for this head succeeded — but no deployment id, alias or runtime probe was read, and none is asserted. That check is the whole of the evidence. |
 | **Migration state** | **This document deliberately states no migration number.** Hosted max is declared once, machine-readably, in [`migration-state.json`](./migration-state.json). Repository max, total applied and the next free number are **derived** — run `npm run migration:state`. The current reconciled position, with checksums and apply evidence, is [migration-ledger.md](./migration-ledger.md) under *Current state*. A number copied into this table is a number that goes stale on the next apply; that is how the `0160`/`0163`/`0165` divergence happened. |
 | **Database vs. application skew** | **None** — repository and hosted migration state reconcile, with nothing pending and nothing remote-only. Verified by `npm run migration:state` at this reconciliation. The reconciling numbers are **not** restated here; see [migration-ledger.md](./migration-ledger.md). |
 | **Production Supabase project** | The single production project. Always re-read the linked ref from `supabase/.temp/project-ref` (gitignored) and verify with `supabase migration list --linked` before trusting any number here. **No credentials are recorded in documentation.** (The project ref itself appears in at least one older repo document, so treat it as an operational identifier rather than a secret — but do not add new copies of it.) |
@@ -37,24 +37,25 @@ not a PR diary — per-capability evidence lives in
 
 ### Immediately preceding runtime baseline
 
-`9eb3c3174762c733ff553220e9c72341fc9032c5` — the PR #643 merge (studio launch consent
-readiness). Its code remains live because #644 was built on top of it.
+`6786b07be57a9c01ff4421378f22d7dbca68a5c9` — the PR #644 merge (TRUTH-01A, the export
+resource registry). Its code remains live because #648 was built on top of it.
 
 ### What this reconciliation did and did not measure
 
 **This reconciliation is a documentation lane.** It re-derived what can be derived from the
 repository and the Git graph, and it re-measured **nothing** in the production database, at
-Vercel, or at any provider. Read the two lists as a boundary, not as a caveat:
+Vercel, or at any provider. It was refreshed to `8418a755` on 2026-08-27 when `#648`
+shipped; the measurement boundary below is unchanged by that refresh. Read the two lists as a boundary, not as a caveat:
 
-**Re-derived on 2026-08-26, from the repository at `6786b07b`:**
+**Re-derived on 2026-08-27, from the repository at `8418a755`:**
 
-- the production branch head and the full merge ancestry back to `b9e0003f` (fourteen merges);
+- the production branch head and the full merge ancestry back to `b9e0003f` (fifteen merges);
 - which of those merges are runtime-bearing, by changed-path analysis;
 - repository migration max, total, next free number and pending set (`npm run migration:state`);
 - hosted migration max as **declared** in [`migration-state.json`](./migration-state.json);
 - every capability status below that rests on merged source, migrations or tests.
 
-**NOT measured on 2026-08-26, and therefore carried forward with their original 2026-08-23
+**NOT measured on 2026-08-27, and therefore carried forward with their original 2026-08-23
 stamps rather than restated as current:**
 
 - every per-studio row count in §0, and every derived figure that depends on them;
@@ -74,7 +75,8 @@ claim about today, and a later reader must re-measure before treating it as one.
 | PR | State | Why it is not production |
 |---|---|---|
 | **#646** — FIN, owner financial truth surface | **OPEN**, not draft | Its head is **not an ancestor of `6786b07b`**. Carries **no migration**. Nothing it adds is live. |
-| **TRUTH-01B-1** — the first export-payload slice | **IN DEVELOPMENT**, no PR merged | The registry and the disclosure landed in TRUTH-01A; **the export payload is byte-for-byte unchanged**, so nothing here is live. See §12. |
+| **TRUTH-01B-1** — the first export-payload slice | **IN DEVELOPMENT**, no PR merged (carried by draft #647) | The registry and the disclosure landed in TRUTH-01A; **the export payload is byte-for-byte unchanged**, so nothing here is live. See §12. |
+| **#647** — TRUTH-01B-1, the joinable archive | **OPEN**, and a **DRAFT** | Parked. `#648` records it as untouched. Nothing here is live. |
 | **#631** — this reconciliation | **OPEN** | Documentation and tests only. |
 
 > **No head SHA is recorded for an open PR, deliberately.** An open branch's head moves whenever
@@ -177,7 +179,7 @@ surfaces then made affirmative clinical statements nobody had read: *Last visit*
 Intelligence* reported every stat as a known zero, and *Before today* reported no watch or plan
 notes and a complete procedure record.
 
-At `6786b07b` all four check `unavailable` **before** `hasHistory`, and
+At `8418a755` all four check `unavailable` **before** `hasHistory`, and
 `session_blocks.caution_for_next_session` / `caution_note` — which reach the practitioner only
 through the Watch/Plan band built from that same read — are protected on both the Overview and
 Sessions tabs. Read failure now renders *clinical history could not be loaded*.
@@ -185,6 +187,50 @@ Sessions tabs. Read failure now renders *clinical history could not be loaded*.
 **Deliberate non-change, recorded so it is not mistaken for a gap:** `attachStructuredAreas`
 still **throws** on a `session_block_areas` read failure, surfacing the error boundary. That is
 loud, not a false absence, and was left alone.
+
+#### The Dashboard half — F2, closed by PR #648 (`8418a755`)
+
+**Implemented · merged · deployed · enabled for all studios. No migration.**
+
+CLIN-01-B closed the **client profile**. The Dashboard *Before today* pipeline had the same
+defect on a different pipeline and was **not** covered by it: its four Supabase reads
+destructured `data` alone — the token `error` did not appear in
+`lib/dashboard/before-today-previews.ts` at all — so a failed read arrived `null`, became `[]`,
+and was rendered as an **answer**.
+
+It went unnoticed because the row did not go blank. `pickLastTreatment` accepts a session on its
+**live entries** alone, and those ride on the *sessions* read; so when the `session_blocks` read
+failed for a client with real charted history, `hasHistory` stayed **true** while every
+block-derived field collapsed to empty, and the row kept its confident voice.
+
+All four reads now pass through one wrapper retaining **both** failure channels — PostgREST's
+`error`, and a rejected invocation, which never sets `error` at all. Outcomes classify into two
+**independent** facts, and the independence is the design:
+
+- the three **clinical** reads are one evidence set → `clinicalUnavailable`;
+- the **clients** read carries no clinical evidence → `clientRecordUnavailable`, which suppresses
+  only the missing-from-record reminders.
+
+So a failed clinical read never hides true record reminders, and a failed client read never
+blanks a history that *was* read. `compactBeforeToday` checks `unavailable` **before**
+`hasHistory` — both arrive as `hasHistory: false`, and collapsing them is exactly what lost the
+distinction. **Invariant: a failed read is not an empty history.**
+
+**What #648 explicitly does NOT claim, recorded because the claim was withdrawn:**
+`DASHBOARD_RETURNING_AS_NEW = NOT_PROVEN`. The recon did **not** prove this failure renders
+returning clients as *"New client · No charted history yet"*; the appointment-prep path has
+separate error binding. It is not asserted, not tested and not repeated here.
+
+**Still open, and deliberately out of #648's scope — do not read F2's closure as covering them:**
+
+| Item | State |
+|---|---|
+| **F3** — SQL/JS recency ordering and tie authority | **Separate, confirmed P2. Open.** `ORDER BY`, latest-selection authority, `starts_at`/`created_at` semantics, truncation and tie-breaking are untouched — verified byte-identical to production bar indentation. |
+| **F4** — optional-evidence / absence authority | **Latent, deferred.** The architecture is unchanged. |
+| **HIST-01A** | Untouched. The `COMPLETE / PARTIAL / EMPTY_PROVEN / UNAVAILABLE` model is deliberately **not** introduced. |
+
+**No migration, schema, RPC, DB policy or provider change**, and no production data mutation —
+four runtime files and five test files.
 
 ## 2. Whole-session copy
 

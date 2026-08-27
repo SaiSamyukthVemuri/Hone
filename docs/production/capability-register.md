@@ -4,7 +4,7 @@
 [current-state.md](./current-state.md). Where the two disagree, re-verify both against
 production; neither document is evidence for the other.
 
-- **Reconciled:** 2026-08-26
+- **Reconciled:** 2026-08-27
 - **Runtime-bearing baseline:** the application HEAD recorded in
   [current-state.md](./current-state.md) *Reconciliation header* — **the single authority for
   that SHA, which is deliberately not copied here.** At this reconciliation the branch HEAD and
