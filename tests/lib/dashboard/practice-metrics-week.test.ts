@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { resolvePeriodRange } from "@/lib/dashboard/practice-metrics";
+import { resolvePeriodRange } from "@/lib/booking/reporting-period";
 import {
   addDays,
   localTimeString,
@@ -210,11 +210,17 @@ describe("dashboard week — it is the SAME boundary the calendar uses", () => {
     expect(week(SUN).startLocal).toBe(startOfWeek(SUN));
   });
 
-  it("the dashboard DELEGATES to the shared helper instead of re-deriving it", () => {
+  it("the period contract DELEGATES to the shared helper instead of re-deriving it", () => {
     // A source guard, deliberately. A local re-implementation that agrees
     // today is exactly how the dashboard and calendar drifted apart before.
+    //
+    // It now reads lib/booking/reporting-period.ts: the algorithm moved there
+    // on PR #646 so the Financials surface could import the period vocabulary
+    // without transitively depending on a module that reads service prices and
+    // payment_charge_attempts. The guard follows the algorithm; it was never
+    // about which file happened to host it.
     const src = readFileSync(
-      join(process.cwd(), "lib/dashboard/practice-metrics.ts"),
+      join(process.cwd(), "lib/booking/reporting-period.ts"),
       "utf8",
     );
     const code = src
@@ -224,7 +230,23 @@ describe("dashboard week — it is the SAME boundary the calendar uses", () => {
     expect(code).toMatch(/startOfWeek\s*\(\s*todayLocal\s*\)/);
     expect(code, "the Monday anchor must not come back").not.toMatch(/sinceMonday/);
     expect(code, "no hand-rolled day-of-week arithmetic").not.toMatch(/\(\s*dow\s*\+\s*6\s*\)\s*%\s*7/);
-    expect(code).toMatch(/from "@\/lib\/booking\/tz"/);
+    expect(code).toMatch(/from "\.\/tz"/);
+  });
+
+  it("THE ALGORITHM HAS EXACTLY ONE HOME — no copy came back to the money module", () => {
+    // The extraction is only safe while it stays an extraction. A second
+    // implementation in practice-metrics.ts that agrees today is the same
+    // defect this file was written for, wearing a new file name.
+    const metrics = readFileSync(
+      join(process.cwd(), "lib/dashboard/practice-metrics.ts"),
+      "utf8",
+    )
+      .split("\n")
+      .filter((l) => !l.trimStart().startsWith("//"))
+      .join("\n");
+    expect(metrics).not.toMatch(/export function resolvePeriodRange/);
+    expect(metrics).not.toMatch(/startOfWeek/);
+    expect(metrics).toMatch(/from "@\/lib\/booking\/reporting-period"/);
   });
 });
 

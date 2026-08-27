@@ -24,6 +24,9 @@ function input(over: Partial<TodayWorkflowInput> = {}): TodayWorkflowInput {
     timeLabel: "9:00 AM",
     status: "confirmed",
     serviceName: "Electrolysis 30",
+    // CLIN-BEFORE-TODAY-F2: the reads returned. Every case in this file is a
+    // successful read, so the fail-closed cases live in their own suite.
+    unavailable: false,
     hasHistory: true,
     nextVisitNote: null,
     cautionNote: null,
