@@ -189,7 +189,7 @@ export function FinancialSpine({ briefing }: { briefing: FinancialBriefing }) {
       <section className="flex flex-col gap-3">
         <SectionLabel as="h2">The calendar</SectionLabel>
         <div className="flex flex-col">
-          <Row label="Booked in this period" fact={calendar.booked} />
+          <Row label="Appointments in this period" fact={calendar.booked} />
           <Row label="Still to happen" fact={calendar.stillToHappen} />
           <Row label="Past, still confirmed" fact={calendar.pastConfirmed} />
           <Row label="Cancelled" fact={calendar.cancelled} />
@@ -275,8 +275,8 @@ function PartitionNote({ briefing }: { briefing: FinancialBriefing }) {
     return (
       <p className="text-xs text-fg">
         Still to happen, past but still confirmed, completed, cancelled and no-show
-        account for every appointment booked in this period. Completed is counted in
-        the next section.
+        account for every appointment in this period. Completed is counted in the
+        next section.
       </p>
     );
   }
@@ -304,7 +304,8 @@ function PartitionNote({ briefing }: { briefing: FinancialBriefing }) {
   return (
     <p className="text-xs text-warning-fg">
       {reasons.join("; and ")}, so still to happen, past but still confirmed,
-      completed, cancelled and no-show do not account for every appointment booked.
+      completed, cancelled and no-show do not account for every appointment in this
+      period.
     </p>
   );
 }
