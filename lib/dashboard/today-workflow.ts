@@ -48,6 +48,11 @@ export type TodayWorkflowInput = {
   timeLabel: string;
   status: string;
   serviceName: string | null;
+  // CLIN-BEFORE-TODAY-F2. A read feeding the Before-today preview FAILED, so
+  // every clinical field below is unknown rather than absent. REQUIRED, not
+  // optional: `hasHistory: false` carries both meanings, and a caller that can
+  // omit this is a caller that can silently pick the wrong one.
+  unavailable: boolean;
   hasHistory: boolean;
   // The structured plan note (session.next_session_note).
   nextVisitNote: string | null;
@@ -72,6 +77,12 @@ export type TodayWorkflowItem = {
   serviceName: string | null;
 
   // Preparation: each fact resolved ONCE, and never re-labelled elsewhere.
+  // CLIN-BEFORE-TODAY-F2. Checked BEFORE `hasHistory` by everything that
+  // renders this item. The row must reach it here rather than reading the
+  // preview a second time on its own: this module is the single derivation for
+  // the row's preparation facts, and a second path is how two surfaces start
+  // disagreeing about one fact.
+  unavailable: boolean;
   hasHistory: boolean;
   // The plan note. Rendered once under "Remember".
   remember: string | null;
@@ -164,6 +175,7 @@ function buildItem(input: TodayWorkflowInput): TodayWorkflowItem {
     timeLabel: input.timeLabel,
     status: input.status,
     serviceName: input.serviceName,
+    unavailable: input.unavailable,
     hasHistory: input.hasHistory,
     remember,
     caution,

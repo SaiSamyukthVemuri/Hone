@@ -5,8 +5,13 @@ import { compactBeforeToday } from "@/lib/dashboard/before-today-previews";
 import type { BeforeToday } from "@/lib/sessions/before-today";
 
 // PR #212: compact Before-today previews on the Dashboard Today
-// roster. Same PR #211 pipeline, compacted; three batched reads for
+// roster. Same PR #211 pipeline, compacted; four batched reads for
 // the whole roster, never per-appointment.
+//
+// CLIN-BEFORE-TODAY-F2: those four reads now report their own outcome, and the
+// fail-closed behaviour is proven behaviourally in
+// tests/lib/dashboard/before-today-fail-closed.test.ts. Everything here is a
+// SUCCESSFUL read.
 
 function read(rel: string): string {
   return readFileSync(join(process.cwd(), rel), "utf8");
@@ -19,8 +24,9 @@ const OVERVIEW = read("app/(app)/clients/[id]/page.tsx");
 
 function briefing(over: Partial<BeforeToday> = {}): BeforeToday {
   return {
-    // CLIN-01-B: the dashboard preview path never sets this; a briefing it
-    // compacts is one that was READ successfully.
+    // CLIN-BEFORE-TODAY-F2: the dashboard preview path DOES set this now, and
+    // `compactBeforeToday` branches on it before `hasHistory`. Every briefing
+    // in this file is one that was read, so it is false throughout.
     unavailable: false,
     hasHistory: true,
     lastTreated: {
