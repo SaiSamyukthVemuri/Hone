@@ -25,9 +25,9 @@ not a PR diary — per-capability evidence lives in
 |---|---|
 | **Reconciliation date** | 2026-08-27 |
 | **Production branch** | `claude/build-hone-saas-hOex7` |
-| **Current Git branch HEAD** | `8418a75507f0006efded89ce1439faab63b73890` — the PR #648 merge (clinical *Before today* fail-closed). Query GitHub for the live value; documentation-only commits may have advanced it since. |
-| **Last runtime-bearing application HEAD** | **`8418a75507f0006efded89ce1439faab63b73890` — the same commit.** The branch HEAD and the runtime-bearing HEAD **coincide** again, which is not the usual case and is therefore stated rather than assumed. Derived mechanically, not asserted: `#648` changes **four** deployed files — `app/(app)/dashboard/page.tsx`, `lib/dashboard/before-today-previews.ts`, `lib/dashboard/today-workflow.ts` and `lib/sessions/before-today.ts` — classified by `scripts/classify-changes.mjs`, the same map CI uses. **This is the baseline for every behavioural claim in this document.** |
-| **Current Vercel Production deployment** | ⚠️ **NO DEPLOYMENT ID READ.** The commit status for `8418a755` reports the **Vercel check as `success`**, so a production deployment for this head succeeded — but no deployment id, alias or runtime probe was read, and none is asserted. That check is the whole of the evidence. |
+| **Current Git branch HEAD** | `5ad81129abfa0cd1f48bc8b51feb15a0738922db` — the PR #646 merge (FIN-01A Slice 1, the owner financial truth surface). Query GitHub for the live value; documentation-only commits may have advanced it since. |
+| **Last runtime-bearing application HEAD** | **`5ad81129abfa0cd1f48bc8b51feb15a0738922db` — the same commit.** The branch HEAD and the runtime-bearing HEAD **coincide** again, which is not the usual case and is therefore stated rather than assumed. Derived mechanically, not asserted: `#646` changes **twelve** deployed files across `app/(app)/financials/`, `app/(app)/dashboard/`, `lib/finance/`, `lib/dashboard/`, `lib/booking/reporting-period.ts` and `lib/search/navigation-registry.ts`, classified by `scripts/classify-changes.mjs`, the same map CI uses. **This is the baseline for every behavioural claim in this document.** |
+| **Current Vercel Production deployment** | ⚠️ **NO DEPLOYMENT ID READ.** The commit status for `5ad81129` is the evidence that a production deployment for this head succeeded — no deployment id, alias or runtime probe was read, and none is asserted. |
 | **Migration state** | **This document deliberately states no migration number.** Hosted max is declared once, machine-readably, in [`migration-state.json`](./migration-state.json). Repository max, total applied and the next free number are **derived** — run `npm run migration:state`. The current reconciled position, with checksums and apply evidence, is [migration-ledger.md](./migration-ledger.md) under *Current state*. A number copied into this table is a number that goes stale on the next apply; that is how the `0160`/`0163`/`0165` divergence happened. |
 | **Database vs. application skew** | **None** — repository and hosted migration state reconcile, with nothing pending and nothing remote-only. Verified by `npm run migration:state` at this reconciliation. The reconciling numbers are **not** restated here; see [migration-ledger.md](./migration-ledger.md). |
 | **Production Supabase project** | The single production project. Always re-read the linked ref from `supabase/.temp/project-ref` (gitignored) and verify with `supabase migration list --linked` before trusting any number here. **No credentials are recorded in documentation.** (The project ref itself appears in at least one older repo document, so treat it as an operational identifier rather than a secret — but do not add new copies of it.) |
@@ -37,19 +37,21 @@ not a PR diary — per-capability evidence lives in
 
 ### Immediately preceding runtime baseline
 
-`6786b07be57a9c01ff4421378f22d7dbca68a5c9` — the PR #644 merge (TRUTH-01A, the export
-resource registry). Its code remains live because #648 was built on top of it.
+`8418a75507f0006efded89ce1439faab63b73890` — the PR #648 merge (clinical *Before today*
+fail-closed). Its code remains live because #646 was built on top of it.
 
 ### What this reconciliation did and did not measure
 
 **This reconciliation is a documentation lane.** It re-derived what can be derived from the
 repository and the Git graph, and it re-measured **nothing** in the production database, at
-Vercel, or at any provider. It was refreshed to `8418a755` on 2026-08-27 when `#648`
-shipped; the measurement boundary below is unchanged by that refresh. Read the two lists as a boundary, not as a caveat:
+Vercel, or at any provider. It was refreshed to `8418a755` when `#648` shipped and again to
+`5ad81129` when `#646` shipped, both on 2026-08-27; **the measurement boundary below is
+unchanged by either refresh — production moving is not a reason to restate a figure nobody
+re-read.** Read the two lists as a boundary, not as a caveat:
 
-**Re-derived on 2026-08-27, from the repository at `8418a755`:**
+**Re-derived on 2026-08-27, from the repository at `5ad81129`:**
 
-- the production branch head and the full merge ancestry back to `b9e0003f` (fifteen merges);
+- the production branch head and the full merge ancestry back to `b9e0003f` (sixteen merges);
 - which of those merges are runtime-bearing, by changed-path analysis;
 - repository migration max, total, next free number and pending set (`npm run migration:state`);
 - hosted migration max as **declared** in [`migration-state.json`](./migration-state.json);
@@ -74,7 +76,6 @@ claim about today, and a later reader must re-measure before treating it as one.
 
 | PR | State | Why it is not production |
 |---|---|---|
-| **#646** — FIN, owner financial truth surface | **OPEN**, not draft | Its head is **not an ancestor of `6786b07b`**. Carries **no migration**. Nothing it adds is live. |
 | **TRUTH-01B-1** — the first export-payload slice | **IN DEVELOPMENT**, no PR merged (carried by draft #647) | The registry and the disclosure landed in TRUTH-01A; **the export payload is byte-for-byte unchanged**, so nothing here is live. See §12. |
 | **#647** — TRUTH-01B-1, the joinable archive | **OPEN**, and a **DRAFT** | Parked. `#648` records it as untouched. Nothing here is live. |
 | **#631** — this reconciliation | **OPEN** | Documentation and tests only. |
@@ -179,7 +180,7 @@ surfaces then made affirmative clinical statements nobody had read: *Last visit*
 Intelligence* reported every stat as a known zero, and *Before today* reported no watch or plan
 notes and a complete procedure record.
 
-At `8418a755` all four check `unavailable` **before** `hasHistory`, and
+At `5ad81129` all four check `unavailable` **before** `hasHistory`, and
 `session_blocks.caution_for_next_session` / `caution_note` — which reach the practitioner only
 through the Watch/Plan band built from that same read — are protected on both the Overview and
 Sessions tabs. Read failure now renders *clinical history could not be loaded*.
@@ -188,7 +189,7 @@ Sessions tabs. Read failure now renders *clinical history could not be loaded*.
 still **throws** on a `session_block_areas` read failure, surfacing the error boundary. That is
 loud, not a false absence, and was left alone.
 
-#### The Dashboard half — F2, closed by PR #648 (`8418a755`)
+#### The Dashboard half — F2, closed by PR #648
 
 **Implemented · merged · deployed · enabled for all studios. No migration.**
 
@@ -698,6 +699,42 @@ production answers it; `clients-needing-attention.ts` is clinical memory and
 
 **Not production-exercised as a measured fact.** No usage of `/dashboard/capacity` was measured
 at this reconciliation, and none is claimed.
+
+### Owner financial truth surface — FIN-01A Slice 1 (PR #646)
+
+**Implemented · merged · deployed · owner-only · NOT production-exercised as a measured fact.**
+**No migration, no RPC, no new table, no schema work. Migration 0187 is untouched and no
+settlement vocabulary changes.**
+
+`/financials` answers one question: **what the calendar held in one studio-local period, and how
+those appointments divided** — still to happen, completed, cancelled, no-show — with the
+partition claim printed only when it is true.
+
+- **Owner-only, refused before any query.** The role refusal is the **first statement** of
+  `loadFinancialsView`, before a Supabase client is constructed, so a practitioner who types the
+  URL causes **no studio-wide query** and receives no aggregate payload — not merely an
+  aggregate they are not shown.
+- **The route is unadvertised.** It is added to `NON_SEARCHABLE_ROUTES`, which **withholds** it
+  from search; there is no `NAV_ENTRIES` row. Owners reach it through the existing *Business*
+  entry established by #645.
+- **It adds no money arithmetic of any kind**, and a source guard proves it: the slice
+  references none of the three truth classes' ledger identifiers and reads **exactly one
+  table**. The anchor is answered in **visits, not service value** — resolving a price per visit
+  is money arithmetic and belongs to **Slice 2**.
+- **Unknown is a closed vocabulary, not free prose.** `lib/finance/financial-fact.ts` carries a
+  `Fact<T>` whose unknown side is one of `not_recorded`, `unavailable`, `unknowable`,
+  `not_yet_supported`, `not_enumerable` — each with its own label, sentence and shape, because
+  *"nobody has said what happened"* and *"Hone could not look"* are different claims.
+  **`known(0)` is the only route by which a zero reaches this screen**, so a failed read renders
+  a sentence naming the cause, never a zero.
+- **Deliberately not OWNER-CAP's `Fact<T>`.** That one carries `reason: string`, which cannot be
+  exhaustively checked; the two are structurally incompatible on purpose, so importing the wrong
+  one is a type error. OWNER-CAP's type is left alone.
+- **No external side effect** — no write, no Stripe call, no email, SMS, Google or analytics
+  path. No browser E2E was added, deliberately: an `e2e/` spec would trip the spec-count pin.
+
+**Slice 2 and beyond are not shipped.** The disposition chain and the two money bridges each
+render one sentence naming the release rather than a zero or a stub.
 
 ## 11. Studio onboarding and self-service
 

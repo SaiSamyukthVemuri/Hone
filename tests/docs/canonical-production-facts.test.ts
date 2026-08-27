@@ -134,6 +134,7 @@ const NON_SHIPPING_ROOTS: ReadonlyArray<readonly [RegExp, string]> = [
   [/^scripts\//, "build-time and operator tooling (verify-prepush, migration-state, gate checks)"],
   [/^playwright(\.[\w.-]+)?\.config\./, "test-runner configuration"],
   [/^vitest(\.[\w.-]+)?\.config\./, "test-runner configuration"],
+  [/^eslint\.config\./, "linter configuration: gates the build, never served by it"],
 ];
 
 function nonShippingReason(file: string): string | null {
@@ -1243,6 +1244,32 @@ describe("RULE F — open PRs are declared, and never described as shipped", () 
     }
   });
 
+  it("no DECLARED-OPEN PR has actually merged — the converse, and the gap this closes", () => {
+    // Rule F stops an open PR being called shipped. Nothing stopped the
+    // opposite: a PR that HAS merged still sitting in the open table, which is
+    // the same falsehood pointing the other way and is what a production move
+    // produces by default. #646 sat there merged until this refresh, and only a
+    // human noticed.
+    //
+    // Decided from the Git graph, not from GitHub: a merge commit reachable
+    // from HEAD whose subject names the PR is proof it landed. Skips on a
+    // shallow clone for the same reason A2/A3 do.
+    if (!GIT_USABLE) {
+      expect(GIT_USABLE, "shallow clone or no git — the converse check could not run").toBe(false);
+      return;
+    }
+    const merged = git("log", "--merges", "--format=%s", "HEAD") ?? "";
+    const landed = declaredOpenPrs().filter((pr) =>
+      new RegExp(`Merge pull request #${pr}\\b`).test(merged),
+    );
+    expect(
+      landed,
+      "current-state.md declares PR(s) OPEN that have already merged into this history. " +
+        "A shipped PR described as open is the same defect as an open PR described as shipped, " +
+        `and production moving creates it by default. Offending: ${JSON.stringify(landed)}`,
+    ).toEqual([]);
+  });
+
   it("the changelog carries no row for a declared-open PR", () => {
     for (const pr of declaredOpenPrs()) {
       expect(
@@ -1511,6 +1538,25 @@ describe("RULE D+ — open limitations persist, closed ones stay labelled", () =
 // `<short sha>` ..." about current behaviour. Two statements of one fact drift,
 // and a section pinned to a superseded head reads as current while describing a
 // runtime that has moved.
+//
+// Fifth round - the refresh onto production 5ad81129 (#646, FIN-01A Slice 1).
+// A3 fired unprompted again, this time naming twelve deployed files, before any
+// documentation was touched. Re-proved on that tree:
+//
+//   C2   pre-0169 DML claim reintroduced                              -> RED
+//   A3   pin rolled back to the pre-#646 head                         -> RED (with A1b)
+//   H4   "Real-customer activity is the remainder: 79 clients ..."    -> RED
+//   F    "deployed in production under PR #646"                       -> RED
+//   H3   "Production currently runs migration 0165"                   -> RED
+//   H3   "Production has reached migration 0165"                      -> RED
+//   F-converse  merged #646 re-declared OPEN                          -> RED
+//
+// THE CONVERSE RULE IS NEW, AND THIS REFRESH IS WHY. Rule F stopped an open PR
+// being called shipped. Nothing stopped the opposite - a PR that HAS merged
+// still sitting in the open table - which is the same falsehood pointing the
+// other way, and is what a production move produces BY DEFAULT. #646 sat there
+// merged and only a human noticed. It is decided from the Git graph rather
+// than from GitHub, so it works offline and in CI.
 //
 // declaredOpenPrs() was also repaired here, by this refresh rather than by
 // review: it scraped every `#NNN` in the open-PR block, so the moment a row's
