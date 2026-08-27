@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { addDays, todayInTz, utcInstantFromLocal } from "@/lib/booking/tz";
+import { addDays, localDateString, utcInstantFromLocal } from "@/lib/booking/tz";
 import {
   resolvePeriodRange,
   type ReportingPeriod,
@@ -41,6 +41,11 @@ import {
 // SCOPE — SLICE 1. One read: the studio's appointments inside one studio-local
 // period. No money. See financial-briefing-model.ts for why the anchor is
 // answered in visits rather than in service value.
+//
+// THE READ PROJECTS `status, starts_at` AND NOTHING ELSE. The second column is
+// not a widening of scope: it is what makes "still to happen" a true statement
+// rather than a restatement of `status = 'confirmed'`, which stays true forever
+// once an appointment is never closed out.
 
 /** One request returns at most this many rows; `supabase/config.toml` sets it. */
 const API_PAGE_SIZE = 1_000;
@@ -83,7 +88,13 @@ export async function loadFinancialsView(
   if (practitioner.role !== "owner") return { access: "refused" };
 
   const tz = studio.timezone;
-  const todayLocal = todayInTz(tz);
+  // ONE CLOCK READ, used for BOTH the period window and the still-to-happen
+  // split. `todayInTz(tz)` is exactly `localDateString(new Date(), tz)`, so
+  // this is the same value it returned — but reading the clock twice would let
+  // the window and the temporal split straddle midnight and disagree about
+  // which day it is, for one instant a day, unreproducibly.
+  const now = new Date();
+  const todayLocal = localDateString(now, tz);
   const range = resolvePeriodRange(todayLocal, period);
 
   // TWO SEPARATE LOCAL-MIDNIGHT INSTANTS, never "start + N x 24h". A DST day is
@@ -97,6 +108,7 @@ export async function loadFinancialsView(
     studio.id,
     startUtc,
     endUtc,
+    now,
   );
 
   return {
@@ -144,10 +156,14 @@ async function readCalendar(
   studioId: string,
   startUtc: string,
   endUtc: string,
+  referenceInstant: Date,
 ): Promise<CalendarCensus> {
   const { data, error, count } = await supabase
     .from("appointments")
-    .select("status", { count: "exact" })
+    // `starts_at` joins `status` because STATUS ALONE CANNOT ANSWER "still to
+    // happen" — see financial-briefing-model.ts. Nothing financial is added:
+    // still one table, no price, no payment, no settlement column.
+    .select("status, starts_at", { count: "exact" })
     .eq("studio_id", studioId)
     // Windowed on starts_at: the calendar's value belongs to when the work was
     // scheduled. created_at is when the row was written, which straddles local
@@ -164,5 +180,5 @@ async function readCalendar(
     return unreadableCalendar("not_enumerable");
   }
 
-  return summarizeCalendar(rows);
+  return summarizeCalendar(rows, referenceInstant);
 }

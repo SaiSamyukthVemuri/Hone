@@ -5,6 +5,7 @@ import type { FinancialBriefing } from "@/lib/finance/financial-briefing";
 import {
   DISPOSITION_CHAIN_NOT_YET,
   MONEY_BRIDGES_NOT_YET,
+  PAST_STILL_CONFIRMED_IS_A_RECORD_STATE,
   PERMANENT_LINES,
   UNKNOWN_EXPLANATION,
   UNKNOWN_LABEL,
@@ -190,10 +191,16 @@ export function FinancialSpine({ briefing }: { briefing: FinancialBriefing }) {
         <div className="flex flex-col">
           <Row label="Booked in this period" fact={calendar.booked} />
           <Row label="Still to happen" fact={calendar.stillToHappen} />
+          <Row label="Past, still confirmed" fact={calendar.pastConfirmed} />
           <Row label="Cancelled" fact={calendar.cancelled} />
           <Row label="No-show" fact={calendar.noShow} />
         </div>
         <PartitionNote briefing={briefing} />
+        {calendar.pastConfirmed.known && calendar.pastConfirmed.value > 0 ? (
+          <p className="max-w-[68ch] text-xs leading-relaxed text-fg">
+            {PAST_STILL_CONFIRMED_IS_A_RECORD_STATE}
+          </p>
+        ) : null}
       </section>
 
       <section className="flex flex-col gap-2 border-y border-line-strong py-6">
@@ -240,8 +247,10 @@ export function FinancialSpine({ briefing }: { briefing: FinancialBriefing }) {
  * The partition claim, printed only when it is TRUE — and stating the claim the
  * model actually makes.
  *
- * `partition.closed` means every appointment fell into one of the four known
- * statuses, so `stillToHappen + completed + cancelled + noShow === booked`.
+ * `partition.closed` now means TWO things, because the census now decides two
+ * things: every appointment fell into one of the four known statuses, AND every
+ * confirmed row supplied a readable start. Only then is
+ * `stillToHappen + pastConfirmed + completed + cancelled + noShow === booked`.
  * That is a fact about STATUS COVERAGE. An earlier version of this note printed
  * it as a fact about LAYOUT — "every appointment in this period is on exactly
  * one line above" — and that was false twice over: `Booked in this period` is
@@ -265,18 +274,37 @@ function PartitionNote({ briefing }: { briefing: FinancialBriefing }) {
   if (partition.closed) {
     return (
       <p className="text-xs text-fg">
-        Still to happen, completed, cancelled and no-show account for every appointment
-        booked in this period. Completed is counted in the next section.
+        Still to happen, past but still confirmed, completed, cancelled and no-show
+        account for every appointment booked in this period. Completed is counted in
+        the next section.
       </p>
     );
   }
-  const count = partition.unrecognisedStatuses.length;
+  // TWO REASONS, REPORTED SEPARATELY AND BOTH IF BOTH HOLD. Naming only the
+  // status reason would have printed "0 appointment statuses ... are ones this
+  // version of Hone does not recognise" whenever the breach was an unreadable
+  // start time instead — a sentence that is false and reads as a bug.
+  const statuses = partition.unrecognisedStatuses.length;
+  const undatable = partition.undatableConfirmed;
+  const reasons: string[] = [];
+  if (statuses > 0) {
+    reasons.push(
+      `${statuses} appointment status${statuses === 1 ? "" : "es"} in this period ${
+        statuses === 1 ? "is one" : "are ones"
+      } this version of Hone does not recognise`,
+    );
+  }
+  if (undatable > 0) {
+    reasons.push(
+      `${undatable} confirmed appointment${undatable === 1 ? "" : "s"} did not supply a start time Hone could read, so ${
+        undatable === 1 ? "it is" : "they are"
+      } counted as neither still to happen nor past`,
+    );
+  }
   return (
     <p className="text-xs text-warning-fg">
-      {count} appointment status{count === 1 ? "" : "es"} in this period{" "}
-      {count === 1 ? "is one" : "are ones"} this version of Hone does not recognise, so
-      still to happen, completed, cancelled and no-show do not account for every
-      appointment booked.
+      {reasons.join("; and ")}, so still to happen, past but still confirmed,
+      completed, cancelled and no-show do not account for every appointment booked.
     </p>
   );
 }
