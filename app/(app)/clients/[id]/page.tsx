@@ -745,7 +745,7 @@ export default async function ClientCheatSheetPage({
       <section>
         <Link
           href="/clients"
-          className="text-sm text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
+          className="inline-flex items-center min-h-[44px] min-w-[44px] text-sm text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
         >
           ← Clients
         </Link>
@@ -1074,7 +1074,7 @@ export default async function ClientCheatSheetPage({
               </h2>
               <Link
                 href={`/clients/${client.id}/edit`}
-                className="text-xs text-neutral-500 underline hover:text-neutral-900 dark:hover:text-neutral-100"
+                className="inline-flex items-center min-h-[44px] min-w-[44px] text-xs text-neutral-500 underline hover:text-neutral-900 dark:hover:text-neutral-100"
               >
                 Edit
               </Link>
@@ -1352,7 +1352,7 @@ export default async function ClientCheatSheetPage({
                 </p>
                 <Link
                   href={`/clients/${client.id}/intake`}
-                  className="text-sm font-medium text-neutral-700 hover:underline dark:text-neutral-300"
+                  className="inline-flex items-center min-h-[44px] min-w-[44px] text-sm font-medium text-neutral-700 hover:underline dark:text-neutral-300"
                 >
                   View intake →
                 </Link>
@@ -1380,7 +1380,7 @@ export default async function ClientCheatSheetPage({
               </p>
               <Link
                 href={`/clients/${client.id}/intake`}
-                className="text-sm font-medium text-neutral-700 hover:underline dark:text-neutral-300"
+                className="inline-flex items-center min-h-[44px] min-w-[44px] text-sm font-medium text-neutral-700 hover:underline dark:text-neutral-300"
               >
                 View intake →
               </Link>
@@ -1393,7 +1393,7 @@ export default async function ClientCheatSheetPage({
               </p>
               <Link
                 href={`/clients/${client.id}/intake`}
-                className="text-sm font-medium text-neutral-700 hover:underline dark:text-neutral-300"
+                className="inline-flex items-center min-h-[44px] min-w-[44px] text-sm font-medium text-neutral-700 hover:underline dark:text-neutral-300"
               >
                 View intake →
               </Link>
@@ -1456,7 +1456,7 @@ export default async function ClientCheatSheetPage({
                   </div>
                   <Link
                     href={`/clients/${client.id}/sessions/${lastTreatment.id}`}
-                    className="text-xs font-medium text-neutral-700 hover:underline dark:text-neutral-300"
+                    className="inline-flex items-center min-h-[44px] min-w-[44px] text-xs font-medium text-neutral-700 hover:underline dark:text-neutral-300"
                   >
                     Open →
                   </Link>
