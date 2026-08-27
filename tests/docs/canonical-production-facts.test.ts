@@ -108,14 +108,38 @@ const GIT_USABLE = GIT_AVAILABLE && !SHALLOW;
 // that there is "deliberately no second competing map". A partial copy here
 // was exactly that second map. It is gone; the authority is imported.
 //
-// `classify(files).docs_only` is the repository's own answer to "does this
-// change nothing that ships". Test files are the one documented exception:
-// the classifier deliberately routes them to a CI lane (they are `.ts`, so the
-// `application` catch-all claims them) but no test file is in the deployed
-// bundle. That exception is named here, scoped to `tests/`, and is the ONLY
-// path judgement this file makes.
+// `classify(files).docs_only` is the repository's own answer to "is this
+// documentation". It is NOT the same question as "does this ship", and an
+// earlier revision treated the two as equivalent. They come apart on every
+// non-shipping non-doc path: the classifier returns docs_only:false for
+// `.github/workflows/ci.yml`, `scripts/verify-prepush.mjs` and
+// `e2e/foo.spec.ts`, none of which is in the deployed application, so A3 would
+// have demanded a fresh runtime baseline for a CI tweak.
+//
+// The classifier has no "ships" output to borrow, so the deployed decision is:
+//
+//   DEPLOYED  =  not documentation (asked of the classifier)
+//                AND not in a non-shipping root (named below, with reasons)
+//
+// The roots are a category list, not a path taxonomy: each names a whole class
+// of files that CI runs and Vercel never serves. Nothing here re-describes
+// WHICH application paths are runtime - that judgement stays entirely with
+// scripts/classify-changes.mjs, so `instrumentation.ts`, the Sentry configs,
+// `public/`, `hooks/` and `types/` are covered without being listed.
 // ---------------------------------------------------------------------------
-const NOT_DEPLOYED = /^tests\//;
+const NON_SHIPPING_ROOTS: ReadonlyArray<readonly [RegExp, string]> = [
+  [/^tests\//, "unit, DB and migration tests: run in CI, absent from the bundle"],
+  [/^e2e[a-z-]*\//, "Playwright specs and their fixtures: run against a build, never part of one"],
+  [/^\.github\//, "workflows and templates: they decide what CI does, not what production serves"],
+  [/^scripts\//, "build-time and operator tooling (verify-prepush, migration-state, gate checks)"],
+  [/^playwright(\.[\w.-]+)?\.config\./, "test-runner configuration"],
+  [/^vitest(\.[\w.-]+)?\.config\./, "test-runner configuration"],
+];
+
+function nonShippingReason(file: string): string | null {
+  for (const [re, why] of NON_SHIPPING_ROOTS) if (re.test(file)) return why;
+  return null;
+}
 
 async function loadClassifier(): Promise<(files: string[]) => { docs_only: boolean }> {
   const mod = await import(path.join(ROOT, "scripts/classify-changes.mjs"));
@@ -174,11 +198,17 @@ const POSITION_SUBJECT = String.raw`(?:production|hosted|repo(?:sitory)?|current
 // production was at 0185" is a narrative ABOUT past drift, which these
 // documents must be free to tell. Past tense is the marker of history, not of
 // a current assertion, and banning it would turn the guard into a number ban.
-const POSITION_VERB = String.raw`(?:is|are|sits|stands|remains|rests)`;
+// The set covers the ways a CURRENT POSITION gets stated, not every way English
+// can join a subject to a number. It grew once, from six verbs to these, when
+// "Production currently runs migration 0165" and "Production has reached
+// migration 0165" both walked through - the first because `runs` was missing,
+// the second because a present perfect reads as current. Still closed; adding
+// to it should feel like a decision.
+const POSITION_VERB = String.raw`(?:is|are|sits|stands|remains|rests|runs|run|has\s+reached|have\s+reached|reaches)`;
 const CURRENT_POSITION_PATTERNS: readonly RegExp[] = [
   // "Production is currently at migration 0165" · "Hosted production stands at 0165"
   new RegExp(
-    String.raw`\b${POSITION_SUBJECT}\b[^.\n|;]{0,30}?\b${POSITION_VERB}\b\s*(?:\bnow\b|\bcurrently\b)?\s*(?:\bat\b|\bon\b)\s*(?:\bmigration\b\s*)?\*{0,2}\`?(0\d{3})\b`,
+    String.raw`\b${POSITION_SUBJECT}\b[^.\n|;]{0,30}?(?:\bnow\b|\bcurrently\b)?\s*\b${POSITION_VERB}\b\s*(?:\bnow\b|\bcurrently\b)?\s*(?:\bat\b|\bon\b)?\s*(?:\bmigration\b\s*)?\*{0,2}\`?(0\d{3})\b`,
     "gi",
   ),
   // "Current hosted migration is 0165" · "the production migration is now 0165"
@@ -306,8 +336,14 @@ export function findSyntheticAsCustomer(text: string, totals: number[]): string[
     // disclaimer being flagged as the claim it warns against is a false
     // positive that teaches people to delete the warning.
     const LABELLED = /\ball[\s-]tenants?\b|\bincludes?\s+synthetic\b/i;
+    // `remainder` used to sit in this set on its own, which let a false claim
+    // pass by using the very noun the rule polices:
+    //   "Real-customer activity is the remainder: 79 clients and 241 appointments"
+    // A line naming a forbidden figure must NEGATE it, not merely mention the
+    // category. §0's genuine warning still qualifies - it says "not the same as
+    // real-customer" and "Never present it as customer activity".
     const DISCLAIMED =
-      /\bnot\b[^.]{0,48}\bcustomer\b|\bnever\s+present\b|\bremainder\b|\bis not the same as\b/i;
+      /\bnot\b[^.]{0,48}\bcustomer\b|\bnever\s+present\b|\bis not the same as\b|\bnot\b[^.]{0,32}\bremainder\b/i;
     if (LABELLED.test(line) || DISCLAIMED.test(line)) continue;
     for (const total of totals) {
       if (new RegExp(`\\b${total}\\b`).test(line)) {
@@ -876,9 +912,10 @@ describe("RULE A — current-state.md pins a real, current production SHA", () =
       .split("\n")
       .filter(Boolean);
 
-    // Files that ship nothing: the classifier's own docs set, plus tests.
     const classify = await loadClassifier();
-    const deployed = changed.filter((f) => !NOT_DEPLOYED.test(f) && !classify([f]).docs_only);
+    const deployed = changed.filter(
+      (f) => nonShippingReason(f) === null && !classify([f]).docs_only,
+    );
 
     expect(
       deployed,
@@ -888,6 +925,46 @@ describe("RULE A — current-state.md pins a real, current production SHA", () =
         'changes it should not. This is the check the document\'s own "verified mechanically, ' +
         'not asserted" sentence describes. Changed: ' + JSON.stringify(deployed.slice(0, 12)),
     ).toEqual([]);
+  });
+
+  it("A3's deployed decision: runtime paths ship, CI/test/tooling paths do not", async () => {
+    const classify = await loadClassifier();
+    const deployed = (f: string) => nonShippingReason(f) === null && !classify([f]).docs_only;
+
+    // SHIPS - a change to any of these after the pin must invalidate it.
+    for (const f of [
+      "app/(app)/dashboard/page.tsx",
+      "lib/export/resource-registry.ts",
+      "components/pending-link.tsx",
+      "instrumentation.ts",
+      "instrumentation-client.ts",
+      "sentry.server.config.ts",
+      "sentry.edge.config.ts",
+      "public/favicon.ico",
+      "hooks/use-thing.ts",
+      "types/thing.ts",
+      "middleware.ts",
+      "next.config.ts",
+    ]) {
+      expect(deployed(f), `${f} must count as deployed runtime`).toBe(true);
+    }
+
+    // DOES NOT SHIP - a change to any of these must NOT demand a new baseline.
+    for (const f of [
+      ".github/workflows/ci.yml",
+      "scripts/verify-prepush.mjs",
+      "scripts/classify-changes.mjs",
+      "e2e/perceived-speed.spec.ts",
+      "e2e-payment/checkout.spec.ts",
+      "tests/docs/canonical-production-facts.test.ts",
+      "tests/db/export-resource-registry.db.test.ts",
+      "playwright.config.ts",
+      "vitest.config.ts",
+      "docs/production/current-state.md",
+      "README.md",
+    ]) {
+      expect(deployed(f), `${f} must NOT count as deployed runtime`).toBe(false);
+    }
   });
 
   it("A3 uses the repository's classifier, not a private path list", async () => {
@@ -955,6 +1032,57 @@ const SHIPPED_WORD = /\b(?:deployed|shipped|is live|in production|production[\s-
 // way. A guard that merely banned the phrase "runtime-bearing head is" would
 // be satisfied by any other wording around the same literal.
 // ===========================================================================
+
+// ===========================================================================
+// RULE C2 — the 0169 clinical write boundary is stated once, correctly
+//
+// Migration 0169 (applied 2026-08-03) revoked `insert, update, delete` from
+// `authenticated` on all six clinical tables by name, leaving SELECT only.
+// Three canonical documents nonetheless carried the PRE-0169 sentence as
+// current fact - "authenticated still holds row INSERT/UPDATE/DELETE", "row
+// DML on the five app-written tables is NOT revoked" - and two of them cited
+// L18 as corroboration while L18's own heading says CLOSED.
+//
+// The first remediation pass fixed ONE of the three and believed it had swept
+// the class. This rule is why the second pass could not repeat that: it is a
+// CLASS check over every canonical document, not three fixed line numbers.
+//
+// A correction may quote the old sentence - that is how the fix stays
+// auditable - so a hit is permitted on a line that also carries an explicit
+// correction marker. Everything else is a live contradiction.
+// ===========================================================================
+
+const PRE_0169_DML =
+  /(?:\bstill\s+holds\b[^.\n|]{0,60}\b(?:DML|INSERT)|(?:row\s+)?DML\b[^.\n|]{0,40}\bis\s+NOT\s+revoked\b|\bis\s+NOT\s+revoked\b[^.\n|]{0,40}\bDML\b)/i;
+const CORRECTION_MARKER = /\bCORRECTED\b|\bcorrected\b|\bpreviously\s+(?:read|continued)\b|\bused\s+to\s+(?:read|carry)\b/;
+
+describe("RULE C2 — no canonical doc says authenticated still holds clinical row DML", () => {
+  it.each(NO_CURRENT_MAX_DOCS)("%s carries no live pre-0169 assertion", (name, doc) => {
+    const offenders = currentProse(doc)
+      .split("\n")
+      .filter((l) => PRE_0169_DML.test(l))
+      .filter((l) => !CORRECTION_MARKER.test(l))
+      // A preserved historical heading is legal while it is marked CLOSED -
+      // the same convention L2, L18 and L23 already use.
+      .filter((l) => !(/^##\s/.test(l) && /\bCLOSED\b/.test(l)))
+      .map((l) => l.trim().slice(0, 150));
+
+    expect(
+      offenders,
+      `${name} states as CURRENT fact that authenticated holds clinical row DML. ` +
+        "Migration 0169 revoked it on all six tables and L18 is CLOSED, so this contradicts " +
+        "both the migration and the sibling document it usually cites. Mark it historical or " +
+        `remove it. Offending: ${JSON.stringify(offenders)}`,
+    ).toEqual([]);
+  });
+
+  it("L18 is still recorded as CLOSED, so the correction has something to point at", () => {
+    expect(
+      KNOWN_LIMITATIONS,
+      "L18's heading must remain, marked CLOSED by 0169",
+    ).toMatch(/^##\s+L18\s+—[^\n]*\bCLOSED\b[^\n]*0169/m);
+  });
+});
 
 describe("RULE A4 — only current-state.md pins the runtime-bearing SHA", () => {
   const SHA_FREE_DOCS = [
@@ -1045,7 +1173,12 @@ describe("RULE F — open PRs are declared, and never described as shipped", () 
   // vocabularies, not a phrase list, and it generalises to wordings nobody has
   // written yet.
   // -------------------------------------------------------------------------
-  const NEGATOR = /\b(?:not|no|nothing|never|neither|nor|un\w+|cannot|without|yet to)\b/i;
+  // CLOSED SET, enumerated. It was `un\w+` once, which made every word starting
+  // "un" a negator - so `deployed in production under PR #646` passed Rule F
+  // because `under` "negated" it. `unit` and `unknown` did the same. The
+  // un-prefixed forms that genuinely negate are few enough to name.
+  const NEGATOR =
+    /\b(?:not|no|nothing|none|never|neither|nor|cannot|can't|isn't|aren't|without|yet to|unmerged|unreleased|unshipped|undeployed|unavailable)\b/i;
 
   it("every open-PR ROW is scanned, and a shipped claim there must be negated", () => {
     const rows = openPrSection()
@@ -1302,6 +1435,33 @@ describe("RULE D+ — open limitations persist, closed ones stay labelled", () =
 //   A4   duplicate SHA reintroduced in known-limitations.md         -> RED (single authority)
 //   A4   duplicate SHA reintroduced in capability-register.md       -> RED (single authority)
 //   A3   pin moved back one merge, runtime changed since            -> RED (via classifier)
+//
+// Third round (Codex review of 397d2a2d), same discipline:
+//
+//   C2   pre-0169 DML claim reintroduced in current-state.md         -> RED
+//   C2   ... in capability-register.md                               -> RED
+//   C2   ... in known-limitations.md                                 -> RED
+//   F    "deployed in production under PR #646"                      -> RED (was GREEN: `under`
+//                                                                       satisfied the old `un\w+`)
+//   H4   "Real-customer activity is the remainder: 79 clients ..."   -> RED (was GREEN: the bare
+//                                                                       word `remainder` exempted it)
+//   H3   "Production currently runs migration 0165"                  -> RED (verb was missing)
+//   H3   "Production has reached migration 0165"                     -> RED (present perfect)
+//   A3   pin moved back one merge                                    -> RED (unchanged)
+//
+// C2 exists because the previous round fixed ONE of three copies of the same
+// false sentence and believed the class was swept. It is a class check over
+// every canonical document, not three line numbers.
+//
+// A3's GREEN controls are asserted directly rather than by mutation, since a
+// CI-only commit cannot be made from inside this PR's file surface: the
+// deployed-decision test pins `.github/workflows/ci.yml`,
+// `scripts/verify-prepush.mjs`, `e2e/*.spec.ts`, `tests/**`, the runner configs
+// and docs as NON-deployed, and `app/`, `lib/`, `components/`,
+// `instrumentation*.ts`, the Sentry configs, `public/`, `hooks/`, `types/`,
+// `middleware.ts` and `next.config.ts` as deployed. This branch is itself a
+// docs+tests change after the pin, and A3 stays green throughout - the
+// live docs-only/test-only control.
 //
 // Positive controls, proving the rules are not simply always-red: this branch
 // changes only documentation and tests after the pinned SHA, and A3 stays
