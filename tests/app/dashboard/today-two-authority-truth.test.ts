@@ -63,11 +63,37 @@ describe("the disclosure projection cannot carry the plan note", () => {
 });
 
 describe("Today never contradicts itself about the relationship", () => {
+  it("CLIN-BEFORE-TODAY-F2: an unreadable Before-today read is answered FIRST", () => {
+    // Before either authority is consulted. Every arm below states something
+    // about what is recorded, and `hasHistory` is false both for a client with
+    // nothing charted and for a client whose history could not be read — so a
+    // chain that opens on `hasHistory` cannot tell the two apart.
+    expect(CODE).toMatch(/\{workflow\.unavailable \? \(/);
+    expect(CODE).toMatch(/\{CLINICAL_UNAVAILABLE_HEADLINE\}/);
+  });
+
   it("the no-history line requires BOTH authorities to agree", () => {
-    // workflow says none, prep PROVED none, and prep actually answered.
+    // workflow says none, prep PROVED none, and prep actually answered — and
+    // it is now reachable only PAST the unavailable arm, so this row's own read
+    // having answered is a third condition on the claim.
     expect(CODE).toMatch(
-      /\{!workflow\.hasHistory &&\s*!prepSummary\.hasTreatment &&\s*!prepSummary\.unavailable \? \(/,
+      /\) : !workflow\.hasHistory &&\s*!prepSummary\.hasTreatment &&\s*!prepSummary\.unavailable \? \(/,
     );
+  });
+
+  it("the whole chain is ordered unavailable -> new -> silent -> history", () => {
+    // ONE regex over the real chain, so the absence copy in the last arm
+    // ("No watch/plan note.", "Latest setup: ...") is provably unreachable
+    // while `workflow.unavailable` is true.
+    expect(CODE).toMatch(
+      /\{workflow\.unavailable \? \([\s\S]*?\) : !workflow\.hasHistory &&\s*!prepSummary\.hasTreatment &&\s*!prepSummary\.unavailable \? \([\s\S]*?\) : !workflow\.hasHistory \? \(\s*null\s*\) : \(/,
+    );
+    const chain = CODE.slice(CODE.indexOf("{workflow.unavailable ? ("));
+    const historyArm = chain.indexOf(") : !workflow.hasHistory ? (");
+    expect(historyArm).toBeGreaterThan(-1);
+    for (const claim of ["No watch/plan note.", "Latest setup:"]) {
+      expect(chain.indexOf(claim)).toBeGreaterThan(historyArm);
+    }
   });
 
   it("a proven treatment or an unanswered read suppresses the claim", () => {
