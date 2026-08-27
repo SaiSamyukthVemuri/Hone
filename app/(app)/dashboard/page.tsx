@@ -1228,7 +1228,7 @@ function AppointmentRow({
                 </span>
               )}
             </div>
-            <div className="mt-0.5 text-xs text-neutral-500">
+            <div className="mt-0.5 break-words text-xs text-neutral-500">
               {serviceName && <span>{serviceName}</span>}
               {modality && <span>{serviceName ? " · " : ""}{modality}</span>}
               <span>

@@ -2,6 +2,7 @@ import { test, expect, type Page } from "@playwright/test";
 import {
   seedE2eStudio,
   seedE2eDashboardClient,
+  seedE2eDashboardMemoryClient,
   seedE2eTodayAppointment,
   getClientIdByEmail,
   getAppointmentsForClient,
@@ -1020,6 +1021,139 @@ for (const width of CARD_WIDTHS) {
 
       // 8. The service/meta line is no longer cut off inside its own box.
       expect(m.serviceClipped).toBe(false);
+    });
+  });
+}
+
+// ===========================================================================
+// MOBILE-UI-01 repair round 1 — the unbroken-token class
+// ===========================================================================
+//
+// WHY THIS BLOCK EXISTS AND THE ONE ABOVE WAS NOT ENOUGH
+// ------------------------------------------------------
+// The block above proved the card's geometry with ORDINARY fixture text, and
+// passed at all three widths while a real overflow shipped. Removing
+// `truncate` from two lines restored their full text — which is the product
+// contract — but `truncate` had also been supplying `overflow: hidden`, and
+// nothing replaced it. An unbroken token then painted straight past the
+// viewport: measured on the To-do detail at 390px, ink 720px wide, document
+// scrollWidth 757 against a clientWidth of 390.
+//
+// So the class is FULL TEXT VISIBLE + NO EXPLICIT WRAP POLICY, and it is
+// invisible to any fixture whose words happen to break. These fixtures do not
+// break: they are single tokens of 200 and 500 characters, which is what a
+// studio-named service or a pasted clinical note can look like.
+//
+// The caution line is included deliberately even though it already carried
+// `break-words` and was never the offender — a proof that only covers the
+// elements known to be broken cannot show the class is closed.
+
+const HOSTILE_WIDTHS = [375, 390, 430] as const;
+
+/** No element may paint outside the viewport, and none inside the card may leave it. */
+async function provesNothingEscapes(page: Page, label: string) {
+  const m = await page.evaluate(() => {
+    const doc = document.documentElement;
+    const escapees: string[] = [];
+    // Ink, not boxes: an unbroken token overflows its box while the box itself
+    // stays put, which is exactly how this defect hid from a box-only sweep.
+    for (const el of document.querySelectorAll("span,p,div,a,h1,h2,h3")) {
+      if (el.children.length) continue;
+      if (getComputedStyle(el).overflowX === "hidden") continue; // deliberately clipped
+      const r = document.createRange();
+      r.selectNodeContents(el);
+      for (const q of r.getClientRects()) {
+        if (q.right > doc.clientWidth + 1) {
+          escapees.push(
+            `${el.tagName.toLowerCase()}."${(el.className || "").toString().slice(0, 40)}" ink=${q.right.toFixed(0)}`,
+          );
+          break;
+        }
+      }
+    }
+    return { s: doc.scrollWidth, c: doc.clientWidth, escapees };
+  });
+  expect(m.escapees, `${label}: text painting past the viewport`).toEqual([]);
+  expect(m.s, `${label}: document scrollWidth`).toBeLessThanOrEqual(m.c);
+}
+
+for (const width of HOSTILE_WIDTHS) {
+  test.describe(`MOBILE-UI-01 hostile text @ ${width}px`, () => {
+    test.use({ viewport: { width, height: 900 }, hasTouch: true, isMobile: true });
+
+    test("a 200-char unbroken service name wraps inside the card", async ({ page }) => {
+      const seed = await seedE2eStudio();
+      const client = await seedE2eDashboardClient(seed, { label: `Svc ${width}` });
+      await seedE2eTodayAppointment(seed, {
+        clientId: client.clientId,
+        startsMinutesFromNow: 90,
+        endsMinutesFromNow: 135,
+        withService: true,
+        serviceName: "S".repeat(200),
+      });
+      await loginAsOwner(page, seed);
+      await page.goto("/dashboard");
+      await expect(
+        page.getByRole("heading", { level: 2, name: "Today", exact: true }),
+      ).toBeVisible({ timeout: 30_000 });
+      await provesNothingEscapes(page, "service name");
+
+      // The repair must not have re-broken the layout it was repairing.
+      const geo = await page.evaluate(() => {
+        const rowBody = document.querySelector('[data-testid="today-row-body"]');
+        if (!rowBody) return null;
+        const timeCell = rowBody.firstElementChild as HTMLElement;
+        const textCol = rowBody.children[1] as HTMLElement;
+        const rg = document.createRange();
+        rg.selectNodeContents(timeCell);
+        const card = rowBody.parentElement!.parentElement!.getBoundingClientRect();
+        const acts = [
+          ...document.querySelectorAll(
+            '[data-testid="today-next-action"],[data-testid="today-consultation-notes"]',
+          ),
+        ].map((a) => {
+          const r = a.getBoundingClientRect();
+          return { x: +r.x.toFixed(1), h: +r.height.toFixed(1), right: +r.right.toFixed(1) };
+        });
+        return {
+          timeLineBoxes: rg.getClientRects().length,
+          bodyX: +textCol.getBoundingClientRect().x.toFixed(1),
+          acts,
+          cardRight: +card.right.toFixed(1),
+        };
+      });
+      expect(geo).not.toBeNull();
+      expect(geo!.timeLineBoxes, "time still one line").toBe(1);
+      for (const a of geo!.acts) {
+        expect(a.x, "action still aligned to body").toBe(geo!.bodyX);
+        expect(a.h, "44px floor preserved").toBeGreaterThanOrEqual(44);
+        expect(a.right, "action still inside card").toBeLessThanOrEqual(geo!.cardRight + 0.5);
+      }
+    });
+
+    test("a 500-char unbroken caution, and the To-do detail it drives, both wrap", async ({
+      page,
+    }) => {
+      const seed = await seedE2eStudio();
+      // One fixture, two members of the class: the caution renders on the card
+      // AND reaches the To-do list as an item detail, which is where the
+      // shipped overflow actually surfaced.
+      await seedE2eDashboardMemoryClient(seed, {
+        cautionNote: `Lot ${"C".repeat(500)}`,
+      });
+      await loginAsOwner(page, seed);
+      await page.goto("/dashboard");
+      await expect(
+        page.getByRole("heading", { level: 2, name: "Today", exact: true }),
+      ).toBeVisible({ timeout: 30_000 });
+      await provesNothingEscapes(page, "caution + to-do detail");
+
+      // The caution keeps the break-word contract its own guard asserts.
+      const caution = page.locator("span.whitespace-pre-wrap").filter({ hasText: "CCC" }).first();
+      await expect(caution).toBeVisible({ timeout: 30_000 });
+      expect(
+        await caution.evaluate((n) => getComputedStyle(n).overflowWrap),
+      ).toBe("break-word");
     });
   });
 }
