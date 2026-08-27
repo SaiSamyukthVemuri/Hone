@@ -543,12 +543,11 @@ describe("NC-scope — the later slices are absent, and say so", () => {
 //   FIN's static ESM dependency graph — bundler semantics, `@/*` aliases,
 //   extension substitution and package resolution all inherited rather than
 //   imitated. Every module in the resulting closure is scanned for forbidden
-//   money identifiers, and none contains one OUTSIDE the declaration-only
-//   exemption. That qualifier is load-bearing rather than decorative:
-//   `lib/types/database.ts` is in the closure and does contain `price_cents`,
-//   `price_paid_cents` and `stripe_livemode`, because a file that DECLARES the
-//   shape of a row names its columns. The scan skips it by name and a separate
-//   assertion proves it cannot execute a read — see TYPE_DECLARATION_ONLY.
+//   money identifiers in VALUE POSITION, and none contains one. Position is the
+//   boundary, not a file allowlist: `lib/types/database.ts` is in the closure
+//   and does contain `price_cents`, `price_paid_cents` and `stripe_livemode`,
+//   all of them `name: type` property signatures, because a file that DECLARES
+//   the shape of a row names its columns. It passes on its merits.
 //
 //   A dependency site the compiler cannot resolve is a VIOLATION rather than an
 //   absence, so the closure cannot shrink silently — which is the failure mode
@@ -883,13 +882,60 @@ const FORBIDDEN_ON_THE_PATH = [
 ];
 
 /**
- * ONE exemption, narrow enough to state in a sentence: a module that only
- * DECLARES the shape of a row names its columns, and naming a column is not
- * reading one. `lib/types/database.ts` is where `Studio` lives. The exemption
- * is not taken on trust — the assertion below proves the file still cannot
- * execute a read.
+ * Occurrences of a forbidden identifier in VALUE position — the ones that could
+ * be a read. A type declaration NAMES a column; it does not read one.
+ *
+ * THIS REPLACED A FILE-LEVEL EXEMPTION, and the reason is worth keeping. The
+ * scan used to skip `lib/types/database.ts` wholesale, justified as
+ * "declaration-only". Codex checked that premise and it was false: the file
+ * exports `KNOWN_MODALITIES`, a runtime value. So a future executable helper
+ * there using `price_cents` would have evaded the scan entirely, while the
+ * follow-up assertion still passed as long as it avoided four query markers.
+ * The exemption was justified by a property nobody had verified.
+ *
+ * Position is the honest boundary, and it needs no allowlist: every one of the
+ * four forbidden identifiers in that file is a `name: type` property signature,
+ * so the file passes on its merits and the exemption set is gone.
+ *
+ * Comments are excluded by construction — only nodes that carry text are
+ * inspected, and a comment is not one. Template parts and JSX text ARE
+ * inspected, so the scan loses none of the reach the previous text search had.
  */
-const TYPE_DECLARATION_ONLY = new Set(["lib/types/database.ts"]);
+function forbiddenValueOccurrences(source: string, fileName: string): string[] {
+  const sf = ts.createSourceFile(
+    fileName,
+    source,
+    ts.ScriptTarget.Latest,
+    /* setParentNodes */ true,
+    fileName.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+  );
+  const hits: string[] = [];
+  const visit = (node: ts.Node, inType: boolean): void => {
+    const nowInType =
+      inType ||
+      ts.isTypeNode(node) ||
+      ts.isTypeAliasDeclaration(node) ||
+      ts.isInterfaceDeclaration(node);
+    const carriesText =
+      ts.isIdentifier(node) ||
+      ts.isStringLiteralLike(node) ||
+      ts.isTemplateHead(node) ||
+      ts.isTemplateMiddle(node) ||
+      ts.isTemplateTail(node) ||
+      ts.isJsxText(node);
+    if (!nowInType && carriesText) {
+      for (const id of FORBIDDEN_ON_THE_PATH) {
+        if (node.text.includes(id)) {
+          const { line } = sf.getLineAndCharacterOfPosition(node.getStart(sf));
+          hits.push(`line ${line + 1}: "${id}"`);
+        }
+      }
+    }
+    ts.forEachChild(node, (child) => visit(child, nowInType));
+  };
+  visit(sf, /* inType */ false);
+  return hits;
+}
 
 /**
  * Every ESM shape the walker must see, with the answer WRITTEN DOWN rather than
@@ -1077,36 +1123,51 @@ describe("NC-reach — no money path is in FIN Slice 1's static ESM closure", ()
     expect(CLOSURE_REL.filter((f) => f.startsWith("lib/dashboard/"))).toEqual([]);
   });
 
-  it("no module in the closure contains a forbidden identifier", () => {
+  it("no module in the closure names a forbidden identifier in VALUE position", () => {
+    // The title says value position because that is what is checked. A type
+    // declaration naming `price_cents` is a shape, not a read, and
+    // lib/types/database.ts is in this closure precisely so that distinction
+    // has to be made rather than assumed.
     const offences: string[] = [];
     for (const [file, via] of CLOSURE) {
       const rel = path.relative(ROOT, file);
-      if (TYPE_DECLARATION_ONLY.has(rel)) continue;
-      const code = codeOnly(readFileSync(file, "utf8"));
-      for (const id of FORBIDDEN_ON_THE_PATH) {
-        if (code.includes(id)) {
-          offences.push(`${rel} contains "${id}" (reached via ${via ?? "entry point"})`);
-        }
+      for (const hit of forbiddenValueOccurrences(readFileSync(file, "utf8"), file)) {
+        offences.push(`${rel} ${hit} (reached via ${via ?? "entry point"})`);
       }
     }
     expect(offences).toEqual([]);
   });
 
-  it("the type-declaration exemption cannot hide a read", () => {
-    for (const rel of TYPE_DECLARATION_ONLY) {
-      const code = codeOnly(readFileSync(path.join(ROOT, rel), "utf8"));
-      expect(code, rel).not.toMatch(/\.from\(|\.rpc\(|createClient|supabase/i);
-      for (const line of code.split("\n")) {
-        if (/^\s*import\s/.test(line)) {
-          expect(line, `${rel}: ${line.trim()}`).toMatch(/^\s*import type\s/);
-        }
-      }
+  it("the position rule distinguishes a declaration from a read", () => {
+    // Without this the rule could pass by seeing nothing at all. A shape is
+    // clean; every way the money module actually reads a column is not.
+    const probe = path.join(ROOT, "lib/finance/probe.ts");
+    expect(forbiddenValueOccurrences("export interface S { price_cents: number | null }", probe)).toEqual([]);
+    expect(forbiddenValueOccurrences("export type S = { price_paid_cents: number }", probe)).toEqual([]);
+    expect(forbiddenValueOccurrences("// price_cents is never read\nexport const a = 1;", probe)).toEqual([]);
+    for (const realRead of [
+      'const r = db.from("services").select("price_cents");',
+      "export const v = row.price_cents;",
+      'const cols = "status, price_cents";',
+      "export const o = { price_cents: 1 };",
+      "const q = `select price_cents from x ${t}`;",
+    ]) {
+      expect(forbiddenValueOccurrences(realRead, probe), realRead).not.toEqual([]);
     }
+    // ...and the real money module trips it, so the rule is aimed at something.
+    expect(
+      forbiddenValueOccurrences(read("lib/dashboard/practice-metrics.ts"), path.join(ROOT, "lib/dashboard/practice-metrics.ts")),
+    ).not.toEqual([]);
   });
 
+
   it("TOTAL equals the sum of the kinds, for every module in the closure", () => {
-    // A site that fell through to nothing would make the parts sum to less than
-    // the whole.
+    // What this proves: every site object the scanner DID emit carries one of
+    // the four counted kinds, so none is classified into nothing. What it
+    // cannot prove: that a reference reached the scanner at all. A dropped
+    // reference emits no site, so the sum and `sites.length` fall together and
+    // this stays green — which is why the header above scopes the census to
+    // extracted static ESM references.
     for (const file of CLOSURE.keys()) {
       const sites = dependencySites(file);
       const sum =
