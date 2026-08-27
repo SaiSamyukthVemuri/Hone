@@ -1102,7 +1102,7 @@ describe("NC-reach — no money path is in FIN Slice 1's static ESM closure", ()
 });
 
 // ---------------------------------------------------------------------------
-// 11. The FIN-owned coding constraint, and exactly what it covers
+// 11. The FIN-owned coding constraint
 // ---------------------------------------------------------------------------
 //
 // This is the OTHER half of the architecture, and it is a CONSTRAINT rather
