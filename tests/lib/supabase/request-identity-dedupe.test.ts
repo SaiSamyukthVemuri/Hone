@@ -443,11 +443,18 @@ const QUERIES = QUERIES_RAW.replace(/\/\*[\s\S]*?\*\//g, "").replace(
 // is. A predicate that is not a link in that chain does not count, wherever
 // else it appears.
 
-type ChainCall = { method: string; args: readonly ts.Expression[] };
+type ChainLink = { method: string; args: readonly ts.Expression[] };
 type MembershipQuery = {
-  /** The loader exists and returns a destructured awaited query. */
+  /** The loader exists, returns an identifier, and that identifier resolves. */
   bound: boolean;
-  /** The returned chain is rooted in `.from("practitioners")`. */
+  /**
+   * Which declaration was selected, taken from the chain's own `.select(...)`.
+   * Fixtures label the visible query "OUTER" and every shadow "SHADOW", so a
+   * control can assert WHICH declaration the resolver picked rather than only
+   * that the flags came out false.
+   */
+  selectArg: string | null;
+  /** The resolved chain is rooted in `.from("practitioners")`. */
   fromPractitioners: boolean;
   /** `.eq("user_id", <the loader's own userId param>)` is a link in it. */
   userScoped: boolean;
@@ -459,6 +466,7 @@ type MembershipQuery = {
 
 const NOT_BOUND: MembershipQuery = {
   bound: false,
+  selectArg: null,
   fromPractitioners: false,
   userScoped: false,
   activeScoped: false,
@@ -492,8 +500,8 @@ function unwrap(e: ts.Expression): ts.Expression {
 }
 
 /** Decompose `x.a(1).b(2)` into its ordered links plus the identifier at the root. */
-function chainOf(expr: ts.Expression): { base: string | null; calls: ChainCall[] } {
-  const calls: ChainCall[] = [];
+function chainOf(expr: ts.Expression): { base: string | null; calls: ChainLink[] } {
+  const calls: ChainLink[] = [];
   let cur = unwrap(expr);
   while (ts.isCallExpression(cur)) {
     const callee = cur.expression;
@@ -527,6 +535,100 @@ function findFunction(
  * initializer. Any other query in the function, however similar, is not that
  * chain and cannot satisfy anything here.
  */
+/** Anything that opens a new function scope. Never descended into. */
+function isFunctionLike(n: ts.Node): boolean {
+  return (
+    ts.isFunctionDeclaration(n) ||
+    ts.isFunctionExpression(n) ||
+    ts.isArrowFunction(n) ||
+    ts.isMethodDeclaration(n) ||
+    ts.isConstructorDeclaration(n) ||
+    ts.isGetAccessorDeclaration(n) ||
+    ts.isSetAccessorDeclaration(n)
+  );
+}
+
+/**
+ * The loader's OWN return — never one belonging to a nested helper.
+ *
+ * The walk refuses to enter any nested function scope, so `return data` inside
+ * an inner arrow or helper can never be mistaken for the loader's result.
+ */
+function ownReturn(fn: ts.FunctionDeclaration): ts.ReturnStatement | null {
+  let last: ts.ReturnStatement | null = null;
+  const visit = (n: ts.Node) => {
+    if (isFunctionLike(n)) return; // a different scope's return is not ours
+    if (ts.isReturnStatement(n) && n.expression) last = n;
+    ts.forEachChild(n, visit);
+  };
+  ts.forEachChild(fn.body!, visit);
+  return last;
+}
+
+/** The statement list a scope node contributes to lexical lookup, if any. */
+function scopeStatements(n: ts.Node): readonly ts.Statement[] | null {
+  if (ts.isBlock(n)) return n.statements;
+  if (ts.isCaseClause(n) || ts.isDefaultClause(n)) return n.statements;
+  return null;
+}
+
+/**
+ * Resolve `name` to the declaration LEXICALLY VISIBLE at `ret`.
+ *
+ * This is the fix for the fourth review finding. Searching the function for any
+ * declaration spelled `data` and keeping the last one is scope-insensitive: a
+ * nested helper, an inner block, a sibling scope or a declaration placed after
+ * the return could all supply a fully-filtered query while the value the loader
+ * actually returns came from an unscoped one — and the pin would inspect the
+ * wrong chain.
+ *
+ * So the lookup follows binding rules instead of spelling. It starts at the
+ * return statement, walks OUTWARD through its enclosing scopes only, considers
+ * only declarations positioned BEFORE the return (a `const` below it is in the
+ * temporal dead zone and cannot be what the return read), takes the nearest
+ * enclosing scope's match, and stops at the loader itself so nothing outside it
+ * can satisfy the proof. Nested scopes are never entered.
+ */
+function resolveAtReturn(
+  fn: ts.FunctionDeclaration,
+  ret: ts.ReturnStatement,
+  name: string,
+): ts.Expression | null {
+  let scope: ts.Node | undefined = ret.parent;
+  while (scope) {
+    const statements = scopeStatements(scope);
+    if (statements) {
+      let candidate: ts.Expression | null = null;
+      for (const st of statements) {
+        // Declared at or after the return: not visible to it.
+        if (st.getStart() >= ret.getStart()) break;
+        if (!ts.isVariableStatement(st)) continue;
+        for (const d of st.declarationList.declarations) {
+          if (!d.initializer) continue;
+          const binds =
+            (ts.isObjectBindingPattern(d.name) &&
+              d.name.elements.some(
+                (el) => ts.isIdentifier(el.name) && el.name.text === name,
+              )) ||
+            (ts.isIdentifier(d.name) && d.name.text === name);
+          if (binds) candidate = d.initializer; // last one before the return
+        }
+      }
+      if (candidate) return candidate; // nearest enclosing scope wins
+    }
+    if (scope === fn) break; // never resolve outside the loader
+    scope = scope.parent;
+  }
+  return null;
+}
+
+/**
+ * Analyse the membership query the loader ACTUALLY RETURNS.
+ *
+ * return statement -> the identifier it names -> that identifier's LEXICALLY
+ * VISIBLE declaration -> the awaited call chain on its initializer. Any other
+ * query in the file, however similar and however spelled, is not that chain.
+ */
 function membershipQuery(source: string): MembershipQuery {
   const sf = parse(source);
   const fn = findFunction(sf, "loadActiveMembershipRows");
@@ -541,38 +643,22 @@ function membershipQuery(source: string): MembershipQuery {
       ? userIdParam.name.text
       : null;
 
-  // 1. What does it return?
-  let returned: string | null = null;
-  const findReturn = (n: ts.Node) => {
-    if (ts.isReturnStatement(n) && n.expression) {
-      const e = unwrap(n.expression);
-      if (ts.isIdentifier(e)) returned = e.text;
-    }
-    ts.forEachChild(n, findReturn);
-  };
-  findReturn(fn.body);
-  if (!returned) return NOT_BOUND;
+  const ret = ownReturn(fn);
+  if (!ret?.expression) return NOT_BOUND;
+  const returnedExpr = unwrap(ret.expression);
+  if (!ts.isIdentifier(returnedExpr)) return NOT_BOUND;
 
-  // 2. Which declaration produced that name, and from which expression?
-  let initializer: ts.Expression | null = null;
-  const findDecl = (n: ts.Node) => {
-    if (ts.isVariableDeclaration(n) && n.initializer) {
-      const binds =
-        ts.isObjectBindingPattern(n.name) &&
-        n.name.elements.some(
-          (el) => ts.isIdentifier(el.name) && el.name.text === returned,
-        );
-      const named = ts.isIdentifier(n.name) && n.name.text === returned;
-      if (binds || named) initializer = n.initializer;
-    }
-    ts.forEachChild(n, findDecl);
-  };
-  findDecl(fn.body);
+  const initializer = resolveAtReturn(fn, ret, returnedExpr.text);
   if (!initializer) return NOT_BOUND;
 
-  // 3. That expression's chain — and only that one.
   const { base, calls } = chainOf(initializer);
   if (base === null || calls.length === 0) return NOT_BOUND;
+
+  const selectCall = calls.find((c) => c.method === "select");
+  const selectArg =
+    selectCall && selectCall.args.length > 0 && ts.isStringLiteral(selectCall.args[0])
+      ? selectCall.args[0].text
+      : null;
 
   const from = calls.find((c) => c.method === "from");
   const fromPractitioners =
@@ -600,6 +686,7 @@ function membershipQuery(source: string): MembershipQuery {
 
   return {
     bound: true,
+    selectArg,
     fromPractitioners,
     userScoped,
     activeScoped,
@@ -682,7 +769,7 @@ const CONTROLS: Array<{
     source: fixture(`
       // .eq("user_id", userId)
       const { data, error } = await supabase
-        .from("practitioners").select("*, studio:studios(*)").eq("active", true);`),
+        .from("practitioners").select("OUTER").eq("active", true);`),
     expect: { bound: true, fromPractitioners: true, userScoped: false, activeScoped: true },
   },
   {
@@ -691,7 +778,7 @@ const CONTROLS: Array<{
     source: fixture(`
       const note = '.eq("active", true)';
       const { data, error } = await supabase
-        .from("practitioners").select("*, studio:studios(*)").eq("user_id", userId);`),
+        .from("practitioners").select("OUTER").eq("user_id", userId);`),
     expect: { bound: true, fromPractitioners: true, userScoped: true, activeScoped: false },
   },
   {
@@ -699,9 +786,9 @@ const CONTROLS: Array<{
     label: "C. a SECOND query in the same loader carries user_id",
     source: fixture(`
       const audit = await supabase
-        .from("practitioners").select("id").eq("user_id", userId);
+        .from("practitioners").select("SHADOW").eq("user_id", userId);
       const { data, error } = await supabase
-        .from("practitioners").select("*, studio:studios(*)").eq("active", true);`),
+        .from("practitioners").select("OUTER").eq("active", true);`),
     expect: { bound: true, fromPractitioners: true, userScoped: false, activeScoped: true },
   },
   {
@@ -709,9 +796,9 @@ const CONTROLS: Array<{
     label: "D. a SECOND query in the same loader carries active",
     source: fixture(`
       const audit = await supabase
-        .from("practitioners").select("id").eq("active", true);
+        .from("practitioners").select("SHADOW").eq("active", true);
       const { data, error } = await supabase
-        .from("practitioners").select("*, studio:studios(*)").eq("user_id", userId);`),
+        .from("practitioners").select("OUTER").eq("user_id", userId);`),
     expect: { bound: true, fromPractitioners: true, userScoped: true, activeScoped: false },
   },
   {
@@ -719,9 +806,9 @@ const CONTROLS: Array<{
     label: "E. a DIFFERENT practitioners chain has BOTH; the returned one has neither",
     source: fixture(`
       const audit = await supabase
-        .from("practitioners").select("id").eq("user_id", userId).eq("active", true);
+        .from("practitioners").select("SHADOW").eq("user_id", userId).eq("active", true);
       const { data, error } = await supabase
-        .from("practitioners").select("*, studio:studios(*)");`),
+        .from("practitioners").select("OUTER");`),
     expect: { bound: true, fromPractitioners: true, userScoped: false, activeScoped: false },
   },
   {
@@ -729,7 +816,7 @@ const CONTROLS: Array<{
     label: "F. the returned chain is doubly scoped but reads ANOTHER table",
     source: fixture(`
       const { data, error } = await supabase
-        .from("sessions").select("*").eq("user_id", userId).eq("active", true);`),
+        .from("sessions").select("OUTER").eq("user_id", userId).eq("active", true);`),
     expect: { bound: true, fromPractitioners: false, userScoped: true, activeScoped: true },
   },
 ];
@@ -779,5 +866,288 @@ describe("negative controls — vocabulary in the function never counts", () => 
       q.activeScoped,
       q.multiRowSafe,
     ]).toEqual([true, true, true, true, true]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Lexical-scope negative controls
+// ---------------------------------------------------------------------------
+// The fourth review finding: resolving `data` by SPELLING lets a shadow supply
+// the answer. Every fixture below has an OUTER query — the one the loader
+// actually returns — that is missing a filter, and a SHADOW query that has
+// everything, placed somewhere a name-based search would have found it: a
+// nested function, an inner block, after the return, a sibling scope, an arrow
+// body, an `if` block, a `try` block.
+//
+// Each control asserts three things, in this order, so none of them can pass
+// for an uninteresting reason:
+//   1. the fixture parses and the loader is FOUND,
+//   2. resolution SUCCEEDED (`bound`) — a control must never pass merely
+//      because the resolver gave up,
+//   3. the declaration selected is the OUTER one (`selectArg === "OUTER"`),
+//      which is the actual claim: the resolver picked the binding visible at
+//      the return, not the shadow.
+
+const OUTER_MISSING_ACTIVE = `        const { data, error } = await supabase
+          .from("practitioners").select("OUTER").eq("user_id", userId);`;
+const OUTER_MISSING_USER = `        const { data, error } = await supabase
+          .from("practitioners").select("OUTER").eq("active", true);`;
+const TAIL_RETURN = `        if (error) { throw new Error("x"); }
+        return data ?? [];`;
+
+/**
+ * Every fixture places the SHADOW *after* the outer declaration on purpose.
+ *
+ * That ordering is what makes these controls discriminate rather than decorate.
+ * The resolver this repair replaced kept the LAST declaration spelled `data`
+ * that it met while descending, so a shadow placed BEFORE the real one would
+ * have been overwritten by it and the control would have passed against the
+ * very defect it exists to catch — vacuity one level up. Positioned after, the
+ * old resolver picks SHADOW and the control goes red; the lexical resolver
+ * still picks OUTER because none of these scopes is visible at the return.
+ */
+const LEXICAL: Array<{
+  id: string;
+  label: string;
+  source: string;
+  missing: "userScoped" | "activeScoped";
+  token: RegExp;
+  /** Whether the superseded name-based resolver would have picked the shadow. */
+  catchesOldResolver: boolean;
+}> = [
+  {
+    id: "NESTED_FUNCTION_CONTROL",
+    label: "A. a nested FUNCTION declares a fully-scoped `data`",
+    source: `
+      async function loadActiveMembershipRows(supabase: S, userId: string) {
+${OUTER_MISSING_ACTIVE}
+        async function helper() {
+          const { data } = await supabase
+            .from("practitioners").select("SHADOW")
+            .eq("user_id", userId).eq("active", true);
+          return data;
+        }
+${TAIL_RETURN}
+      }`,
+    missing: "activeScoped",
+    token: /\.eq\("active", true\)/,
+    catchesOldResolver: true,
+  },
+  {
+    id: "NESTED_BLOCK_CONTROL",
+    label: "B. an inner BLOCK shadows `data` between the declaration and the return",
+    source: `
+      async function loadActiveMembershipRows(supabase: S, userId: string) {
+${OUTER_MISSING_ACTIVE}
+        {
+          const { data } = await supabase
+            .from("practitioners").select("SHADOW")
+            .eq("user_id", userId).eq("active", true);
+        }
+${TAIL_RETURN}
+      }`,
+    missing: "activeScoped",
+    token: /\.eq\("active", true\)/,
+    catchesOldResolver: true,
+  },
+  {
+    id: "AFTER_RETURN_CONTROL",
+    label: "C. a fully-scoped `data` is declared AFTER the return, same block",
+    source: `
+      async function loadActiveMembershipRows(supabase: S, userId: string) {
+${OUTER_MISSING_ACTIVE}
+${TAIL_RETURN}
+        const { data } = await supabase
+          .from("practitioners").select("SHADOW")
+          .eq("user_id", userId).eq("active", true);
+      }`,
+    missing: "activeScoped",
+    token: /\.eq\("active", true\)/,
+    catchesOldResolver: true,
+  },
+  {
+    id: "SIBLING_SCOPE_CONTROL",
+    label: "D. a SIBLING function holds the fully-scoped `data`",
+    source: `
+      async function loadActiveMembershipRows(supabase: S, userId: string) {
+${OUTER_MISSING_ACTIVE}
+${TAIL_RETURN}
+      }
+      async function somethingElse(supabase: S, userId: string) {
+        const { data } = await supabase
+          .from("practitioners").select("SHADOW")
+          .eq("user_id", userId).eq("active", true);
+        return data ?? [];
+      }`,
+    missing: "activeScoped",
+    token: /\.eq\("active", true\)/,
+    // The superseded resolver only descended the loader's own body, so it never
+    // saw a sibling either. This control guards the rule, not that one bug.
+    catchesOldResolver: false,
+  },
+  {
+    id: "ARROW_SCOPE_CONTROL",
+    label: "E. an inner ARROW function holds the fully-scoped `data`",
+    source: `
+      async function loadActiveMembershipRows(supabase: S, userId: string) {
+${OUTER_MISSING_ACTIVE}
+        const reload = async () => {
+          const { data } = await supabase
+            .from("practitioners").select("SHADOW")
+            .eq("user_id", userId).eq("active", true);
+          return data;
+        };
+${TAIL_RETURN}
+      }`,
+    missing: "activeScoped",
+    token: /\.eq\("active", true\)/,
+    catchesOldResolver: true,
+  },
+  {
+    id: "ACTIVE_SHADOW_CONTROL",
+    label: "F. outer has user_id but not active; an `if` block shadow has both",
+    source: `
+      async function loadActiveMembershipRows(supabase: S, userId: string) {
+${OUTER_MISSING_ACTIVE}
+        if (userId) {
+          const { data } = await supabase
+            .from("practitioners").select("SHADOW")
+            .eq("user_id", userId).eq("active", true);
+        }
+${TAIL_RETURN}
+      }`,
+    missing: "activeScoped",
+    token: /\.eq\("active", true\)/,
+    catchesOldResolver: true,
+  },
+  {
+    id: "USER_SHADOW_CONTROL",
+    label: "G. outer has active but not user_id; a `try` block shadow has both",
+    source: `
+      async function loadActiveMembershipRows(supabase: S, userId: string) {
+${OUTER_MISSING_USER}
+        try {
+          const { data } = await supabase
+            .from("practitioners").select("SHADOW")
+            .eq("user_id", userId).eq("active", true);
+        } catch {}
+${TAIL_RETURN}
+      }`,
+    missing: "userScoped",
+    token: /\.eq\("user_id", userId\)/,
+    catchesOldResolver: true,
+  },
+];
+
+/**
+ * The resolver this repair REPLACED, kept here as the thing the controls are
+ * measured against: find any declaration spelled like the returned identifier
+ * anywhere beneath the loader, last one wins, nested scopes included.
+ */
+function supersededResolve(source: string): string | null {
+  const sf = parse(source);
+  const fn = findFunction(sf, "loadActiveMembershipRows");
+  if (!fn?.body) return null;
+  let returned: string | null = null;
+  const findReturn = (n: ts.Node) => {
+    if (ts.isReturnStatement(n) && n.expression) {
+      const e = unwrap(n.expression);
+      if (ts.isIdentifier(e)) returned = e.text;
+    }
+    ts.forEachChild(n, findReturn);
+  };
+  findReturn(fn.body);
+  let initializer: ts.Expression | null = null;
+  const findDecl = (n: ts.Node) => {
+    if (ts.isVariableDeclaration(n) && n.initializer) {
+      if (
+        ts.isObjectBindingPattern(n.name) &&
+        n.name.elements.some(
+          (el) => ts.isIdentifier(el.name) && el.name.text === returned,
+        )
+      ) {
+        initializer = n.initializer;
+      }
+    }
+    ts.forEachChild(n, findDecl);
+  };
+  findDecl(fn.body);
+  if (!initializer) return null;
+  const { calls } = chainOf(initializer);
+  const sel = calls.find((c) => c.method === "select");
+  return sel && sel.args.length > 0 && ts.isStringLiteral(sel.args[0])
+    ? sel.args[0].text
+    : null;
+}
+
+describe("negative controls — a shadow never answers for the returned query", () => {
+  for (const control of LEXICAL) {
+    it(`${control.label} -> RED`, () => {
+      // The fixture WOULD satisfy a spelling-based search: the token is present.
+      expect(control.source, "fixture must contain the token textually").toMatch(
+        control.token,
+      );
+      expect(control.source, "fixture must contain the shadow query").toMatch(
+        /select\("SHADOW"\)/,
+      );
+
+      const q = membershipQuery(control.source);
+
+      // 1. Parsing and lookup succeeded — this control is not passing because
+      //    the resolver failed to find anything.
+      expect(q.bound, `${control.id}: resolution did not succeed`).toBe(true);
+      // 2. The declaration chosen is the one VISIBLE AT THE RETURN, not the
+      //    shadow. This is the finding's actual subject.
+      expect(q.selectArg, `${control.id}: resolved the SHADOW declaration`).toBe(
+        "OUTER",
+      );
+      // 3. And so the missing filter is reported missing.
+      expect(q[control.missing], `${control.id}: ${control.missing}`).toBe(false);
+
+      const fullyValid =
+        q.bound && q.fromPractitioners && q.userScoped && q.activeScoped;
+      expect(fullyValid, `${control.id} was accepted as a valid loader`).toBe(false);
+
+      // 4. ANTI-VACUITY. A control the superseded resolver ALSO passes is
+      //    decoration, not a guard. Where the fixture is built to defeat it,
+      //    prove that it does: the old resolver must reach for the SHADOW.
+      if (control.catchesOldResolver) {
+        expect(
+          supersededResolve(control.source),
+          `${control.id} does not discriminate: the superseded resolver picks it too`,
+        ).toBe("SHADOW");
+      }
+    });
+  }
+
+  it("a return belonging to a nested helper is never mistaken for the loader's", () => {
+    // The loader itself returns nothing resolvable; only the helper returns.
+    // That must be NOT BOUND, never the helper's fully-scoped query.
+    const q = membershipQuery(`
+      async function loadActiveMembershipRows(supabase: S, userId: string) {
+        async function helper() {
+          const { data } = await supabase
+            .from("practitioners").select("SHADOW")
+            .eq("user_id", userId).eq("active", true);
+          return data ?? [];
+        }
+        await helper();
+      }`);
+    expect(q.bound).toBe(false);
+    expect(q.selectArg).toBeNull();
+  });
+
+  it("the real loader still resolves to its own query, on all flags", () => {
+    const q = membershipQuery(QUERIES_RAW);
+    expect(q.bound).toBe(true);
+    expect(q.selectArg, "resolved a query other than the loader's own").toBe(
+      "*, studio:studios(*)",
+    );
+    expect([
+      q.fromPractitioners,
+      q.userScoped,
+      q.activeScoped,
+      q.multiRowSafe,
+    ]).toEqual([true, true, true, true]);
   });
 });
