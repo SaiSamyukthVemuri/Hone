@@ -426,41 +426,184 @@ const QUERIES = QUERIES_RAW.replace(/\/\*[\s\S]*?\*\//g, "").replace(
   "",
 );
 
-/**
- * The body of ONE named function declaration, via the TypeScript AST.
- *
- * A whole-file regex cannot make a claim about a specific function: this module
- * is ~1000 lines and unrelated practitioner queries carry the very same
- * predicates, so a file-wide `.eq("active", true)` search stays green even if
- * the membership loader drops it — while memoised identity starts authorizing
- * INACTIVE memberships. Same AST idiom as tests/security/helpers/supabase-write-census.ts.
- */
-function functionBody(source: string, name: string): string | null {
-  const sf = ts.createSourceFile(
+// ---------------------------------------------------------------------------
+// The membership query itself, bound through the AST
+// ---------------------------------------------------------------------------
+//
+// Two earlier revisions of this proof were vacuous in the same way, one level
+// apart. The first searched the WHOLE module for `.eq("active", true)`, which
+// unrelated practitioner queries already satisfy. The second narrowed to
+// `loadActiveMembershipRows`'s body but still matched raw text, so a comment, a
+// string literal, or a second query inside that same function could satisfy it
+// while the authored membership chain quietly lost a filter — and memoised
+// identity would begin authorizing inactive or cross-user rows.
+//
+// Text cannot make this claim. So nothing below reads text: it finds the ONE
+// chain whose result the loader actually returns, and asks that chain what it
+// is. A predicate that is not a link in that chain does not count, wherever
+// else it appears.
+
+type ChainCall = { method: string; args: readonly ts.Expression[] };
+type MembershipQuery = {
+  /** The loader exists and returns a destructured awaited query. */
+  bound: boolean;
+  /** The returned chain is rooted in `.from("practitioners")`. */
+  fromPractitioners: boolean;
+  /** `.eq("user_id", <the loader's own userId param>)` is a link in it. */
+  userScoped: boolean;
+  /** `.eq("active", true)` is a link in it. */
+  activeScoped: boolean;
+  /** `.maybeSingle()` is NOT a link in it (it errors on 2+ memberships). */
+  multiRowSafe: boolean;
+};
+
+const NOT_BOUND: MembershipQuery = {
+  bound: false,
+  fromPractitioners: false,
+  userScoped: false,
+  activeScoped: false,
+  multiRowSafe: false,
+};
+
+function parse(source: string): ts.SourceFile {
+  return ts.createSourceFile(
     "queries.ts",
     source,
     ts.ScriptTarget.Latest,
     /* setParentNodes */ true,
     ts.ScriptKind.TS,
   );
-  let body: string | null = null;
+}
+
+/** Strip the wrappers that sit between a return and the expression it names. */
+function unwrap(e: ts.Expression): ts.Expression {
+  for (;;) {
+    if (ts.isParenthesizedExpression(e)) e = e.expression;
+    else if (ts.isAsExpression(e)) e = e.expression;
+    else if (ts.isNonNullExpression(e)) e = e.expression;
+    else if (ts.isAwaitExpression(e)) e = e.expression;
+    else if (
+      ts.isBinaryExpression(e) &&
+      e.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken
+    ) {
+      e = e.left; // `data ?? []` names `data`
+    } else return e;
+  }
+}
+
+/** Decompose `x.a(1).b(2)` into its ordered links plus the identifier at the root. */
+function chainOf(expr: ts.Expression): { base: string | null; calls: ChainCall[] } {
+  const calls: ChainCall[] = [];
+  let cur = unwrap(expr);
+  while (ts.isCallExpression(cur)) {
+    const callee = cur.expression;
+    if (!ts.isPropertyAccessExpression(callee)) break;
+    calls.unshift({ method: callee.name.text, args: cur.arguments });
+    cur = unwrap(callee.expression);
+  }
+  return { base: ts.isIdentifier(cur) ? cur.text : null, calls };
+}
+
+function findFunction(
+  sf: ts.SourceFile,
+  name: string,
+): ts.FunctionDeclaration | null {
+  let found: ts.FunctionDeclaration | null = null;
   const visit = (n: ts.Node) => {
     if (ts.isFunctionDeclaration(n) && n.name?.text === name && n.body) {
-      body = n.body.getText(sf);
+      found = n;
     }
     ts.forEachChild(n, visit);
   };
   visit(sf);
-  return body;
+  return found;
 }
 
-/** Both tenancy predicates, required WITHIN the membership loader itself. */
-function loaderScoping(source: string) {
-  const body = functionBody(source, "loadActiveMembershipRows");
+/**
+ * Analyse the membership query the loader ACTUALLY RETURNS.
+ *
+ * The binding is: return statement -> the identifier it names -> the
+ * destructuring declaration that produced it -> the awaited call chain on its
+ * initializer. Any other query in the function, however similar, is not that
+ * chain and cannot satisfy anything here.
+ */
+function membershipQuery(source: string): MembershipQuery {
+  const sf = parse(source);
+  const fn = findFunction(sf, "loadActiveMembershipRows");
+  if (!fn?.body) return NOT_BOUND;
+
+  // The loader's own `userId` parameter, so a decoy identifier cannot pass.
+  const userIdParam = fn.parameters.find(
+    (p) => ts.isIdentifier(p.name) && p.name.text === "userId",
+  );
+  const userIdName =
+    userIdParam && ts.isIdentifier(userIdParam.name)
+      ? userIdParam.name.text
+      : null;
+
+  // 1. What does it return?
+  let returned: string | null = null;
+  const findReturn = (n: ts.Node) => {
+    if (ts.isReturnStatement(n) && n.expression) {
+      const e = unwrap(n.expression);
+      if (ts.isIdentifier(e)) returned = e.text;
+    }
+    ts.forEachChild(n, findReturn);
+  };
+  findReturn(fn.body);
+  if (!returned) return NOT_BOUND;
+
+  // 2. Which declaration produced that name, and from which expression?
+  let initializer: ts.Expression | null = null;
+  const findDecl = (n: ts.Node) => {
+    if (ts.isVariableDeclaration(n) && n.initializer) {
+      const binds =
+        ts.isObjectBindingPattern(n.name) &&
+        n.name.elements.some(
+          (el) => ts.isIdentifier(el.name) && el.name.text === returned,
+        );
+      const named = ts.isIdentifier(n.name) && n.name.text === returned;
+      if (binds || named) initializer = n.initializer;
+    }
+    ts.forEachChild(n, findDecl);
+  };
+  findDecl(fn.body);
+  if (!initializer) return NOT_BOUND;
+
+  // 3. That expression's chain — and only that one.
+  const { base, calls } = chainOf(initializer);
+  if (base === null || calls.length === 0) return NOT_BOUND;
+
+  const from = calls.find((c) => c.method === "from");
+  const fromPractitioners =
+    !!from &&
+    from.args.length > 0 &&
+    ts.isStringLiteral(from.args[0]) &&
+    from.args[0].text === "practitioners";
+
+  const eqCalls = calls.filter((c) => c.method === "eq" && c.args.length >= 2);
+  const userScoped =
+    userIdName !== null &&
+    eqCalls.some(
+      (c) =>
+        ts.isStringLiteral(c.args[0]) &&
+        c.args[0].text === "user_id" &&
+        ts.isIdentifier(c.args[1]) &&
+        c.args[1].text === userIdName,
+    );
+  const activeScoped = eqCalls.some(
+    (c) =>
+      ts.isStringLiteral(c.args[0]) &&
+      c.args[0].text === "active" &&
+      c.args[1].kind === ts.SyntaxKind.TrueKeyword,
+  );
+
   return {
-    found: body !== null,
-    userScoped: body !== null && /\.eq\(\s*"user_id"\s*,\s*userId\s*\)/.test(body),
-    activeScoped: body !== null && /\.eq\(\s*"active"\s*,\s*true\s*\)/.test(body),
+    bound: true,
+    fromPractitioners,
+    userScoped,
+    activeScoped,
+    multiRowSafe: !calls.some((c) => c.method === "maybeSingle"),
   };
 }
 
@@ -494,68 +637,147 @@ describe("source pins — the wrappers consume the shared authority", () => {
   });
 });
 
-describe("source pins — the membership read stays tenancy-scoped (RLS unchanged)", () => {
-  it("BOTH predicates live inside loadActiveMembershipRows itself", () => {
-    const s = loaderScoping(QUERIES_RAW);
-    expect(s.found, "loadActiveMembershipRows was renamed or removed").toBe(true);
-    expect(s.userScoped, 'the loader lost .eq("user_id", userId)').toBe(true);
-    expect(s.activeScoped, 'the loader lost .eq("active", true)').toBe(true);
+describe("the RETURNED membership query is the thing that carries the filters", () => {
+  it("the real loader is bound, on practitioners, and doubly scoped", () => {
+    const q = membershipQuery(QUERIES_RAW);
+    expect(q.bound, "loadActiveMembershipRows no longer returns a bound query").toBe(true);
+    expect(q.fromPractitioners, 'the returned chain is not from("practitioners")').toBe(true);
+    expect(q.userScoped, 'the returned chain lost .eq("user_id", userId)').toBe(true);
+    expect(q.activeScoped, 'the returned chain lost .eq("active", true)').toBe(true);
+    expect(q.multiRowSafe, "the returned chain uses maybeSingle").toBe(true);
   });
+});
 
-  it("the loader does not use maybeSingle (it errors on 2+ memberships)", () => {
-    const body = functionBody(QUERIES_RAW, "loadActiveMembershipRows");
-    expect(body).not.toMatch(/maybeSingle/);
-  });
+// ---------------------------------------------------------------------------
+// Negative controls
+// ---------------------------------------------------------------------------
+// Every fixture below is a loader that a text-based proof would pass: the exact
+// missing predicate is present SOMEWHERE in the function, as a comment, a
+// string, a decoy query, or a query against another table. None of them is a
+// link in the chain the loader returns, so none of them may count.
 
-  // NEGATIVE CONTROLS. Each fixture keeps an UNRELATED function carrying both
-  // predicates, so a file-wide search would pass every one of them. The checker
-  // must not.
-  const UNRELATED = `
-    async function getPractitionersForStudio(supabase: S, studioId: string) {
-      return supabase.from("practitioners").select("*")
-        .eq("user_id", userId).eq("active", true).eq("studio_id", studioId);
-    }
-  `;
-  const loader = (predicates: string) => `
-    async function loadActiveMembershipRows(supabase: S, userId: string) {
+const TAIL = `
+  if (error) {
+    throw new Error("Failed to load practitioner: " + error.message);
+  }
+  return data ?? [];
+}
+`;
+const OPEN = `async function loadActiveMembershipRows(supabase: S, userId: string) {`;
+
+function fixture(body: string): string {
+  return `${OPEN}\n${body}\n${TAIL}`;
+}
+
+/** Each control names the vocabulary it plants and the link it removes. */
+const CONTROLS: Array<{
+  id: string;
+  label: string;
+  source: string;
+  expect: Partial<MembershipQuery>;
+}> = [
+  {
+    id: "COMMENT_DECOY",
+    label: "A. a COMMENT carries the missing user_id predicate",
+    source: fixture(`
+      // .eq("user_id", userId)
       const { data, error } = await supabase
-        .from("practitioners").select("*, studio:studios(*)")${predicates};
-      if (error) throw new Error("Failed to load practitioner: " + error.message);
-      return data ?? [];
-    }
-  `;
+        .from("practitioners").select("*, studio:studios(*)").eq("active", true);`),
+    expect: { bound: true, fromPractitioners: true, userScoped: false, activeScoped: true },
+  },
+  {
+    id: "STRING_DECOY",
+    label: "B. a STRING LITERAL carries the missing active predicate",
+    source: fixture(`
+      const note = '.eq("active", true)';
+      const { data, error } = await supabase
+        .from("practitioners").select("*, studio:studios(*)").eq("user_id", userId);`),
+    expect: { bound: true, fromPractitioners: true, userScoped: true, activeScoped: false },
+  },
+  {
+    id: "SECOND_QUERY_USER",
+    label: "C. a SECOND query in the same loader carries user_id",
+    source: fixture(`
+      const audit = await supabase
+        .from("practitioners").select("id").eq("user_id", userId);
+      const { data, error } = await supabase
+        .from("practitioners").select("*, studio:studios(*)").eq("active", true);`),
+    expect: { bound: true, fromPractitioners: true, userScoped: false, activeScoped: true },
+  },
+  {
+    id: "SECOND_QUERY_ACTIVE",
+    label: "D. a SECOND query in the same loader carries active",
+    source: fixture(`
+      const audit = await supabase
+        .from("practitioners").select("id").eq("active", true);
+      const { data, error } = await supabase
+        .from("practitioners").select("*, studio:studios(*)").eq("user_id", userId);`),
+    expect: { bound: true, fromPractitioners: true, userScoped: true, activeScoped: false },
+  },
+  {
+    id: "PRACTITIONERS_DECOY",
+    label: "E. a DIFFERENT practitioners chain has BOTH; the returned one has neither",
+    source: fixture(`
+      const audit = await supabase
+        .from("practitioners").select("id").eq("user_id", userId).eq("active", true);
+      const { data, error } = await supabase
+        .from("practitioners").select("*, studio:studios(*)");`),
+    expect: { bound: true, fromPractitioners: true, userScoped: false, activeScoped: false },
+  },
+  {
+    id: "WRONG_TABLE",
+    label: "F. the returned chain is doubly scoped but reads ANOTHER table",
+    source: fixture(`
+      const { data, error } = await supabase
+        .from("sessions").select("*").eq("user_id", userId).eq("active", true);`),
+    expect: { bound: true, fromPractitioners: false, userScoped: true, activeScoped: true },
+  },
+];
 
-  it("RED when the loader loses the user_id predicate", () => {
-    const src = UNRELATED + loader(`.eq("active", true)`);
-    expect(src, "fixture must still contain the token file-wide").toMatch(
-      /\.eq\("user_id", userId\)/,
-    );
-    const s = loaderScoping(src);
-    expect(s.found).toBe(true);
-    expect(s.userScoped, "an unrelated query satisfied the user filter").toBe(
-      false,
-    );
+describe("negative controls — vocabulary in the function never counts", () => {
+  for (const control of CONTROLS) {
+    it(`${control.label} -> RED`, () => {
+      // The fixture WOULD pass a text-based proof: the token is right there.
+      const planted = control.expect.fromPractitioners === false
+        ? /\.eq\("user_id", userId\)/
+        : control.expect.userScoped === false
+          ? /\.eq\("user_id", userId\)/
+          : /\.eq\("active", true\)/;
+      expect(control.source, "the fixture must contain the token textually").toMatch(planted);
+
+      const q = membershipQuery(control.source);
+      for (const [key, want] of Object.entries(control.expect)) {
+        expect(q[key as keyof MembershipQuery], `${control.id}: ${key}`).toBe(want);
+      }
+      // Whatever the individual flags, the control must NOT be a fully valid
+      // membership query — that is the single claim each one exists to make.
+      const fullyValid =
+        q.bound && q.fromPractitioners && q.userScoped && q.activeScoped;
+      expect(fullyValid, `${control.id} was accepted as a valid loader`).toBe(false);
+    });
+  }
+
+  it("a renamed-away loader is RED, not silently absent", () => {
+    const q = membershipQuery(`
+      async function somethingElse(supabase: S, userId: string) {
+        const { data } = await supabase
+          .from("practitioners").select("*").eq("user_id", userId).eq("active", true);
+        return data ?? [];
+      }
+    `);
+    expect(q.bound).toBe(false);
+    expect(q.userScoped).toBe(false);
+    expect(q.activeScoped).toBe(false);
   });
 
-  it("RED when the loader loses the active predicate", () => {
-    const src = UNRELATED + loader(`.eq("user_id", userId)`);
-    expect(src).toMatch(/\.eq\("active", true\)/);
-    const s = loaderScoping(src);
-    expect(s.found).toBe(true);
-    expect(s.activeScoped, "an unrelated query satisfied the active filter").toBe(
-      false,
-    );
-  });
-
-  it("RED when the loader is renamed away entirely", () => {
-    const s = loaderScoping(UNRELATED);
-    expect(s.found).toBe(false);
-    expect(s.userScoped).toBe(false);
-    expect(s.activeScoped).toBe(false);
-  });
-
-  it("GREEN on the real module — the control discriminates", () => {
-    const s = loaderScoping(QUERIES_RAW);
-    expect([s.found, s.userScoped, s.activeScoped]).toEqual([true, true, true]);
+  it("the controls discriminate: the REAL loader passes every flag", () => {
+    const q = membershipQuery(QUERIES_RAW);
+    expect([
+      q.bound,
+      q.fromPractitioners,
+      q.userScoped,
+      q.activeScoped,
+      q.multiRowSafe,
+    ]).toEqual([true, true, true, true, true]);
   });
 });
