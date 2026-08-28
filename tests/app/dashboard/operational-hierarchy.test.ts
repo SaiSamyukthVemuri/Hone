@@ -281,7 +281,19 @@ describe("dashboard cleanup — completed setup and pilot tooling do not render"
       join(process.cwd(), "app/(app)/dashboard/onboarding/OnboardingSurface.tsx"),
       "utf8",
     );
-    expect(surface).toMatch(/\{!model\.isComplete && \(\s*<OnboardingProgressCard/);
+    // PERF-01C added a second, NARROWER condition rather than replacing this
+    // one: `!model.isComplete && !completedLocally`. The server model remains
+    // the authority — `completedLocally` is set ONLY when
+    // completeOnboardingAction reports ok, so a refusal still leaves the card.
+    // Asserted as both conjuncts rather than as one exact spelling, so the
+    // server gate cannot be dropped and the local one cannot become the only
+    // condition.
+    expect(surface).toMatch(
+      /\{!model\.isComplete && !completedLocally && \(\s*<OnboardingProgressCard/,
+    );
+    // The local flag is never set except on a RECORDED completion.
+    expect(surface).toMatch(/if \(res\.ok\) setCompletedLocally\(true\)/);
+    expect(surface).not.toMatch(/setCompletedLocally\(true\);?\s*\n?\s*\}?\s*startTransition/);
   });
 
   it("D3: the dedicated Getting Started route stays reachable and deliberate", () => {
