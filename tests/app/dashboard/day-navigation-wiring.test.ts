@@ -74,9 +74,15 @@ describe("OFF TODAY THE PAGE ASKS NO HISTORY QUESTION — the load-bearing rule"
     // This is the retired model: its only output channel is a boolean, so a
     // failed or truncated read is forced to render as an affirmative "New
     // client". It must never run off Today.
-    expect(CODE).toMatch(
-      /const beforeTodayPreviews = viewingToday\s*\?\s*await getBeforeTodayPreviews\(/,
-    );
+    //
+    // PERF-01B moved the START of this read off the roster's critical path, so
+    // the gate now sits on the CALL rather than on an inline `await`. That is
+    // the same rule and a stricter reading of it: what matters was never where
+    // the result is awaited, it is whether the query RUNS. Pinned two ways —
+    // the gate itself, and the fact that there is exactly ONE call site for it
+    // to gate, so no second ungated caller can appear elsewhere in the file.
+    expect(CODE).toMatch(/viewingToday\s*\?\s*getBeforeTodayPreviews\(/);
+    expect(CODE.match(/getBeforeTodayPreviews\(/g) ?? []).toHaveLength(1);
   });
 
   it("the APPOINTMENT-PREP loader now runs for the selected day", () => {
@@ -86,9 +92,13 @@ describe("OFF TODAY THE PAGE ASKS NO HISTORY QUESTION — the load-bearing rule"
     // rather than as an absence. That is what makes it safe on any day — and
     // it is what gives a practitioner something to prepare with.
     expect(CODE).not.toMatch(/const prepLoads = !viewingToday/);
-    expect(CODE).toMatch(
-      /const prepLoads = await loadLastChartedTreatmentsForClients\(\{/,
-    );
+    // PERF-01B: started before the linked-session chain, awaited where read.
+    // The claim is that it runs UNGATED on any day, so it is pinned as the
+    // absence of a day gate on its single call site rather than as an inline
+    // `await` spelling.
+    expect(CODE).toMatch(/loadLastChartedTreatmentsForClients\(\{/);
+    expect(CODE.match(/loadLastChartedTreatmentsForClients\(/g) ?? []).toHaveLength(1);
+    expect(CODE).not.toMatch(/viewingToday\s*\?\s*loadLastChartedTreatmentsForClients\(/);
     // Still one request PER APPOINTMENT, carrying its own boundary.
     expect(CODE).toMatch(/requestKey: a\.id/);
     expect(CODE).toMatch(/before: a\.starts_at/);

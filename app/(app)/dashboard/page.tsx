@@ -237,6 +237,67 @@ export default async function DashboardPage({
   // `start + 24h`: across a DST transition a Toronto day is 23 or 25 hours, and
   // the short one would silently drop a late-evening appointment.
   const selectedDayEndLocal = addDays(selectedDayLocal, 1);
+  // PERF-01B. THE ROSTER MUST NOT WAIT FOR THE BUSINESS.
+  //
+  // Everything started here depends on the STUDIO and the CLOCK and nothing
+  // else — not on the appointment query below, and not on each other. Every one
+  // was previously an `await` placed AFTER the roster, so the practitioner's
+  // day sat behind six serial round-trip waves that had no bearing on it:
+  // the attention sources, practice metrics, the attention list, the
+  // missing-records assistant, expiring supplies, and getting-started.
+  //
+  // They are STARTED here and AWAITED where their value is first read. Nothing
+  // about what they return, or who may read them, changes.
+  //
+  // `settleLater` is not decoration. A promise that rejects while nothing is
+  // awaiting it is an unhandled rejection in Node, and the window between
+  // starting these and awaiting them spans the roster query. A no-op catch
+  // marks the rejection handled for that window WITHOUT consuming it — the
+  // real `await` below still throws, and still reaches the route's error
+  // boundary exactly as it did when these were inline awaits.
+  const settleLater = <T,>(promise: Promise<T>): Promise<T> => {
+    promise.catch(() => undefined);
+    return promise;
+  };
+  const attentionSourcesPromise = settleLater(
+    Promise.all([
+      countIntakesAwaitingReview(supabase, studio.id),
+      countActiveServices(studio.id),
+      isOwner ? loadPaymentStatus(supabase, studio.id) : Promise.resolve(null),
+      // Birthday reminders: month-of-year only, derived from
+      // clients.date_of_birth. Practitioner-facing only. Never sent as
+      // email/SMS or exposed to client/public surfaces.
+      getClientBirthdaysForMonth(studio.id, parseInt(todayLocal.slice(5, 7), 10)),
+      // Booking setup readiness (owner-only card). Loaded for everyone since
+      // the studio_availability_default table is RLS-scoped to the studio
+      // and the read is cheap (<=7 rows). The readiness compute + render is
+      // gated on isOwner below.
+      isOwner
+        ? getAvailabilityDefaults(studio.id)
+        : Promise.resolve(
+            [] as Awaited<ReturnType<typeof getAvailabilityDefaults>>,
+          ),
+    ] as const),
+  );
+  const practiceMetricsPromise = settleLater(
+    getPracticeDashboardMetrics(studio.id, studio.timezone, period),
+  );
+  const clientsNeedingAttentionPromise = settleLater(
+    getClientsNeedingAttention(studio.id),
+  );
+  const followUpAssistantPromise = settleLater(
+    getMissingRecordsAssistant(studio.id, renderNow.toISOString()),
+  );
+  const expiringSuppliesPromise = settleLater(
+    getExpiringSterileItems(studio.id, todayLocal),
+  );
+  const gettingStartedSignalsPromise = settleLater(
+    getGettingStartedSignals(
+      { id: studio.id, name: studio.name, slug: studio.slug },
+      practitioner.display_name?.trim() || practitioner.email,
+    ),
+  );
+
   const startUtc = utcInstantFromLocal(selectedDayLocal, "00:00", studio.timezone);
   const endUtc = utcInstantFromLocal(selectedDayEndLocal, "00:00", studio.timezone);
 
@@ -348,24 +409,7 @@ export default async function DashboardPage({
     paymentStatus,
     birthdaysThisMonth,
     availabilityDefaults,
-  ] = await Promise.all([
-    countIntakesAwaitingReview(supabase, studio.id),
-    countActiveServices(studio.id),
-    isOwner ? loadPaymentStatus(supabase, studio.id) : Promise.resolve(null),
-    // Birthday reminders: month-of-year only, derived from
-    // clients.date_of_birth. Practitioner-facing only. Never sent as
-    // email/SMS or exposed to client/public surfaces.
-    getClientBirthdaysForMonth(studio.id, parseInt(todayLocal.slice(5, 7), 10)),
-    // Booking setup readiness (owner-only card). Loaded for everyone since
-    // the studio_availability_default table is RLS-scoped to the studio
-    // and the read is cheap (≤7 rows). The readiness compute + render is
-    // gated on isOwner below.
-    isOwner
-      ? getAvailabilityDefaults(studio.id)
-      : Promise.resolve(
-          [] as Awaited<ReturnType<typeof getAvailabilityDefaults>>,
-        ),
-  ]);
+  ] = await attentionSourcesPromise;
 
   // Booking readiness for the owner card. Derived only; no schema flag.
   // The card itself is owner-only (rendered below). Public booking is
@@ -388,11 +432,7 @@ export default async function DashboardPage({
     : null;
 
   // PR #208: read-only practice metrics for the selected period.
-  const practiceMetrics = await getPracticeDashboardMetrics(
-    studio.id,
-    studio.timezone,
-    period,
-  );
+  const practiceMetrics = await practiceMetricsPromise;
 
   // PR #212: compact Before-today previews for the Today roster.
   // THREE batched reads for all of today's clients (never per-row);
@@ -400,6 +440,36 @@ export default async function DashboardPage({
   // PR #236: linked-session facts for the Today next actions. Two
   // batched reads (same shape as the charted-24h loader); no N+1.
   const apptIds = dayAppointments.map((a) => a.id);
+
+  // PERF-01B. These three need the ROSTER and nothing else — not each other,
+  // and not the linked-session chain immediately below. They used to be three
+  // separate awaits placed after that chain, so the card's own preparation
+  // facts arrived four waves deep.
+  const paymentStatesPromise = settleLater(
+    getAppointmentPaymentStates(studio.id, apptIds, studio.timezone),
+  );
+  const beforeTodayPreviewsPromise = settleLater(
+    viewingToday
+      ? getBeforeTodayPreviews(
+          studio.id,
+          visibleAppointments.map((a) => a.client_id),
+        )
+      : Promise.resolve(new Map<string, BeforeTodayPreview>()),
+  );
+  const prepLoadsPromise = settleLater(
+    loadLastChartedTreatmentsForClients({
+      studioId: studio.id,
+      requests: visibleAppointments.map((a) => ({
+        // The APPOINTMENT is the unit of identity, not the client. A client with
+        // two bookings in a day gets two requests with two different boundaries
+        // and must get back two different answers.
+        requestKey: a.id,
+        clientId: a.client_id,
+        before: a.starts_at,
+        excludeAppointmentId: a.id,
+      })),
+    }),
+  );
   const sessionByAppointment = new Map<
     string,
     { sessionId: string; hasChartedArea: boolean }
@@ -438,7 +508,7 @@ export default async function DashboardPage({
 
   // Quick checkout (Chloe): one bounded, tenant-scoped batch loader for the
   // visible appointments' payment state, no per-row query, no full history.
-  const paymentStates = await getAppointmentPaymentStates(studio.id, apptIds, studio.timezone);
+  const paymentStates = await paymentStatesPromise;
 
   // THE LOAD-BEARING RULE OF THIS CHANGE.
   //
@@ -455,12 +525,7 @@ export default async function DashboardPage({
   //
   // Skipping is also strictly cheaper: it removes six batched reads, the
   // largest read on the page.
-  const beforeTodayPreviews = viewingToday
-    ? await getBeforeTodayPreviews(
-        studio.id,
-        visibleAppointments.map((a) => a.client_id),
-      )
-    : new Map<string, BeforeTodayPreview>();
+  const beforeTodayPreviews = await beforeTodayPreviewsPromise;
 
   // Dashboard V2 Part 2A: the FULL previous treatment for every returning
   // client of the day, from the SAME #517 authority the appointment page uses.
@@ -487,18 +552,7 @@ export default async function DashboardPage({
   // One batch is ONE DAY. The shared row budget is spent between the loosest
   // and tightest `before` in the batch, so widening a batch across several days
   // would let one day's rows evict another's and reappear as a false absence.
-  const prepLoads = await loadLastChartedTreatmentsForClients({
-    studioId: studio.id,
-    requests: visibleAppointments.map((a) => ({
-      // The APPOINTMENT is the unit of identity, not the client. A client with
-      // two bookings in a day gets two requests with two different boundaries
-      // and must get back two different answers.
-      requestKey: a.id,
-      clientId: a.client_id,
-      before: a.starts_at,
-      excludeAppointmentId: a.id,
-    })),
-  });
+  const prepLoads = await prepLoadsPromise;
 
   // Pure fold into the shared model, no I/O. `prepLoads` is ALREADY keyed by
   // appointment id (the requestKey passed above), so this reads its own key and
@@ -591,7 +645,7 @@ export default async function DashboardPage({
 
   // PR #214: recorded-history attention list (two batched reads over
   // the 200 most recent sessions; unique clients counted once).
-  const clientsNeedingAttention = await getClientsNeedingAttention(studio.id);
+  const clientsNeedingAttention = await clientsNeedingAttentionPromise;
 
   // PR #249: Missing Records / Follow-up Assistant V1. Rules-based only
   // (no AI, no model, no provider, no action): bounded, studio-scoped,
@@ -599,14 +653,11 @@ export default async function DashboardPage({
   // recorded workflow gaps (charting, aftercare, probe lot, intake,
   // for-next-visit follow-ups) into a deterministic, link-only list. The
   // window is computed once here so the helper stays clock-free.
-  const followUpAssistant = await getMissingRecordsAssistant(
-    studio.id,
-    renderNow.toISOString(),
-  );
+  const followUpAssistant = await followUpAssistantPromise;
 
   // PR #316: sterile items / probe lots expired or expiring within 30 days,
   // studio-scoped, for the on-dashboard "Supplies expiring" attention card.
-  const expiringSupplies = await getExpiringSterileItems(studio.id, todayLocal);
+  const expiringSupplies = await expiringSuppliesPromise;
 
   // Dashboard V2 Part 2B, the ONE To-do model.
   //
@@ -630,12 +681,7 @@ export default async function DashboardPage({
   });
 
   // PR #215: Getting Started progress for the dashboard card.
-  const gettingStarted = buildGettingStarted(
-    await getGettingStartedSignals(
-      { id: studio.id, name: studio.name, slug: studio.slug },
-      practitioner.display_name?.trim() || practitioner.email,
-    ),
-  );
+  const gettingStarted = buildGettingStarted(await gettingStartedSignalsPromise);
 
   // PR #238 (Chloe pilot): the dashboard reads as a daily worklist.
   // Today moved to the top (it sat below the snapshot, attention,
