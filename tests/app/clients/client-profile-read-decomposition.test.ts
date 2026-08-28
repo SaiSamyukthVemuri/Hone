@@ -90,8 +90,39 @@ describe("independent reads run in one parallel wave", () => {
     // Was 14 await-bearing top-level statements (2 framework params + 12 data
     // waves): getClientById, then seven single reads, a ten-way Promise.all,
     // one more read, the tab-gated notes, and two session_blocks blocks.
+    //
+    // PERF-02A raised this ceiling from 10 to 11, and the direction is worth
+    // stating because it looks backwards in a performance change. This counter
+    // sees TOP-LEVEL awaits only, so the two `attachStructuredAreas` calls that
+    // used to sit INSIDE the two session_blocks if/else branches were never
+    // counted. PERF-02A merged them into one call, which is top-level and
+    // therefore visible: +1 counted wave, -1 actual session_block_areas read,
+    // and the overview tab went from four serial stages in that region to
+    // three. The ceiling exists to stop the page drifting back toward 14; it is
+    // not a proxy for round trips, and the DB lane
+    // (tests/db/client-profile-tab-queries.db.test.ts) is what counts those.
     const waves = serialWaves();
-    expect(waves.length).toBeLessThanOrEqual(10);
+    expect(waves.length).toBeLessThanOrEqual(11);
+  });
+
+  // PERF-02A. The invariant the ceiling above cannot express, and the one this
+  // slice actually establishes: the page attaches structured areas EXACTLY
+  // ONCE. `recentSessions` is a strict prefix of the intelligence window and
+  // getSessionBlockAreasByBlockIds de-duplicates its ids, so a second call can
+  // only ever re-fetch rows the first already has.
+  it("attaches structured areas exactly once", () => {
+    const calls = SOURCE.match(/attachStructuredAreas\(/g) ?? [];
+    expect(
+      calls.length,
+      "a second attachStructuredAreas call re-reads session_block_areas rows the first already fetched",
+    ).toBe(1);
+  });
+
+  it("still passes the studio id to the areas read (cross-studio defence in depth)", () => {
+    // RLS already scopes it; queries.ts documents this filter as the guard that
+    // stops a cross-studio block id surfacing a foreign area row. Merging the
+    // two calls must not quietly drop it.
+    expect(SOURCE).toMatch(/attachStructuredAreas\([\s\S]{0,200}?studio\.id/);
   });
 
   it("keeps getClientById ahead of the wave, because it gates notFound()", () => {
@@ -157,6 +188,10 @@ describe("independent reads run in one parallel wave", () => {
       "getClinicalNotesSummary",
       "recentSessions.length",
       "sessions.length",
+      // PERF-02A: the single structured-areas attach. Genuinely serial — it
+      // depends on the output of BOTH session_blocks reads — and it replaced
+      // two such stages rather than adding one.
+      "attachStructuredAreas",
     ];
     for (const w of serialWaves()) {
       const text = w.getText(SF);

@@ -486,7 +486,31 @@ export default async function ClientCheatSheetPage({
   // Nothing about WHICH treatment is selected changes; pickLastTreatment and
   // pickPreClientWatchPlanSource are untouched. This records only whether the
   // read that feeds them succeeded.
+  // PERF-02A. BOTH clinical block reads are issued first, their structured
+  // areas are attached in ONE read, and only then is each result consumed.
+  //
+  // WHY. `recentSessions` is `sessions.slice(0, 25)` and the intelligence
+  // window is `sessions.slice(0, 200)`, so the summary's block ids are ALWAYS a
+  // strict subset of the intelligence read's. `getSessionBlockAreasByBlockIds`
+  // opens with `[...new Set(blockIds)]`, so the second attach was re-issuing a
+  // query whose rows the first had just fetched — a wholly redundant round trip
+  // on the slowest route in the app, paid on every overview load.
+  //
+  // WHAT IS DELIBERATELY UNCHANGED. Selection semantics: pickLastTreatment and
+  // pickPreClientWatchPlanSource receive exactly the rows they received before.
+  // Both `session_blocks` reads keep their own projection, their own session
+  // window and their own CLIN-01-B unavailability flag — the rows are held in
+  // two variables rather than merged into one array precisely so that one read
+  // failing still cannot blank the other's card.
   let clinicalHistoryUnavailable = false;
+  type SummaryBlockRow = ClinicalSummaryBlock & {
+    id: string;
+    session_id: string;
+    electrolysis_entries?:
+      | Array<{ observation_chips: unknown; deleted_at: string | null }>
+      | null;
+  };
+  let summaryBlockRows: SummaryBlockRow[] | null = null;
   if (needsLastTreatment && recentSessions.length > 0) {
     const supabaseForSummary = await createClient();
     const { data: recentBlocks, error: recentBlocksError } = await supabaseForSummary
@@ -510,101 +534,42 @@ export default async function ClientCheatSheetPage({
       );
       clinicalHistoryUnavailable = true;
     } else {
-      // Migration 0128: attach structured areas so the Last treatment / Watch-plan
-      // summaries render EVERY treated area + laterality, not just primary_area.
-      const summaryBlockRows = (recentBlocks ?? []) as Array<
-        ClinicalSummaryBlock & {
-          id: string;
-          session_id: string;
-          electrolysis_entries?:
-            | Array<{ observation_chips: unknown; deleted_at: string | null }>
-            | null;
-        }
-      >;
-      await attachStructuredAreas(summaryBlockRows, studio.id);
-      const blocksBySession = new Map<string, ClinicalSummaryBlock[]>();
-      for (const block of summaryBlockRows) {
-        const sessionId = block.session_id;
-        const list = blocksBySession.get(sessionId) ?? [];
-        // Charting unification: carry live entries' observation_chips so the
-        // reaction line reads the unified representation.
-        list.push({
-          ...block,
-          observation_chips_list: (block.electrolysis_entries ?? [])
-            .filter((e) => e.deleted_at == null)
-            .map((e) => e.observation_chips),
-        });
-        blocksBySession.set(sessionId, list);
-      }
-      lastTreatment = pickLastTreatment(recentSessions, blocksBySession);
-      if (lastTreatment) {
-        lastTreatmentBlocks = blocksBySession.get(lastTreatment.id) ?? [];
-        lastTreatmentSummary = buildLastSessionSummary({
-          blocks: lastTreatmentBlocks,
-          nextSessionNote:
-            (lastTreatment as { next_session_note?: string | null })
-              .next_session_note ?? null,
-        });
-      }
-      // PR #203: the Watch/Plan band uses the same pre-client context
-      // the charting page shows; the newest session carrying any
-      // watch/plan content, even if a newer charted session has none of
-      // its own. Same blocks read; no extra query.
-      const watchPlanSource = pickPreClientWatchPlanSource(
-        recentSessions as Array<
-          (typeof sessions)[number] & { next_session_note?: string | null }
-        >,
-        blocksBySession,
-      );
-      if (watchPlanSource) {
-        preClientWatchPlan = buildLastSessionSummary({
-          blocks: blocksBySession.get(watchPlanSource.id) ?? [],
-          nextSessionNote: watchPlanSource.next_session_note ?? null,
-        });
-      }
+      summaryBlockRows = (recentBlocks ?? []) as SummaryBlockRow[];
     }
   }
-
-  const lastTreatmentPerformer = lastTreatment
-    ? sessionPerformerName(lastTreatment, practitioners)
-    : null;
-
-  // Overview "Last visit" card: derived from the SINGLE last session
-  // that is already loaded above (no new query, no new summary). Total
-  // minutes sums the last session's own blocks; the aftercare stamp
-  // (0085) and "is this the very latest session" flag are read from the
-  // same last-treatment row.
-  const lastTreatmentTotalMinutes = lastTreatmentBlocks.reduce(
-    (sum, b) => sum + (b.minutes_performed ?? 0),
-    0,
-  );
-  const lastTreatmentAftercareAt = lastTreatment
-    ? ((lastTreatment as { aftercare_and_risks_explained_at?: string | null })
-        .aftercare_and_risks_explained_at ?? null)
-    : null;
 
   // PR #210: Treatment Intelligence. One read across ALL the client's
   // sessions (cap 200) with per-entry hairs; the pure builder turns
   // recorded history into the Overview summary. Read-only; recorded-
   // history language only; "Not recorded" for gaps.
-  let treatmentIntelligence = buildTreatmentIntelligence({
-    sessionsNewestFirst: sessions,
-    blocks: [],
-  });
+  //
   // PERF2: TreatmentIntelligenceCard renders on the overview tab ONLY, and
   // this is the widest read on the page — every session (cap 200) with its
-  // per-entry hairs, plus attachStructuredAreas. Six of the seven tabs were
-  // paying for it and rendering none of it. buildTreatmentIntelligence has
-  // already produced the blocks:[] value above, which is exactly what a
-  // client with no recorded blocks yields.
-  // CLIN-01-B. TRUE only when the intelligence read below FAILED. The
-  // `blocks: []` value built above is what a client with NO recorded blocks
-  // yields, so leaving it in place after a failed read hands the card a
-  // known-empty clinical history: zero charted sessions, zero areas, "No
-  // charted treatment history yet.". Kept separate from
+  // per-entry hairs. Six of the seven tabs were paying for it and rendering
+  // none of it.
+  //
+  // CLIN-01-B. `intelligenceUnavailable` is TRUE only when the read below
+  // FAILED. The `blocks: []` default built after it is what a client with NO
+  // recorded blocks yields, so leaving it in place after a failed read would
+  // hand the card a known-empty clinical history: zero charted sessions, zero
+  // areas, "No charted treatment history yet.". Kept separate from
   // clinicalHistoryUnavailable because these are two reads: one failing must
   // not blank the other's card.
   let intelligenceUnavailable = false;
+  type IntelBlockRow = Omit<
+    IntelligenceBlockInput,
+    "entry_hairs" | "observation_chips_list"
+  > & {
+    id: string;
+    electrolysis_entries:
+      | Array<{
+          hairs_treated: number | null;
+          observation_chips: unknown;
+          deleted_at: string | null;
+        }>
+      | null;
+  };
+  let intelBlockRows: IntelBlockRow[] | null = null;
   if (isOverview && sessions.length > 0) {
     const supabaseForIntel = await createClient();
     const { data: intelBlocks, error: intelBlocksError } = await supabaseForIntel
@@ -627,38 +592,113 @@ export default async function ClientCheatSheetPage({
       );
       intelligenceUnavailable = true;
     } else {
-      // Migration 0128: attach structured areas so the Treatment intelligence card
-      // credits EVERY treated area (a Cheeks + Sideburns block appears under both),
-      // not only the legacy primary_area.
-      const intelBlockRows = (intelBlocks ?? []) as Array<
-        Omit<IntelligenceBlockInput, "entry_hairs" | "observation_chips_list"> & {
-          id: string;
-          electrolysis_entries:
-            | Array<{
-                hairs_treated: number | null;
-                observation_chips: unknown;
-                deleted_at: string | null;
-              }>
-            | null;
-        }
-      >;
-      await attachStructuredAreas(intelBlockRows, studio.id);
-      treatmentIntelligence = buildTreatmentIntelligence({
-        sessionsNewestFirst: sessions,
-        blocks: intelBlockRows.map((b) => ({
-          ...b,
-          // Migration 0114: voided passes don't contribute hairs to intelligence.
-          entry_hairs: (b.electrolysis_entries ?? [])
-            .filter((e) => !e.deleted_at)
-            .map((e) => e.hairs_treated),
-          // Charting unification: the block's live entries' observation_chips feed
-          // the unified reaction summaries.
-          observation_chips_list: (b.electrolysis_entries ?? [])
-            .filter((e) => !e.deleted_at)
-            .map((e) => e.observation_chips),
-        })),
+      intelBlockRows = (intelBlocks ?? []) as IntelBlockRow[];
+    }
+  }
+
+  // Migration 0128: structured treated areas, for BOTH reads, in ONE query.
+  //
+  // The Last treatment / Watch-plan summaries render every treated area +
+  // laterality rather than just `primary_area`, and Treatment Intelligence
+  // credits every treated area (a Cheeks + Sideburns block appears under both).
+  // Both need the same table; the summary's block ids are a subset of the
+  // intelligence read's; and the helper de-duplicates ids internally. So one
+  // call covers both, and the spread copies row REFERENCES — the helper mutates
+  // `structured_areas` on the objects themselves, so both arrays are populated.
+  //
+  // `studio.id` is still passed: RLS already scopes the read, and this is the
+  // documented defence-in-depth filter that stops a cross-studio block id (should
+  // one ever be passed) surfacing a foreign area row. Dropping it here would
+  // silently weaken that.
+  //
+  // attachStructuredAreas returns early on an empty array, so a client with no
+  // blocks — and every tab that reads neither — still costs ZERO area reads.
+  await attachStructuredAreas(
+    [...(summaryBlockRows ?? []), ...(intelBlockRows ?? [])],
+    studio.id,
+  );
+
+  if (summaryBlockRows) {
+    const blocksBySession = new Map<string, ClinicalSummaryBlock[]>();
+    for (const block of summaryBlockRows) {
+      const sessionId = block.session_id;
+      const list = blocksBySession.get(sessionId) ?? [];
+      // Charting unification: carry live entries' observation_chips so the
+      // reaction line reads the unified representation.
+      list.push({
+        ...block,
+        observation_chips_list: (block.electrolysis_entries ?? [])
+          .filter((e) => e.deleted_at == null)
+          .map((e) => e.observation_chips),
+      });
+      blocksBySession.set(sessionId, list);
+    }
+    lastTreatment = pickLastTreatment(recentSessions, blocksBySession);
+    if (lastTreatment) {
+      lastTreatmentBlocks = blocksBySession.get(lastTreatment.id) ?? [];
+      lastTreatmentSummary = buildLastSessionSummary({
+        blocks: lastTreatmentBlocks,
+        nextSessionNote:
+          (lastTreatment as { next_session_note?: string | null })
+            .next_session_note ?? null,
       });
     }
+    // PR #203: the Watch/Plan band uses the same pre-client context
+    // the charting page shows; the newest session carrying any
+    // watch/plan content, even if a newer charted session has none of
+    // its own. Same blocks read; no extra query.
+    const watchPlanSource = pickPreClientWatchPlanSource(
+      recentSessions as Array<
+        (typeof sessions)[number] & { next_session_note?: string | null }
+      >,
+      blocksBySession,
+    );
+    if (watchPlanSource) {
+      preClientWatchPlan = buildLastSessionSummary({
+        blocks: blocksBySession.get(watchPlanSource.id) ?? [],
+        nextSessionNote: watchPlanSource.next_session_note ?? null,
+      });
+    }
+  }
+
+  const lastTreatmentPerformer = lastTreatment
+    ? sessionPerformerName(lastTreatment, practitioners)
+    : null;
+
+  // Overview "Last visit" card: derived from the SINGLE last session
+  // that is already loaded above (no new query, no new summary). Total
+  // minutes sums the last session's own blocks; the aftercare stamp
+  // (0085) and "is this the very latest session" flag are read from the
+  // same last-treatment row.
+  const lastTreatmentTotalMinutes = lastTreatmentBlocks.reduce(
+    (sum, b) => sum + (b.minutes_performed ?? 0),
+    0,
+  );
+  const lastTreatmentAftercareAt = lastTreatment
+    ? ((lastTreatment as { aftercare_and_risks_explained_at?: string | null })
+        .aftercare_and_risks_explained_at ?? null)
+    : null;
+
+  let treatmentIntelligence = buildTreatmentIntelligence({
+    sessionsNewestFirst: sessions,
+    blocks: [],
+  });
+  if (intelBlockRows) {
+    treatmentIntelligence = buildTreatmentIntelligence({
+      sessionsNewestFirst: sessions,
+      blocks: intelBlockRows.map((b) => ({
+        ...b,
+        // Migration 0114: voided passes don't contribute hairs to intelligence.
+        entry_hairs: (b.electrolysis_entries ?? [])
+          .filter((e) => !e.deleted_at)
+          .map((e) => e.hairs_treated),
+        // Charting unification: the block's live entries' observation_chips feed
+        // the unified reaction summaries.
+        observation_chips_list: (b.electrolysis_entries ?? [])
+          .filter((e) => !e.deleted_at)
+          .map((e) => e.observation_chips),
+      })),
+    });
   }
 
   // PR #211: "Before today" pre-treatment briefing, assembled from
