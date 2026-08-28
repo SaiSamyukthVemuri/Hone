@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useState, useTransition } from "react";
+import { useEffect, useId, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import {
   ONBOARDING_STEP_ORDER,
@@ -117,15 +117,45 @@ export function OnboardingWizard({
   const nextKey = ONBOARDING_STEP_ORDER[activeIndex + 1];
   const prevKey = ONBOARDING_STEP_ORDER[activeIndex - 1];
 
-  const showConfetti = active.key === "done" && model.shouldCelebrate;
+  // PERF-01C. THIS celebration, once played, is consumed for this mounted
+  // wizard — independently of when refreshed server state arrives.
+  //
+  // `markCelebrationShownAction` no longer revalidates the dashboard (that is
+  // what re-suspended the wizard's transition and disabled its buttons), so a
+  // MOUNTED wizard keeps carrying `model.shouldCelebrate === true` until a
+  // genuinely new server model lands. Closing the success step and reopening it
+  // from the pinned card is synchronous, so without this the confetti replayed
+  // even though `celebrated_at` was already stamped. Codex raised it on #658.
+  //
+  // The SERVER STAMP REMAINS THE DURABLE AUTHORITY: on any fresh render
+  // `model.shouldCelebrate` is false because `celebrated_at` is set, and the
+  // action still refuses to stamp unless the live model is genuinely complete,
+  // so this local flag cannot consume a celebration the owner never earned.
+  // SPENT ON CLOSE, NOT ON MOUNT. An earlier attempt set this inside the same
+  // effect that fires the stamp, which removed the confetti on the very next
+  // render — the owner would never have SEEN the celebration they earned. The
+  // new e2e assertion caught that. It is spent only once the success step has
+  // actually been closed, which is precisely the reopen case Codex described.
+  const played = useRef(false);
+  const [celebrationSpent, setCelebrationSpent] = useState(false);
+  const showConfetti =
+    active.key === "done" && model.shouldCelebrate && !celebrationSpent;
   useEffect(() => {
     if (open && showConfetti) {
+      played.current = true;
       startTransition(() => {
         void markCelebrationShownAction();
       });
     }
     // Fire once when landing on a celebratory success step.
   }, [open, showConfetti]);
+  useEffect(() => {
+    // Closing the wizard spends the celebration for this mounted session, so
+    // reopening from the pinned card cannot replay it while the mounted model
+    // still carries shouldCelebrate=true. `played` keeps a close BEFORE any
+    // celebration from spending one the owner has not been shown.
+    if (!open && played.current) setCelebrationSpent(true);
+  }, [open]);
 
   function goTo(step: OnboardingStepKey) {
     setActiveStep(step);

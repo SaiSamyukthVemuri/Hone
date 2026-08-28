@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import type { OnboardingModel } from "@/lib/onboarding/steps";
 import { OnboardingProgressCard } from "./OnboardingProgressCard";
 import { OnboardingWizard } from "./OnboardingWizard";
@@ -39,6 +39,29 @@ export function OnboardingSurface({
   // The server model stays the authority on the next render; this only stops
   // the view lagging behind a decision the server already made.
   const [completedLocally, setCompletedLocally] = useState(false);
+  // ...AND IT IS A BRIDGE, NOT A LATCH. It spans exactly one gap: the moment
+  // between the server RECORDING completion and the next server model arriving.
+  // The first fresh model retires it, and the server is sole authority again.
+  //
+  // Without this the override never cleared. A same-route navigation preserves
+  // this component's state, so if completion later became FALSE — the owner
+  // removes their last service or availability in another tab, and
+  // buildOnboardingModel correctly recomputes isComplete=false — the stale flag
+  // would keep suppressing the setup card against the server's answer. Codex
+  // raised it on PR #658 and was right.
+  //
+  // RETIRED ON ANY NEW MODEL, not only a COMPLETE one. Keying retirement on
+  // `model.isComplete` was the first attempt and it was insufficient: if the
+  // next model is also incomplete — exactly the removed-service case — the
+  // bridge would never retire and the card would stay wrongly hidden. The new
+  // e2e negative control catches that. Every server render ships a fresh model
+  // object over the RSC payload, while a client-only re-render reuses the same
+  // prop, so identity is the honest signal for "the server has spoken again".
+  const lastModel = useRef(model);
+  if (lastModel.current !== model) {
+    lastModel.current = model;
+    if (completedLocally) setCompletedLocally(false);
+  }
 
   function handleDismiss() {
     setOpen(false);

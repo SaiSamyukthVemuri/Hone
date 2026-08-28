@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { seedE2eStudio, setStudioOnboardingV2Enabled } from "./helpers/seed";
+import { seedE2eStudio, setStudioOnboardingV2Enabled, sql } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
 
 // Onboarding v2 (migration 0140), proven end to end against the real local
@@ -118,5 +118,101 @@ test.describe("onboarding v2 — flag ON", () => {
       .getByRole("button", { name: /Continue setup|Start setup/ })
       .click();
     await expect(page.locator(WIZARD)).toBeVisible();
+  });
+
+  // PERF-01C negative control. The local completion override is a BRIDGE, not a
+  // latch: once a server render confirms completion it must retire, so a LATER
+  // server model that says incomplete regains authority.
+  //
+  // Driven through a QUERY-ONLY navigation on purpose. That keeps the same route
+  // and therefore the same mounted client component, which is exactly the case a
+  // full reload would hide — a remount would clear the flag for the wrong reason
+  // and the test would pass without proving anything.
+  test("a later INCOMPLETE server model can show the card again", async ({
+    page,
+  }) => {
+    const seed = await seedE2eStudio();
+    await setStudioOnboardingV2Enabled(seed.studioId, true);
+    await loginAsOwner(page, seed);
+
+    // 1-2. Complete onboarding; the surface goes, and the server model agrees.
+    const wizard = page.locator(WIZARD);
+    await expect(wizard).toBeVisible();
+    await wizard.getByRole("button", { name: "Get started" }).click();
+    await wizard.getByRole("button", { name: "Continue" }).click();
+    await wizard.getByRole("button", { name: "Continue" }).click();
+    await wizard.getByRole("button", { name: "Continue" }).click();
+    await wizard.getByRole("button", { name: "Skip for now" }).click();
+    await wizard.getByRole("button", { name: "Go to dashboard" }).click();
+    const card = page.getByRole("heading", {
+      name: "Finish setting up your studio",
+    });
+    await expect(card).toHaveCount(0);
+
+    // 3. The override has been retired by the confirmed model. 4. Now make the
+    // authoritative model INCOMPLETE again, as another tab would.
+    await sql(`update services set active = false where studio_id = $1`, [
+      seed.studioId,
+    ]);
+
+    // 5. Same-route, query-only navigation: the client component survives, so
+    // only a retired override lets the server's answer through.
+    await page.locator('[data-testid="dashboard-next-day"]').click();
+    await expect(card).toBeVisible();
+  });
+
+  // PERF-01C negative control. markCelebrationShownAction no longer revalidates
+  // the dashboard, so a MOUNTED wizard keeps carrying shouldCelebrate=true. The
+  // confetti must still be one-time: closing the success step and reopening it
+  // from the pinned card is synchronous and must NOT replay it.
+  test("the celebration is consumed once, and reopening does not replay it", async ({
+    page,
+  }) => {
+    const seed = await seedE2eStudio();
+    await setStudioOnboardingV2Enabled(seed.studioId, true);
+    await loginAsOwner(page, seed);
+
+    const wizard = page.locator(WIZARD);
+    // Presence, not visibility: the confetti container is `h-0` with
+    // `overflow-hidden`, so Playwright cannot call the pieces visible. Whether
+    // they are IN THE DOM is exactly what distinguishes a replay from none.
+    const confetti = wizard.locator(".hone-confetti");
+    await expect(wizard).toBeVisible();
+    await wizard.getByRole("button", { name: "Get started" }).click();
+    await wizard.getByRole("button", { name: "Continue" }).click();
+    await wizard.getByRole("button", { name: "Continue" }).click();
+    await wizard.getByRole("button", { name: "Continue" }).click();
+    await wizard.getByRole("button", { name: "Skip for now" }).click();
+
+    // It plays on the legitimate first completion.
+    await expect(
+      wizard.getByRole("heading", { name: "You're ready" }),
+    ).toBeVisible();
+    await expect(confetti).not.toHaveCount(0);
+
+    // The stamp is persisted by the action.
+    await expect
+      .poll(async () => {
+        const rows = await sql<{ celebrated_at: string | null }>(
+          `select celebrated_at from studio_onboarding where studio_id = $1`,
+          [seed.studioId],
+        );
+        return rows[0]?.celebrated_at != null;
+      })
+      .toBe(true);
+
+    // Close WITHOUT completing, then reopen from the pinned card. Same mounted
+    // wizard, so shouldCelebrate is still true in its props — the confetti must
+    // not return.
+    await wizard.getByRole("button", { name: "Close setup" }).click();
+    await expect(page.locator(WIZARD)).toHaveCount(0);
+    await page
+      .getByRole("button", { name: /Continue setup|Start setup/ })
+      .click();
+    await expect(page.locator(WIZARD)).toBeVisible();
+    await expect(
+      page.locator(WIZARD).getByRole("heading", { name: "You're ready" }),
+    ).toBeVisible();
+    await expect(page.locator(WIZARD).locator(".hone-confetti")).toHaveCount(0);
   });
 });
