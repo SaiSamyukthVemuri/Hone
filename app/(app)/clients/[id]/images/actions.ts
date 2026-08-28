@@ -14,6 +14,9 @@ import {
   validateTreatmentImagePath,
   sanitizeFilename,
   buildTreatmentImagePath,
+  buildTreatmentImageThumbPath,
+  TREATMENT_IMAGE_THUMB_CACHE_CONTROL,
+  TREATMENT_IMAGE_THUMB_CONTENT_TYPE,
 } from "@/lib/images/treatment-images";
 import { sanitizeTreatmentImage } from "@/lib/images/treatment-image-sanitize";
 import { TREATMENT_NOTE_MAX_LENGTH } from "./note-constants";
@@ -240,6 +243,34 @@ export async function uploadTreatmentImageAction(
         safeDetails: { imageId: id, bucket: TREATMENT_IMAGES_BUCKET },
       });
       return { ok: false, error: "Could not save the image. Please retry." };
+    }
+
+    // PERF-IMG-03. The grid derivative is uploaded LAST, only once the metadata
+    // insert has succeeded. That ordering is deliberate: the failure path above
+    // rolls back by removing [storagePath], and writing the thumbnail before the
+    // insert would create a second orphan class that rollback does not clean.
+    // Uploading it after the record exists also makes failure inherently
+    // non-fatal — the clinical image is already stored and recorded.
+    //
+    // A missing derivative is NOT an error and raises NO alert: the grid signs
+    // the original instead, which is exactly the behaviour before this change.
+    // storagePath here is server-constructed by buildTreatmentImagePath above,
+    // so the derived key inherits that authority rather than any client input.
+    if (sanitized.thumbBytes) {
+      const thumbPath = buildTreatmentImageThumbPath(storagePath);
+      if (thumbPath) {
+        try {
+          await admin.storage
+            .from(TREATMENT_IMAGES_BUCKET)
+            .upload(thumbPath, sanitized.thumbBytes, {
+              contentType: TREATMENT_IMAGE_THUMB_CONTENT_TYPE,
+              cacheControl: TREATMENT_IMAGE_THUMB_CACHE_CONTROL,
+              upsert: false,
+            });
+        } catch {
+          // Swallowed on purpose. See above: the fallback is the original.
+        }
+      }
     }
 
     revalidatePath(`/clients/${clientId}/images`);
