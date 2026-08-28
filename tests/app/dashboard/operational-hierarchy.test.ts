@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import { dayHeading } from "@/lib/dashboard/day-navigation";
 import { join } from "node:path";
+import { COMPOSED_DASHBOARD } from "./helpers/composed-dashboard";
 
 // ===========================================================================
 // Dashboard V2 Part 1 — the operational hierarchy.
@@ -36,10 +37,13 @@ import { join } from "node:path";
 // Deliberately NOT asserted: CSS classes, colours, spacing, or markup shape.
 // Those must stay free to change without touching this file.
 
-const DASH = readFileSync(
-  join(process.cwd(), "app/(app)/dashboard/page.tsx"),
-  "utf8",
-);
+// PERF-01C: the secondary stack (To do, Birthdays, snapshot, setup cards) now
+// renders from app/(app)/dashboard/secondary-stack.tsx behind a Suspense
+// boundary, so the day's roster no longer waits on studio paperwork. These
+// assertions are about what RENDERS and in what order, so they read the
+// COMPOSED source (page with the child spliced in where it renders) rather
+// than half the page. See tests/app/dashboard/helpers/composed-dashboard.ts.
+const DASH = COMPOSED_DASHBOARD;
 
 /**
  * DASH with `//` lines and `{/* jsx *\/}` blocks removed.
@@ -322,10 +326,7 @@ describe("dashboard cleanup — completed setup and pilot tooling do not render"
     // Dashboard-specific, and deleting shared code is a wider decision than this
     // tranche was asked to make.
     expect(existsSync(join(process.cwd(), "lib/pilot/feedback-mailto.ts"))).toBe(true);
-    const page = readFileSync(
-      join(process.cwd(), "app/(app)/dashboard/page.tsx"),
-      "utf8",
-    )
+    const page = COMPOSED_DASHBOARD
       .replace(/\/\*[\s\S]*?\*\//g, "")
       .replace(/\{\/\*[\s\S]*?\*\/\}/g, "");
     expect(page).not.toMatch(/<PilotFeedbackPrompt/);
