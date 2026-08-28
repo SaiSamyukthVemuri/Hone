@@ -10,6 +10,7 @@ import {
   TREATMENT_IMAGES_BUCKET,
   TREATMENT_IMAGE_SIGNED_URL_TTL_SECONDS,
   validateTreatmentImagePath,
+  buildTreatmentImageThumbPath,
 } from "@/lib/images/treatment-images";
 import {
   treatmentPhotoScopeLabel,
@@ -97,6 +98,7 @@ export default async function ClientImagesPage({
   const rows = await Promise.all(
     meta.map(async (m) => {
       let previewUrl: string | null = null;
+      let thumbUrl: string | null = null;
       // Trust boundary (PR #276): only sign a path that binds to this studio +
       // client; a forged/malformed row yields previewUrl=null ("Image not
       // available") instead of being signed.
@@ -108,6 +110,9 @@ export default async function ClientImagesPage({
         storagePath: m.storage_path,
       }).ok;
       if (pathOk) {
+        // PERF-IMG-03. The ORIGINAL is always signed, unconditionally. It is the
+        // clinical record and the guaranteed fallback, so nothing about the
+        // derivative may make it unavailable.
         try {
           const { data } = await admin.storage
             .from(TREATMENT_IMAGES_BUCKET)
@@ -118,6 +123,35 @@ export default async function ClientImagesPage({
           previewUrl = data?.signedUrl ?? null;
         } catch {
           previewUrl = null;
+        }
+        // The grid derivative is signed SECOND, only as an optimisation, and
+        // ONLY IF THE ORIGINAL WAS SUCCESSFULLY SIGNED.
+        //
+        // That `previewUrl` guard is the load-bearing part: a derivative's
+        // authorization must never EXCEED the original's. Without it, an
+        // original whose signing failed would still hand the browser a working
+        // signed URL to derived clinical image content — the grid would not
+        // render it (availability keys off the original), but the URL would
+        // have been minted and shipped, which is authorization the original
+        // never obtained.
+        //
+        // VALIDATE FIRST, DERIVE SECOND: the key is derived from the path that
+        // just passed validateTreatmentImagePath, so it carries that same
+        // studio/client binding and no separate authorization is invented here.
+        // Rows uploaded before this change have no derivative; createSignedUrl
+        // fails for a missing object and thumbUrl simply stays null.
+        const thumbPath = previewUrl
+          ? buildTreatmentImageThumbPath(m.storage_path)
+          : null;
+        if (thumbPath) {
+          try {
+            const { data } = await admin.storage
+              .from(TREATMENT_IMAGES_BUCKET)
+              .createSignedUrl(thumbPath, TREATMENT_IMAGE_SIGNED_URL_TTL_SECONDS);
+            thumbUrl = data?.signedUrl ?? null;
+          } catch {
+            thumbUrl = null;
+          }
         }
       }
       // Embedded to-one can arrive as an object or a single-element array.
@@ -147,6 +181,9 @@ export default async function ClientImagesPage({
         note: m.practitioner_note ?? null,
         createdAt: m.created_at,
         previewUrl,
+        // Null whenever no derivative could be signed; the grid then renders
+        // previewUrl (the original) exactly as it did before this change.
+        thumbUrl,
         scopeLabel: treatmentPhotoScopeLabel({
           sessionId: m.session_id,
           sessionBlockId: m.session_block_id,
