@@ -131,3 +131,76 @@ export function validateTreatmentImagePath(input: {
   }
   return { ok: true };
 }
+
+// ---------------------------------------------------------------------------
+// PERF-IMG-03. Grid thumbnail derivative.
+//
+// The grid renders each photo into a box measured at ~288px (lg, 3-col), ~449px
+// (sm/md, 2-col — the largest) and ~326px (mobile, 1-col), while the stored
+// original keeps whatever resolution the camera produced. THUMB_MAX_EDGE is
+// chosen from those measured boxes: 449px at 2x DPR needs ~898px and 326px at
+// 3x needs ~978px, so 1024 clears the worst case rather than guessing at it.
+//
+// WebP, not JPEG, for every source format: a PNG source flattened to JPEG would
+// render transparency as black, and `webp` is already permitted by BOTH the
+// ALLOWED_FILENAME regex above and the 0093 storage_path CHECK, so the derived
+// key needs no widening of either.
+export const TREATMENT_IMAGE_THUMB_MAX_EDGE = 1024;
+export const TREATMENT_IMAGE_THUMB_QUALITY = 80;
+export const TREATMENT_IMAGE_THUMB_CONTENT_TYPE = "image/webp" as const;
+// One year: the object is immutable once written (a new upload gets a new uuid),
+// so the only thing bounding reuse is the 60s signed-URL token, not this value.
+export const TREATMENT_IMAGE_THUMB_CACHE_CONTROL = "31536000";
+
+const THUMB_SUFFIX = ".thumb.webp";
+
+// Derive the thumbnail object key from an ORIGINAL key that the caller has
+// ALREADY validated with validateTreatmentImagePath.
+//
+// This function does NOT authorize anything and must never be the only check:
+// it is a pure string derivation, so the studio/client binding it carries is
+// exactly the binding of the path handed to it. Validate first, derive second.
+// Returning null on any unexpected shape keeps a malformed original from
+// producing a well-formed key that would then be signed.
+export function buildTreatmentImageThumbPath(
+  originalStoragePath: string,
+): string | null {
+  const path = originalStoragePath ?? "";
+  const segments = path.split("/");
+  if (segments.length !== 3) return null;
+  const [studioSeg, clientSeg, filename] = segments;
+  if (!ALLOWED_FILENAME.test(filename)) return null;
+  // Strip exactly the final extension; the basename keeps its own dots, which
+  // ALLOWED_FILENAME already permits.
+  const dot = filename.lastIndexOf(".");
+  if (dot <= 0) return null;
+  const base = filename.slice(0, dot);
+  const thumbFilename = `${base}${THUMB_SUFFIX}`;
+  // Defence in depth: the DERIVED name must itself satisfy the same allowlist
+  // the signer's validator applies, so this can never mint a shape the trust
+  // boundary would reject downstream.
+  if (!ALLOWED_FILENAME.test(thumbFilename)) return null;
+  return `${studioSeg}/${clientSeg}/${thumbFilename}`;
+}
+
+// Which URL the GRID cell should render, and whether it may render at all.
+//
+// Extracted as a pure function because the guarantee it encodes is the one that
+// matters most in this slice and is the hardest to reach through a render test:
+// a derivative that is absent, or that fails to load, must DEMOTE the cell to
+// the original — never hide it. `showPreview` therefore depends on the ORIGINAL
+// alone, exactly as it did before derivatives existed.
+export function selectGridImageSource(input: {
+  previewUrl: string | null; // the ORIGINAL, signed
+  thumbUrl: string | null; // the derivative, signed, or null when there is none
+  thumbFailed: boolean; // this derivative already failed to LOAD
+  broken: boolean; // the ORIGINAL already failed to load
+}): { src: string | null; showPreview: boolean; usingThumb: boolean } {
+  const showPreview = !!input.previewUrl && !input.broken;
+  const usingThumb = !!input.thumbUrl && !input.thumbFailed;
+  return {
+    src: usingThumb ? input.thumbUrl : input.previewUrl,
+    showPreview,
+    usingThumb,
+  };
+}
