@@ -15,22 +15,24 @@ import type { OnboardingModel } from "@/lib/onboarding/steps";
 // and asserting on it through a browser means asserting on timing luck. Here the
 // interleaving is written down.
 //
-// ANTI-VACUITY, against BOTH earlier versions.
+// ANTI-VACUITY, against every earlier version — because three of them were
+// wrong, and each was wrong in a way the previous controls did not catch.
 //
-// (1) The pre-repair wizard — a `stampInFlight` ref, a `lastModel` ref, and the
-// boolean pair `closedAfterShowing && stampConfirmed`. NINE of these 18 read red
-// there, including the P3 as an outcome and again as a mechanism.
+// (1) The pre-repair wizard: a `stampInFlight` ref, a `lastModel` ref, and
+//     `closedAfterShowing && stampConfirmed`. TEN of these 20 read red.
 //
-// (2) The FIRST version of this machine, which fixed deferral but made the
-// durable stamp showing-scoped as well. THREE read red there for semantic
-// reasons, and they are the controls that exist because of it:
+// (2) Machine v1, which resolved deferral but scoped the durable stamp to a
+//     showing as well. FIVE read red for semantic reasons, chiefly:
+//       * "retains a durable success from a superseded showing, without spending it"
+//       * "a superseded FAILURE retracts nothing and clears nothing"
+//       * "a durable stamp survives supersession and a later failure"
+//     (Two more fail there only because v1 named the field `stamped`. Those are
+//     rename artefacts, not discriminators, and are not counted as such.)
 //
-//   * "retains a durable success from a superseded showing, without spending it"
-//   * "a superseded FAILURE retracts nothing and clears nothing"
-//   * "a durable stamp survives supersession and a later failure"
-//
-// (Two further controls also fail against that version, but only because it
-// named the field `stamped`; those are rename artefacts, not discriminators.)
+// (3) Machine v2, which let a deferred model retract a confirmed stamp. TWO
+//     read red:
+//       * "a deferred model cannot retract a success recorded while it waited"
+//       * "a positive model arriving after a confirmed stamp retracts nothing"
 //
 // The controls that pass against every version are here to pin behaviour that
 // was already correct, so a repair cannot regress it. Knowing which is which is
@@ -227,21 +229,25 @@ describe("celebration machine — required deterministic controls", () => {
     expect(isCelebrationSpent(settled)).toBe(true);
   });
 
-  // F. a genuinely fresh positive model AFTER settlement regains authority
-  it("F: a fresh positive model after settlement makes it eligible again", () => {
-    const spent = drive([
+  // F. a genuinely fresh positive model AFTER settlement regains authority.
+  //
+  // Scoped to the case where it can be authoritative: the stamp was REFUSED, so
+  // nothing was written and a model reporting the celebration as owed is simply
+  // correct. (After a CONFIRMED stamp the same model is provably stale — see the
+  // monotonicity controls below.)
+  it("F: after a refusal, a fresh positive model makes it eligible again", () => {
+    const stuck = drive([
       ...showing(1),
-      { type: "STAMP_SUCCEEDED", showing: 1 },
+      { type: "STAMP_REFUSED_OR_FAILED", showing: 1 },
       { type: "OWNER_CLOSED_AFTER_SHOWING" },
     ]);
-    expect(isCelebrationSpent(spent)).toBe(true);
+    expect(stuck.closed).not.toBe(0);
 
-    // The server says it is owed again, with nothing in flight to make that
-    // claim stale. The server wins.
-    const fresh = celebrationReducer(spent, {
+    const fresh = celebrationReducer(stuck, {
       type: "SERVER_MODEL_ARRIVED",
       model: serverModel(true),
     });
+    expect(fresh.closed).toBe(0);
     expect(isCelebrationSpent(fresh)).toBe(false);
   });
 
@@ -251,15 +257,15 @@ describe("celebration machine — required deterministic controls", () => {
   it("F: retiring suppression keeps the on-screen showing closable", () => {
     const retired = drive([
       ...showing(1),
-      { type: "STAMP_SUCCEEDED", showing: 1 },
+      { type: "STAMP_REFUSED_OR_FAILED", showing: 1 },
       { type: "OWNER_CLOSED_AFTER_SHOWING" },
       { type: "SERVER_MODEL_ARRIVED", model: serverModel(true) },
     ]);
+    expect(retired.closed).toBe(0);
     expect(retired.live).not.toBe(0);
-    const closedAgain = drive(
-      [{ type: "STAMP_SUCCEEDED", showing: 1 }],
-      celebrationReducer(retired, { type: "OWNER_CLOSED_AFTER_SHOWING" }),
-    );
+    const closedAgain = celebrationReducer(retired, {
+      type: "OWNER_CLOSED_AFTER_SHOWING",
+    });
     expect(closedAgain.closed).toBe(retired.live);
   });
 
@@ -366,6 +372,51 @@ describe("celebration machine — what the client may never do", () => {
     });
     expect(closed.stampConfirmed).toBe(true);
     expect(isCelebrationSpent(closed)).toBe(true);
+  });
+
+  // Codex's finding on the second version of this machine.
+  //
+  // A positive model read before showing 1's stamp committed, but arriving after
+  // showing 2 started, was held as `deferred`; when showing 2 then FAILED, the
+  // machine applied it and cleared the `stampConfirmed` that showing 1's success
+  // had just recorded. The server never retracted `celebrated_at`, so closing and
+  // reopening showing 2 replayed the celebration.
+  it("a deferred model cannot retract a success recorded while it waited", () => {
+    const settled = drive([
+      { type: "SERVER_MODEL_ARRIVED", model: serverModel(true) },
+      ...showing(1),
+      ...showing(2), // showing 2 supersedes showing 1's request
+      // Read before showing 1 committed, delivered after showing 2 started.
+      { type: "SERVER_MODEL_ARRIVED", model: serverModel(true) },
+      { type: "STAMP_SUCCEEDED", showing: 1 }, // the write DID land
+      { type: "STAMP_REFUSED_OR_FAILED", showing: 2 },
+    ]);
+    expect(settled.stampConfirmed).toBe(true);
+    const closed = celebrationReducer(settled, {
+      type: "OWNER_CLOSED_AFTER_SHOWING",
+    });
+    expect(isCelebrationSpent(closed)).toBe(true);
+  });
+
+  // The same rule stated directly, and the reason it is a property of the FACT
+  // rather than of the timing: `celebrated_at` is stamp-once on a protected
+  // field and never returns to null, so a model reporting the celebration as
+  // owed was necessarily read BEFORE the write, whenever it arrives.
+  it("a positive model arriving after a confirmed stamp retracts nothing", () => {
+    const spent = drive([
+      ...showing(1),
+      { type: "STAMP_SUCCEEDED", showing: 1 },
+      { type: "OWNER_CLOSED_AFTER_SHOWING" },
+    ]);
+    expect(isCelebrationSpent(spent)).toBe(true);
+
+    const after = celebrationReducer(spent, {
+      type: "SERVER_MODEL_ARRIVED",
+      model: serverModel(true),
+    });
+    expect(after.stampConfirmed).toBe(true);
+    expect(after.closed).toBe(spent.closed);
+    expect(isCelebrationSpent(after)).toBe(true);
   });
 
   it("treats a client-only re-render as saying nothing new", () => {

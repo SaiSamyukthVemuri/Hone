@@ -4,7 +4,7 @@ import type { OnboardingModel } from "./steps";
 //
 // WHY A MACHINE RATHER THAN A HANDFUL OF FLAGS
 // --------------------------------------------
-// Five successive review findings on #658 were one defect wearing different
+// Six successive review findings on #658 were one defect wearing different
 // clothes: CLIENT-LOCAL STATE OUTLIVING OR OUTRANKING FRESH SERVER AUTHORITY.
 //
 //   1. `completedLocally` never cleared        -> a latch, not a bridge
@@ -12,6 +12,7 @@ import type { OnboardingModel } from "./steps";
 //   3. a stale in-flight model discarded the close -> the conjunction never completed
 //   4. a model deferred during a stamp was never revisited
 //   5. a durable stamp was DISCARDED because its showing had been superseded
+//   6. a durable stamp was RETRACTED by a model that predated the write
 //
 // (4) is why flags are the wrong tool. A model arriving while the stamp was in
 // flight was correctly SKIPPED — it cannot have observed the outcome of a
@@ -23,8 +24,8 @@ import type { OnboardingModel } from "./steps";
 // shaped this file. Two things were being conflated:
 //
 //   * WHETHER THE SERVER DURABLY STAMPED is a fact about the STUDIO. Once
-//     `celebrated_at` is written it stays written. It is monotonic, and only the
-//     server may retract it.
+//     `celebrated_at` is written it stays written — stamp-once, and never
+//     cleared by anything.
 //   * WHICH SHOWING THE OWNER CLOSED is a fact about one showing of the confetti.
 //
 // The first version of this machine made BOTH showing-scoped, so a stamp that
@@ -41,10 +42,12 @@ import type { OnboardingModel } from "./steps";
 //        STAMP_REFUSED_OR_FAILED -> nothing was written, so the model is still
 //                                   truthful and is APPLIED.
 //
-//   B. A CONFIRMED STAMP IS DURABLE AND MONOTONIC. A later refusal cannot unset
-//      it, and neither can its own showing being superseded. Only a fresh server
-//      model saying the celebration is still owed retracts it — because that is
-//      the server itself saying `celebrated_at` is not set.
+//   B. A CONFIRMED STAMP IS DURABLE AND MONOTONIC, AND NOTHING RETRACTS IT.
+//      A later refusal cannot unset it, its own showing being superseded cannot,
+//      and neither can a server model still reporting the celebration as owed —
+//      because `celebrated_at` is stamp-once on a protected field and never
+//      returns to null, so such a model was necessarily READ BEFORE the write.
+//      It is stale by construction, whenever it arrives.
 //
 //   C. SUPPRESSION REQUIRES THE OWNER TO HAVE CLOSED THE SHOWING THEY ARE BEING
 //      SHOWN. `closed === live`, not a bare boolean. This is what stops an old
@@ -73,7 +76,7 @@ export type CelebrationState = {
   closed: ShowingId;
   /**
    * The server has durably recorded the stamp. A fact about the studio, not
-   * about a showing: monotonic, and retracted only by the server.
+   * about a showing: monotonic and never retracted, mirroring `celebrated_at`.
    */
   stampConfirmed: boolean;
   /** The showing whose stamp request is still outstanding. */
@@ -123,9 +126,24 @@ export function isCelebrationSpent(state: CelebrationState): boolean {
 }
 
 /**
- * Hand authority back to the server. A model still reporting the celebration as
- * owed means `celebrated_at` is not set, which contradicts any local belief that
- * the stamp landed — so that belief is dropped along with the recorded close.
+ * Hand authority back to the server: a model still reporting the celebration as
+ * owed retires the recorded close, so the celebration can be offered again.
+ *
+ * IT CANNOT RETRACT A CONFIRMED STAMP. `celebrated_at` is written by exactly one
+ * path — `admin_mark_onboarding_celebrated`, an idempotent stamp-once CAS on
+ * `celebrated_at is null` — on a field the guard trigger makes trusted-server-
+ * only, with no reset path anywhere. It is MONOTONIC in the database: null to a
+ * timestamp, never back.
+ *
+ * So a model reporting `shouldCelebrate` (which requires `celebrated_at IS NULL`
+ * at read time) that arrives after a confirmed stamp must have been READ BEFORE
+ * that write. It is stale, not authoritative, whenever it happens to arrive —
+ * which is why this is a property of the FACT and not of the timing.
+ *
+ * This does not let the client spend a celebration the server owes:
+ * `stampConfirmed` is set only from `res.ok`, so it being true means the write
+ * genuinely landed and the server owes nothing. A refusal leaves it false and
+ * the celebration owed, exactly as before.
  *
  * `live` deliberately survives. Retiring it too would orphan a showing that is
  * still on screen: the confetti stays mounted, no CELEBRATION_SHOWN fires again
@@ -137,8 +155,9 @@ function retire(
   model: OnboardingModel,
 ): CelebrationState {
   if (!model.shouldCelebrate) return state;
-  if (state.closed === 0 && !state.stampConfirmed) return state;
-  return { ...state, closed: 0, stampConfirmed: false };
+  if (state.stampConfirmed) return state;
+  if (state.closed === 0) return state;
+  return { ...state, closed: 0 };
 }
 
 export function celebrationReducer(
