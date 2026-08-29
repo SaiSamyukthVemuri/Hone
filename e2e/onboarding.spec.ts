@@ -293,6 +293,11 @@ test.describe("onboarding v2 — flag ON", () => {
     await wizard.getByRole("button", { name: "Skip for now" }).click();
 
     // Close IMMEDIATELY — no wait for the heading, the confetti or the action.
+    // This is the ordering that also fires dismissOnboardingAction, which DOES
+    // revalidate /dashboard: that render can return a model still saying
+    // shouldCelebrate=true because the stamp has not committed yet. A model that
+    // stale must NOT discard the recorded close, or the conjunction never
+    // completes and a reopen replays the confetti.
     await wizard.getByRole("button", { name: "Close setup" }).click();
     await expect(page.locator(WIZARD)).toHaveCount(0);
 
@@ -308,6 +313,16 @@ test.describe("onboarding v2 — flag ON", () => {
       .toBe(true);
 
     // With the stamp confirmed and the wizard closed, reopening does not replay.
+    await page
+      .getByRole("button", { name: /Continue setup|Start setup/ })
+      .click();
+    await expect(page.locator(WIZARD)).toBeVisible();
+    await expect(page.locator(WIZARD).locator(".hone-confetti")).toHaveCount(0);
+
+    // And again after a second close/reopen: a close discarded by a stale
+    // in-flight model would leave the conjunction incomplete and replay here.
+    await page.locator(WIZARD).getByRole("button", { name: "Close setup" }).click();
+    await expect(page.locator(WIZARD)).toHaveCount(0);
     await page
       .getByRole("button", { name: /Continue setup|Start setup/ })
       .click();

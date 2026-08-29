@@ -161,10 +161,27 @@ export function OnboardingWizard({
   // and the server is the authority. Same prop-identity signal the completion
   // bridge uses in OnboardingSurface: a server render ships a new model object,
   // a client-only re-render reuses the prop.
+  //
+  // ...EXCEPT WHILE THE STAMP IS STILL IN FLIGHT. Closing also fires
+  // dismissOnboardingAction, which DOES revalidate /dashboard. That render can
+  // read `celebrated_at` BEFORE this stamp commits and hand back a model still
+  // saying shouldCelebrate=true — a model that is STALE WITH RESPECT TO THE
+  // REQUEST ALREADY IN FLIGHT. Letting it clear `closedAfterShowing` lost the
+  // recorded close, the stamp then set only `stampConfirmed`, and the
+  // conjunction stayed false: a synchronous reopen replayed the confetti.
+  // Codex raised this on #658 and was right; it is race (B) again, one level in.
+  //
+  // A model may only retire local state once it could actually have observed
+  // the outcome, so the reset waits for the request to settle.
+  const stampInFlight = useRef(false);
   const lastModel = useRef(model);
   if (lastModel.current !== model) {
     lastModel.current = model;
-    if (model.shouldCelebrate && (closedAfterShowing || stampConfirmed)) {
+    if (
+      model.shouldCelebrate &&
+      !stampInFlight.current &&
+      (closedAfterShowing || stampConfirmed)
+    ) {
       shown.current = false;
       setClosedAfterShowing(false);
       setStampConfirmed(false);
@@ -174,11 +191,18 @@ export function OnboardingWizard({
   useEffect(() => {
     if (open && showConfetti) {
       shown.current = true;
+      stampInFlight.current = true;
       startTransition(async () => {
         // The RESULT is what makes it spendable. A refusal leaves the
         // celebration owed, exactly as the server sees it.
-        const res = await markCelebrationShownAction();
-        if (res.ok) setStampConfirmed(true);
+        try {
+          const res = await markCelebrationShownAction();
+          if (res.ok) setStampConfirmed(true);
+        } finally {
+          // Cleared in `finally` so a thrown action cannot strand the flag and
+          // block every later model from retiring stale local state.
+          stampInFlight.current = false;
+        }
       });
     }
     // Fire once when landing on a celebratory success step.
