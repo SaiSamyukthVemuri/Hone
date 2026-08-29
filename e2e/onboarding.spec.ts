@@ -273,6 +273,101 @@ test.describe("onboarding v2 — flag ON", () => {
     ).not.toHaveCount(0);
   });
 
+  // PERF-01C negative control. THE RETRY AFTER A REFUSAL.
+  //
+  // The browser-observable half of the #658 P3: a celebration the server refused
+  // stays owed, the owner reopens, and the RETRY succeeds. The close belonging to
+  // the FIRST showing must not combine with the SECOND showing's stamp — or the
+  // celebration the owner is looking at right now vanishes before they close it.
+  //
+  // Determinism: the refusal is forced (services deactivated after the done-step
+  // model rendered) and so is the recovery (reactivated before the reopen), so
+  // both stamp outcomes are certain. What is NOT pinned here is whether the
+  // revalidated model lands while the retry is still in flight; the assertion
+  // holds either way. That interleaving is pinned deterministically in
+  // tests/lib/onboarding/celebration-machine.test.ts, where it can be written
+  // down rather than raced.
+  test("a retry after a refusal is not spent by the previous showing's close", async ({
+    page,
+  }) => {
+    const seed = await seedE2eStudio();
+    await setStudioOnboardingV2Enabled(seed.studioId, true);
+    await loginAsOwner(page, seed);
+
+    const wizard = page.locator(WIZARD);
+    await expect(wizard).toBeVisible();
+    await wizard.getByRole("button", { name: "Get started" }).click();
+    await wizard.getByRole("button", { name: "Continue" }).click();
+    await wizard.getByRole("button", { name: "Continue" }).click();
+    await wizard.getByRole("button", { name: "Continue" }).click();
+
+    // Force the refusal: the rendered model still says the celebration is owed.
+    await sql(`update services set active = false where studio_id = $1`, [
+      seed.studioId,
+    ]);
+    await wizard.getByRole("button", { name: "Skip for now" }).click();
+    await expect(
+      wizard.getByRole("heading", { name: "You're ready" }),
+    ).toBeVisible();
+    await expect
+      .poll(async () => {
+        const rows = await sql<{ celebrated_at: string | null }>(
+          `select celebrated_at from studio_onboarding where studio_id = $1`,
+          [seed.studioId],
+        );
+        return rows[0]?.celebrated_at ?? null;
+      })
+      .toBeNull();
+
+    // The owner closes the refused showing. This is the close that must not
+    // outlive its showing.
+    await wizard.getByRole("button", { name: "Close setup" }).click();
+    await expect(page.locator(WIZARD)).toHaveCount(0);
+
+    // Setup is genuinely green again, so the server owes the celebration and the
+    // retry will succeed.
+    await sql(`update services set active = true where studio_id = $1`, [
+      seed.studioId,
+    ]);
+    await page
+      .getByRole("button", { name: /Continue setup|Start setup/ })
+      .click();
+    await expect(page.locator(WIZARD)).toBeVisible();
+    await expect(
+      page.locator(WIZARD).locator(".hone-confetti"),
+    ).not.toHaveCount(0);
+
+    // The retry lands.
+    await expect
+      .poll(async () => {
+        const rows = await sql<{ celebrated_at: string | null }>(
+          `select celebrated_at from studio_onboarding where studio_id = $1`,
+          [seed.studioId],
+        );
+        return rows[0]?.celebrated_at != null;
+      })
+      .toBe(true);
+
+    // THE ASSERTION. A confirmed stamp alone spends nothing: this showing has not
+    // been closed, so the confetti is still owed to the owner. The old close
+    // belongs to a showing that is over.
+    await expect(
+      page.locator(WIZARD).locator(".hone-confetti"),
+    ).not.toHaveCount(0);
+
+    // And once THIS showing is closed, it is spent for real.
+    await page
+      .locator(WIZARD)
+      .getByRole("button", { name: "Close setup" })
+      .click();
+    await expect(page.locator(WIZARD)).toHaveCount(0);
+    await page
+      .getByRole("button", { name: /Continue setup|Start setup/ })
+      .click();
+    await expect(page.locator(WIZARD)).toBeVisible();
+    await expect(page.locator(WIZARD).locator(".hone-confetti")).toHaveCount(0);
+  });
+
   // PERF-01C negative control. The close may land BEFORE the stamp resolves.
   // Suppression is a conjunction computed during render, so neither ordering has
   // its own branch — this drives the close-first ordering explicitly and asserts

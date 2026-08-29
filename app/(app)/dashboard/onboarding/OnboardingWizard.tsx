@@ -1,6 +1,13 @@
 "use client";
 
-import { useEffect, useId, useRef, useState, useTransition } from "react";
+import {
+  useEffect,
+  useId,
+  useReducer,
+  useRef,
+  useState,
+  useTransition,
+} from "react";
 import Link from "next/link";
 import {
   ONBOARDING_STEP_ORDER,
@@ -8,6 +15,11 @@ import {
   type OnboardingStepKey,
   type OnboardingStepState,
 } from "@/lib/onboarding/steps";
+import {
+  INITIAL_CELEBRATION_STATE,
+  celebrationReducer,
+  isCelebrationSpent,
+} from "@/lib/onboarding/celebration-machine";
 import { OnboardingModal } from "./OnboardingModal";
 import { Celebration } from "./Celebration";
 import {
@@ -117,102 +129,82 @@ export function OnboardingWizard({
   const nextKey = ONBOARDING_STEP_ORDER[activeIndex + 1];
   const prevKey = ONBOARDING_STEP_ORDER[activeIndex - 1];
 
-  // PERF-01C. THIS celebration, once played, is consumed for this mounted
-  // wizard — independently of when refreshed server state arrives.
+  // PERF-01C. The one-time celebration is driven by an explicit state machine —
+  // see lib/onboarding/celebration-machine.ts for the transitions and the
+  // reasoning. This component only turns React lifecycle into EVENTS.
   //
-  // `markCelebrationShownAction` no longer revalidates the dashboard (that is
-  // what re-suspended the wizard's transition and disabled its buttons), so a
-  // MOUNTED wizard keeps carrying `model.shouldCelebrate === true` until a
-  // genuinely new server model lands. Closing the success step and reopening it
-  // from the pinned card is synchronous, so without this the confetti replayed
-  // even though `celebrated_at` was already stamped. Codex raised it on #658.
+  // Why a machine and not a few flags: four successive #658 review findings were
+  // the same defect — client-local state outliving or outranking fresh server
+  // authority — and the last one is only reachable with flags. A model arriving
+  // while the stamp is unresolved was correctly SKIPPED (it cannot have observed
+  // the outcome), but the skip was recorded in a REF. A ref mutation is not a
+  // render, so nothing ever reconsidered that model when the request settled and
+  // the deferred transition was simply lost. Deferral without resolution is
+  // discarding on a delay.
   //
-  // The SERVER STAMP REMAINS THE DURABLE AUTHORITY: on any fresh render
-  // `model.shouldCelebrate` is false because `celebrated_at` is set, and the
-  // action still refuses to stamp unless the live model is genuinely complete,
-  // so this local flag cannot consume a celebration the owner never earned.
-  // SPENT ONLY ON A CONFIRMED SERVER STAMP, and DERIVED rather than assigned.
+  // Two things follow, and both live in the reducer rather than here:
+  //   * a deferred model is RESOLVED BY THE OUTCOME — discarded on a successful
+  //     stamp (it provably predates the write), applied on a refusal (nothing
+  //     was written, so it is still true);
+  //   * suppression compares SHOWING IDS, not booleans, so a close can only ever
+  //     be completed by the stamp of the same showing.
   //
-  // Two earlier attempts were wrong in opposite directions. Marking it consumed
-  // inside the effect that fires the stamp removed the confetti on the very next
-  // render — the owner never saw the celebration they earned. Spending it on
-  // close instead fixed that, but recorded mere VISUAL PLAYBACK: the action's
-  // result was discarded, so a stamp the server REFUSED (`not_ready`, because
-  // the live model is no longer complete) still consumed the celebration while
-  // `celebrated_at` stayed null. The server would still owe it and the client
-  // would never show it again. Codex raised that on #658 and was right.
-  //
-  // So the two facts are tracked separately — the owner has SEEN it and been
-  // shown a close, and the SERVER has confirmed the durable stamp — and
-  // suppression is their conjunction, computed during render. Because it is
-  // derived, BOTH orderings fall out for free: the action resolving before the
-  // close, and the owner closing before the action resolves. There is no
-  // ordering-dependent branch to get wrong.
-  const shown = useRef(false);
-  const [closedAfterShowing, setClosedAfterShowing] = useState(false);
-  const [stampConfirmed, setStampConfirmed] = useState(false);
-  const celebrationSpent = closedAfterShowing && stampConfirmed;
-  const showConfetti =
-    active.key === "done" && model.shouldCelebrate && !celebrationSpent;
+  // The server remains the durable authority throughout: `model.shouldCelebrate`
+  // decides whether one is owed, and only `res.ok` can confirm a stamp.
+  const [celebration, dispatch] = useReducer(
+    celebrationReducer,
+    INITIAL_CELEBRATION_STATE,
+  );
 
-  // A FRESH SERVER MODEL THAT STILL SAYS THE CELEBRATION IS OWED clears any
-  // local suppression. If the stamp had really landed, the next model would
-  // report shouldCelebrate=false; it saying TRUE means the server still owes it,
-  // and the server is the authority. Same prop-identity signal the completion
-  // bridge uses in OnboardingSurface: a server render ships a new model object,
-  // a client-only re-render reuses the prop.
-  //
-  // ...EXCEPT WHILE THE STAMP IS STILL IN FLIGHT. Closing also fires
-  // dismissOnboardingAction, which DOES revalidate /dashboard. That render can
-  // read `celebrated_at` BEFORE this stamp commits and hand back a model still
-  // saying shouldCelebrate=true — a model that is STALE WITH RESPECT TO THE
-  // REQUEST ALREADY IN FLIGHT. Letting it clear `closedAfterShowing` lost the
-  // recorded close, the stamp then set only `stampConfirmed`, and the
-  // conjunction stayed false: a synchronous reopen replayed the confetti.
-  // Codex raised this on #658 and was right; it is race (B) again, one level in.
-  //
-  // A model may only retire local state once it could actually have observed
-  // the outcome, so the reset waits for the request to settle.
-  const stampInFlight = useRef(false);
-  const lastModel = useRef(model);
-  if (lastModel.current !== model) {
-    lastModel.current = model;
-    if (
-      model.shouldCelebrate &&
-      !stampInFlight.current &&
-      (closedAfterShowing || stampConfirmed)
-    ) {
-      shown.current = false;
-      setClosedAfterShowing(false);
-      setStampConfirmed(false);
-    }
+  // SERVER_MODEL_ARRIVED, folded in DURING RENDER so a fresh model is applied
+  // before paint rather than a frame late. Guarded by identity — a server render
+  // ships a new model object over the RSC payload, a client-only re-render
+  // reuses the prop — and the reducer records what it has seen, so this
+  // converges after one extra render pass.
+  if (celebration.seen !== model) {
+    dispatch({ type: "SERVER_MODEL_ARRIVED", model });
   }
 
+  const showConfetti =
+    active.key === "done" &&
+    model.shouldCelebrate &&
+    !isCelebrationSpent(celebration);
+
+  // Showing ids are allocated here, not in the reducer, so the async settlement
+  // below can carry the id of the request it belongs to. A superseded reply then
+  // decides nothing about the showing that replaced it. This ref is an id
+  // source only: every DECISION is a dispatch, and therefore a render.
+  const showings = useRef(0);
+
   useEffect(() => {
-    if (open && showConfetti) {
-      shown.current = true;
-      stampInFlight.current = true;
-      startTransition(async () => {
-        // The RESULT is what makes it spendable. A refusal leaves the
-        // celebration owed, exactly as the server sees it.
-        try {
-          const res = await markCelebrationShownAction();
-          if (res.ok) setStampConfirmed(true);
-        } finally {
-          // Cleared in `finally` so a thrown action cannot strand the flag and
-          // block every later model from retiring stale local state.
-          stampInFlight.current = false;
-        }
-      });
-    }
+    dispatch({
+      type: open ? "OWNER_REOPENED" : "OWNER_CLOSED_AFTER_SHOWING",
+    });
+  }, [open]);
+
+  useEffect(() => {
+    if (!(open && showConfetti)) return;
+    // A distinct showing of the confetti, with its own id.
+    const showing = (showings.current += 1);
+    dispatch({ type: "CELEBRATION_SHOWN", showing });
+    dispatch({ type: "STAMP_STARTED", showing });
+    startTransition(async () => {
+      // The RESULT is what makes it spendable. A refusal leaves the celebration
+      // owed, exactly as the server sees it — and settles any model deferred
+      // behind this request instead of stranding it.
+      try {
+        const res = await markCelebrationShownAction();
+        dispatch(
+          res.ok
+            ? { type: "STAMP_SUCCEEDED", showing }
+            : { type: "STAMP_REFUSED_OR_FAILED", showing },
+        );
+      } catch {
+        dispatch({ type: "STAMP_REFUSED_OR_FAILED", showing });
+      }
+    });
     // Fire once when landing on a celebratory success step.
   }, [open, showConfetti]);
-  useEffect(() => {
-    // Closing records only that the owner has SEEN it. On its own this suppresses
-    // nothing — `shown` keeps a close BEFORE any celebration from counting, and
-    // the confirmed stamp is the other half of the conjunction.
-    if (!open && shown.current) setClosedAfterShowing(true);
-  }, [open]);
 
   function goTo(step: OnboardingStepKey) {
     setActiveStep(step);
