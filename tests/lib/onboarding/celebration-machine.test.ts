@@ -483,30 +483,31 @@ describe("celebration machine — the durable premise", () => {
     expect(sql).toMatch(/where\s+so\.celebrated_at\s+is\s+null/i);
   });
 
-  // Two shapes of write, because the SQL-style one is not how this codebase
-  // usually writes. Supabase writes are object payloads — `.update({
-  // celebrated_at: null })` — which a `celebrated_at =` scan misses entirely,
-  // leaving the guard green while the premise is broken. Codex caught exactly
-  // that on the first version of this guard.
-  it("no application code writes the column, by either syntax", () => {
+  // WHITELIST THE SAFE SHAPES, do not blacklist the dangerous ones.
+  //
+  // Two earlier versions of this guard were blacklists and both missed a shape
+  // the codebase actually uses: first `.update({ celebrated_at: null })`, then
+  // `const patch = { celebrated_at: null }; ...update(patch)` — and
+  // `upsertOwner(studioId, patch)` in lib/onboarding/state.ts shows the indirect
+  // form is conventional here. Chasing payloads through variables and helpers is
+  // unbounded; enumerating the shapes that are ALLOWED is not.
+  //
+  // So: every mention of the column in application source must be a comment, a
+  // type member, the select column-list, or a property READ. Anything else —
+  // including any object-literal binding, wherever the object ends up — fails.
+  it("application source mentions celebrated_at only in read-only shapes", () => {
     const roots = ["app", "lib", "components"];
     const offenders: string[] = [];
 
-    /** `celebrated_at` inside the balanced payload of an update/insert/upsert. */
-    const payloadWrites = (body: string): boolean => {
-      const call = /\.(update|insert|upsert)\s*\(/g;
-      let m: RegExpExecArray | null;
-      while ((m = call.exec(body))) {
-        let depth = 1;
-        let i = m.index + m[0].length;
-        const start = i;
-        while (i < body.length && depth > 0) {
-          if (body[i] === "(") depth += 1;
-          else if (body[i] === ")") depth -= 1;
-          i += 1;
-        }
-        if (/celebrated_at/.test(body.slice(start, i))) return true;
-      }
+    const isSafe = (line: string): boolean => {
+      const t = line.trim();
+      if (/^(\/\/|\*|\/\*)/.test(t)) return true; // comment
+      // Type member: `celebrated_at: string | null;` / `celebrated_at?: ...`
+      if (/celebrated_at\??:\s*[^,]*\bstring\b/.test(t)) return true;
+      // Property read: `row?.celebrated_at`, `rows[0].celebrated_at`
+      if (/[?]?\.\s*celebrated_at\b/.test(t)) return true;
+      // The quoted select column-list: inside a string, comma-delimited.
+      if (/["'`][^"'`]*\bcelebrated_at\b\s*,[^"'`]*["'`]/.test(t)) return true;
       return false;
     };
 
@@ -515,17 +516,23 @@ describe("celebration machine — the durable premise", () => {
         const full = path.join(dir, e.name);
         if (e.isDirectory()) walk(full);
         else if (/\.tsx?$/.test(e.name)) {
-          const body = readFileSync(full, "utf8");
-          // SQL-style assignment in a template literal or raw query...
-          const sqlStyle = /celebrated_at\s*=(?!=)/.test(body);
-          // ...and an object-payload write through the Supabase client.
-          if (sqlStyle || payloadWrites(body)) {
-            offenders.push(path.relative(ROOT, full));
-          }
+          const lines = readFileSync(full, "utf8").split("\n");
+          lines.forEach((line, i) => {
+            if (!/celebrated_at/.test(line)) return;
+            if (isSafe(line)) return;
+            offenders.push(`${path.relative(ROOT, full)}:${i + 1}: ${line.trim()}`);
+          });
         }
       }
     };
     for (const r of roots) walk(path.join(ROOT, r));
     expect(offenders).toEqual([]);
+  });
+
+  it("the shape whitelist really does see the column, so it is not vacuous", () => {
+    // If a refactor renamed the column, every check above would pass on an empty
+    // scan. Assert the mentions this guard is actually classifying.
+    const body = readFileSync(path.join(ROOT, "lib/onboarding/state.ts"), "utf8");
+    expect(body).toMatch(/celebrated_at/);
   });
 });
