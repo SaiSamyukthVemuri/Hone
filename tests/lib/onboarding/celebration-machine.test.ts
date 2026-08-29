@@ -15,20 +15,25 @@ import type { OnboardingModel } from "@/lib/onboarding/steps";
 // and asserting on it through a browser means asserting on timing luck. Here the
 // interleaving is written down.
 //
-// ANTI-VACUITY. Every control below was run against a faithful transcription of
-// the pre-repair wizard — a `stampInFlight` ref, a `lastModel` ref, and the
-// boolean pair `closedAfterShowing && stampConfirmed`, which is the same machine
-// with every showing id collapsed onto 1. SEVEN read RED there:
+// ANTI-VACUITY, against BOTH earlier versions.
 //
-//   * the P3 outcome, and the P3 mechanism
-//   * "holds the newest model when several arrive during one request"
-//   * "F: retiring suppression keeps the on-screen showing closable"
-//   * "never lets an old close apply to a later distinct attempt"
-//   * "never discards a server model merely because it arrived during a request"
-//   * "ignores a settlement belonging to a superseded showing"
+// (1) The pre-repair wizard — a `stampInFlight` ref, a `lastModel` ref, and the
+// boolean pair `closedAfterShowing && stampConfirmed`. NINE of these 18 read red
+// there, including the P3 as an outcome and again as a mechanism.
 //
-// The other nine passed on the old code too, and are here to pin behaviour that
-// was already correct so the repair cannot regress it. Knowing WHICH is which is
+// (2) The FIRST version of this machine, which fixed deferral but made the
+// durable stamp showing-scoped as well. THREE read red there for semantic
+// reasons, and they are the controls that exist because of it:
+//
+//   * "retains a durable success from a superseded showing, without spending it"
+//   * "a superseded FAILURE retracts nothing and clears nothing"
+//   * "a durable stamp survives supersession and a later failure"
+//
+// (Two further controls also fail against that version, but only because it
+// named the field `stamped`; those are rename artefacts, not discriminators.)
+//
+// The controls that pass against every version are here to pin behaviour that
+// was already correct, so a repair cannot regress it. Knowing which is which is
 // the difference between a control and a restatement of the implementation.
 
 // A distinct object per call: the machine keys "the server has spoken again" on
@@ -72,8 +77,7 @@ describe("celebration machine — the deferred model is resolved, never dropped"
       { type: "OWNER_CLOSED_AFTER_SHOWING" }, //  4
       { type: "SERVER_MODEL_ARRIVED", model: serverModel(true) }, //  5, 6, 7
       { type: "STAMP_REFUSED_OR_FAILED", showing: 1 }, //  8, 9, 10, 11
-      { type: "OWNER_REOPENED" }, // 12
-      ...showing(2), // 13
+      ...showing(2), // 12, 13
       { type: "STAMP_SUCCEEDED", showing: 2 },
     ]);
     // 14, 15: the newly owed celebration survives to be seen.
@@ -112,13 +116,12 @@ describe("celebration machine — the deferred model is resolved, never dropped"
     // 11 inverted: the old close is RETIRED by the model that had been deferred.
     expect(settled.deferred).toBeNull();
     expect(settled.closed).toBe(0);
-    expect(settled.stamped).toBe(0);
+    expect(settled.stampConfirmed).toBe(false);
     expect(isCelebrationSpent(settled)).toBe(false);
 
     // 12, 13: the owner reopens and the retry succeeds.
     const retried = drive(
       [
-        { type: "OWNER_REOPENED" },
         ...showing(2),
         { type: "STAMP_SUCCEEDED", showing: 2 },
       ],
@@ -148,11 +151,9 @@ describe("celebration machine — the deferred model is resolved, never dropped"
     ]);
 
     expect(settled.deferred).toBeNull();
+    // Spent, and reopening cannot un-spend it: the close belongs to the live
+    // showing, and the durable stamp is not showing-scoped.
     expect(isCelebrationSpent(settled)).toBe(true);
-
-    // Reopening does not replay it.
-    const reopened = drive([{ type: "OWNER_REOPENED" }], settled);
-    expect(isCelebrationSpent(reopened)).toBe(true);
   });
 
   it("holds the newest model when several arrive during one request", () => {
@@ -192,11 +193,8 @@ describe("celebration machine — required deterministic controls", () => {
       type: "OWNER_CLOSED_AFTER_SHOWING",
     });
     expect(isCelebrationSpent(closed)).toBe(true);
-    expect(
-      isCelebrationSpent(
-        celebrationReducer(closed, { type: "OWNER_REOPENED" }),
-      ),
-    ).toBe(true);
+    // Reopening cannot un-spend it: the close still belongs to the live showing.
+    expect(isCelebrationSpent(closed)).toBe(true);
   });
 
   // B. show -> stamp refuses -> close -> positive model -> reopen -> offered again
@@ -207,7 +205,7 @@ describe("celebration machine — required deterministic controls", () => {
       { type: "STAMP_REFUSED_OR_FAILED", showing: 1 },
       { type: "OWNER_CLOSED_AFTER_SHOWING" },
     ]);
-    expect(refused.stamped).toBe(0);
+    expect(refused.stampConfirmed).toBe(false);
     expect(isCelebrationSpent(refused)).toBe(false);
 
     const authoritative = celebrationReducer(refused, {
@@ -284,7 +282,6 @@ describe("celebration machine — what the client may never do", () => {
         [
           { type: "STAMP_REFUSED_OR_FAILED", showing: n },
           { type: "OWNER_CLOSED_AFTER_SHOWING" },
-          { type: "OWNER_REOPENED" },
           ...showing(n + 1),
         ],
         state,
@@ -300,11 +297,10 @@ describe("celebration machine — what the client may never do", () => {
       ...showing(1),
       { type: "OWNER_CLOSED_AFTER_SHOWING" }, // close belongs to showing 1
       { type: "STAMP_REFUSED_OR_FAILED", showing: 1 },
-      { type: "OWNER_REOPENED" },
       ...showing(2), // a distinct attempt
       { type: "STAMP_SUCCEEDED", showing: 2 },
     ]);
-    expect(state.closed).not.toBe(state.stamped);
+    expect(state.closed).not.toBe(state.live);
     expect(isCelebrationSpent(state)).toBe(false);
   });
 
@@ -319,14 +315,57 @@ describe("celebration machine — what the client may never do", () => {
     expect(during.deferred).not.toBeNull();
   });
 
-  it("ignores a settlement belonging to a superseded showing", () => {
+  // A superseded settlement may not touch the request now outstanding — but a
+  // SUCCESS is a durable fact about the studio, so it is still recorded. The
+  // earlier version of this machine discarded it, and Codex was right that doing
+  // so lets a later failing showing replay confetti the server had recorded.
+  it("retains a durable success from a superseded showing, without spending it", () => {
     const state = drive([
       ...showing(1),
-      ...showing(2),
+      ...showing(2), // showing 2 supersedes showing 1's request
       { type: "STAMP_SUCCEEDED", showing: 1 },
     ]);
-    expect(state.stamped).toBe(0);
+    expect(state.stampConfirmed).toBe(true);
+    // ...but it does not clear the CURRENT request, and cannot suppress showing
+    // 2, which the owner has not closed.
     expect(state.inFlight).toBe(2);
+    expect(isCelebrationSpent(state)).toBe(false);
+  });
+
+  it("a superseded FAILURE retracts nothing and clears nothing", () => {
+    const state = drive([
+      ...showing(1),
+      { type: "STAMP_SUCCEEDED", showing: 1 },
+      ...showing(2),
+      { type: "STAMP_REFUSED_OR_FAILED", showing: 1 },
+    ]);
+    expect(state.stampConfirmed).toBe(true);
+    expect(state.inFlight).toBe(2);
+  });
+
+  // Codex's finding on the first version of this machine, as a control.
+  // Reopening while request 1 is still pending starts showing 2; request 1 then
+  // succeeds (celebrated_at IS written) but is superseded; request 2 fails. The
+  // durable write must survive all of that, so closing showing 2 spends it and
+  // no later showing replays.
+  it("a durable stamp survives supersession and a later failure", () => {
+    const settled = drive([
+      { type: "SERVER_MODEL_ARRIVED", model: serverModel(true) },
+      ...showing(1),
+      { type: "OWNER_CLOSED_AFTER_SHOWING" }, // closes showing 1
+      ...showing(2), // reopened while request 1 is still pending
+      { type: "STAMP_SUCCEEDED", showing: 1 }, // the write DID land
+      { type: "STAMP_REFUSED_OR_FAILED", showing: 2 },
+    ]);
+    // Showing 2 is still owed to the owner: they have not closed it.
+    expect(isCelebrationSpent(settled)).toBe(false);
+    // Closing it spends the celebration for good, on the strength of the
+    // durable stamp from the superseded request.
+    const closed = celebrationReducer(settled, {
+      type: "OWNER_CLOSED_AFTER_SHOWING",
+    });
+    expect(closed.stampConfirmed).toBe(true);
+    expect(isCelebrationSpent(closed)).toBe(true);
   });
 
   it("treats a client-only re-render as saying nothing new", () => {

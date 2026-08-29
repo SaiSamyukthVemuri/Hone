@@ -142,12 +142,16 @@ export function OnboardingWizard({
   // the deferred transition was simply lost. Deferral without resolution is
   // discarding on a delay.
   //
-  // Two things follow, and both live in the reducer rather than here:
+  // Three things follow, and all live in the reducer rather than here:
   //   * a deferred model is RESOLVED BY THE OUTCOME — discarded on a successful
   //     stamp (it provably predates the write), applied on a refusal (nothing
   //     was written, so it is still true);
-  //   * suppression compares SHOWING IDS, not booleans, so a close can only ever
-  //     be completed by the stamp of the same showing.
+  //   * a CONFIRMED STAMP IS DURABLE: it survives a later refusal and survives
+  //     its own showing being superseded, because `celebrated_at` is a fact
+  //     about the studio and not about a showing;
+  //   * SUPPRESSION REQUIRES THE OWNER TO HAVE CLOSED THE SHOWING THEY ARE BEING
+  //     SHOWN (`closed === live`), so an old close can never spend a later,
+  //     distinct celebration attempt.
   //
   // The server remains the durable authority throughout: `model.shouldCelebrate`
   // decides whether one is owed, and only `res.ok` can confirm a stamp.
@@ -176,10 +180,10 @@ export function OnboardingWizard({
   // source only: every DECISION is a dispatch, and therefore a render.
   const showings = useRef(0);
 
+  // Reopening needs no event of its own: what matters is that a NEW showing
+  // begins, which CELEBRATION_SHOWN below records with a fresh id.
   useEffect(() => {
-    dispatch({
-      type: open ? "OWNER_REOPENED" : "OWNER_CLOSED_AFTER_SHOWING",
-    });
+    if (!open) dispatch({ type: "OWNER_CLOSED_AFTER_SHOWING" });
   }, [open]);
 
   useEffect(() => {
