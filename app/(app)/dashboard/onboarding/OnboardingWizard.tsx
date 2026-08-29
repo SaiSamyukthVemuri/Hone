@@ -1,6 +1,13 @@
 "use client";
 
-import { useEffect, useId, useState, useTransition } from "react";
+import {
+  useEffect,
+  useId,
+  useReducer,
+  useRef,
+  useState,
+  useTransition,
+} from "react";
 import Link from "next/link";
 import {
   ONBOARDING_STEP_ORDER,
@@ -8,6 +15,11 @@ import {
   type OnboardingStepKey,
   type OnboardingStepState,
 } from "@/lib/onboarding/steps";
+import {
+  INITIAL_CELEBRATION_STATE,
+  celebrationReducer,
+  isCelebrationSpent,
+} from "@/lib/onboarding/celebration-machine";
 import { OnboardingModal } from "./OnboardingModal";
 import { Celebration } from "./Celebration";
 import {
@@ -117,13 +129,84 @@ export function OnboardingWizard({
   const nextKey = ONBOARDING_STEP_ORDER[activeIndex + 1];
   const prevKey = ONBOARDING_STEP_ORDER[activeIndex - 1];
 
-  const showConfetti = active.key === "done" && model.shouldCelebrate;
+  // PERF-01C. The one-time celebration is driven by an explicit state machine —
+  // see lib/onboarding/celebration-machine.ts for the transitions and the
+  // reasoning. This component only turns React lifecycle into EVENTS.
+  //
+  // Why a machine and not a few flags: four successive #658 review findings were
+  // the same defect — client-local state outliving or outranking fresh server
+  // authority — and the last one is only reachable with flags. A model arriving
+  // while the stamp is unresolved was correctly SKIPPED (it cannot have observed
+  // the outcome), but the skip was recorded in a REF. A ref mutation is not a
+  // render, so nothing ever reconsidered that model when the request settled and
+  // the deferred transition was simply lost. Deferral without resolution is
+  // discarding on a delay.
+  //
+  // Three things follow, and all live in the reducer rather than here:
+  //   * a deferred model is RESOLVED BY THE OUTCOME — discarded on a successful
+  //     stamp (it provably predates the write), applied on a refusal (nothing
+  //     was written, so it is still true);
+  //   * a CONFIRMED STAMP IS DURABLE: it survives a later refusal and survives
+  //     its own showing being superseded, because `celebrated_at` is a fact
+  //     about the studio and not about a showing;
+  //   * SUPPRESSION REQUIRES THE OWNER TO HAVE CLOSED THE SHOWING THEY ARE BEING
+  //     SHOWN (`closed === live`), so an old close can never spend a later,
+  //     distinct celebration attempt.
+  //
+  // The server remains the durable authority throughout: `model.shouldCelebrate`
+  // decides whether one is owed, and only `res.ok` can confirm a stamp.
+  const [celebration, dispatch] = useReducer(
+    celebrationReducer,
+    INITIAL_CELEBRATION_STATE,
+  );
+
+  // SERVER_MODEL_ARRIVED, folded in DURING RENDER so a fresh model is applied
+  // before paint rather than a frame late. Guarded by identity — a server render
+  // ships a new model object over the RSC payload, a client-only re-render
+  // reuses the prop — and the reducer records what it has seen, so this
+  // converges after one extra render pass.
+  if (celebration.seen !== model) {
+    dispatch({ type: "SERVER_MODEL_ARRIVED", model });
+  }
+
+  const showConfetti =
+    active.key === "done" &&
+    model.shouldCelebrate &&
+    !isCelebrationSpent(celebration);
+
+  // Showing ids are allocated here, not in the reducer, so the async settlement
+  // below can carry the id of the request it belongs to. A superseded reply then
+  // decides nothing about the showing that replaced it. This ref is an id
+  // source only: every DECISION is a dispatch, and therefore a render.
+  const showings = useRef(0);
+
+  // Reopening needs no event of its own: what matters is that a NEW showing
+  // begins, which CELEBRATION_SHOWN below records with a fresh id.
   useEffect(() => {
-    if (open && showConfetti) {
-      startTransition(() => {
-        void markCelebrationShownAction();
-      });
-    }
+    if (!open) dispatch({ type: "OWNER_CLOSED_AFTER_SHOWING" });
+  }, [open]);
+
+  useEffect(() => {
+    if (!(open && showConfetti)) return;
+    // A distinct showing of the confetti, with its own id.
+    const showing = (showings.current += 1);
+    dispatch({ type: "CELEBRATION_SHOWN", showing });
+    dispatch({ type: "STAMP_STARTED", showing });
+    startTransition(async () => {
+      // The RESULT is what makes it spendable. A refusal leaves the celebration
+      // owed, exactly as the server sees it — and settles any model deferred
+      // behind this request instead of stranding it.
+      try {
+        const res = await markCelebrationShownAction();
+        dispatch(
+          res.ok
+            ? { type: "STAMP_SUCCEEDED", showing }
+            : { type: "STAMP_REFUSED_OR_FAILED", showing },
+        );
+      } catch {
+        dispatch({ type: "STAMP_REFUSED_OR_FAILED", showing });
+      }
+    });
     // Fire once when landing on a celebratory success step.
   }, [open, showConfetti]);
 

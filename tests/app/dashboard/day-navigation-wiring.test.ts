@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { COMPOSED_DASHBOARD } from "./helpers/composed-dashboard";
 
 // The day-navigation ARITHMETIC is proved in tests/lib/dashboard. This file
 // proves the PAGE is wired to it — and, more importantly, that off Today the
@@ -11,7 +12,13 @@ import { join } from "node:path";
 // operational-hierarchy.test.ts.
 
 const read = (p: string) => readFileSync(join(process.cwd(), p), "utf8");
-const PAGE = read("app/(app)/dashboard/page.tsx");
+// PERF-01C: the secondary stack (To do, Birthdays, snapshot, setup cards) now
+// renders from app/(app)/dashboard/secondary-stack.tsx behind a Suspense
+// boundary, so the day's roster no longer waits on studio paperwork. These
+// assertions are about what RENDERS and in what order, so they read the
+// COMPOSED source (page with the child spliced in where it renders) rather
+// than half the page. See tests/app/dashboard/helpers/composed-dashboard.ts.
+const PAGE = COMPOSED_DASHBOARD;
 const SNAPSHOT = read("app/(app)/dashboard/practice-snapshot.tsx");
 const strip = (s: string) =>
   s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");

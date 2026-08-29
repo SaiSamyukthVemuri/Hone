@@ -1,3 +1,4 @@
+import { COMPOSED_DASHBOARD } from "../dashboard/helpers/composed-dashboard";
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -14,7 +15,11 @@ const read = (rel: string) => readFileSync(path.join(root, rel), "utf8");
 const FORMS = read("app/(app)/records/record-forms.tsx");
 const PAGE = read("app/(app)/records/page.tsx");
 const QUERIES = read("lib/record-keeping/queries.ts");
-const DASH = read("app/(app)/dashboard/page.tsx");
+// PERF-01C: the Dashboard's secondary stack renders from
+// app/(app)/dashboard/secondary-stack.tsx behind a Suspense boundary. This
+// assertion is about what RENDERS, so it reads the COMPOSED source.
+// See tests/app/dashboard/helpers/composed-dashboard.ts.
+const DASH = COMPOSED_DASHBOARD;
 // Dashboard V2 Part 2B retired the standalone "Supplies expiring" card. The
 // same expiring items now flow through the ONE normalized To-do model and
 // render in the single To-do list, so these pins follow them there.
