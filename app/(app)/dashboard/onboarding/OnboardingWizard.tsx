@@ -131,30 +131,63 @@ export function OnboardingWizard({
   // `model.shouldCelebrate` is false because `celebrated_at` is set, and the
   // action still refuses to stamp unless the live model is genuinely complete,
   // so this local flag cannot consume a celebration the owner never earned.
-  // SPENT ON CLOSE, NOT ON MOUNT. An earlier attempt set this inside the same
-  // effect that fires the stamp, which removed the confetti on the very next
-  // render — the owner would never have SEEN the celebration they earned. The
-  // new e2e assertion caught that. It is spent only once the success step has
-  // actually been closed, which is precisely the reopen case Codex described.
-  const played = useRef(false);
-  const [celebrationSpent, setCelebrationSpent] = useState(false);
+  // SPENT ONLY ON A CONFIRMED SERVER STAMP, and DERIVED rather than assigned.
+  //
+  // Two earlier attempts were wrong in opposite directions. Marking it consumed
+  // inside the effect that fires the stamp removed the confetti on the very next
+  // render — the owner never saw the celebration they earned. Spending it on
+  // close instead fixed that, but recorded mere VISUAL PLAYBACK: the action's
+  // result was discarded, so a stamp the server REFUSED (`not_ready`, because
+  // the live model is no longer complete) still consumed the celebration while
+  // `celebrated_at` stayed null. The server would still owe it and the client
+  // would never show it again. Codex raised that on #658 and was right.
+  //
+  // So the two facts are tracked separately — the owner has SEEN it and been
+  // shown a close, and the SERVER has confirmed the durable stamp — and
+  // suppression is their conjunction, computed during render. Because it is
+  // derived, BOTH orderings fall out for free: the action resolving before the
+  // close, and the owner closing before the action resolves. There is no
+  // ordering-dependent branch to get wrong.
+  const shown = useRef(false);
+  const [closedAfterShowing, setClosedAfterShowing] = useState(false);
+  const [stampConfirmed, setStampConfirmed] = useState(false);
+  const celebrationSpent = closedAfterShowing && stampConfirmed;
   const showConfetti =
     active.key === "done" && model.shouldCelebrate && !celebrationSpent;
+
+  // A FRESH SERVER MODEL THAT STILL SAYS THE CELEBRATION IS OWED clears any
+  // local suppression. If the stamp had really landed, the next model would
+  // report shouldCelebrate=false; it saying TRUE means the server still owes it,
+  // and the server is the authority. Same prop-identity signal the completion
+  // bridge uses in OnboardingSurface: a server render ships a new model object,
+  // a client-only re-render reuses the prop.
+  const lastModel = useRef(model);
+  if (lastModel.current !== model) {
+    lastModel.current = model;
+    if (model.shouldCelebrate && (closedAfterShowing || stampConfirmed)) {
+      shown.current = false;
+      setClosedAfterShowing(false);
+      setStampConfirmed(false);
+    }
+  }
+
   useEffect(() => {
     if (open && showConfetti) {
-      played.current = true;
-      startTransition(() => {
-        void markCelebrationShownAction();
+      shown.current = true;
+      startTransition(async () => {
+        // The RESULT is what makes it spendable. A refusal leaves the
+        // celebration owed, exactly as the server sees it.
+        const res = await markCelebrationShownAction();
+        if (res.ok) setStampConfirmed(true);
       });
     }
     // Fire once when landing on a celebratory success step.
   }, [open, showConfetti]);
   useEffect(() => {
-    // Closing the wizard spends the celebration for this mounted session, so
-    // reopening from the pinned card cannot replay it while the mounted model
-    // still carries shouldCelebrate=true. `played` keeps a close BEFORE any
-    // celebration from spending one the owner has not been shown.
-    if (!open && played.current) setCelebrationSpent(true);
+    // Closing records only that the owner has SEEN it. On its own this suppresses
+    // nothing — `shown` keeps a close BEFORE any celebration from counting, and
+    // the confirmed stamp is the other half of the conjunction.
+    if (!open && shown.current) setClosedAfterShowing(true);
   }, [open]);
 
   function goTo(step: OnboardingStepKey) {

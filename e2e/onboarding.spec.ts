@@ -215,4 +215,126 @@ test.describe("onboarding v2 — flag ON", () => {
     ).toBeVisible();
     await expect(page.locator(WIZARD).locator(".hone-confetti")).toHaveCount(0);
   });
+
+  // PERF-01C negative control. A celebration the server REFUSED to stamp must
+  // stay owed. `markCelebrationShownAction` re-checks the LIVE model and returns
+  // not_ready when required setup is no longer green, so the client must not
+  // consume a celebration on mere visual playback.
+  //
+  // The refusal is made deterministic rather than raced: the wizard renders the
+  // done step from a model captured BEFORE the services are deactivated, so the
+  // confetti mounts from that stale model while the action's own live re-check
+  // refuses.
+  test("a REFUSED stamp leaves the celebration owed, and it can play again", async ({
+    page,
+  }) => {
+    const seed = await seedE2eStudio();
+    await setStudioOnboardingV2Enabled(seed.studioId, true);
+    await loginAsOwner(page, seed);
+
+    const wizard = page.locator(WIZARD);
+    await expect(wizard).toBeVisible();
+    await wizard.getByRole("button", { name: "Get started" }).click();
+    await wizard.getByRole("button", { name: "Continue" }).click();
+    await wizard.getByRole("button", { name: "Continue" }).click();
+    await wizard.getByRole("button", { name: "Continue" }).click();
+
+    // The rendered model still says the celebration is owed; the SERVER is about
+    // to disagree.
+    await sql(`update services set active = false where studio_id = $1`, [
+      seed.studioId,
+    ]);
+    await wizard.getByRole("button", { name: "Skip for now" }).click();
+    await expect(
+      wizard.getByRole("heading", { name: "You're ready" }),
+    ).toBeVisible();
+
+    // The stamp is REFUSED, so celebrated_at stays null.
+    await expect
+      .poll(async () => {
+        const rows = await sql<{ celebrated_at: string | null }>(
+          `select celebrated_at from studio_onboarding where studio_id = $1`,
+          [seed.studioId],
+        );
+        return rows[0]?.celebrated_at ?? null;
+      })
+      .toBeNull();
+
+    // Closing must NOT consume what the server never recorded: reopening the
+    // same mounted wizard still offers the celebration.
+    await wizard.getByRole("button", { name: "Close setup" }).click();
+    await expect(page.locator(WIZARD)).toHaveCount(0);
+    await page
+      .getByRole("button", { name: /Continue setup|Start setup/ })
+      .click();
+    await expect(page.locator(WIZARD)).toBeVisible();
+    await expect(
+      page.locator(WIZARD).locator(".hone-confetti"),
+    ).not.toHaveCount(0);
+  });
+
+  // PERF-01C negative control. The close may land BEFORE the stamp resolves.
+  // Suppression is a conjunction computed during render, so neither ordering has
+  // its own branch — this drives the close-first ordering explicitly and asserts
+  // the settled outcome is still correct once the stamp is confirmed.
+  test("closing before the stamp resolves still settles correctly", async ({
+    page,
+  }) => {
+    const seed = await seedE2eStudio();
+    await setStudioOnboardingV2Enabled(seed.studioId, true);
+    await loginAsOwner(page, seed);
+
+    const wizard = page.locator(WIZARD);
+    await expect(wizard).toBeVisible();
+    await wizard.getByRole("button", { name: "Get started" }).click();
+    await wizard.getByRole("button", { name: "Continue" }).click();
+    await wizard.getByRole("button", { name: "Continue" }).click();
+    await wizard.getByRole("button", { name: "Continue" }).click();
+    await wizard.getByRole("button", { name: "Skip for now" }).click();
+
+    // Close IMMEDIATELY — no wait for the heading, the confetti or the action.
+    await wizard.getByRole("button", { name: "Close setup" }).click();
+    await expect(page.locator(WIZARD)).toHaveCount(0);
+
+    // The stamp still lands: this studio is genuinely complete.
+    await expect
+      .poll(async () => {
+        const rows = await sql<{ celebrated_at: string | null }>(
+          `select celebrated_at from studio_onboarding where studio_id = $1`,
+          [seed.studioId],
+        );
+        return rows[0]?.celebrated_at != null;
+      })
+      .toBe(true);
+
+    // With the stamp confirmed and the wizard closed, reopening does not replay.
+    await page
+      .getByRole("button", { name: /Continue setup|Start setup/ })
+      .click();
+    await expect(page.locator(WIZARD)).toBeVisible();
+    await expect(page.locator(WIZARD).locator(".hone-confetti")).toHaveCount(0);
+  });
+
+  // PERF-01C negative control. An INCOMPLETE studio can never consume the
+  // one-time celebration: the server gate refuses, so the stamp stays absent and
+  // the celebration remains owed for when setup is genuinely finished.
+  test("an incomplete studio cannot consume the celebration early", async ({
+    page,
+  }) => {
+    const seed = await seedE2eStudio();
+    await setStudioOnboardingV2Enabled(seed.studioId, true);
+    await sql(`update services set active = false where studio_id = $1`, [
+      seed.studioId,
+    ]);
+    await loginAsOwner(page, seed);
+
+    await expect(page.locator(WIZARD)).toBeVisible();
+    // Setup is not green, so no celebration is offered and none is stamped.
+    await expect(page.locator(WIZARD).locator(".hone-confetti")).toHaveCount(0);
+    const rows = await sql<{ celebrated_at: string | null }>(
+      `select celebrated_at from studio_onboarding where studio_id = $1`,
+      [seed.studioId],
+    );
+    expect(rows[0]?.celebrated_at ?? null).toBeNull();
+  });
 });
