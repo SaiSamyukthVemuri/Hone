@@ -483,16 +483,43 @@ describe("celebration machine — the durable premise", () => {
     expect(sql).toMatch(/where\s+so\.celebrated_at\s+is\s+null/i);
   });
 
-  it("no application code writes the column at all", () => {
+  // Two shapes of write, because the SQL-style one is not how this codebase
+  // usually writes. Supabase writes are object payloads — `.update({
+  // celebrated_at: null })` — which a `celebrated_at =` scan misses entirely,
+  // leaving the guard green while the premise is broken. Codex caught exactly
+  // that on the first version of this guard.
+  it("no application code writes the column, by either syntax", () => {
     const roots = ["app", "lib", "components"];
     const offenders: string[] = [];
+
+    /** `celebrated_at` inside the balanced payload of an update/insert/upsert. */
+    const payloadWrites = (body: string): boolean => {
+      const call = /\.(update|insert|upsert)\s*\(/g;
+      let m: RegExpExecArray | null;
+      while ((m = call.exec(body))) {
+        let depth = 1;
+        let i = m.index + m[0].length;
+        const start = i;
+        while (i < body.length && depth > 0) {
+          if (body[i] === "(") depth += 1;
+          else if (body[i] === ")") depth -= 1;
+          i += 1;
+        }
+        if (/celebrated_at/.test(body.slice(start, i))) return true;
+      }
+      return false;
+    };
+
     const walk = (dir: string) => {
       for (const e of readdirSync(dir, { withFileTypes: true })) {
         const full = path.join(dir, e.name);
         if (e.isDirectory()) walk(full);
         else if (/\.tsx?$/.test(e.name)) {
           const body = readFileSync(full, "utf8");
-          if (/celebrated_at\s*=(?!=)/.test(body)) {
+          // SQL-style assignment in a template literal or raw query...
+          const sqlStyle = /celebrated_at\s*=(?!=)/.test(body);
+          // ...and an object-payload write through the Supabase client.
+          if (sqlStyle || payloadWrites(body)) {
             offenders.push(path.relative(ROOT, full));
           }
         }
