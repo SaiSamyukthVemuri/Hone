@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync, readdirSync } from "node:fs";
+import path from "node:path";
 import {
   INITIAL_CELEBRATION_STATE,
   celebrationReducer,
@@ -431,5 +433,72 @@ describe("celebration machine — what the client may never do", () => {
     expect(celebrationReducer(once, { type: "SERVER_MODEL_ARRIVED", model })).toBe(
       once,
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE PREMISE THE MACHINE RESTS ON
+// ---------------------------------------------------------------------------
+// `retire` refuses to retract `stampConfirmed` because `celebrated_at` is
+// MONOTONIC: a model reporting the celebration as owed must therefore predate
+// the write. That is an argument about the DATABASE, made in a client file, so
+// it is pinned here rather than left as prose. If a future migration ever clears
+// or re-stamps the field, this fails and the machine's rule has to be revisited
+// — which is the whole point of writing it down.
+describe("celebration machine — the durable premise", () => {
+  const ROOT = path.resolve(__dirname, "../../..");
+  const migrationsDir = path.join(ROOT, "supabase/migrations");
+  const migrations = readdirSync(migrationsDir)
+    .filter((f) => f.endsWith(".sql"))
+    .map((f) => [f, readFileSync(path.join(migrationsDir, f), "utf8")] as const);
+
+  it("finds the migrations, so this guard cannot pass vacuously", () => {
+    expect(migrations.length).toBeGreaterThan(100);
+    expect(
+      migrations.filter(([, sql]) => /celebrated_at/.test(sql)).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("no migration ever clears or re-stamps celebrated_at", () => {
+    for (const [file, sql] of migrations) {
+      // Every assignment to the column, anywhere in the schema.
+      const assignments =
+        sql.match(/celebrated_at\s*=\s*(?:now\(\)|[^\s;,)]+)/g) ?? [];
+      for (const a of assignments) {
+        // `celebrated_at = now()` is the stamp; `= null` would be a reset, and
+        // `is null` is a read used by the compare-and-set, not an assignment.
+        expect(a, `${file}: ${a}`).toMatch(/celebrated_at\s*=\s*now\(\)/);
+      }
+    }
+  });
+
+  it("the only writer is a stamp-once compare-and-set", () => {
+    const withStamp = migrations.filter(([, sql]) =>
+      /celebrated_at\s*=\s*now\(\)/.test(sql),
+    );
+    expect(withStamp.length).toBe(1);
+    const [, sql] = withStamp[0];
+    // The CAS guard is what makes the stamp once-only: an existing timestamp is
+    // never overwritten, so the value cannot move backwards or forwards again.
+    expect(sql).toMatch(/where\s+so\.celebrated_at\s+is\s+null/i);
+  });
+
+  it("no application code writes the column at all", () => {
+    const roots = ["app", "lib", "components"];
+    const offenders: string[] = [];
+    const walk = (dir: string) => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) walk(full);
+        else if (/\.tsx?$/.test(e.name)) {
+          const body = readFileSync(full, "utf8");
+          if (/celebrated_at\s*=(?!=)/.test(body)) {
+            offenders.push(path.relative(ROOT, full));
+          }
+        }
+      }
+    };
+    for (const r of roots) walk(path.join(ROOT, r));
+    expect(offenders).toEqual([]);
   });
 });
