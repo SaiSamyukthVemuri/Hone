@@ -101,8 +101,19 @@ describe("independent reads run in one parallel wave", () => {
     // three. The ceiling exists to stop the page drifting back toward 14; it is
     // not a proxy for round trips, and the DB lane
     // (tests/db/client-profile-tab-queries.db.test.ts) is what counts those.
+    //
+    // PERF-02C lowered it 11 -> 9, and here the counter and the round trips
+    // move together. The clinical-notes summary and the two session_blocks
+    // reads are mutually independent but ran as three consecutive awaits; they
+    // are now one Promise.all, so the overview tail went from four serial
+    // stages to two (the wave, then the attach that consumes both block
+    // reads). Because the three units are IIFEs INSIDE that one statement,
+    // they count as the single wave they actually are.
+    //
+    // Keep this ceiling equal to the measured count, never slack: a ceiling
+    // with headroom stops catching the drift it exists to catch.
     const waves = serialWaves();
-    expect(waves.length).toBeLessThanOrEqual(11);
+    expect(waves.length).toBeLessThanOrEqual(9);
   });
 
   // PERF-02A. The invariant the ceiling above cannot express, and the one this
@@ -185,9 +196,12 @@ describe("independent reads run in one parallel wave", () => {
       "Promise.all",
       "buildClinicalNoteSections",
       "getClientBudgetContext",
-      "getClinicalNotesSummary",
-      "recentSessions.length",
-      "sessions.length",
+      // PERF-02C removed "getClinicalNotesSummary", "recentSessions.length"
+      // and "sessions.length" from this list. They named three statements that
+      // no longer stand alone: the notes summary and the two session_blocks
+      // reads are now IIFEs inside the second Promise.all, which this list
+      // admits under "Promise.all". Re-adding any of them would re-permit the
+      // serial form this ticket removed.
       // PERF-02A: the single structured-areas attach. Genuinely serial — it
       // depends on the output of BOTH session_blocks reads — and it replaced
       // two such stages rather than adding one.

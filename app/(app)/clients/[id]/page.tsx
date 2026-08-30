@@ -437,12 +437,6 @@ export default async function ClientCheatSheetPage({
     needsConsultationNotes
       ? await getClientBudgetContext(client.id)
       : null;
-  // Read-only latest-of-each-kind summary for the overview appointment-prep
-  // briefing. Two light reads; only on the default overview tab.
-  const clinicalNotesSummary =
-    isOverview
-      ? await getClinicalNotesSummary(client.id)
-      : null;
 
   const lifetimeCents = sessions.reduce(
     (sum, s) => sum + (s.price_paid_cents ?? 0),
@@ -502,7 +496,32 @@ export default async function ClientCheatSheetPage({
   // window and their own CLIN-01-B unavailability flag — the rows are held in
   // two variables rather than merged into one array precisely so that one read
   // failing still cannot blank the other's card.
-  let clinicalHistoryUnavailable = false;
+  // PERF-02C. The clinical-notes summary and the two `session_blocks` reads
+  // below are MUTUALLY INDEPENDENT — none of them reads another's result — yet
+  // they ran as three consecutive awaits, so the overview tab paid three serial
+  // round trips before it could attach areas. They now run as ONE wave. Only
+  // `attachStructuredAreas` further down stays serial, because it genuinely
+  // consumes the rows of the two block reads, and only those.
+  //
+  // This is a REORDERING, not a dedupe. Every projection, filter, session
+  // window (<=25 summary, <=200 intelligence), ordering and tab gate below is
+  // byte-for-byte what it was, so each tab issues exactly the queries it issued
+  // before; only the order they are awaited in changed.
+  //
+  // EACH UNIT RESOLVES; NONE REJECTS. That is the correctness crux, not a style
+  // choice. A bare Promise.all over three throwing promises rejects as a unit,
+  // which would couple two clinical reads whose INDEPENDENT failure is the
+  // entire subject of CLIN-01-B: one read throwing would blank the other's
+  // card. Containment therefore sits at the EDGE of each unit, in a `.catch`,
+  // so the `{ data, error }` branches inside stay exactly the branches that
+  // were there before — a thrown failure takes the same explicit-unavailable
+  // path a returned `error` takes, never a known-empty one.
+  // The five bindings below are written INSIDE the wave's units, which
+  // TypeScript's control-flow analysis cannot see. Without the `as`, each is
+  // narrowed to its initialiser (`null` / `false`) at every read after the
+  // wave — `summaryBlockRows.map` then fails on `never`. The assertions state
+  // the declared type and are load-bearing: dropping them re-breaks the build.
+  let clinicalHistoryUnavailable = false as boolean;
   type SummaryBlockRow = ClinicalSummaryBlock & {
     id: string;
     session_id: string;
@@ -510,33 +529,7 @@ export default async function ClientCheatSheetPage({
       | Array<{ observation_chips: unknown; deleted_at: string | null }>
       | null;
   };
-  let summaryBlockRows: SummaryBlockRow[] | null = null;
-  if (needsLastTreatment && recentSessions.length > 0) {
-    const supabaseForSummary = await createClient();
-    const { data: recentBlocks, error: recentBlocksError } = await supabaseForSummary
-      .from("session_blocks")
-      .select(
-        "id, session_id, sort_order, block_name, primary_area, side, custom_area_detail, mode, apilus_modality, energy_level, minutes_performed, probe_label, probe_lot_number, tolerance_rating, reaction_type, reaction_notes, caution_for_next_session, caution_note, electrolysis_entries(observation_chips, deleted_at)",
-      )
-      .eq("studio_id", studio.id)
-      .in(
-        "session_id",
-        recentSessions.map((s) => s.id),
-      )
-      .is("deleted_at", null)
-      .order("sort_order", { ascending: true });
-    if (recentBlocksError) {
-      logClinicalReadFailure(
-        "client_profile_recent_blocks_read_failed",
-        studio.id,
-        recentBlocksError.code,
-        recentSessions.length,
-      );
-      clinicalHistoryUnavailable = true;
-    } else {
-      summaryBlockRows = (recentBlocks ?? []) as SummaryBlockRow[];
-    }
-  }
+  let summaryBlockRows = null as SummaryBlockRow[] | null;
 
   // PR #210: Treatment Intelligence. One read across ALL the client's
   // sessions (cap 200) with per-entry hairs; the pure builder turns
@@ -555,7 +548,7 @@ export default async function ClientCheatSheetPage({
   // areas, "No charted treatment history yet.". Kept separate from
   // clinicalHistoryUnavailable because these are two reads: one failing must
   // not blank the other's card.
-  let intelligenceUnavailable = false;
+  let intelligenceUnavailable = false as boolean;
   type IntelBlockRow = Omit<
     IntelligenceBlockInput,
     "entry_hairs" | "observation_chips_list"
@@ -569,31 +562,113 @@ export default async function ClientCheatSheetPage({
         }>
       | null;
   };
-  let intelBlockRows: IntelBlockRow[] | null = null;
-  if (isOverview && sessions.length > 0) {
-    const supabaseForIntel = await createClient();
-    const { data: intelBlocks, error: intelBlocksError } = await supabaseForIntel
-      .from("session_blocks")
-      .select(
-        "id, session_id, primary_area, side, block_name, mode, apilus_modality, energy_level, machine_frequency, probe_label, minutes_performed, tolerance_rating, reaction_type, caution_for_next_session, caution_note, electrolysis_entries(hairs_treated, observation_chips, deleted_at)",
-      )
-      .eq("studio_id", studio.id)
-      .in(
-        "session_id",
-        sessions.slice(0, 200).map((sess) => sess.id),
-      )
-      .is("deleted_at", null);
-    if (intelBlocksError) {
+  let intelBlockRows = null as IntelBlockRow[] | null;
+
+  // Read-only latest-of-each-kind summary for the overview appointment-prep
+  // briefing. Two light reads; only on the default overview tab.
+  //
+  // Unlike the two block reads this one has NO unavailability flag, and its
+  // card renders under a plain `&&`, so resolving a failure to `null` would
+  // silently VANISH the briefing — a confident clinical absence nobody read,
+  // precisely what CLIN-01-B forbids. A throw is therefore carried OUT of the
+  // wave and re-raised below: the unit still never rejects, so it cannot take
+  // the two block reads down with it, and the page still fails exactly as
+  // loudly as it did before.
+  let clinicalNotesSummary = null as Awaited<
+    ReturnType<typeof getClinicalNotesSummary>
+  > | null;
+  // Rejection is tracked by a DEDICATED FLAG, never by the thrown value.
+  // `throw null` and `throw undefined` are legal, so using the value as its
+  // own sentinel loses exactly those two rejections — and losing one here is
+  // not a crash, it is the briefing card silently VANISHING under its `&&`,
+  // which is the confident clinical absence this rethrow exists to prevent.
+  // `as boolean` for the same CFA reason as the bindings above.
+  let notesSummaryRejected = false as boolean;
+  let notesSummaryThrown: unknown = undefined;
+
+  await Promise.all([
+    (async () => {
+      if (isOverview) {
+        clinicalNotesSummary = await getClinicalNotesSummary(client.id);
+      }
+    })().catch((err: unknown) => {
+      notesSummaryRejected = true;
+      notesSummaryThrown = err;
+    }),
+    (async () => {
+      if (needsLastTreatment && recentSessions.length > 0) {
+        const supabaseForSummary = await createClient();
+        const { data: recentBlocks, error: recentBlocksError } = await supabaseForSummary
+          .from("session_blocks")
+          .select(
+            "id, session_id, sort_order, block_name, primary_area, side, custom_area_detail, mode, apilus_modality, energy_level, minutes_performed, probe_label, probe_lot_number, tolerance_rating, reaction_type, reaction_notes, caution_for_next_session, caution_note, electrolysis_entries(observation_chips, deleted_at)",
+          )
+          .eq("studio_id", studio.id)
+          .in(
+            "session_id",
+            recentSessions.map((s) => s.id),
+          )
+          .is("deleted_at", null)
+          .order("sort_order", { ascending: true });
+        if (recentBlocksError) {
+          logClinicalReadFailure(
+            "client_profile_recent_blocks_read_failed",
+            studio.id,
+            recentBlocksError.code,
+            recentSessions.length,
+          );
+          clinicalHistoryUnavailable = true;
+        } else {
+          summaryBlockRows = (recentBlocks ?? []) as SummaryBlockRow[];
+        }
+      }
+    })().catch((err: unknown) => {
+      logClinicalReadFailure(
+        "client_profile_recent_blocks_read_failed",
+        studio.id,
+        (err as { code?: unknown } | null)?.code,
+        recentSessions.length,
+      );
+      clinicalHistoryUnavailable = true;
+    }),
+    (async () => {
+      if (isOverview && sessions.length > 0) {
+        const supabaseForIntel = await createClient();
+        const { data: intelBlocks, error: intelBlocksError } = await supabaseForIntel
+          .from("session_blocks")
+          .select(
+            "id, session_id, primary_area, side, block_name, mode, apilus_modality, energy_level, machine_frequency, probe_label, minutes_performed, tolerance_rating, reaction_type, caution_for_next_session, caution_note, electrolysis_entries(hairs_treated, observation_chips, deleted_at)",
+          )
+          .eq("studio_id", studio.id)
+          .in(
+            "session_id",
+            sessions.slice(0, 200).map((sess) => sess.id),
+          )
+          .is("deleted_at", null);
+        if (intelBlocksError) {
+          logClinicalReadFailure(
+            "client_profile_intelligence_blocks_read_failed",
+            studio.id,
+            intelBlocksError.code,
+            Math.min(sessions.length, 200),
+          );
+          intelligenceUnavailable = true;
+        } else {
+          intelBlockRows = (intelBlocks ?? []) as IntelBlockRow[];
+        }
+      }
+    })().catch((err: unknown) => {
       logClinicalReadFailure(
         "client_profile_intelligence_blocks_read_failed",
         studio.id,
-        intelBlocksError.code,
+        (err as { code?: unknown } | null)?.code,
         Math.min(sessions.length, 200),
       );
       intelligenceUnavailable = true;
-    } else {
-      intelBlockRows = (intelBlocks ?? []) as IntelBlockRow[];
-    }
+    }),
+  ]);
+  if (notesSummaryRejected) {
+    throw notesSummaryThrown;
   }
 
   // Migration 0128: structured treated areas, for BOTH reads, in ONE query.
