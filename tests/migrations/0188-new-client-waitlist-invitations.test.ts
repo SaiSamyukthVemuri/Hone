@@ -293,8 +293,14 @@ describe("0188 — RLS", () => {
     expect(CODE).toMatch(
       /alter\s+table\s+public\.new_client_waitlist_invitations\s+enable\s+row\s+level\s+security/i,
     );
+    // Both new tables carry exactly one owner-only SELECT policy and no more.
+    // Pinned as an exhaustive list so an added INSERT/UPDATE/DELETE policy on
+    // either table fails here rather than shipping.
     const policies = [...CODE.matchAll(/create\s+policy\s+"([^"]+)"/gi)].map((m) => m[1]);
-    expect(policies).toEqual(["new_client_waitlist_invitations_owner_select"]);
+    expect(policies).toEqual([
+      "new_client_waitlist_invitations_owner_select",
+      "new_client_waitlist_entry_events_owner_select",
+    ]);
     expect(CODE).toMatch(/for\s+select\s+to\s+authenticated/i);
     // Fully qualified — 0126 resolved a bare column against the wrong relation
     // and the check silently degraded to a tautology.
@@ -328,5 +334,81 @@ describe("0188 — tenancy is structural", () => {
 
   it("adds no automatic release, sweep or scheduler", () => {
     expect(CODE).not.toMatch(/pg_cron|cron\.schedule|pg_net|net\.http/i);
+  });
+});
+
+describe("0188 — provenance survives a cycle that issues no invitation", () => {
+  it("records EVERY status change to an append-only event log, by trigger", () => {
+    // THE DEFECT THIS EXISTS FOR: requeue clears the cycle evidence, and the
+    // path claimed -> released -> waiting issues no invitation, so before the
+    // event log an operator's claim and release left ZERO persisted state.
+    expect(CODE).toMatch(
+      /create\s+table\s+if\s+not\s+exists\s+public\.new_client_waitlist_entry_events/i,
+    );
+    expect(CODE).toMatch(
+      /after\s+insert\s+or\s+update\s+on\s+public\.new_client_waitlist_entries[\s\S]{0,140}new_client_waitlist_entries_record_event/i,
+    );
+    // The append happens on ANY status change, not on a named subset.
+    expect(CODE).toMatch(/new\.status\s+is\s+distinct\s+from\s+old\.status/i);
+    // The requeued claimer is preserved from OLD before it is discarded.
+    // SCOPED to the recording function: `old.claimed_by_practitioner_id` also
+    // appears in the transition guard, so a file-wide match passes vacuously
+    // even when the actor fallback has been deleted.
+    const rec = CODE.slice(
+      CODE.indexOf("function public.new_client_waitlist_entries_record_event"),
+      CODE.indexOf("function public.new_client_waitlist_entry_events_append_only"),
+    );
+    expect(rec.length).toBeGreaterThan(0);
+    expect(rec).toMatch(/coalesce\([\s\S]{0,200}old\.claimed_by_practitioner_id/);
+  });
+
+  it("makes the event log append-only against UPDATE and DELETE alike", () => {
+    expect(CODE).toMatch(
+      /before\s+update\s+or\s+delete\s+on\s+public\.new_client_waitlist_entry_events/i,
+    );
+  });
+
+  it("scopes events by studio, with composite FKs to entry and actor", () => {
+    const block = CODE.slice(
+      CODE.indexOf("create table if not exists public.new_client_waitlist_entry_events"),
+      CODE.indexOf("create index if not exists new_client_waitlist_entry_events_entry_idx"),
+    );
+    expect(block.length).toBeGreaterThan(0);
+    expect(block).toMatch(
+      /foreign\s+key\s*\(\s*entry_id\s*,\s*studio_id\s*\)[\s\S]{0,140}references\s+public\.new_client_waitlist_entries\s*\(\s*id\s*,\s*studio_id\s*\)/i,
+    );
+    expect(block).toMatch(
+      /foreign\s+key\s*\(\s*actor_practitioner_id\s*,\s*studio_id\s*\)[\s\S]{0,140}references\s+public\.practitioners\s*\(\s*id\s*,\s*studio_id\s*\)/i,
+    );
+  });
+
+  it("gives the event log the same read-only, owner-only posture as the rest", () => {
+    for (const role of ["public", "anon", "authenticated", "service_role"]) {
+      expect(CODE).toContain(
+        `revoke all on public.new_client_waitlist_entry_events from ${role};`,
+      );
+    }
+    expect(CODE).toContain(
+      "grant select on public.new_client_waitlist_entry_events to authenticated;",
+    );
+    expect(CODE).toMatch(
+      /is_studio_owner\(new_client_waitlist_entry_events\.studio_id\)/i,
+    );
+    for (const fn of [
+      "public.new_client_waitlist_entries_record_event()",
+      "public.new_client_waitlist_entry_events_append_only()",
+    ]) {
+      expect(CODE).toContain(`revoke all privileges on function ${fn}`);
+    }
+  });
+
+  it("no longer claims the invitation rows carry the whole history", () => {
+    // The prose that was corrected. A contract stated over a narrower set than
+    // the sentence describes is the 0183 failure shape, and this file is where
+    // that regression would reappear.
+    expect(SQL).not.toMatch(
+      /durable history of what happened to them is not lost: it lives in the\s*--\s*append-only invitation rows/i,
+    );
+    expect(SQL).toMatch(/new_client_waitlist_entry_events by trigger/i);
   });
 });

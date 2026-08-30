@@ -917,8 +917,12 @@ $$;
 -- ---------------------------------------------------------------------------
 -- Requeue returns a released or expired prospect to the pool and CLEARS the
 -- cycle evidence, because `waiting` asserts no claim and no invitation. The
--- durable history of what happened to them is not lost: it lives in the
--- append-only invitation rows.
+-- durable history of what happened to them is not lost: every status change is
+-- appended to public.new_client_waitlist_entry_events by trigger, INCLUDING the
+-- claim/release cycle that issues no invitation and therefore leaves no
+-- invitation row. An earlier draft of this comment claimed the invitation rows
+-- carried that history; they carry it only when an invitation was ISSUED, which
+-- is narrower than the sentence promised.
 create or replace function public.requeue_new_client_waitlist_entry(
   p_studio_id     uuid,
   p_entry_id      uuid,
@@ -1171,6 +1175,123 @@ revoke all privileges on function public.new_client_waitlist_invitations_server_
 revoke all privileges on function public.new_client_waitlist_invitations_append_only()
   from public, anon, authenticated, service_role;
 revoke all privileges on function public.new_client_waitlist_invitations_no_delete()
+  from public, anon, authenticated, service_role;
+
+-- ---------------------------------------------------------------------------
+-- 11. THE LIFECYCLE EVENT LOG — PROVENANCE THAT SURVIVES REQUEUE
+-- ---------------------------------------------------------------------------
+-- THE HOLE THIS CLOSES. `requeue_new_client_waitlist_entry` clears the cycle
+-- evidence, because `waiting` must assert no claim and no invitation. For the
+-- path claimed -> released -> waiting NO INVITATION IS EVER ISSUED, so there is
+-- no invitation row either: after the requeue, an operator's claim and release
+-- had left ZERO persisted state anywhere, and the prospect was indistinguishable
+-- from someone who had only just joined. "Audit/provenance" was stated as a
+-- contract and enforced over a narrower set than the prose described -- the 0183
+-- failure shape.
+--
+-- EVERY status change is appended here BY TRIGGER, so no command, and no future
+-- direct write through the migration channel, can perform a transition without
+-- leaving a trace. Append-only: no UPDATE, no DELETE.
+--
+-- ON THE ACTOR, DELIBERATELY NOT OVERSTATED. This records the practitioner the
+-- SCHEMA actually knows for the transition -- the claimer, or the remover, or
+-- the claimer whose hold is being discarded. Release carries no actor column of
+-- its own, so a release records the practitioner who HELD the claim, not
+-- necessarily the one who ended it. A null actor means the schema had no actor
+-- to record (the public join), never that nobody acted.
+create table if not exists public.new_client_waitlist_entry_events (
+  id          uuid primary key default gen_random_uuid(),
+  studio_id   uuid not null references public.studios(id) on delete cascade,
+  entry_id    uuid not null,
+  from_status text,
+  to_status   text not null,
+  occurred_at timestamptz not null default now(),
+  actor_practitioner_id uuid,
+
+  constraint new_client_waitlist_entry_events_entry_same_studio_fk
+    foreign key (entry_id, studio_id)
+    references public.new_client_waitlist_entries (id, studio_id) on delete cascade,
+  constraint new_client_waitlist_entry_events_actor_same_studio_fk
+    foreign key (actor_practitioner_id, studio_id)
+    references public.practitioners (id, studio_id) on delete restrict
+);
+
+create index if not exists new_client_waitlist_entry_events_entry_idx
+  on public.new_client_waitlist_entry_events (entry_id, occurred_at, id);
+create index if not exists new_client_waitlist_entry_events_studio_idx
+  on public.new_client_waitlist_entry_events (studio_id, occurred_at desc, id);
+
+create or replace function public.new_client_waitlist_entries_record_event()
+returns trigger
+language plpgsql
+set search_path = pg_catalog, pg_temp
+as $$
+begin
+  if tg_op = 'INSERT' then
+    insert into public.new_client_waitlist_entry_events
+      (studio_id, entry_id, from_status, to_status, actor_practitioner_id)
+    values (new.studio_id, new.id, null, new.status, null);
+    return null;
+  end if;
+
+  if new.status is distinct from old.status then
+    insert into public.new_client_waitlist_entry_events
+      (studio_id, entry_id, from_status, to_status, actor_practitioner_id)
+    values (
+      new.studio_id, new.id, old.status, new.status,
+      -- NEW evidence first (the actor of the transition being made), then the
+      -- OLD claimer whose hold is being discarded by a requeue.
+      coalesce(new.removed_by_practitioner_id,
+               new.claimed_by_practitioner_id,
+               old.claimed_by_practitioner_id)
+    );
+  end if;
+  return null;
+end;
+$$;
+
+drop trigger if exists new_client_waitlist_entries_record_event
+  on public.new_client_waitlist_entries;
+create trigger new_client_waitlist_entries_record_event
+  after insert or update on public.new_client_waitlist_entries
+  for each row execute function public.new_client_waitlist_entries_record_event();
+
+-- APPEND-ONLY. An audit row that can be edited or deleted is not evidence.
+create or replace function public.new_client_waitlist_entry_events_append_only()
+returns trigger
+language plpgsql
+set search_path = pg_catalog, pg_temp
+as $$
+begin
+  raise exception
+    'new_client_waitlist_entry_events: lifecycle events are append-only evidence and are never modified or deleted'
+    using errcode = 'check_violation';
+end;
+$$;
+
+drop trigger if exists new_client_waitlist_entry_events_append_only
+  on public.new_client_waitlist_entry_events;
+create trigger new_client_waitlist_entry_events_append_only
+  before update or delete on public.new_client_waitlist_entry_events
+  for each row execute function public.new_client_waitlist_entry_events_append_only();
+
+alter table public.new_client_waitlist_entry_events enable row level security;
+
+drop policy if exists "new_client_waitlist_entry_events_owner_select"
+  on public.new_client_waitlist_entry_events;
+create policy "new_client_waitlist_entry_events_owner_select"
+  on public.new_client_waitlist_entry_events for select to authenticated
+  using (public.is_studio_owner(new_client_waitlist_entry_events.studio_id));
+
+revoke all on public.new_client_waitlist_entry_events from public;
+revoke all on public.new_client_waitlist_entry_events from anon;
+revoke all on public.new_client_waitlist_entry_events from authenticated;
+revoke all on public.new_client_waitlist_entry_events from service_role;
+grant select on public.new_client_waitlist_entry_events to authenticated;
+
+revoke all privileges on function public.new_client_waitlist_entries_record_event()
+  from public, anon, authenticated, service_role;
+revoke all privileges on function public.new_client_waitlist_entry_events_append_only()
   from public, anon, authenticated, service_role;
 
 commit;

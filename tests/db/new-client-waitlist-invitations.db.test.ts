@@ -520,3 +520,146 @@ describe("0188 — privilege", () => {
     expect(r.rows[0].qual).toContain("is_studio_owner");
   });
 });
+
+describe("0188 — lifecycle provenance", () => {
+  async function trail(entryId: string) {
+    const r = await adminQuery(
+      `select from_status, to_status, actor_practitioner_id
+         from public.new_client_waitlist_entry_events
+        where entry_id = $1 order by occurred_at, id`,
+      [entryId],
+    );
+    return r.rows as {
+      from_status: string | null;
+      to_status: string;
+      actor_practitioner_id: string | null;
+    }[];
+  }
+
+  it("records a claim/release cycle that issues NO invitation and is then requeued", async () => {
+    // THE REGRESSION THIS EXISTS FOR. requeue clears the cycle evidence, and
+    // this path issues no invitation, so there is no invitation row either.
+    // Before the event log, an operator's claim and release left ZERO
+    // persisted state and the prospect looked like a fresh join.
+    const s = await seedStudio("wait03-prov-cycle");
+    const j = await join(s.studioId, `cyc-${s.studioId.slice(0, 8)}@ex.com`);
+    const entry = j.entry_id as string;
+
+    await claim(s.studioId, entry, s.userId);
+    await adminQuery(
+      `select public.release_new_client_waitlist_entry($1,$2,$3)`,
+      [s.studioId, entry, s.userId],
+    );
+    await adminQuery(
+      `select public.requeue_new_client_waitlist_entry($1,$2,$3)`,
+      [s.studioId, entry, s.userId],
+    );
+
+    // The entry itself is correctly back to a clean `waiting`...
+    const row = await adminQuery(
+      `select status, claimed_at, released_at from public.new_client_waitlist_entries where id = $1`,
+      [entry],
+    );
+    expect(row.rows[0].status).toBe("waiting");
+    expect(row.rows[0].claimed_at).toBeNull();
+    expect(row.rows[0].released_at).toBeNull();
+
+    // ...and no invitation row exists, because none was ever issued.
+    const inv = await adminQuery(
+      `select count(*)::int as n from public.new_client_waitlist_invitations where entry_id = $1`,
+      [entry],
+    );
+    expect(inv.rows[0].n).toBe(0);
+
+    // The history nevertheless survives, in full, with the actor.
+    const t = await trail(entry);
+    expect(t.map((e) => `${e.from_status ?? "(new)"}->${e.to_status}`)).toEqual([
+      "(new)->waiting",
+      "waiting->claimed",
+      "claimed->released",
+      "released->waiting",
+    ]);
+    expect(t[1].actor_practitioner_id).toBe(s.practitionerId);
+    expect(t[3].actor_practitioner_id).toBe(s.practitionerId);
+  });
+
+  it("records the full invite-to-conversion trail too", async () => {
+    const s = await seedStudio("wait03-prov-full");
+    const j = await join(s.studioId, `full-${s.studioId.slice(0, 8)}@ex.com`);
+    const entry = j.entry_id as string;
+    await claim(s.studioId, entry, s.userId);
+    const inv = await issue(s.studioId, entry, s.userId);
+    await redeem(inv.raw_token);
+    await adminQuery(
+      `select public.record_new_client_waitlist_conversion($1,$2,$3)`,
+      [s.studioId, entry, s.clientId],
+    );
+    const t = await trail(entry);
+    expect(t.map((e) => e.to_status)).toEqual([
+      "waiting",
+      "claimed",
+      "invited",
+      "converted",
+    ]);
+  });
+
+  it("is append-only against UPDATE and DELETE alike", async () => {
+    const s = await seedStudio("wait03-prov-append");
+    const j = await join(s.studioId, `app-${s.studioId.slice(0, 8)}@ex.com`);
+    const entry = j.entry_id as string;
+
+    expect(
+      await codeOf(() =>
+        adminQuery(
+          `update public.new_client_waitlist_entry_events set to_status = 'removed' where entry_id = $1`,
+          [entry],
+        ),
+      ),
+    ).toBe("23514");
+    expect(
+      await codeOf(() =>
+        adminQuery(
+          `delete from public.new_client_waitlist_entry_events where entry_id = $1`,
+          [entry],
+        ),
+      ),
+    ).toBe("23514");
+  });
+
+  it("logs a transition even when it is written directly, not through a command", async () => {
+    // The trigger is the authority, so no future direct write through the
+    // migration channel can transition an entry without leaving a trace.
+    const s = await seedStudio("wait03-prov-direct");
+    const j = await join(s.studioId, `dir-${s.studioId.slice(0, 8)}@ex.com`);
+    const entry = j.entry_id as string;
+    await adminQuery(
+      `update public.new_client_waitlist_entries
+          set status='removed', removed_at=now(), removed_by_practitioner_id=$2
+        where id = $1`,
+      [entry, s.practitionerId],
+    );
+    const t = await trail(entry);
+    expect(t.map((e) => e.to_status)).toEqual(["waiting", "removed"]);
+    expect(t[1].actor_practitioner_id).toBe(s.practitionerId);
+  });
+
+  it("keeps the event log owner-only and read-only", async () => {
+    const g = await adminQuery(
+      `select rolname, priv, has_table_privilege(rolname,'public.new_client_waitlist_entry_events',priv) as ok
+         from (values('anon'),('authenticated'),('service_role')) t(rolname),
+              (values('SELECT'),('INSERT'),('UPDATE'),('DELETE'),('MAINTAIN')) p(priv)`,
+    );
+    for (const row of g.rows as { rolname: string; priv: string; ok: boolean }[]) {
+      expect(row.ok, `${row.rolname} ${row.priv}`).toBe(
+        row.rolname === "authenticated" && row.priv === "SELECT",
+      );
+    }
+    const p = await adminQuery(
+      `select polcmd::text as cmd, pg_get_expr(polqual, polrelid) as qual
+         from pg_policy where polrelid = 'public.new_client_waitlist_entry_events'::regclass`,
+    );
+    expect(p.rows).toHaveLength(1);
+    expect(p.rows[0].cmd).toBe("r");
+    expect(p.rows[0].qual).toContain("is_studio_owner");
+  });
+});
