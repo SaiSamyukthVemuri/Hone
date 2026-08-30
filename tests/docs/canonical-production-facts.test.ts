@@ -1271,21 +1271,66 @@ const CANONICAL_SET = [
   ["docs/production/migration-ledger.md", MIGRATION_LEDGER],
 ] as const;
 
-/** Spelled-out counts these documents use, and their values. */
-const NUMBER_WORDS: Readonly<Record<string, number>> = {
-  four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11,
-  twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16,
-  seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20,
-  // Extended 2026-08-30. The map stopped at twenty and the two count regexes
-  // below matched `\w+`, which cannot span a hyphen - so once production passed
-  // twenty merges since `b9e0003f` the TRUE count became inexpressible and X4
-  // failed on a document that was correct. A guard that cannot represent the
-  // fact it checks forces the document to be wrong; the fix is here, not there.
-  "twenty-one": 21, "twenty-two": 22, "twenty-three": 23, "twenty-four": 24,
-  "twenty-five": 25, "twenty-six": 26, "twenty-seven": 27, "twenty-eight": 28,
-  "twenty-nine": 29, thirty: 30,
+/**
+ * Parse a count these documents write, as a WORD or as DIGITS.
+ *
+ * This replaced a fixed lookup table that stopped at twenty, and then at
+ * thirty. Both ceilings were the same bug: production advances, the true count
+ * eventually exceeds the table, and a guard that cannot REPRESENT the fact it
+ * checks starts failing documents that are correct - which pressures the
+ * document to be wrong. Raising the ceiling to 31, 32, 33 just reschedules it.
+ *
+ * So the parser is COMPOSITIONAL rather than enumerated: units, teens, tens,
+ * optional hyphen or space, optional hundreds, optional "and". Digits are
+ * accepted too and are unbounded, which is the escape hatch if a count ever
+ * outgrows comfortable English. Nothing here needs editing when production
+ * moves.
+ */
+const UNITS: Readonly<Record<string, number>> = {
+  zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7,
+  eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13,
+  fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18,
+  nineteen: 19,
 };
-const isCountWord = (w: string) => w.toLowerCase() in NUMBER_WORDS;
+const TENS: Readonly<Record<string, number>> = {
+  twenty: 20, thirty: 30, forty: 40, fifty: 50,
+  sixty: 60, seventy: 70, eighty: 80, ninety: 90,
+};
+
+/** Number a count word/phrase denotes, or null when it is not a count at all. */
+function parseCount(raw: string): number | null {
+  const text = raw.trim().toLowerCase();
+  if (/^\d+$/.test(text)) return Number(text);
+  const tokens = text.split(/[\s-]+/).filter((t) => t && t !== "and");
+  if (tokens.length === 0) return null;
+  let total = 0;
+  let current = 0;
+  let sawAny = false;
+  for (const t of tokens) {
+    if (t === "hundred") {
+      if (current === 0) return null; // "hundred" with nothing before it
+      current *= 100;
+      sawAny = true;
+      continue;
+    }
+    if (t in TENS) {
+      current += TENS[t];
+      sawAny = true;
+      continue;
+    }
+    if (t in UNITS) {
+      current += UNITS[t];
+      sawAny = true;
+      continue;
+    }
+    return null; // any non-number token means this is not a count
+  }
+  if (!sawAny) return null;
+  total += current;
+  return total;
+}
+
+const isCountWord = (w: string) => parseCount(w) !== null;
 
 /**
  * Split a document into units a CLAIM can live in.
@@ -1421,7 +1466,12 @@ describe("RULE X — canonical documents agree with each other", () => {
     ).toEqual([]);
   });
 
-  it("X4: the capability register's merge count matches current-state's", () => {
+  it("X4: both documents' merge counts equal the count Git actually reports", async () => {
+    // This used to compare one prose number with the other, so two documents
+    // agreeing on a WRONG number passed. They did: both said "fourteen" while
+    // the ancestry had moved, and the rule was green throughout. Prose-to-prose
+    // agreement is consistency, not correctness - the Git graph is the
+    // authority, and it is the thing that moves.
     const cs = currentProse(CURRENT_STATE).match(
       /full merge ancestry back to `b9e0003f` \(([\w-]+) merges\)/i,
     )?.[1];
@@ -1430,12 +1480,45 @@ describe("RULE X — canonical documents agree with each other", () => {
     )?.[1];
     expect(cs, "current-state must state the merge count").toBeTruthy();
     expect(cr, "capability-register must state the merge count").toBeTruthy();
-    expect(isCountWord(cs as string), `unexpected count word: ${cs}`).toBe(true);
+
+    const csN = parseCount(cs as string);
+    const crN = parseCount(cr as string);
+    expect(csN, `current-state's count is not parseable: ${cs}`).not.toBeNull();
+    expect(crN, `capability-register's count is not parseable: ${cr}`).not.toBeNull();
+
+    // They must still agree with each other - a cheap check that survives a
+    // shallow clone, where the authoritative one below cannot run.
     expect(
-      (cr as string).toLowerCase(),
-      "the two documents count the same merges since the same baseline and must agree. The " +
-        "register sat at 'fourteen' through two production moves while current-state advanced.",
-    ).toBe((cs as string).toLowerCase());
+      crN,
+      "the two documents count the same merges since the same baseline and must agree",
+    ).toBe(csN);
+
+    if (!GIT_USABLE) {
+      expect(GIT_USABLE, "shallow clone or no git — X4's Git derivation could not run").toBe(false);
+      return;
+    }
+    // Count over the PINNED BASELINE, not `HEAD`. The sentence is about
+    // PRODUCTION merges, and on a PR branch `--first-parent HEAD` walks the
+    // PR's own chain instead - it reported 5 (this PR's successive "merge
+    // production into the branch" commits) against a true production count of
+    // 27. The pin is the current baseline by definition, so it is the right
+    // endpoint and it keeps this rule consistent with RULE A.
+    const baseline = pinnedRuntimeSha();
+    expect(baseline, "current-state must pin a runtime-bearing HEAD for X4 to count against").toBeTruthy();
+    const log = git("log", "--first-parent", "--merges", "--format=%H", `b9e0003f..${baseline}`);
+    expect(log, "git could not enumerate the ancestry from b9e0003f").not.toBeNull();
+    const actual = (log as string).split("\n").filter(Boolean).length;
+    expect(
+      actual,
+      "b9e0003f must be reachable with merges after it, or this rule proves nothing",
+    ).toBeGreaterThan(0);
+    expect(
+      csN,
+      `both documents state ${csN} merges since \`b9e0003f\`, but git log --first-parent ` +
+        `--merges b9e0003f..${(baseline as string).slice(0, 8)} reports ${actual}. The graph is the ` +
+        `authority; the prose is a ` +
+        "copy of it, and this is the copy going stale.",
+    ).toBe(actual);
   });
 
   it("X6: the changelog's coverage statements match the PR rows it actually carries", () => {
@@ -1520,7 +1603,7 @@ describe("RULE X — canonical documents agree with each other", () => {
       `section 15 says it carries ${stated} capabilities but its table holds ${rows} contiguous ` +
         "row(s). Either the count is stale, or a row was appended after a blank line and fell " +
         "out of the table - both have happened here.",
-    ).toBe(NUMBER_WORDS[(stated as string).toLowerCase()]);
+    ).toBe(parseCount(stated as string));
   });
 });
 
@@ -1803,6 +1886,87 @@ const MUST_STAY_OPEN = [
 
 /** Headings preserved verbatim that state something no longer true. */
 const MUST_BE_MARKED_CLOSED = ["L2", "L18", "L23", "L30"] as const;
+
+/** Every `## Lnn` heading id in known-limitations.md, in document order. */
+function limitationIds(doc: string): string[] {
+  return [...doc.matchAll(/^##\s+(L\d+)\s+—/gm)].map((m) => m[1]);
+}
+
+// ===========================================================================
+// RULE D0 — a limitation identifier is unique, and this runs BEFORE D+
+// ===========================================================================
+//
+// THE DEFECT THIS EXISTS FOR, exactly as it happened. Production recorded the
+// onboarding-celebration limitation as L25 in #658 while this branch had
+// independently issued L25 to the durable waitlist. An ordinary merge produced
+// TWO `## L25` sections, out of order, and:
+//
+//   * `git merge-tree --write-tree` returned exit 0 - no textual conflict;
+//   * every D+ rule passed, because `MUST_STAY_OPEN` resolves an id with
+//     `KNOWN_LIMITATIONS.match(re)?.[0]`, a FIRST-match lookup. The waitlist
+//     L25 appears first, satisfied the assertion, and the duplicate sat 35
+//     lines below it unmentioned.
+//
+// So a clean merge, a green CI run and a green guard all coexisted with a
+// document that had two different limitations under one identifier. Uniqueness
+// has to be asserted over the WHOLE set before any per-id rule reads it,
+// because every per-id rule is a first-match lookup and cannot see the second.
+describe("RULE D0 — limitation identifiers are unique across the whole document", () => {
+  it("no `## Lnn` identifier appears twice", () => {
+    const ids = limitationIds(KNOWN_LIMITATIONS);
+    expect(ids.length, "known-limitations.md must carry limitation headings").toBeGreaterThan(0);
+    const seen = new Map<string, number>();
+    for (const id of ids) seen.set(id, (seen.get(id) ?? 0) + 1);
+    const duplicated = [...seen.entries()].filter(([, n]) => n > 1).map(([id, n]) => `${id}x${n}`);
+    expect(
+      duplicated,
+      "known-limitations.md issues the same limitation identifier more than once. Two different " +
+        "limitations under one id is not a formatting slip: every per-id rule below resolves by " +
+        "FIRST match, so the second one is invisible to all of them. Production moving is what " +
+        `creates this, by merging cleanly. Offending: ${JSON.stringify(duplicated)}`,
+    ).toEqual([]);
+  });
+
+  // DISCRIMINATION PROOF. Reproduces the exact merge-collision class above and
+  // shows the new rule goes RED on it while the OLD first-match lookup stays
+  // green - which is the whole reason this rule had to be added rather than
+  // trusting D+ to have caught it.
+  it("goes RED on the exact collision that escaped, where a first-match lookup stays green", () => {
+    const collided = KNOWN_LIMITATIONS.replace(
+      /^##\s+L31\s+—/m,
+      "## L25 —",
+    );
+    expect(
+      collided,
+      "the fixture must actually differ, or this control proves nothing",
+    ).not.toBe(KNOWN_LIMITATIONS);
+
+    const ids = limitationIds(collided);
+    const dupes = ids.filter((id, i) => ids.indexOf(id) !== i);
+    expect(dupes, "the reproduced collision must contain a duplicate id").toContain("L25");
+
+    // The old per-id shape - `match(/^## L25 —.*$/m)` - still resolves, and
+    // still resolves to the WAITLIST heading, exactly as it did in the real
+    // merge. That is the blindness this rule covers.
+    const firstMatch = collided.match(/^##\s+L25\s+—\s+The durable new-client waitlist.*$/m)?.[0];
+    expect(
+      firstMatch,
+      "the first-match lookup must still succeed on the collided document - if it did not, D+ " +
+        "would already have caught this and RULE D0 would be unnecessary",
+    ).toBeTruthy();
+  });
+
+  it("does NOT fire on a document whose identifiers are merely out of order", () => {
+    // Order is a readability question and several ids in this file are already
+    // out of sequence for good reasons. Only REUSE is a defect, and a rule that
+    // conflated the two would be deleted the first time it fired on a
+    // deliberate ordering.
+    const shuffled = ["L3", "L1", "L2"];
+    const seen = new Map<string, number>();
+    for (const id of shuffled) seen.set(id, (seen.get(id) ?? 0) + 1);
+    expect([...seen.values()].filter((n) => n > 1)).toEqual([]);
+  });
+});
 
 describe("RULE D+ — open limitations persist, closed ones stay labelled", () => {
   it.each(MUST_STAY_OPEN.map(([id, re, what]) => [id, re, what] as const))(

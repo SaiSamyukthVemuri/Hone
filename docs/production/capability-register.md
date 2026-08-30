@@ -287,8 +287,21 @@ and equally, do not restate that dated zero as a present-tense fact: it is evide
 
 ## 15. Capabilities added since the 2026-08-23 reconciliation
 
-**Twenty-seven** production merges landed between `b9e0003f` and the current baseline. **Ten** carry
-a capability that belongs in this register; the rest are UI, documentation or test work. **None
+**Twenty-seven** production merges landed between `b9e0003f` and the current baseline. **Ten**
+carry a capability that belongs in this register.
+
+**Those two numbers are derived over different spans, and saying so is the point.** All ten
+rows below come from the **`#632`–`#650`** span, which is the range this table was derived
+over. The **nine** merges since — `#651`, `#653`, `#652`, `#654`, `#655`, `#656`, `#657`,
+`#658`, `#659` — were re-examined by changed-path analysis on **2026-08-30** and add **no new
+capability**: they are performance, mobile-layout and touch-target work, plus one correction
+(`#652`) to a capability already listed here and one behaviour rework (`#658`) inside an
+onboarding capability already covered, whose residual gap is recorded as **L31** rather than as
+a new capability. The rest of the twenty-seven are UI, documentation or test work.
+
+Without that sentence the pairing reads as though ten capabilities were derived over all
+twenty-seven merges, which is not what was done — and a derived count moved without
+re-deriving the fact beneath it is precisely the defect this document exists to close. **None
 of the ten is production-exercised**, and each is recorded with the evidence that decides its
 status rather than with a status word alone.
 
