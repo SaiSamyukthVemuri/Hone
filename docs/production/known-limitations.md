@@ -43,6 +43,22 @@ changed:
 - **L30 added and immediately CLOSED** — `HN-037`, the defect this reconciliation exists to fix,
   recorded with what closes it and what it deliberately leaves open elsewhere.
 
+**Refreshed again 2026-08-30**, to the baseline recorded in
+[current-state.md](./current-state.md), across nine merges (`#651`–`#659`). Still no
+production re-measurement. What changed:
+
+- **L31 added — renumbered, not new.** Production recorded it as **L25** in `#658`, but `#631`
+  had independently issued L25 to the durable waitlist, so an ordinary merge produced **two
+  different L25 sections** in this file. Git reports that merge as clean and the canonical
+  guard passes it too, because the rule that pins L25 resolves by first match. Production's
+  entry is renumbered to **L31** and its body is unchanged; the waitlist keeps L25, because
+  the guard, `capability-register.md` and this summary all already refer to it by that number.
+- **L32 added** — the Client Profile fails to open for a client with a long charted history:
+  the block-areas read never chunks its id list, so past roughly **205** `session_blocks` the
+  request is refused with HTTP 414 and the page throws. Found while building a measurement
+  fixture for `#659`; it reproduces on the baseline before `#659` as well, so it is **not** a
+  regression from that change.
+
 **Amended 2026-07-29:** **L9** and **L10** were rewritten because signed / finalized clinical
 records are now **RETIRED by product decision**, enforced by migration **0159**. **Amended
 2026-07-30: 0159 is APPLIED and verified in production** — the retirement is database-enforced, and
@@ -460,19 +476,6 @@ selling to additional studios · `Neither` = accepted, tracked, not blocking tod
 
 ---
 
-## L25 — the onboarding celebration's client state is not scoped to the selected studio
-
-| Field | Value |
-|---|---|
-| **Impact** | For a **multi-studio owner only**: the one-time setup celebration (confetti) may be silently suppressed for studio B in a dashboard tab that was mounted while studio A was selected. Cosmetic. The celebration is an animation; no setup step, stamp, or record is affected. |
-| **Mechanism** | `lib/onboarding/celebration-machine.ts` keeps `stampConfirmed`, `closed` and `live` for the mounted wizard, and neither `OnboardingModel` nor the machine carries a studio identity. Switching studio in another tab rewrites the shared httpOnly `hone_selected_studio` cookie; a subsequent `dismissOnboardingAction` in the stale tab resolves the NEW studio server-side and revalidates `/dashboard`, so the reducer can receive studio B's `shouldCelebrate=true` model while its own state still describes studio A. Studio A's `stampConfirmed` then suppresses studio B's still-owed celebration. |
-| **Reproduction** | Owner active in two studios, both onboarding-v2 enabled, studio B's `celebrated_at` still null. Tab 1: dashboard for studio A, complete setup so the celebration stamps. Tab 2: *Switch studio* (`/no-access?reason=multiple-studios`) to studio B. Tab 1, without reloading: close the wizard, then reopen it from the pinned card. Studio B's celebration does not play. Reloading tab 1 clears it. |
-| **Why it is not a tenant-isolation defect** | No data crosses tenants. Studio B's model is fetched under studio B's own authorization, and every server action (`markCelebrationShownAction`, `dismissOnboardingAction`, `completeOnboardingAction`) resolves its own studio via `requireOnboardingOwner()` → `getCurrentPractitionerWithStudio()`, never from client state. No write is directed at the wrong studio; the stamp remains a stamp-once CAS on the correct row. No authorization decision reads this state. The only casualty is one animation in one stale tab. |
-| **Current mitigation** | A reload — or any fresh mount — starts the machine empty and the server model is authoritative again. Single-studio owners, which is every pilot studio today, cannot reach it: the *Switch studio* affordance renders only for 2+ active memberships (`app/(app)/layout.tsx`). |
-| **Owner** | Sam (engineering) |
-| **Next gate** | Key or reset the celebration machine when the model's studio changes. Cheapest honest fix is to carry a studio identifier on `OnboardingModel` and reset state when it differs; keying `<OnboardingSurface>` on the studio id would also do it. Raised by review on PR #658 and deliberately deferred there under the P3 release policy. |
-| **Blocks** | Neither. |
-
 ## Explicitly *not* claimed
 
 To keep this register honest, the following are **not** asserted anywhere in Hone's
@@ -595,3 +598,38 @@ only cross-reference is `current-state.md` → `docs/14_AI_HANDOFF.md`, and it i
 chronology*, explicitly not for current state. Several of these are legitimately **historical
 context** (a dated audit record, a frozen apply note); the rest are genuine stale current claims
 belonging to their own lane.
+
+---
+
+## L31 — the onboarding celebration's client state is not scoped to the selected studio
+
+*Recorded in production by #658 as **L25**. Renumbered to **L31** here, because this reconciliation had independently issued L25 to the durable waitlist and an ordinary merge produced two sections with the same identifier. The body below is unchanged.*
+
+
+| Field | Value |
+|---|---|
+| **Impact** | For a **multi-studio owner only**: the one-time setup celebration (confetti) may be silently suppressed for studio B in a dashboard tab that was mounted while studio A was selected. Cosmetic. The celebration is an animation; no setup step, stamp, or record is affected. |
+| **Mechanism** | `lib/onboarding/celebration-machine.ts` keeps `stampConfirmed`, `closed` and `live` for the mounted wizard, and neither `OnboardingModel` nor the machine carries a studio identity. Switching studio in another tab rewrites the shared httpOnly `hone_selected_studio` cookie; a subsequent `dismissOnboardingAction` in the stale tab resolves the NEW studio server-side and revalidates `/dashboard`, so the reducer can receive studio B's `shouldCelebrate=true` model while its own state still describes studio A. Studio A's `stampConfirmed` then suppresses studio B's still-owed celebration. |
+| **Reproduction** | Owner active in two studios, both onboarding-v2 enabled, studio B's `celebrated_at` still null. Tab 1: dashboard for studio A, complete setup so the celebration stamps. Tab 2: *Switch studio* (`/no-access?reason=multiple-studios`) to studio B. Tab 1, without reloading: close the wizard, then reopen it from the pinned card. Studio B's celebration does not play. Reloading tab 1 clears it. |
+| **Why it is not a tenant-isolation defect** | No data crosses tenants. Studio B's model is fetched under studio B's own authorization, and every server action (`markCelebrationShownAction`, `dismissOnboardingAction`, `completeOnboardingAction`) resolves its own studio via `requireOnboardingOwner()` → `getCurrentPractitionerWithStudio()`, never from client state. No write is directed at the wrong studio; the stamp remains a stamp-once CAS on the correct row. No authorization decision reads this state. The only casualty is one animation in one stale tab. |
+| **Current mitigation** | A reload — or any fresh mount — starts the machine empty and the server model is authoritative again. Single-studio owners, which is every pilot studio today, cannot reach it: the *Switch studio* affordance renders only for 2+ active memberships (`app/(app)/layout.tsx`). |
+| **Owner** | Sam (engineering) |
+| **Next gate** | Key or reset the celebration machine when the model's studio changes. Cheapest honest fix is to carry a studio identifier on `OnboardingModel` and reset state when it differs; keying `<OnboardingSurface>` on the studio id would also do it. Raised by review on PR #658 and deliberately deferred there under the P3 release policy. |
+| **Blocks** | Neither. |
+
+---
+
+## L32 — the client profile fails to open for a client with a long charted history
+
+| Field | Value |
+|---|---|
+| **Severity** | **P1 — OPEN.** Total loss of function on the core clinical surface, for a growing subset of clients. |
+| **Impact** | A practitioner cannot open the profile of a long-standing client **at all**. The Overview tab is the default, so there is no way to avoid it from the UI, and there is no user-side workaround. It strikes the longest-standing clients — the ones with the most history to lose access to — and it only ever gets worse, because every charted session adds blocks. |
+| **Mechanism** | `getSessionBlockAreasByBlockIds` (`lib/supabase/queries.ts`) de-duplicates its block ids but **never chunks** them: every id goes into a single PostgREST `.in("session_block_id", …)` filter, so the request grows with the client's history against a fixed transport limit. PostgREST returns **HTTP 414**, the helper throws `Failed to load block areas: …`, and `app/(app)/clients/[id]/page.tsx` has no `try`/`catch` — so it escapes to the app-group error boundary. This is the same `attachStructuredAreas` throw recorded as a deliberate non-change under CLIN-01-B; what is new is the evidence that it is **reachable in ordinary use**. |
+| **Measured threshold** | **204 block ids pass, 206 return 414** — a ceiling of roughly **205 unique `session_blocks`**, measured against the real query shape (`select`, `in(...)`, `studio_id`, two `order` params). Consistent with an 8 KB request line at ~37 chars per id. |
+| **Reachability** | The id list is the live blocks across the **200 most recent sessions** (the intelligence read's window; the ≤25-session summary set de-duplicates into it). At 2 blocks charted per visit that is ~**103 sessions**; at 3, ~**69**. Electrolysis is a multi-year, fortnightly-to-weekly course of treatment and multi-area visits are ordinary, so this is not an edge case. The 200-session cap looks like a bound on the id count but is not one — blocks per session is unbounded. |
+| **How it was found** | While building a measurement fixture for PERF-02C (#659). It reproduces identically on the baseline that preceded #659 and on #659 itself, so it is **not** a PERF-02C regression and #659 neither causes nor fixes it. |
+| **Not a tenancy defect** | The `studio_id` defence-in-depth filter and RLS are untouched by the failure; the request is refused at the transport layer before any row is returned. |
+| **Owner** | Sam (engineering) |
+| **Next gate** | Chunk the id list inside that one function and merge the results — batch conservatively (~100), issue batches with `Promise.all` so a chunked read does not reintroduce the serial round trips #659 removed, and keep the `studio_id` filter on **every** batch or it becomes a tenancy defect. Whether an area-read failure should be able to fail the whole page, rather than degrading to an explicit unavailable state the way the CLIN-01-B reads do, is a separate design question and should not be folded into the chunking fix. |
+| **Blocks** | **Neither** for the pilot — no pilot client is near the threshold today — but it blocks any studio migrating a long client history. |

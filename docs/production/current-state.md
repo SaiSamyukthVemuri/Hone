@@ -23,11 +23,11 @@ not a PR diary — per-capability evidence lives in
 
 | Field | Value |
 |---|---|
-| **Reconciliation date** | 2026-08-27 |
+| **Reconciliation date** | 2026-08-30 |
 | **Production branch** | `claude/build-hone-saas-hOex7` |
-| **Current Git branch HEAD** | `4fee652fe67f9fdc06b7d5e719cdb73d5e6d294b` — the PR #649 merge (UI-01D, Client Profile tab acknowledgement). Query GitHub for the live value; documentation-only commits may have advanced it since. |
-| **Last runtime-bearing application HEAD** | **`4fee652fe67f9fdc06b7d5e719cdb73d5e6d294b` — the same commit.** Derived mechanically, not asserted: the two merges since `5ad81129` (`#650`, then `#649`) change **five** deployed files — `app/(app)/financials/financial-spine.tsx`, `components/profile-tab-bar.tsx` and three under `lib/finance/` — classified by `scripts/classify-changes.mjs`, the same map CI uses. **This is the baseline for every behavioural claim in this document.** |
-| **Current Vercel Production deployment** | ⚠️ **NO DEPLOYMENT ID READ.** The commit status for `4fee652f` is the evidence that a production deployment for this head succeeded — no deployment id, alias or runtime probe was read, and none is asserted. |
+| **Current Git branch HEAD** | `0f07dae68efe06d493421af715cb0b7234153de9` — the PR #659 merge (PERF-02C, the client-profile overview clinical wave). Query GitHub for the live value; documentation-only commits may have advanced it since. |
+| **Last runtime-bearing application HEAD** | **`0f07dae68efe06d493421af715cb0b7234153de9` — the same commit.** Derived mechanically, not asserted: the **nine** merges since the previous baseline `4fee652f` (`#651`, `#653`, `#652`, `#654`, `#655`, `#656`, `#657`, `#658`, `#659`) change **21** deployed files across `app/`, `components/` and `lib/` — classified by `scripts/classify-changes.mjs`, the same map CI uses. Every one of the nine is runtime-bearing; none is documentation-only. **This is the baseline for every behavioural claim in this document.** |
+| **Current Vercel Production deployment** | ⚠️ **NO DEPLOYMENT ID READ.** The Vercel commit status for `0f07dae6` reports **success**, and that status is the whole of the evidence that a production deployment for this head succeeded — no deployment id, alias or runtime probe was read, and none is asserted. |
 | **Migration state** | **This document deliberately states no migration number.** Hosted max is declared once, machine-readably, in [`migration-state.json`](./migration-state.json). Repository max, total applied and the next free number are **derived** — run `npm run migration:state`. The current reconciled position, with checksums and apply evidence, is [migration-ledger.md](./migration-ledger.md) under *Current state*. A number copied into this table is a number that goes stale on the next apply; that is how the `0160`/`0163`/`0165` divergence happened. |
 | **Database vs. application skew** | **None** — repository and hosted migration state reconcile, with nothing pending and nothing remote-only. Verified by `npm run migration:state` at this reconciliation. The reconciling numbers are **not** restated here; see [migration-ledger.md](./migration-ledger.md). |
 | **Production Supabase project** | The single production project. Always re-read the linked ref from `supabase/.temp/project-ref` (gitignored) and verify with `supabase migration list --linked` before trusting any number here. **No credentials are recorded in documentation.** (The project ref itself appears in at least one older repo document, so treat it as an operational identifier rather than a secret — but do not add new copies of it.) |
@@ -37,27 +37,32 @@ not a PR diary — per-capability evidence lives in
 
 ### Immediately preceding runtime baseline
 
-`5ad81129abfa0cd1f48bc8b51feb15a0738922db` — the PR #646 merge (FIN-01A Slice 1, the owner
-financial truth surface). Its code remains live because #650 and #649 were built on top of it.
+`4fee652fe67f9fdc06b7d5e719cdb73d5e6d294b` — the PR #649 merge (UI-01D, Client Profile tab
+acknowledgement), the baseline this document carried before the 2026-08-30 refresh. Its code
+remains live because the nine merges above were built on top of it.
 
 ### What this reconciliation did and did not measure
 
 **This reconciliation is a documentation lane.** It re-derived what can be derived from the
 repository and the Git graph, and it re-measured **nothing** in the production database, at
 Vercel, or at any provider. It has been refreshed to each production head in turn —
-`8418a755` (#648), `5ad81129` (#646) and `4fee652f` (#650, #649), all on 2026-08-27 — **the measurement boundary below is
-unchanged by either refresh — production moving is not a reason to restate a figure nobody
-re-read.** Read the two lists as a boundary, not as a caveat:
+`8418a755` (#648), `5ad81129` (#646) and `4fee652f` (#650, #649) on 2026-08-27, then
+`0f07dae6` (#651, #653, #652, #654, #655, #656, #657, #658, #659) on 2026-08-30 — **the
+measurement boundary below is unchanged by any of those refreshes — production moving is not
+a reason to restate a figure nobody re-read.** Read the two lists as a boundary, not as a
+caveat:
 
-**Re-derived on 2026-08-27, from the repository at `4fee652f`:**
+**Re-derived on 2026-08-30, from the repository at `0f07dae6`:**
 
-- the production branch head and the full merge ancestry back to `b9e0003f` (eighteen merges);
+- the production branch head and the full merge ancestry back to `b9e0003f` (twenty-seven merges);
+- the nine merges since the previous baseline `4fee652f`, and that **all nine are
+  runtime-bearing** (none is documentation-only), by changed-path analysis;
 - which of those merges are runtime-bearing, by changed-path analysis;
 - repository migration max, total, next free number and pending set (`npm run migration:state`);
 - hosted migration max as **declared** in [`migration-state.json`](./migration-state.json);
 - every capability status below that rests on merged source, migrations or tests.
 
-**NOT measured on 2026-08-27, and therefore carried forward with their original 2026-08-23
+**NOT measured on 2026-08-30, and therefore carried forward with their original 2026-08-23
 stamps rather than restated as current:**
 
 - every per-studio row count in §0, and every derived figure that depends on them;
@@ -65,7 +70,10 @@ stamps rather than restated as current:**
 - portal, intake and consent counts (§6);
 - `ops_alerts` rows and the admin audit event count (§13);
 - treatment-image counts (§12);
-- HTTP health, the Vercel deployment record, and whether Sentry or PostHog is receiving events.
+- HTTP health, and whether Sentry or PostHog is receiving events;
+- **any production performance figure.** The PERF-02C measurement recorded in §1 was taken
+  on a local stack against a synthetic fixture. Nothing was measured in production, and no
+  production latency claim is made anywhere in this document.
 
 A figure with a 2026-08-23 stamp is **evidence of what was true on 2026-08-23**. It is not a
 claim about today, and a later reader must re-measure before treating it as one.
@@ -180,7 +188,7 @@ surfaces then made affirmative clinical statements nobody had read: *Last visit*
 Intelligence* reported every stat as a known zero, and *Before today* reported no watch or plan
 notes and a complete procedure record.
 
-At `4fee652f` all four check `unavailable` **before** `hasHistory`, and
+At `0f07dae6` all four check `unavailable` **before** `hasHistory`, and
 `session_blocks.caution_for_next_session` / `caution_note` — which reach the practitioner only
 through the Watch/Plan band built from that same read — are protected on both the Overview and
 Sessions tabs. Read failure now renders *clinical history could not be loaded*.
@@ -188,6 +196,34 @@ Sessions tabs. Read failure now renders *clinical history could not be loaded*.
 **Deliberate non-change, recorded so it is not mistaken for a gap:** `attachStructuredAreas`
 still **throws** on a `session_block_areas` read failure, surfacing the error boundary. That is
 loud, not a false absence, and was left alone.
+
+Since **PR #659 (PERF-02C, merged, `0f07dae6`)** those same reads run differently while saying
+the same thing. The clinical-notes summary and the two `session_blocks` reads are mutually
+independent, and on the Overview tab they ran as three consecutive awaits; they are now one
+`Promise.all` wave, with `attachStructuredAreas` still serial after it because it genuinely
+consumes both block reads. **This is a reordering, not a dedupe** — per-tab query counts were
+measured identical before and after, not assumed. CLIN-01-B's containment is preserved by
+construction: each unit resolves with its own outcome and never rejects, so one read failing
+still cannot blank the other's card, and the two unavailability flags and two
+`logClinicalReadFailure` event names are unchanged.
+
+**The measurement, with the condition that makes it meaningful.** On a local stack against a
+synthetic client carrying **40 sessions and 80 `session_blocks`**, the Overview navigation's
+server-render window (`clients → client profile`, response-headers to first useful content)
+measured **588 ms → 530 ms, −58 ms**, n=22 per arm, interleaved, reproduced in both A→B
+pairings. The parallelism itself was proven at the database rather than inferred from the
+clock: sampling `pg_stat_activity` found **zero** instants with the summary and intelligence
+reads concurrently active before, and **thirty** after. On a client with **no** charted
+history the same change measures ≈0, because both `session_blocks` reads are gated on a
+session count and never execute — so the figure is meaningless without its fixture and must
+never be quoted bare. **Nothing was measured in production**, and no production latency
+improvement is claimed.
+
+The paired asymmetry check (the Sessions tab, which runs only one of the three units and
+should therefore not move) is **inconclusive** rather than passing: the measurement harness
+returns to the Overview tab between samples, so that control's own warm-up runs the code path
+under test. That is measurement debt in a test-only harness — it ships nothing and no user can
+reach it — and it is recorded as such, not as a product regression.
 
 #### The Dashboard half — F2, closed by PR #648
 

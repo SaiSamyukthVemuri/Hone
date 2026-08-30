@@ -1276,6 +1276,14 @@ const NUMBER_WORDS: Readonly<Record<string, number>> = {
   four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11,
   twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16,
   seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20,
+  // Extended 2026-08-30. The map stopped at twenty and the two count regexes
+  // below matched `\w+`, which cannot span a hyphen - so once production passed
+  // twenty merges since `b9e0003f` the TRUE count became inexpressible and X4
+  // failed on a document that was correct. A guard that cannot represent the
+  // fact it checks forces the document to be wrong; the fix is here, not there.
+  "twenty-one": 21, "twenty-two": 22, "twenty-three": 23, "twenty-four": 24,
+  "twenty-five": 25, "twenty-six": 26, "twenty-seven": 27, "twenty-eight": 28,
+  "twenty-nine": 29, thirty: 30,
 };
 const isCountWord = (w: string) => w.toLowerCase() in NUMBER_WORDS;
 
@@ -1415,10 +1423,10 @@ describe("RULE X — canonical documents agree with each other", () => {
 
   it("X4: the capability register's merge count matches current-state's", () => {
     const cs = currentProse(CURRENT_STATE).match(
-      /full merge ancestry back to `b9e0003f` \((\w+) merges\)/i,
+      /full merge ancestry back to `b9e0003f` \(([\w-]+) merges\)/i,
     )?.[1];
     const cr = currentProse(CAPABILITY_REGISTER).match(
-      /\*{0,2}(\w+)\*{0,2}\s+production merges landed between `b9e0003f`/i,
+      /\*{0,2}([\w-]+?)\*{0,2}\s+production merges landed between `b9e0003f`/i,
     )?.[1];
     expect(cs, "current-state must state the merge count").toBeTruthy();
     expect(cr, "capability-register must state the merge count").toBeTruthy();

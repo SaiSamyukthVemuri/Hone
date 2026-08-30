@@ -287,7 +287,7 @@ and equally, do not restate that dated zero as a present-tense fact: it is evide
 
 ## 15. Capabilities added since the 2026-08-23 reconciliation
 
-**Eighteen** production merges landed between `b9e0003f` and the current baseline. **Ten** carry
+**Twenty-seven** production merges landed between `b9e0003f` and the current baseline. **Ten** carry
 a capability that belongs in this register; the rest are UI, documentation or test work. **None
 of the ten is production-exercised**, and each is recorded with the evidence that decides its
 status rather than with a status word alone.
