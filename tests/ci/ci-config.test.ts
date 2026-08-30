@@ -137,8 +137,33 @@ function executableUses(file: string, doc: unknown): UseSite[] {
 const allUses = (sources: readonly Workflow[]): UseSite[] =>
   parseAll(sources).flatMap(({ file, doc }) => executableUses(file, doc));
 
-/** `actions/checkout@<sha>` -> `actions/checkout`. */
-const actionOf = (value: string) => value.slice(0, value.lastIndexOf("@") + 1 || undefined).replace(/@$/, "");
+/**
+ * The canonical identity of a REMOTE action or reusable-workflow reference —
+ * `Actions/Checkout@<sha>` -> `actions/checkout` — or null when the value is not
+ * a remote reference at all.
+ *
+ * GitHub matches owner and repository case-INSENSITIVELY, so `Actions/checkout`,
+ * `ACTIONS/CHECKOUT` and `actions/checkout` are one action to it. They were three
+ * different strings to the action-specific guards, which compared against
+ * lowercase literals: a checkout written `Actions/checkout@<approved sha>` was
+ * not recognised as a checkout, so its missing `persist-credentials: false` was
+ * never demanded and it never reached the reviewed checkout total — while the
+ * SHA-pinning and annotation guards, which never look at the identifier's case,
+ * went on reporting clean.
+ *
+ * Folded HERE and nowhere else, so the fold cannot leak:
+ *   - the SHA is returned untouched by this function and compared as written;
+ *   - a LOCAL action (`./…`) is a path in this repository, which GitHub does not
+ *     case-fold — it returns null rather than a rewritten remote identity;
+ *   - arbitrary YAML scalars never reach it.
+ */
+function canonicalActionIdentity(value: string): string | null {
+  if (value.startsWith("./") || value.startsWith("../")) return null; // a path, not an identifier
+  const at = value.lastIndexOf("@");
+  const target = at > 0 ? value.slice(0, at) : value; // the ref is NOT part of identity
+  if (!/^[\w.-]+\/[\w./-]+$/.test(target)) return null; // docker://, or malformed
+  return target.toLowerCase();
+}
 
 /**
  * Immutable = a 40-character commit SHA, or a path inside THIS repository
@@ -212,9 +237,103 @@ function taggedStrings(node: unknown, key: string | null = null, out: TaggedStri
   return out;
 }
 
-/** Every `${{ ... }}` body in a string. */
-const expressions = (text: string): string[] =>
-  [...text.matchAll(/\$\{\{([\s\S]*?)\}\}/g)].map((m) => m[1]);
+/**
+ * Every `${{ ... }}` body in a string, found by SCANNING rather than by a
+ * non-greedy match, plus a count of expressions that never closed.
+ *
+ * `${{ format('}}', secrets.DEPLOY_PAT) }}` is one expression whose string
+ * literal happens to contain the closing delimiter. A non-greedy /\$\{\{(.*?)\}\}/
+ * stops at that inner `}}`, yields ` format('`, and the credential after it is
+ * never inspected — the whole expression scans clean. Quote state has to be
+ * tracked to know which `}}` is a terminator and which is data.
+ *
+ * Both quote styles hold literal state. GitHub's expression grammar documents
+ * SINGLE quotes, and this repository carries no evidence about double ones, so
+ * this is deliberately a conservative superset rather than a claim: if double
+ * quotes are not literals then `format("}}", …)` is a syntax error that never
+ * runs, and treating them as literals only makes the scanner capture MORE text
+ * to inspect. `''` (and `""`) escape a quote inside a literal.
+ *
+ * An expression that never closes is REPORTED, not silently dropped — returning
+ * its partial content would be exactly the truncation this replaced.
+ */
+type ExpressionScan = { expressions: string[]; unterminated: string[] };
+
+function extractGithubExpressions(text: string): ExpressionScan {
+  const expressions: string[] = [];
+  const unterminated: string[] = [];
+  let i = 0;
+  while (i < text.length) {
+    const open = text.indexOf("${{", i);
+    if (open === -1) break;
+    let j = open + 3;
+    let quote: string | null = null;
+    let closed = -1;
+    while (j < text.length) {
+      const c = text[j];
+      if (quote !== null) {
+        if (c === quote) {
+          if (text[j + 1] === quote) {
+            j += 2; // an escaped quote: still inside the literal
+            continue;
+          }
+          quote = null;
+        }
+        j++;
+        continue;
+      }
+      if (c === "'" || c === '"') {
+        quote = c;
+        j++;
+        continue;
+      }
+      if (c === "}" && text[j + 1] === "}") {
+        closed = j;
+        break;
+      }
+      j++;
+    }
+    if (closed === -1) {
+      unterminated.push(text.slice(open));
+      break; // nothing after an unclosed expression can be read reliably
+    }
+    expressions.push(text.slice(open + 3, closed));
+    i = closed + 2;
+  }
+  return { expressions, unterminated };
+}
+
+/**
+ * The expression with its string literals emptied — same quote rules as the
+ * scanner, so `'it''s'` is one literal. Their CONTENT is data, never a context
+ * reference: `format('secrets.DEPLOY_PAT')` names nothing.
+ */
+function stripExpressionLiterals(expr: string): string {
+  let out = "";
+  let i = 0;
+  while (i < expr.length) {
+    const c = expr[i];
+    if (c !== "'" && c !== '"') {
+      out += c;
+      i++;
+      continue;
+    }
+    i++;
+    while (i < expr.length) {
+      if (expr[i] === c) {
+        if (expr[i + 1] === c) {
+          i += 2;
+          continue;
+        }
+        i++;
+        break;
+      }
+      i++;
+    }
+    out += c + c; // the literal was here; its content was not code
+  }
+  return out;
+}
 
 /**
  * Does this expression reference the `secrets` CONTEXT?
@@ -232,11 +351,11 @@ const expressions = (text: string): string[] =>
  *
  * No secret NAME is enumerated: the context is what is refused.
  */
-function referencesSecretsContext(expr: string): boolean {
-  // String literals first, so `format('no secrets here')` — which references
-  // nothing — cannot report one. Removing them also reduces `secrets['X']` to
-  // `secrets[]`, so the bracket access is still plainly visible.
-  const code = expr.replace(/'[^']*'/g, "''").replace(/"[^"]*"/g, '""');
+function expressionReferencesSecrets(expr: string): boolean {
+  // Literals emptied first, so `format('no secrets here')` — which references
+  // nothing — cannot report one. That step also reduces `secrets['X']` to
+  // `secrets['']`, leaving the bracket access plainly visible.
+  const code = stripExpressionLiterals(expr);
   // Not preceded by a dot, so `needs.build.outputs.secrets` — a property that
   // merely shares the name — is not mistaken for the context.
   //
@@ -717,8 +836,11 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
    */
   const WORKFLOWS: readonly Workflow[] = readWorkflowDir();
 
+  /** Canonical identities — lowercase, because canonicalActionIdentity folds. */
+  const CHECKOUT_ACTION = "actions/checkout";
+
   const checkoutCount = (sources: readonly Workflow[]) =>
-    allUses(sources).filter((u) => actionOf(u.value) === "actions/checkout").length;
+    allUses(sources).filter((u) => canonicalActionIdentity(u.value) === CHECKOUT_ACTION).length;
 
   it("the YAML parser is present and functioning", () => {
     // Stated, not assumed: js-yaml is a TRANSITIVE dev dependency here, and
@@ -817,7 +939,7 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
   function persistCredentialViolations(sources: readonly Workflow[]): string[] {
     const bad: string[] = [];
     for (const u of allUses(sources)) {
-      if (actionOf(u.value) !== "actions/checkout") continue;
+      if (canonicalActionIdentity(u.value) !== CHECKOUT_ACTION) continue;
       if (u.with === null || !("persist-credentials" in u.with)) {
         bad.push(
           `${u.file} ${u.where}: checkout sets no persist-credentials input, so the token is persisted by default`,
@@ -901,7 +1023,7 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
   //
   //    The secrets half is now the CONTEXT, found inside GitHub expressions,
   //    not one textual spelling of a property access — see
-  //    referencesSecretsContext. Pinning is not a substitute: a SHA-pinned
+  //    expressionReferencesSecrets. Pinning is not a substitute: a SHA-pinned
   //    third-party action handed a PAT writes through the API just the same,
   //    while `permissions: contents: read` and the absence of `git push` and
   //    `gh` all still read clean.
@@ -919,14 +1041,21 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
       // context is refused and there is no allowlist to argue with.
       const found = new Set<string>();
       for (const { key, value } of strings) {
-        const bodies = expressions(value);
+        const scan = extractGithubExpressions(value);
+        // Fail CLOSED: an expression that never closes is refused outright
+        // rather than inspected in part. Truncated content is exactly what let
+        // `format('}}', secrets.X)` scan clean.
+        for (const partial of scan.unterminated) {
+          bad.push(`${file}: unterminated GitHub expression — ${partial.trim()}`);
+        }
+        const bodies = scan.expressions;
         // `if:` is evaluated as an expression with no `${{ }}` around it, so
         // `if: secrets.FOO != ''` reads a credential without ever writing a
         // brace. Only when the value carries none, or the braces are scanned
         // twice and one reference reports as two.
-        if (key === "if" && bodies.length === 0) bodies.push(value);
+        if (key === "if" && bodies.length === 0 && scan.unterminated.length === 0) bodies.push(value);
         for (const expr of bodies) {
-          if (referencesSecretsContext(expr)) found.add(expr.trim());
+          if (expressionReferencesSecrets(expr)) found.add(expr.trim());
         }
       }
       for (const expr of [...found].sort()) {
@@ -993,7 +1122,7 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
    */
   function setupCliViolations(sources: readonly Workflow[]): string[] {
     const bad: string[] = [];
-    const uses = allUses(sources).filter((u) => actionOf(u.value) === SETUP_CLI_ACTION);
+    const uses = allUses(sources).filter((u) => canonicalActionIdentity(u.value) === SETUP_CLI_ACTION);
 
     if (uses.length !== SETUP_CLI_USES) {
       bad.push(`${uses.length} setup-cli uses, expected ${SETUP_CLI_USES}`);
@@ -1014,8 +1143,10 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
     }
 
     for (const { file, body, doc } of parseAll(sources)) {
-      const executed = executableUses(file, doc).filter((u) => actionOf(u.value) === SETUP_CLI_ACTION).length;
-      const lines = usesLines(file, body).filter((l) => actionOf(l.value) === SETUP_CLI_ACTION);
+      const executed = executableUses(file, doc).filter(
+        (u) => canonicalActionIdentity(u.value) === SETUP_CLI_ACTION,
+      ).length;
+      const lines = usesLines(file, body).filter((l) => canonicalActionIdentity(l.value) === SETUP_CLI_ACTION);
       if (lines.length !== executed) {
         bad.push(
           `${file}: ${lines.length} setup-cli lines but ${executed} executed — the text scan cannot be ` +
@@ -1416,7 +1547,7 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
     const LEGACY = /secrets\.[A-Z_]/; // what the check used to be
     const spellings = ["secrets.DEPLOY_PAT", "secrets['DEPLOY_PAT']", 'secrets["DEPLOY_PAT"]'];
     expect(spellings.filter((e) => LEGACY.test(e))).toEqual(["secrets.DEPLOY_PAT"]);
-    expect(spellings.filter(referencesSecretsContext)).toEqual(spellings);
+    expect(spellings.filter(expressionReferencesSecrets)).toEqual(spellings);
   });
 
   it("spacing and casing do not change which context is referenced", () => {
@@ -1428,7 +1559,7 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
       "SECRETS.DEPLOY_PAT",
       "toJSON(secrets)",
     ]) {
-      expect(referencesSecretsContext(expr), expr).toBe(true);
+      expect(expressionReferencesSecrets(expr), expr).toBe(true);
     }
   });
 
@@ -1439,7 +1570,7 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
       " format('no secrets here') ", // a string literal
       " github.sha ", // control 6: an ordinary expression
     ]) {
-      expect(referencesSecretsContext(expr), expr).toBe(false);
+      expect(expressionReferencesSecrets(expr), expr).toBe(false);
     }
   });
 
@@ -1521,6 +1652,164 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
       );
       expect(supplyChainViolations(readWorkflowDir(dir)).join("\n")).toMatch(
         /deploy\.yaml: references the secrets context/,
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // ACTION IDENTITY IS CASE-INSENSITIVE
+  // -------------------------------------------------------------------------
+
+  const APPROVED_CHECKOUT_SHA = "3d3c42e5aac5ba805825da76410c181273ba90b1";
+
+  const oneStep = (ref: string, rest: string[] = []): string[] => [
+    "name: Future",
+    "on: push",
+    "permissions:",
+    "  contents: read",
+    "jobs:",
+    "  scan:",
+    "    runs-on: ubuntu-latest",
+    "    steps:",
+    `      - uses: ${ref} # v7.0.1`,
+    ...rest,
+  ];
+  const OPT_OUT = ["        with:", "          persist-credentials: false"];
+
+  it("identity control 4: canonicalActionIdentity folds the identifier, and only the identifier", () => {
+    for (const written of [
+      `Actions/checkout@${APPROVED_CHECKOUT_SHA}`,
+      `actions/CHECKOUT@${APPROVED_CHECKOUT_SHA}`,
+      `ACTIONS/CHECKOUT@${APPROVED_CHECKOUT_SHA}`,
+    ]) {
+      expect(canonicalActionIdentity(written), written).toBe(CHECKOUT_ACTION);
+    }
+    expect(canonicalActionIdentity(`Supabase/Setup-Cli@${SETUP_CLI_SHA}`)).toBe(SETUP_CLI_ACTION);
+
+    // A LOCAL action is a path, which GitHub does not case-fold: it must not be
+    // rewritten into a remote identity at all.
+    expect(canonicalActionIdentity("./.github/actions/Foo")).toBeNull();
+    expect(canonicalActionIdentity("../Shared/Action")).toBeNull();
+    expect(canonicalActionIdentity("docker://Alpine:3")).toBeNull();
+
+    // The SHA is not part of identity and is never folded — so an uppercase ref
+    // is still refused as unpinned rather than quietly accepted.
+    expect(isImmutableRef(`actions/checkout@${APPROVED_CHECKOUT_SHA.toUpperCase()}`)).toBe(false);
+  });
+
+  it("the case-preserving comparison this replaced did not see a mixed-case checkout", () => {
+    const legacyActionOf = (v: string) => v.slice(0, v.lastIndexOf("@") + 1 || undefined).replace(/@$/, "");
+    const ref = `Actions/checkout@${APPROVED_CHECKOUT_SHA}`;
+    expect(legacyActionOf(ref) === CHECKOUT_ACTION, "the old comparison saw no checkout").toBe(false);
+    expect(canonicalActionIdentity(ref)).toBe(CHECKOUT_ACTION);
+  });
+
+  it("identity control 1 RED: Actions/checkout with no persist-credentials", () => {
+    const hostile = synthetic("cased.yaml", oneStep(`Actions/checkout@${APPROVED_CHECKOUT_SHA}`));
+    expect(persistCredentialViolations([hostile])).toEqual([
+      "cased.yaml jobs.scan.steps[0].uses: checkout sets no persist-credentials input, so the token is persisted by default",
+    ]);
+  });
+
+  it("identity control 2: ACTIONS/CHECKOUT is recognised as a checkout and counted", () => {
+    const shouty = synthetic("shouty.yaml", oneStep(`ACTIONS/CHECKOUT@${APPROVED_CHECKOUT_SHA}`, OPT_OUT));
+    expect(checkoutCount([shouty]), "it reaches the reviewed checkout total").toBe(1);
+    expect(persistCredentialViolations([shouty]), "and its opt-out is honoured").toEqual([]);
+    expect(supplyChainViolations([...WORKFLOWS, shouty])).toEqual([]);
+  });
+
+  it("identity control 3: Supabase/Setup-Cli is held to the vetted v1.7.1 / 2.102.0 contract", () => {
+    const cased = synthetic(
+      "cli.yaml",
+      oneStep(`Supabase/Setup-Cli@${SETUP_CLI_SHA}`, ["        with:", "          version: 2.103.0"]),
+    );
+    const violations = setupCliViolations([...WORKFLOWS, cased]).join("\n");
+    // Recognised at all — the reviewed count moves, which it could not do while
+    // the identifier was compared case-sensitively...
+    expect(violations).toMatch(/7 setup-cli uses, expected 6/);
+    // ...and, being recognised, it is subject to the grants-parity pin.
+    expect(violations).toMatch(/cli\.yaml jobs\.scan\.steps\[0\]\.uses: CLI version 2\.103\.0 is not the grants-parity pin 2\.102\.0/);
+  });
+
+  // -------------------------------------------------------------------------
+  // EXPRESSION SCANNING IS QUOTE-AWARE
+  // -------------------------------------------------------------------------
+
+  it("extractGithubExpressions does not end an expression at a }} inside a literal", () => {
+    expect(extractGithubExpressions("${{ format('}}', secrets.DEPLOY_PAT) }}").expressions).toEqual([
+      " format('}}', secrets.DEPLOY_PAT) ",
+    ]);
+    expect(extractGithubExpressions('${{ format("}}", secrets.DEPLOY_PAT) }}').expressions).toEqual([
+      ' format("}}", secrets.DEPLOY_PAT) ',
+    ]);
+    // An escaped quote does not end the literal either.
+    expect(extractGithubExpressions("${{ format('it''s }}', secrets.X) }}").expressions).toEqual([
+      " format('it''s }}', secrets.X) ",
+    ]);
+    // Ordinary expressions are unaffected, including several in one scalar.
+    expect(extractGithubExpressions("a ${{ github.sha }} b ${{ github.ref }}").expressions).toEqual([
+      " github.sha ",
+      " github.ref ",
+    ]);
+  });
+
+  it("the non-greedy match this replaced truncated before the credential", () => {
+    const LEGACY = /\$\{\{([\s\S]*?)\}\}/; // what extraction used to be
+    const adversarial = "${{ format('}}', secrets.DEPLOY_PAT) }}";
+    expect(LEGACY.exec(adversarial)?.[1], "it stopped at the } inside the literal").toBe(" format('");
+    expect(expressionReferencesSecrets(" format('")).toBe(false); // ...and so scanned clean
+    expect(extractGithubExpressions(adversarial).expressions.some(expressionReferencesSecrets)).toBe(true);
+  });
+
+  it("expression control 7: an unterminated expression is reported, never partly inspected", () => {
+    const scan = extractGithubExpressions("${{ secrets.DEPLOY_PAT");
+    expect(scan.expressions).toEqual([]);
+    expect(scan.unterminated).toEqual(["${{ secrets.DEPLOY_PAT"]);
+    const broken = synthetic("broken.yaml", [...COMPLIANT, "        env:", '          TOKEN: "${{ secrets.DEPLOY_PAT"']);
+    expect(supplyChainViolations([...WORKFLOWS, broken])).toContain(
+      "broken.yaml: unterminated GitHub expression — ${{ secrets.DEPLOY_PAT",
+    );
+  });
+
+  it("expression control 5 GREEN: a string literal naming the context is not a reference", () => {
+    expect(expressionReferencesSecrets(" format('secrets.DEPLOY_PAT') ")).toBe(false);
+    expect(expressionReferencesSecrets(" format('}}', secrets.DEPLOY_PAT) ")).toBe(true);
+    const quoted = synthetic("quoted.yaml", [
+      ...COMPLIANT,
+      "        env:",
+      "          NOTE: \"${{ format('secrets.DEPLOY_PAT') }}\"",
+    ]);
+    expect(supplyChainViolations([...WORKFLOWS, quoted])).toEqual([]);
+  });
+
+  const ADVERSARIAL: [string, string][] = [
+    ["expression control 3 — a single-quoted literal holding the delimiter", "${{ format('}}', secrets.DEPLOY_PAT) }}"],
+    ["expression control 4 — a double-quoted literal holding the delimiter", '${{ format("}}", secrets.DEPLOY_PAT) }}'],
+  ];
+
+  for (const [label, expr] of ADVERSARIAL) {
+    it(`RED: ${label}`, () => {
+      const hostile = synthetic("leaky.yaml", [...COMPLIANT, "        env:", `          TOKEN: ${JSON.stringify(expr)}`]);
+      expect(supplyChainViolations([...WORKFLOWS, hostile]).join("\n")).toMatch(
+        /leaky\.yaml: references the secrets context/,
+      );
+    });
+  }
+
+  it("expression control 8: the adversarial form is refused in a future .yaml by existing", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "hone-workflow-adversarial-"));
+    try {
+      for (const [name, body] of WORKFLOWS) writeFileSync(path.join(dir, name), body, "utf8");
+      expect(supplyChainViolations(readWorkflowDir(dir)), "the copy must start GREEN").toEqual([]);
+      writeFileSync(
+        path.join(dir, "ship.yaml"),
+        [...COMPLIANT, "        env:", "          TOKEN: \"${{ format('}}', secrets.DEPLOY_PAT) }}\""].join("\n") + "\n",
+        "utf8",
+      );
+      expect(supplyChainViolations(readWorkflowDir(dir)).join("\n")).toMatch(
+        /ship\.yaml: references the secrets context/,
       );
     } finally {
       rmSync(dir, { recursive: true, force: true });
