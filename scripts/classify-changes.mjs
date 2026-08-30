@@ -31,18 +31,39 @@ const FULL_MATRIX = [
 ];
 
 /**
- * The security-guidance adapter (SEC-ADAPTER-01). It is markdown, so the bare
- * `/\.md$/` below would call it documentation, and a file whose ENTIRE purpose
- * is to steer a security reviewer would ship under the docs lane at T0.
+ * SEC-ADAPTER-01 — the complete input set of the security-guidance control.
  *
- * It changes no runtime behaviour, which is exactly why it needs saying out
- * loud: a stale or wrong rule in here produces no symptom anywhere. It degrades
- * review quality silently. That is a security-path change, not a docs change.
+ * The adapter states Hone's security rules for a reviewer, and every one of its
+ * rules is DERIVED from one of the four canonical documents below and pinned to
+ * it by tests/security/security-guidance-parity.test.ts.
  *
- * Listed as an EXCEPTION rather than by narrowing `/\.md$/`, so ordinary
- * markdown keeps routing to the docs lane and this stays a one-file carve-out.
+ * Routing only the adapter to the security lane guards half the control. The
+ * parity test proves adapter and source AGREE, so it has to run when EITHER
+ * side moves: with the sources routing docs-only, a PR could delete the very
+ * sentence an adapter rule quotes, CI would select the docs lane, the parity
+ * test would never execute, and the drift it exists to catch would ship green.
+ * The guarded thing is the RELATIONSHIP, so its inputs are named as one set.
+ *
+ * These files change no runtime behaviour, which is exactly why this needs
+ * saying out loud: a stale rule here produces no symptom anywhere: it silently
+ * degrades review quality. That is a security-path change, not a docs change.
+ *
+ * Deliberately an EXACT, CLOSED list rather than a widening of `/\.md$/`:
+ * ordinary documentation, the production records under `docs/production/`, and
+ * the rest of the tracked `.claude/` tree all keep routing to the docs lane.
+ * Adding a file here means accepting that every edit to it runs the security
+ * lane, so the list stays exactly as long as the control's real inputs.
  */
-const DOCS_EXCEPTIONS = [/^\.claude\/claude-security-guidance(\.local)?\.md$/];
+const SECURITY_GUIDANCE_INPUTS = [
+  /^\.claude\/claude-security-guidance(\.local)?\.md$/,
+  /^CONTRIBUTING\.md$/,
+  /^CLAUDE\.md$/,
+  /^ENGINEERING_STANDARDS\.md$/,
+  /^docs\/03_SECURITY_AND_PRIVACY\.md$/,
+];
+
+/** One source of truth: what the security lane claims, docs_only must not. */
+const DOCS_EXCEPTIONS = SECURITY_GUIDANCE_INPUTS;
 
 /** Docs and records that never change runtime behaviour. */
 const DOCS = [
@@ -62,7 +83,7 @@ const RULES = [
   // would let someone retire a disposition without the guard that proves the
   // retirement is honest ever running.
   { key: "database", patterns: [/^supabase\/migrations\//, /^supabase\/.*\.sql$/, /^tests\/db\//, /^tests\/migrations\//, /^scripts\/migration-state\.mjs$/, /^scripts\/check-migration-extension/, /^scripts\/check-fresh-managed/, /^lib\/export\/resource-registry\.ts$/] },
-  { key: "security", patterns: [/^tests\/security\//, /^lib\/security\//, /^lib\/observability\//, /^scripts\/check-.*gates/, ...DOCS_EXCEPTIONS] },
+  { key: "security", patterns: [/^tests\/security\//, /^lib\/security\//, /^lib\/observability\//, /^scripts\/check-.*gates/, ...SECURITY_GUIDANCE_INPUTS] },
   { key: "payment", patterns: [/payment/i, /stripe/i, /^lib\/billing\//, /^e2e-payment\//, /^playwright\.payment\.config/] },
   { key: "google_calendar", patterns: [/google[-_]?calendar/i, /^lib\/google-calendar\//, /^e2e-google\//, /^playwright\.google\.config/, /^app\/api\/cron\/calendar/] },
   { key: "mobile", patterns: [/^e2e-mobile\//, /^playwright\.mobile\.config/, /mobile/i, /responsive/i] },

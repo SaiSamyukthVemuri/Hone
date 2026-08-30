@@ -450,9 +450,16 @@ describe("classifier — the security-guidance adapter (SEC-ADAPTER-01)", () => 
     expect(r.full_matrix_required).toBe(true);
   });
 
-  // Controls: the carve-out must not promote markdown generally.
+  // Controls: the input set must not promote markdown generally. The four
+  // canonical sources are deliberately NOT in this list any more — they are
+  // inputs to the control and are asserted security-bearing below.
   it("ordinary markdown still routes to the docs lane", () => {
-    for (const f of ["docs/03_SECURITY_AND_PRIVACY.md", "README.md", "CLAUDE.md", "CONTRIBUTING.md"]) {
+    for (const f of [
+      "README.md",
+      "docs/production/current-state.md",
+      "docs/09_DATABASE_AND_RLS.md",
+      "docs/00_PRODUCT_OVERVIEW.md",
+    ]) {
       const r = c(f);
       expect(r.docs_only, `${f} must stay docs_only`).toBe(true);
       expect(r.security, `${f} must not become a security path`).toBe(false);
@@ -477,6 +484,85 @@ describe("classifier — the security-guidance adapter (SEC-ADAPTER-01)", () => 
     ]) {
       const r = c(f);
       expect(r.security, `${f} must not match the exception`).toBe(false);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SEC-ADAPTER-01 — the whole INPUT SET of the security-guidance control
+// ---------------------------------------------------------------------------
+// The parity guard proves the adapter and its canonical sources AGREE, so it has
+// to run when EITHER side moves. Routing only the adapter to the security lane
+// guarded half of it: with CONTRIBUTING.md, CLAUDE.md, ENGINEERING_STANDARDS.md
+// and docs/03 all routing docs-only, a PR could delete the very sentence an
+// adapter rule quotes, CI would pick the docs lane, and the parity test that
+// exists to catch exactly that would never execute.
+//
+// The guarded thing is the RELATIONSHIP, so all six inputs route together.
+describe("classifier — the security-guidance INPUT SET (SEC-ADAPTER-01)", () => {
+  const INPUTS = [
+    ".claude/claude-security-guidance.md",
+    ".claude/claude-security-guidance.local.md",
+    "CONTRIBUTING.md",
+    "CLAUDE.md",
+    "ENGINEERING_STANDARDS.md",
+    "docs/03_SECURITY_AND_PRIVACY.md",
+  ];
+
+  it("every input individually selects the security lane at T3", () => {
+    for (const f of INPUTS) {
+      const r = c(f);
+      expect(r.security, `${f} must select the security lane`).toBe(true);
+      expect(r.docs_only, `${f} must not be docs_only`).toBe(false);
+      expect(r.baselineRiskTier, `${f} must be T3`).toBe("T3");
+      expect(r.riskReasons).toContain("security or privilege boundary path changed");
+    }
+  });
+
+  it("changing ANY canonical source alone selects the lane the parity test runs in", () => {
+    // The parity test lives in tests/security/, which the security lane runs.
+    // This is the property the guard depends on, asserted per source rather than
+    // for the set: one source moving must be enough.
+    for (const f of [
+      "CONTRIBUTING.md",
+      "CLAUDE.md",
+      "ENGINEERING_STANDARDS.md",
+      "docs/03_SECURITY_AND_PRIVACY.md",
+    ]) {
+      expect(c(f).security, `${f} alone must run the parity lane`).toBe(true);
+      expect(c(f, "tests/security/security-guidance-parity.test.ts").security).toBe(true);
+    }
+  });
+
+  it("one canonical source alongside ordinary docs is still not docs_only", () => {
+    const r = c("README.md", "docs/production/release-changelog.md", "CONTRIBUTING.md");
+    expect(r.docs_only).toBe(false);
+    expect(r.security).toBe(true);
+  });
+
+  it("the set does not make markdown security-bearing in general", () => {
+    for (const f of [
+      "README.md",
+      "docs/production/current-state.md",
+      "docs/09_DATABASE_AND_RLS.md",
+      "docs/13_DECISIONS.md",
+      ".claude/skills/prototype/SKILL.md",
+    ]) {
+      const r = c(f);
+      expect(r.security, `${f} must not be security-bearing`).toBe(false);
+      expect(r.docs_only, `${f} must stay docs_only`).toBe(true);
+    }
+  });
+
+  it("a near-miss filename does not join the set", () => {
+    for (const f of [
+      "docs/CONTRIBUTING.md",
+      "ENGINEERING_STANDARDS.md.bak",
+      "docs/03_SECURITY_AND_PRIVACY.md.orig",
+      "sub/CLAUDE.md",
+      ".claude/nested/claude-security-guidance.md",
+    ]) {
+      expect(c(f).security, `${f} must not match the input set`).toBe(false);
     }
   });
 });

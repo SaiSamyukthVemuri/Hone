@@ -138,6 +138,19 @@ const NON_SHIPPING_ROOTS: ReadonlyArray<readonly [RegExp, string]> = [
   // reached this clause at all. Without the entry, a file that ships nothing
   // would make A3 report that this branch "carries runtime changes".
   [/^\.claude\//, "agent skills and security-guidance adapter: read while authoring, never served"],
+  // SEC-ADAPTER-01. Markdown is never bundled or served by this application:
+  // no runtime module imports a `.md`, MDX is not configured, `pageExtensions`
+  // is not overridden, `public/` holds none, and a real `next build` emits none.
+  //
+  // It is listed only now because `!docs_only` used to carry this meaning by
+  // itself — every markdown file answered docs_only, so none reached this
+  // clause. Routing the security-guidance INPUT SET (CONTRIBUTING.md, CLAUDE.md,
+  // ENGINEERING_STANDARDS.md, docs/03) to the security lane decoupled the two:
+  // a file can now be non-docs BECAUSE it is a security input while still being
+  // prose that ships nothing. This restores exactly the previous verdict for
+  // markdown and changes it for nothing else — A3 still demands a fresh runtime
+  // baseline for every non-markdown deployed path.
+  [/\.md$/, "markdown: documentation and authoring input, never bundled or served"],
   // NOTE: scripts/ is NOT blanket-exempt. See PRODUCTION_BUILD_SCRIPTS below -
   // a script the production `build` command executes can change what the
   // deployment does, and is subtracted from this exemption.
@@ -1053,6 +1066,12 @@ describe("RULE A — current-state.md pins a real, current production SHA", () =
       "tests/db/export-resource-registry.db.test.ts",
       ".claude/claude-security-guidance.md",
       ".claude/skills/prototype/SKILL.md",
+      // Security-lane inputs, and still prose: routed to the security lane so
+      // the parity test runs when they move, which does not make them runtime.
+      "CONTRIBUTING.md",
+      "CLAUDE.md",
+      "ENGINEERING_STANDARDS.md",
+      "docs/03_SECURITY_AND_PRIVACY.md",
       "playwright.config.ts",
       "vitest.config.ts",
       "docs/production/current-state.md",

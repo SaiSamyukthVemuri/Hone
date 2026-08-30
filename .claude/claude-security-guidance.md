@@ -1,7 +1,7 @@
 # Hone — repository security rules
 
-These are Hone's own rules, for a reviewer who already knows general security.
-They exist because a general model cannot infer them from the code alone.
+Rules for a reviewer who already knows general security. They exist because a
+general model cannot infer them from the code alone.
 
 ## Authority — read this first
 
@@ -12,38 +12,45 @@ raised here has neither, so it can never render as `COMPLETE_CLEAN` and can
 never appear as a Codex finding. It also never sets a risk tier, never selects a
 CI lane, and never overrides a repository guard.
 
-Every rule below is **derived** from a canonical document and carries the source
-it was derived from. If a rule and its source disagree, the source wins and this
-file is wrong. Change the canonical document first, in its own change.
+Every rule below is **quoted from** a canonical document, not paraphrased from
+one, and carries the source it was quoted from. The parity test requires each
+rule to appear verbatim in its cited section, so this file cannot state a rule
+its source does not — nor the opposite of one. The canonical documents are the
+authority; this file is a view onto them.
 
 ## Identity
 
-- Resolve `studio_id`, `client_id`, `appointment_id` and `practitioner_id` on the server, from the session or from token resolution. Never read them from `formData`, a query string, or any other caller-supplied value. <!-- source: CONTRIBUTING.md#security-review-expectations | token: Never trust those ids from the form. -->
-- Studio-scoped tables get studio-member SELECT only under RLS unless a wider posture is explicitly justified in the PR. <!-- source: CONTRIBUTING.md#security-review-expectations | token: studio-member SELECT only -->
+- Server resolves `studio_id`, `client_id`, `appointment_id`, `practitioner_id` from the session or from token resolution. **Never trust those ids from the form.** <!-- source: CONTRIBUTING.md#security-review-expectations | token: Never trust those ids from the form. -->
+- RLS posture: studio-member SELECT only on every studio-scoped table unless explicitly justified. <!-- source: CONTRIBUTING.md#security-review-expectations | token: studio-member SELECT only -->
 
 ## Service role
 
-- `createAdminClient()` is transport privilege, never business truth. It bypasses RLS, so the authorization decision must already have been made and proved above it. <!-- source: CONTRIBUTING.md#how-to-use-service-role-correctly | token: createAdminClient -->
-- Never call it from a `"use client"` component, and never from a public route that has not resolved a token. Service-role writes come from server actions or webhook routes only. <!-- source: CONTRIBUTING.md#how-not-to-use-service-role | token: "use client" -->
+- Service-role writes only from server actions or webhook routes. Never in a `"use client"` component. <!-- source: CONTRIBUTING.md#security-review-expectations | token: Never in a `"use client"` component. -->
+- RPC invocations where the function is `SECURITY DEFINER` with a service-role-only grant. <!-- source: CONTRIBUTING.md#how-to-use-service-role-correctly | token: service-role-only grant -->
+- Never in a route that any unauthenticated caller can reach without a token check. <!-- source: CONTRIBUTING.md#how-not-to-use-service-role | token: without a token check -->
+- Never to bypass RLS as a convenience. If you find yourself reaching for the admin client because RLS is "in the way", revisit the RLS policy or the action's identity model. <!-- source: CONTRIBUTING.md#how-not-to-use-service-role | token: Never to bypass RLS as a convenience. -->
 
 ## Database privilege
 
-- A `SECURITY DEFINER` function must explicitly set `search_path = pg_catalog, pg_temp`, and its grants are `revoke from public, anon, authenticated; grant to service_role` unless deliberately wider. <!-- source: CONTRIBUTING.md#security-review-expectations | token: search_path = pg_catalog, pg_temp -->
-- Supabase's `ALTER DEFAULT PRIVILEGES` grants EXECUTE to `anon`, `authenticated` **and** `service_role` at function-create time. An authenticated-only command must revoke from all three explicitly, by name — missed in 0129 for `anon` and again in 0164 for `service_role`. <!-- source: CLAUDE.md#5-production-safety | token: ALTER DEFAULT PRIVILEGES -->
+- `SECURITY DEFINER` functions must explicitly set `search_path = pg_catalog, pg_temp`. Grants are `revoke from public, anon, authenticated; grant to service_role` unless deliberately wider. <!-- source: CONTRIBUTING.md#security-review-expectations | token: search_path = pg_catalog, pg_temp -->
+- Supabase's `ALTER DEFAULT PRIVILEGES` grants EXECUTE to `anon`, `authenticated` **and** `service_role` at function-create time. An authenticated-only command must revoke from **all three** explicitly, by name. <!-- source: CLAUDE.md#5-production-safety | token: revoke from **all three** explicitly, by name -->
 
 ## Public and token routes
 
-- The token is the credential: anyone holding the URL has the access it confers. Use the single-use claim pattern — `FOR UPDATE` plus a conditional UPDATE inside an RPC. <!-- source: CONTRIBUTING.md#how-to-treat-public--token-routes | token: The token is the credential. -->
-- Collapse error states. Never distinguish "expired" from "unknown" to the visitor; both surface one generic message. <!-- source: CONTRIBUTING.md#how-to-treat-public--token-routes | token: Collapse error states -->
-- No analytics anywhere in a token subtree, and every new public prefix is added to `next.config.ts` `headers()` for `X-Robots-Tag: noindex, nofollow` and `Referrer-Policy: no-referrer`. <!-- source: CONTRIBUTING.md#how-to-treat-public--token-routes | token: X-Robots-Tag: noindex, nofollow -->
+- The token is the credential. Anyone with the URL has the access it confers. <!-- source: CONTRIBUTING.md#how-to-treat-public--token-routes | token: The token is the credential. -->
+- Use the `claim_stripe_event` / `claim_manual_fee_charge_attempt` / `public_cancel_appointment_with_token` pattern: single-use claim with `FOR UPDATE` + conditional UPDATE inside an RPC. <!-- source: CONTRIBUTING.md#how-to-treat-public--token-routes | token: single-use claim with `FOR UPDATE` -->
+- Collapse error states: never tell the visitor "this token is expired" vs "this token is unknown". Both surface the same generic "this link can't be used right now" message. <!-- source: CONTRIBUTING.md#how-to-treat-public--token-routes | token: Collapse error states -->
+- No analytics in the subtree. Add the new prefix to `next.config.ts headers()` for `X-Robots-Tag: noindex, nofollow` and `Referrer-Policy: no-referrer`. <!-- source: CONTRIBUTING.md#how-to-treat-public--token-routes | token: X-Robots-Tag: noindex, nofollow -->
 
 ## Payments
 
-- Exactly one runtime `paymentIntents.create`, in `lib/billing/session-payment-charge.ts`. Any new occurrence is high-risk and needs an explicit docs/13 decision. <!-- source: CONTRIBUTING.md#payment-review-expectations | token: paymentIntents.create -->
-- Exactly one `refunds.create`, in `lib/billing/payment-refund.ts`. Zero `charges.create`. Zero `checkout.sessions` unless the PR is explicitly a Checkout PR. <!-- source: CONTRIBUTING.md#payment-review-expectations | token: refunds.create -->
-- No raw card number, CVC or `client_secret` in new code, and no automatic, batch, background or public-triggered charge. <!-- source: CONTRIBUTING.md#payment-review-expectations | token: No raw card / CVC -->
-- `STRIPE_ALLOW_LIVE_MODE=true` appears exactly once, inside an error message in `lib/stripe/server.ts`. It must never appear as a code path that flips the flag. <!-- source: CONTRIBUTING.md#payment-review-expectations | token: STRIPE_ALLOW_LIVE_MODE=true -->
+- `paymentIntents.create`: **exactly one runtime occurrence, in `lib/billing/session-payment-charge.ts`** <!-- source: CONTRIBUTING.md#payment-review-expectations | token: paymentIntents.create -->
+- `refunds.create`: exactly one occurrence, in `lib/billing/payment-refund.ts` (full-amount, owner-only, test mode). <!-- source: CONTRIBUTING.md#payment-review-expectations | token: refunds.create -->
+- `charges.create`: must be zero. <!-- source: CONTRIBUTING.md#payment-review-expectations | token: charges.create -->
+- `checkout.sessions`: must be zero unless explicit Checkout PR. <!-- source: CONTRIBUTING.md#payment-review-expectations | token: checkout.sessions -->
+- No raw card / CVC / `client_secret` in any new code. <!-- source: CONTRIBUTING.md#payment-review-expectations | token: No raw card / CVC -->
+- No automatic, batch, background, or public-triggered charge. <!-- source: CONTRIBUTING.md#payment-review-expectations | token: public-triggered charge -->
 
 ## External side effects
 
-- Provider truth is not Hone truth. Prefer claim → external side effect → settle, and never automatically retry an uncertain provider-success state when the retry could duplicate the external action. <!-- source: ENGINEERING_STANDARDS.md#5-design-rules-for-risky-work | token: claim → external side effect → settle -->
+- External provider truth is not the same as Hone persisted truth. Prefer **claim → external side effect → settle**. Do not automatically retry an uncertain provider-success state when the retry could duplicate the external action. <!-- source: ENGINEERING_STANDARDS.md#5-design-rules-for-risky-work | token: claim → external side effect → settle -->

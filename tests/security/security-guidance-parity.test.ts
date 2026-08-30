@@ -46,6 +46,23 @@ const CANONICAL = [
  */
 const PROMPT_BUDGET_BYTES = 8192;
 
+/**
+ * Conservative markdown normalization, applied IDENTICALLY to an adapter rule
+ * and to its cited canonical section before they are compared.
+ *
+ * Deliberately small and deterministic: emphasis markers and backticks are
+ * presentation, and the canonical documents hard-wrap their prose, so a rule
+ * quoted onto one line must still match a source sentence broken across three.
+ * Nothing here changes a word, drops a negation, or reorders anything — so a
+ * rule that survives normalization survives it with its MEANING intact, which
+ * is the whole point of comparing after it.
+ */
+const normalize = (text: string): string =>
+  text
+    .replace(/[`*_]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
 /** GitHub's heading-slug rule, which is what a `#anchor` in a citation means. */
 const slug = (heading: string): string =>
   heading
@@ -96,7 +113,11 @@ function readAdapter(body: string): Adapter {
       unanchored.push(i + 1);
       return;
     }
-    cited.push({ line: i + 1, rule: m[1], file: m[2], anchor: m[3], token: m[4] });
+    // The leading `- ` is this file's own list formatting, not rule text. Left
+    // in, the containment check would silently depend on the cited source
+    // ALSO being a bullet — true for most of CONTRIBUTING.md and false for the
+    // prose in ENGINEERING_STANDARDS.md, which is how the coincidence surfaced.
+    cited.push({ line: i + 1, rule: m[1].replace(/^-\s+/, ""), file: m[2], anchor: m[3], token: m[4] });
   });
   return { rules, cited, unanchored };
 }
@@ -138,10 +159,30 @@ function parityViolations(adapterBody: string, read: (file: string) => string | 
       bad.push(`${ADAPTER}:${c.line}: ${c.file} has no heading "#${c.anchor}"`);
       continue;
     }
-    if (!secs.get(c.anchor)!.includes(c.token)) {
+    const section = secs.get(c.anchor)!;
+    if (!section.includes(c.token)) {
       bad.push(
         `${ADAPTER}:${c.line}: ${c.file}#${c.anchor} no longer contains ${JSON.stringify(c.token)} — ` +
           `the adapter asserts a rule its source has dropped`,
+      );
+    }
+    // THE RULE ITSELF, not merely the token it names. Checking only the token
+    // let the rule text be inverted — "Never trust caller-supplied ids" ->
+    // "Trust caller-supplied ids" — while the citation, the token and the
+    // canonical source all stayed valid, and parity stayed green. Requiring the
+    // normalized section to CONTAIN the normalized rule closes that: the
+    // adapter can only say what its source already says, so it cannot state the
+    // opposite of a rule, soften one, or invent one.
+    //
+    // Containment, deliberately, not equality: a section holds several rules and
+    // an adapter quotes one of them. The direction matters — the SOURCE contains
+    // the RULE, never the reverse — so the canonical document stays the
+    // authority and this file stays a view onto it.
+    if (!normalize(section).includes(normalize(c.rule))) {
+      bad.push(
+        `${ADAPTER}:${c.line}: the rule text does not appear in ${c.file}#${c.anchor}. ` +
+          `The adapter may only quote its source, never paraphrase or contradict it. Rule: ` +
+          JSON.stringify(normalize(c.rule).slice(0, 120)),
       );
     }
   }
@@ -272,6 +313,53 @@ describe("SEC-ADAPTER-01 — security-guidance adapter parity", () => {
     expect(mutated, "the token must actually be gone").not.toContain(from);
     return (f: string) => (f === file ? mutated : readRepo(f));
   };
+
+  // THE control this binding exists for. Inverting a rule's security meaning
+  // while leaving its file, anchor and token untouched was GREEN before the
+  // rule text itself was bound: the canonical source was unchanged, the token
+  // was still present, and the adapter told a reviewer the opposite of the
+  // rule. Every case below alters meaning and nothing else.
+  const INVERSIONS: [string, string, string][] = [
+    [
+      "identity — a negation dropped",
+      "**Never trust those ids from the form.**",
+      "Trust those ids from the form.",
+    ],
+    [
+      "service role — a prohibition turned into permission",
+      "Never in a `\"use client\"` component.",
+      "Fine in a `\"use client\"` component.",
+    ],
+    [
+      "payments — a hard zero turned into an allowance",
+      "`charges.create`: must be zero.",
+      "`charges.create`: may be used freely.",
+    ],
+    [
+      "external side effects — a retry prohibition reversed",
+      "Do not automatically retry an uncertain provider-success state",
+      "Always automatically retry an uncertain provider-success state",
+    ],
+  ];
+
+  for (const [label, from, to] of INVERSIONS) {
+    it(`N0 RED: an inverted rule is refused — ${label}`, () => {
+      expect(BODY, `control needs ${JSON.stringify(from)} in the adapter`).toContain(from);
+      const inverted = BODY.replace(from, to);
+      expect(inverted, "the control's substitution must land").not.toEqual(BODY);
+
+      // The citation is untouched, so file / anchor / token all still resolve —
+      // which is exactly the state that used to pass.
+      const before = readAdapter(BODY).cited;
+      const after = readAdapter(inverted).cited;
+      expect(after.map((c) => `${c.file}#${c.anchor}|${c.token}`)).toEqual(
+        before.map((c) => `${c.file}#${c.anchor}|${c.token}`),
+      );
+
+      const violations = parityViolations(inverted, readRepo);
+      expect(violations.join("\n")).toMatch(/the rule text does not appear in/);
+    });
+  }
 
   it("N1 RED: a cited token dropped from its source is reported", () => {
     // The replacement must not CONTAIN the token: `paymentIntents.createX` still
