@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+// @ts-expect-error - .mjs utility ships without type declarations
+import { classify } from "../../scripts/classify-changes.mjs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -184,6 +187,71 @@ describe("SEC-ADAPTER-01 — security-guidance adapter parity", () => {
     expect(BODY, "must disclaim tier and lane authority").toMatch(
       /never sets a risk tier, never selects a\s+CI lane/,
     );
+  });
+
+  // -------------------------------------------------------------------------
+  // What kind of file this actually is
+  // -------------------------------------------------------------------------
+  // The adapter sits in an awkward place: it is markdown, it is not
+  // documentation, and it changes no runtime behaviour. Getting that three-way
+  // answer wrong in either direction is a real defect — call it docs and a
+  // security control ships under the docs lane; call it runtime and every
+  // production baseline guard demands a fresh runtime pin for a file Vercel
+  // never serves. Both were live possibilities, so the answer is pinned here.
+  describe("the adapter's authority is governance, not runtime and not docs", () => {
+    it("is NOT runtime-bearing: no shipped code reads it", () => {
+      // The deployed application never touches `.claude/`. Asserted over the
+      // runtime roots rather than by trusting the build output, so this stays
+      // true for a reader who never runs `next build`.
+      // Derived from what the repository actually has, not a hard-coded list:
+      // `hooks/` and `types/` do not exist here, and a pathspec git cannot
+      // resolve makes the probe exit 128 — a broken probe that proves nothing.
+      const runtimeRoots = ["app", "lib", "components", "hooks", "types", "middleware.ts", "next.config.ts"]
+        .filter((r) => existsSync(r));
+      expect(runtimeRoots.length, "no runtime root exists — the probe would be vacuous").toBeGreaterThan(2);
+      // Scope, stated rather than implied: `git grep` reads TRACKED content, so
+      // an unstaged working-tree file is invisible to this probe. That is the
+      // right scope for a repository guard — CI only ever sees tracked files —
+      // but it means a local "it passed" before `git add` proves nothing.
+      //
+      // `git grep -l` exits 1 when it matches nothing, which is the PASSING
+      // case here, so the exit status is read rather than thrown on. status 1
+      // with empty output is "no runtime module reads it"; anything else is a
+      // real result or a broken probe, and both must be visible.
+      const probe = spawnSync(
+        "git",
+        ["grep", "-l", "--", ".claude/", ...runtimeRoots],
+        { encoding: "utf8" },
+      );
+      expect(probe.status, "the probe itself must run (0 = matched, 1 = no match)").toBeLessThanOrEqual(1);
+      expect(
+        (probe.stdout ?? "").trim(),
+        "a runtime module reads .claude/ — the adapter would then be runtime-bearing",
+      ).toBe("");
+    });
+
+    it("is NOT runtime-bearing: the production build never runs it", () => {
+      const pkg = JSON.parse(readFileSync("package.json", "utf8")) as {
+        scripts?: Record<string, string>;
+      };
+      expect(pkg.scripts?.build ?? "", "the build command must not reach .claude/").not.toMatch(/\.claude/);
+    });
+
+    it("IS security-governance-bearing: it routes to the security lane at T3", () => {
+      const r = classify([ADAPTER]) as { security: boolean; docs_only: boolean; baselineRiskTier: string };
+      expect(r.security, "the adapter must reach the security lane").toBe(true);
+      expect(r.baselineRiskTier).toBe("T3");
+      expect(r.docs_only, "it is not documentation").toBe(false);
+    });
+
+    it("the three answers are mutually consistent — governance, not runtime, not docs", () => {
+      const r = classify([ADAPTER]) as { security: boolean; docs_only: boolean };
+      // Not docs AND not runtime is only coherent because a third category
+      // exists: files that govern how the repository is built and reviewed.
+      // If a future change makes it runtime-bearing, the first test above fails
+      // and this classification has to be revisited rather than assumed.
+      expect([r.security, r.docs_only]).toEqual([true, false]);
+    });
   });
 
   // -------------------------------------------------------------------------

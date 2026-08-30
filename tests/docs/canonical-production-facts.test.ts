@@ -131,6 +131,13 @@ const NON_SHIPPING_ROOTS: ReadonlyArray<readonly [RegExp, string]> = [
   [/^tests\//, "unit, DB and migration tests: run in CI, absent from the bundle"],
   [/^e2e[a-z-]*\//, "Playwright specs and their fixtures: run against a build, never part of one"],
   [/^\.github\//, "workflows and templates: they decide what CI does, not what production serves"],
+  // SEC-ADAPTER-01. `.claude/` is authoring and agent tooling — skills, and the
+  // security-guidance adapter that steers a reviewer's prompt. Vercel never
+  // serves any of it. It is listed only now because, until the adapter was
+  // routed to the security lane, everything here answered docs_only and never
+  // reached this clause at all. Without the entry, a file that ships nothing
+  // would make A3 report that this branch "carries runtime changes".
+  [/^\.claude\//, "agent skills and security-guidance adapter: read while authoring, never served"],
   // NOTE: scripts/ is NOT blanket-exempt. See PRODUCTION_BUILD_SCRIPTS below -
   // a script the production `build` command executes can change what the
   // deployment does, and is subtracted from this exemption.
@@ -1044,6 +1051,8 @@ describe("RULE A — current-state.md pins a real, current production SHA", () =
       "e2e-payment/checkout.spec.ts",
       "tests/docs/canonical-production-facts.test.ts",
       "tests/db/export-resource-registry.db.test.ts",
+      ".claude/claude-security-guidance.md",
+      ".claude/skills/prototype/SKILL.md",
       "playwright.config.ts",
       "vitest.config.ts",
       "docs/production/current-state.md",
