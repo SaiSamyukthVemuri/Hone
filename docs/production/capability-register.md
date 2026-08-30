@@ -290,20 +290,38 @@ and equally, do not restate that dated zero as a present-tense fact: it is evide
 **Twenty-nine** production merges landed between `b9e0003f` and the current branch head. **Ten**
 carry a capability that belongs in this register.
 
-**Those two numbers are derived over different spans, and saying so is the point.** All ten
-rows below come from the **`#632`–`#650`** span, which is the range this table was derived
-over. The **nine** merges since — `#651`, `#653`, `#652`, `#654`, `#655`, `#656`, `#657`,
-`#658`, `#659` — were re-examined by changed-path analysis on **2026-08-30** and add **no new
-capability**: they are performance, mobile-layout and touch-target work, plus one correction
-(`#652`) to a capability already listed here and one behaviour rework (`#658`) inside an
-onboarding capability already covered, whose residual gap is recorded as **L31** rather than as
-a new capability. The rest of the twenty-seven are UI, documentation or test work.
+**Those two numbers are derived over different spans, and saying so is the point.** The
+twenty-nine decompose exactly, by `git log --first-parent --merges b9e0003f..bf6f09c4`:
 
-Without that sentence the pairing reads as though ten capabilities were derived over all
-twenty-seven merges, which is not what was done — and a derived count moved without
-re-deriving the fact beneath it is precisely the defect this document exists to close. **None
-of the ten is production-exercised**, and each is recorded with the evidence that decides its
-status rather than with a status word alone.
+| Group | Merges | Capabilities |
+|---|---|---|
+| The **`#632`–`#650`** derivation span — the range this table was built over | **18** | **10** |
+| Post-`#650` performance, mobile-layout and touch-target work — `#651`, `#652`, `#653`, `#654`, `#655`, `#656`, `#657`, `#658`, `#659` | **9** | **0** |
+| Documentation, CI and test merges carried in by later production refreshes — `#631`, `#660` | **2** | **0** |
+| **Total** | **29** | **10** |
+
+The **nine** post-`#650` merges were re-examined by changed-path analysis on **2026-08-30** and
+add **no new capability**: they are performance, mobile-layout and touch-target work, plus one
+correction (`#652`) to a capability already listed here and one behaviour rework (`#658`) inside
+an onboarding capability already covered, whose residual gap is recorded as **L31** rather than
+as a new capability.
+
+The **two** remaining merges are the ones the count gained when the branch head advanced past
+`#659`, and they were classified the same way rather than assumed. **`#631`** is the canonical
+docs reconciliation: documentation and `tests/docs/**` only. **`#660`** is CI-HARDEN-01B:
+`.github/workflows/**`, `tests/ci/**`, `CLAUDE.md` and `docs/03_SECURITY_AND_PRIVACY.md`.
+Between them they touch **no** `app/`, `lib/`, `components/` or `supabase/` path, so neither
+adds a capability and neither moves the runtime baseline — which is why
+[current-state.md](./current-state.md) pins a runtime-bearing HEAD *behind* the branch head.
+
+Without that decomposition the pairing reads as though ten capabilities were derived over all
+twenty-nine merges, which is not what was done — and a derived count moved without re-deriving
+the fact beneath it is precisely the defect this document exists to close. **That is not
+hypothetical here:** the headline was advanced from twenty-seven to twenty-nine while this
+derivation still reasoned through twenty-seven and omitted `#631` and `#660` entirely.
+
+**None of the ten is production-exercised**, and each is recorded with the evidence that decides
+its status rather than with a status word alone.
 
 *(⚠️ **Corrected 2026-08-27.** This section stopped at fourteen merges and six capabilities and
 had no row for `#648` at all, two production moves after it was written. The count and the head

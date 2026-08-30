@@ -284,7 +284,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
       { column: "archived_by", reason: "pending_review", note: "Archive attribution; see archived_at." },
     ],
     sourceCountCheck: { kind: "studio_scoped" },
-    rowScope: "Every client row this studio holds, archived clients included (the archived_at flag itself is not emitted).",
+    rowScope: "Every client row this studio holds is exported, archived clients included — the read does not filter on archived_at — and archived_at IS emitted, so archived state stays distinguishable from active.",
     description:
       "Client master list with names, contact info, allergies, skin notes, Fitzpatrick type, emergency contacts.",
   },
@@ -1196,11 +1196,11 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     file: "client_consent_signatures.csv",
     csvHeaders: [
       "id","client_id","template_id","template_title_snapshot","template_body_snapshot",
-      "template_version","signature_name","signed_at","response","response_label_snapshot","created_at",
+      "template_version","template_hash","signature_name","signed_at","response","response_label_snapshot","created_at",
     ],
     includedColumns: [
       "id","client_id","template_id","template_title_snapshot","template_body_snapshot",
-      "template_version","signature_name","signed_at","response","response_label_snapshot","created_at",
+      "template_version","template_hash","signature_name","signed_at","response","response_label_snapshot","created_at",
     ],
     excludedColumns: [
       { column: "studio_id", reason: "tenant_key" },
@@ -1214,16 +1214,11 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
         reason: "security_material",
         note: "A hash of the signer's user agent. Same anti-repudiation purpose as ip_hash.",
       },
-      {
-        column: "template_hash",
-        reason: "security_material",
-        note: "Integrity digest of the template body. The consent CONTENT is exported verbatim as template_body_snapshot, so the digest adds no customer-actionable fact and is withheld with the other cryptographic material.",
-      },
     ],
     sourceCountCheck: { kind: "none", reason: "No source-side count query is issued for this file today, so its row count is recorded but NOT verified against the database." },
     rowScope: "Every consent signature this studio holds, across all of its clients.",
     description:
-      "Signed consent records, each carrying the exact template title and body the client agreed to at the time plus their typed signature name and response. The snapshot columns are what make this evidence rather than a pointer to a template that may since have changed. Cryptographic and device-telemetry hashes are deliberately withheld.",
+      "Signed consent records, each carrying the exact template title and body the client agreed to at the time plus their typed signature name and response. The snapshot columns are what make this evidence rather than a pointer to a template that may since have changed, and template_hash is the SHA-256 fingerprint persisted at signing (migration 0057) so a studio can verify those exported snapshots against the digest actually stored rather than against one recomputed from the export. DEVICE TELEMETRY IS STILL WITHHELD: ip_hash and user_agent_hash are anti-repudiation material about the signer, not consent content, and are not exported.",
   },
   consent_form_templates: {
     kind: "pending",

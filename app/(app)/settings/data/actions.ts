@@ -186,6 +186,16 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
         .order("id", { ascending: true })
         .range(from, to),
     ),
+    // EVERY practitioner this studio holds, ACTIVE AND INACTIVE, and the
+    // absence of an `active` filter here is the point rather than an oversight.
+    // 0134 preserves a practitioner's service_practitioners rows when they are
+    // deactivated AFTER being made eligible ("removal is a separate, explicit
+    // action"), so an active-only read let service_practitioners.csv carry a
+    // practitioner_id with no matching row in practitioners.csv — the exported
+    // archive failing the very joinability this slice exists to deliver. The
+    // `active` column is itself exported, so a consumer can still tell the two
+    // apart; nothing about practitioner PRODUCT behaviour changes, and nobody
+    // is reactivated. The read stays studio-scoped and under the same RLS.
     fetchExportRows("practitioners", (from, to) =>
       supabase
         .from("practitioners")
@@ -193,7 +203,6 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
           "id, display_name, email, role, active, created_at, color, default_machine_frequency",
         )
         .eq("studio_id", studio.id)
-        .eq("active", true)
         .order("display_name", { ascending: true })
         .order("id", { ascending: true })
         .range(from, to),
@@ -383,7 +392,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
       supabase
         .from("client_consent_signatures")
         .select(
-          "id, client_id, template_id, template_title_snapshot, template_body_snapshot, template_version, signature_name, signed_at, response, response_label_snapshot, created_at",
+          "id, client_id, template_id, template_title_snapshot, template_body_snapshot, template_version, template_hash, signature_name, signed_at, response, response_label_snapshot, created_at",
         )
         .eq("studio_id", studio.id)
         .order("signed_at", { ascending: false })
@@ -1215,10 +1224,13 @@ below, and only those. Every listed source is exported in full: reads are
 paginated, and the export refuses rather than hand over a partial file.
 
 IT IS NOT EVERYTHING HONE HOLDS FOR YOUR STUDIO. The NOT INCLUDED section below
-lists, by name, every studio-owned record type this export does not yet carry -
-most importantly your treatment photos, your intake forms, your signed consents,
-your service menu and your payment records. That list is generated from the same
-source that decides what gets written here, so it cannot quietly fall behind.
+lists, by name, every studio-owned record type this export does not yet carry.
+That list is generated from the same source that decides what gets written here,
+so it cannot quietly fall behind. It is the ONLY list of omissions in this file,
+deliberately: a hand-written summary beside it is a second authority that goes
+stale the moment a record type is promoted, and this paragraph previously did
+exactly that - it still named signed consents and the service menu as missing
+after both had become files in this archive.
 
 WHAT THIS IS NOT: it is not a transactional database backup and it is NOT
 point-in-time consistent. Each table is read independently, so records written

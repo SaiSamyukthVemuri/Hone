@@ -32,7 +32,7 @@ import {
 // rather than by hand. This is the payload pin: TRUTH-01A moved the header
 // arrays into the registry, and if a single column moved with them, this fails.
 const BASE_CSV_HEADERS: Readonly<Record<string, readonly string[]>> = {
-  "client_consent_signatures.csv": ["id", "client_id", "template_id", "template_title_snapshot", "template_body_snapshot", "template_version", "signature_name", "signed_at", "response", "response_label_snapshot", "created_at"],
+  "client_consent_signatures.csv": ["id", "client_id", "template_id", "template_title_snapshot", "template_body_snapshot", "template_version", "template_hash", "signature_name", "signed_at", "response", "response_label_snapshot", "created_at"],
   "probe_lots.csv": ["id", "probe_size", "lot_number", "expiry_date", "active", "notes", "created_at"],
   "service_practitioners.csv": ["id", "service_id", "practitioner_id", "created_at"],
   "services.csv": ["id", "name", "description", "default_duration_minutes", "price_cents", "active", "modality", "sort_order", "pre_care_instructions", "calendar_color", "created_at", "updated_at"],

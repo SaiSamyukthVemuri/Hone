@@ -65,6 +65,10 @@ vi.mock("next/cache", () => ({ revalidatePath: () => undefined }));
 // ---------------------------------------------------------------------------
 // TRUTH-01B-1 seed ids.
 let deletedElectEntryId = "";
+let deletedLaserEntryId = "";
+let inactivePractitionerId = "";
+let inactiveJoinId = "";
+let otherStudioPractitionerId = "";
 let serviceId = "";
 let consentSignatureId = "";
 let probeLotId = "";
@@ -249,6 +253,19 @@ beforeAll(async () => {
     [deletedElectEntryId, sessionId],
   );
 
+  // The same soft-delete pair for LASER. Seeded because the laser control used
+  // to assert only that the HEADER existed, which stayed green even if the
+  // serializer stopped writing the value.
+  deletedLaserEntryId = randomUUID();
+  await adminQuery(
+    `insert into public.laser_entries
+       (id, session_id, zone, session_number, equipment_params, observation_notes,
+        deleted_at, delete_reason)
+     values ($1,$2,'Deleted Zone',9,'{}'::jsonb,'laser entry that was removed',
+             now(), 'seeded for the honesty control')`,
+    [deletedLaserEntryId, sessionId],
+  );
+
   serviceId = randomUUID();
   await adminQuery(
     `insert into public.services
@@ -271,7 +288,7 @@ beforeAll(async () => {
         template_body_snapshot, template_version, template_hash, signature_name,
         signed_at, ip_hash, user_agent_hash, response, response_label_snapshot)
      values ($1,$2,$3,$4,'Consent Template','The full consent body the client agreed to.',2,
-             'HASH-TEMPLATE-MUST-NOT-EXPORT','Ada Signer', now(),
+             'TEMPLATE-FINGERPRINT-0057-MUST-EXPORT','Ada Signer', now(),
              'HASH-IP-MUST-NOT-EXPORT','HASH-UA-MUST-NOT-EXPORT','accepted','Yes, I agree')`,
     [consentSignatureId, studioId, clientId, templateId],
   );
@@ -294,6 +311,34 @@ beforeAll(async () => {
     )
   ).rows[0].id as string;
 
+  // THE 0134 PATH, reproduced exactly: a practitioner is made eligible for a
+  // service WHILE ACTIVE, and is deactivated afterwards. 0134's own comment
+  // says the join row survives ("removal is a separate, explicit action"), and
+  // guard_service_practitioner_active fires on INSERT only, so the ordering
+  // here is the ordering the product enforces - eligible first, inactive second.
+  inactivePractitionerId = randomUUID();
+  await adminQuery(
+    `insert into public.practitioners (id, studio_id, display_name, email, role, active)
+     values ($1,$2,'Retired Practitioner',$3,'practitioner',true)`,
+    [inactivePractitionerId, studioId, `rt-inactive-${randomUUID().slice(0, 8)}@harness.local`],
+  );
+  await adminQuery(
+    `insert into public.service_practitioners (studio_id, service_id, practitioner_id)
+     values ($1,$2,$3)
+     on conflict do nothing`,
+    [studioId, serviceId, inactivePractitionerId],
+  );
+  inactiveJoinId = (
+    await adminQuery(
+      `select id from public.service_practitioners
+        where studio_id = $1 and service_id = $2 and practitioner_id = $3`,
+      [studioId, serviceId, inactivePractitionerId],
+    )
+  ).rows[0].id as string;
+  await adminQuery(`update public.practitioners set active = false where id = $1`, [
+    inactivePractitionerId,
+  ]);
+
   treatmentGoalId = randomUUID();
   await adminQuery(
     `insert into public.treatment_goals
@@ -306,6 +351,7 @@ beforeAll(async () => {
   // may appear in this studio's archive.
   const other = await seedStudio(`rt-other-${randomUUID().slice(0, 6)}`);
   const otherPractitionerId = randomUUID();
+  otherStudioPractitionerId = otherPractitionerId;
   await adminQuery(
     `insert into public.practitioners (id, studio_id, display_name, email, role, active)
      values ($1,$2,'Other Owner',$3,'owner',true)`,
@@ -511,8 +557,24 @@ describe("SOFT-DELETE HONESTY: a removed entry never looks live", () => {
     expect(gone.deleted_at.length).toBeGreaterThan(10);
   });
 
-  it("laser entries carry the same column, for the same reason", async () => {
+  it("both the live and the deleted LASER entry are in the archive", async () => {
+    const t = await table("laser_entries");
+    const ids = t.rows.map((r) => r.id);
+    expect(ids).toContain(laserEntryId);
+    expect(ids).toContain(deletedLaserEntryId);
+  });
+
+  it("CONTROL — the deleted LASER entry carries its deletion state, the live one does not", async () => {
+    // This assertion used to check only that the HEADER existed, which would
+    // have stayed green if `deleted_at: e.deleted_at` were dropped from the
+    // laser serializer: both rows would emit a blank cell and the header would
+    // still be there. It now reads the two CELLS, so that mutation goes RED.
     expect(exportSpec("laser_entries").csvHeaders).toContain("deleted_at");
+    const live = await rowById("laser_entries", laserEntryId);
+    const gone = await rowById("laser_entries", deletedLaserEntryId);
+    expect(live.deleted_at).toBe("");
+    expect(gone.deleted_at).not.toBe("");
+    expect(gone.deleted_at.length).toBeGreaterThan(10);
   });
 });
 
@@ -559,20 +621,71 @@ describe("TRUTH-01B-1 new files carry their seeded rows", () => {
     expect(row.response_label_snapshot).toBe("Yes, I agree");
   });
 
-  it("CONTROL — no consent hash reaches the archive, in any column or cell", async () => {
+  it("template_hash IS exported, and carries the value stored at signing", async () => {
+    // The integrity fingerprint 0057 persists so template drift can be checked
+    // cheaply. Exporting the snapshots without it would leave a studio able to
+    // recompute a digest from the export but never to compare against the one
+    // actually stored — which is the only comparison that proves anything.
+    expect(exportSpec("client_consent_signatures").csvHeaders).toContain("template_hash");
+    const row = await rowById("client_consent_signatures", consentSignatureId);
+    const stored = (
+      await adminQuery(`select template_hash from public.client_consent_signatures where id = $1`, [
+        consentSignatureId,
+      ])
+    ).rows[0].template_hash as string;
+    expect(row.template_hash).toBe(stored);
+    expect(row.template_hash).toBe("TEMPLATE-FINGERPRINT-0057-MUST-EXPORT");
+  });
+
+  it("CONTROL — the DEVICE-TELEMETRY hashes still reach no column and no cell", async () => {
+    // Narrowed deliberately when template_hash was promoted: ip_hash and
+    // user_agent_hash are anti-repudiation material ABOUT THE SIGNER, not
+    // consent content, and remain withheld. The control keeps its teeth by
+    // scanning cells as well as headers.
     const headers = exportSpec("client_consent_signatures").csvHeaders;
-    for (const forbidden of ["ip_hash", "user_agent_hash", "template_hash"]) {
+    for (const forbidden of ["ip_hash", "user_agent_hash"]) {
       expect(headers, `${forbidden} must not be a header`).not.toContain(forbidden);
     }
-    // And not smuggled into some other cell either: scan the whole file.
     const raw = await archive.files[exportSpec("client_consent_signatures").file].async("string");
-    for (const value of [
-      "HASH-IP-MUST-NOT-EXPORT",
-      "HASH-UA-MUST-NOT-EXPORT",
-      "HASH-TEMPLATE-MUST-NOT-EXPORT",
-    ]) {
+    for (const value of ["HASH-IP-MUST-NOT-EXPORT", "HASH-UA-MUST-NOT-EXPORT"]) {
       expect(raw, `${value} reached the CSV`).not.toContain(value);
     }
+  });
+
+  it("an INACTIVE practitioner referenced by a join row is still in practitioners.csv", async () => {
+    // The joinability contract, at its weakest point. service_practitioners
+    // rows outlive deactivation by design (0134), so an active-only export read
+    // produced a join file pointing at a practitioner_id that appeared nowhere
+    // in practitioners.csv.
+    const joins = await table("service_practitioners");
+    const assignment = joins.rows.find((r) => r.id === inactiveJoinId);
+    expect(assignment, "the surviving assignment must be exported").toBeDefined();
+    expect(assignment?.practitioner_id).toBe(inactivePractitionerId);
+
+    const practitioner = await rowById("practitioners", inactivePractitionerId);
+    expect(practitioner.display_name).toBe("Retired Practitioner");
+    // Exported, and honestly labelled rather than quietly presented as current.
+    expect(practitioner.active).toBe("false");
+  });
+
+  it("dropping the active filter did NOT widen tenancy — the other studio's practitioner is absent", async () => {
+    // The studio_id predicate is what confines this read; `active` never did
+    // any tenancy work. Removing it must therefore change WHICH OF THIS
+    // STUDIO'S rows are exported and nothing else.
+    const practitioners = await table("practitioners");
+    const ids = practitioners.rows.map((r) => r.id);
+    expect(ids).toContain(inactivePractitionerId);
+    expect(ids).not.toContain(otherStudioPractitionerId);
+  });
+
+  it("EVERY exported assignment resolves to an exported practitioner row", async () => {
+    const joins = await table("service_practitioners");
+    const practitioners = await table("practitioners");
+    const known = new Set(practitioners.rows.map((r) => r.id));
+    const dangling = joins.rows
+      .map((r) => r.practitioner_id)
+      .filter((id) => !known.has(id));
+    expect(dangling, "join rows referencing a practitioner absent from the archive").toEqual([]);
   });
 
   it("the archive holds this studio's join rows and not another studio's", async () => {
