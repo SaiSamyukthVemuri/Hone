@@ -1,5 +1,6 @@
 # Hone — repository security rules
 
+<!-- header:begin -->
 Rules for a reviewer who already knows general security. They exist because a
 general model cannot infer them from the code alone.
 
@@ -17,6 +18,7 @@ one, and carries the source it was quoted from. The parity test requires each
 rule to appear verbatim in its cited section, so this file cannot state a rule
 its source does not — nor the opposite of one. The canonical documents are the
 authority; this file is a view onto them.
+<!-- header:end -->
 
 ## Identity
 
