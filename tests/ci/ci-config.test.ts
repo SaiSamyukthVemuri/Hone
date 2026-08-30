@@ -566,14 +566,151 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
   //    application bug (CLAUDE.md §3). The action was pinned to a commit but
   //    deliberately NOT bumped past the v1 line — v3 is a composite action that
   //    installs the CLI from npm via Bun with different `version` semantics.
-  it("the Supabase CLI stays on the grants-parity version and the v1 action line", () => {
-    const all = CI + NIGHTLY;
-    const setupCli = (all.match(/uses: supabase\/setup-cli@\S+/g) ?? []).length;
-    const versions = (all.match(/version: 2\.102\.0/g) ?? []).length;
-    expect(setupCli, "setup-cli must still be used").toBeGreaterThan(0);
-    expect(versions, `${setupCli} setup-cli sites but ${versions} pinned versions`).toBe(setupCli);
-    expect(all, "setup-cli must not be bumped past the v1 line without a grants re-verification")
-      .not.toMatch(/supabase\/setup-cli@v[23]/);
+  //
+  //    Stated as the APPROVED POSTURE, not as the absence of a forbidden
+  //    string. The previous form of this guard asserted
+  //    `not.toMatch(/supabase\/setup-cli@v[23]/)`, which guard 1 had already
+  //    made unreachable: once every ref must be a 40-character SHA, the literal
+  //    `@v2` / `@v3` can never appear in these files, so that limb could not
+  //    fire for any diff. Replacing all six refs with a v3 commit and
+  //    relabelling the comments `# v3.0.0` — while keeping `version: 2.102.0` —
+  //    would have kept it green.
+  //
+  //    The SHA is the supply-chain authority; the annotation is the
+  //    human-readable consistency check, believed only after the SHA agrees;
+  //    the CLI version is the grants-parity invariant. All three are pinned,
+  //    plus the number of uses, so a seventh unreviewed site is not silent.
+  const SETUP_CLI_SHA = "ab058987d8d6c725971f6cf9d0b5c98467e30bd1";
+  const SETUP_CLI_TAG = "v1.7.1";
+  const SETUP_CLI_VERSION = "2.102.0";
+  const SETUP_CLI_USES = 6; // 5 in ci.yml + 1 in nightly.yml
+
+  const SETUP_CLI_SOURCES: [string, string][] = [
+    ["ci.yml", CI],
+    ["nightly.yml", NIGHTLY],
+  ];
+
+  type SetupCliUse = {
+    where: string;
+    sha: string;
+    annotation: string | null;
+    versions: string[];
+  };
+
+  /**
+   * Every `supabase/setup-cli` step, read from its own `uses:` line to the end
+   * of that step. Deliberately NOT filtered to the approved SHA — the point is
+   * to see the unapproved ones.
+   *
+   * The `version:` input is read out of the step that declares it rather than
+   * counted across the whole file: a file-wide count of `version: 2.102.0` is
+   * satisfiable by an unrelated action's input, so it would stay green while a
+   * setup-cli step ran a different CLI.
+   */
+  function setupCliUses(file: string, body: string): SetupCliUse[] {
+    const lines = body.split("\n");
+    const out: SetupCliUse[] = [];
+    for (let i = 0; i < lines.length; i++) {
+      const m = /^[\s-]*uses:\s*supabase\/setup-cli@(\S+)(?:\s*#\s*(\S+))?\s*$/.exec(lines[i]);
+      if (!m) continue;
+      // The COLUMN of `uses:` is the step's body indent in both YAML shapes:
+      // `- uses:` as the step's first key, and `uses:` under a `- name:`.
+      const indent = lines[i].indexOf("uses:");
+      const versions: string[] = [];
+      for (let j = i + 1; j < lines.length; j++) {
+        const line = lines[j];
+        if (line.trim() === "") continue;
+        if (line.length - line.trimStart().length < indent) break; // next step
+        if (/^\s*#/.test(line)) continue; // a comment is not an input
+        const v = /^\s*version:\s*(\S+)\s*$/.exec(line);
+        if (v) versions.push(v[1]);
+      }
+      out.push({ where: `${file}:${i + 1}`, sha: m[1], annotation: m[2] ?? null, versions });
+    }
+    return out;
+  }
+
+  /** Every way the observed posture departs from the approved one. */
+  function setupCliViolations(sources: readonly (readonly [string, string])[]): string[] {
+    const uses = sources.flatMap(([file, body]) => setupCliUses(file, body));
+    const bad: string[] = [];
+    if (uses.length !== SETUP_CLI_USES) {
+      bad.push(`${uses.length} setup-cli uses, expected ${SETUP_CLI_USES}`);
+    }
+    for (const u of uses) {
+      if (u.sha !== SETUP_CLI_SHA) {
+        bad.push(`${u.where}: ref ${u.sha} is not the vetted ${SETUP_CLI_TAG} commit`);
+      }
+      if (u.annotation !== SETUP_CLI_TAG) {
+        bad.push(
+          `${u.where}: annotation "${u.annotation ?? "(none)"}" does not report ${SETUP_CLI_TAG}`,
+        );
+      }
+      if (u.versions.length !== 1) {
+        bad.push(`${u.where}: ${u.versions.length} version inputs, expected exactly one`);
+      }
+      for (const v of u.versions) {
+        if (v !== SETUP_CLI_VERSION) {
+          bad.push(`${u.where}: CLI version ${v} is not the grants-parity pin ${SETUP_CLI_VERSION}`);
+        }
+      }
+    }
+    return bad;
+  }
+
+  it("every supabase/setup-cli use is the vetted v1.7.1 commit on the grants-parity CLI", () => {
+    expect(setupCliViolations(SETUP_CLI_SOURCES)).toEqual([]);
+  });
+
+  // A guard that cannot fail is not a guard — which is exactly what the removed
+  // `@v[23]` limb was. These three drive the substitutions the pin exists to
+  // refuse THROUGH THE REAL WORKFLOW TEXT and require each to be reported, so
+  // the check is proved reachable rather than assumed to be. No network is
+  // involved: the vetted SHA is a constant here and the test is string equality
+  // against it.
+  //
+  // Each control asserts the substitution actually landed before judging the
+  // result, so a stale `from` string cannot turn a control into a no-op that
+  // "passes" against unmutated text.
+  const withMutatedCi = (from: string, to: string): [string, string][] => {
+    expect(CI, `negative control needs "${from}" in ci.yml`).toContain(from);
+    // Replaces the FIRST occurrence only: one of the six uses departs, which is
+    // the realistic shape of the change and proves the guard is per-site.
+    return [
+      ["ci.yml", CI.replace(from, to)],
+      ["nightly.yml", NIGHTLY],
+    ];
+  };
+
+  // A synthetic 40-hex value, NOT a published supabase/setup-cli commit. That
+  // makes the control stronger than "a v3 commit is refused": the posture is
+  // equality with the vetted v1.7.1 commit, so a v3 commit, a re-tagged v1 and
+  // an attacker's commit are all refused by the same assertion — and the test
+  // carries no unverifiable claim about which SHA v3 actually is.
+  const UNAPPROVED_SHA = "0123456789abcdef0123456789abcdef01234567";
+
+  it("RED: a setup-cli ref moved off the vetted commit is refused", () => {
+    const violations = setupCliViolations(
+      withMutatedCi(`setup-cli@${SETUP_CLI_SHA}`, `setup-cli@${UNAPPROVED_SHA}`),
+    );
+    expect(violations).toHaveLength(1);
+    expect(violations[0]).toMatch(/is not the vetted v1\.7\.1 commit/);
+  });
+
+  it("RED: a setup-cli annotation claiming another major is refused", () => {
+    const violations = setupCliViolations(
+      withMutatedCi(`${SETUP_CLI_SHA} # ${SETUP_CLI_TAG}`, `${SETUP_CLI_SHA} # v3.0.0`),
+    );
+    expect(violations).toHaveLength(1);
+    expect(violations[0]).toMatch(/annotation "v3\.0\.0" does not report v1\.7\.1/);
+  });
+
+  it("RED: a setup-cli step on another CLI version is refused", () => {
+    const violations = setupCliViolations(
+      withMutatedCi(`version: ${SETUP_CLI_VERSION}`, "version: 2.103.0"),
+    );
+    expect(violations).toHaveLength(1);
+    expect(violations[0]).toMatch(/CLI version 2\.103\.0 is not the grants-parity pin/);
   });
 
   // 7. The browser-e2e aggregator has NO checkout — it is shell arithmetic over
