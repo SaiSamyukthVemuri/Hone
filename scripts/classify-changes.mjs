@@ -30,6 +30,20 @@ const FULL_MATRIX = [
   /^tests\/db\/helpers\//,
 ];
 
+/**
+ * The security-guidance adapter (SEC-ADAPTER-01). It is markdown, so the bare
+ * `/\.md$/` below would call it documentation, and a file whose ENTIRE purpose
+ * is to steer a security reviewer would ship under the docs lane at T0.
+ *
+ * It changes no runtime behaviour, which is exactly why it needs saying out
+ * loud: a stale or wrong rule in here produces no symptom anywhere. It degrades
+ * review quality silently. That is a security-path change, not a docs change.
+ *
+ * Listed as an EXCEPTION rather than by narrowing `/\.md$/`, so ordinary
+ * markdown keeps routing to the docs lane and this stays a one-file carve-out.
+ */
+const DOCS_EXCEPTIONS = [/^\.claude\/claude-security-guidance(\.local)?\.md$/];
+
 /** Docs and records that never change runtime behaviour. */
 const DOCS = [
   /^docs\//,
@@ -48,7 +62,7 @@ const RULES = [
   // would let someone retire a disposition without the guard that proves the
   // retirement is honest ever running.
   { key: "database", patterns: [/^supabase\/migrations\//, /^supabase\/.*\.sql$/, /^tests\/db\//, /^tests\/migrations\//, /^scripts\/migration-state\.mjs$/, /^scripts\/check-migration-extension/, /^scripts\/check-fresh-managed/, /^lib\/export\/resource-registry\.ts$/] },
-  { key: "security", patterns: [/^tests\/security\//, /^lib\/security\//, /^lib\/observability\//, /^scripts\/check-.*gates/] },
+  { key: "security", patterns: [/^tests\/security\//, /^lib\/security\//, /^lib\/observability\//, /^scripts\/check-.*gates/, ...DOCS_EXCEPTIONS] },
   { key: "payment", patterns: [/payment/i, /stripe/i, /^lib\/billing\//, /^e2e-payment\//, /^playwright\.payment\.config/] },
   { key: "google_calendar", patterns: [/google[-_]?calendar/i, /^lib\/google-calendar\//, /^e2e-google\//, /^playwright\.google\.config/, /^app\/api\/cron\/calendar/] },
   { key: "mobile", patterns: [/^e2e-mobile\//, /^playwright\.mobile\.config/, /mobile/i, /responsive/i] },
@@ -252,7 +266,7 @@ export function classify(files) {
   const rawLanes = { ...out };
 
   // Docs-only when EVERY changed file is documentation.
-  out.docs_only = list.every((f) => match(f, DOCS));
+  out.docs_only = list.every((f) => match(f, DOCS) && !match(f, DOCS_EXCEPTIONS));
   Object.assign(out, baselineRisk(list, rawLanes, out.docs_only));
   if (out.docs_only) {
     for (const k of ["application", "database", "security", "payment", "google_calendar", "browser_core", "mobile", "ci_workflows"]) {

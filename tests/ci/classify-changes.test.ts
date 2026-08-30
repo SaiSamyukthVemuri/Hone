@@ -392,3 +392,91 @@ describe("classifier — mixed diffs still take the highest tier", () => {
     expect(a).toEqual(b);
   });
 });
+
+// ---------------------------------------------------------------------------
+// SEC-ADAPTER-01 — the security-guidance adapter is a SECURITY path
+// ---------------------------------------------------------------------------
+// `.claude/claude-security-guidance.md` is markdown, and DOCS carries a bare
+// /\.md$/, so before this carve-out the file classified docs_only -> T0 -> docs
+// lane. A file whose entire purpose is to steer a security reviewer would have
+// shipped under documentation CI, and a wrong rule in it has no runtime symptom
+// to catch it later.
+//
+// The carve-out is deliberately ONE file (plus its .local sibling). The last two
+// cases here are the controls that keep it that way: ordinary markdown, and the
+// rest of the tracked `.claude/` tree, must still route to docs.
+describe("classifier — the security-guidance adapter (SEC-ADAPTER-01)", () => {
+  it("the adapter alone is a security path at T3, not documentation", () => {
+    const r = c(".claude/claude-security-guidance.md");
+    expect(r.docs_only).toBe(false);
+    expect(r.security).toBe(true);
+    expect(r.baselineRiskTier).toBe("T3");
+    expect(r.riskReasons).toContain("security or privilege boundary path changed");
+  });
+
+  it("the .local sibling routes identically", () => {
+    const r = c(".claude/claude-security-guidance.local.md");
+    expect(r.docs_only).toBe(false);
+    expect(r.security).toBe(true);
+    expect(r.baselineRiskTier).toBe("T3");
+  });
+
+  it("its parity test routes to the security lane too", () => {
+    const r = c("tests/security/security-guidance-parity.test.ts");
+    expect(r.security).toBe(true);
+    expect(r.docs_only).toBe(false);
+    expect(r.baselineRiskTier).toBe("T3");
+  });
+
+  it("the adapter alongside docs is still not docs_only", () => {
+    // One exception file is enough to defeat the `every` — the point of routing
+    // it out of DOCS rather than merely adding it to the security rule.
+    const r = c("docs/03_SECURITY_AND_PRIVACY.md", ".claude/claude-security-guidance.md");
+    expect(r.docs_only).toBe(false);
+    expect(r.security).toBe(true);
+  });
+
+  it("the whole SEC-ADAPTER-01 change set forces the full matrix", () => {
+    const r = c(
+      ".claude/claude-security-guidance.md",
+      "tests/security/security-guidance-parity.test.ts",
+      "scripts/classify-changes.mjs",
+      "tests/ci/classify-changes.test.ts",
+    );
+    expect(r.security).toBe(true);
+    expect(r.ci_workflows).toBe(true);
+    expect(r.docs_only).toBe(false);
+    expect(r.baselineRiskTier).toBe("T3");
+    expect(r.full_matrix_required).toBe(true);
+  });
+
+  // Controls: the carve-out must not promote markdown generally.
+  it("ordinary markdown still routes to the docs lane", () => {
+    for (const f of ["docs/03_SECURITY_AND_PRIVACY.md", "README.md", "CLAUDE.md", "CONTRIBUTING.md"]) {
+      const r = c(f);
+      expect(r.docs_only, `${f} must stay docs_only`).toBe(true);
+      expect(r.security, `${f} must not become a security path`).toBe(false);
+      expect(r.baselineRiskTier, `${f} must stay T0`).toBe("T0");
+    }
+  });
+
+  it("the rest of the tracked .claude tree is untouched by the carve-out", () => {
+    // `.claude/skills/**` is tracked and also markdown. It is prompts, not
+    // security rules, and is deliberately NOT promoted here.
+    const r = c(".claude/skills/prototype/SKILL.md");
+    expect(r.docs_only).toBe(true);
+    expect(r.security).toBe(false);
+    expect(r.baselineRiskTier).toBe("T0");
+  });
+
+  it("a near-miss filename does not inherit the carve-out", () => {
+    for (const f of [
+      ".claude/claude-security-guidance.md.bak",
+      ".claude/claude-security-guidance-notes.md",
+      ".claude/nested/claude-security-guidance.md",
+    ]) {
+      const r = c(f);
+      expect(r.security, `${f} must not match the exception`).toBe(false);
+    }
+  });
+});
