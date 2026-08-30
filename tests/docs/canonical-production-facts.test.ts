@@ -1175,6 +1175,36 @@ const CORRECTION_MARKER =
  * whatever is left on the line is being asserted in the document's own voice.
  * Bounded span reasoning, not a Markdown parser.
  */
+/** A marker that DESCRIBES the quotation before it rather than introducing one. */
+const POSTPOSITIVE_MARKER =
+  /\b(?:was|were|is|are|has\s+been|have\s+been|had\s+been)\s+(?:corrected|withdrawn|superseded|retracted|amended|replaced)\b/gi;
+
+type MarkerSpan = { start: number; end: number };
+
+/**
+ * Locate correction markers and classify each by the direction it binds.
+ *
+ * A postpositive phrase contains a correction word, so the generic marker
+ * pattern matches inside it - "was corrected" contains "corrected". Any generic
+ * match overlapping a postpositive phrase is therefore NOT counted as
+ * prepositive, which is what stops `"X" was corrected` from also reading as an
+ * introduction of the quotation that follows.
+ */
+function markerSpans(text: string): { pre: MarkerSpan[]; post: MarkerSpan[] } {
+  const post: MarkerSpan[] = [...text.matchAll(POSTPOSITIVE_MARKER)].map((m) => ({
+    start: m.index ?? 0,
+    end: (m.index ?? 0) + m[0].length,
+  }));
+  const pre: MarkerSpan[] = [];
+  for (const m of text.matchAll(new RegExp(CORRECTION_MARKER.source, "gi"))) {
+    const start = m.index ?? 0;
+    const end = start + m[0].length;
+    if (post.some((p) => start < p.end && end > p.start)) continue;
+    pre.push({ start, end });
+  }
+  return { pre, post };
+}
+
 function maskQuotedSpans(text: string): string {
   // A quote is masked only when a correction/history marker INTRODUCES it -
   // i.e. the marker appears earlier on the same line than the quote does.
@@ -1191,74 +1221,130 @@ function maskQuotedSpans(text: string): string {
   // separate live assertion still fails on the assertion, which sits outside
   // any marker-introduced quote.
   let out = text;
-  // A MARKER IS CONSUMED BY THE QUOTATION IT INTRODUCES.
+  // A MARKER OWNS EXACTLY ONE QUOTATION, AND DIRECTION DECIDES WHICH.
   //
-  // Two earlier scopes were both too broad, and each failed the same way - one
-  // legitimate correction licensing an unrelated LIVE assertion beside it:
+  // Three scopes were tried and each let one legitimate correction license an
+  // unrelated LIVE assertion: line scope, then cell scope, then "the span since
+  // the previous quotation". The last one closed forward inheritance for
+  // PREPOSITIVE markers and left the mirror image open, because a POSTPOSITIVE
+  // marker sits between the quote it describes and the next one:
   //
-  //   line-scoped  a marker anywhere on the row masked every quote in the row.
-  //   cell-scoped  a marker anywhere in the cell masked every quote in the cell,
-  //                so `Corrected: previous wording "X"; current posture: "Y"`
-  //                still masked Y - one cell, two quotations, one marker.
+  //     "A harmless statement" was corrected; current posture: "<live claim>"
+  //                            ^^^^^^^^^^^^^ describes the quote BEFORE it,
+  //                                          but lands in the NEXT quote's span
   //
-  // The association is now positional and single-use: for each quotation, only
-  // the span since the PREVIOUS quotation in the same cell is examined. A marker
-  // in that span introduces exactly this quotation and is spent doing so; the
-  // next quotation must carry its own marker or it is judged as the document
-  // speaking. That is the semantic contract - a marker governs the historical
-  // span it introduces, not the rest of the row.
+  // So the live claim inherited a marker that was never about it. Association
+  // is now explicit and directional rather than "did the text since the last
+  // quote contain the word corrected":
+  //
+  //   PREPOSITIVE  `Corrected previous wording "X"`   introduces the quote after it
+  //   POSTPOSITIVE `"X" was corrected`                describes the quote before it
+  //
+  // Each marker is examined only in the window it can legitimately govern, so
+  // neither direction can spill onto a neighbouring quotation. A quote with no
+  // marker of its own in either window is the document speaking.
   const quotes = [...text.matchAll(/"[^"\n]*"|“[^”\n]*”/g)];
-  let previousQuoteEnd = -1;
-  for (const m of quotes) {
+  const { pre, post } = markerSpans(text);
+  for (let i = 0; i < quotes.length; i += 1) {
+    const m = quotes[i];
     const start = m.index ?? 0;
+    const end = start + m[0].length;
+
     const lineStart = text.lastIndexOf("\n", start) + 1;
     const cellSep = text.lastIndexOf("|", start);
     const cellStart = Math.max(lineStart, cellSep === -1 ? lineStart : cellSep + 1);
-    // The previous quotation only bounds this one when it is in the SAME cell.
-    const scanFrom = Math.max(cellStart, previousQuoteEnd);
-    previousQuoteEnd = start + m[0].length;
-    if (!CORRECTION_MARKER.test(text.slice(scanFrom, start))) continue;
+    const previous = i > 0 ? (quotes[i - 1].index ?? 0) + quotes[i - 1][0].length : -1;
+    const scanFrom = Math.max(cellStart, previous);
+
+    const nl = text.indexOf("\n", end);
+    const lineEnd = nl === -1 ? text.length : nl;
+    const nextSep = text.indexOf("|", end);
+    const cellEnd = Math.min(lineEnd, nextSep === -1 ? lineEnd : nextSep);
+    const next = i + 1 < quotes.length ? (quotes[i + 1].index ?? 0) : cellEnd;
+    const scanTo = Math.min(cellEnd, next);
+
+    const introduced = pre.some((k) => k.start >= scanFrom && k.end <= start);
+    const described = post.some((k) => k.start >= end && k.end <= scanTo);
+    if (!introduced && !described) continue;
     out = out.slice(0, start) + " ".repeat(m[0].length) + out.slice(start + m[0].length);
   }
   return out;
 }
 
-describe("correction markers bind to the quotation they introduce, and are spent doing so", () => {
-  // Three scopes were tried. The first two each let one legitimate correction
-  // license an unrelated LIVE assertion beside it, which is the only failure
-  // mode that matters here: a document stating a withdrawn fact as current and
-  // a guard signing it off.
+describe("correction markers own exactly one quotation, and direction decides which", () => {
+  // Four scopes were tried before this one, and each let a legitimate
+  // correction license an unrelated LIVE assertion beside it: line, then cell,
+  // then "the span since the previous quotation". The third closed forward
+  // inheritance for PREPOSITIVE markers and left the mirror image wide open,
+  // because a POSTPOSITIVE marker sits between the quote it describes and the
+  // next one. Both directions are supported and neither may spill.
   const live = "authenticated still holds row INSERT/UPDATE/DELETE";
+  const old = "row DML is NOT revoked";
 
-  it("does NOT mask a live quotation sharing a cell with a corrected one", () => {
-    const row = `| Corrected: previous wording "row DML is NOT revoked"; current posture: "${live}" |`;
+  it("1. PREPOSITIVE history does not license the live quote after it", () => {
+    const row = `| Corrected previous wording "${old}"; current posture: "${live}" |`;
     const masked = maskQuotedSpans(row);
-    expect(masked, "the historical quotation must still be masked").not.toContain("NOT revoked");
-    expect(
-      masked,
-      "a marker introducing an earlier quotation must not reach the next one in the same cell",
-    ).toContain(live);
+    expect(masked, "the introduced historical quote is masked").not.toContain(old);
+    expect(masked, "the live quote must remain visible to C2").toContain(live);
   });
 
-  it("does NOT mask a live quotation in a later cell", () => {
-    const row = `| Corrected: previously read "row DML is NOT revoked" | "${live}" is current |`;
+  it("2. POSTPOSITIVE history does not license the live quote after it", () => {
+    // THE DEFECT THIS EXISTS FOR. "was corrected" describes the quote BEFORE
+    // it, but it lands in the following quote's introducing span, so the live
+    // claim inherited a marker that was never about it.
+    const row = `| "${old}" was corrected; current posture: "${live}" |`;
+    const masked = maskQuotedSpans(row);
+    expect(masked, "the described historical quote is masked").not.toContain(old);
+    expect(masked, "a postpositive marker must not reach forward").toContain(live);
+  });
+
+  it("3. a simple PREPOSITIVE correction stays exempt", () => {
+    expect(maskQuotedSpans(`| Corrected previous wording "${old}" |`)).not.toContain(old);
+  });
+
+  it("4. a simple POSTPOSITIVE correction stays exempt", () => {
+    expect(maskQuotedSpans(`| "${old}" was corrected. |`)).not.toContain(old);
+  });
+
+  it("5. two historical quotes, each with its own marker, are both exempt", () => {
+    const row = `| Corrected previous wording "${old}"; "${live}" was withdrawn. |`;
+    const masked = maskQuotedSpans(row);
+    expect(masked).not.toContain(old);
+    expect(masked).not.toContain(live);
+  });
+
+  it("6. a live quote with no marker of its own is the document speaking", () => {
+    const row = `| Current posture: "${live}" |`;
     expect(maskQuotedSpans(row)).toContain(live);
   });
 
-  it("still masks a legitimate historical correction", () => {
-    const row = `| Corrected 2026-08-03: this row previously read "${live}" — 0169 revoked it |`;
-    expect(maskQuotedSpans(row)).not.toContain(live);
+  it("a live quote in a later CELL never inherits an earlier cell's marker", () => {
+    const row = `| Corrected: previously read "${old}" | "${live}" is current |`;
+    expect(maskQuotedSpans(row)).toContain(live);
   });
 
-  it("masks BOTH quotations when each carries its own marker", () => {
-    // The shape the canonical documents actually use. Inheritance is not
-    // required for it: every historical quotation is introduced in its own
-    // right, so consuming a marker cannot break a truthful row.
-    const row =
-      `| Corrected: previous wording "row DML is NOT revoked"; also corrected: previously read "${live}" |`;
-    const masked = maskQuotedSpans(row);
-    expect(masked).not.toContain("NOT revoked");
-    expect(masked).not.toContain(live);
+  it("C2 actually fires on both adversarial shapes, not merely the masking", () => {
+    // The masking helper is machinery; this is the behaviour that matters.
+    for (const row of [
+      `| Corrected previous wording "${old}"; current posture: "${live}" |`,
+      `| "${old}" was corrected; current posture: "${live}" |`,
+      `| Current posture: "${live}" |`,
+    ]) {
+      expect(
+        PRE_0169_DML.test(maskQuotedSpans(row)),
+        `C2 must flag this row: ${row.slice(0, 90)}`,
+      ).toBe(true);
+    }
+    // ...and does NOT fire on the purely historical shapes.
+    for (const row of [
+      `| Corrected previous wording "${old}" |`,
+      `| "${old}" was corrected. |`,
+    ]) {
+      expect(
+        PRE_0169_DML.test(maskQuotedSpans(row)),
+        `C2 must not flag this row: ${row.slice(0, 90)}`,
+      ).toBe(false);
+    }
   });
 });
 
