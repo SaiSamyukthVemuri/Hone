@@ -104,6 +104,33 @@ vi.mock("@/lib/supabase/server", async (importOriginal) => {
   };
 });
 
+// The NOTES seam. The clinical-notes summary is the one unit that must NOT be
+// contained: it has no unavailability flag and its card renders under a plain
+// `&&`, so swallowing its failure removes the briefing without saying so. Its
+// rejection is carried out of the wave and re-raised, and these modes prove the
+// re-raise survives rejection values that are themselves falsy.
+const notesFault = vi.hoisted(() => ({
+  mode: "off" as "off" | "null" | "undefined" | "error",
+  seen: 0,
+}));
+vi.mock("@/lib/clinical-notes/queries", async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>();
+  return {
+    ...actual,
+    getClinicalNotesSummary: async (...args: unknown[]) => {
+      if (notesFault.mode !== "off") {
+        notesFault.seen += 1;
+        if (notesFault.mode === "null") return Promise.reject(null);
+        if (notesFault.mode === "undefined") return Promise.reject(undefined);
+        return Promise.reject(new Error("PERF02C-INJECTED-NOTES-FAILURE"));
+      }
+      return (
+        actual.getClinicalNotesSummary as (...a: unknown[]) => Promise<unknown>
+      )(...args);
+    },
+  };
+});
+
 /** The charted area token, rendered verbatim when the summary read succeeded. */
 const AREA_TOKEN = "TOKENCONTAINMENTAREA";
 
@@ -138,17 +165,34 @@ function visibleText(html: string): string {
     .trim();
 }
 
-/** Render the overview tab of the REAL page and return what it puts on screen. */
-async function renderOverview(): Promise<{ text: string; threw: unknown }> {
+/**
+ * Render the overview tab of the REAL page and return what it puts on screen.
+ *
+ * `didThrow` is a FLAG, not a property of the thrown value. `throw null` and
+ * `throw undefined` are legal, so a helper that reports the caught value alone
+ * cannot tell "did not throw" from "threw null" — which is precisely the defect
+ * the notes-rejection cases below exist to catch, and a helper carrying the same
+ * ambiguity would report those cases green while the page silently swallowed the
+ * failure.
+ */
+async function renderOverview(): Promise<{
+  text: string;
+  didThrow: boolean;
+  thrown: unknown;
+}> {
   try {
     const el = await renderPage({
       params: Promise.resolve({ id: clientId }),
       searchParams: Promise.resolve({ tab: "overview" }),
     });
     const { renderToStaticMarkup } = await import("react-dom/server");
-    return { text: visibleText(renderToStaticMarkup(el as never)), threw: null };
+    return {
+      text: visibleText(renderToStaticMarkup(el as never)),
+      didThrow: false,
+      thrown: undefined,
+    };
   } catch (e) {
-    return { text: "", threw: e };
+    return { text: "", didThrow: true, thrown: e };
   }
 }
 
@@ -253,8 +297,8 @@ describe("PERF-02C — one clinical read failing cannot take down the wave", () 
   // Without this, every assertion below could be satisfied by a page that
   // renders nothing at all.
   it("baseline: an undisturbed overview shows its real charted data", async () => {
-    const { text, threw } = await renderOverview();
-    expect(threw).toBeNull();
+    const { text, didThrow } = await renderOverview();
+    expect(didThrow).toBe(false);
     expect(text).toContain(AREA_TOKEN);
     expect(text.toLowerCase()).not.toContain(UNAVAILABLE);
   });
@@ -268,7 +312,7 @@ describe("PERF-02C — one clinical read failing cannot take down the wave", () 
     } finally {
       restore();
     }
-    expect(out.threw).toBeNull();
+    expect(out.didThrow).toBe(false);
     expect(out.text.toLowerCase()).toContain(UNAVAILABLE);
     // The sibling read was untouched, so its rows must still be on screen.
     expect(out.text).toContain(AREA_TOKEN);
@@ -283,7 +327,7 @@ describe("PERF-02C — one clinical read failing cannot take down the wave", () 
     } finally {
       restore();
     }
-    expect(out.threw).toBeNull();
+    expect(out.didThrow).toBe(false);
     expect(out.text.toLowerCase()).toContain(UNAVAILABLE);
     expect(out.text).toContain(AREA_TOKEN);
     for (const claim of CONFIDENT_ABSENCE) expect(out.text).not.toContain(claim);
@@ -297,7 +341,7 @@ describe("PERF-02C — one clinical read failing cannot take down the wave", () 
     } finally {
       restore();
     }
-    expect(out.threw).toBeNull();
+    expect(out.didThrow).toBe(false);
     expect(out.text.toLowerCase()).toContain(UNAVAILABLE);
     for (const claim of CONFIDENT_ABSENCE) expect(out.text).not.toContain(claim);
   });
@@ -319,7 +363,7 @@ describe("PERF-02C — one clinical read failing cannot take down the wave", () 
       svcFault.seen,
       "the throw seam never fired: no createClient call was attributed to the page, so this case proved nothing",
     ).toBeGreaterThan(0);
-    expect(out.threw, "a rejecting unit took the whole page down").toBeNull();
+    expect(out.didThrow, "a rejecting unit took the whole page down").toBe(false);
     expect(out.text.toLowerCase()).toContain(UNAVAILABLE);
     expect(out.text).toContain(AREA_TOKEN);
     for (const claim of CONFIDENT_ABSENCE) expect(out.text).not.toContain(claim);
@@ -335,7 +379,7 @@ describe("PERF-02C — one clinical read failing cannot take down the wave", () 
       svcFault.target = 0;
     }
     expect(svcFault.seen, "the throw seam never fired").toBeGreaterThan(1);
-    expect(out.threw, "a rejecting unit took the whole page down").toBeNull();
+    expect(out.didThrow, "a rejecting unit took the whole page down").toBe(false);
     expect(out.text.toLowerCase()).toContain(UNAVAILABLE);
     // The summary read was untouched, so the charted area must survive.
     expect(out.text).toContain(AREA_TOKEN);
@@ -352,14 +396,97 @@ describe("PERF-02C — one clinical read failing cannot take down the wave", () 
       svcFault.target = 0;
     }
     expect(svcFault.seen, "the throw seam never fired").toBeGreaterThan(0);
-    expect(out.threw, "two rejecting units took the page down").toBeNull();
+    expect(out.didThrow, "two rejecting units took the page down").toBe(false);
+    expect(out.text.toLowerCase()).toContain(UNAVAILABLE);
+    for (const claim of CONFIDENT_ABSENCE) expect(out.text).not.toContain(claim);
+  });
+
+  // ------------------------------------- the notes summary must FAIL LOUD
+  // Codex review of PR #659, P2. The rejection used to be tracked by its own
+  // VALUE (`notesSummaryThrown !== null && !== undefined`). `throw null` and
+  // `throw undefined` are legal, so those two rejections were recorded and then
+  // skipped by the rethrow condition — the page rendered, the briefing card
+  // silently vanished under its `&&`, and a practitioner saw an absence nobody
+  // had read. Tracking is now a dedicated boolean, and these cases pin that.
+  //
+  // "Fails loud" is asserted with the didThrow FLAG, never with the thrown
+  // value: the value is exactly what cannot be trusted here.
+  for (const [label, mode, expected] of [
+    ["null", "null", null],
+    ["undefined", "undefined", undefined],
+  ] as const) {
+    it(`notes summary rejects with ${label}: the page still fails loudly`, async () => {
+      notesFault.mode = mode;
+      notesFault.seen = 0;
+      let out: Awaited<ReturnType<typeof renderOverview>>;
+      try {
+        out = await renderOverview();
+      } finally {
+        notesFault.mode = "off";
+      }
+      expect(notesFault.seen, "the notes seam never fired").toBeGreaterThan(0);
+      expect(
+        out.didThrow,
+        `a ${label} rejection was swallowed: the page rendered without the clinical briefing and said nothing`,
+      ).toBe(true);
+      // The original rejection value is re-raised unchanged, not replaced.
+      expect(out.thrown).toBe(expected);
+    });
+  }
+
+  it("notes summary rejects with an ordinary Error: the page still fails loudly", async () => {
+    notesFault.mode = "error";
+    notesFault.seen = 0;
+    let out: Awaited<ReturnType<typeof renderOverview>>;
+    try {
+      out = await renderOverview();
+    } finally {
+      notesFault.mode = "off";
+    }
+    expect(notesFault.seen).toBeGreaterThan(0);
+    expect(out.didThrow).toBe(true);
+    expect((out.thrown as Error)?.message).toBe("PERF02C-INJECTED-NOTES-FAILURE");
+  });
+
+  it("a null notes rejection still fails loudly when a sibling read ALSO failed", async () => {
+    // The sibling is contained and the notes rejection is not, so the notes
+    // failure must still reach the caller rather than being masked by a
+    // sibling that handled itself.
+    notesFault.mode = "null";
+    notesFault.seen = 0;
+    const restore = injectReadError({ summary: true });
+    let out: Awaited<ReturnType<typeof renderOverview>>;
+    try {
+      out = await renderOverview();
+    } finally {
+      restore();
+      notesFault.mode = "off";
+    }
+    expect(notesFault.seen).toBeGreaterThan(0);
+    expect(out.didThrow, "a contained sibling masked the notes rejection").toBe(true);
+    expect(out.thrown).toBe(null);
+  });
+
+  it("the sibling block reads stay independently contained while notes is healthy", async () => {
+    // Guards the other direction: the notes fix must not have made the two
+    // session_blocks units fail loud too. Both reject; the page still renders.
+    svcFault.target = -1;
+    svcFault.seen = 0;
+    let out: Awaited<ReturnType<typeof renderOverview>>;
+    try {
+      out = await renderOverview();
+    } finally {
+      svcFault.target = 0;
+    }
+    expect(svcFault.seen).toBeGreaterThan(0);
+    expect(out.didThrow, "the notes fix leaked fail-loud onto the block reads").toBe(false);
     expect(out.text.toLowerCase()).toContain(UNAVAILABLE);
     for (const claim of CONFIDENT_ABSENCE) expect(out.text).not.toContain(claim);
   });
 
   it("recovers: the next render after a contained failure is healthy again", async () => {
-    const { text, threw } = await renderOverview();
-    expect(threw).toBeNull();
+    const { text, didThrow } = await renderOverview();
+    expect(didThrow).toBe(false);
     expect(text).toContain(AREA_TOKEN);
     expect(text.toLowerCase()).not.toContain(UNAVAILABLE);
   });

@@ -577,7 +577,14 @@ export default async function ClientCheatSheetPage({
   let clinicalNotesSummary = null as Awaited<
     ReturnType<typeof getClinicalNotesSummary>
   > | null;
-  let notesSummaryThrown: unknown = null;
+  // Rejection is tracked by a DEDICATED FLAG, never by the thrown value.
+  // `throw null` and `throw undefined` are legal, so using the value as its
+  // own sentinel loses exactly those two rejections — and losing one here is
+  // not a crash, it is the briefing card silently VANISHING under its `&&`,
+  // which is the confident clinical absence this rethrow exists to prevent.
+  // `as boolean` for the same CFA reason as the bindings above.
+  let notesSummaryRejected = false as boolean;
+  let notesSummaryThrown: unknown = undefined;
 
   await Promise.all([
     (async () => {
@@ -585,6 +592,7 @@ export default async function ClientCheatSheetPage({
         clinicalNotesSummary = await getClinicalNotesSummary(client.id);
       }
     })().catch((err: unknown) => {
+      notesSummaryRejected = true;
       notesSummaryThrown = err;
     }),
     (async () => {
@@ -659,7 +667,7 @@ export default async function ClientCheatSheetPage({
       intelligenceUnavailable = true;
     }),
   ]);
-  if (notesSummaryThrown !== null && notesSummaryThrown !== undefined) {
+  if (notesSummaryRejected) {
     throw notesSummaryThrown;
   }
 
