@@ -164,6 +164,35 @@ describe("PR #312: record-keeping / inspection CSVs", () => {
     expect(spec.rowScope).toMatch(/discarded stock included/i);
   });
 
+  // TRUTH-01B-1: the practitioners read was widened to carry INACTIVE rows, so
+  // service_practitioners.csv and historical session rows cannot name a
+  // practitioner_id that appears in no file. The registry entry is the RECORD of
+  // that decision, and it went stale once already - the query dropped its
+  // `active` predicate while rowScope still described one, which nothing caught
+  // because rowScope has no runtime consumer. Both halves are pinned here, so
+  // the query and the record can only move together.
+  it("the practitioners export carries INACTIVE rows, and the registry says so", () => {
+    const from = CODE.indexOf('fetchExportRows("practitioners"');
+    expect(from).toBeGreaterThan(-1);
+    const load = CODE.slice(from, from + 500);
+
+    // The query: confined by studio_id, and by NOTHING ELSE.
+    expect(load).toMatch(/\.eq\("studio_id", studio\.id\)/);
+    expect(load).not.toMatch(/\.eq\("active"/);
+
+    // The record must not describe a filter the query does not have.
+    const spec = exportSpec("practitioners");
+    expect(spec.rowScope).not.toMatch(/ACTIVE practitioners only/i);
+    expect(spec.rowScope).not.toMatch(/filters active/i);
+    expect(spec.rowScope).not.toMatch(/constant true/i);
+    expect(spec.rowScope).toMatch(/inactive/i);
+
+    // `active` is what keeps an exported deactivated practitioner distinguishable
+    // from a current one; without it the widening would blur the two.
+    expect(spec.csvHeaders).toContain("active");
+    expect(spec.includedColumns).toContain("active");
+  });
+
   it("reads each record-keeping table via the RLS client, studio-scoped", () => {
     for (const table of [
       "record_keeping_sterile_items",
