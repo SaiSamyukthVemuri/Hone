@@ -88,7 +88,19 @@ export async function setOnboardingStepAction(
   if (!ctx) return NOT_ALLOWED;
   if (!isStepKey(step)) return { ok: false, error: "bad_step" };
   const res = await setCurrentStep(ctx.studioId, step);
-  revalidatePath("/dashboard");
+  // PERF-01C. NO revalidatePath HERE, and the reason is load-bearing.
+  //
+  // The wizard calls this inside its OWN `useTransition`, whose `pending` gates
+  // every Continue/Back button (`disabled={pending}`). `revalidatePath` makes
+  // that transition re-render /dashboard, which now suspends on the streamed
+  // secondary stack — so `pending` stayed true and the wizard became unusable.
+  // e2e/onboarding.spec.ts caught it: Continue never enabled.
+  //
+  // Removing it is safe because the VISIBLE step is `activeStep`, local state
+  // the wizard sets SYNCHRONOUSLY before starting this transition. This call
+  // persists the resume pointer and nothing else; the dashboard shell renders
+  // no part of the wizard's step. The durable write is untouched, so the next
+  // render — a reload, or any fresh navigation — reads the persisted pointer.
   return res;
 }
 
@@ -103,7 +115,9 @@ export async function acknowledgeWelcomeAction(): Promise<OnboardingActionResult
     event: "onboarding_wizard_started",
     properties: { studio_id: ctx.studioId },
   });
-  revalidatePath("/dashboard");
+  // PERF-01C: same wizard-transition reason as setOnboardingStepAction above.
+  // The caller runs `setActiveStep("service")` synchronously, so the visible
+  // step has already advanced; this only persists it.
   return res;
 }
 
@@ -112,7 +126,7 @@ export async function skipPaymentsAction(): Promise<OnboardingActionResult> {
   const ctx = await requireOnboardingOwner();
   if (!ctx) return NOT_ALLOWED;
   const res = await markStepSkipped(ctx.studioId, "payments", "done");
-  revalidatePath("/dashboard");
+  // PERF-01C: same reason. The caller runs `setActiveStep("done")` synchronously.
   return res;
 }
 
@@ -193,6 +207,10 @@ export async function markCelebrationShownAction(): Promise<OnboardingActionResu
 
   const res = await markCelebrated(ctx.userId, ctx.studioId);
   if (!res.ok) return { ok: false, error: "celebrate_failed" };
-  revalidatePath("/dashboard");
+  // PERF-01C: this fires from a useEffect inside the WIZARD's transition, so its
+  // `pending` disables "Go to dashboard" on the done step for exactly the same
+  // reason. The confetti is already on screen — this stamp suppresses FUTURE
+  // celebrations, which the next render reads from the durable `celebrated_at`.
+  // Nothing visible now depends on re-rendering the dashboard.
   return { ok: true };
 }

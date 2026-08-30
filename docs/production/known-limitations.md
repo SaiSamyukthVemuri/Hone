@@ -460,6 +460,19 @@ selling to additional studios · `Neither` = accepted, tracked, not blocking tod
 
 ---
 
+## L25 — the onboarding celebration's client state is not scoped to the selected studio
+
+| Field | Value |
+|---|---|
+| **Impact** | For a **multi-studio owner only**: the one-time setup celebration (confetti) may be silently suppressed for studio B in a dashboard tab that was mounted while studio A was selected. Cosmetic. The celebration is an animation; no setup step, stamp, or record is affected. |
+| **Mechanism** | `lib/onboarding/celebration-machine.ts` keeps `stampConfirmed`, `closed` and `live` for the mounted wizard, and neither `OnboardingModel` nor the machine carries a studio identity. Switching studio in another tab rewrites the shared httpOnly `hone_selected_studio` cookie; a subsequent `dismissOnboardingAction` in the stale tab resolves the NEW studio server-side and revalidates `/dashboard`, so the reducer can receive studio B's `shouldCelebrate=true` model while its own state still describes studio A. Studio A's `stampConfirmed` then suppresses studio B's still-owed celebration. |
+| **Reproduction** | Owner active in two studios, both onboarding-v2 enabled, studio B's `celebrated_at` still null. Tab 1: dashboard for studio A, complete setup so the celebration stamps. Tab 2: *Switch studio* (`/no-access?reason=multiple-studios`) to studio B. Tab 1, without reloading: close the wizard, then reopen it from the pinned card. Studio B's celebration does not play. Reloading tab 1 clears it. |
+| **Why it is not a tenant-isolation defect** | No data crosses tenants. Studio B's model is fetched under studio B's own authorization, and every server action (`markCelebrationShownAction`, `dismissOnboardingAction`, `completeOnboardingAction`) resolves its own studio via `requireOnboardingOwner()` → `getCurrentPractitionerWithStudio()`, never from client state. No write is directed at the wrong studio; the stamp remains a stamp-once CAS on the correct row. No authorization decision reads this state. The only casualty is one animation in one stale tab. |
+| **Current mitigation** | A reload — or any fresh mount — starts the machine empty and the server model is authoritative again. Single-studio owners, which is every pilot studio today, cannot reach it: the *Switch studio* affordance renders only for 2+ active memberships (`app/(app)/layout.tsx`). |
+| **Owner** | Sam (engineering) |
+| **Next gate** | Key or reset the celebration machine when the model's studio changes. Cheapest honest fix is to carry a studio identifier on `OnboardingModel` and reset state when it differs; keying `<OnboardingSurface>` on the studio id would also do it. Raised by review on PR #658 and deliberately deferred there under the P3 release policy. |
+| **Blocks** | Neither. |
+
 ## Explicitly *not* claimed
 
 To keep this register honest, the following are **not** asserted anywhere in Hone's

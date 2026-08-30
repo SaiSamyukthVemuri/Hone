@@ -1,3 +1,4 @@
+import { COMPOSED_DASHBOARD } from "../../app/dashboard/helpers/composed-dashboard";
 import { describe, expect, it } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -149,10 +150,7 @@ describe("Pilot Love Loop: source pins (helper + components)", () => {
 });
 
 describe("Pilot Love Loop: dashboard wiring (source pins)", () => {
-  const PAGE = readFileSync(
-    join(process.cwd(), "app/(app)/dashboard/page.tsx"),
-    "utf8",
-  );
+  const PAGE = COMPOSED_DASHBOARD;
   // Comment-stripped for the absence assertions: the page records WHY the card
   // was removed, and that note necessarily names the card and quotes its copy.
   const PAGE_CODE = PAGE.split("\n")

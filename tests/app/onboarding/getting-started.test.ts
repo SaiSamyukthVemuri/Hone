@@ -1,3 +1,4 @@
+import { COMPOSED_DASHBOARD } from "../dashboard/helpers/composed-dashboard";
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -16,7 +17,11 @@ function read(rel: string): string {
 
 const PAGE = read("app/(app)/getting-started/page.tsx");
 const HELPER = read("lib/onboarding/getting-started.ts");
-const DASH = read("app/(app)/dashboard/page.tsx");
+// PERF-01C: the Dashboard's secondary stack renders from
+// app/(app)/dashboard/secondary-stack.tsx behind a Suspense boundary. This
+// assertion is about what RENDERS, so it reads the COMPOSED source.
+// See tests/app/dashboard/helpers/composed-dashboard.ts.
+const DASH = COMPOSED_DASHBOARD;
 
 function signals(over: Partial<GettingStartedSignals> = {}): GettingStartedSignals {
   return {

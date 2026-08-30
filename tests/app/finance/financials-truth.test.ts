@@ -198,7 +198,7 @@ describe("NC7/NC8 — the causes are not collapsed at the render boundary", () =
 // one line above" whenever `partition.closed`. Codex raised it on PR #646 and
 // was right: `closed` means every appointment fell into one of the four KNOWN
 // STATUSES, which is a claim about status coverage, while the sentence asserted
-// a claim about ROW LAYOUT — and that one was false twice over. `Booked in this
+// a claim about ROW LAYOUT — and that one was false twice over. The total row
 // period` is the total, so every appointment is on that line AND on its status
 // line; and `completed` has no line in that section at all.
 //
@@ -277,7 +277,7 @@ function partitionMessages(): { coverage: string; withdrawal: string } {
  * Asserting the statuses against the whole coverage message was still too
  * loose, and a one-fact-at-a-time control caught it: deleting `completed` from
  * the enumeration left the message false — "Still to happen, cancelled and
- * no-show account for every appointment booked" — while the word survived in
+ * no-show account for every appointment in this period" — while the word survived in
  * the pointer sentence, "Completed is counted in the next section", so the
  * assertion stayed green. The enumeration is the thing making the claim, so the
  * enumeration is what gets asserted.
@@ -352,8 +352,60 @@ describe("NC-claim — the partition note states status coverage, not row layout
     expect(calendarSection).toBeGreaterThan(-1);
     expect(completedSection).toBeGreaterThan(calendarSection);
     const calendarRows = CODE.spine.slice(calendarSection, completedSection);
-    expect(calendarRows).toContain('label="Booked in this period"');
+    expect(calendarRows).toContain('label="Appointments in this period"');
     expect(calendarRows).not.toContain('label="Completed"');
+  });
+
+  it("NO OWNER-FACING COPY CALLS THE TOTAL 'BOOKED'", () => {
+    // The total counts EVERY appointment record whose start falls in the
+    // period — cancelled and no-show included, and rows whose status this build
+    // does not recognise too. "Booked in this period" read as work the studio
+    // had on; measured on production 2026-08-27, August showed 92 while 18 of
+    // them were cancelled, so the label overstated the month by roughly a
+    // fifth. It now claims only what the count is.
+    //
+    // Scoped to the RENDERED COPY, deliberately. The model field is still
+    // called `booked`, which is an identifier the owner never sees, so a
+    // whole-file search would fail on the wrong thing and force a refactor this
+    // repair does not need.
+    const calendarSection = CODE.spine.indexOf("The calendar");
+    const completedSection = CODE.spine.indexOf("Work actually completed");
+    const calendarRows = CODE.spine.slice(calendarSection, completedSection);
+    const labels = [...calendarRows.matchAll(/label="([^"]+)"/g)].map((m) => m[1]);
+
+    // ANTI-VACUITY: the extraction found the real rows, not an empty list.
+    expect(labels).toContain("Appointments in this period");
+    expect(labels).toContain("Still to happen");
+    expect(labels.length).toBeGreaterThanOrEqual(5);
+
+    for (const label of labels) {
+      expect(normalise(label), label).not.toMatch(/book/);
+    }
+    expect(normalise(messages.coverage)).not.toMatch(/book/);
+    expect(normalise(messages.withdrawal)).not.toMatch(/book/);
+  });
+
+  it("the total's label claims NOTHING about outcome, money or attendance", () => {
+    // The words this label may never use. Each would assert something the
+    // count does not establish: it is not a confirmed-only figure, not work
+    // that happened, and carries no money meaning whatsoever.
+    const calendarSection = CODE.spine.indexOf("The calendar");
+    const completedSection = CODE.spine.indexOf("Work actually completed");
+    const calendarRows = CODE.spine.slice(calendarSection, completedSection);
+    const total = [...calendarRows.matchAll(/label="([^"]+)"/g)][0][1];
+    expect(total).toBe("Appointments in this period");
+    for (const forbidden of [
+      "booked",
+      "confirmed",
+      "completed",
+      "revenue",
+      "paid",
+      "attended",
+      "earned",
+      "income",
+    ]) {
+      expect(normalise(total), total).not.toContain(forbidden);
+    }
   });
 
   it("the claim is printed ONLY when the model says it holds", () => {
@@ -410,7 +462,9 @@ describe("NC-claim — the partition note states status coverage, not row layout
     );
     expect(census.partition.closed).toBe(false);
     expect(census.partition.unrecognisedStatuses).toEqual(["rescheduled"]);
-    expect(normalise(messages.withdrawal)).toMatch(/do not account for every appointment booked/);
+    expect(normalise(messages.withdrawal)).toMatch(
+      /do not account for every appointment in this period/,
+    );
   });
 });
 

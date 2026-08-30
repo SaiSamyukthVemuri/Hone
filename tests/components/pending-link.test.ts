@@ -1,3 +1,4 @@
+import { COMPOSED_DASHBOARD } from "../app/dashboard/helpers/composed-dashboard";
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -180,7 +181,11 @@ describe("PendingLink announces the request, never an outcome", () => {
 });
 
 describe("the dashboard is wired to it, and nothing else was swept up", () => {
-  const dashboard = read("app/(app)/dashboard/page.tsx");
+  // PERF-01C: the Dashboard's secondary stack renders from
+// app/(app)/dashboard/secondary-stack.tsx behind a Suspense boundary. This
+// assertion is about what RENDERS, so it reads the COMPOSED source.
+// See tests/app/dashboard/helpers/composed-dashboard.ts.
+  const dashboard = COMPOSED_DASHBOARD;
   const dash = codeOnly(dashboard);
 
   // UI-01A: same-pathname query navigation, where no route boundary can render.
@@ -368,7 +373,7 @@ describe("UI-01C: PendingContainerLink adds nothing to the layout", () => {
 });
 
 describe("UI-01C: the row body and the calendar toolbar are wired to it", () => {
-  const dash = codeOnly(read("app/(app)/dashboard/page.tsx"));
+    const dash = codeOnly(COMPOSED_DASHBOARD);
   const toolbarSrc = read("app/(app)/calendar/CalendarToolbar.tsx");
   const toggleSrc = read("app/(app)/calendar/ViewToggle.tsx");
   const toolbar = codeOnly(toolbarSrc);

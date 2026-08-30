@@ -131,7 +131,7 @@ export function ProfileTabBar({ active }: Props) {
           select; md+: a tab-styled link at the end of the row. */}
       <Link
         href={`${pathname}/images`}
-        className="mt-2 inline-block text-sm font-medium text-neutral-600 underline md:hidden dark:text-neutral-300"
+        className="mt-2 inline-flex items-center min-h-[44px] min-w-[44px] text-sm font-medium text-neutral-600 underline md:hidden dark:text-neutral-300"
       >
         Treatment Photos →
       </Link>

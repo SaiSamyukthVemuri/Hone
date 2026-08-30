@@ -437,12 +437,6 @@ export default async function ClientCheatSheetPage({
     needsConsultationNotes
       ? await getClientBudgetContext(client.id)
       : null;
-  // Read-only latest-of-each-kind summary for the overview appointment-prep
-  // briefing. Two light reads; only on the default overview tab.
-  const clinicalNotesSummary =
-    isOverview
-      ? await getClinicalNotesSummary(client.id)
-      : null;
 
   const lifetimeCents = sessions.reduce(
     (sum, s) => sum + (s.price_paid_cents ?? 0),
@@ -486,82 +480,259 @@ export default async function ClientCheatSheetPage({
   // Nothing about WHICH treatment is selected changes; pickLastTreatment and
   // pickPreClientWatchPlanSource are untouched. This records only whether the
   // read that feeds them succeeded.
-  let clinicalHistoryUnavailable = false;
-  if (needsLastTreatment && recentSessions.length > 0) {
-    const supabaseForSummary = await createClient();
-    const { data: recentBlocks, error: recentBlocksError } = await supabaseForSummary
-      .from("session_blocks")
-      .select(
-        "id, session_id, sort_order, block_name, primary_area, side, custom_area_detail, mode, apilus_modality, energy_level, minutes_performed, probe_label, probe_lot_number, tolerance_rating, reaction_type, reaction_notes, caution_for_next_session, caution_note, electrolysis_entries(observation_chips, deleted_at)",
-      )
-      .eq("studio_id", studio.id)
-      .in(
-        "session_id",
-        recentSessions.map((s) => s.id),
-      )
-      .is("deleted_at", null)
-      .order("sort_order", { ascending: true });
-    if (recentBlocksError) {
+  // PERF-02A. BOTH clinical block reads are issued first, their structured
+  // areas are attached in ONE read, and only then is each result consumed.
+  //
+  // WHY. `recentSessions` is `sessions.slice(0, 25)` and the intelligence
+  // window is `sessions.slice(0, 200)`, so the summary's block ids are ALWAYS a
+  // strict subset of the intelligence read's. `getSessionBlockAreasByBlockIds`
+  // opens with `[...new Set(blockIds)]`, so the second attach was re-issuing a
+  // query whose rows the first had just fetched — a wholly redundant round trip
+  // on the slowest route in the app, paid on every overview load.
+  //
+  // WHAT IS DELIBERATELY UNCHANGED. Selection semantics: pickLastTreatment and
+  // pickPreClientWatchPlanSource receive exactly the rows they received before.
+  // Both `session_blocks` reads keep their own projection, their own session
+  // window and their own CLIN-01-B unavailability flag — the rows are held in
+  // two variables rather than merged into one array precisely so that one read
+  // failing still cannot blank the other's card.
+  // PERF-02C. The clinical-notes summary and the two `session_blocks` reads
+  // below are MUTUALLY INDEPENDENT — none of them reads another's result — yet
+  // they ran as three consecutive awaits, so the overview tab paid three serial
+  // round trips before it could attach areas. They now run as ONE wave. Only
+  // `attachStructuredAreas` further down stays serial, because it genuinely
+  // consumes the rows of the two block reads, and only those.
+  //
+  // This is a REORDERING, not a dedupe. Every projection, filter, session
+  // window (<=25 summary, <=200 intelligence), ordering and tab gate below is
+  // byte-for-byte what it was, so each tab issues exactly the queries it issued
+  // before; only the order they are awaited in changed.
+  //
+  // EACH UNIT RESOLVES; NONE REJECTS. That is the correctness crux, not a style
+  // choice. A bare Promise.all over three throwing promises rejects as a unit,
+  // which would couple two clinical reads whose INDEPENDENT failure is the
+  // entire subject of CLIN-01-B: one read throwing would blank the other's
+  // card. Containment therefore sits at the EDGE of each unit, in a `.catch`,
+  // so the `{ data, error }` branches inside stay exactly the branches that
+  // were there before — a thrown failure takes the same explicit-unavailable
+  // path a returned `error` takes, never a known-empty one.
+  // The five bindings below are written INSIDE the wave's units, which
+  // TypeScript's control-flow analysis cannot see. Without the `as`, each is
+  // narrowed to its initialiser (`null` / `false`) at every read after the
+  // wave — `summaryBlockRows.map` then fails on `never`. The assertions state
+  // the declared type and are load-bearing: dropping them re-breaks the build.
+  let clinicalHistoryUnavailable = false as boolean;
+  type SummaryBlockRow = ClinicalSummaryBlock & {
+    id: string;
+    session_id: string;
+    electrolysis_entries?:
+      | Array<{ observation_chips: unknown; deleted_at: string | null }>
+      | null;
+  };
+  let summaryBlockRows = null as SummaryBlockRow[] | null;
+
+  // PR #210: Treatment Intelligence. One read across ALL the client's
+  // sessions (cap 200) with per-entry hairs; the pure builder turns
+  // recorded history into the Overview summary. Read-only; recorded-
+  // history language only; "Not recorded" for gaps.
+  //
+  // PERF2: TreatmentIntelligenceCard renders on the overview tab ONLY, and
+  // this is the widest read on the page — every session (cap 200) with its
+  // per-entry hairs. Six of the seven tabs were paying for it and rendering
+  // none of it.
+  //
+  // CLIN-01-B. `intelligenceUnavailable` is TRUE only when the read below
+  // FAILED. The `blocks: []` default built after it is what a client with NO
+  // recorded blocks yields, so leaving it in place after a failed read would
+  // hand the card a known-empty clinical history: zero charted sessions, zero
+  // areas, "No charted treatment history yet.". Kept separate from
+  // clinicalHistoryUnavailable because these are two reads: one failing must
+  // not blank the other's card.
+  let intelligenceUnavailable = false as boolean;
+  type IntelBlockRow = Omit<
+    IntelligenceBlockInput,
+    "entry_hairs" | "observation_chips_list"
+  > & {
+    id: string;
+    electrolysis_entries:
+      | Array<{
+          hairs_treated: number | null;
+          observation_chips: unknown;
+          deleted_at: string | null;
+        }>
+      | null;
+  };
+  let intelBlockRows = null as IntelBlockRow[] | null;
+
+  // Read-only latest-of-each-kind summary for the overview appointment-prep
+  // briefing. Two light reads; only on the default overview tab.
+  //
+  // Unlike the two block reads this one has NO unavailability flag, and its
+  // card renders under a plain `&&`, so resolving a failure to `null` would
+  // silently VANISH the briefing — a confident clinical absence nobody read,
+  // precisely what CLIN-01-B forbids. A throw is therefore carried OUT of the
+  // wave and re-raised below: the unit still never rejects, so it cannot take
+  // the two block reads down with it, and the page still fails exactly as
+  // loudly as it did before.
+  let clinicalNotesSummary = null as Awaited<
+    ReturnType<typeof getClinicalNotesSummary>
+  > | null;
+  // Rejection is tracked by a DEDICATED FLAG, never by the thrown value.
+  // `throw null` and `throw undefined` are legal, so using the value as its
+  // own sentinel loses exactly those two rejections — and losing one here is
+  // not a crash, it is the briefing card silently VANISHING under its `&&`,
+  // which is the confident clinical absence this rethrow exists to prevent.
+  // `as boolean` for the same CFA reason as the bindings above.
+  let notesSummaryRejected = false as boolean;
+  let notesSummaryThrown: unknown = undefined;
+
+  await Promise.all([
+    (async () => {
+      if (isOverview) {
+        clinicalNotesSummary = await getClinicalNotesSummary(client.id);
+      }
+    })().catch((err: unknown) => {
+      notesSummaryRejected = true;
+      notesSummaryThrown = err;
+    }),
+    (async () => {
+      if (needsLastTreatment && recentSessions.length > 0) {
+        const supabaseForSummary = await createClient();
+        const { data: recentBlocks, error: recentBlocksError } = await supabaseForSummary
+          .from("session_blocks")
+          .select(
+            "id, session_id, sort_order, block_name, primary_area, side, custom_area_detail, mode, apilus_modality, energy_level, minutes_performed, probe_label, probe_lot_number, tolerance_rating, reaction_type, reaction_notes, caution_for_next_session, caution_note, electrolysis_entries(observation_chips, deleted_at)",
+          )
+          .eq("studio_id", studio.id)
+          .in(
+            "session_id",
+            recentSessions.map((s) => s.id),
+          )
+          .is("deleted_at", null)
+          .order("sort_order", { ascending: true });
+        if (recentBlocksError) {
+          logClinicalReadFailure(
+            "client_profile_recent_blocks_read_failed",
+            studio.id,
+            recentBlocksError.code,
+            recentSessions.length,
+          );
+          clinicalHistoryUnavailable = true;
+        } else {
+          summaryBlockRows = (recentBlocks ?? []) as SummaryBlockRow[];
+        }
+      }
+    })().catch((err: unknown) => {
       logClinicalReadFailure(
         "client_profile_recent_blocks_read_failed",
         studio.id,
-        recentBlocksError.code,
+        (err as { code?: unknown } | null)?.code,
         recentSessions.length,
       );
       clinicalHistoryUnavailable = true;
-    } else {
-      // Migration 0128: attach structured areas so the Last treatment / Watch-plan
-      // summaries render EVERY treated area + laterality, not just primary_area.
-      const summaryBlockRows = (recentBlocks ?? []) as Array<
-        ClinicalSummaryBlock & {
-          id: string;
-          session_id: string;
-          electrolysis_entries?:
-            | Array<{ observation_chips: unknown; deleted_at: string | null }>
-            | null;
+    }),
+    (async () => {
+      if (isOverview && sessions.length > 0) {
+        const supabaseForIntel = await createClient();
+        const { data: intelBlocks, error: intelBlocksError } = await supabaseForIntel
+          .from("session_blocks")
+          .select(
+            "id, session_id, primary_area, side, block_name, mode, apilus_modality, energy_level, machine_frequency, probe_label, minutes_performed, tolerance_rating, reaction_type, caution_for_next_session, caution_note, electrolysis_entries(hairs_treated, observation_chips, deleted_at)",
+          )
+          .eq("studio_id", studio.id)
+          .in(
+            "session_id",
+            sessions.slice(0, 200).map((sess) => sess.id),
+          )
+          .is("deleted_at", null);
+        if (intelBlocksError) {
+          logClinicalReadFailure(
+            "client_profile_intelligence_blocks_read_failed",
+            studio.id,
+            intelBlocksError.code,
+            Math.min(sessions.length, 200),
+          );
+          intelligenceUnavailable = true;
+        } else {
+          intelBlockRows = (intelBlocks ?? []) as IntelBlockRow[];
         }
-      >;
-      await attachStructuredAreas(summaryBlockRows, studio.id);
-      const blocksBySession = new Map<string, ClinicalSummaryBlock[]>();
-      for (const block of summaryBlockRows) {
-        const sessionId = block.session_id;
-        const list = blocksBySession.get(sessionId) ?? [];
-        // Charting unification: carry live entries' observation_chips so the
-        // reaction line reads the unified representation.
-        list.push({
-          ...block,
-          observation_chips_list: (block.electrolysis_entries ?? [])
-            .filter((e) => e.deleted_at == null)
-            .map((e) => e.observation_chips),
-        });
-        blocksBySession.set(sessionId, list);
       }
-      lastTreatment = pickLastTreatment(recentSessions, blocksBySession);
-      if (lastTreatment) {
-        lastTreatmentBlocks = blocksBySession.get(lastTreatment.id) ?? [];
-        lastTreatmentSummary = buildLastSessionSummary({
-          blocks: lastTreatmentBlocks,
-          nextSessionNote:
-            (lastTreatment as { next_session_note?: string | null })
-              .next_session_note ?? null,
-        });
-      }
-      // PR #203: the Watch/Plan band uses the same pre-client context
-      // the charting page shows; the newest session carrying any
-      // watch/plan content, even if a newer charted session has none of
-      // its own. Same blocks read; no extra query.
-      const watchPlanSource = pickPreClientWatchPlanSource(
-        recentSessions as Array<
-          (typeof sessions)[number] & { next_session_note?: string | null }
-        >,
-        blocksBySession,
+    })().catch((err: unknown) => {
+      logClinicalReadFailure(
+        "client_profile_intelligence_blocks_read_failed",
+        studio.id,
+        (err as { code?: unknown } | null)?.code,
+        Math.min(sessions.length, 200),
       );
-      if (watchPlanSource) {
-        preClientWatchPlan = buildLastSessionSummary({
-          blocks: blocksBySession.get(watchPlanSource.id) ?? [],
-          nextSessionNote: watchPlanSource.next_session_note ?? null,
-        });
-      }
+      intelligenceUnavailable = true;
+    }),
+  ]);
+  if (notesSummaryRejected) {
+    throw notesSummaryThrown;
+  }
+
+  // Migration 0128: structured treated areas, for BOTH reads, in ONE query.
+  //
+  // The Last treatment / Watch-plan summaries render every treated area +
+  // laterality rather than just `primary_area`, and Treatment Intelligence
+  // credits every treated area (a Cheeks + Sideburns block appears under both).
+  // Both need the same table; the summary's block ids are a subset of the
+  // intelligence read's; and the helper de-duplicates ids internally. So one
+  // call covers both, and the spread copies row REFERENCES — the helper mutates
+  // `structured_areas` on the objects themselves, so both arrays are populated.
+  //
+  // `studio.id` is still passed: RLS already scopes the read, and this is the
+  // documented defence-in-depth filter that stops a cross-studio block id (should
+  // one ever be passed) surfacing a foreign area row. Dropping it here would
+  // silently weaken that.
+  //
+  // attachStructuredAreas returns early on an empty array, so a client with no
+  // blocks — and every tab that reads neither — still costs ZERO area reads.
+  await attachStructuredAreas(
+    [...(summaryBlockRows ?? []), ...(intelBlockRows ?? [])],
+    studio.id,
+  );
+
+  if (summaryBlockRows) {
+    const blocksBySession = new Map<string, ClinicalSummaryBlock[]>();
+    for (const block of summaryBlockRows) {
+      const sessionId = block.session_id;
+      const list = blocksBySession.get(sessionId) ?? [];
+      // Charting unification: carry live entries' observation_chips so the
+      // reaction line reads the unified representation.
+      list.push({
+        ...block,
+        observation_chips_list: (block.electrolysis_entries ?? [])
+          .filter((e) => e.deleted_at == null)
+          .map((e) => e.observation_chips),
+      });
+      blocksBySession.set(sessionId, list);
+    }
+    lastTreatment = pickLastTreatment(recentSessions, blocksBySession);
+    if (lastTreatment) {
+      lastTreatmentBlocks = blocksBySession.get(lastTreatment.id) ?? [];
+      lastTreatmentSummary = buildLastSessionSummary({
+        blocks: lastTreatmentBlocks,
+        nextSessionNote:
+          (lastTreatment as { next_session_note?: string | null })
+            .next_session_note ?? null,
+      });
+    }
+    // PR #203: the Watch/Plan band uses the same pre-client context
+    // the charting page shows; the newest session carrying any
+    // watch/plan content, even if a newer charted session has none of
+    // its own. Same blocks read; no extra query.
+    const watchPlanSource = pickPreClientWatchPlanSource(
+      recentSessions as Array<
+        (typeof sessions)[number] & { next_session_note?: string | null }
+      >,
+      blocksBySession,
+    );
+    if (watchPlanSource) {
+      preClientWatchPlan = buildLastSessionSummary({
+        blocks: blocksBySession.get(watchPlanSource.id) ?? [],
+        nextSessionNote: watchPlanSource.next_session_note ?? null,
+      });
     }
   }
 
@@ -583,82 +754,26 @@ export default async function ClientCheatSheetPage({
         .aftercare_and_risks_explained_at ?? null)
     : null;
 
-  // PR #210: Treatment Intelligence. One read across ALL the client's
-  // sessions (cap 200) with per-entry hairs; the pure builder turns
-  // recorded history into the Overview summary. Read-only; recorded-
-  // history language only; "Not recorded" for gaps.
   let treatmentIntelligence = buildTreatmentIntelligence({
     sessionsNewestFirst: sessions,
     blocks: [],
   });
-  // PERF2: TreatmentIntelligenceCard renders on the overview tab ONLY, and
-  // this is the widest read on the page — every session (cap 200) with its
-  // per-entry hairs, plus attachStructuredAreas. Six of the seven tabs were
-  // paying for it and rendering none of it. buildTreatmentIntelligence has
-  // already produced the blocks:[] value above, which is exactly what a
-  // client with no recorded blocks yields.
-  // CLIN-01-B. TRUE only when the intelligence read below FAILED. The
-  // `blocks: []` value built above is what a client with NO recorded blocks
-  // yields, so leaving it in place after a failed read hands the card a
-  // known-empty clinical history: zero charted sessions, zero areas, "No
-  // charted treatment history yet.". Kept separate from
-  // clinicalHistoryUnavailable because these are two reads: one failing must
-  // not blank the other's card.
-  let intelligenceUnavailable = false;
-  if (isOverview && sessions.length > 0) {
-    const supabaseForIntel = await createClient();
-    const { data: intelBlocks, error: intelBlocksError } = await supabaseForIntel
-      .from("session_blocks")
-      .select(
-        "id, session_id, primary_area, side, block_name, mode, apilus_modality, energy_level, machine_frequency, probe_label, minutes_performed, tolerance_rating, reaction_type, caution_for_next_session, caution_note, electrolysis_entries(hairs_treated, observation_chips, deleted_at)",
-      )
-      .eq("studio_id", studio.id)
-      .in(
-        "session_id",
-        sessions.slice(0, 200).map((sess) => sess.id),
-      )
-      .is("deleted_at", null);
-    if (intelBlocksError) {
-      logClinicalReadFailure(
-        "client_profile_intelligence_blocks_read_failed",
-        studio.id,
-        intelBlocksError.code,
-        Math.min(sessions.length, 200),
-      );
-      intelligenceUnavailable = true;
-    } else {
-      // Migration 0128: attach structured areas so the Treatment intelligence card
-      // credits EVERY treated area (a Cheeks + Sideburns block appears under both),
-      // not only the legacy primary_area.
-      const intelBlockRows = (intelBlocks ?? []) as Array<
-        Omit<IntelligenceBlockInput, "entry_hairs" | "observation_chips_list"> & {
-          id: string;
-          electrolysis_entries:
-            | Array<{
-                hairs_treated: number | null;
-                observation_chips: unknown;
-                deleted_at: string | null;
-              }>
-            | null;
-        }
-      >;
-      await attachStructuredAreas(intelBlockRows, studio.id);
-      treatmentIntelligence = buildTreatmentIntelligence({
-        sessionsNewestFirst: sessions,
-        blocks: intelBlockRows.map((b) => ({
-          ...b,
-          // Migration 0114: voided passes don't contribute hairs to intelligence.
-          entry_hairs: (b.electrolysis_entries ?? [])
-            .filter((e) => !e.deleted_at)
-            .map((e) => e.hairs_treated),
-          // Charting unification: the block's live entries' observation_chips feed
-          // the unified reaction summaries.
-          observation_chips_list: (b.electrolysis_entries ?? [])
-            .filter((e) => !e.deleted_at)
-            .map((e) => e.observation_chips),
-        })),
-      });
-    }
+  if (intelBlockRows) {
+    treatmentIntelligence = buildTreatmentIntelligence({
+      sessionsNewestFirst: sessions,
+      blocks: intelBlockRows.map((b) => ({
+        ...b,
+        // Migration 0114: voided passes don't contribute hairs to intelligence.
+        entry_hairs: (b.electrolysis_entries ?? [])
+          .filter((e) => !e.deleted_at)
+          .map((e) => e.hairs_treated),
+        // Charting unification: the block's live entries' observation_chips feed
+        // the unified reaction summaries.
+        observation_chips_list: (b.electrolysis_entries ?? [])
+          .filter((e) => !e.deleted_at)
+          .map((e) => e.observation_chips),
+      })),
+    });
   }
 
   // PR #211: "Before today" pre-treatment briefing, assembled from
@@ -745,7 +860,7 @@ export default async function ClientCheatSheetPage({
       <section>
         <Link
           href="/clients"
-          className="text-sm text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
+          className="inline-flex items-center min-h-[44px] min-w-[44px] text-sm text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
         >
           ← Clients
         </Link>
@@ -1074,7 +1189,7 @@ export default async function ClientCheatSheetPage({
               </h2>
               <Link
                 href={`/clients/${client.id}/edit`}
-                className="text-xs text-neutral-500 underline hover:text-neutral-900 dark:hover:text-neutral-100"
+                className="inline-flex items-center min-h-[44px] min-w-[44px] text-xs text-neutral-500 underline hover:text-neutral-900 dark:hover:text-neutral-100"
               >
                 Edit
               </Link>
@@ -1352,7 +1467,7 @@ export default async function ClientCheatSheetPage({
                 </p>
                 <Link
                   href={`/clients/${client.id}/intake`}
-                  className="text-sm font-medium text-neutral-700 hover:underline dark:text-neutral-300"
+                  className="inline-flex items-center min-h-[44px] min-w-[44px] text-sm font-medium text-neutral-700 hover:underline dark:text-neutral-300"
                 >
                   View intake →
                 </Link>
@@ -1380,7 +1495,7 @@ export default async function ClientCheatSheetPage({
               </p>
               <Link
                 href={`/clients/${client.id}/intake`}
-                className="text-sm font-medium text-neutral-700 hover:underline dark:text-neutral-300"
+                className="inline-flex items-center min-h-[44px] min-w-[44px] text-sm font-medium text-neutral-700 hover:underline dark:text-neutral-300"
               >
                 View intake →
               </Link>
@@ -1393,7 +1508,7 @@ export default async function ClientCheatSheetPage({
               </p>
               <Link
                 href={`/clients/${client.id}/intake`}
-                className="text-sm font-medium text-neutral-700 hover:underline dark:text-neutral-300"
+                className="inline-flex items-center min-h-[44px] min-w-[44px] text-sm font-medium text-neutral-700 hover:underline dark:text-neutral-300"
               >
                 View intake →
               </Link>
@@ -1456,7 +1571,7 @@ export default async function ClientCheatSheetPage({
                   </div>
                   <Link
                     href={`/clients/${client.id}/sessions/${lastTreatment.id}`}
-                    className="text-xs font-medium text-neutral-700 hover:underline dark:text-neutral-300"
+                    className="inline-flex items-center min-h-[44px] min-w-[44px] text-xs font-medium text-neutral-700 hover:underline dark:text-neutral-300"
                   >
                     Open →
                   </Link>

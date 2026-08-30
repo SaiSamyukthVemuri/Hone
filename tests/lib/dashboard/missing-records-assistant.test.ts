@@ -1,3 +1,4 @@
+import { COMPOSED_DASHBOARD } from "../../app/dashboard/helpers/composed-dashboard";
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -265,10 +266,13 @@ describe("safety: source pins (helper + loader file)", () => {
 });
 
 describe("dashboard wiring (source pins)", () => {
-  const PAGE = readFileSync(
-    join(process.cwd(), "app/(app)/dashboard/page.tsx"),
-    "utf8",
-  );
+  // PERF-01C: the secondary stack (To do, Birthdays, snapshot, setup cards) now
+// renders from app/(app)/dashboard/secondary-stack.tsx behind a Suspense
+// boundary, so the day's roster no longer waits on studio paperwork. These
+// assertions are about what RENDERS and in what order, so they read the
+// COMPOSED source (page with the child spliced in where it renders) rather
+// than half the page. See tests/app/dashboard/helpers/composed-dashboard.ts.
+  const PAGE = COMPOSED_DASHBOARD;
   // Dashboard V2 Part 2B: the standalone "Follow-up assistant" card is gone.
   // Its items now flow through the ONE normalized To-do model and render in
   // the single To-do list. The loader and the item contract are unchanged, so
