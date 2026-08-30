@@ -442,7 +442,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
       probe_length: "session_blocks.probe_length, joined by block_id",
       probe_label: "session_blocks.probe_label, joined by block_id",
     },
-    rowScope: "Entries whose parent session is in sessions.csv. The entry's own soft-delete state is neither filtered nor emitted.",
+    rowScope: "Entries whose parent session is in sessions.csv. The entry's own soft-delete state is NOT filtered — a soft-deleted entry is still exported, so the archive stays historical — and it IS emitted, as deleted_at, so a soft-deleted entry is distinguishable from a live one.",
     description:
       "Every electrolysis entry with area, mode, energy level, modality, machine frequency, pulse count, hairs treated, blend/galvanic and thermolysis readings (galvanic mA/duration/intensity, thermolysis intensity/duration, units of lye), the structured probe (brand, material, piece type, shank, size, length), the treatment area (primary area, side, specifics), structured observation chips, and free-text comments.",
   },
@@ -483,7 +483,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
       session_number: { headers: ["treatment_number"], note: "Emitted under the practitioner-facing name." },
       equipment_params: { headers: ["fluence", "pulse_width", "spot_size"], note: "The jsonb blob is FLATTENED into three top-level columns so a spreadsheet shows plain fields. Any key the blob holds beyond these three does not reach the CSV." },
     },
-    rowScope: "Entries whose parent session is in sessions.csv. The entry's own soft-delete state is neither filtered nor emitted.",
+    rowScope: "Entries whose parent session is in sessions.csv. The entry's own soft-delete state is NOT filtered — a soft-deleted entry is still exported, so the archive stays historical — and it IS emitted, as deleted_at, so a soft-deleted entry is distinguishable from a live one.",
     description:
       "Every laser entry with zone, fluence, pulse width, treatment number, observations.",
   },

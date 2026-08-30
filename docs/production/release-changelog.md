@@ -34,13 +34,13 @@ This section previously carried a "(through 2026-07-27)" heading while containin
 **Coverage gap, stated rather than hidden:** this table covers PRs **#357–#479**, **#601**,
 **#629**, **#630**, and — added by the 2026-08-26 reconciliation and kept current through each
 production refresh since — every consecutive merge from `b9e0003f` to the current baseline
-(**#632–#659**). Roughly 150 merges between #479 and #601
+(**#632–#660**). Roughly 150 merges between #479 and #601
 — including migrations 0159–0184 — still have **no row here**. Those releases are recorded in
 [migration-ledger.md](./migration-ledger.md) and in the git history; they were deliberately
 **not** backfilled, because the scope of both reconciliations was current truth rather than
 historical completeness. Do not read a missing row as "not shipped".
 
-**The #632–#659 block is complete, not sampled.** It was enumerated mechanically
+**The #632–#660 block is complete, not sampled.** It was enumerated mechanically
 (`git log --merges --first-parent b9e0003f..<current baseline>`) rather than recalled, so the current
 state can be reconstructed from shipped history without a gap in that range. Each row records
 whether the merge was **runtime-bearing**, decided by changed-path analysis rather than by the
@@ -48,6 +48,7 @@ PR title.
 
 | PR | Migration | Status | What shipped | Notes |
 |---|---|---|---|---|
+| **#660** | none | **Documentation, CI and tests only — NOT runtime-bearing** | **CI-HARDEN-01B** — every GitHub Action pinned to a vetted commit SHA, workflow `permissions` dropped to `contents: read`, and `persist-credentials: false` on every checkout so the job token is no longer written to the runner's git config | Merged `bf6f09c4a987e0e251f414bdf5dfc520c5d02d42`. **Advanced the branch HEAD above the runtime-bearing SHA without changing anything Hone does** — the diff touches five files (`.github/workflows/ci.yml`, `.github/workflows/nightly.yml`, `tests/ci/ci-config.test.ts`, `CLAUDE.md`, `docs/03_SECURITY_AND_PRIVACY.md`) and no `app/`, `lib/`, `components/` or `supabase/` path. No migration |
 | **#659** | none | **Deployed + enabled for all studios** | **PERF-02C** — the Client Profile overview runs its three independent clinical reads as one wave. The clinical-notes summary and the two `session_blocks` reads ran as three consecutive awaits; they are now one `Promise.all`, with `attachStructuredAreas` still serial after it. | Merged `0f07dae6…`. **Runtime-bearing** (1 file: `app/(app)/clients/[id]/page.tsx`). **A reordering, not a dedupe** — per-tab query counts measured identical before and after. CLIN-01-B containment preserved: each unit resolves and never rejects. Local measurement on a 40-session / 80-block synthetic client: **588 → 530 ms, −58 ms**, n=22/arm, both pairings; parallelism proven at the database (0 → 30 concurrent instants). **≈0 on a client with no charted history** — never quote the figure without its fixture. Nothing measured in production. |
 | **#658** | none | **Deployed + enabled for all studios** | **PERF-01C** — stream the studio's paperwork, commit the day's roster first. Adds a `<Suspense>` boundary around `SecondaryStack`, plus the onboarding celebration state machine. | Merged `32dfd329…`. **Runtime-bearing** (6 files under `app/(app)/dashboard/` and `lib/onboarding/celebration-machine.ts`). The navigation census **cannot see** this change: the boundary wraps `SecondaryStack` while the landmark it keys on renders outside it. No regression observed; no benefit measured. Raised **L31** (celebration state not scoped to the selected studio). |
 | **#657** | none | **Deployed + enabled for all studios** | **PERF-02A** — read `session_block_areas` once on the Client Profile, not twice. | Merged `d6bc27de…`. **Runtime-bearing** (1 file: `app/(app)/clients/[id]/page.tsx`). Removed a query, not a serial stage; body time did not move. #659 is the follow-up that removed the stages. |
