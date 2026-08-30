@@ -151,6 +151,13 @@ const NON_SHIPPING_ROOTS: ReadonlyArray<readonly [RegExp, string]> = [
   // markdown and changes it for nothing else — A3 still demands a fresh runtime
   // baseline for every non-markdown deployed path.
   [/\.md$/, "markdown: documentation and authoring input, never bundled or served"],
+  // SEC-ADAPTER-01. `.gitignore` tells git what to track. It is not imported by
+  // any runtime module, is not emitted into `.next` by a real build, is not
+  // under `public/`, and the production build command never names it. It
+  // surfaced here only because this change edits it — before that, nothing had
+  // touched it since the pin, so its absence from this list was untested rather
+  // than deliberate.
+  [/^\.gitignore$/, "git tracking configuration: decides what is committed, never what is served"],
   // NOTE: scripts/ is NOT blanket-exempt. See PRODUCTION_BUILD_SCRIPTS below -
   // a script the production `build` command executes can change what the
   // deployment does, and is subtracted from this exemption.
@@ -1072,6 +1079,7 @@ describe("RULE A — current-state.md pins a real, current production SHA", () =
       "CLAUDE.md",
       "ENGINEERING_STANDARDS.md",
       "docs/03_SECURITY_AND_PRIVACY.md",
+      ".gitignore",
       "playwright.config.ts",
       "vitest.config.ts",
       "docs/production/current-state.md",

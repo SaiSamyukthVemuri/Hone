@@ -75,22 +75,68 @@ const slug = (heading: string): string =>
     .trim()
     .replace(/ /g, "-");
 
-/** Every heading in a markdown document, mapped to the body beneath it. */
+/**
+ * Every heading in a markdown document, mapped to the body beneath it.
+ *
+ * FIRST occurrence wins, which is what a `#slug` anchor means: markdown points
+ * `#heading` at the first heading and gives later ones `-1`, `-2`. The previous
+ * version let a later section overwrite an earlier one, so a citation naming a
+ * section could silently be validated against a DIFFERENT one further down the
+ * file — a document could keep a rule the guard checked while the section the
+ * anchor actually addresses no longer said it.
+ *
+ * First-wins alone is not the guard, though: it makes the parse correct, while
+ * duplicateSlugViolations() refuses the ambiguity outright. Both, because a
+ * silently-correct parse is still a document nobody can reason about.
+ */
 function sections(body: string): Map<string, string> {
   const out = new Map<string, string>();
   let current: string | null = null;
   let buffer: string[] = [];
+  const flush = () => {
+    if (current !== null && !out.has(current)) out.set(current, buffer.join("\n"));
+  };
   for (const line of body.split("\n")) {
     if (/^#{1,6}\s+/.test(line)) {
-      if (current !== null) out.set(current, buffer.join("\n"));
+      flush();
       current = slug(line);
       buffer = [];
     } else if (current !== null) {
       buffer.push(line);
     }
   }
-  if (current !== null) out.set(current, buffer.join("\n"));
+  flush();
   return out;
+}
+
+/**
+ * Duplicate heading slugs in a canonical source, which this guard REFUSES.
+ *
+ * The invariant: a canonical security source may not contain two headings that
+ * normalize to the same slug. Verified adoptable before it was adopted — all 52
+ * headings across the four documents are distinct today — so no GitHub anchor
+ * emulation (`#heading-1`, `#heading-2`) is carried for a case that does not
+ * exist. If a canonical document ever legitimately needs duplicate headings,
+ * this fails loudly and the model gets chosen deliberately rather than by a
+ * parser quietly picking one.
+ */
+function duplicateSlugViolations(file: string, body: string): string[] {
+  const seen = new Map<string, { line: number; heading: string }[]>();
+  body.split("\n").forEach((line, i) => {
+    if (!/^#{1,6}\s+/.test(line)) return;
+    const s = slug(line);
+    if (!seen.has(s)) seen.set(s, []);
+    seen.get(s)!.push({ line: i + 1, heading: line.trim() });
+  });
+  return [...seen.entries()]
+    .filter(([, occurrences]) => occurrences.length > 1)
+    .map(
+      ([s, occurrences]) =>
+        `${file}: duplicate heading slug "#${s}" at ${occurrences
+          .map((o) => `line ${o.line} (${JSON.stringify(o.heading)})`)
+          .join(", ")} — a citation naming it is ambiguous, so which section the ` +
+        "guard validates would depend on parse order rather than on the anchor",
+    );
 }
 
 const HEADER_BEGIN = "<!-- header:begin -->";
@@ -276,6 +322,14 @@ function parityViolations(adapterBody: string, read: (file: string) => string | 
   if (rules === 0) bad.push("the adapter states no rules at all");
   for (const line of unanchored) bad.push(`${ADAPTER}:${line}: rule line carries no source citation`);
 
+  // Checked across every canonical document, not only the cited ones: the
+  // invariant is a property of the sources, and a duplicate in one nobody
+  // happens to cite today is a trap set for the next rule that cites it.
+  for (const file of CANONICAL) {
+    const body = read(file);
+    if (body !== null) bad.push(...duplicateSlugViolations(file, body));
+  }
+
   const cache = new Map<string, Map<string, string> | null>();
   const sectionsOf = (file: string) => {
     if (!cache.has(file)) {
@@ -457,6 +511,84 @@ describe("SEC-ADAPTER-01 — security-guidance adapter parity", () => {
     expect(mutated, "the token must actually be gone").not.toContain(from);
     return (f: string) => (f === file ? mutated : readRepo(f));
   };
+
+  // -------------------------------------------------------------------------
+  // Canonical sources may not contain duplicate heading slugs
+  // -------------------------------------------------------------------------
+  // A citation names a section by slug. With two headings normalizing to the
+  // same slug, which section the guard reads depends on parse order — and the
+  // previous last-wins parser read the LATER one, so a document could keep a
+  // pristine copy of a rule at the bottom while the section the anchor actually
+  // addresses was gutted, and parity stayed green.
+
+  it("the real canonical documents have no duplicate heading slugs", () => {
+    for (const file of CANONICAL) {
+      const body = readRepo(file);
+      expect(body, `${file} must exist`).not.toBeNull();
+      expect(duplicateSlugViolations(file, body!), `${file} must have unique heading slugs`).toEqual([]);
+    }
+  });
+
+  it("the duplicate check is not vacuous — it sees real headings", () => {
+    // If the heading matcher were wrong, the check above would pass forever.
+    const body = readRepo("CONTRIBUTING.md")!;
+    expect(sections(body).size, "CONTRIBUTING.md must parse into sections").toBeGreaterThan(5);
+    expect([...sections(body).keys()]).toContain("payment-review-expectations");
+  });
+
+  it("DUPLICATE RED: a second section with the same slug is refused", () => {
+    // The full adversarial shape: gut the cited rule in the FIRST section, then
+    // append a duplicate section further down that still carries it. A last-wins
+    // parser validates the decoy and reports nothing.
+    const original = readRepo("CONTRIBUTING.md")!;
+    const RULE = "- `charges.create`: must be zero.";
+    expect(original, "control needs the real rule").toContain(RULE);
+
+    const gutted = original.replace(RULE, "- `charges.create`: may be used freely.");
+    expect(gutted, "the control's substitution must land").not.toEqual(original);
+    const withDecoy = `${gutted}\n\n## Payment review expectations\n\n${RULE}\n`;
+
+    const read = (f: string) => (f === "CONTRIBUTING.md" ? withDecoy : readRepo(f));
+    const violations = parityViolations(BODY, read);
+
+    // Refused for the DUPLICATE itself, not merely because a rule drifted.
+    expect(violations.join("\n")).toMatch(
+      /CONTRIBUTING\.md: duplicate heading slug "#payment-review-expectations"/,
+    );
+    // ...and the parse points at the FIRST section, so the decoy never validates.
+    expect(sections(withDecoy).get("payment-review-expectations")).toContain(
+      "`charges.create`: may be used freely.",
+    );
+  });
+
+  it("DUPLICATE: the decoy would have passed a last-wins parser", () => {
+    // Pins the defect this invariant closes, so the control above cannot later
+    // be mistaken for belt-and-braces and removed.
+    const lastWins = (body: string): Map<string, string> => {
+      const out = new Map<string, string>();
+      let cur: string | null = null;
+      let buf: string[] = [];
+      for (const line of body.split("\n")) {
+        if (/^#{1,6}\s+/.test(line)) {
+          if (cur !== null) out.set(cur, buf.join("\n")); // overwrites — the bug
+          cur = slug(line);
+          buf = [];
+        } else if (cur !== null) buf.push(line);
+      }
+      if (cur !== null) out.set(cur, buf.join("\n"));
+      return out;
+    };
+    const original = readRepo("CONTRIBUTING.md")!;
+    const RULE = "- `charges.create`: must be zero.";
+    const withDecoy = `${original.replace(RULE, "- `charges.create`: may be used freely.")}\n\n## Payment review expectations\n\n${RULE}\n`;
+
+    const decoyed = lastWins(withDecoy).get("payment-review-expectations")!;
+    expect(decoyed, "last-wins reads the decoy").toContain("`charges.create`: must be zero.");
+    expect(decoyed).not.toContain("may be used freely.");
+
+    const honest = sections(withDecoy).get("payment-review-expectations")!;
+    expect(honest, "first-wins reads the section the anchor names").toContain("may be used freely.");
+  });
 
   // -------------------------------------------------------------------------
   // A rule must be a COMPLETE canonical rule, never a fragment of one
