@@ -1,5 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync, existsSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { execFileSync } from "node:child_process";
 
 // Workflow configuration + canonical migration-state guards. These replace the
@@ -8,6 +19,38 @@ import { execFileSync } from "node:child_process";
 
 const CI = readFileSync(".github/workflows/ci.yml", "utf8");
 const NIGHTLY = readFileSync(".github/workflows/nightly.yml", "utf8");
+
+const WORKFLOW_DIR = ".github/workflows";
+
+/** A workflow as the supply-chain guards see it: its file name, and its text. */
+type Workflow = readonly [name: string, body: string];
+
+/**
+ * The workflow universe, ENUMERATED from the directory rather than named here.
+ *
+ * A hand-written list is the wrong shape for a repo-wide supply-chain guard.
+ * With `[ci.yml, nightly.yml]` written into this file, a future
+ * `.github/workflows/security.yaml` carrying a floating `actions/checkout@v4`,
+ * `persist-credentials: true` and a write scope would simply never be loaded —
+ * and every guard below would report GREEN while the exact thing they exist to
+ * prevent sat in the repository. Enrolling a workflow must not depend on
+ * somebody remembering to edit a test.
+ *
+ * Membership is by EXTENSION ONLY — `.yml` / `.yaml`, which is what GitHub
+ * Actions itself reads — so a new workflow is enrolled by existing. Sorted, so
+ * failures report in a stable order.
+ *
+ * `statSync` rather than `Dirent.isFile()`: it resolves symlinks, so a
+ * symlinked workflow is enrolled instead of skipped. For a guard, inclusive is
+ * the safe direction.
+ */
+function readWorkflowDir(dir: string = WORKFLOW_DIR): Workflow[] {
+  return readdirSync(dir)
+    .filter((name) => /\.ya?ml$/.test(name))
+    .filter((name) => statSync(path.join(dir, name)).isFile())
+    .sort()
+    .map((name): Workflow => [name, readFileSync(path.join(dir, name), "utf8")]);
+}
 
 /** Minimal structural check — job keys are two-space indented under `jobs:`. */
 function jobNames(yaml: string): string[] {
@@ -465,11 +508,19 @@ describe("pre-push verification", () => {
 // workflows at base 32dfd329 before the workflows were touched, so none of them
 // is a guard that passes no matter what. Guards 5-7 are invariants: they were
 // green before this change and must stay green, which is the point of them.
+//
+// Every guard is a PURE FUNCTION of an injected workflow collection, and the
+// collection is read from the directory (readWorkflowDir). Two things follow,
+// and both are asserted below: a new workflow is enrolled merely by existing,
+// and the discrimination controls can hand the same guards a synthetic third
+// workflow without writing a hostile file into this repository.
 describe("CI-HARDEN-01B — supply chain and least privilege", () => {
-  const WORKFLOWS = [
-    ["ci.yml", CI],
-    ["nightly.yml", NIGHTLY],
-  ] as const;
+  /**
+   * The universe under guard — READ FROM DISK, deliberately not listed here.
+   * "the guarded universe IS the workflow directory" below is the tripwire
+   * against anyone re-hardcoding it.
+   */
+  const WORKFLOWS: readonly Workflow[] = readWorkflowDir();
 
   /**
    * A workflow's own comments are not what it executes. The permissions block
@@ -483,35 +534,56 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
       .filter((l) => !/^\s*#/.test(l))
       .join("\n");
 
+  const actionRefs = (sources: readonly Workflow[]) =>
+    sources.flatMap(([, body]) => body.match(/uses: \S+/g) ?? []);
+
+  const checkoutCount = (sources: readonly Workflow[]) =>
+    sources.reduce((n, [, body]) => n + (body.match(/uses: actions\/checkout@/g) ?? []).length, 0);
+
   // 1. A mutable ref means the code a job runs can change without a commit
   //    here. `supabase/setup-cli@v1` was the sharpest case: it resolves to a
   //    BRANCH (refs/heads/v1), not a tag — that repository's tags run
   //    v1.7.1 -> v2.0.0 -> v3 — so anyone with push access to it could alter
   //    what every database-touching job in this file executed.
-  it("every action reference is pinned to a commit SHA", () => {
-    for (const [file, body] of WORKFLOWS) {
-      const refs = body.match(/uses: \S+/g) ?? [];
-      expect(refs.length, `${file} declares no actions`).toBeGreaterThan(0);
-      for (const ref of refs) {
-        expect(ref, `${file}: ${ref} is not pinned to a 40-character SHA`).toMatch(
-          /^uses: [\w.-]+\/[\w.-]+@[0-9a-f]{40}$/,
-        );
+  function unpinnedRefViolations(sources: readonly Workflow[]): string[] {
+    const bad: string[] = [];
+    for (const [file, body] of sources) {
+      for (const ref of body.match(/uses: \S+/g) ?? []) {
+        if (!/^uses: [\w.-]+\/[\w.-]+@[0-9a-f]{40}$/.test(ref)) {
+          bad.push(`${file}: ${ref} is not pinned to a 40-character SHA`);
+        }
       }
     }
+    return bad;
+  }
+
+  it("every action reference is pinned to a commit SHA", () => {
+    // Anti-vacuity moved to the COLLECTION. Per file it would have forced every
+    // future workflow to declare an action, which is not the contract: a
+    // workflow of pure `run:` steps is compliant, and demanding otherwise is
+    // how a guard gets weakened later.
+    expect(actionRefs(WORKFLOWS).length, "no workflow declares an action at all").toBeGreaterThan(0);
+    expect(unpinnedRefViolations(WORKFLOWS)).toEqual([]);
   });
 
   // 2. A bare 40-character SHA is unreadable. The trailing tag comment is how a
   //    reviewer knows WHICH version was vetted without leaving the diff.
-  it("every pinned ref carries a trailing version comment", () => {
-    for (const [file, body] of WORKFLOWS) {
-      const lines = body.split("\n").filter((l) => /uses: \S+@[0-9a-f]{40}/.test(l));
-      expect(lines.length, `${file} declares no pinned actions`).toBeGreaterThan(0);
-      for (const l of lines) {
-        expect(l, `${file}: ${l.trim()} has no # vX.Y.Z comment`).toMatch(
-          /@[0-9a-f]{40}\s+# v\d+\.\d+\.\d+/,
-        );
+  function missingAnnotationViolations(sources: readonly Workflow[]): string[] {
+    const bad: string[] = [];
+    for (const [file, body] of sources) {
+      for (const l of body.split("\n").filter((l) => /uses: \S+@[0-9a-f]{40}/.test(l))) {
+        if (!/@[0-9a-f]{40}\s+# v\d+\.\d+\.\d+/.test(l)) {
+          bad.push(`${file}: ${l.trim()} has no # vX.Y.Z comment`);
+        }
       }
     }
+    return bad;
+  }
+
+  it("every pinned ref carries a trailing version comment", () => {
+    const pinned = actionRefs(WORKFLOWS).filter((r) => /@[0-9a-f]{40}/.test(r));
+    expect(pinned.length, "no workflow declares a pinned action").toBeGreaterThan(0);
+    expect(missingAnnotationViolations(WORKFLOWS)).toEqual([]);
   });
 
   // 3. Counted, not merely present. A `.includes()` check would pass with one
@@ -523,25 +595,58 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
   //    NOT redundant with the action default: persist-credentials still
   //    defaults to TRUE in actions/checkout v7.0.1, verified in its action.yml
   //    at the exact SHA pinned here.
-  it("every checkout refuses to persist the token", () => {
-    for (const [file, body] of WORKFLOWS) {
+  //
+  //    The property belongs to the CHECKOUT STEP, not to the workflow. This
+  //    guard used to require every file to declare a checkout, which is the
+  //    wrong contract for a directory universe — a future workflow that
+  //    legitimately has none would have failed, and the pressure would then be
+  //    to weaken the guard. A workflow with zero checkouts is vacuously
+  //    compliant here; guard 7 pins the TOTAL, so a checkout cannot be quietly
+  //    dropped to satisfy this one instead.
+  function persistCredentialViolations(sources: readonly Workflow[]): string[] {
+    const bad: string[] = [];
+    for (const [file, body] of sources) {
       const checkouts = (body.match(/uses: actions\/checkout@/g) ?? []).length;
       const optOuts = (body.match(/persist-credentials: false/g) ?? []).length;
-      expect(checkouts, `${file} declares no checkout`).toBeGreaterThan(0);
-      expect(
-        optOuts,
-        `${file}: ${checkouts} checkouts but ${optOuts} opt-outs`,
-      ).toBe(checkouts);
+      if (checkouts !== optOuts) {
+        bad.push(`${file}: ${checkouts} checkouts but ${optOuts} persist-credentials: false opt-outs`);
+      }
+      // Stated as well as counted: an opt-IN is refused by name, so a workflow
+      // that writes `persist-credentials: true` without a checkout — or beside
+      // a balancing `false` elsewhere — cannot slip through on arithmetic.
+      for (const l of steps(body).split("\n")) {
+        if (/persist-credentials:\s*true\b/.test(l)) {
+          bad.push(`${file}: declares ${l.trim()}`);
+        }
+      }
     }
+    return bad;
+  }
+
+  it("every checkout refuses to persist the token", () => {
+    expect(persistCredentialViolations(WORKFLOWS)).toEqual([]);
   });
 
-  it("both workflows declare contents: read and grant nothing wider", () => {
-    for (const [file, body] of WORKFLOWS) {
-      expect(body, `${file} must declare least privilege`).toMatch(
-        /^permissions:\n  contents: read$/m,
-      );
-      expect(body, `${file} grants a write scope`).not.toMatch(/:\s*write\b/);
+  // 4. A workflow with no `permissions:` block inherits the REPOSITORY default,
+  //    which is not necessarily read-only — so this is required per file, of
+  //    every file, and a new workflow that simply omits the block is refused.
+  function permissionViolations(sources: readonly Workflow[]): string[] {
+    const bad: string[] = [];
+    for (const [file, body] of sources) {
+      if (!/^permissions:\n  contents: read$/m.test(body)) {
+        bad.push(`${file}: does not declare the least-privilege block \`permissions:\` / \`contents: read\``);
+      }
+      // Comment-stripped, for the reason guard 5 documents: a comment cannot
+      // grant a scope, and prose about write access must not read as a grant.
+      for (const l of steps(body).split("\n")) {
+        if (/:\s*write\b/.test(l)) bad.push(`${file}: grants a write scope — ${l.trim()}`);
+      }
     }
+    return bad;
+  }
+
+  it("every workflow declares contents: read and grants nothing wider", () => {
+    expect(permissionViolations(WORKFLOWS)).toEqual([]);
   });
 
   // 5. The credential opt-out and the read-only token are only safe while this
@@ -550,14 +655,20 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
   //    test. It is also what keeps Codex exact-head review OUT of CI —
   //    scripts/eng/* reads GitHub with the operator's credential and must stay
   //    operator-side.
-  it("no workflow writes to GitHub, which is what makes the opt-out safe", () => {
-    for (const [file, body] of WORKFLOWS) {
+  function writeCredentialViolations(sources: readonly Workflow[]): string[] {
+    const bad: string[] = [];
+    for (const [file, body] of sources) {
       const code = steps(body);
-      expect(code, `${file} uses GITHUB_TOKEN`).not.toMatch(/GITHUB_TOKEN/);
-      expect(code, `${file} reads a secret`).not.toMatch(/secrets\.[A-Z_]/);
-      expect(code, `${file} pushes`).not.toMatch(/\bgit (push|tag)\b/);
-      expect(code, `${file} calls a gh write`).not.toMatch(/\bgh (pr|release|issue|api)\b/);
+      if (/GITHUB_TOKEN/.test(code)) bad.push(`${file}: uses GITHUB_TOKEN`);
+      if (/secrets\.[A-Z_]/.test(code)) bad.push(`${file}: reads a secret`);
+      if (/\bgit (push|tag)\b/.test(code)) bad.push(`${file}: pushes`);
+      if (/\bgh (pr|release|issue|api)\b/.test(code)) bad.push(`${file}: calls a gh write`);
     }
+    return bad;
+  }
+
+  it("no workflow writes to GitHub, which is what makes the opt-out safe", () => {
+    expect(writeCredentialViolations(WORKFLOWS)).toEqual([]);
   });
 
   // 6. The Supabase CLI pin is a DB-SAFETY invariant, not a preference: a newer
@@ -584,11 +695,6 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
   const SETUP_CLI_TAG = "v1.7.1";
   const SETUP_CLI_VERSION = "2.102.0";
   const SETUP_CLI_USES = 6; // 5 in ci.yml + 1 in nightly.yml
-
-  const SETUP_CLI_SOURCES: [string, string][] = [
-    ["ci.yml", CI],
-    ["nightly.yml", NIGHTLY],
-  ];
 
   type SetupCliUse = {
     where: string;
@@ -659,7 +765,7 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
   }
 
   it("every supabase/setup-cli use is the vetted v1.7.1 commit on the grants-parity CLI", () => {
-    expect(setupCliViolations(SETUP_CLI_SOURCES)).toEqual([]);
+    expect(setupCliViolations(WORKFLOWS)).toEqual([]);
   });
 
   // A guard that cannot fail is not a guard — which is exactly what the removed
@@ -672,14 +778,19 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
   // Each control asserts the substitution actually landed before judging the
   // result, so a stale `from` string cannot turn a control into a no-op that
   // "passes" against unmutated text.
-  const withMutatedCi = (from: string, to: string): [string, string][] => {
-    expect(CI, `negative control needs "${from}" in ci.yml`).toContain(from);
+  const withMutatedCi = (from: string, to: string): Workflow[] => {
     // Replaces the FIRST occurrence only: one of the six uses departs, which is
-    // the realistic shape of the change and proves the guard is per-site.
-    return [
-      ["ci.yml", CI.replace(from, to)],
-      ["nightly.yml", NIGHTLY],
-    ];
+    // the realistic shape of the change and proves the guard is per-site. The
+    // mutation is applied to the ENUMERATED universe, so these controls and the
+    // guard they exercise read the same collection.
+    const out = WORKFLOWS.map(([name, body]): Workflow =>
+      name === "ci.yml" ? [name, body.replace(from, to)] : [name, body],
+    );
+    expect(
+      out.map(([, body]) => body).join("\n"),
+      `negative control needs "${from}" in ci.yml`,
+    ).not.toEqual(WORKFLOWS.map(([, body]) => body).join("\n"));
+    return out;
   };
 
   // A synthetic 40-hex value, NOT a published supabase/setup-cli commit. That
@@ -715,11 +826,180 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
 
   // 7. The browser-e2e aggregator has NO checkout — it is shell arithmetic over
   //    needs.*.result and is covered by the top-level permissions block alone.
-  //    Counting the checkouts stops guard 3 from silently assuming nine.
-  it("there are exactly eight checkouts across both workflows", () => {
-    const total =
-      (CI.match(/uses: actions\/checkout@/g) ?? []).length +
-      (NIGHTLY.match(/uses: actions\/checkout@/g) ?? []).length;
-    expect(total, "7 in ci.yml (the aggregator has none) + 1 in nightly.yml").toBe(8);
+  //    Counting the checkouts stops guard 3 from silently assuming nine, and is
+  //    what lets guard 3 treat a checkout-free workflow as compliant: a
+  //    checkout cannot be DELETED to dodge the opt-out without moving this
+  //    number. Counted over the whole directory, so a checkout added by a new
+  //    workflow lands here too.
+  it("the checkout count across the workflow directory is the reviewed one", () => {
+    expect(
+      checkoutCount(WORKFLOWS),
+      "7 in ci.yml (the aggregator has none) + 1 in nightly.yml",
+    ).toBe(8);
+  });
+
+  // -------------------------------------------------------------------------
+  // The directory-universe contract
+  // -------------------------------------------------------------------------
+  // The guards above are repo-wide only if the COLLECTION is. These controls
+  // prove the enumeration itself — that a workflow becomes subject to every
+  // guard merely by existing under .github/workflows, with no edit to this
+  // file — because a guard whose universe is hand-written reports on the
+  // workflows somebody remembered, not on the ones the repository runs.
+  //
+  // No hostile workflow is written into .github/workflows to prove this. The
+  // synthetic workflows live in memory, or in a temporary directory handed to
+  // the real enumerator.
+
+  /** Every CI-HARDEN supply-chain / least-privilege violation, in one call. */
+  function supplyChainViolations(sources: readonly Workflow[]): string[] {
+    return [
+      ...unpinnedRefViolations(sources),
+      ...missingAnnotationViolations(sources),
+      ...persistCredentialViolations(sources),
+      ...permissionViolations(sources),
+      ...writeCredentialViolations(sources),
+      ...setupCliViolations(sources),
+    ];
+  }
+
+  /**
+   * A COMPLIANT future workflow. Each control below varies exactly one property
+   * of it, so a RED is attributable to that property and not to the scaffold —
+   * which "the compliant baseline is GREEN" is here to establish first.
+   */
+  const COMPLIANT = [
+    "name: Future",
+    "on: push",
+    "permissions:",
+    "  contents: read",
+    "jobs:",
+    "  scan:",
+    "    runs-on: ubuntu-latest",
+    "    steps:",
+    "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1",
+    "        with:",
+    "          persist-credentials: false",
+  ];
+
+  const synthetic = (name: string, lines: string[]): Workflow => [name, lines.join("\n") + "\n"];
+
+  /** Vary one line of the baseline, asserting the substitution actually landed. */
+  const variant = (name: string, from: string, to: string): Workflow => {
+    const lines = COMPLIANT.map((l) => l.replace(from, to));
+    expect(lines, `control needs "${from}" in the compliant baseline`).not.toEqual(COMPLIANT);
+    return synthetic(name, lines);
+  };
+
+  it("control 4: the real workflow directory alone is GREEN", () => {
+    expect(supplyChainViolations(WORKFLOWS)).toEqual([]);
+  });
+
+  it("the compliant baseline is GREEN, so each RED below is attributable", () => {
+    expect(supplyChainViolations([...WORKFLOWS, synthetic("future.yaml", COMPLIANT)])).toEqual([]);
+  });
+
+  it("control 1 RED: a future security.yaml with a floating actions/checkout@v4", () => {
+    const hostile = variant(
+      "security.yaml",
+      "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1",
+      "actions/checkout@v4",
+    );
+    expect(supplyChainViolations([...WORKFLOWS, hostile])).toContain(
+      "security.yaml: uses: actions/checkout@v4 is not pinned to a 40-character SHA",
+    );
+  });
+
+  it("control 2 RED: a future .yaml file with persist-credentials: true", () => {
+    const hostile = variant("future.yaml", "persist-credentials: false", "persist-credentials: true");
+    expect(supplyChainViolations([...WORKFLOWS, hostile])).toContain(
+      "future.yaml: declares persist-credentials: true",
+    );
+  });
+
+  it("control 3 RED: a future workflow granting contents: write", () => {
+    const hostile = variant("wide.yml", "  contents: read", "  contents: write");
+    const violations = supplyChainViolations([...WORKFLOWS, hostile]);
+    expect(violations).toContain("wide.yml: grants a write scope — contents: write");
+    expect(violations.join("\n")).toMatch(/wide\.yml: does not declare the least-privilege block/);
+  });
+
+  it("controls 5 and 6: the enumeration takes every .yml and .yaml, and nothing else", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "hone-workflow-universe-"));
+    try {
+      writeFileSync(path.join(dir, "b.yml"), "name: B\n", "utf8");
+      writeFileSync(path.join(dir, "a.yaml"), "name: A\n", "utf8");
+      writeFileSync(path.join(dir, "README.md"), "# not a workflow\n", "utf8");
+      writeFileSync(path.join(dir, "notes.txt"), "not a workflow\n", "utf8");
+      writeFileSync(path.join(dir, "ci.yml.bak"), "name: stale\n", "utf8");
+      mkdirSync(path.join(dir, "nested.yml")); // a DIRECTORY named like a workflow
+      const found = readWorkflowDir(dir);
+      // Both extensions, sorted, and the file BODIES — so this proves the
+      // enumerator reads the workflow, not merely that it lists a name.
+      expect(found).toEqual([
+        ["a.yaml", "name: A\n"],
+        ["b.yml", "name: B\n"],
+      ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // The one that matters most: the path from "a file exists in the directory"
+  // to "every guard judges it", driven end to end through the REAL enumerator.
+  // Nothing in this file names security.yaml as a member of the universe — it
+  // is enrolled by existing, which is the whole contract.
+  it("a workflow is enrolled in every guard merely by existing in the directory", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "hone-workflow-enrol-"));
+    try {
+      for (const [name, body] of WORKFLOWS) writeFileSync(path.join(dir, name), body, "utf8");
+      expect(supplyChainViolations(readWorkflowDir(dir)), "the copy must start GREEN").toEqual([]);
+
+      writeFileSync(
+        path.join(dir, "security.yaml"),
+        [
+          "name: Security",
+          "on: push",
+          "permissions:",
+          "  contents: write",
+          "jobs:",
+          "  scan:",
+          "    runs-on: ubuntu-latest",
+          "    steps:",
+          "      - uses: actions/checkout@v4",
+          "        with:",
+          "          persist-credentials: true",
+          "      - run: git push origin HEAD",
+        ].join("\n") + "\n",
+        "utf8",
+      );
+
+      const enrolled = readWorkflowDir(dir);
+      expect(enrolled.map(([name]) => name)).toContain("security.yaml");
+
+      const violations = supplyChainViolations(enrolled);
+      const reported = violations.filter((v) => v.startsWith("security.yaml:"));
+      // Not merely "something failed": each guard must name the new file.
+      expect(reported.join("\n")).toMatch(/is not pinned to a 40-character SHA/);
+      expect(reported.join("\n")).toMatch(/persist-credentials: true/);
+      expect(reported.join("\n")).toMatch(/grants a write scope/);
+      expect(reported.join("\n")).toMatch(/does not declare the least-privilege block/);
+      expect(reported.join("\n")).toMatch(/pushes/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // Tripwire against a future re-hardcoding: if somebody replaces the
+  // enumeration with a list again, WORKFLOWS stops matching the directory.
+  // ci.yml and nightly.yml are asserted PRESENT, not asserted to be the whole
+  // universe — presence is a fact about today, membership is the directory's.
+  it("the guarded universe IS the workflow directory, not a list in this file", () => {
+    const onDisk = readdirSync(WORKFLOW_DIR)
+      .filter((name) => /\.ya?ml$/.test(name))
+      .sort();
+    expect(onDisk.length, "the workflow directory is empty").toBeGreaterThan(0);
+    expect(WORKFLOWS.map(([name]) => name)).toEqual(onDisk);
+    expect(onDisk).toEqual(expect.arrayContaining(["ci.yml", "nightly.yml"]));
   });
 });
