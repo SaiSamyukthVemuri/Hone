@@ -19,8 +19,8 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0187** (`0187_appointment_settlement.sql`) |
-| **Repo migration max** | **0187** — **hosted == repo.** Nothing pending. Next free number is **0188** (available, **not claimed**). |
-| **Total migrations in repo** | **186** (`0001` … `0157`, `0159` … `0187` — **no `0158`**) — derived by `npm run migration:state` |
+| **Repo migration max** | **0188** — **repo > hosted.** `0188_new_client_waitlist_invitations.sql` (WAIT-03, the private invitation lifecycle) is **AUTHORED AND TESTED, NOT APPLIED** — it exists in the repository and production does not have it. Next free number is **0189** (available, **not claimed**). |
+| **Total migrations in repo** | **187** (`0001` … `0157`, `0159` … `0188` — **no `0158`**) — derived by `npm run migration:state` |
 | **Apply timestamp** | ⚠️ **NO SERVER-GENERATED APPLY TIMESTAMP WAS CAPTURED**, so `hosted_applied_at` is `null`. The **operator-observed client-side window** is `2026-08-24T23:36:31.509Z` – `2026-08-24T23:36:51.291Z`, **19.782 s**, read from the apply host's clock around the CLI invocation. **That window is not a server apply time and is never represented as one.** |
 | **Verified applied** | **2026-08-24** |
 | **Applied from** | the exact reviewed **PR #636** head `eb7e824031fb715f23b0c6da6def4e7ea97fc4de` — **applied BEFORE #636 merged**, so the merge commit did not exist at apply time |

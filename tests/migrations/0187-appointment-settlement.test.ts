@@ -6,6 +6,7 @@ import {
   countVersion,
   fileForVersion,
   isRepoMax,
+  versionsAbove,
   migrationState,
 } from "./helpers/migration-state";
 
@@ -56,10 +57,13 @@ describe("0187 — migration state", () => {
     expect(FILE).toBe("0187_appointment_settlement.sql");
   });
 
-  it("is the current repository maximum", () => {
-    // Per CLAUDE.md only the CURRENT max asserts this, so that a future
-    // migration does not turn this file red. Whoever adds 0188 moves it.
-    expect(isRepoMax(VERSION)).toBe(true);
+  it("is NO LONGER the repository maximum — 0188 took that claim", () => {
+    // HANDED OVER, exactly as the previous wording instructed. Per CLAUDE.md
+    // only the CURRENT max asserts isRepoMax, so that claim now lives in
+    // tests/migrations/0188-new-client-waitlist-invitations.test.ts and this
+    // file asserts the converse: something legitimately sits above 0187.
+    expect(isRepoMax(VERSION)).toBe(false);
+    expect(versionsAbove(VERSION).length).toBeGreaterThan(0);
   });
 
   it("IS APPLIED to production, and hosted has caught up with the repo", () => {
@@ -72,12 +76,15 @@ describe("0187 — migration state", () => {
     // Derived, never pinned to a literal: whoever adds 0188 changes nothing
     // here, because repo/hosted equality is read from the canonical record
     // rather than from a number typed into this file.
+    //
+    // UPDATED WHEN 0188 WAS AUTHORED. The repo-side half of this block moved:
+    // repo max is now 0188 and repo/hosted parity is DELIBERATELY not asserted
+    // here, because 0188 is authored and tested but NOT applied to production.
+    // What remains is 0187's own durable fact — it is applied, and it is the
+    // hosted maximum until an authorized apply advances that.
     const state = migrationState();
-    expect(state.repo_migration_max).toBe(VERSION);
     expect(state.hosted_migration_max).toBe(VERSION);
-    expect(state.repo_equals_hosted).toBe(true);
-    expect(state.pending_migrations).toEqual([]);
-    expect(state.next_free_migration).toBe("0188");
+    expect(state.pending_migrations).not.toContain(FILE);
   });
 });
 
@@ -707,15 +714,17 @@ describe("0187 — current hosted state", () => {
     expect(canonicalRecord().hosted_migration_max).toBe(VERSION);
   });
 
-  it("hosted == repo, nothing pending, next free 0188 and UNCLAIMED", () => {
-    // All four are DERIVED repo-side facts read from the canonical utility, so
-    // whoever adds 0188 moves the last assertion by adding a file, not by
-    // editing a number here.
+  it("is still the hosted maximum, with 0188 authored above it and NOT applied", () => {
+    // MOVED, NOT DELETED. This block previously asserted repo/hosted parity and
+    // that 0188 did not exist. 0188 now exists in the repository and has NOT
+    // been applied to production, so the honest assertions are: 0187 remains
+    // the hosted max, and the repo has legitimately moved ahead of it. Parity
+    // returns only when an AUTHORIZED production apply advances hosted state --
+    // it is never restored by editing this file.
     const state = migrationState();
-    expect(state.repo_equals_hosted).toBe(true);
-    expect(state.pending_migrations).toEqual([]);
-    expect(state.next_free_migration).toBe("0188");
-    expect(state.versions).not.toContain("0188");
+    expect(state.hosted_migration_max).toBe(VERSION);
+    expect(state.versions).toContain("0188");
+    expect(Number(state.repo_migration_max)).toBeGreaterThan(Number(VERSION));
   });
 
   it("NO SERVER APPLY TIMESTAMP was captured, and the window is not passed off as one", () => {
