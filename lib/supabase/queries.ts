@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { redirect } from "next/navigation";
 import { createClient } from "./server";
 import { readSelectedStudioId } from "./selected-studio";
@@ -76,12 +77,74 @@ async function loadActiveMembershipRows(
   return (data ?? []) as Array<Practitioner & { studio: Studio }>;
 }
 
+// ===========================================================================
+// PERF-01A. ONE identity resolution per request.
+// ===========================================================================
+//
+// THE MEASURED PROBLEM. Three semantic wrappers sat on top of the same two
+// physical calls, and each one made them again. A single authenticated
+// navigation resolved identity THREE times inside one render:
+//
+//   app/(app)/layout.tsx  requirePractitionerWithStudio()   getUser + select
+//   app/(app)/layout.tsx  listActiveStudioMemberships()     getUser + select
+//   the page itself       getCurrentPractitionerWithStudio() getUser + select
+//
+// and because the shell awaits before it returns the JSX that contains
+// `{children}`, all three ran SERIALLY: six network round trips to Supabase
+// before the page's own domain reads could start. `auth.getUser()` is not a
+// cookie read — supabase-js calls GoTrue `/auth/v1/user` to validate the
+// token, so each one is a real round trip, and the membership select cannot
+// start until it returns.
+//
+// WHAT THIS IS. `cache()` from React memoises for the lifetime of ONE server
+// request. It is not a cache in the sense this repository forbids: there is no
+// key, no TTL, no revalidation, no `unstable_cache`, no shared store, and
+// nothing survives the response. Two requests, even from the same user one
+// millisecond apart, resolve independently. `lib/observability/perf-timing.ts`
+// already relies on exactly this scoping for its per-request collector.
+//
+// WHAT IT IS NOT, precisely because identity is what is being deduplicated:
+//   * NOT a session cache. The auth token is still validated against GoTrue on
+//     every request. A revoked session is refused on the very next navigation.
+//   * NOT a tenant cache. Rows are re-read per request and re-checked against
+//     the selected-studio cookie every time a wrapper is called.
+//   * NOT trusted from the middleware. The middleware's own check stays; this
+//     never reads its result. RLS is unchanged: the same user-scoped,
+//     active-scoped select runs on the same authenticated (anon-key) client.
+//
+// The COOKIE is deliberately NOT memoised. `readSelectedStudioId()` is a local
+// header read with no network cost, and a server action may change the
+// selection mid-request — so every wrapper re-reads it and re-validates it
+// against these rows. Memoising the rows can never pin a stale selection.
+//
+// Outside a request scope — unit tests, scripts — `cache()` neither throws nor
+// dedupes; it simply calls through. So the behavioural suites that drive these
+// wrappers with per-test fixtures keep resolving fresh, and no test-only back
+// door is needed. (Same documented property perf-timing.ts depends on.)
+type RequestIdentity =
+  | { kind: "anonymous" }
+  | {
+      kind: "authenticated";
+      userId: string;
+      rows: Array<Practitioner & { studio: Studio }>;
+    };
+
+const loadRequestIdentity = cache(async (): Promise<RequestIdentity> => {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { kind: "anonymous" };
+  // Deliberately NOT wrapped: a failed membership read must reach the caller
+  // exactly as it did before, not be swallowed into "no memberships".
+  const rows = await loadActiveMembershipRows(supabase, user.id);
+  return { kind: "authenticated", userId: user.id, rows };
+});
+
 async function resolveActivePractitionerMembership(
-  supabase: ServerSupabase,
-  userId: string,
+  rows: Array<Practitioner & { studio: Studio }>,
   selectedStudioId: string | null,
 ): Promise<PractitionerMembership> {
-  const rows = await loadActiveMembershipRows(supabase, userId);
   if (rows.length === 0) return { kind: "none" };
   if (rows.length === 1) return { kind: "one", value: toValue(rows[0]) };
 
@@ -106,13 +169,12 @@ async function resolveActivePractitionerMembership(
 export async function listActiveStudioMemberships(): Promise<
   StudioMembershipOption[]
 > {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return [];
-  const rows = await loadActiveMembershipRows(supabase, user.id);
-  return rows.map((r) => ({
+  // PERF-01A: reuses this request's single identity resolution. Behaviour is
+  // unchanged — anonymous still yields no options, and the rows are still the
+  // RLS-scoped active memberships of the signed-in user.
+  const identity = await loadRequestIdentity();
+  if (identity.kind === "anonymous") return [];
+  return identity.rows.map((r) => ({
     studioId: r.studio_id,
     studioName: r.studio.name,
     role: r.role,
@@ -122,19 +184,19 @@ export async function listActiveStudioMemberships(): Promise<
 // Returns the signed-in user's active practitioner row + studio.
 // Redirects to /login if no auth user, or throws if the user has no practitioner row.
 export async function getCurrentPractitionerWithStudio(): Promise<PractitionerWithStudio> {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  // PERF-01A: same three outcomes, resolved from this request's single
+  // identity read instead of a third round trip to GoTrue and Postgres.
+  const identity = await loadRequestIdentity();
 
-  if (!user) {
+  if (identity.kind === "anonymous") {
     redirect("/login");
   }
 
+  // Re-read every call: a server action may set the selection mid-request, and
+  // it is re-validated against the rows below rather than trusted.
   const selectedStudioId = await readSelectedStudioId();
   const membership = await resolveActivePractitionerMembership(
-    supabase,
-    user.id,
+    identity.rows,
     selectedStudioId,
   );
   if (membership.kind === "none") {
@@ -168,19 +230,18 @@ export async function getCurrentPractitionerWithStudio(): Promise<PractitionerWi
 // this redirecting guard is used ONLY where a clean redirect is wanted
 // and not swallowed by a surrounding catch (the shell layout).
 export async function requirePractitionerWithStudio(): Promise<PractitionerWithStudio> {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  // PERF-01A: same three redirect outcomes, resolved from this request's
+  // single identity read. The redirects stay OUT of the memoised function so a
+  // control-flow signal is never what gets cached.
+  const identity = await loadRequestIdentity();
 
-  if (!user) {
+  if (identity.kind === "anonymous") {
     redirect("/login");
   }
 
   const selectedStudioId = await readSelectedStudioId();
   const membership = await resolveActivePractitionerMembership(
-    supabase,
-    user.id,
+    identity.rows,
     selectedStudioId,
   );
   if (membership.kind === "none") {

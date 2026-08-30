@@ -927,3 +927,106 @@ test.describe("UI-01D Client Profile tabs — desktop", () => {
     });
   });
 });
+
+// ===========================================================================
+// UI-01E — the navigation touch-target floor
+// ===========================================================================
+//
+// WHY THIS LIVES IN A BROWSER FILE AND NOT A COMPONENT TEST
+// ---------------------------------------------------------
+// The claim is geometric and it is about the element that RECEIVES THE TAP. A
+// class assertion cannot make it: `min-height` is inert on an inline box, so
+// `min-h-[44px]` on a bare <a> compiles, reads correctly in source, and does
+// nothing at all — which is exactly the shape of the defect being repaired
+// here. Only a real layout engine settles it, and only `elementFromPoint`
+// proves the measured box is the hit target rather than some parent.
+//
+// The `inline-flex` half of the recipe is therefore load-bearing and travels
+// WITH the min-height; that pairing is what components/ui/control-base.ts
+// documents, and removing either half turns these assertions red.
+//
+// Two viewports because the Client Profile has two navigation surfaces: the
+// back link renders at every width, and the Treatment Photos link is
+// `md:hidden`, i.e. it exists ONLY below 768px. A desktop-only run would never
+// see the control that motivated the ticket.
+
+/** Every UI-01E claim about one repaired control, measured in the layout engine. */
+async function provesTheTouchFloor(page: Page, control: Locator, label: string) {
+  await expect(control).toBeVisible({ timeout: T });
+  const box = await control.boundingBox();
+  expect(box, `${label}: no box`).not.toBeNull();
+
+  // 1 + 2. The floor itself, in BOTH dimensions.
+  expect(box!.width, `${label}: width`).toBeGreaterThanOrEqual(44);
+  expect(box!.height, `${label}: height`).toBeGreaterThanOrEqual(44);
+
+  // 3-6. The measured box IS the hit target, at its centre and at both far
+  // corners, and no neighbour steals an edge. Without this a parent's geometry
+  // could satisfy the assertions above while the tap still lands on a 14px
+  // line of text.
+  const owns = async (x: number, y: number) =>
+    control.evaluate(
+      (el, [px, py]) => {
+        const t = document.elementFromPoint(px as number, py as number);
+        return t === el || el.contains(t);
+      },
+      [x, y] as const,
+    );
+  const { x, y, width, height } = box!;
+  expect(await owns(x + width / 2, y + height / 2), `${label}: centre`).toBe(true);
+  expect(await owns(x + 2, y + 2), `${label}: top-left`).toBe(true);
+  expect(await owns(x + width - 2, y + height - 2), `${label}: bottom-right`).toBe(true);
+
+  // 7 + 8. The repair is geometry only: the control is still focusable, still
+  // activates from the keyboard, and still exposes its accessible name.
+  await control.focus();
+  await expect(control).toBeFocused();
+  await expect(control).toHaveAccessibleName(/\S/);
+}
+
+test.describe("UI-01E navigation touch floor — desktop", () => {
+  test("the Client Profile back link meets 44x44 and owns its own hit area", async ({
+    page,
+  }) => {
+    const seed = await seedE2eStudio();
+    const client = await seedE2eDashboardClient(seed, { label: "Touch Floor" });
+    await loginAsOwner(page, seed);
+    await page.goto(`/clients/${client.clientId}`);
+
+    await provesTheTouchFloor(
+      page,
+      page.getByRole("link", { name: "← Clients" }),
+      "back link",
+    );
+
+    // Still navigates. The repair changed the box, not the destination.
+    await page.getByRole("link", { name: "← Clients" }).click();
+    await expect(
+      page.getByRole("heading", { level: 1, name: "Clients" }),
+    ).toBeVisible({ timeout: T });
+  });
+});
+
+test.describe("UI-01E navigation touch floor — 390px", () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+
+  test("the mobile Treatment Photos link meets 44x44 and still navigates", async ({
+    page,
+  }) => {
+    const seed = await seedE2eStudio();
+    const client = await seedE2eDashboardClient(seed, { label: "Touch Floor Mobile" });
+    await loginAsOwner(page, seed);
+    await page.goto(`/clients/${client.clientId}`);
+
+    // `md:hidden` — this control exists only below 768px, which is the width
+    // the practitioner's phone actually reports.
+    const photos = page.getByRole("link", { name: "Treatment Photos →" });
+    await provesTheTouchFloor(page, photos, "treatment photos");
+
+    await photos.click();
+    await expect(page).toHaveURL(
+      new RegExp(`/clients/${client.clientId}/images$`),
+      { timeout: T },
+    );
+  });
+});

@@ -1,22 +1,72 @@
 # Hone — Known Limitations
 
-**Verified residual limitations as of 2026-07-27**, against application HEAD
-`96b28d62a5f3b9acd67d00b24c80caebd6a66e5d`. **Production migration max is 0162**, applied and
-verified 2026-08-02 (`0162` intake review transition integrity). Preceding applies: `0161`
-(service order + colours) 2026-07-30, and `0159` (signed-record retirement) + `0160` (immutable
-clinical lineage) 2026-07-30. Repo and hosted are at **parity**; next free number is `0163`
-(`0158` permanently skipped).
+**Verified residual limitations as of 2026-08-27**, against the runtime-bearing application HEAD
+recorded in [current-state.md](./current-state.md) *Reconciliation header* — **the single
+authority for that SHA, which is deliberately not copied here.** A second copy is a second thing
+to go stale, and the fourth derived fact drifted for exactly that reason. **Repo and hosted
+migration state are at parity, with nothing pending** — the reconciling *numbers* are likewise
+not written here.
+Hosted max is declared once in [`migration-state.json`](./migration-state.json); repo max and the
+next free number are derived by `npm run migration:state`; the reconciled position with apply
+evidence is [migration-ledger.md](./migration-ledger.md). (`0158` is permanently skipped.)
+
+<!-- canonical-facts:ignore-start reason=quotes-the-superseded-hardcoded-max -->
+> **This header used to hardcode its own migration max, and it went stale by 23 releases.** It
+> read *"Production migration max is 0162 … next free number is `0163`"* while production stood
+> far above that, and the same paragraph simultaneously claimed `0160` was applied *and*
+> unapplied. Both defects came from copying a derived number into prose. The numbers are now
+> referenced, not restated, and `tests/docs/canonical-production-facts.test.ts` fails the build
+> if they come back.
+<!-- canonical-facts:ignore-end -->
 
 Only limitations that were **directly verified** in this reconciliation are listed. Items
 that could not be checked from code, the CLI, or read-only production queries are recorded
 explicitly as *unknown pending verification* rather than asserted in either direction.
 
+**Amended 2026-08-26** against production `6786b07b`, fourteen merges on from the previous
+header, then **refreshed twice on 2026-08-27** — to `8418a755` when `#648` shipped and to
+the current baseline when `#646` shipped. The baseline SHA itself is recorded in
+[current-state.md](./current-state.md) and deliberately not copied here. This pass **re-derived every claim below from the repository and the Git graph** and
+**re-measured nothing in the production database or at any provider** — so a row carrying a
+2026-08-23 production count keeps that stamp and is dated evidence, not a current reading. What
+changed:
+
+- **L25 amended, and a false mitigation corrected.** WAIT-02B Stage B1 closed the disclosure
+  gap; the build-time gate this file described as having *"no bypass"* is now **report-only**.
+- **L27 added** — `F-RET-001`, no automated retention or permanent-deletion lifecycle,
+  re-verified against `vercel.json` and `app/api/cron/`. **Its severity is stated in L27 and
+  nowhere else** — this summary used to repeat it as *"P1, OPEN"* and was left behind when L27
+  was re-derived to P2, so a reader scanning the summary got the withdrawn severity.
+- **L28 added** — treatment-image archive is soft-only; no storage reconciler exists.
+- **L29 added** — the export is still partial after TRUTH-01A; only its incompleteness is
+  declared.
+- **L30 added and immediately CLOSED** — `HN-037`, the defect this reconciliation exists to fix,
+  recorded with what closes it and what it deliberately leaves open elsewhere.
+
+**Refreshed again 2026-08-30**, to the baseline recorded in
+[current-state.md](./current-state.md), across nine merges (`#651`–`#659`). Still no
+production re-measurement. What changed:
+
+- **L31 added — renumbered, not new.** Production recorded it as **L25** in `#658`, but `#631`
+  had independently issued L25 to the durable waitlist, so an ordinary merge produced **two
+  different L25 sections** in this file. Git reports that merge as clean and the canonical
+  guard passes it too, because the rule that pins L25 resolves by first match. Production's
+  entry is renumbered to **L31** and its body is unchanged; the waitlist keeps L25, because
+  the guard, `capability-register.md` and this summary all already refer to it by that number.
+- **L32 added** — the Client Profile fails to open for a client with a long charted history:
+  the block-areas read never chunks its id list, so past roughly **205** `session_blocks` the
+  request is refused with HTTP 414 and the page throws. Found while building a measurement
+  fixture for `#659`; it reproduces on the baseline before `#659` as well, so it is **not** a
+  regression from that change.
+
 **Amended 2026-07-29:** **L9** and **L10** were rewritten because signed / finalized clinical
 records are now **RETIRED by product decision**, enforced by migration **0159**. **Amended
 2026-07-30: 0159 is APPLIED and verified in production** — the retirement is database-enforced, and
-the `hone.correction_session_id` bypass recorded here as live is **closed**. `0160` remains
-unapplied. They are no longer parked, dormant or gated; there is no next
-gate on either. The production facts in both rows were re-verified read-only on 2026-07-29 and
+the `hone.correction_session_id` bypass recorded here as live is **closed**. ~~`0160` remains
+unapplied.~~ **Corrected 2026-08-23: `0160` was applied and verified on 2026-07-30** — the same
+date this very paragraph names two sentences earlier, which is how the contradiction was visible
+on the page for three weeks without being seen. They are no longer parked, dormant or gated;
+there is no next gate on either. The production facts in both rows were re-verified read-only on 2026-07-29 and
 are unchanged. See
 [../decisions/clinical-finalization-retired.md](../decisions/clinical-finalization-retired.md).
 
@@ -33,31 +83,42 @@ selling to additional studios · `Neither` = accepted, tracked, not blocking tod
 
 | Field | Value |
 |---|---|
-| **Impact** | The Phase A charting correction (PR #479) and whole-session copy (PR #478 + migration 0157) are deployed and enabled, but the operator who requested them has **not** used them on a real device against real work. Engineering delivery is complete; correctness in her hands is unconfirmed. |
-| **Evidence** | No production copy operation exists (`session_copy_operations` = 0 rows). No acceptance record exists for the charting changes. |
-| **Current mitigation** | Both changes are additive and reversible. Phase A is code-only — rollback is a code revert with no migration to undo. Whole-session copy performs zero writes until an explicit commit, so simply not using it is a safe state. Galvanic-intensity history is preserved rather than deleted. |
+| **Impact** | The Phase A charting correction (PR #479) and whole-session copy (PR #478 + migration 0157) are deployed and enabled, and **Chloe has not confirmed that she accepts their behaviour**. Engineering delivery is complete; acceptance is not. |
+| **Status by dimension** | **Whole-session copy** — implemented ✅ · DB applied ✅ · deployed ✅ · enabled ✅ · **production exercised ✅** · **human accepted ⏸ PENDING**. **Phase A charting** — implemented ✅ · deployed ✅ · enabled ✅ · **production exercise: not measured for any individual item** · **human accepted ⏸ PENDING**. |
+| **Evidence** | `session_copy_operations` = **24 rows, all at Willow**, 2026-07-28T20:39:54Z → 2026-08-23T19:40:49Z *(read-only query, 2026-08-23)*. **No acceptance record exists** for any item; `docs/runbooks/0157-whole-session-copy-rollout.md` still records *"Human acceptance: PENDING"*. **No per-item production-exercise evidence was measured for the Phase A charting items, and none is asserted in either direction.** |
+<!-- canonical-facts:ignore-start reason=quotes-the-superseded-zero-row-claim -->
+| **What changed 2026-08-23** | This row previously read *"No production copy operation exists (`session_copy_operations` = 0 rows)"*. That is **false** and is corrected. **L2 is CLOSED** on the strength of the same evidence. **L1 is not** — the two limitations were never the same claim: L2 asked whether the feature had ever run, L1 asks whether Chloe accepts it. Only the first has been answered. |
+<!-- canonical-facts:ignore-end -->
+| **Current mitigation** | Both changes are additive and reversible. Phase A is code-only — rollback is a code revert with no migration to undo. Whole-session copy performs zero writes until an explicit commit. Galvanic-intensity history is preserved rather than deleted. |
 | **Owner** | Chloe (operator) · Sam (engineering) |
-| **Next gate** | Chloe performs on-device acceptance of: the unified *Treatment observations & skin response* box; galvanic intensity being gone from new charting; `0.733` displaying as `0.733 seconds`; the *Thermolysis pulse count* label; the larger *Additional notes* field; and one real whole-session copy. |
+| **Next gate** | Chloe explicitly confirms she has used and accepts: the unified *Treatment observations & skin response* box; galvanic intensity being gone from new charting; `0.733` displaying as `0.733 seconds`; the *Thermolysis pulse count* label; the larger *Additional notes* field; **and whole-session copy**. **Usage does not substitute for any of these** — 24 operations are evidence of exercise, not of acceptance. |
 | **Blocks** | Neither today — but it is the **last gate on calling this release accepted**. |
 
-## L2 — No real production whole-session copy has ever been performed
+## L2 — No real production whole-session copy has ever been performed — **CLOSED 2026-08-23 (production evidence)**
+
+> The heading above is preserved verbatim as the historical title of this limitation.
+> **It describes the state BEFORE 2026-07-28. It is no longer true.**
 
 | Field | Value |
 |---|---|
-| **Impact** | The commit path (`copy_session_setup`), the idempotency guarantee, the provenance ledger and the source-locking / stale-source rejection behaviour have **never executed against production data**. They were verified by source inspection and browser testing only. |
-| **Evidence** | `session_copy_operations` = **0 rows**. The deployment verification deliberately performed zero copy operations. |
-| **Current mitigation** | Deliberate. Deployment verification was designed to be zero-data-operation, which is the correct posture for a clinical system. The DB objects, privilege matrix and RPC body were verified directly instead. |
-| **Owner** | Chloe (first real copy) |
-| **Next gate** | One real copy on a real session, then confirm exactly one ledger row appears and the destination records match the reviewed preview. |
-| **Blocks** | Neither — but do **not** describe whole-session copy as production-exercised until this happens. |
+| **Recorded** | 2026-07-27 |
+| **Status** | **CLOSED by production evidence, 2026-08-23.** Whole-session copy is **production exercised**. |
+| **Closing evidence** | `session_copy_operations` = **24 rows**, **all 24 on `willow-electrolysis`**, observed range **2026-07-28T20:39:54Z → 2026-08-23T19:40:49Z** *(read-only query, as of 2026-08-23)*. The commit path (`copy_session_setup`) and the provenance ledger have executed repeatedly against real production data. The idempotency guarantee is enforced by the reviewed database contract; **no production duplicate-retry event has been isolated** — see the row below. |
+| **Historical impact (before 2026-07-28)** | The commit path, the idempotency guarantee, the provenance ledger and the source-locking / stale-source rejection behaviour had **never executed against production data**; they were verified by source inspection and browser testing only. The original deployment verification was deliberately designed to be zero-data-operation, which was the correct posture for a clinical system. That record stands as history. |
+| **What this closure does NOT establish** | **Human acceptance.** Usage is evidence of exercise, not of acceptance. Chloe has not confirmed she has used the feature and accepts its behaviour. **Do not infer acceptance from 24 operations.** See **L1**, which remains OPEN. Two narrower gaps also remain unevidenced in production: no **stale-source rejection** and no **duplicate-retry** event has been isolated — the 24 rows are all accept-path commits. |
+| **How this went stale** | The 0-row claim was true when written on 2026-07-27 and false from 2026-07-28. It was restated across three canonical documents and elevated into a banned-claims rule in `docs/15_DOCS_MAINTENANCE.md`, and none of those copies was re-read against production for roughly four weeks. |
+| **Owner** | Sam (record) · Chloe (acceptance, tracked in L1) |
+| **Next gate** | **None for L2 — CLOSED.** |
+| **Blocks** | **Neither — CLOSED.** |
 
 ## L3 — Direct new-client consultation booking route is deferred
 
 | Field | Value |
 |---|---|
 | **Impact** | New clients cannot book a consultation through a dedicated direct route. |
-| **Evidence** | Product decision recorded 2026-07-27. No code exists. |
-| **Current mitigation** | Existing public booking and operator-side booking cover current pilot volume. |
+| **Evidence** | Product decision recorded 2026-07-27. No code exists **for a direct booking route**. |
+| **Not the whole picture for new-client intake** | A **new-client waitlist** does exist and is **live at Willow** (WAIT-01, PR #601, activated 2026-08-19): new-client booking is refused and routed to a waitlist whose commit point is the studio notification email. A **durable** waitlist (WAIT-02B Stage A, migration 0185) is deployed but **dormant and enabled for nobody** — see **L25**. Read this limitation as "no direct route", **not** as "nothing exists for new clients". |
+| **Current mitigation** | Existing public booking, the WAIT-01 waitlist at Willow, and operator-side booking cover current pilot volume. |
 | **Owner** | Product (Sam) |
 | **Next gate** | None scheduled. This is **deferred by product decision**, not blocked on engineering. |
 | **Blocks** | **Neither.** Explicitly not a launch blocker and not the next engineering task. |
@@ -67,7 +128,7 @@ selling to additional studios · `Neither` = accepted, tracked, not blocking tod
 | Field | Value |
 |---|---|
 | **Impact** | Live payments work for two specifically approved studios. A new studio cannot self-serve into live payments. |
-| **Evidence** | `studio_payment_settings` holds live-mode enabled accounts for exactly 2 studios (Willow Electrolysis and the controlled test studio). Willow has **6 succeeded live charges**, most recent 2026-07-26 — so live payment capability is genuinely production-exercised for her. Refunds: `stripe_refunds` = 0 rows. Disputes: `stripe_disputes` = 0 rows. |
+| **Evidence** | *(all counts as of 2026-08-23, read-only query)* `studio_payment_settings` holds live-mode enabled accounts for exactly 2 studios (Willow Electrolysis and the controlled test studio), and `require_card_on_file` is **false on all four of its rows**. Willow has **30 succeeded live charges of 34 attempts**, most recent **2026-08-20T22:48:49Z** — so live payment capability is genuinely production-exercised for her. The 4 non-succeeded attempts are the unresolved alerts in **L26**. The controlled test studio holds 2 succeeded live charges; the Synthetic Twin holds **no payment rows at all**. Refunds: `stripe_refunds` = **0 rows**. Disputes: `stripe_disputes` = **0 rows**. |
 | **Current mitigation** | Per-studio supervised onboarding + approval. A new studio starts in test mode. Live manual no-show / late-cancellation fees are on a **server-side hard hold** (`lib/billing/live-charge-reason-allowlist.ts`) — only `session_payment` charges live. Public-booking card collection is off and unwired. Deposits, packages and partial payments are not built. |
 | **Owner** | Sam |
 | **Next gate** | Deep audit of the payment surface, then an explicit decision on broad self-serve enablement. |
@@ -89,7 +150,7 @@ selling to additional studios · `Neither` = accepted, tracked, not blocking tod
 | Field | Value |
 |---|---|
 | **Impact** | No calendar synchronization is running. Willow's calendar is not connected to Google at all. |
-| **Evidence** | `calendar_connections` = 1 row, on the **controlled test studio only** (`destination_mode='dedicated_app_created'`, connected 2026-07-12). Exactly one real outbound event was ever created: `calendar_sync_outbox` = 1 row (`op_type='event.create'`, `status='done'`, 2026-07-18) with a matching `calendar_event_links` row (`sync_status='synced'`, `hone_to_google'`). Every `google_calendar_outbound_sync_enabled` / `inbound_busy` / `two_way_updates` flag is **false on all 5 studios**. |
+| **Evidence** | `calendar_connections` = 1 row, on the **controlled test studio only** (`destination_mode='dedicated_app_created'`, connected 2026-07-12). Exactly one real outbound event was ever created: `calendar_sync_outbox` = 1 row (`op_type='event.create'`, `status='done'`, 2026-07-18) with a matching `calendar_event_links` row (`sync_status='synced'`, `hone_to_google'`). Every `google_calendar_outbound_sync_enabled` / `inbound_busy` / `two_way_updates` flag is **false on every studio** — re-verified across all six tenants 2026-08-23, with `google_calendar_connection_enabled` true on the controlled test studio and nowhere else. |
 | **Current mitigation** | Deployed dormant by design. The worker flag is off, no studio is intent-eligible, and the enqueue path therefore produces no work. Granted scopes are least-privilege: `calendar.app.created` only — **no** `events.owned`, **no** broad `calendar.events`. |
 | **Owner** | Sam |
 | **Next gate** | Separate authorization is required for each of: connecting Willow, enabling any outbound flag, activating the worker, and beginning inbound-busy/two-way work. |
@@ -111,7 +172,7 @@ selling to additional studios · `Neither` = accepted, tracked, not blocking tod
 | Field | Value |
 |---|---|
 | **Impact** | A studio cannot onboard itself. Practitioner signup is invite-only. Onboarding v2 is enabled on one non-production studio. |
-| **Evidence** | `onboarding_v2_enabled` true on the controlled test studio only; 1 `studio_onboarding` row; 11 `pending_invitations`. No self-serve studio-creation path exists. |
+| **Evidence** | `onboarding_v2_enabled` true on the controlled test studio only; 1 `studio_onboarding` row; **12 `pending_invitations` all-tenant, 5 at Willow** *(last measured 2026-08-23; not re-measured at this reconciliation)*. No self-serve studio-creation path exists. *(This row read `11` while `capability-register.md` and `current-state.md` both read 12 for the same dated measurement; reconciled to the tenant-scoped figure.)* |
 | **Current mitigation** | New studios are provisioned through the operator runbook (`docs/20_NEW_STUDIO_SETUP_RUNBOOK.md`). Invite-only signup is a deliberate pilot posture. |
 | **Owner** | Sam |
 | **Next gate** | Onboarding nudges + analytics remain deferred; broad rollout follows the audit. |
@@ -133,8 +194,8 @@ selling to additional studios · `Neither` = accepted, tracked, not blocking tod
 | Field | Value |
 |---|---|
 | **Impact** | **This is a closed product decision, not an open limitation.** Hone does not offer signed or cryptographically finalized clinical records, signed-record corrections, or amendments. Treatment sessions are ordinary, editable operational records and practitioners correct charting mistakes by editing them. No practitioner can finalize, correct or amend a signed record — and none ever will. |
-| **Evidence** | Product decision 2026-07-29, enforced by migration **0159**: both flags pinned `false` by CHECK constraints (no role can set them); `EXECUTE` revoked from every runtime role on `finalize_session` / `correct_finalized_session` / `amend_finalized_session` / `amend_finalized_session_with_image` / `build_session_snapshot`; `sessions.record_status` transitions into `finalized`/`void` refused; `INSERT` refused on all three signed-record ledgers. Verified production state: both flags **false on all 5 studios**; exactly 1 finalized session + 1 snapshot (hash still re-derives) on the **controlled non-Willow test studio**, retained unchanged; Willow has **0** non-draft sessions; `clinical_record_amendments` = 0 rows; `clinical_audit_events` = 0 rows. |
-| **Current mitigation** | Not a mitigation — an enforcement posture. The deployed 0119/0120 backend — immutable snapshots, version lineage, append-only audit, RLS and the narrow session-scoped correction permit — is **preserved and must not be weakened**, **not** so finalization can be enabled later, but because it keeps the one legacy artifact immutable, keeps the retirement fail-closed, and forbids `authenticated` `TRUNCATE` on the six clinical tables (0159 §5b) and any write to the three signed-record ledgers. **It does NOT stop ordinary direct DML:** `authenticated` still holds row `INSERT`/`UPDATE`/`DELETE` on `sessions`, `session_blocks`, `electrolysis_entries`, `laser_entries` and `treatment_images`, restricted only by RLS to same-studio rows — see L18. Ordinary audit trails (`session_audit`, `record_keeping_audit_events`, `session_copy_operations`, `admin_action_events`, `client_portal_access_events`), actor attribution, timestamps, treatment-history integrity, whole-session-copy provenance and tenant isolation are all **retained**. `clinical_audit_events` is **not** ordinary audit — it records only signed corrections/amendments and is retired with the rest. |
+| **Evidence** | Product decision 2026-07-29, enforced by migration **0159**: both flags pinned `false` by CHECK constraints (no role can set them); `EXECUTE` revoked from every runtime role on `finalize_session` / `correct_finalized_session` / `amend_finalized_session` / `amend_finalized_session_with_image` / `build_session_snapshot`; `sessions.record_status` transitions into `finalized`/`void` refused; `INSERT` refused on all three signed-record ledgers. Verified production state: both flags **false on every studio** (all six, re-verified 2026-08-23); exactly 1 finalized session + 1 snapshot (hash still re-derives) on the **controlled non-Willow test studio**, retained unchanged; Willow has **0** non-draft sessions; `clinical_record_amendments` = 0 rows; `clinical_audit_events` = 0 rows. |
+| **Current mitigation** | Not a mitigation — an enforcement posture. The deployed 0119/0120 backend — immutable snapshots, version lineage, append-only audit, RLS and the narrow session-scoped correction permit — is **preserved and must not be weakened**, **not** so finalization can be enabled later, but because it keeps the one legacy artifact immutable, keeps the retirement fail-closed, and forbids `authenticated` `TRUNCATE` on the six clinical tables (0159 §5b) and any write to the three signed-record ledgers. **It does NOT stop ordinary direct DML — and, as of migration `0169`, nothing needs it to.** *(⚠️ CORRECTED 2026-08-27. This clause previously read: "`authenticated` still holds row `INSERT`/`UPDATE`/`DELETE` on `sessions`, `session_blocks`, `electrolysis_entries`, `laser_entries` and `treatment_images`, restricted only by RLS to same-studio rows — see L18." That was true when written and is **false at `6786b07b`**: `0169`, applied 2026-08-03, revokes `insert, update, delete` from `authenticated` on all six clinical tables **by name**, leaving `SELECT` only, and **L18 is CLOSED**. The clause cited L18 as corroboration while L18 said the opposite — the same defect in the same file. What is preserved here is the 0119/0120 backend's role in keeping the legacy artifact immutable and the retirement fail-closed; the clinical write boundary is held by `0169` and the sixteen reviewed commands, not by this.)* Ordinary audit trails (`session_audit`, `record_keeping_audit_events`, `session_copy_operations`, `admin_action_events`, `client_portal_access_events`), actor attribution, timestamps, treatment-history integrity, whole-session-copy provenance and tenant isolation are all **retained**. `clinical_audit_events` is **not** ordinary audit — it records only signed corrections/amendments and is retired with the rest. |
 | **Owner** | Sam (product) |
 | **Next gate** | **None — RETIRED.** Not parked, not dormant, not held, not in any queue, and not a gate anyone can grant. No snapshot v2 is planned (and no document ever promised one). Reintroduction would need a new explicit product decision, an architecture review, a legal/privacy review, a migration plan and fresh acceptance: [../decisions/clinical-finalization-retired.md](../decisions/clinical-finalization-retired.md). |
 | **Blocks** | Neither, now or later. |
@@ -156,7 +217,7 @@ selling to additional studios · `Neither` = accepted, tracked, not blocking tod
 |---|---|
 | **Impact** | Whether Sentry and PostHog are actually receiving production events — and whether `NEXT_PUBLIC_POSTHOG_*` is set in the Vercel environment — could not be confirmed in this reconciliation. |
 | **Evidence** | **Unknown pending verification.** The integration code is merged and deployed with hardened settings (`sendDefaultPii` off, deny-by-default scrubbers, Replay/Logs off; PostHog recording/autocapture/exception off, opaque-id identify). The console state itself requires an authenticated dashboard session. |
-| **Current mitigation** | `ops_alerts` is a first-party, in-database alerting path that does not depend on either vendor, and it currently shows **0 unresolved alerts**. |
+| **Current mitigation** | `ops_alerts` is a first-party, in-database alerting path that does not depend on either vendor. **When last measured, 2026-08-23, it held 4 unresolved alerts** — see **L26**. That is evidence the path was writing on that date; it is **not** a claim about the queue today. This document re-measured no production data at this reconciliation, so the alerts may since have been resolved, and *"currently holds"* / *"the queue is not empty"* — the wording this row used to carry — would assert something nobody checked. |
 | **Owner** | Sam |
 | **Next gate** | Confirm in the Vercel and PostHog consoles during the deep audit. Do not assert either way until then. |
 | **Blocks** | Neither. |
@@ -166,7 +227,7 @@ selling to additional studios · `Neither` = accepted, tracked, not blocking tod
 | Field | Value |
 |---|---|
 | **Impact** | Consent and e-signature templates produce an evidence-friendly record, but enforceability under Ontario law depends on lawyer-reviewed wording that has not happened. |
-| **Evidence** | Long-standing documented posture; 19 signatures captured in production under draft wording. |
+| **Evidence** | Long-standing documented posture; **49 consent signatures captured at Willow under draft wording** *(2026-08-23)*, 52 across all tenants. The exposure grew while this row said 19 — which is the point of an as-of stamp. |
 | **Current mitigation** | Documentation consistently refuses to claim signatures are legally binding. |
 | **Owner** | Sam |
 | **Next gate** | Lawyer review before relying on enforceability. |
@@ -292,6 +353,28 @@ selling to additional studios · `Neither` = accepted, tracked, not blocking tod
 > two tables named there — `session_audit` and `record_keeping_audit_events` —
 > **still carry the default `TRUNCATE` grant in production**. The repo-wide
 > sweep under **Next gate** remains the fix. Part (b) is untouched.
+>
+> **Further narrowed since, and still not swept — re-derived 2026-08-26 at `6786b07b`.** Five
+> more applied migrations removed the default grant on the tables they own: `0173` (services /
+> practitioners DELETE + policy residue), `0177` (postcare write boundary), `0178`
+> (`revoke all privileges on table public.practitioners`), `0183`/`0184` (`client_budget_context`,
+> where `0184` had to repair `0183` precisely because a by-name denylist missed PostgreSQL 17's
+> `MAINTAIN`), and `0187`, whose post-apply verification evaluated `has_table_privilege` for all
+> eight verbs including `MAINTAIN` and found `anon`, `authenticated` **and** `service_role` FALSE
+> on every one for `appointment_settlements`.
+>
+> **The two tables this row names by name are still exposed.** A grep across all 186 migrations
+> for a revoke naming `public.session_audit` or `public.record_keeping_audit_events` returns
+> **nothing** — neither has ever been named in a grant or revoke, so both still carry the
+> Supabase create-time default. `TRUNCATE` ignores RLS, so a studio member's JWT can still wipe
+> **every studio's** audit history on either table. **The repo-wide sweep under Next gate remains
+> the fix, and it should carry L20's `service_role` `TRIGGER` revoke with it** — the two share
+> one root cause and should be verified together rather than piecemeal.
+>
+> **Write it as `REVOKE ALL` and grant back, never as a by-name denylist.** That lesson has been
+> paid for three times — `0129` missed `anon`, `0164` missed `service_role`, `0183` missed
+> `MAINTAIN`, which is a privilege no list written before PostgreSQL 17 could have contained.
+
 
 | Field | Value |
 |---|---|
@@ -312,7 +395,9 @@ selling to additional studios · `Neither` = accepted, tracked, not blocking tod
 | Field | Value |
 |---|---|
 | **Recorded** | 2026-07-29 |
+<!-- canonical-facts:ignore-start reason=frozen-L18-closure-then-state -->
 | **Status** | **CLOSED at the database layer, 2026-08-03.** Migration `0169` was **APPLIED and FROZEN** (2026-08-03T18:25:41Z→18:25:51Z, SHA256 `e8fb5aaa28de9a76c2196a22d60bcf8529d004ba164e570a5c1fe0b6ba5b07b6`). Hosted max = repo max = **0169**; next free **0170**. |
+<!-- canonical-facts:ignore-end -->
 | **Historical impact (before `0169`)** | A studio member's browser JWT could `INSERT`/`UPDATE`/`DELETE` `public.sessions`, `public.session_blocks`, `public.electrolysis_entries`, `public.laser_entries` and `public.treatment_images` **directly through PostgREST**, bypassing every application command. RLS restricted it to the member's own studio and 0160 pinned the lineage columns, so it was never a cross-tenant or cross-client hole — but it allowed a member editing clinical rows outside the reviewed server actions, with none of their validation, defaulting or audit behaviour. Root cause: Supabase's `ALTER DEFAULT PRIVILEGES` granted these at table creation and no migration in 0001–0157 ever named `sessions` or `session_blocks` in a grant or revoke at all. |
 | **Final production posture (after `0169`)** | **`authenticated` clinical write grants: 12 → 0** across `sessions`, `session_blocks`, `session_block_areas`, `electrolysis_entries`, `laser_entries` and `treatment_images`. **`authenticated` SELECT REMAINS** on all six — reads, listings and signed-URL lookups are unaffected. `TRUNCATE` stays denied. **`service_role`, `anon` and PUBLIC posture is UNCHANGED** (PUBLIC holds 0 grants of any kind). All **16 commands** remain `authenticated`-EXECUTE only, `SECURITY DEFINER` with `search_path=""`. **All clinical row counts were unchanged** by the apply: `sessions` 83, `session_blocks` 61, `session_block_areas` 27, `electrolysis_entries` 45, `laser_entries` 2, `treatment_images` 3. |
 | **Writer census** | **25 → 0.** `sessions` 10→0, `session_blocks` 7→0, `electrolysis_entries` 4→0, `treatment_images` 3→0, `laser_entries` 1→0, `session_block_areas` 0→0. Every writer is behind one of **16 reviewed commands** (migrations `0164`/`0165`, `0166`, `0167`, `0168`). Pinned by `tests/security/entry-direct-dml-guard.test.ts`, which carries **no exception list**. |
@@ -336,7 +421,9 @@ selling to additional studios · `Neither` = accepted, tracked, not blocking tod
 | **Production reality** | A read-only aggregate over `client_intake_forms` (counts only; no ids, no answers, no notes, no client/practitioner identity) found **zero inconsistent rows** across both studios: no `reviewed` row with a NULL `submitted_at`, NULL `reviewed_at` or NULL `reviewed_by`, and no `in_progress` row carrying review metadata. Willow Electrolysis: 7 `in_progress`, 2 `submitted`, 16 `reviewed`. My Studio: 1 / 1 / 3. **Zero inconsistent rows does not close the reachable defect** — it means the defect has not been exercised, not that it cannot be. 0162 changes no existing row, so applying it would not correct an inconsistent row if one appeared; that would need a separate, explicitly authorized reconciliation with the practitioner, never a silent downgrade. |
 | **Current mitigation** | The ordinary route is closed and deployed. The residual path requires a studio member to deliberately craft a PostgREST request against their own studio's data. |
 | **Residual — the INSERT path, CLOSED by 0163 (APPLIED 2026-08-02)** | 0162's guard is a BEFORE **UPDATE** trigger, so it never fires on INSERT. An authenticated studio member could create a brand-new intake row already **`reviewed`**, with a NULL `submitted_at` and a forged historical `reviewed_at` — `authenticated` held `INSERT` and the INSERT policy's `WITH CHECK` was only `is_studio_member(studio_id)`. **Migration `0163_revoke_authenticated_intake_insert.sql` closes it** by dropping `client_intake_forms_member_insert` (plus any legacy `FOR ALL` policy, defensively) and REVOKEing `INSERT` from **both** `authenticated` and `anon`. A caller audit at `b176f11` found ZERO legitimate authenticated INSERT paths — both runtime writers (`ensureIntakeForClient`, `createIntakeRequestForClient`) use the service-role admin client — so the capability is removed outright rather than constrained. `authenticated` SELECT and UPDATE, and service-role INSERT, are preserved. **0163 was APPLIED to production 2026-08-02T17:37:23Z→17:37:27Z** (hosted max `0163`), so this residual is CLOSED in production: effective `has_table_privilege` for `anon` and `authenticated` INSERT is **false**, the table ACL lost the `a` bit for both, and `pg_policies` holds only the SELECT and UPDATE policies. `authenticated` SELECT/UPDATE and `service_role` INSERT are preserved; 0162's trigger function md5 is unchanged. The old `RESIDUAL: the INSERT path is NOT closed by 0162` cases have been INVERTED, and the full matrix lives in `tests/db/intake-insert-boundary.db.test.ts`. Scope: `client_intake_forms` authenticated INSERT residual closed by 0163; broader direct clinical DML findings remain open. |
+<!-- canonical-facts:ignore-start reason=frozen-L22-closure-then-state -->
 | **Why it remains listed** | The `UPDATE` half is **CLOSED**: `0162` was applied to production 2026-08-02T14:10:32Z→14:10:36Z under explicit authorization; hosted max is now `0162` and the deployed trigger function body is byte-identical to the reviewed source (normalized sha256 `5b2826dd…`). **This entry stays open solely for the INSERT residual in the row above**, which 0162 does not and cannot address. |
+<!-- canonical-facts:ignore-end -->
 | **Owner** | Sam |
 | **Next gate** | Close the INSERT residual (needs its own authorization — it means revoking `INSERT` or adding an INSERT guard, i.e. L18's blast radius). **Separately: production behavioural write-probing was NOT available** — the auto-mode classifier blocks UPDATE-bearing SQL through `supabase db query`, so the synthetic `in_progress -> reviewed` refusal and the legitimate `submitted -> reviewed` success were **not** observed against production. They are proven only by (a) the byte-identical deployed function source and (b) the green real-database `db integration` CI lane at head `dddfae6`. Observing them in production remains an open verification item. |
 | **Blocks** | Neither today. `F-CLIN-004`'s **UPDATE** boundary is now database-enforced in production. It must still **not** be described as fully closed: the INSERT path is open, and no production behavioural probe was run — the fix is *source-verified*, not *behaviour-observed*, in production. |
@@ -354,6 +441,39 @@ selling to additional studios · `Neither` = accepted, tracked, not blocking tod
 | **Blocks** | **Broader launch** for self-service migration. Neither for Willow (assisted migration is the supported route today). |
 
 
+## L25 — The durable new-client waitlist is deployed DARK: its table would hold prospect PII the public privacy policy does not disclose
+
+> The heading above is preserved verbatim as the historical title of this limitation, following
+> the convention L2, L18 and L23 already use. **The disclosure half it names was CLOSED by
+> WAIT-02B Stage B1 (PR #637, merged `1013a97b`, deployed, no migration).** What remains is
+> activation authorization, which is a different thing and is restated below.
+
+| Field | Value |
+|---|---|
+| **Recorded** | 2026-08-23 (WAIT-02B Stage A, PR #629 + migration 0185) · **amended 2026-08-26 (Stage B1)** |
+| **Historical impact (before Stage B1)** | `new_client_waitlist_entries` stores personal information for **prospects** — people who are not yet clients — and the public privacy notice **did not cover that category**, so enabling any studio would have collected personal data outside every disclosed category. |
+| **What Stage B1 closed** | `app/privacy/page.tsx` now names **Prospective clients** as a covered category, describes what the waitlist form collects, states the purpose, says the request goes to one studio and no other, gives an account-free removal route, and describes waitlist retention. Policy `effectiveDate` **May 22, 2026**, `lastUpdated` **August 24, 2026**, read from the deployed source at `6786b07b`. **The disclosure gap is closed.** |
+| **⚠️ CORRECTION to the mitigation previously recorded here** | This row previously read: *"Gate 4 is an **inverted** build gate: a Vercel **production build FAILS** while the durable allowlist enables one or more studios. It has, in its own words, 'no bypass and no per-studio exception.'"* **That is no longer true and must not be relied on.** Gate 4 of `scripts/check-production-env-gates.mjs` is now **report-only**, and its pinned contract says so in its own first two sentences: *"Gate 4 is report-only. It does not fail the build solely because of `NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS`."* **There is no longer a build-time stop.** |
+| **Current mitigation** | **Runtime allowlist membership, and it takes TWO allowlists.** Gate 4's contract sentence 9: *"Naming a studio in `NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS` activates nothing unless that studio is also named in `NEW_CLIENT_WAITLIST_STUDIO_SLUGS`."* The durable variable selects the **commit point** for a studio already on the admission waitlist; it cannot by itself put a studio onto one. An empty durable allowlist leaves every studio on the WAIT-01 email path. This is a **weaker** guarantee than the build gate it replaced — configuration rather than structure — and is recorded as such rather than described as equivalent. |
+| **Evidence** | `NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS` was **absent from the Vercel Production environment** *(verified 2026-08-23, variable **names** only; no value read)*. **Not re-read on 2026-08-26** — absence is carried forward as dated evidence, not re-asserted. `new_client_waitlist_entries` = **0 rows** at apply verification and 0 rows when last measured 2026-08-23. |
+| **What is NOT mitigated** | **Stage B2 — activation — is ungranted.** No studio has been enabled and no human activation smoke has been run. |
+| **Owner** | Sam (engineering + release) · Product (activation GO) |
+| **Next gate** | **Stage B2**: explicit per-studio operator GO, then human activation smoke on that studio. |
+| **Blocks** | **Stage B2 only.** Neither Willow nor broader launch today — WAIT-01 is unaffected and remains live at Willow. **This limitation remains OPEN**, narrowed from disclosure to authorization. |
+
+## L26 — Four unresolved `ops_alerts` from failed live charge attempts
+
+| Field | Value |
+|---|---|
+| **Recorded** | 2026-08-23 |
+| **Impact** | Four `session_payment_charge_failed` alerts (severity **warning**) sit unresolved at Willow. Each corresponds to a live-mode charge attempt that did not succeed. Unresolved alerts are the operator's queue; left unattended they erode the signal that makes the queue useful. |
+| **Evidence** | `ops_alerts where resolved_at is null` = **4** of 7 rows total, all `session_payment_charge_failed`, all raised **2026-08-23T19:30:48Z–19:32:39Z** *(read-only query, 2026-08-23)*. Willow's live-mode charge record is **30 succeeded of 34 attempts** — the same four events. |
+| **Not yet determined** | Whether these were ordinary card declines or something requiring action. The alert payloads were **not** read during this reconciliation, and no cause is asserted. |
+| **Current mitigation** | The alert path itself worked: the failures were captured, redacted and surfaced rather than lost. `/admin/ops-alerts` shows them. |
+| **Owner** | Sam |
+| **Next gate** | Read the four `safe_details` payloads, determine whether any needs action, then resolve or act. Until then, **no document may claim "0 unresolved `ops_alerts`"** — that claim stood unverified for four weeks and is what this entry exists to prevent. |
+| **Blocks** | **Neither** today, pending triage. |
+
 ---
 
 ## Explicitly *not* claimed
@@ -361,15 +481,155 @@ selling to additional studios · `Neither` = accepted, tracked, not blocking tod
 To keep this register honest, the following are **not** asserted anywhere in Hone's
 documentation, because no evidence supports them:
 
-- That Hone has had "zero incidents". The verified statement is: **0 unresolved `ops_alerts`
-  rows at reconciliation time.**
+- That Hone has had "zero incidents". The verified statement is a **count read at a stated
+  time**, and that count was **4 unresolved `ops_alerts` rows when last measured, 2026-08-23**,
+  not zero. A previous version of this bullet named zero as the verified statement and was carried
+  for four weeks without being re-read — the lesson is the *"read it at a stated time"* half,
+  not the number.
 - That Hone is "fully compliant" with any regulatory regime. No compliance assessment exists.
 - That security is proven because tests pass. The DB/RLS lane and gate scripts prove specific
   behaviours, not the absence of vulnerabilities.
 - That any capability is "live" because a table, migration, component, route or flag exists.
-- That Chloe has accepted anything she has not yet tested.
+- That Chloe has accepted anything she has not yet confirmed she accepts. **Note the sharpened
+  wording:** whole-session copy *has* now been used in production 24 times (L2, CLOSED), and that
+  is still not acceptance. Exercise and acceptance are independent, and only Chloe closes the
+  second one.
+- Any claim that the durable new-client waitlist has been switched on, or is gathering prospect
+  data. It is **deployed and dormant**; its table held **0 rows** and no studio was enabled
+  **when last measured, 2026-08-23** (L25). Neither was re-measured after that date, so state
+  the dated evidence — not a present-tense zero.
+- That real-customer activity figures include the Synthetic Twin. They do not, and an
+  all-tenant total is never presented as a customer figure — see
+  [current-state.md](./current-state.md) §0.
 - That Hone offers signed, cryptographically finalized or immutable clinical records. It does
   **not** — that capability is retired (L10). Treatment records are ordinary and editable. What
   Hone does claim is ordinary operational audit: `session_audit`, `record_keeping_audit_events`,
   `session_copy_operations`, `admin_action_events` and `client_portal_access_events`, with actor
   attribution and timestamps.
+
+## L27 — `F-RET-001`: no automated retention or permanent-deletion lifecycle exists
+
+> **⚠️ SEVERITY AND RATIONALE CORRECTED 2026-08-26, and the correction is the point.** An earlier
+> revision of this entry recorded `F-RET-001` as **P1 / WILLOW_NOW** on the grounds that
+> `app/privacy/page.tsx` and `app/terms/page.tsx` publicly promised a **30-day hard delete** and a
+> **90-day backup purge** the product did not perform. **That rationale was copied from the
+> 2026-07-30 audit register rather than re-derived at `6786b07b`, and it is false at this head.**
+> Those promises were retired by commit `0acc6773` ("align residency, retention, and commercial
+> claims with reality"). Writing an obsolete quotation into a limitation about documents asserting
+> what they cannot prove is the same defect this file exists to catch, committed in the entry that
+> closes it — recorded here rather than quietly fixed.
+
+| Field | Value |
+|---|---|
+| **Recorded** | 2026-07-30 (audit register `F-RET-001` / `HN-022`) · **severity and rationale re-derived 2026-08-26 at `6786b07b`** |
+| **Severity** | **P2 — OPEN.** Gate: **BEFORE_TEN_STUDIOS.** *(Was P1 / WILLOW_NOW. The downgrade is not a judgement that the gap shrank — it is that the **published-breach** driver no longer exists, so what remains is a capability gap, not a live false claim.)* |
+| **What the published policy says NOW** | The opposite of what this entry used to quote. `app/privacy/page.tsx`: *"We do not currently operate an automatic timed purge that permanently erases archived records or expires backup copies on a fixed schedule. Requests for permanent deletion are handled case by case through the process above."* `app/terms/page.tsx` §7.7: *"Client Data is then archived and removed from everyday use. We do not currently operate an automatic timed purge."* Both distinguish **archiving** from **permanent erasure** explicitly. **The documents are accurate about the absence.** |
+| **Guarded, not merely changed** | `tests/app/settings/data-truthfulness.test.ts` §6 pins the removal in both directions: the old phrases (`then hard-deleted from active systems`, `Backups are purged within`, `we will delete Client Data within 30 days`) must be **absent**, and the phrase `do not currently operate an automatic timed purge` must be **present** in both documents. Reflow-tolerant by design. So the retirement cannot silently regress. |
+| **A. THE IMPLEMENTATION GAP — real, and unchanged** | There is **no automated retention or purge lifecycle**: no purge job, no hard-delete path, no legal hold, no cross-system deletion. Re-derived 2026-08-26 from the repository: `vercel.json` registers exactly **three** crons (`materialize-recurring-breaks`, `calendar-reconcile`, `calendar-sync`) and `app/api/cron/` holds exactly **five** routes (those three plus `appointment-reminders`, `no-show-check`) — **none retention-related**. A search for `legal_hold` / `legalHold` / `retention_policy` / `hard_delete` / `purge` finds them only in the two policy documents and in two unrelated migrations (`0115`, `0125`). |
+| **B. THE PUBLISHED-BREACH CLAIM — WITHDRAWN** | There is no live timed-deletion commitment to breach. **Do not restore this framing** without re-reading both policy documents at the then-current head. |
+| **What IS still exposed, stated narrowly** | The policy says an archived record stays *"unless and until it is permanently deleted following a request we have reviewed and actioned."* **No implemented mechanism exists to action one.** Archiving stamps `deleted_at`; nothing erases a row or a storage object (see **L28**). So the process the policy describes can be *reviewed* but not *completed* in the product today. That becomes live on the **first permanent-deletion request or first offboarding**, not before — which is why the gate is BEFORE_TEN_STUDIOS rather than WILLOW_NOW. |
+| **Current mitigation** | The published wording is truthful about the absence, and requests route to a human at `privacy@hone.care` rather than to an automated path that does not exist. That makes the claim honest; it does not make the capability present. |
+| **Owner** | Sam |
+| **Next gate** | Sequenced **after** a complete export (**L29** — an owner must be able to take their data before anything deletes it) and **jointly with** offboarding, which is the process a retention lifecycle hangs off. Not started. |
+| **Blocks** | **Broader launch**, not Willow today. **This limitation remains OPEN. It is downgraded, not closed, and the implementation gap in row A is untouched by this reconciliation.** |
+
+## L28 — Treatment-image archive is soft-only and no storage reconciler exists
+
+| Field | Value |
+|---|---|
+| **Recorded** | 2026-07-30 (audit register `HN-023`) · **re-verified at `6786b07b` on 2026-08-26** |
+| **Severity** | **P2 — OPEN, partially mitigated.** |
+| **Impact** | Two halves, at different stages. **(a) Upload — MITIGATED.** `app/(app)/clients/[id]/images/actions.ts` removes the uploaded object when the metadata insert fails, and raises a **CRITICAL** `treatment_image_orphan_cleanup_failed` ops alert if that removal also fails. **(b) Archive — UNCHANGED.** `archive_treatment_image` (migration `0168`) is **soft-only**; its own source states *"Still SOFT only, no row and no storage object is deleted."* Bytes are never removed. **(c) No reconciler exists** — the only reconciling cron in `app/api/cron/` is `calendar-reconcile`, which is Google Calendar. Nothing sweeps orphaned storage objects. |
+| **Why the upload mitigation must not be deleted** | Image storage and PostgreSQL are **separate planes and cannot share a transaction**. Migration `0169`'s closure record says so explicitly: the compensating cleanup *"remains required, and must not be deleted on the grounds that the metadata write is now a command."* |
+| **Current mitigation** | Private `treatment-images` bucket, service-role-only access, short-TTL signed URLs, path/identity CHECKs, and an integrity trigger freezing identity columns after insert. Those bound **access**, not **lifecycle**. |
+| **Owner** | Sam |
+| **Next gate** | The byte-deletion path belongs to **L27**'s retention lifecycle, not to a standalone reconciler — a reconciler built first would still leave the published deletion commitment unmet. |
+| **Blocks** | Neither today. **OPEN.** |
+
+## L29 — `TRUTH-01B`: the studio data export is still partial; only its incompleteness is now declared
+
+| Field | Value |
+|---|---|
+| **Recorded** | 2026-08-26 (TRUTH-01A, PR #644, is production) |
+| **Severity** | **P2 — OPEN.** Downgraded from the P1 `F-DATA-001` recorded 2026-07-30, because the misrepresentation half is closed. |
+| **Impact** | Roughly **fifty-nine** studio-owned resources are **not** in the export. Each carries a ticket (`TRUTH-01B`, or `TRUTH-01C` for a small tail) and a tier in `lib/export/resource-registry.ts`. |
+| **What TRUTH-01A closed** | The **misrepresentation**, which was the severity driver. The registry is now the one place a disposition is decided; a missing decision is a **build failure**; and the Data settings page plus the in-ZIP manifest **render the pending list**, so an owner is told what the archive does not carry. |
+| **What TRUTH-01A explicitly did NOT do** | **Change the payload.** No new file, table or column; `tests/app/settings/data/export-emission-parity.test.ts` pins every header row against base `a1639a84` column-for-column. R3/R4/R5 — streaming, image binaries, a format-version bump — are deferred, so the whole ZIP is still built in server memory and returned base64 through a server action. |
+| **Recorded honestly rather than glossed** | TRUTH-01A's application-source reachability analyser was **withdrawn** as insufficiently robust and **nothing replaces it**. Pending entries therefore state that TRUTH-01A makes *no finding* about which code paths reach a table — neither claiming nor denying use. Surviving facts come from the database (e.g. `ON DELETE CASCADE` read from `pg_constraint`), not from reading application code. |
+| **Owner** | Sam |
+| **Next gate** | **TRUTH-01B**, which owns the large majority of the pending set and is the first slice that changes what an owner actually receives. In development; **no PR merged**. |
+| **Blocks** | **L27** — a complete export must exist before a deletion lifecycle can be honoured. **OPEN.** |
+
+## L30 — `HN-037`: canonical production documentation asserted facts it could not prove — **CLOSED by this reconciliation**
+
+| Field | Value |
+|---|---|
+| **Recorded** | 2026-07-30 (audit register `HN-037`) |
+| **Severity** | **P1 at the audit head.** Closed here. |
+| **Historical impact** | Four derived facts — hosted migration max, repo migration max, the next free number, and the runtime-bearing production SHA — were hand-copied as prose literals into five documents. Nothing failed when a copy diverged, so every copy rotted independently. The canonical set simultaneously claimed the production migration max was `0165`, `0163`, `0162`, `0160` and `0157` while production stood at `0185`; `current-state.md` carried **three different numbers in one table cell**. Separately, `current-state.md` pinned a production SHA fourteen merges old as current. |
+| **What closes it** | Two mechanisms, not one. **(1) The numbers were removed rather than corrected**: `current-state.md`, `capability-register.md` and `known-limitations.md` now state **no** migration number, deferring to `migration-state.json` (machine authority) and `migration-ledger.md` **§Current state** (the one prose authority). **(2) `tests/docs/canonical-production-facts.test.ts` fails the build** if a current-max or next-free assertion reappears in those documents, if the ledger's current block disagrees with the canonical record, if `current-state.md` pins a SHA that is not the production head, if a SHA written there does not resolve to a real commit, if an open PR is described as shipped, or if the document cites itself as authority. Each rule carries a **negative control** that feeds it the exact shape it exists to catch. |
+| **What it does NOT close** | **Stale current-position claims OUTSIDE the five canonical documents remain**, and are deliberately out of scope here — see the note below this table. |
+| **Owner** | Sam |
+| **Next gate** | **None for the canonical five — CLOSED.** The external sweep is separate work. |
+| **Blocks** | **Nothing — closed.** |
+
+### Stale migration claims outside the canonical five — surveyed, NOT fixed here
+
+A repository-wide sweep on 2026-08-26, using the guard's own patterns, found **current-position
+migration claims in files outside this reconciliation's authorized surface**. They are recorded
+so the next reader does not mistake this closure for a repository-wide one:
+
+| File | Claims a current max of |
+|---|---|
+| `docs/09_DATABASE_AND_RLS.md` | `0165`, `0157`, `0160`, `0162`, `0163`, `0164`; next free `0166` |
+| `docs/14_AI_HANDOFF.md` | `0161`, `0105` |
+| `docs/12_SMOKE_TESTS.md` | `0157`, `0162`, `0163`, `0164` |
+| `docs/13_BACKLOG_AND_DECISIONS.md` | `0157`, `0105`; next free `0173` |
+| `docs/10_DEPLOYMENT_AND_ENV.md` | `0157` |
+| `docs/16_LIVE_PAYMENTS_READINESS.md` | `0101`, `0112` |
+| `docs/21_SUPERVISED_PILOT_CHECKLIST.md` | `0113` |
+| `docs/decisions/clinical-finalization-retired.md` | `0159` |
+| `docs/integrations/google-calendar-*.md` | `0157`, `0131` |
+| `docs/roadmap/`, `docs/reviews/`, `docs/runbooks/`, `docs/audits/` | assorted historical maxima |
+
+**None of them creates a hard contradiction with the canonical five**, which is why scope was not
+widened: no canonical document cites any of these files as authority for migration state. The
+only cross-reference is `current-state.md` → `docs/14_AI_HANDOFF.md`, and it is cited for *dated
+chronology*, explicitly not for current state. Several of these are legitimately **historical
+context** (a dated audit record, a frozen apply note); the rest are genuine stale current claims
+belonging to their own lane.
+
+---
+
+## L31 — the onboarding celebration's client state is not scoped to the selected studio
+
+*Recorded in production by #658 as **L25**. Renumbered to **L31** here, because this reconciliation had independently issued L25 to the durable waitlist and an ordinary merge produced two sections with the same identifier. The body below is unchanged.*
+
+
+| Field | Value |
+|---|---|
+| **Impact** | For a **multi-studio owner only**: the one-time setup celebration (confetti) may be silently suppressed for studio B in a dashboard tab that was mounted while studio A was selected. Cosmetic. The celebration is an animation; no setup step, stamp, or record is affected. |
+| **Mechanism** | `lib/onboarding/celebration-machine.ts` keeps `stampConfirmed`, `closed` and `live` for the mounted wizard, and neither `OnboardingModel` nor the machine carries a studio identity. Switching studio in another tab rewrites the shared httpOnly `hone_selected_studio` cookie; a subsequent `dismissOnboardingAction` in the stale tab resolves the NEW studio server-side and revalidates `/dashboard`, so the reducer can receive studio B's `shouldCelebrate=true` model while its own state still describes studio A. Studio A's `stampConfirmed` then suppresses studio B's still-owed celebration. |
+| **Reproduction** | Owner active in two studios, both onboarding-v2 enabled, studio B's `celebrated_at` still null. Tab 1: dashboard for studio A, complete setup so the celebration stamps. Tab 2: *Switch studio* (`/no-access?reason=multiple-studios`) to studio B. Tab 1, without reloading: close the wizard, then reopen it from the pinned card. Studio B's celebration does not play. Reloading tab 1 clears it. |
+| **Why it is not a tenant-isolation defect** | No data crosses tenants. Studio B's model is fetched under studio B's own authorization, and every server action (`markCelebrationShownAction`, `dismissOnboardingAction`, `completeOnboardingAction`) resolves its own studio via `requireOnboardingOwner()` → `getCurrentPractitionerWithStudio()`, never from client state. No write is directed at the wrong studio; the stamp remains a stamp-once CAS on the correct row. No authorization decision reads this state. The only casualty is one animation in one stale tab. |
+| **Current mitigation** | A reload — or any fresh mount — starts the machine empty and the server model is authoritative again. Single-studio owners, which is every pilot studio today, cannot reach it: the *Switch studio* affordance renders only for 2+ active memberships (`app/(app)/layout.tsx`). |
+| **Owner** | Sam (engineering) |
+| **Next gate** | Key or reset the celebration machine when the model's studio changes. Cheapest honest fix is to carry a studio identifier on `OnboardingModel` and reset state when it differs; keying `<OnboardingSurface>` on the studio id would also do it. Raised by review on PR #658 and deliberately deferred there under the P3 release policy. |
+| **Blocks** | Neither. |
+
+---
+
+## L32 — the client profile fails to open for a client with a long charted history
+
+| Field | Value |
+|---|---|
+| **Severity** | **P1 — OPEN.** Total loss of function on the core clinical surface, for a growing subset of clients. |
+| **Impact** | A practitioner cannot open the profile of a long-standing client **at all**. The Overview tab is the default, so there is no way to avoid it from the UI, and there is no user-side workaround. It strikes the longest-standing clients — the ones with the most history to lose access to — and it only ever gets worse, because every charted session adds blocks. |
+| **Mechanism** | `getSessionBlockAreasByBlockIds` (`lib/supabase/queries.ts`) de-duplicates its block ids but **never chunks** them: every id goes into a single PostgREST `.in("session_block_id", …)` filter, so the request grows with the client's history against a fixed transport limit. PostgREST returns **HTTP 414**, the helper throws `Failed to load block areas: …`, and `app/(app)/clients/[id]/page.tsx` has no `try`/`catch` — so it escapes to the app-group error boundary. This is the same `attachStructuredAreas` throw recorded as a deliberate non-change under CLIN-01-B; what is new is the evidence that it is **reachable in ordinary use**. |
+| **Measured threshold** | **204 block ids pass, 206 return 414** — a ceiling of roughly **205 unique `session_blocks`**, measured against the real query shape (`select`, `in(...)`, `studio_id`, two `order` params). Consistent with an 8 KB request line at ~37 chars per id. |
+| **Reachability** | The id list is the live blocks across the **200 most recent sessions** (the intelligence read's window; the ≤25-session summary set de-duplicates into it). At 2 blocks charted per visit that is ~**103 sessions**; at 3, ~**69**. Electrolysis is a multi-year, fortnightly-to-weekly course of treatment and multi-area visits are ordinary, so this is not an edge case. The 200-session cap looks like a bound on the id count but is not one — blocks per session is unbounded. |
+| **How it was found** | While building a measurement fixture for PERF-02C (#659). It reproduces identically on the baseline that preceded #659 and on #659 itself, so it is **not** a PERF-02C regression and #659 neither causes nor fixes it. |
+| **Not a tenancy defect** | The `studio_id` defence-in-depth filter and RLS are untouched by the failure; the request is refused at the transport layer before any row is returned. |
+| **Owner** | Sam (engineering) |
+| **Next gate** | Chunk the id list inside that one function and merge the results — batch conservatively (~100), issue batches with `Promise.all` so a chunked read does not reintroduce the serial round trips #659 removed, and keep the `studio_id` filter on **every** batch or it becomes a tenancy defect. Whether an area-read failure should be able to fail the whole page, rather than degrading to an explicit unavailable state the way the CLIN-01-B reads do, is a separate design question and should not be folded into the chunking fix. |
+| **Blocks** | **Neither** for the pilot — no pilot client is near the threshold today — but it blocks any studio migrating a long client history. |

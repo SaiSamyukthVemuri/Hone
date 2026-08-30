@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import Link from "next/link";
 import {
   PendingContainerLink,
@@ -18,8 +19,6 @@ import {
   getActiveServices,
   getAvailabilityDefaults,
 } from "@/lib/booking/queries";
-import { computeBookingReadiness } from "@/lib/booking/readiness";
-import { BookingSetupCard } from "./BookingSetupCard";
 import { getLatestPinnedNoteByClient } from "@/lib/client-pinned-notes/queries";
 import {
   canNavigateNext,
@@ -36,8 +35,6 @@ import {
 } from "@/lib/dashboard/day-navigation";
 import { resolveDayNextAction } from "@/lib/dashboard/day-next-action";
 import { getClientBirthdaysForMonth } from "@/lib/clients/birthday-queries";
-import { resolveBirthdayColor } from "@/lib/birthday-colors";
-import type { BirthdayReminderColor } from "@/lib/types/database";
 import {
   addDays,
   formatTimeForStudio,
@@ -48,7 +45,10 @@ import {
   type TimeFormat,
 } from "@/lib/booking/tz";
 import { FormattedToday } from "@/components/formatted-date-time";
-import { PracticeSnapshot } from "./practice-snapshot";
+import {
+  SecondaryStack,
+  SecondaryStackSkeleton,
+} from "./secondary-stack";
 import { getPracticeDashboardMetrics } from "@/lib/dashboard/practice-metrics";
 import {
   isReportingPeriod,
@@ -101,12 +101,7 @@ import {
 import { CardOnFilePill, CurrentPill } from "./today-status-pills";
 import { TodayPortalLinkButton } from "./TodayPortalLinkButton";
 import { getExpiringSterileItems } from "@/lib/record-keeping/queries";
-import { DashboardTodoList } from "./todo-list";
-import { buildDashboardTodo } from "@/lib/dashboard/todo-model";
-import {
-  buildGettingStarted,
-  getGettingStartedSignals,
-} from "@/lib/onboarding/getting-started";
+import { getGettingStartedSignals } from "@/lib/onboarding/getting-started";
 import { buildOnboardingModel } from "@/lib/onboarding/steps";
 import { getOnboardingSignals } from "@/lib/onboarding/signals";
 import { getOnboardingRow, toPersisted } from "@/lib/onboarding/state";
@@ -120,7 +115,6 @@ import type {
   Service,
 } from "@/lib/types/database";
 import { DashboardGreeting } from "./DashboardGreeting";
-import { getRequiredAppOrigin } from "@/lib/app-origin";
 
 // ---------------------------------------------------------------------------
 // Color convention (Chloe P0 feedback). Kept here as the canonical note
@@ -237,6 +231,67 @@ export default async function DashboardPage({
   // `start + 24h`: across a DST transition a Toronto day is 23 or 25 hours, and
   // the short one would silently drop a late-evening appointment.
   const selectedDayEndLocal = addDays(selectedDayLocal, 1);
+  // PERF-01B. THE ROSTER MUST NOT WAIT FOR THE BUSINESS.
+  //
+  // Everything started here depends on the STUDIO and the CLOCK and nothing
+  // else — not on the appointment query below, and not on each other. Every one
+  // was previously an `await` placed AFTER the roster, so the practitioner's
+  // day sat behind six serial round-trip waves that had no bearing on it:
+  // the attention sources, practice metrics, the attention list, the
+  // missing-records assistant, expiring supplies, and getting-started.
+  //
+  // They are STARTED here and AWAITED where their value is first read. Nothing
+  // about what they return, or who may read them, changes.
+  //
+  // `settleLater` is not decoration. A promise that rejects while nothing is
+  // awaiting it is an unhandled rejection in Node, and the window between
+  // starting these and awaiting them spans the roster query. A no-op catch
+  // marks the rejection handled for that window WITHOUT consuming it — the
+  // real `await` below still throws, and still reaches the route's error
+  // boundary exactly as it did when these were inline awaits.
+  const settleLater = <T,>(promise: Promise<T>): Promise<T> => {
+    promise.catch(() => undefined);
+    return promise;
+  };
+  const attentionSourcesPromise = settleLater(
+    Promise.all([
+      countIntakesAwaitingReview(supabase, studio.id),
+      countActiveServices(studio.id),
+      isOwner ? loadPaymentStatus(supabase, studio.id) : Promise.resolve(null),
+      // Birthday reminders: month-of-year only, derived from
+      // clients.date_of_birth. Practitioner-facing only. Never sent as
+      // email/SMS or exposed to client/public surfaces.
+      getClientBirthdaysForMonth(studio.id, parseInt(todayLocal.slice(5, 7), 10)),
+      // Booking setup readiness (owner-only card). Loaded for everyone since
+      // the studio_availability_default table is RLS-scoped to the studio
+      // and the read is cheap (<=7 rows). The readiness compute + render is
+      // gated on isOwner below.
+      isOwner
+        ? getAvailabilityDefaults(studio.id)
+        : Promise.resolve(
+            [] as Awaited<ReturnType<typeof getAvailabilityDefaults>>,
+          ),
+    ] as const),
+  );
+  const practiceMetricsPromise = settleLater(
+    getPracticeDashboardMetrics(studio.id, studio.timezone, period),
+  );
+  const clientsNeedingAttentionPromise = settleLater(
+    getClientsNeedingAttention(studio.id),
+  );
+  const followUpAssistantPromise = settleLater(
+    getMissingRecordsAssistant(studio.id, renderNow.toISOString()),
+  );
+  const expiringSuppliesPromise = settleLater(
+    getExpiringSterileItems(studio.id, todayLocal),
+  );
+  const gettingStartedSignalsPromise = settleLater(
+    getGettingStartedSignals(
+      { id: studio.id, name: studio.name, slug: studio.slug },
+      practitioner.display_name?.trim() || practitioner.email,
+    ),
+  );
+
   const startUtc = utcInstantFromLocal(selectedDayLocal, "00:00", studio.timezone);
   const endUtc = utcInstantFromLocal(selectedDayEndLocal, "00:00", studio.timezone);
 
@@ -339,60 +394,7 @@ export default async function DashboardPage({
   // kept fetched in parallel because future per-practitioner annotations
   // may surface here without paying an extra round-trip.
 
-  // "Needs attention" sources. Each is independently safe to fail; if a
-  // single signal can't be fetched we render the rest. All checks here
-  // are bounded SELECTs on tables we already have RLS on.
-  const [
-    intakesAwaitingReviewCount,
-    activeServicesCount,
-    paymentStatus,
-    birthdaysThisMonth,
-    availabilityDefaults,
-  ] = await Promise.all([
-    countIntakesAwaitingReview(supabase, studio.id),
-    countActiveServices(studio.id),
-    isOwner ? loadPaymentStatus(supabase, studio.id) : Promise.resolve(null),
-    // Birthday reminders: month-of-year only, derived from
-    // clients.date_of_birth. Practitioner-facing only. Never sent as
-    // email/SMS or exposed to client/public surfaces.
-    getClientBirthdaysForMonth(studio.id, parseInt(todayLocal.slice(5, 7), 10)),
-    // Booking setup readiness (owner-only card). Loaded for everyone since
-    // the studio_availability_default table is RLS-scoped to the studio
-    // and the read is cheap (≤7 rows). The readiness compute + render is
-    // gated on isOwner below.
-    isOwner
-      ? getAvailabilityDefaults(studio.id)
-      : Promise.resolve(
-          [] as Awaited<ReturnType<typeof getAvailabilityDefaults>>,
-        ),
-  ]);
 
-  // Booking readiness for the owner card. Derived only; no schema flag.
-  // The card itself is owner-only (rendered below). Public booking is
-  // soft-gated independently in app/book/[slug]/page.tsx.
-  const openAvailabilityDaysCount = isOwner
-    ? availabilityDefaults.filter(
-        (d) =>
-          d.is_open === true &&
-          typeof d.open_time === "string" &&
-          typeof d.close_time === "string",
-      ).length
-    : 0;
-  const bookingReadiness = isOwner
-    ? computeBookingReadiness({
-        studio,
-        activeServicesCount,
-        openAvailabilityDaysCount,
-        appOrigin: getRequiredAppOrigin(),
-      })
-    : null;
-
-  // PR #208: read-only practice metrics for the selected period.
-  const practiceMetrics = await getPracticeDashboardMetrics(
-    studio.id,
-    studio.timezone,
-    period,
-  );
 
   // PR #212: compact Before-today previews for the Today roster.
   // THREE batched reads for all of today's clients (never per-row);
@@ -400,6 +402,36 @@ export default async function DashboardPage({
   // PR #236: linked-session facts for the Today next actions. Two
   // batched reads (same shape as the charted-24h loader); no N+1.
   const apptIds = dayAppointments.map((a) => a.id);
+
+  // PERF-01B. These three need the ROSTER and nothing else — not each other,
+  // and not the linked-session chain immediately below. They used to be three
+  // separate awaits placed after that chain, so the card's own preparation
+  // facts arrived four waves deep.
+  const paymentStatesPromise = settleLater(
+    getAppointmentPaymentStates(studio.id, apptIds, studio.timezone),
+  );
+  const beforeTodayPreviewsPromise = settleLater(
+    viewingToday
+      ? getBeforeTodayPreviews(
+          studio.id,
+          visibleAppointments.map((a) => a.client_id),
+        )
+      : Promise.resolve(new Map<string, BeforeTodayPreview>()),
+  );
+  const prepLoadsPromise = settleLater(
+    loadLastChartedTreatmentsForClients({
+      studioId: studio.id,
+      requests: visibleAppointments.map((a) => ({
+        // The APPOINTMENT is the unit of identity, not the client. A client with
+        // two bookings in a day gets two requests with two different boundaries
+        // and must get back two different answers.
+        requestKey: a.id,
+        clientId: a.client_id,
+        before: a.starts_at,
+        excludeAppointmentId: a.id,
+      })),
+    }),
+  );
   const sessionByAppointment = new Map<
     string,
     { sessionId: string; hasChartedArea: boolean }
@@ -438,7 +470,7 @@ export default async function DashboardPage({
 
   // Quick checkout (Chloe): one bounded, tenant-scoped batch loader for the
   // visible appointments' payment state, no per-row query, no full history.
-  const paymentStates = await getAppointmentPaymentStates(studio.id, apptIds, studio.timezone);
+  const paymentStates = await paymentStatesPromise;
 
   // THE LOAD-BEARING RULE OF THIS CHANGE.
   //
@@ -455,12 +487,7 @@ export default async function DashboardPage({
   //
   // Skipping is also strictly cheaper: it removes six batched reads, the
   // largest read on the page.
-  const beforeTodayPreviews = viewingToday
-    ? await getBeforeTodayPreviews(
-        studio.id,
-        visibleAppointments.map((a) => a.client_id),
-      )
-    : new Map<string, BeforeTodayPreview>();
+  const beforeTodayPreviews = await beforeTodayPreviewsPromise;
 
   // Dashboard V2 Part 2A: the FULL previous treatment for every returning
   // client of the day, from the SAME #517 authority the appointment page uses.
@@ -487,18 +514,7 @@ export default async function DashboardPage({
   // One batch is ONE DAY. The shared row budget is spent between the loosest
   // and tightest `before` in the batch, so widening a batch across several days
   // would let one day's rows evict another's and reappear as a false absence.
-  const prepLoads = await loadLastChartedTreatmentsForClients({
-    studioId: studio.id,
-    requests: visibleAppointments.map((a) => ({
-      // The APPOINTMENT is the unit of identity, not the client. A client with
-      // two bookings in a day gets two requests with two different boundaries
-      // and must get back two different answers.
-      requestKey: a.id,
-      clientId: a.client_id,
-      before: a.starts_at,
-      excludeAppointmentId: a.id,
-    })),
-  });
+  const prepLoads = await prepLoadsPromise;
 
   // Pure fold into the shared model, no I/O. `prepLoads` is ALREADY keyed by
   // appointment id (the requestKey passed above), so this reads its own key and
@@ -589,62 +605,8 @@ export default async function DashboardPage({
   const todayWorkflow = buildTodayWorkflow(todayWorkflowInputs);
   const workflowByAppointment = todayWorkflowByAppointment(todayWorkflow);
 
-  // PR #214: recorded-history attention list (two batched reads over
-  // the 200 most recent sessions; unique clients counted once).
-  const clientsNeedingAttention = await getClientsNeedingAttention(studio.id);
 
-  // PR #249: Missing Records / Follow-up Assistant V1. Rules-based only
-  // (no AI, no model, no provider, no action): bounded, studio-scoped,
-  // RLS-backed reads over recent sessions and completed appointments turn
-  // recorded workflow gaps (charting, aftercare, probe lot, intake,
-  // for-next-visit follow-ups) into a deterministic, link-only list. The
-  // window is computed once here so the helper stays clock-free.
-  const followUpAssistant = await getMissingRecordsAssistant(
-    studio.id,
-    renderNow.toISOString(),
-  );
 
-  // PR #316: sterile items / probe lots expired or expiring within 30 days,
-  // studio-scoped, for the on-dashboard "Supplies expiring" attention card.
-  const expiringSupplies = await getExpiringSterileItems(studio.id, todayLocal);
-
-  // Dashboard V2 Part 2B, the ONE To-do model.
-  //
-  // Everything below was already loaded for the four sub-sections this
-  // replaces. `buildDashboardTodo` is PURE: no client, no query, no clock, no
-  // model. It normalizes the four domains into one row grammar
-  // (subject · reason · action), dedupes on domain identity, and orders by the
-  // documented TODO_PRIORITY. Adding it costs ZERO additional round-trips.
-  const dashboardTodo = buildDashboardTodo({
-    assistant: followUpAssistant,
-    attention: clientsNeedingAttention,
-    supplies: expiringSupplies,
-    metrics: practiceMetrics.actions,
-    studio: {
-      isOwner,
-      intakesAwaitingReviewCount,
-      activeServicesCount,
-      paymentStatus,
-    },
-    todayLocal,
-  });
-
-  // PR #215: Getting Started progress for the dashboard card.
-  const gettingStarted = buildGettingStarted(
-    await getGettingStartedSignals(
-      { id: studio.id, name: studio.name, slug: studio.slug },
-      practitioner.display_name?.trim() || practitioner.email,
-    ),
-  );
-
-  // PR #238 (Chloe pilot): the dashboard reads as a daily worklist.
-  // Today moved to the top (it sat below the snapshot, attention,
-  // booking, and birthday cards); once every auto-detected setup
-  // step is done, the Getting started card collapses to a one-line
-  // footer link so finished setup stops occupying the prime spot.
-  const setupComplete =
-    gettingStarted.autoTotal > 0 &&
-    gettingStarted.autoDone === gettingStarted.autoTotal;
 
   // Onboarding v2 (guided welcome wizard + pinned setup-progress card). Strictly
   // opt-in per studio and owner-only: when the flag is off, NONE of this runs
@@ -857,149 +819,57 @@ export default async function DashboardPage({
             The daily workspace should not ask a practitioner to email the
             founder; that was pilot tooling, not product. */}
       </section>
+      {/* PERF-01C: the secondary stack streams; the roster above does not
+          wait for it.
 
+          Everything below Today — To do, Birthdays, the practice snapshot and
+          the setup cards — reads studio paperwork the day's roster never
+          consumes. Before this boundary the page awaited all six of those
+          reads before emitting a single byte, so a practitioner waited on
+          expiring-supply counts and a setup fraction to find out who was
+          coming in.
 
-      {/* ===================================================================
-          TO DO: Dashboard V2 Part 2B.
-          ===================================================================
-          Part 1 put ONE heading over four independent products: "Action
-          needed", "Follow-up assistant", "Supplies expiring" and "Needs
-          attention". They still had four loaders, four row grammars, four
-          empty states, and they asked for the same unresolved work more than
-          once: most visibly "Aftercare not marked", which arrived both as a
-          per-session row from the assistant and as a count tile computed over
-          a different window in a different unit.
+          The promises are STARTED ABOVE, before the roster query, and are
+          passed in here. That direction matters: creating them inside the
+          child would delay them until this component rendered, which is worse
+          than the serial code PERF-01B replaced. This boundary changes WHEN
+          the result is awaited, never when the read begins.
 
-          Part 2B replaces the four visible sub-sections with ONE ordered list
-          built from ONE normalized model:
+          The fallback is wordless by contract. Every card in this stack states
+          something about the studio — a To-do list, appointment counts,
+          service value, a setup fraction — and none of it is known yet. See
+          SecondaryStackSkeleton. */}
+      {/* KEYED, and the key is load-bearing.
 
-              domain facts → lib/dashboard/todo-model.ts → one To-do list
+          Day and period navigation are QUERY-ONLY: the segment does not change,
+          so Next drives them as a React transition. When a transition renders a
+          tree that suspends, React deliberately keeps the CURRENT screen up
+          rather than showing a fallback — which, with an unkeyed boundary here,
+          held the whole navigation until the studio paperwork resolved and put
+          the roster back behind exactly the reads this boundary removed it
+          from. e2e/perceived-speed.spec.ts caught it: the day never arrived.
 
-          The domain loaders below are deliberately UNCHANGED: rewriting them
-          would expand scope, and NO query was added: `buildDashboardTodo` is
-          pure and consumes results the page already had. Deduplication is on
-          domain identity (`kind:subjectId`), never on rendered text; ordering
-          is documented in TODO_PRIORITY. Every action that worked before is
-          carried through unchanged, including the assistant's deep links to a
-          specific session or appointment. */}
-      <section className="flex flex-col gap-3">
-        <h2 className="text-lg font-medium">To do</h2>
-        <DashboardTodoList todo={dashboardTodo} />
-        {/* DASH-TRUTH-04: the quiet pilot feedback footer is gone from To do
-            as well. See the note at the foot of this file. */}
-      </section>
-
-      {/* Relationship context, BELOW the operational work, never above it. */}
-      <BirthdaysThisMonth
-        birthdays={birthdaysThisMonth}
-        today={todayLocal}
-        accentColor={studio.birthday_reminder_color}
-      />
-
-      {/* ===================================================================
-          Secondary: reporting and setup, below the operational hierarchy.
-          ===================================================================
-          PR #208's practice snapshot (period filter + appointment counts +
-          service value + test-mode payment posture). It is REPORTING, so it is
-          demoted below Today / To do / Birthdays rather than removed: the
-          owner-only Financials route that will eventually own service value and
-          payment posture does not exist yet, and deleting the only surface that
-          shows them before their replacement exists would destroy working
-          functionality. Nothing here was recomputed, renamed or duplicated,
-          the only change to its numbers in this PR is the Sunday week
-          boundary correction in resolvePeriodRange. */}
-      <PracticeSnapshot
-        metrics={practiceMetrics}
-        livemode={inferStripeLivemode()}
-        selectedDay={selectedDayLocal}
-        todayLocal={todayLocal}
-      />
-
-      {/* OWNER-CAP Slice 1: the owner's capacity briefing. A LINK, not a card:
-          the figures on it are studio-wide practice analytics an ordinary
-          practitioner must not be shown, and the page refuses them server-side
-          before issuing a single analytics read. Rendering it here keeps the
-          surface reachable without another nav tab. */}
-      {isOwner && (
-        <Link
-          href="/dashboard/capacity"
-          className="flex items-baseline justify-between gap-3 rounded-lg border border-line px-4 py-3 text-sm hover:bg-surface-sunken"
-        >
-          <span className="font-medium">Practice capacity</span>
-          <span className="text-fg-muted">
-            Who is in treatment, and who has no treatment booked &rarr;
-          </span>
-        </Link>
-      )}
-
-      {/* CHLOE D2, setup that is DONE is not daily work.
-          ------------------------------------------------------------------
-          This card used to render in both states. Once every required item was
-          satisfied it became a permanent "Booking page ready / Your public
-          booking page is live" banner plus a column of ticks: a congratulation
-          occupying the daily workspace forever.
-
-          The gate is `readiness.status`, the EXISTING derived authority
-          (lib/booking/readiness.ts). No new flag, no new column, no new query:
-          `computeBookingReadiness` is already computed above for this card, and
-          "ready" already means "every required item is satisfied". The card
-          itself also returns null in that state, so the contract holds for any
-          future caller and not only for this call site. */}
-      {isOwner && bookingReadiness && bookingReadiness.status !== "ready" && (
-        <BookingSetupCard readiness={bookingReadiness} />
-      )}
-
-      {/* PR #215: setup/readiness checklist entry point. A normal
-          link card, never a blocking modal. PR #238: shown only while
-          auto-detected steps remain; the full checklist always lives on
-          /getting-started. Demoted out of the operational flow: setup is not
-          daily work. */}
-      {!onboardingV2On && !setupComplete && (
-        <Link
-          href="/getting-started"
-          className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-neutral-200 px-4 py-3 hover:border-neutral-400 dark:border-neutral-800 dark:hover:border-neutral-600"
-        >
-          <span className="text-sm font-medium">Getting started</span>
-          <span className="text-xs text-neutral-500">
-            {gettingStarted.autoDone} of {gettingStarted.autoTotal} steps
-            complete →
-          </span>
-        </Link>
-      )}
-
-      {/* CHLOE D3, a finished checklist is not a dashboard card.
-          ------------------------------------------------------------------
-          PR #238 collapsed completed setup into a quiet footer reading "Setup
-          complete. Getting started checklist →". Chloe's report is that the
-          Dashboard says setup is complete AND still offers her the setup
-          checklist; the footer is that contradiction in one line. When
-          `setupComplete` is true the Dashboard now renders NOTHING here.
-
-          Getting Started is not deleted and is not harder to find on purpose:
-          /getting-started is a permanent route and is linked from the account
-          menu (app/(app)/AccountMenu.tsx) and the mobile menu
-          (app/(app)/MobileMenu.tsx). It is available deliberately rather than
-          presented daily.
-
-          The INCOMPLETE branch above is untouched: a studio that still has
-          auto-detected steps outstanding keeps its progress card, so new-studio
-          onboarding is unaffected. Onboarding v2 already hides its own pinned
-          card once `model.isComplete` (see OnboardingSurface), so both systems
-          now agree: no completed-setup card on the daily Dashboard.
-
-          CHLOE D4, the "Pilot learning" card ("…Send it to Sam", "Send
-          feedback", "Know another electrologist?") was PR #250 pilot tooling
-          and no longer belongs in a practitioner's daily workspace. It was
-          removed earlier and its component file deleted.
-
-          DASH-TRUTH-04 finishes the job: the two quiet <PilotFeedbackPrompt>
-          footers that survived under Today and To do are now gone too. The
-          daily product no longer routes practitioner feedback directly to Sam.
-          The PilotFeedbackPrompt component and the shared
-          buildPilotFeedbackMailto helper are deliberately NOT deleted: this
-          requirement is Dashboard-specific, and a census found no other live
-          consumer to break, so removing the shared helper would be a wider
-          decision than this tranche was asked to make. */}
+          Keying the boundary on the values that change what it renders makes
+          React treat each day/period as a NEW boundary, so it shows the
+          fallback and commits the roster immediately. */}
+      <Suspense
+        key={`${selectedDayLocal}:${period}`}
+        fallback={<SecondaryStackSkeleton />}
+      >
+        <SecondaryStack
+          attentionSources={attentionSourcesPromise}
+          practiceMetrics={practiceMetricsPromise}
+          clientsNeedingAttention={clientsNeedingAttentionPromise}
+          followUpAssistant={followUpAssistantPromise}
+          expiringSupplies={expiringSuppliesPromise}
+          gettingStartedSignals={gettingStartedSignalsPromise}
+          studio={studio}
+          isOwner={isOwner}
+          onboardingV2On={onboardingV2On}
+          todayLocal={todayLocal}
+          selectedDayLocal={selectedDayLocal}
+        />
+      </Suspense>
     </div>
   );
 }
@@ -1180,7 +1050,7 @@ function AppointmentRow({
           nested <button> are still invalid content for <a>, and native anchor
           activation is not a React synthetic event. So the disclosure is
           HOISTED OUT of the link instead, and sits directly beneath it in the
-          same text column (pl-[4.5rem] = the w-14 time cell + the gap-4), which
+          same text column (pl-24 = the w-20 time cell + the gap-4), which
           is where it already appeared. The row body still opens the
           appointment; the disclosure is simply no longer part of it. */}
       <div className="flex min-w-0 flex-1 basis-64 flex-col">
@@ -1202,7 +1072,7 @@ function AppointmentRow({
           pendingLabel="Opening appointment…"
           className="flex min-w-0 gap-4"
         >
-          <div className="w-14 flex-none text-sm font-medium tabular-nums text-neutral-700 dark:text-neutral-300">
+          <div className="w-20 flex-none text-sm font-medium tabular-nums text-neutral-700 dark:text-neutral-300">
             {time}
           </div>
           <div className="min-w-0 flex-1">
@@ -1228,7 +1098,7 @@ function AppointmentRow({
                 </span>
               )}
             </div>
-            <div className="mt-0.5 truncate text-xs text-neutral-500">
+            <div className="mt-0.5 break-words text-xs text-neutral-500">
               {serviceName && <span>{serviceName}</span>}
               {modality && <span>{serviceName ? " · " : ""}{modality}</span>}
               <span>
@@ -1419,7 +1289,7 @@ function AppointmentRow({
             the narrative to survive both "nothing charted" and a failed block
             read, so a note-only visit still reaches her. */}
         {!workflow && prepSummary.remember && (
-          <div className="pl-[4.5rem] text-xs">
+          <div className="pl-24 text-xs">
             <span
               data-testid="dashboard-prep-remember"
               className="whitespace-pre-wrap break-words text-blue-900 dark:text-blue-200"
@@ -1430,7 +1300,7 @@ function AppointmentRow({
           </div>
         )}
         {(prepSummary.hasTreatment || prepSummary.unavailable) && (
-          <div className="pl-[4.5rem] text-xs">
+          <div className="pl-24 text-xs">
             <DashboardTreatmentMemory
               appointmentId={appt.id}
               clientId={appt.client_id}
@@ -1448,7 +1318,7 @@ function AppointmentRow({
           `gap-2` + `self-center`: on a phone this column wraps onto its own
           full-width line, where centring it against a tall text column opened
           dead space above and below with nothing in it. */}
-      <div className="flex flex-col items-end gap-1 self-start">
+      <div className="flex w-full flex-col items-start gap-1 self-start pl-24 sm:w-auto sm:items-end sm:pl-0">
         {/* Quick checkout (Chloe): take payment from the roster without opening
             charting. Paid/Processing/Refunded show a status badge instead. */}
         <AppointmentCheckoutCell
@@ -1487,7 +1357,7 @@ function AppointmentRow({
             each item is quiet, borderless, and never competes with the resolved
             primary action or the checkout cell above. Every item here is a
             SIBLING of the row-body link, never nested inside it. */}
-        <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1">
+        <div className="flex flex-wrap items-center justify-start gap-x-3 gap-y-1 sm:justify-end">
           {/* Chloe: consultation notes in ONE TAP from the Dashboard. It
               NAVIGATES to the canonical practitioner writer
               (/clients/<id>?tab=consultation, client_clinical_notes) exactly as
@@ -1499,7 +1369,7 @@ function AppointmentRow({
             href={`/clients/${appt.client_id}?tab=consultation`}
             data-testid="today-consultation-notes"
             pendingLabel="Opening client…"
-            className="inline-flex min-h-[44px] items-center rounded-md px-3 py-1.5 text-right text-xs font-medium text-neutral-600 underline-offset-2 hover:text-neutral-900 hover:underline dark:text-neutral-400 dark:hover:text-neutral-100"
+            className="inline-flex min-h-[44px] items-center rounded-md px-0 py-1.5 text-xs font-medium text-neutral-600 sm:px-3 underline-offset-2 hover:text-neutral-900 hover:underline dark:text-neutral-400 dark:hover:text-neutral-100"
           >
             {isConsultationVisit
               ? "Start consultation notes"
@@ -1510,7 +1380,7 @@ function AppointmentRow({
               href={intakeAction.href}
               data-testid="today-review-intake"
               pendingLabel="Opening intake…"
-              className="inline-flex min-h-[44px] items-center rounded-md px-3 py-1.5 text-right text-xs font-medium text-neutral-600 underline-offset-2 hover:text-neutral-900 hover:underline dark:text-neutral-400 dark:hover:text-neutral-100"
+              className="inline-flex min-h-[44px] items-center rounded-md px-0 py-1.5 text-xs font-medium text-neutral-600 sm:px-3 underline-offset-2 hover:text-neutral-900 hover:underline dark:text-neutral-400 dark:hover:text-neutral-100"
             >
               {intakeAction.label}
             </PendingLink>
@@ -1751,85 +1621,4 @@ async function loadPaymentStatus(
     onboardingCompleted: row.onboarding_completed_at != null,
     payoutsEnabled: row.payouts_enabled === true,
   };
-}
-
-// Birthdays this month: practitioner-facing only. Renders nothing when
-// the studio has no clients with a birthday in the current month so the
-// dashboard stays quiet. Each row links to the client profile so the
-// practitioner can pull up context before wishing them a happy birth
-// month.
-//
-// Never sent as email/SMS. Never exposed to client/public surfaces.
-function BirthdaysThisMonth({
-  birthdays,
-  today,
-  accentColor,
-}: {
-  birthdays: ReadonlyArray<{ id: string; name: string; month: number; day: number }>;
-  // Studio-local YYYY-MM-DD for the "today" highlight.
-  today: string;
-  // Studio-chosen accent (migration 0040). Never red/rose, that's
-  // reserved for allergies/cautions. Falls back to purple if unset.
-  accentColor: BirthdayReminderColor;
-}) {
-  if (birthdays.length === 0) return null;
-
-  const todayDay = parseInt(today.slice(8, 10), 10);
-  const accent = resolveBirthdayColor(accentColor);
-
-  return (
-    <section className="flex flex-col gap-3">
-      <h2 className="text-lg font-medium">Birthdays this month</h2>
-      <ul className="flex flex-col gap-2">
-        {birthdays.map((b) => {
-          const isToday = b.day === todayDay;
-          return (
-            <li
-              key={b.id}
-              className={`flex flex-wrap items-baseline justify-between gap-3 rounded-lg border px-4 py-3 ${accent.card}`}
-            >
-              <div className="flex items-baseline gap-2">
-                <Link
-                  href={`/clients/${b.id}?tab=personal`}
-                  className="text-sm font-medium hover:underline"
-                >
-                  {b.name}
-                </Link>
-                <span className={`text-xs tabular-nums ${accent.mutedText}`}>
-                  {formatMonthDay(b.month, b.day)}
-                </span>
-                {isToday && (
-                  <span
-                    className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${accent.badge}`}
-                  >
-                    Today
-                  </span>
-                )}
-              </div>
-            </li>
-          );
-        })}
-      </ul>
-    </section>
-  );
-}
-
-const MONTH_NAMES: ReadonlyArray<string> = [
-  "January",
-  "February",
-  "March",
-  "April",
-  "May",
-  "June",
-  "July",
-  "August",
-  "September",
-  "October",
-  "November",
-  "December",
-];
-
-function formatMonthDay(month: number, day: number): string {
-  const name = MONTH_NAMES[month - 1] ?? "";
-  return `${name} ${day}`;
 }

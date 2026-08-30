@@ -1,3 +1,4 @@
+import { COMPOSED_DASHBOARD } from "./helpers/composed-dashboard";
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -16,7 +17,11 @@ function read(rel: string): string {
 
 const SNAPSHOT = read("app/(app)/dashboard/practice-snapshot.tsx");
 const HELPER = read("lib/dashboard/clients-needing-attention.ts");
-const PAGE = read("app/(app)/dashboard/page.tsx");
+// PERF-01C: the secondary stack now renders from
+// app/(app)/dashboard/secondary-stack.tsx behind a Suspense boundary. These
+// assertions are about render ORDER and content, so they read the COMPOSED
+// source. See tests/app/dashboard/helpers/composed-dashboard.ts.
+const PAGE = COMPOSED_DASHBOARD;
 const MODEL = read("lib/dashboard/todo-model.ts");
 const LIST = read("app/(app)/dashboard/todo-list.tsx");
 

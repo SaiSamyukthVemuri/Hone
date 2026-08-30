@@ -1,3 +1,4 @@
+import { COMPOSED_DASHBOARD } from "../app/dashboard/helpers/composed-dashboard";
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -61,7 +62,11 @@ describe("owner capacity copy — never claims more than the figure supports", (
   it("the dashboard entry point to the capacity page does not over-claim", () => {
     // Scoped to the capacity link block, not the whole dashboard: this file is
     // shared with other lanes and a whole-file ban would block them.
-    const dash = read("app/(app)/dashboard/page.tsx");
+    // PERF-01C: the Dashboard's secondary stack renders from
+// app/(app)/dashboard/secondary-stack.tsx behind a Suspense boundary. This
+// assertion is about what RENDERS, so it reads the COMPOSED source.
+// See tests/app/dashboard/helpers/composed-dashboard.ts.
+    const dash = COMPOSED_DASHBOARD;
     const at = dash.indexOf("/dashboard/capacity");
     expect(at, "the dashboard must still link to the capacity page").toBeGreaterThan(-1);
     const block = dash.slice(at, at + 600).replace(/\s+/g, " ");

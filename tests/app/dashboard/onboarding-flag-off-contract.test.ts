@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { COMPOSED_DASHBOARD } from "./helpers/composed-dashboard";
 
 // Flag-off contract for the onboarding-v2 dashboard integration (migration
 // 0140). PRIME DIRECTIVE: while studios.onboarding_v2_enabled is not exactly
@@ -9,10 +10,13 @@ import { describe, expect, it } from "vitest";
 // contract (mirrors the capacity flag-off contract style) pins that gating so a
 // later edit can't silently leak the v2 experience to every studio.
 
-const SRC = readFileSync(
-  join(process.cwd(), "app/(app)/dashboard/page.tsx"),
-  "utf8",
-);
+// PERF-01C: the secondary stack (To do, Birthdays, snapshot, setup cards) now
+// renders from app/(app)/dashboard/secondary-stack.tsx behind a Suspense
+// boundary, so the day's roster no longer waits on studio paperwork. These
+// assertions are about what RENDERS and in what order, so they read the
+// COMPOSED source (page with the child spliced in where it renders) rather
+// than half the page. See tests/app/dashboard/helpers/composed-dashboard.ts.
+const SRC = COMPOSED_DASHBOARD;
 // Comment-strip so doc-comments can't satisfy or trip a grep.
 const CODE = SRC.replace(/\/\*[\s\S]*?\*\//g, "")
   .replace(/\{\s*\/\*[\s\S]*?\*\/\s*\}/g, "")
