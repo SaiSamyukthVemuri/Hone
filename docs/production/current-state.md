@@ -25,8 +25,8 @@ not a PR diary — per-capability evidence lives in
 |---|---|
 | **Reconciliation date** | 2026-08-30 |
 | **Production branch** | `claude/build-hone-saas-hOex7` |
-| **Current Git branch HEAD** | `0f07dae68efe06d493421af715cb0b7234153de9` — the PR #659 merge (PERF-02C, the client-profile overview clinical wave). Query GitHub for the live value; documentation-only commits may have advanced it since. |
-| **Last runtime-bearing application HEAD** | **`0f07dae68efe06d493421af715cb0b7234153de9` — the same commit.** Derived mechanically, not asserted: the **nine** merges since the previous baseline `4fee652f` (`#651`, `#653`, `#652`, `#654`, `#655`, `#656`, `#657`, `#658`, `#659`) change **21** deployed files across `app/`, `components/` and `lib/` — classified by `scripts/classify-changes.mjs`, the same map CI uses. Every one of the nine is runtime-bearing; none is documentation-only. **This is the baseline for every behavioural claim in this document.** |
+| **Current Git branch HEAD** | `bf6f09c4a987e0e251f414bdf5dfc520c5d02d42` — the PR #660 merge (CI-HARDEN-01B: every action pinned to a vetted SHA, `contents: read`, checkout token no longer persisted). Query GitHub for the live value; documentation-only commits may have advanced it since. |
+| **Last runtime-bearing application HEAD** | **`0f07dae68efe06d493421af715cb0b7234153de9` — the PR #659 merge, and DELIBERATELY NOT the branch head above.** Derived mechanically, not asserted: the **nine** merges from the previous baseline `4fee652f` through `#659` (`#651`, `#653`, `#652`, `#654`, `#655`, `#656`, `#657`, `#658`, `#659`) change **21** deployed files across `app/`, `components/` and `lib/` — classified by `scripts/classify-changes.mjs`, the same map CI uses. Every one of those nine is runtime-bearing. The **two** merges since (`#631` canonical docs reconciliation, `#660` CI-HARDEN-01B) change **13** files — documentation, CI workflows and tests — and **not one deployed file**, so the branch advanced while the runtime baseline did not. **This is the baseline for every behavioural claim in this document.** |
 | **Current Vercel Production deployment** | ⚠️ **NO DEPLOYMENT ID READ.** The Vercel commit status for `0f07dae6` reports **success**, and that status is the whole of the evidence that a production deployment for this head succeeded — no deployment id, alias or runtime probe was read, and none is asserted. |
 | **Migration state** | **This document deliberately states no migration number.** Hosted max is declared once, machine-readably, in [`migration-state.json`](./migration-state.json). Repository max, total applied and the next free number are **derived** — run `npm run migration:state`. The current reconciled position, with checksums and apply evidence, is [migration-ledger.md](./migration-ledger.md) under *Current state*. A number copied into this table is a number that goes stale on the next apply; that is how the `0160`/`0163`/`0165` divergence happened. |
 | **Database vs. application skew** | **None** — repository and hosted migration state reconcile, with nothing pending and nothing remote-only. Verified by `npm run migration:state` at this reconciliation. The reconciling numbers are **not** restated here; see [migration-ledger.md](./migration-ledger.md). |
@@ -52,9 +52,9 @@ measurement boundary below is unchanged by any of those refreshes — production
 a reason to restate a figure nobody re-read.** Read the two lists as a boundary, not as a
 caveat:
 
-**Re-derived on 2026-08-30, from the repository at `0f07dae6`:**
+**Re-derived on 2026-08-30, from the repository at `bf6f09c4`:**
 
-- the production branch head and the full merge ancestry back to `b9e0003f` (twenty-seven merges);
+- the production branch head and the full merge ancestry back to `b9e0003f` (twenty-nine merges);
 - the nine merges since the previous baseline `4fee652f`, and that **all nine are
   runtime-bearing** (none is documentation-only), by changed-path analysis;
 - which of those merges are runtime-bearing, by changed-path analysis;
@@ -86,7 +86,6 @@ claim about today, and a later reader must re-measure before treating it as one.
 |---|---|---|
 | **TRUTH-01B-1** — the first export-payload slice | **IN DEVELOPMENT**, no PR merged (carried by draft #647) | The registry and the disclosure landed in TRUTH-01A; **the export payload is byte-for-byte unchanged**, so nothing here is live. See §12. |
 | **#647** — TRUTH-01B-1, the joinable archive | **OPEN**, and a **DRAFT** | Parked. `#648` records it as untouched. Nothing here is live. |
-| **#631** — this reconciliation | **OPEN** | Documentation and tests only. |
 
 > **No head SHA is recorded for an open PR, deliberately.** An open branch's head moves whenever
 > it is pushed to, so a SHA written here is stale the moment it is useful — the same defect this

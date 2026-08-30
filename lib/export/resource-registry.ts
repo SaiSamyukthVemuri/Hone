@@ -35,10 +35,29 @@ import {
 //              entry is the honest state of a gap; it is not permission to keep
 //              the gap quiet, and the Data settings page renders it.
 //
-// WHAT THIS SLICE DELIBERATELY DOES NOT DO. It adds no file, no table and no
-// column to the export. The payload is byte-for-byte what it was. TRUTH-01A
-// makes the completeness of that payload MACHINE ACCOUNTABLE; TRUTH-01B and
-// TRUTH-01C change it.
+// WHAT THIS FILE GUARANTEES, AND WHAT IT DELIBERATELY DOES NOT. It does not
+// freeze the payload. A slice is free to promote a resource or widen a file -
+// that is how the export grows - and this registry is where that decision gets
+// recorded. What is forbidden is an UNDECLARED change: a value that reaches a
+// CSV with no entry here, or an entry here that no executed query satisfies.
+// Four views of the payload must agree - the disposition declared below, the
+// SELECT the request actually sent, the header row and cells written to the
+// file, and the manifest that counts them - and the guards beside this file
+// make a disagreement a TEST FAILURE rather than something a departing studio
+// discovers years later. A payload-changing PR is legitimate; an unaccountable
+// one is not.
+//
+// NO PAYLOAD SIZE IS STATED IN THIS HEADER, deliberately. Any count written
+// into prose goes stale on the next promotion, and this header carried exactly
+// that defect: it went on asserting an unchanged payload long after
+// TRUTH-01B-1 had added files and columns to it. The entries below are the
+// count.
+//
+// HISTORICAL, and true only of the slice that wrote it: TRUTH-01A introduced
+// this mechanism and deliberately changed no payload, so the accountability
+// could be reviewed on its own. TRUTH-01B-1 is the first slice to USE that
+// mechanism to expand the payload. Read this paragraph as provenance, never as
+// a claim about what the export carries today.
 //
 // SCHEMA AUTHORITY IS THE DATABASE, NOT THIS FILE. The guards below take the
 // live resource and column lists as arguments; tests/db/export-resource-
@@ -103,11 +122,18 @@ export const NON_CUSTOMER_SCHEMAS: Readonly<Record<string, string>> = {
  * Whether a file's row count is checked against the database, and when it is
  * not, why not.
  *
- * `none` is a first-class member on purpose. Nine of the fifteen exported files
- * have no source-side count query today, and the manifest used to list them
- * beside four that did with nothing distinguishing the two. An unverified count
- * presented as a verified one is the same class of untruth as a partial export
- * presented as a complete one.
+ * `none` is a first-class member on purpose. Not every exported file has a
+ * source-side count query, and the manifest used to list the ones that do not
+ * beside the ones that do with nothing distinguishing the two. An unverified
+ * count presented as a verified one is the same class of untruth as a partial
+ * export presented as a complete one - so a file with no independent
+ * source-count proof must be IDENTIFIED as unverified rather than sitting
+ * silently beside verified counts.
+ *
+ * NO CARDINALITY IS STATED HERE, deliberately. The split moves whenever a
+ * resource is promoted, and the previous revision of this comment was still
+ * asserting TRUTH-01A's file counts after TRUTH-01B-1 had made them wrong.
+ * Derive the live split from the registry; do not copy it into prose.
  */
 export type SourceCountCheck =
   | { readonly kind: "studio_scoped" }
@@ -142,7 +168,7 @@ export type ExcludedColumn = {
  * under several.
  *
  * Without this, "included" and "emitted" could only be compared for columns
- * that happen to keep their own name, and the two files that rename or flatten
+ * that happen to keep their own name, and the files that rename or flatten
  * would have had to be exempted wholesale - which is how an exemption becomes a
  * hole. Declaring the mapping makes the rename checkable instead.
  */
@@ -227,7 +253,9 @@ export type ResourceDisposition =
 
 export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDisposition>> = {
   // -------------------------------------------------------------------------
-  // EXPORTED - in the ZIP today. Nothing below changes the payload.
+  // EXPORTED - emitted in the archive today. These entries DEFINE the payload:
+  // changing one may legitimately change what ships, provided the executed
+  // SELECT, the emitted headers and cells, and the manifest all change with it.
   // -------------------------------------------------------------------------
   clients: {
     kind: "exported",
@@ -245,6 +273,14 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
       "email",
       "phone",
       "created_at",
+      "address",
+      "contraindications",
+      "photo_consent",
+      "sms_consent_at",
+      "sms_consent_source",
+      "sms_opted_out_at",
+      "sms_opt_out_source",
+      "archived_at",
     ],
     includedColumns: [
       "id",
@@ -259,24 +295,24 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
       "email",
       "phone",
       "created_at",
+      "address",
+      "contraindications",
+      "photo_consent",
+      "sms_consent_at",
+      "sms_consent_source",
+      "sms_opted_out_at",
+      "sms_opt_out_source",
+      "archived_at",
     ],
     excludedColumns: [
       { column: "studio_id", reason: "tenant_key" },
-      { column: "address", reason: "pending_review", note: "Client postal address. Genuine studio-owned contact data." },
-      { column: "contraindications", reason: "pending_review", note: "Clinical safety data. Its absence is a real gap, not a decision." },
-      { column: "photo_consent", reason: "pending_review", note: "Consent evidence the studio may need to produce." },
       { column: "notes", reason: "pending_review", note: "General client note text." },
       { column: "created_by", reason: "pending_review", note: "Creator attribution; belongs with the wider actor-attribution export decision." },
       { column: "normalized_email", reason: "internal_state", note: "Generated from email, which is exported; a second copy carries no new fact." },
-      { column: "sms_consent_at", reason: "pending_review", note: "SMS consent evidence." },
-      { column: "sms_consent_source", reason: "pending_review", note: "SMS consent evidence." },
-      { column: "sms_opted_out_at", reason: "pending_review", note: "SMS opt-out evidence." },
-      { column: "sms_opt_out_source", reason: "pending_review", note: "SMS opt-out evidence." },
-      { column: "archived_at", reason: "pending_review", note: "Archived clients are exported today with nothing marking them archived." },
       { column: "archived_by", reason: "pending_review", note: "Archive attribution; see archived_at." },
     ],
     sourceCountCheck: { kind: "studio_scoped" },
-    rowScope: "Every client row this studio holds, archived clients included (the archived_at flag itself is not emitted).",
+    rowScope: "Every client row this studio holds is exported, archived clients included — the read does not filter on archived_at — and archived_at IS emitted, so archived state stays distinguishable from active.",
     description:
       "Client master list with names, contact info, allergies, skin notes, Fitzpatrick type, emergency contacts.",
   },
@@ -295,6 +331,13 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
       "price_paid_cents",
       "session_notes",
       "created_at",
+      "appointment_id",
+      "treatment_plan_id",
+      "started_at_original",
+      "next_session_note",
+      "aftercare_and_risks_explained_at",
+      "record_origin",
+      "legacy_classification",
     ],
     includedColumns: [
       "id",
@@ -307,25 +350,25 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
       "price_paid_cents",
       "session_notes",
       "created_at",
+      "appointment_id",
+      "treatment_plan_id",
+      "started_at_original",
+      "next_session_note",
+      "aftercare_and_risks_explained_at",
+      "record_origin",
+      "legacy_classification",
     ],
     excludedColumns: [
       { column: "studio_id", reason: "tenant_key" },
-      { column: "started_at_original", reason: "pending_review", note: "Original start before an edit; part of the session audit story." },
       { column: "deleted_at", reason: "internal_state", note: "Constant NULL for every exported row: the read filters deleted_at IS NULL. Soft-deleted sessions are a ROW-scope gap, recorded in rowScope." },
       { column: "deleted_by", reason: "internal_state", note: "See deleted_at." },
       { column: "delete_reason", reason: "internal_state", note: "See deleted_at." },
-      { column: "treatment_plan_id", reason: "pending_review", note: "Session-to-plan linkage. Without it the exported plan and session files cannot be joined." },
-      { column: "appointment_id", reason: "pending_review", note: "Session-to-appointment linkage. Without it the exported session and appointment files cannot be joined." },
-      { column: "next_session_note", reason: "pending_review", note: "Clinical carry-forward note." },
-      { column: "aftercare_and_risks_explained_at", reason: "pending_review", note: "Aftercare/risk disclosure evidence." },
       { column: "aftercare_and_risks_explained_by", reason: "pending_review", note: "Aftercare/risk disclosure attribution." },
       { column: "record_status", reason: "retired_capability", note: "Signed/finalized clinical records were retired by migration 0159." },
       { column: "finalized_at", reason: "retired_capability", note: "Retired by 0159." },
       { column: "finalized_by", reason: "retired_capability", note: "Retired by 0159." },
       { column: "record_version", reason: "retired_capability", note: "Retired by 0159." },
       { column: "current_snapshot_id", reason: "retired_capability", note: "Retired by 0159." },
-      { column: "record_origin", reason: "pending_review", note: "Native vs imported provenance." },
-      { column: "legacy_classification", reason: "pending_review", note: "Legacy import classification." },
     ],
     sourceCountCheck: { kind: "studio_scoped" },
     rowScope: "Sessions with deleted_at IS NULL. A soft-deleted session, and every entry beneath it, is absent from the export.",
@@ -375,6 +418,8 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
       "probe_size_value",
       "probe_length",
       "probe_label",
+      "pulse_delay_seconds",
+      "deleted_at",
     ],
     includedColumns: [
       "id",
@@ -403,10 +448,10 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
       "thermolysis_duration_seconds",
       "units_of_lye",
       "observation_chips",
+      "pulse_delay_seconds",
+      "deleted_at",
     ],
     excludedColumns: [
-      { column: "pulse_delay_seconds", reason: "pending_review", note: "Read by the export SELECT and then dropped before serialization. A charting value the studio recorded." },
-      { column: "deleted_at", reason: "pending_review", note: "Entries are exported regardless of soft-delete state (only the parent session is filtered), and the state itself is not emitted." },
       { column: "deleted_by", reason: "pending_review", note: "See deleted_at." },
       { column: "delete_reason", reason: "pending_review", note: "See deleted_at." },
     ],
@@ -425,7 +470,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
       probe_length: "session_blocks.probe_length, joined by block_id",
       probe_label: "session_blocks.probe_label, joined by block_id",
     },
-    rowScope: "Entries whose parent session is in sessions.csv. The entry's own soft-delete state is neither filtered nor emitted.",
+    rowScope: "Entries whose parent session is in sessions.csv. The entry's own soft-delete state is NOT filtered — a soft-deleted entry is still exported, so the archive stays historical — and it IS emitted, as deleted_at, so a soft-deleted entry is distinguishable from a live one.",
     description:
       "Every electrolysis entry with area, mode, energy level, modality, machine frequency, pulse count, hairs treated, blend/galvanic and thermolysis readings (galvanic mA/duration/intensity, thermolysis intensity/duration, units of lye), the structured probe (brand, material, piece type, shank, size, length), the treatment area (primary area, side, specifics), structured observation chips, and free-text comments.",
   },
@@ -443,6 +488,8 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
       "spot_size",
       "observation_notes",
       "created_at",
+      "ejection_results",
+      "deleted_at",
     ],
     includedColumns: [
       "id",
@@ -452,10 +499,10 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
       "equipment_params",
       "observation_notes",
       "created_at",
+      "ejection_results",
+      "deleted_at",
     ],
     excludedColumns: [
-      { column: "ejection_results", reason: "pending_review", note: "Recorded laser outcome text." },
-      { column: "deleted_at", reason: "pending_review", note: "Entries are exported regardless of soft-delete state (only the parent session is filtered), and the state itself is not emitted." },
       { column: "deleted_by", reason: "pending_review", note: "See deleted_at." },
       { column: "delete_reason", reason: "pending_review", note: "See deleted_at." },
     ],
@@ -464,7 +511,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
       session_number: { headers: ["treatment_number"], note: "Emitted under the practitioner-facing name." },
       equipment_params: { headers: ["fluence", "pulse_width", "spot_size"], note: "The jsonb blob is FLATTENED into three top-level columns so a spreadsheet shows plain fields. Any key the blob holds beyond these three does not reach the CSV." },
     },
-    rowScope: "Entries whose parent session is in sessions.csv. The entry's own soft-delete state is neither filtered nor emitted.",
+    rowScope: "Entries whose parent session is in sessions.csv. The entry's own soft-delete state is NOT filtered — a soft-deleted entry is still exported, so the archive stays historical — and it IS emitted, as deleted_at, so a soft-deleted entry is distinguishable from a live one.",
     description:
       "Every laser entry with zone, fluence, pulse width, treatment number, observations.",
   },
@@ -479,6 +526,8 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
       "role",
       "active",
       "created_at",
+      "color",
+      "default_machine_frequency",
     ],
     includedColumns: [
       "id",
@@ -487,21 +536,21 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
       "role",
       "active",
       "created_at",
+      "color",
+      "default_machine_frequency",
     ],
     excludedColumns: [
       { column: "studio_id", reason: "tenant_key" },
       { column: "user_id", reason: "internal_state", note: "Supabase auth user identifier. Platform identity, not studio content." },
-      { column: "color", reason: "pending_review", note: "Calendar display preference." },
       { column: "terms_accepted_at", reason: "internal_state", note: "Hone platform agreement acceptance, not studio-owned client content." },
       { column: "terms_version", reason: "internal_state", note: "See terms_accepted_at." },
       { column: "privacy_accepted_at", reason: "internal_state", note: "See terms_accepted_at." },
       { column: "privacy_version", reason: "internal_state", note: "See terms_accepted_at." },
       { column: "calendar_feed_token_hash", reason: "security_material", note: "Calendar-feed credential material. Never exported." },
-      { column: "default_machine_frequency", reason: "pending_review", note: "Practitioner charting preference." },
     ],
     sourceCountCheck: { kind: "none", reason: "No source-side count query is issued for this file today, so its row count is recorded but NOT verified against the database. Adding the check is TRUTH-01B; declaring the gap here is what stops the manifest reading as though every file were verified." },
     rowScope:
-      "ACTIVE practitioners only: the read filters active = true. A deactivated practitioner is absent from the export even though rows elsewhere in it still name her id, so an exported session can point at a performer who appears in no file. The `active` column is emitted and is therefore constant true. Widening this is TRUTH-01B.",
+      "Every practitioner row this studio holds, ACTIVE AND INACTIVE. Tenant scope is studio_id and nothing else: the read carries no `active` predicate. Inactive rows are in scope deliberately, because service_practitioners rows survive a practitioner's deactivation by design (0134 - removal is a separate, explicit action), so an active-only read left service_practitioners.csv and historical session rows naming a practitioner_id that appeared in no file. The `active` column is emitted, so a deactivated practitioner is exported and honestly labelled rather than presented as current.",
     description:
       "Practitioners at your studio, with role and active flag.",
   },
@@ -555,6 +604,11 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
       "cancelled_by",
       "created_at",
       "updated_at",
+      "referral_source",
+      "rescheduled_from_appointment_id",
+      "rescheduled_to_appointment_id",
+      "cancellation_kind",
+      "booked_outside_availability",
     ],
     includedColumns: [
       "id",
@@ -571,6 +625,11 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
       "cancelled_by",
       "created_at",
       "updated_at",
+      "referral_source",
+      "rescheduled_from_appointment_id",
+      "rescheduled_to_appointment_id",
+      "cancellation_kind",
+      "booked_outside_availability",
     ],
     excludedColumns: [
       { column: "studio_id", reason: "tenant_key" },
@@ -595,7 +654,6 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
       { column: "sms_reminder_2h_sent_at", reason: "delivery_mechanics" },
       { column: "sms_reminder_2h_send_attempts", reason: "delivery_mechanics" },
       { column: "sms_reminder_2h_claimed_at", reason: "delivery_mechanics" },
-      { column: "referral_source", reason: "pending_review", note: "How the client found the studio. Studio-owned marketing attribution." },
       { column: "confirmation_claimed_at", reason: "delivery_mechanics" },
       { column: "reminder_24h_claimed_at", reason: "delivery_mechanics" },
       { column: "reminder_2h_claimed_at", reason: "delivery_mechanics" },
@@ -611,11 +669,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
       { column: "postcare_email_last_error", reason: "delivery_mechanics" },
       { column: "postcare_email_last_attempt_at", reason: "delivery_mechanics" },
       { column: "sync_version", reason: "internal_state", note: "Google-calendar sync bookkeeping." },
-      { column: "rescheduled_from_appointment_id", reason: "pending_review", note: "Reschedule lineage." },
-      { column: "rescheduled_to_appointment_id", reason: "pending_review", note: "Reschedule lineage." },
-      { column: "cancellation_kind", reason: "pending_review", note: "Distinguishes a cancellation from a reschedule." },
       { column: "capacity_enabled", reason: "internal_state", note: "Feature-state snapshot at booking time." },
-      { column: "booked_outside_availability", reason: "pending_review", note: "Booking-policy fact." },
       { column: "created_by_practitioner_id", reason: "pending_review", note: "Booking attribution (migration 0174)." },
       { column: "cancelled_by_practitioner_id", reason: "pending_review", note: "Cancellation attribution (migration 0174)." },
       { column: "outside_availability_authorized_by_practitioner_id", reason: "pending_review", note: "Override authorization (migration 0174)." },
@@ -747,6 +801,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
       "created_by_practitioner_id",
       "created_at",
       "updated_at",
+      "probe_key",
     ],
     includedColumns: [
       "id",
@@ -761,10 +816,10 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
       "created_by_practitioner_id",
       "created_at",
       "updated_at",
+      "probe_key",
     ],
     excludedColumns: [
       { column: "studio_id", reason: "tenant_key" },
-      { column: "probe_key", reason: "pending_review", note: "Links the sterile item to the probe taxonomy used in charting." },
     ],
     sourceCountCheck: { kind: "none", reason: "No source-side count query is issued for this file today, so its row count is recorded but NOT verified against the database. Adding the check is TRUTH-01B; declaring the gap here is what stops the manifest reading as though every file were verified." },
     rowScope: "Every sterile-supply row this studio holds, discarded stock included.",
@@ -1139,11 +1194,23 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
       "Folded into electrolysis_entries.csv as a semicolon-joined block_areas label, which is lossy and cannot be parsed back into rows.",
   },
   services: {
-    kind: "pending",
-    ticket: "TRUTH-01B",
-    tier: 1,
-    reason:
-      "Read by the export for id and name only, to label appointments.csv. The service menu itself - price, duration, active flag, ordering, colour - reaches no file, so a departing studio cannot reconstruct what it charges for.",
+    kind: "exported",
+    file: "services.csv",
+    csvHeaders: [
+      "id","name","description","default_duration_minutes","price_cents","active",
+      "modality","sort_order","pre_care_instructions","calendar_color","created_at","updated_at",
+    ],
+    includedColumns: [
+      "id","name","description","default_duration_minutes","price_cents","active",
+      "modality","sort_order","pre_care_instructions","calendar_color","created_at","updated_at",
+    ],
+    excludedColumns: [
+      { column: "studio_id", reason: "tenant_key" },
+    ],
+    sourceCountCheck: { kind: "none", reason: "No source-side count query is issued for this file today, so its row count is recorded but NOT verified against the database - the same posture as the other unverified files. Declaring the gap is what stops the manifest reading as though every file were checked." },
+    rowScope: "Every service this studio has defined, active or not.",
+    description:
+      "The studio's service catalogue: name, description, duration, price, modality and booking presentation. Exported because the archive already names services on appointments and custom prices without letting a studio reconstruct the catalogue those names came from. price_cents is exported as recorded, including an authoritative zero.",
   },
   client_intake_forms: {
     kind: "pending",
@@ -1153,18 +1220,40 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
       "Client-completed intake responses. Studio-owned clinical intake content with no representation in any exported file.",
   },
   client_consent_signatures: {
-    kind: "pending",
-    ticket: "TRUTH-01B",
-    tier: 1,
-    reason:
-      "Signed client consent records. Evidence a studio may need to produce; absent from every file.",
+    kind: "exported",
+    file: "client_consent_signatures.csv",
+    csvHeaders: [
+      "id","client_id","template_id","template_title_snapshot","template_body_snapshot",
+      "template_version","template_hash","signature_name","signed_at","response","response_label_snapshot","created_at",
+    ],
+    includedColumns: [
+      "id","client_id","template_id","template_title_snapshot","template_body_snapshot",
+      "template_version","template_hash","signature_name","signed_at","response","response_label_snapshot","created_at",
+    ],
+    excludedColumns: [
+      { column: "studio_id", reason: "tenant_key" },
+      {
+        column: "ip_hash",
+        reason: "security_material",
+        note: "A hash of the signer's IP address. Device telemetry captured for anti-repudiation, not consent content a studio acts on.",
+      },
+      {
+        column: "user_agent_hash",
+        reason: "security_material",
+        note: "A hash of the signer's user agent. Same anti-repudiation purpose as ip_hash.",
+      },
+    ],
+    sourceCountCheck: { kind: "none", reason: "No source-side count query is issued for this file today, so its row count is recorded but NOT verified against the database." },
+    rowScope: "Every consent signature this studio holds, across all of its clients.",
+    description:
+      "Signed consent records, each carrying the exact template title and body the client agreed to at the time plus their typed signature name and response. The snapshot columns are what make this evidence rather than a pointer to a template that may since have changed, and template_hash is the SHA-256 fingerprint persisted at signing (migration 0057) so a studio can verify those exported snapshots against the digest actually stored rather than against one recomputed from the export. DEVICE TELEMETRY IS STILL WITHHELD: ip_hash and user_agent_hash are anti-repudiation material about the signer, not consent content, and are not exported.",
   },
   consent_form_templates: {
     kind: "pending",
     ticket: "TRUTH-01B",
     tier: 1,
     reason:
-      "The studio's own consent form wording. Without it an exported signature cannot be tied to what was agreed.",
+      "The studio's consent template catalogue. Signed evidence is NOT what is missing here: client_consent_signatures.csv carries the exact title, body, version and persisted template_hash for every signature, so what a client agreed to is reconstructable from the signature row alone. What is absent is the catalogue itself - every template as a row in its own right, including `draft` and `archived` templates and any `active` template no client has signed yet, together with each template's status and is_live state.",
   },
   treatment_images: {
     kind: "pending",
@@ -1181,11 +1270,22 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
       "Legacy photo records from migration 0001. Same binary-bearing deferral as treatment_images.",
   },
   treatment_goals: {
-    kind: "pending",
-    ticket: "TRUTH-01B",
-    tier: 1,
-    reason:
-      "Per-client treatment goals. Practitioner-authored planning content.",
+    kind: "exported",
+    file: "treatment_goals.csv",
+    csvHeaders: ["id","client_id","estimated_total_minutes","notes","status","created_at","updated_at"],
+    includedColumns: ["id","client_id","estimated_total_minutes","notes","status","created_at","updated_at"],
+    excludedColumns: [
+      { column: "studio_id", reason: "tenant_key" },
+      {
+        column: "created_by",
+        reason: "pending_review",
+        note: "Creator attribution. Held with the wider actor-attribution export decision rather than settled here, so this file follows whatever that decision concludes.",
+      },
+    ],
+    sourceCountCheck: { kind: "none", reason: "No source-side count query is issued for this file today, so its row count is recorded but NOT verified against the database." },
+    rowScope: "Every treatment goal recorded for this studio's clients.",
+    description:
+      "Per-client treatment goals: the estimated total treatment time, the practitioner's goal notes and the goal's current status.",
   },
   client_tags: {
     kind: "pending",
@@ -1195,11 +1295,17 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
       "Studio-authored client tags. Small, but it is how a studio segments its own client list, and none of it is recoverable from any other exported file.",
   },
   probe_lots: {
-    kind: "pending",
-    ticket: "TRUTH-01B",
-    tier: 1,
-    reason:
-      "Probe lot inventory. Inspection-relevant and referenced by exported charting rows through probe_lot_id, which currently resolves to nothing in the ZIP.",
+    kind: "exported",
+    file: "probe_lots.csv",
+    csvHeaders: ["id","probe_size","lot_number","expiry_date","active","notes","created_at"],
+    includedColumns: ["id","probe_size","lot_number","expiry_date","active","notes","created_at"],
+    excludedColumns: [
+      { column: "studio_id", reason: "tenant_key" },
+    ],
+    sourceCountCheck: { kind: "none", reason: "No source-side count query is issued for this file today, so its row count is recorded but NOT verified against the database." },
+    rowScope: "Every probe lot this studio has recorded.",
+    description:
+      "Probe lot inventory - size, lot number, expiry and status. Exported because electrolysis entries already carry probe_lot_id, which a studio could not resolve to a real lot from the archive alone.",
   },
   imported_treatment_memories: {
     kind: "pending",
@@ -1267,11 +1373,17 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
       "Recurring break rules. The rule, not the derived occurrence, is the studio's fact.",
   },
   service_practitioners: {
-    kind: "pending",
-    ticket: "TRUTH-01B",
-    tier: 1,
-    reason:
-      "Which practitioner performs which service. Part of the service menu the export cannot currently reconstruct.",
+    kind: "exported",
+    file: "service_practitioners.csv",
+    csvHeaders: ["id","service_id","practitioner_id","created_at"],
+    includedColumns: ["id","service_id","practitioner_id","created_at"],
+    excludedColumns: [
+      { column: "studio_id", reason: "tenant_key" },
+    ],
+    sourceCountCheck: { kind: "none", reason: "No source-side count query is issued for this file today, so its row count is recorded but NOT verified against the database." },
+    rowScope: "Every service-to-practitioner assignment in this studio. The join cannot cross studios: both foreign keys are COMPOSITE - (service_id, studio_id) and (practitioner_id, studio_id) - so a row's service and practitioner must belong to the same studio as the row.",
+    description:
+      "Which practitioners offer which services. Completes the service catalogue: without it the archive says a studio offers a service but not who performs it.",
   },
   new_client_waitlist_entries: {
     kind: "pending",

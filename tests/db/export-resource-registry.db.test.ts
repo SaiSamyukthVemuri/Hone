@@ -328,13 +328,32 @@ describe("guard 2: every column of an exported table is accounted for", () => {
         .map((c) => c.column);
       if (pending.length > 0) pendingByTable.set(resource, pending);
     }
-    // The four the recon named, none of them hard-coded into the MECHANISM —
-    // the mechanism is set arithmetic against the database. They are asserted
-    // here only to prove the accounting reached the columns that motivated it.
-    expect(pendingByTable.get("clients")).toContain("contraindications");
-    expect(pendingByTable.get("clients")).toContain("photo_consent");
-    expect(pendingByTable.get("laser_entries")).toContain("ejection_results");
-    expect(pendingByTable.get("electrolysis_entries")).toContain("pulse_delay_seconds");
+    // TRUTH-01B-1 CLOSED the four gaps that originally motivated this
+    // accounting — contraindications, photo_consent, ejection_results and
+    // pulse_delay_seconds are exported now, so they are no longer omissions and
+    // asserting them here would be asserting a falsehood. What the mechanism
+    // has to keep proving is that the gaps which REMAIN stay visible, so the
+    // pins move to those. None is hard-coded into the mechanism itself; it is
+    // set arithmetic against the live database either way.
+    for (const closed of [
+      ["clients", "contraindications"],
+      ["clients", "photo_consent"],
+      ["laser_entries", "ejection_results"],
+      ["electrolysis_entries", "pulse_delay_seconds"],
+    ] as const) {
+      expect(
+        pendingByTable.get(closed[0]) ?? [],
+        `${closed[0]}.${closed[1]} is exported now and must not still read as an omission`,
+      ).not.toContain(closed[1]);
+    }
+    // The remaining admissions: creator/deleter attribution, the delete
+    // narrative, and the one free-text field held for a product judgment.
+    expect(pendingByTable.get("clients")).toContain("notes");
+    expect(pendingByTable.get("clients")).toContain("created_by");
+    expect(pendingByTable.get("electrolysis_entries")).toContain("delete_reason");
+    expect(pendingByTable.get("laser_entries")).toContain("deleted_by");
+    expect(pendingByTable.get("appointments")).toContain("created_by_practitioner_id");
+    expect(pendingByTable.get("treatment_goals")).toContain("created_by");
   });
 
   it("every pending_review column says what the studio does not get", () => {
