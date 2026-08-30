@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { createRequire } from "node:module";
 import { execFileSync } from "node:child_process";
 
 // Workflow configuration + canonical migration-state guards. These replace the
@@ -50,6 +51,160 @@ function readWorkflowDir(dir: string = WORKFLOW_DIR): Workflow[] {
     .filter((name) => statSync(path.join(dir, name)).isFile())
     .sort()
     .map((name): Workflow => [name, readFileSync(path.join(dir, name), "utf8")]);
+}
+
+// ---------------------------------------------------------------------------
+// YAML semantics
+// ---------------------------------------------------------------------------
+// A workflow is YAML, and the guards below judge what GITHUB EXECUTES, so the
+// parser — not a regular expression — is the authority for that. Every one of
+//
+//     uses: actions/checkout@v4
+//     uses : actions/checkout@v4
+//     "uses": actions/checkout@v4
+//     'uses': actions/checkout@v4
+//
+// is the same key to YAML and to GitHub. Only the first is the same key to
+// /uses: \S+/, so a text scan could be walked straight past with a mutable ref.
+//
+// js-yaml is already installed in this repository (4.1.1, via @eslint/eslintrc)
+// and is reached through createRequire because it ships no type declarations
+// and @types/js-yaml is not installed — importing it directly would fail
+// `strict` typecheck, and adding either package is a dependency change this
+// change is not authorised to make. It is a TRANSITIVE dev dependency, which is
+// worth promoting to an explicit devDependency in its own change: if ESLint
+// ever drops it this file fails to load, which is loud and fail-CLOSED, but it
+// is still a phantom dependency. "the YAML parser is present and functioning"
+// below states that requirement as a test rather than as a hope.
+const nodeRequire = createRequire(path.resolve("package.json"));
+const yaml = nodeRequire("js-yaml") as { load(src: string): unknown };
+
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+
+type ParsedWorkflow = { file: string; body: string; doc: unknown; error: string | null };
+
+function parseAll(sources: readonly Workflow[]): ParsedWorkflow[] {
+  return sources.map(({ 0: file, 1: body }) => {
+    try {
+      return { file, body, doc: yaml.load(body), error: null };
+    } catch (e) {
+      return { file, body, doc: null, error: e instanceof Error ? e.message : String(e) };
+    }
+  });
+}
+
+/**
+ * One executable `uses`, located semantically.
+ *
+ * GitHub executes a `uses` in exactly two places, and this reads exactly those
+ * two — NOT a deep search for the name, so a `uses` buried in an action's input
+ * data is never mistaken for something that runs:
+ *
+ *   jobs.<job>.steps[*].uses   an action
+ *   jobs.<job>.uses            a reusable-workflow call
+ */
+type UseSite = {
+  file: string;
+  where: string;
+  value: string;
+  with: Record<string, unknown> | null;
+};
+
+function executableUses(file: string, doc: unknown): UseSite[] {
+  const out: UseSite[] = [];
+  if (!isRecord(doc) || !isRecord(doc.jobs)) return out;
+  for (const [job, node] of Object.entries(doc.jobs)) {
+    if (!isRecord(node)) continue;
+    const inputs = (n: Record<string, unknown>) => (isRecord(n.with) ? n.with : null);
+    if (typeof node.uses === "string") {
+      out.push({ file, where: `jobs.${job}.uses`, value: node.uses, with: inputs(node) });
+    }
+    if (!Array.isArray(node.steps)) continue;
+    node.steps.forEach((step: unknown, i: number) => {
+      if (!isRecord(step) || typeof step.uses !== "string") return;
+      out.push({
+        file,
+        where: `jobs.${job}.steps[${i}].uses`,
+        value: step.uses,
+        with: inputs(step),
+      });
+    });
+  }
+  return out;
+}
+
+const allUses = (sources: readonly Workflow[]): UseSite[] =>
+  parseAll(sources).flatMap(({ file, doc }) => executableUses(file, doc));
+
+/** `actions/checkout@<sha>` -> `actions/checkout`. */
+const actionOf = (value: string) => value.slice(0, value.lastIndexOf("@") + 1 || undefined).replace(/@$/, "");
+
+/**
+ * Immutable = a 40-character commit SHA, or a path inside THIS repository
+ * (`./...`), which is fixed by the commit under review and has no ref to pin.
+ * A tag, a branch, `docker://image:tag` and a short SHA are all mutable.
+ */
+function isImmutableRef(value: string): boolean {
+  if (value.startsWith("./")) return true;
+  const at = value.lastIndexOf("@");
+  if (at <= 0) return false;
+  return /^[0-9a-f]{40}$/.test(value.slice(at + 1)) && /^[\w.-]+\/[\w./-]+$/.test(value.slice(0, at));
+}
+
+/**
+ * Every LINE that assigns a `uses` key, with its value and trailing comment.
+ *
+ * This is NOT discovery. executableUses() is the authority for what runs; this
+ * exists only because comments are absent from the parsed model, so the
+ * human-readable `# vX.Y.Z` annotation can be read nowhere else. Every guard
+ * that uses it first requires it to RECONCILE with the parser, so it can never
+ * quietly become the authority again.
+ */
+type UsesLine = { file: string; line: number; value: string; annotation: string | null };
+
+function usesLines(file: string, body: string): UsesLine[] {
+  const out: UsesLine[] = [];
+  body.split("\n").forEach((raw, i) => {
+    if (/^\s*#/.test(raw)) return; // a commented-out step is not a step
+    const m = /^\s*(?:-\s+)?(?:uses|"uses"|'uses')\s*:\s*(.*)$/.exec(raw);
+    if (!m) return;
+    out.push({ file, line: i + 1, ...splitScalarAndComment(m[1]) });
+  });
+  return out;
+}
+
+/** `actions/checkout@sha # v7.0.1` -> value plus the annotation, minus its `#`. */
+function splitScalarAndComment(rest: string): { value: string; annotation: string | null } {
+  const s = rest.trim();
+  for (const q of ['"', "'"]) {
+    if (!s.startsWith(q)) continue;
+    const end = s.indexOf(q, 1);
+    if (end === -1) break;
+    const after = s.slice(end + 1).trim();
+    return { value: s.slice(1, end), annotation: after.startsWith("#") ? after.slice(1).trim() : null };
+  }
+  const hash = s.indexOf(" #");
+  if (hash === -1) return { value: s, annotation: null };
+  return { value: s.slice(0, hash).trim(), annotation: s.slice(hash + 1).replace(/^#/, "").trim() };
+}
+
+/**
+ * Every string in the parsed document, KEYS INCLUDED — `env: { GITHUB_TOKEN: ... }`
+ * hides the token in a key, so a values-only walk would miss it. Comments are
+ * not in the model at all, which is why this replaced a comment-stripping
+ * text scan: a comment can no longer read as a credential, or hide one.
+ */
+function scalarsAndKeys(node: unknown, out: string[] = []): string[] {
+  if (typeof node === "string") out.push(node);
+  else if (Array.isArray(node)) for (const v of node) scalarsAndKeys(v, out);
+  else if (isRecord(node)) {
+    for (const [k, v] of Object.entries(node)) {
+      out.push(k);
+      scalarsAndKeys(v, out);
+    }
+  }
+  return out;
 }
 
 /** Minimal structural check — job keys are two-space indented under `jobs:`. */
@@ -522,58 +677,71 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
    */
   const WORKFLOWS: readonly Workflow[] = readWorkflowDir();
 
-  /**
-   * A workflow's own comments are not what it executes. The permissions block
-   * added by this change explains itself by NAMING GITHUB_TOKEN, so a
-   * whole-file match for that token reports the exact opposite of the truth —
-   * which is what the first version of guard 5 caught, in its own rationale.
-   */
-  const steps = (body: string) =>
-    body
-      .split("\n")
-      .filter((l) => !/^\s*#/.test(l))
-      .join("\n");
-
-  const actionRefs = (sources: readonly Workflow[]) =>
-    sources.flatMap(([, body]) => body.match(/uses: \S+/g) ?? []);
-
   const checkoutCount = (sources: readonly Workflow[]) =>
-    sources.reduce((n, [, body]) => n + (body.match(/uses: actions\/checkout@/g) ?? []).length, 0);
+    allUses(sources).filter((u) => actionOf(u.value) === "actions/checkout").length;
+
+  it("the YAML parser is present and functioning", () => {
+    // Stated, not assumed: js-yaml is a TRANSITIVE dev dependency here, and
+    // every guard below rests on it. If it ever disappears this reads RED
+    // rather than letting a text fallback quietly take over.
+    const doc = yaml.load('jobs:\n  j:\n    steps:\n      - "uses" : a/b@c\n');
+    expect(executableUses("probe", doc).map((u) => u.value)).toEqual(["a/b@c"]);
+  });
+
+  it("every workflow parses as YAML", () => {
+    expect(parseAll(WORKFLOWS).filter((w) => w.error).map((w) => `${w.file}: ${w.error}`)).toEqual([]);
+  });
 
   // 1. A mutable ref means the code a job runs can change without a commit
   //    here. `supabase/setup-cli@v1` was the sharpest case: it resolves to a
   //    BRANCH (refs/heads/v1), not a tag — that repository's tags run
   //    v1.7.1 -> v2.0.0 -> v3 — so anyone with push access to it could alter
   //    what every database-touching job in this file executed.
+  //
+  //    Discovered from the PARSED document. The regex this replaced matched
+  //    `uses: ` literally, so `uses : actions/checkout@v4` and
+  //    `"uses": actions/checkout@v4` — the same key to YAML, the same action to
+  //    GitHub — were invisible to it, and a mutable ref could ride in on either.
   function unpinnedRefViolations(sources: readonly Workflow[]): string[] {
-    const bad: string[] = [];
-    for (const [file, body] of sources) {
-      for (const ref of body.match(/uses: \S+/g) ?? []) {
-        if (!/^uses: [\w.-]+\/[\w.-]+@[0-9a-f]{40}$/.test(ref)) {
-          bad.push(`${file}: ${ref} is not pinned to a 40-character SHA`);
-        }
-      }
-    }
-    return bad;
+    return allUses(sources)
+      .filter((u) => !isImmutableRef(u.value))
+      .map((u) => `${u.file} ${u.where}: ${u.value} is not pinned to a 40-character SHA`);
   }
 
   it("every action reference is pinned to a commit SHA", () => {
-    // Anti-vacuity moved to the COLLECTION. Per file it would have forced every
+    // Anti-vacuity on the COLLECTION. Per file it would have forced every
     // future workflow to declare an action, which is not the contract: a
     // workflow of pure `run:` steps is compliant, and demanding otherwise is
     // how a guard gets weakened later.
-    expect(actionRefs(WORKFLOWS).length, "no workflow declares an action at all").toBeGreaterThan(0);
+    expect(allUses(WORKFLOWS).length, "no workflow declares an action at all").toBeGreaterThan(0);
     expect(unpinnedRefViolations(WORKFLOWS)).toEqual([]);
   });
 
   // 2. A bare 40-character SHA is unreadable. The trailing tag comment is how a
   //    reviewer knows WHICH version was vetted without leaving the diff.
-  function missingAnnotationViolations(sources: readonly Workflow[]): string[] {
+  //
+  //    The ONE place text is still read — a comment cannot be anywhere else.
+  //    It is fenced: the line scan must first agree, exactly, with what the
+  //    parser says executes. If a `uses` reaches the document by a route the
+  //    scan cannot see (or the scan sees one the document does not run), that
+  //    disagreement is itself the violation, and no annotation verdict is given.
+  function annotationViolations(sources: readonly Workflow[]): string[] {
     const bad: string[] = [];
-    for (const [file, body] of sources) {
-      for (const l of body.split("\n").filter((l) => /uses: \S+@[0-9a-f]{40}/.test(l))) {
-        if (!/@[0-9a-f]{40}\s+# v\d+\.\d+\.\d+/.test(l)) {
-          bad.push(`${file}: ${l.trim()} has no # vX.Y.Z comment`);
+    for (const { file, body, doc } of parseAll(sources)) {
+      const semantic = executableUses(file, doc).map((u) => u.value).sort();
+      const lines = usesLines(file, body);
+      const textual = lines.map((l) => l.value).sort();
+      if (JSON.stringify(semantic) !== JSON.stringify(textual)) {
+        bad.push(
+          `${file}: the annotation scan sees ${JSON.stringify(textual)} but the parser executes ` +
+            `${JSON.stringify(semantic)} — the text scan cannot be trusted to carry the annotation check`,
+        );
+        continue;
+      }
+      for (const l of lines) {
+        if (l.value.startsWith("./")) continue; // in-repo action: no version to report
+        if (!/^v\d+\.\d+\.\d+$/.test(l.annotation ?? "")) {
+          bad.push(`${file}:${l.line}: ${l.value} has no # vX.Y.Z annotation`);
         }
       }
     }
@@ -581,65 +749,94 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
   }
 
   it("every pinned ref carries a trailing version comment", () => {
-    const pinned = actionRefs(WORKFLOWS).filter((r) => /@[0-9a-f]{40}/.test(r));
-    expect(pinned.length, "no workflow declares a pinned action").toBeGreaterThan(0);
-    expect(missingAnnotationViolations(WORKFLOWS)).toEqual([]);
+    expect(allUses(WORKFLOWS).length, "no workflow declares an action at all").toBeGreaterThan(0);
+    expect(annotationViolations(WORKFLOWS)).toEqual([]);
   });
 
-  // 3. Counted, not merely present. A `.includes()` check would pass with one
-  //    opt-out among eight checkouts, which is the shape this guard exists to
-  //    refuse. Safe precisely because no job needs the credential afterwards:
-  //    every git call in these workflows is local to the history checkout
-  //    already fetched, and guard 5 keeps that true.
+  // 3. THE credential control. persist-credentials belongs to the checkout STEP,
+  //    so it is read off that step's own `with:` in the parsed document.
+  //
+  //    What this replaced compared two counts over the raw file — how many
+  //    `uses: actions/checkout@` strings, how many `persist-credentials: false`
+  //    strings. A COMMENT reading `# checkout must keep persist-credentials:
+  //    false` counts as one, so a checkout that had LOST its input, and was
+  //    therefore persisting the token again, could be balanced by prose about
+  //    the very control it had dropped. Comments are not in the parsed model,
+  //    so that is now impossible by construction rather than by care.
   //
   //    NOT redundant with the action default: persist-credentials still
   //    defaults to TRUE in actions/checkout v7.0.1, verified in its action.yml
   //    at the exact SHA pinned here.
   //
-  //    The property belongs to the CHECKOUT STEP, not to the workflow. This
-  //    guard used to require every file to declare a checkout, which is the
-  //    wrong contract for a directory universe — a future workflow that
-  //    legitimately has none would have failed, and the pressure would then be
-  //    to weaken the guard. A workflow with zero checkouts is vacuously
-  //    compliant here; guard 7 pins the TOTAL, so a checkout cannot be quietly
-  //    dropped to satisfy this one instead.
+  //    The property belongs to the STEP, not to the workflow: a workflow with
+  //    no checkout is vacuously compliant (requiring one would fail a
+  //    legitimate future workflow, and the pressure would then be to relax this
+  //    guard), while guard 7 pins the TOTAL so a checkout cannot be deleted to
+  //    dodge the opt-out instead. Each step is judged alone, so one step's
+  //    opt-out can never cover for another step's missing one.
   function persistCredentialViolations(sources: readonly Workflow[]): string[] {
     const bad: string[] = [];
-    for (const [file, body] of sources) {
-      const checkouts = (body.match(/uses: actions\/checkout@/g) ?? []).length;
-      const optOuts = (body.match(/persist-credentials: false/g) ?? []).length;
-      if (checkouts !== optOuts) {
-        bad.push(`${file}: ${checkouts} checkouts but ${optOuts} persist-credentials: false opt-outs`);
+    for (const u of allUses(sources)) {
+      if (actionOf(u.value) !== "actions/checkout") continue;
+      if (u.with === null || !("persist-credentials" in u.with)) {
+        bad.push(
+          `${u.file} ${u.where}: checkout sets no persist-credentials input, so the token is persisted by default`,
+        );
+        continue;
       }
-      // Stated as well as counted: an opt-IN is refused by name, so a workflow
-      // that writes `persist-credentials: true` without a checkout — or beside
-      // a balancing `false` elsewhere — cannot slip through on arithmetic.
-      for (const l of steps(body).split("\n")) {
-        if (/persist-credentials:\s*true\b/.test(l)) {
-          bad.push(`${file}: declares ${l.trim()}`);
-        }
+      const v = u.with["persist-credentials"];
+      // Strictly the YAML boolean. `"false"` is refused too: it is quoted, and
+      // the canonical unquoted form is what every checkout here already uses,
+      // so requiring it costs nothing and removes a shape to argue about.
+      if (v !== false) {
+        bad.push(
+          `${u.file} ${u.where}: persist-credentials is ${JSON.stringify(v)}, not the boolean false`,
+        );
       }
     }
     return bad;
   }
 
   it("every checkout refuses to persist the token", () => {
+    expect(checkoutCount(WORKFLOWS), "no checkout was found to judge").toBeGreaterThan(0);
     expect(persistCredentialViolations(WORKFLOWS)).toEqual([]);
   });
 
   // 4. A workflow with no `permissions:` block inherits the REPOSITORY default,
-  //    which is not necessarily read-only — so this is required per file, of
-  //    every file, and a new workflow that simply omits the block is refused.
+  //    which is not necessarily read-only — so this is required of every file,
+  //    and a new workflow that simply omits the block is refused. Read from the
+  //    parsed document for the same reason as guard 1: `"permissions":` and
+  //    `permissions :` are the same key to GitHub, and were not the same key to
+  //    the anchored regex this replaced.
   function permissionViolations(sources: readonly Workflow[]): string[] {
     const bad: string[] = [];
-    for (const [file, body] of sources) {
-      if (!/^permissions:\n  contents: read$/m.test(body)) {
-        bad.push(`${file}: does not declare the least-privilege block \`permissions:\` / \`contents: read\``);
+    for (const { file, doc } of parseAll(sources)) {
+      if (!isRecord(doc)) {
+        bad.push(`${file}: is not a YAML mapping`);
+        continue;
       }
-      // Comment-stripped, for the reason guard 5 documents: a comment cannot
-      // grant a scope, and prose about write access must not read as a grant.
-      for (const l of steps(body).split("\n")) {
-        if (/:\s*write\b/.test(l)) bad.push(`${file}: grants a write scope — ${l.trim()}`);
+      const top = doc.permissions;
+      if (!isRecord(top) || Object.keys(top).length !== 1 || top.contents !== "read") {
+        bad.push(
+          `${file}: top-level permissions is ${JSON.stringify(top ?? null)}, not exactly { contents: read }`,
+        );
+      }
+      const blocks: [string, unknown][] = [["permissions", doc.permissions]];
+      if (isRecord(doc.jobs)) {
+        for (const [job, node] of Object.entries(doc.jobs)) {
+          if (isRecord(node) && node.permissions !== undefined) {
+            blocks.push([`jobs.${job}.permissions`, node.permissions]);
+          }
+        }
+      }
+      for (const [where, block] of blocks) {
+        if (typeof block === "string" && block !== "read-all") {
+          bad.push(`${file} ${where}: grants a write scope — ${block}`);
+        } else if (isRecord(block)) {
+          for (const [scope, level] of Object.entries(block)) {
+            if (level === "write") bad.push(`${file} ${where}: grants a write scope — ${scope}: write`);
+          }
+        }
       }
     }
     return bad;
@@ -655,14 +852,20 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
   //    test. It is also what keeps Codex exact-head review OUT of CI —
   //    scripts/eng/* reads GitHub with the operator's credential and must stay
   //    operator-side.
+  //
+  //    Scanned over the parsed document's strings AND KEYS. The comment-strip
+  //    this replaced existed only because the permissions block explains itself
+  //    by naming GITHUB_TOKEN; the parser drops comments outright, so the hack
+  //    is gone, and keys are included because `env: { GITHUB_TOKEN: ... }` hides
+  //    the token in one.
   function writeCredentialViolations(sources: readonly Workflow[]): string[] {
     const bad: string[] = [];
-    for (const [file, body] of sources) {
-      const code = steps(body);
-      if (/GITHUB_TOKEN/.test(code)) bad.push(`${file}: uses GITHUB_TOKEN`);
-      if (/secrets\.[A-Z_]/.test(code)) bad.push(`${file}: reads a secret`);
-      if (/\bgit (push|tag)\b/.test(code)) bad.push(`${file}: pushes`);
-      if (/\bgh (pr|release|issue|api)\b/.test(code)) bad.push(`${file}: calls a gh write`);
+    for (const { file, doc } of parseAll(sources)) {
+      const text = scalarsAndKeys(doc).join("\n");
+      if (/GITHUB_TOKEN/.test(text)) bad.push(`${file}: uses GITHUB_TOKEN`);
+      if (/secrets\.[A-Z_]/.test(text)) bad.push(`${file}: reads a secret`);
+      if (/\bgit (push|tag)\b/.test(text)) bad.push(`${file}: pushes`);
+      if (/\bgh (pr|release|issue|api)\b/.test(text)) bad.push(`${file}: calls a gh write`);
     }
     return bad;
   }
@@ -696,68 +899,58 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
   const SETUP_CLI_VERSION = "2.102.0";
   const SETUP_CLI_USES = 6; // 5 in ci.yml + 1 in nightly.yml
 
-  type SetupCliUse = {
-    where: string;
-    sha: string;
-    annotation: string | null;
-    versions: string[];
-  };
+  const SETUP_CLI_ACTION = "supabase/setup-cli";
 
   /**
-   * Every `supabase/setup-cli` step, read from its own `uses:` line to the end
-   * of that step. Deliberately NOT filtered to the approved SHA — the point is
-   * to see the unapproved ones.
+   * Every way the observed setup-cli posture departs from the approved one.
    *
-   * The `version:` input is read out of the step that declares it rather than
-   * counted across the whole file: a file-wide count of `version: 2.102.0` is
-   * satisfiable by an unrelated action's input, so it would stay green while a
-   * setup-cli step ran a different CLI.
+   * The step and its `version:` input are read from the PARSED document. The
+   * hand-rolled scanner this replaced walked from a `uses:` line to the end of
+   * that step by indentation, which was both fragile and blind to the key
+   * shapes YAML accepts — a seventh site written `uses : supabase/setup-cli@...`
+   * would not have been counted, and the "expected six" check would have gone
+   * on reporting six.
+   *
+   * The annotation is still text, because a comment is only ever text; it is
+   * fenced by the same reconciliation guard 2 uses.
    */
-  function setupCliUses(file: string, body: string): SetupCliUse[] {
-    const lines = body.split("\n");
-    const out: SetupCliUse[] = [];
-    for (let i = 0; i < lines.length; i++) {
-      const m = /^[\s-]*uses:\s*supabase\/setup-cli@(\S+)(?:\s*#\s*(\S+))?\s*$/.exec(lines[i]);
-      if (!m) continue;
-      // The COLUMN of `uses:` is the step's body indent in both YAML shapes:
-      // `- uses:` as the step's first key, and `uses:` under a `- name:`.
-      const indent = lines[i].indexOf("uses:");
-      const versions: string[] = [];
-      for (let j = i + 1; j < lines.length; j++) {
-        const line = lines[j];
-        if (line.trim() === "") continue;
-        if (line.length - line.trimStart().length < indent) break; // next step
-        if (/^\s*#/.test(line)) continue; // a comment is not an input
-        const v = /^\s*version:\s*(\S+)\s*$/.exec(line);
-        if (v) versions.push(v[1]);
-      }
-      out.push({ where: `${file}:${i + 1}`, sha: m[1], annotation: m[2] ?? null, versions });
-    }
-    return out;
-  }
-
-  /** Every way the observed posture departs from the approved one. */
-  function setupCliViolations(sources: readonly (readonly [string, string])[]): string[] {
-    const uses = sources.flatMap(([file, body]) => setupCliUses(file, body));
+  function setupCliViolations(sources: readonly Workflow[]): string[] {
     const bad: string[] = [];
+    const uses = allUses(sources).filter((u) => actionOf(u.value) === SETUP_CLI_ACTION);
+
     if (uses.length !== SETUP_CLI_USES) {
       bad.push(`${uses.length} setup-cli uses, expected ${SETUP_CLI_USES}`);
     }
     for (const u of uses) {
-      if (u.sha !== SETUP_CLI_SHA) {
-        bad.push(`${u.where}: ref ${u.sha} is not the vetted ${SETUP_CLI_TAG} commit`);
+      const ref = u.value.slice(u.value.lastIndexOf("@") + 1);
+      if (ref !== SETUP_CLI_SHA) {
+        bad.push(`${u.file} ${u.where}: ref ${ref} is not the vetted ${SETUP_CLI_TAG} commit`);
       }
-      if (u.annotation !== SETUP_CLI_TAG) {
+      const version = u.with?.["version"];
+      if (version !== SETUP_CLI_VERSION) {
+        const shown =
+          version === undefined ? "(absent)" : typeof version === "string" ? version : JSON.stringify(version);
         bad.push(
-          `${u.where}: annotation "${u.annotation ?? "(none)"}" does not report ${SETUP_CLI_TAG}`,
+          `${u.file} ${u.where}: CLI version ${shown} is not the grants-parity pin ${SETUP_CLI_VERSION}`,
         );
       }
-      if (u.versions.length !== 1) {
-        bad.push(`${u.where}: ${u.versions.length} version inputs, expected exactly one`);
+    }
+
+    for (const { file, body, doc } of parseAll(sources)) {
+      const executed = executableUses(file, doc).filter((u) => actionOf(u.value) === SETUP_CLI_ACTION).length;
+      const lines = usesLines(file, body).filter((l) => actionOf(l.value) === SETUP_CLI_ACTION);
+      if (lines.length !== executed) {
+        bad.push(
+          `${file}: ${lines.length} setup-cli lines but ${executed} executed — the text scan cannot be ` +
+            `trusted to carry the annotation check`,
+        );
+        continue;
       }
-      for (const v of u.versions) {
-        if (v !== SETUP_CLI_VERSION) {
-          bad.push(`${u.where}: CLI version ${v} is not the grants-parity pin ${SETUP_CLI_VERSION}`);
+      for (const l of lines) {
+        if (l.annotation !== SETUP_CLI_TAG) {
+          bad.push(
+            `${file}:${l.line}: annotation ${JSON.stringify(l.annotation ?? "(none)")} does not report ${SETUP_CLI_TAG}`,
+          );
         }
       }
     }
@@ -855,7 +1048,7 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
   function supplyChainViolations(sources: readonly Workflow[]): string[] {
     return [
       ...unpinnedRefViolations(sources),
-      ...missingAnnotationViolations(sources),
+      ...annotationViolations(sources),
       ...persistCredentialViolations(sources),
       ...permissionViolations(sources),
       ...writeCredentialViolations(sources),
@@ -906,22 +1099,22 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
       "actions/checkout@v4",
     );
     expect(supplyChainViolations([...WORKFLOWS, hostile])).toContain(
-      "security.yaml: uses: actions/checkout@v4 is not pinned to a 40-character SHA",
+      "security.yaml jobs.scan.steps[0].uses: actions/checkout@v4 is not pinned to a 40-character SHA",
     );
   });
 
   it("control 2 RED: a future .yaml file with persist-credentials: true", () => {
     const hostile = variant("future.yaml", "persist-credentials: false", "persist-credentials: true");
     expect(supplyChainViolations([...WORKFLOWS, hostile])).toContain(
-      "future.yaml: declares persist-credentials: true",
+      "future.yaml jobs.scan.steps[0].uses: persist-credentials is true, not the boolean false",
     );
   });
 
   it("control 3 RED: a future workflow granting contents: write", () => {
     const hostile = variant("wide.yml", "  contents: read", "  contents: write");
     const violations = supplyChainViolations([...WORKFLOWS, hostile]);
-    expect(violations).toContain("wide.yml: grants a write scope — contents: write");
-    expect(violations.join("\n")).toMatch(/wide\.yml: does not declare the least-privilege block/);
+    expect(violations).toContain("wide.yml permissions: grants a write scope — contents: write");
+    expect(violations.join("\n")).toMatch(/wide\.yml: top-level permissions is .* not exactly \{ contents: read \}/);
   });
 
   it("controls 5 and 6: the enumeration takes every .yml and .yaml, and nothing else", () => {
@@ -978,12 +1171,12 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
       expect(enrolled.map(([name]) => name)).toContain("security.yaml");
 
       const violations = supplyChainViolations(enrolled);
-      const reported = violations.filter((v) => v.startsWith("security.yaml:"));
+      const reported = violations.filter((v) => v.startsWith("security.yaml"));
       // Not merely "something failed": each guard must name the new file.
       expect(reported.join("\n")).toMatch(/is not pinned to a 40-character SHA/);
-      expect(reported.join("\n")).toMatch(/persist-credentials: true/);
+      expect(reported.join("\n")).toMatch(/persist-credentials is true, not the boolean false/);
       expect(reported.join("\n")).toMatch(/grants a write scope/);
-      expect(reported.join("\n")).toMatch(/does not declare the least-privilege block/);
+      expect(reported.join("\n")).toMatch(/top-level permissions is .* not exactly \{ contents: read \}/);
       expect(reported.join("\n")).toMatch(/pushes/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -994,6 +1187,147 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
   // enumeration with a list again, WORKFLOWS stops matching the directory.
   // ci.yml and nightly.yml are asserted PRESENT, not asserted to be the whole
   // universe — presence is a fact about today, membership is the directory's.
+  // -------------------------------------------------------------------------
+  // P2-A — YAML KEY SHAPES
+  // -------------------------------------------------------------------------
+  // `uses:`, `uses :`, `"uses":` and `'uses':` are ONE key to YAML and one
+  // action to GitHub. They were not one key to the text regex that used to do
+  // the discovering, so two of the four could carry a mutable ref straight past
+  // the pinning guard. Each shape is driven through the real guards below.
+
+  const PINNED_CHECKOUT = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1";
+  const USES_LINE = `      - uses: ${PINNED_CHECKOUT}`;
+
+  /** The compliant baseline with its single `uses` line rewritten. */
+  const withUsesLine = (name: string, replacement: string): Workflow => {
+    expect(COMPLIANT.filter((l) => l === USES_LINE), "baseline holds exactly one uses line").toHaveLength(1);
+    return synthetic(name, COMPLIANT.map((l) => (l === USES_LINE ? replacement : l)));
+  };
+
+  const KEY_SHAPES: [string, string][] = [
+    ["uses:", "uses:"],
+    ["uses : (space before the colon)", "uses :"],
+    ['"uses": (double-quoted key)', '"uses":'],
+    ["'uses': (single-quoted key)", "'uses':"],
+  ];
+
+  it("the text regex this replaced was blind to three of the four key shapes", () => {
+    const LEGACY = /uses: \S+/; // what discovery used to be
+    const blind = KEY_SHAPES.filter(([, key]) => !LEGACY.test(`      - ${key} actions/checkout@v4`));
+    expect(blind.map(([label]) => label)).toEqual([
+      "uses : (space before the colon)",
+      '"uses": (double-quoted key)',
+      "'uses': (single-quoted key)",
+    ]);
+    // ...and the parser sees every one of them as the same executable action.
+    for (const [, key] of KEY_SHAPES) {
+      const doc = yaml.load(["jobs:", "  j:", "    steps:", `      - ${key} actions/checkout@v4`].join("\n"));
+      expect(executableUses("probe", doc).map((u) => u.value)).toEqual(["actions/checkout@v4"]);
+    }
+  });
+
+  for (const [label, key] of KEY_SHAPES) {
+    it(`control A4 GREEN: a correctly pinned ref written as ${label}`, () => {
+      const ok = withUsesLine("future.yaml", `      - ${key} ${PINNED_CHECKOUT}`);
+      expect(supplyChainViolations([...WORKFLOWS, ok])).toEqual([]);
+    });
+
+    it(`control A1-A3 RED: a mutable actions/checkout@v4 written as ${label}`, () => {
+      const hostile = withUsesLine("security.yaml", `      - ${key} actions/checkout@v4`);
+      expect(supplyChainViolations([...WORKFLOWS, hostile])).toContain(
+        "security.yaml jobs.scan.steps[0].uses: actions/checkout@v4 is not pinned to a 40-character SHA",
+      );
+    });
+  }
+
+  it("a `uses` that is only input DATA is not treated as an executable action", () => {
+    // Discovery reads jobs.<job>.steps[*].uses and jobs.<job>.uses, and nothing
+    // else — a deep search for the name would call this an unpinned action.
+    const doc = yaml.load(
+      ["jobs:", "  j:", "    steps:", `      - uses: ${PINNED_CHECKOUT.split(" ")[0]}`,
+       "        with:", "          uses: not-an-action@v1"].join("\n"),
+    );
+    expect(executableUses("probe", doc).map((u) => u.value)).toEqual([PINNED_CHECKOUT.split(" ")[0]]);
+  });
+
+  // -------------------------------------------------------------------------
+  // P2-B — persist-credentials BELONGS TO THE CHECKOUT STEP
+  // -------------------------------------------------------------------------
+
+  const checkoutWorkflow = (...steps: string[][]): string[] => [
+    "name: Future",
+    "on: push",
+    "permissions:",
+    "  contents: read",
+    "jobs:",
+    "  scan:",
+    "    runs-on: ubuntu-latest",
+    "    steps:",
+    ...steps.flat(),
+  ];
+  const OPTED_OUT = [`      - uses: ${PINNED_CHECKOUT}`, "        with:", "          persist-credentials: false"];
+  const MASKED = [`      - uses: ${PINNED_CHECKOUT}`, "        # persist-credentials: false"];
+  const NO_OPT_OUT = "masked.yaml jobs.scan.steps[0].uses: checkout sets no persist-credentials input, so the token is persisted by default";
+
+  it("the count comparison this replaced was satisfied by the COMMENT alone", () => {
+    const [, body] = synthetic("masked.yaml", checkoutWorkflow(MASKED));
+    // Exactly the legacy check: count checkout uses, count the opt-out STRING.
+    const checkouts = (body.match(/uses: actions\/checkout@/g) ?? []).length;
+    const optOuts = (body.match(/persist-credentials: false/g) ?? []).length;
+    expect(checkouts).toBe(1);
+    expect(optOuts, "the comment supplied the count").toBe(1);
+    expect(checkouts === optOuts, "so the legacy guard read GREEN").toBe(true);
+    // The step itself carries no such input, and the token is persisted.
+    expect(persistCredentialViolations([synthetic("masked.yaml", checkoutWorkflow(MASKED))])).toEqual([
+      NO_OPT_OUT,
+    ]);
+  });
+
+  it("control B1 GREEN: a checkout with persist-credentials: false", () => {
+    expect(supplyChainViolations([...WORKFLOWS, synthetic("future.yaml", checkoutWorkflow(OPTED_OUT))])).toEqual([]);
+  });
+
+  it("control B2 RED: a checkout missing the input, with a comment naming it", () => {
+    expect(supplyChainViolations([...WORKFLOWS, synthetic("masked.yaml", checkoutWorkflow(MASKED))])).toContain(
+      NO_OPT_OUT,
+    );
+  });
+
+  it("control B3 RED: two checkouts, one opted out and one not", () => {
+    const mixed = synthetic("mixed.yaml", checkoutWorkflow(OPTED_OUT, [`      - uses: ${PINNED_CHECKOUT}`]));
+    const violations = persistCredentialViolations([mixed]);
+    // One opt-out cannot cover for the other step: the SECOND step is named.
+    expect(violations).toEqual([
+      "mixed.yaml jobs.scan.steps[1].uses: checkout sets no persist-credentials input, so the token is persisted by default",
+    ]);
+  });
+
+  it("control B4 RED: every value that is not the boolean false", () => {
+    const cases: [string, string][] = [
+      ["true", "true"],
+      ['"true"', '"true"'],
+      ['"false"', '"false"'],
+      ["(empty)", ""],
+      ["null", "null"],
+      ["no", "no"],
+    ];
+    for (const [label, value] of cases) {
+      const wf = synthetic(
+        "value.yaml",
+        checkoutWorkflow([`      - uses: ${PINNED_CHECKOUT}`, "        with:", `          persist-credentials: ${value}`]),
+      );
+      expect(persistCredentialViolations([wf]), `persist-credentials: ${label} must be refused`).toHaveLength(1);
+    }
+    // ...while the canonical boolean, in any YAML casing, is accepted.
+    for (const value of ["false", "False", "FALSE"]) {
+      const wf = synthetic(
+        "value.yaml",
+        checkoutWorkflow([`      - uses: ${PINNED_CHECKOUT}`, "        with:", `          persist-credentials: ${value}`]),
+      );
+      expect(persistCredentialViolations([wf]), `persist-credentials: ${value} is the opt-out`).toEqual([]);
+    }
+  });
+
   it("the guarded universe IS the workflow directory, not a list in this file", () => {
     const onDisk = readdirSync(WORKFLOW_DIR)
       .filter((name) => /\.ya?ml$/.test(name))
