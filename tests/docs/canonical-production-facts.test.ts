@@ -1194,7 +1194,21 @@ function maskQuotedSpans(text: string): string {
   for (const m of [...text.matchAll(/"[^"\n]*"|“[^”\n]*”/g)]) {
     const start = m.index ?? 0;
     const lineStart = text.lastIndexOf("\n", start) + 1;
-    const preamble = text.slice(lineStart, start);
+    // CELL-SCOPED, NOT LINE-SCOPED. Scanning from the start of the LINE let one
+    // legitimate correction license every later quotation in the same Markdown
+    // row, which is the densest place these documents write:
+    //
+    //   | Corrected: previous wording "row DML is NOT revoked" | Current
+    //     posture: "authenticated still holds row INSERT/UPDATE/DELETE" |
+    //
+    // The first cell is a real historical correction. The second states the
+    // defect as CURRENT FACT, and it was masked by the marker in the cell
+    // before it. A marker may only speak for its own cell, so the preamble
+    // starts at the nearest `|` (or line start, whichever is closer) - which
+    // also still covers the ordinary prose case where there is no table at all.
+    const cellStart = text.lastIndexOf("|", start);
+    const preambleStart = Math.max(lineStart, cellStart === -1 ? lineStart : cellStart + 1);
+    const preamble = text.slice(preambleStart, start);
     if (!CORRECTION_MARKER.test(preamble)) continue;
     out = out.slice(0, start) + " ".repeat(m[0].length) + out.slice(start + m[0].length);
   }
@@ -1373,7 +1387,14 @@ const isCountWord = (w: string) => parseCount(w) !== null;
 const NUM_TOKEN = [...Object.keys(UNITS), ...Object.keys(TENS), "hundred"]
   .sort((a, b) => b.length - a.length) // longest-first: "nineteen" before "nine"
   .join("|");
-const COUNT_PHRASE = `(?:\\d+|(?:${NUM_TOKEN})(?:[\\s-]+(?:and[\\s-]+)?(?:${NUM_TOKEN}))*)`;
+const COUNT_PHRASE =
+  // `\b` AT BOTH ENDS, and it is load-bearing rather than defensive. Without
+  // it the alternation happily starts INSIDE an ordinary word: "none",
+  // "someone", "stone" and "alone" all yielded "one", so a document asserting
+  // **none** carry a capability parsed as the number 1 and passed silently
+  // wherever 1 was the expected count. A wrong number that parses is the
+  // failure mode this whole grammar exists to remove.
+  `\\b(?:\\d+|(?:${NUM_TOKEN})(?:[\\s-]+(?:and[\\s-]+)?(?:${NUM_TOKEN}))*)\\b`;
 
 /**
  * Split a document into units a CLAIM can live in.
@@ -1465,8 +1486,24 @@ describe("RULE X — canonical documents agree with each other", () => {
         // "currently holds 4" · "is currently 4 unresolved rows" · "now holds 0 rows"
         String.raw`\b(?:currently|now)\b[^.\n|]{0,20}\b${STATE_VERB}\b[^.\n|]{0,20}${COUNT}`,
         String.raw`\b${STATE_VERB}\b[^.\n|]{0,20}\b(?:currently|now)\b[^.\n|]{0,20}${COUNT}`,
-        // "holds 0 rows" · "contains 4 rows" - a bare present-tense row count
-        String.raw`\b(?:holds?|contains?)\s+${COUNT}\s*(?:rows?|entries|records)\b`,
+        // A BARE present-tense count, with the FULL state-verb set rather than
+        // two of them. Restricting this branch to holds/contains meant the
+        // commonest phrasings walked straight through without needing
+        // "currently" or "now" anywhere:
+        //   "appointment_settlements has 0 rows"
+        //   "There are 4 unresolved ops_alerts rows"
+        //   "the queue remains 4 records"
+        // The noun anchor keeps it bounded, and the gap allows the qualifiers
+        // these documents actually write ("4 unresolved ops_alerts rows").
+        // A NUMERAL, deliberately, not the full COUNT. With "currently"/"now"
+        // above, any count form is a claim about today. WITHOUT a temporal
+        // qualifier only a numeral is unambiguous evidence of a measurement:
+        // the word forms "no"/"zero" are just as often structural rather than
+        // measured ("there is no `NAV_ENTRIES` row", "these merges have no row
+        // here"), and matching them turned this rule against the document's own
+        // prose. Zero stated as a negation is already covered by its own branch
+        // below, which is anchored on recorded/created/collected.
+        String.raw`\b${STATE_VERB}\s+\*{0,2}\d+\b[^.\n|]{0,30}?(?:rows?|entries|records)\b`,
         // "No settlement has been recorded" - a zero stated as a negation
         String.raw`\b(?:no|zero)\s+\w[\w-]{2,}(?:\s+\w[\w-]{2,})?\s+(?:has|have)\s+been\s+(?:recorded|created|collected|made)\b`,
         // the original inference form
@@ -1573,6 +1610,52 @@ describe("RULE X — canonical documents agree with each other", () => {
     ).toBe(actual);
   });
 
+  it("A5: the recorded Current Git branch HEAD equals the real production ref", () => {
+    // READING THE VALUE FROM THE DOCUMENT IS NOT VERIFYING IT. X4 counts to the
+    // recorded Git head, which closed one hole and left a subtler one: the
+    // RECORDED VALUE can itself be stale. After a documentation-only production
+    // merge, A2/A3 stay green by construction - the runtime-bearing SHA has not
+    // moved and no runtime file changed - while the branch has advanced, the
+    // recorded head still names the older commit, and X4 dutifully counts to
+    // that stale commit and agrees with a stale prose count. Every rule passes
+    // and every number is wrong.
+    //
+    // So the head is checked against the actual ref. The branch NAME is read
+    // from the document (it is a recorded fact like any other) and resolved
+    // locally - no network. Where the ref is not present, as in a shallow CI
+    // clone, this reports that it could not run rather than passing quietly,
+    // the same contract A1/A2/A3 use.
+    const recorded = currentGitHeadSha();
+    expect(recorded, "current-state must record a Current Git branch HEAD").toBeTruthy();
+
+    const branch = currentProse(CURRENT_STATE).match(
+      /\|\s*\*{0,2}Production branch\*{0,2}\s*\|\s*`([^`]+)`/i,
+    )?.[1];
+    expect(branch, "current-state must name the production branch for this rule to resolve it").toBeTruthy();
+
+    if (!GIT_USABLE) {
+      expect(GIT_USABLE, "shallow clone or no git — A5 could not run").toBe(false);
+      return;
+    }
+    // Prefer the remote-tracking ref: on the production branch itself the local
+    // ref is the same commit, and on a PR branch only the remote-tracking ref
+    // describes production at all.
+    const ref =
+      git("rev-parse", "--verify", "-q", `refs/remotes/origin/${branch}`) ??
+      git("rev-parse", "--verify", "-q", `refs/heads/${branch}`);
+    if (!ref) {
+      expect(ref, `neither origin/${branch} nor ${branch} is present in this clone — A5 could not run`).toBeNull();
+      return;
+    }
+    expect(
+      recorded,
+      `current-state records the Current Git branch HEAD as ${(recorded as string).slice(0, 8)}, but ` +
+        `${branch} actually points at ${ref.slice(0, 8)}. A documentation-only production merge ` +
+        "advances the branch without moving the runtime pin, so A2 and A3 both stay green while " +
+        "this row and every count derived from it go stale.",
+    ).toBe(ref);
+  });
+
   it("X4's endpoint is the production GIT HEAD, not the runtime pin — they are different facts", () => {
     // A DOCS-ONLY production merge advances the branch head and leaves the
     // runtime-bearing SHA where it was. Counting merges from the pin therefore
@@ -1655,16 +1738,24 @@ describe("RULE X — canonical documents agree with each other", () => {
     expect(parseCount("banana"), "banana is not a count").toBeNull();
   });
 
-  it("X6: the changelog's coverage statements match the PR rows it actually carries", () => {
-    // Two sentences four lines apart said "#632-#645" and "#632-#646" while the
-    // table held #648 too. A coverage claim is a derived fact like any other,
-    // and it went stale the same way - immediately after a sweep that was meant
-    // to catch exactly this.
-    const rows = [...RELEASE_CHANGELOG.matchAll(/^\|\s*\*{0,2}#(\d{3,4})\*{0,2}\s*\|/gm)]
-      .map((m) => Number(m[1]))
-      .filter((n) => n >= 632);
-    expect(rows.length, "the changelog must carry rows in the reconciled range").toBeGreaterThan(0);
-    const highest = Math.max(...rows);
+  it("X6: the changelog covers every production PR that actually merged in its range", () => {
+    // ENDPOINT AGREEMENT IS NOT COVERAGE. This compared the claimed upper bound
+    // with `Math.max(...rows)`, so "#632-#650" was satisfied by carrying #632
+    // and #650 and nothing in between - a range can be complete at both ends
+    // and hollow in the middle, which is precisely the shape a hand-maintained
+    // table drifts into.
+    //
+    // The authority is the first-parent production history, not the numbers in
+    // the table. And it must be the set of PRs that ACTUALLY MERGED: PR numbers
+    // are not contiguous production history, so a draft or abandoned PR (#647
+    // is open and drafted today) leaves a legitimate numeric gap that is not
+    // missing coverage. Enumerating integers would manufacture that defect.
+    const rows = new Set(
+      [...RELEASE_CHANGELOG.matchAll(/^\|\s*\*{0,2}#(\d{3,4})\*{0,2}\s*\|/gm)]
+        .map((m) => Number(m[1]))
+        .filter((n) => n >= 632),
+    );
+    expect(rows.size, "the changelog must carry rows in the reconciled range").toBeGreaterThan(0);
 
     const claims = [...RELEASE_CHANGELOG.matchAll(/#632[–-]#?(\d{3,4})/g)].map((m) => Number(m[1]));
     expect(
@@ -1672,13 +1763,46 @@ describe("RULE X — canonical documents agree with each other", () => {
       "the changelog must state the range it covers, so the claim can be checked",
     ).toBeGreaterThan(0);
 
-    const wrong = claims.filter((c) => c !== highest);
+    // Every coverage sentence states one derived fact and they must agree.
+    const distinct = [...new Set(claims)];
     expect(
-      wrong,
-      `the changelog claims coverage through #${JSON.stringify(wrong)} while its highest ` +
-        `reconciled row is #${highest}. Every coverage sentence states the same derived fact and ` +
-        "they must agree with the table and with each other.",
+      distinct.length,
+      `the changelog states more than one coverage upper bound: ${JSON.stringify(distinct)}`,
+    ).toBe(1);
+    const upper = distinct[0];
+
+    if (!GIT_USABLE) {
+      expect(GIT_USABLE, "shallow clone or no git — X6's completeness check could not run").toBe(false);
+      return;
+    }
+    // The MERGED set, read from the production line rather than from integers.
+    const baseline = currentGitHeadSha();
+    expect(baseline, "current-state must record a Current Git branch HEAD").toBeTruthy();
+    const subjects = git("log", "--first-parent", "--merges", "--format=%s", `b9e0003f..${baseline}`) ?? "";
+    const merged = new Set(
+      [...subjects.matchAll(/Merge pull request #(\d{3,4})\b/g)]
+        .map((m) => Number(m[1]))
+        .filter((n) => n >= 632 && n <= upper),
+    );
+    expect(
+      merged.size,
+      "no merged production PRs were found in the claimed range, so this rule would prove nothing",
+    ).toBeGreaterThan(0);
+
+    const missing = [...merged].filter((pr) => !rows.has(pr)).sort((a, b) => a - b);
+    expect(
+      missing,
+      `the changelog claims coverage through #${upper}, but ${missing.length} production PR(s) ` +
+        "that actually merged inside that range have no row. A range complete at both ends can " +
+        `still be hollow, which is why the upper bound alone cannot prove this. Missing: ${JSON.stringify(missing)}`,
     ).toEqual([]);
+
+    // The upper bound must still BE a merged PR and the highest one covered -
+    // otherwise coverage could be claimed through a number that never landed.
+    expect(
+      rows.has(upper),
+      `the changelog claims coverage through #${upper} but carries no row for it`,
+    ).toBe(true);
   });
 
   it("X5: the register's capability section counts what it actually lists, contiguously", () => {
