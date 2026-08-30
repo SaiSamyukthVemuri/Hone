@@ -209,7 +209,10 @@ describe("PR CI — path-aware lane selection", () => {
     // on every run.
     const caches = CI.match(/path: ~\/\.cache\/ms-playwright/g) ?? [];
     expect(caches.length, "all four browser jobs must cache").toBe(4);
-    expect((CI.match(/uses: actions\/cache@v4/g) ?? []).length).toBeGreaterThanOrEqual(4);
+    // CI-HARDEN-01B pinned every action to a commit SHA, so this counts the
+    // ACTION rather than a version tag. The claim under test is "every browser
+    // job caches", which a ref should never have been able to falsify.
+    expect((CI.match(/uses: actions\/cache@/g) ?? []).length).toBeGreaterThanOrEqual(4);
   });
 
   it("the cache key is bound to runner OS and the exact Playwright version", () => {
@@ -446,5 +449,140 @@ describe("pre-push verification", () => {
     expect(claude).toMatch(/verify:prepush/);
     expect(claude).toMatch(/git diff HEAD --exit-code/);
     expect(claude).toMatch(/git add -A/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CI-HARDEN-01B — supply chain and least privilege
+// ---------------------------------------------------------------------------
+// Closes the pinning half of HNE-CI-001 (P2, docs/audits/2026-07-30/
+// MASTER_FINDINGS_REGISTER.csv, recorded UNMAPPED_HISTORICAL /
+// NOT_INDIVIDUALLY_RE_VERIFIED). That row is a frozen historical artifact and is
+// referenced here, never rewritten: every source_* cell of the register is
+// SHA-256 digest-pinned by tests/audits/findings-register-consistency.test.ts.
+//
+// Guards 1-4 were each verified to read FALSE against the pre-hardening
+// workflows at base 32dfd329 before the workflows were touched, so none of them
+// is a guard that passes no matter what. Guards 5-7 are invariants: they were
+// green before this change and must stay green, which is the point of them.
+describe("CI-HARDEN-01B — supply chain and least privilege", () => {
+  const WORKFLOWS = [
+    ["ci.yml", CI],
+    ["nightly.yml", NIGHTLY],
+  ] as const;
+
+  /**
+   * A workflow's own comments are not what it executes. The permissions block
+   * added by this change explains itself by NAMING GITHUB_TOKEN, so a
+   * whole-file match for that token reports the exact opposite of the truth —
+   * which is what the first version of guard 5 caught, in its own rationale.
+   */
+  const steps = (body: string) =>
+    body
+      .split("\n")
+      .filter((l) => !/^\s*#/.test(l))
+      .join("\n");
+
+  // 1. A mutable ref means the code a job runs can change without a commit
+  //    here. `supabase/setup-cli@v1` was the sharpest case: it resolves to a
+  //    BRANCH (refs/heads/v1), not a tag — that repository's tags run
+  //    v1.7.1 -> v2.0.0 -> v3 — so anyone with push access to it could alter
+  //    what every database-touching job in this file executed.
+  it("every action reference is pinned to a commit SHA", () => {
+    for (const [file, body] of WORKFLOWS) {
+      const refs = body.match(/uses: \S+/g) ?? [];
+      expect(refs.length, `${file} declares no actions`).toBeGreaterThan(0);
+      for (const ref of refs) {
+        expect(ref, `${file}: ${ref} is not pinned to a 40-character SHA`).toMatch(
+          /^uses: [\w.-]+\/[\w.-]+@[0-9a-f]{40}$/,
+        );
+      }
+    }
+  });
+
+  // 2. A bare 40-character SHA is unreadable. The trailing tag comment is how a
+  //    reviewer knows WHICH version was vetted without leaving the diff.
+  it("every pinned ref carries a trailing version comment", () => {
+    for (const [file, body] of WORKFLOWS) {
+      const lines = body.split("\n").filter((l) => /uses: \S+@[0-9a-f]{40}/.test(l));
+      expect(lines.length, `${file} declares no pinned actions`).toBeGreaterThan(0);
+      for (const l of lines) {
+        expect(l, `${file}: ${l.trim()} has no # vX.Y.Z comment`).toMatch(
+          /@[0-9a-f]{40}\s+# v\d+\.\d+\.\d+/,
+        );
+      }
+    }
+  });
+
+  // 3. Counted, not merely present. A `.includes()` check would pass with one
+  //    opt-out among eight checkouts, which is the shape this guard exists to
+  //    refuse. Safe precisely because no job needs the credential afterwards:
+  //    every git call in these workflows is local to the history checkout
+  //    already fetched, and guard 5 keeps that true.
+  //
+  //    NOT redundant with the action default: persist-credentials still
+  //    defaults to TRUE in actions/checkout v7.0.1, verified in its action.yml
+  //    at the exact SHA pinned here.
+  it("every checkout refuses to persist the token", () => {
+    for (const [file, body] of WORKFLOWS) {
+      const checkouts = (body.match(/uses: actions\/checkout@/g) ?? []).length;
+      const optOuts = (body.match(/persist-credentials: false/g) ?? []).length;
+      expect(checkouts, `${file} declares no checkout`).toBeGreaterThan(0);
+      expect(
+        optOuts,
+        `${file}: ${checkouts} checkouts but ${optOuts} opt-outs`,
+      ).toBe(checkouts);
+    }
+  });
+
+  it("both workflows declare contents: read and grant nothing wider", () => {
+    for (const [file, body] of WORKFLOWS) {
+      expect(body, `${file} must declare least privilege`).toMatch(
+        /^permissions:\n  contents: read$/m,
+      );
+      expect(body, `${file} grants a write scope`).not.toMatch(/:\s*write\b/);
+    }
+  });
+
+  // 5. The credential opt-out and the read-only token are only safe while this
+  //    stays true, so the claim is pinned rather than left as a comment: a
+  //    future `git push`, `gh` write or secret read would have to confront this
+  //    test. It is also what keeps Codex exact-head review OUT of CI —
+  //    scripts/eng/* reads GitHub with the operator's credential and must stay
+  //    operator-side.
+  it("no workflow writes to GitHub, which is what makes the opt-out safe", () => {
+    for (const [file, body] of WORKFLOWS) {
+      const code = steps(body);
+      expect(code, `${file} uses GITHUB_TOKEN`).not.toMatch(/GITHUB_TOKEN/);
+      expect(code, `${file} reads a secret`).not.toMatch(/secrets\.[A-Z_]/);
+      expect(code, `${file} pushes`).not.toMatch(/\bgit (push|tag)\b/);
+      expect(code, `${file} calls a gh write`).not.toMatch(/\bgh (pr|release|issue|api)\b/);
+    }
+  });
+
+  // 6. The Supabase CLI pin is a DB-SAFETY invariant, not a preference: a newer
+  //    CLI's `db reset` strips Data-API grants and every authenticated query
+  //    then fails at the privilege layer, which looks exactly like an
+  //    application bug (CLAUDE.md §3). The action was pinned to a commit but
+  //    deliberately NOT bumped past the v1 line — v3 is a composite action that
+  //    installs the CLI from npm via Bun with different `version` semantics.
+  it("the Supabase CLI stays on the grants-parity version and the v1 action line", () => {
+    const all = CI + NIGHTLY;
+    const setupCli = (all.match(/uses: supabase\/setup-cli@\S+/g) ?? []).length;
+    const versions = (all.match(/version: 2\.102\.0/g) ?? []).length;
+    expect(setupCli, "setup-cli must still be used").toBeGreaterThan(0);
+    expect(versions, `${setupCli} setup-cli sites but ${versions} pinned versions`).toBe(setupCli);
+    expect(all, "setup-cli must not be bumped past the v1 line without a grants re-verification")
+      .not.toMatch(/supabase\/setup-cli@v[23]/);
+  });
+
+  // 7. The browser-e2e aggregator has NO checkout — it is shell arithmetic over
+  //    needs.*.result and is covered by the top-level permissions block alone.
+  //    Counting the checkouts stops guard 3 from silently assuming nine.
+  it("there are exactly eight checkouts across both workflows", () => {
+    const total =
+      (CI.match(/uses: actions\/checkout@/g) ?? []).length +
+      (NIGHTLY.match(/uses: actions\/checkout@/g) ?? []).length;
+    expect(total, "7 in ci.yml (the aggregator has none) + 1 in nightly.yml").toBe(8);
   });
 });

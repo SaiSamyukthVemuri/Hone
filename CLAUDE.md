@@ -271,3 +271,22 @@ before assuming the diff broke something.**
   authenticated-only command must revoke from **all three** explicitly, by name.
   Missed once in 0129 (`anon`) and again in 0164 (`service_role`); now pinned by
   `tests/security/clinical-rpc-grant-guard.test.ts`.
+
+### CI supply chain
+
+- Every action in `.github/workflows/**` is pinned to a **commit SHA** with a
+  trailing `# vX.Y.Z` comment. A tag is mutable, and `supabase/setup-cli@v1` was
+  a **branch** (`refs/heads/v1`), so every DB-touching job ran whatever that
+  branch pointed at. Closes the pinning half of HNE-CI-001; the register row is
+  referenced, never rewritten.
+- `supabase/setup-cli` stays on the **v1** line. v3 is a composite action that
+  installs the CLI from npm via Bun, and `version: 2.102.0` above is a
+  grants-parity invariant — a major bump is its own ticket with its own grants
+  re-verification and a fresh `db reset` proof.
+- Both workflows declare `permissions: contents: read` at the top level and every
+  checkout sets `persist-credentials: false`. No workflow holds write
+  credentials. A new workflow that genuinely needs one declares **job-level**
+  `permissions:` rather than widening the top-level block.
+- Codex exact-head review (`npm run eng -- status <pr>`) is **operator-side**. Do
+  not wire it into a workflow: it needs a GitHub API credential, which is exactly
+  what the posture above removes.

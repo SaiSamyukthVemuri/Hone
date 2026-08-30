@@ -28,6 +28,28 @@ on:
     branches:
       - claude/build-hone-saas-hOex7
 
+# CI-HARDEN-01B. Least privilege, asserted rather than assumed.
+#
+# Neither workflow uses GITHUB_TOKEN, reads a secret, pushes a commit, tags,
+# comments, or calls a GitHub write API: every job checks out, builds and tests.
+# The default token scope was therefore wider than anything here needs, so read
+# is the whole requirement. That is verified rather than assumed - see the guard
+# in tests/ci/ci-config.test.ts, which asserts it over step text with comment
+# lines stripped, because this block's own rationale names GITHUB_TOKEN.
+#
+# Cache restore and artifact upload are unaffected: both authenticate with the
+# Actions runtime token, not GITHUB_TOKEN.
+#
+# Codex exact-head review deliberately does NOT run here. scripts/eng/* reads
+# GitHub with the operator's credential; putting it in a workflow would require
+# this workflow to hold an API credential, which is exactly what this block
+# removes. It stays operator-side: `npm run eng -- status <pr>`.
+#
+# A future workflow that genuinely writes to GitHub declares its own JOB-LEVEL
+# `permissions:` rather than widening this one.
+permissions:
+  contents: read
+
 # Cancel in-progress runs for the same ref when a newer commit lands.
 # Keeps CI minutes bounded and stops a slow run from blocking the
 # next attempt.
@@ -77,15 +99,26 @@ jobs:
       browser_reason: ${{ steps.browser.outputs.browser_reason }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        # CI-HARDEN-01B. The checkout credential is not left behind for the rest
+        # of the job. Nothing here needs it: every git call in these workflows is
+        # LOCAL to the history checkout already fetched (merge-base, diff, show,
+        # diff --check). No job pushes, tags, comments or calls a write API, so a
+        # usable token sitting on disk for the remainder of the run buys nothing
+        # and widens what a compromised later step could reach.
+        #
+        # NOT redundant with the action default: persist-credentials still
+        # defaults to TRUE in actions/checkout v7.0.1, verified in its action.yml
+        # at this exact SHA.
         with:
+          persist-credentials: false
           # Full history so the PR BASE sha is reachable: the diff must be
           # against the merge base, not merely the previous commit, or a
           # multi-commit PR would classify only its most recent push.
           fetch-depth: 0
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "20"
 
@@ -175,10 +208,12 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           # No .nvmrc and no engines.node in package.json today.
           # Pin to Node 20 (LTS), matches the docs/14 fallback and
@@ -256,10 +291,12 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "20"
           cache: "npm"
@@ -268,8 +305,17 @@ jobs:
         run: npm ci
 
       - name: Set up Supabase CLI
-        uses: supabase/setup-cli@v1
+        uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1 # v1.7.1
         with:
+          # CI-HARDEN-01B. Pinned to a COMMIT, not to `v1`: `v1` is a BRANCH in
+          # supabase/setup-cli (refs/heads/v1), not a tag - that repository's
+          # tags run v1.7.1 -> v2.0.0 -> v3 - so every DB-touching job here
+          # executed whatever that branch pointed at. ab058987 == tag v1.7.1.
+          #
+          # NOT bumped to v3: v3 is a COMPOSITE action that installs the CLI
+          # from npm via Bun, with different `version` semantics. The 2.102.0
+          # pin below is a grants-parity DB-safety invariant; a major bump is a
+          # separate ticket with its own grants re-verification.
           # Pinned, not latest: the CLI version selects the local
           # postgres image, and newer images dropped the baseline
           # default privileges (grant all to anon/authenticated/
@@ -390,10 +436,12 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "20"
           cache: "npm"
@@ -402,9 +450,9 @@ jobs:
         run: npm ci
 
       - name: Set up Supabase CLI
-        uses: supabase/setup-cli@v1
+        uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1 # v1.7.1
         with:
-          # Same pin and rationale as db-integration (grants parity).
+          # Same pin and rationale as db-integration (grants parity, v1 branch).
           version: 2.102.0
 
       - name: Configure local auth for the E2E origin
@@ -434,7 +482,7 @@ jobs:
 
       - name: Cache Playwright browsers
         id: pw-cache
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}-${{ hashFiles('package-lock.json') }}
@@ -476,7 +524,7 @@ jobs:
 
       - name: Upload Playwright traces on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           # Per-shard so two shards never clobber each other's artifact.
           name: playwright-traces-shard-${{ matrix.shard }}
@@ -625,10 +673,12 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "20"
           cache: "npm"
@@ -645,9 +695,9 @@ jobs:
           echo "HONE_E2E_FAKE_STRIPE=1" >> "$GITHUB_ENV"
 
       - name: Set up Supabase CLI
-        uses: supabase/setup-cli@v1
+        uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1 # v1.7.1
         with:
-          # Same pin and rationale as db-integration / browser-e2e (grants parity).
+          # Same pin and rationale as db-integration / browser-e2e (grants parity, v1 branch).
           version: 2.102.0
 
       - name: Configure local auth for the E2E origin
@@ -675,7 +725,7 @@ jobs:
 
       - name: Cache Playwright browsers
         id: pw-cache
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}-${{ hashFiles('package-lock.json') }}
@@ -700,7 +750,7 @@ jobs:
 
       - name: Upload Playwright traces on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: payment-playwright-traces
           path: test-results/
@@ -728,10 +778,12 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "20"
           cache: "npm"
@@ -748,9 +800,9 @@ jobs:
           echo "HONE_E2E_FAKE_STRIPE=1" >> "$GITHUB_ENV"
 
       - name: Set up Supabase CLI
-        uses: supabase/setup-cli@v1
+        uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1 # v1.7.1
         with:
-          # Same pin and rationale as the other browser lanes (grants parity).
+          # Same pin and rationale as the other browser lanes (grants parity, v1 branch).
           version: 2.102.0
 
       - name: Configure local auth for the E2E origin
@@ -772,7 +824,7 @@ jobs:
 
       - name: Cache Playwright browsers
         id: pw-cache
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}-${{ hashFiles('package-lock.json') }}
@@ -797,7 +849,7 @@ jobs:
 
       - name: Upload Playwright traces on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: mobile-completion-playwright-traces
           path: test-results/
@@ -817,10 +869,12 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "20"
           cache: "npm"
@@ -837,7 +891,7 @@ jobs:
           echo "HONE_E2E_FAKE_GOOGLE=1" >> "$GITHUB_ENV"
 
       - name: Set up Supabase CLI
-        uses: supabase/setup-cli@v1
+        uses: supabase/setup-cli@ab058987d8d6c725971f6cf9d0b5c98467e30bd1 # v1.7.1
         with:
           version: 2.102.0
 
@@ -864,7 +918,7 @@ jobs:
 
       - name: Cache Playwright browsers
         id: pw-cache
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}-${{ hashFiles('package-lock.json') }}
@@ -889,7 +943,7 @@ jobs:
 
       - name: Upload Playwright traces on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: google-playwright-traces
           path: test-results/
