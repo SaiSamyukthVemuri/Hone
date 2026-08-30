@@ -1175,6 +1175,37 @@ const CORRECTION_MARKER =
  * whatever is left on the line is being asserted in the document's own voice.
  * Bounded span reasoning, not a Markdown parser.
  */
+/**
+ * The FULL introducing phrase, longest form first.
+ *
+ * Adjacency is enforced below by requiring the gap between marker and quotation
+ * to be punctuation only, which means the marker pattern must swallow the whole
+ * introducing phrase or the trailing verb would look like intervening prose:
+ * `This row previously read *"X"` matches `this row previously` under the
+ * generic vocabulary, leaving ` read *` in the gap and failing adjacency for a
+ * row that is perfectly well formed. Ordered longest-first because JS
+ * alternation returns the first branch that matches, not the longest.
+ */
+const PREPOSITIVE_BIND =
+  /\b(?:this\s+(?:row|passage|clause|bullet|section|entry|parenthetical)\s+(?:previously|used\s+to)\s+(?:read|continued|said|carry|carried|quoted?|stated?)|previously\s+(?:read|continued|said|carried|quoted|stated)|used\s+to\s+(?:read|carry|say|quote)|previous\s+wording|withdrawn\s+wording)\b/gi;
+
+/**
+ * Everything a marker and its quotation may legitimately have between them.
+ *
+ * Punctuation and markdown emphasis ONLY - no word characters, no `;`, no `|`.
+ * A semicolon starts a new statement, a pipe starts a new cell, and any word at
+ * all means some OTHER subject has intervened:
+ *
+ *   "X" was corrected                          adjacent - X is historical
+ *   "X" — is superseded                        adjacent - X is historical
+ *   "X"; an unrelated table was corrected      NOT adjacent - X stays live
+ *
+ * This is the whole of the adjacency rule. It is deliberately not a distance
+ * heuristic: "how far away is the nearest marker" is what produced every
+ * previous version of this defect.
+ */
+const BINDING_GAP = /^[\s*_:()[\]—–,-]*$/;
+
 /** A marker that DESCRIBES the quotation before it rather than introducing one. */
 const POSTPOSITIVE_MARKER =
   /\b(?:was|were|is|are|has\s+been|have\s+been|had\s+been)\s+(?:corrected|withdrawn|superseded|retracted|amended|replaced)\b/gi;
@@ -1196,7 +1227,7 @@ function markerSpans(text: string): { pre: MarkerSpan[]; post: MarkerSpan[] } {
     end: (m.index ?? 0) + m[0].length,
   }));
   const pre: MarkerSpan[] = [];
-  for (const m of text.matchAll(new RegExp(CORRECTION_MARKER.source, "gi"))) {
+  for (const m of text.matchAll(PREPOSITIVE_BIND)) {
     const start = m.index ?? 0;
     const end = start + m[0].length;
     if (post.some((p) => start < p.end && end > p.start)) continue;
@@ -1263,87 +1294,93 @@ function maskQuotedSpans(text: string): string {
     const next = i + 1 < quotes.length ? (quotes[i + 1].index ?? 0) : cellEnd;
     const scanTo = Math.min(cellEnd, next);
 
-    const introduced = pre.some((k) => k.start >= scanFrom && k.end <= start);
-    const described = post.some((k) => k.start >= end && k.end <= scanTo);
+    // ADJACENCY, both directions. Membership of the window is necessary and NOT
+    // sufficient: the marker must also sit immediately beside the quotation,
+    // with nothing but punctuation between them. Window membership alone let
+    //   "<live claim>"; an unrelated table was corrected; note: "safe"
+    // mask the live claim, because "was corrected" was merely somewhere before
+    // the next quotation while belonging to a different subject entirely.
+    const introduced = pre.some(
+      (k) => k.start >= scanFrom && k.end <= start && BINDING_GAP.test(text.slice(k.end, start)),
+    );
+    const described = post.some(
+      (k) => k.start >= end && k.end <= scanTo && BINDING_GAP.test(text.slice(end, k.start)),
+    );
     if (!introduced && !described) continue;
     out = out.slice(0, start) + " ".repeat(m[0].length) + out.slice(start + m[0].length);
   }
   return out;
 }
 
-describe("correction markers own exactly one quotation, and direction decides which", () => {
-  // Four scopes were tried before this one, and each let a legitimate
-  // correction license an unrelated LIVE assertion beside it: line, then cell,
-  // then "the span since the previous quotation". The third closed forward
-  // inheritance for PREPOSITIVE markers and left the mirror image wide open,
-  // because a POSTPOSITIVE marker sits between the quote it describes and the
-  // next one. Both directions are supported and neither may spill.
+describe("a correction marker owns exactly one ADJACENT quotation", () => {
+  // Five scopes were tried. Line, cell, "since the previous quotation", then
+  // directional windows - and each one still let a legitimate correction
+  // license an unrelated LIVE assertion, because window membership was treated
+  // as sufficient. It is only necessary. A marker must ALSO sit immediately
+  // beside its quotation, with nothing but punctuation between, or some other
+  // subject has intervened and the marker is not about this quote at all.
   const live = "authenticated still holds row INSERT/UPDATE/DELETE";
   const old = "row DML is NOT revoked";
+  const isLive = (row: string) => maskQuotedSpans(row).includes(live);
+  const flags = (row: string) => PRE_0169_DML.test(maskQuotedSpans(row));
 
-  it("1. PREPOSITIVE history does not license the live quote after it", () => {
-    const row = `| Corrected previous wording "${old}"; current posture: "${live}" |`;
-    const masked = maskQuotedSpans(row);
-    expect(masked, "the introduced historical quote is masked").not.toContain(old);
-    expect(masked, "the live quote must remain visible to C2").toContain(live);
+  it("1. POSTPOSITIVE ADJACENT — the described quote is historical", () => {
+    expect(maskQuotedSpans(`| "A harmless statement" was corrected. |`)).not.toContain(
+      "A harmless statement",
+    );
   });
 
-  it("2. POSTPOSITIVE history does not license the live quote after it", () => {
-    // THE DEFECT THIS EXISTS FOR. "was corrected" describes the quote BEFORE
-    // it, but it lands in the following quote's introducing span, so the live
-    // claim inherited a marker that was never about it.
-    const row = `| "${old}" was corrected; current posture: "${live}" |`;
-    const masked = maskQuotedSpans(row);
-    expect(masked, "the described historical quote is masked").not.toContain(old);
-    expect(masked, "a postpositive marker must not reach forward").toContain(live);
+  it("2. POSTPOSITIVE NON-ADJACENT — an unrelated subject's correction does not reach back", () => {
+    // THE DEFECT THIS EXISTS FOR. "was corrected" belongs to "an unrelated
+    // table"; it says nothing about the DML quotation two clauses earlier.
+    const row = `| Current posture: "${live}"; an unrelated table was corrected; note: "safe" |`;
+    expect(isLive(row), "the DML quotation must stay visible to C2").toBe(true);
+    expect(flags(row), "C2 must go red on this row").toBe(true);
   });
 
-  it("3. a simple PREPOSITIVE correction stays exempt", () => {
-    expect(maskQuotedSpans(`| Corrected previous wording "${old}" |`)).not.toContain(old);
+  it("3. POSTPOSITIVE DIFFERENT SUBJECT — same shape, one clause away", () => {
+    const row = `| "${live}"; the previous migration description was corrected. |`;
+    expect(isLive(row)).toBe(true);
+    expect(flags(row)).toBe(true);
   });
 
-  it("4. a simple POSTPOSITIVE correction stays exempt", () => {
-    expect(maskQuotedSpans(`| "${old}" was corrected. |`)).not.toContain(old);
+  it("4. PREPOSITIVE ADJACENT — the introduced quote is historical", () => {
+    expect(maskQuotedSpans(`| Corrected previous wording: "${old}" |`)).not.toContain(old);
   });
 
-  it("5. two historical quotes, each with its own marker, are both exempt", () => {
-    const row = `| Corrected previous wording "${old}"; "${live}" was withdrawn. |`;
+  it("5. PREPOSITIVE NON-ADJACENT — a marker about another section does not carry forward", () => {
+    const row = `| Corrected previous wording in another section; current posture: "${live}" |`;
+    expect(isLive(row)).toBe(true);
+    expect(flags(row)).toBe(true);
+  });
+
+  it("6. SAME CELL, TWO QUOTES — only the introduced one is historical", () => {
+    const row = `| Corrected previous wording "${old}"; current posture "${live}" |`;
     const masked = maskQuotedSpans(row);
     expect(masked).not.toContain(old);
-    expect(masked).not.toContain(live);
+    expect(masked).toContain(live);
   });
 
-  it("6. a live quote with no marker of its own is the document speaking", () => {
+  it("7. CROSS CELL — a marker in cell A does not license a quotation in cell B", () => {
+    expect(isLive(`| Corrected: previously read "${old}" | "${live}" is current |`)).toBe(true);
+  });
+
+  it("8. NO MARKER — the document is speaking", () => {
     const row = `| Current posture: "${live}" |`;
-    expect(maskQuotedSpans(row)).toContain(live);
+    expect(isLive(row)).toBe(true);
+    expect(flags(row)).toBe(true);
   });
 
-  it("a live quote in a later CELL never inherits an earlier cell's marker", () => {
-    const row = `| Corrected: previously read "${old}" | "${live}" is current |`;
-    expect(maskQuotedSpans(row)).toContain(live);
-  });
-
-  it("C2 actually fires on both adversarial shapes, not merely the masking", () => {
-    // The masking helper is machinery; this is the behaviour that matters.
+  it("the supported canonical shapes still read as historical", () => {
+    // Drawn from the shapes the canonical documents actually use, so the
+    // grammar is pinned to real writing rather than to invented English.
     for (const row of [
-      `| Corrected previous wording "${old}"; current posture: "${live}" |`,
-      `| "${old}" was corrected; current posture: "${live}" |`,
-      `| Current posture: "${live}" |`,
+      `| This row previously read *"${old}"* and 0169 revoked it |`,
+      `| This passage previously continued: *"${old}"* |`,
+      `| This row used to read *"${old}"* |`,
+      `| *(Earlier wording — "${old}" — is superseded.)* |`,
     ]) {
-      expect(
-        PRE_0169_DML.test(maskQuotedSpans(row)),
-        `C2 must flag this row: ${row.slice(0, 90)}`,
-      ).toBe(true);
-    }
-    // ...and does NOT fire on the purely historical shapes.
-    for (const row of [
-      `| Corrected previous wording "${old}" |`,
-      `| "${old}" was corrected. |`,
-    ]) {
-      expect(
-        PRE_0169_DML.test(maskQuotedSpans(row)),
-        `C2 must not flag this row: ${row.slice(0, 90)}`,
-      ).toBe(false);
+      expect(maskQuotedSpans(row), `must stay historical: ${row.slice(0, 70)}`).not.toContain(old);
     }
   });
 });
