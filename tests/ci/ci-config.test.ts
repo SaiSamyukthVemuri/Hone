@@ -194,17 +194,57 @@ function splitScalarAndComment(rest: string): { value: string; annotation: strin
  * hides the token in a key, so a values-only walk would miss it. Comments are
  * not in the model at all, which is why this replaced a comment-stripping
  * text scan: a comment can no longer read as a credential, or hide one.
+ *
+ * Each string carries the key it was stored under, because one key changes how
+ * its value must be read: `if:` is an expression WITHOUT the `${{ }}` wrapper.
  */
-function scalarsAndKeys(node: unknown, out: string[] = []): string[] {
-  if (typeof node === "string") out.push(node);
-  else if (Array.isArray(node)) for (const v of node) scalarsAndKeys(v, out);
+type TaggedString = { key: string | null; value: string };
+
+function taggedStrings(node: unknown, key: string | null = null, out: TaggedString[] = []): TaggedString[] {
+  if (typeof node === "string") out.push({ key, value: node });
+  else if (Array.isArray(node)) for (const v of node) taggedStrings(v, key, out);
   else if (isRecord(node)) {
     for (const [k, v] of Object.entries(node)) {
-      out.push(k);
-      scalarsAndKeys(v, out);
+      out.push({ key: null, value: k });
+      taggedStrings(v, k, out);
     }
   }
   return out;
+}
+
+/** Every `${{ ... }}` body in a string. */
+const expressions = (text: string): string[] =>
+  [...text.matchAll(/\$\{\{([\s\S]*?)\}\}/g)].map((m) => m[1]);
+
+/**
+ * Does this expression reference the `secrets` CONTEXT?
+ *
+ * The context, not a spelling. These are one reference to GitHub and must be
+ * one reference here:
+ *
+ *     secrets.DEPLOY_PAT      secrets['DEPLOY_PAT']
+ *     secrets["DEPLOY_PAT"]   secrets . DEPLOY_PAT
+ *
+ * The regex this replaced was /secrets\.[A-Z_]/ — dot access, uppercase first
+ * character. A bracket access walked straight past a control whose entire point
+ * is that these workflows hold no credential at all, and pinning the receiving
+ * action to a SHA does not make handing it a PAT safe.
+ *
+ * No secret NAME is enumerated: the context is what is refused.
+ */
+function referencesSecretsContext(expr: string): boolean {
+  // String literals first, so `format('no secrets here')` — which references
+  // nothing — cannot report one. Removing them also reduces `secrets['X']` to
+  // `secrets[]`, so the bracket access is still plainly visible.
+  const code = expr.replace(/'[^']*'/g, "''").replace(/"[^"]*"/g, '""');
+  // Not preceded by a dot, so `needs.build.outputs.secrets` — a property that
+  // merely shares the name — is not mistaken for the context.
+  //
+  // Case-insensitive deliberately. That is the fail-CLOSED direction and needs
+  // no claim about GitHub's parser to justify it: matching more can only add
+  // findings inside an expression, where no other meaning of the bare
+  // identifier `secrets` exists.
+  return /(?<![A-Za-z0-9_.-])secrets(?![A-Za-z0-9_-])/i.test(code);
 }
 
 /** Minimal structural check — job keys are two-space indented under `jobs:`. */
@@ -858,14 +898,51 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
   //    by naming GITHUB_TOKEN; the parser drops comments outright, so the hack
   //    is gone, and keys are included because `env: { GITHUB_TOKEN: ... }` hides
   //    the token in one.
+  //
+  //    The secrets half is now the CONTEXT, found inside GitHub expressions,
+  //    not one textual spelling of a property access — see
+  //    referencesSecretsContext. Pinning is not a substitute: a SHA-pinned
+  //    third-party action handed a PAT writes through the API just the same,
+  //    while `permissions: contents: read` and the absence of `git push` and
+  //    `gh` all still read clean.
   function writeCredentialViolations(sources: readonly Workflow[]): string[] {
     const bad: string[] = [];
     for (const { file, doc } of parseAll(sources)) {
-      const text = scalarsAndKeys(doc).join("\n");
+      const strings = taggedStrings(doc);
+      const text = strings.map((s) => s.value).join("\n");
       if (/GITHUB_TOKEN/.test(text)) bad.push(`${file}: uses GITHUB_TOKEN`);
-      if (/secrets\.[A-Z_]/.test(text)) bad.push(`${file}: reads a secret`);
       if (/\bgit (push|tag)\b/.test(text)) bad.push(`${file}: pushes`);
       if (/\bgh (pr|release|issue|api)\b/.test(text)) bad.push(`${file}: calls a gh write`);
+
+      // The contract is not "no KNOWN write secret" — it is that these
+      // workflows need no credential at all, so ANY reference to the secrets
+      // context is refused and there is no allowlist to argue with.
+      const found = new Set<string>();
+      for (const { key, value } of strings) {
+        const bodies = expressions(value);
+        // `if:` is evaluated as an expression with no `${{ }}` around it, so
+        // `if: secrets.FOO != ''` reads a credential without ever writing a
+        // brace. Only when the value carries none, or the braces are scanned
+        // twice and one reference reports as two.
+        if (key === "if" && bodies.length === 0) bodies.push(value);
+        for (const expr of bodies) {
+          if (referencesSecretsContext(expr)) found.add(expr.trim());
+        }
+      }
+      for (const expr of [...found].sort()) {
+        bad.push(`${file}: references the secrets context — ${expr}`);
+      }
+
+      // `jobs.<job>.secrets` hands credentials to a called workflow, and the
+      // bare `secrets: inherit` passes EVERY one while containing no
+      // expression for the scan above to find.
+      if (isRecord(doc) && isRecord(doc.jobs)) {
+        for (const [job, node] of Object.entries(doc.jobs)) {
+          if (isRecord(node) && node.secrets !== undefined) {
+            bad.push(`${file} jobs.${job}.secrets: passes secrets to a called workflow`);
+          }
+        }
+      }
     }
     return bad;
   }
@@ -1325,6 +1402,128 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
         checkoutWorkflow([`      - uses: ${PINNED_CHECKOUT}`, "        with:", `          persist-credentials: ${value}`]),
       );
       expect(persistCredentialViolations([wf]), `persist-credentials: ${value} is the opt-out`).toEqual([]);
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // THE SECRETS CONTEXT
+  // -------------------------------------------------------------------------
+  // The contract is not "no known write secret". It is that these workflows
+  // need NO credential, so any reference to the context is refused and there is
+  // no allowlist. A ticket that genuinely needs a secret has to redesign this.
+
+  it("the property-access regex this replaced saw only one of the three spellings", () => {
+    const LEGACY = /secrets\.[A-Z_]/; // what the check used to be
+    const spellings = ["secrets.DEPLOY_PAT", "secrets['DEPLOY_PAT']", 'secrets["DEPLOY_PAT"]'];
+    expect(spellings.filter((e) => LEGACY.test(e))).toEqual(["secrets.DEPLOY_PAT"]);
+    expect(spellings.filter(referencesSecretsContext)).toEqual(spellings);
+  });
+
+  it("spacing and casing do not change which context is referenced", () => {
+    for (const expr of [
+      "secrets.DEPLOY_PAT",
+      "secrets . DEPLOY_PAT",
+      "secrets['DEPLOY_PAT']",
+      'secrets[ "DEPLOY_PAT" ]',
+      "SECRETS.DEPLOY_PAT",
+      "toJSON(secrets)",
+    ]) {
+      expect(referencesSecretsContext(expr), expr).toBe(true);
+    }
+  });
+
+  it("something that merely shares the name is NOT the context", () => {
+    for (const expr of [
+      " needs.build.outputs.secrets ", // a property, reached through a dot
+      " env.MY_SECRETS ", // a longer identifier
+      " format('no secrets here') ", // a string literal
+      " github.sha ", // control 6: an ordinary expression
+    ]) {
+      expect(referencesSecretsContext(expr), expr).toBe(false);
+    }
+  });
+
+  const SECRET_SITES: [string, string[]][] = [
+    ["control 1 — env, dot access", ["        env:", "          TOKEN: ${{ secrets.DEPLOY_PAT }}"]],
+    ["control 2 — env, single-quoted bracket", ["        env:", "          TOKEN: ${{ secrets['DEPLOY_PAT'] }}"]],
+    ["control 3 — with, double-quoted bracket", ['          token: ${{ secrets["DEPLOY_PAT"] }}']],
+    ["an if: condition, which needs no braces at all", ["        if: secrets.DEPLOY_PAT != ''"]],
+    [
+      "control 4 — a SHA-PINNED third-party action handed the secret",
+      [
+        "      - uses: owner/action@1111111111111111111111111111111111111111 # v1.0.0",
+        "        with:",
+        "          token: ${{ secrets.DEPLOY_PAT }}",
+      ],
+    ],
+  ];
+
+  for (const [label, extra] of SECRET_SITES) {
+    it(`RED: a secrets reference in ${label}`, () => {
+      const hostile = synthetic("leaky.yaml", [...COMPLIANT, ...extra]);
+      const violations = supplyChainViolations([...WORKFLOWS, hostile]);
+      expect(violations.join("\n")).toMatch(/leaky\.yaml: references the secrets context/);
+      // Control 4's point: the receiving action is immutably pinned, carries its
+      // annotation, the workflow is contents: read, and nothing pushes or calls
+      // gh — every other guard reads clean, and the credential is still refused.
+      expect(unpinnedRefViolations([hostile]), "the refs are pinned").toEqual([]);
+      expect(annotationViolations([hostile]), "the refs are annotated").toEqual([]);
+      expect(permissionViolations([hostile]), "the token is read-only").toEqual([]);
+    });
+  }
+
+  it("control 5 GREEN: a COMMENT naming the secrets context is not a reference", () => {
+    const commented = synthetic("commented.yaml", [
+      ...COMPLIANT,
+      "        # never use ${{ secrets.DEPLOY_PAT }} here",
+    ]);
+    expect(supplyChainViolations([...WORKFLOWS, commented])).toEqual([]);
+    // ...and this is not hypothetical: the real workflows discuss secrets in
+    // comments already, which is why the check must read the parsed model.
+    expect(CI + NIGHTLY, "the real workflows mention secrets in prose").toMatch(/No secrets/);
+  });
+
+  it("control 6 GREEN: an ordinary expression is untouched", () => {
+    const ordinary = synthetic("ordinary.yaml", [
+      ...COMPLIANT,
+      "        env:",
+      "          SHA: ${{ github.sha }}",
+      "        if: github.ref == 'refs/heads/main'",
+    ]);
+    expect(supplyChainViolations([...WORKFLOWS, ordinary])).toEqual([]);
+  });
+
+  it("RED: `secrets: inherit` hands every secret on without an expression", () => {
+    const inheriting = synthetic("inherit.yaml", [
+      "name: Caller",
+      "on: push",
+      "permissions:",
+      "  contents: read",
+      "jobs:",
+      "  call:",
+      "    uses: owner/repo/.github/workflows/x.yml@1111111111111111111111111111111111111111 # v1.0.0",
+      "    secrets: inherit",
+    ]);
+    expect(supplyChainViolations([...WORKFLOWS, inheriting])).toContain(
+      "inherit.yaml jobs.call.secrets: passes secrets to a called workflow",
+    );
+  });
+
+  it("control 7: a future .yaml with a secrets reference is refused by existing", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "hone-workflow-secret-"));
+    try {
+      for (const [name, body] of WORKFLOWS) writeFileSync(path.join(dir, name), body, "utf8");
+      expect(supplyChainViolations(readWorkflowDir(dir)), "the copy must start GREEN").toEqual([]);
+      writeFileSync(
+        path.join(dir, "deploy.yaml"),
+        [...COMPLIANT, "        env:", "          TOKEN: ${{ secrets['DEPLOY_PAT'] }}"].join("\n") + "\n",
+        "utf8",
+      );
+      expect(supplyChainViolations(readWorkflowDir(dir)).join("\n")).toMatch(
+        /deploy\.yaml: references the secrets context/,
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 
