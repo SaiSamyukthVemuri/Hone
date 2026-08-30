@@ -876,6 +876,29 @@ function pinnedRuntimeSha(): string | null {
   return row?.match(/\b([0-9a-f]{40})\b/)?.[1] ?? null;
 }
 
+/**
+ * The CURRENT PRODUCTION GIT HEAD, which is a different fact from the pin above
+ * and has its own row in the header.
+ *
+ * MERGE_COUNT_AUTHORITY != RUNTIME_SHA. A documentation-only production merge
+ * advances the branch HEAD while leaving the runtime-bearing SHA exactly where
+ * it was - that is the whole reason the two rows exist separately. Counting
+ * merges from the runtime pin therefore UNDERCOUNTS by every docs-only merge,
+ * silently, and the guard would keep passing while the prose drifted.
+ *
+ * The two rows are the same commit today, which is precisely why this was
+ * invisible: the wrong authority produced the right answer.
+ *
+ * Runtime-BEHAVIOUR claims keep using `pinnedRuntimeSha()`. Only the
+ * merge-count fact uses this.
+ */
+function currentGitHeadSha(): string | null {
+  const row = currentProse(CURRENT_STATE)
+    .split("\n")
+    .find((l) => /Current Git branch HEAD/i.test(l));
+  return row?.match(/\b([0-9a-f]{40})\b/)?.[1] ?? null;
+}
+
 describe("RULE A — current-state.md pins a real, current production SHA", () => {
   // WHERE THIS RULE ACTUALLY ENFORCES, stated so nobody mistakes a green CI run
   // for a checked one. All three A-rules need real history. CI clones with
@@ -1333,6 +1356,26 @@ function parseCount(raw: string): number | null {
 const isCountWord = (w: string) => parseCount(w) !== null;
 
 /**
+ * Regex source matching a COMPLETE count phrase, and nothing else.
+ *
+ * `parseCount` already understood "one hundred and five"; the CONSUMERS did
+ * not. Both extraction sites captured a single `\w+` (later `[\w-]+`) token, so
+ * the parser was handed "one" and the rest of the phrase was dropped on the
+ * floor - a capable parser defeated by its caller, which is worse than a
+ * limited parser because the limitation is invisible.
+ *
+ * Built FROM the parser's own vocabulary rather than written alongside it, so
+ * the two cannot drift: adding a word to UNITS/TENS extends this automatically.
+ * It is a bounded grammar, not a wildcard - only number tokens joined by a
+ * space or hyphen, with an optional "and". Ordinary prose cannot be swallowed,
+ * because the first non-number token ends the match.
+ */
+const NUM_TOKEN = [...Object.keys(UNITS), ...Object.keys(TENS), "hundred"]
+  .sort((a, b) => b.length - a.length) // longest-first: "nineteen" before "nine"
+  .join("|");
+const COUNT_PHRASE = `(?:\\d+|(?:${NUM_TOKEN})(?:[\\s-]+(?:and[\\s-]+)?(?:${NUM_TOKEN}))*)`;
+
+/**
  * Split a document into units a CLAIM can live in.
  *
  * A table row is one unit - it is one statement, however long. Ordinary prose
@@ -1473,10 +1516,10 @@ describe("RULE X — canonical documents agree with each other", () => {
     // agreement is consistency, not correctness - the Git graph is the
     // authority, and it is the thing that moves.
     const cs = currentProse(CURRENT_STATE).match(
-      /full merge ancestry back to `b9e0003f` \(([\w-]+) merges\)/i,
+      new RegExp(`full merge ancestry back to \`b9e0003f\` \\((${COUNT_PHRASE}) merges\\)`, "i"),
     )?.[1];
     const cr = currentProse(CAPABILITY_REGISTER).match(
-      /\*{0,2}([\w-]+?)\*{0,2}\s+production merges landed between `b9e0003f`/i,
+      new RegExp(`\\*{0,2}(${COUNT_PHRASE})\\*{0,2}\\s+production merges landed between \`b9e0003f\``, "i"),
     )?.[1];
     expect(cs, "current-state must state the merge count").toBeTruthy();
     expect(cr, "capability-register must state the merge count").toBeTruthy();
@@ -1497,14 +1540,23 @@ describe("RULE X — canonical documents agree with each other", () => {
       expect(GIT_USABLE, "shallow clone or no git — X4's Git derivation could not run").toBe(false);
       return;
     }
-    // Count over the PINNED BASELINE, not `HEAD`. The sentence is about
-    // PRODUCTION merges, and on a PR branch `--first-parent HEAD` walks the
-    // PR's own chain instead - it reported 5 (this PR's successive "merge
-    // production into the branch" commits) against a true production count of
-    // 27. The pin is the current baseline by definition, so it is the right
-    // endpoint and it keeps this rule consistent with RULE A.
-    const baseline = pinnedRuntimeSha();
-    expect(baseline, "current-state must pin a runtime-bearing HEAD for X4 to count against").toBeTruthy();
+    // ENDPOINT = the CURRENT PRODUCTION GIT HEAD. Two wrong endpoints were
+    // tried before this one, and both produced a confidently wrong number:
+    //
+    //   `HEAD`              - on a PR branch `--first-parent` walks the PR's
+    //                         OWN chain. It reported 5, this branch's successive
+    //                         "merge production in" commits, against a true 27.
+    //   runtime-bearing pin - a DOCS-ONLY production merge advances the branch
+    //                         HEAD without moving the runtime SHA, so counting
+    //                         from the pin undercounts by every such merge and
+    //                         does it silently. MERGE_COUNT_AUTHORITY is not
+    //                         RUNTIME_SHA; they are separate rows for exactly
+    //                         this reason, and they happen to be equal today,
+    //                         which is what hid the error.
+    //
+    // Runtime-behaviour rules keep using the pin. Only this count uses the head.
+    const baseline = currentGitHeadSha();
+    expect(baseline, "current-state must record a Current Git branch HEAD for X4 to count against").toBeTruthy();
     const log = git("log", "--first-parent", "--merges", "--format=%H", `b9e0003f..${baseline}`);
     expect(log, "git could not enumerate the ancestry from b9e0003f").not.toBeNull();
     const actual = (log as string).split("\n").filter(Boolean).length;
@@ -1519,6 +1571,88 @@ describe("RULE X — canonical documents agree with each other", () => {
         `authority; the prose is a ` +
         "copy of it, and this is the copy going stale.",
     ).toBe(actual);
+  });
+
+  it("X4's endpoint is the production GIT HEAD, not the runtime pin — they are different facts", () => {
+    // A DOCS-ONLY production merge advances the branch head and leaves the
+    // runtime-bearing SHA where it was. Counting merges from the pin therefore
+    // undercounts by every docs-only merge, silently. Constructed proof, run
+    // against a real throwaway history rather than asserted:
+    //
+    //   baseline -> merge #1 (app/x.ts)   <- runtime pin stops here, count 1
+    //            -> merge #2 (docs/y.md)  <- branch head is here,   count 2
+    //
+    // Prose still saying "one" passes when counted from the pin and fails when
+    // counted from the head. That is the whole defect, and it is invisible on
+    // this repository today because the two rows name the same commit.
+    const head = currentGitHeadSha();
+    const pin = pinnedRuntimeSha();
+    expect(head, "current-state must record a Current Git branch HEAD").toBeTruthy();
+    expect(pin, "current-state must pin a runtime-bearing HEAD").toBeTruthy();
+
+    // The two authorities are read from DIFFERENT rows. Equal values are legal
+    // and are the normal case; reading them from one row would not be.
+    const rows = currentProse(CURRENT_STATE).split("\n");
+    const headRow = rows.findIndex((l) => /Current Git branch HEAD/i.test(l));
+    const pinRow = rows.findIndex((l) => /Last runtime-bearing application HEAD/i.test(l));
+    expect(headRow, "the Git-head row must exist").toBeGreaterThan(-1);
+    expect(pinRow, "the runtime-pin row must exist").toBeGreaterThan(-1);
+    expect(
+      headRow,
+      "the merge-count authority and the runtime-behaviour authority must be separate rows - " +
+        "collapsing them is what makes a docs-only production merge invisible to the count",
+    ).not.toBe(pinRow);
+
+    if (!GIT_USABLE) {
+      expect(GIT_USABLE, "shallow clone or no git — the endpoint check could not run").toBe(false);
+      return;
+    }
+    // The head must be an ancestor-or-equal of nothing weaker than the pin:
+    // production only ever moves forward, so the head can never be BEHIND the
+    // runtime pin. If it ever is, one of the two rows is stale.
+    expect(
+      git("merge-base", "--is-ancestor", pin as string, head as string),
+      `the runtime pin ${(pin as string).slice(0, 8)} is not an ancestor of the recorded Git ` +
+        `head ${(head as string).slice(0, 8)} - one of the two header rows is stale`,
+    ).toBe("");
+  });
+
+  it("count extraction hands parseCount the WHOLE phrase, at every consumer", () => {
+    // The parser understood "one hundred and five" long before the consumers
+    // did. Both extraction sites captured a single token, so X5 did not merely
+    // fail to parse "twenty-seven" - it captured "seven" and compared against
+    // SEVEN. A wrong number that parses is worse than one that does not.
+    const cases: ReadonlyArray<readonly [string, number]> = [
+      ["27", 27],
+      ["250", 250],
+      ["4096", 4096],
+      ["twenty-seven", 27],
+      ["thirty-one", 31],
+      ["forty-two", 42],
+      ["one hundred and five", 105],
+    ];
+    const registerRe = new RegExp(
+      `\\*{0,2}(${COUNT_PHRASE})\\*{0,2}\\s+production merges landed between \`b9e0003f\``,
+      "i",
+    );
+    const capabilityRe = new RegExp(
+      `\\*{0,2}(${COUNT_PHRASE})\\*{0,2}\\s+carry\\s+a\\s+capability`,
+      "i",
+    );
+    for (const [phrase, value] of cases) {
+      const reg = `**${phrase}** production merges landed between \`b9e0003f\` and the baseline.`;
+      const cap = `**${phrase}**\ncarry a capability that belongs in this register.`;
+      expect(parseCount(reg.match(registerRe)?.[1] ?? ""), `register: ${phrase}`).toBe(value);
+      expect(parseCount(cap.match(capabilityRe)?.[1] ?? ""), `capability: ${phrase}`).toBe(value);
+    }
+
+    // The grammar is bounded: a non-number word is not a count, and must not
+    // match at all rather than matching some fragment of itself.
+    const bananaReg = "**banana** production merges landed between \`b9e0003f\` and the baseline.";
+    const bananaCap = "**banana**\ncarry a capability that belongs in this register.";
+    expect(bananaReg.match(registerRe)?.[1], "banana must not match the register grammar").toBeUndefined();
+    expect(bananaCap.match(capabilityRe)?.[1], "banana must not match the capability grammar").toBeUndefined();
+    expect(parseCount("banana"), "banana is not a count").toBeNull();
   });
 
   it("X6: the changelog's coverage statements match the PR rows it actually carries", () => {
@@ -1564,7 +1698,9 @@ describe("RULE X — canonical documents agree with each other", () => {
 
     // `\s+` throughout: the prose wraps, so "**Eight** carry\na capability" is
     // one sentence across two lines and a literal space would miss it.
-    const stated = section.match(/\*{0,2}(\w+)\*{0,2}\s+carry\s+a\s+capability/i)?.[1];
+    const stated = section.match(
+      new RegExp(`\\*{0,2}(${COUNT_PHRASE})\\*{0,2}\\s+carry\\s+a\\s+capability`, "i"),
+    )?.[1];
     expect(stated, "the section must state how many capabilities it carries").toBeTruthy();
     expect(isCountWord(stated as string), `unexpected count word: ${stated}`).toBe(true);
 
