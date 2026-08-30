@@ -522,7 +522,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     ],
     sourceCountCheck: { kind: "none", reason: "No source-side count query is issued for this file today, so its row count is recorded but NOT verified against the database. Adding the check is TRUTH-01B; declaring the gap here is what stops the manifest reading as though every file were verified." },
     rowScope:
-      "ACTIVE practitioners only: the read filters active = true. A deactivated practitioner is absent from the export even though rows elsewhere in it still name her id, so an exported session can point at a performer who appears in no file. The `active` column is emitted and is therefore constant true. Widening this is TRUTH-01B.",
+      "Every practitioner row this studio holds, ACTIVE AND INACTIVE. Tenant scope is studio_id and nothing else: the read carries no `active` predicate. Inactive rows are in scope deliberately, because service_practitioners rows survive a practitioner's deactivation by design (0134 - removal is a separate, explicit action), so an active-only read left service_practitioners.csv and historical session rows naming a practitioner_id that appeared in no file. The `active` column is emitted, so a deactivated practitioner is exported and honestly labelled rather than presented as current.",
     description:
       "Practitioners at your studio, with role and active flag.",
   },
@@ -1225,7 +1225,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     ticket: "TRUTH-01B",
     tier: 1,
     reason:
-      "The studio's own consent form wording. Without it an exported signature cannot be tied to what was agreed.",
+      "The studio's consent template catalogue. Signed evidence is NOT what is missing here: client_consent_signatures.csv carries the exact title, body, version and persisted template_hash for every signature, so what a client agreed to is reconstructable from the signature row alone. What is absent is the catalogue itself - every template as a row in its own right, including `draft` and `archived` templates and any `active` template no client has signed yet, together with each template's status and is_live state.",
   },
   treatment_images: {
     kind: "pending",
