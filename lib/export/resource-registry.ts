@@ -35,10 +35,29 @@ import {
 //              entry is the honest state of a gap; it is not permission to keep
 //              the gap quiet, and the Data settings page renders it.
 //
-// WHAT THIS SLICE DELIBERATELY DOES NOT DO. It adds no file, no table and no
-// column to the export. The payload is byte-for-byte what it was. TRUTH-01A
-// makes the completeness of that payload MACHINE ACCOUNTABLE; TRUTH-01B and
-// TRUTH-01C change it.
+// WHAT THIS FILE GUARANTEES, AND WHAT IT DELIBERATELY DOES NOT. It does not
+// freeze the payload. A slice is free to promote a resource or widen a file -
+// that is how the export grows - and this registry is where that decision gets
+// recorded. What is forbidden is an UNDECLARED change: a value that reaches a
+// CSV with no entry here, or an entry here that no executed query satisfies.
+// Four views of the payload must agree - the disposition declared below, the
+// SELECT the request actually sent, the header row and cells written to the
+// file, and the manifest that counts them - and the guards beside this file
+// make a disagreement a TEST FAILURE rather than something a departing studio
+// discovers years later. A payload-changing PR is legitimate; an unaccountable
+// one is not.
+//
+// NO PAYLOAD SIZE IS STATED IN THIS HEADER, deliberately. Any count written
+// into prose goes stale on the next promotion, and this header carried exactly
+// that defect: it went on asserting an unchanged payload long after
+// TRUTH-01B-1 had added files and columns to it. The entries below are the
+// count.
+//
+// HISTORICAL, and true only of the slice that wrote it: TRUTH-01A introduced
+// this mechanism and deliberately changed no payload, so the accountability
+// could be reviewed on its own. TRUTH-01B-1 is the first slice to USE that
+// mechanism to expand the payload. Read this paragraph as provenance, never as
+// a claim about what the export carries today.
 //
 // SCHEMA AUTHORITY IS THE DATABASE, NOT THIS FILE. The guards below take the
 // live resource and column lists as arguments; tests/db/export-resource-
@@ -103,11 +122,18 @@ export const NON_CUSTOMER_SCHEMAS: Readonly<Record<string, string>> = {
  * Whether a file's row count is checked against the database, and when it is
  * not, why not.
  *
- * `none` is a first-class member on purpose. Nine of the fifteen exported files
- * have no source-side count query today, and the manifest used to list them
- * beside four that did with nothing distinguishing the two. An unverified count
- * presented as a verified one is the same class of untruth as a partial export
- * presented as a complete one.
+ * `none` is a first-class member on purpose. Not every exported file has a
+ * source-side count query, and the manifest used to list the ones that do not
+ * beside the ones that do with nothing distinguishing the two. An unverified
+ * count presented as a verified one is the same class of untruth as a partial
+ * export presented as a complete one - so a file with no independent
+ * source-count proof must be IDENTIFIED as unverified rather than sitting
+ * silently beside verified counts.
+ *
+ * NO CARDINALITY IS STATED HERE, deliberately. The split moves whenever a
+ * resource is promoted, and the previous revision of this comment was still
+ * asserting TRUTH-01A's file counts after TRUTH-01B-1 had made them wrong.
+ * Derive the live split from the registry; do not copy it into prose.
  */
 export type SourceCountCheck =
   | { readonly kind: "studio_scoped" }
@@ -142,7 +168,7 @@ export type ExcludedColumn = {
  * under several.
  *
  * Without this, "included" and "emitted" could only be compared for columns
- * that happen to keep their own name, and the two files that rename or flatten
+ * that happen to keep their own name, and the files that rename or flatten
  * would have had to be exempted wholesale - which is how an exemption becomes a
  * hole. Declaring the mapping makes the rename checkable instead.
  */

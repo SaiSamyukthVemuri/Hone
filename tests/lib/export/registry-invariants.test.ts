@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 
 import {
   auditEmissionContract,
@@ -231,5 +233,104 @@ describe("negative control: two exported resources sharing a filename", () => {
       disposition: { ...sound().disposition, file: "other_table.csv" },
     };
     expect(auditExportedFilenames([a, fixed]).ok).toBe(true);
+  });
+});
+
+
+// ===========================================================================
+// THE REGISTRY'S OWN PROSE - the species these guards kept missing
+// ===========================================================================
+//
+// Three stale claims have now been repaired inside this registry's COMMENTS:
+// a header asserting the payload was unchanged, a source-count comment naming
+// how many exported files went uncounted, and an emittedAs note counting the
+// files that rename. None of them could ever go red. Prose has no runtime
+// consumer, so nothing mechanical contradicted any of it while the payload
+// moved underneath - which is exactly the "stated in prose, checked over a
+// narrower set" shape this file was created to stop.
+//
+// The remedy is ELIMINATION, not validation. Teaching a test to re-derive every
+// number a comment might copy is a prose parser: it breaks on rewording and
+// invites more copied numbers by making them look safe. These guards instead
+// FORBID the two shapes that actually went stale - a claim that the payload is
+// frozen, and a hard-coded count of exported files. The registry below is the
+// count; nothing beside it may restate one.
+
+const REGISTRY_SRC = readFileSync(
+  path.resolve(__dirname, "../../../lib/export/resource-registry.ts"),
+  "utf8",
+);
+
+/** Comment lines only: `//`, plus `/*` and `*` continuation inside doc blocks. */
+const REGISTRY_PROSE = REGISTRY_SRC.split("\n")
+  .filter((line) => /^\s*(\/\/|\/\*|\*)/.test(line))
+  .join("\n");
+
+const CARDINAL =
+  "\\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|" +
+  "thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty";
+
+/** The shapes that went stale. Each is a claim the registry cannot keep true. */
+const FORBIDDEN: ReadonlyArray<{ readonly why: string; readonly pattern: RegExp }> = [
+  { why: "claims the payload is frozen", pattern: /byte-for-byte/i },
+  {
+    why: "claims the slice adds nothing",
+    pattern: /adds no file, no table and no column/i,
+  },
+  {
+    why: "hard-codes how many files the export carries",
+    pattern: new RegExp(
+      `\\b(?:${CARDINAL})\\s+(?:of\\s+the\\s+(?:${CARDINAL})\\s+)?exported\\s+files\\b`,
+      "i",
+    ),
+  },
+  {
+    why: "hard-codes how many files rename or flatten",
+    pattern: new RegExp(`\\b(?:${CARDINAL})\\s+files\\s+that\\s+rename`, "i"),
+  },
+];
+
+describe("the registry's prose cannot go stale about the payload", () => {
+  // Vacuity check, first: every guard below is a NEGATIVE assertion over
+  // REGISTRY_PROSE, so a comment filter that silently extracted nothing would
+  // make all of them pass while checking nothing at all.
+  it("the extracted prose is really the registry's comments", () => {
+    expect(REGISTRY_PROSE.length).toBeGreaterThan(5_000);
+    expect(REGISTRY_PROSE).toMatch(/THE EXPORT RESOURCE REGISTRY/);
+  });
+
+  for (const { why, pattern } of FORBIDDEN) {
+    it(`no comment ${why}`, () => {
+      const offending = REGISTRY_PROSE.split("\n").filter((l) => pattern.test(l));
+      expect(offending, `registry prose ${why}: ${offending.join(" | ")}`).toEqual([]);
+    });
+  }
+
+  // Per this file's own rule: a guard with only the green case is a guard
+  // nobody has proved discriminates. Each string below is prose this registry
+  // ACTUALLY carried, and each must trip at least one pattern above.
+  it("NEGATIVE CONTROL - every shape trips on the prose it replaced", () => {
+    const wasInTheRegistry = [
+      "The payload is byte-for-byte what it was.",
+      "It adds no file, no table and no column to the export.",
+      "Nine of the fifteen exported files have no source-side count query today,",
+      "the two files that rename or flatten would have had to be exempted",
+    ];
+    for (const line of wasInTheRegistry) {
+      const caught = FORBIDDEN.some(({ pattern }) => pattern.test(line));
+      expect(caught, `no guard would have caught: ${line}`).toBe(true);
+    }
+  });
+
+  // The counts the prose is no longer allowed to restate must still be
+  // derivable, or "derive it from the registry" is an instruction to nowhere.
+  it("the source-count split is derivable from the registry itself", () => {
+    const exported = exportedResources();
+    const kinds = exported.map(({ disposition }) => disposition.sourceCountCheck.kind);
+    expect(exported.length).toBeGreaterThan(0);
+    expect(kinds.length).toBe(exported.length);
+    for (const kind of kinds) {
+      expect(["studio_scoped", "via_parent", "none"]).toContain(kind);
+    }
   });
 });
