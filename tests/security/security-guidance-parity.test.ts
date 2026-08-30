@@ -172,6 +172,64 @@ function grammarViolations(body: string): string[] {
   return bad;
 }
 
+const isItem = (l: string) => /^\s*[-*]\s+\S/.test(l);
+const isHeading = (l: string) => /^#{1,6}\s/.test(l);
+const indentOf = (l: string) => (/^(\s*)/.exec(l)?.[1] ?? "").length;
+
+/** End of the block a list item at `start` owns: its wraps AND its children. */
+function blockEnd(lines: string[], start: number): number {
+  const ind = indentOf(lines[start]);
+  let j = start + 1;
+  while (j < lines.length) {
+    const n = lines[j];
+    if (n.trim() === "" || isHeading(n)) break;
+    if (isItem(n) && indentOf(n) <= ind) break;
+    j++;
+  }
+  return j;
+}
+
+/**
+ * The COMPLETE logical rules a canonical section states.
+ *
+ * WHY THIS EXISTS. Substring containment accepted any fragment: `"Server"`,
+ * `"-"`, or the first half of a sentence all appear inside a real canonical
+ * rule, so all three passed with a valid file, anchor and token — while the
+ * reviewer was handed half an instruction, or none. A length floor would only
+ * move the threshold, not close the hole.
+ *
+ * So the section is decomposed into complete units and the rule must EQUAL one:
+ *
+ *   - every list item, carrying its wrapped continuation lines and its nested
+ *     children (so both a parent gate and each gate beneath it are units);
+ *   - every paragraph that is not inside a list item, for the sources that
+ *     state a rule as prose rather than as a bullet.
+ *
+ * Structural only — it never reads what a unit MEANS. The canonical document
+ * decides where its rules begin and end; this just respects those boundaries.
+ */
+type SourceUnit = { kind: "item" | "para"; text: string };
+
+function sourceUnits(section: string): SourceUnit[] {
+  const lines = section.split("\n");
+  const inItem = new Array<boolean>(lines.length).fill(false);
+  const out: SourceUnit[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (!isItem(lines[i])) continue;
+    const end = blockEnd(lines, i);
+    for (let k = i; k < end; k++) inItem[k] = true;
+    out.push({ kind: "item", text: lines.slice(i, end).join("\n").replace(/^\s*[-*]\s+/, "") });
+  }
+  for (let i = 0; i < lines.length; i++) {
+    if (inItem[i] || lines[i].trim() === "" || isHeading(lines[i])) continue;
+    let j = i;
+    while (j < lines.length && !inItem[j] && lines[j].trim() !== "" && !isHeading(lines[j])) j++;
+    out.push({ kind: "para", text: lines.slice(i, j).join("\n") });
+    i = j - 1;
+  }
+  return out;
+}
+
 type Citation = { line: number; rule: string; file: string; anchor: string; token: string };
 type Adapter = { rules: number; cited: Citation[]; unanchored: number[] };
 
@@ -248,23 +306,27 @@ function parityViolations(adapterBody: string, read: (file: string) => string | 
           `the adapter asserts a rule its source has dropped`,
       );
     }
-    // THE RULE ITSELF, not merely the token it names. Checking only the token
-    // let the rule text be inverted — "Never trust caller-supplied ids" ->
-    // "Trust caller-supplied ids" — while the citation, the token and the
-    // canonical source all stayed valid, and parity stayed green. Requiring the
-    // normalized section to CONTAIN the normalized rule closes that: the
-    // adapter can only say what its source already says, so it cannot state the
-    // opposite of a rule, soften one, or invent one.
+    // THE RULE ITSELF, as ONE COMPLETE canonical rule. Checking only the token
+    // let the rule be inverted — "Never trust caller-supplied ids" -> "Trust
+    // caller-supplied ids" — with the citation still valid. Checking substring
+    // containment closed that but accepted FRAGMENTS: "Server", "-", or the
+    // first half of a sentence all appear inside a real rule, so a reviewer
+    // could be handed half an instruction and parity stayed green.
     //
-    // Containment, deliberately, not equality: a section holds several rules and
-    // an adapter quotes one of them. The direction matters — the SOURCE contains
-    // the RULE, never the reverse — so the canonical document stays the
-    // authority and this file stays a view onto it.
-    if (!normalize(section).includes(normalize(c.rule))) {
+    // Equality against one complete unit closes both. The adapter may only
+    // quote a whole rule its source already states — it cannot paraphrase one,
+    // contradict one, truncate one, or invent one. The direction of authority
+    // is unchanged: the SOURCE decides where its rules begin and end, and this
+    // file may only mirror one of them.
+    const wanted = normalize(c.rule);
+    const complete = sourceUnits(section).map((u) => normalize(u.text));
+    if (!complete.includes(wanted)) {
+      const truncated = complete.some((u) => u !== wanted && u.includes(wanted));
       bad.push(
-        `${ADAPTER}:${c.line}: the rule text does not appear in ${c.file}#${c.anchor}. ` +
-          `The adapter may only quote its source, never paraphrase or contradict it. Rule: ` +
-          JSON.stringify(normalize(c.rule).slice(0, 120)),
+        `${ADAPTER}:${c.line}: the rule is not a complete rule of ${c.file}#${c.anchor}` +
+          (truncated ? " — it is a FRAGMENT of one" : "") +
+          `. The adapter may only quote a whole canonical rule. Rule: ` +
+          JSON.stringify(wanted.slice(0, 120)),
       );
     }
   }
@@ -397,6 +459,116 @@ describe("SEC-ADAPTER-01 — security-guidance adapter parity", () => {
   };
 
   // -------------------------------------------------------------------------
+  // A rule must be a COMPLETE canonical rule, never a fragment of one
+  // -------------------------------------------------------------------------
+  // Substring containment accepted any piece of a real rule. Each control below
+  // replaces one real rule's TEXT while leaving its file, anchor and token
+  // untouched — the state that used to pass — and requires the mismatch.
+
+  /** Replace the text of the first rule line, keeping its citation verbatim. */
+  const withRuleText = (replacement: string): string => {
+    const lines = BODY.split("\n");
+    const i = lines.findIndex((l) => RULE_LINE.test(l));
+    expect(i, "the adapter must contain at least one cited rule").toBeGreaterThan(-1);
+    const citation = /(<!-- source: .*-->)$/.exec(lines[i])![1];
+    lines[i] = `- ${replacement} ${citation}`;
+    return lines.join("\n");
+  };
+
+  const REAL_RULE = "Server resolves `studio_id`, `client_id`, `appointment_id`, `practitioner_id` from the session or from token resolution. **Never trust those ids from the form.**";
+
+  it("the first rule really is the one these controls mutate", () => {
+    // Anchors the fixtures below to real content, so a reworded adapter makes
+    // them fail loudly instead of silently testing a rule that moved.
+    expect(BODY).toContain(`- ${REAL_RULE} <!-- source:`);
+  });
+
+  const FRAGMENTS: [string, string][] = [
+    ["a single word", "Server"],
+    ["a bare dash", "-"],
+    ["one character", "S"],
+    ["a proper first-half substring", "Server resolves `studio_id`, `client_id`, `appointment_id`"],
+    ["the rule minus its final sentence", "Server resolves `studio_id`, `client_id`, `appointment_id`, `practitioner_id` from the session or from token resolution."],
+    ["the negation dropped", REAL_RULE.replace("**Never trust those ids from the form.**", "**Trust those ids from the form.**")],
+  ];
+
+  for (const [label, text] of FRAGMENTS) {
+    it(`FRAGMENT RED: ${label}`, () => {
+      const mutated = withRuleText(text);
+      expect(mutated, "the control's substitution must land").not.toEqual(BODY);
+      // file / anchor / token untouched — this is purely the rule text.
+      expect(readAdapter(mutated).cited.map((c) => `${c.file}#${c.anchor}|${c.token}`)).toEqual(
+        readAdapter(BODY).cited.map((c) => `${c.file}#${c.anchor}|${c.token}`),
+      );
+      expect(parityViolations(mutated, readRepo).join("\n")).toMatch(/is not a complete rule of/);
+    });
+  }
+
+  it("FRAGMENT: a truncation is named as a fragment, not merely as a mismatch", () => {
+    const mutated = withRuleText("Server resolves `studio_id`, `client_id`, `appointment_id`");
+    expect(parityViolations(mutated, readRepo).join("\n")).toMatch(/it is a FRAGMENT of one/);
+  });
+
+  it("the complete canonical rule is GREEN", () => {
+    expect(withRuleText(REAL_RULE)).toEqual(BODY); // unchanged, and the suite is green
+    expect(parityViolations(BODY, readRepo)).toEqual([]);
+  });
+
+  it("every rule in the adapter equals one complete unit of its cited section", () => {
+    for (const cite of readAdapter(BODY).cited) {
+      const secs = sections(readRepo(cite.file)!);
+      const complete = sourceUnits(secs.get(cite.anchor)!).map((u) => normalize(u.text));
+      expect(complete, `${cite.file}#${cite.anchor} :: ${cite.rule.slice(0, 60)}`).toContain(
+        normalize(cite.rule),
+      );
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // The .local sibling is FORBIDDEN in the repository
+  // -------------------------------------------------------------------------
+  // The classifier recognises `.claude/claude-security-guidance.local.md` so an
+  // attempt to add one runs this suite. Nothing validated it, though: the
+  // plugin concatenates it AFTER the tracked adapter, so a tracked sibling would
+  // be repository-shipped security guidance that no parity, grammar, budget or
+  // authority check ever saw — and, being later in the prompt, one that could
+  // contradict everything above it.
+  //
+  // The contract is the simplest safe one: the tracked adapter is the ONLY
+  // repository security-guidance prompt. A developer's own untracked file is
+  // outside repository authority and is not Hone policy; this guard says
+  // nothing about it, and deliberately does not validate local overrides as if
+  // they were canonical.
+  const LOCAL_SIBLING = ".claude/claude-security-guidance.local.md";
+
+  const trackedFiles = (pathspec: string): string[] => {
+    const r = spawnSync("git", ["ls-files", "--", pathspec], { encoding: "utf8" });
+    expect(r.status, "git ls-files must run").toBe(0);
+    return (r.stdout ?? "").split("\n").filter(Boolean);
+  };
+
+  it("no local guidance sibling is tracked in the repository", () => {
+    expect(
+      trackedFiles(LOCAL_SIBLING),
+      `${LOCAL_SIBLING} is TRACKED. The tracked adapter is the only repository ` +
+        "security-guidance prompt: a committed sibling is shipped guidance that parity, the " +
+        "grammar, the budget and the authority header never validate, loaded AFTER the adapter " +
+        "and able to contradict it. Remove it from the index; keep it untracked if you want it locally.",
+    ).toEqual([]);
+  });
+
+  it("the guard is not vacuous — it does see this directory's tracked files", () => {
+    // If `git ls-files` were mis-scoped, the check above would pass forever.
+    expect(trackedFiles(".claude/*")).toContain(ADAPTER);
+  });
+
+  it("the local sibling stays security-classified so an attempt runs this suite", () => {
+    const r = classify([LOCAL_SIBLING]) as { security: boolean; docs_only: boolean };
+    expect(r.security, "adding it must select the security lane").toBe(true);
+    expect(r.docs_only).toBe(false);
+  });
+
+  // -------------------------------------------------------------------------
   // The document grammar — everything the reviewer reads, not just the bullets
   // -------------------------------------------------------------------------
   // The plugin concatenates this whole file into a prompt, so a line that is not
@@ -485,7 +657,7 @@ describe("SEC-ADAPTER-01 — security-guidance adapter parity", () => {
       const after = readAdapter(mutated).cited.map((c) => `${c.file}#${c.anchor}|${c.token}`);
       expect(after).toEqual(before);
 
-      expect(parityViolations(mutated, readRepo).join("\n")).toMatch(/the rule text does not appear in/);
+      expect(parityViolations(mutated, readRepo).join("\n")).toMatch(/is not a complete rule of/);
     });
   }
 
@@ -532,7 +704,7 @@ describe("SEC-ADAPTER-01 — security-guidance adapter parity", () => {
       );
 
       const violations = parityViolations(inverted, readRepo);
-      expect(violations.join("\n")).toMatch(/the rule text does not appear in/);
+      expect(violations.join("\n")).toMatch(/is not a complete rule of/);
     });
   }
 

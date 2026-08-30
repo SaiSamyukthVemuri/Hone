@@ -35,7 +35,7 @@ authority; this file is a view onto them.
 ## Database privilege
 
 - `SECURITY DEFINER` functions must explicitly set `search_path = pg_catalog, pg_temp`. Grants are `revoke from public, anon, authenticated; grant to service_role` unless deliberately wider. <!-- source: CONTRIBUTING.md#security-review-expectations | token: search_path = pg_catalog, pg_temp -->
-- Supabase's `ALTER DEFAULT PRIVILEGES` grants EXECUTE to `anon`, `authenticated` **and** `service_role` at function-create time. An authenticated-only command must revoke from **all three** explicitly, by name. <!-- source: CLAUDE.md#5-production-safety | token: revoke from **all three** explicitly, by name -->
+- Supabase's `ALTER DEFAULT PRIVILEGES` grants EXECUTE to `anon`, `authenticated` **and** `service_role` at function-create time. An authenticated-only command must revoke from **all three** explicitly, by name. Missed once in 0129 (`anon`) and again in 0164 (`service_role`); now pinned by `tests/security/clinical-rpc-grant-guard.test.ts`. <!-- source: CLAUDE.md#5-production-safety | token: revoke from **all three** explicitly, by name -->
 
 ## Public and token routes
 
@@ -46,7 +46,7 @@ authority; this file is a view onto them.
 
 ## Payments
 
-- `paymentIntents.create`: **exactly one runtime occurrence, in `lib/billing/session-payment-charge.ts`** <!-- source: CONTRIBUTING.md#payment-review-expectations | token: paymentIntents.create -->
+- `paymentIntents.create`: **exactly one runtime occurrence, in `lib/billing/session-payment-charge.ts`** (the canonical charge executor for session payments AND cancellation/no-show fees since the PR #196 unification; the legacy `lib/billing/manual-fee-charge.ts` executor was deleted in PR #218). Any new occurrence anywhere is high-risk and must be explicitly reviewed with a docs/13 decision. <!-- source: CONTRIBUTING.md#payment-review-expectations | token: paymentIntents.create -->
 - `refunds.create`: exactly one occurrence, in `lib/billing/payment-refund.ts` (full-amount, owner-only, test mode). <!-- source: CONTRIBUTING.md#payment-review-expectations | token: refunds.create -->
 - `charges.create`: must be zero. <!-- source: CONTRIBUTING.md#payment-review-expectations | token: charges.create -->
 - `checkout.sessions`: must be zero unless explicit Checkout PR. <!-- source: CONTRIBUTING.md#payment-review-expectations | token: checkout.sessions -->
@@ -55,4 +55,4 @@ authority; this file is a view onto them.
 
 ## External side effects
 
-- External provider truth is not the same as Hone persisted truth. Prefer **claim → external side effect → settle**. Do not automatically retry an uncertain provider-success state when the retry could duplicate the external action. <!-- source: ENGINEERING_STANDARDS.md#5-design-rules-for-risky-work | token: claim → external side effect → settle -->
+- **External side effects.** External provider truth is not the same as Hone persisted truth. Prefer **claim → external side effect → settle**. Do not automatically retry an uncertain provider-success state when the retry could duplicate the external action. <!-- source: ENGINEERING_STANDARDS.md#5-design-rules-for-risky-work | token: claim → external side effect → settle -->
