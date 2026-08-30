@@ -1191,29 +1191,76 @@ function maskQuotedSpans(text: string): string {
   // separate live assertion still fails on the assertion, which sits outside
   // any marker-introduced quote.
   let out = text;
-  for (const m of [...text.matchAll(/"[^"\n]*"|“[^”\n]*”/g)]) {
+  // A MARKER IS CONSUMED BY THE QUOTATION IT INTRODUCES.
+  //
+  // Two earlier scopes were both too broad, and each failed the same way - one
+  // legitimate correction licensing an unrelated LIVE assertion beside it:
+  //
+  //   line-scoped  a marker anywhere on the row masked every quote in the row.
+  //   cell-scoped  a marker anywhere in the cell masked every quote in the cell,
+  //                so `Corrected: previous wording "X"; current posture: "Y"`
+  //                still masked Y - one cell, two quotations, one marker.
+  //
+  // The association is now positional and single-use: for each quotation, only
+  // the span since the PREVIOUS quotation in the same cell is examined. A marker
+  // in that span introduces exactly this quotation and is spent doing so; the
+  // next quotation must carry its own marker or it is judged as the document
+  // speaking. That is the semantic contract - a marker governs the historical
+  // span it introduces, not the rest of the row.
+  const quotes = [...text.matchAll(/"[^"\n]*"|“[^”\n]*”/g)];
+  let previousQuoteEnd = -1;
+  for (const m of quotes) {
     const start = m.index ?? 0;
     const lineStart = text.lastIndexOf("\n", start) + 1;
-    // CELL-SCOPED, NOT LINE-SCOPED. Scanning from the start of the LINE let one
-    // legitimate correction license every later quotation in the same Markdown
-    // row, which is the densest place these documents write:
-    //
-    //   | Corrected: previous wording "row DML is NOT revoked" | Current
-    //     posture: "authenticated still holds row INSERT/UPDATE/DELETE" |
-    //
-    // The first cell is a real historical correction. The second states the
-    // defect as CURRENT FACT, and it was masked by the marker in the cell
-    // before it. A marker may only speak for its own cell, so the preamble
-    // starts at the nearest `|` (or line start, whichever is closer) - which
-    // also still covers the ordinary prose case where there is no table at all.
-    const cellStart = text.lastIndexOf("|", start);
-    const preambleStart = Math.max(lineStart, cellStart === -1 ? lineStart : cellStart + 1);
-    const preamble = text.slice(preambleStart, start);
-    if (!CORRECTION_MARKER.test(preamble)) continue;
+    const cellSep = text.lastIndexOf("|", start);
+    const cellStart = Math.max(lineStart, cellSep === -1 ? lineStart : cellSep + 1);
+    // The previous quotation only bounds this one when it is in the SAME cell.
+    const scanFrom = Math.max(cellStart, previousQuoteEnd);
+    previousQuoteEnd = start + m[0].length;
+    if (!CORRECTION_MARKER.test(text.slice(scanFrom, start))) continue;
     out = out.slice(0, start) + " ".repeat(m[0].length) + out.slice(start + m[0].length);
   }
   return out;
 }
+
+describe("correction markers bind to the quotation they introduce, and are spent doing so", () => {
+  // Three scopes were tried. The first two each let one legitimate correction
+  // license an unrelated LIVE assertion beside it, which is the only failure
+  // mode that matters here: a document stating a withdrawn fact as current and
+  // a guard signing it off.
+  const live = "authenticated still holds row INSERT/UPDATE/DELETE";
+
+  it("does NOT mask a live quotation sharing a cell with a corrected one", () => {
+    const row = `| Corrected: previous wording "row DML is NOT revoked"; current posture: "${live}" |`;
+    const masked = maskQuotedSpans(row);
+    expect(masked, "the historical quotation must still be masked").not.toContain("NOT revoked");
+    expect(
+      masked,
+      "a marker introducing an earlier quotation must not reach the next one in the same cell",
+    ).toContain(live);
+  });
+
+  it("does NOT mask a live quotation in a later cell", () => {
+    const row = `| Corrected: previously read "row DML is NOT revoked" | "${live}" is current |`;
+    expect(maskQuotedSpans(row)).toContain(live);
+  });
+
+  it("still masks a legitimate historical correction", () => {
+    const row = `| Corrected 2026-08-03: this row previously read "${live}" — 0169 revoked it |`;
+    expect(maskQuotedSpans(row)).not.toContain(live);
+  });
+
+  it("masks BOTH quotations when each carries its own marker", () => {
+    // The shape the canonical documents actually use. Inheritance is not
+    // required for it: every historical quotation is introduced in its own
+    // right, so consuming a marker cannot break a truthful row.
+    const row =
+      `| Corrected: previous wording "row DML is NOT revoked"; also corrected: previously read "${live}" |`;
+    const masked = maskQuotedSpans(row);
+    expect(masked).not.toContain("NOT revoked");
+    expect(masked).not.toContain(live);
+  });
+});
 
 describe("RULE C2 — no canonical doc says authenticated still holds clinical row DML", () => {
   it.each(NO_CURRENT_MAX_DOCS)("%s carries no live pre-0169 assertion", (name, doc) => {
@@ -1775,27 +1822,50 @@ describe("RULE X — canonical documents agree with each other", () => {
       expect(GIT_USABLE, "shallow clone or no git — X6's completeness check could not run").toBe(false);
       return;
     }
-    // The MERGED set, read from the production line rather than from integers.
+    // THE DOCUMENT'S CLAIM MUST NEVER NARROW THE AUTHORITY. The previous
+    // revision filtered the merged set to `pr <= upper`, so a production merge
+    // BEYOND the stated bound was removed from the evidence before comparison:
+    // production gains #660, the document still claims through #659 and still
+    // ends its rows at #659, and the rule passed because the one PR that would
+    // have exposed the staleness had been filtered out by the very claim under
+    // test. The set is derived over the whole reconciliation span, and the
+    // claim is then checked against it.
     const baseline = currentGitHeadSha();
     expect(baseline, "current-state must record a Current Git branch HEAD").toBeTruthy();
     const subjects = git("log", "--first-parent", "--merges", "--format=%s", `b9e0003f..${baseline}`) ?? "";
     const merged = new Set(
       [...subjects.matchAll(/Merge pull request #(\d{3,4})\b/g)]
         .map((m) => Number(m[1]))
-        .filter((n) => n >= 632 && n <= upper),
+        // Lower bound only: this is the reconciliation span. NO upper bound -
+        // that is the defect above.
+        .filter((n) => n >= 632),
     );
     expect(
       merged.size,
-      "no merged production PRs were found in the claimed range, so this rule would prove nothing",
+      "no merged production PRs were found in the reconciliation span, so this rule would prove nothing",
     ).toBeGreaterThan(0);
 
+    // 1 + 3. Every PR that ACTUALLY MERGED needs a row. This catches an
+    //        internal gap and a stale tail with the same assertion, because
+    //        neither is filtered out of `merged` any more.
     const missing = [...merged].filter((pr) => !rows.has(pr)).sort((a, b) => a - b);
     expect(
       missing,
-      `the changelog claims coverage through #${upper}, but ${missing.length} production PR(s) ` +
-        "that actually merged inside that range have no row. A range complete at both ends can " +
-        `still be hollow, which is why the upper bound alone cannot prove this. Missing: ${JSON.stringify(missing)}`,
+      `${missing.length} production PR(s) that actually merged have no changelog row. A range ` +
+        "complete at both ends can still be hollow, and a newly merged tail is invisible if the " +
+        `document's own claim is allowed to bound the evidence. Missing: ${JSON.stringify(missing)}`,
     ).toEqual([]);
+
+    // 2 + 4. The stated endpoint must equal the highest PR that actually
+    //        merged - so a tail beyond the claim fails even in the hypothetical
+    //        case where someone added the row but left the sentence behind.
+    const highestMerged = Math.max(...merged);
+    expect(
+      upper,
+      `the changelog claims coverage through #${upper}, but the highest production PR that ` +
+        `actually merged in this span is #${highestMerged}. The claim is checked against Git; ` +
+        "Git is never narrowed by the claim.",
+    ).toBe(highestMerged);
 
     // The upper bound must still BE a merged PR and the highest one covered -
     // otherwise coverage could be claimed through a number that never landed.

@@ -219,6 +219,17 @@ session count and never execute — so the figure is meaningless without its fix
 never be quoted bare. **Nothing was measured in production**, and no production latency
 improvement is claimed.
 
+**The merged #659 PR body carries an EARLIER measurement, and it is superseded here.**
+That body reports `606 ms → 519 ms`, `−88 ms`, `−14.4%`. Those figures are real but they
+were taken against `c94258eb`, before the final runtime-head correction; `df9674bb` — the
+head that actually merged — was committed afterwards and re-measured, because the fix
+changed the runtime blob and a number taken on a superseded blob cannot describe the
+shipped one. For shipped-head reporting the canonical figure is the fixture-bound
+**588 → 530 ms** recorded above, and the PR-body figures are **not** competing current
+evidence. The PR body is history and is deliberately not rewritten. **Neither measurement
+was a production latency measurement**; both were local, on the same synthetic fixture,
+and no percentage is stated for the final-head run because none was derived for it.
+
 The paired asymmetry check (the Sessions tab, which runs only one of the three units and
 should therefore not move) is **inconclusive** rather than passing: the measurement harness
 returns to the Overview tab between samples, so that control's own warm-up runs the code path
