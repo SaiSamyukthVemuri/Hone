@@ -21,6 +21,7 @@ const ALL_CAUSES: FinancialUnknownCause[] = [
   "unknowable",
   "not_yet_supported",
   "not_enumerable",
+  "records_incomplete",
 ];
 
 describe("Fact<T> — known zero is a value, every absence is a cause", () => {
@@ -78,7 +79,17 @@ describe("Fact<T> — known zero is a value, every absence is a cause", () => {
   });
 });
 
-describe("the five causes are five different sentences", () => {
+describe("every cause is its own sentence", () => {
+  it("ALL_CAUSES IS COMPLETE — the list cannot silently fall behind the union", () => {
+    // Without this, adding a cause to the union leaves every loop below quietly
+    // under-covering it: the suite stays green while the new member is never
+    // exercised. UNKNOWN_LABEL is keyed by the union, so the compiler forces it
+    // to hold every member, which makes its keys the honest census.
+    expect([...ALL_CAUSES].sort()).toEqual(Object.keys(UNKNOWN_LABEL).sort());
+    expect([...ALL_CAUSES].sort()).toEqual(Object.keys(UNKNOWN_EXPLANATION).sort());
+    expect(new Set(ALL_CAUSES).size).toBe(ALL_CAUSES.length);
+  });
+
   it("every cause has a label and an explanation", () => {
     for (const cause of ALL_CAUSES) {
       expect(UNKNOWN_LABEL[cause].length).toBeGreaterThan(0);

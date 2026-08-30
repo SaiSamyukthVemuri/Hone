@@ -94,6 +94,7 @@ export const UNKNOWN_LABEL: Record<FinancialUnknownCause, string> = {
   unknowable: "Hone can't know this",
   not_yet_supported: "Not supported yet",
   not_enumerable: "Too much to total",
+  records_incomplete: "Records too incomplete",
 };
 
 /** The sentence beneath the label, saying what it means and what to do. */
@@ -108,6 +109,8 @@ export const UNKNOWN_EXPLANATION: Record<FinancialUnknownCause, string> = {
     "Hone can answer this and does not answer it yet. It is coming in a later release; it says nothing about your studio.",
   not_enumerable:
     "This period has more activity than one read can total, so no partial figure is shown. Choose a shorter period.",
+  records_incomplete:
+    "Appointments in this period were often left open rather than closed out, so a figure over them would understate the work. Hone shows money from the point the records can carry it.",
 };
 
 /** What the owner can do about it, where there is anything. */
@@ -118,11 +121,60 @@ export const UNKNOWN_ACTION: Partial<Record<FinancialUnknownCause, string>> = {
 };
 
 // ---------------------------------------------------------------------------
-// Slice boundaries — what this release does not answer, said plainly
+// Slice 2 — delivered money
 // ---------------------------------------------------------------------------
 
-export const DISPOSITION_CHAIN_NOT_YET =
-  "How each completed visit was settled — paid by card, collected outside Hone, still owed, waived — is not on this screen yet.";
+/**
+ * THE THREE CLASSES, NAMED. This is the sentence that stops the screen being
+ * read as one bank balance with parts missing.
+ */
+export const THREE_CLASSES_NEVER_ADD_UP =
+  "These are three different kinds of evidence and Hone does not add them together. Card payments are ones Hone watched go through. Money collected outside Hone exists only if a practitioner wrote it down. Service value is a price, not money.";
 
-export const MONEY_BRIDGES_NOT_YET =
-  "Card payments Hone verified, and what a practitioner recorded collecting outside Hone, are not on this screen yet. They are different measurements from the service value above and will be shown apart from it.";
+/** What "delivered" counts, said before any figure computed from it. */
+export const DELIVERED_MEANS =
+  "Delivered counts visits that had finished by the time this page was built — whether or not anyone marked them completed afterwards.";
+
+/** Why the money window can be shorter than the period the owner picked. */
+export const MONEY_WINDOW_IS_NARROWER =
+  "Money is shown from 1 August 2026 onwards. Before that, appointments were often left open rather than closed out, so figures over them would understate the work.";
+
+/** The whole requested period sits below the floor. */
+export const PERIOD_IS_BEFORE_MONEY_WINDOW =
+  "This period ends before 1 August 2026, so there is no money figure Hone can stand behind for it. The calendar above is unaffected.";
+
+/** The window reaches back past this studio's first verified card payment. */
+export const WINDOW_PRECEDES_LEDGER =
+  "This window reaches back before your first card payment through Hone, so part of it is time Hone was not collecting. A low figure here is not a quiet stretch.";
+
+/** Collected money is gross. Processor cost is not knowable from this ledger. */
+export const COLLECTED_IS_GROSS =
+  "Card payments are shown before Stripe's fees. Hone's payment records carry no fee column, so what reached your bank is not something Hone can work out.";
+
+/**
+ * What "no payment recorded" IS and is NOT.
+ *
+ * NOT "owed", NOT "outstanding", NOT "unpaid". No settlement row exists for
+ * these visits, so nothing establishes that money is owed — and telling an
+ * owner a client owes money they may have already handed over in cash is a
+ * client-relationship harm, not a rounding error. Production holds exactly one
+ * settlement row in the entire database, and none for this studio.
+ */
+export const NO_PAYMENT_RECORDED_IS_NOT_OWED =
+  "No payment recorded means nobody has written down what happened. It does not mean the visit is unpaid, and it does not mean money is owed.";
+
+/** The collection rate is a count ratio, and says so. */
+export const COLLECTION_RATE_IS_VISITS =
+  "This counts visits, not dollars. A dollar version would divide an amount a practitioner typed at checkout by a price you can still edit, which is not a rate of anything.";
+
+/** Service value moves when the menu moves. */
+export const SERVICE_VALUE_IS_TODAYS_PRICE =
+  "Service value uses today's prices. Hone does not keep the price a visit carried at the time, so editing a service price changes this figure for past visits too.";
+
+/** Free consultations are a cost, and are excluded from the per-hour figure. */
+export const CONSULTATIONS_ARE_UNPAID_TIME =
+  "Consultations are free, so they earn nothing while still taking clinic time. They are kept out of the per-hour figure and shown separately.";
+
+/** What is still not on this screen. */
+export const CAPACITY_NOT_YET =
+  "How full your schedule is, and what an extra day would be worth, are not on this screen. Answering them needs your blocked-out time, which this release does not read.";

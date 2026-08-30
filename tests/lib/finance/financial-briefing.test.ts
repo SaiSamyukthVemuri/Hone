@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { loadFinancialsView } from "@/lib/finance/financial-briefing";
 import type { Studio } from "@/lib/types/database";
@@ -113,10 +113,10 @@ describe("the owner gate is authority, and it runs before anything is read", () 
 });
 
 describe("the read projects enough to answer 'still to happen' truthfully", () => {
-  it("SELECTS starts_at ALONGSIDE status, and nothing financial", async () => {
+  it("SELECTS starts_at ALONGSIDE status, and the appointments read stays non-financial", async () => {
     // Status alone cannot distinguish an upcoming appointment from one that
     // passed and was never closed out, so the projection is the fix's load
-    // bearing half. It must widen by exactly one temporal column.
+    // bearing half.
     const { client, filters, tables } = stubClient({ rows: [] });
     await loadFinancialsView(OWNER, studio("America/Toronto"), "month", client);
 
@@ -125,19 +125,47 @@ describe("the read projects enough to answer 'still to happen' truthfully", () =
     const projection = String(select!.args[0]);
     expect(projection).toContain("status");
     expect(projection).toContain("starts_at");
-    // Still ONE table, and still no money.
-    expect(tables).toEqual(["appointments"]);
-    for (const forbidden of [
-      "price",
-      "amount",
-      "cents",
-      "payment",
-      "settlement",
-      "charge",
-      "refund",
-      "stripe",
-    ]) {
+    // SLICE 2 WIDENS THIS PROJECTION, and every added column is named here so a
+    // future widening is a decision made in the open rather than a column that
+    // quietly appears. `ends_at` is what "delivered" is defined on;
+    // `blocked_ends_at` is chair time including the per-appointment buffer.
+    expect(projection).toContain("ends_at");
+    expect(projection).toContain("duration_minutes");
+    expect(projection).toContain("blocked_ends_at");
+    expect(projection).toContain("service_id");
+
+    // THE APPOINTMENTS READ ITSELF CARRIES NO MONEY. Prices, payments and
+    // settlements are separate reads against their own authorities, and this
+    // one must never grow an embedded resource that reaches them.
+    for (const forbidden of ["price", "amount", "cents", "payment", "settlement", "charge", "refund", "stripe"]) {
       expect(projection.toLowerCase(), projection).not.toContain(forbidden);
+    }
+    expect(projection, "no PostgREST embedded resource").not.toContain("(");
+
+    // ONE appointments read, feeding BOTH censuses, so the calendar and the
+    // money panel cannot disagree about which appointments exist.
+    expect(tables.filter((t) => t === "appointments")).toHaveLength(1);
+  });
+
+  it("reads each money authority exactly where it lives, and reads no decoy", async () => {
+    const { client, tables } = stubClient({ rows: [] });
+    await loadFinancialsView(OWNER, studio("America/Toronto"), "month", client);
+
+    // The live ledger, its refund window, and the 0187 settlement authority.
+    // `payment_charge_attempts` appears four times: charges, refunds, the
+    // unattributed count, and the ledger-opening probe — four different
+    // windows over one authority, never a second table pretending to be it.
+    expect(new Set(tables)).toEqual(
+      new Set(["appointments", "services", "payment_charge_attempts", "appointment_settlements"]),
+    );
+    for (const decoy of [
+      "manual_fee_charge_attempts",
+      "stripe_charge_attempts",
+      "appointment_payments",
+      "stripe_refunds",
+      "stripe_refund_attempts",
+    ]) {
+      expect(tables, decoy).not.toContain(decoy);
     }
   });
 
@@ -167,7 +195,7 @@ describe("the period window is the STUDIO's, in the studio's timezone", () => {
     const { client, tables, filters } = stubClient({ rows: [] });
     await loadFinancialsView(OWNER, studio("America/Toronto"), "today", client);
 
-    expect(tables).toEqual(["appointments"]);
+    expect(tables[0]).toBe("appointments");
     expect(argOf(filters, "eq", "studio_id")).toBe("studio-1");
     // Half-open: gte on the start, lt on the end. `lte` would double-count the
     // boundary instant into two periods.
@@ -263,5 +291,170 @@ describe("a read that did not succeed never becomes a zero", () => {
     const view = await loadFinancialsView(OWNER, studio("UTC"), "today", client);
     if (view.access !== "granted") throw new Error("expected granted");
     expect(view.briefing.calendar.booked.known).toBe(false);
+  });
+});
+
+// ===========================================================================
+// SLICE 2 — the money window
+// ===========================================================================
+
+/**
+ * A stub that answers each TABLE differently, so the money reads can be
+ * distinguished from the appointments read. The single-shape `stubClient` above
+ * is left untouched: the Slice 1 tests assert against it and it still says what
+ * they were written to say.
+ */
+function stubTables(byTable: Record<string, { rows?: unknown[]; count?: number | null }>) {
+  const tables: string[] = [];
+  const filters: Array<Filter & { table: string }> = [];
+  const from = (table: string) => {
+    tables.push(table);
+    const stub = byTable[table] ?? { rows: [] };
+    const result = () => ({
+      data: stub.rows ?? [],
+      error: null,
+      count: stub.count === undefined ? (stub.rows ?? []).length : stub.count,
+    });
+    const proxy: unknown = new Proxy(
+      {},
+      {
+        get: (_t, prop) => {
+          if (prop === "then") {
+            return (res: (v: unknown) => unknown, rej: (e: unknown) => unknown) =>
+              Promise.resolve(result()).then(res, rej);
+          }
+          return (...args: unknown[]) => {
+            filters.push({ table, op: String(prop), args });
+            return proxy;
+          };
+        },
+      },
+    );
+    return proxy;
+  };
+  return { client: { from } as unknown as SupabaseClient, tables, filters };
+}
+
+const granted = (view: Awaited<ReturnType<typeof loadFinancialsView>>) => {
+  if (view.access !== "granted") throw new Error("expected the briefing to be granted");
+  return view.briefing;
+};
+
+describe("RULING 1 — the money window opens at the record-keeping floor", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const at = (iso: string) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(iso));
+  };
+
+  it("a period ENTIRELY below the floor yields no money figure at all", async () => {
+    // July 2026: the marking rate that month was 82.6%, and May's was 0%. A
+    // figure over such a month does not describe a quieter studio, it describes
+    // a studio that had not started closing appointments out.
+    at("2026-07-15T16:00:00.000Z");
+    const { client } = stubTables({});
+    const b = granted(await loadFinancialsView(OWNER, studio("America/Toronto"), "month", client));
+
+    expect(b.money.covered).toBe(false);
+    expect(b.money.census.collectedGrossCents.known).toBe(false);
+    if (!b.money.census.collectedGrossCents.known) {
+      // NOT `unavailable` and NOT `unknowable`: the read would have succeeded,
+      // and records did exist. They were incomplete.
+      expect(b.money.census.collectedGrossCents.cause).toBe("records_incomplete");
+    }
+    // THE CALENDAR IS UNAFFECTED. Only money is withdrawn.
+    expect(b.calendar.booked.known).toBe(true);
+  });
+
+  it("a period STRADDLING the floor reports money from the floor, and says so", async () => {
+    at("2026-08-15T16:00:00.000Z");
+    const { client, filters } = stubTables({});
+    const b = granted(await loadFinancialsView(OWNER, studio("America/Toronto"), "month", client));
+
+    expect(b.money.covered).toBe(true);
+    if (b.money.covered) {
+      expect(b.money.startLocal).toBe("2026-08-01");
+      expect(b.money.narrowed).toBe(false); // August starts exactly at the floor
+    }
+    // The APPOINTMENTS read still covers the whole period the owner asked for.
+    const appointmentStart = filters.find(
+      (f) => f.table === "appointments" && f.op === "gte" && f.args[0] === "starts_at",
+    );
+    expect(appointmentStart).toBeDefined();
+  });
+
+  it("THE LEDGER READS ARE WINDOWED AT THE FLOOR, not at the period start", async () => {
+    // A July period start must never reach the ledger query, or the figure
+    // would cover exactly the months the floor exists to exclude.
+    at("2026-08-15T16:00:00.000Z");
+    const { client, filters } = stubTables({});
+    await loadFinancialsView(OWNER, studio("America/Toronto"), "month", client);
+
+    const chargeStart = filters.find(
+      (f) => f.table === "payment_charge_attempts" && f.op === "gte" && f.args[0] === "charged_at",
+    );
+    expect(chargeStart).toBeDefined();
+    // Toronto local midnight on 1 August is 04:00Z (EDT).
+    expect(String(chargeStart!.args[1])).toBe("2026-08-01T04:00:00.000Z");
+  });
+
+  it("a WEEK straddling the floor is narrowed, and the screen is told", async () => {
+    // The week of Sunday 26 July 2026 runs into August.
+    at("2026-07-30T16:00:00.000Z");
+    const { client } = stubTables({});
+    const b = granted(await loadFinancialsView(OWNER, studio("America/Toronto"), "week", client));
+    expect(b.money.covered).toBe(true);
+    if (b.money.covered) {
+      expect(b.money.startLocal).toBe("2026-08-01");
+      expect(b.money.narrowed).toBe(true);
+    }
+  });
+});
+
+describe("FIN-C11 — a window reaching back before the ledger is flagged, never reported flat", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("flags a window that starts before this studio's first verified payment", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-15T16:00:00.000Z"));
+    const { client } = stubTables({
+      payment_charge_attempts: { rows: [{ charged_at: "2026-08-10T12:00:00.000Z" }] },
+    });
+    const b = granted(await loadFinancialsView(OWNER, studio("America/Toronto"), "month", client));
+    expect(b.money.covered && b.money.precedesLedger).toBe(true);
+  });
+
+  it("does NOT flag a window that sits entirely inside the ledger's life", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-15T16:00:00.000Z"));
+    const { client } = stubTables({
+      payment_charge_attempts: { rows: [{ charged_at: "2026-07-07T12:00:00.000Z" }] },
+    });
+    const b = granted(await loadFinancialsView(OWNER, studio("America/Toronto"), "month", client));
+    expect(b.money.covered && b.money.precedesLedger).toBe(false);
+  });
+
+  it("NO LEDGER AT ALL is the same statement, maximally — flagged, not zeroed", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-15T16:00:00.000Z"));
+    const { client } = stubTables({});
+    const b = granted(await loadFinancialsView(OWNER, studio("America/Toronto"), "month", client));
+    expect(b.money.covered && b.money.precedesLedger).toBe(true);
+  });
+});
+
+describe("the evidence instant is pinned and published", () => {
+  it("one clock read anchors the period, the delivered split AND the printed instant", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-15T16:00:00.000Z"));
+    const { client } = stubTables({});
+    const b = granted(await loadFinancialsView(OWNER, studio("America/Toronto"), "month", client));
+    expect(b.evidenceInstant).toBe("2026-08-15T16:00:00.000Z");
+    vi.useRealTimers();
   });
 });

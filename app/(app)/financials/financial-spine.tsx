@@ -3,12 +3,21 @@ import Link from "next/link";
 import { SectionLabel } from "@/components/ui/section-label";
 import type { FinancialBriefing } from "@/lib/finance/financial-briefing";
 import {
-  DISPOSITION_CHAIN_NOT_YET,
-  MONEY_BRIDGES_NOT_YET,
+  CAPACITY_NOT_YET,
+  COLLECTED_IS_GROSS,
+  COLLECTION_RATE_IS_VISITS,
+  CONSULTATIONS_ARE_UNPAID_TIME,
+  DELIVERED_MEANS,
+  MONEY_WINDOW_IS_NARROWER,
+  NO_PAYMENT_RECORDED_IS_NOT_OWED,
   PAST_STILL_CONFIRMED_IS_A_RECORD_STATE,
+  PERIOD_IS_BEFORE_MONEY_WINDOW,
   PERMANENT_LINES,
+  SERVICE_VALUE_IS_TODAYS_PRICE,
+  THREE_CLASSES_NEVER_ADD_UP,
   UNKNOWN_EXPLANATION,
   UNKNOWN_LABEL,
+  WINDOW_PRECEDES_LEDGER,
 } from "@/lib/finance/financial-copy";
 import type { Fact, FinancialUnknownCause } from "@/lib/finance/financial-fact";
 import type { ReportingPeriod } from "@/lib/booking/reporting-period";
@@ -66,6 +75,16 @@ const MARK: Record<FinancialUnknownCause, React.ReactNode> = {
       <path d="M2.5 4.5h9" strokeWidth="1.6" strokeLinecap="round" />
       <path d="M2.5 7.5h9" strokeWidth="1.6" strokeLinecap="round" />
       <path d="M2.5 10.5h6" strokeWidth="1.6" strokeLinecap="round" />
+    </>
+  ),
+  // A broken outline: the shape of a record that was started and left open,
+  // which is exactly what this cause describes. Distinguishable from
+  // `not_recorded`'s dashed circle in greyscale because it is a rectangle.
+  records_incomplete: (
+    <>
+      <path d="M2.2 3.8v-1.6h4" strokeWidth="1.6" fill="none" strokeLinecap="round" />
+      <path d="M11.8 3.8v-1.6h-4" strokeWidth="1.6" fill="none" strokeLinecap="round" />
+      <path d="M2.2 10.2v1.6h9.6v-1.6" strokeWidth="1.6" fill="none" strokeLinecap="round" />
     </>
   ),
 };
@@ -137,6 +156,55 @@ function Visits({ fact }: { fact: Fact<number> }) {
         {fact.value === 1 ? "visit" : "visits"}
       </span>
     </p>
+  );
+}
+
+/**
+ * Cents, as the studio's own currency. NEVER a bare number and never rounded to
+ * the dollar: a money figure that has lost its cents is a different number, and
+ * an owner reconciling against a bank statement is the person most likely to
+ * notice.
+ */
+function money(cents: number): string {
+  return (cents / 100).toLocaleString(undefined, {
+    style: "currency",
+    currency: "CAD",
+    currencyDisplay: "narrowSymbol",
+  });
+}
+
+/** A money figure, or the sentence saying why there isn't one. */
+function Money({ fact }: { fact: Fact<number> }) {
+  if (!fact.known) return <Unknown cause={fact.cause} />;
+  return <p className="tabular-nums text-sm font-medium">{money(fact.value)}</p>;
+}
+
+/** Basis points, rendered as a percentage with one decimal. */
+function percent(basisPoints: number): string {
+  return `${(basisPoints / 100).toFixed(1)}%`;
+}
+
+/** Minutes as hours, to two decimals — the unit the per-hour figure divides by. */
+function hours(minutes: number): string {
+  return `${(minutes / 60).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })} h`;
+}
+
+/**
+ * One labelled line whose figure is rendered by the caller.
+ *
+ * Generalised from `Row` so a money figure, a count and a ratio can share the
+ * exact same label/figure geometry. Order in the DOM is unchanged: the label
+ * always precedes its figure, so stacking on a phone cannot invert them.
+ */
+function Line({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex flex-col gap-1 border-t border-line py-3 first:border-t-0 sm:flex-row sm:items-baseline sm:justify-between sm:gap-4">
+      <span className="text-sm">{label}</span>
+      <div className="min-w-0 sm:text-right">{children}</div>
+    </div>
   );
 }
 
@@ -220,17 +288,7 @@ export function FinancialSpine({ briefing }: { briefing: FinancialBriefing }) {
         </p>
       </section>
 
-      <section className="flex flex-col gap-3">
-        <SectionLabel as="h2">Where the completed work went</SectionLabel>
-        <Unknown cause="not_yet_supported" />
-        <p className="text-sm text-fg">{DISPOSITION_CHAIN_NOT_YET}</p>
-      </section>
-
-      <section className="flex flex-col gap-3">
-        <SectionLabel as="h2">Money in this period</SectionLabel>
-        <Unknown cause="not_yet_supported" />
-        <p className="text-sm text-fg">{MONEY_BRIDGES_NOT_YET}</p>
-      </section>
+      <DeliveredMoney briefing={briefing} />
 
       <footer className="flex flex-col gap-2 border-t border-line pt-5">
         {PERMANENT_LINES.map((line) => (
@@ -238,6 +296,22 @@ export function FinancialSpine({ briefing }: { briefing: FinancialBriefing }) {
             {line}
           </p>
         ))}
+        <p className="max-w-[68ch] text-xs leading-relaxed text-fg">{CAPACITY_NOT_YET}</p>
+        {/*
+          THE EVIDENCE INSTANT, ON SCREEN. Two reports run minutes apart
+          legitimately disagree — production moved 63 to 64 delivered visits
+          inside twenty-six minutes while this surface was being specified — and
+          without the instant an owner comparing them concludes Hone is broken.
+          `dateTime` carries the machine-readable form; the visible text is the
+          same instant, not a prettier approximation of it.
+        */}
+        <p className="max-w-[68ch] text-xs leading-relaxed text-fg-muted">
+          Figures as at{" "}
+          <time dateTime={briefing.evidenceInstant} className="tabular-nums">
+            {briefing.evidenceInstant}
+          </time>
+          .
+        </p>
       </footer>
     </div>
   );
@@ -312,6 +386,276 @@ function PartitionNote({ briefing }: { briefing: FinancialBriefing }) {
       {reasons.join("; and ")}, so still to happen, past but still confirmed,
       completed, cancelled and no-show do not account for every appointment in this
       period.
+    </p>
+  );
+}
+
+/**
+ * SLICE 2 — delivered work and the money against it.
+ *
+ * THE THREE EVIDENCE CLASSES GET THREE SECTIONS, and the order is deliberate:
+ * verified card money, then attested external money, then service value. No
+ * section sums another, there is no total line anywhere beneath them, and the
+ * sentence naming why sits directly under the heading rather than in the
+ * footer — a reader who stops after the first figure has still read it.
+ *
+ * WHAT IS DELIBERATELY ABSENT: schedule utilisation, clinic-hour yield, any
+ * sustainable-client or spare-capacity count, and every forecast. Those need
+ * blocked-out time, interval merging and an elapsed denominator, none of which
+ * this release reads. The footer says so in a sentence rather than leaving the
+ * owner to assume the screen has answered a question it has not.
+ */
+function DeliveredMoney({ briefing }: { briefing: FinancialBriefing }) {
+  const { money: window } = briefing;
+
+  // The whole requested period sits below the record-keeping floor. The
+  // calendar above is still true and still shown; only money is withdrawn.
+  if (!window.covered) {
+    return (
+      <section className="flex flex-col gap-3">
+        <SectionLabel as="h2">Money in this period</SectionLabel>
+        <Unknown cause="records_incomplete" />
+        <p className="max-w-[68ch] text-sm text-fg">{PERIOD_IS_BEFORE_MONEY_WINDOW}</p>
+      </section>
+    );
+  }
+
+  const c = window.census;
+  return (
+    <>
+      <section className="flex flex-col gap-3">
+        <SectionLabel as="h2">Delivered in this window</SectionLabel>
+        <div className="flex flex-col">
+          <Line label="Treatment visits delivered">
+            <Visits fact={c.deliveredPaidVisits} />
+          </Line>
+          <Line label="Consultations delivered (free)">
+            <Visits fact={c.consultationVisits} />
+          </Line>
+        </div>
+        <p className="max-w-[68ch] text-xs leading-relaxed text-fg">{DELIVERED_MEANS}</p>
+        {window.narrowed ? (
+          <p className="max-w-[68ch] text-xs leading-relaxed text-fg">
+            {MONEY_WINDOW_IS_NARROWER}
+          </p>
+        ) : null}
+        <p className="max-w-[68ch] text-xs leading-relaxed text-fg">
+          {THREE_CLASSES_NEVER_ADD_UP}
+        </p>
+      </section>
+
+      {/* CLASS 1 — provider-verified. Hone watched this money move. */}
+      <section className="flex flex-col gap-3">
+        <SectionLabel as="h2">Card payments collected through Hone</SectionLabel>
+        <div className="flex flex-col">
+          <Line label="Collected, before fees">
+            <Money fact={c.collectedGrossCents} />
+          </Line>
+          <Line label="Refunded">
+            <Money fact={c.refundedCents} />
+          </Line>
+          <Line label="Net of refunds">
+            <Money fact={c.collectedNetCents} />
+          </Line>
+          <Line label="Payments">
+            <Visits fact={c.chargeCount} />
+          </Line>
+        </div>
+        <p className="max-w-[68ch] text-xs leading-relaxed text-fg">{COLLECTED_IS_GROSS}</p>
+        {/*
+          FIN-C9. A succeeded payment carrying no collection time belongs to no
+          period, so it appears in no window's total. Surfaced rather than
+          dropped: dropping it denies money that was actually made.
+        */}
+        {c.unattributedCharges.known && c.unattributedCharges.value > 0 ? (
+          <p className="max-w-[68ch] text-xs leading-relaxed text-warning-fg">
+            {c.unattributedCharges.value.toLocaleString()} card payment
+            {c.unattributedCharges.value === 1 ? "" : "s"} succeeded without a
+            collection time, so {c.unattributedCharges.value === 1 ? "it is" : "they are"}{" "}
+            in no period and not counted above.
+          </p>
+        ) : null}
+        {window.precedesLedger ? (
+          <p className="max-w-[68ch] text-xs leading-relaxed text-fg">
+            {WINDOW_PRECEDES_LEDGER}
+          </p>
+        ) : null}
+      </section>
+
+      {/* CLASS 2 — studio-attested. Exists only if somebody wrote it down. */}
+      <section className="flex flex-col gap-3">
+        <SectionLabel as="h2">Collected outside Hone</SectionLabel>
+        <div className="flex flex-col">
+          <Line label="Cash, e-transfer or other, as recorded">
+            <Money fact={c.externallyAttestedCents} />
+          </Line>
+          <Line label="Waived">
+            <Money fact={c.waivedCents} />
+          </Line>
+          <Line label="Recorded as still owed">
+            <Money fact={c.stillOwedCents} />
+          </Line>
+        </div>
+      </section>
+
+      {/* CLASS 3 — service value. A price, and never money. */}
+      <section className="flex flex-col gap-3">
+        <SectionLabel as="h2">Service value of delivered treatment</SectionLabel>
+        <div className="flex flex-col">
+          <Line label="At today's prices">
+            <Money fact={c.serviceValueCents} />
+          </Line>
+        </div>
+        <p className="max-w-[68ch] text-xs leading-relaxed text-fg">
+          {SERVICE_VALUE_IS_TODAYS_PRICE}
+        </p>
+      </section>
+
+      <section className="flex flex-col gap-3">
+        <SectionLabel as="h2">Visits with a payment recorded</SectionLabel>
+        <div className="flex flex-col">
+          <Line label="Paid by card through Hone">
+            <Visits fact={c.cardPaidVisits} />
+          </Line>
+          <Line label="Of delivered treatment visits">
+            {c.collectionRateBasisPoints.known ? (
+              <p className="tabular-nums text-sm font-medium">
+                {percent(c.collectionRateBasisPoints.value)}
+              </p>
+            ) : (
+              <Unknown cause={c.collectionRateBasisPoints.cause} />
+            )}
+          </Line>
+          <Line label="No payment recorded">
+            <Visits fact={c.unresolvedVisits} />
+          </Line>
+          <Line label="Service value of those visits">
+            <Money fact={c.unresolvedServiceValueCents} />
+          </Line>
+        </div>
+        <p className="max-w-[68ch] text-xs leading-relaxed text-fg">
+          {COLLECTION_RATE_IS_VISITS}
+        </p>
+        <p className="max-w-[68ch] text-xs leading-relaxed text-fg">
+          {NO_PAYMENT_RECORDED_IS_NOT_OWED}
+        </p>
+      </section>
+
+      <section className="flex flex-col gap-3">
+        <SectionLabel as="h2">Where the clinic time went</SectionLabel>
+        <div className="flex flex-col">
+          <Line label="Treatment, with the client">
+            {c.treatmentBookedMinutes.known ? (
+              <p className="tabular-nums text-sm font-medium">
+                {hours(c.treatmentBookedMinutes.value)}
+              </p>
+            ) : (
+              <Unknown cause={c.treatmentBookedMinutes.cause} />
+            )}
+          </Line>
+          <Line label="Treatment, including buffer">
+            {c.treatmentBlockedMinutes.known ? (
+              <p className="tabular-nums text-sm font-medium">
+                {hours(c.treatmentBlockedMinutes.value)}
+              </p>
+            ) : (
+              <Unknown cause={c.treatmentBlockedMinutes.cause} />
+            )}
+          </Line>
+          <Line label="Consultations, including buffer">
+            {c.consultationBlockedMinutes.known ? (
+              <p className="tabular-nums text-sm font-medium">
+                {hours(c.consultationBlockedMinutes.value)}
+              </p>
+            ) : (
+              <Unknown cause={c.consultationBlockedMinutes.cause} />
+            )}
+          </Line>
+          <Line label="Share of clinic time that was consultation">
+            {c.consultationTimeShareBasisPoints.known ? (
+              <p className="tabular-nums text-sm font-medium">
+                {percent(c.consultationTimeShareBasisPoints.value)}
+              </p>
+            ) : (
+              <Unknown cause={c.consultationTimeShareBasisPoints.cause} />
+            )}
+          </Line>
+        </div>
+        <p className="max-w-[68ch] text-xs leading-relaxed text-fg">
+          {CONSULTATIONS_ARE_UNPAID_TIME}
+        </p>
+      </section>
+
+      {/*
+        RULING 2 — BOTH AXES NAMED IN THE LABEL ITSELF, not in a footnote.
+        Holding the numerator still and moving only the denominator across its
+        defensible choices spans roughly 4x, so a bare "per hour" figure is not
+        imprecise, it is undefined. Rendered only where there is treatment time
+        to divide by.
+      */}
+      {c.collectedPerTreatmentHourBookedCents.known ? (
+        <section className="flex flex-col gap-2 border-y border-line-strong py-6">
+          <SectionLabel as="h2">
+            Card payments collected per treatment hour with the client
+          </SectionLabel>
+          <p className="tabular-nums text-4xl font-semibold tracking-tight">
+            {money(c.collectedPerTreatmentHourBookedCents.value)}
+          </p>
+          <p className="max-w-[68ch] text-sm text-fg">
+            Net card payments in this window, divided by treatment hours with the
+            client. Free consultations are not in the divisor.
+          </p>
+        </section>
+      ) : null}
+
+      <BasisNote briefing={briefing} />
+    </>
+  );
+}
+
+/**
+ * What the money census could NOT account for.
+ *
+ * Same discipline as PartitionNote: the figures above stay true and the
+ * COMPLETENESS claim is withdrawn, naming each reason separately. A row that
+ * could not be dated, priced or measured is not dropped to keep a total tidy —
+ * it is counted here, where the owner can see the figures are narrower than the
+ * window they were asked for.
+ */
+function BasisNote({ briefing }: { briefing: FinancialBriefing }) {
+  if (!briefing.money.covered) return null;
+  const b = briefing.money.census.basis;
+  if (b.complete) return null;
+  const reasons: string[] = [];
+  if (b.undatable > 0) {
+    reasons.push(
+      `${b.undatable} appointment${b.undatable === 1 ? "" : "s"} did not supply an end time Hone could read, so whether ${b.undatable === 1 ? "it has" : "they have"} finished is unknown`,
+    );
+  }
+  if (b.unpriced > 0) {
+    reasons.push(
+      `${b.unpriced} delivered appointment${b.unpriced === 1 ? "" : "s"} had no service price Hone could resolve, so ${b.unpriced === 1 ? "it is" : "they are"} in neither the treatment nor the consultation figures`,
+    );
+  }
+  if (b.unmeasurable > 0) {
+    reasons.push(
+      `${b.unmeasurable} delivered appointment${b.unmeasurable === 1 ? "" : "s"} did not supply readable times for the chair, so ${b.unmeasurable === 1 ? "its" : "their"} clinic time is not in the hours above`,
+    );
+  }
+  if (b.unreadableAmounts > 0) {
+    reasons.push(
+      `${b.unreadableAmounts} amount${b.unreadableAmounts === 1 ? "" : "s"} did not arrive as a number Hone could read, so ${b.unreadableAmounts === 1 ? "it is" : "they are"} left out of the totals rather than counted as nothing`,
+    );
+  }
+  if (b.settlementsOutsideWindow > 0) {
+    reasons.push(
+      `${b.settlementsOutsideWindow} recorded payment${b.settlementsOutsideWindow === 1 ? "" : "s"} outside Hone name${b.settlementsOutsideWindow === 1 ? "s" : ""} a visit outside this window, so ${b.settlementsOutsideWindow === 1 ? "it is" : "they are"} not counted here`,
+    );
+  }
+  return (
+    <p className="max-w-[68ch] text-xs leading-relaxed text-warning-fg">
+      {reasons.join("; and ")}. The figures above are true for what Hone could
+      read, and are not a complete account of this window.
     </p>
   );
 }
