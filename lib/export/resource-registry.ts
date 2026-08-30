@@ -253,7 +253,9 @@ export type ResourceDisposition =
 
 export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDisposition>> = {
   // -------------------------------------------------------------------------
-  // EXPORTED - in the ZIP today. Nothing below changes the payload.
+  // EXPORTED - emitted in the archive today. These entries DEFINE the payload:
+  // changing one may legitimately change what ships, provided the executed
+  // SELECT, the emitted headers and cells, and the manifest all change with it.
   // -------------------------------------------------------------------------
   clients: {
     kind: "exported",

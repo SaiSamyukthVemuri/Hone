@@ -288,6 +288,21 @@ const FORBIDDEN: ReadonlyArray<{ readonly why: string; readonly pattern: RegExp 
     why: "hard-codes how many files rename or flatten",
     pattern: new RegExp(`\\b(?:${CARDINAL})\\s+files\\s+that\\s+rename`, "i"),
   },
+  {
+    // The shape the first version of this guard missed: not a claim about
+    // SIZE, and not the word "byte-for-byte", but an absolute assertion that a
+    // whole region of the registry leaves the payload alone. The EXPORTED
+    // banner carried it while this very PR promoted five resources beneath it.
+    //
+    // Bounded on purpose. It requires the universal-negative SUBJECT
+    // ("nothing below/here/above/in this ...") in front of the verb, which is
+    // what makes the sentence absolute. A conditional statement about the same
+    // relationship - "changing this entry changes the payload" - is TRUE and
+    // must keep passing; the positive control below pins that.
+    why: "asserts a region of the registry cannot change the payload",
+    pattern:
+      /\bnothing\s+(?:below|here|above|in\s+this\s+\w+)\s+(?:changes|alters|affects|modifies|touches)\s+the\s+(?:payload|export|archive|zip)\b/i,
+  },
 ];
 
 describe("the registry's prose cannot go stale about the payload", () => {
@@ -315,10 +330,37 @@ describe("the registry's prose cannot go stale about the payload", () => {
       "It adds no file, no table and no column to the export.",
       "Nine of the fifteen exported files have no source-side count query today,",
       "the two files that rename or flatten would have had to be exempted",
+      "// EXPORTED - in the ZIP today. Nothing below changes the payload.",
+      "Nothing below alters the payload.",
     ];
     for (const line of wasInTheRegistry) {
       const caught = FORBIDDEN.some(({ pattern }) => pattern.test(line));
       expect(caught, `no guard would have caught: ${line}`).toBe(true);
+    }
+  });
+
+  // POSITIVE CONTROL, and the reason the frozen-payload pattern is bounded
+  // rather than a keyword search. Every line below is a statement the registry
+  // is ENTITLED to make - three of them are in it right now - and a guard that
+  // rejected any of these would be pushing the file back towards the untruth it
+  // just removed. "The payload does not change" is forbidden; "changing this
+  // changes the payload", and TRUTH-01A's historical record of a slice that
+  // deliberately changed none, are not.
+  it("POSITIVE CONTROL - legitimate payload statements are not rejected", () => {
+    const mustStayLegal = [
+      "These entries DEFINE the payload: changing one may legitimately change what ships",
+      "changing this entry changes the payload",
+      "It does not freeze the payload. A slice is free to promote a resource",
+      "TRUTH-01A introduced this mechanism and deliberately changed no payload",
+      "it went on asserting an unchanged payload long after TRUTH-01B-1",
+      "A payload-changing PR is legitimate; an unaccountable one is not.",
+    ];
+    for (const line of mustStayLegal) {
+      const tripped = FORBIDDEN.filter(({ pattern }) => pattern.test(line));
+      expect(
+        tripped.map((t) => t.why),
+        `guard wrongly rejects a legitimate statement: ${line}`,
+      ).toEqual([]);
     }
   });
 
