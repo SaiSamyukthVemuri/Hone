@@ -65,12 +65,19 @@ const SECURITY_GUIDANCE_INPUTS = [
 /** One source of truth: what the security lane claims, docs_only must not. */
 const DOCS_EXCEPTIONS = SECURITY_GUIDANCE_INPUTS;
 
-/** Docs and records that never change runtime behaviour. */
+/**
+ * Docs and records that never change runtime behaviour.
+ *
+ * The markdown pattern deliberately EXCLUDES public/. Next serves everything
+ * under public/ verbatim, so `public/help.md` is deployed content, not
+ * documentation: calling it docs-only would route a served file to the docs lane
+ * and let it change without invalidating the production runtime pin.
+ */
 const DOCS = [
   /^docs\//,
   /^README\.md$/,
   /^CLAUDE\.md$/,
-  /\.md$/,
+  /^(?!public\/).*\.md$/,
   /^\.github\/(ISSUE_TEMPLATE|PULL_REQUEST_TEMPLATE)/,
 ];
 

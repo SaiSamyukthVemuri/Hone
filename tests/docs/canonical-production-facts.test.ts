@@ -150,7 +150,12 @@ const NON_SHIPPING_ROOTS: ReadonlyArray<readonly [RegExp, string]> = [
   // prose that ships nothing. This restores exactly the previous verdict for
   // markdown and changes it for nothing else — A3 still demands a fresh runtime
   // baseline for every non-markdown deployed path.
-  [/\.md$/, "markdown: documentation and authoring input, never bundled or served"],
+  // NOT under public/. Next serves everything in public/ verbatim, so
+  // `public/help.md` IS deployed content — the earlier wording here ("never
+  // bundled or served") was simply false for that one directory, and exempting
+  // it would have let a served file change without invalidating the runtime pin.
+  // public/ has no exemption of its own, so excluding it here is enough.
+  [/^(?!public\/).*\.md$/, "markdown outside public/: documentation and authoring input, never bundled or served"],
   // SEC-ADAPTER-01. `.gitignore` tells git what to track. It is not imported by
   // any runtime module, is not emitted into `.next` by a real build, is not
   // under `public/`, and the production build command never names it. It
@@ -1044,6 +1049,8 @@ describe("RULE A — current-state.md pins a real, current production SHA", () =
       "sentry.server.config.ts",
       "sentry.edge.config.ts",
       "public/favicon.ico",
+      // Markdown is exempt everywhere EXCEPT here: Next serves public/.
+      "public/help.md",
       "hooks/use-thing.ts",
       "types/thing.ts",
       "middleware.ts",

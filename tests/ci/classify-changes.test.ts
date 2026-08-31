@@ -659,3 +659,45 @@ describe("classifier — renamed canonical security sources (SEC-ADAPTER-01)", (
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// SEC-ADAPTER-01 — markdown under public/ is SERVED, not documentation
+// ---------------------------------------------------------------------------
+// Next serves everything in public/ verbatim, so `public/help.md` is deployed
+// content. The bare /\.md$/ docs pattern called it documentation, which routed a
+// served file to the docs lane and — combined with the matching non-shipping
+// exemption in the production-facts guard — would have let it change without
+// invalidating the production runtime pin.
+describe("classifier — markdown under public/ (SEC-ADAPTER-01)", () => {
+  it("public markdown is not documentation", () => {
+    for (const f of ["public/help.md", "public/docs/guide.md", "public/a/b/c.md"]) {
+      const r = c(f);
+      expect(r.docs_only, `${f} is served by Next and must not be docs_only`).toBe(false);
+    }
+  });
+
+  it("markdown everywhere else is still documentation", () => {
+    for (const f of [
+      "README.md",
+      "docs/03_SECURITY_AND_PRIVACY.md",
+      "docs/production/current-state.md",
+      "publicity/notes.md", // a near-miss: the prefix must be exactly `public/`
+      "app/public/notes.md", // not the served root either
+    ]) {
+      const r = c(f);
+      // docs/03 and CONTRIBUTING are security-guidance INPUTS, so they are not
+      // docs_only for a different and deliberate reason; every other one is.
+      if (f === "docs/03_SECURITY_AND_PRIVACY.md") {
+        expect(r.security, `${f} is a security-guidance input`).toBe(true);
+      } else {
+        expect(r.docs_only, `${f} must stay docs_only`).toBe(true);
+      }
+    }
+  });
+
+  it("non-markdown public assets are unchanged", () => {
+    for (const f of ["public/favicon.ico", "public/robots.txt", "public/img/logo.svg"]) {
+      expect(c(f).docs_only, `${f} was never docs_only`).toBe(false);
+    }
+  });
+});

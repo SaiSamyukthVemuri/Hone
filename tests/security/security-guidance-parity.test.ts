@@ -165,8 +165,20 @@ function renderedText(inline: MdToken | undefined): string {
   const children = inline.children;
   if (!children || children.length === 0) return inline.content ?? "";
   return children
-    .filter((c) => c.type === "text" || c.type === "code_inline")
-    .map((c) => c.content)
+    .map((c) => {
+      if (c.type === "text" || c.type === "code_inline") return c.content;
+      // An IMAGE renders as its alt text, which is visible and which a heading
+      // anchor is derived from. Filtering images out gave
+      // `## ![Payment review expectations](x.png)` an EMPTY slug, so a decoy
+      // heading wearing an image took the real anchor while the guard saw a
+      // different slug and reported no duplicate.
+      //
+      // The alt is a full inline subtree — `![**Payment** review](x)` — so this
+      // recurses rather than trusting a flat content field, and the `src` never
+      // contributes because it lives in attrs, not in the children.
+      if (c.type === "image") return renderedText(c);
+      return "";
+    })
     .join("");
 }
 
@@ -1368,9 +1380,19 @@ describe("SEC-ADAPTER-01 — security-guidance adapter parity", () => {
       "## Payment *review* expectations",
       "## [**Payment** `review` expectations](https://x.co)",
       "## Payment review expectations ##",
+      "## ![Payment review expectations](x.png)",
+      "## ![**Payment** `review` expectations](x.png)",
+      "## [![Payment review expectations](x.png)](https://e.co)",
     ]) {
       expect(sluggedAs(src), src).toEqual(["payment-review-expectations"]);
     }
+
+    // Image alt text is visible and must reach the slug; the src must not.
+    expect(textOf("## ![Payment review expectations](x.png)")).toBe("Payment review expectations");
+    expect(textOf("## ![Payment review expectations](x.png)")).not.toContain("x.png");
+    expect(sluggedAs("## ![Payment review expectations](x.png)")).toEqual([
+      "payment-review-expectations",
+    ]);
 
     // The destination is not visible and must not reach the text.
     expect(textOf("## [Payment review expectations](https://example.com)")).toBe(
@@ -1384,6 +1406,13 @@ describe("SEC-ADAPTER-01 — security-guidance adapter parity", () => {
   });
 
   const INLINE_HEADINGS: [string, string][] = [
+    // An IMAGE renders as its alt text, and the anchor comes from that. Filtering
+    // images out of the visible text gave this heading an EMPTY slug, so the
+    // decoy took the real anchor while the guard saw no duplicate at all.
+    ["an image", "## ![Payment review expectations](x.png)"],
+    ["an image beside text", "## ![Payment review](x.png) expectations"],
+    ["an image inside a link", "## [![Payment review expectations](x.png)](https://e.co)"],
+    ["an image with nested markup in its alt", "## ![**Payment** `review` expectations](x.png)"],
     ["a link", "## [Payment review expectations](https://example.com)"],
     ["a link with nested markup", "## [**Payment** `review` expectations](https://x.co)"],
     ["strong", "## **Payment review expectations**"],
