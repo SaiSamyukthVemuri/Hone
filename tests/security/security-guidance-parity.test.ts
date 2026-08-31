@@ -456,6 +456,9 @@ const ancestorDigest = (context: string): string =>
  * rule matching uses. Line numbers and parser positions are excluded, so the
  * fingerprint is stable under edits elsewhere in the file.
  */
+/** `h2` -> 2. The heading's own level, from the parser rather than the text. */
+const headingLevel = (t: MdToken): number => Number(t.tag.slice(1));
+
 function sectionTokens(body: string, anchor: string): MdToken[] | null {
   const tokens = md.parse(body, {});
   let start = -1;
@@ -468,12 +471,26 @@ function sectionTokens(body: string, anchor: string): MdToken[] | null {
     break;
   }
   if (start === -1) return null;
-  // The section body runs from after this heading to the next rendered heading.
+
+  // A SECTION OWNS ITS SUBSECTIONS. Stopping at the next heading of any level
+  // cut a cited H2 off at its first H3, so everything beneath that H3 escaped
+  // the envelope entirely — and `CLAUDE.md#5-production-safety` has exactly that
+  // shape: `### CI supply chain` sits inside it and carries the CI-HARDEN
+  // security rules. Inverting one of those left the digest unmoved.
+  //
+  // The boundary is the next heading whose level is <= the cited heading's, so a
+  // cited H2 absorbs H3-H6 and stops at the next H2 or H1. Read from the token's
+  // own tag, never from its text.
+  const citedLevel = headingLevel(tokens[start]);
   let from = start;
   while (from < tokens.length && tokens[from].type !== "heading_close") from++;
   from++;
   let to = from;
-  while (to < tokens.length && tokens[to].type !== "heading_open") to++;
+  while (to < tokens.length) {
+    const t = tokens[to];
+    if (t.type === "heading_open" && headingLevel(t) <= citedLevel) break;
+    to++;
+  }
   return tokens.slice(from, to);
 }
 
@@ -664,7 +681,7 @@ const APPROVED_SECTION_DIGESTS: Readonly<Record<string, string>> = {
   "CONTRIBUTING.md#payment-review-expectations":
     "6bea6c0a337570f6637f2a36488e33fcd127fc5f9565754e8c644431a67bee2d",
   "CLAUDE.md#5-production-safety":
-    "843ddfc39b03967b9116e4df533221f545094a532a3703bb7aaeff711cb60026",
+    "f723aa8e679e4a1da9eb4013eee07bdd188712fa5b357948dd377b5f8373cf7f",
   "ENGINEERING_STANDARDS.md#5-design-rules-for-risky-work":
     "998420aed8302e34324e7492799104821752c1108e62c0141008344707f89c50",
 };
@@ -1558,6 +1575,89 @@ describe("SEC-ADAPTER-01 — security-guidance adapter parity", () => {
       );
     });
   }
+
+  // A SECTION OWNS ITS SUBSECTIONS. Stopping at the next heading of any level cut
+  // a cited H2 off at its first H3, so everything beneath escaped the envelope.
+  // `CLAUDE.md#5-production-safety` has exactly that shape: `### CI supply chain`
+  // sits inside it and carries the CI-HARDEN rules.
+
+  it("SECTION RED: an edit inside a nested subsection of a cited section", () => {
+    // The real case. Inverting the operator-side rule inside the nested H3 left
+    // the digest unmoved before this repair, with the outer H2 untouched.
+    const read = mutateFile(
+      "CLAUDE.md",
+      "Codex exact-head review (`npm run eng -- status <pr>`) is **operator-side**.",
+      "Codex exact-head review is now wired into CI and may hold a write credential.",
+    );
+    expect(readRepo("CLAUDE.md"), "the nested subsection must exist").toContain("### CI supply chain");
+    expect(digestViolationsFor(read).join("\n")).toMatch(/5-production-safety/);
+  });
+
+  it("SECTION: boundaries follow heading LEVEL, not the next heading", () => {
+    const doc = (h3Body: string, h4Body: string, siblingBody: string) =>
+      [
+        "## Cited",
+        "",
+        "own body",
+        "",
+        "### Nested three",
+        "",
+        h3Body,
+        "",
+        "#### Nested four",
+        "",
+        h4Body,
+        "",
+        "## Sibling two",
+        "",
+        siblingBody,
+        "",
+      ].join("\n");
+    const base = sectionFingerprint(doc("a", "b", "c"), "cited");
+
+    // A — nested H3 content is INSIDE the cited H2.
+    expect(sectionFingerprint(doc("CHANGED", "b", "c"), "cited"), "H3 body is owned").not.toBe(base);
+    // B — nested H4 beneath that H3 is also inside.
+    expect(sectionFingerprint(doc("a", "CHANGED", "c"), "cited"), "H4 body is owned").not.toBe(base);
+    // C — content directly under the cited H2.
+    expect(
+      sectionFingerprint(doc("a", "b", "c").replace("own body", "CHANGED"), "cited"),
+      "own body is owned",
+    ).not.toBe(base);
+    // D — the NEXT SIBLING H2 is outside, and must not move the digest.
+    expect(sectionFingerprint(doc("a", "b", "CHANGED"), "cited"), "sibling H2 is outside").toBe(base);
+  });
+
+  it("SECTION: a cited H3 owns its H4 but stops at the next H3", () => {
+    // Controls F and G — the law is level-relative, not H2-specific.
+    const doc = (h4Body: string, siblingH3Body: string) =>
+      [
+        "## Outer",
+        "",
+        "### Cited three",
+        "",
+        "own body",
+        "",
+        "#### Nested four",
+        "",
+        h4Body,
+        "",
+        "### Sibling three",
+        "",
+        siblingH3Body,
+        "",
+      ].join("\n");
+    const base = sectionFingerprint(doc("a", "b"), "cited-three");
+    expect(sectionFingerprint(doc("CHANGED", "b"), "cited-three"), "H4 is owned").not.toBe(base);
+    expect(sectionFingerprint(doc("a", "CHANGED"), "cited-three"), "sibling H3 is outside").toBe(base);
+  });
+
+  it("SECTION: a deeper heading does not end a shallower cited section", () => {
+    // The precise inversion of the defect: an H6 must not terminate a cited H2.
+    const withH6 = ["## Cited", "", "own body", "", "###### Deep", "", "deep body", "", "## Next", ""].join("\n");
+    const changed = withH6.replace("deep body", "CHANGED");
+    expect(sectionFingerprint(changed, "cited")).not.toBe(sectionFingerprint(withH6, "cited"));
+  });
 
   // THE control that keeps this from becoming a whole-file hash.
   it("SECTION GREEN: editing a DIFFERENT, uncited section leaves the digests alone", () => {
