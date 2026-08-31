@@ -66,10 +66,35 @@ const PROMPT_BUDGET_BYTES = 8192;
  */
 const normalize = (text: string): string => text.replace(/\s+/g, " ").trim();
 
+/**
+ * The ONE ATX heading parser in this file.
+ *
+ * Markdown accepts an ATX heading indented by 0-3 spaces; at 4 it stops being a
+ * heading and becomes indented-code territory. Six separate `/^#{1,6}/`-shaped
+ * regexes had grown here, each assuming column zero, and they could disagree:
+ * `  ## Payment review expectations` inserted BEFORE the real heading renders as
+ * the heading a `#payment-review-expectations` citation resolves to, while a
+ * column-zero matcher skips it and inspects the later section instead. Section
+ * extraction, duplicate detection and the adapter grammar now all ask this.
+ *
+ * Deliberately not a markdown parser — just ATX headings, done once and
+ * correctly, so the rule cannot drift back apart across call sites.
+ */
+const ATX_HEADING = /^ {0,3}(#{1,6})(?:[ \t]+(.*?))?[ \t]*$/;
+
+function atxHeading(line: string): { level: number; text: string } | null {
+  const m = ATX_HEADING.exec(line);
+  if (!m) return null;
+  // A trailing run of `#`s preceded by whitespace closes a heading and is not
+  // part of its text, so it must not reach the slug.
+  return { level: m[1].length, text: (m[2] ?? "").replace(/[ \t]+#+[ \t]*$/, "").trim() };
+}
+
+const isHeading = (line: string): boolean => atxHeading(line) !== null;
+
 /** GitHub's heading-slug rule, which is what a `#anchor` in a citation means. */
-const slug = (heading: string): string =>
-  heading
-    .replace(/^#+\s+/, "")
+const slug = (headingText: string): string =>
+  headingText
     .toLowerCase()
     .replace(/[^a-z0-9 -]/g, "")
     .trim()
@@ -97,9 +122,10 @@ function sections(body: string): Map<string, string> {
     if (current !== null && !out.has(current)) out.set(current, buffer.join("\n"));
   };
   for (const line of body.split("\n")) {
-    if (/^#{1,6}\s+/.test(line)) {
+    const heading = atxHeading(line);
+    if (heading !== null) {
       flush();
-      current = slug(line);
+      current = slug(heading.text);
       buffer = [];
     } else if (current !== null) {
       buffer.push(line);
@@ -123,8 +149,9 @@ function sections(body: string): Map<string, string> {
 function duplicateSlugViolations(file: string, body: string): string[] {
   const seen = new Map<string, { line: number; heading: string }[]>();
   body.split("\n").forEach((line, i) => {
-    if (!/^#{1,6}\s+/.test(line)) return;
-    const s = slug(line);
+    const heading = atxHeading(line);
+    if (heading === null) return;
+    const s = slug(heading.text);
     if (!seen.has(s)) seen.set(s, []);
     seen.get(s)!.push({ line: i + 1, heading: line.trim() });
   });
@@ -137,6 +164,71 @@ function duplicateSlugViolations(file: string, body: string): string[] {
           .join(", ")} — a citation naming it is ambiguous, so which section the ` +
         "guard validates would depend on parse order rather than on the anchor",
     );
+}
+
+/**
+ * The COMPLETE approved rule set, by CITATION IDENTITY.
+ *
+ * `rules > 0` only proved the adapter said something. Deleting the form-ID rule
+ * or a payment gate left approved headings intact, every surviving citation
+ * valid, and parity green — a reviewer simply stopped being told about it, with
+ * nothing anywhere reporting the loss.
+ *
+ * WHAT THIS IS AND IS NOT. It is a coverage manifest: which canonical rules the
+ * adapter must expose, named by the tuple (source file, canonical anchor,
+ * load-bearing token). It is NOT a copy of their security meaning — no rule text
+ * lives here. What each rule SAYS is still supplied by the canonical document
+ * and checked against a complete source unit, so this cannot drift into being a
+ * second authority: if a canonical rule is reworded, this manifest keeps
+ * pointing at it and the text check does the work.
+ *
+ * Set equality, so a rule cannot be dropped, duplicated, or quietly added.
+ * Extending the adapter means adding an entry here, deliberately.
+ */
+type RuleIdentity = { file: string; anchor: string; token: string };
+
+const APPROVED_RULE_IDENTITIES: readonly RuleIdentity[] = [
+  { file: "CONTRIBUTING.md", anchor: "security-review-expectations", token: "Never trust those ids from the form." },
+  { file: "CONTRIBUTING.md", anchor: "security-review-expectations", token: "studio-member SELECT only" },
+  { file: "CONTRIBUTING.md", anchor: "security-review-expectations", token: 'Never in a `"use client"` component.' },
+  { file: "CONTRIBUTING.md", anchor: "how-to-use-service-role-correctly", token: "service-role-only grant" },
+  { file: "CONTRIBUTING.md", anchor: "how-not-to-use-service-role", token: "without a token check" },
+  { file: "CONTRIBUTING.md", anchor: "how-not-to-use-service-role", token: "Never to bypass RLS as a convenience." },
+  { file: "CONTRIBUTING.md", anchor: "security-review-expectations", token: "search_path = pg_catalog, pg_temp" },
+  { file: "CLAUDE.md", anchor: "5-production-safety", token: "revoke from **all three** explicitly, by name" },
+  { file: "CONTRIBUTING.md", anchor: "how-to-treat-public--token-routes", token: "The token is the credential." },
+  { file: "CONTRIBUTING.md", anchor: "how-to-treat-public--token-routes", token: "single-use claim with `FOR UPDATE`" },
+  { file: "CONTRIBUTING.md", anchor: "how-to-treat-public--token-routes", token: "Collapse error states" },
+  { file: "CONTRIBUTING.md", anchor: "how-to-treat-public--token-routes", token: "X-Robots-Tag: noindex, nofollow" },
+  { file: "CONTRIBUTING.md", anchor: "payment-review-expectations", token: "paymentIntents.create" },
+  { file: "CONTRIBUTING.md", anchor: "payment-review-expectations", token: "refunds.create" },
+  { file: "CONTRIBUTING.md", anchor: "payment-review-expectations", token: "charges.create" },
+  { file: "CONTRIBUTING.md", anchor: "payment-review-expectations", token: "checkout.sessions" },
+  { file: "CONTRIBUTING.md", anchor: "payment-review-expectations", token: "No raw card / CVC" },
+  { file: "CONTRIBUTING.md", anchor: "payment-review-expectations", token: "public-triggered charge" },
+  { file: "ENGINEERING_STANDARDS.md", anchor: "5-design-rules-for-risky-work", token: "claim → external side effect → settle" },
+];
+
+/** A citation's stable identity, for set comparison. */
+const identityOf = (r: RuleIdentity): string => `${r.file}#${r.anchor} | ${r.token}`;
+
+/** Every way the adapter's rule COVERAGE departs from the approved set. */
+function coverageViolations(adapterBody: string): string[] {
+  const bad: string[] = [];
+  const actual = readAdapter(adapterBody).cited.map(identityOf);
+  const expected = APPROVED_RULE_IDENTITIES.map(identityOf);
+
+  for (const id of new Set(actual)) {
+    const n = actual.filter((a) => a === id).length;
+    if (n > 1) bad.push(`${ADAPTER}: rule ${id} appears ${n} times — identities must be unique`);
+  }
+  for (const id of expected) {
+    if (!actual.includes(id)) bad.push(`${ADAPTER}: MISSING approved rule ${id}`);
+  }
+  for (const id of actual) {
+    if (!expected.includes(id)) bad.push(`${ADAPTER}: UNAPPROVED rule ${id} — add it to the manifest deliberately`);
+  }
+  return bad;
 }
 
 const HEADER_BEGIN = "<!-- header:begin -->";
@@ -236,7 +328,7 @@ function grammarViolations(body: string): string[] {
     const line = lines[i];
     if (line.trim() === "") continue;
     if (RULE_LINE.test(line)) continue;
-    if (/^#/.test(line)) {
+    if (isHeading(line)) {
       headingsSeen.push(line);
       // Whole-line equality. Prefix or substring matching would let
       // `## Identity override` in on the strength of `## Identity`.
@@ -266,7 +358,6 @@ function grammarViolations(body: string): string[] {
 }
 
 const isItem = (l: string) => /^\s*[-*]\s+\S/.test(l);
-const isHeading = (l: string) => /^#{1,6}\s/.test(l);
 const indentOf = (l: string) => (/^(\s*)/.exec(l)?.[1] ?? "").length;
 
 /** End of the block a list item at `start` owns: its wraps AND its children. */
@@ -367,6 +458,7 @@ function parityViolations(adapterBody: string, read: (file: string) => string | 
   const { rules, cited, unanchored } = readAdapter(adapterBody);
 
   if (rules === 0) bad.push("the adapter states no rules at all");
+  bad.push(...coverageViolations(adapterBody));
   for (const line of unanchored) bad.push(`${ADAPTER}:${line}: rule line carries no source citation`);
 
   // Checked across every canonical document, not only the cited ones: the
@@ -560,6 +652,146 @@ describe("SEC-ADAPTER-01 — security-guidance adapter parity", () => {
   };
 
   // -------------------------------------------------------------------------
+  // The approved rule set is COMPLETE — deleting one rule is a failure
+  // -------------------------------------------------------------------------
+
+  /** Drop the adapter rule carrying this citation identity. */
+  const withoutRule = (id: string): string => {
+    const lines = BODY.split("\n");
+    const kept = lines.filter((l) => {
+      if (!RULE_LINE.test(l)) return true;
+      const c = readAdapter(l).cited[0];
+      return c === undefined || identityOf(c) !== id;
+    });
+    expect(kept.length, `control needs the rule ${id} to exist`).toBe(lines.length - 1);
+    return kept.join("\n");
+  };
+
+  // One parameterized control over every approved rule, so a rule added to the
+  // manifest is automatically covered instead of needing a hand-written test.
+  for (const identity of APPROVED_RULE_IDENTITIES) {
+    const id = identityOf(identity);
+    it(`COVERAGE RED: removing ${id}`, () => {
+      const mutated = withoutRule(id);
+      expect(mutated, "the control's removal must land").not.toEqual(BODY);
+      expect(parityViolations(mutated, readRepo).join("\n")).toContain(`MISSING approved rule ${id}`);
+    });
+  }
+
+  it("COVERAGE RED: a rule deleted and another duplicated, keeping the count constant", () => {
+    // Defeats any count-based check: 19 rules before, 19 after.
+    const dropped = "CONTRIBUTING.md#payment-review-expectations | paymentIntents.create";
+    const lines = withoutRule(dropped).split("\n");
+    const donor = lines.find((l) => RULE_LINE.test(l))!;
+    const at = lines.findIndex((l) => RULE_LINE.test(l));
+    lines.splice(at + 1, 0, donor);
+    const mutated = lines.join("\n");
+
+    expect(readAdapter(mutated).cited.length, "the count is unchanged").toBe(
+      readAdapter(BODY).cited.length,
+    );
+    const violations = parityViolations(mutated, readRepo).join("\n");
+    expect(violations).toContain(`MISSING approved rule ${dropped}`);
+    expect(violations).toMatch(/appears 2 times — identities must be unique/);
+  });
+
+  it("COVERAGE RED: an unapproved rule, otherwise perfectly valid, is refused", () => {
+    // A real canonical rule, correctly cited and verbatim — but not one the
+    // adapter is approved to carry. Extending coverage is a deliberate edit.
+    const extra =
+      "- An applied migration is **frozen** — never edit it. Write a new one. " +
+      "<!-- source: CLAUDE.md#5-production-safety | token: An applied migration is **frozen** -->";
+    const mutated = `${BODY.trimEnd()}\n${extra}\n`;
+    const violations = parityViolations(mutated, readRepo).join("\n");
+    expect(violations).toMatch(/UNAPPROVED rule CLAUDE\.md#5-production-safety/);
+  });
+
+  it("COVERAGE: the manifest matches the real adapter exactly", () => {
+    const actual = readAdapter(BODY).cited.map(identityOf).sort();
+    expect(actual).toEqual(APPROVED_RULE_IDENTITIES.map(identityOf).sort());
+    expect(APPROVED_RULE_IDENTITIES.length, "the manifest must not be empty").toBeGreaterThan(0);
+    expect(new Set(actual).size, "identities must be unique").toBe(actual.length);
+  });
+
+  it("COVERAGE: the manifest carries no rule TEXT, only citation identity", () => {
+    // The guard against this becoming a second authority: if the manifest held
+    // rule prose, a canonical rewording would have two places to disagree.
+    for (const r of APPROVED_RULE_IDENTITIES) {
+      expect(Object.keys(r).sort()).toEqual(["anchor", "file", "token"]);
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // ATX headings: 0-3 leading spaces are headings, 4 is not
+  // -------------------------------------------------------------------------
+
+  it("ATX: the shared parser follows markdown indentation rules", () => {
+    for (const indent of ["", " ", "  ", "   "]) {
+      const line = `${indent}## Payment review expectations`;
+      expect(atxHeading(line), `${JSON.stringify(line)} is a heading`).not.toBeNull();
+      expect(atxHeading(line)!.text).toBe("Payment review expectations");
+      expect(slug(atxHeading(line)!.text)).toBe("payment-review-expectations");
+    }
+    // 4+ spaces is indented-code territory, never a heading.
+    expect(atxHeading("    ## Payment review expectations")).toBeNull();
+    expect(atxHeading("     # Still not a heading")).toBeNull();
+    // Other markdown rules the one parser must honour.
+    expect(atxHeading("#no-space"), "ATX requires a space").toBeNull();
+    expect(atxHeading("####### seven hashes"), "levels stop at 6").toBeNull();
+    expect(atxHeading("## Closed ##")!.text, "a closing run is not text").toBe("Closed");
+    expect(atxHeading("- ## not a heading")).toBeNull();
+  });
+
+  for (const [label, indent] of [
+    ["0 spaces", ""],
+    ["1 leading space", " "],
+    ["2 leading spaces", "  "],
+    ["3 leading spaces", "   "],
+  ] as const) {
+    it(`ATX RED: a duplicate cited heading at ${label}`, () => {
+      const original = readRepo("CONTRIBUTING.md")!;
+      const withDup = `${original}\n\n${indent}## Payment review expectations\n\n- decoy\n`;
+      const read = (f: string) => (f === "CONTRIBUTING.md" ? withDup : readRepo(f));
+      expect(parityViolations(BODY, read).join("\n")).toMatch(
+        /CONTRIBUTING\.md: duplicate heading slug "#payment-review-expectations"/,
+      );
+    });
+  }
+
+  it("ATX: the same text at 4 leading spaces is NOT a heading, and creates no duplicate", () => {
+    const original = readRepo("CONTRIBUTING.md")!;
+    const withCode = `${original}\n\n    ## Payment review expectations\n`;
+    const read = (f: string) => (f === "CONTRIBUTING.md" ? withCode : readRepo(f));
+    // Markdown semantics followed, not silently promoted to a heading...
+    expect(duplicateSlugViolations("CONTRIBUTING.md", withCode)).toEqual([]);
+    // ...and the document still validates, because nothing about it changed.
+    expect(parityViolations(BODY, read)).toEqual([]);
+  });
+
+  it("ATX RED: an indented duplicate inserted BEFORE the real heading", () => {
+    // The adversarial case. The inserted 2-space heading renders FIRST, so
+    // `#payment-review-expectations` resolves to it — and it carries altered
+    // guidance while the untouched real section sits below. A column-zero
+    // matcher skips the insert and validates the later, still-correct section.
+    const original = readRepo("CONTRIBUTING.md")!;
+    const at = original.indexOf("## Payment review expectations");
+    expect(at, "control needs the real heading").toBeGreaterThan(-1);
+    const injected =
+      "  ## Payment review expectations\n\n- `charges.create`: may be used freely.\n\n";
+    const withDecoy = original.slice(0, at) + injected + original.slice(at);
+
+    const read = (f: string) => (f === "CONTRIBUTING.md" ? withDecoy : readRepo(f));
+    const violations = parityViolations(BODY, read).join("\n");
+    expect(violations).toMatch(/duplicate heading slug "#payment-review-expectations"/);
+
+    // And the parse resolves to the FIRST rendered heading — the decoy — so the
+    // later untouched section can never stand in for it.
+    expect(sections(withDecoy).get("payment-review-expectations")).toContain(
+      "`charges.create`: may be used freely.",
+    );
+  });
+
+  // -------------------------------------------------------------------------
   // Canonical sources may not contain duplicate heading slugs
   // -------------------------------------------------------------------------
   // A citation names a section by slug. With two headings normalizing to the
@@ -616,9 +848,10 @@ describe("SEC-ADAPTER-01 — security-guidance adapter parity", () => {
       let cur: string | null = null;
       let buf: string[] = [];
       for (const line of body.split("\n")) {
-        if (/^#{1,6}\s+/.test(line)) {
+        const h = atxHeading(line);
+        if (h !== null) {
           if (cur !== null) out.set(cur, buf.join("\n")); // overwrites — the bug
-          cur = slug(line);
+          cur = slug(h.text);
           buf = [];
         } else if (cur !== null) buf.push(line);
       }
@@ -846,7 +1079,7 @@ describe("SEC-ADAPTER-01 — security-guidance adapter parity", () => {
   it("HEADING: the approved set is exactly what the real adapter carries", () => {
     const present = BODY.split("\n")
       .slice(BODY.split("\n").indexOf(HEADER_END) + 1)
-      .filter((l) => /^#/.test(l));
+      .filter((l) => isHeading(l));
     expect(present).toEqual([...APPROVED_SECTION_HEADINGS]);
     expect(APPROVED_SECTION_HEADINGS.length, "the set must not be empty").toBeGreaterThan(0);
   });
