@@ -36,6 +36,15 @@ import {
   buildPolicySnapshot,
   hasAnyPolicy,
 } from "@/lib/booking/policy-acknowledgement";
+// EMERG-01. The ONE decision behind waitlist-only rebooking of a free
+// consultation. Imported here rather than re-derived, so all four public
+// reschedule entry points refuse on exactly the same facts.
+import {
+  FREE_CONSULT_WAITLIST_ONLY_CODE,
+  FREE_CONSULT_WAITLIST_ONLY_ERROR,
+  isFreeConsultWaitlistOnlyReschedule,
+  type FreeConsultWaitlistOnlyCode,
+} from "@/lib/booking/free-consult-reschedule-policy";
 
 const POLICY_ACK_REQUIRED_ERROR =
   "Please review and acknowledge the appointment policies before rescheduling.";
@@ -167,6 +176,27 @@ function logInternal(event: string, detail: Record<string, unknown>): void {
 // collapses to the same generic public error so a probing caller cannot
 // distinguish state. The DB RPC re-enforces the same invariants
 // independently (migration 0066) for defence in depth.
+//
+// EMERG-01 ADDS A THIRD REFUSAL HERE, AND ON PURPOSE PUTS IT HERE.
+//
+// A free consultation at a studio whose new-client intake is waitlisted may be
+// cancelled but not self-service rescheduled. That decision could have been
+// bolted onto the page, or onto the submit action, or onto each read surface
+// separately — and every one of those choices leaves a path that can drift.
+// This helper is the ONE thing all four public entry points already call, so
+// enforcing it here means a future fifth entry point inherits the refusal by
+// construction rather than by review.
+//
+// ORDER IS THE PRIVACY CONTRACT. The policy verdict is derived LAST, strictly
+// after the token has resolved and the appointment has been proved confirmed
+// and future. A caller holding an unknown, stale, cancelled or past token gets
+// the same generic collapse it always got, with NO code attached, so the
+// special outcome can never be used to enumerate which studios have the policy.
+//
+// EVERY INPUT IS RE-DERIVED. The studio slug and the service row are read back
+// through the appointment's own foreign keys in the same statement that proves
+// its state. Nothing the browser sent — slug, service id, price, modality, or a
+// policy boolean — participates.
 type ReschedulableOriginal = {
   appointment_id: string;
   studio_id: string;
@@ -191,11 +221,35 @@ type ReschedulableOriginal = {
   // command will keep.
   practitioner_id: string | null;
 };
+
+// EMERG-01. Every refusal this helper can produce. `code` is present for
+// exactly one of them — see the ordering note above — and absent for the
+// generic collapse, which must stay indistinguishable across token states.
+export type RescheduleRefusal = {
+  ok: false;
+  error: string;
+  code?: FreeConsultWaitlistOnlyCode;
+};
+
+// The joined shape the policy needs. PostgREST types an embedded relation as
+// either an object or a single-element array depending on how it resolves the
+// relationship, so both are accepted and normalised.
+type EmbeddedPolicyRow = {
+  service:
+    | { modality: string | null; name: string; price_cents: number | null }
+    | Array<{ modality: string | null; name: string; price_cents: number | null }>
+    | null;
+  studio: { slug: string | null } | Array<{ slug: string | null }> | null;
+};
+
+function firstEmbedded<T>(v: T | T[] | null | undefined): T | null {
+  if (Array.isArray(v)) return v[0] ?? null;
+  return v ?? null;
+}
+
 async function assertReschedulableOriginal(
   token: string,
-): Promise<
-  { ok: true; original: ReschedulableOriginal } | { ok: false; error: string }
-> {
+): Promise<{ ok: true; original: ReschedulableOriginal } | RescheduleRefusal> {
   const resolved = await resolveAppointmentIdFromToken(token);
   if (!resolved.ok) {
     return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
@@ -204,7 +258,10 @@ async function assertReschedulableOriginal(
   const { data, error } = await admin
     .from("appointments")
     .select(
-      "id, studio_id, client_id, practitioner_id, status, starts_at, duration_minutes",
+      // EMERG-01 embeds the service and the studio slug in the statement that
+      // already proves the appointment's state, so the policy costs no extra
+      // round trip and cannot read a different row than the one it gated.
+      "id, studio_id, client_id, practitioner_id, status, starts_at, duration_minutes, service:services(modality, name, price_cents), studio:studios(slug)",
     )
     .eq("id", resolved.appointment_id)
     .maybeSingle();
@@ -225,6 +282,23 @@ async function assertReschedulableOriginal(
   if (new Date(data.starts_at).getTime() <= Date.now()) {
     return { ok: false, error: PUBLIC_RESCHEDULE_GENERIC_ERROR };
   }
+
+  // EMERG-01. Only now — a real token, a confirmed appointment, a future start
+  // — may the policy speak, and only from server-resolved rows.
+  const embedded = data as unknown as EmbeddedPolicyRow;
+  if (
+    isFreeConsultWaitlistOnlyReschedule({
+      studioSlug: firstEmbedded(embedded.studio)?.slug ?? null,
+      service: firstEmbedded(embedded.service),
+    })
+  ) {
+    return {
+      ok: false,
+      error: FREE_CONSULT_WAITLIST_ONLY_ERROR,
+      code: FREE_CONSULT_WAITLIST_ONLY_CODE,
+    };
+  }
+
   return {
     ok: true,
     original: {
@@ -336,7 +410,11 @@ export type RescheduleSummary = {
 
 export type FetchRescheduleResult =
   | { ok: true; summary: RescheduleSummary }
-  | { ok: false; error: string };
+  // EMERG-01. The refusal may carry the bounded free-consultation code so the
+  // PAGE can render a deliberate policy surface instead of the generic
+  // "unavailable" collapse. No summary accompanies it: a refused reschedule
+  // exposes no service, studio, time or slot data.
+  | RescheduleRefusal;
 
 export async function fetchAppointmentForRescheduleAction(
   token: string,
@@ -355,7 +433,9 @@ export async function fetchAppointmentForRescheduleAction(
   // the generic public error.
   const asserted = await assertReschedulableOriginal(token);
   if (!asserted.ok) {
-    return { ok: false, error: asserted.error };
+    // EMERG-01: returned WHOLE. Re-building it as `{ ok: false, error }` would
+    // silently drop the policy code on this one path.
+    return asserted;
   }
   const admin = createAdminClient();
   const { data, error } = await admin
@@ -453,7 +533,7 @@ export async function fetchAppointmentForRescheduleAction(
 export async function fetchRescheduleSlotsAction(params: {
   token: string;
   date: string;
-}): Promise<{ ok: true; slots: Slot[] } | { ok: false; error: string }> {
+}): Promise<{ ok: true; slots: Slot[] } | RescheduleRefusal> {
   // Rate limit the slot fetch (generous; date-switching is bursty). Runs
   // before resolve + the heavy getAvailableSlots. Token never consumed.
   const gate = await limitTokenRoute({
@@ -468,7 +548,9 @@ export async function fetchRescheduleSlotsAction(params: {
   // copy.
   const asserted = await assertReschedulableOriginal(params.token);
   if (!asserted.ok) {
-    return { ok: false, error: asserted.error };
+    // EMERG-01: returned WHOLE. Re-building it as `{ ok: false, error }` would
+    // silently drop the policy code on this one path.
+    return asserted;
   }
   const admin = createAdminClient();
   const ctx = await loadRescheduleSlotContext(admin, asserted.original);
@@ -528,9 +610,7 @@ const MAX_NEXT_AVAILABLE_SCAN_DAYS = maxPublicBookingHorizonDays() + 14;
 export async function fetchNextAvailableDateForRescheduleAction(params: {
   token: string;
   fromDate: string;
-}): Promise<
-  { ok: true; date: string | null } | { ok: false; error: string }
-> {
+}): Promise<{ ok: true; date: string | null } | RescheduleRefusal> {
   const gate = await limitTokenRoute({
     routeClass: "reschedule_slots",
     token: params.token,
@@ -542,7 +622,9 @@ export async function fetchNextAvailableDateForRescheduleAction(params: {
   // available surface too.
   const asserted = await assertReschedulableOriginal(params.token);
   if (!asserted.ok) {
-    return { ok: false, error: asserted.error };
+    // EMERG-01: returned WHOLE. Re-building it as `{ ok: false, error }` would
+    // silently drop the policy code on this one path.
+    return asserted;
   }
   const admin = createAdminClient();
   const ctx = await loadRescheduleSlotContext(admin, asserted.original);
@@ -614,7 +696,10 @@ export type RescheduleResult =
       manageUrl: string;
       confirmationEmailStatus: ConfirmationEmailStatus;
     }
-  | { ok: false; error: string; code?: "slot_taken" };
+  // EMERG-01 adds one more bounded code. A refusal carrying it means the
+  // command was NEVER called: no cancellation of the original, no successor, no
+  // reservation change, no token rotation.
+  | { ok: false; error: string; code?: "slot_taken" | FreeConsultWaitlistOnlyCode };
 
 export async function rescheduleAppointmentViaTokenAction(formData: FormData): Promise<
   RescheduleResult
@@ -657,7 +742,9 @@ export async function rescheduleAppointmentViaTokenAction(formData: FormData): P
   // fields the RPC will consume, but it is now defended in depth.
   const asserted = await assertReschedulableOriginal(token);
   if (!asserted.ok) {
-    return { ok: false, error: asserted.error };
+    // EMERG-01: returned WHOLE. Re-building it as `{ ok: false, error }` would
+    // silently drop the policy code on this one path.
+    return asserted;
   }
 
   const admin = createAdminClient();
