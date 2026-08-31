@@ -30,12 +30,22 @@ type Props = {
   // page rendered. Posted back unchanged; the browser neither supplies
   // policy text nor computes the authoritative hash.
   presentedPolicyHash: string;
+  // EMERG-01. SERVER-DERIVED on the page from the appointment's own service
+  // and studio rows. PRESENTATION ONLY — it changes what this form says, never
+  // what it is allowed to do. Cancellation stays available exactly as before.
+  freeConsultationWaitlistOnly: boolean;
+  // The studio's public booking slug, non-null only when the flag above is
+  // true. Builds the post-cancellation "Join the waitlist" link into the
+  // studio's existing public booking surface.
+  waitlistBookingSlug: string | null;
 };
 
 export function CancelForm({
   token,
   requiresAcknowledgement,
   presentedPolicyHash,
+  freeConsultationWaitlistOnly,
+  waitlistBookingSlug,
 }: Props) {
   const router = useRouter();
   // PR #144. The free-form textarea has been replaced with a
@@ -59,45 +69,10 @@ export function CancelForm({
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<"cancelled" | null>(null);
 
-  // PR #144. Reschedule nudge. When the picked reason implies
-  // "I want a different time, not no appointment", surface a small
-  // callout above the destructive button so the client can pivot to
-  // reschedule without committing to a cancel. The /reschedule/[token]
-  // route accepts the same token the cancel page is already using.
-  const showRescheduleNudge =
-    reason !== "" && RESCHEDULE_NUDGE_REASONS.has(reason);
   const rescheduleHref = `/reschedule/${encodeURIComponent(token)}`;
 
   if (done === "cancelled") {
-    return (
-      <div className="flex flex-col gap-4">
-        <h2
-          className="font-[var(--font-fraunces)] text-[24px] font-bold leading-tight"
-          style={{ letterSpacing: "-0.02em" }}
-        >
-          Your appointment is cancelled.
-        </h2>
-        <p className="text-[16px] leading-relaxed text-[#0A0A0A]">
-          The studio has been notified.
-        </p>
-        {/* Back-to-portal exit. /portal handles its own session
-            check: if the visitor has a live portal session they land
-            on their home; if not, the portal page redirects to
-            /portal/login. We do not promise they are already signed
-            in. */}
-        <a
-          href="/portal"
-          className="self-start px-6 py-3 text-[13px] font-medium uppercase"
-          style={{
-            border: "1px solid #0A0A0A",
-            color: "#0A0A0A",
-            letterSpacing: "0.1em",
-          }}
-        >
-          Back to client portal
-        </a>
-      </div>
-    );
+    return <CancelledSuccess waitlistBookingSlug={waitlistBookingSlug} />;
   }
 
   function submit(e: React.FormEvent) {
@@ -221,48 +196,11 @@ export function CancelForm({
           </select>
         </label>
 
-        {showRescheduleNudge && (
-          // Inline nudge. Rendered inside the form (not as a separate
-          // page surface) so the client sees it the moment they pick
-          // a scheduling-shaped reason. The Reschedule link is a
-          // plain anchor to /reschedule/[token]; this component does
-          // not consume the token or call any server action when the
-          // client clicks it. The cancel button below remains active
-          // so the client can continue cancelling if they prefer.
-          <div
-            className="flex flex-col gap-3 p-5"
-            style={{
-              backgroundColor: "#FAFAF7",
-              border: "1px solid #E5E2D9",
-            }}
-          >
-            <h3
-              className="font-[var(--font-fraunces)] text-[16px] font-bold leading-tight"
-              style={{ letterSpacing: "-0.01em" }}
-            >
-              Would another time work better?
-            </h3>
-            <p className="text-[14px] leading-relaxed text-[#0A0A0A]">
-              You can reschedule this appointment instead of cancelling.
-            </p>
-            <div className="flex flex-wrap items-center gap-3 pt-1">
-              <a
-                href={rescheduleHref}
-                className="px-5 py-2.5 text-[13px] font-medium uppercase"
-                style={{
-                  backgroundColor: "#0A0A0A",
-                  color: "#FAFAF7",
-                  letterSpacing: "0.1em",
-                }}
-              >
-                Reschedule instead
-              </a>
-              <span className="text-[13px] text-[#6B6B6B]">
-                or continue cancelling below
-              </span>
-            </div>
-          </div>
-        )}
+        <CancellationNudge
+          reason={reason}
+          freeConsultationWaitlistOnly={freeConsultationWaitlistOnly}
+          rescheduleHref={rescheduleHref}
+        />
 
         <label className="flex flex-col gap-2">
           <span
@@ -345,5 +283,169 @@ export function CancelForm({
         {error && <span className="text-[13px] text-red-600">{error}</span>}
       </div>
     </form>
+  );
+}
+
+// ===========================================================================
+// The two surfaces whose CONTENT depends on the free-consultation policy.
+// ===========================================================================
+//
+// They are separate exported components, not inline JSX, for one reason: each
+// has two mutually exclusive renderings and only one of them is reachable from
+// a given piece of form state. Pulled out, both are pure functions of their
+// props, so a test can render each branch and assert on the REAL output rather
+// than grepping this file for a phrase. That is what makes "no reschedule CTA
+// for a free consultation" a proof instead of a claim.
+//
+// Neither reads the policy itself. The verdict is derived on the server from
+// the appointment's own service and studio rows and arrives here as a prop.
+
+/**
+ * PR #144's reschedule nudge, plus EMERG-01's replacement for it.
+ *
+ * When the picked reason implies "I want a different time, not no
+ * appointment", the client is normally offered a way to pivot. For a free
+ * consultation at a waitlisted studio that offer would be a link to a refusal,
+ * so the same trigger explains the waitlist instead. Cancellation is never
+ * blocked either way; the cancel button below this block stays active.
+ */
+export function CancellationNudge({
+  reason,
+  freeConsultationWaitlistOnly,
+  rescheduleHref,
+}: {
+  reason: string;
+  freeConsultationWaitlistOnly: boolean;
+  rescheduleHref: string;
+}) {
+  const triggered =
+    reason !== "" &&
+    RESCHEDULE_NUDGE_REASONS.has(reason as CancellationReasonValue);
+  if (!triggered) return null;
+
+  if (freeConsultationWaitlistOnly) {
+    // EMERG-01. NO link, NO route back into available times — not even a
+    // disabled one. The visitor is told the truth about what happens next so
+    // they can decide, and the decision stays theirs.
+    return (
+      <div
+        className="flex flex-col gap-3 p-5"
+        style={{ backgroundColor: "#FAFAF7", border: "1px solid #E5E2D9" }}
+      >
+        <h3
+          className="font-[var(--font-fraunces)] text-[16px] font-bold leading-tight"
+          style={{ letterSpacing: "-0.01em" }}
+        >
+          This consultation can&rsquo;t be moved to another time
+        </h3>
+        <p className="text-[14px] leading-relaxed text-[#0A0A0A]">
+          Free consultations can&rsquo;t be rescheduled. If you cancel, you can
+          join the waitlist for the next available consultation.
+        </p>
+      </div>
+    );
+  }
+
+  // Unchanged from PR #144 for every other studio and service.
+  return (
+    <div
+      className="flex flex-col gap-3 p-5"
+      style={{ backgroundColor: "#FAFAF7", border: "1px solid #E5E2D9" }}
+    >
+      <h3
+        className="font-[var(--font-fraunces)] text-[16px] font-bold leading-tight"
+        style={{ letterSpacing: "-0.01em" }}
+      >
+        Would another time work better?
+      </h3>
+      <p className="text-[14px] leading-relaxed text-[#0A0A0A]">
+        You can reschedule this appointment instead of cancelling.
+      </p>
+      <div className="flex flex-wrap items-center gap-3 pt-1">
+        <a
+          href={rescheduleHref}
+          className="px-5 py-2.5 text-[13px] font-medium uppercase"
+          style={{
+            backgroundColor: "#0A0A0A",
+            color: "#FAFAF7",
+            letterSpacing: "0.1em",
+          }}
+        >
+          Reschedule instead
+        </a>
+        <span className="text-[13px] text-[#6B6B6B]">
+          or continue cancelling below
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The post-cancellation surface.
+ *
+ * For a policy-matched free consultation it also names the way back: the
+ * studio's EXISTING public booking page, which already switches a closed
+ * studio into the waitlist experience.
+ *
+ * IT IS A LINK, AND ONLY A LINK. No waitlist row is created, no client detail
+ * is copied into a waitlist command, and nothing is pre-filled — the person
+ * must submit the existing public waitlist form themselves. Converting a
+ * cancelled appointment into a waitlist record automatically is not within
+ * that surface's authority: it is an explicit public contact submission, and
+ * consent to be contacted about a treatment cannot be inherited from an
+ * appointment the person just cancelled.
+ */
+export function CancelledSuccess({
+  waitlistBookingSlug,
+}: {
+  waitlistBookingSlug: string | null;
+}) {
+  return (
+    <div className="flex flex-col gap-4">
+      <h2
+        className="font-[var(--font-fraunces)] text-[24px] font-bold leading-tight"
+        style={{ letterSpacing: "-0.02em" }}
+      >
+        Your appointment is cancelled.
+      </h2>
+      <p className="text-[16px] leading-relaxed text-[#0A0A0A]">
+        The studio has been notified.
+      </p>
+      {waitlistBookingSlug ? (
+        <>
+          <p className="text-[16px] leading-relaxed text-[#0A0A0A]">
+            To request another free consultation, join the waitlist.
+          </p>
+          <a
+            href={`/book/${encodeURIComponent(waitlistBookingSlug)}`}
+            className="self-start px-6 py-3 text-[13px] font-medium uppercase"
+            style={{
+              backgroundColor: "#0A0A0A",
+              color: "#FAFAF7",
+              letterSpacing: "0.1em",
+            }}
+          >
+            Join the waitlist
+          </a>
+        </>
+      ) : (
+        // Back-to-portal exit. /portal handles its own session check: if the
+        // visitor has a live portal session they land on their home; if not,
+        // the portal page redirects to /portal/login. We do not promise they
+        // are already signed in.
+        <a
+          href="/portal"
+          className="self-start px-6 py-3 text-[13px] font-medium uppercase"
+          style={{
+            border: "1px solid #0A0A0A",
+            color: "#0A0A0A",
+            letterSpacing: "0.1em",
+          }}
+        >
+          Back to client portal
+        </a>
+      )}
+    </div>
   );
 }
