@@ -266,15 +266,28 @@ function structureOf(body: string): MdStructure {
   // it said the opposite.
   let quoteDepth = 0;
   tokens.forEach((t, i) => {
-    // A paragraph only introduces a list that DIRECTLY follows it. Any other
-    // block at top level ends that claim, so unrelated earlier prose can never
-    // drift into becoming a rule's context. Done first, because the handlers
-    // below return early and would otherwise skip it.
-    if (
-      itemStack.length === 0 &&
-      (t.type === "heading_open" || t.type === "fence" || t.type === "code_block" || t.type === "hr")
-    ) {
-      pendingParagraph = null;
+    // A paragraph introduces ONLY the list that directly follows it.
+    //
+    // Enumerating the block types that break the association was the wrong
+    // shape and leaked three of them: a raw HTML block, a blockquote and a
+    // table all left a stale lead-in attached to a list they did not introduce.
+    // Naming more types would just move the gap.
+    //
+    // So the law is positional instead: whatever the NEXT top-level block turns
+    // out to be decides. If it is the list, associate; if it is anything else,
+    // the claim is over. `block && level === 0 && nesting >= 0` is markdown-it's
+    // own description of "a block starting at the top level", so a block type
+    // this file has never heard of is handled by construction.
+    //
+    // Runs before the handlers below, which return early and would skip it.
+    if (itemStack.length === 0 && t.block && t.level === 0 && t.nesting >= 0) {
+      if (t.type === "bullet_list_open" || t.type === "ordered_list_open") {
+        listLeadIn = pendingParagraph;
+      } else {
+        // Including `paragraph_open`: the previous paragraph's claim ends here,
+        // and the handler below then records THIS paragraph as the new one.
+        pendingParagraph = null;
+      }
     }
     if (t.type === "blockquote_open") {
       quoteDepth++;
@@ -303,9 +316,8 @@ function structureOf(body: string): MdStructure {
       return;
     }
     if (t.type === "bullet_list_open" || t.type === "ordered_list_open") {
-      // A list at top level takes its lead-in from the paragraph that DIRECTLY
-      // introduces it, if there is one. Nested lists keep the ancestor-item law.
-      if (itemStack.length === 0) listLeadIn = pendingParagraph;
+      // Association happened in the positional guard above. Nested lists keep
+      // the ancestor-item law and take no lead-in.
       return;
     }
     if (t.type === "bullet_list_close" || t.type === "ordered_list_close") {
@@ -1383,30 +1395,74 @@ describe("SEC-ADAPTER-01 — security-guidance adapter parity", () => {
     expect(parityViolations(BODY, readRestored)).toEqual([]);
   });
 
-  it("LEAD-IN: association is bounded to the paragraph that DIRECTLY introduces the list", () => {
-    const ctx = (body: string, needle: string) =>
-      sections(body)
-        .get("example")!
-        .units.find((u) => normalize(u.text).startsWith(needle))!.ancestorContext;
+  /**
+   * The context derived for a rule, found in whichever section it lands in.
+   *
+   * Section-agnostic on purpose: an intervening HEADING legitimately moves the
+   * rule into a new section, and a lookup pinned to one section would fail for
+   * that reason rather than for the context it is meant to be checking.
+   */
+  const contextOf = (body: string, needle: string) => {
+    const unit = [...sections(body).values()]
+      .flatMap((sec) => sec.units)
+      .find((u) => normalize(u.text).startsWith(needle));
+    expect(unit, `the rule must parse as a unit somewhere`).toBeDefined();
+    return unit!.ancestorContext;
+  };
 
-    // The immediately preceding paragraph introduces the list.
-    expect(ctx(["## Example", "", "Lead in:", "", "- the rule", ""].join("\n"), "the rule")).toBe(
+  it("LEAD-IN: a paragraph introduces only the list DIRECTLY following it", () => {
+    expect(contextOf(["## Example", "", "Lead in:", "", "- the rule", ""].join("\n"), "the rule")).toBe(
       "Lead in:",
     );
-    // An EARLIER paragraph is superseded, never accumulated — control F.
-    expect(
-      ctx(["## Example", "", "Unrelated prose.", "", "Lead in:", "", "- the rule", ""].join("\n"), "the rule"),
-    ).toBe("Lead in:");
-    // A heading between them breaks the association.
-    expect(
-      ctx(["## Other", "", "Not a lead-in.", "", "## Example", "", "- the rule", ""].join("\n"), "the rule"),
-    ).toBe("");
-    // So does intervening code.
-    expect(
-      ctx(["## Example", "", "Not a lead-in.", "", "```", "x", "```", "", "- the rule", ""].join("\n"), "the rule"),
-    ).toBe("");
-    // A list with no introducing paragraph has no context — control E.
-    expect(ctx(["## Example", "", "- the rule", ""].join("\n"), "the rule")).toBe("");
+    // A list with no introducing paragraph has no context.
+    expect(contextOf(["## Example", "", "- the rule", ""].join("\n"), "the rule")).toBe("");
+  });
+
+  // ANY intervening top-level block ends the claim. Enumerating block types was
+  // the wrong shape and leaked three of them — raw HTML, a blockquote and a
+  // table each left a stale lead-in attached to a list it never introduced — so
+  // the law is positional: whatever the next top-level block is decides.
+  const INTERVENING_BLOCKS: [string, string[]][] = [
+    ["a raw HTML block", ["<p>The following permission is obsolete.</p>"]],
+    ["a blockquote", ["> The following permission is obsolete."]],
+    ["a fenced code block", ["```", "x", "```"]],
+    ["an indented code block", ["    x = 1"]],
+    ["another paragraph", ["Unrelated prose."]],
+    ["a heading", ["### Something else"]],
+    ["a thematic break", ["---"]],
+    ["a table", ["| a | b |", "|---|---|", "| 1 | 2 |"]],
+    ["another list", ["- an unrelated list", "", "some prose"]],
+  ];
+
+  for (const [label, block] of INTERVENING_BLOCKS) {
+    it(`LEAD-IN: ${label} between paragraph and list breaks the association`, () => {
+      const body = ["## Example", "", "Lead in:", "", ...block, "", "- the rule", ""].join("\n");
+      // contextOf asserts the rule still parses as a unit, so this control fails
+      // for the context and never for a vanished rule.
+      expect(contextOf(body, "the rule"), `${label} must not leave a stale lead-in`).not.toBe(
+        "Lead in:",
+      );
+    });
+  }
+
+  it("LEAD-IN: the association survives blank lines, which are not blocks", () => {
+    const body = ["## Example", "", "Lead in:", "", "", "", "- the rule", ""].join("\n");
+    expect(contextOf(body, "the rule")).toBe("Lead in:");
+  });
+
+  it("LEAD-IN RED: an intervening block on the REAL source detaches the context", () => {
+    // End to end: inserting a raw HTML block between the service-role lead-in
+    // and its list must change the derived context, so the pinned digest no
+    // longer matches and parity fails closed.
+    const original = readRepo("CONTRIBUTING.md")!;
+    const mutated = original.replace(
+      `${SERVICE_ROLE_LEAD}\n`,
+      `${SERVICE_ROLE_LEAD}\n\n<p>The following permission is obsolete.</p>\n`,
+    );
+    expect(mutated, "the control's insertion must land").not.toEqual(original);
+    expect(mutated, "the bullet is untouched").toContain(SERVICE_ROLE_BULLET);
+    const read = (f: string) => (f === "CONTRIBUTING.md" ? mutated : readRepo(f));
+    expect(parityViolations(BODY, read).join("\n")).toMatch(/semantic context of/);
   });
 
   it("LEAD-IN: another list in the same section does not contaminate this one", () => {
