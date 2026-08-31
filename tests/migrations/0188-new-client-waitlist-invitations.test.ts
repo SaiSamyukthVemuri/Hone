@@ -507,3 +507,66 @@ describe("0188 — requeue is the only command that re-enters the active index",
     expect(fn).toMatch(/status\s+in\s*\(\s*'released'\s*,\s*'expired'\s*\)/i);
   });
 });
+
+describe("0188 — redemption is terminal for the entry, not only for the token", () => {
+  const expireFn = (code: string) =>
+    code.slice(
+      code.indexOf("function public.expire_new_client_waitlist_invitation"),
+      code.indexOf("function public.release_new_client_waitlist_entry"),
+    );
+  const releaseFn = (code: string) =>
+    code.slice(
+      code.indexOf("function public.release_new_client_waitlist_entry"),
+      code.indexOf("function public.requeue_new_client_waitlist_entry"),
+    );
+
+  it.each([
+    ["expire", expireFn],
+    ["release", releaseFn],
+  ])("%s guards its ENTRY-STATUS statement against a redeemed invitation", (_n, pick) => {
+    // THE DEFECT THIS EXISTS FOR. Both commands write two statements: the
+    // invitation stamp (already guarded) and the entry move (was not). The
+    // result code came from the entry move alone, so the two could disagree --
+    // statement 1 matching zero rows while statement 2 matched one -- and the
+    // command answered `expired`/`released` over a redeemed invitation. The
+    // entry then left `invited`, and `converted` is reachable ONLY from
+    // `invited`, so a person who accepted their invitation became
+    // unconvertible with no recovery edge.
+    const fn = pick(CODE);
+    expect(fn.length).toBeGreaterThan(0);
+    const entryUpdate = fn.slice(fn.indexOf("update public.new_client_waitlist_entries"));
+    expect(entryUpdate).toMatch(
+      /not\s+exists\s*\([\s\S]{0,260}new_client_waitlist_invitations[\s\S]{0,260}redeemed_at\s+is\s+not\s+null/i,
+    );
+    // ...and the refusal is studio-scoped like every other predicate here.
+    expect(entryUpdate).toMatch(/i\.studio_id\s*=\s*p_studio_id/);
+  });
+
+  it.each([
+    ["expire", expireFn],
+    ["release", releaseFn],
+  ])("%s answers already_redeemed rather than mislabelling it", (_n, pick) => {
+    // `not_invited` would be FALSE for this case: the entry IS invited, and it
+    // has been redeemed. 0185 requires closed codes precisely so a caller can
+    // tell "nothing to expire" from "this person already accepted -- record the
+    // conversion instead".
+    const fn = pick(CODE);
+    expect(fn).toMatch(/return\s+'already_redeemed'/);
+  });
+
+  it("keeps the genuine no-op codes for the unredeemed case", () => {
+    // The guard must DISCRIMINATE, not over-block: an ordinary unredeemed
+    // expiry/release still reports its own outcome.
+    expect(expireFn(CODE)).toMatch(/return\s+'not_invited'/);
+    expect(releaseFn(CODE)).toMatch(/return\s+'not_releasable'/);
+  });
+
+  it("adds no column, table or trigger to obtain the redeemed fact", () => {
+    // `redeemed_at` is already write-once (append-only trigger), its row
+    // undeletable (no-delete trigger) and `entry_id` immutable, so the fact is
+    // durable without new state. A new column would be a second copy of a law
+    // that already exists.
+    expect(CODE).not.toMatch(/add\s+column[^;]*redeem/i);
+    expect(CODE).not.toMatch(/create\s+table[^;]*redemption/i);
+  });
+});

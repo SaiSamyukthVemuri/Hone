@@ -885,3 +885,129 @@ describe("0188 — requeue collision: refused cleanly, reuse preserved, tenant-s
     for (const r of per.rows as { n: number }[]) expect(r.n).toBe(1);
   });
 });
+
+describe("0188 — redeem vs expire/release: exactly one side may win", () => {
+  const expire = async (studioId: string, entry: string, userId: string) =>
+    (await adminQuery(`select public.expire_new_client_waitlist_invitation($1,$2,$3) as r`, [
+      studioId, entry, userId,
+    ])).rows[0].r as string;
+  const release = async (studioId: string, entry: string, userId: string) =>
+    (await adminQuery(`select public.release_new_client_waitlist_entry($1,$2,$3) as r`, [
+      studioId, entry, userId,
+    ])).rows[0].r as string;
+  const convert = async (studioId: string, entry: string, clientId: string) =>
+    (await adminQuery(`select public.record_new_client_waitlist_conversion($1,$2,$3) as r`, [
+      studioId, entry, clientId,
+    ])).rows[0].r as string;
+
+  async function invited(label: string) {
+    const s = await seedStudio(label);
+    const j = await join(s.studioId, `${label}-${s.studioId.slice(0, 8)}@ex.com`);
+    const entry = j.entry_id as string;
+    await claim(s.studioId, entry, s.userId);
+    const inv = await issue(s.studioId, entry, s.userId);
+    return { s, entry, token: inv.raw_token as string };
+  }
+
+  it("A: redeem wins -> expire refused, entry stays invited, conversion completes", async () => {
+    const { s, entry, token } = await invited("wait03-t-a");
+    expect((await redeem(token)).result).toBe("redeemed");
+    expect(await expire(s.studioId, entry, s.userId)).toBe("already_redeemed");
+    expect(await statusOf(entry)).toBe("invited");
+    expect(await convert(s.studioId, entry, s.clientId)).toBe("converted");
+  });
+
+  it("A2: redeem wins -> release refused, entry stays invited, conversion completes", async () => {
+    const { s, entry, token } = await invited("wait03-t-a2");
+    expect((await redeem(token)).result).toBe("redeemed");
+    expect(await release(s.studioId, entry, s.userId)).toBe("already_redeemed");
+    expect(await statusOf(entry)).toBe("invited");
+    expect(await convert(s.studioId, entry, s.clientId)).toBe("converted");
+  });
+
+  it("B: expire wins -> redeem refused", async () => {
+    const { s, entry, token } = await invited("wait03-t-b");
+    expect(await expire(s.studioId, entry, s.userId)).toBe("expired");
+    expect((await redeem(token)).result).toBe("invalid_token");
+    const inv = await adminQuery(
+      `select (redeemed_at is not null) as red, (expired_at is not null) as exp
+         from public.new_client_waitlist_invitations where entry_id = $1`,
+      [entry],
+    );
+    expect(inv.rows[0].red).toBe(false);
+    expect(inv.rows[0].exp).toBe(true);
+  });
+
+  it("C: release wins -> redeem refused", async () => {
+    const { s, entry, token } = await invited("wait03-t-c");
+    expect(await release(s.studioId, entry, s.userId)).toBe("released");
+    expect((await redeem(token)).result).toBe("invalid_token");
+  });
+
+  it("D: concurrent redeem/expire -> exactly one winner, never stranded", async () => {
+    for (let i = 0; i < 6; i++) {
+      const { s, entry, token } = await invited(`wait03-t-d${i}`);
+      const [r, x] = await Promise.all([
+        redeem(token).then((v) => v.result),
+        expire(s.studioId, entry, s.userId),
+      ]);
+      const st = await statusOf(entry);
+      if (r === "redeemed") {
+        // Redemption won: the entry may not have moved, and conversion must work.
+        expect(x, `trial ${i}`).toBe("already_redeemed");
+        expect(st, `trial ${i}`).toBe("invited");
+        expect(await convert(s.studioId, entry, s.clientId)).toBe("converted");
+      } else {
+        expect(r, `trial ${i}`).toBe("invalid_token");
+        expect(x, `trial ${i}`).toBe("expired");
+        expect(st, `trial ${i}`).toBe("expired");
+      }
+    }
+  });
+
+  it("E: concurrent redeem/release -> exactly one winner, never stranded", async () => {
+    for (let i = 0; i < 6; i++) {
+      const { s, entry, token } = await invited(`wait03-t-e${i}`);
+      const [r, x] = await Promise.all([
+        redeem(token).then((v) => v.result),
+        release(s.studioId, entry, s.userId),
+      ]);
+      const st = await statusOf(entry);
+      if (r === "redeemed") {
+        expect(x, `trial ${i}`).toBe("already_redeemed");
+        expect(st, `trial ${i}`).toBe("invited");
+        expect(await convert(s.studioId, entry, s.clientId)).toBe("converted");
+      } else {
+        expect(r, `trial ${i}`).toBe("invalid_token");
+        expect(x, `trial ${i}`).toBe("released");
+        expect(st, `trial ${i}`).toBe("released");
+      }
+    }
+  });
+
+  it("F: an ordinary UNREDEEMED expiry is untouched — the guard discriminates", async () => {
+    // The mandatory negative control. Without it, a guard that simply blocked
+    // every expiry would pass A-E and be catastrophically wrong.
+    const { s, entry } = await invited("wait03-t-f");
+    expect(await expire(s.studioId, entry, s.userId)).toBe("expired");
+    expect(await statusOf(entry)).toBe("expired");
+    const inv = await adminQuery(
+      `select (expired_at is not null) as exp from public.new_client_waitlist_invitations where entry_id = $1`,
+      [entry],
+    );
+    expect(inv.rows[0].exp).toBe(true);
+  });
+
+  it("G: release from CLAIMED (never invited) still works, and removal follows", async () => {
+    const s = await seedStudio("wait03-t-g");
+    const j = await join(s.studioId, `tg-${s.studioId.slice(0, 8)}@ex.com`);
+    const entry = j.entry_id as string;
+    await claim(s.studioId, entry, s.userId);
+    expect(await release(s.studioId, entry, s.userId)).toBe("released");
+    const rm = await adminQuery(
+      `select public.remove_new_client_waitlist_entry($1,$2,$3) as r`,
+      [s.studioId, entry, s.userId],
+    );
+    expect(rm.rows[0].r).toBe("removed");
+  });
+});

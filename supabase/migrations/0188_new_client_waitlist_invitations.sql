@@ -910,12 +910,48 @@ begin
      and i.studio_id = p_studio_id
      and i.redeemed_at is null and i.expired_at is null and i.released_at is null;
 
+  -- REDEMPTION IS TERMINAL FOR THIS ENTRY. The statement above is already
+  -- guarded against a redeemed invitation, but the entry move below was not,
+  -- and the RESULT CODE was derived from the entry move alone. The two could
+  -- therefore disagree: statement 1 matched zero rows while this one matched
+  -- one, and the command still answered 'expired'. Measured consequence --
+  -- redeem succeeded, expire succeeded, the entry left `invited`, and
+  -- record_conversion answered 'not_invited' with NO recovery path, because
+  -- `converted` is reachable only from `invited` and no expired -> converted
+  -- edge exists. A person who accepted their invitation became unconvertible.
+  --
+  -- The fact this tests is write-once and undeletable: `redeemed_at` cannot be
+  -- cleared or moved (append-only trigger), the invitation row cannot be
+  -- deleted (no-delete trigger), and `entry_id` cannot be re-pointed
+  -- (immutability trigger). So "has this entry been redeemed" is durable
+  -- without adding any column, table or trigger.
   update public.new_client_waitlist_entries
      set status = 'expired', expired_at = now()
    where id = p_entry_id and studio_id = p_studio_id and status = 'invited'
+     and not exists (
+       select 1
+         from public.new_client_waitlist_invitations i
+        where i.entry_id    = p_entry_id
+          and i.studio_id   = p_studio_id
+          and i.redeemed_at is not null)
   returning id into v_hit;
 
-  if v_hit is null then return 'not_invited'; end if;
+  if v_hit is null then
+    -- DISTINGUISHED, NOT COLLAPSED INTO 'not_invited'. Saying "not invited"
+    -- here would be false: the entry IS invited, and it has been redeemed.
+    -- The caller must be able to tell "nothing to expire" from "this person
+    -- already accepted -- record the conversion instead".
+    if exists (
+      select 1
+        from public.new_client_waitlist_invitations i
+       where i.entry_id    = p_entry_id
+         and i.studio_id   = p_studio_id
+         and i.redeemed_at is not null)
+    then
+      return 'already_redeemed';
+    end if;
+    return 'not_invited';
+  end if;
   return 'expired';
 end;
 $$;
@@ -948,13 +984,34 @@ begin
      and i.studio_id = p_studio_id
      and i.redeemed_at is null and i.expired_at is null and i.released_at is null;
 
+  -- Same asymmetry, same repair as expire above: statement 1 is guarded
+  -- against a redeemed invitation and this entry move was not, so a redeemed
+  -- prospect could be released out of `invited` and stranded short of
+  -- conversion.
   update public.new_client_waitlist_entries
      set status = 'released', released_at = now()
    where id = p_entry_id and studio_id = p_studio_id
      and status in ('claimed','invited','expired')
+     and not exists (
+       select 1
+         from public.new_client_waitlist_invitations i
+        where i.entry_id    = p_entry_id
+          and i.studio_id   = p_studio_id
+          and i.redeemed_at is not null)
   returning id into v_hit;
 
-  if v_hit is null then return 'not_releasable'; end if;
+  if v_hit is null then
+    if exists (
+      select 1
+        from public.new_client_waitlist_invitations i
+       where i.entry_id    = p_entry_id
+         and i.studio_id   = p_studio_id
+         and i.redeemed_at is not null)
+    then
+      return 'already_redeemed';
+    end if;
+    return 'not_releasable';
+  end if;
   return 'released';
 end;
 $$;
