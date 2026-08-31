@@ -163,9 +163,33 @@ export const COLLECTED_IS_GROSS =
 export const NO_PAYMENT_RECORDED_IS_NOT_OWED =
   "No payment recorded means nobody has written down what happened. It does not mean the visit is unpaid, and it does not mean money is owed.";
 
+/** CONTRACT 1. What this figure is, and — load-bearing — what it is not. */
+export const CASH_MOVEMENT_IS_NOT_EARNINGS =
+  "This is card money that moved in this period: payments taken, less refunds sent back. A refund here can reverse a payment taken in an earlier period, so this is movement through your card payments, not what this period's work earned.";
+
+/** CONTRACT 2. Numerator and denominator are the same visits, and it says so. */
+export const COLLECTED_ON_DELIVERED_IS_ONE_POPULATION =
+  "These figures cover one set of visits: treatment delivered in this window that was also paid by card in it. Each payment is counted after its own refund, whenever that refund happened, so the amount and the hours describe exactly the same visits.";
+
+/** Why the per-hour figure covers a narrower set than delivered treatment. */
+export const PER_HOUR_POPULATION =
+  "Treatment delivered in this window and paid by card in it. Visits not yet paid, paid outside Hone, or paid in another period are not in either half of this figure.";
+
+/** P2-D. All-time, and never dressed as a figure about the chosen period. */
+export const UNATTRIBUTED_IS_ALL_TIME =
+  "These card payments succeeded but carry no collection time, so Hone cannot place them in any period. The count is all time, not this period, and they are in none of the figures above.";
+
+/** A consultation is decided by the service, never by its price. */
+export const CONSULTATION_IS_A_SERVICE_KIND =
+  "Consultation or treatment is taken from the service itself, the same way the booking page decides it. A consultation you charge for is still a consultation, and a treatment you do not charge for is still treatment.";
+
+/** A delivered visit whose service is gone cannot be classified at all. */
+export const UNCLASSIFIED_VISITS_EXPLAINED =
+  "These visits happened, but the service behind them is no longer on record, so Hone cannot tell whether they were treatment or consultation. They are counted here and left out of both.";
+
 /** The collection rate is a count ratio, and says so. */
 export const COLLECTION_RATE_IS_VISITS =
-  "This counts visits, not dollars. A dollar version would divide an amount a practitioner typed at checkout by a price you can still edit, which is not a rate of anything.";
+  "This counts visits, not dollars. A dollar version would divide an amount a practitioner typed at checkout by a price you can still edit, which is not a rate of anything. Only treatment with a price is counted: there is nothing to collect on a visit priced at nothing.";
 
 /** Service value moves when the menu moves. */
 export const SERVICE_VALUE_IS_TODAYS_PRICE =
@@ -173,7 +197,7 @@ export const SERVICE_VALUE_IS_TODAYS_PRICE =
 
 /** Free consultations are a cost, and are excluded from the per-hour figure. */
 export const CONSULTATIONS_ARE_UNPAID_TIME =
-  "Consultations are free, so they earn nothing while still taking clinic time. They are kept out of the per-hour figure and shown separately.";
+  "Consultations still take clinic time. They are kept out of the treatment figures and shown separately, so consultation time never reads as treatment earnings.";
 
 /** What is still not on this screen. */
 export const CAPACITY_NOT_YET =

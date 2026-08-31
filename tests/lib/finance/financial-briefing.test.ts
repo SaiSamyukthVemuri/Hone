@@ -359,11 +359,11 @@ describe("RULING 1 — the money window opens at the record-keeping floor", () =
     const b = granted(await loadFinancialsView(OWNER, studio("America/Toronto"), "month", client));
 
     expect(b.money.covered).toBe(false);
-    expect(b.money.census.collectedGrossCents.known).toBe(false);
-    if (!b.money.census.collectedGrossCents.known) {
+    expect(b.money.census.movedInGrossCents.known).toBe(false);
+    if (!b.money.census.movedInGrossCents.known) {
       // NOT `unavailable` and NOT `unknowable`: the read would have succeeded,
       // and records did exist. They were incomplete.
-      expect(b.money.census.collectedGrossCents.cause).toBe("records_incomplete");
+      expect(b.money.census.movedInGrossCents.cause).toBe("records_incomplete");
     }
     // THE CALENDAR IS UNAFFECTED. Only money is withdrawn.
     expect(b.calendar.booked.known).toBe(true);
@@ -456,5 +456,63 @@ describe("the evidence instant is pinned and published", () => {
     const b = granted(await loadFinancialsView(OWNER, studio("America/Toronto"), "month", client));
     expect(b.evidenceInstant).toBe("2026-08-15T16:00:00.000Z");
     vi.useRealTimers();
+  });
+});
+
+describe("P2-D — the unattributed count never rides on the period", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("travels on the briefing, NOT inside the windowed money census", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-15T16:00:00.000Z"));
+    const { client } = stubTables({});
+    const b = granted(await loadFinancialsView(OWNER, studio("America/Toronto"), "month", client));
+
+    expect(b.unattributedChargesAllTime).toBeDefined();
+    // It is not a member of the census, so no window can be implied for it.
+    expect(Object.keys(b.money.census)).not.toContain("unattributedCharges");
+    expect(Object.keys(b.money.census)).not.toContain("unattributedChargesAllTime");
+  });
+
+  it("its read is filtered on charged_at IS NULL and carries NO date window", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-15T16:00:00.000Z"));
+    const { client, filters } = stubTables({});
+    await loadFinancialsView(OWNER, studio("America/Toronto"), "month", client);
+
+    // A HEAD count over rows with no collection time. Windowing it would need
+    // an instant these rows do not have; `created_at` records when the attempt
+    // ROW was written, not when money moved.
+    const nullCharged = filters.filter((f) => f.op === "is" && f.args[0] === "charged_at");
+    expect(nullCharged.length).toBeGreaterThanOrEqual(1);
+    expect(filters.some((f) => f.args[0] === "created_at")).toBe(false);
+  });
+
+  it("is UNKNOWN, not zero, when the period is below the money floor", async () => {
+    // Below the floor no ledger read is issued at all, so the count is not
+    // established — and an unestablished count must never render as none.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-15T16:00:00.000Z"));
+    const { client } = stubTables({});
+    const b = granted(await loadFinancialsView(OWNER, studio("America/Toronto"), "month", client));
+    expect(b.unattributedChargesAllTime.known).toBe(false);
+  });
+});
+
+describe("P2-A — the services read carries what the shared predicate needs", () => {
+  it("projects name and modality, not only price", async () => {
+    const { client, filters } = stubTables({});
+    await loadFinancialsView(OWNER, studio("America/Toronto"), "month", client);
+    const servicesSelect = filters.find((f) => f.table === "services" && f.op === "select");
+    expect(servicesSelect).toBeDefined();
+    const projection = String(servicesSelect!.args[0]);
+    // Without BOTH, `isConsultationService` silently degrades: no modality
+    // sends every row down its name fallback, and no name makes the fallback
+    // impossible too.
+    expect(projection).toContain("name");
+    expect(projection).toContain("modality");
+    expect(projection).toContain("price_cents");
   });
 });

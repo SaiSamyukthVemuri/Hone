@@ -8,7 +8,12 @@ import {
 import { createClient } from "@/lib/supabase/server";
 import type { Studio } from "@/lib/types/database";
 
-import type { FinancialUnknownCause } from "./financial-fact";
+import {
+  known,
+  unknownBecause,
+  type Fact,
+  type FinancialUnknownCause,
+} from "./financial-fact";
 
 import { inferStripeLivemode } from "@/lib/stripe/livemode";
 
@@ -22,7 +27,7 @@ import {
   type DeliveredMoneyCensus,
   type DeliveryRow,
   type RefundRow,
-  type ServicePriceRow,
+  type ServiceRow,
   type SettlementRow,
 } from "./financial-briefing-model";
 
@@ -91,6 +96,21 @@ export type FinancialBriefing = {
   readonly evidenceInstant: string;
   /** The money window, which is the period INTERSECTED with the floor below. */
   readonly money: DeliveredMoneyWindow;
+  /**
+   * SUCCEEDED card payments carrying NO collection time — ALL TIME, not this
+   * period, and deliberately not inside the money census.
+   *
+   * These rows have `status = 'succeeded'` and `charged_at IS NULL`. There is
+   * no authoritative instant to window them by: `created_at` records when the
+   * ATTEMPT ROW was written, not when money moved, so using it would invent a
+   * collection time and file real money into a period on a guess.
+   *
+   * They sat beside the windowed figures in the first draft, which read as a
+   * claim about the period. FIN-C9 still requires surfacing them — dropping
+   * them denies money that was actually made — so they are kept, moved out of
+   * the period entirely, and labelled all-time at the point of use.
+   */
+  readonly unattributedChargesAllTime: Fact<number>;
 };
 
 /**
@@ -223,8 +243,9 @@ export async function loadFinancialsView(
               charges: ledgers.charges,
               refunds: ledgers.refunds,
               settlements: ledgers.settlements,
-              unattributedCharges: ledgers.unattributedCharges,
               snapshot: now,
+              windowStartUtc: moneyStartUtc,
+              windowEndUtc: endUtc,
             }),
             ledgerOpensAt: ledgers.ledgerOpensAt,
           };
@@ -240,6 +261,10 @@ export async function loadFinancialsView(
       label: range.label,
       calendar,
       evidenceInstant: now.toISOString(),
+      unattributedChargesAllTime:
+        ledgers === null || !ledgers.ok
+          ? unknownBecause<number>(ledgers?.cause ?? "not_yet_supported")
+          : known(ledgers.unattributedCharges),
       money: moneyCovered
         ? {
             covered: true,
@@ -313,7 +338,7 @@ function complete<T>(
 type MoneyLedgers =
   | {
       readonly ok: true;
-      readonly services: readonly ServicePriceRow[];
+      readonly services: readonly ServiceRow[];
       readonly charges: readonly ChargeRow[];
       readonly refunds: readonly RefundRow[];
       readonly settlements: readonly SettlementRow[];
@@ -332,7 +357,12 @@ async function readMoneyLedgers(
   const ledger = () =>
     supabase
       .from("payment_charge_attempts")
-      .select("appointment_id, amount_cents", { count: "exact" })
+      // The refund columns ride along so a charge can be netted by ITS OWN
+      // refund, whenever that refund happened. That is the service-period
+      // numerator, and it must never be netted by a window instead.
+      .select("appointment_id, amount_cents, refund_amount_cents, refund_status", {
+        count: "exact",
+      })
       .eq("studio_id", studioId)
       .eq("status", "succeeded")
       .eq("stripe_livemode", livemode);
@@ -341,14 +371,19 @@ async function readMoneyLedgers(
     await Promise.all([
       supabase
         .from("services")
-        .select("id, price_cents", { count: "exact" })
+        // `name` and `modality` are what `isConsultationService` reads;
+        // `price_cents` decides only whether there was anything to collect.
+        .select("id, name, modality, price_cents", { count: "exact" })
         .eq("studio_id", studioId)
         .order("id")
         .range(0, API_PAGE_SIZE - 1),
       ledger().gte("charged_at", startUtc).lt("charged_at", endUtc).order("id").range(0, API_PAGE_SIZE - 1),
       supabase
         .from("payment_charge_attempts")
-        .select("refund_amount_cents", { count: "exact" })
+        // `charged_at` rides along ONLY so a refund reversing a charge from
+        // another period can be COUNTED and published, rather than silently
+        // reducing this period's figure with no explanation.
+        .select("refund_amount_cents, charged_at", { count: "exact" })
         .eq("studio_id", studioId)
         .eq("status", "succeeded")
         .eq("stripe_livemode", livemode)
@@ -385,7 +420,7 @@ async function readMoneyLedgers(
         .limit(1),
     ]);
 
-  const s = complete<ServicePriceRow>(services.data, services.error, services.count);
+  const s = complete<ServiceRow>(services.data, services.error, services.count);
   const c = complete<ChargeRow>(charges.data, charges.error, charges.count);
   const r = complete<RefundRow>(refunds.data, refunds.error, refunds.count);
   const t = complete<SettlementRow>(settlements.data, settlements.error, settlements.count);

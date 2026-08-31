@@ -304,19 +304,39 @@ describe("unreadableCalendar — an absence never becomes a partial answer", () 
 // ===========================================================================
 
 import {
+  classifyService,
   summarizeDeliveredMoney,
   unreadableDeliveredMoney,
   type ChargeRow,
   type DeliveryRow,
-  type ServicePriceRow,
+  type ServiceRow,
   type SettlementRow,
 } from "@/lib/finance/financial-briefing-model";
 
+const WINDOW_START = "2026-08-01T04:00:00.000Z";
+const WINDOW_END = "2026-09-01T04:00:00.000Z";
+
 const TREATMENT = "svc-treatment";
 const CONSULT = "svc-consult";
-const SERVICES: ServicePriceRow[] = [
-  { id: TREATMENT, price_cents: 15_000 },
-  { id: CONSULT, price_cents: 0 },
+const PAID_CONSULT = "svc-paid-consult";
+const FREE_TREATMENT = "svc-free-treatment";
+const NAMED_CONSULT = "svc-named-consult";
+
+/**
+ * Services chosen to separate KIND from PRICE on both axes at once, because
+ * that separation is the whole point of P2-A:
+ *
+ *   consultation, free      the ordinary case
+ *   consultation, PAID      kind survives a price
+ *   treatment, FREE         a price of nothing is not a consultation
+ *   consultation by NAME    the shared predicate's documented fallback
+ */
+const SERVICES: ServiceRow[] = [
+  { id: TREATMENT, name: "60 minute session", modality: "electrolysis", price_cents: 15_000 },
+  { id: CONSULT, name: "NEW CLIENT Consultation", modality: "consultation", price_cents: 0 },
+  { id: PAID_CONSULT, name: "Extended assessment", modality: "consultation", price_cents: 5_000 },
+  { id: FREE_TREATMENT, name: "Complimentary redo", modality: "electrolysis", price_cents: 0 },
+  { id: NAMED_CONSULT, name: "Underarm Consultation Follow-up", modality: null, price_cents: 0 },
 ];
 
 /** One appointment. Defaults describe a delivered 60-minute treatment. */
@@ -327,8 +347,18 @@ function appt(over: Partial<DeliveryRow> & { id: string }): DeliveryRow {
     starts_at: "2026-08-27T10:00:00.000Z",
     ends_at: "2026-08-27T11:00:00.000Z",
     duration_minutes: 60,
-    // 60 booked + a 20-minute buffer.
-    blocked_ends_at: "2026-08-27T11:20:00.000Z",
+    blocked_ends_at: "2026-08-27T11:20:00.000Z", // 60 booked + a 20-minute buffer
+    ...over,
+  };
+}
+
+/** A charge. Defaults describe a full, unrefunded payment. */
+function charge(over: Partial<ChargeRow>): ChargeRow {
+  return {
+    appointment_id: null,
+    amount_cents: 15_000,
+    refund_amount_cents: null,
+    refund_status: null,
     ...over,
   };
 }
@@ -340,8 +370,9 @@ function census(over: Partial<Parameters<typeof summarizeDeliveredMoney>[0]> = {
     charges: [],
     refunds: [],
     settlements: [],
-    unattributedCharges: 0,
     snapshot: NOW,
+    windowStartUtc: WINDOW_START,
+    windowEndUtc: WINDOW_END,
     ...over,
   });
 }
@@ -352,18 +383,240 @@ function value(fact: { known: boolean } & Record<string, unknown>): number {
   return fact.value as number;
 }
 
+// ---------------------------------------------------------------------------
+// P2-A — consultation is a SERVICE KIND, never a price
+// ---------------------------------------------------------------------------
+
+describe("P2-A — classification comes from the shared predicate, not from price", () => {
+  it("a FREE consultation is a consultation", () => {
+    const c = census({ appointments: [appt({ id: "a", service_id: CONSULT })] });
+    expect(value(c.consultationVisits)).toBe(1);
+    expect(value(c.deliveredTreatmentVisits)).toBe(0);
+  });
+
+  it("a PAID consultation is STILL a consultation", () => {
+    // The defect this replaces: `price_cents === 0` called this treatment,
+    // which put consultation money into a treatment-yield figure and inflated
+    // treatment hours.
+    const c = census({ appointments: [appt({ id: "a", service_id: PAID_CONSULT })] });
+    expect(value(c.consultationVisits)).toBe(1);
+    expect(value(c.deliveredTreatmentVisits)).toBe(0);
+    // Its value is kept, and kept APART from treatment value.
+    expect(value(c.consultationServiceValueCents)).toBe(5_000);
+    expect(value(c.treatmentServiceValueCents)).toBe(0);
+  });
+
+  it("a ZERO-DOLLAR NON-CONSULT service is NOT automatically a consultation", () => {
+    // The mirror defect: a comp or a redo is real clinical work, and calling it
+    // a consultation removed it from treatment time entirely.
+    const c = census({ appointments: [appt({ id: "a", service_id: FREE_TREATMENT })] });
+    expect(value(c.deliveredTreatmentVisits)).toBe(1);
+    expect(value(c.consultationVisits)).toBe(0);
+    expect(value(c.treatmentBookedMinutes)).toBe(60);
+  });
+
+  it("a zero-dollar treatment has NOTHING TO COLLECT, so it is outside the rate", () => {
+    // It is delivered treatment; it is not a collection failure. Counting it in
+    // the denominator would understate the rate for work nobody owed anything on.
+    const c = census({
+      appointments: [
+        appt({ id: "paid" }),
+        appt({ id: "free", service_id: FREE_TREATMENT }),
+      ],
+      charges: [charge({ appointment_id: "paid" })],
+    });
+    expect(value(c.deliveredTreatmentVisits)).toBe(2);
+    expect(value(c.chargeableTreatmentVisits)).toBe(1);
+    expect(value(c.collectionRateBasisPoints)).toBe(10_000);
+    expect(value(c.unresolvedVisits)).toBe(0);
+  });
+
+  it("honours the predicate's NAME fallback when modality is unset", () => {
+    const c = census({ appointments: [appt({ id: "a", service_id: NAMED_CONSULT })] });
+    expect(value(c.consultationVisits)).toBe(1);
+  });
+
+  it("a visit whose service is gone is UNKNOWN — never silently treatment", () => {
+    // `service_id` is nullable and a service row can be deleted. That state
+    // carries neither modality nor name, which are the only two things the
+    // predicate reads, so the classification genuinely cannot be made.
+    const c = census({
+      appointments: [appt({ id: "a", service_id: null }), appt({ id: "b", service_id: "gone" })],
+    });
+    expect(value(c.unclassifiedVisits)).toBe(2);
+    expect(value(c.deliveredTreatmentVisits)).toBe(0);
+    expect(value(c.consultationVisits)).toBe(0);
+    expect(c.basis.unclassifiable).toBe(2);
+    expect(c.basis.complete).toBe(false);
+  });
+
+  it("classifyService is the SAME predicate, exposed for the loader and pinned here", () => {
+    expect(classifyService(SERVICES[0])).toBe("treatment");
+    expect(classifyService(SERVICES[1])).toBe("consultation");
+    expect(classifyService(SERVICES[2])).toBe("consultation");
+    expect(classifyService(SERVICES[3])).toBe("treatment");
+    expect(classifyService(SERVICES[4])).toBe("consultation");
+    expect(classifyService(null)).toBe("unknown");
+    expect(classifyService(undefined)).toBe("unknown");
+  });
+
+  it("a delivered TREATMENT with no price is counted but not valued", () => {
+    const c = census({
+      services: [...SERVICES, { id: "svc-null", name: "Session", modality: "electrolysis", price_cents: null }],
+      appointments: [appt({ id: "a", service_id: "svc-null" })],
+    });
+    expect(value(c.deliveredTreatmentVisits)).toBe(1);
+    expect(value(c.treatmentServiceValueCents)).toBe(0);
+    expect(value(c.chargeableTreatmentVisits)).toBe(0);
+    expect(c.basis.unvalued).toBe(1);
+    expect(c.basis.complete).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P2-B / P2-C — two money contracts, named apart
+// ---------------------------------------------------------------------------
+
+describe("P2-B — the per-hour rate has ONE population on both sides", () => {
+  it("numerator and denominator cover exactly the same visits", () => {
+    const c = census({
+      appointments: [appt({ id: "paid" }), appt({ id: "unpaid" })],
+      charges: [charge({ appointment_id: "paid" })],
+    });
+    // Only the PAID visit is in either half. The unpaid visit's hour must not
+    // enlarge the denominator while contributing nothing to the numerator.
+    expect(value(c.collectedOnDeliveredVisits)).toBe(1);
+    expect(value(c.collectedOnDeliveredMinutes)).toBe(60);
+    expect(value(c.collectedOnDeliveredCents)).toBe(15_000);
+    expect(value(c.perTreatmentHourCents)).toBe(15_000);
+    // ...while delivered treatment time still counts BOTH visits.
+    expect(value(c.treatmentBookedMinutes)).toBe(120);
+  });
+
+  it("a charge for a visit OUTSIDE the delivered set never reaches the rate", () => {
+    // It is real cash movement, so it belongs in contract 1 and nowhere else.
+    const c = census({
+      appointments: [appt({ id: "here" })],
+      charges: [charge({ appointment_id: "elsewhere", amount_cents: 99_000 })],
+    });
+    expect(value(c.movedInGrossCents)).toBe(99_000);
+    expect(value(c.collectedOnDeliveredCents)).toBe(0);
+    expect(c.perTreatmentHourCents.known).toBe(false);
+  });
+
+  it("A CONSULTATION PAYMENT NEVER INFLATES THE TREATMENT RATE", () => {
+    // The concrete harm P2-A and P2-B combine to prevent: consultation money
+    // over treatment hours.
+    const c = census({
+      appointments: [
+        appt({ id: "t" }),
+        appt({ id: "pc", service_id: PAID_CONSULT, duration_minutes: 45 }),
+      ],
+      charges: [
+        charge({ appointment_id: "t" }),
+        charge({ appointment_id: "pc", amount_cents: 5_000 }),
+      ],
+    });
+    expect(value(c.movedInGrossCents)).toBe(20_000); // both moved
+    expect(value(c.collectedOnDeliveredCents)).toBe(15_000); // treatment only
+    expect(value(c.collectedOnDeliveredMinutes)).toBe(60);
+    expect(value(c.perTreatmentHourCents)).toBe(15_000);
+  });
+
+  it("a paid visit whose booked time is unreadable joins NEITHER half", () => {
+    // Its money over no time would inflate the rate without bound.
+    const c = census({
+      appointments: [appt({ id: "a", duration_minutes: null })],
+      charges: [charge({ appointment_id: "a" })],
+    });
+    expect(value(c.collectedOnDeliveredVisits)).toBe(0);
+    expect(c.perTreatmentHourCents.known).toBe(false);
+    expect(c.basis.unreadableAmounts).toBe(1);
+  });
+
+  it("the rate is UNKNOWN, never zero, when nothing was both delivered and paid", () => {
+    const c = census({ appointments: [appt({ id: "a" })] });
+    expect(c.perTreatmentHourCents.known).toBe(false);
+  });
+});
+
+describe("P2-C — cash movement and service-period collection are DIFFERENT metrics", () => {
+  it("a refund is netted against ITS OWN charge in the service-period figure", () => {
+    const c = census({
+      appointments: [appt({ id: "a" })],
+      charges: [
+        charge({ appointment_id: "a", refund_amount_cents: 5_000, refund_status: "succeeded" }),
+      ],
+    });
+    // Service period: the visit collected $100 net, over one hour.
+    expect(value(c.collectedOnDeliveredCents)).toBe(10_000);
+    expect(value(c.perTreatmentHourCents)).toBe(10_000);
+  });
+
+  it("an UNSUCCESSFUL refund does not reduce the service-period figure", () => {
+    const c = census({
+      appointments: [appt({ id: "a" })],
+      charges: [
+        charge({ appointment_id: "a", refund_amount_cents: 5_000, refund_status: "pending" }),
+      ],
+    });
+    expect(value(c.collectedOnDeliveredCents)).toBe(15_000);
+  });
+
+  it("a refund reversing an EARLIER period is counted, not silently netted away", () => {
+    // The economically false statement this prevents: "you collected less this
+    // month" when what happened is a refund of last month's payment.
+    const c = census({
+      refunds: [
+        { refund_amount_cents: 9_000, charged_at: "2026-06-15T12:00:00.000Z" },
+        { refund_amount_cents: 1_000, charged_at: "2026-08-14T12:00:00.000Z" },
+      ],
+    });
+    expect(value(c.movedOutRefundedCents)).toBe(10_000);
+    expect(value(c.refundsReversingOtherPeriods)).toBe(1);
+  });
+
+  it("a refund with NO readable charge time counts as cross-period", () => {
+    // Fails toward disclosure: an unplaceable reversal is exactly the case the
+    // owner most needs told about.
+    const c = census({ refunds: [{ refund_amount_cents: 500, charged_at: null }] });
+    expect(value(c.refundsReversingOtherPeriods)).toBe(1);
+  });
+
+  it("cash movement and service-period collection are separate fields, never merged", () => {
+    const c = census({
+      appointments: [appt({ id: "a" })],
+      charges: [charge({ appointment_id: "a" })],
+      refunds: [{ refund_amount_cents: 4_000, charged_at: "2026-05-01T12:00:00.000Z" }],
+    });
+    // Movement is dragged down by an old period's reversal...
+    expect(value(c.netMovementCents)).toBe(11_000);
+    // ...while what this window's delivered work collected is untouched by it.
+    expect(value(c.collectedOnDeliveredCents)).toBe(15_000);
+    expect(value(c.perTreatmentHourCents)).toBe(15_000);
+  });
+
+  it("there is NO field that adds the two contracts together", () => {
+    const c = census();
+    for (const forbidden of ["totalCollectedCents", "totalMoneyCents", "collectedNetCents"]) {
+      expect(Object.keys(c)).not.toContain(forbidden);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// carried forward from the first round — still true after the repair
+// ---------------------------------------------------------------------------
+
 describe("RULING 1 — what counts as delivered", () => {
   it("counts completed AND past-confirmed, because status alone measures admin behaviour", () => {
-    // The share of elapsed appointments ever marked `completed` ran 0% -> 98.4%
-    // across four months in production. A `completed`-only definition would
-    // read that ramp as growth that did not happen.
     const c = census({
       appointments: [
         appt({ id: "a", status: "completed" }),
         appt({ id: "b", status: "confirmed" }),
       ],
     });
-    expect(value(c.deliveredPaidVisits)).toBe(2);
+    expect(value(c.deliveredTreatmentVisits)).toBe(2);
   });
 
   it("EXCLUDES an appointment that has not finished, in either status", () => {
@@ -378,15 +631,12 @@ describe("RULING 1 — what counts as delivered", () => {
         appt({ id: "b", status: "completed", ...future }),
       ],
     });
-    expect(value(c.deliveredPaidVisits)).toBe(0);
+    expect(value(c.deliveredTreatmentVisits)).toBe(0);
   });
 
   it("THE TIE: an appointment ending exactly at the snapshot has NOT finished", () => {
-    // Half-open, matching the period window's own `[start, end)` convention.
-    const c = census({
-      appointments: [appt({ id: "a", ends_at: NOW.toISOString() })],
-    });
-    expect(value(c.deliveredPaidVisits)).toBe(0);
+    const c = census({ appointments: [appt({ id: "a", ends_at: NOW.toISOString() })] });
+    expect(value(c.deliveredTreatmentVisits)).toBe(0);
   });
 
   it("never counts cancelled or no-show, however long past", () => {
@@ -396,7 +646,7 @@ describe("RULING 1 — what counts as delivered", () => {
         appt({ id: "b", status: "no_show" }),
       ],
     });
-    expect(value(c.deliveredPaidVisits)).toBe(0);
+    expect(value(c.deliveredTreatmentVisits)).toBe(0);
   });
 
   it("is DEFINED ON ends_at, not starts_at — a visit that began has not finished", () => {
@@ -410,28 +660,12 @@ describe("RULING 1 — what counts as delivered", () => {
         }),
       ],
     });
-    expect(value(c.deliveredPaidVisits)).toBe(0);
-  });
-
-  it("splits free consultations out of treatment, by price and not by name", () => {
-    const c = census({
-      appointments: [
-        appt({ id: "a" }),
-        appt({ id: "b", service_id: CONSULT, duration_minutes: 45 }),
-      ],
-    });
-    expect(value(c.deliveredPaidVisits)).toBe(1);
-    expect(value(c.consultationVisits)).toBe(1);
-    // A free consultation contributes no service value.
-    expect(value(c.serviceValueCents)).toBe(15_000);
+    expect(value(c.deliveredTreatmentVisits)).toBe(0);
   });
 });
 
 describe("the three evidence classes stay apart", () => {
   it("EXTERNAL MONEY IS UNKNOWN, NOT ZERO, when nothing has been attested", () => {
-    // The single most damaging sentence this surface could print is a $0.00
-    // next to cash for an owner who takes cash every week. Production holds one
-    // settlement row in the entire database, and none for this studio.
     const c = census({ appointments: [appt({ id: "a" })], settlements: [] });
     expect(c.externallyAttestedCents.known).toBe(false);
     expect(c.waivedCents.known).toBe(false);
@@ -457,98 +691,6 @@ describe("the three evidence classes stay apart", () => {
     expect(value(c.stillOwedCents)).toBe(12_000);
   });
 
-  it("card money, attested money and service value are three separate figures", () => {
-    const c = census({
-      appointments: [appt({ id: "a" })],
-      charges: [{ appointment_id: "a", amount_cents: 15_000 }],
-      settlements: [{ appointment_id: "a", method: "paid_cash", amount_cents: 9_000 }],
-    });
-    expect(value(c.collectedGrossCents)).toBe(15_000);
-    expect(value(c.externallyAttestedCents)).toBe(9_000);
-    expect(value(c.serviceValueCents)).toBe(15_000);
-    // There is no field on the census that adds any two of them.
-    expect(Object.keys(c)).not.toContain("totalCollectedCents");
-    expect(Object.keys(c)).not.toContain("totalMoneyCents");
-  });
-
-  it("gross money is summed WHOLE, even for a visit outside the delivered set", () => {
-    // Money that moved is money that moved. Charges are windowed on charged_at,
-    // delivery on starts_at; they are different populations by construction and
-    // the census must not quietly reconcile them.
-    const c = census({
-      appointments: [],
-      charges: [{ appointment_id: "not-in-window", amount_cents: 15_000 }],
-    });
-    expect(value(c.collectedGrossCents)).toBe(15_000);
-    expect(value(c.cardPaidVisits)).toBe(0);
-  });
-
-  it("a refund is netted but NOT attributed to a visit", () => {
-    const c = census({
-      appointments: [appt({ id: "a" })],
-      charges: [{ appointment_id: "a", amount_cents: 15_000 }],
-      refunds: [{ refund_amount_cents: 200 }],
-    });
-    expect(value(c.collectedGrossCents)).toBe(15_000);
-    expect(value(c.refundedCents)).toBe(200);
-    expect(value(c.collectedNetCents)).toBe(14_800);
-    // The visit still counts as card-paid: the refund does not un-deliver it.
-    expect(value(c.cardPaidVisits)).toBe(1);
-  });
-
-  it("a refund with NO charge in the window still nets — the windows are independent", () => {
-    const c = census({ refunds: [{ refund_amount_cents: 5_000 }] });
-    expect(value(c.collectedGrossCents)).toBe(0);
-    expect(value(c.collectedNetCents)).toBe(-5_000);
-  });
-});
-
-describe("the bridge from delivered work to money", () => {
-  it("the collection rate is a VISIT COUNT ratio", () => {
-    const c = census({
-      appointments: ["a", "b", "c", "d"].map((id) => appt({ id })),
-      // Wildly different amounts: a dollar ratio would move, a count ratio does not.
-      charges: [
-        { appointment_id: "a", amount_cents: 200 },
-        { appointment_id: "b", amount_cents: 99_000 },
-        { appointment_id: "c", amount_cents: 15_000 },
-      ],
-    });
-    expect(value(c.collectionRateBasisPoints)).toBe(7_500);
-    expect(value(c.cardPaidVisits)).toBe(3);
-  });
-
-  it("a visit with a settlement is resolved, and is NOT counted as card-paid", () => {
-    const c = census({
-      appointments: ["a", "b"].map((id) => appt({ id })),
-      charges: [{ appointment_id: "a", amount_cents: 15_000 }],
-      settlements: [{ appointment_id: "b", method: "paid_cash", amount_cents: 15_000 }],
-    });
-    expect(value(c.cardPaidVisits)).toBe(1);
-    expect(value(c.unresolvedVisits)).toBe(0);
-  });
-
-  it("UNRESOLVED means no evidence either way — never 'owed'", () => {
-    const c = census({
-      appointments: ["a", "b", "c"].map((id) => appt({ id })),
-      charges: [{ appointment_id: "a", amount_cents: 15_000 }],
-    });
-    expect(value(c.unresolvedVisits)).toBe(2);
-    expect(value(c.unresolvedServiceValueCents)).toBe(30_000);
-    // Nothing was attested, so "still owed" remains unknowable — the unresolved
-    // value must never leak into it.
-    expect(c.stillOwedCents.known).toBe(false);
-  });
-
-  it("an empty window is a real zero, not an unknown", () => {
-    const c = census();
-    expect(value(c.deliveredPaidVisits)).toBe(0);
-    expect(value(c.collectedGrossCents)).toBe(0);
-    // ...except the ratios, which have nothing to divide by.
-    expect(c.collectionRateBasisPoints.known).toBe(false);
-    expect(c.collectedPerTreatmentHourBookedCents.known).toBe(false);
-  });
-
   it("a settlement naming a visit outside the window is counted, not silently dropped", () => {
     const c = census({
       appointments: [appt({ id: "a" })],
@@ -560,7 +702,52 @@ describe("the bridge from delivered work to money", () => {
   });
 });
 
-describe("time, and RULING 2", () => {
+describe("the bridge from delivered work to money", () => {
+  it("the collection rate is a VISIT COUNT ratio", () => {
+    const c = census({
+      appointments: ["a", "b", "c", "d"].map((id) => appt({ id })),
+      // Wildly different amounts: a dollar ratio would move, a count ratio does not.
+      charges: [
+        charge({ appointment_id: "a", amount_cents: 200 }),
+        charge({ appointment_id: "b", amount_cents: 99_000 }),
+        charge({ appointment_id: "c", amount_cents: 15_000 }),
+      ],
+    });
+    expect(value(c.collectionRateBasisPoints)).toBe(7_500);
+    expect(value(c.cardPaidVisits)).toBe(3);
+  });
+
+  it("a visit with a settlement is resolved, and is NOT counted as card-paid", () => {
+    const c = census({
+      appointments: ["a", "b"].map((id) => appt({ id })),
+      charges: [charge({ appointment_id: "a" })],
+      settlements: [{ appointment_id: "b", method: "paid_cash", amount_cents: 15_000 }],
+    });
+    expect(value(c.cardPaidVisits)).toBe(1);
+    expect(value(c.unresolvedVisits)).toBe(0);
+  });
+
+  it("UNRESOLVED means no evidence either way — never 'owed'", () => {
+    const c = census({
+      appointments: ["a", "b", "c"].map((id) => appt({ id })),
+      charges: [charge({ appointment_id: "a" })],
+    });
+    expect(value(c.unresolvedVisits)).toBe(2);
+    expect(value(c.unresolvedServiceValueCents)).toBe(30_000);
+    expect(c.stillOwedCents.known).toBe(false);
+  });
+
+  it("an empty window is a real zero, not an unknown", () => {
+    const c = census();
+    expect(value(c.deliveredTreatmentVisits)).toBe(0);
+    expect(value(c.movedInGrossCents)).toBe(0);
+    // ...except the ratios, which have nothing to divide by.
+    expect(c.collectionRateBasisPoints.known).toBe(false);
+    expect(c.perTreatmentHourCents.known).toBe(false);
+  });
+});
+
+describe("time", () => {
   it("booked time is with the client; blocked time includes the buffer", () => {
     const c = census({ appointments: [appt({ id: "a" })] });
     expect(value(c.treatmentBookedMinutes)).toBe(60);
@@ -568,8 +755,6 @@ describe("time, and RULING 2", () => {
   });
 
   it("the buffer is taken per appointment, so a 15 and a 20 both land", () => {
-    // Production carries both. A model recomputing from studios.buffer_minutes
-    // would be wrong on every row booked under the other value.
     const c = census({
       appointments: [
         appt({ id: "a", blocked_ends_at: "2026-08-27T11:20:00.000Z" }),
@@ -592,36 +777,20 @@ describe("time, and RULING 2", () => {
         }),
       ],
     });
-    // 80 treatment, 65 consultation.
     expect(value(c.consultationBlockedMinutes)).toBe(65);
     expect(
       value(c.treatmentTimeShareBasisPoints) + value(c.consultationTimeShareBasisPoints),
     ).toBe(10_000);
   });
 
-  it("RULING 2 divides net card money by treatment hours WITH THE CLIENT", () => {
-    // Free consultations are not in the divisor: pooling them makes the
-    // treatment work look far less productive than it is.
-    const c = census({
-      appointments: [
-        appt({ id: "a" }),
-        appt({ id: "b", service_id: CONSULT, duration_minutes: 45 }),
-      ],
-      charges: [{ appointment_id: "a", amount_cents: 15_000 }],
-    });
-    // $150.00 over 1.00 treatment hour.
-    expect(value(c.collectedPerTreatmentHourBookedCents)).toBe(15_000);
-  });
-
   it("reproduces the production August shape", () => {
     // 35 delivered treatment visits, 30 card-paid, 85.7%.
     const appointments = Array.from({ length: 35 }, (_, i) => appt({ id: `v${i}` }));
-    const charges: ChargeRow[] = Array.from({ length: 30 }, (_, i) => ({
-      appointment_id: `v${i}`,
-      amount_cents: 12_783,
-    }));
+    const charges = Array.from({ length: 30 }, (_, i) =>
+      charge({ appointment_id: `v${i}`, amount_cents: 12_783 }),
+    );
     const c = census({ appointments, charges });
-    expect(value(c.deliveredPaidVisits)).toBe(35);
+    expect(value(c.deliveredTreatmentVisits)).toBe(35);
     expect(value(c.cardPaidVisits)).toBe(30);
     expect(value(c.collectionRateBasisPoints)).toBe(8_571);
     expect(value(c.unresolvedVisits)).toBe(5);
@@ -630,33 +799,18 @@ describe("time, and RULING 2", () => {
 
 describe("nothing unreadable is silently coerced", () => {
   it("an unreadable end time is counted, not filed as past OR future", () => {
-    // `NaN < now` is false, so an unguarded comparison would call it undelivered
-    // — a wrong answer that looks like a decision.
     const c = census({ appointments: [appt({ id: "a", ends_at: "not a date" })] });
     expect(c.basis.undatable).toBe(1);
-    expect(value(c.deliveredPaidVisits)).toBe(0);
+    expect(value(c.deliveredTreatmentVisits)).toBe(0);
     expect(c.basis.complete).toBe(false);
-  });
-
-  it("a visit whose service price cannot be resolved is neither treatment nor consultation", () => {
-    const c = census({
-      appointments: [appt({ id: "a", service_id: "svc-unknown" }), appt({ id: "b", service_id: null })],
-    });
-    expect(c.basis.unpriced).toBe(2);
-    expect(value(c.deliveredPaidVisits)).toBe(0);
-    expect(value(c.consultationVisits)).toBe(0);
-    expect(value(c.serviceValueCents)).toBe(0);
   });
 
   it("AN UNREADABLE AMOUNT IS EXCLUDED, NEVER ADDED AS ZERO", () => {
     const c = census({
       appointments: [appt({ id: "a" })],
-      charges: [
-        { appointment_id: "a", amount_cents: 15_000 },
-        { appointment_id: "a", amount_cents: null },
-      ],
+      charges: [charge({ appointment_id: "a" }), charge({ appointment_id: "a", amount_cents: null })],
     });
-    expect(value(c.collectedGrossCents)).toBe(15_000);
+    expect(value(c.movedInGrossCents)).toBe(15_000);
     expect(c.basis.unreadableAmounts).toBe(1);
     expect(c.basis.complete).toBe(false);
   });
@@ -667,8 +821,7 @@ describe("nothing unreadable is silently coerced", () => {
     });
     expect(c.basis.unmeasurable).toBe(1);
     expect(value(c.treatmentBlockedMinutes)).toBe(80);
-    // The visit still counts and is still valued; only its chair time is absent.
-    expect(value(c.deliveredPaidVisits)).toBe(2);
+    expect(value(c.deliveredTreatmentVisits)).toBe(2);
   });
 
   it("a clean window claims completeness", () => {
@@ -683,7 +836,7 @@ describe("a failed read withdraws EVERY figure, with one cause", () => {
     (cause) => {
       const c = unreadableDeliveredMoney(cause);
       const facts = Object.entries(c).filter(([k]) => k !== "basis");
-      expect(facts.length).toBeGreaterThanOrEqual(20);
+      expect(facts.length).toBeGreaterThanOrEqual(25);
       for (const [name, fact] of facts) {
         expect((fact as { known: boolean }).known, name).toBe(false);
         expect((fact as { cause: string }).cause, name).toBe(cause);

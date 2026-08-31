@@ -5,7 +5,10 @@ import ts from "typescript";
 
 import {
   CAPACITY_NOT_YET,
+  CASH_MOVEMENT_IS_NOT_EARNINGS,
+  COLLECTED_ON_DELIVERED_IS_ONE_POPULATION,
   HISTORY_BEFORE_OUTCOMES,
+  UNATTRIBUTED_IS_ALL_TIME,
   PERMANENT_LINES,
   UNKNOWN_EXPLANATION,
   UNKNOWN_LABEL,
@@ -189,7 +192,7 @@ describe("NC3 — the three evidence classes are never summed into one another",
   it("the collection rate is a VISIT-COUNT ratio, never a dollar ratio", () => {
     // The numerator would be an operator-authored till total and the
     // denominator a mutable menu price. That quotient is not a rate.
-    expect(CODE.model).toContain("cardPaid.size / deliveredCount");
+    expect(CODE.model).toContain("cardPaidChargeable / chargeable.size");
     for (const forbidden of [
       /collected\w*Cents\s*\/\s*\w*serviceValue/i,
       /serviceValue\w*\s*\/\s*collected/i,
@@ -221,6 +224,125 @@ describe("NC3 — the three evidence classes are never summed into one another",
     // TypeScript, off the one period contract.
     expect(ALL_CODE.toLowerCase()).not.toContain("date_trunc");
     expect(ALL_CODE).not.toContain("at time zone");
+  });
+});
+
+describe("P2-A — consultation is decided by the shared predicate, never by price", () => {
+  it("FIN imports the SAME predicate the booking page and its server guard use", () => {
+    expect(CODE.model).toContain('from "@/lib/booking/consultation"');
+    expect(CODE.model).toContain("isConsultationService");
+  });
+
+  it("NO price comparison decides what a visit IS", () => {
+    // The defect this replaces: `price_cents === 0` meant a PAID consultation
+    // was counted as treatment and a ZERO-DOLLAR treatment as a consultation.
+    // Price still decides whether there was anything to COLLECT, which is a
+    // different question and is asserted separately below.
+    for (const forbidden of [
+      /price_cents\s*===\s*0/,
+      /price_cents\s*!==\s*0/,
+      /price\s*===\s*0\s*\)\s*\{?\s*(consultation|isConsult)/i,
+      /consultation[\w]*\s*=\s*[^;\n]*price/i,
+      /isConsult[\w]*\s*=\s*[^;\n]*price/i,
+    ]) {
+      expect(ALL_CODE, String(forbidden)).not.toMatch(forbidden);
+    }
+  });
+
+  it("the predicate's own inputs are read, and nothing else", () => {
+    // `isConsultationService` reads modality and name. The projection has to
+    // carry both or the predicate silently degrades to its name fallback — or,
+    // worse, to `unknown` for every row.
+    expect(CODE.loader).toContain('.select("id, name, modality, price_cents"');
+  });
+
+  it("price decides ONLY whether there was something to collect", () => {
+    expect(CODE.model).toContain("if (price > 0) chargeable.set(row.id, price)");
+    // ...and the collection rate divides by THAT set, not by delivered visits.
+    expect(CODE.model).toContain("chargeable.size === 0");
+  });
+
+  it("a missing service is UNKNOWN, not silently treatment", () => {
+    expect(CODE.model).toContain('if (!service) return "unknown"');
+    expect(CODE.model).toContain("unclassifiable");
+  });
+});
+
+describe("P2-B / P2-C — the two money contracts are named apart and never merged", () => {
+  it("the per-hour rate divides one population by itself", () => {
+    // Numerator and denominator are accumulated in the SAME loop over the same
+    // visits, so they cannot describe different periods.
+    expect(CODE.model).toContain(
+      "collectedOnDeliveredCents / (collectedOnDeliveredMinutes / 60)",
+    );
+  });
+
+  it("the cash-movement net NEVER feeds the per-hour rate", () => {
+    // The refuted form: cash-movement net (charged_at-windowed, minus
+    // refunded_at-windowed refunds) over delivered-visit hours. Those are
+    // different populations, so the quotient was a rate of nothing.
+    for (const forbidden of [
+      /netMovementCents\s*\/\s*/,
+      /movedInGrossCents\s*\/\s*/,
+      /perTreatmentHour\w*\s*=\s*[^;]*netMovement/,
+      /perTreatmentHour\w*\s*=\s*[^;]*treatmentBookedMinutes/,
+    ]) {
+      expect(ALL_CODE, String(forbidden)).not.toMatch(forbidden);
+    }
+  });
+
+  it("a service-period charge is netted by ITS OWN refund, not by a window", () => {
+    expect(CODE.model).toContain('c.refund_status === "succeeded"');
+    // The charge read has to carry the refund columns for that to be possible.
+    expect(CODE.loader).toContain("refund_amount_cents, refund_status");
+  });
+
+  it("cross-period reversals are COUNTED, so the caveat is measured not asserted", () => {
+    expect(CODE.model).toContain("refundsReversingOtherPeriods");
+    // `charged_at` on the refund read is what makes the comparison possible.
+    expect(CODE.loader).toContain('.select("refund_amount_cents, charged_at"');
+    expect(CODE.spine).toContain("refundsReversingOtherPeriods");
+  });
+
+  it("the two contracts carry DIFFERENT owner-facing names", () => {
+    expect(CODE.spine).toContain("Card money that moved this period");
+    expect(CODE.spine).toContain("Collected on treatment delivered in this window");
+    // No surviving name that would read as one overloaded number.
+    expect(CODE.spine).not.toContain("Net of refunds");
+    expect(ALL_CODE).not.toContain("collectedNetCents");
+  });
+
+  it("both contracts publish the sentence that says what they are NOT", () => {
+    expect(CASH_MOVEMENT_IS_NOT_EARNINGS).toMatch(/not what this period.s work earned/);
+    expect(COLLECTED_ON_DELIVERED_IS_ONE_POPULATION).toMatch(/same visits/);
+    expect(CODE.spine).toContain("CASH_MOVEMENT_IS_NOT_EARNINGS");
+    expect(CODE.spine).toContain("COLLECTED_ON_DELIVERED_IS_ONE_POPULATION");
+  });
+});
+
+describe("P2-D — the unattributed count is all-time, and says so", () => {
+  it("it is NOT inside the windowed money census", () => {
+    // It sat beside the windowed figures in the first draft, where it read as
+    // a claim about the chosen period.
+    expect(CODE.model).not.toContain("unattributedCharges");
+  });
+
+  it("it travels on the briefing, explicitly named all-time", () => {
+    expect(CODE.loader).toContain("unattributedChargesAllTime");
+    expect(CODE.spine).toContain("unattributedChargesAllTime");
+    expect(CODE.spine).toMatch(/\(all time\)/);
+    expect(UNATTRIBUTED_IS_ALL_TIME).toMatch(/all time, not this period/);
+  });
+
+  it("no window is invented for it from created_at", () => {
+    // `created_at` records when the ATTEMPT ROW was written, not when money
+    // moved. Windowing by it would file real money into a period on a guess.
+    expect(CODE.loader).not.toContain("created_at");
+  });
+
+  it("it is still SURFACED — dropping it would deny money that was made", () => {
+    expect(CODE.loader).toContain('.is("charged_at", null)');
+    expect(CODE.spine).toContain("UnattributedAllTime");
   });
 });
 
@@ -684,13 +806,18 @@ describe("NC-mobile/a11y — order carries the meaning, colour never does", () =
     // evidence classes appear in provenance order — what Hone VERIFIED, then
     // what a practitioner ATTESTED, then what is only a PRICE — so a reader
     // who stops early stops on the strongest evidence, not the weakest.
+    // Provenance order, now that the money contracts are named apart: what
+    // MOVED (transaction period), then what this window's delivered work
+    // COLLECTED (service period), then what was only ATTESTED, then what is
+    // only a PRICE. A reader who stops early stops on the strongest evidence.
     const order = [
       "The calendar",
       "Work actually completed",
       "Delivered in this window",
-      "Card payments collected through Hone",
+      "Card money that moved this period",
+      "Collected on treatment delivered in this window",
       "Collected outside Hone",
-      "Service value of delivered treatment",
+      "Service value of delivered work",
       "Visits with a payment recorded",
       "Where the clinic time went",
     ].map((heading) => CODE.spine.indexOf(heading));

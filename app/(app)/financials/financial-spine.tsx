@@ -4,17 +4,23 @@ import { SectionLabel } from "@/components/ui/section-label";
 import type { FinancialBriefing } from "@/lib/finance/financial-briefing";
 import {
   CAPACITY_NOT_YET,
+  CASH_MOVEMENT_IS_NOT_EARNINGS,
   COLLECTED_IS_GROSS,
+  COLLECTED_ON_DELIVERED_IS_ONE_POPULATION,
+  CONSULTATION_IS_A_SERVICE_KIND,
   COLLECTION_RATE_IS_VISITS,
   CONSULTATIONS_ARE_UNPAID_TIME,
   DELIVERED_MEANS,
   MONEY_WINDOW_IS_NARROWER,
   NO_PAYMENT_RECORDED_IS_NOT_OWED,
+  PER_HOUR_POPULATION,
   PAST_STILL_CONFIRMED_IS_A_RECORD_STATE,
   PERIOD_IS_BEFORE_MONEY_WINDOW,
   PERMANENT_LINES,
   SERVICE_VALUE_IS_TODAYS_PRICE,
   THREE_CLASSES_NEVER_ADD_UP,
+  UNATTRIBUTED_IS_ALL_TIME,
+  UNCLASSIFIED_VISITS_EXPLAINED,
   UNKNOWN_EXPLANATION,
   UNKNOWN_LABEL,
   WINDOW_PRECEDES_LEDGER,
@@ -182,6 +188,12 @@ function Money({ fact }: { fact: Fact<number> }) {
 /** Basis points, rendered as a percentage with one decimal. */
 function percent(basisPoints: number): string {
   return `${(basisPoints / 100).toFixed(1)}%`;
+}
+
+/** An hours figure, or the sentence saying why there isn't one. */
+function Hours({ fact }: { fact: Fact<number> }) {
+  if (!fact.known) return <Unknown cause={fact.cause} />;
+  return <p className="tabular-nums text-sm font-medium">{hours(fact.value)}</p>;
 }
 
 /** Minutes as hours, to two decimals — the unit the per-hour figure divides by. */
@@ -412,11 +424,14 @@ function DeliveredMoney({ briefing }: { briefing: FinancialBriefing }) {
   // calendar above is still true and still shown; only money is withdrawn.
   if (!window.covered) {
     return (
-      <section className="flex flex-col gap-3">
-        <SectionLabel as="h2">Money in this period</SectionLabel>
-        <Unknown cause="records_incomplete" />
-        <p className="max-w-[68ch] text-sm text-fg">{PERIOD_IS_BEFORE_MONEY_WINDOW}</p>
-      </section>
+      <>
+        <section className="flex flex-col gap-3">
+          <SectionLabel as="h2">Money in this period</SectionLabel>
+          <Unknown cause="records_incomplete" />
+          <p className="max-w-[68ch] text-sm text-fg">{PERIOD_IS_BEFORE_MONEY_WINDOW}</p>
+        </section>
+        <UnattributedAllTime briefing={briefing} />
+      </>
     );
   }
 
@@ -427,13 +442,26 @@ function DeliveredMoney({ briefing }: { briefing: FinancialBriefing }) {
         <SectionLabel as="h2">Delivered in this window</SectionLabel>
         <div className="flex flex-col">
           <Line label="Treatment visits delivered">
-            <Visits fact={c.deliveredPaidVisits} />
+            <Visits fact={c.deliveredTreatmentVisits} />
           </Line>
-          <Line label="Consultations delivered (free)">
+          <Line label="Consultations delivered">
             <Visits fact={c.consultationVisits} />
           </Line>
+          {c.unclassifiedVisits.known && c.unclassifiedVisits.value > 0 ? (
+            <Line label="Delivered, service no longer on record">
+              <Visits fact={c.unclassifiedVisits} />
+            </Line>
+          ) : null}
         </div>
         <p className="max-w-[68ch] text-xs leading-relaxed text-fg">{DELIVERED_MEANS}</p>
+        <p className="max-w-[68ch] text-xs leading-relaxed text-fg">
+          {CONSULTATION_IS_A_SERVICE_KIND}
+        </p>
+        {c.unclassifiedVisits.known && c.unclassifiedVisits.value > 0 ? (
+          <p className="max-w-[68ch] text-xs leading-relaxed text-fg">
+            {UNCLASSIFIED_VISITS_EXPLAINED}
+          </p>
+        ) : null}
         {window.narrowed ? (
           <p className="max-w-[68ch] text-xs leading-relaxed text-fg">
             {MONEY_WINDOW_IS_NARROWER}
@@ -444,42 +472,85 @@ function DeliveredMoney({ briefing }: { briefing: FinancialBriefing }) {
         </p>
       </section>
 
-      {/* CLASS 1 — provider-verified. Hone watched this money move. */}
+      {/*
+        CONTRACT 1 — CASH MOVEMENT, transaction period. Charges windowed on
+        charged_at, refunds on refunded_at, INDEPENDENTLY. That independence is
+        correct for movement and wrong for earnings, so the heading says
+        "moved" and the caveat says why.
+      */}
       <section className="flex flex-col gap-3">
-        <SectionLabel as="h2">Card payments collected through Hone</SectionLabel>
+        <SectionLabel as="h2">Card money that moved this period</SectionLabel>
         <div className="flex flex-col">
-          <Line label="Collected, before fees">
-            <Money fact={c.collectedGrossCents} />
+          <Line label="Payments taken, before fees">
+            <Money fact={c.movedInGrossCents} />
           </Line>
-          <Line label="Refunded">
-            <Money fact={c.refundedCents} />
+          <Line label="Refunds sent back">
+            <Money fact={c.movedOutRefundedCents} />
           </Line>
-          <Line label="Net of refunds">
-            <Money fact={c.collectedNetCents} />
+          <Line label="Net movement">
+            <Money fact={c.netMovementCents} />
           </Line>
           <Line label="Payments">
             <Visits fact={c.chargeCount} />
           </Line>
         </div>
-        <p className="max-w-[68ch] text-xs leading-relaxed text-fg">{COLLECTED_IS_GROSS}</p>
+        <p className="max-w-[68ch] text-xs leading-relaxed text-fg">
+          {CASH_MOVEMENT_IS_NOT_EARNINGS}
+        </p>
         {/*
-          FIN-C9. A succeeded payment carrying no collection time belongs to no
-          period, so it appears in no window's total. Surfaced rather than
-          dropped: dropping it denies money that was actually made.
+          The generic caveat above is true always; this line is the MEASURED
+          instance of it, so the owner learns whether it actually bit this
+          period rather than being told it might have.
         */}
-        {c.unattributedCharges.known && c.unattributedCharges.value > 0 ? (
+        {c.refundsReversingOtherPeriods.known && c.refundsReversingOtherPeriods.value > 0 ? (
           <p className="max-w-[68ch] text-xs leading-relaxed text-warning-fg">
-            {c.unattributedCharges.value.toLocaleString()} card payment
-            {c.unattributedCharges.value === 1 ? "" : "s"} succeeded without a
-            collection time, so {c.unattributedCharges.value === 1 ? "it is" : "they are"}{" "}
-            in no period and not counted above.
+            {c.refundsReversingOtherPeriods.value.toLocaleString()} of these refund
+            {c.refundsReversingOtherPeriods.value === 1 ? "" : "s"} reverse
+            {c.refundsReversingOtherPeriods.value === 1 ? "s" : ""} a payment taken in
+            another period, so net movement is lower here than this period&apos;s
+            work would suggest.
           </p>
         ) : null}
+        <p className="max-w-[68ch] text-xs leading-relaxed text-fg">{COLLECTED_IS_GROSS}</p>
         {window.precedesLedger ? (
           <p className="max-w-[68ch] text-xs leading-relaxed text-fg">
             {WINDOW_PRECEDES_LEDGER}
           </p>
         ) : null}
+      </section>
+
+      {/*
+        CONTRACT 2 — SERVICE PERIOD. One population on both sides. An earlier
+        draft divided cash-movement net by delivered-visit hours; a charge in
+        the window can pay for a visit outside it and vice versa, so that
+        quotient had no population to be a rate OF. Replaced, not relabelled.
+      */}
+      <section className="flex flex-col gap-3">
+        <SectionLabel as="h2">Collected on treatment delivered in this window</SectionLabel>
+        <div className="flex flex-col">
+          <Line label="Collected by card, after refunds on those visits">
+            <Money fact={c.collectedOnDeliveredCents} />
+          </Line>
+          <Line label="Visits">
+            <Visits fact={c.collectedOnDeliveredVisits} />
+          </Line>
+          <Line label="Treatment hours with the client">
+            <Hours fact={c.collectedOnDeliveredMinutes} />
+          </Line>
+          <Line label="Collected per treatment hour with the client">
+            {c.perTreatmentHourCents.known ? (
+              <p className="tabular-nums text-sm font-medium">
+                {money(c.perTreatmentHourCents.value)}
+              </p>
+            ) : (
+              <Unknown cause={c.perTreatmentHourCents.cause} />
+            )}
+          </Line>
+        </div>
+        <p className="max-w-[68ch] text-xs leading-relaxed text-fg">
+          {COLLECTED_ON_DELIVERED_IS_ONE_POPULATION}
+        </p>
+        <p className="max-w-[68ch] text-xs leading-relaxed text-fg">{PER_HOUR_POPULATION}</p>
       </section>
 
       {/* CLASS 2 — studio-attested. Exists only if somebody wrote it down. */}
@@ -500,10 +571,13 @@ function DeliveredMoney({ briefing }: { briefing: FinancialBriefing }) {
 
       {/* CLASS 3 — service value. A price, and never money. */}
       <section className="flex flex-col gap-3">
-        <SectionLabel as="h2">Service value of delivered treatment</SectionLabel>
+        <SectionLabel as="h2">Service value of delivered work</SectionLabel>
         <div className="flex flex-col">
-          <Line label="At today's prices">
-            <Money fact={c.serviceValueCents} />
+          <Line label="Treatment, at today's prices">
+            <Money fact={c.treatmentServiceValueCents} />
+          </Line>
+          <Line label="Consultations, at today's prices">
+            <Money fact={c.consultationServiceValueCents} />
           </Line>
         </div>
         <p className="max-w-[68ch] text-xs leading-relaxed text-fg">
@@ -514,10 +588,13 @@ function DeliveredMoney({ briefing }: { briefing: FinancialBriefing }) {
       <section className="flex flex-col gap-3">
         <SectionLabel as="h2">Visits with a payment recorded</SectionLabel>
         <div className="flex flex-col">
+          <Line label="Treatment visits with something to collect">
+            <Visits fact={c.chargeableTreatmentVisits} />
+          </Line>
           <Line label="Paid by card through Hone">
             <Visits fact={c.cardPaidVisits} />
           </Line>
-          <Line label="Of delivered treatment visits">
+          <Line label="Of those visits">
             {c.collectionRateBasisPoints.known ? (
               <p className="tabular-nums text-sm font-medium">
                 {percent(c.collectionRateBasisPoints.value)}
@@ -545,31 +622,13 @@ function DeliveredMoney({ briefing }: { briefing: FinancialBriefing }) {
         <SectionLabel as="h2">Where the clinic time went</SectionLabel>
         <div className="flex flex-col">
           <Line label="Treatment, with the client">
-            {c.treatmentBookedMinutes.known ? (
-              <p className="tabular-nums text-sm font-medium">
-                {hours(c.treatmentBookedMinutes.value)}
-              </p>
-            ) : (
-              <Unknown cause={c.treatmentBookedMinutes.cause} />
-            )}
+            <Hours fact={c.treatmentBookedMinutes} />
           </Line>
           <Line label="Treatment, including buffer">
-            {c.treatmentBlockedMinutes.known ? (
-              <p className="tabular-nums text-sm font-medium">
-                {hours(c.treatmentBlockedMinutes.value)}
-              </p>
-            ) : (
-              <Unknown cause={c.treatmentBlockedMinutes.cause} />
-            )}
+            <Hours fact={c.treatmentBlockedMinutes} />
           </Line>
           <Line label="Consultations, including buffer">
-            {c.consultationBlockedMinutes.known ? (
-              <p className="tabular-nums text-sm font-medium">
-                {hours(c.consultationBlockedMinutes.value)}
-              </p>
-            ) : (
-              <Unknown cause={c.consultationBlockedMinutes.cause} />
-            )}
+            <Hours fact={c.consultationBlockedMinutes} />
           </Line>
           <Line label="Share of clinic time that was consultation">
             {c.consultationTimeShareBasisPoints.known ? (
@@ -586,30 +645,37 @@ function DeliveredMoney({ briefing }: { briefing: FinancialBriefing }) {
         </p>
       </section>
 
-      {/*
-        RULING 2 — BOTH AXES NAMED IN THE LABEL ITSELF, not in a footnote.
-        Holding the numerator still and moving only the denominator across its
-        defensible choices spans roughly 4x, so a bare "per hour" figure is not
-        imprecise, it is undefined. Rendered only where there is treatment time
-        to divide by.
-      */}
-      {c.collectedPerTreatmentHourBookedCents.known ? (
-        <section className="flex flex-col gap-2 border-y border-line-strong py-6">
-          <SectionLabel as="h2">
-            Card payments collected per treatment hour with the client
-          </SectionLabel>
-          <p className="tabular-nums text-4xl font-semibold tracking-tight">
-            {money(c.collectedPerTreatmentHourBookedCents.value)}
-          </p>
-          <p className="max-w-[68ch] text-sm text-fg">
-            Net card payments in this window, divided by treatment hours with the
-            client. Free consultations are not in the divisor.
-          </p>
-        </section>
-      ) : null}
-
+      <UnattributedAllTime briefing={briefing} />
       <BasisNote briefing={briefing} />
     </>
+  );
+}
+
+/**
+ * FIN-C9, KEPT — AND MOVED OUT OF THE PERIOD.
+ *
+ * A succeeded card payment with no `charged_at` belongs to no period and can be
+ * windowed by nothing: `created_at` records when the attempt ROW was written,
+ * not when money moved, so windowing by it would file real money into a period
+ * on a guess. The first draft printed this count beside the windowed figures,
+ * where it read as a claim about the chosen period. It is still surfaced —
+ * dropping it denies money that was actually made — but it now sits in its own
+ * section and says "all time" in its own sentence.
+ */
+function UnattributedAllTime({ briefing }: { briefing: FinancialBriefing }) {
+  const fact = briefing.unattributedChargesAllTime;
+  if (!fact.known || fact.value === 0) return null;
+  return (
+    <section className="flex flex-col gap-2">
+      <SectionLabel as="h2">Card payments Hone cannot place in time (all time)</SectionLabel>
+      <p className="tabular-nums text-sm font-medium">
+        {fact.value.toLocaleString()}
+        <span className="ml-1 font-normal text-fg-muted">
+          {fact.value === 1 ? "payment" : "payments"}
+        </span>
+      </p>
+      <p className="max-w-[68ch] text-xs leading-relaxed text-fg">{UNATTRIBUTED_IS_ALL_TIME}</p>
+    </section>
   );
 }
 
@@ -632,9 +698,14 @@ function BasisNote({ briefing }: { briefing: FinancialBriefing }) {
       `${b.undatable} appointment${b.undatable === 1 ? "" : "s"} did not supply an end time Hone could read, so whether ${b.undatable === 1 ? "it has" : "they have"} finished is unknown`,
     );
   }
-  if (b.unpriced > 0) {
+  if (b.unclassifiable > 0) {
     reasons.push(
-      `${b.unpriced} delivered appointment${b.unpriced === 1 ? "" : "s"} had no service price Hone could resolve, so ${b.unpriced === 1 ? "it is" : "they are"} in neither the treatment nor the consultation figures`,
+      `${b.unclassifiable} delivered appointment${b.unclassifiable === 1 ? "" : "s"} no longer carries a service Hone can read, so whether ${b.unclassifiable === 1 ? "it was" : "they were"} treatment or consultation is unknown`,
+    );
+  }
+  if (b.unvalued > 0) {
+    reasons.push(
+      `${b.unvalued} delivered treatment visit${b.unvalued === 1 ? "" : "s"} had no price on record, so ${b.unvalued === 1 ? "it is" : "they are"} counted as delivered work with no service value`,
     );
   }
   if (b.unmeasurable > 0) {

@@ -220,10 +220,7 @@ export function unreadableCalendar(cause: FinancialUnknownCause): CalendarCensus
 // ===========================================================================
 //
 // SCOPE. Present-tense observable facts over one studio-local window. No
-// forecast, no scenario, no client projection, no capacity ratio, and no
-// utilisation: those need block ingestion, interval merging and an elapsed
-// denominator, which are Slice 3's mechanisms and are absent here rather than
-// approximated.
+// forecast, no scenario, no client projection, no capacity utilisation.
 //
 // THE THREE EVIDENCE CLASSES ARE MODELLED APART AND NEVER SUMMED.
 //
@@ -231,51 +228,63 @@ export function unreadableCalendar(cause: FinancialUnknownCause): CalendarCensus
 //   STUDIO-ATTESTED      appointment_settlements. A practitioner wrote it down.
 //   SERVICE VALUE        services.price_cents. A price, not money.
 //
-// There is deliberately NO field on the census that adds any two of them, and
-// no caller can make one without writing the addition itself in the open. A
-// single "total money" field is the whole defect this shape exists to prevent:
-// card money is verified, external money is attested and mostly absent, and
-// service value is not money at all.
+// No field on this census adds any two of them, and there is no total line.
 //
 // ---------------------------------------------------------------------------
-// RULING 1 — WHAT "DELIVERED" MEANS
+// CLASSIFICATION — `isConsultationService`, NEVER price
 // ---------------------------------------------------------------------------
 //
-//   status IN ('completed','confirmed') AND ends_at < snapshot
+// An earlier draft of this module classified a visit by `price_cents === 0`.
+// That was wrong three ways at once, and the shared predicate says so in its
+// own header: it "does not look at price, duration, or any per-studio
+// override".
 //
-// NOT `status = 'completed'`. Nothing in Hone writes a terminal status when an
-// appointment elapses, so `completed` measures ADMIN BEHAVIOUR as much as
-// delivery, and that behaviour changed sharply: the share of elapsed
-// appointments marked completed ran 0.0% -> 20.8% -> 82.6% -> 98.4% over
-// 2026-05..2026-08 in production.
+//   * A PAID consultation was counted as TREATMENT — inflating treatment
+//     hours, and putting consultation money into a treatment-yield figure.
+//   * A ZERO-DOLLAR TREATMENT (a comp, a redo, a goodwill visit) was counted
+//     as a CONSULTATION — removing real clinical work from treatment time.
+//   * It was a SECOND definition of a product concept Hone had already
+//     settled, so /financials could disagree with the public booking page,
+//     its server-side guard and the owner capacity briefing about what a
+//     consultation is.
 //
-// The inclusive definition has the opposite bias — it counts a past `confirmed`
-// row as delivered when it may have been an unrecorded no-show. Measured on
-// production: of the past-confirmed paid visits, 14 carried no clinical
-// session, no card charge and no settlement, so nothing corroborates them.
+// The predicate is the one `app/book/[slug]/PublicBookForm.tsx`, its server
+// action, and `lib/dashboard/owner-capacity.ts` all share. This module never
+// re-decides it and never infers it from price, duration or name on its own.
 //
-// BOTH BIASES VANISH INSIDE THE REPORTED WINDOW, which is why the window floor
-// below is not a nicety but the precondition for this whole module. Restricted
-// to 2026-08 the three candidate definitions — `completed` only, `completed` or
-// a clinical session, and the inclusive one — returned 35, 35 and 35. Not close:
-// identical. Outside that window they disagree by twenty points of collection
-// rate, and no choice among them would be safe.
+// THE THIRD MEMBER IS THE POINT. `appointments.service_id` is nullable and the
+// service row can be deleted, so "no service on this appointment" is a real
+// production state carrying neither modality nor name — the only two things
+// the predicate reads. It is `unknown`, not silently treatment.
+//
+// PRICE STILL DOES ONE JOB, and only one: deciding whether there was anything
+// to collect. That is what a price IS. It never decides what a visit is.
 //
 // ---------------------------------------------------------------------------
-// RULING 2 — WHAT "PER TREATMENT HOUR" MEANS
+// TWO MONEY CONTRACTS, NAMED APART — they answer different questions
 // ---------------------------------------------------------------------------
 //
-//   numerator    live-mode net collected in the window
-//   denominator  duration_minutes of DELIVERED PAID-SERVICE visits in the window
+//   CASH MOVEMENT (transaction period)
+//     Charges windowed on `charged_at`, refunds windowed on `refunded_at`,
+//     independently. This is what moved through the card rails in the period.
+//     A refund here may reverse a charge taken months earlier, so the net is
+//     movement, NOT "what this period's work earned". The count of such
+//     cross-period reversals is published rather than described in the
+//     abstract.
 //
-// Fixed here because the metric is otherwise undefined rather than merely
-// imprecise. Holding the numerator still and moving only the denominator across
-// its four defensible choices spans roughly 4x, and every point of that span is
-// arguable. Free consultations are excluded from the denominator and reported
-// separately: they are 43.6% of delivered clinical time at a $0.00 price, and
-// pooling them makes the treatment work look far less productive than it is.
+//   COLLECTED ON DELIVERED TREATMENT (service period)
+//     Restricted to visits that were BOTH delivered in this window AND paid by
+//     card in it, with each charge netted by its OWN refund whenever that
+//     refund happened. Numerator and denominator are then the SAME VISITS, so
+//     the per-hour figure is a rate over one population rather than a quotient
+//     of two different periods.
 //
-// The BLOCKED-time variant is deliberately not offered. One ruling, one number.
+// The previous draft divided cash-movement net by delivered-visit hours. Those
+// are different populations: a charge in the window can pay for a visit outside
+// it, and a visit in the window can be paid outside it. The quotient had no
+// population to be a rate OF. It is replaced, not relabelled.
+
+import { isConsultationService } from "@/lib/booking/consultation";
 
 /** The settlement vocabulary migration 0187 closes by CHECK. No card, no Hone. */
 export const SETTLEMENT_METHODS = [
@@ -294,9 +303,18 @@ const EXTERNALLY_COLLECTED: ReadonlySet<string> = new Set([
   "paid_other_external",
 ]);
 
+/**
+ * What a delivered visit IS. Same three-member vocabulary the owner capacity
+ * briefing uses, resolved through the same predicate.
+ */
+export type ServiceClass = "consultation" | "treatment" | "unknown";
+
 /** Wire shapes. PostgREST column names kept verbatim. */
-export type ServicePriceRow = {
+export type ServiceRow = {
   readonly id: string;
+  /** Read by `isConsultationService`, with `modality`. Never by this module. */
+  readonly name: string;
+  readonly modality: string | null;
   readonly price_cents: number | null;
 };
 
@@ -313,9 +331,16 @@ export type DeliveryRow = {
 export type ChargeRow = {
   readonly appointment_id: string | null;
   readonly amount_cents: number | null;
+  /** Netted against its OWN charge, whenever the refund happened. */
+  readonly refund_amount_cents: number | null;
+  readonly refund_status: string | null;
 };
 
-export type RefundRow = { readonly refund_amount_cents: number | null };
+/** `charged_at` rides along so a cross-period reversal can be COUNTED. */
+export type RefundRow = {
+  readonly refund_amount_cents: number | null;
+  readonly charged_at: string | null;
+};
 
 export type SettlementRow = {
   readonly appointment_id: string | null;
@@ -324,17 +349,27 @@ export type SettlementRow = {
 };
 
 /**
- * What the census could NOT account for.
- *
- * Same discipline as PartitionClaim: the counts stay true and the completeness
- * claim is withdrawn, rather than a row being dropped to keep a total tidy.
+ * PURE. `isConsultationService` needs only modality and name; a missing service
+ * supplies neither, so the answer is `unknown` rather than a guess.
+ */
+export function classifyService(service: ServiceRow | null | undefined): ServiceClass {
+  if (!service) return "unknown";
+  return isConsultationService(service) ? "consultation" : "treatment";
+}
+
+/**
+ * What the census could NOT account for. The counts above stay true and the
+ * completeness claim is withdrawn, rather than a row being dropped to keep a
+ * total tidy.
  */
 export type DeliveryBasis = {
   readonly complete: boolean;
   /** `ends_at` unreadable, so "has it elapsed" is unanswerable. */
   readonly undatable: number;
-  /** No service row, or a null price: the visit cannot be classed or valued. */
-  readonly unpriced: number;
+  /** No resolvable service, so the visit cannot be classified at all. */
+  readonly unclassifiable: number;
+  /** Classified TREATMENT but carrying no price, so it cannot be valued. */
+  readonly unvalued: number;
   /** `blocked_ends_at` unreadable, so chair time is unmeasurable. */
   readonly unmeasurable: number;
   /** Settlement rows naming an appointment outside this window. */
@@ -343,40 +378,46 @@ export type DeliveryBasis = {
    * Money or duration columns that did not arrive as a finite number.
    *
    * NOT COERCED TO ZERO AND NOT ADDED. A `?? 0` here would be the exact defect
-   * this whole module is shaped against: an amount nobody could read would
-   * silently become an amount of nothing, and the sum would look complete. The
-   * row is excluded from the sum and counted here instead, so the figures stay
-   * true for what was readable while the completeness claim is withdrawn.
-   *
-   * Schema says these columns are NOT NULL, so this should always be 0. It is
-   * measured rather than assumed, because "should always" is how a confident
-   * wrong total gets shipped.
+   * this module is shaped against: an amount nobody could read would silently
+   * become an amount of nothing, and the sum would look complete.
    */
   readonly unreadableAmounts: number;
 };
 
 export type DeliveredMoneyCensus = {
-  // --- delivered work -----------------------------------------------------
-  readonly deliveredPaidVisits: Fact<number>;
+  // --- delivered work, classified by the shared predicate -----------------
+  readonly deliveredTreatmentVisits: Fact<number>;
   readonly consultationVisits: Fact<number>;
+  /** Delivered, but carrying no service Hone could classify. */
+  readonly unclassifiedVisits: Fact<number>;
+  /** Treatment visits with a positive price — the ones with something to collect. */
+  readonly chargeableTreatmentVisits: Fact<number>;
 
   // --- SERVICE VALUE (a price, never money) -------------------------------
-  readonly serviceValueCents: Fact<number>;
+  readonly treatmentServiceValueCents: Fact<number>;
+  /** Kept apart so a PAID consultation's value is neither lost nor merged. */
+  readonly consultationServiceValueCents: Fact<number>;
 
-  // --- PROVIDER-VERIFIED card money ---------------------------------------
-  readonly collectedGrossCents: Fact<number>;
-  readonly refundedCents: Fact<number>;
-  readonly collectedNetCents: Fact<number>;
+  // --- CONTRACT 1: CASH MOVEMENT (transaction period) ---------------------
+  readonly movedInGrossCents: Fact<number>;
+  readonly movedOutRefundedCents: Fact<number>;
+  readonly netMovementCents: Fact<number>;
   readonly chargeCount: Fact<number>;
-  /** Succeeded rows carrying NO collection time, so they fall in NO period. */
-  readonly unattributedCharges: Fact<number>;
+  /** Of the refunds in this window, how many reverse a charge from another. */
+  readonly refundsReversingOtherPeriods: Fact<number>;
+
+  // --- CONTRACT 2: COLLECTED ON DELIVERED TREATMENT (service period) ------
+  readonly collectedOnDeliveredCents: Fact<number>;
+  readonly collectedOnDeliveredVisits: Fact<number>;
+  readonly collectedOnDeliveredMinutes: Fact<number>;
+  readonly perTreatmentHourCents: Fact<number>;
 
   // --- STUDIO-ATTESTED external money -------------------------------------
   readonly externallyAttestedCents: Fact<number>;
   readonly waivedCents: Fact<number>;
   readonly stillOwedCents: Fact<number>;
 
-  // --- the bridge between delivered work and card money -------------------
+  // --- the bridge ---------------------------------------------------------
   readonly cardPaidVisits: Fact<number>;
   readonly collectionRateBasisPoints: Fact<number>;
   readonly unresolvedVisits: Fact<number>;
@@ -388,9 +429,6 @@ export type DeliveredMoneyCensus = {
   readonly consultationBlockedMinutes: Fact<number>;
   readonly treatmentTimeShareBasisPoints: Fact<number>;
   readonly consultationTimeShareBasisPoints: Fact<number>;
-
-  // --- Ruling 2 -----------------------------------------------------------
-  readonly collectedPerTreatmentHourBookedCents: Fact<number>;
 
   readonly basis: DeliveryBasis;
 };
@@ -409,45 +447,55 @@ function finite(value: number | null | undefined): number | null {
 /**
  * PURE. The whole money census for one window.
  *
- * THE SNAPSHOT IS A PARAMETER. Every "has it elapsed" decision on this screen
- * resolves against the SAME instant the period window was anchored to, so no
- * two panels can disagree about what has happened yet. Production moved under
- * this measurement while it was being taken — delivered August visits went
- * 63 -> 64 and card-paid 34 -> 35 inside twenty-six minutes — so two reads
+ * THE SNAPSHOT IS A PARAMETER, so every "has it elapsed" decision resolves
+ * against the same instant the period window was anchored to. Production moved
+ * under this measurement while it was being specified — delivered August visits
+ * went 63 to 64 and card-paid 34 to 35 inside twenty-six minutes — so two reads
  * minutes apart legitimately disagree, and only a pinned instant makes one
  * report internally consistent.
+ *
+ * `windowStartUtc` / `windowEndUtc` are the MONEY window, and are used for one
+ * job only: deciding whether a refund in this period reverses a charge from
+ * another. Nothing else re-derives a window here.
  */
 export function summarizeDeliveredMoney(input: {
-  readonly services: readonly ServicePriceRow[];
+  readonly services: readonly ServiceRow[];
   readonly appointments: readonly DeliveryRow[];
   readonly charges: readonly ChargeRow[];
   readonly refunds: readonly RefundRow[];
   readonly settlements: readonly SettlementRow[];
-  readonly unattributedCharges: number;
   readonly snapshot: Date;
+  readonly windowStartUtc: string;
+  readonly windowEndUtc: string;
 }): DeliveredMoneyCensus {
   const at = input.snapshot.getTime();
-  const priceOf = new Map<string, number | null>();
-  for (const s of input.services) priceOf.set(s.id, finite(s.price_cents));
+  const windowStart = Date.parse(input.windowStartUtc);
+  const windowEnd = Date.parse(input.windowEndUtc);
+  const serviceById = new Map<string, ServiceRow>();
+  for (const s of input.services) serviceById.set(s.id, s);
 
   let undatable = 0;
-  let unpriced = 0;
+  let unclassifiable = 0;
+  let unvalued = 0;
   let unmeasurable = 0;
   let unreadableAmounts = 0;
 
-  const deliveredPaid = new Set<string>();
+  const deliveredTreatment = new Set<string>();
+  const chargeable = new Map<string, number>();
+  const bookedMinutesOf = new Map<string, number>();
   let consultationVisits = 0;
-  let serviceValueCents = 0;
+  let unclassifiedVisits = 0;
+  let treatmentServiceValueCents = 0;
+  let consultationServiceValueCents = 0;
   let treatmentBookedMinutes = 0;
   let treatmentBlockedMinutes = 0;
   let consultationBlockedMinutes = 0;
-  const valueOfPaidVisit = new Map<string, number>();
 
   for (const row of input.appointments) {
     if (row.status !== "completed" && row.status !== "confirmed") continue;
 
     // Guarded explicitly. `NaN < at` is false, so a bare comparison would
-    // silently file every unreadable end time as NOT delivered — an answer
+    // silently file every unreadable end time as undelivered — a wrong answer
     // that looks like a decision.
     const endsAt = parseInstant(row.ends_at);
     if (endsAt === null) {
@@ -456,9 +504,11 @@ export function summarizeDeliveredMoney(input: {
     }
     if (endsAt >= at) continue; // has not elapsed: not delivered, not a defect
 
-    const price = row.service_id === null ? null : priceOf.get(row.service_id) ?? null;
-    if (price === null) {
-      unpriced += 1;
+    const service = row.service_id === null ? null : serviceById.get(row.service_id);
+    const serviceClass = classifyService(service);
+    if (serviceClass === "unknown") {
+      unclassifiable += 1;
+      unclassifiedVisits += 1;
       continue;
     }
 
@@ -470,53 +520,127 @@ export function summarizeDeliveredMoney(input: {
         : (blockedEndsAt - startsAt) / 60_000;
     if (blockedMinutes === null) unmeasurable += 1;
 
-    if (price === 0) {
+    const price = finite(service?.price_cents);
+
+    if (serviceClass === "consultation") {
       consultationVisits += 1;
       if (blockedMinutes !== null) consultationBlockedMinutes += blockedMinutes;
+      // A consultation is USUALLY free. When it is not, its value is kept in
+      // its own line rather than folded into treatment value, so a paid
+      // consultation is neither lost nor counted as treatment earnings.
+      if (price !== null) consultationServiceValueCents += price;
       continue;
     }
 
-    deliveredPaid.add(row.id);
-    serviceValueCents += price;
-    valueOfPaidVisit.set(row.id, price);
+    deliveredTreatment.add(row.id);
+    if (blockedMinutes !== null) treatmentBlockedMinutes += blockedMinutes;
     const booked = finite(row.duration_minutes);
     if (booked === null) unreadableAmounts += 1;
-    else treatmentBookedMinutes += booked;
-    if (blockedMinutes !== null) treatmentBlockedMinutes += blockedMinutes;
-  }
+    else {
+      treatmentBookedMinutes += booked;
+      bookedMinutesOf.set(row.id, booked);
+    }
 
-  // --- PROVIDER-VERIFIED ----------------------------------------------------
-  // Windowed on `charged_at` by the caller and summed WHOLE: money that moved
-  // is money that moved, whether or not its appointment falls in this window.
-  // It is never reconciled against service value by arithmetic here.
-  let collectedGrossCents = 0;
-  const cardPaid = new Set<string>();
-  for (const c of input.charges) {
-    const amount = finite(c.amount_cents);
-    if (amount === null) unreadableAmounts += 1;
-    else collectedGrossCents += amount;
-    if (c.appointment_id !== null && deliveredPaid.has(c.appointment_id)) {
-      cardPaid.add(c.appointment_id);
+    if (price === null) {
+      // Classified treatment, but nothing establishes what it was worth. The
+      // VISIT still counts; only its value is absent.
+      unvalued += 1;
+    } else {
+      treatmentServiceValueCents += price;
+      // PRICE DECIDES ONLY ONE THING: whether there was anything to collect.
+      // A zero-value treatment is real clinical work with nothing owed on it,
+      // so it belongs in treatment time and NOT in a collection rate — "did
+      // you collect for it" has no answer when there was nothing to collect.
+      if (price > 0) chargeable.set(row.id, price);
     }
   }
-  // Windowed on `refunded_at` INDEPENDENTLY: a refund can fall in a different
-  // period from the charge it reverses, and netting it against this window's
-  // gross would move money between periods.
-  let refundedCents = 0;
-  for (const r of input.refunds) {
-    const amount = finite(r.refund_amount_cents);
-    if (amount === null) unreadableAmounts += 1;
-    else refundedCents += amount;
+
+  // --- CONTRACT 1: CASH MOVEMENT ------------------------------------------
+  let movedInGrossCents = 0;
+  const cardPaid = new Set<string>();
+  // Each charge netted by its OWN refund, whenever that refund happened. This
+  // is the service-period numerator and it never touches the window.
+  const netOnVisit = new Map<string, number>();
+  /** Visits whose card net could not be established, so they join no rate. */
+  const unnettable = new Set<string>();
+  for (const c of input.charges) {
+    const amount = finite(c.amount_cents);
+    if (amount === null) {
+      unreadableAmounts += 1;
+      continue;
+    }
+    movedInGrossCents += amount;
+    const id = c.appointment_id;
+    if (id === null || !deliveredTreatment.has(id)) continue;
+    cardPaid.add(id);
+    // A SUCCEEDED REFUND WITH AN UNREADABLE AMOUNT MAKES THE NET UNKNOWABLE.
+    // Treating it as zero would count the whole charge as collected and
+    // OVERSTATE what the visit earned — the one direction a money figure must
+    // never fail in. The visit is withdrawn from the service-period set
+    // instead, and counted.
+    let refunded = 0;
+    if (c.refund_status === "succeeded") {
+      const amountRefunded = finite(c.refund_amount_cents);
+      if (amountRefunded === null) {
+        unreadableAmounts += 1;
+        unnettable.add(id);
+        continue;
+      }
+      refunded = amountRefunded;
+    }
+    const previous = netOnVisit.get(id);
+    netOnVisit.set(id, (previous === undefined ? 0 : previous) + amount - refunded);
   }
 
-  // --- STUDIO-ATTESTED ------------------------------------------------------
+  // Windowed on `refunded_at` INDEPENDENTLY, because a refund can fall in a
+  // different period from the charge it reverses. That makes this NET a
+  // statement about cash movement, not about what this period's work earned —
+  // which is why the cross-period reversals are counted and published rather
+  // than left for the reader to assume away.
+  let movedOutRefundedCents = 0;
+  let refundsReversingOtherPeriods = 0;
+  for (const r of input.refunds) {
+    const amount = finite(r.refund_amount_cents);
+    if (amount === null) {
+      unreadableAmounts += 1;
+      continue;
+    }
+    movedOutRefundedCents += amount;
+    const chargedAt = parseInstant(r.charged_at);
+    if (chargedAt === null || chargedAt < windowStart || chargedAt >= windowEnd) {
+      refundsReversingOtherPeriods += 1;
+    }
+  }
+
+  // --- CONTRACT 2: COLLECTED ON DELIVERED TREATMENT -----------------------
+  // Delivered in this window AND paid by card in it. Numerator and denominator
+  // are the SAME VISITS, so the per-hour figure is a rate over one population.
+  let collectedOnDeliveredCents = 0;
+  let collectedOnDeliveredMinutes = 0;
+  let collectedOnDeliveredVisits = 0;
+  for (const [id, net] of netOnVisit) {
+    if (unnettable.has(id)) continue;
+    const minutes = bookedMinutesOf.get(id);
+    // A visit whose booked time could not be read cannot join a per-hour rate:
+    // including its money over no time would inflate the rate without bound.
+    if (minutes === undefined) continue;
+    collectedOnDeliveredCents += net;
+    collectedOnDeliveredMinutes += minutes;
+    collectedOnDeliveredVisits += 1;
+  }
+  const perTreatmentHourCents =
+    collectedOnDeliveredMinutes === 0
+      ? unknownBecause<number>("not_recorded")
+      : known(Math.round(collectedOnDeliveredCents / (collectedOnDeliveredMinutes / 60)));
+
+  // --- STUDIO-ATTESTED ----------------------------------------------------
   let externallyAttestedCents = 0;
   let waivedCents = 0;
   let stillOwedCents = 0;
   let settlementsOutsideWindow = 0;
   const settled = new Set<string>();
   for (const s of input.settlements) {
-    if (s.appointment_id === null || !deliveredPaid.has(s.appointment_id)) {
+    if (s.appointment_id === null || !deliveredTreatment.has(s.appointment_id)) {
       settlementsOutsideWindow += 1;
       continue;
     }
@@ -533,34 +657,33 @@ export function summarizeDeliveredMoney(input: {
 
   // NOTHING ATTESTED IS NOT NOTHING COLLECTED. An absent settlement row means
   // nobody wrote it down, which is exactly the state production is in: one row
-  // in the entire database, and none for this studio. Rendering 0 here would
-  // tell an owner who takes cash every week that she took none — the single
-  // most damaging sentence this surface could print. Operator decision 4.
+  // in the entire database, and none for this studio. Rendering 0 would tell an
+  // owner who takes cash every week that she took none. Operator decision 4.
   const nothingAttested = input.settlements.length === 0;
   const attested = (cents: number): Fact<number> =>
     nothingAttested ? unknownBecause<number>("not_recorded") : known(cents);
 
-  // --- the bridge -----------------------------------------------------------
+  // --- the bridge ---------------------------------------------------------
   let unresolvedVisits = 0;
   let unresolvedServiceValueCents = 0;
-  // Iterated over the VALUE MAP rather than the id set, so the visit and its
-  // price come from the same entry. Looking the price up by id would need a
-  // fallback for a miss that cannot happen, and a `?? 0` fallback in a money
-  // sum is indistinguishable from a real zero at the point it is read.
-  for (const [id, value] of valueOfPaidVisit) {
-    if (cardPaid.has(id) || settled.has(id)) continue;
+  let cardPaidChargeable = 0;
+  for (const [id, value] of chargeable) {
+    if (cardPaid.has(id)) {
+      cardPaidChargeable += 1;
+      continue;
+    }
+    if (settled.has(id)) continue;
     unresolvedVisits += 1;
     unresolvedServiceValueCents += value;
   }
 
-  const deliveredCount = deliveredPaid.size;
-  // VISIT COUNT ON BOTH SIDES. Never dollars: the numerator would be an
-  // operator-authored till total and the denominator a mutable menu price, and
-  // that quotient is not a rate of anything.
+  // VISIT COUNT ON BOTH SIDES, over the visits that had something to collect.
+  // Never dollars: the numerator would be an operator-authored till total and
+  // the denominator a mutable menu price, and that quotient is not a rate.
   const collectionRateBasisPoints =
-    deliveredCount === 0
+    chargeable.size === 0
       ? unknownBecause<number>("not_recorded")
-      : known(Math.round((cardPaid.size / deliveredCount) * 10_000));
+      : known(Math.round((cardPaidChargeable / chargeable.size) * 10_000));
 
   const clinicalMinutes = treatmentBlockedMinutes + consultationBlockedMinutes;
   const share = (part: number): Fact<number> =>
@@ -568,29 +691,31 @@ export function summarizeDeliveredMoney(input: {
       ? unknownBecause<number>("not_recorded")
       : known(Math.round((part / clinicalMinutes) * 10_000));
 
-  const collectedNetCents = collectedGrossCents - refundedCents;
-  const collectedPerTreatmentHourBookedCents =
-    treatmentBookedMinutes === 0
-      ? unknownBecause<number>("not_recorded")
-      : known(Math.round(collectedNetCents / (treatmentBookedMinutes / 60)));
-
   return {
-    deliveredPaidVisits: known(deliveredCount),
+    deliveredTreatmentVisits: known(deliveredTreatment.size),
     consultationVisits: known(consultationVisits),
+    unclassifiedVisits: known(unclassifiedVisits),
+    chargeableTreatmentVisits: known(chargeable.size),
 
-    serviceValueCents: known(serviceValueCents),
+    treatmentServiceValueCents: known(treatmentServiceValueCents),
+    consultationServiceValueCents: known(consultationServiceValueCents),
 
-    collectedGrossCents: known(collectedGrossCents),
-    refundedCents: known(refundedCents),
-    collectedNetCents: known(collectedNetCents),
+    movedInGrossCents: known(movedInGrossCents),
+    movedOutRefundedCents: known(movedOutRefundedCents),
+    netMovementCents: known(movedInGrossCents - movedOutRefundedCents),
     chargeCount: known(input.charges.length),
-    unattributedCharges: known(input.unattributedCharges),
+    refundsReversingOtherPeriods: known(refundsReversingOtherPeriods),
+
+    collectedOnDeliveredCents: known(collectedOnDeliveredCents),
+    collectedOnDeliveredVisits: known(collectedOnDeliveredVisits),
+    collectedOnDeliveredMinutes: known(collectedOnDeliveredMinutes),
+    perTreatmentHourCents,
 
     externallyAttestedCents: attested(externallyAttestedCents),
     waivedCents: attested(waivedCents),
     stillOwedCents: attested(stillOwedCents),
 
-    cardPaidVisits: known(cardPaid.size),
+    cardPaidVisits: known(cardPaidChargeable),
     collectionRateBasisPoints,
     unresolvedVisits: known(unresolvedVisits),
     unresolvedServiceValueCents: known(unresolvedServiceValueCents),
@@ -601,17 +726,17 @@ export function summarizeDeliveredMoney(input: {
     treatmentTimeShareBasisPoints: share(treatmentBlockedMinutes),
     consultationTimeShareBasisPoints: share(consultationBlockedMinutes),
 
-    collectedPerTreatmentHourBookedCents,
-
     basis: {
       complete:
         undatable === 0 &&
-        unpriced === 0 &&
+        unclassifiable === 0 &&
+        unvalued === 0 &&
         unmeasurable === 0 &&
         settlementsOutsideWindow === 0 &&
         unreadableAmounts === 0,
       undatable,
-      unpriced,
+      unclassifiable,
+      unvalued,
       unmeasurable,
       settlementsOutsideWindow,
       unreadableAmounts,
@@ -621,25 +746,30 @@ export function summarizeDeliveredMoney(input: {
 
 /**
  * A money census that could not be established, EVERY line carrying the same
- * cause.
- *
- * Deliberately not partial. A failed or truncated read tells us nothing about
- * any individual figure, and publishing the lines that happened to arrive is
- * how a confident, understated money screen reaches an owner.
+ * cause. Deliberately not partial: a failed or truncated read tells us nothing
+ * about any individual figure, and publishing the lines that happened to arrive
+ * is how a confident, understated money screen reaches an owner.
  */
 export function unreadableDeliveredMoney(
   cause: FinancialUnknownCause,
 ): DeliveredMoneyCensus {
   const absent = unknownBecause<number>(cause);
   return {
-    deliveredPaidVisits: absent,
+    deliveredTreatmentVisits: absent,
     consultationVisits: absent,
-    serviceValueCents: absent,
-    collectedGrossCents: absent,
-    refundedCents: absent,
-    collectedNetCents: absent,
+    unclassifiedVisits: absent,
+    chargeableTreatmentVisits: absent,
+    treatmentServiceValueCents: absent,
+    consultationServiceValueCents: absent,
+    movedInGrossCents: absent,
+    movedOutRefundedCents: absent,
+    netMovementCents: absent,
     chargeCount: absent,
-    unattributedCharges: absent,
+    refundsReversingOtherPeriods: absent,
+    collectedOnDeliveredCents: absent,
+    collectedOnDeliveredVisits: absent,
+    collectedOnDeliveredMinutes: absent,
+    perTreatmentHourCents: absent,
     externallyAttestedCents: absent,
     waivedCents: absent,
     stillOwedCents: absent,
@@ -652,11 +782,11 @@ export function unreadableDeliveredMoney(
     consultationBlockedMinutes: absent,
     treatmentTimeShareBasisPoints: absent,
     consultationTimeShareBasisPoints: absent,
-    collectedPerTreatmentHourBookedCents: absent,
     basis: {
       complete: false,
       undatable: 0,
-      unpriced: 0,
+      unclassifiable: 0,
+      unvalued: 0,
       unmeasurable: 0,
       settlementsOutsideWindow: 0,
       unreadableAmounts: 0,
