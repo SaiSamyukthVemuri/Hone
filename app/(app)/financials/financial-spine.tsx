@@ -13,6 +13,7 @@ import {
   DELIVERED_MEANS,
   MONEY_WINDOW_IS_NARROWER,
   NO_PAYMENT_RECORDED_IS_NOT_OWED,
+  PAID_BUT_NOTHING_TO_COLLECT,
   PER_HOUR_POPULATION,
   PAST_STILL_CONFIRMED_IS_A_RECORD_STATE,
   PERIOD_IS_BEFORE_MONEY_WINDOW,
@@ -531,7 +532,7 @@ function DeliveredMoney({ briefing }: { briefing: FinancialBriefing }) {
           <Line label="Collected by card, after refunds on those visits">
             <Money fact={c.collectedOnDeliveredCents} />
           </Line>
-          <Line label="Visits">
+          <Line label="Treatment visits paid by card in this window">
             <Visits fact={c.collectedOnDeliveredVisits} />
           </Line>
           <Line label="Treatment hours with the client">
@@ -591,7 +592,7 @@ function DeliveredMoney({ briefing }: { briefing: FinancialBriefing }) {
           <Line label="Treatment visits with something to collect">
             <Visits fact={c.chargeableTreatmentVisits} />
           </Line>
-          <Line label="Paid by card through Hone">
+          <Line label="Of those, paid by card through Hone">
             <Visits fact={c.cardPaidVisits} />
           </Line>
           <Line label="Of those visits">
@@ -613,6 +614,17 @@ function DeliveredMoney({ briefing }: { briefing: FinancialBriefing }) {
         <p className="max-w-[68ch] text-xs leading-relaxed text-fg">
           {COLLECTION_RATE_IS_VISITS}
         </p>
+        {/*
+          The two paid-visit counts on this screen differ by exactly this, and
+          only when it happens. Measured rather than described: a standing
+          caveat about a case that almost never arises is noise, while an
+          unexplained mismatch between two adjacent numbers is a bug report.
+        */}
+        {c.cardPaidWithoutAPrice.known && c.cardPaidWithoutAPrice.value > 0 ? (
+          <p className="max-w-[68ch] text-xs leading-relaxed text-fg">
+            {PAID_BUT_NOTHING_TO_COLLECT}
+          </p>
+        ) : null}
         <p className="max-w-[68ch] text-xs leading-relaxed text-fg">
           {NO_PAYMENT_RECORDED_IS_NOT_OWED}
         </p>

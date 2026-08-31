@@ -179,6 +179,16 @@ export const PER_HOUR_POPULATION =
 export const UNATTRIBUTED_IS_ALL_TIME =
   "These card payments succeeded but carry no collection time, so Hone cannot place them in any period. The count is all time, not this period, and they are in none of the figures above.";
 
+/**
+ * The one place the screen's two paid-visit counts legitimately differ.
+ *
+ * Shown ONLY when it actually happens. A visit priced at nothing that was still
+ * charged belongs in the service-period figures — money landed on it — and
+ * outside the collection rate, because there was nothing to collect.
+ */
+export const PAID_BUT_NOTHING_TO_COLLECT =
+  "A card payment landed on treatment that carried no price. Those visits are in the collected figures above, and outside the collection rate below, because there was nothing to collect on them.";
+
 /** A consultation is decided by the service, never by its price. */
 export const CONSULTATION_IS_A_SERVICE_KIND =
   "Consultation or treatment is taken from the service itself, the same way the booking page decides it. A consultation you charge for is still a consultation, and a treatment you do not charge for is still treatment.";

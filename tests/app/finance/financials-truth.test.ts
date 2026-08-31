@@ -233,20 +233,47 @@ describe("P2-A — consultation is decided by the shared predicate, never by pri
     expect(CODE.model).toContain("isConsultationService");
   });
 
-  it("NO price comparison decides what a visit IS", () => {
-    // The defect this replaces: `price_cents === 0` meant a PAID consultation
-    // was counted as treatment and a ZERO-DOLLAR treatment as a consultation.
-    // Price still decides whether there was anything to COLLECT, which is a
-    // different question and is asserted separately below.
-    for (const forbidden of [
-      /price_cents\s*===\s*0/,
-      /price_cents\s*!==\s*0/,
-      /price\s*===\s*0\s*\)\s*\{?\s*(consultation|isConsult)/i,
-      /consultation[\w]*\s*=\s*[^;\n]*price/i,
-      /isConsult[\w]*\s*=\s*[^;\n]*price/i,
-    ]) {
-      expect(ALL_CODE, String(forbidden)).not.toMatch(forbidden);
-    }
+  it("EVERY price comparison in the model is one of the three that may exist", () => {
+    // AN ENUMERATION, NOT A DENYLIST, and the reason is the defect this
+    // replaced. The old code classified with `if (price === 0)` — a LOCAL. A
+    // denylist written against the column name (`price_cents === 0`) would
+    // never have matched it, and a future author reintroducing the defect would
+    // reach for the local again. Pinning the exact SET means any new price
+    // comparison fails here and has to be justified in the open, whatever it is
+    // spelled.
+    //
+    // The three permitted comparisons all answer "what was this worth", never
+    // "what was this":
+    //   === null  ->  cannot be valued
+    //   !== null  ->  a consultation's own value line
+    //   > 0       ->  there was something to collect
+    const comparisons = [
+      ...CODE.model.matchAll(/[^\n]*\bprice\w*\s*(===|!==|>=|<=|>|<)[^\n]*/g),
+    ].map((m) => m[0].trim());
+    expect(comparisons).toEqual([
+      "if (price !== null) consultationServiceValueCents += price;",
+      "if (price === null) {",
+      "if (price > 0) chargeable.set(row.id, price);",
+    ]);
+  });
+
+  it("THE PREDICATE'S OWN BODY never mentions price, whatever the spelling", () => {
+    // `classifyService` is the authority. If price cannot reach it, no spelling
+    // of a price test can decide what a visit is.
+    const start = CODE.model.indexOf("export function classifyService(");
+    expect(start).toBeGreaterThan(-1);
+    const body = CODE.model.slice(start, CODE.model.indexOf("\n}", start));
+    expect(body).not.toMatch(/price/i);
+    expect(body).toContain("isConsultationService");
+  });
+
+  it("the consultation branch is keyed on the CLASS, never on a value", () => {
+    expect(CODE.model).toContain('if (serviceClass === "consultation")');
+    expect(CODE.model).toContain('if (serviceClass === "unknown")');
+    // And a price test never gates a classification, in either spelling.
+    expect(ALL_CODE).not.toMatch(
+      /\bprice\w*\s*(===|!==)\s*0\s*\)[\s\S]{0,80}?(consultation|treatment)/i,
+    );
   });
 
   it("the predicate's own inputs are read, and nothing else", () => {

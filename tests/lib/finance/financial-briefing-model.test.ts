@@ -460,6 +460,49 @@ describe("P2-A — classification comes from the shared predicate, not from pric
     expect(classifyService(undefined)).toBe("unknown");
   });
 
+  it("a card payment on a PRICELESS treatment reconciles the two paid-visit counts", () => {
+    // The two counts on the screen legitimately differ here, and this is the
+    // field that explains the gap rather than leaving it to be read as a bug:
+    // the visit is in the service-period figures (money landed on it) and
+    // outside the collection rate (there was nothing to collect).
+    const c = census({
+      appointments: [appt({ id: "paid" }), appt({ id: "free", service_id: FREE_TREATMENT })],
+      charges: [charge({ appointment_id: "paid" }), charge({ appointment_id: "free", amount_cents: 2_000 })],
+    });
+    expect(value(c.collectedOnDeliveredVisits)).toBe(2); // money landed on both
+    expect(value(c.cardPaidVisits)).toBe(1); // only one had something to collect
+    expect(value(c.cardPaidWithoutAPrice)).toBe(1); // and this is the difference
+    expect(value(c.collectedOnDeliveredVisits) - value(c.cardPaidVisits)).toBe(
+      value(c.cardPaidWithoutAPrice),
+    );
+    // The rate is still over the chargeable set only, and is still 100%.
+    expect(value(c.collectionRateBasisPoints)).toBe(10_000);
+  });
+
+  it("is ZERO when every card-paid treatment carried a price", () => {
+    // The screen shows the reconciliation line only when it is non-zero, so a
+    // false positive here would put a standing caveat on an ordinary period.
+    const c = census({
+      appointments: [appt({ id: "a" })],
+      charges: [charge({ appointment_id: "a" })],
+    });
+    expect(value(c.cardPaidWithoutAPrice)).toBe(0);
+    expect(value(c.collectedOnDeliveredVisits)).toBe(value(c.cardPaidVisits));
+  });
+
+  it("THE PAYMENTS COUNT DESCRIBES THE SAME SET THE GROSS SUMS", () => {
+    // Counting the returned ROWS would print "2 payments" beside a total that
+    // summed one of them.
+    const c = census({
+      appointments: [appt({ id: "a" })],
+      charges: [charge({ appointment_id: "a" }), charge({ appointment_id: "a", amount_cents: null })],
+    });
+    expect(value(c.movedInGrossCents)).toBe(15_000);
+    expect(value(c.chargeCount)).toBe(1);
+    expect(c.basis.unreadableAmounts).toBe(1);
+    expect(c.basis.complete).toBe(false);
+  });
+
   it("a delivered TREATMENT with no price is counted but not valued", () => {
     const c = census({
       services: [...SERVICES, { id: "svc-null", name: "Session", modality: "electrolysis", price_cents: null }],

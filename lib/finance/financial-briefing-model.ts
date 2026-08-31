@@ -419,6 +419,15 @@ export type DeliveredMoneyCensus = {
 
   // --- the bridge ---------------------------------------------------------
   readonly cardPaidVisits: Fact<number>;
+  /**
+   * Card-paid delivered treatment visits that carried NO positive price.
+   *
+   * They are outside the collection rate — "did you collect for it" has no
+   * answer when there was nothing to collect — but they ARE inside the
+   * service-period figures, because money did land on them. This count is what
+   * makes the two paid-visit numbers on the screen reconcile.
+   */
+  readonly cardPaidWithoutAPrice: Fact<number>;
   readonly collectionRateBasisPoints: Fact<number>;
   readonly unresolvedVisits: Fact<number>;
   readonly unresolvedServiceValueCents: Fact<number>;
@@ -557,6 +566,12 @@ export function summarizeDeliveredMoney(input: {
 
   // --- CONTRACT 1: CASH MOVEMENT ------------------------------------------
   let movedInGrossCents = 0;
+  // COUNTED, NOT `input.charges.length`. A charge whose amount could not be
+  // read is excluded from the gross above, so counting the returned ROWS would
+  // print "N payments" beside a total that sums fewer than N of them. The count
+  // and the sum now describe the same set; the excluded rows are disclosed by
+  // `basis.unreadableAmounts`.
+  let summedCharges = 0;
   const cardPaid = new Set<string>();
   // Each charge netted by its OWN refund, whenever that refund happened. This
   // is the service-period numerator and it never touches the window.
@@ -570,6 +585,7 @@ export function summarizeDeliveredMoney(input: {
       continue;
     }
     movedInGrossCents += amount;
+    summedCharges += 1;
     const id = c.appointment_id;
     if (id === null || !deliveredTreatment.has(id)) continue;
     cardPaid.add(id);
@@ -667,6 +683,22 @@ export function summarizeDeliveredMoney(input: {
   let unresolvedVisits = 0;
   let unresolvedServiceValueCents = 0;
   let cardPaidChargeable = 0;
+  // THE ONE PLACE THE SCREEN'S TWO PAID-VISIT COUNTS CAN DISAGREE, measured
+  // rather than left for a reader to notice.
+  //
+  // "Paid by card" under the collection rate counts visits that HAD SOMETHING
+  // TO COLLECT and were collected. The service-period section counts every
+  // delivered treatment visit a card payment landed on. A visit priced at
+  // nothing, or carrying no price at all, that was nonetheless charged sits in
+  // the second and not the first — so the two numbers differ, both correctly.
+  //
+  // Rather than describe that possibility in prose, it is counted here and
+  // shown only when it actually happens. Production holds three null-priced
+  // services today, so this is reachable, not hypothetical.
+  let cardPaidWithoutAPrice = 0;
+  for (const id of cardPaid) {
+    if (!chargeable.has(id)) cardPaidWithoutAPrice += 1;
+  }
   for (const [id, value] of chargeable) {
     if (cardPaid.has(id)) {
       cardPaidChargeable += 1;
@@ -703,7 +735,7 @@ export function summarizeDeliveredMoney(input: {
     movedInGrossCents: known(movedInGrossCents),
     movedOutRefundedCents: known(movedOutRefundedCents),
     netMovementCents: known(movedInGrossCents - movedOutRefundedCents),
-    chargeCount: known(input.charges.length),
+    chargeCount: known(summedCharges),
     refundsReversingOtherPeriods: known(refundsReversingOtherPeriods),
 
     collectedOnDeliveredCents: known(collectedOnDeliveredCents),
@@ -716,6 +748,7 @@ export function summarizeDeliveredMoney(input: {
     stillOwedCents: attested(stillOwedCents),
 
     cardPaidVisits: known(cardPaidChargeable),
+    cardPaidWithoutAPrice: known(cardPaidWithoutAPrice),
     collectionRateBasisPoints,
     unresolvedVisits: known(unresolvedVisits),
     unresolvedServiceValueCents: known(unresolvedServiceValueCents),
@@ -774,6 +807,7 @@ export function unreadableDeliveredMoney(
     waivedCents: absent,
     stillOwedCents: absent,
     cardPaidVisits: absent,
+    cardPaidWithoutAPrice: absent,
     collectionRateBasisPoints: absent,
     unresolvedVisits: absent,
     unresolvedServiceValueCents: absent,
