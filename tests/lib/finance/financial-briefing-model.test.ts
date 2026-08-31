@@ -490,6 +490,30 @@ describe("P2-A — classification comes from the shared predicate, not from pric
     expect(value(c.collectedOnDeliveredVisits)).toBe(value(c.cardPaidVisits));
   });
 
+  it("the reconciliation is EXACT only while nothing was unreadable", () => {
+    // The boundary, recorded rather than assumed. `cardPaidWithoutAPrice`
+    // explains the gap in ONE direction — money on a priceless visit. A
+    // card-paid visit whose chair time could not be read drops out of the
+    // service-period count in the OTHER direction, so the plain subtraction no
+    // longer lands on it. That second case is disclosed by `basis`, not by the
+    // reconciling sentence, and the copy deliberately does not claim to be the
+    // whole difference.
+    const c = census({
+      appointments: [appt({ id: "a" }), appt({ id: "b", duration_minutes: null })],
+      charges: [charge({ appointment_id: "a" }), charge({ appointment_id: "b" })],
+    });
+    expect(value(c.cardPaidVisits)).toBe(2); // both had something to collect
+    expect(value(c.collectedOnDeliveredVisits)).toBe(1); // one has no divisor
+    expect(value(c.cardPaidWithoutAPrice)).toBe(0); // and neither was priceless
+    // So the subtraction does NOT equal the reconciling field here...
+    expect(value(c.collectedOnDeliveredVisits) - value(c.cardPaidVisits)).not.toBe(
+      value(c.cardPaidWithoutAPrice),
+    );
+    // ...and the reason is carried by the basis instead.
+    expect(c.basis.unreadableAmounts).toBe(1);
+    expect(c.basis.complete).toBe(false);
+  });
+
   it("THE PAYMENTS COUNT DESCRIBES THE SAME SET THE GROSS SUMS", () => {
     // Counting the returned ROWS would print "2 payments" beside a total that
     // summed one of them.
