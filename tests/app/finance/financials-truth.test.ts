@@ -344,6 +344,40 @@ describe("P2-D — the unattributed count is all-time, and says so", () => {
     expect(CODE.loader).toContain('.is("charged_at", null)');
     expect(CODE.spine).toContain("UnattributedAllTime");
   });
+
+  it("its read is INDEPENDENT of the money window, structurally", () => {
+    // It used to ride inside the ledger bundle, so a period below the money
+    // floor suppressed an ALL-TIME figure for a reason that had nothing to do
+    // with it. Its own reader makes the independence structural rather than a
+    // comment, and that reader takes no window arguments at all.
+    expect(CODE.loader).toContain("async function readUnattributedChargeCount(");
+    const reader = CODE.loader.slice(
+      CODE.loader.indexOf("async function readUnattributedChargeCount("),
+    );
+    const body = reader.slice(0, reader.indexOf("\n}"));
+    expect(body).toContain('.is("charged_at", null)');
+    for (const windowed of ["startUtc", "endUtc", "moneyStartUtc", '.gte(', '.lt(']) {
+      expect(body, windowed).not.toContain(windowed);
+    }
+  });
+
+  it("NEVER reports its absence as not_yet_supported", () => {
+    // That cause's sentence says Hone can answer this and does not answer it
+    // yet. Hone answers it in every period, so the sentence would be false —
+    // which is the one thing this whole surface exists to prevent.
+    expect(CODE.loader).not.toContain("not_yet_supported");
+    expect(UNKNOWN_EXPLANATION.not_yet_supported).toMatch(/later release/);
+  });
+
+  it("an UNKNOWN count does not render identically to a zero one", () => {
+    // Returning null for both made "Hone could not look" indistinguishable
+    // from "there are none" — the same collapse financial-copy.ts refuses when
+    // it rejects a shared "Not available".
+    expect(CODE.spine).toContain("if (fact.known && fact.value === 0) return null;");
+    expect(CODE.spine).not.toContain("if (!fact.known || fact.value === 0) return null;");
+    const section = CODE.spine.slice(CODE.spine.indexOf("function UnattributedAllTime("));
+    expect(section.slice(0, section.indexOf("\n}"))).toContain("<Unknown cause={fact.cause} />");
+  });
 });
 
 describe("NC-snapshot — one instant, passed as a parameter", () => {

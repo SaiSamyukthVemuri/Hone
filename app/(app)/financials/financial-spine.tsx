@@ -664,16 +664,28 @@ function DeliveredMoney({ briefing }: { briefing: FinancialBriefing }) {
  */
 function UnattributedAllTime({ briefing }: { briefing: FinancialBriefing }) {
   const fact = briefing.unattributedChargesAllTime;
-  if (!fact.known || fact.value === 0) return null;
+  // A KNOWN ZERO IS A NON-EVENT and says nothing worth a section: Hone looked,
+  // and every payment it has is placeable in time.
+  //
+  // AN UNKNOWN IS NOT THAT, and must not look like it. Returning null for both
+  // made "Hone could not look" indistinguishable from "there are none" — the
+  // exact collapse this surface refuses everywhere else, and the reason
+  // financial-copy.ts rejects a shared "Not available". So the section renders,
+  // carrying its cause.
+  if (fact.known && fact.value === 0) return null;
   return (
     <section className="flex flex-col gap-2">
       <SectionLabel as="h2">Card payments Hone cannot place in time (all time)</SectionLabel>
-      <p className="tabular-nums text-sm font-medium">
-        {fact.value.toLocaleString()}
-        <span className="ml-1 font-normal text-fg-muted">
-          {fact.value === 1 ? "payment" : "payments"}
-        </span>
-      </p>
+      {fact.known ? (
+        <p className="tabular-nums text-sm font-medium">
+          {fact.value.toLocaleString()}
+          <span className="ml-1 font-normal text-fg-muted">
+            {fact.value === 1 ? "payment" : "payments"}
+          </span>
+        </p>
+      ) : (
+        <Unknown cause={fact.cause} />
+      )}
       <p className="max-w-[68ch] text-xs leading-relaxed text-fg">{UNATTRIBUTED_IS_ALL_TIME}</p>
     </section>
   );

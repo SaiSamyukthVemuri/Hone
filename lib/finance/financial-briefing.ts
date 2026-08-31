@@ -212,11 +212,19 @@ export async function loadFinancialsView(
     : endUtc;
 
   const supabase = supabaseClient ?? (await createClient());
-  const [appointments, ledgers] = await Promise.all([
+  const [appointments, ledgers, unattributed] = await Promise.all([
     readAppointments(supabase, studio.id, startUtc, endUtc),
     moneyCovered
       ? readMoneyLedgers(supabase, studio.id, moneyStartUtc, endUtc)
       : Promise.resolve(null),
+    // ISSUED UNCONDITIONALLY, and that is the point. This count is ALL-TIME, so
+    // the money window's floor has no bearing on it. It used to ride inside the
+    // ledger bundle, which meant a period below the floor suppressed an
+    // all-time figure for a reason that had nothing to do with it — and then
+    // reported the absence with a cause that said Hone could not answer this
+    // yet, which is untrue in every other period. Reading it separately makes
+    // the independence structural instead of a comment.
+    readUnattributedChargeCount(supabase, studio.id),
   ]);
 
   // ONE ROW SET, TWO CENSUSES. The money census narrows the SAME rows to its own
@@ -261,10 +269,7 @@ export async function loadFinancialsView(
       label: range.label,
       calendar,
       evidenceInstant: now.toISOString(),
-      unattributedChargesAllTime:
-        ledgers === null || !ledgers.ok
-          ? unknownBecause<number>(ledgers?.cause ?? "not_yet_supported")
-          : known(ledgers.unattributedCharges),
+      unattributedChargesAllTime: unattributed,
       money: moneyCovered
         ? {
             covered: true,
@@ -342,7 +347,6 @@ type MoneyLedgers =
       readonly charges: readonly ChargeRow[];
       readonly refunds: readonly RefundRow[];
       readonly settlements: readonly SettlementRow[];
-      readonly unattributedCharges: number;
       readonly ledgerOpensAt: string | null;
     }
   | { readonly ok: false; readonly cause: FinancialUnknownCause };
@@ -367,7 +371,7 @@ async function readMoneyLedgers(
       .eq("status", "succeeded")
       .eq("stripe_livemode", livemode);
 
-  const [services, charges, refunds, settlements, unattributed, opened] =
+  const [services, charges, refunds, settlements, opened] =
     await Promise.all([
       supabase
         .from("services")
@@ -404,13 +408,6 @@ async function readMoneyLedgers(
       // them rather than dropping money that was actually made.
       supabase
         .from("payment_charge_attempts")
-        .select("id", { count: "exact", head: true })
-        .eq("studio_id", studioId)
-        .eq("status", "succeeded")
-        .eq("stripe_livemode", livemode)
-        .is("charged_at", null),
-      supabase
-        .from("payment_charge_attempts")
         .select("charged_at")
         .eq("studio_id", studioId)
         .eq("status", "succeeded")
@@ -431,9 +428,6 @@ async function readMoneyLedgers(
   for (const part of [s, c, r, t]) {
     if (!part.ok) return { ok: false, cause: part.cause };
   }
-  if (unattributed.error || typeof unattributed.count !== "number") {
-    return { ok: false, cause: "unavailable" };
-  }
   if (opened.error) return { ok: false, cause: "unavailable" };
 
   const openedRows = (opened.data ?? []) as ReadonlyArray<{ charged_at: string | null }>;
@@ -444,9 +438,46 @@ async function readMoneyLedgers(
     charges: c.ok ? c.rows : [],
     refunds: r.ok ? r.rows : [],
     settlements: t.ok ? t.rows : [],
-    unattributedCharges: unattributed.count,
     ledgerOpensAt: openedRows[0]?.charged_at ?? null,
   };
+}
+
+/**
+ * The ALL-TIME count of succeeded card payments carrying NO collection time.
+ *
+ * ITS OWN READ, DELIBERATELY. These rows have `charged_at IS NULL`, so they
+ * belong to no period and can be windowed by nothing: `created_at` records when
+ * the ATTEMPT ROW was written, not when money moved, and windowing by it would
+ * file real money into a period on a guess. Being period-independent, it must
+ * not be suppressed by the money window's floor either — which is what happened
+ * while it travelled inside the ledger bundle.
+ *
+ * A HEAD count: no rows are transferred, so there is no row ceiling to clear
+ * and no completeness comparison to make. The count IS the answer.
+ *
+ * THE ONLY ABSENT PATH IS A FAILED READ, and `unavailable` is the true thing to
+ * say about it — "a read Hone depends on did not come back". It is never
+ * `not_yet_supported`: Hone supports this figure, and a sentence claiming a
+ * later release would tell the owner something false about their own studio.
+ */
+async function readUnattributedChargeCount(
+  supabase: SupabaseClient,
+  studioId: string,
+): Promise<Fact<number>> {
+  // Spelled exactly as every other ledger read spells it, so the source guard
+  // that requires BOTH filters on EVERY payment_charge_attempts read stays an
+  // exact-string check rather than a pattern a new spelling could slip past.
+  const livemode = inferStripeLivemode();
+  const { error, count } = await supabase
+    .from("payment_charge_attempts")
+    .select("id", { count: "exact", head: true })
+    .eq("studio_id", studioId)
+    .eq("status", "succeeded")
+    .eq("stripe_livemode", livemode)
+    .is("charged_at", null);
+
+  if (error || typeof count !== "number") return unknownBecause<number>("unavailable");
+  return known(count);
 }
 
 /**

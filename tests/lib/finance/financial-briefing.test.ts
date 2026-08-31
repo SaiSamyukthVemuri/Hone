@@ -490,14 +490,61 @@ describe("P2-D — the unattributed count never rides on the period", () => {
     expect(filters.some((f) => f.args[0] === "created_at")).toBe(false);
   });
 
-  it("is UNKNOWN, not zero, when the period is below the money floor", async () => {
-    // Below the floor no ledger read is issued at all, so the count is not
-    // established — and an unestablished count must never render as none.
+  it("IS STILL ESTABLISHED when the period is below the money floor", async () => {
+    // The count is ALL-TIME, so the money window's floor has no bearing on it.
+    // It previously rode inside the ledger bundle, which meant a July period
+    // suppressed an all-time figure for an unrelated reason — and reported the
+    // absence as `not_yet_supported`, whose sentence claims Hone cannot answer
+    // this yet. Hone answers it in every other period, so that was untrue.
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-15T16:00:00.000Z"));
     const { client } = stubTables({});
     const b = granted(await loadFinancialsView(OWNER, studio("America/Toronto"), "month", client));
+
+    expect(b.money.covered).toBe(false); // the money window IS withheld...
+    expect(b.unattributedChargesAllTime.known).toBe(true); // ...and this is not
+  });
+
+  it("NEVER carries not_yet_supported — Hone does support this figure", async () => {
+    // The only absent path is a failed read, and the true thing to say about
+    // that is `unavailable`. A `not_yet_supported` sentence would tell the
+    // owner something false about their own studio.
+    const failing = {
+      from: () => {
+        const proxy: unknown = new Proxy(
+          {},
+          {
+            get: (_t, prop) => {
+              if (prop === "then") {
+                return (res: (v: unknown) => unknown) =>
+                  Promise.resolve({ data: null, error: { code: "PGRST500" }, count: null }).then(res);
+              }
+              return () => proxy;
+            },
+          },
+        );
+        return proxy;
+      },
+    } as unknown as SupabaseClient;
+
+    const b = granted(
+      await loadFinancialsView(OWNER, studio("America/Toronto"), "month", failing),
+    );
     expect(b.unattributedChargesAllTime.known).toBe(false);
+    if (!b.unattributedChargesAllTime.known) {
+      expect(b.unattributedChargesAllTime.cause).toBe("unavailable");
+    }
+  });
+
+  it("its read is issued even when no ledger window is opened at all", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-15T16:00:00.000Z"));
+    const { client, filters } = stubTables({});
+    await loadFinancialsView(OWNER, studio("America/Toronto"), "month", client);
+    // Below the floor the ledger WINDOW reads are skipped, but the all-time
+    // count still goes out — filtered on the absence of a collection time.
+    expect(filters.some((f) => f.op === "is" && f.args[0] === "charged_at")).toBe(true);
+    expect(filters.some((f) => f.op === "gte" && f.args[0] === "charged_at")).toBe(false);
   });
 });
 
