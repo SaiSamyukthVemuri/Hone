@@ -4,6 +4,8 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 // Structure only — never security authority. Dev-only, exact-pinned.
 import MarkdownIt from "markdown-it";
+// GitHub-compatible heading anchors. Structure/identity only, never authority.
+import { slug as githubSlug } from "github-slugger";
 // @ts-expect-error - .mjs utility ships without type declarations
 import { classify } from "../../scripts/classify-changes.mjs";
 import { tmpdir } from "node:os";
@@ -92,13 +94,26 @@ const normalize = (text: string): string => text.replace(/\s+/g, " ").trim();
  */
 const md = new MarkdownIt("commonmark");
 
-/** GitHub's heading-slug rule, which is what a `#anchor` in a citation means. */
-const slug = (headingText: string): string =>
-  headingText
-    .toLowerCase()
-    .replace(/[^a-z0-9 -]/g, "")
-    .trim()
-    .replace(/ /g, "-");
+/**
+ * GitHub's heading-slug rule, from the reference implementation.
+ *
+ * The hand-written version was an ASCII filter: it DELETED every non-ASCII
+ * letter, so `Sécurité des paiements` slugged `scurit-des-paiements` — not the
+ * anchor GitHub renders — and `Проверка платежей` and `日本語の見出し` both
+ * slugged to the EMPTY STRING, colliding with each other and with any other
+ * non-Latin heading. A citation could then resolve to the wrong section, or fail
+ * to resolve at all.
+ *
+ * github-slugger exists to be byte-compatible with GitHub's slugger and is
+ * pinned exactly as a dev-only dependency. Its stateless `slug()` is used, not
+ * the stateful allocator: duplicate anchors are REFUSED here rather than
+ * silently suffixed `-1`, which is stricter than GitHub's own behaviour and is
+ * the property duplicateSlugViolations already enforces.
+ *
+ * This is the ONE slug law — canonical section lookup, duplicate detection,
+ * citation resolution and the section fingerprint all call it.
+ */
+const slug = (headingText: string): string => githubSlug(headingText);
 
 /**
  * The text a reader SEES in a heading, from the parser's inline child tokens.
@@ -600,6 +615,16 @@ function duplicateSlugViolations(file: string, body: string): string[] {
  * Extending the adapter means adding an entry here, deliberately.
  */
 type RuleIdentity = {
+  /**
+   * The adapter heading this rule is approved to live under.
+   *
+   * Coverage proved each citation existed SOMEWHERE in the adapter, so an
+   * untouched bullet could be moved from `## Public and token routes` to
+   * `## Payments` with its text, source, anchor and token identical — every
+   * other guard green, and the reviewer shown a rule under the wrong subject.
+   * Presentation structure is part of what the adapter asserts, so it is pinned.
+   */
+  adapterSection: string;
   file: string;
   anchor: string;
   token: string;
@@ -631,31 +656,31 @@ const SERVICE_ROLE_LEADIN = "d0382ce6a534d19dd2763535fea7bf5762e0d7161a88b6d7c69
 const STRIPE_GATES_CONTEXT = "10425b205424e031a284c3f758b3de6db20b62cc5622dec5c41780497b936fdd";
 
 const APPROVED_RULE_IDENTITIES: readonly RuleIdentity[] = [
-  { file: "CONTRIBUTING.md", anchor: "security-review-expectations", token: "Never trust those ids from the form.", ancestors: null },
-  { file: "CONTRIBUTING.md", anchor: "security-review-expectations", token: "studio-member SELECT only", ancestors: null },
-  { file: "CONTRIBUTING.md", anchor: "security-review-expectations", token: 'Never in a `"use client"` component.', ancestors: null },
-  { file: "CONTRIBUTING.md", anchor: "how-to-use-service-role-correctly", token: "service-role-only grant", ancestors: SERVICE_ROLE_LEADIN },
-  { file: "CONTRIBUTING.md", anchor: "how-not-to-use-service-role", token: "without a token check", ancestors: null },
-  { file: "CONTRIBUTING.md", anchor: "how-not-to-use-service-role", token: "Never to bypass RLS as a convenience.", ancestors: null },
-  { file: "CONTRIBUTING.md", anchor: "security-review-expectations", token: "search_path = pg_catalog, pg_temp", ancestors: null },
-  { file: "CLAUDE.md", anchor: "5-production-safety", token: "revoke from **all three** explicitly, by name", ancestors: null },
-  { file: "CONTRIBUTING.md", anchor: "how-to-treat-public--token-routes", token: "The token is the credential.", ancestors: null },
-  { file: "CONTRIBUTING.md", anchor: "how-to-treat-public--token-routes", token: "single-use claim with `FOR UPDATE`", ancestors: null },
-  { file: "CONTRIBUTING.md", anchor: "how-to-treat-public--token-routes", token: "Collapse error states", ancestors: null },
-  { file: "CONTRIBUTING.md", anchor: "how-to-treat-public--token-routes", token: "X-Robots-Tag: noindex, nofollow", ancestors: null },
-  { file: "CONTRIBUTING.md", anchor: "payment-review-expectations", token: "paymentIntents.create", ancestors: STRIPE_GATES_CONTEXT },
-  { file: "CONTRIBUTING.md", anchor: "payment-review-expectations", token: "refunds.create", ancestors: STRIPE_GATES_CONTEXT },
-  { file: "CONTRIBUTING.md", anchor: "payment-review-expectations", token: "charges.create", ancestors: STRIPE_GATES_CONTEXT },
-  { file: "CONTRIBUTING.md", anchor: "payment-review-expectations", token: "checkout.sessions", ancestors: STRIPE_GATES_CONTEXT },
-  { file: "CONTRIBUTING.md", anchor: "payment-review-expectations", token: "No raw card / CVC", ancestors: null },
-  { file: "CONTRIBUTING.md", anchor: "payment-review-expectations", token: "public-triggered charge", ancestors: null },
-  { file: "ENGINEERING_STANDARDS.md", anchor: "5-design-rules-for-risky-work", token: "claim → external side effect → settle", ancestors: null },
+  { adapterSection: "## Identity", file: "CONTRIBUTING.md", anchor: "security-review-expectations", token: "Never trust those ids from the form.", ancestors: null },
+  { adapterSection: "## Identity", file: "CONTRIBUTING.md", anchor: "security-review-expectations", token: "studio-member SELECT only", ancestors: null },
+  { adapterSection: "## Service role", file: "CONTRIBUTING.md", anchor: "security-review-expectations", token: 'Never in a `"use client"` component.', ancestors: null },
+  { adapterSection: "## Service role", file: "CONTRIBUTING.md", anchor: "how-to-use-service-role-correctly", token: "service-role-only grant", ancestors: SERVICE_ROLE_LEADIN },
+  { adapterSection: "## Service role", file: "CONTRIBUTING.md", anchor: "how-not-to-use-service-role", token: "without a token check", ancestors: null },
+  { adapterSection: "## Service role", file: "CONTRIBUTING.md", anchor: "how-not-to-use-service-role", token: "Never to bypass RLS as a convenience.", ancestors: null },
+  { adapterSection: "## Database privilege", file: "CONTRIBUTING.md", anchor: "security-review-expectations", token: "search_path = pg_catalog, pg_temp", ancestors: null },
+  { adapterSection: "## Database privilege", file: "CLAUDE.md", anchor: "5-production-safety", token: "revoke from **all three** explicitly, by name", ancestors: null },
+  { adapterSection: "## Public and token routes", file: "CONTRIBUTING.md", anchor: "how-to-treat-public--token-routes", token: "The token is the credential.", ancestors: null },
+  { adapterSection: "## Public and token routes", file: "CONTRIBUTING.md", anchor: "how-to-treat-public--token-routes", token: "single-use claim with `FOR UPDATE`", ancestors: null },
+  { adapterSection: "## Public and token routes", file: "CONTRIBUTING.md", anchor: "how-to-treat-public--token-routes", token: "Collapse error states", ancestors: null },
+  { adapterSection: "## Public and token routes", file: "CONTRIBUTING.md", anchor: "how-to-treat-public--token-routes", token: "X-Robots-Tag: noindex, nofollow", ancestors: null },
+  { adapterSection: "## Payments", file: "CONTRIBUTING.md", anchor: "payment-review-expectations", token: "paymentIntents.create", ancestors: STRIPE_GATES_CONTEXT },
+  { adapterSection: "## Payments", file: "CONTRIBUTING.md", anchor: "payment-review-expectations", token: "refunds.create", ancestors: STRIPE_GATES_CONTEXT },
+  { adapterSection: "## Payments", file: "CONTRIBUTING.md", anchor: "payment-review-expectations", token: "charges.create", ancestors: STRIPE_GATES_CONTEXT },
+  { adapterSection: "## Payments", file: "CONTRIBUTING.md", anchor: "payment-review-expectations", token: "checkout.sessions", ancestors: STRIPE_GATES_CONTEXT },
+  { adapterSection: "## Payments", file: "CONTRIBUTING.md", anchor: "payment-review-expectations", token: "No raw card / CVC", ancestors: null },
+  { adapterSection: "## Payments", file: "CONTRIBUTING.md", anchor: "payment-review-expectations", token: "public-triggered charge", ancestors: null },
+  { adapterSection: "## External side effects", file: "ENGINEERING_STANDARDS.md", anchor: "5-design-rules-for-risky-work", token: "claim → external side effect → settle", ancestors: null },
 ];
 
 /** A citation's stable identity, for set comparison. */
 /** Identity is file+anchor+token; the ancestor expectation is not part of it. */
-const identityOf = (r: { file: string; anchor: string; token: string }): string =>
-  `${r.file}#${r.anchor} | ${r.token}`;
+const identityOf = (r: { adapterSection: string; file: string; anchor: string; token: string }): string =>
+  `${r.adapterSection} :: ${r.file}#${r.anchor} | ${r.token}`;
 
 /**
  * The approved semantic state of every canonical section the manifest cites.
@@ -894,7 +919,15 @@ function grammarViolations(body: string): string[] {
   return bad;
 }
 
-type Citation = { line: number; rule: string; file: string; anchor: string; token: string };
+type Citation = {
+  line: number;
+  rule: string;
+  file: string;
+  anchor: string;
+  token: string;
+  /** The adapter heading in force where this rule appears. */
+  adapterSection: string;
+};
 type Adapter = { rules: number; cited: Citation[]; unanchored: number[] };
 
 /**
@@ -909,7 +942,11 @@ function readAdapter(body: string): Adapter {
   const cited: Citation[] = [];
   const unanchored: number[] = [];
   let rules = 0;
+  let activeSection = "";
   body.split("\n").forEach((raw, i) => {
+    // Track the adapter heading in force, so a rule carries where it PRESENTS,
+    // not merely that it exists somewhere in the document.
+    if (/^#{1,6}\s/.test(raw)) activeSection = raw.trim();
     if (!raw.startsWith("- ")) return;
     rules++;
     const m = /^(.*?)\s*<!-- source: ([^#\s]+)#([^\s|]+) \| token: (.+?) -->$/.exec(raw.trim());
@@ -921,7 +958,14 @@ function readAdapter(body: string): Adapter {
     // in, the containment check would silently depend on the cited source
     // ALSO being a bullet — true for most of CONTRIBUTING.md and false for the
     // prose in ENGINEERING_STANDARDS.md, which is how the coincidence surfaced.
-    cited.push({ line: i + 1, rule: m[1].replace(/^-\s+/, ""), file: m[2], anchor: m[3], token: m[4] });
+    cited.push({
+      line: i + 1,
+      rule: m[1].replace(/^-\s+/, ""),
+      file: m[2],
+      anchor: m[3],
+      token: m[4],
+      adapterSection: activeSection,
+    });
   });
   return { rules, cited, unanchored };
 }
@@ -2050,14 +2094,13 @@ describe("SEC-ADAPTER-01 — security-guidance adapter parity", () => {
 
   /** Drop the adapter rule carrying this citation identity. */
   const withoutRule = (id: string): string => {
+    // Identity now includes the adapter section, so the line must be located by
+    // parsing the WHOLE document — a lone line has no heading context.
+    const target = readAdapter(BODY).cited.find((c) => identityOf(c) === id);
+    expect(target, `control needs the rule ${id} to exist`).toBeDefined();
     const lines = BODY.split("\n");
-    const kept = lines.filter((l) => {
-      if (!RULE_LINE.test(l)) return true;
-      const c = readAdapter(l).cited[0];
-      return c === undefined || identityOf(c) !== id;
-    });
-    expect(kept.length, `control needs the rule ${id} to exist`).toBe(lines.length - 1);
-    return kept.join("\n");
+    lines.splice(target!.line - 1, 1);
+    return lines.join("\n");
   };
 
   // One parameterized control over every approved rule, so a rule added to the
@@ -2071,9 +2114,136 @@ describe("SEC-ADAPTER-01 — security-guidance adapter parity", () => {
     });
   }
 
+  // A rule's ADAPTER SECTION is part of what it asserts. Coverage proved each
+  // citation existed somewhere; moving an untouched bullet under a different
+  // approved heading changed the subject it is presented under while every other
+  // guard stayed green.
+
+  /** Move a rule line under a different existing adapter heading. */
+  const movedToSection = (token: string, targetHeading: string): string => {
+    const lines = BODY.split("\n");
+    const i = lines.findIndex((l) => RULE_LINE.test(l) && l.includes(`| token: ${token} -->`));
+    expect(i, `control needs a rule cited by ${token}`).toBeGreaterThan(-1);
+    const [rule] = lines.splice(i, 1);
+    const h = lines.findIndex((l) => l === targetHeading);
+    expect(h, `control needs the heading ${targetHeading}`).toBeGreaterThan(-1);
+    lines.splice(h + 2, 0, rule);
+    return lines.join("\n");
+  };
+
+  it("SECTION-BINDING RED: an untouched rule moved to another approved heading", () => {
+    const moved = movedToSection("X-Robots-Tag: noindex, nofollow", "## Payments");
+    expect(moved, "the control's move must land").not.toEqual(BODY);
+
+    // Everything else is identical: same rule text, same citation, same headings.
+    expect(moved.split("\n").filter((l) => /^## /.test(l))).toEqual(
+      BODY.split("\n").filter((l) => /^## /.test(l)),
+    );
+    expect(readAdapter(moved).rules, "same rule count").toBe(readAdapter(BODY).rules);
+    expect(
+      readAdapter(moved).cited.map((c) => `${c.file}#${c.anchor}|${c.token}`).sort(),
+      "same citations, ignoring section",
+    ).toEqual(readAdapter(BODY).cited.map((c) => `${c.file}#${c.anchor}|${c.token}`).sort());
+
+    const violations = parityViolations(moved, readRepo).join("\n");
+    expect(violations).toMatch(/MISSING approved rule ## Public and token routes/);
+    expect(violations).toMatch(/UNAPPROVED rule ## Payments/);
+  });
+
+  it("SECTION-BINDING GREEN: moving it back restores parity", () => {
+    const moved = movedToSection("X-Robots-Tag: noindex, nofollow", "## Payments");
+    expect(parityViolations(moved, readRepo).length).toBeGreaterThan(0);
+    expect(parityViolations(BODY, readRepo), "the real adapter is green").toEqual([]);
+  });
+
+  it("SECTION-BINDING RED: a rule duplicated into a second heading", () => {
+    const lines = BODY.split("\n");
+    const i = lines.findIndex((l) => RULE_LINE.test(l) && l.includes("| token: charges.create -->"));
+    const h = lines.findIndex((l) => l === "## Identity");
+    const copy = [...lines];
+    copy.splice(h + 2, 0, lines[i]);
+    const violations = parityViolations(copy.join("\n"), readRepo).join("\n");
+    expect(violations).toMatch(/UNAPPROVED rule ## Identity/);
+  });
+
+  it("SECTION-BINDING: reordering rules WITHIN one approved section stays green", () => {
+    // Order inside a section is not authoritative; only ownership is.
+    const lines = BODY.split("\n");
+    const idx = lines
+      .map((l, k) => (RULE_LINE.test(l) && l.includes("| token: charges.create -->") ? k : -1))
+      .filter((k) => k >= 0);
+    const j = lines
+      .map((l, k) => (RULE_LINE.test(l) && l.includes("| token: refunds.create -->") ? k : -1))
+      .filter((k) => k >= 0);
+    expect(idx.length && j.length, "both payment rules must exist").toBeTruthy();
+    const swapped = [...lines];
+    [swapped[idx[0]], swapped[j[0]]] = [swapped[j[0]], swapped[idx[0]]];
+    expect(swapped.join("\n"), "the control's swap must land").not.toEqual(BODY);
+    expect(parityViolations(swapped.join("\n"), readRepo), "order within a section is free").toEqual([]);
+  });
+
+  // ---- the slug law ---------------------------------------------------------
+
+  it("SLUG: heading anchors come from github-slugger, one law everywhere", () => {
+    // B1/B3 — plain and rendered-softbreak text agree.
+    expect(structureOf("## Payment review expectations").headings[0].slug).toBe(
+      "payment-review-expectations",
+    );
+    expect(structureOf("Payment review\nexpectations\n---").headings[0].slug).toBe(
+      "payment-review-expectations",
+    );
+    // B4/B5/B6 — link, image alt, code and emphasis all slug from visible text.
+    for (const src of [
+      "## [Payment review expectations](https://e.co)",
+      "## ![Payment review expectations](x.png)",
+      "## **Payment review** `expectations`",
+    ]) {
+      expect(structureOf(src).headings[0].slug, src).toBe("payment-review-expectations");
+    }
+    // B7 — Unicode letters are PRESERVED, which the ASCII filter destroyed:
+    // `Проверка платежей` and `日本語の見出し` both slugged to "" and collided.
+    expect(slug("Sécurité des paiements")).toBe("sécurité-des-paiements");
+    expect(slug("Проверка платежей")).toBe("проверка-платежей");
+    expect(slug("日本語の見出し")).toBe("日本語の見出し");
+    expect(slug("Проверка платежей")).not.toBe(slug("日本語の見出し"));
+    // B8 — punctuation, per GitHub.
+    expect(slug("Don't trust ids!")).toBe("dont-trust-ids");
+    expect(slug("How to treat public / token routes")).toBe("how-to-treat-public--token-routes");
+  });
+
+  it("SLUG: U+00A0 fuses words, exactly as GitHub does", () => {
+    // Recorded deliberately. GitHub drops a non-breaking space WITHOUT
+    // substituting a hyphen, so it does not separate words — the reference
+    // slugger and the retired hand-written one agree here. An NBSP heading
+    // therefore takes its OWN anchor and cannot steal the real one; there is no
+    // NBSP decoy. The real divergence was Unicode letters, above.
+    const nbsp = "Payment review expectations";
+    expect(slug(nbsp)).toBe("paymentreviewexpectations");
+    expect(slug(nbsp)).not.toBe(slug("Payment review expectations"));
+  });
+
+  it("SLUG: the real canonical heading resolutions are unchanged", () => {
+    // B11 — adopting the reference slugger must not move any anchor a citation
+    // already depends on.
+    for (const c of readAdapter(BODY).cited) {
+      expect(sections(readRepo(c.file)!).has(c.anchor), `${c.file}#${c.anchor} must still resolve`).toBe(
+        true,
+      );
+    }
+  });
+
+  it("SLUG RED: two headings whose visible text slugs alike are still refused", () => {
+    // Duplicate anchors are REFUSED, not suffixed `-1`: stricter than GitHub,
+    // and the property duplicateSlugViolations already owns.
+    const body = "## Payment review expectations\n\na\n\n## Payment Review Expectations\n\nb\n";
+    expect(duplicateSlugViolations("synthetic.md", body).join("\n")).toMatch(
+      /duplicate heading slug "#payment-review-expectations"/,
+    );
+  });
+
   it("COVERAGE RED: a rule deleted and another duplicated, keeping the count constant", () => {
     // Defeats any count-based check: 19 rules before, 19 after.
-    const dropped = "CONTRIBUTING.md#payment-review-expectations | paymentIntents.create";
+    const dropped = "## Payments :: CONTRIBUTING.md#payment-review-expectations | paymentIntents.create";
     const lines = withoutRule(dropped).split("\n");
     const donor = lines.find((l) => RULE_LINE.test(l))!;
     const at = lines.findIndex((l) => RULE_LINE.test(l));
@@ -2096,7 +2266,7 @@ describe("SEC-ADAPTER-01 — security-guidance adapter parity", () => {
       "<!-- source: CLAUDE.md#5-production-safety | token: An applied migration is **frozen** -->";
     const mutated = `${BODY.trimEnd()}\n${extra}\n`;
     const violations = parityViolations(mutated, readRepo).join("\n");
-    expect(violations).toMatch(/UNAPPROVED rule CLAUDE\.md#5-production-safety/);
+    expect(violations).toMatch(/UNAPPROVED rule .*CLAUDE\.md#5-production-safety/);
   });
 
   it("COVERAGE: the manifest matches the real adapter exactly", () => {
@@ -2114,7 +2284,8 @@ describe("SEC-ADAPTER-01 — security-guidance adapter parity", () => {
     // ancestor contract is a drift detector and not a second copy of the parent's
     // wording. That distinction is what keeps the canonical document authoritative.
     for (const r of APPROVED_RULE_IDENTITIES) {
-      expect(Object.keys(r).sort()).toEqual(["ancestors", "anchor", "file", "token"]);
+      expect(Object.keys(r).sort()).toEqual(["adapterSection", "ancestors", "anchor", "file", "token"]);
+      expect(r.adapterSection, "the owning adapter heading, not prose").toMatch(/^#{2,6} \S/);
       expect(r.ancestors === null || /^[0-9a-f]{64}$/.test(r.ancestors), `${r.token}: ancestors must be null or a sha256`).toBe(true);
     }
     // ...and the one nested context is pinned as a literal, never recomputed
