@@ -441,7 +441,31 @@ const TITLE = "# Hone — repository security rules";
  * deliberately, in a diff that also updates this constant and therefore gets
  * read. The same shape the audit register uses for its frozen source cells.
  */
-const HEADER_DIGEST = "5cfb45d0cefad4c8dd67cd518220e316c62f8699ec7818dbcd186591c81296cf";
+const HEADER_DIGEST = "a2843e3b94170a0b332c7b349de001a9d4b409429b1e74b29f9623f6bede6821";
+
+/**
+ * The approved header's digest, over its EXACT markdown source.
+ *
+ * It used to hash `normalize(header)`, which collapses whitespace — and in
+ * markdown whitespace is syntax. Indenting every non-blank header line by four
+ * spaces turns the authority statement and its heading into an indented code
+ * block, changing what the plugin receives entirely, while the normalized text
+ * and therefore the digest stayed byte-identical. CI would have reported the
+ * header unchanged.
+ *
+ * So nothing is normalized away: leading and internal spaces, blank lines, line
+ * boundaries, emphasis delimiters and punctuation all reach the hash. The digest
+ * deliberately pins markdown SOURCE, not visible words.
+ *
+ * LINE ENDINGS ARE THE ONE EXCEPTION, and it is deliberate: CRLF and CR are
+ * canonicalized to LF so a checkout with `core.autocrlf` does not report a
+ * header nobody edited. Both sides of the comparison go through this same
+ * function, so the conversion cannot mask anything else.
+ */
+const headerDigest = (headerSource: string): string =>
+  createHash("sha256")
+    .update(headerSource.replace(/\r\n?/g, "\n"), "utf8")
+    .digest("hex");
 
 const RULE_LINE = /^- .*<!-- source: [^#\s]+#[^\s|]+ \| token: .+ -->$/;
 
@@ -511,8 +535,7 @@ function grammarViolations(body: string): string[] {
     if (lines[i].trim() !== "") bad.push(`${ADAPTER}:${i + 1}: content before the approved header`);
   }
   // The header is prose, so it is pinned by digest rather than by grammar.
-  const header = normalize(lines.slice(begin + 1, end).join("\n"));
-  const digest = createHash("sha256").update(header, "utf8").digest("hex");
+  const digest = headerDigest(lines.slice(begin + 1, end).join("\n"));
   if (digest !== HEADER_DIGEST) {
     bad.push(
       `${ADAPTER}: the approved header changed (sha256 ${digest.slice(0, 16)}…). If that is ` +
@@ -1794,6 +1817,106 @@ describe("SEC-ADAPTER-01 — security-guidance adapter parity", () => {
       .filter((_, i) => headingLinesOf(BODY).has(afterHeader + i + 1));
     expect(present).toEqual([...APPROVED_SECTION_HEADINGS]);
     expect(APPROVED_SECTION_HEADINGS.length, "the set must not be empty").toBeGreaterThan(0);
+  });
+
+  // -------------------------------------------------------------------------
+  // The header digest pins markdown SOURCE, not visible words
+  // -------------------------------------------------------------------------
+  // Whitespace is syntax in markdown. Hashing normalized text meant indenting
+  // every header line by four spaces — turning the authority statement into an
+  // indented code block — left the digest byte-identical, so CI could report an
+  // unchanged header while the plugin received something else entirely.
+
+  const headerLinesOfAdapter = (body: string): { begin: number; end: number; lines: string[] } => {
+    const lines = body.split("\n");
+    return { begin: lines.indexOf(HEADER_BEGIN), end: lines.indexOf(HEADER_END), lines };
+  };
+
+  /** Rewrite the approved header region of a scratch copy of the real adapter. */
+  const withHeader = (rewrite: (headerLines: string[]) => string[]): string => {
+    const { begin, end, lines } = headerLinesOfAdapter(BODY);
+    expect(begin, "the header must be delimited").toBeGreaterThan(-1);
+    const rewritten = rewrite(lines.slice(begin + 1, end));
+    return [...lines.slice(0, begin + 1), ...rewritten, ...lines.slice(end)].join("\n");
+  };
+
+  /**
+   * ISOLATED: the digest violation specifically, not "something failed".
+   *
+   * Anti-vacuity for the digest itself — several of these mutations would also
+   * be caught by other checks, and a control that cannot tell which one fired
+   * proves nothing about the digest.
+   */
+  const digestViolations = (mutated: string): string[] =>
+    parityViolations(mutated, readRepo).filter((v) => v.includes("the approved header changed"));
+
+  const HEADER_MUTATIONS: [string, (h: string[]) => string[]][] = [
+    ["four spaces before every non-blank line", (h) => h.map((l) => (l.trim() === "" ? l : `    ${l}`))],
+    ["one leading space on an authority line", (h) => h.map((l, i) => (i === h.findIndex((x) => x.includes("**leads**")) ? ` ${l}` : l))],
+    ["a blank line removed", (h) => h.filter((l, i) => !(l.trim() === "" && i === h.findIndex((x) => x.trim() === "")))],
+    ["a blank line added", (h) => [h[0], "", ...h.slice(1)]],
+    ["emphasis delimiters removed", (h) => h.map((l) => l.replace("**leads**", "leads"))],
+    ["backticks added", (h) => h.map((l) => l.replace("199175422", "`199175422`"))],
+    ["a single word altered", (h) => h.map((l) => l.replace("Findings", "Verdicts"))],
+    ["one sentence rewrapped onto different lines", (h) => h.join("\n").replace(/\n(?=[a-z])/g, " ").split("\n")],
+    ["trailing whitespace added", (h) => h.map((l, i) => (i === 0 ? `${l}  ` : l))],
+    ["internal spacing doubled", (h) => h.map((l) => l.replace("read this first", "read  this  first"))],
+  ];
+
+  for (const [label, rewrite] of HEADER_MUTATIONS) {
+    it(`HEADER DIGEST RED: ${label}`, () => {
+      const mutated = withHeader(rewrite);
+      expect(mutated, "the control's rewrite must land").not.toEqual(BODY);
+      expect(
+        digestViolations(mutated),
+        `${label} must trip the DIGEST specifically`,
+      ).not.toEqual([]);
+    });
+  }
+
+  it("HEADER DIGEST: the four-space mutation is caught by the digest ALONE", () => {
+    // The sharpest anti-vacuity check. Nothing else inspects inside the header,
+    // so if the digest were still normalized this would pass entirely — which is
+    // exactly what it did before.
+    const mutated = withHeader((h) => h.map((l) => (l.trim() === "" ? l : `    ${l}`)));
+    const all = parityViolations(mutated, readRepo);
+    expect(all.length, "the mutation must be refused").toBeGreaterThan(0);
+    expect(all.every((v) => v.includes("the approved header changed")), all.join("\n")).toBe(true);
+
+    // ...and it really is materially different markdown: indented four spaces,
+    // the authority heading stops being a heading at all.
+    expect(structureOf(mutated).headings.map((h) => h.text)).not.toContain("Authority — read this first");
+    expect(structureOf(BODY).headings.map((h) => h.text)).toContain("Authority — read this first");
+  });
+
+  it("HEADER DIGEST: normalized hashing would MISS the four-space mutation", () => {
+    // Pins the defect, so the exact-source rule cannot be relaxed back later.
+    const { begin, end, lines } = headerLinesOfAdapter(BODY);
+    const header = lines.slice(begin + 1, end);
+    const indented = header.map((l) => (l.trim() === "" ? l : `    ${l}`));
+    expect(normalize(indented.join("\n")), "normalized text is identical").toBe(
+      normalize(header.join("\n")),
+    );
+    expect(headerDigest(indented.join("\n")), "exact-source digest is not").not.toBe(
+      headerDigest(header.join("\n")),
+    );
+  });
+
+  it("HEADER DIGEST GREEN: line endings are canonicalized, and only line endings", () => {
+    const { begin, end, lines } = headerLinesOfAdapter(BODY);
+    const header = lines.slice(begin + 1, end).join("\n");
+    // CRLF and CR are deliberately equivalent: a core.autocrlf checkout must not
+    // report a header nobody edited.
+    expect(headerDigest(header.replace(/\n/g, "\r\n"))).toBe(headerDigest(header));
+    expect(headerDigest(header.replace(/\n/g, "\r"))).toBe(headerDigest(header));
+    // Every other whitespace difference still moves the digest.
+    expect(headerDigest(header.replace(/\n/g, "\n\n"))).not.toBe(headerDigest(header));
+    expect(headerDigest(` ${header}`)).not.toBe(headerDigest(header));
+  });
+
+  it("HEADER DIGEST GREEN: the unmodified real header", () => {
+    expect(digestViolations(BODY)).toEqual([]);
+    expect(parityViolations(BODY, readRepo)).toEqual([]);
   });
 
   it("GRAMMAR RED: the approved header cannot be edited silently", () => {
