@@ -255,6 +255,53 @@ alter table public.new_client_waitlist_invitations
     + (released_at is not null)::int <= 1
   );
 
+-- FK-REFERENCEABLE BY (id, studio_id) — NOT A DUPLICATE RULE.
+--
+-- This constraint rejects NOTHING that `primary key (id)` does not already
+-- reject: `id` alone is unique, and `studio_id` is frozen by the append-only
+-- trigger, so the pair cannot drift from the single column. It is not a
+-- duplicate control and no concurrency can defeat it, because there is no
+-- duplicate state for it to prevent.
+--
+-- Its ONLY purpose is to be a referenceable TARGET, so a future child table
+-- (the delivery ledger's `invitation_id`) can carry the same-studio composite
+-- FK idiom this schema applies everywhere else:
+--
+--     foreign key (invitation_id, studio_id)
+--       references public.new_client_waitlist_invitations (id, studio_id)
+--
+-- Without it that FK cannot be written at all -- PostgreSQL answers "there is
+-- no unique constraint matching given keys for referenced table" -- and the
+-- ledger would fall back to a bare `id` FK, losing the cross-studio guarantee
+-- that section 1 of this migration went out of its way to establish for the
+-- entries table for exactly this reason.
+--
+-- UNCONDITIONAL, NEVER PARTIAL. A partial unique index cannot serve as a
+-- foreign-key target: PostgreSQL requires a real unique CONSTRAINT and refuses
+-- a predicated index with the same error. A predicate would also make
+-- referenceability depend on lifecycle state, so a redeemed, expired or
+-- released invitation would silently stop being referenceable while the rows
+-- referencing it still existed. The constraint is therefore lifecycle-blind by
+-- design.
+--
+-- ADDED CONDITIONALLY, matching the idiom in section 1: a `drop ... if exists`
+-- here would fail once a child FK depends on it, which is the idempotency trap
+-- this migration was already caught on once.
+do $$
+begin
+  if not exists (
+    select 1
+      from pg_constraint
+     where conrelid = 'public.new_client_waitlist_invitations'::regclass
+       and conname  = 'new_client_waitlist_invitations_id_studio_id_unique'
+  ) then
+    alter table public.new_client_waitlist_invitations
+      add constraint new_client_waitlist_invitations_id_studio_id_unique
+      unique (id, studio_id);
+  end if;
+end
+$$;
+
 -- A TOKEN IS GLOBALLY UNIQUE. Redemption looks a token up by hash alone, so
 -- two invitations must never share one, in this studio or any other.
 create unique index if not exists new_client_waitlist_invitations_token_hash_uniq

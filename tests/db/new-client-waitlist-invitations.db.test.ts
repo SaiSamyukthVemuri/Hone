@@ -663,3 +663,124 @@ describe("0188 — lifecycle provenance", () => {
     expect(p.rows[0].qual).toContain("is_studio_owner");
   });
 });
+
+describe("0188 — the invitations composite key, and what it does and does not do", () => {
+  it("exists as a real unique CONSTRAINT, unconditional", async () => {
+    const r = await adminQuery(
+      `select conname, contype, pg_get_constraintdef(oid) as def
+         from pg_constraint
+        where conrelid = 'public.new_client_waitlist_invitations'::regclass
+          and conname = 'new_client_waitlist_invitations_id_studio_id_unique'`,
+    );
+    expect(r.rows).toHaveLength(1);
+    // contype 'u' -- a unique CONSTRAINT. A bare unique INDEX, and a partial
+    // one especially, cannot serve as a foreign-key target at all.
+    expect(r.rows[0].contype).toBe("u");
+    expect(r.rows[0].def).toMatch(/UNIQUE \(id, studio_id\)/i);
+    expect(r.rows[0].def).not.toMatch(/WHERE/i);
+  });
+
+  it("prevents NO duplicate that the primary key does not already reject", async () => {
+    // This constraint is not a duplicate control and must never be described as
+    // one: `id` alone is the PK, and studio_id is frozen by the append-only
+    // trigger, so the pair cannot disagree with the single column. A duplicate
+    // id is rejected by the PK, never by this constraint.
+    const s = await seedStudio("wait03-ck-dup");
+    const j = await join(s.studioId, `ckdup-${s.studioId.slice(0, 8)}@ex.com`);
+    const entry = j.entry_id as string;
+    await claim(s.studioId, entry, s.userId);
+    await issue(s.studioId, entry, s.userId);
+    const existing = await adminQuery(
+      `select id from public.new_client_waitlist_invitations where entry_id = $1`,
+      [entry],
+    );
+    const id = existing.rows[0].id as string;
+
+    let violated = "";
+    try {
+      await adminQuery(
+        `insert into public.new_client_waitlist_invitations
+           (id, studio_id, entry_id, token_hash, expires_at, issued_by_practitioner_id)
+         values ($1, $2, $3, encode(extensions.digest('dup','sha256'),'hex'), now() + interval '1 day', $4)`,
+        [id, s.studioId, entry, s.practitionerId],
+      );
+    } catch (e) {
+      violated = (e as { constraint?: string }).constraint ?? "";
+    }
+    expect(violated).toBe("new_client_waitlist_invitations_pkey");
+  });
+
+  it("lets a child carry a same-studio composite FK: cross-studio RED, own-studio GREEN in every state", async () => {
+    const a = await seedStudio("wait03-ck-a");
+    const b = await seedStudio("wait03-ck-b");
+
+    // One invitation per terminal state, all in studio A.
+    const made: { id: string; state: string }[] = [];
+    for (const state of ["live", "redeemed", "released"]) {
+      const j = await join(a.studioId, `ck-${state}-${a.studioId.slice(0, 8)}@ex.com`);
+      const entry = j.entry_id as string;
+      await claim(a.studioId, entry, a.userId);
+      const inv = await issue(a.studioId, entry, a.userId);
+      if (state === "redeemed") await redeem(inv.raw_token);
+      if (state === "released") {
+        await adminQuery(
+          `select public.release_new_client_waitlist_entry($1,$2,$3)`,
+          [a.studioId, entry, a.userId],
+        );
+      }
+      const row = await adminQuery(
+        `select id from public.new_client_waitlist_invitations where entry_id = $1`,
+        [entry],
+      );
+      made.push({ id: row.rows[0].id as string, state });
+    }
+    expect(made).toHaveLength(3);
+
+    // The FK the review asks for is only writable BECAUSE of the constraint.
+    await adminQuery(`create schema if not exists wait03_ck`);
+    await adminQuery(`drop table if exists wait03_ck.child`);
+    await adminQuery(
+      `create table wait03_ck.child (
+         id uuid primary key default gen_random_uuid(),
+         studio_id uuid not null,
+         invitation_id uuid,
+         constraint child_invitation_same_studio_fk
+           foreign key (invitation_id, studio_id)
+           references public.new_client_waitlist_invitations (id, studio_id))`,
+    );
+
+    try {
+      for (const m of made) {
+        // GREEN: own studio, regardless of lifecycle state. A partial key
+        // predicated on liveness would have failed for redeemed/released here.
+        await adminQuery(
+          `insert into wait03_ck.child (studio_id, invitation_id) values ($1, $2)`,
+          [a.studioId, m.id],
+        );
+        // RED: another studio's id against the same invitation.
+        expect(
+          await codeOf(() =>
+            adminQuery(
+              `insert into wait03_ck.child (studio_id, invitation_id) values ($1, $2)`,
+              [b.studioId, m.id],
+            ),
+          ),
+          `cross-studio reference to a ${m.state} invitation must be refused`,
+        ).toBe("23503");
+      }
+
+      const n = await adminQuery(
+        `select count(*)::int as n from wait03_ck.child where studio_id = $1`,
+        [a.studioId],
+      );
+      expect(n.rows[0].n).toBe(3);
+      const foreign = await adminQuery(
+        `select count(*)::int as n from wait03_ck.child where studio_id = $1`,
+        [b.studioId],
+      );
+      expect(foreign.rows[0].n).toBe(0);
+    } finally {
+      await adminQuery(`drop schema if exists wait03_ck cascade`);
+    }
+  });
+});

@@ -412,3 +412,50 @@ describe("0188 — provenance survives a cycle that issues no invitation", () =>
     expect(SQL).toMatch(/new_client_waitlist_entry_events by trigger/i);
   });
 });
+
+describe("0188 — the invitations composite key is FK-referenceable", () => {
+  it("adds unique (id, studio_id) on the invitations table", () => {
+    expect(CODE).toMatch(
+      /add\s+constraint\s+new_client_waitlist_invitations_id_studio_id_unique\s+unique\s*\(\s*id\s*,\s*studio_id\s*\)/i,
+    );
+  });
+
+  it("adds it CONDITIONALLY, never drop-then-add", () => {
+    // A `drop constraint if exists` here fails the moment a child FK depends on
+    // it -- the exact idempotency trap this migration was already caught on for
+    // the entries table.
+    expect(CODE).not.toMatch(
+      /drop\s+constraint\s+if\s+exists\s+new_client_waitlist_invitations_id_studio_id_unique/i,
+    );
+    // guard -> name check -> add, in that order, in one DO block.
+    expect(CODE).toMatch(
+      /if\s+not\s+exists[\s\S]{0,300}pg_constraint[\s\S]{0,300}new_client_waitlist_invitations_id_studio_id_unique[\s\S]{0,300}add\s+constraint\s+new_client_waitlist_invitations_id_studio_id_unique/i,
+    );
+  });
+
+  it("is UNCONDITIONAL — never a partial/predicated uniqueness", () => {
+    // PostgreSQL cannot use a predicated index as a foreign-key target, and a
+    // predicate would make referenceability depend on lifecycle state: a
+    // redeemed, expired or released invitation would silently stop being
+    // referenceable while rows referencing it still existed.
+    // Both anchors are CODE, not comments: `CODE` strips comments, so a
+    // comment anchor returns -1 and the slice silently runs to end of file.
+    const start = CODE.indexOf(
+      "add constraint new_client_waitlist_invitations_id_studio_id_unique",
+    );
+    const end = CODE.indexOf(
+      "create unique index if not exists new_client_waitlist_invitations_token_hash_uniq",
+    );
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    expect(CODE.slice(start, end)).not.toMatch(/\bwhere\b/i);
+  });
+
+  it("is documented as FK-referenceability, NOT as a duplicate rule", () => {
+    // It rejects nothing `primary key (id)` does not already reject. Recording
+    // that in the file stops a later reader "strengthening" it into a partial
+    // key, or trusting it as a duplicate control it was never able to be.
+    expect(SQL).toMatch(/NOT A DUPLICATE RULE/i);
+    expect(SQL).toMatch(/UNCONDITIONAL, NEVER PARTIAL/i);
+  });
+});
