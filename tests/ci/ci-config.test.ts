@@ -409,6 +409,30 @@ describe("PR CI — path-aware lane selection", () => {
   it("diffs against the PR merge base, not merely the previous commit", () => {
     expect(CI).toMatch(/pull_request\.base\.sha/);
     expect(CI).toMatch(/git merge-base/);
+  });
+
+  // A rename is the one change shape that can REMOVE a path while looking like
+  // an ordinary addition. With git's default rename detection an R100 reports
+  // only the destination, so renaming a canonical security source emitted one
+  // unremarkable .md path, classified docs_only at T0, and the security lane
+  // never ran — even though a source the security-guidance adapter is pinned to
+  // had just disappeared. Both collection sites must therefore disable it.
+  it("collects both sides of a rename, so a removed path is still classified", () => {
+    const step = /- name: Collect changed files\n([\s\S]*?)\n      - name:/.exec(CI)?.[1];
+    expect(step, "the changed-file collection step must exist").toBeTruthy();
+
+    const commands = (step ?? "")
+      .split("\n")
+      .filter((l) => /^\s*git (diff|show) /.test(l))
+      .map((l) => l.trim());
+    expect(commands.length, "both the PR and push collection commands").toBe(2);
+    for (const c of commands) {
+      expect(c, `${c} must disable rename detection`).toMatch(/--no-renames/);
+      expect(c, `${c} must still list names only`).toMatch(/--name-only/);
+    }
+
+    // Anti-vacuity: the matcher must reject the pre-fix form.
+    expect(/--no-renames/.test('git diff --name-only "$MB" "$HEAD_SHA"')).toBe(false);
     expect(CI).toMatch(/fetch-depth: 0/);
   });
 

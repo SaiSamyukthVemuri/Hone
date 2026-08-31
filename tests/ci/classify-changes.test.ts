@@ -566,3 +566,96 @@ describe("classifier — the security-guidance INPUT SET (SEC-ADAPTER-01)", () =
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// SEC-ADAPTER-01 — a renamed canonical source is still a security change
+// ---------------------------------------------------------------------------
+// A rename is the one change shape that can REMOVE a path while looking like an
+// ordinary addition. Git's default rename detection reports an R100 as the
+// DESTINATION only, so `CONTRIBUTING.md -> CONTRIBUTING-old.md` reached the
+// classifier as a single unremarkable `.md` path: docs_only, T0, and the
+// security lane that proves the security-guidance adapter still matches its
+// sources never ran — while a source it is pinned to had just disappeared.
+//
+// ci.yml now collects with --no-renames, so both sides arrive. These fixtures
+// pin the classification half of that contract: given both sides, the removal
+// of a canonical source is visible and selects the security lane.
+describe("classifier — renamed canonical security sources (SEC-ADAPTER-01)", () => {
+  const CANONICAL = [
+    "CONTRIBUTING.md",
+    "CLAUDE.md",
+    "ENGINEERING_STANDARDS.md",
+    "docs/03_SECURITY_AND_PRIVACY.md",
+  ];
+
+  it("each canonical source renamed away still selects security at T3", () => {
+    for (const source of CANONICAL) {
+      const destination = source.replace(/\.md$/, "-old.md");
+      // Both sides, as --no-renames produces them.
+      const r = c(destination, source);
+      expect(r.security, `renaming ${source} must stay a security change`).toBe(true);
+      expect(r.docs_only, `renaming ${source} must not be docs_only`).toBe(false);
+      expect(r.baselineRiskTier, `renaming ${source} must be T3`).toBe("T3");
+    }
+  });
+
+  it("the destination ALONE is what the defect looked like", () => {
+    // Documents the pre-fix behaviour so the collection-site fix cannot be
+    // reverted without this reading as an obvious regression.
+    for (const source of CANONICAL) {
+      const destination = source.replace(/\.md$/, "-old.md");
+      const r = c(destination);
+      expect(r.security, `${destination} alone is not recognisable as security`).toBe(false);
+      expect(r.docs_only).toBe(true);
+    }
+  });
+
+  it("the adapter renamed away is still a security change", () => {
+    const r = c(".claude/claude-security-guidance-old.md", ".claude/claude-security-guidance.md");
+    expect(r.security).toBe(true);
+    expect(r.docs_only).toBe(false);
+    expect(r.baselineRiskTier).toBe("T3");
+  });
+
+  it("an ordinary markdown rename does NOT become security", () => {
+    for (const [from, to] of [
+      ["README.md", "README-new.md"],
+      ["docs/00_PRODUCT_OVERVIEW.md", "docs/00_PRODUCT_OVERVIEW-old.md"],
+      ["docs/production/current-state.md", "docs/production/current-state-old.md"],
+    ]) {
+      const r = c(to, from);
+      expect(r.security, `renaming ${from} must not become security`).toBe(false);
+      expect(r.docs_only, `renaming ${from} must stay docs_only`).toBe(true);
+      expect(r.baselineRiskTier).toBe("T0");
+    }
+  });
+
+  it("plain addition, modification and deletion are unchanged", () => {
+    // --no-renames only affects renames; every other shape must behave as before.
+    expect(c("CONTRIBUTING.md").security).toBe(true);
+    expect(c("README.md").docs_only).toBe(true);
+    expect(c("app/(app)/dashboard/page.tsx").application).toBe(true);
+    expect(c("supabase/migrations/0190_x.sql").database).toBe(true);
+  });
+
+  it("a duplicated path does not change any decision", () => {
+    // Neither collection site can emit a duplicate today — the PR site diffs two
+    // commits and the push site shows one — but the guarantee is asserted rather
+    // than assumed, because --no-renames changes what the list contains.
+    //
+    // Every DECISION field is identical. `changed_file_count` is the one field
+    // that moves, and it is purely informational: scripts/ci-plan.mjs prints it,
+    // and no lane, tier or gate reads it. Asserting that precisely beats forcing
+    // deep equality by deduping a number nothing consumes.
+    for (const file of ["CONTRIBUTING.md", "README.md", "app/(app)/dashboard/page.tsx"]) {
+      const once = c(file);
+      const twice = c(file, file);
+      const decisions = (r: Result) => {
+        const { changed_file_count: _ignored, ...rest } = r;
+        return rest;
+      };
+      expect(decisions(twice), `${file} duplicated must decide identically`).toEqual(decisions(once));
+      expect(twice.changed_file_count, "only the informational count reflects the raw list").toBe(2);
+    }
+  });
+});

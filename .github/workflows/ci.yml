@@ -125,13 +125,24 @@ jobs:
       - name: Collect changed files
         run: |
           set -euo pipefail
+          # --no-renames, deliberately. With rename detection ON (git's default)
+          # an R100 rename reports ONLY THE DESTINATION, so renaming a canonical
+          # security source - CONTRIBUTING.md -> CONTRIBUTING-old.md - emitted one
+          # ordinary .md path, classified docs_only at T0, and the security lane
+          # that proves the security-guidance adapter still matches its sources
+          # never ran, even though a source had just disappeared.
+          #
+          # Disabling detection reports the rename as a delete plus an add, so the
+          # OLD path stays in the set and the classifier can see what was removed.
+          # A path that was only ever renamed is otherwise unremarkable: an
+          # ordinary README rename still classifies as docs.
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             BASE="${{ github.event.pull_request.base.sha }}"
             HEAD_SHA="${{ github.event.pull_request.head.sha }}"
             MB="$(git merge-base "$BASE" "$HEAD_SHA" 2>/dev/null || echo "$BASE")"
-            git diff --name-only "$MB" "$HEAD_SHA" > changed.txt || true
+            git diff --no-renames --name-only "$MB" "$HEAD_SHA" > changed.txt || true
           else
-            git show --name-only --pretty=format: "${{ github.sha }}" > changed.txt
+            git show --no-renames --name-only --pretty=format: "${{ github.sha }}" > changed.txt
           fi
           echo "--- changed files ---"; cat changed.txt
 
