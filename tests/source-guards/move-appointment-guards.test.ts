@@ -266,7 +266,9 @@ describe("move dialog: the disabled Move button explains itself", () => {
   it("derives the copy from the SAME state machine as the button state", () => {
     // One call, destructured — never a second inline recomputation that could
     // disagree with the sentence shown next to it.
-    expect(raw).toMatch(/const \{ canConfirm, disabledReason, reassignmentNotice, isReassign \} = moveConfirmState\(/);
+    expect(raw).toMatch(
+      /const \{ canConfirm, disabledReason, reassignmentNotice, isReassign, timeChanged \} = moveConfirmState\(/,
+    );
     expect((raw.match(/moveConfirmState\(/g) ?? []).length).toBe(1);
   });
   it("keeps the custom-time override an OWNER acknowledgement, not a bypass", () => {
@@ -278,5 +280,41 @@ describe("move dialog: the disabled Move button explains itself", () => {
   });
   it("preserves the server no_change contract instead of spending a round trip", () => {
     expect(gate).toMatch(/if \(!timeChanged && !isReassign\) return blocked\(MOVE_REASON\.noChange\)/);
+  });
+});
+
+// ---- EMERG-02 P2: ONE timestamp law, and it PARSES -------------------------
+describe("move dialog: instants are compared as instants, in one place", () => {
+  const raw = read(DIALOG);
+  const gate = read("app/(app)/calendar/move-confirm-state.ts");
+
+  it("the dialog compares no timestamps of its own", () => {
+    // The available-slot arm used to be `selected.start !== appointment.startsAt`
+    // — a RAW STRING compare — while the custom arm parsed. A generated slot is
+    // Date#toISOString ("...Z") and the appointment's start comes from PostgREST
+    // ("...+00:00"), so the same instant read as a change.
+    expect(raw).not.toMatch(/selected\.start !== appointment\.startsAt/);
+    expect(raw).not.toMatch(/const timeChanged =/);
+    // It hands the gate the raw proposal and consumes the gate's answer.
+    expect(raw).toMatch(/currentStartsAt: appointment\.startsAt/);
+    expect(raw).toMatch(/proposedStartsAt,/);
+  });
+
+  it("the gate parses both sides exactly once, and fails closed", () => {
+    expect(gate).toMatch(/export function isDifferentInstant/);
+    expect(gate).toMatch(/const c = new Date\(current\)\.getTime\(\)/);
+    expect(gate).toMatch(/const p = new Date\(proposed\)\.getTime\(\)/);
+    expect(gate).toMatch(/if \(Number\.isNaN\(c\) \|\| Number\.isNaN\(p\)\) return false/);
+    expect(gate).toMatch(/const timeChanged = isDifferentInstant\(currentStartsAt, proposedStartsAt\)/);
+    // Exactly one derivation of the answer — no second law anywhere.
+    expect((gate.match(/isDifferentInstant\(/g) ?? []).length).toBe(2); // declaration + single use
+  });
+
+  it("never normalises the TEXT instead of parsing it", () => {
+    // Stripping "Z"/"+00:00"/millis would be a second, divergent law.
+    for (const forbidden of [/\.replace\(\/Z\//, /endsWith\("Z"\)/, /"\+00:00"/, /slice\(0, *19\)/]) {
+      expect(gate).not.toMatch(forbidden);
+      expect(raw).not.toMatch(forbidden);
+    }
   });
 });

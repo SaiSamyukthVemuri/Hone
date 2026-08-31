@@ -361,6 +361,52 @@ test("EMERG-02 M: the prerequisite is legible and the flow usable on a 390x844 t
   await ctx.close();
 });
 
+// EMERG-02 P2 — the two spellings of one instant.
+//
+// A generated slot's `start` is Date#toISOString ("...T15:00:00.000Z"), while
+// `appointment.startsAt` comes straight off PostgREST, which renders timestamptz
+// as "...T15:00:00+00:00". Comparing those as STRINGS says "changed" for the
+// same instant, which re-enabled the button the no-op pre-emption exists to
+// disable and pushed a move to the RPC only for it to answer `no_change`.
+test("EMERG-02 H: selecting the appointment's CURRENT generated slot is not a move", async ({ browser }) => {
+  const f = await capacityFixture();
+  const apptId = await seedLocalTimeOnFutureDate(f, 3, "15:00"); // whole minute
+  await attachService(apptId, f.serviceId);
+
+  // NOTE: this helper talks to Postgres through `pg`, which parses timestamptz
+  // into a JS Date. The SPELLING divergence that causes the defect lives on the
+  // PostgREST/supabase-js wire the app actually reads ("...+00:00" with
+  // microseconds) versus a generated slot's Date#toISOString ("...Z") — pinned
+  // in tests/lib/calendar/move-confirm-state.test.ts. Here we assert BEHAVIOUR.
+  const before = await sql<{ starts_at: Date }>(
+    `select starts_at from public.appointments where id = $1`,
+    [apptId],
+  );
+
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  const page = await ctx.newPage();
+  await loginByMagicLink(page, f.seed.ownerEmail);
+  const dialog = await openMoveDialog(page, apptId);
+
+  // Available-slot mode is the default. The appointment's OWN reservation is
+  // excluded server-side, so its current time is offered back to it.
+  const currentSlot = dialog.getByRole("button", { name: "3:00 PM", exact: true });
+  await expect(currentSlot).toBeVisible({ timeout: 20_000 });
+  await currentSlot.click();
+
+  const confirm = dialog.getByRole("button", { name: /^Move appointment$/ });
+  await expect(confirm, "the same instant in a different spelling is not a change").toBeDisabled();
+  await expect(dialog.getByTestId("confirm-disabled-reason")).toContainText(/different time/i);
+
+  // Nothing reached the RPC.
+  const after = await sql<{ starts_at: Date }>(
+    `select starts_at from public.appointments where id = $1`,
+    [apptId],
+  );
+  expect(new Date(after[0].starts_at).getTime()).toBe(new Date(before[0].starts_at).getTime());
+  await ctx.close();
+});
+
 test("EMERG-02 L: an appointment ALREADY outside published hours moves to another custom time", async ({ browser }) => {
   // Closest match to the real customer report: the appointment's CURRENT start
   // is outside ordinary availability (04:00, before the 06:00 open) and its

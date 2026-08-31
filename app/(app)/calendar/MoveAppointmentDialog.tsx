@@ -266,16 +266,19 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
     setMoveError(null); // clear generated-slot conflict errors
   };
 
-  const timeChanged =
-    mode === "available_slot"
-      ? !!selected && selected.start !== appointment.startsAt
-      : !!customInstant && customInstant.getTime() !== new Date(appointment.startsAt).getTime();
+  // The proposal, in whichever mode produced it. Comparing it against the
+  // appointment's current start is the gate's job, NOT this component's: the
+  // two arms used to compare differently (raw strings here, parsed instants
+  // there), and a generated slot spells the same instant differently from the
+  // way PostgREST spells the appointment's own start.
+  const proposedStartsAt =
+    mode === "available_slot" ? (selected?.start ?? null) : (customInstant?.toISOString() ?? null);
 
   // EMERG-02: the button state and the sentence explaining it come from ONE
   // function, so a disabled primary action can never hide its own prerequisite
   // and the two can never drift. The reassignment arm mirrors the DB command
   // (`practitioner_reassignment_required`), it does not add a UI-only rule.
-  const { canConfirm, disabledReason, reassignmentNotice, isReassign } = moveConfirmState({
+  const { canConfirm, disabledReason, reassignmentNotice, isReassign, timeChanged } = moveConfirmState({
     mode,
     submitting,
     reassignEnabled,
@@ -287,7 +290,8 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
     date,
     customTime,
     ackOverride,
-    timeChanged,
+    currentStartsAt: appointment.startsAt,
+    proposedStartsAt,
   });
 
   const currentName =

@@ -46,7 +46,10 @@ export type MoveConfirmInput = {
   customTime: string;
   ackOverride: boolean;
   // ---- change detection (the server's no_change contract) -------------------
-  timeChanged: boolean;
+  /** The appointment's current start, as the server spelled it. */
+  currentStartsAt: string;
+  /** The proposed start (selected slot, or the custom date+time), or null. */
+  proposedStartsAt: string | null;
 };
 
 export type MoveConfirmState = {
@@ -62,6 +65,8 @@ export type MoveConfirmState = {
   reassignmentNotice: string | null;
   /** The chosen target differs from the current holder. */
   isReassign: boolean;
+  /** The proposal is a PROVABLY different instant from the current start. */
+  timeChanged: boolean;
 };
 
 // Exported so tests assert the SAME strings the dialog renders.
@@ -82,6 +87,30 @@ export const MOVE_NOTICE = {
   unassigned: "This appointment has no assigned practitioner. Choose a practitioner to reassign it.",
 } as const;
 
+/**
+ * Is `proposed` a PROVABLY different instant from `current`?
+ *
+ * Both sides reach the browser as ISO-8601 text, and the two producers do NOT
+ * agree on spelling: a generated slot is `Date#toISOString()` ("...T15:00:00.000Z")
+ * while the appointment's own start comes straight off PostgREST, which renders
+ * `timestamptz` with an offset and microsecond precision
+ * ("...T15:00:00.074892+00:00"). Comparing those as STRINGS reports a change for
+ * one and the same instant. So: parse, never normalise text — no stripping of
+ * `Z`, `+00:00`, milliseconds or offsets, all of which would be a second,
+ * divergent law.
+ *
+ * Fails CLOSED. If either side is missing or unparseable the answer is "not
+ * provably different", which leaves the confirm button disabled rather than
+ * enabling a submission on a timestamp we could not read.
+ */
+export function isDifferentInstant(current: string, proposed: string | null | undefined): boolean {
+  if (!proposed) return false;
+  const c = new Date(current).getTime();
+  const p = new Date(proposed).getTime();
+  if (Number.isNaN(c) || Number.isNaN(p)) return false;
+  return c !== p;
+}
+
 export function moveConfirmState(input: MoveConfirmInput): MoveConfirmState {
   const {
     mode,
@@ -95,8 +124,14 @@ export function moveConfirmState(input: MoveConfirmInput): MoveConfirmState {
     date,
     customTime,
     ackOverride,
-    timeChanged,
+    currentStartsAt,
+    proposedStartsAt,
   } = input;
+
+  // ONE comparison law for BOTH modes. The custom-time branch used to parse
+  // while the available-slot branch compared raw strings; that split is exactly
+  // what let a re-selected current slot look like a move.
+  const timeChanged = isDifferentInstant(currentStartsAt, proposedStartsAt);
 
   // Fail closed: with reassignment enabled the target must be a RESOLVED
   // eligible practitioner. An empty or failed lookup leaves it unresolved.
@@ -124,6 +159,7 @@ export function moveConfirmState(input: MoveConfirmInput): MoveConfirmState {
     reassignmentRequired,
     reassignmentNotice,
     isReassign,
+    timeChanged,
   });
 
   // A submit in flight disables everything; the button already reads "Moving…",
@@ -154,5 +190,6 @@ export function moveConfirmState(input: MoveConfirmInput): MoveConfirmState {
     reassignmentRequired,
     reassignmentNotice,
     isReassign,
+    timeChanged,
   };
 }
