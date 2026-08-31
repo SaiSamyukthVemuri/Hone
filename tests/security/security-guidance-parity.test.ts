@@ -177,6 +177,13 @@ function renderedText(inline: MdToken | undefined): string {
       // recurses rather than trusting a flat content field, and the `src` never
       // contributes because it lives in attrs, not in the children.
       if (c.type === "image") return renderedText(c);
+      // A line break inside a heading RENDERS as whitespace. Dropping it joined
+      // the words either side, so a heading written across two lines —
+      // "Payment review\nexpectations" over "---" — slugged as
+      // `payment-reviewexpectations` and escaped duplicate detection entirely.
+      // Emitting a space is enough: normalization collapses runs, so this can
+      // never introduce a spurious difference.
+      if (c.type === "softbreak" || c.type === "hardbreak") return " ";
       return "";
     })
     .join("");
@@ -793,7 +800,15 @@ function parityViolations(adapterBody: string, read: (file: string) => string | 
       }
     }
 
-    if (!matched[0].text.includes(c.token)) {
+    // The token is compared under the SAME whitespace law as the rule it belongs
+    // to. Raw `includes()` failed whenever a canonical document hard-wrapped a
+    // token across a newline — `search_path = pg_catalog,\n  pg_temp` — so a rule
+    // whose complete text matched was rejected for a token that was plainly
+    // there. Normalization is whitespace-only, so `studio_id`, `client_secret`
+    // and `service_role` remain distinct from their underscore-stripped forms.
+    //
+    // Still the MATCHED unit, never the section: the binding is unchanged.
+    if (!normalize(matched[0].text).includes(normalize(c.token))) {
       bad.push(
         `${ADAPTER}:${c.line}: the matched rule at ${c.file}#${c.anchor} line ${matched[0].line} ` +
           `does not contain ${JSON.stringify(c.token)} — the citation names a token that belongs ` +
@@ -1116,6 +1131,108 @@ describe("SEC-ADAPTER-01 — security-guidance adapter parity", () => {
     expect(parityViolations(BODY, read).join("\n")).toMatch(
       /matches 2 indistinguishable units|is not a complete rule of/,
     );
+  });
+
+  // -------------------------------------------------------------------------
+  // Line breaks render as whitespace; tokens obey the rule's whitespace law
+  // -------------------------------------------------------------------------
+
+  it("SOFTBREAK: a heading written across lines slugs as one phrase", () => {
+    const sluggedAs = (src: string) => structureOf(src).headings.map((h) => h.slug);
+    for (const src of [
+      "Payment review\nexpectations\n---",
+      "Payment\nreview\nexpectations\n---",
+      "## Payment review expectations",
+    ]) {
+      expect(sluggedAs(src), JSON.stringify(src)).toEqual(["payment-review-expectations"]);
+    }
+    // The break contributes whitespace, not nothing — the words must not fuse.
+    expect(structureOf("Payment review\nexpectations\n---").headings[0].text).toBe(
+      "Payment review expectations",
+    );
+    // ...and every other inline form still behaves, unchanged by this.
+    for (const src of [
+      "## ![Payment review expectations](x.png)",
+      "## [Payment review expectations](https://e.co)",
+      "## **Payment review** expectations",
+      "## `Payment review` expectations",
+      "## [![Payment review expectations](x.png)](https://e.co)",
+    ]) {
+      expect(sluggedAs(src), src).toEqual(["payment-review-expectations"]);
+    }
+  });
+
+  it("SOFTBREAK: dropping the break would fuse the words (pins the defect)", () => {
+    // Guards the fix against being simplified away later.
+    const inline = md.parse("Payment review\nexpectations\n---", {}).find((t) => t.type === "inline")!;
+    const withoutBreaks = (inline.children ?? [])
+      .filter((c) => c.type === "text")
+      .map((c) => c.content)
+      .join("");
+    expect(slug(withoutBreaks), "the old behaviour").toBe("payment-reviewexpectations");
+    expect(slug(renderedText(inline)), "the fixed behaviour").toBe("payment-review-expectations");
+  });
+
+  it("TOKEN GREEN: a token hard-wrapped in the source still binds", () => {
+    // A canonical document may wrap a token across a newline. The complete-rule
+    // match already normalized; the token check did not, so a rule whose text
+    // matched was rejected for a token plainly present in it.
+    const original = readRepo("CONTRIBUTING.md")!;
+    const FLAT = "`search_path = pg_catalog, pg_temp`";
+    expect(original, "control needs the token unwrapped").toContain(FLAT);
+    const wrapped = original.replace(FLAT, "`search_path = pg_catalog,\n  pg_temp`");
+    expect(wrapped, "the control's rewrap must land").not.toEqual(original);
+
+    const read = (f: string) => (f === "CONTRIBUTING.md" ? wrapped : readRepo(f));
+    // Raw containment would now fail; normalized containment must not.
+    expect(wrapped.includes("search_path = pg_catalog, pg_temp"), "raw text no longer holds it").toBe(
+      false,
+    );
+    expect(parityViolations(BODY, read)).toEqual([]);
+  });
+
+  it("TOKEN GREEN: repeated whitespace inside a token is harmless", () => {
+    const original = readRepo("CONTRIBUTING.md")!;
+    const wrapped = original.replace(
+      "`search_path = pg_catalog, pg_temp`",
+      "`search_path = pg_catalog,   pg_temp`",
+    );
+    expect(wrapped).not.toEqual(original);
+    const read = (f: string) => (f === "CONTRIBUTING.md" ? wrapped : readRepo(f));
+    expect(parityViolations(BODY, read)).toEqual([]);
+  });
+
+  it("TOKEN RED: normalization is whitespace-only, so identifiers stay distinct", () => {
+    for (const [a, b] of [
+      ["studio_id", "studioid"],
+      ["client_secret", "clientsecret"],
+      ["service_role", "servicerole"],
+      ["search_path = pg_catalog, pg_temp", "search_path = pgcatalog, pgtemp"],
+    ]) {
+      expect(normalize(a), `${a} must not equal ${b}`).not.toEqual(normalize(b));
+    }
+    // ...and a semantic alteration of a real token is still refused.
+    const original = readRepo("CONTRIBUTING.md")!;
+    const mutated = original.replace("search_path = pg_catalog, pg_temp", "search_path = public, pg_temp");
+    expect(mutated).not.toEqual(original);
+    const read = (f: string) => (f === "CONTRIBUTING.md" ? mutated : readRepo(f));
+    expect(parityViolations(BODY, read).join("\n")).toMatch(/is not a complete rule of|does not contain/);
+  });
+
+  it("TOKEN RED: the token is still looked up in the MATCHED unit, not the section", () => {
+    // Normalizing must not have widened the search. The token is moved to a
+    // sibling unit: present in the section, absent from the matched rule.
+    const original = readRepo("CONTRIBUTING.md")!;
+    const mutated = original
+      .replace("`charges.create`: must be zero.", "`charges.forge`: must be zero.")
+      .replace(
+        "- No raw card / CVC / `client_secret` in any new code.",
+        "- No raw card / CVC / `client_secret` in any new code. See `charges.create`.",
+      );
+    expect(mutated).not.toEqual(original);
+    expect(mutated, "the token survives elsewhere in the section").toContain("`charges.create`");
+    const read = (f: string) => (f === "CONTRIBUTING.md" ? mutated : readRepo(f));
+    expect(parityViolations(BODY, read).join("\n")).toMatch(/is not a complete rule of|does not contain/);
   });
 
   // -------------------------------------------------------------------------
@@ -1560,6 +1677,11 @@ describe("SEC-ADAPTER-01 — security-guidance adapter parity", () => {
     ["ATX indented 1 space", " ## Payment review expectations"],
     ["ATX indented 3 spaces", "   ## Payment review expectations"],
     ["setext", "Payment review expectations\n---------------------------"],
+    // A line break inside a heading renders as whitespace. Dropping it joined
+    // the words and produced `payment-reviewexpectations`, so this decoy took
+    // the real anchor while the guard saw a different slug entirely.
+    ["setext across two lines", "Payment review\nexpectations\n---------------------------"],
+    ["setext across three lines", "Payment\nreview\nexpectations\n---------------------------"],
     ["inside a list item", "- ## Payment review expectations"],
     ["inside a blockquote", "> ## Payment review expectations"],
     ["inside a blockquoted list", "> - ## Payment review expectations"],
@@ -1605,6 +1727,8 @@ describe("SEC-ADAPTER-01 — security-guidance adapter parity", () => {
       "## Payment *review* expectations",
       "## [**Payment** `review` expectations](https://x.co)",
       "## Payment review expectations ##",
+      "Payment review\nexpectations\n---",
+      "Payment\nreview\nexpectations\n---",
       "## ![Payment review expectations](x.png)",
       "## ![**Payment** `review` expectations](x.png)",
       "## [![Payment review expectations](x.png)](https://e.co)",
