@@ -14,6 +14,7 @@ import {
   type MoveSlot,
   type MovePractitionerOption,
 } from "./move-appointment-actions";
+import { moveConfirmState } from "./move-confirm-state";
 
 // Practitioner Move appointment, ONE shared responsive dialog + state machine used by
 // mobile, tablet, and desktop (responsive by Tailwind; no separate mobile/desktop paths).
@@ -130,12 +131,14 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
         setCanUseCustomTime(res.canUseCustomTime); // server-authoritative owner flag
         setReassignEnabled(res.reassignEnabled);
         setEligible(res.eligiblePractitioners);
-        setCurrentPractitionerId(res.currentPractitionerId);
+        // NULLABLE in the database (ON DELETE SET NULL): normalise to "" so the
+        // gate treats "no holder" as a resolvable state rather than an id.
+        setCurrentPractitionerId(res.currentPractitionerId ?? "");
         // Default target on the FIRST load only: keep the current practitioner when
         // still active + eligible; otherwise leave it empty so the owner must
         // deliberately choose a replacement (never a silent first pick).
         if (forTarget === null && res.reassignEnabled) {
-          setTarget(res.currentPractitionerValid ? res.currentPractitionerId : "");
+          setTarget(res.currentPractitionerValid ? (res.currentPractitionerId ?? "") : "");
         }
         setSelected((prev) => (prev && res.slots.some((s) => s.start === prev.start) ? prev : null));
       });
@@ -263,25 +266,33 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
     setMoveError(null); // clear generated-slot conflict errors
   };
 
-  // Item 7: when reassignment is enabled the current target MUST be a resolved
-  // eligible practitioner (fail closed: an empty/failed lookup leaves target "").
-  const targetChosen = !reassignEnabled || eligible.some((p) => p.id === target);
-  const canConfirm =
-    targetChosen &&
-    (mode === "available_slot"
-      ? !!selected && !loadingSlots
-      : DATE_RE.test(date) && TIME_RE.test(customTime) && ackOverride);
-
-  // Which operation the current selection represents (drives the summary + button).
-  const isReassign = reassignEnabled && !!target && target !== currentPractitionerId;
   const timeChanged =
     mode === "available_slot"
       ? !!selected && selected.start !== appointment.startsAt
       : !!customInstant && customInstant.getTime() !== new Date(appointment.startsAt).getTime();
+
+  // EMERG-02: the button state and the sentence explaining it come from ONE
+  // function, so a disabled primary action can never hide its own prerequisite
+  // and the two can never drift. The reassignment arm mirrors the DB command
+  // (`practitioner_reassignment_required`), it does not add a UI-only rule.
+  const { canConfirm, disabledReason, reassignmentNotice, isReassign } = moveConfirmState({
+    mode,
+    submitting,
+    reassignEnabled,
+    eligibleIds: eligible.map((p) => p.id),
+    target,
+    currentPractitionerId,
+    hasSlot: !!selected,
+    loadingSlots,
+    date,
+    customTime,
+    ackOverride,
+    timeChanged,
+  });
+
   const currentName =
     eligible.find((p) => p.id === currentPractitionerId)?.displayName ?? appointment.practitionerName ?? null;
   const targetName = eligible.find((p) => p.id === target)?.displayName ?? null;
-  const currentInvalid = reassignEnabled && !!currentPractitionerId && !eligible.some((p) => p.id === currentPractitionerId);
   const opVerb = isReassign
     ? timeChanged
       ? "Move and reassign appointment"
@@ -420,7 +431,7 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
                   aria-label="Practitioner"
                   className="mt-1 block w-full rounded-lg border border-neutral-300 px-3 py-3 text-base focus:border-neutral-900 focus:outline-none focus:ring-2 focus:ring-neutral-900/10 disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-900"
                 >
-                  {(currentInvalid || target === "") && <option value="">Choose a practitioner…</option>}
+                  {(reassignmentNotice !== null || target === "") && <option value="">Choose a practitioner…</option>}
                   {eligible.map((p) => (
                     <option key={p.id} value={p.id}>
                       {p.displayName}
@@ -429,9 +440,9 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
                   ))}
                 </select>
               </label>
-              {currentInvalid && (
+              {reassignmentNotice && (
                 <p className="mt-2 text-xs text-amber-700 dark:text-amber-300" data-testid="reassignment-required">
-                  This appointment&apos;s practitioner is no longer active or eligible. Choose a practitioner to reassign it.
+                  {reassignmentNotice}
                 </p>
               )}
               {isReassign && targetName && (
@@ -582,14 +593,26 @@ export default function MoveAppointmentDialog({ open, onClose, onMoved, appointm
             top border + safe-area bottom padding. Because it is a flex sibling of the
             scroll body (not sticky inside an overflow-clipped container) it stays
             continuously painted on iOS Safari before, during and after submission. */}
-        <div className="flex shrink-0 items-center justify-end gap-3 border-t border-neutral-200 bg-white px-5 py-4 pb-[calc(1rem+env(safe-area-inset-bottom))] dark:border-neutral-800 dark:bg-neutral-950 sm:pb-4">
-          <button type="button" onClick={() => { if (!submitting) onClose(); }} disabled={submitting} className="min-h-[44px] rounded-lg px-4 py-2 text-sm font-medium text-neutral-700 hover:bg-neutral-100 disabled:opacity-50 dark:text-neutral-300 dark:hover:bg-neutral-900">Keep current time</button>
-          <button type="button" onClick={confirmMove} disabled={!canConfirm || submitting} aria-busy={submitting} className="inline-flex min-h-[44px] items-center justify-center gap-2 rounded-lg bg-neutral-900 px-5 py-2 text-sm font-semibold text-white disabled:opacity-50 dark:bg-white dark:text-neutral-900">
-            {submitting && (
-              <span aria-hidden="true" className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-white/40 border-t-white dark:border-neutral-900/40 dark:border-t-neutral-900" />
-            )}
-            {submitting ? opBusy : opVerb}
-          </button>
+        <div className="flex shrink-0 flex-col gap-3 border-t border-neutral-200 bg-white px-5 py-4 pb-[calc(1rem+env(safe-area-inset-bottom))] dark:border-neutral-800 dark:bg-neutral-950 sm:pb-4">
+          {/* EMERG-02: a disabled primary action never conceals its prerequisite.
+              Same state machine as `canConfirm`, so the two cannot disagree, and
+              it lives in the always-painted footer rather than in the scroll
+              body — the reported symptom was a greyed button with the only hint
+              scrolled off-screen above it. */}
+          {disabledReason && (
+            <p id="move-confirm-reason" data-testid="confirm-disabled-reason" className="text-sm text-neutral-600 dark:text-neutral-400">
+              {disabledReason}
+            </p>
+          )}
+          <div className="flex items-center justify-end gap-3">
+            <button type="button" onClick={() => { if (!submitting) onClose(); }} disabled={submitting} className="min-h-[44px] rounded-lg px-4 py-2 text-sm font-medium text-neutral-700 hover:bg-neutral-100 disabled:opacity-50 dark:text-neutral-300 dark:hover:bg-neutral-900">Keep current time</button>
+            <button type="button" onClick={confirmMove} disabled={!canConfirm || submitting} aria-busy={submitting} aria-describedby={disabledReason ? "move-confirm-reason" : undefined} className="inline-flex min-h-[44px] items-center justify-center gap-2 rounded-lg bg-neutral-900 px-5 py-2 text-sm font-semibold text-white disabled:opacity-50 dark:bg-white dark:text-neutral-900">
+              {submitting && (
+                <span aria-hidden="true" className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-white/40 border-t-white dark:border-neutral-900/40 dark:border-t-neutral-900" />
+              )}
+              {submitting ? opBusy : opVerb}
+            </button>
+          </div>
         </div>
       </div>
     </div>

@@ -229,7 +229,10 @@ describe("move dialog: footer stays painted + submit locks synchronously", () =>
     expect(raw).not.toMatch(/sticky\s+top-0/);
   });
   it("header + footer are shrink-0 flex children; body is the only scroll region (min-h-0)", () => {
-    expect(raw).toMatch(/flex shrink-0[^"]*items-center justify-end/); // footer
+    // EMERG-02 made the footer a COLUMN (prerequisite line above the action row);
+    // both halves are still ordinary shrink-0 flex children, never sticky.
+    expect(raw).toMatch(/flex shrink-0 flex-col[^"]*border-t/); // footer shell
+    expect(raw).toMatch(/flex items-center justify-end gap-3/); // action row
     expect(raw).toMatch(/min-h-0 flex-1 overflow-y-auto/); // body
   });
   it("submission lock is an EXPLICIT useState + one-shot ref, set synchronously (not only useTransition)", () => {
@@ -243,5 +246,37 @@ describe("move dialog: footer stays painted + submit locks synchronously", () =>
   });
   it("the submit button exposes aria-busy while submitting", () => {
     expect(raw).toMatch(/aria-busy=\{submitting\}/);
+  });
+});
+
+// ---- EMERG-02: a disabled primary action must state its prerequisite --------
+describe("move dialog: the disabled Move button explains itself", () => {
+  const raw = read(DIALOG);
+  const gate = read("app/(app)/calendar/move-confirm-state.ts");
+  it("renders the reason in the ALWAYS-PAINTED footer, not the scroll body", () => {
+    // The reported symptom was a greyed button whose only hint had scrolled
+    // away, so the reason must sit in the footer shell beside the button.
+    const footer = raw.slice(raw.indexOf("flex shrink-0 flex-col"));
+    expect(footer).toMatch(/data-testid="confirm-disabled-reason"/);
+    expect(footer).toMatch(/\{disabledReason\}/);
+  });
+  it("associates the reason with the button for assistive technology", () => {
+    expect(raw).toMatch(/aria-describedby=\{disabledReason \? "move-confirm-reason" : undefined\}/);
+  });
+  it("derives the copy from the SAME state machine as the button state", () => {
+    // One call, destructured — never a second inline recomputation that could
+    // disagree with the sentence shown next to it.
+    expect(raw).toMatch(/const \{ canConfirm, disabledReason, reassignmentNotice, isReassign \} = moveConfirmState\(/);
+    expect((raw.match(/moveConfirmState\(/g) ?? []).length).toBe(1);
+  });
+  it("keeps the custom-time override an OWNER acknowledgement, not a bypass", () => {
+    // The gate may explain the block; it may never relax the DB precondition.
+    expect(gate).toMatch(/if \(!targetChosen\) return blocked\(MOVE_REASON\.reassignmentRequired\)/);
+    expect(gate).toMatch(/if \(!ackOverride\) return blocked\(MOVE_REASON\.acknowledge\)/);
+    // available_slot mode keeps requiring a real generated selection.
+    expect(gate).toMatch(/if \(!hasSlot\) return blocked\(MOVE_REASON\.chooseSlot\)/);
+  });
+  it("preserves the server no_change contract instead of spending a round trip", () => {
+    expect(gate).toMatch(/if \(!timeChanged && !isReassign\) return blocked\(MOVE_REASON\.noChange\)/);
   });
 });
