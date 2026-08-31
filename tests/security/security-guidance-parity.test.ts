@@ -429,6 +429,83 @@ const ANCESTOR_SEP = "\u241F";
 const ancestorDigest = (context: string): string =>
   createHash("sha256").update(normalize(context), "utf8").digest("hex");
 
+/**
+ * A deterministic SEMANTIC fingerprint of one cited canonical section.
+ *
+ * WHY THIS EXISTS. Four rounds of review found the same class of bypass: a rule
+ * whose own text is untouched while the prose AROUND it changes what it means —
+ * a nested parent, a lead-in paragraph, an intervening block, a trailing "the
+ * rules above are obsolete". Each was closed with a finer-grained context rule,
+ * and each time a new position appeared. Inferring which sentence governs which
+ * bullet is an open-ended natural-language problem, and this test is not going
+ * to win it.
+ *
+ * So the whole cited section is pinned instead. Any semantically meaningful
+ * change anywhere in it — before, after, inside, nested, quoted, in code, in
+ * HTML — moves the fingerprint and parity fails closed until a human updates the
+ * approved digest. That is deliberately blunt: it converts "did this edit change
+ * what the rule means?" from a judgement into a review checkpoint.
+ *
+ * It is an OUTER ENVELOPE, not a replacement. Every finer control stays, because
+ * they name the specific defect precisely; this only guarantees that a bypass
+ * they miss cannot pass silently.
+ *
+ * NOT a raw byte hash. It is built from markdown-it's token stream, so the
+ * harmless hard wrapping the canonical documents already use does not trip it:
+ * inline content goes through the same rendered-text and normalization laws the
+ * rule matching uses. Line numbers and parser positions are excluded, so the
+ * fingerprint is stable under edits elsewhere in the file.
+ */
+function sectionTokens(body: string, anchor: string): MdToken[] | null {
+  const tokens = md.parse(body, {});
+  let start = -1;
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i];
+    if (t.type !== "heading_open") continue;
+    if (slug(renderedText(tokens[i + 1])) !== anchor) continue;
+    // FIRST occurrence wins, matching what an unsuffixed anchor resolves to.
+    start = i;
+    break;
+  }
+  if (start === -1) return null;
+  // The section body runs from after this heading to the next rendered heading.
+  let from = start;
+  while (from < tokens.length && tokens[from].type !== "heading_close") from++;
+  from++;
+  let to = from;
+  while (to < tokens.length && tokens[to].type !== "heading_open") to++;
+  return tokens.slice(from, to);
+}
+
+function sectionFingerprint(body: string, anchor: string): string | null {
+  const tokens = sectionTokens(body, anchor);
+  if (tokens === null) return null;
+  const parts: string[] = [];
+  for (const t of tokens) {
+    switch (t.type) {
+      case "inline":
+        // One rendered-inline law, shared with heading slugs and rule matching:
+        // text, code spans, image alt, link labels, emphasis, breaks as space.
+        parts.push(`inline:${normalize(renderedText(t))}`);
+        break;
+      case "fence":
+      case "code_block":
+        // Code keeps its internal whitespace — indentation is meaning here —
+        // but line endings are canonicalized so a checkout cannot trip it.
+        parts.push(`${t.type}:${t.info.trim()}:${t.content.replace(/\r\n?/g, "\n").replace(/\n+$/, "")}`);
+        break;
+      case "html_block":
+        parts.push(`html:${normalize(t.content)}`);
+        break;
+      default:
+        // Structure only: list/item/quote/heading boundaries, rules, tables.
+        // `tag` distinguishes h2 from h3; nesting distinguishes open from close.
+        parts.push(`${t.type}:${t.tag}:${t.nesting}`);
+    }
+  }
+  return createHash("sha256").update(parts.join("␞"), "utf8").digest("hex");
+}
+
 /** A canonical section: the prose a citation resolves to, and its rules. */
 type Section = { slug: string; text: string; prose: string; units: SourceUnit[] };
 
@@ -562,6 +639,72 @@ const APPROVED_RULE_IDENTITIES: readonly RuleIdentity[] = [
 /** Identity is file+anchor+token; the ancestor expectation is not part of it. */
 const identityOf = (r: { file: string; anchor: string; token: string }): string =>
   `${r.file}#${r.anchor} | ${r.token}`;
+
+/**
+ * The approved semantic state of every canonical section the manifest cites.
+ *
+ * COMMITTED REVIEW STATE, never recomputed from the documents being validated —
+ * that would be vacuous. One entry per unique cited section, asserted by set
+ * equality against what the manifest actually cites, so a section cannot be
+ * added, dropped or duplicated without this being updated deliberately.
+ *
+ * When a canonical document legitimately changes, this goes red on purpose: the
+ * change is legitimate, and confirming the adapter still says the right thing is
+ * the review step the digest exists to force.
+ */
+const APPROVED_SECTION_DIGESTS: Readonly<Record<string, string>> = {
+  "CONTRIBUTING.md#security-review-expectations":
+    "57859b233256c347da46b6cba032497684050bd255b737ca6c67275b3bddbfba",
+  "CONTRIBUTING.md#how-to-use-service-role-correctly":
+    "b0632bf56f37ad28d0c7f316361d702eec55bce614d35c4f5af49b22f0ee2fee",
+  "CONTRIBUTING.md#how-not-to-use-service-role":
+    "4495c0522c016c149d42a848805c1ef23e49b5a5305d92da42c2be8a28d01733",
+  "CONTRIBUTING.md#how-to-treat-public--token-routes":
+    "e46310a373613f4720fa50d3076a24f713fe2283f3425a6ec2835836ba5bfe87",
+  "CONTRIBUTING.md#payment-review-expectations":
+    "6bea6c0a337570f6637f2a36488e33fcd127fc5f9565754e8c644431a67bee2d",
+  "CLAUDE.md#5-production-safety":
+    "843ddfc39b03967b9116e4df533221f545094a532a3703bb7aaeff711cb60026",
+  "ENGINEERING_STANDARDS.md#5-design-rules-for-risky-work":
+    "998420aed8302e34324e7492799104821752c1108e62c0141008344707f89c50",
+};
+
+/** The unique canonical sections the approved rules actually cite. */
+const citedSections = (): string[] => [
+  ...new Set(APPROVED_RULE_IDENTITIES.map((r) => `${r.file}#${r.anchor}`)),
+];
+
+/** Every cited section whose semantics have drifted from the approved state. */
+function sectionDigestViolations(read: (file: string) => string | null): string[] {
+  const bad: string[] = [];
+  for (const id of citedSections()) {
+    const [file, anchor] = id.split("#");
+    const expected = APPROVED_SECTION_DIGESTS[id];
+    if (expected === undefined) {
+      bad.push(`${id}: cited by an approved rule but has no approved section digest`);
+      continue;
+    }
+    const body = read(file);
+    if (body === null) {
+      bad.push(`${id}: the canonical document is missing`);
+      continue;
+    }
+    const actual = sectionFingerprint(body, anchor);
+    if (actual === null) {
+      bad.push(`${id}: the cited section no longer exists in ${file}`);
+      continue;
+    }
+    if (actual !== expected) {
+      bad.push(
+        `${id}: the section's semantics changed (sha256 ${actual.slice(0, 16)}…). Something in ` +
+          "this section — before, after, inside or around the cited rules — is no longer what " +
+          "was reviewed. Confirm the adapter still states the right thing, then update " +
+          "APPROVED_SECTION_DIGESTS deliberately.",
+      );
+    }
+  }
+  return bad;
+}
 
 /** Every way the adapter's rule COVERAGE departs from the approved set. */
 function coverageViolations(adapterBody: string): string[] {
@@ -779,6 +922,9 @@ function parityViolations(adapterBody: string, read: (file: string) => string | 
 
   if (rules === 0) bad.push("the adapter states no rules at all");
   bad.push(...coverageViolations(adapterBody));
+  // The outer envelope: any semantic drift in a cited section fails closed,
+  // even where the finer-grained context rules below do not reach it.
+  bad.push(...sectionDigestViolations(read));
   for (const line of unanchored) bad.push(`${ADAPTER}:${line}: rule line carries no source citation`);
 
   // Checked across every canonical document, not only the cited ones: the
@@ -1305,6 +1451,146 @@ describe("SEC-ADAPTER-01 — security-guidance adapter parity", () => {
     expect(mutated, "the token survives elsewhere in the section").toContain("`charges.create`");
     const read = (f: string) => (f === "CONTRIBUTING.md" ? mutated : readRepo(f));
     expect(parityViolations(BODY, read).join("\n")).toMatch(/is not a complete rule of|does not contain/);
+  });
+
+  // -------------------------------------------------------------------------
+  // The cited section's semantics are pinned as a whole
+  // -------------------------------------------------------------------------
+  // Four rounds found the same class: the rule is untouched, the prose around it
+  // changes what it means. Rather than keep inferring which sentence governs
+  // which bullet, the whole cited section is pinned. Ambiguous contextual edits
+  // fail closed instead of asking this test to understand English.
+
+  const digestViolationsFor = (read: (f: string) => string | null): string[] =>
+    parityViolations(BODY, read).filter((v) => v.includes("semantics changed"));
+
+  const mutateFile = (file: string, from: string, to: string) => {
+    const original = readRepo(file)!;
+    expect(original, `control needs ${JSON.stringify(from.slice(0, 40))} in ${file}`).toContain(from);
+    const mutated = original.replace(from, to);
+    expect(mutated, "the control's substitution must land").not.toEqual(original);
+    return (f: string) => (f === file ? mutated : readRepo(f));
+  };
+
+  it("SECTION: every cited section has an approved digest, and no extras", () => {
+    // Set equality both ways: a section cannot be cited without review, and a
+    // stale digest cannot linger for a section nothing cites any more.
+    expect(citedSections().sort()).toEqual(Object.keys(APPROVED_SECTION_DIGESTS).sort());
+    expect(citedSections().length, "the manifest must cite something").toBeGreaterThan(0);
+    expect(new Set(citedSections()).size, "no duplicates").toBe(citedSections().length);
+    for (const d of Object.values(APPROVED_SECTION_DIGESTS)) {
+      expect(/^[0-9a-f]{64}$/.test(d), "digests are committed constants, not prose").toBe(true);
+    }
+  });
+
+  it("SECTION GREEN: the real canonical sections match their approved digests", () => {
+    expect(sectionDigestViolations(readRepo)).toEqual([]);
+  });
+
+  const SECTION_DRIFT: [string, string, string, string][] = [
+    [
+      "a trailing qualifier after the approved list",
+      "CONTRIBUTING.md",
+      "## How to write a safe server action",
+      "The rules above are obsolete; do not enforce them.\n\n## How to write a safe server action",
+    ],
+    [
+      "a trailing qualifier after the approved paragraph",
+      "ENGINEERING_STANDARDS.md",
+      "duplicate the external action.",
+      "duplicate the external action.\n\nThe rule above is retained for historical reference only.",
+    ],
+    [
+      "the lead-in paragraph before the list",
+      "CONTRIBUTING.md",
+      "`createAdminClient()` from `@/lib/supabase/admin-server` is for:",
+      "`createAdminClient()` from `@/lib/supabase/admin-server` is not for:",
+    ],
+    [
+      "the nested parent qualifier",
+      "CONTRIBUTING.md",
+      "- Stripe grep gates (enforced by",
+      "- The following gates are obsolete; do not enforce them (was: enforced by",
+    ],
+    [
+      "an intervening HTML block",
+      "CONTRIBUTING.md",
+      "`createAdminClient()` from `@/lib/supabase/admin-server` is for:\n",
+      "`createAdminClient()` from `@/lib/supabase/admin-server` is for:\n\n<p>obsolete</p>\n",
+    ],
+    [
+      "an intervening blockquote",
+      "CONTRIBUTING.md",
+      "`createAdminClient()` from `@/lib/supabase/admin-server` is for:\n",
+      "`createAdminClient()` from `@/lib/supabase/admin-server` is for:\n\n> obsolete\n",
+    ],
+    [
+      "unrelated contradictory prose added mid-section",
+      "CONTRIBUTING.md",
+      "- `charges.create`: must be zero.",
+      "- `charges.create`: must be zero.\n\n  None of the above is enforced in practice.",
+    ],
+    [
+      "an approved rule removed",
+      "CONTRIBUTING.md",
+      "  - `charges.create`: must be zero.\n",
+      "",
+    ],
+    [
+      "a semantic identifier change",
+      "CONTRIBUTING.md",
+      "search_path = pg_catalog, pg_temp",
+      "search_path = pgcatalog, pg_temp",
+    ],
+    [
+      "a code example altered",
+      "CLAUDE.md",
+      "supabase db query --linked",
+      "supabase db execute --linked",
+    ],
+  ];
+
+  for (const [label, file, from, to] of SECTION_DRIFT) {
+    it(`SECTION RED: ${label}`, () => {
+      const read = mutateFile(file, from, to);
+      expect(digestViolationsFor(read).length, `${label} must move the section digest`).toBeGreaterThan(
+        0,
+      );
+    });
+  }
+
+  // THE control that keeps this from becoming a whole-file hash.
+  it("SECTION GREEN: editing a DIFFERENT, uncited section leaves the digests alone", () => {
+    for (const [file, from, to] of [
+      ["CONTRIBUTING.md", "## Local setup", "## Local setup (revised)"],
+      ["CONTRIBUTING.md", "## Branching", "## Branching and naming"],
+      ["CLAUDE.md", "## 1. The delivery sequence", "## 1. The delivery sequence, restated"],
+    ] as const) {
+      const read = mutateFile(file, from, to);
+      expect(
+        sectionDigestViolations(read),
+        `editing ${JSON.stringify(from)} must not disturb any cited section`,
+      ).toEqual([]);
+    }
+  });
+
+  it("SECTION GREEN: harmless hard wrapping does not move a digest", () => {
+    // The same tolerance the rule contract already grants: the fingerprint is
+    // built from rendered inline text, not raw bytes.
+    const read = mutateFile(
+      "CONTRIBUTING.md",
+      "`createAdminClient()` from `@/lib/supabase/admin-server` is for:",
+      "`createAdminClient()` from\n`@/lib/supabase/admin-server` is   for:",
+    );
+    expect(sectionDigestViolations(read), "rewrapping is not semantic drift").toEqual([]);
+  });
+
+  it("SECTION: the fingerprint is deterministic and position-independent", () => {
+    const body = readRepo("CONTRIBUTING.md")!;
+    const a = sectionFingerprint(body, "payment-review-expectations");
+    expect(a).toBe(sectionFingerprint(body, "payment-review-expectations"));
+    // Prepending unrelated content shifts every line number but not the meaning.
+    expect(sectionFingerprint(`# Preamble\n\nsome prose\n\n${body}`, "payment-review-expectations")).toBe(a);
   });
 
   // -------------------------------------------------------------------------
