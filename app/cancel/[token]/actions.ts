@@ -13,6 +13,10 @@ import {
   isCancellationReasonValue,
   type CancellationReasonValue,
 } from "@/lib/booking/cancellation-reasons";
+// EMERG-01. The SAME decision the reschedule surface refuses on. Imported so
+// the cancel page can WARN about a restriction it does not itself impose:
+// nothing about cancellation changes here, only what the visitor is told.
+import { isFreeConsultWaitlistOnlyReschedule } from "@/lib/booking/free-consult-reschedule-policy";
 
 const POLICY_ACK_REQUIRED_ERROR =
   "Please review and acknowledge the appointment policies before cancelling.";
@@ -457,6 +461,23 @@ export type AppointmentSummary = {
   // these fields and is not blocked when either is empty.
   cancellationPolicyText: string | null;
   noShowPolicyText: string | null;
+  // EMERG-01. SERVER-DERIVED, presentation only.
+  //
+  // True when this appointment is a free consultation at a studio whose
+  // new-client intake is waitlisted — i.e. when /reschedule will refuse. The
+  // cancel page uses it to warn BEFORE the destructive action and to stop
+  // offering "Reschedule instead", which would be a link to a refusal.
+  //
+  // It gates COPY, never authority: `publicCancelAppointmentAction` does not
+  // read it, and cancellation remains available for every studio and every
+  // service exactly as before.
+  freeConsultationWaitlistOnly: boolean;
+  // The studio's PUBLIC booking slug, and ONLY when the flag above is true —
+  // it exists solely to build the post-cancellation "Join the waitlist" link
+  // into the studio's existing public booking surface, which already switches
+  // a closed studio into the waitlist experience. Null otherwise, so this
+  // never becomes a general studio-slug disclosure on a public token route.
+  waitlistBookingSlug: string | null;
 };
 
 export async function fetchAppointmentForCancelAction(
@@ -483,7 +504,11 @@ export async function fetchAppointmentForCancelAction(
   const { data, error } = await admin
     .from("appointments")
     .select(
-      "id, status, starts_at, studio:studios(name, timezone, cancellation_policy_text, no_show_policy_text), service:services(name)",
+      // EMERG-01 adds `slug` to the studio embed and `modality, price_cents`
+      // to the service embed. Both ride the read that already proves the
+      // appointment's state, so the warning is derived from the same row the
+      // page is about to render and costs no extra round trip.
+      "id, status, starts_at, studio:studios(name, slug, timezone, cancellation_policy_text, no_show_policy_text), service:services(name, modality, price_cents)",
     )
     .eq("id", resolved.appointment_id)
     .maybeSingle();
@@ -494,25 +519,24 @@ export async function fetchAppointmentForCancelAction(
   if (!data) return { ok: false, error: PUBLIC_CANCEL_GENERIC_ERROR };
 
   // The relation shape from Supabase types as array; pick first.
+  type JoinedStudio = {
+    name: string;
+    slug: string | null;
+    timezone: string;
+    cancellation_policy_text: string | null;
+    no_show_policy_text: string | null;
+  };
+  type JoinedService = {
+    name: string;
+    modality: string | null;
+    price_cents: number | null;
+  };
   type Joined = {
     id: string;
     status: string;
     starts_at: string;
-    studio:
-      | {
-          name: string;
-          timezone: string;
-          cancellation_policy_text: string | null;
-          no_show_policy_text: string | null;
-        }
-      | Array<{
-          name: string;
-          timezone: string;
-          cancellation_policy_text: string | null;
-          no_show_policy_text: string | null;
-        }>
-      | null;
-    service: { name: string } | { name: string }[] | null;
+    studio: JoinedStudio | JoinedStudio[] | null;
+    service: JoinedService | JoinedService[] | null;
   };
   const row = data as unknown as Joined;
 
@@ -534,6 +558,14 @@ export async function fetchAppointmentForCancelAction(
   const studio = pick(row.studio);
   const service = pick(row.service);
 
+  // EMERG-01. Derived from the rows just read, never from anything the browser
+  // sent. The slug is returned ONLY alongside a true verdict, so it cannot be
+  // read off this public surface for a studio the policy does not cover.
+  const freeConsultationWaitlistOnly = isFreeConsultWaitlistOnlyReschedule({
+    studioSlug: studio?.slug ?? null,
+    service,
+  });
+
   return {
     ok: true,
     summary: {
@@ -543,6 +575,10 @@ export async function fetchAppointmentForCancelAction(
       startsAt: row.starts_at,
       cancellationPolicyText: studio?.cancellation_policy_text ?? null,
       noShowPolicyText: studio?.no_show_policy_text ?? null,
+      freeConsultationWaitlistOnly,
+      waitlistBookingSlug: freeConsultationWaitlistOnly
+        ? (studio?.slug ?? null)
+        : null,
     },
   };
 }
