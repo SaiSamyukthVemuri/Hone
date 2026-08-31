@@ -121,6 +121,35 @@ const slug = (headingText: string): string =>
 /** The parser's own token type, so this file never restates its shape. */
 type MdToken = ReturnType<typeof md.parse>[number];
 
+/**
+ * The content a list item OWNS, excluding every descendant.
+ *
+ * Ownership is read from the token stream's nesting, never from indentation. A
+ * nested list is stepped over wholesale, so grandchildren cannot leak into a
+ * parent OR into an immediate child, and code inside the item is dropped for the
+ * same reason it is dropped everywhere else: an example is not policy.
+ */
+function ownContentOf(tokens: MdToken[], listItemOpen: number): string {
+  const parts: string[] = [];
+  let nested = 0;
+  for (let i = listItemOpen + 1; i < tokens.length; i++) {
+    const t = tokens[i];
+    if (t.type === "bullet_list_open" || t.type === "ordered_list_open") {
+      nested++;
+      continue;
+    }
+    if (t.type === "bullet_list_close" || t.type === "ordered_list_close") {
+      nested--;
+      continue;
+    }
+    if (nested === 0 && t.type === "list_item_close") break;
+    if (nested > 0) continue; // a descendant's content is its own unit's
+    if (t.type === "fence" || t.type === "code_block") continue;
+    if (t.type === "inline") parts.push(t.content);
+  }
+  return parts.join("\n");
+}
+
 function renderedText(inline: MdToken | undefined): string {
   if (!inline) return "";
   const children = inline.children;
@@ -140,7 +169,16 @@ type MdHeading = {
   bodyFrom: number;
 };
 
-type SourceUnit = { kind: "item" | "para"; text: string };
+/**
+ * One complete canonical rule, with the identity a citation binds to.
+ *
+ * `text` is the unit's OWN content. A parent list item does NOT carry its
+ * descendants: `- Stripe grep gates …` with six gates beneath it used to be one
+ * giant unit containing every gate, so the whole block could be pasted into the
+ * adapter as a single "rule" and matched. Each gate is independently its own
+ * unit instead, and the parent states only its own sentence.
+ */
+type SourceUnit = { kind: "item" | "para"; text: string; line: number };
 
 /**
  * Everything this guard needs to know about a markdown document's structure,
@@ -162,7 +200,7 @@ function structureOf(body: string): MdStructure {
   const lines = body.split("\n");
   const code = new Array<boolean>(lines.length).fill(false);
   const headings: MdHeading[] = [];
-  const items: [number, number][] = [];
+  const items: { at: number; line: number }[] = [];
   const paras: { from: number; to: number; content: string }[] = [];
 
   const tokens = md.parse(body, {});
@@ -188,8 +226,8 @@ function structureOf(body: string): MdStructure {
     }
     if (t.type === "list_item_open") {
       itemDepth++;
-      const [a, b] = t.map ?? [0, 0];
-      items.push([a, b]);
+      const [a] = t.map ?? [0, 0];
+      items.push({ at: i, line: a + 1 });
       return;
     }
     if (t.type === "list_item_close") {
@@ -206,27 +244,25 @@ function structureOf(body: string): MdStructure {
   /**
    * The COMPLETE logical rules stated between two lines.
    *
-   * A list item carries its wrapped continuation lines and its nested children,
-   * so both a parent gate and each gate beneath it are units — the shape the
-   * canonical payment section actually uses. Code lines are dropped, so an
-   * example can never become policy.
+   * Each list item contributes its OWN content only — the text it directly
+   * owns, not its descendants. Ownership comes from the token stream's nesting,
+   * never from indentation: on `list_item_open`, walk to the matching close and
+   * take the inline content encountered at nesting depth zero, stepping over any
+   * nested list wholesale. Descendant items, their paragraphs, and any code they
+   * contain are therefore excluded at every depth, and each descendant is
+   * independently a unit in its own right.
    */
   const units = (from: number, to: number): SourceUnit[] => {
     const out: SourceUnit[] = [];
-    for (const [a, b] of items) {
-      if (a < from || a >= to) continue;
-      const text = lines
-        .slice(a, b)
-        .filter((_, k) => !code[a + k])
-        .join("\n")
-        .replace(/^\s*(?:[-*+]|\d{1,9}[.)])\s+/, "");
-      out.push({ kind: "item", text });
+    for (const { at, line } of items) {
+      if (line - 1 < from || line - 1 >= to) continue;
+      out.push({ kind: "item", text: ownContentOf(tokens, at), line });
     }
     for (const para of paras) {
       if (para.from < from || para.from >= to) continue;
       // The parser's inline content, so a container prefix (`> `) is already
       // gone and the text is exactly what renders.
-      out.push({ kind: "para", text: para.content });
+      out.push({ kind: "para", text: para.content, line: para.from + 1 });
     }
     return out;
   };
@@ -568,35 +604,46 @@ function parityViolations(adapterBody: string, read: (file: string) => string | 
       continue;
     }
     const section = secs.get(c.anchor)!;
-    // Prose only: a token that appears solely inside a code example is example
-    // text, not policy, and must not satisfy the citation.
-    if (!section.prose.includes(c.token)) {
-      bad.push(
-        `${ADAPTER}:${c.line}: ${c.file}#${c.anchor} no longer contains ${JSON.stringify(c.token)} — ` +
-          `the adapter asserts a rule its source has dropped`,
-      );
-    }
-    // THE RULE ITSELF, as ONE COMPLETE canonical rule. Checking only the token
-    // let the rule be inverted — "Never trust caller-supplied ids" -> "Trust
-    // caller-supplied ids" — with the citation still valid. Checking substring
-    // containment closed that but accepted FRAGMENTS: "Server", "-", or the
-    // first half of a sentence all appear inside a real rule, so a reviewer
-    // could be handed half an instruction and parity stayed green.
+
+    // ONE relationship, not two independent ones:
     //
-    // Equality against one complete unit closes both. The adapter may only
-    // quote a whole rule its source already states — it cannot paraphrase one,
-    // contradict one, truncate one, or invent one. The direction of authority
-    // is unchanged: the SOURCE decides where its rules begin and end, and this
-    // file may only mirror one of them.
+    //   citation identity -> the EXACT matched canonical unit -> that unit
+    //   contains the load-bearing token
+    //
+    // Asking separately "is this rule some complete unit?" and "does the section
+    // contain this token?" let an adapter entry keep the paymentIntents citation
+    // and token while carrying the complete refunds.create rule: the token still
+    // appeared elsewhere in the section, the rule was still a real unit, and
+    // parity stayed green while the reviewer was told the wrong thing. There is
+    // no section-wide token lookup any more.
     const wanted = normalize(c.rule);
-    const complete = section.units.map((u) => normalize(u.text));
-    if (!complete.includes(wanted)) {
-      const truncated = complete.some((u) => u !== wanted && u.includes(wanted));
+    const matched = section.units.filter((u) => normalize(u.text) === wanted);
+
+    if (matched.length === 0) {
+      const truncated = section.units.some((u) => normalize(u.text).includes(wanted));
       bad.push(
         `${ADAPTER}:${c.line}: the rule is not a complete rule of ${c.file}#${c.anchor}` +
           (truncated ? " — it is a FRAGMENT of one" : "") +
           `. The adapter may only quote a whole canonical rule. Rule: ` +
           JSON.stringify(wanted.slice(0, 120)),
+      );
+      continue;
+    }
+    if (matched.length > 1) {
+      // Two units that normalize identically make "the matched unit"
+      // ambiguous, so the token binding below would be meaningless.
+      bad.push(
+        `${ADAPTER}:${c.line}: the rule matches ${matched.length} indistinguishable units of ` +
+          `${c.file}#${c.anchor} (lines ${matched.map((u) => u.line).join(", ")}) — which unit the ` +
+          "token must belong to is undecidable, so this fails closed",
+      );
+      continue;
+    }
+    if (!matched[0].text.includes(c.token)) {
+      bad.push(
+        `${ADAPTER}:${c.line}: the matched rule at ${c.file}#${c.anchor} line ${matched[0].line} ` +
+          `does not contain ${JSON.stringify(c.token)} — the citation names a token that belongs ` +
+          "to a DIFFERENT canonical rule",
       );
     }
   }
@@ -727,6 +774,154 @@ describe("SEC-ADAPTER-01 — security-guidance adapter parity", () => {
     expect(mutated, "the token must actually be gone").not.toContain(from);
     return (f: string) => (f === file ? mutated : readRepo(f));
   };
+
+  // -------------------------------------------------------------------------
+  // The token must belong to the EXACT matched unit
+  // -------------------------------------------------------------------------
+
+  const PAYMENTS = "CONTRIBUTING.md#payment-review-expectations";
+  const paymentUnits = () => sections(readRepo("CONTRIBUTING.md")!).get("payment-review-expectations")!.units;
+
+  /** Swap the TEXT of the rule carrying this citation, keeping the citation. */
+  const withRuleTextFor = (token: string, replacement: string): string => {
+    const lines = BODY.split("\n");
+    const i = lines.findIndex((l) => RULE_LINE.test(l) && l.includes(`| token: ${token} -->`));
+    expect(i, `control needs a rule cited by ${token}`).toBeGreaterThan(-1);
+    const citation = /(<!-- source: .*-->)$/.exec(lines[i])![1];
+    lines[i] = `- ${replacement} ${citation}`;
+    return lines.join("\n");
+  };
+
+  it("SAME-UNIT RED: the right section and token, but a DIFFERENT canonical rule", () => {
+    // Keep the paymentIntents.create citation and token; carry the complete
+    // refunds.create rule instead. Both are real complete units of the same
+    // section, and paymentIntents.create still appears elsewhere in it — so
+    // checking rule and token independently reported nothing.
+    const refunds = paymentUnits().find((u) => normalize(u.text).startsWith("`refunds.create`"))!;
+    expect(refunds, "control needs the refunds unit").toBeDefined();
+
+    const mutated = withRuleTextFor("paymentIntents.create", normalize(refunds.text));
+    expect(mutated, "the control's substitution must land").not.toEqual(BODY);
+
+    // The citation identity is untouched — this is purely the rule text.
+    expect(readAdapter(mutated).cited.map((c) => `${c.file}#${c.anchor}|${c.token}`)).toEqual(
+      readAdapter(BODY).cited.map((c) => `${c.file}#${c.anchor}|${c.token}`),
+    );
+    // The token really does still exist elsewhere in the section...
+    expect(
+      paymentUnits().some((u) => u.text.includes("paymentIntents.create")),
+      "the token survives in a sibling unit",
+    ).toBe(true);
+    // ...and the guard still refuses, because THIS unit does not hold it.
+    expect(parityViolations(mutated, readRepo).join("\n")).toMatch(
+      /does not contain "paymentIntents\.create" — the citation names a token that belongs to a DIFFERENT canonical rule/,
+    );
+  });
+
+  it("SAME-UNIT RED: the cited token moved to a sibling unit", () => {
+    // The rule stays a valid complete unit; the token is relocated out of it.
+    const original = readRepo("CONTRIBUTING.md")!;
+    const mutated = original
+      .replace("`charges.create`: must be zero.", "`charges.forge`: must be zero.")
+      .replace(
+        "`checkout.sessions`: must be zero unless explicit Checkout PR.",
+        "`checkout.sessions`: must be zero unless explicit Checkout PR. See also `charges.create`.",
+      );
+    expect(mutated, "the control's substitution must land").not.toEqual(original);
+    const read = (f: string) => (f === "CONTRIBUTING.md" ? mutated : readRepo(f));
+    // Section-wide the token is present; the matched unit no longer holds it.
+    expect(mutated).toContain("`charges.create`");
+    expect(parityViolations(BODY, read).join("\n")).toMatch(/is not a complete rule of|does not contain/);
+  });
+
+  it("SAME-UNIT GREEN: the real adapter binds every token to its own matched unit", () => {
+    for (const c of readAdapter(BODY).cited) {
+      const units = sections(readRepo(c.file)!).get(c.anchor)!.units;
+      const matched = units.filter((u) => normalize(u.text) === normalize(c.rule));
+      expect(matched, `${c.file}#${c.anchor} :: ${c.rule.slice(0, 50)}`).toHaveLength(1);
+      expect(matched[0].text, `token ${JSON.stringify(c.token)} must be in the matched unit`).toContain(
+        c.token,
+      );
+    }
+  });
+
+  it("SAME-UNIT RED: an ambiguous match fails closed", () => {
+    // Two units normalizing identically make "the matched unit" undecidable, so
+    // the token binding would be meaningless. Refused rather than guessed.
+    const original = readRepo("CONTRIBUTING.md")!;
+    const DUP = "- `charges.create`: must be zero.";
+    const mutated = original.replace(DUP, `${DUP}\n${DUP}`);
+    expect(mutated, "the control's substitution must land").not.toEqual(original);
+    const read = (f: string) => (f === "CONTRIBUTING.md" ? mutated : readRepo(f));
+    expect(parityViolations(BODY, read).join("\n")).toMatch(
+      /matches 2 indistinguishable units|is not a complete rule of/,
+    );
+  });
+
+  // -------------------------------------------------------------------------
+  // A parent list item owns only its OWN content
+  // -------------------------------------------------------------------------
+
+  it("OWNERSHIP: the Stripe parent does not absorb its descendant gates", () => {
+    const units = paymentUnits().map((u) => normalize(u.text));
+    const parent = units.find((u) => u.startsWith("Stripe grep gates"))!;
+    expect(parent, "control needs the parent gate").toBeDefined();
+
+    for (const descendant of [
+      "set_studio_require_card_on_file",
+      "paymentIntents.create",
+      "refunds.create",
+      "STRIPE_ALLOW_LIVE_MODE=true",
+    ]) {
+      expect(parent, `the parent must not absorb ${descendant}`).not.toContain(descendant);
+    }
+    // The parent still states its own sentence.
+    expect(parent).toContain("check-stripe-gates.mjs");
+  });
+
+  it("OWNERSHIP: each child gate is independently its own unit", () => {
+    const units = paymentUnits().map((u) => normalize(u.text));
+    for (const child of [
+      "`paymentIntents.create`:",
+      "`refunds.create`:",
+      "`charges.create`: must be zero.",
+      "`checkout.sessions`:",
+      "`set_studio_require_card_on_file`:",
+      "`STRIPE_ALLOW_LIVE_MODE=true`:",
+    ]) {
+      expect(units.some((u) => u.startsWith(child)), `${child} must be its own unit`).toBe(true);
+    }
+  });
+
+  it("OWNERSHIP RED: the flattened parent+children block is not a rule", () => {
+    // Pasting the whole subtree in as one "rule" used to match, because the
+    // parent unit WAS the whole subtree.
+    const original = readRepo("CONTRIBUTING.md")!;
+    const from = original.indexOf("- Stripe grep gates");
+    const to = original.indexOf("- No raw card / CVC");
+    const flattened = normalize(original.slice(from, to).replace(/^-\s+/, ""));
+    expect(flattened, "control needs the whole subtree").toContain("set_studio_require_card_on_file");
+
+    const mutated = withRuleTextFor("paymentIntents.create", flattened);
+    expect(parityViolations(mutated, readRepo).join("\n")).toMatch(/is not a complete rule of/);
+  });
+
+  it("OWNERSHIP: grandchildren leak into neither parent nor immediate child", () => {
+    const body = [
+      "## Example",
+      "",
+      "- parent own text",
+      "  - child own text",
+      "    - grandchild own text",
+      "",
+    ].join("\n");
+    const units = sections(body).get("example")!.units.map((u) => normalize(u.text));
+    expect(units).toContain("parent own text");
+    expect(units).toContain("child own text");
+    expect(units).toContain("grandchild own text");
+    expect(units.find((u) => u === "parent own text")).not.toContain("child");
+    expect(units.find((u) => u === "child own text")).not.toContain("grandchild");
+  });
 
   // -------------------------------------------------------------------------
   // The approved rule set is COMPLETE — deleting one rule is a failure
@@ -1116,14 +1311,23 @@ describe("SEC-ADAPTER-01 — security-guidance adapter parity", () => {
   });
 
   it("CODE RED: a rule re-homed into CONTAINER-RELATIVE indented code is not policy", () => {
-    // Six spaces under a two-space parent item is code with respect to that
-    // item. Indentation arithmetic measured from column zero called it policy.
+    // Indentation is relative to the CONTAINER. Under a top-level bullet whose
+    // content column is 2, six spaces is four beyond it — an indented code
+    // block. (Under a nested bullet at content column 4 the same six spaces
+    // would be ordinary list content, which is exactly why this is the parser's
+    // judgement to make and not an arithmetic rule written here.)
     const original = readRepo("CONTRIBUTING.md")!;
     const RULE = "- `charges.create`: must be zero.";
+    const TOP_LEVEL = "- No raw card / CVC / `client_secret` in any new code.";
     const stripped = original.replace(`${RULE}\n`, "");
     expect(stripped, "the removal must land").not.toEqual(original);
-    const at = stripped.indexOf("- `checkout.sessions`");
-    const mutated = `${stripped.slice(0, at)}\n      ${RULE}\n\n${stripped.slice(at)}`;
+    expect(stripped, "control needs the top-level anchor").toContain(TOP_LEVEL);
+    const mutated = stripped.replace(TOP_LEVEL, `${TOP_LEVEL}\n\n      ${RULE}\n`);
+
+    // The parser must actually call it code, or the control proves nothing.
+    const st = structureOf(mutated);
+    const line = st.lines.findIndex((l) => l.includes("charges.create") && l.includes("must be zero"));
+    expect(st.code[line], "the re-homed rule must be parsed as code").toBe(true);
 
     const read = (f: string) => (f === "CONTRIBUTING.md" ? mutated : readRepo(f));
     expect(parityViolations(BODY, read).join("\n")).toMatch(/is not a complete rule of/);
@@ -1567,7 +1771,10 @@ describe("SEC-ADAPTER-01 — security-guidance adapter parity", () => {
     // control would prove nothing. Mutate in the language the matcher parses.
     const read = withMutatedSource("CONTRIBUTING.md", "paymentIntents.create", "paymentIntents.forge");
     const violations = parityViolations(BODY, read);
-    expect(violations.join("\n")).toMatch(/no longer contains "paymentIntents\.create"/);
+    // The token lives inside the rule text, so removing it from the source
+    // breaks the complete-unit match — the token is no longer looked up
+    // section-wide, which is the whole point of the same-unit binding.
+    expect(violations.join("\n")).toMatch(/is not a complete rule of/);
   });
 
   it("N2 RED: a cited heading removed from its source is reported", () => {
