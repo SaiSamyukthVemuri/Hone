@@ -245,12 +245,20 @@ function structureOf(body: string): MdStructure {
   const lines = body.split("\n");
   const code = new Array<boolean>(lines.length).fill(false);
   const headings: MdHeading[] = [];
-  const items: { at: number; line: number; quoteDepth: number; ancestors: number[] }[] = [];
+  const items: {
+    at: number;
+    line: number;
+    quoteDepth: number;
+    ancestors: number[];
+    leadIn: string | null;
+  }[] = [];
   const paras: { from: number; to: number; content: string; quoteDepth: number }[] = [];
 
   const tokens = md.parse(body, {});
   let itemDepth = 0;
   const itemStack: number[] = [];
+  let pendingParagraph: string | null = null;
+  let listLeadIn: string | null = null;
   // CONTAINER AUTHORITY. Quoted prose is a record of what something said, not a
   // rule this repository states. Tracking only list depth let a paragraph inside
   // `> …` become a canonical unit, so obsolete guidance preserved in a quote
@@ -258,6 +266,16 @@ function structureOf(body: string): MdStructure {
   // it said the opposite.
   let quoteDepth = 0;
   tokens.forEach((t, i) => {
+    // A paragraph only introduces a list that DIRECTLY follows it. Any other
+    // block at top level ends that claim, so unrelated earlier prose can never
+    // drift into becoming a rule's context. Done first, because the handlers
+    // below return early and would otherwise skip it.
+    if (
+      itemStack.length === 0 &&
+      (t.type === "heading_open" || t.type === "fence" || t.type === "code_block" || t.type === "hr")
+    ) {
+      pendingParagraph = null;
+    }
     if (t.type === "blockquote_open") {
       quoteDepth++;
       return;
@@ -284,11 +302,33 @@ function structureOf(body: string): MdStructure {
       });
       return;
     }
+    if (t.type === "bullet_list_open" || t.type === "ordered_list_open") {
+      // A list at top level takes its lead-in from the paragraph that DIRECTLY
+      // introduces it, if there is one. Nested lists keep the ancestor-item law.
+      if (itemStack.length === 0) listLeadIn = pendingParagraph;
+      return;
+    }
+    if (t.type === "bullet_list_close" || t.type === "ordered_list_close") {
+      if (itemStack.length === 0) {
+        listLeadIn = null;
+        pendingParagraph = null;
+      }
+      return;
+    }
     if (t.type === "list_item_open") {
       itemDepth++;
       const [a] = t.map ?? [0, 0];
-      // Ancestors are the items still OPEN around this one, outermost first.
-      items.push({ at: i, line: a + 1, quoteDepth, ancestors: [...itemStack] });
+      // Ancestors are the items still OPEN around this one, outermost first. A
+      // TOP-LEVEL item has none, so its context is its list's lead-in instead —
+      // `createAdminClient() ... is for:` above `- RPC invocations ...` is what
+      // makes that bullet a permission rather than a prohibition.
+      items.push({
+        at: i,
+        line: a + 1,
+        quoteDepth,
+        ancestors: [...itemStack],
+        leadIn: itemStack.length === 0 ? listLeadIn : null,
+      });
       itemStack.push(i);
       return;
     }
@@ -300,7 +340,11 @@ function structureOf(body: string): MdStructure {
     // A paragraph inside a list item belongs to that item's unit, not its own.
     if (t.type === "paragraph_open" && itemDepth === 0) {
       const [a, b] = t.map ?? [0, 0];
-      paras.push({ from: a, to: b, content: tokens[i + 1]?.content ?? "", quoteDepth });
+      const content = tokens[i + 1]?.content ?? "";
+      paras.push({ from: a, to: b, content, quoteDepth });
+      // The most recent top-level paragraph is the only one that can introduce
+      // the next list — an earlier one is superseded, never accumulated.
+      if (quoteDepth === 0) pendingParagraph = content;
     }
   });
 
@@ -317,16 +361,22 @@ function structureOf(body: string): MdStructure {
    */
   const units = (from: number, to: number): SourceUnit[] => {
     const out: SourceUnit[] = [];
-    for (const { at, line, quoteDepth: q, ancestors } of items) {
+    for (const { at, line, quoteDepth: q, ancestors, leadIn } of items) {
       if (line - 1 < from || line - 1 >= to) continue;
       // Quoted content is never an authoritative rule, at any depth.
       if (q > 0) continue;
+      const context =
+        ancestors.length > 0
+          ? ancestors.map((a) => normalize(ownContentOf(tokens, a)))
+          : leadIn !== null
+            ? [normalize(leadIn)]
+            : [];
       out.push({
         kind: "item",
         text: ownContentOf(tokens, at),
         line,
         blockquoteDepth: q,
-        ancestorContext: ancestors.map((a) => normalize(ownContentOf(tokens, a))).join(ANCESTOR_SEP),
+        ancestorContext: context.join(ANCESTOR_SEP),
       });
     }
     for (const para of paras) {
@@ -462,6 +512,15 @@ type RuleIdentity = {
   ancestors: string | null;
 };
 
+/**
+ * The lead-in paragraph that introduces the service-role permission list.
+ *
+ * `createAdminClient() ... is for:` is what makes the bullet beneath it a
+ * PERMISSION. Rewrite the lead-in to "is not for:" and the bullet means the
+ * opposite while its own text, token and citation stay byte-identical.
+ */
+const SERVICE_ROLE_LEADIN = "d0382ce6a534d19dd2763535fea7bf5762e0d7161a88b6d7c69736c9cdbe0575";
+
 /** The one nested context in the approved set: the Stripe grep-gates parent. */
 const STRIPE_GATES_CONTEXT = "10425b205424e031a284c3f758b3de6db20b62cc5622dec5c41780497b936fdd";
 
@@ -469,7 +528,7 @@ const APPROVED_RULE_IDENTITIES: readonly RuleIdentity[] = [
   { file: "CONTRIBUTING.md", anchor: "security-review-expectations", token: "Never trust those ids from the form.", ancestors: null },
   { file: "CONTRIBUTING.md", anchor: "security-review-expectations", token: "studio-member SELECT only", ancestors: null },
   { file: "CONTRIBUTING.md", anchor: "security-review-expectations", token: 'Never in a `"use client"` component.', ancestors: null },
-  { file: "CONTRIBUTING.md", anchor: "how-to-use-service-role-correctly", token: "service-role-only grant", ancestors: null },
+  { file: "CONTRIBUTING.md", anchor: "how-to-use-service-role-correctly", token: "service-role-only grant", ancestors: SERVICE_ROLE_LEADIN },
   { file: "CONTRIBUTING.md", anchor: "how-not-to-use-service-role", token: "without a token check", ancestors: null },
   { file: "CONTRIBUTING.md", anchor: "how-not-to-use-service-role", token: "Never to bypass RLS as a convenience.", ancestors: null },
   { file: "CONTRIBUTING.md", anchor: "security-review-expectations", token: "search_path = pg_catalog, pg_temp", ancestors: null },
@@ -792,9 +851,10 @@ function parityViolations(adapterBody: string, read: (file: string) => string | 
         );
       } else if (expected.ancestors !== null && ancestorDigest(actual) !== expected.ancestors) {
         bad.push(
-          `${ADAPTER}:${c.line}: the ancestor context of ${c.file}#${c.anchor} changed ` +
+          `${ADAPTER}:${c.line}: the semantic context of ${c.file}#${c.anchor} changed ` +
             `(sha256 ${ancestorDigest(actual).slice(0, 16)}…). A nested rule is authoritative only ` +
-            `in its parents' context, so this fails closed until the adapter contract is ` +
+            `in the context that introduces it — an ancestor list item, or the paragraph ` +
+            `that leads its list — so this fails closed until the adapter contract is ` +
             `deliberately reconciled. Now: ${JSON.stringify(normalize(actual).slice(0, 90))}`,
         );
       }
@@ -1252,9 +1312,9 @@ describe("SEC-ADAPTER-01 — security-guidance adapter parity", () => {
     return mutated;
   };
 
-  /** Only the ancestor violation, so these controls cannot pass by accident. */
+  /** Only the context violation, so these controls cannot pass by accident. */
   const ancestorViolations = (read: (f: string) => string | null): string[] =>
-    parityViolations(BODY, read).filter((v) => v.includes("ancestor context of"));
+    parityViolations(BODY, read).filter((v) => v.includes("semantic context of"));
 
   const PARENT_INVERSIONS: [string, string][] = [
     ["declared obsolete", "- The following gates are obsolete; do not enforce them:"],
@@ -1274,9 +1334,121 @@ describe("SEC-ADAPTER-01 — security-guidance adapter parity", () => {
       // ...and every nested rule is refused for the ANCESTOR reason specifically.
       const violations = ancestorViolations(read);
       expect(violations.length, `${label} must trip the ancestor contract`).toBeGreaterThan(0);
-      expect(violations.join("\n")).toMatch(/is authoritative only in its parents' context/);
+      expect(violations.join("\n")).toMatch(/is authoritative only in the context that introduces it/);
     });
   }
+
+  // A TOP-LEVEL bullet can take its meaning from the paragraph that introduces
+  // its list. `createAdminClient() ... is for:` is what makes the bullet beneath
+  // it a permission; rewrite only the lead-in and the bullet says the opposite
+  // while its own text, token, heading and citation stay byte-identical.
+
+  const SERVICE_ROLE_LEAD = "`createAdminClient()` from `@/lib/supabase/admin-server` is for:";
+  const SERVICE_ROLE_BULLET =
+    "- RPC invocations where the function is `SECURITY DEFINER` with a service-role-only grant.";
+
+  const withLeadIn = (replacement: string): string => {
+    const original = readRepo("CONTRIBUTING.md")!;
+    expect(original.split(SERVICE_ROLE_LEAD).length - 1, "control needs exactly one lead-in").toBe(1);
+    const mutated = original.replace(SERVICE_ROLE_LEAD, replacement);
+    expect(mutated, "the control's substitution must land").not.toEqual(original);
+    expect(mutated, "the bullet must be untouched").toContain(SERVICE_ROLE_BULLET);
+    return mutated;
+  };
+
+  const LEADIN_INVERSIONS: [string, string][] = [
+    ["negated", "`createAdminClient()` from `@/lib/supabase/admin-server` is not for:"],
+    ["retired into history", "Historically, `createAdminClient()` from `@/lib/supabase/admin-server` was for:"],
+    ["demoted to illustration", "Some places `createAdminClient()` has appeared, not a permission list:"],
+  ];
+
+  for (const [label, replacement] of LEADIN_INVERSIONS) {
+    it(`LEAD-IN RED: the introducing paragraph ${label}, bullet untouched`, () => {
+      const mutated = withLeadIn(replacement);
+      const read = (f: string) => (f === "CONTRIBUTING.md" ? mutated : readRepo(f));
+      const violations = ancestorViolations(read);
+      expect(violations.length, `${label} must trip the context contract`).toBeGreaterThan(0);
+      expect(violations.join("\n")).toMatch(/the paragraph that leads its list/);
+    });
+  }
+
+  it("LEAD-IN: restoring the paragraph makes it green again (anti-vacuity)", () => {
+    const mutated = withLeadIn("`createAdminClient()` from `@/lib/supabase/admin-server` is not for:");
+    const readMutated = (f: string) => (f === "CONTRIBUTING.md" ? mutated : readRepo(f));
+    expect(ancestorViolations(readMutated).length).toBeGreaterThan(0);
+
+    const restored = readRepo("CONTRIBUTING.md")!;
+    const readRestored = (f: string) => (f === "CONTRIBUTING.md" ? restored : readRepo(f));
+    expect(ancestorViolations(readRestored)).toEqual([]);
+    expect(parityViolations(BODY, readRestored)).toEqual([]);
+  });
+
+  it("LEAD-IN: association is bounded to the paragraph that DIRECTLY introduces the list", () => {
+    const ctx = (body: string, needle: string) =>
+      sections(body)
+        .get("example")!
+        .units.find((u) => normalize(u.text).startsWith(needle))!.ancestorContext;
+
+    // The immediately preceding paragraph introduces the list.
+    expect(ctx(["## Example", "", "Lead in:", "", "- the rule", ""].join("\n"), "the rule")).toBe(
+      "Lead in:",
+    );
+    // An EARLIER paragraph is superseded, never accumulated — control F.
+    expect(
+      ctx(["## Example", "", "Unrelated prose.", "", "Lead in:", "", "- the rule", ""].join("\n"), "the rule"),
+    ).toBe("Lead in:");
+    // A heading between them breaks the association.
+    expect(
+      ctx(["## Other", "", "Not a lead-in.", "", "## Example", "", "- the rule", ""].join("\n"), "the rule"),
+    ).toBe("");
+    // So does intervening code.
+    expect(
+      ctx(["## Example", "", "Not a lead-in.", "", "```", "x", "```", "", "- the rule", ""].join("\n"), "the rule"),
+    ).toBe("");
+    // A list with no introducing paragraph has no context — control E.
+    expect(ctx(["## Example", "", "- the rule", ""].join("\n"), "the rule")).toBe("");
+  });
+
+  it("LEAD-IN: another list in the same section does not contaminate this one", () => {
+    // Control G — each list takes only its own introducer.
+    const body = [
+      "## Example",
+      "",
+      "First lead:",
+      "",
+      "- first rule",
+      "",
+      "Second lead:",
+      "",
+      "- second rule",
+      "",
+    ].join("\n");
+    const units = sections(body).get("example")!.units;
+    const of = (n: string) => units.find((u) => normalize(u.text) === n)!.ancestorContext;
+    expect(of("first rule")).toBe("First lead:");
+    expect(of("second rule")).toBe("Second lead:");
+  });
+
+  it("LEAD-IN: a nested item still uses its ancestor items, not the list lead-in", () => {
+    // Control D — the nested law from the previous repair is preserved exactly.
+    const body = ["## Example", "", "Lead in:", "", "- parent", "  - child", ""].join("\n");
+    const units = sections(body).get("example")!.units;
+    const of = (n: string) => units.find((u) => normalize(u.text) === n)!.ancestorContext;
+    expect(of("parent"), "top-level takes the lead-in").toBe("Lead in:");
+    expect(of("child"), "nested takes its ancestor item").toBe("parent");
+  });
+
+  it("LEAD-IN GREEN: rewrapping the introducing paragraph is tolerated", () => {
+    // Control J — the context is normalized exactly like rule text.
+    const original = readRepo("CONTRIBUTING.md")!;
+    const mutated = original.replace(
+      SERVICE_ROLE_LEAD,
+      "`createAdminClient()` from\n`@/lib/supabase/admin-server` is   for:",
+    );
+    expect(mutated).not.toEqual(original);
+    const read = (f: string) => (f === "CONTRIBUTING.md" ? mutated : readRepo(f));
+    expect(ancestorViolations(read), "rewrapping is not semantic drift").toEqual([]);
+  });
 
   it("ANCESTOR: restoring the parent makes it green again (anti-vacuity)", () => {
     // Not merely "a hash differs": the guard must go red on mutation and green
@@ -1304,7 +1476,7 @@ describe("SEC-ADAPTER-01 — security-guidance adapter parity", () => {
       );
     expect(mutated, "the control's move must land").not.toEqual(original);
     const read = (f: string) => (f === "CONTRIBUTING.md" ? mutated : readRepo(f));
-    expect(ancestorViolations(read).join("\n")).toMatch(/ancestor context of/);
+    expect(ancestorViolations(read).join("\n")).toMatch(/semantic context of/);
   });
 
   it("ANCESTOR: a top-level approved rule is unaffected by nesting elsewhere", () => {
