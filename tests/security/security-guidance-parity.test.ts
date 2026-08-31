@@ -206,6 +206,16 @@ type SourceUnit = {
   line: number;
   /** 0 for authoritative content. A quoted unit is never eligible as a rule. */
   blockquoteDepth: number;
+  /**
+   * The OWN text of each enclosing list item, outermost first, joined.
+   *
+   * A nested rule is authoritative only in its ancestors' context. `- Stripe
+   * grep gates …` above `- charges.create: must be zero.` is what makes the
+   * child a gate; rewrite the parent to "these are obsolete, do not enforce
+   * them" and the child means the opposite while its own text, token and
+   * citation are untouched. Empty for a top-level unit.
+   */
+  ancestorContext: string;
 };
 
 /**
@@ -228,11 +238,12 @@ function structureOf(body: string): MdStructure {
   const lines = body.split("\n");
   const code = new Array<boolean>(lines.length).fill(false);
   const headings: MdHeading[] = [];
-  const items: { at: number; line: number; quoteDepth: number }[] = [];
+  const items: { at: number; line: number; quoteDepth: number; ancestors: number[] }[] = [];
   const paras: { from: number; to: number; content: string; quoteDepth: number }[] = [];
 
   const tokens = md.parse(body, {});
   let itemDepth = 0;
+  const itemStack: number[] = [];
   // CONTAINER AUTHORITY. Quoted prose is a record of what something said, not a
   // rule this repository states. Tracking only list depth let a paragraph inside
   // `> …` become a canonical unit, so obsolete guidance preserved in a quote
@@ -269,11 +280,14 @@ function structureOf(body: string): MdStructure {
     if (t.type === "list_item_open") {
       itemDepth++;
       const [a] = t.map ?? [0, 0];
-      items.push({ at: i, line: a + 1, quoteDepth });
+      // Ancestors are the items still OPEN around this one, outermost first.
+      items.push({ at: i, line: a + 1, quoteDepth, ancestors: [...itemStack] });
+      itemStack.push(i);
       return;
     }
     if (t.type === "list_item_close") {
       itemDepth--;
+      itemStack.pop();
       return;
     }
     // A paragraph inside a list item belongs to that item's unit, not its own.
@@ -296,17 +310,30 @@ function structureOf(body: string): MdStructure {
    */
   const units = (from: number, to: number): SourceUnit[] => {
     const out: SourceUnit[] = [];
-    for (const { at, line, quoteDepth: q } of items) {
+    for (const { at, line, quoteDepth: q, ancestors } of items) {
       if (line - 1 < from || line - 1 >= to) continue;
       // Quoted content is never an authoritative rule, at any depth.
       if (q > 0) continue;
-      out.push({ kind: "item", text: ownContentOf(tokens, at), line, blockquoteDepth: q });
+      out.push({
+        kind: "item",
+        text: ownContentOf(tokens, at),
+        line,
+        blockquoteDepth: q,
+        ancestorContext: ancestors.map((a) => normalize(ownContentOf(tokens, a))).join(ANCESTOR_SEP),
+      });
     }
     for (const para of paras) {
       if (para.from < from || para.from >= to) continue;
       if (para.quoteDepth > 0) continue;
       // The parser's inline content, so the text is exactly what renders.
-      out.push({ kind: "para", text: para.content, line: para.from + 1, blockquoteDepth: para.quoteDepth });
+      // Paragraphs are only collected at itemDepth 0, so they have no ancestors.
+      out.push({
+        kind: "para",
+        text: para.content,
+        line: para.from + 1,
+        blockquoteDepth: para.quoteDepth,
+        ancestorContext: "",
+      });
     }
     return out;
   };
@@ -317,6 +344,21 @@ function structureOf(body: string): MdStructure {
 /** Lines that RENDER as a heading, for the adapter's line-oriented grammar. */
 const headingLinesOf = (body: string): Set<number> =>
   new Set(structureOf(body).headings.map((h) => h.line));
+
+/** Joins ancestor own-texts. A literal that cannot occur in canonical prose. */
+const ANCESTOR_SEP = "\u241F";
+
+/**
+ * A drift detector for a nested rule's ancestor context.
+ *
+ * The digest exists so the manifest can pin WHICH context a nested rule was
+ * approved under without copying canonical prose into this test — the canonical
+ * document stays the authority for what the context says, and this only notices
+ * when it changes. Normalized first, so the harmless rewrapping the rule
+ * contract already tolerates does not trip it.
+ */
+const ancestorDigest = (context: string): string =>
+  createHash("sha256").update(normalize(context), "utf8").digest("hex");
 
 /** A canonical section: the prose a citation resolves to, and its rules. */
 type Section = { slug: string; text: string; prose: string; units: SourceUnit[] };
@@ -394,32 +436,54 @@ function duplicateSlugViolations(file: string, body: string): string[] {
  * Set equality, so a rule cannot be dropped, duplicated, or quietly added.
  * Extending the adapter means adding an entry here, deliberately.
  */
-type RuleIdentity = { file: string; anchor: string; token: string };
+type RuleIdentity = {
+  file: string;
+  anchor: string;
+  token: string;
+  /**
+   * The ancestor context this nested rule was APPROVED under, as a digest.
+   *
+   * `null` means the rule must be top-level. A digest means the rule is nested
+   * and its ancestors' own text must still hash to this. Pinned as a LITERAL —
+   * never recomputed from the document being validated, which would be vacuous —
+   * so a semantic parent edit ("these gates are obsolete; do not enforce them")
+   * fails closed until the adapter contract is deliberately reconciled.
+   *
+   * It is a drift detector, not a second copy of the prose: the canonical
+   * document remains the authority for what the context actually says.
+   */
+  ancestors: string | null;
+};
+
+/** The one nested context in the approved set: the Stripe grep-gates parent. */
+const STRIPE_GATES_CONTEXT = "10425b205424e031a284c3f758b3de6db20b62cc5622dec5c41780497b936fdd";
 
 const APPROVED_RULE_IDENTITIES: readonly RuleIdentity[] = [
-  { file: "CONTRIBUTING.md", anchor: "security-review-expectations", token: "Never trust those ids from the form." },
-  { file: "CONTRIBUTING.md", anchor: "security-review-expectations", token: "studio-member SELECT only" },
-  { file: "CONTRIBUTING.md", anchor: "security-review-expectations", token: 'Never in a `"use client"` component.' },
-  { file: "CONTRIBUTING.md", anchor: "how-to-use-service-role-correctly", token: "service-role-only grant" },
-  { file: "CONTRIBUTING.md", anchor: "how-not-to-use-service-role", token: "without a token check" },
-  { file: "CONTRIBUTING.md", anchor: "how-not-to-use-service-role", token: "Never to bypass RLS as a convenience." },
-  { file: "CONTRIBUTING.md", anchor: "security-review-expectations", token: "search_path = pg_catalog, pg_temp" },
-  { file: "CLAUDE.md", anchor: "5-production-safety", token: "revoke from **all three** explicitly, by name" },
-  { file: "CONTRIBUTING.md", anchor: "how-to-treat-public--token-routes", token: "The token is the credential." },
-  { file: "CONTRIBUTING.md", anchor: "how-to-treat-public--token-routes", token: "single-use claim with `FOR UPDATE`" },
-  { file: "CONTRIBUTING.md", anchor: "how-to-treat-public--token-routes", token: "Collapse error states" },
-  { file: "CONTRIBUTING.md", anchor: "how-to-treat-public--token-routes", token: "X-Robots-Tag: noindex, nofollow" },
-  { file: "CONTRIBUTING.md", anchor: "payment-review-expectations", token: "paymentIntents.create" },
-  { file: "CONTRIBUTING.md", anchor: "payment-review-expectations", token: "refunds.create" },
-  { file: "CONTRIBUTING.md", anchor: "payment-review-expectations", token: "charges.create" },
-  { file: "CONTRIBUTING.md", anchor: "payment-review-expectations", token: "checkout.sessions" },
-  { file: "CONTRIBUTING.md", anchor: "payment-review-expectations", token: "No raw card / CVC" },
-  { file: "CONTRIBUTING.md", anchor: "payment-review-expectations", token: "public-triggered charge" },
-  { file: "ENGINEERING_STANDARDS.md", anchor: "5-design-rules-for-risky-work", token: "claim → external side effect → settle" },
+  { file: "CONTRIBUTING.md", anchor: "security-review-expectations", token: "Never trust those ids from the form.", ancestors: null },
+  { file: "CONTRIBUTING.md", anchor: "security-review-expectations", token: "studio-member SELECT only", ancestors: null },
+  { file: "CONTRIBUTING.md", anchor: "security-review-expectations", token: 'Never in a `"use client"` component.', ancestors: null },
+  { file: "CONTRIBUTING.md", anchor: "how-to-use-service-role-correctly", token: "service-role-only grant", ancestors: null },
+  { file: "CONTRIBUTING.md", anchor: "how-not-to-use-service-role", token: "without a token check", ancestors: null },
+  { file: "CONTRIBUTING.md", anchor: "how-not-to-use-service-role", token: "Never to bypass RLS as a convenience.", ancestors: null },
+  { file: "CONTRIBUTING.md", anchor: "security-review-expectations", token: "search_path = pg_catalog, pg_temp", ancestors: null },
+  { file: "CLAUDE.md", anchor: "5-production-safety", token: "revoke from **all three** explicitly, by name", ancestors: null },
+  { file: "CONTRIBUTING.md", anchor: "how-to-treat-public--token-routes", token: "The token is the credential.", ancestors: null },
+  { file: "CONTRIBUTING.md", anchor: "how-to-treat-public--token-routes", token: "single-use claim with `FOR UPDATE`", ancestors: null },
+  { file: "CONTRIBUTING.md", anchor: "how-to-treat-public--token-routes", token: "Collapse error states", ancestors: null },
+  { file: "CONTRIBUTING.md", anchor: "how-to-treat-public--token-routes", token: "X-Robots-Tag: noindex, nofollow", ancestors: null },
+  { file: "CONTRIBUTING.md", anchor: "payment-review-expectations", token: "paymentIntents.create", ancestors: STRIPE_GATES_CONTEXT },
+  { file: "CONTRIBUTING.md", anchor: "payment-review-expectations", token: "refunds.create", ancestors: STRIPE_GATES_CONTEXT },
+  { file: "CONTRIBUTING.md", anchor: "payment-review-expectations", token: "charges.create", ancestors: STRIPE_GATES_CONTEXT },
+  { file: "CONTRIBUTING.md", anchor: "payment-review-expectations", token: "checkout.sessions", ancestors: STRIPE_GATES_CONTEXT },
+  { file: "CONTRIBUTING.md", anchor: "payment-review-expectations", token: "No raw card / CVC", ancestors: null },
+  { file: "CONTRIBUTING.md", anchor: "payment-review-expectations", token: "public-triggered charge", ancestors: null },
+  { file: "ENGINEERING_STANDARDS.md", anchor: "5-design-rules-for-risky-work", token: "claim → external side effect → settle", ancestors: null },
 ];
 
 /** A citation's stable identity, for set comparison. */
-const identityOf = (r: RuleIdentity): string => `${r.file}#${r.anchor} | ${r.token}`;
+/** Identity is file+anchor+token; the ancestor expectation is not part of it. */
+const identityOf = (r: { file: string; anchor: string; token: string }): string =>
+  `${r.file}#${r.anchor} | ${r.token}`;
 
 /** Every way the adapter's rule COVERAGE departs from the approved set. */
 function coverageViolations(adapterBody: string): string[] {
@@ -706,6 +770,29 @@ function parityViolations(adapterBody: string, read: (file: string) => string | 
       );
       continue;
     }
+    // The matched unit must still sit in the ancestor context it was approved
+    // under. A nested rule inherits its parents' meaning: leave
+    // `- charges.create: must be zero.` untouched and rewrite its parent to
+    // "these gates are obsolete; do not enforce them", and the rule's own text,
+    // token and citation are all still valid while it now means the opposite.
+    const expected = APPROVED_RULE_IDENTITIES.find((r) => identityOf(r) === identityOf(c));
+    if (expected !== undefined) {
+      const actual = matched[0].ancestorContext;
+      if (expected.ancestors === null && actual !== "") {
+        bad.push(
+          `${ADAPTER}:${c.line}: the rule is approved as TOP-LEVEL but is now nested under ` +
+            `${JSON.stringify(normalize(actual).slice(0, 80))} — a parent changes what a rule means`,
+        );
+      } else if (expected.ancestors !== null && ancestorDigest(actual) !== expected.ancestors) {
+        bad.push(
+          `${ADAPTER}:${c.line}: the ancestor context of ${c.file}#${c.anchor} changed ` +
+            `(sha256 ${ancestorDigest(actual).slice(0, 16)}…). A nested rule is authoritative only ` +
+            `in its parents' context, so this fails closed until the adapter contract is ` +
+            `deliberately reconciled. Now: ${JSON.stringify(normalize(actual).slice(0, 90))}`,
+        );
+      }
+    }
+
     if (!matched[0].text.includes(c.token)) {
       bad.push(
         `${ADAPTER}:${c.line}: the matched rule at ${c.file}#${c.anchor} line ${matched[0].line} ` +
@@ -1032,6 +1119,136 @@ describe("SEC-ADAPTER-01 — security-guidance adapter parity", () => {
   });
 
   // -------------------------------------------------------------------------
+  // A nested rule is authoritative only in its ancestors' context
+  // -------------------------------------------------------------------------
+  // Leave `- charges.create: must be zero.` untouched and rewrite its parent to
+  // say the gates are obsolete: the rule's own text, token and citation are all
+  // still valid, and it now means the opposite. Parity accepted that.
+
+  /** Rewrite ONLY the Stripe parent line of a scratch copy of the real source. */
+  const withParentText = (replacement: string): string => {
+    const original = readRepo("CONTRIBUTING.md")!;
+    const parent = original.split("\n").find((l) => l.startsWith("- Stripe grep gates"));
+    expect(parent, "control needs the real parent line").toBeTruthy();
+    const mutated = original.replace(parent!, replacement);
+    expect(mutated, "the control's substitution must land").not.toEqual(original);
+    return mutated;
+  };
+
+  /** Only the ancestor violation, so these controls cannot pass by accident. */
+  const ancestorViolations = (read: (f: string) => string | null): string[] =>
+    parityViolations(BODY, read).filter((v) => v.includes("ancestor context of"));
+
+  const PARENT_INVERSIONS: [string, string][] = [
+    ["declared obsolete", "- The following gates are obsolete; do not enforce them:"],
+    ["demoted to examples", "- Examples only; these rules are not requirements:"],
+    ["scoped away", "- Historical gates, retained for reference only:"],
+  ];
+
+  for (const [label, replacement] of PARENT_INVERSIONS) {
+    it(`ANCESTOR RED: the parent ${label}, children untouched`, () => {
+      const mutated = withParentText(replacement);
+      const read = (f: string) => (f === "CONTRIBUTING.md" ? mutated : readRepo(f));
+
+      // The children really are byte-identical — this is purely the parent.
+      expect(mutated).toContain("- `charges.create`: must be zero.");
+      expect(mutated).toContain("`paymentIntents.create`: **exactly one runtime occurrence");
+
+      // ...and every nested rule is refused for the ANCESTOR reason specifically.
+      const violations = ancestorViolations(read);
+      expect(violations.length, `${label} must trip the ancestor contract`).toBeGreaterThan(0);
+      expect(violations.join("\n")).toMatch(/is authoritative only in its parents' context/);
+    });
+  }
+
+  it("ANCESTOR: restoring the parent makes it green again (anti-vacuity)", () => {
+    // Not merely "a hash differs": the guard must go red on mutation and green
+    // on restoration, proved in one test.
+    const mutated = withParentText("- The following gates are obsolete; do not enforce them:");
+    const readMutated = (f: string) => (f === "CONTRIBUTING.md" ? mutated : readRepo(f));
+    expect(ancestorViolations(readMutated).length).toBeGreaterThan(0);
+
+    const restored = readRepo("CONTRIBUTING.md")!;
+    const readRestored = (f: string) => (f === "CONTRIBUTING.md" ? restored : readRepo(f));
+    expect(ancestorViolations(readRestored)).toEqual([]);
+    expect(parityViolations(BODY, readRestored)).toEqual([]);
+  });
+
+  it("ANCESTOR RED: a nested rule moved under a different parent", () => {
+    // Same child text, different ancestry. Identity and token are unchanged.
+    const original = readRepo("CONTRIBUTING.md")!;
+    const CHILD = "  - `charges.create`: must be zero.";
+    expect(original).toContain(CHILD);
+    const mutated = original
+      .replace(`${CHILD}\n`, "")
+      .replace(
+        "- No raw card / CVC / `client_secret` in any new code.",
+        "- Unrelated container:\n" + CHILD + "\n\n- No raw card / CVC / `client_secret` in any new code.",
+      );
+    expect(mutated, "the control's move must land").not.toEqual(original);
+    const read = (f: string) => (f === "CONTRIBUTING.md" ? mutated : readRepo(f));
+    expect(ancestorViolations(read).join("\n")).toMatch(/ancestor context of/);
+  });
+
+  it("ANCESTOR: a top-level approved rule is unaffected by nesting elsewhere", () => {
+    // Control G — changing an unrelated parent must not invalidate rules outside
+    // that ancestry. The identity-section rules are top-level and stay green.
+    const original = readRepo("CONTRIBUTING.md")!;
+    const mutated = original.replace(
+      "- No automatic, batch, background, or public-triggered charge.",
+      "- Unrelated new parent:\n  - a child nobody cites",
+    );
+    expect(mutated, "the control's substitution must land").not.toEqual(original);
+    const read = (f: string) => (f === "CONTRIBUTING.md" ? mutated : readRepo(f));
+    const violations = parityViolations(BODY, read).join("\n");
+    // The removed rule IS cited, so it fails — but for a coverage reason, not by
+    // dragging unrelated top-level rules' ancestor contracts down with it.
+    expect(violations).not.toMatch(/approved as TOP-LEVEL but is now nested/);
+  });
+
+  it("ANCESTOR RED: a top-level rule that becomes nested", () => {
+    const original = readRepo("CONTRIBUTING.md")!;
+    const TOP = "- No raw card / CVC / `client_secret` in any new code.";
+    expect(original).toContain(TOP);
+    const mutated = original.replace(TOP, `- Wrapper:\n  ${TOP}`);
+    const read = (f: string) => (f === "CONTRIBUTING.md" ? mutated : readRepo(f));
+    expect(parityViolations(BODY, read).join("\n")).toMatch(
+      /approved as TOP-LEVEL but is now nested under/,
+    );
+  });
+
+  it("ANCESTOR GREEN: rewrapping the parent's prose is tolerated", () => {
+    // Control J — the ancestor context is normalized, exactly like rule text, so
+    // the harmless rewrapping the canonical documents already use is not drift.
+    const original = readRepo("CONTRIBUTING.md")!;
+    const parent = original.split("\n").find((l) => l.startsWith("- Stripe grep gates"))!;
+    const rewrapped = parent.replace(
+      "(enforced by `scripts/check-stripe-gates.mjs`, run in `npm run ci` and CI;",
+      "(enforced by `scripts/check-stripe-gates.mjs`,\n  run in `npm run ci` and CI;",
+    );
+    expect(rewrapped, "the control's rewrap must land").not.toEqual(parent);
+    const mutated = original.replace(parent, rewrapped);
+    const read = (f: string) => (f === "CONTRIBUTING.md" ? mutated : readRepo(f));
+    expect(ancestorViolations(read), "rewrapping is not semantic drift").toEqual([]);
+  });
+
+  it("ANCESTOR: the real nested rules carry the pinned context, top-level ones none", () => {
+    for (const c of readAdapter(BODY).cited) {
+      const expectedRule = APPROVED_RULE_IDENTITIES.find((r) => identityOf(r) === identityOf(c))!;
+      const unit = sections(readRepo(c.file)!)
+        .get(c.anchor)!
+        .units.find((u) => normalize(u.text) === normalize(c.rule))!;
+      if (expectedRule.ancestors === null) {
+        expect(unit.ancestorContext, `${c.token} is approved top-level`).toBe("");
+      } else {
+        expect(ancestorDigest(unit.ancestorContext), `${c.token} context digest`).toBe(
+          expectedRule.ancestors,
+        );
+      }
+    }
+  });
+
+  // -------------------------------------------------------------------------
   // A parent list item owns only its OWN content
   // -------------------------------------------------------------------------
 
@@ -1158,12 +1375,20 @@ describe("SEC-ADAPTER-01 — security-guidance adapter parity", () => {
     expect(new Set(actual).size, "identities must be unique").toBe(actual.length);
   });
 
-  it("COVERAGE: the manifest carries no rule TEXT, only citation identity", () => {
+  it("COVERAGE: the manifest carries no rule TEXT, only identity and a digest", () => {
     // The guard against this becoming a second authority: if the manifest held
     // rule prose, a canonical rewording would have two places to disagree.
+    //
+    // `ancestors` is admitted only as a DIGEST or null — never as text — so the
+    // ancestor contract is a drift detector and not a second copy of the parent's
+    // wording. That distinction is what keeps the canonical document authoritative.
     for (const r of APPROVED_RULE_IDENTITIES) {
-      expect(Object.keys(r).sort()).toEqual(["anchor", "file", "token"]);
+      expect(Object.keys(r).sort()).toEqual(["ancestors", "anchor", "file", "token"]);
+      expect(r.ancestors === null || /^[0-9a-f]{64}$/.test(r.ancestors), `${r.token}: ancestors must be null or a sha256`).toBe(true);
     }
+    // ...and the one nested context is pinned as a literal, never recomputed
+    // from the document being validated.
+    expect(/^[0-9a-f]{64}$/.test(STRIPE_GATES_CONTEXT)).toBe(true);
   });
 
   // -------------------------------------------------------------------------
