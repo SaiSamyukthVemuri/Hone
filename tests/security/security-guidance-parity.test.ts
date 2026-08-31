@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
+// Structure only — never security authority. Dev-only, exact-pinned.
+import MarkdownIt from "markdown-it";
 // @ts-expect-error - .mjs utility ships without type declarations
 import { classify } from "../../scripts/classify-changes.mjs";
 import { tmpdir } from "node:os";
@@ -67,41 +69,28 @@ const PROMPT_BUDGET_BYTES = 8192;
 const normalize = (text: string): string => text.replace(/\s+/g, " ").trim();
 
 /**
- * ONE bounded structural scanner for markdown, and the only thing in this file
- * that decides what a heading, a rule or a code block is.
+ * STRUCTURE COMES FROM A REAL COMMONMARK PARSER, NOT FROM REGEXES HERE.
  *
- * WHY IT EXISTS. Four interpreters had grown here — an ATX regex, a duplicate
- * scan, a section splitter and list-indent logic — each reading markdown its own
- * way, and each patch to one left the others behind. Two consequences were live:
+ * This file previously grew its own markdown scanner, and each round of review
+ * found another construct it had not modelled: setext headings, then fenced and
+ * indented code, then headings inside containers (`- ## Heading`,
+ * `> ## Heading`), then container-RELATIVE code indentation, where a nested item
+ * moved from 2 to 6 spaces becomes code with respect to its parent. Each was a
+ * real bypass, and the pattern was clear: a hand-rolled parser will keep losing
+ * to markdown, one construct at a time.
  *
- *   - only ATX headings were seen, so a SETEXT heading ("Payment review
- *     expectations" over "---") inserted before the real one takes the rendered
- *     `#payment-review-expectations` anchor while every regex here skipped it
- *     and validated the untouched section below;
- *   - code was not modelled at all, so `- Never trust ...` inside a fenced or
- *     indented example counted as canonical policy — a rule could be deleted
- *     from real prose, pasted into an example, and still satisfy the guard.
+ * So markdown-it answers every structural question — what is a heading, a list
+ * item, a paragraph, code, and which container owns it — in `commonmark` preset
+ * mode. It is pinned to an exact version as a dev-only dependency and is never
+ * imported by application code.
  *
- * It is NOT a markdown renderer. It models exactly the structures that decide
- * this security contract: ATX headings, setext headings, fenced code, indented
- * code, list items, paragraphs and blanks. Everything else is prose.
- *
- * No repository markdown parser exists to reuse — none is declared in
- * package.json and none is installed, transitively or otherwise — and adding a
- * dependency for this was out of scope, so it is deterministic and local.
+ * THE PARSER IS NOT SECURITY AUTHORITY. It reports structure and nothing else.
+ * The canonical Hone documents remain the authority for what the rules SAY, and
+ * this test remains the authority for which files are canonical, which sections
+ * are approved, which rule identities are required, the prompt budget, the
+ * local-sibling prohibition and the classification contract.
  */
-const ATX_HEADING = /^ {0,3}(#{1,6})(?:[ \t]+(.*?))?[ \t]*$/;
-const FENCE_OPEN = /^ {0,3}(`{3,}|~{3,})(.*)$/;
-const SETEXT_UNDERLINE = /^ {0,3}(=+|-+)[ \t]*$/;
-const LIST_MARKER = /^(\s*)(?:[-*+]|\d{1,9}[.)])\s+\S/;
-
-function atxHeading(line: string): { level: number; text: string } | null {
-  const m = ATX_HEADING.exec(line);
-  if (!m) return null;
-  // A trailing run of `#`s preceded by whitespace closes a heading and is not
-  // part of its text, so it must not reach the slug.
-  return { level: m[1].length, text: (m[2] ?? "").replace(/[ \t]+#+[ \t]*$/, "").trim() };
-}
+const md = new MarkdownIt("commonmark");
 
 /** GitHub's heading-slug rule, which is what a `#anchor` in a citation means. */
 const slug = (headingText: string): string =>
@@ -111,210 +100,139 @@ const slug = (headingText: string): string =>
     .trim()
     .replace(/ /g, "-");
 
-/**
- * Line-level ATX check, for the ADAPTER's grammar only.
- *
- * The adapter is line-oriented — blank, approved heading, or cited rule — so a
- * setext attempt there needs no special case: its text line and its underline
- * are each non-blank, non-rule and non-ATX, so both are refused by the grammar's
- * catch-all. Canonical sources, which may legitimately use either style, go
- * through scanMarkdown instead.
- */
-const isHeading = (line: string): boolean => atxHeading(line) !== null;
-
-type MdHeading = { style: "atx" | "setext"; level: number; text: string; slug: string; line: number };
-
-/**
- * Per-line structure. `code` marks a line as example text rather than policy;
- * `heading` marks the line that renders as one, in either style.
- */
-type MdScan = {
-  lines: string[];
-  code: boolean[];
-  headingAt: (MdHeading | null)[];
-  headings: MdHeading[];
+type MdHeading = {
+  style: "atx" | "setext";
+  level: number;
+  text: string;
+  slug: string;
+  line: number;
+  bodyFrom: number;
 };
-
-function scanMarkdown(body: string): MdScan {
-  const lines = body.split("\n");
-  const code = new Array<boolean>(lines.length).fill(false);
-  const headingAt = new Array<MdHeading | null>(lines.length).fill(null);
-  const headings: MdHeading[] = [];
-
-  let i = 0;
-  while (i < lines.length) {
-    const line = lines[i];
-
-    // Fenced code. The closing fence is the same character, at least as long,
-    // and indented no more than three — anything else stays inside the block.
-    const fence = FENCE_OPEN.exec(line);
-    if (fence) {
-      const marker = fence[1][0];
-      const length = fence[1].length;
-      code[i] = true;
-      let j = i + 1;
-      for (; j < lines.length; j++) {
-        code[j] = true;
-        const close = FENCE_OPEN.exec(lines[j]);
-        if (close && close[1][0] === marker && close[1].length >= length && close[2].trim() === "") break;
-      }
-      i = j + 1;
-      continue;
-    }
-
-    if (line.trim() === "") {
-      i++;
-      continue;
-    }
-
-    const atx = atxHeading(line);
-    if (atx !== null) {
-      const h: MdHeading = { style: "atx", level: atx.level, text: atx.text, slug: slug(atx.text), line: i + 1 };
-      headingAt[i] = h;
-      headings.push(h);
-      i++;
-      continue;
-    }
-
-    // A list item owns its wraps and children; four-space indentation inside one
-    // is list content, not a code block, so the whole block is consumed here and
-    // never reaches the indented-code rule below.
-    const marker = LIST_MARKER.exec(line);
-    if (marker && marker[1].length <= 3) {
-      i = listBlockEnd(lines, i);
-      continue;
-    }
-
-    // Indented code: four or more spaces where a new block may begin. Reached
-    // only when the line does not continue a paragraph or a list, because both
-    // are consumed above and below.
-    if (/^ {4,}/.test(line)) {
-      let j = i;
-      while (j < lines.length && (lines[j].trim() === "" || /^ {4,}/.test(lines[j]))) {
-        code[j] = true;
-        j++;
-      }
-      i = j;
-      continue;
-    }
-
-    // Paragraph. A setext underline on the NEXT line turns it into a heading —
-    // and only here, which is what separates a setext heading from a thematic
-    // break: `---` after a blank line has no paragraph to underline.
-    let j = i;
-    while (
-      j < lines.length &&
-      lines[j].trim() !== "" &&
-      atxHeading(lines[j]) === null &&
-      !FENCE_OPEN.test(lines[j]) &&
-      !(LIST_MARKER.test(lines[j]) && (LIST_MARKER.exec(lines[j])![1].length <= 3)) &&
-      !(j > i && SETEXT_UNDERLINE.test(lines[j]))
-    ) {
-      j++;
-    }
-    if (j < lines.length && j > i && SETEXT_UNDERLINE.test(lines[j])) {
-      const text = lines.slice(i, j).map((l) => l.trim()).join(" ").trim();
-      const h: MdHeading = {
-        style: "setext",
-        level: lines[j].trim().startsWith("=") ? 1 : 2,
-        text,
-        slug: slug(text),
-        line: i + 1, // the heading renders where its TEXT is, not its underline
-      };
-      headingAt[i] = h;
-      headings.push(h);
-      i = j + 1;
-      continue;
-    }
-    i = j;
-  }
-
-  return { lines, code, headingAt, headings };
-}
-
-/** End of the block a list item at `start` owns: its wraps AND its children. */
-function listBlockEnd(lines: string[], start: number): number {
-  const ind = (/^(\s*)/.exec(lines[start])?.[1] ?? "").length;
-  let j = start + 1;
-  while (j < lines.length) {
-    const n = lines[j];
-    if (n.trim() === "" || atxHeading(n) !== null || FENCE_OPEN.test(n)) break;
-    const m = LIST_MARKER.exec(n);
-    if (m && m[1].length <= ind) break;
-    j++;
-  }
-  return j;
-}
 
 type SourceUnit = { kind: "item" | "para"; text: string };
 
 /**
- * The COMPLETE logical rules a section states, derived from the shared scan.
+ * Everything this guard needs to know about a markdown document's structure,
+ * read once from the parser's token stream.
  *
- * Code is excluded by the same state that recognises it, so a list marker in an
- * example can never become a canonical rule — the guard against deleting a rule
- * from policy and pasting it into a code block.
+ * Headings are collected wherever they RENDER — top level, inside a blockquote,
+ * inside a list item — because all of them produce an anchor a citation could
+ * resolve to. Code is whatever the parser calls code, which is what makes
+ * container-relative indentation correct without any indentation arithmetic here.
  */
-function sourceUnitsFrom(lines: string[], code: boolean[]): SourceUnit[] {
-  const inItem = new Array<boolean>(lines.length).fill(false);
-  const out: SourceUnit[] = [];
-  const structural = (i: number) => !code[i] && atxHeading(lines[i]) === null;
+type MdStructure = {
+  lines: string[];
+  code: boolean[];
+  headings: MdHeading[];
+  units: (from: number, to: number) => SourceUnit[];
+};
 
-  for (let i = 0; i < lines.length; i++) {
-    if (!structural(i)) continue;
-    const m = LIST_MARKER.exec(lines[i]);
-    if (!m) continue;
-    const end = listBlockEnd(lines, i);
-    for (let k = i; k < end; k++) inItem[k] = true;
-    const text = lines
-      .slice(i, end)
-      .filter((_, k) => !code[i + k])
-      .join("\n")
-      .replace(/^\s*(?:[-*+]|\d{1,9}[.)])\s+/, "");
-    out.push({ kind: "item", text });
-  }
-  for (let i = 0; i < lines.length; i++) {
-    if (inItem[i] || !structural(i) || lines[i].trim() === "") continue;
-    let j = i;
-    while (j < lines.length && !inItem[j] && structural(j) && lines[j].trim() !== "") j++;
-    out.push({ kind: "para", text: lines.slice(i, j).join("\n") });
-    i = j - 1;
-  }
-  return out;
+function structureOf(body: string): MdStructure {
+  const lines = body.split("\n");
+  const code = new Array<boolean>(lines.length).fill(false);
+  const headings: MdHeading[] = [];
+  const items: [number, number][] = [];
+  const paras: { from: number; to: number; content: string }[] = [];
+
+  const tokens = md.parse(body, {});
+  let itemDepth = 0;
+  tokens.forEach((t, i) => {
+    if (t.type === "fence" || t.type === "code_block") {
+      const [a, b] = t.map ?? [0, 0];
+      for (let k = a; k < b; k++) code[k] = true;
+      return;
+    }
+    if (t.type === "heading_open") {
+      const text = tokens[i + 1]?.content ?? "";
+      const [a, b] = t.map ?? [0, 0];
+      headings.push({
+        style: t.markup.startsWith("#") ? "atx" : "setext",
+        level: Number(t.tag.slice(1)),
+        text,
+        slug: slug(text),
+        line: a + 1,
+        bodyFrom: b, // a setext heading spans its text AND its underline
+      });
+      return;
+    }
+    if (t.type === "list_item_open") {
+      itemDepth++;
+      const [a, b] = t.map ?? [0, 0];
+      items.push([a, b]);
+      return;
+    }
+    if (t.type === "list_item_close") {
+      itemDepth--;
+      return;
+    }
+    // A paragraph inside a list item belongs to that item's unit, not its own.
+    if (t.type === "paragraph_open" && itemDepth === 0) {
+      const [a, b] = t.map ?? [0, 0];
+      paras.push({ from: a, to: b, content: tokens[i + 1]?.content ?? "" });
+    }
+  });
+
+  /**
+   * The COMPLETE logical rules stated between two lines.
+   *
+   * A list item carries its wrapped continuation lines and its nested children,
+   * so both a parent gate and each gate beneath it are units — the shape the
+   * canonical payment section actually uses. Code lines are dropped, so an
+   * example can never become policy.
+   */
+  const units = (from: number, to: number): SourceUnit[] => {
+    const out: SourceUnit[] = [];
+    for (const [a, b] of items) {
+      if (a < from || a >= to) continue;
+      const text = lines
+        .slice(a, b)
+        .filter((_, k) => !code[a + k])
+        .join("\n")
+        .replace(/^\s*(?:[-*+]|\d{1,9}[.)])\s+/, "");
+      out.push({ kind: "item", text });
+    }
+    for (const para of paras) {
+      if (para.from < from || para.from >= to) continue;
+      // The parser's inline content, so a container prefix (`> `) is already
+      // gone and the text is exactly what renders.
+      out.push({ kind: "para", text: para.content });
+    }
+    return out;
+  };
+
+  return { lines, code, headings, units };
 }
+
+/** Lines that RENDER as a heading, for the adapter's line-oriented grammar. */
+const headingLinesOf = (body: string): Set<number> =>
+  new Set(structureOf(body).headings.map((h) => h.line));
 
 /** A canonical section: the prose a citation resolves to, and its rules. */
 type Section = { slug: string; text: string; prose: string; units: SourceUnit[] };
 
 /**
- * Every section of a document, keyed by slug, derived from the shared scan.
+ * Every section of a document, keyed by slug.
  *
  * FIRST occurrence wins, which is what an unsuffixed `#slug` anchor means —
- * markdown gives later duplicates `-1`, `-2`. Headings of BOTH styles feed this,
- * so a setext heading can no longer take the rendered anchor while this reads
- * the ATX one below it.
+ * markdown gives later duplicates `-1`, `-2`. Every rendered heading feeds this,
+ * including ones inside containers, so a heading that steals the anchor can no
+ * longer be skipped while the guard validates a later section instead.
  */
 function sections(body: string): Map<string, Section> {
-  const scan = scanMarkdown(body);
-  const starts: { slug: string; at: number }[] = [];
-  scan.headingAt.forEach((h, i) => {
-    if (h !== null) starts.push({ slug: h.slug, at: i });
-  });
-
+  const structure = structureOf(body);
   const out = new Map<string, Section>();
-  starts.forEach(({ slug: s, at }, k) => {
-    if (out.has(s)) return; // first wins
-    // A setext heading occupies its text line and its underline.
-    const headingLines = scan.headingAt[at]!.style === "setext" ? 2 : 1;
-    const from = at + headingLines;
-    const to = k + 1 < starts.length ? starts[k + 1].at : scan.lines.length;
-    const body_ = scan.lines.slice(from, to);
-    const code_ = scan.code.slice(from, to);
-    out.set(s, {
-      slug: s,
+
+  structure.headings.forEach((h, k) => {
+    if (out.has(h.slug)) return; // first wins
+    const from = h.bodyFrom;
+    const to = k + 1 < structure.headings.length ? structure.headings[k + 1].line - 1 : structure.lines.length;
+    const body_ = structure.lines.slice(from, Math.max(from, to));
+    const code_ = structure.code.slice(from, Math.max(from, to));
+    out.set(h.slug, {
+      slug: h.slug,
       text: body_.join("\n"),
       prose: body_.filter((_, i) => !code_[i]).join("\n"),
-      units: sourceUnitsFrom(body_, code_),
+      units: structure.units(from, Math.max(from, to)),
     });
   });
   return out;
@@ -322,15 +240,16 @@ function sections(body: string): Map<string, Section> {
 
 /**
  * Duplicate rendered heading slugs in a canonical source, which this guard
- * REFUSES. Both heading styles count, because both render an anchor.
+ * REFUSES. Every style and every container counts, because each renders an
+ * anchor.
  *
- * The invariant was verified adoptable before it was adopted — all headings
- * across the four canonical documents are distinct — so no suffixed-anchor
- * model (`#heading-1`) is carried for a case that does not exist.
+ * Verified adoptable before it was adopted — all headings across the four
+ * canonical documents are distinct — so no suffixed-anchor model (`#heading-1`)
+ * is carried for a case that does not exist.
  */
 function duplicateSlugViolations(file: string, body: string): string[] {
   const seen = new Map<string, MdHeading[]>();
-  for (const h of scanMarkdown(body).headings) {
+  for (const h of structureOf(body).headings) {
     if (!seen.has(h.slug)) seen.set(h.slug, []);
     seen.get(h.slug)!.push(h);
   }
@@ -502,12 +421,15 @@ function grammarViolations(body: string): string[] {
     );
   }
   // After the header: blank lines, APPROVED headings, and cited rules. Nothing else.
+  // Which lines RENDER as a heading comes from the parser, so a setext or
+  // container heading in the adapter cannot slip past a line-shaped assumption.
+  const headingLines = headingLinesOf(body);
   const headingsSeen: string[] = [];
   for (let i = end + 1; i < lines.length; i++) {
     const line = lines[i];
     if (line.trim() === "") continue;
     if (RULE_LINE.test(line)) continue;
-    if (isHeading(line)) {
+    if (headingLines.has(i + 1)) {
       headingsSeen.push(line);
       // Whole-line equality. Prefix or substring matching would let
       // `## Identity override` in on the strength of `## Identity`.
@@ -849,21 +771,57 @@ describe("SEC-ADAPTER-01 — security-guidance adapter parity", () => {
   // ATX headings: 0-3 leading spaces are headings, 4 is not
   // -------------------------------------------------------------------------
 
-  it("ATX: the shared parser follows markdown indentation rules", () => {
+  it("PARSER: heading recognition follows CommonMark, in every position", () => {
+    const heads = (body: string) => structureOf(body).headings.map((h) => `${h.style}:${h.slug}`);
+
+    // ATX at 0-3 spaces is a heading; at 4 it is indented code.
     for (const indent of ["", " ", "  ", "   "]) {
-      const line = `${indent}## Payment review expectations`;
-      expect(atxHeading(line), `${JSON.stringify(line)} is a heading`).not.toBeNull();
-      expect(atxHeading(line)!.text).toBe("Payment review expectations");
-      expect(slug(atxHeading(line)!.text)).toBe("payment-review-expectations");
+      expect(heads(`${indent}## Payment review expectations`)).toEqual([
+        "atx:payment-review-expectations",
+      ]);
     }
-    // 4+ spaces is indented-code territory, never a heading.
-    expect(atxHeading("    ## Payment review expectations")).toBeNull();
-    expect(atxHeading("     # Still not a heading")).toBeNull();
-    // Other markdown rules the one parser must honour.
-    expect(atxHeading("#no-space"), "ATX requires a space").toBeNull();
-    expect(atxHeading("####### seven hashes"), "levels stop at 6").toBeNull();
-    expect(atxHeading("## Closed ##")!.text, "a closing run is not text").toBe("Closed");
-    expect(atxHeading("- ## not a heading")).toBeNull();
+    expect(heads("    ## Payment review expectations"), "4 spaces is code").toEqual([]);
+
+    // Setext.
+    expect(heads("Payment review expectations\n---")).toEqual(["setext:payment-review-expectations"]);
+    expect(heads("Title\n===")).toEqual(["setext:title"]);
+    // ...but `---` with no paragraph above it is a THEMATIC BREAK. The canonical
+    // documents use these as separators; reading them as headings would shred
+    // every section boundary.
+    expect(heads("para\n\n---\n\nmore")).toEqual([]);
+
+    // Headings inside CONTAINERS still render, and still take the anchor.
+    expect(heads("- ## Payment review expectations")).toEqual([
+      "atx:payment-review-expectations",
+    ]);
+    expect(heads("> ## Payment review expectations")).toEqual([
+      "atx:payment-review-expectations",
+    ]);
+    expect(heads("> - ## Payment review expectations")).toEqual([
+      "atx:payment-review-expectations",
+    ]);
+
+    // Other CommonMark rules the guard now inherits rather than re-implements.
+    expect(heads("#no-space"), "ATX requires a space").toEqual([]);
+    expect(heads("####### seven hashes"), "levels stop at 6").toEqual([]);
+    expect(structureOf("## Closed ##").headings[0].text, "a closing run is not text").toBe("Closed");
+  });
+
+  it("PARSER: code is whatever the parser calls code, including container-relative", () => {
+    const codeOf = (body: string) => {
+      const st = structureOf(body);
+      return st.lines.filter((_, i) => st.code[i]);
+    };
+    expect(codeOf("```\n- Never trust anything.\n```").join(" ")).toContain("Never trust anything.");
+    expect(codeOf("~~~\n- Never trust anything.\n~~~").join(" ")).toContain("Never trust anything.");
+    expect(codeOf("    - Never trust anything.").join(" ")).toContain("Never trust anything.");
+    // Container-RELATIVE: 6 spaces under a 2-space parent item is code with
+    // respect to that item, which no indentation arithmetic here ever modelled.
+    expect(codeOf("- parent\n\n      - Never trust anything.").join(" ")).toContain(
+      "Never trust anything.",
+    );
+    // ...while ordinary nested list content is NOT code.
+    expect(codeOf("- parent\n  - child rule.")).toEqual([]);
   });
 
   for (const [label, indent] of [
@@ -919,8 +877,8 @@ describe("SEC-ADAPTER-01 — security-guidance adapter parity", () => {
   // Setext headings render anchors too
   // -------------------------------------------------------------------------
 
-  it("SCANNER: setext headings are recognised, thematic breaks are not", () => {
-    const scan = scanMarkdown(["Payment review expectations", "---------------------------", "", "body"].join("\n"));
+  it("PARSER: setext headings are recognised, thematic breaks are not", () => {
+    const scan = structureOf(["Payment review expectations", "---------------------------", "", "body"].join("\n"));
     expect(scan.headings).toHaveLength(1);
     expect(scan.headings[0].style).toBe("setext");
     expect(scan.headings[0].slug).toBe("payment-review-expectations");
@@ -928,17 +886,17 @@ describe("SEC-ADAPTER-01 — security-guidance adapter parity", () => {
     // `---` with no paragraph above it is a THEMATIC BREAK, not a heading. The
     // canonical documents use these as separators; reading them as headings
     // would shred every section boundary.
-    expect(scanMarkdown(["para", "", "---", "", "more"].join("\n")).headings).toEqual([]);
-    expect(scanMarkdown(["# Real", "", "---", ""].join("\n")).headings).toHaveLength(1);
+    expect(structureOf(["para", "", "---", "", "more"].join("\n")).headings).toEqual([]);
+    expect(structureOf(["# Real", "", "---", ""].join("\n")).headings).toHaveLength(1);
     // `===` underlines are level 1.
-    expect(scanMarkdown(["Title", "====="].join("\n")).headings[0].level).toBe(1);
+    expect(structureOf(["Title", "====="].join("\n")).headings[0].level).toBe(1);
   });
 
-  it("SCANNER: the real canonical documents contain no setext headings today", () => {
+  it("PARSER: the real canonical documents contain no setext headings today", () => {
     // Every `---` in them follows a blank line, so all are thematic breaks. If
     // that ever changes this states it rather than letting it pass unnoticed.
     for (const file of CANONICAL) {
-      const setext = scanMarkdown(readRepo(file)!).headings.filter((h) => h.style === "setext");
+      const setext = structureOf(readRepo(file)!).headings.filter((h) => h.style === "setext");
       expect(setext.map((h) => h.text), `${file} gained a setext heading`).toEqual([]);
     }
   });
@@ -963,6 +921,54 @@ describe("SEC-ADAPTER-01 — security-guidance adapter parity", () => {
     expect(sections(withDecoy).get("payment-review-expectations")!.text).toContain(
       "`charges.create`: may be used freely.",
     );
+  });
+
+  // -------------------------------------------------------------------------
+  // A heading that STEALS the anchor, in every position markdown allows
+  // -------------------------------------------------------------------------
+  // Each decoy is inserted BEFORE the real cited heading, so it renders first
+  // and the unsuffixed `#payment-review-expectations` anchor lands on it while
+  // the untouched real section sits below. Container forms are the ones a
+  // hand-rolled scanner missed entirely.
+
+  const ANCHOR_THIEVES: [string, string][] = [
+    ["ATX at column 0", "## Payment review expectations"],
+    ["ATX indented 1 space", " ## Payment review expectations"],
+    ["ATX indented 3 spaces", "   ## Payment review expectations"],
+    ["setext", "Payment review expectations\n---------------------------"],
+    ["inside a list item", "- ## Payment review expectations"],
+    ["inside a blockquote", "> ## Payment review expectations"],
+    ["inside a blockquoted list", "> - ## Payment review expectations"],
+  ];
+
+  for (const [label, decoyHeading] of ANCHOR_THIEVES) {
+    it(`ANCHOR RED: a decoy heading ${label} steals the anchor`, () => {
+      const original = readRepo("CONTRIBUTING.md")!;
+      const at = original.indexOf("## Payment review expectations");
+      expect(at, "control needs the real heading").toBeGreaterThan(-1);
+      const withDecoy = `${original.slice(0, at)}${decoyHeading}\n\n- \`charges.create\`: may be used freely.\n\n${original.slice(at)}`;
+
+      // It really does render as a heading with the contested slug...
+      const rendered = structureOf(withDecoy).headings.filter(
+        (h) => h.slug === "payment-review-expectations",
+      );
+      expect(rendered.length, `${label} must render a heading`).toBe(2);
+
+      // ...and the guard refuses the ambiguity rather than picking one.
+      const read = (f: string) => (f === "CONTRIBUTING.md" ? withDecoy : readRepo(f));
+      expect(parityViolations(BODY, read).join("\n")).toMatch(
+        /duplicate heading slug "#payment-review-expectations"/,
+      );
+    });
+  }
+
+  it("ANCHOR: a container heading in the ADAPTER is refused by its grammar", () => {
+    for (const injected of ["- ## Identity", "> ## Identity"]) {
+      const mutated = `${BODY.trimEnd()}\n\n${injected}\n`;
+      expect(parityViolations(mutated, readRepo).join("\n"), injected).toMatch(
+        /not an approved section heading|not the approved sequence|outside the permitted grammar/,
+      );
+    }
   });
 
   // -------------------------------------------------------------------------
@@ -1015,6 +1021,20 @@ describe("SEC-ADAPTER-01 — security-guidance adapter parity", () => {
       const violations = parityViolations(BODY, read).join("\n");
       expect(violations).toMatch(/no longer contains "paymentIntents\.create"|is not a complete rule of/);
     }
+  });
+
+  it("CODE RED: a rule re-homed into CONTAINER-RELATIVE indented code is not policy", () => {
+    // Six spaces under a two-space parent item is code with respect to that
+    // item. Indentation arithmetic measured from column zero called it policy.
+    const original = readRepo("CONTRIBUTING.md")!;
+    const RULE = "- `charges.create`: must be zero.";
+    const stripped = original.replace(`${RULE}\n`, "");
+    expect(stripped, "the removal must land").not.toEqual(original);
+    const at = stripped.indexOf("- `checkout.sessions`");
+    const mutated = `${stripped.slice(0, at)}\n      ${RULE}\n\n${stripped.slice(at)}`;
+
+    const read = (f: string) => (f === "CONTRIBUTING.md" ? mutated : readRepo(f));
+    expect(parityViolations(BODY, read).join("\n")).toMatch(/is not a complete rule of/);
   });
 
   it("CODE: a list marker inside code never becomes a source unit", () => {
@@ -1103,32 +1123,28 @@ describe("SEC-ADAPTER-01 — security-guidance adapter parity", () => {
 
   it("DUPLICATE: the decoy would have passed a last-wins parser", () => {
     // Pins the defect this invariant closes, so the control above cannot later
-    // be mistaken for belt-and-braces and removed.
-    const lastWins = (body: string): Map<string, string> => {
-      const out = new Map<string, string>();
-      let cur: string | null = null;
-      let buf: string[] = [];
-      for (const line of body.split("\n")) {
-        const h = atxHeading(line);
-        if (h !== null) {
-          if (cur !== null) out.set(cur, buf.join("\n")); // overwrites — the bug
-          cur = slug(h.text);
-          buf = [];
-        } else if (cur !== null) buf.push(line);
-      }
-      if (cur !== null) out.set(cur, buf.join("\n"));
-      return out;
-    };
+    // be mistaken for belt-and-braces and removed. Last-wins is modelled ON TOP
+    // of the real parser's headings, so this control introduces no second
+    // structural interpretation of markdown.
     const original = readRepo("CONTRIBUTING.md")!;
     const RULE = "- `charges.create`: must be zero.";
     const withDecoy = `${original.replace(RULE, "- `charges.create`: may be used freely.")}\n\n## Payment review expectations\n\n${RULE}\n`;
 
-    const decoyed = lastWins(withDecoy).get("payment-review-expectations")!;
-    expect(decoyed, "last-wins reads the decoy").toContain("`charges.create`: must be zero.");
-    expect(decoyed).not.toContain("may be used freely.");
+    const headings = structureOf(withDecoy).headings.filter(
+      (h) => h.slug === "payment-review-expectations",
+    );
+    expect(headings.length, "the decoy makes two rendered headings").toBe(2);
 
-    const honest = sections(withDecoy).get("payment-review-expectations")!.text;
-    expect(honest, "first-wins reads the section the anchor names").toContain("may be used freely.");
+    const lines = withDecoy.split("\n");
+    const bodyOf = (h: (typeof headings)[number]) =>
+      lines.slice(h.bodyFrom, h.bodyFrom + 12).join("\n");
+
+    // Last-wins would read the LATER heading — the pristine decoy.
+    expect(bodyOf(headings[1]), "last-wins reads the decoy").toContain("must be zero.");
+    // First-wins reads the section the anchor actually names — the gutted one.
+    expect(sections(withDecoy).get("payment-review-expectations")!.text).toContain(
+      "may be used freely.",
+    );
   });
 
   // -------------------------------------------------------------------------
@@ -1338,9 +1354,10 @@ describe("SEC-ADAPTER-01 — security-guidance adapter parity", () => {
   });
 
   it("HEADING: the approved set is exactly what the real adapter carries", () => {
+    const afterHeader = BODY.split("\n").indexOf(HEADER_END) + 1;
     const present = BODY.split("\n")
-      .slice(BODY.split("\n").indexOf(HEADER_END) + 1)
-      .filter((l) => isHeading(l));
+      .slice(afterHeader)
+      .filter((_, i) => headingLinesOf(BODY).has(afterHeader + i + 1));
     expect(present).toEqual([...APPROVED_SECTION_HEADINGS]);
     expect(APPROVED_SECTION_HEADINGS.length, "the set must not be empty").toBeGreaterThan(0);
   });
