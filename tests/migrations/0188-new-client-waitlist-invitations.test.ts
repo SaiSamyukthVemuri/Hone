@@ -459,3 +459,51 @@ describe("0188 — the invitations composite key is FK-referenceable", () => {
     expect(SQL).toMatch(/UNCONDITIONAL, NEVER PARTIAL/i);
   });
 });
+
+describe("0188 — requeue is the only command that re-enters the active index", () => {
+  it("translates the duplicate-key refusal into a closed result code", () => {
+    // Reachable WITHOUT concurrency: release an entry, let the same person
+    // rejoin through the public form, then requeue the old entry. The index
+    // correctly refuses the second active row -- but 0185 forbade these
+    // commands to raise, because an exception is indistinguishable from
+    // "the write may have committed".
+    const fn = CODE.slice(
+      CODE.indexOf("function public.requeue_new_client_waitlist_entry"),
+      CODE.indexOf("function public.record_new_client_waitlist_conversion"),
+    );
+    expect(fn.length).toBeGreaterThan(0);
+    expect(fn).toMatch(/exception\s+when\s+unique_violation\s+then/i);
+    expect(fn).toMatch(/return\s+'already_active'/);
+  });
+
+  it("HANDLES the violation rather than pre-checking for it", () => {
+    // A `select ... where status in (active)` before the update reintroduces
+    // the read-then-write window this migration removes everywhere else: the
+    // conflicting row can commit between the check and the write. Catching the
+    // violation is the only form with no window.
+    const fn = CODE.slice(
+      CODE.indexOf("function public.requeue_new_client_waitlist_entry"),
+      CODE.indexOf("function public.record_new_client_waitlist_conversion"),
+    );
+    // No SELECT against the entries table inside requeue at all.
+    expect(fn).not.toMatch(/select[\s\S]{0,120}from\s+public\.new_client_waitlist_entries/i);
+  });
+
+  it("still clears the cycle evidence it is required to clear", () => {
+    const fn = CODE.slice(
+      CODE.indexOf("function public.requeue_new_client_waitlist_entry"),
+      CODE.indexOf("function public.record_new_client_waitlist_conversion"),
+    );
+    for (const col of [
+      "claimed_at",
+      "claimed_by_practitioner_id",
+      "invited_at",
+      "expired_at",
+      "released_at",
+    ]) {
+      expect(fn).toMatch(new RegExp(`${col}\\s*=\\s*null`, "i"));
+    }
+    // ...and only from the two states product semantics permit.
+    expect(fn).toMatch(/status\s+in\s*\(\s*'released'\s*,\s*'expired'\s*\)/i);
+  });
+});

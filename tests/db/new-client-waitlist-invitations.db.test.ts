@@ -784,3 +784,104 @@ describe("0188 — the invitations composite key, and what it does and does not 
     }
   });
 });
+
+describe("0188 — requeue collision: refused cleanly, reuse preserved, tenant-scoped", () => {
+  async function releasedEntry(s: Awaited<ReturnType<typeof seedStudio>>, email: string) {
+    const j = await join(s.studioId, email);
+    const entry = j.entry_id as string;
+    await claim(s.studioId, entry, s.userId);
+    await adminQuery(`select public.release_new_client_waitlist_entry($1,$2,$3)`, [
+      s.studioId, entry, s.userId,
+    ]);
+    return entry;
+  }
+  const requeue = async (studioId: string, entry: string, userId: string) =>
+    (await adminQuery(`select public.requeue_new_client_waitlist_entry($1,$2,$3) as r`, [
+      studioId, entry, userId,
+    ])).rows[0].r as string;
+
+  it("FORBIDDEN: requeue while the person is active again returns a code, never raises", async () => {
+    const s = await seedStudio("wait03-rq-dup");
+    const email = `rqdup-${s.studioId.slice(0, 8)}@ex.com`;
+    const old = await releasedEntry(s, email);
+
+    // The same person rejoins through the public form.
+    expect((await join(s.studioId, email)).result).toBe("created");
+
+    // Requeueing the old entry must be REFUSED, as a closed code.
+    expect(await requeue(s.studioId, old, s.userId)).toBe("already_active");
+
+    const active = await adminQuery(
+      `select count(*)::int as n from public.new_client_waitlist_entries
+        where studio_id = $1 and email_normalized = $2
+          and status in ('waiting','claimed','invited')`,
+      [s.studioId, email],
+    );
+    expect(active.rows[0].n).toBe(1);
+    const oldRow = await adminQuery(
+      `select status from public.new_client_waitlist_entries where id = $1`,
+      [old],
+    );
+    expect(oldRow.rows[0].status).toBe("released");
+  });
+
+  it("FORBIDDEN under CONCURRENCY: requeue racing a rejoin still yields one active row", async () => {
+    const s = await seedStudio("wait03-rq-race");
+    const email = `rqrace-${s.studioId.slice(0, 8)}@ex.com`;
+    const old = await releasedEntry(s, email);
+
+    const [rq, jn] = await Promise.all([
+      requeue(s.studioId, old, s.userId).catch((e) => `RAISED:${(e as Error).message}`),
+      join(s.studioId, email).catch((e) => ({ result: `RAISED:${(e as Error).message}` })),
+    ]);
+    // Whichever order they land in, neither may raise.
+    expect(String(rq)).not.toMatch(/^RAISED:/);
+    expect(String((jn as { result: string }).result)).not.toMatch(/^RAISED:/);
+    expect(["requeued", "already_active"]).toContain(rq);
+
+    const active = await adminQuery(
+      `select count(*)::int as n from public.new_client_waitlist_entries
+        where studio_id = $1 and email_normalized = $2
+          and status in ('waiting','claimed','invited')`,
+      [s.studioId, email],
+    );
+    expect(active.rows[0].n).toBe(1);
+  });
+
+  it("VALID REUSE: requeue from released AND from expired still succeeds when nothing rivals it", async () => {
+    const s = await seedStudio("wait03-rq-reuse");
+    const email = `rqreuse-${s.studioId.slice(0, 8)}@ex.com`;
+    const entry = await releasedEntry(s, email);
+
+    expect(await requeue(s.studioId, entry, s.userId)).toBe("requeued");
+    expect(await statusOf(entry)).toBe("waiting");
+    expect(await claim(s.studioId, entry, s.userId)).toBe("claimed");
+
+    const inv = await issue(s.studioId, entry, s.userId);
+    expect(inv.result).toBe("invited");
+    await adminQuery(`select public.expire_new_client_waitlist_invitation($1,$2,$3)`, [
+      s.studioId, entry, s.userId,
+    ]);
+    expect(await statusOf(entry)).toBe("expired");
+    expect(await requeue(s.studioId, entry, s.userId)).toBe("requeued");
+    // The superseded token stays dead across the whole reuse cycle.
+    expect((await redeem(inv.raw_token)).result).toBe("invalid_token");
+  });
+
+  it("TENANT-SCOPED: the same email may be active in two studios at once", async () => {
+    const a = await seedStudio("wait03-rq-ta");
+    const b = await seedStudio("wait03-rq-tb");
+    const email = `rqten-${a.studioId.slice(0, 8)}@ex.com`;
+    expect((await join(a.studioId, email)).result).toBe("created");
+    expect((await join(b.studioId, email)).result).toBe("created");
+
+    const per = await adminQuery(
+      `select studio_id, count(*)::int as n from public.new_client_waitlist_entries
+        where email_normalized = $1 and status in ('waiting','claimed','invited')
+        group by studio_id order by studio_id`,
+      [email],
+    );
+    expect(per.rows).toHaveLength(2);
+    for (const r of per.rows as { n: number }[]) expect(r.n).toBe(1);
+  });
+});

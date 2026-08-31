@@ -991,16 +991,44 @@ begin
   if v_code <> 'ok' then return v_code; end if;
   if p_entry_id is null then return 'invalid_input'; end if;
 
-  update public.new_client_waitlist_entries
-     set status                     = 'waiting',
-         claimed_at                 = null,
-         claimed_by_practitioner_id = null,
-         invited_at                 = null,
-         expired_at                 = null,
-         released_at                = null
-   where id = p_entry_id and studio_id = p_studio_id
-     and status in ('released','expired')
-  returning id into v_hit;
+  -- REQUEUE IS THE ONLY COMMAND THAT RE-ENTERS THE ACTIVE DUPLICATE INDEX.
+  -- Every other transition either stays inside the active set (waiting ->
+  -- claimed -> invited, no new key) or leaves it (released, expired, converted,
+  -- removed). Only this one takes a row from OUTSIDE
+  -- `..._one_active_per_email` and puts it back IN, so only this one can
+  -- collide with a row that arrived while the entry was away.
+  --
+  -- That collision is REACHABLE WITHOUT CONCURRENCY: release an entry, let the
+  -- same person rejoin through the public form, then requeue the old entry.
+  -- The index correctly REFUSES the second active row -- the invariant holds
+  -- and no duplicate is created -- but the refusal arrives as unique_violation,
+  -- and an exception is exactly what 0185 forbade these commands to do:
+  -- "an exception is indistinguishable from 'the insert may have committed',
+  -- and the caller would have to report an unconfirmed outcome". So the
+  -- outcome is translated into a closed result code here.
+  --
+  -- HANDLED, NOT PRE-CHECKED. A `select ... where status in (active)` before
+  -- the update would reintroduce the read-then-write window this migration
+  -- removes everywhere else: the conflicting row can be committed between the
+  -- check and the write. Catching the violation is the only form with no
+  -- window, because the index itself is the decision.
+  begin
+    update public.new_client_waitlist_entries
+       set status                     = 'waiting',
+           claimed_at                 = null,
+           claimed_by_practitioner_id = null,
+           invited_at                 = null,
+           expired_at                 = null,
+           released_at                = null
+     where id = p_entry_id and studio_id = p_studio_id
+       and status in ('released','expired')
+    returning id into v_hit;
+  exception
+    when unique_violation then
+      -- This person already holds an active place in this studio's list. The
+      -- old entry stays where it is; there is nothing to requeue it to.
+      return 'already_active';
+  end;
 
   if v_hit is null then return 'not_requeueable'; end if;
   return 'requeued';
