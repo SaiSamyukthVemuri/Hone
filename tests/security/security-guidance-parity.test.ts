@@ -487,6 +487,11 @@ function sectionTokens(body: string, anchor: string): MdToken[] | null {
   }
   if (start === -1) return null;
 
+  // THE CITED HEADING IS PART OF THE SECTION. Fingerprinting only what follows
+  // `heading_close` left the heading's own markdown unpinned, so
+  // `## <del>How NOT to use service role</del>` kept the anchor, kept the body,
+  // and told the reviewer the section was struck out — with the digest unmoved.
+  //
   // A SECTION OWNS ITS SUBSECTIONS. Stopping at the next heading of any level
   // cut a cited H2 off at its first H3, so everything beneath that H3 escaped
   // the envelope entirely — and `CLAUDE.md#5-production-safety` has exactly that
@@ -497,10 +502,9 @@ function sectionTokens(body: string, anchor: string): MdToken[] | null {
   // cited H2 absorbs H3-H6 and stops at the next H2 or H1. Read from the token's
   // own tag, never from its text.
   const citedLevel = headingLevel(tokens[start]);
-  let from = start;
-  while (from < tokens.length && tokens[from].type !== "heading_close") from++;
-  from++;
-  let to = from;
+  // Begin AT the heading, not after it.
+  const from = start;
+  let to = from + 1;
   while (to < tokens.length) {
     const t = tokens[to];
     if (t.type === "heading_open" && headingLevel(t) <= citedLevel) break;
@@ -515,11 +519,24 @@ function sectionFingerprint(body: string, anchor: string): string | null {
   const parts: string[] = [];
   for (const t of tokens) {
     switch (t.type) {
-      case "inline":
-        // One rendered-inline law, shared with heading slugs and rule matching:
-        // text, code spans, image alt, link labels, emphasis, breaks as space.
-        parts.push(`inline:${normalize(renderedText(t))}`);
+      case "inline": {
+        // Rendered text alone could not tell `<del>x</del>` from `x`: both render
+        // the same words and the same anchor, while one says the section is
+        // struck out. So the inline MARKS travel with the text — emphasis, links,
+        // code spans and raw inline HTML, with html content included so `<del>`
+        // differs from `<ins>`.
+        //
+        // Breaks are deliberately excluded: a softbreak is rendered whitespace,
+        // and the canonical documents hard-wrap freely. Including it would make
+        // a rewrap read as semantic drift, which the rule contract already
+        // tolerates and which control 9 pins.
+        const marks = (t.children ?? [])
+          .filter((c) => c.type !== "text" && c.type !== "softbreak" && c.type !== "hardbreak")
+          .map((c) => (c.content ? `${c.type}=${normalize(c.content)}` : c.type))
+          .join(",");
+        parts.push(`inline:${marks}:${normalize(renderedText(t))}`);
         break;
+      }
       case "fence":
       case "code_block":
         // Code keeps its internal whitespace — indentation is meaning here —
@@ -696,19 +713,19 @@ const identityOf = (r: { adapterSection: string; file: string; anchor: string; t
  */
 const APPROVED_SECTION_DIGESTS: Readonly<Record<string, string>> = {
   "CONTRIBUTING.md#security-review-expectations":
-    "57859b233256c347da46b6cba032497684050bd255b737ca6c67275b3bddbfba",
+    "870390eb22b42b5278ad6bfa6ceb874f9b2ac0945937360bf3b7182695d57ab6",
   "CONTRIBUTING.md#how-to-use-service-role-correctly":
-    "b0632bf56f37ad28d0c7f316361d702eec55bce614d35c4f5af49b22f0ee2fee",
+    "232f9d8ab3c99fefe9b368b10158622aa1c6389e7e46db94166a6adbc148c5d7",
   "CONTRIBUTING.md#how-not-to-use-service-role":
-    "4495c0522c016c149d42a848805c1ef23e49b5a5305d92da42c2be8a28d01733",
+    "59957556ad13f605ea3072397fbd51b2f056dc8bee633fd8123a06f7d1ce4a27",
   "CONTRIBUTING.md#how-to-treat-public--token-routes":
-    "e46310a373613f4720fa50d3076a24f713fe2283f3425a6ec2835836ba5bfe87",
+    "eb7f43f662c15d1302f8aec7adce2eb1d6d65a13c99af5151fa32e2525100de8",
   "CONTRIBUTING.md#payment-review-expectations":
-    "6bea6c0a337570f6637f2a36488e33fcd127fc5f9565754e8c644431a67bee2d",
+    "f4e6fc46a18be51f8deaa60b9f7193f15a198cafd65d71b669d89a4f768e5a2f",
   "CLAUDE.md#5-production-safety":
-    "f723aa8e679e4a1da9eb4013eee07bdd188712fa5b357948dd377b5f8373cf7f",
+    "59f85f8608d7fcab1ed1c79844974bbb7570acc7289d13ca0d3e6815500a09c2",
   "ENGINEERING_STANDARDS.md#5-design-rules-for-risky-work":
-    "998420aed8302e34324e7492799104821752c1108e62c0141008344707f89c50",
+    "98af0d59247da3070816dfd0d62a8782398808609e5ae1a42577b49f3e76d107",
 };
 
 /** The unique canonical sections the approved rules actually cite. */
@@ -1619,6 +1636,73 @@ describe("SEC-ADAPTER-01 — security-guidance adapter parity", () => {
       );
     });
   }
+
+  // THE CITED HEADING IS PART OF WHAT IS PINNED. Wrapping it in markup can leave
+  // the anchor, the body and every rule untouched while telling the reviewer the
+  // section is struck out, illustrative, or a link to somewhere else.
+
+  const HEADING_MARKUP: [string, string][] = [
+    ["strikethrough", "## <del>How NOT to use service role</del>"],
+    ["raw HTML span", "## <span class='obsolete'>How NOT to use service role</span>"],
+    ["emphasis", "## *How NOT to use service role*"],
+    ["strong", "## **How NOT to use service role**"],
+    ["a link", "## [How NOT to use service role](https://example.com/retired)"],
+    ["a code span", "## `How NOT to use service role`"],
+  ];
+
+  for (const [label, replacement] of HEADING_MARKUP) {
+    it(`HEADING RED: the cited heading wrapped in ${label}`, () => {
+      const original = readRepo("CONTRIBUTING.md")!;
+      const PLAIN = "## How NOT to use service role";
+      expect(original.split(PLAIN).length - 1, "control needs exactly one such heading").toBe(1);
+      const mutated = original.replace(PLAIN, replacement);
+      expect(mutated, "the control's substitution must land").not.toEqual(original);
+
+      // The ANCHOR is unchanged — that is precisely why the body-only digest
+      // missed this, and why the control has to assert it.
+      expect(
+        structureOf(replacement).headings[0].slug,
+        `${label} must keep the anchor`,
+      ).toBe("how-not-to-use-service-role");
+      // ...and the rules beneath are untouched.
+      expect(mutated).toContain("- Never in a `\"use client\"` component.");
+
+      const read = (f: string) => (f === "CONTRIBUTING.md" ? mutated : readRepo(f));
+      expect(digestViolationsFor(read).join("\n")).toMatch(/how-not-to-use-service-role/);
+    });
+  }
+
+  it("HEADING RED: the cited heading's visible text changed", () => {
+    const read = mutateFile(
+      "CONTRIBUTING.md",
+      "## How NOT to use service role",
+      "## How to use service role anywhere",
+    );
+    // The anchor moves too, so the section stops resolving — also fail-closed.
+    expect(parityViolations(BODY, read).length).toBeGreaterThan(0);
+  });
+
+  it("HEADING: the fingerprint starts AT the heading, not after it", () => {
+    const plain = "## Cited\n\nbody\n\n## Next\n\nother\n";
+    const wrapped = "## *Cited*\n\nbody\n\n## Next\n\nother\n";
+    // Same anchor, same body — different markdown, therefore different digest.
+    expect(structureOf(plain).headings[0].slug).toBe(structureOf(wrapped).headings[0].slug);
+    expect(sectionFingerprint(wrapped, "cited")).not.toBe(sectionFingerprint(plain, "cited"));
+    // The NEXT sibling heading stays outside: wrapping it must not move ours.
+    const siblingWrapped = "## Cited\n\nbody\n\n## *Next*\n\nother\n";
+    expect(sectionFingerprint(siblingWrapped, "cited")).toBe(sectionFingerprint(plain, "cited"));
+  });
+
+  it("HEADING GREEN: hard wrapping is still not semantic drift", () => {
+    // Breaks are excluded from the inline marks precisely so this stays true —
+    // the canonical documents hard-wrap freely.
+    const read = mutateFile(
+      "CONTRIBUTING.md",
+      "`createAdminClient()` from `@/lib/supabase/admin-server` is for:",
+      "`createAdminClient()` from\n`@/lib/supabase/admin-server` is   for:",
+    );
+    expect(sectionDigestViolations(read), "a rewrap is not drift").toEqual([]);
+  });
 
   // A SECTION OWNS ITS SUBSECTIONS. Stopping at the next heading of any level cut
   // a cited H2 off at its first H3, so everything beneath escaped the envelope.
