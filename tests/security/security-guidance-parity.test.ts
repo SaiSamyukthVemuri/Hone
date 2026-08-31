@@ -132,6 +132,7 @@ type MdToken = ReturnType<typeof md.parse>[number];
 function ownContentOf(tokens: MdToken[], listItemOpen: number): string {
   const parts: string[] = [];
   let nested = 0;
+  let quoted = 0;
   for (let i = listItemOpen + 1; i < tokens.length; i++) {
     const t = tokens[i];
     if (t.type === "bullet_list_open" || t.type === "ordered_list_open") {
@@ -142,8 +143,17 @@ function ownContentOf(tokens: MdToken[], listItemOpen: number): string {
       nested--;
       continue;
     }
+    if (t.type === "blockquote_open") {
+      quoted++;
+      continue;
+    }
+    if (t.type === "blockquote_close") {
+      quoted--;
+      continue;
+    }
     if (nested === 0 && t.type === "list_item_close") break;
     if (nested > 0) continue; // a descendant's content is its own unit's
+    if (quoted > 0) continue; // an item quoting something does not state it
     if (t.type === "fence" || t.type === "code_block") continue;
     if (t.type === "inline") parts.push(t.content);
   }
@@ -178,7 +188,13 @@ type MdHeading = {
  * adapter as a single "rule" and matched. Each gate is independently its own
  * unit instead, and the parent states only its own sentence.
  */
-type SourceUnit = { kind: "item" | "para"; text: string; line: number };
+type SourceUnit = {
+  kind: "item" | "para";
+  text: string;
+  line: number;
+  /** 0 for authoritative content. A quoted unit is never eligible as a rule. */
+  blockquoteDepth: number;
+};
 
 /**
  * Everything this guard needs to know about a markdown document's structure,
@@ -200,12 +216,26 @@ function structureOf(body: string): MdStructure {
   const lines = body.split("\n");
   const code = new Array<boolean>(lines.length).fill(false);
   const headings: MdHeading[] = [];
-  const items: { at: number; line: number }[] = [];
-  const paras: { from: number; to: number; content: string }[] = [];
+  const items: { at: number; line: number; quoteDepth: number }[] = [];
+  const paras: { from: number; to: number; content: string; quoteDepth: number }[] = [];
 
   const tokens = md.parse(body, {});
   let itemDepth = 0;
+  // CONTAINER AUTHORITY. Quoted prose is a record of what something said, not a
+  // rule this repository states. Tracking only list depth let a paragraph inside
+  // `> …` become a canonical unit, so obsolete guidance preserved in a quote
+  // could keep satisfying an adapter rule while the authoritative prose beside
+  // it said the opposite.
+  let quoteDepth = 0;
   tokens.forEach((t, i) => {
+    if (t.type === "blockquote_open") {
+      quoteDepth++;
+      return;
+    }
+    if (t.type === "blockquote_close") {
+      quoteDepth--;
+      return;
+    }
     if (t.type === "fence" || t.type === "code_block") {
       const [a, b] = t.map ?? [0, 0];
       for (let k = a; k < b; k++) code[k] = true;
@@ -227,7 +257,7 @@ function structureOf(body: string): MdStructure {
     if (t.type === "list_item_open") {
       itemDepth++;
       const [a] = t.map ?? [0, 0];
-      items.push({ at: i, line: a + 1 });
+      items.push({ at: i, line: a + 1, quoteDepth });
       return;
     }
     if (t.type === "list_item_close") {
@@ -237,7 +267,7 @@ function structureOf(body: string): MdStructure {
     // A paragraph inside a list item belongs to that item's unit, not its own.
     if (t.type === "paragraph_open" && itemDepth === 0) {
       const [a, b] = t.map ?? [0, 0];
-      paras.push({ from: a, to: b, content: tokens[i + 1]?.content ?? "" });
+      paras.push({ from: a, to: b, content: tokens[i + 1]?.content ?? "", quoteDepth });
     }
   });
 
@@ -254,15 +284,17 @@ function structureOf(body: string): MdStructure {
    */
   const units = (from: number, to: number): SourceUnit[] => {
     const out: SourceUnit[] = [];
-    for (const { at, line } of items) {
+    for (const { at, line, quoteDepth: q } of items) {
       if (line - 1 < from || line - 1 >= to) continue;
-      out.push({ kind: "item", text: ownContentOf(tokens, at), line });
+      // Quoted content is never an authoritative rule, at any depth.
+      if (q > 0) continue;
+      out.push({ kind: "item", text: ownContentOf(tokens, at), line, blockquoteDepth: q });
     }
     for (const para of paras) {
       if (para.from < from || para.from >= to) continue;
-      // The parser's inline content, so a container prefix (`> `) is already
-      // gone and the text is exactly what renders.
-      out.push({ kind: "para", text: para.content, line: para.from + 1 });
+      if (para.quoteDepth > 0) continue;
+      // The parser's inline content, so the text is exactly what renders.
+      out.push({ kind: "para", text: para.content, line: para.from + 1, blockquoteDepth: para.quoteDepth });
     }
     return out;
   };
@@ -774,6 +806,112 @@ describe("SEC-ADAPTER-01 — security-guidance adapter parity", () => {
     expect(mutated, "the token must actually be gone").not.toContain(from);
     return (f: string) => (f === file ? mutated : readRepo(f));
   };
+
+  // -------------------------------------------------------------------------
+  // Quoted prose is a record, never an authoritative rule
+  // -------------------------------------------------------------------------
+  // A blockquote says what something SAID. Preserving an obsolete rule in one
+  // while the authoritative prose beside it says the opposite must not keep the
+  // adapter green — the reviewer would be told the retired thing.
+
+  const IDENTITY_RULE =
+    "Server resolves `studio_id`, `client_id`, `appointment_id`, `practitioner_id` from the session or from token resolution. **Never trust those ids from the form.**";
+
+  /** Retire the real rule from authoritative prose, preserving it as `quoted`. */
+  const retiredIntoQuote = (quoted: string): string => {
+    const original = readRepo("CONTRIBUTING.md")!;
+    expect(original, "control needs the real rule").toContain(`- ${IDENTITY_RULE}`);
+    const reversed =
+      "- Server resolves ids from the request. **Trust those ids from the form.**";
+    const mutated = original.replace(`- ${IDENTITY_RULE}`, `${reversed}\n\n${quoted}\n`);
+    expect(mutated, "the control's substitution must land").not.toEqual(original);
+    return mutated;
+  };
+
+  const QUOTE_FORMS: [string, string][] = [
+    ["a quoted paragraph", `> ${IDENTITY_RULE}`],
+    ["a quoted list item", `> - ${IDENTITY_RULE}`],
+    ["a nested blockquote", `> > ${IDENTITY_RULE}`],
+    ["a quoted paragraph with a lead-in", `> Historically:\n>\n> ${IDENTITY_RULE}`],
+  ];
+
+  for (const [label, quoted] of QUOTE_FORMS) {
+    it(`QUOTE RED: the rule surviving only in ${label}`, () => {
+      const mutated = retiredIntoQuote(quoted);
+      // The quoted text really is present in the file...
+      expect(mutated).toContain("Never trust those ids from the form.");
+      // ...and markdown-it really does place it inside a blockquote.
+      const st = structureOf(mutated);
+      const quotedLine = st.lines.findIndex((l) => l.includes("Never trust those ids"));
+      expect(st.lines[quotedLine].trimStart().startsWith(">"), "must be quoted").toBe(true);
+
+      // ...but it is not an authoritative unit, so the adapter rule has no match.
+      const read = (f: string) => (f === "CONTRIBUTING.md" ? mutated : readRepo(f));
+      expect(parityViolations(BODY, read).join("\n")).toMatch(/is not a complete rule of/);
+    });
+  }
+
+  it("QUOTE RED: a token surviving only inside a quote does not satisfy its citation", () => {
+    const original = readRepo("CONTRIBUTING.md")!;
+    const mutated = original
+      .replace("`charges.create`: must be zero.", "`charges.forge`: must be zero.")
+      .replace(
+        "- No raw card / CVC / `client_secret` in any new code.",
+        "- No raw card / CVC / `client_secret` in any new code.\n\n> Formerly: `charges.create`: must be zero.\n",
+      );
+    expect(mutated, "the control's substitution must land").not.toEqual(original);
+    expect(mutated, "the token survives, but only quoted").toContain("`charges.create`");
+    const read = (f: string) => (f === "CONTRIBUTING.md" ? mutated : readRepo(f));
+    expect(parityViolations(BODY, read).join("\n")).toMatch(/is not a complete rule of|does not contain/);
+  });
+
+  it("QUOTE: no unit derived from any canonical document is quoted", () => {
+    for (const file of CANONICAL) {
+      for (const section of sections(readRepo(file)!).values()) {
+        for (const unit of section.units) {
+          expect(unit.blockquoteDepth, `${file}#${section.slug} unit at line ${unit.line}`).toBe(0);
+        }
+      }
+    }
+  });
+
+  it("QUOTE: docs/03's real explanatory blockquotes are non-authoritative", () => {
+    // Control 7 — these exist today and must stay outside the rule set rather
+    // than being special-cased away.
+    const doc = readRepo("docs/03_SECURITY_AND_PRIVACY.md")!;
+    const quotedParagraphs = md
+      .parse(doc, {})
+      .reduce<{ depth: number; count: number }>(
+        (acc, t) => {
+          if (t.type === "blockquote_open") acc.depth++;
+          else if (t.type === "blockquote_close") acc.depth--;
+          else if (acc.depth > 0 && t.type === "paragraph_open") acc.count++;
+          return acc;
+        },
+        { depth: 0, count: 0 },
+      ).count;
+    expect(quotedParagraphs, "docs/03 really does carry explanatory quotes").toBeGreaterThan(0);
+
+    const unitTexts = [...sections(doc).values()].flatMap((s) => s.units.map((u) => normalize(u.text)));
+    expect(
+      unitTexts.some((u) => u.startsWith("**Clinical delete posture")),
+      "a quoted note must not be a canonical rule",
+    ).toBe(false);
+  });
+
+  it("QUOTE: an item that QUOTES something does not thereby state it", () => {
+    const body = ["## Example", "", "- own text", "", "  > quoted text", ""].join("\n");
+    const units = sections(body).get("example")!.units.map((u) => normalize(u.text));
+    expect(units).toContain("own text");
+    expect(units.join(" | "), "the quote is not the item's own content").not.toContain("quoted text");
+  });
+
+  it("QUOTE GREEN: the real top-level canonical rules are unaffected", () => {
+    expect(parityViolations(BODY, readRepo)).toEqual([]);
+    // ...and the identity rule specifically still resolves to a real unit.
+    const units = sections(readRepo("CONTRIBUTING.md")!).get("security-review-expectations")!.units;
+    expect(units.map((u) => normalize(u.text))).toContain(normalize(IDENTITY_RULE));
+  });
 
   // -------------------------------------------------------------------------
   // The token must belong to the EXACT matched unit
