@@ -5,6 +5,12 @@ import { createAdminClient } from "@/lib/supabase/admin-server";
 import { verifyCancellationToken } from "@/lib/booking/tokens";
 import { hashAppointmentToken } from "@/lib/booking/appointment-token";
 import { limitTokenRoute, RATE_LIMIT_MESSAGE } from "@/lib/rate-limit/public";
+// EMERG-01. /manage mutates nothing, so this is not an authority boundary —
+// the four reschedule actions own that. It is however the button a client
+// actually taps from a confirmation or reminder message, and offering
+// "Reschedule appointment" to someone /reschedule will then refuse is the same
+// dead end, one screen earlier. Same decision, same server-resolved inputs.
+import { isFreeConsultWaitlistOnlyReschedule } from "@/lib/booking/free-consult-reschedule-policy";
 
 // Generic public-facing message for the /manage surface. Returned for
 // any non-success outcome so the existence of a real appointment row
@@ -75,6 +81,10 @@ export type ManageSummary = {
   startsAt: string;
   cancellationPolicyText: string | null;
   noShowPolicyText: string | null;
+  // EMERG-01. SERVER-DERIVED, presentation only: true when /reschedule will
+  // refuse this appointment. The page withdraws the reschedule CTA rather than
+  // linking into a refusal. Cancellation is unaffected and still offered.
+  freeConsultationWaitlistOnly: boolean;
 };
 
 export type FetchManageResult =
@@ -105,7 +115,9 @@ export async function fetchAppointmentForManageAction(
   const { data, error } = await admin
     .from("appointments")
     .select(
-      "id, status, starts_at, studio:studios(name, timezone, cancellation_policy_text, no_show_policy_text), service:services(name)",
+      // EMERG-01 adds the studio slug and the service's modality + price so
+      // the policy is derived from the same row this page renders.
+      "id, status, starts_at, studio:studios(name, slug, timezone, cancellation_policy_text, no_show_policy_text), service:services(name, modality, price_cents)",
     )
     .eq("id", resolved.appointment_id)
     .maybeSingle();
@@ -118,25 +130,24 @@ export async function fetchAppointmentForManageAction(
   }
   if (!data) return { ok: false, error: PUBLIC_MANAGE_GENERIC_ERROR };
 
+  type JoinedStudio = {
+    name: string;
+    slug: string | null;
+    timezone: string;
+    cancellation_policy_text: string | null;
+    no_show_policy_text: string | null;
+  };
+  type JoinedService = {
+    name: string;
+    modality: string | null;
+    price_cents: number | null;
+  };
   type Joined = {
     id: string;
     status: string;
     starts_at: string;
-    studio:
-      | {
-          name: string;
-          timezone: string;
-          cancellation_policy_text: string | null;
-          no_show_policy_text: string | null;
-        }
-      | Array<{
-          name: string;
-          timezone: string;
-          cancellation_policy_text: string | null;
-          no_show_policy_text: string | null;
-        }>
-      | null;
-    service: { name: string } | { name: string }[] | null;
+    studio: JoinedStudio | JoinedStudio[] | null;
+    service: JoinedService | JoinedService[] | null;
   };
   const row = data as unknown as Joined;
 
@@ -169,6 +180,14 @@ export async function fetchAppointmentForManageAction(
       startsAt: row.starts_at,
       cancellationPolicyText: studio?.cancellation_policy_text ?? null,
       noShowPolicyText: studio?.no_show_policy_text ?? null,
+      // EMERG-01. Derived AFTER the collapse rule above, so a token that did
+      // not resolve to a future confirmed appointment never reaches it and the
+      // policy stays invisible to a probing caller. The slug is consumed here
+      // and never returned: this surface has no waitlist CTA to build.
+      freeConsultationWaitlistOnly: isFreeConsultWaitlistOnlyReschedule({
+        studioSlug: studio?.slug ?? null,
+        service,
+      }),
     },
   };
 }
