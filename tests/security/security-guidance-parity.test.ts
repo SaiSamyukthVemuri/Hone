@@ -100,6 +100,37 @@ const slug = (headingText: string): string =>
     .trim()
     .replace(/ /g, "-");
 
+/**
+ * The text a reader SEES in a heading, from the parser's inline child tokens.
+ *
+ * An inline token's `.content` is raw markdown SOURCE, so
+ * `## [Payment review expectations](https://example.com)` yielded
+ * "[Payment review expectations](https://example.com)" and slugged to
+ * `payment-review-expectations-httpsexamplecom`. GitHub renders that heading as
+ * "Payment review expectations" and gives it `#payment-review-expectations`, so
+ * a decoy heading wearing a link took the real anchor while the guard, slugging
+ * the source, saw a different slug, found no duplicate, and validated the later
+ * section instead.
+ *
+ * The children are a FLAT token stream, so visible text is simply the `text` and
+ * `code_inline` tokens. `link_open` carries the destination in `attrs` and
+ * contributes nothing visible; emphasis and strong delimiters are markup tokens
+ * with empty content. Nothing is re-implemented here — markdown-it has already
+ * decided what is markup and what is text.
+ */
+/** The parser's own token type, so this file never restates its shape. */
+type MdToken = ReturnType<typeof md.parse>[number];
+
+function renderedText(inline: MdToken | undefined): string {
+  if (!inline) return "";
+  const children = inline.children;
+  if (!children || children.length === 0) return inline.content ?? "";
+  return children
+    .filter((c) => c.type === "text" || c.type === "code_inline")
+    .map((c) => c.content)
+    .join("");
+}
+
 type MdHeading = {
   style: "atx" | "setext";
   level: number;
@@ -143,7 +174,7 @@ function structureOf(body: string): MdStructure {
       return;
     }
     if (t.type === "heading_open") {
-      const text = tokens[i + 1]?.content ?? "";
+      const text = renderedText(tokens[i + 1]);
       const [a, b] = t.map ?? [0, 0];
       headings.push({
         style: t.markup.startsWith("#") ? "atx" : "setext",
@@ -955,6 +986,67 @@ describe("SEC-ADAPTER-01 — security-guidance adapter parity", () => {
       expect(rendered.length, `${label} must render a heading`).toBe(2);
 
       // ...and the guard refuses the ambiguity rather than picking one.
+      const read = (f: string) => (f === "CONTRIBUTING.md" ? withDecoy : readRepo(f));
+      expect(parityViolations(BODY, read).join("\n")).toMatch(
+        /duplicate heading slug "#payment-review-expectations"/,
+      );
+    });
+  }
+
+  // A heading's slug must come from what a reader SEES, not from the markdown
+  // source. `## [Payment review expectations](https://example.com)` renders as
+  // "Payment review expectations" and takes that anchor, but slugging the raw
+  // source folds the URL in and yields a different slug — so the decoy is not
+  // recognised as a duplicate and the guard validates the later section instead.
+  it("RENDERED: a heading's slug is what a reader sees, not the markdown source", () => {
+    const sluggedAs = (src: string) => structureOf(src).headings.map((h) => h.slug);
+    const textOf = (src: string) => structureOf(src).headings[0].text;
+
+    // Every inline form renders the same visible heading, so every one produces
+    // the same anchor. The link case is the one that was previously wrong.
+    for (const src of [
+      "## Payment review expectations",
+      "## [Payment review expectations](https://example.com)",
+      "## **Payment review expectations**",
+      "## `Payment review expectations`",
+      "## Payment *review* expectations",
+      "## [**Payment** `review` expectations](https://x.co)",
+      "## Payment review expectations ##",
+    ]) {
+      expect(sluggedAs(src), src).toEqual(["payment-review-expectations"]);
+    }
+
+    // The destination is not visible and must not reach the text.
+    expect(textOf("## [Payment review expectations](https://example.com)")).toBe(
+      "Payment review expectations",
+    );
+    expect(textOf("## [Payment review expectations](https://example.com)")).not.toContain("example.com");
+
+    // Raw source would have folded the URL in — the defect this replaced.
+    const raw = "[Payment review expectations](https://example.com)";
+    expect(slug(raw), "slugging raw source is wrong").not.toBe("payment-review-expectations");
+  });
+
+  const INLINE_HEADINGS: [string, string][] = [
+    ["a link", "## [Payment review expectations](https://example.com)"],
+    ["a link with nested markup", "## [**Payment** `review` expectations](https://x.co)"],
+    ["strong", "## **Payment review expectations**"],
+    ["code span", "## `Payment review expectations`"],
+    ["emphasis mid-phrase", "## Payment *review* expectations"],
+  ];
+
+  for (const [label, decoyHeading] of INLINE_HEADINGS) {
+    it(`RENDERED RED: a decoy heading using ${label} steals the anchor`, () => {
+      // It renders with the contested slug...
+      expect(
+        structureOf(decoyHeading).headings.map((h) => h.slug),
+        `${label} must render #payment-review-expectations`,
+      ).toEqual(["payment-review-expectations"]);
+
+      // ...so inserting it before the real heading is a duplicate, and RED.
+      const original = readRepo("CONTRIBUTING.md")!;
+      const at = original.indexOf("## Payment review expectations");
+      const withDecoy = `${original.slice(0, at)}${decoyHeading}\n\n- \`charges.create\`: may be used freely.\n\n${original.slice(at)}`;
       const read = (f: string) => (f === "CONTRIBUTING.md" ? withDecoy : readRepo(f));
       expect(parityViolations(BODY, read).join("\n")).toMatch(
         /duplicate heading slug "#payment-review-expectations"/,
