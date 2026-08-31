@@ -523,7 +523,11 @@ describe("0185: nothing can convert, move or rewrite an entry", () => {
         "update public.new_client_waitlist_entries set status = 'converted' where id = $1",
         [created.entry_id],
       ),
-    ).rejects.toThrow(/only permitted status transition is waiting -> removed/);
+      // 0188 replaced this guard with the full invitation lifecycle. The rule
+      // asserted here is UNCHANGED, restated in the CURRENT wording: `converted`
+      // is reachable only from `invited`, so a waiting row still cannot be
+      // converted even by the table owner.
+    ).rejects.toThrow(/illegal lifecycle transition waiting -> converted/);
   });
 
   it("removed -> waiting is refused: history is not resurrected", async () => {
@@ -536,7 +540,7 @@ describe("0185: nothing can convert, move or rewrite an entry", () => {
           where id = $1`,
         [created.entry_id],
       ),
-    ).rejects.toThrow(/only permitted status transition/);
+    ).rejects.toThrow(/illegal lifecycle transition removed -> waiting/);
   });
 
   it("a row cannot be moved to another studio", async () => {
@@ -574,8 +578,13 @@ describe("0185: nothing can convert, move or rewrite an entry", () => {
         [created.entry_id],
       ),
       // Two independent layers refuse this: the BEFORE UPDATE trigger (which
-      // fires first) and the all-or-nothing CHECK behind it.
-    ).rejects.toThrow(/removal evidence is recorded once|removal_evidence_check/);
+      // fires first) and the all-or-nothing CHECK behind it. 0188 widened the
+      // trigger's clause from a removal-specific rule to one that freezes EVERY
+      // lifecycle stamp whenever `status` does not change -- strictly broader,
+      // so the forgery is still refused, and the CHECK still backs it up.
+    ).rejects.toThrow(
+      /lifecycle evidence changes only in the statement that performs a legal transition|removal_evidence_check/,
+    );
   });
 
   it("REMOVAL EVIDENCE IS WRITE-ONCE — it cannot be rewritten afterwards", async () => {
@@ -607,7 +616,9 @@ describe("0185: nothing can convert, move or rewrite an entry", () => {
       await expect(
         adminQuery(sql, [...params]),
         `${label} must be refused`,
-      ).rejects.toThrow(/removal evidence is recorded once|removal_evidence_check/);
+      ).rejects.toThrow(
+        /lifecycle evidence changes only in the statement that performs a legal transition|removal_evidence_check/,
+      );
     }
 
     // The original evidence is intact.
@@ -731,7 +742,9 @@ describe("0185: negative control", () => {
         "update public.new_client_waitlist_entries set removed_by_practitioner_id = $2 where id = $1",
         [created.entry_id, aMember.practitionerId],
       ),
-    ).rejects.toThrow(/removal evidence is recorded once/);
+    ).rejects.toThrow(
+      /lifecycle evidence changes only in the statement that performs a legal transition/,
+    );
 
     // ...and the original attribution survived the whole exercise.
     const row = await adminQuery(
@@ -801,7 +814,7 @@ describe("0185: negative control", () => {
     const restored = await adminQuery(
       `select indexdef from pg_indexes
         where tablename = 'new_client_waitlist_entries'
-          and indexname = 'new_client_waitlist_entries_one_waiting_per_email'`,
+          and indexname = 'new_client_waitlist_entries_one_active_per_email'`,
     );
     expect(restored.rows[0].indexdef).toContain("(studio_id, email_normalized)");
     const mutation = await adminQuery(
