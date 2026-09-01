@@ -14,7 +14,203 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-08-24, post-0187 apply)
+## Current state (verified 2026-09-01, post-0188 apply)
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0188** (`0188_new_client_waitlist_invitations.sql`) |
+| **Repo migration max** | **0188** — **hosted == repo.** Nothing pending. Next free number is **0189** (available, **not claimed**). |
+| **Total migrations in repo** | **187** (`0001` … `0157`, `0159` … `0188` — **no `0158`**) — derived by `npm run migration:state` |
+| **Apply timestamp** | ⚠️ **NO SERVER-GENERATED APPLY TIMESTAMP WAS CAPTURED**, so `hosted_applied_at` is `null`. The **operator-observed client-side window** is `2026-09-01T21:40:32.695Z` – `2026-09-01T21:40:52.645Z`, **19.950 s**, read from the apply host's clock around the CLI invocation. **That window is not a server apply time and is never represented as one.** |
+| **Verified applied** | **2026-09-01** |
+| **Applied from** | the exact reviewed **PR #664** head `378ec6949808d1e34f01debb8a3ea6ac1bc9353f` — **applied BEFORE #664 merged**, so the merge commit did not exist at apply time |
+| **Application production at apply time** | `389a3e12588eda7e03624eb98d5efc9b6d1107e3` — **verified UNCHANGED after the apply**. No deploy occurred and #664 remains open. |
+| **`0188` raw checksum (frozen)** | `2bf43f0d49280d0095f627f4a3a2e6e169b5111c0d988496244003db377b7bf0` — **73,564 bytes**, 1,608 lines, git blob `509fdfb0aaac67fbd7e836ea8e2abbbdc65b3c6b`; computed from the reviewed head's blob **and** recomputed from the detached apply tree's on-disk file, both identical, not copied from console history |
+| **Project ref** | `alhhybgqdmcdyzpybykj` — confirmed byte-identical to the ref recorded in `migration-state.json`, and confirmed as **Hone**, not **Hone Staging**, before every command |
+| **Supabase CLI / PostgreSQL** | **2.102.0** (invoked as `npx --yes supabase@2.102.0`) / reported **17.6** |
+| **Where the apply ran** | `/srv/hone/worktrees/apply-0188-final` on the `hone-dev-01` repository host — a **throwaway worktree DETACHED at the exact reviewed SHA**, carrying no branch, proven clean by `git status --porcelain` **and** `git diff HEAD --exit-code`, linked specifically for this authorized apply. Same posture as the 0178 and 0187 applies. |
+| **Dry run** | `2026-09-01T21:39:21.188Z` – `21:39:26.734Z`; proposed `0188_new_client_waitlist_invitations.sql` **and nothing else**; **DRY-RUN EXIT 0** |
+| **Pre-apply remote state** | `0187 \| 0187` applied, `0188` pending with a **blank** remote column, **no** other pending row, **no** remote-only row, nothing above `0188`. **186** versions carried a populated remote column — a count of the CLI's reported remote rows, **not** a row count of `supabase_migrations.schema_migrations`, which was never queried. |
+| **Apply exit status** | ✅ **PUSH EXIT CODE 0 EXPLICITLY CAPTURED** from `$?`, not inferred from output text. Output: `Applying migration 0188_new_client_waitlist_invitations.sql...` → `Finished supabase db push.` |
+| **Confirmation prompt** | The CLI printed `Do you want to push these migrations to the remote database? [Y/n]` and, with stdin at `/dev/null`, **took the default yes**. The operator's authorization preceded the command, but **no human typed that keystroke** — recorded rather than glossed. |
+| **Observed notices** | exactly **13** `NOTICE (00000)` — **6** `constraint … does not exist, skipping`, **5** `trigger … does not exist, skipping`, **2** `policy … does not exist, skipping`. Every one is the file's own re-runnability `drop … if exists` guard firing against an object created moments earlier in the same transaction, or not yet existing. |
+| **Observed error classes** | **No `ERROR`, no `WARNING`, no `25P01`, no `55P03`.** That is a statement about **those specific classes** — not a claim that no conceivable diagnostic of any kind occurred. |
+| **Post-apply verification** | `0187 \| 0187`, `0188 \| 0188`, **zero pending**, no remote-only row, nothing above `0188`; **187** versions carried a populated remote column, one more than the 186 read before. |
+
+### What 0188 establishes
+
+The **WAIT-03 private invitation lifecycle** — `public.new_client_waitlist_invitations`
+(token-hash-only, append-only provenance) and `public.new_client_waitlist_entry_events`
+(append-only lifecycle log written by trigger), plus **17 functions**: ten
+`service_role` commands, one internal authority helper, and six trigger functions.
+
+**This is NOT a purely additive migration, and is not recorded as one.** It also
+modifies the **live** 0185 table `public.new_client_waitlist_entries`: it adds a
+`(id, studio_id)` UNIQUE constraint, **widens** the status CHECK from three values
+to seven, adds seven nullable columns and two composite same-studio FKs, adds
+`cycle_evidence_check`, **replaces** the partial unique index
+`one_waiting_per_email` with `one_active_per_email` over `waiting|claimed|invited`,
+replaces the transition guard, and **replaces the two live commands**
+`join_new_client_waitlist` and `remove_new_client_waitlist_entry`.
+
+**Backward compatibility was proven before the apply, not assumed.** Production
+carried **byte-identical** signatures and return types for both replaced commands,
+so `create or replace` **replaced** them and could not create an overload; their
+ACLs are unchanged at `postgres=X` + `service_role=X`; the status CHECK only
+**widens**, so no currently-legal value became illegal; and **zero deployed code**
+referenced any 0188 object.
+
+### Verified structural result (read-only, production)
+
+- `new_client_waitlist_invitations` — **10** columns, **8** constraints, **5**
+  indexes, **3** user triggers, RLS **enabled**, **exactly one** policy.
+- `new_client_waitlist_entry_events` — **7** columns, **4** constraints, **3**
+  indexes, **1** user trigger, RLS **enabled**, **exactly one** policy.
+- `new_client_waitlist_entries` — now **19** columns, **13** constraints, **4**
+  indexes, **4** user triggers.
+- **The index replacement landed:** `one_waiting_per_email` is **gone** (0 rows in
+  `pg_class`); `one_active_per_email` is **present** with
+  `WHERE (status = ANY (ARRAY['waiting','claimed','invited']))`.
+- **The status CHECK now reads**
+  `CHECK ((status = ANY (ARRAY['waiting','claimed','invited','converted','expired','released','removed'])))`.
+- **All three policies** are SELECT-only, to `authenticated`, using
+  `is_studio_owner(studio_id)`. There is **no** INSERT, UPDATE or DELETE policy for
+  any role on any of the three tables.
+- Every same-studio composite FK is present and transcribed from
+  `pg_get_constraintdef`: entry→`practitioners(id, studio_id)` and
+  →`clients(id, studio_id)` on the entries table; entry and issuer on invitations;
+  entry and actor on the event log.
+
+### Verified ACL — transcribed from the production query output, not paraphrased
+
+- `new_client_waitlist_invitations` relacl reads `{postgres=arwdDxtm/postgres}`
+  **only** — no application role holds a **table-level** grant, and PUBLIC holds no
+  entry.
+- **Column privileges:** `authenticated` holds SELECT on **exactly nine** columns
+  (`id, studio_id, entry_id, issued_at, expires_at, issued_by_practitioner_id,
+  redeemed_at, expired_at, released_at`) and **`token_hash` is not among them**.
+  `anon`, `service_role` and PUBLIC hold **no** column privilege at all.
+- **Proven live, not inferred:** under `set role authenticated`,
+  `select token_hash` and `select *` each returned **`ERROR 42501: permission
+  denied for table new_client_waitlist_invitations`**, while the nine-column
+  projection **succeeded** and returned zero rows.
+- `has_table_privilege` was evaluated for **all eight verbs including `MAINTAIN`**,
+  the PostgreSQL 17 privilege that survived 0183's by-name denylist. On
+  `new_client_waitlist_invitations` `anon`, `authenticated` and `service_role` are
+  **FALSE on all eight** — `authenticated`'s access is column-level, which is
+  exactly why the table-level probe is FALSE while the nine-column projection
+  succeeds. On `new_client_waitlist_entry_events` `authenticated` is TRUE on SELECT
+  and FALSE on the other seven; `anon` and `service_role` are FALSE on all eight.
+- **Functions:** 18 public functions match `new_client_waitlist` (the 17 from 0188
+  plus `new_client_waitlist_entries_server_timestamps` from 0185, which 0188 does
+  not touch). **`anon` holds EXECUTE on none. `authenticated` holds EXECUTE on
+  none.** `service_role` holds EXECUTE on **exactly ten**, and they are exactly the
+  ten intended commands. The remaining eight —
+  `new_client_waitlist_resolve_owner` and the seven trigger functions — read
+  `postgres=X/postgres` and are granted to nobody among the application roles.
+  **The 0129 (`anon`) and 0164 (`service_role`) enumeration trap is shut in
+  production, verified by measurement rather than by reading the file.**
+
+### Append-only and cascade semantics — verified structurally, not by writing
+
+`new_client_waitlist_invitations_no_delete` and
+`new_client_waitlist_entry_events_append_only` were read from production with
+`pg_get_functiondef`. Each raises `check_violation` on DELETE **only while**
+`exists (select 1 from public.studios st where st.id = old.studio_id)` — so a
+**direct** delete is refused while a **studio cascade**, during which the studio row
+is already gone, passes and returns `old`. The event log additionally refuses
+UPDATE **unconditionally**.
+
+**No behavioural test was run against production.** Every such test writes, and none
+was authorized. The 106 behavioural and contract tests (65 DB + 41 source) were
+proven on a local stack; only **structure and privilege** are claimed here.
+
+### Business-data observations — measured immediately before and after
+
+- `new_client_waitlist_invitations` was **created empty, row count 0 — no invitation
+  was issued**.
+- `new_client_waitlist_entry_events` was **created empty, row count 0**, which
+  independently confirms the migration performed **zero apply-time DML**: the
+  `record_event` trigger fires on every INSERT and status UPDATE, and fired not once.
+- ⚠️ **Correction to a stale prior record.** The 0185 record described this feature
+  as **dark** with a row count of 0. **That is no longer true and was not true at
+  this apply.** `new_client_waitlist_entries` held **10 real rows** across 1 studio
+  — 9 `waiting`, 1 `removed` — every one joined within the preceding 7 days, most
+  recent `2026-09-01T00:38:35.279Z`. **This migration altered a LIVE table under
+  real traffic, and the apply window was not a zero-traffic window.**
+- Because of that, the two validations that could have aborted the apply were
+  **proven against the live rows before the push**, not reasoned about: 0188's exact
+  `cycle_evidence_check` predicate over all 10 rows with the seven new columns
+  simulated as NULL returned **10 passing, 0 failing**; duplicate
+  `(studio_id, email_normalized)` pairs among `waiting|claimed|invited` numbered **0**.
+- After the apply: entries **10 → 10**, waiting **9 → 9**, removed **1 → 1**, and
+  **0** entries in any of the five new states. clients **130 → 130**, appointments
+  **404 → 404**, practitioners **7 → 7**, studios **6 → 6**,
+  `payment_charge_attempts` **54 → 54**.
+- **Precision, deliberately not overstated:** these are measured row-count
+  observations paired with the migration's **source contract** — the file's
+  executable apply path contains **zero top-level DML**, its 15 INSERT/UPDATE/DELETE
+  statements all sitting inside function bodies that run at RPC call time. They are
+  **not** a claim that concurrent production traffic was globally absent during the
+  window; that was not measured, and an UPDATE would leave a count untouched.
+
+### Outbound effects
+
+**Stripe calls 0, emails 0, SMS 0.** Stated as an executable-contract fact plus
+observed zero actions: a pre-apply scan of the exact applied bytes found **no**
+apply-time invocation of `pg_net`, `net.http`, `extensions.http`, `http_post`,
+`create extension`, `pg_cron`, `cron.schedule`, `dblink`, `COPY … FROM PROGRAM`,
+`pg_read_file`, `pg_ls_dir`, `lo_import` or `lo_export`, so the migration has **no
+outbound surface at all**; and measured across the window, `stripe_events`,
+`stripe_charge_attempts`, `stripe_refunds`, `stripe_payment_audit`,
+`practitioner_notifications`, `client_portal_messages`,
+`conversion_event_deliveries` and `admin_action_events` each recorded **0** new rows
+after `2026-09-01T21:40:00Z`.
+
+**A separate fact, deliberately not conflated:** one live charge attempt and one
+Stripe webhook **did** occur earlier the same day, both at `2026-09-01T16:02Z` —
+roughly **5.6 hours before** the apply began. They are ordinary production business
+traffic, recorded here precisely so the delta against the 12:00Z preflight reading
+is not misread as an apply effect.
+
+### Production health
+
+`verify-production.mjs` → **11 PASS, 0 FAIL, 1 INCOMPLETE**, the sole INCOMPLETE
+being the known local Upstash reminder heartbeat the runbook accepts, with
+`Remote migration max: = 0188` **PASS** and `RLS on critical tables: 12/12, all
+enabled` **PASS**. `check-stripe-gates.mjs` → **15 PASS, EXIT 0**. Ops alerts:
+**0** critical/error in the hour spanning the apply, **0** unresolved critical.
+
+### The CI waiver — recorded rather than glossed
+
+The reviewed head `378ec694` was **not fully CI-green**. Exactly **one** test failed
+out of **12,908** (681 of 682 files passed):
+`tests/docs/canonical-production-facts.test.ts` →
+*"repo and hosted agree, so no document can contradict another about parity"*,
+asserting `repo_migration_max == hosted_migration_max` and reading
+`expected '0188' to be '0187'`.
+
+**That assertion requires nothing to be pending**, which is the exact opposite of
+what the migration-first runbook requires, so **no pre-apply head of this PR could
+satisfy it**. It was introduced 2026-08-23 in `1560a460` and was **absent** at
+`eb7e8240`, the #636 head 0187 was applied from, which carried the identical pending
+shape and was green.
+
+The operator waived **that red specifically and only that red**, in writing, before
+authorizing the apply. Every other lane was green: db integration, the browser
+aggregator, all four extended shards, changed-path detection and Vercel.
+
+**The guard should be made pending-aware**, so a future migration-first apply is not
+forced to choose between a red head and pre-filling `migration-state.json`.
+
+### Not observed, and therefore not claimed
+
+No authenticated application surface was rendered, no synthetic invitation smoke was
+run, and no behavioural contract was exercised against production. **0188 is now
+frozen** — its bytes are production truth, and any correction is a **new** migration.
+**0189 is available and not claimed.**
+
+## Previous state (verified 2026-08-24, post-0187 apply)
 
 | Field | Value |
 |---|---|
