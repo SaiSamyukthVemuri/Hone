@@ -1553,3 +1553,151 @@ describe("0188 — expiry requires an elapsed TTL, decided by server time", () =
     ).toBe("23514");
   });
 });
+
+// ---------------------------------------------------------------------------
+// 0188 — CLOSURE PROOFS for the two review threads that outlived their commits
+// ---------------------------------------------------------------------------
+// Both were repaired at 486c3dd9 ("require redemption before conversion" and
+// "permit studio cascades through append-only rows") but stayed anchored to
+// 07f12ad, so GitHub kept showing them live. These lock the closure down in the
+// dimensions the earlier round only demonstrated in a transcript: cross-studio
+// satisfaction, concurrent conversion, and selective erasure of lineage.
+describe("0188 — conversion and cascade closure, in the dimensions not yet pinned", () => {
+  async function invitedEntry(label: string) {
+    const s = await seedStudio(label);
+    const j = await join(s.studioId, `${label}-${s.studioId.slice(0, 8)}@ex.com`);
+    const entry = j.entry_id as string;
+    await claim(s.studioId, entry, s.userId);
+    const inv = await issue(s.studioId, entry, s.userId);
+    return { s, entry, token: inv.raw_token as string };
+  }
+  const convert = async (studioId: string, entry: string, clientId: string) =>
+    (
+      await adminQuery(`select public.record_new_client_waitlist_conversion($1,$2,$3) as r`, [
+        studioId,
+        entry,
+        clientId,
+      ])
+    ).rows[0].r as string;
+
+  it("a redemption in ANOTHER studio cannot satisfy this studio's conversion", async () => {
+    const mine = await invitedEntry("wait03-close-mine");
+    const theirs = await invitedEntry("wait03-close-theirs");
+    await adminQuery(`select result from public.redeem_new_client_waitlist_invitation($1)`, [
+      theirs.token,
+    ]);
+
+    // Their redeemed entry, addressed under MY studio: not found, not borrowed.
+    expect(await convert(mine.s.studioId, theirs.entry, mine.s.clientId)).toBe("not_invited");
+    // My unredeemed entry stays refused despite a redemption existing elsewhere.
+    expect(await convert(mine.s.studioId, mine.entry, mine.s.clientId)).toBe("not_redeemed");
+    // And a foreign client is refused before redemption is even considered.
+    expect(await convert(mine.s.studioId, mine.entry, theirs.s.clientId)).toBe("client_not_found");
+
+    // Structurally, an invitation can never sit under a different studio than
+    // its entry — the composite FK forbids it, so the predicate cannot be
+    // satisfied across a tenant boundary by any row that could exist.
+    const skew = await adminQuery(
+      `select count(*)::int as n
+         from public.new_client_waitlist_invitations i
+         join public.new_client_waitlist_entries e on e.id = i.entry_id
+        where i.studio_id <> e.studio_id`,
+    );
+    expect(skew.rows[0].n).toBe(0);
+  });
+
+  it("concurrent conversions of one redeemed entry leave ONE coherent terminal state", async () => {
+    const { s, entry, token } = await invitedEntry("wait03-close-concurrent");
+    await adminQuery(`select result from public.redeem_new_client_waitlist_invitation($1)`, [token]);
+
+    const both = await Promise.all([
+      convert(s.studioId, entry, s.clientId),
+      convert(s.studioId, entry, s.clientId),
+    ]);
+    // Exactly one records the conversion; the other is refused, never duplicated.
+    expect(both.filter((r) => r === "converted")).toHaveLength(1);
+    expect(both.filter((r) => r === "not_invited")).toHaveLength(1);
+
+    const row = await adminQuery(
+      `select status, converted_client_id, converted_at
+         from public.new_client_waitlist_entries where id = $1`,
+      [entry],
+    );
+    expect(row.rows[0].status).toBe("converted");
+    expect(row.rows[0].converted_client_id).toBe(s.clientId);
+    expect(row.rows[0].converted_at).not.toBeNull();
+    // ...and no stale token survives the terminal state.
+    const redeem = await adminQuery(
+      `select result from public.redeem_new_client_waitlist_invitation($1)`,
+      [token],
+    );
+    expect(redeem.rows[0].result).toBe("invalid_token");
+  });
+
+  it("lineage cannot be selectively erased while the studio survives", async () => {
+    // The cascade carve-out is scoped to the STUDIO's own deletion. Anything
+    // short of that — wiping the event log, or deleting the ENTRY so its
+    // children cascade — is still refused, so history cannot be laundered by
+    // removing a parent one level down.
+    const { s, entry } = await invitedEntry("wait03-close-lineage");
+
+    expect(
+      await codeOf(() =>
+        adminQuery(`delete from public.new_client_waitlist_entry_events where studio_id = $1`, [
+          s.studioId,
+        ]),
+      ),
+    ).toBe("23514");
+    expect(
+      await codeOf(() =>
+        adminQuery(`delete from public.new_client_waitlist_invitations where studio_id = $1`, [
+          s.studioId,
+        ]),
+      ),
+    ).toBe("23514");
+    // Deleting the ENTRY would cascade into both children: also refused.
+    expect(
+      await codeOf(() =>
+        adminQuery(`delete from public.new_client_waitlist_entries where id = $1`, [entry]),
+      ),
+    ).toBe("23514");
+
+    const alive = await adminQuery(`select count(*)::int as n from public.studios where id = $1`, [
+      s.studioId,
+    ]);
+    expect(alive.rows[0].n, "the studio must still exist for this to mean anything").toBe(1);
+    const lineage = await adminQuery(
+      `select (select count(*) from public.new_client_waitlist_invitations where studio_id = $1)
+            + (select count(*) from public.new_client_waitlist_entry_events where studio_id = $1) as n`,
+      [s.studioId],
+    );
+    expect(Number(lineage.rows[0].n)).toBeGreaterThan(0);
+  });
+
+  it("one studio's cascade does not disturb another studio's waitlist rows", async () => {
+    const doomed = await invitedEntry("wait03-close-doomed");
+    const bystander = await invitedEntry("wait03-close-bystander");
+    const countFor = async (studioId: string) =>
+      Number(
+        (
+          await adminQuery(
+            `select (select count(*) from public.new_client_waitlist_entries where studio_id = $1)
+                  + (select count(*) from public.new_client_waitlist_invitations where studio_id = $1)
+                  + (select count(*) from public.new_client_waitlist_entry_events where studio_id = $1) as n`,
+            [studioId],
+          )
+        ).rows[0].n,
+      );
+    const before = await countFor(bystander.s.studioId);
+    expect(before).toBeGreaterThan(0);
+
+    expect(
+      await codeOf(() =>
+        adminQuery(`delete from public.studios where id = $1`, [doomed.s.studioId]),
+      ),
+    ).toBe("NO_ERROR");
+
+    expect(await countFor(doomed.s.studioId)).toBe(0);
+    expect(await countFor(bystander.s.studioId), "a neighbour must be untouched").toBe(before);
+  });
+});
