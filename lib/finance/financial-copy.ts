@@ -226,9 +226,32 @@ export const UNCLASSIFIED_VISITS_EXPLAINED =
 export const COLLECTION_RATE_IS_VISITS =
   "This counts visits, not dollars. A dollar version would divide an amount a practitioner typed at checkout by a price you can still edit, which is not a rate of anything. Only treatment with a price is counted: there is nothing to collect on a visit priced at nothing.";
 
-/** Service value moves when the menu moves. */
-export const SERVICE_VALUE_IS_TODAYS_PRICE =
-  "Service value uses today's prices. Hone does not keep the price a visit carried at the time, so editing a service price changes this figure for past visits too.";
+/**
+ * WHICH PRICE EACH VISIT IS VALUED AT.
+ *
+ * The sentence this replaces said "Hone does not keep the price a visit
+ * carried at the time". That is FALSE wherever a visit was settled: migration
+ * 0187 stores `quoted_amount_cents` — "THE PRICE AT THE TIME, SNAPSHOTTED" —
+ * resolved by the same authoritative resolver the card path uses, and its own
+ * column comment names this surface as the reason the column exists: "without
+ * the snapshot, a service repriced in March silently rewrites what February's
+ * completed visits were worth".
+ *
+ * Telling an owner Hone keeps no such record, on a screen reading that record,
+ * is the same class of untrue sentence this file exists to prevent.
+ */
+export const SERVICE_VALUE_PRICE_BASIS =
+  "Service value uses the price recorded when a visit was settled, wherever Hone has one. Every other visit uses today's price, because no record was kept of what it was priced at — so editing a service price changes this figure for those visits.";
+
+/**
+ * Shown ONLY when the two bases are actually mixed.
+ *
+ * A standing sentence about a distinction that does not apply is noise; an
+ * unexplained figure that moves for some past visits and not others is a bug
+ * report. Measured, like every other caveat on this screen.
+ */
+export const SOME_VISITS_PRICED_AT_THE_TIME =
+  "Some of these visits are valued at the price recorded when they were settled. Repricing a service does not change what those were worth.";
 
 /** Free consultations are a cost, and are excluded from the per-hour figure. */
 export const CONSULTATIONS_ARE_UNPAID_TIME =

@@ -398,7 +398,13 @@ async function readMoneyLedgers(
         .range(0, API_PAGE_SIZE - 1),
       supabase
         .from("appointment_settlements")
-        .select("appointment_id, method, amount_cents", { count: "exact" })
+        // `quoted_amount_cents` is THE PRICE AT THE TIME. 0187 snapshots it
+        // from the same authoritative resolver the card path uses, precisely
+        // so this surface stops valuing past work at a mutable menu price —
+        // its column comment names FIN-01A as the reason it exists.
+        .select("appointment_id, method, amount_cents, quoted_amount_cents", {
+          count: "exact",
+        })
         .eq("studio_id", studioId)
         .is("superseded_at", null)
         .order("id")

@@ -274,6 +274,41 @@ describe("NC5 — a reversed payment is not a collection, an absent one is not a
   });
 });
 
+describe("NC6 — past work is valued at the price on record, never at today's menu", () => {
+  it("the settlement read asks for the 0187 price snapshot", () => {
+    // The column exists FOR this surface: "without the snapshot, a service
+    // repriced in March silently rewrites what February's completed visits
+    // were worth, and FIN-01A's collection rate drifts away from what Checkout
+    // actually showed" (0187, quoted_amount_cents).
+    expect(CODE.loader).toContain("quoted_amount_cents");
+  });
+
+  it("the recorded price WINS over services.price_cents", () => {
+    // `services.price_cents` is a single CURRENT value. Using it for past work
+    // is the same defect `blocked_ends_at` is read per appointment to avoid.
+    expect(CODE.model).toContain("recordedPrice ?? finite(service?.price_cents)");
+  });
+
+  it("the fallback is NULLISH, so a recorded price of zero survives", () => {
+    // `quoted_amount_cents >= 0` is legal and means the visit was quoted
+    // nothing. `||` would discard that and silently re-price it from the menu.
+    expect(CODE.model).not.toMatch(/recordedPrice\s*\|\|/);
+  });
+
+  it("no sentence claims Hone keeps no record of the price at the time", () => {
+    // It kept one from 0187 onward, and said so in the column comment.
+    expect(ALL_CODE).not.toContain("Hone does not keep the price a visit carried at the time");
+    expect(CODE.copy).toContain("SERVICE_VALUE_PRICE_BASIS");
+    expect(CODE.spine).toContain("SERVICE_VALUE_PRICE_BASIS");
+  });
+
+  it("the screen says when the two price bases are MIXED", () => {
+    expect(CODE.model).toContain("visitsValuedAtRecordedPrice");
+    expect(CODE.spine).toContain("visitsValuedAtRecordedPrice");
+    expect(CODE.spine).toContain("SOME_VISITS_PRICED_AT_THE_TIME");
+  });
+});
+
 describe("P2-A — consultation is decided by the shared predicate, never by price", () => {
   it("FIN imports the SAME predicate the booking page and its server guard use", () => {
     expect(CODE.model).toContain('from "@/lib/booking/consultation"');

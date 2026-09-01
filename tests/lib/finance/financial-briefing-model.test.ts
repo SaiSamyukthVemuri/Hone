@@ -363,6 +363,15 @@ function charge(over: Partial<ChargeRow>): ChargeRow {
   };
 }
 
+/**
+ * One settlement. Defaults carry NO price snapshot, which is the shape every
+ * row written before a resolver could produce one has — so a test that wants
+ * the 0187 snapshot has to ask for it explicitly.
+ */
+function settlement(over: Partial<SettlementRow> & { appointment_id: string }): SettlementRow {
+  return { method: "paid_cash", amount_cents: 15_000, quoted_amount_cents: null, ...over };
+}
+
 function census(over: Partial<Parameters<typeof summarizeDeliveredMoney>[0]> = {}) {
   return summarizeDeliveredMoney({
     services: SERVICES,
@@ -744,10 +753,10 @@ describe("the three evidence classes stay apart", () => {
 
   it("attested money becomes KNOWN the moment a practitioner records one", () => {
     const settlements: SettlementRow[] = [
-      { appointment_id: "a", method: "paid_cash", amount_cents: 9_000 },
-      { appointment_id: "b", method: "paid_e_transfer", amount_cents: 6_000 },
-      { appointment_id: "c", method: "waived", amount_cents: 15_000 },
-      { appointment_id: "d", method: "still_owes", amount_cents: 12_000 },
+      settlement({ appointment_id: "a", method: "paid_cash", amount_cents: 9_000 }),
+      settlement({ appointment_id: "b", method: "paid_e_transfer", amount_cents: 6_000 }),
+      settlement({ appointment_id: "c", method: "waived", amount_cents: 15_000 }),
+      settlement({ appointment_id: "d", method: "still_owes", amount_cents: 12_000 }),
     ];
     const c = census({
       appointments: ["a", "b", "c", "d"].map((id) => appt({ id })),
@@ -761,7 +770,7 @@ describe("the three evidence classes stay apart", () => {
   it("a settlement naming a visit outside the window is counted, not silently dropped", () => {
     const c = census({
       appointments: [appt({ id: "a" })],
-      settlements: [{ appointment_id: "elsewhere", method: "paid_cash", amount_cents: 9_000 }],
+      settlements: [settlement({ appointment_id: "elsewhere", method: "paid_cash", amount_cents: 9_000 })],
     });
     expect(c.basis.settlementsOutsideWindow).toBe(1);
     expect(c.basis.complete).toBe(false);
@@ -783,7 +792,7 @@ describe("the three evidence classes stay apart", () => {
     // consultation inside it.
     const c = census({
       appointments: [appt({ id: "c1", service_id: PAID_CONSULT })],
-      settlements: [{ appointment_id: "c1", method: "paid_cash", amount_cents: 5_000 }],
+      settlements: [settlement({ appointment_id: "c1", method: "paid_cash", amount_cents: 5_000 })],
     });
     expect(value(c.consultationVisits)).toBe(1);
     expect(value(c.externallyAttestedCents)).toBe(5_000);
@@ -795,7 +804,7 @@ describe("the three evidence classes stay apart", () => {
     // A missing service row says nothing about whether somebody was paid.
     const c = census({
       appointments: [appt({ id: "x", service_id: null })],
-      settlements: [{ appointment_id: "x", method: "paid_e_transfer", amount_cents: 4_000 }],
+      settlements: [settlement({ appointment_id: "x", method: "paid_e_transfer", amount_cents: 4_000 })],
     });
     expect(value(c.unclassifiedVisits)).toBe(1);
     expect(value(c.externallyAttestedCents)).toBe(4_000);
@@ -806,7 +815,7 @@ describe("the three evidence classes stay apart", () => {
     // It is evidence that something was attested, never evidence of an amount.
     const c = census({
       appointments: [appt({ id: "a" })],
-      settlements: [{ appointment_id: "a", method: "paid_cash", amount_cents: null }],
+      settlements: [settlement({ appointment_id: "a", method: "paid_cash", amount_cents: null })],
     });
     expect(c.externallyAttestedCents.known).toBe(false);
     expect(c.basis.unreadableAmounts).toBe(1);
@@ -911,6 +920,92 @@ describe("a card payment that was REFUNDED IN FULL is not a collection", () => {
   });
 });
 
+describe("service value uses THE PRICE ON RECORD, not a mutable menu price", () => {
+  // `services.price_cents` is a SINGLE CURRENT VALUE. 0187 snapshots what the
+  // visit was actually quoted at settlement time, from the same authoritative
+  // resolver the card path uses, and its column comment names this surface as
+  // the reason: "without the snapshot, a service repriced in March silently
+  // rewrites what February's completed visits were worth".
+
+  it("a settled visit is valued at its snapshot, not at today's price", () => {
+    const c = census({
+      appointments: [appt({ id: "a" })], // today's TREATMENT price is 15_000
+      settlements: [settlement({ appointment_id: "a", amount_cents: 9_000, quoted_amount_cents: 9_000 })],
+    });
+    expect(value(c.treatmentServiceValueCents)).toBe(9_000);
+    expect(value(c.visitsValuedAtRecordedPrice)).toBe(1);
+  });
+
+  it("falls back to today's price when NO settlement recorded one", () => {
+    const c = census({ appointments: [appt({ id: "a" })] });
+    expect(value(c.treatmentServiceValueCents)).toBe(15_000);
+    expect(value(c.visitsValuedAtRecordedPrice)).toBe(0);
+  });
+
+  it("falls back when the settlement exists but its snapshot is NULL", () => {
+    // 0187 keeps null when the resolver could not produce a price — "a fact
+    // worth keeping rather than a zero worth inventing". It must not become 0.
+    const c = census({
+      appointments: [appt({ id: "a" })],
+      settlements: [settlement({ appointment_id: "a", quoted_amount_cents: null })],
+    });
+    expect(value(c.treatmentServiceValueCents)).toBe(15_000);
+    expect(value(c.visitsValuedAtRecordedPrice)).toBe(0);
+  });
+
+  it("a snapshot of ZERO is used, and is not mistaken for an absent one", () => {
+    // `quoted_amount_cents >= 0` is legal. `?? ` rather than `||` is what makes
+    // a recorded price of nothing survive instead of falling back to the menu.
+    const c = census({
+      appointments: [appt({ id: "a" })],
+      settlements: [settlement({ appointment_id: "a", method: "waived", amount_cents: 0, quoted_amount_cents: 0 })],
+    });
+    expect(value(c.treatmentServiceValueCents)).toBe(0);
+    expect(value(c.visitsValuedAtRecordedPrice)).toBe(1);
+    // Nothing to collect, so it is outside the collection rate entirely.
+    expect(value(c.chargeableTreatmentVisits)).toBe(0);
+  });
+
+  it("a snapshot makes a NOW-FREE treatment chargeable again", () => {
+    // The service was repriced to nothing after the visit. What the client was
+    // quoted is what there was to collect.
+    const c = census({
+      appointments: [appt({ id: "a", service_id: FREE_TREATMENT })],
+      settlements: [settlement({ appointment_id: "a", amount_cents: 12_000, quoted_amount_cents: 12_000 })],
+    });
+    expect(value(c.treatmentServiceValueCents)).toBe(12_000);
+    expect(value(c.chargeableTreatmentVisits)).toBe(1);
+  });
+
+  it("a CONSULTATION is valued at its snapshot too, in its own line", () => {
+    const c = census({
+      appointments: [appt({ id: "c1", service_id: PAID_CONSULT })], // today: 5_000
+      settlements: [settlement({ appointment_id: "c1", amount_cents: 3_000, quoted_amount_cents: 3_000 })],
+    });
+    expect(value(c.consultationServiceValueCents)).toBe(3_000);
+    expect(value(c.treatmentServiceValueCents)).toBe(0);
+    expect(value(c.visitsValuedAtRecordedPrice)).toBe(1);
+  });
+
+  it("counts the MIX, so the screen can say the two bases are both in the total", () => {
+    const c = census({
+      appointments: [appt({ id: "a" }), appt({ id: "b" })],
+      settlements: [settlement({ appointment_id: "a", amount_cents: 9_000, quoted_amount_cents: 9_000 })],
+    });
+    expect(value(c.treatmentServiceValueCents)).toBe(24_000); // 9_000 + 15_000
+    expect(value(c.visitsValuedAtRecordedPrice)).toBe(1);
+  });
+
+  it("a snapshot on a visit OUTSIDE this window values nothing here", () => {
+    const c = census({
+      appointments: [appt({ id: "a" })],
+      settlements: [settlement({ appointment_id: "elsewhere", quoted_amount_cents: 1 })],
+    });
+    expect(value(c.treatmentServiceValueCents)).toBe(15_000);
+    expect(value(c.visitsValuedAtRecordedPrice)).toBe(0);
+  });
+});
+
 describe("the bridge from delivered work to money", () => {
   it("the collection rate is a VISIT COUNT ratio", () => {
     const c = census({
@@ -930,7 +1025,7 @@ describe("the bridge from delivered work to money", () => {
     const c = census({
       appointments: ["a", "b"].map((id) => appt({ id })),
       charges: [charge({ appointment_id: "a" })],
-      settlements: [{ appointment_id: "b", method: "paid_cash", amount_cents: 15_000 }],
+      settlements: [settlement({ appointment_id: "b", method: "paid_cash", amount_cents: 15_000 })],
     });
     expect(value(c.cardPaidVisits)).toBe(1);
     expect(value(c.unresolvedVisits)).toBe(0);

@@ -346,6 +346,11 @@ export type SettlementRow = {
   readonly appointment_id: string | null;
   readonly method: string;
   readonly amount_cents: number | null;
+  /**
+   * THE PRICE AT THE TIME, from 0187. Null when the resolver could not produce
+   * one, which that migration deliberately keeps as a fact rather than a zero.
+   */
+  readonly quoted_amount_cents: number | null;
 };
 
 /**
@@ -406,6 +411,16 @@ export type DeliveredMoneyCensus = {
   readonly treatmentServiceValueCents: Fact<number>;
   /** Kept apart so a PAID consultation's value is neither lost nor merged. */
   readonly consultationServiceValueCents: Fact<number>;
+  /**
+   * Delivered visits valued at the price 0187 recorded when they were settled,
+   * rather than at today's menu price.
+   *
+   * Published because the two figures above are a MIX of two bases wherever
+   * this is neither zero nor the whole delivered set, and a reader cannot tell
+   * which from the total. Repricing a service moves the today's-price part and
+   * leaves this part alone.
+   */
+  readonly visitsValuedAtRecordedPrice: Fact<number>;
 
   // --- CONTRACT 1: CASH MOVEMENT (transaction period) ---------------------
   readonly movedInGrossCents: Fact<number>;
@@ -501,6 +516,26 @@ export function summarizeDeliveredMoney(input: {
   const serviceById = new Map<string, ServiceRow>();
   for (const s of input.services) serviceById.set(s.id, s);
 
+  /**
+   * THE PRICE EACH VISIT WAS ACTUALLY QUOTED, where a settlement recorded one.
+   *
+   * `services.price_cents` is a SINGLE CURRENT VALUE. Valuing past work with it
+   * means repricing a service in March silently rewrites what February's visits
+   * were worth — the same defect `blocked_ends_at` is read per appointment to
+   * avoid, and the reason 0187 snapshots the quote at settlement time.
+   *
+   * EXACTLY ONE LIVE ROW PER APPOINTMENT, enforced by 0187's partial unique
+   * index on (studio_id, appointment_id) where superseded_at is null, so this
+   * map cannot be ambiguous and needs no tie-break. The loader reads live rows
+   * only, so a superseded correction's predecessor never reaches it.
+   */
+  const recordedPriceOf = new Map<string, number>();
+  for (const s of input.settlements) {
+    if (s.appointment_id === null) continue;
+    const quoted = finite(s.quoted_amount_cents);
+    if (quoted !== null) recordedPriceOf.set(s.appointment_id, quoted);
+  }
+
   let undatable = 0;
   let unclassifiable = 0;
   let unvalued = 0;
@@ -529,6 +564,7 @@ export function summarizeDeliveredMoney(input: {
   let treatmentBookedMinutes = 0;
   let treatmentBlockedMinutes = 0;
   let consultationBlockedMinutes = 0;
+  let valuedAtRecordedPrice = 0;
 
   for (const row of input.appointments) {
     if (row.status !== "completed" && row.status !== "confirmed") continue;
@@ -563,7 +599,13 @@ export function summarizeDeliveredMoney(input: {
         : (blockedEndsAt - startsAt) / 60_000;
     if (blockedMinutes === null) unmeasurable += 1;
 
-    const price = finite(service?.price_cents);
+    // THE PRICE ON RECORD WINS, and it falls back rather than inventing: a
+    // visit nobody settled has no snapshot, and a snapshot the resolver could
+    // not produce is null. In both cases today's price is the only evidence
+    // there is, and the screen says which basis each figure used.
+    const recordedPrice = recordedPriceOf.get(row.id);
+    const price = recordedPrice ?? finite(service?.price_cents);
+    if (recordedPrice !== undefined) valuedAtRecordedPrice += 1;
 
     if (serviceClass === "consultation") {
       consultationVisits += 1;
@@ -821,6 +863,7 @@ export function summarizeDeliveredMoney(input: {
 
     treatmentServiceValueCents: known(treatmentServiceValueCents),
     consultationServiceValueCents: known(consultationServiceValueCents),
+    visitsValuedAtRecordedPrice: known(valuedAtRecordedPrice),
 
     movedInGrossCents: known(movedInGrossCents),
     movedOutRefundedCents: known(movedOutRefundedCents),
@@ -892,6 +935,7 @@ export function unreadableDeliveredMoney(
     chargeableTreatmentVisits: absent,
     treatmentServiceValueCents: absent,
     consultationServiceValueCents: absent,
+    visitsValuedAtRecordedPrice: absent,
     movedInGrossCents: absent,
     movedOutRefundedCents: absent,
     netMovementCents: absent,

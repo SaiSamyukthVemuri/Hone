@@ -19,8 +19,9 @@ import {
   PERIOD_IS_BEFORE_MONEY_WINDOW,
   PERMANENT_LINES,
   REFUNDED_TO_ZERO_EXPLAINED,
-  SERVICE_VALUE_IS_TODAYS_PRICE,
+  SERVICE_VALUE_PRICE_BASIS,
   SETTLEMENTS_NOT_IN_THIS_WINDOW,
+  SOME_VISITS_PRICED_AT_THE_TIME,
   THREE_CLASSES_NEVER_ADD_UP,
   UNATTRIBUTED_IS_ALL_TIME,
   UNCLASSIFIED_VISITS_EXPLAINED,
@@ -594,8 +595,17 @@ function DeliveredMoney({ briefing }: { briefing: FinancialBriefing }) {
           </Line>
         </div>
         <p className="max-w-[68ch] text-xs leading-relaxed text-fg">
-          {SERVICE_VALUE_IS_TODAYS_PRICE}
+          {SERVICE_VALUE_PRICE_BASIS}
         </p>
+        {/*
+          Shown only when the bases are actually mixed. The figures above then
+          sum two kinds of evidence, and nothing in the total says so.
+        */}
+        {c.visitsValuedAtRecordedPrice.known && c.visitsValuedAtRecordedPrice.value > 0 ? (
+          <p className="max-w-[68ch] text-xs leading-relaxed text-fg">
+            {SOME_VISITS_PRICED_AT_THE_TIME}
+          </p>
+        ) : null}
       </section>
 
       <section className="flex flex-col gap-3">
