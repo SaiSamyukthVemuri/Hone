@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from "vitest";
-import { adminQuery, adminTx, closePool, seedMember, seedStudio } from "./helpers/harness";
+import { adminQuery, adminTx, asUser, closePool, seedMember, seedStudio } from "./helpers/harness";
 
 // 0188 — WAIT-03 private invitation lifecycle, proved against a real local
 // PostgreSQL.
@@ -25,6 +25,27 @@ async function codeOf(fn: () => Promise<unknown>): Promise<string> {
   } catch (e) {
     return (e as { code?: string }).code ?? "UNKNOWN";
   }
+}
+
+// EXPIRY NOW MEANS THE TTL ELAPSED, so a test that wants a genuinely expired
+// invitation must move the window into the past. The server-timestamp trigger
+// owns issued_at and the append-only trigger freezes expires_at, so this is
+// only possible as the table owner with the trigger disabled -- which is itself
+// the proof that no application role can manufacture an expiry. The ttl CHECK
+// (expires_at > issued_at, and within 7 days of it) means both move together.
+async function elapseTtl(entryId: string): Promise<void> {
+  await adminQuery(
+    `alter table public.new_client_waitlist_invitations disable trigger new_client_waitlist_invitations_append_only`,
+  );
+  await adminQuery(
+    `update public.new_client_waitlist_invitations
+        set issued_at = now() - interval '4 days', expires_at = now() - interval '1 minute'
+      where entry_id = $1 and expired_at is null and released_at is null`,
+    [entryId],
+  );
+  await adminQuery(
+    `alter table public.new_client_waitlist_invitations enable trigger new_client_waitlist_invitations_append_only`,
+  );
 }
 
 async function join(studioId: string, email: string) {
@@ -445,16 +466,86 @@ describe("0188 — the duplicate law and its coupled command", () => {
 });
 
 describe("0188 — privilege", () => {
-  it("gives authenticated SELECT only, and anon/service_role no table rights", async () => {
+  it("gives NO role a whole-table right — authenticated reads named columns only", async () => {
+    // token_hash is the verifier for a live credential, so whole-table SELECT
+    // was withdrawn: RLS scopes ROWS, never COLUMNS, and a plain table grant
+    // let an authenticated owner read the hash for every row their studio could
+    // see. has_table_privilege reports SELECT only when EVERY column is
+    // readable, so `authenticated` is now false here too — by design.
     const r = await adminQuery(
       `select rolname, priv, has_table_privilege(rolname,'public.new_client_waitlist_invitations',priv) as ok
          from (values('anon'),('authenticated'),('service_role')) t(rolname),
               (values('SELECT'),('INSERT'),('UPDATE'),('DELETE'),('MAINTAIN')) p(priv)`,
     );
     for (const row of r.rows as { rolname: string; priv: string; ok: boolean }[]) {
-      const expected = row.rolname === "authenticated" && row.priv === "SELECT";
-      expect(row.ok, `${row.rolname} ${row.priv}`).toBe(expected);
+      expect(row.ok, `${row.rolname} ${row.priv}`).toBe(false);
     }
+  });
+
+  it("grants authenticated exactly the nine safe columns, and NEVER token_hash", async () => {
+    const r = await adminQuery(
+      `select column_name from information_schema.column_privileges
+        where table_schema='public' and table_name='new_client_waitlist_invitations'
+          and grantee='authenticated' and privilege_type='SELECT'
+        order by column_name`,
+    );
+    const granted = r.rows.map((x: { column_name: string }) => x.column_name);
+    expect(granted).toEqual([
+      "entry_id","expired_at","expires_at","id","issued_at",
+      "issued_by_practitioner_id","redeemed_at","released_at","studio_id",
+    ]);
+    expect(granted, "the credential verifier is never readable").not.toContain("token_hash");
+
+    // Positive list, not a denylist: every live column is either granted or is
+    // token_hash. A column added later is unreadable until granted on purpose.
+    const live = await adminQuery(
+      `select column_name from information_schema.columns
+        where table_schema='public' and table_name='new_client_waitlist_invitations'`,
+    );
+    const all = live.rows.map((x: { column_name: string }) => x.column_name).sort();
+    expect(all.filter((c: string) => !granted.includes(c))).toEqual(["token_hash"]);
+
+    // anon and service_role hold no column privilege at all.
+    const others = await adminQuery(
+      `select count(*)::int as n from information_schema.column_privileges
+        where table_schema='public' and table_name='new_client_waitlist_invitations'
+          and grantee in ('anon','service_role')`,
+    );
+    expect(others.rows[0].n).toBe(0);
+  });
+
+  it("an authenticated owner reads the safe columns but is DENIED token_hash and SELECT *", async () => {
+    const s = await seedStudio("wait03-colpriv");
+    const j = await join(s.studioId, `colpriv-${s.studioId.slice(0, 8)}@ex.com`);
+    const entry = j.entry_id as string;
+    await claim(s.studioId, entry, s.userId);
+    await issue(s.studioId, entry, s.userId);
+
+    // Safe projection: allowed, and RLS still scopes it to this owner's studio.
+    const safe = await asUser(s.userId, (q) =>
+      q(`select id, entry_id, expires_at, redeemed_at from public.new_client_waitlist_invitations`),
+    );
+    expect(safe.rows.length).toBe(1);
+
+    // The credential verifier: refused by PRIVILEGE, not by convention.
+    await expect(
+      asUser(s.userId, (q) => q(`select token_hash from public.new_client_waitlist_invitations`)),
+    ).rejects.toMatchObject({ code: "42501" });
+
+    // SELECT * necessarily includes it, so it is refused too. Acceptable here
+    // because NO runtime module reads this table at all — the export registry
+    // entry is a declaration, not a query.
+    await expect(
+      asUser(s.userId, (q) => q(`select * from public.new_client_waitlist_invitations`)),
+    ).rejects.toMatchObject({ code: "42501" });
+
+    // A FOREIGN studio owner sees zero rows through the safe projection: RLS is
+    // unchanged and still does the row scoping.
+    const other = await seedStudio("wait03-colpriv-b");
+    const foreign = await asUser(other.userId, (q) =>
+      q(`select id from public.new_client_waitlist_invitations`),
+    );
+    expect(foreign.rows.length).toBe(0);
   });
 
   it("grants every command to service_role ONLY", async () => {
@@ -859,6 +950,7 @@ describe("0188 — requeue collision: refused cleanly, reuse preserved, tenant-s
 
     const inv = await issue(s.studioId, entry, s.userId);
     expect(inv.result).toBe("invited");
+    await elapseTtl(entry);
     await adminQuery(`select public.expire_new_client_waitlist_invitation($1,$2,$3)`, [
       s.studioId, entry, s.userId,
     ]);
@@ -887,10 +979,16 @@ describe("0188 — requeue collision: refused cleanly, reuse preserved, tenant-s
 });
 
 describe("0188 — redeem vs expire/release: exactly one side may win", () => {
-  const expire = async (studioId: string, entry: string, userId: string) =>
-    (await adminQuery(`select public.expire_new_client_waitlist_invitation($1,$2,$3) as r`, [
-      studioId, entry, userId,
-    ])).rows[0].r as string;
+  // Expiry now requires an elapsed TTL, so this helper moves the window first:
+  // these tests are about who WINS the race, not about the TTL rule itself.
+  const expire = async (studioId: string, entry: string, userId: string) => {
+    await elapseTtl(entry);
+    const r = await adminQuery(
+      `select public.expire_new_client_waitlist_invitation($1,$2,$3) as r`,
+      [studioId, entry, userId],
+    );
+    return r.rows[0].r as string;
+  };
   const release = async (studioId: string, entry: string, userId: string) =>
     (await adminQuery(`select public.release_new_client_waitlist_entry($1,$2,$3) as r`, [
       studioId, entry, userId,
@@ -1082,29 +1180,36 @@ describe("0188 — issue serializes against release and expire on the entry row"
         await adminQuery(`select status from public.new_client_waitlist_entries where id = $1`, [entry])
       ).rows[0].status as string;
 
-      // THE LAW: whichever side wins, a terminal entry never coexists with a
-      // usable token. If the entry moved, the invitation was invalidated first.
-      if (status === variant.terminal) {
-        expect(result).toBe(variant.terminal);
-        const live = await adminQuery(
+      const live = (
+        await adminQuery(
           `select count(*)::int as n
              from public.new_client_waitlist_invitations
             where entry_id = $1
               and redeemed_at is null and expired_at is null and released_at is null
               and expires_at > now()`,
           [entry],
-        );
-        expect(live.rows[0].n, "a terminal entry must leave NO live invitation").toBe(0);
-      }
+        )
+      ).rows[0].n as number;
+      const redeem = (
+        await adminQuery(`select result from public.redeem_new_client_waitlist_invitation($1)`, [token])
+      ).rows[0].result as string;
 
-      const redeem = await adminQuery(
-        `select result from public.redeem_new_client_waitlist_invitation($1)`,
-        [token],
-      );
-      expect(
-        redeem.rows[0].result,
-        "after the entry left `invited`, its token must be dead",
-      ).toBe("invalid_token");
+      // THE LAW, stated as the invariant rather than one expected outcome:
+      // a TERMINAL entry never coexists with a usable token. Either side may
+      // win, and for expire the honest outcome changed once expiry began
+      // requiring an elapsed TTL — it now declines a window that has not closed
+      // (`not_expired`) instead of killing a token with three days left.
+      if (status === variant.terminal) {
+        expect(result).toBe(variant.terminal);
+        expect(live, "a terminal entry must leave NO live invitation").toBe(0);
+        expect(redeem, "a terminal entry's token must be dead").toBe("invalid_token");
+      } else {
+        // The entry did NOT move, so the invitation must still be intact and the
+        // token must still work. A refusal that silently burned the token would
+        // be just as wrong as the leak this test was written for.
+        expect(status).toBe("invited");
+        expect(redeem, "a refused command must not consume the token").toBe("redeemed");
+      }
     });
   }
 });
@@ -1174,6 +1279,7 @@ describe("0188 — conversion is recorded only after redemption", () => {
 
   it("an EXPIRED invitation cannot be converted", async () => {
     const { s, entry } = await invited("wait03-conv-expired");
+    await elapseTtl(entry);
     const exp = await adminQuery(
       `select public.expire_new_client_waitlist_invitation($1,$2,$3) as r`,
       [s.studioId, entry, s.userId],
@@ -1313,5 +1419,137 @@ describe("0188 — deletes: direct is refused, the studio cascade is not", () =>
     expect(await codeOf(() => adminQuery(`delete from public.studios where id = $1`, [s.studioId]))).toBe(
       "NO_ERROR",
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 0188 — EXPIRY MEANS THE TTL ELAPSED
+// ---------------------------------------------------------------------------
+// The defect: expire stamped expired_at and moved the entry to `expired` while
+// expires_at was still in the future, so "expire" was a second word for release
+// and it destroyed tokens the prospect could legitimately still use. Measured
+// before the repair: a 72-hour invitation issued seconds earlier came back
+// `expired`, with the entry moved and the token dead.
+describe("0188 — expiry requires an elapsed TTL, decided by server time", () => {
+  async function invitedEntry(label: string) {
+    const s = await seedStudio(label);
+    const j = await join(s.studioId, `${label}-${s.studioId.slice(0, 8)}@ex.com`);
+    const entry = j.entry_id as string;
+    await claim(s.studioId, entry, s.userId);
+    const inv = await issue(s.studioId, entry, s.userId);
+    return { s, entry, token: inv.raw_token as string };
+  }
+  const callExpire = async (studioId: string, entry: string, userId: string) =>
+    (
+      await adminQuery(`select public.expire_new_client_waitlist_invitation($1,$2,$3) as r`, [
+        studioId,
+        entry,
+        userId,
+      ])
+    ).rows[0].r as string;
+
+  it("a FUTURE expires_at is refused, and nothing at all is mutated", async () => {
+    const { s, entry, token } = await invitedEntry("wait03-ttl-future");
+    const before = await adminQuery(
+      `select expires_at, expired_at, released_at from public.new_client_waitlist_invitations where entry_id = $1`,
+      [entry],
+    );
+    expect(new Date(before.rows[0].expires_at).getTime()).toBeGreaterThan(Date.now());
+
+    expect(await callExpire(s.studioId, entry, s.userId)).toBe("not_expired");
+
+    const after = await adminQuery(
+      `select expired_at, released_at from public.new_client_waitlist_invitations where entry_id = $1`,
+      [entry],
+    );
+    expect(after.rows[0].expired_at, "expired_at must not be stamped").toBeNull();
+    expect(after.rows[0].released_at).toBeNull();
+    expect(await statusOf(entry), "the entry must not move").toBe("invited");
+
+    // And the token the operator nearly destroyed still works.
+    const redeem = await adminQuery(
+      `select result from public.redeem_new_client_waitlist_invitation($1)`,
+      [token],
+    );
+    expect(redeem.rows[0].result).toBe("redeemed");
+  });
+
+  it("an ELAPSED expires_at expires, and the entry moves with it", async () => {
+    const { s, entry, token } = await invitedEntry("wait03-ttl-elapsed");
+    await elapseTtl(entry);
+    expect(await callExpire(s.studioId, entry, s.userId)).toBe("expired");
+    expect(await statusOf(entry)).toBe("expired");
+    const inv = await adminQuery(
+      `select expired_at from public.new_client_waitlist_invitations where entry_id = $1`,
+      [entry],
+    );
+    expect(inv.rows[0].expired_at).not.toBeNull();
+    const redeem = await adminQuery(
+      `select result from public.redeem_new_client_waitlist_invitation($1)`,
+      [token],
+    );
+    expect(redeem.rows[0].result).toBe("invalid_token");
+  });
+
+  it("expiring twice is idempotent and keeps the same closed word", async () => {
+    const { s, entry } = await invitedEntry("wait03-ttl-idem");
+    await elapseTtl(entry);
+    expect(await callExpire(s.studioId, entry, s.userId)).toBe("expired");
+    const stamp = await adminQuery(
+      `select expired_at from public.new_client_waitlist_invitations where entry_id = $1`,
+      [entry],
+    );
+    expect(await callExpire(s.studioId, entry, s.userId)).toBe("expired");
+    const again = await adminQuery(
+      `select expired_at from public.new_client_waitlist_invitations where entry_id = $1`,
+      [entry],
+    );
+    expect(again.rows[0].expired_at, "the original stamp is not rewritten").toEqual(
+      stamp.rows[0].expired_at,
+    );
+  });
+
+  it("a REDEEMED invitation is refused even once its TTL has elapsed", async () => {
+    const { s, entry, token } = await invitedEntry("wait03-ttl-redeemed");
+    await adminQuery(`select result from public.redeem_new_client_waitlist_invitation($1)`, [token]);
+    await elapseTtl(entry);
+    expect(await callExpire(s.studioId, entry, s.userId)).toBe("already_redeemed");
+    expect(await statusOf(entry)).toBe("invited");
+  });
+
+  it("a RELEASED invitation is not expirable", async () => {
+    const { s, entry } = await invitedEntry("wait03-ttl-released");
+    const rel = await adminQuery(
+      `select public.release_new_client_waitlist_entry($1,$2,$3) as r`,
+      [s.studioId, entry, s.userId],
+    );
+    expect(rel.rows[0].r).toBe("released");
+    expect(await callExpire(s.studioId, entry, s.userId)).toBe("not_invited");
+  });
+
+  it("the caller holds NO expiry authority — only server time decides", async () => {
+    // The command takes (studio, entry, actor) and nothing else: there is no
+    // clock, no cutoff and no force argument in its signature, so no caller can
+    // ask for an early expiry. The TTL itself is spent at ISSUE time and the
+    // append-only trigger then freezes expires_at.
+    const args = await adminQuery(
+      `select pg_get_function_arguments(p.oid) as a
+         from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+        where n.nspname = 'public' and p.proname = 'expire_new_client_waitlist_invitation'`,
+    );
+    expect(args.rows[0].a).toBe("p_studio_id uuid, p_entry_id uuid, p_actor_user_id uuid");
+
+    // An application role cannot move the window either: the append-only
+    // trigger refuses, which is what makes "server time" enforceable.
+    const { entry } = await invitedEntry("wait03-ttl-authority");
+    expect(
+      await codeOf(() =>
+        adminQuery(
+          `update public.new_client_waitlist_invitations
+              set expires_at = now() - interval '1 day' where entry_id = $1`,
+          [entry],
+        ),
+      ),
+    ).toBe("23514");
   });
 });

@@ -263,9 +263,28 @@ describe("0188 — privilege discipline", () => {
         `revoke all on public.new_client_waitlist_invitations from ${role};`,
       );
     }
-    expect(CODE).toContain(
-      "grant select on public.new_client_waitlist_invitations to authenticated;",
+    // COLUMN privileges, not a whole-table grant: token_hash is the verifier
+    // for a live credential and RLS scopes rows, never columns. The safe set is
+    // a POSITIVE list, so a column added later is unreadable until someone
+    // grants it here deliberately.
+    expect(CODE).not.toMatch(
+      /grant\s+select\s+on\s+public\.new_client_waitlist_invitations\s+to\s+authenticated/i,
     );
+    expect(CODE).toMatch(
+      /grant\s+select\s*\([\s\S]{0,400}?\)\s*on\s+public\.new_client_waitlist_invitations\s+to\s+authenticated\s*;/i,
+    );
+    const grant = CODE.match(
+      /grant\s+select\s*\(([\s\S]{0,400}?)\)\s*on\s+public\.new_client_waitlist_invitations\s+to\s+authenticated\s*;/i,
+    );
+    const columns = (grant?.[1] ?? "")
+      .split(",")
+      .map((c) => c.trim())
+      .filter(Boolean);
+    expect(columns.sort()).toEqual([
+      "entry_id","expired_at","expires_at","id","issued_at",
+      "issued_by_practitioner_id","redeemed_at","released_at","studio_id",
+    ]);
+    expect(columns, "the credential verifier is never granted").not.toContain("token_hash");
   });
 
   it("grants the internal helper and trigger functions to NOBODY", () => {

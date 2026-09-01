@@ -918,6 +918,7 @@ declare
   v_actor uuid;
   v_code  text;
   v_hit   uuid;
+  v_inv   uuid;
 begin
   select r.practitioner_id, r.code into v_actor, v_code
     from public.new_client_waitlist_resolve_owner(p_studio_id, p_actor_user_id) r;
@@ -940,27 +941,78 @@ begin
     where e.id = p_entry_id and e.studio_id = p_studio_id
     for update;
 
+  -- REDEMPTION IS TERMINAL, CHECKED BEFORE ANYTHING IS WRITTEN.
+  if exists (
+    select 1
+      from public.new_client_waitlist_invitations i
+     where i.entry_id    = p_entry_id
+       and i.studio_id   = p_studio_id
+       and i.redeemed_at is not null)
+  then
+    return 'already_redeemed';
+  end if;
+
+  -- EXPIRY MEANS THE TTL ELAPSED. It is not a second word for release.
+  -- Without `expires_at <= now()` this command stamped expired_at on an
+  -- invitation with its whole window still ahead of it and moved the entry to
+  -- `expired`, which killed a token the prospect could legitimately still use.
+  -- Measured before the repair: a 72-hour invitation issued seconds earlier was
+  -- reported `expired` while expires_at was three days in the future.
+  --
+  -- TIME COMES FROM THE SERVER, inside the deciding statement. The caller
+  -- supplies no clock and no expiry authority: p_ttl_hours is spent at ISSUE
+  -- time and is not re-readable here, so there is no argument that can make an
+  -- unelapsed invitation expire. An operator who wants to end an invitation
+  -- early has release_new_client_waitlist_entry, which says what it does.
   update public.new_client_waitlist_invitations i
      set expired_at = now()
    where i.entry_id = p_entry_id
      and i.studio_id = p_studio_id
-     and i.redeemed_at is null and i.expired_at is null and i.released_at is null;
+     and i.redeemed_at is null and i.expired_at is null and i.released_at is null
+     and i.expires_at <= now()
+  returning i.id into v_inv;
 
-  -- REDEMPTION IS TERMINAL FOR THIS ENTRY. The statement above is already
-  -- guarded against a redeemed invitation, but the entry move below was not,
-  -- and the RESULT CODE was derived from the entry move alone. The two could
-  -- therefore disagree: statement 1 matched zero rows while this one matched
-  -- one, and the command still answered 'expired'. Measured consequence --
-  -- redeem succeeded, expire succeeded, the entry left `invited`, and
-  -- record_conversion answered 'not_invited' with NO recovery path, because
-  -- `converted` is reachable only from `invited` and no expired -> converted
-  -- edge exists. A person who accepted their invitation became unconvertible.
+  -- THE ENTRY MOVES ONLY IF THIS COMMAND ACTUALLY EXPIRED AN INVITATION.
+  -- Previously the two statements were independent, so the entry could reach
+  -- `expired` on a call that expired nothing at all.
+  if v_inv is null then
+    if exists (
+      select 1
+        from public.new_client_waitlist_invitations i
+       where i.entry_id    = p_entry_id
+         and i.studio_id   = p_studio_id
+         and i.redeemed_at is null and i.expired_at is null and i.released_at is null
+         and i.expires_at  > now())
+    then
+      -- TRUTHFUL, AND NOT ANY EXISTING CODE. `not_invited` would be false --
+      -- the entry is invited and its invitation is live -- and the vocabulary
+      -- held no word for "the window has not closed yet". Named the way its
+      -- neighbours are: not_invited, not_redeemed, not_releasable.
+      return 'not_expired';
+    end if;
+    if exists (
+      select 1 from public.new_client_waitlist_entries e
+       where e.id = p_entry_id and e.studio_id = p_studio_id and e.status = 'expired')
+    then
+      -- Already expired by an earlier call: idempotent, same closed word.
+      return 'expired';
+    end if;
+    return 'not_invited';
+  end if;
+
+  -- REDEMPTION IS TERMINAL FOR THIS ENTRY, RESTATED AS DEFENCE IN DEPTH.
+  -- The early return above already refuses a redeemed entry before anything is
+  -- written; this repeats the test on the statement that actually moves the
+  -- entry, so the two can never disagree. That disagreement is exactly the
+  -- original defect: the invitation statement was guarded and the entry move
+  -- was not, while the RESULT CODE came from the entry move alone, so a
+  -- redeemed prospect was reported `expired`, left `invited` unreachable for
+  -- conversion, and became permanently unconvertible.
   --
-  -- The fact this tests is write-once and undeletable: `redeemed_at` cannot be
-  -- cleared or moved (append-only trigger), the invitation row cannot be
-  -- deleted (no-delete trigger), and `entry_id` cannot be re-pointed
-  -- (immutability trigger). So "has this entry been redeemed" is durable
-  -- without adding any column, table or trigger.
+  -- The fact both tests read is write-once and undeletable: `redeemed_at`
+  -- cannot be cleared or moved (append-only trigger), the row cannot be deleted
+  -- (no-delete trigger), and `entry_id` cannot be re-pointed (immutability
+  -- trigger). No new column, table or trigger is needed to know this.
   update public.new_client_waitlist_entries
      set status = 'expired', expired_at = now()
    where id = p_entry_id and studio_id = p_studio_id and status = 'invited'
@@ -973,19 +1025,10 @@ begin
   returning id into v_hit;
 
   if v_hit is null then
-    -- DISTINGUISHED, NOT COLLAPSED INTO 'not_invited'. Saying "not invited"
-    -- here would be false: the entry IS invited, and it has been redeemed.
-    -- The caller must be able to tell "nothing to expire" from "this person
-    -- already accepted -- record the conversion instead".
-    if exists (
-      select 1
-        from public.new_client_waitlist_invitations i
-       where i.entry_id    = p_entry_id
-         and i.studio_id   = p_studio_id
-         and i.redeemed_at is not null)
-    then
-      return 'already_redeemed';
-    end if;
+    -- The invitation DID expire (v_inv is set) but the entry was not `invited`.
+    -- Reachable only if the entry moved between the two statements under the
+    -- same lock, which the entry mutex prevents; kept so the command can never
+    -- report a move it did not make.
     return 'not_invited';
   end if;
   return 'expired';
@@ -1325,7 +1368,32 @@ revoke all on public.new_client_waitlist_invitations from public;
 revoke all on public.new_client_waitlist_invitations from anon;
 revoke all on public.new_client_waitlist_invitations from authenticated;
 revoke all on public.new_client_waitlist_invitations from service_role;
-grant select on public.new_client_waitlist_invitations to authenticated;
+
+-- COLUMN PRIVILEGES, NOT WHOLE-TABLE SELECT. `token_hash` is the verifier for a
+-- live credential, and RLS scopes ROWS, not COLUMNS -- so a plain
+-- `grant select on the table` let an authenticated studio owner read the hash
+-- for every invitation their own studio could see. Measured before the repair:
+-- a 64-character hash returned straight to an authenticated session.
+--
+-- The privilege layer is the enforcement point, deliberately. Hiding the column
+-- in the UI, or declaring it excluded in the export registry, are statements
+-- about code paths that happen to exist today; this is a statement PostgreSQL
+-- enforces against any query from that role, including PostgREST's projection.
+--
+-- Every other column is granted by name, so the safe set is a positive list.
+-- A column added later is NOT readable until someone adds it here on purpose,
+-- which is the enumeration failure 0184 was written to prevent.
+grant select (
+  id,
+  studio_id,
+  entry_id,
+  issued_at,
+  expires_at,
+  issued_by_practitioner_id,
+  redeemed_at,
+  expired_at,
+  released_at
+) on public.new_client_waitlist_invitations to authenticated;
 
 -- COMMANDS: service_role ONLY. The browser is `anon` on the public path and
 -- `authenticated` on the operator path; neither holds EXECUTE on any command
