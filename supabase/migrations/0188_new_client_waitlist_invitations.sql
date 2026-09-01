@@ -379,15 +379,35 @@ create trigger new_client_waitlist_invitations_append_only
 
 -- PROVENANCE SURVIVES. An invitation is never deleted; its history is the
 -- audit record. (Entry deletion cascades, but no entry-delete path exists.)
+-- APPEND-ONLY, BUT NOT AT THE COST OF STUDIO TEARDOWN.
+-- An unconditional refusal here collides with this table's own
+-- `studio_id ... on delete cascade`: deleting a studio makes PostgreSQL delete
+-- these rows, the guard refuses, and the whole teardown aborts. Measured: a
+-- studio holding waitlist rows could not be deleted at all, and the rows it
+-- did delete rolled back, so the failure was total rather than partial.
+--
+-- THE DISCRIMINATOR IS THE PARENT'S OWN VISIBILITY, and it is a property of the
+-- transaction rather than anything a caller supplies. PostgreSQL deletes the
+-- parent row FIRST and only then runs the cascade against children, so inside
+-- this trigger the studio row is already gone precisely when this delete is
+-- part of that cascade, and still present for a direct child delete. Proven
+-- both ways by executable control, not asserted.
+--
+-- Deliberately NOT a session GUC, NOT a bypass flag and NOT a parameter: there
+-- is nothing application code can set to talk its way past this guard. The only
+-- way to reach the permitted branch is to actually be deleting the studio.
 create or replace function public.new_client_waitlist_invitations_no_delete()
 returns trigger
 language plpgsql
 set search_path = pg_catalog, pg_temp
 as $$
 begin
-  raise exception
-    'new_client_waitlist_invitations: invitations are append-only provenance and are never deleted'
-    using errcode = 'check_violation';
+  if exists (select 1 from public.studios st where st.id = old.studio_id) then
+    raise exception
+      'new_client_waitlist_invitations: invitations are append-only provenance and are never deleted'
+      using errcode = 'check_violation';
+  end if;
+  return old;
 end;
 $$;
 
@@ -904,6 +924,22 @@ begin
   if v_code <> 'ok' then return v_code; end if;
   if p_entry_id is null then return 'invalid_input'; end if;
 
+  -- SERIALIZE ON THE ENTRY ROW BEFORE LOOKING AT ANY INVITATION.
+  -- issue() takes this same lock before it inserts, so entry+invitation move as
+  -- one unit. Without it the two commands interleave in a way that leaves a
+  -- LIVE TOKEN behind a terminal entry: this command's invitation statement
+  -- scans first and finds nothing (issue has not committed), then waits here
+  -- for the entry, and by the time it moves the entry out of `invited` the
+  -- invitation issue committed in the meantime was never invalidated. Measured
+  -- on the release path: entry `released`, token still `redeemed`-able.
+  -- The entry row is the mutex -- no advisory lock, no second lock table, and
+  -- no sleep is load-bearing. Deliberately no result code of its own: this
+  -- only orders the work, so every existing refusal below is unchanged.
+  perform 1
+     from public.new_client_waitlist_entries e
+    where e.id = p_entry_id and e.studio_id = p_studio_id
+    for update;
+
   update public.new_client_waitlist_invitations i
      set expired_at = now()
    where i.entry_id = p_entry_id
@@ -977,7 +1013,23 @@ begin
   if v_code <> 'ok' then return v_code; end if;
   if p_entry_id is null then return 'invalid_input'; end if;
 
-  -- Invalidate any live invitation FIRST, in the same transaction.
+  -- SERIALIZE ON THE ENTRY ROW BEFORE LOOKING AT ANY INVITATION.
+  -- issue() takes this same lock before it inserts, so entry+invitation move as
+  -- one unit. Without it the two commands interleave in a way that leaves a
+  -- LIVE TOKEN behind a terminal entry: this command's invitation statement
+  -- scans first and finds nothing (issue has not committed), then waits here
+  -- for the entry, and by the time it moves the entry out of `invited` the
+  -- invitation issue committed in the meantime was never invalidated. Measured
+  -- on the release path: entry `released`, token still `redeemed`-able.
+  -- The entry row is the mutex -- no advisory lock, no second lock table, and
+  -- no sleep is load-bearing. Deliberately no result code of its own: this
+  -- only orders the work, so every existing refusal below is unchanged.
+  perform 1
+     from public.new_client_waitlist_entries e
+    where e.id = p_entry_id and e.studio_id = p_studio_id
+    for update;
+
+  -- Invalidate any live invitation, now under the entry lock.
   update public.new_client_waitlist_invitations i
      set released_at = now()
    where i.entry_id = p_entry_id
@@ -1119,11 +1171,58 @@ begin
     return 'client_not_found';
   end if;
 
+  -- Same entry mutex the invalidating commands take, for the same reason: the
+  -- redemption test below and the status move must not straddle a concurrent
+  -- issue/redeem/release.
+  perform 1
+     from public.new_client_waitlist_entries e
+    where e.id = p_entry_id and e.studio_id = p_studio_id
+    for update;
+
+  -- CONVERSION REQUIRES A REDEEMED INVITATION. `invited` alone is not evidence
+  -- that the person ever accepted: it says an operator SENT an invitation. The
+  -- lifecycle is REDEEM -> BOOK -> RECORD, and recording a conversion straight
+  -- out of `invited` skipped the first step entirely -- measured: conversion
+  -- succeeded while the raw token was still live, so the token could then be
+  -- redeemed AFTER the entry had already reached a terminal state.
+  --
+  -- The test is `redeemed_at is not null` on this entry's own invitation, which
+  -- is durable: write-once under an append-only trigger, on an undeletable row,
+  -- with an immutable entry_id. A released or expired invitation that was never
+  -- redeemed carries no redeemed_at and is therefore refused here too.
+  --
+  -- NOTHING IS CONSUMED HERE. This command does not redeem, expire or release
+  -- anything: an unredeemed invitation is left exactly as it was, so the refusal
+  -- is repeatable and the operator can still have the prospect redeem properly.
+  if not exists (
+    select 1
+      from public.new_client_waitlist_invitations i
+     where i.entry_id    = p_entry_id
+       and i.studio_id   = p_studio_id
+       and i.redeemed_at is not null)
+  then
+    -- DISTINGUISHED FROM 'not_invited', which would be false: the entry may be
+    -- invited and simply not yet redeemed. The caller must be able to tell
+    -- "there was no invitation" from "they have not accepted it yet".
+    if exists (select 1 from public.new_client_waitlist_entries e
+                where e.id = p_entry_id and e.studio_id = p_studio_id
+                  and e.status = 'invited')
+    then
+      return 'not_redeemed';
+    end if;
+  end if;
+
   update public.new_client_waitlist_entries
      set status              = 'converted',
          converted_at        = now(),
          converted_client_id = p_client_id
    where id = p_entry_id and studio_id = p_studio_id and status = 'invited'
+     and exists (
+       select 1
+         from public.new_client_waitlist_invitations i
+        where i.entry_id    = p_entry_id
+          and i.studio_id   = p_studio_id
+          and i.redeemed_at is not null)
   returning id into v_hit;
 
   if v_hit is null then return 'not_invited'; end if;
@@ -1389,15 +1488,27 @@ create trigger new_client_waitlist_entries_record_event
   for each row execute function public.new_client_waitlist_entries_record_event();
 
 -- APPEND-ONLY. An audit row that can be edited or deleted is not evidence.
+-- UPDATE IS REFUSED UNCONDITIONALLY -- that protection is untouched. Only the
+-- DELETE arm distinguishes a studio cascade, on exactly the same parent-row
+-- visibility test and for the same reason as the invitations guard above.
 create or replace function public.new_client_waitlist_entry_events_append_only()
 returns trigger
 language plpgsql
 set search_path = pg_catalog, pg_temp
 as $$
 begin
-  raise exception
-    'new_client_waitlist_entry_events: lifecycle events are append-only evidence and are never modified or deleted'
-    using errcode = 'check_violation';
+  if tg_op = 'UPDATE' then
+    raise exception
+      'new_client_waitlist_entry_events: lifecycle events are append-only evidence and are never modified'
+      using errcode = 'check_violation';
+  end if;
+
+  if exists (select 1 from public.studios st where st.id = old.studio_id) then
+    raise exception
+      'new_client_waitlist_entry_events: lifecycle events are append-only evidence and are never deleted'
+      using errcode = 'check_violation';
+  end if;
+  return old;
 end;
 $$;
 

@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from "vitest";
-import { adminQuery, closePool, seedMember, seedStudio } from "./helpers/harness";
+import { adminQuery, adminTx, closePool, seedMember, seedStudio } from "./helpers/harness";
 
 // 0188 — WAIT-03 private invitation lifecycle, proved against a real local
 // PostgreSQL.
@@ -1009,5 +1009,309 @@ describe("0188 — redeem vs expire/release: exactly one side may win", () => {
       [s.studioId, entry, s.userId],
     );
     expect(rm.rows[0].r).toBe("removed");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 0188 — ISSUE vs RELEASE/EXPIRE: the entry row is the mutex
+// ---------------------------------------------------------------------------
+// THE DEFECT THESE PIN. issue() locks the ENTRY before inserting the invitation;
+// release/expire used to touch INVITATIONS first and reach the entry second. So
+// release could scan invitations, find none (issue uncommitted), wait for the
+// entry, and then move the entry out of `invited` — leaving the invitation issue
+// had meanwhile committed completely un-invalidated. Measured before the repair:
+// entry `released` with the raw token still answering `redeemed`.
+//
+// NO SLEEP IS LOAD-BEARING HERE. The interleaving is established by waiting
+// until the second connection is genuinely parked on a LOCK in
+// pg_stat_activity; a timer would only make the race probable, not certain.
+async function waitForLockWaiter(fnName: string): Promise<boolean> {
+  for (let i = 0; i < 400; i += 1) {
+    const r = await adminQuery(
+      `select count(*)::int as n
+         from pg_stat_activity
+        where state = 'active'
+          and wait_event_type = 'Lock'
+          and query like '%' || $1 || '%'`,
+      [fnName],
+    );
+    if (r.rows[0].n > 0) return true;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  return false;
+}
+
+describe("0188 — issue serializes against release and expire on the entry row", () => {
+  for (const variant of [
+    { name: "release", fn: "release_new_client_waitlist_entry", terminal: "released" },
+    { name: "expire", fn: "expire_new_client_waitlist_invitation", terminal: "expired" },
+  ] as const) {
+    it(`issue || ${variant.name}: never a terminal entry beside a redeemable token`, async () => {
+      const s = await seedStudio(`wait03-race-${variant.name}`);
+      const j = await join(s.studioId, `race-${variant.name}-${s.studioId.slice(0, 8)}@ex.com`);
+      const entry = j.entry_id as string;
+      await claim(s.studioId, entry, s.userId);
+
+      let token!: string;
+      let other!: Promise<string>;
+      let contended = false;
+
+      await adminTx(async (q) => {
+        const iss = await q(
+          `select raw_token from public.issue_new_client_waitlist_invitation($1,$2,$3,72)`,
+          [s.studioId, entry, s.userId],
+        );
+        token = iss.rows[0].raw_token as string;
+
+        // A DIFFERENT pooled connection, while this transaction still holds the
+        // entry row. It must not be able to finish ahead of the commit.
+        other = adminQuery(`select public.${variant.fn}($1,$2,$3) as r`, [
+          s.studioId,
+          entry,
+          s.userId,
+        ]).then((r) => r.rows[0].r as string);
+        other.catch(() => undefined);
+
+        contended = await waitForLockWaiter(variant.fn);
+      });
+
+      const result = await other;
+      expect(contended, `${variant.name} must contend for the entry row, not slip past it`).toBe(true);
+
+      const status = (
+        await adminQuery(`select status from public.new_client_waitlist_entries where id = $1`, [entry])
+      ).rows[0].status as string;
+
+      // THE LAW: whichever side wins, a terminal entry never coexists with a
+      // usable token. If the entry moved, the invitation was invalidated first.
+      if (status === variant.terminal) {
+        expect(result).toBe(variant.terminal);
+        const live = await adminQuery(
+          `select count(*)::int as n
+             from public.new_client_waitlist_invitations
+            where entry_id = $1
+              and redeemed_at is null and expired_at is null and released_at is null
+              and expires_at > now()`,
+          [entry],
+        );
+        expect(live.rows[0].n, "a terminal entry must leave NO live invitation").toBe(0);
+      }
+
+      const redeem = await adminQuery(
+        `select result from public.redeem_new_client_waitlist_invitation($1)`,
+        [token],
+      );
+      expect(
+        redeem.rows[0].result,
+        "after the entry left `invited`, its token must be dead",
+      ).toBe("invalid_token");
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 0188 — CONVERSION REQUIRES REDEMPTION
+// ---------------------------------------------------------------------------
+// `invited` says an operator SENT an invitation, not that the person accepted
+// it. Recording a conversion straight out of `invited` skipped redemption
+// entirely and left the raw token live, so it could still be redeemed after the
+// entry had already reached a terminal state.
+describe("0188 — conversion is recorded only after redemption", () => {
+  async function invited(label: string) {
+    const s = await seedStudio(label);
+    const j = await join(s.studioId, `${label}-${s.studioId.slice(0, 8)}@ex.com`);
+    const entry = j.entry_id as string;
+    await claim(s.studioId, entry, s.userId);
+    const iss = await issue(s.studioId, entry, s.userId);
+    return { s, entry, token: iss.raw_token as string };
+  }
+  const convert = async (studioId: string, entry: string, clientId: string) =>
+    (
+      await adminQuery(`select public.record_new_client_waitlist_conversion($1,$2,$3) as r`, [
+        studioId,
+        entry,
+        clientId,
+      ])
+    ).rows[0].r as string;
+
+  it("an UNREDEEMED invitation refuses conversion, and consumes nothing", async () => {
+    const { s, entry, token } = await invited("wait03-conv-unredeemed");
+    expect(await convert(s.studioId, entry, s.clientId)).toBe("not_redeemed");
+
+    // NOT silently consumed: the invitation is untouched and the refusal repeats.
+    const live = await adminQuery(
+      `select count(*)::int as n from public.new_client_waitlist_invitations
+        where entry_id = $1 and redeemed_at is null and expired_at is null and released_at is null`,
+      [entry],
+    );
+    expect(live.rows[0].n).toBe(1);
+    expect(await convert(s.studioId, entry, s.clientId)).toBe("not_redeemed");
+
+    // And the honest ordering still works afterwards: redeem, then record.
+    const red = await adminQuery(
+      `select result from public.redeem_new_client_waitlist_invitation($1)`,
+      [token],
+    );
+    expect(red.rows[0].result).toBe("redeemed");
+    expect(await convert(s.studioId, entry, s.clientId)).toBe("converted");
+  });
+
+  it("a REDEEMED invitation converts", async () => {
+    const { s, entry, token } = await invited("wait03-conv-redeemed");
+    await adminQuery(`select result from public.redeem_new_client_waitlist_invitation($1)`, [token]);
+    expect(await convert(s.studioId, entry, s.clientId)).toBe("converted");
+  });
+
+  it("a RELEASED invitation cannot be converted", async () => {
+    const { s, entry } = await invited("wait03-conv-released");
+    const rel = await adminQuery(
+      `select public.release_new_client_waitlist_entry($1,$2,$3) as r`,
+      [s.studioId, entry, s.userId],
+    );
+    expect(rel.rows[0].r).toBe("released");
+    expect(await convert(s.studioId, entry, s.clientId)).toBe("not_invited");
+  });
+
+  it("an EXPIRED invitation cannot be converted", async () => {
+    const { s, entry } = await invited("wait03-conv-expired");
+    const exp = await adminQuery(
+      `select public.expire_new_client_waitlist_invitation($1,$2,$3) as r`,
+      [s.studioId, entry, s.userId],
+    );
+    expect(exp.rows[0].r).toBe("expired");
+    expect(await convert(s.studioId, entry, s.clientId)).toBe("not_invited");
+  });
+
+  it("a FOREIGN-STUDIO client is refused before redemption is even considered", async () => {
+    const { s, entry, token } = await invited("wait03-conv-foreign");
+    await adminQuery(`select result from public.redeem_new_client_waitlist_invitation($1)`, [token]);
+    const other = await seedStudio("wait03-conv-foreign-b");
+    expect(await convert(s.studioId, entry, other.clientId)).toBe("client_not_found");
+  });
+
+  it("a REPLAYED conversion is refused, and the first one stands", async () => {
+    const { s, entry, token } = await invited("wait03-conv-replay");
+    await adminQuery(`select result from public.redeem_new_client_waitlist_invitation($1)`, [token]);
+    expect(await convert(s.studioId, entry, s.clientId)).toBe("converted");
+    expect(await convert(s.studioId, entry, s.clientId)).toBe("not_invited");
+    const row = await adminQuery(
+      `select converted_client_id from public.new_client_waitlist_entries where id = $1`,
+      [entry],
+    );
+    expect(row.rows[0].converted_client_id).toBe(s.clientId);
+  });
+
+  it("after conversion the token cannot become usable through any command", async () => {
+    const { s, entry, token } = await invited("wait03-conv-after");
+    await adminQuery(`select result from public.redeem_new_client_waitlist_invitation($1)`, [token]);
+    expect(await convert(s.studioId, entry, s.clientId)).toBe("converted");
+    for (const [fn, args] of [
+      ["release_new_client_waitlist_entry", [s.studioId, entry, s.userId]],
+      ["expire_new_client_waitlist_invitation", [s.studioId, entry, s.userId]],
+      ["requeue_new_client_waitlist_entry", [s.studioId, entry, s.userId]],
+      ["remove_new_client_waitlist_entry", [s.studioId, entry, s.userId]],
+    ] as const) {
+      await adminQuery(`select public.${fn}($1,$2,$3) as r`, [...args]).catch(() => undefined);
+    }
+    const redeem = await adminQuery(
+      `select result from public.redeem_new_client_waitlist_invitation($1)`,
+      [token],
+    );
+    expect(redeem.rows[0].result).toBe("invalid_token");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 0188 — APPEND-ONLY, WITHOUT BREAKING STUDIO TEARDOWN
+// ---------------------------------------------------------------------------
+// An unconditional DELETE refusal collided with these tables' own
+// `on delete cascade` to studios: a studio holding nothing more than ONE public
+// waitlist join became undeletable, because the join's own trigger writes a
+// lifecycle event. The guard now distinguishes the studio cascade from a direct
+// child delete by the parent row's visibility, which is a property of the
+// transaction and not anything a caller can set.
+describe("0188 — deletes: direct is refused, the studio cascade is not", () => {
+  async function studioWithWaitlistRows(label: string) {
+    const s = await seedStudio(label);
+    const j = await join(s.studioId, `${label}-${s.studioId.slice(0, 8)}@ex.com`);
+    const entry = j.entry_id as string;
+    await claim(s.studioId, entry, s.userId);
+    await issue(s.studioId, entry, s.userId);
+    return { s, entry };
+  }
+
+  it("a DIRECT invitation delete is refused", async () => {
+    const { s, entry } = await studioWithWaitlistRows("wait03-del-inv");
+    expect(
+      await codeOf(() =>
+        adminQuery(`delete from public.new_client_waitlist_invitations where entry_id = $1`, [entry]),
+      ),
+    ).toBe("23514");
+    const n = await adminQuery(
+      `select count(*)::int as n from public.new_client_waitlist_invitations where studio_id = $1`,
+      [s.studioId],
+    );
+    expect(n.rows[0].n).toBe(1);
+  });
+
+  it("a DIRECT event delete is refused, and UPDATE stays refused too", async () => {
+    const { s, entry } = await studioWithWaitlistRows("wait03-del-ev");
+    expect(
+      await codeOf(() =>
+        adminQuery(`delete from public.new_client_waitlist_entry_events where entry_id = $1`, [entry]),
+      ),
+    ).toBe("23514");
+    // The UPDATE arm is untouched by the cascade carve-out.
+    expect(
+      await codeOf(() =>
+        adminQuery(
+          `update public.new_client_waitlist_entry_events set to_status = 'forged' where entry_id = $1`,
+          [entry],
+        ),
+      ),
+    ).toBe("23514");
+    const n = await adminQuery(
+      `select count(*)::int as n from public.new_client_waitlist_entry_events where studio_id = $1`,
+      [s.studioId],
+    );
+    expect(n.rows[0].n).toBeGreaterThan(0);
+  });
+
+  it("the studio hard-delete succeeds and leaves ZERO orphan waitlist rows", async () => {
+    const { s } = await studioWithWaitlistRows("wait03-del-cascade");
+    const before = await adminQuery(
+      `select (select count(*) from public.new_client_waitlist_entries where studio_id = $1)
+            + (select count(*) from public.new_client_waitlist_invitations where studio_id = $1)
+            + (select count(*) from public.new_client_waitlist_entry_events where studio_id = $1) as n`,
+      [s.studioId],
+    );
+    expect(Number(before.rows[0].n), "the fixture must actually hold WAIT-03 rows").toBeGreaterThan(2);
+
+    expect(await codeOf(() => adminQuery(`delete from public.studios where id = $1`, [s.studioId]))).toBe(
+      "NO_ERROR",
+    );
+
+    const after = await adminQuery(
+      `select (select count(*) from public.new_client_waitlist_entries where studio_id = $1)
+            + (select count(*) from public.new_client_waitlist_invitations where studio_id = $1)
+            + (select count(*) from public.new_client_waitlist_entry_events where studio_id = $1) as n`,
+      [s.studioId],
+    );
+    expect(Number(after.rows[0].n)).toBe(0);
+  });
+
+  it("a studio holding ONLY a public join — no operator action at all — still deletes", async () => {
+    // The regression's sharpest case: the lifecycle event is written by trigger
+    // on the public join, so this state needs nobody to do anything wrong.
+    const s = await seedStudio("wait03-del-joinonly");
+    await join(s.studioId, `joinonly-${s.studioId.slice(0, 8)}@ex.com`);
+    const ev = await adminQuery(
+      `select count(*)::int as n from public.new_client_waitlist_entry_events where studio_id = $1`,
+      [s.studioId],
+    );
+    expect(ev.rows[0].n).toBeGreaterThan(0);
+    expect(await codeOf(() => adminQuery(`delete from public.studios where id = $1`, [s.studioId]))).toBe(
+      "NO_ERROR",
+    );
   });
 });
