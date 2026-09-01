@@ -1606,6 +1606,21 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "Whole-session-copy operation log written by the 0157 command. Provenance for copied charting; decide deliberately.",
   },
+  new_client_waitlist_invitations: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    fieldReviewRequired: true,
+    reason:
+      "Private invitation history for the new-client waitlist, live since migration 0188. The lifecycle itself is studio-owned demand truth and belongs in the backlog alongside new_client_waitlist_entries, so this is PENDING rather than EXCLUDED. It is tier 2 and field-review-required because the row is not only that history: token_hash is security material and MUST NEVER be emitted, raw or otherwise, and the row also carries operational attribution and lifecycle stamps (issued_by_practitioner_id, redeemed_at, expired_at, released_at) whose export shape has not been reviewed. Excluding the whole resource on account of one column would hide legitimate studio-owned invitation history from the backlog; the field review decides the payload column by column, the way calendar_connections separates its non-secret half from secrets that stay permanently excluded.",
+  },
+  new_client_waitlist_entry_events: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    reason:
+      "Append-only lifecycle provenance for waitlist entries, written by trigger on every status change since migration 0188. Studio-owned operational history - it is the only record of a claim/release cycle that issues no invitation - but it is an event log whose payload and export shape have not been reviewed, so it is tier 2 and decided deliberately rather than dumped.",
+  },
   // -------------------------------------------------------------------------
   // STORAGE
   // -------------------------------------------------------------------------
