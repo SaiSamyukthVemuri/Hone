@@ -40,7 +40,11 @@ export type LoadMoveSlotsResult =
       // reassignEnabled=false (time-only move, no selector). Display names only.
       reassignEnabled: boolean;
       eligiblePractitioners: MovePractitionerOption[];
-      currentPractitionerId: string;
+      // NULLABLE: `appointments.practitioner_id` is ON DELETE SET NULL, so an
+      // appointment can legitimately hold no practitioner. Typing this `string`
+      // let the dialog gate a "reassignment required" notice on a non-empty id,
+      // which is why the unassigned case explained nothing at all (EMERG-02).
+      currentPractitionerId: string | null;
       // Whether the appointment's CURRENT practitioner is still active + eligible;
       // when false the owner must deliberately choose a replacement (no silent pick).
       currentPractitionerValid: boolean;

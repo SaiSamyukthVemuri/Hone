@@ -16,6 +16,7 @@ const DIALOG = read("app/(app)/calendar/MoveAppointmentDialog.tsx");
 const BUTTON = read("app/(app)/calendar/MoveAppointmentButton.tsx");
 const NOTIFY = read("lib/email/notify-appointment-moved.ts");
 const DETAIL = read("app/(app)/calendar/[id]/page.tsx");
+const GATE = read("app/(app)/calendar/move-confirm-state.ts");
 const DRAWER = read("app/(app)/calendar/AppointmentPreviewDrawer.tsx");
 
 describe("Item 7 server — reassignment context + target-aware slots + submit", () => {
@@ -56,8 +57,15 @@ describe("Item 7 UI — shared MoveAppointmentDialog reassignment", () => {
   it("shows the selector only when reassignEnabled and blocks confirmation without a valid target", () => {
     expect(DIALOG).toMatch(/\{reassignEnabled && \(/);
     expect(DIALOG).toMatch(/aria-label="Practitioner"/);
-    expect(DIALOG).toMatch(/const targetChosen = !reassignEnabled \|\| eligible\.some\(\(p\) => p\.id === target\)/);
-    expect(DIALOG).toMatch(/canConfirm =\s*\n?\s*targetChosen &&/);
+    // EMERG-02 moved this gate out of the dialog into ONE pure state machine so
+    // the button state and the sentence explaining it are produced together.
+    // Same contract, asserted where it now lives.
+    expect(DIALOG).toMatch(/import \{ moveConfirmState \} from "\.\/move-confirm-state"/);
+    expect(DIALOG).toMatch(/= moveConfirmState\(\{/);
+    expect(GATE).toMatch(/const targetChosen = !reassignEnabled \|\| eligibleIds\.includes\(target\)/);
+    expect(GATE).toMatch(/if \(!targetChosen\) return blocked\(/);
+    // The dialog must NOT keep a second, private copy of the gate.
+    expect(DIALOG).not.toMatch(/const canConfirm =/);
   });
   it("changing the target clears the selected slot + reloads target-specific slots (stale-guarded)", () => {
     expect(DIALOG).toMatch(/const onPickTarget = \(t: string\) => \{/);
@@ -67,7 +75,7 @@ describe("Item 7 UI — shared MoveAppointmentDialog reassignment", () => {
     expect(DIALOG).toMatch(/if \(req !== loadReq\.current\) return/);
   });
   it("distinguishes move / reassign / move-and-reassign in the title, button + From→To", () => {
-    expect(DIALOG).toMatch(/const isReassign = reassignEnabled && !!target && target !== currentPractitionerId/);
+    expect(GATE).toMatch(/const isReassign = reassignEnabled && !!target && target !== currentPractitionerId/);
     expect(DIALOG).toMatch(/"Move and reassign appointment"/);
     expect(DIALOG).toMatch(/"Reassign appointment"/);
     expect(DIALOG).toMatch(/"Confirm reassign"/);
@@ -75,6 +83,10 @@ describe("Item 7 UI — shared MoveAppointmentDialog reassignment", () => {
     expect(DIALOG).toMatch(/\{submitting \? opBusy : opVerb\}/);
     // reassignment-required state when the current practitioner is inactive/ineligible.
     expect(DIALOG).toMatch(/data-testid="reassignment-required"/);
+    // EMERG-02: the notice is no longer gated on a NON-EMPTY current id, so an
+    // appointment holding NO practitioner explains itself too.
+    expect(GATE).toMatch(/const reassignmentRequired = reassignEnabled && !eligibleIds\.includes\(currentPractitionerId\)/);
+    expect(GATE).not.toMatch(/reassignmentRequired = reassignEnabled && !!currentPractitionerId/);
   });
   it("submits the proposed target only for an owner (members/Legacy send null)", () => {
     expect(DIALOG).toMatch(/targetPractitionerId: reassignEnabled \? target : null/);
