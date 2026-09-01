@@ -765,7 +765,125 @@ describe("the three evidence classes stay apart", () => {
     });
     expect(c.basis.settlementsOutsideWindow).toBe(1);
     expect(c.basis.complete).toBe(false);
-    expect(value(c.externallyAttestedCents)).toBe(0);
+    // AND IT DOES NOT MAKE THIS WINDOW A CONFIDENT ZERO. The earlier build
+    // gated on the studio's ALL-TIME row count, so this row — which says
+    // nothing whatever about this window — turned the three figures into
+    // `known(0)`. That printed "Cash, e-transfer or other: $0.00" at an owner
+    // who had simply not settled anything here yet.
+    expect(c.externallyAttestedCents.known).toBe(false);
+    if (!c.externallyAttestedCents.known) {
+      expect(c.externallyAttestedCents.cause).toBe("not_recorded");
+    }
+  });
+
+  it("a settlement on a delivered CONSULTATION is attested money, not a dropped row", () => {
+    // Narrowing settlements to the TREATMENT set dropped this $50 from the
+    // external total and then reported the loss as a row naming a visit
+    // outside the window — false, on a screen already showing the
+    // consultation inside it.
+    const c = census({
+      appointments: [appt({ id: "c1", service_id: PAID_CONSULT })],
+      settlements: [{ appointment_id: "c1", method: "paid_cash", amount_cents: 5_000 }],
+    });
+    expect(value(c.consultationVisits)).toBe(1);
+    expect(value(c.externallyAttestedCents)).toBe(5_000);
+    expect(c.basis.settlementsOutsideWindow).toBe(0);
+    expect(c.basis.complete).toBe(true);
+  });
+
+  it("a settlement on an UNCLASSIFIABLE delivered visit is still attested money", () => {
+    // A missing service row says nothing about whether somebody was paid.
+    const c = census({
+      appointments: [appt({ id: "x", service_id: null })],
+      settlements: [{ appointment_id: "x", method: "paid_e_transfer", amount_cents: 4_000 }],
+    });
+    expect(value(c.unclassifiedVisits)).toBe(1);
+    expect(value(c.externallyAttestedCents)).toBe(4_000);
+    expect(c.basis.settlementsOutsideWindow).toBe(0);
+  });
+
+  it("a settlement whose AMOUNT is unreadable does not open the gate either", () => {
+    // It is evidence that something was attested, never evidence of an amount.
+    const c = census({
+      appointments: [appt({ id: "a" })],
+      settlements: [{ appointment_id: "a", method: "paid_cash", amount_cents: null }],
+    });
+    expect(c.externallyAttestedCents.known).toBe(false);
+    expect(c.basis.unreadableAmounts).toBe(1);
+    expect(c.basis.complete).toBe(false);
+  });
+});
+
+describe("a card payment that was REFUNDED IN FULL is not a collection", () => {
+  // lib/billing/payment-refund.ts writes full reversals only — "v1 sets
+  // refund_amount_cents = amount_cents always" — so this is the shape of every
+  // refund Hone can currently issue, not an exotic one.
+  const fullyRefunded = () =>
+    census({
+      appointments: [appt({ id: "a" })],
+      charges: [
+        charge({
+          appointment_id: "a",
+          amount_cents: 15_000,
+          refund_amount_cents: 15_000,
+          refund_status: "succeeded",
+        }),
+      ],
+    });
+
+  it("leaves the collection rate, instead of reporting 100% beside $0.00", () => {
+    const c = fullyRefunded();
+    expect(value(c.collectedOnDeliveredCents)).toBe(0);
+    expect(value(c.cardPaidVisits)).toBe(0);
+    expect(value(c.collectionRateBasisPoints)).toBe(0);
+  });
+
+  it("is NOT 'no payment recorded' — the payment was recorded, then sent back", () => {
+    const c = fullyRefunded();
+    expect(value(c.unresolvedVisits)).toBe(0);
+    expect(value(c.unresolvedServiceValueCents)).toBe(0);
+    expect(value(c.refundedToZeroVisits)).toBe(1);
+  });
+
+  it("is invisible to Contract 1 when the refund lands in a LATER period", () => {
+    // The refunds read is windowed on refunded_at, so a September reversal of
+    // an August charge returns nothing for August. Movement is right; only the
+    // service-period reading of the visit can carry the reversal, and it does.
+    const c = fullyRefunded();
+    expect(value(c.movedInGrossCents)).toBe(15_000);
+    expect(value(c.movedOutRefundedCents)).toBe(0);
+    expect(value(c.netMovementCents)).toBe(15_000);
+    expect(value(c.refundedToZeroVisits)).toBe(1);
+  });
+
+  it("a PARTIAL refund still leaves the visit collected", () => {
+    // The direction matters: money that stayed is a collection.
+    const c = census({
+      appointments: [appt({ id: "a" })],
+      charges: [
+        charge({ appointment_id: "a", refund_amount_cents: 5_000, refund_status: "succeeded" }),
+      ],
+    });
+    expect(value(c.cardPaidVisits)).toBe(1);
+    expect(value(c.collectionRateBasisPoints)).toBe(10_000);
+    expect(value(c.refundedToZeroVisits)).toBe(0);
+    expect(value(c.collectedOnDeliveredCents)).toBe(10_000);
+  });
+
+  it("a visit whose net is UNKNOWABLE joins neither the rate nor the unresolved", () => {
+    // A succeeded refund with an unreadable amount. Counting it either way
+    // would assert something no row establishes.
+    const c = census({
+      appointments: [appt({ id: "a" })],
+      charges: [
+        charge({ appointment_id: "a", refund_amount_cents: null, refund_status: "succeeded" }),
+      ],
+    });
+    expect(value(c.cardPaidVisits)).toBe(0);
+    expect(value(c.refundedToZeroVisits)).toBe(0);
+    expect(value(c.unresolvedVisits)).toBe(0);
+    expect(c.basis.unreadableAmounts).toBe(1);
+    expect(c.basis.complete).toBe(false);
   });
 });
 

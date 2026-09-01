@@ -189,6 +189,31 @@ export const UNATTRIBUTED_IS_ALL_TIME =
 export const PAID_BUT_NOTHING_TO_COLLECT =
   "A card payment landed on treatment that carried no price. Those visits are in the collected figures above, and outside the collection rate below, because there was nothing to collect on them.";
 
+/**
+ * A card payment that was refunded in full.
+ *
+ * NOT "collected", and NOT "no payment recorded". Both would be false: the
+ * money moved and then moved back. The previous build counted these visits as
+ * collected, so the screen showed a 100% collection rate beside $0.00
+ * collected. Shown only when it actually happens.
+ *
+ * `lib/billing/payment-refund.ts` writes full reversals only, so this is the
+ * shape of every refund Hone can currently issue.
+ */
+export const REFUNDED_TO_ZERO_EXPLAINED =
+  "A card payment on these visits was refunded in full, so nothing was kept. They are not counted as collected, and they are not visits with no payment recorded — the payment was recorded, and then it was sent back.";
+
+/**
+ * Settlement rows the window's figures could not use.
+ *
+ * SAYS WHAT THE COUNT IS. The earlier sentence claimed each such row named a
+ * visit "outside this window", which was false for a payment recorded against
+ * a delivered consultation — the screen showed that consultation inside the
+ * window on the same page.
+ */
+export const SETTLEMENTS_NOT_IN_THIS_WINDOW =
+  "Some payments recorded outside Hone name a visit that is not one of the delivered visits in this window, so they are not counted here.";
+
 /** A consultation is decided by the service, never by its price. */
 export const CONSULTATION_IS_A_SERVICE_KIND =
   "Consultation or treatment is taken from the service itself, the same way the booking page decides it. A consultation you charge for is still a consultation, and a treatment you do not charge for is still treatment.";

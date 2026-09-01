@@ -18,7 +18,9 @@ import {
   PAST_STILL_CONFIRMED_IS_A_RECORD_STATE,
   PERIOD_IS_BEFORE_MONEY_WINDOW,
   PERMANENT_LINES,
+  REFUNDED_TO_ZERO_EXPLAINED,
   SERVICE_VALUE_IS_TODAYS_PRICE,
+  SETTLEMENTS_NOT_IN_THIS_WINDOW,
   THREE_CLASSES_NEVER_ADD_UP,
   UNATTRIBUTED_IS_ALL_TIME,
   UNCLASSIFIED_VISITS_EXPLAINED,
@@ -568,6 +570,16 @@ function DeliveredMoney({ briefing }: { briefing: FinancialBriefing }) {
             <Money fact={c.stillOwedCents} />
           </Line>
         </div>
+        {/*
+          Shown beside the money it affects, not only in the basis note at the
+          foot of the screen: a studio that settles a visit outside this window
+          should see why that money is not in these three lines.
+        */}
+        {briefing.money.census.basis.settlementsOutsideWindow > 0 ? (
+          <p className="max-w-[68ch] text-xs leading-relaxed text-fg">
+            {SETTLEMENTS_NOT_IN_THIS_WINDOW}
+          </p>
+        ) : null}
       </section>
 
       {/* CLASS 3 — service value. A price, and never money. */}
@@ -604,6 +616,11 @@ function DeliveredMoney({ briefing }: { briefing: FinancialBriefing }) {
               <Unknown cause={c.collectionRateBasisPoints.cause} />
             )}
           </Line>
+          {c.refundedToZeroVisits.known && c.refundedToZeroVisits.value > 0 ? (
+            <Line label="Paid by card, then refunded in full">
+              <Visits fact={c.refundedToZeroVisits} />
+            </Line>
+          ) : null}
           <Line label="No payment recorded">
             <Visits fact={c.unresolvedVisits} />
           </Line>
@@ -623,6 +640,16 @@ function DeliveredMoney({ briefing }: { briefing: FinancialBriefing }) {
         {c.cardPaidWithoutAPrice.known && c.cardPaidWithoutAPrice.value > 0 ? (
           <p className="max-w-[68ch] text-xs leading-relaxed text-fg">
             {PAID_BUT_NOTHING_TO_COLLECT}
+          </p>
+        ) : null}
+        {/*
+          A refunded visit used to be counted as collected here, which put a
+          100% rate beside $0.00 collected. It now has its own line, and this
+          says why it is in neither the rate nor "No payment recorded".
+        */}
+        {c.refundedToZeroVisits.known && c.refundedToZeroVisits.value > 0 ? (
+          <p className="max-w-[68ch] text-xs leading-relaxed text-fg">
+            {REFUNDED_TO_ZERO_EXPLAINED}
           </p>
         ) : null}
         <p className="max-w-[68ch] text-xs leading-relaxed text-fg">
@@ -743,8 +770,12 @@ function BasisNote({ briefing }: { briefing: FinancialBriefing }) {
     );
   }
   if (b.settlementsOutsideWindow > 0) {
+    // NOT "a visit outside this window". Settlements are read studio-wide, so
+    // most of these do belong to other periods — but a row can also name a
+    // visit inside the window that has not elapsed, or one that was cancelled,
+    // and the old sentence asserted something false about it.
     reasons.push(
-      `${b.settlementsOutsideWindow} recorded payment${b.settlementsOutsideWindow === 1 ? "" : "s"} outside Hone name${b.settlementsOutsideWindow === 1 ? "s" : ""} a visit outside this window, so ${b.settlementsOutsideWindow === 1 ? "it is" : "they are"} not counted here`,
+      `${b.settlementsOutsideWindow} payment${b.settlementsOutsideWindow === 1 ? "" : "s"} recorded outside Hone name${b.settlementsOutsideWindow === 1 ? "s" : ""} a visit that is not one of the delivered visits in this window, so ${b.settlementsOutsideWindow === 1 ? "it is" : "they are"} not counted here`,
     );
   }
   return (

@@ -227,6 +227,53 @@ describe("NC3 — the three evidence classes are never summed into one another",
   });
 });
 
+describe("NC5 — a reversed payment is not a collection, an absent one is not a zero", () => {
+  it("collection-rate membership is decided AFTER netting, never when the charge lands", () => {
+    // THE DEFECT: `cardPaid.add(id)` sat inside the charge loop, before the
+    // refund was read. A visit charged and then refunded in full counted as
+    // collected, so the screen printed "1 visit paid by card / 100.0%" directly
+    // above "Collected by card, after refunds: $0.00" — and claimed the account
+    // was complete. It also kept the visit out of "No payment recorded", so it
+    // appeared in no honest line at all.
+    //
+    // NOT AN EDGE CASE: lib/billing/payment-refund.ts writes full reversals
+    // only, so a net of zero is the shape of EVERY refund Hone can issue.
+    expect(CODE.model).toMatch(/net\s*>\s*0\)\s*cardPaid\.add/);
+    expect(CODE.model).not.toMatch(
+      /deliveredTreatment\.has\(id\)\)\s*continue;\s*cardPaid\.add/,
+    );
+  });
+
+  it("a reversed visit gets its own line rather than either false sentence", () => {
+    expect(CODE.model).toContain("refundedToZeroVisits");
+    expect(CODE.spine).toContain("refundedToZeroVisits");
+    expect(CODE.copy).toContain("REFUNDED_TO_ZERO_EXPLAINED");
+    expect(CODE.spine).toContain("REFUNDED_TO_ZERO_EXPLAINED");
+  });
+
+  it("the attested gate asks about THIS WINDOW, never the studio's all-time rows", () => {
+    // Settlements are read studio-wide, so gating on `input.settlements.length`
+    // let the FIRST settlement a studio ever wrote turn every OTHER window's
+    // external money into a confident $0.00 — the exact sentence Operator
+    // decision 4 exists to prevent, printed in every unsettled period.
+    expect(CODE.model).toContain("const nothingAttested = attestedRows === 0;");
+    expect(CODE.model).not.toContain("input.settlements.length === 0");
+  });
+
+  it("settlements are narrowed against every delivered visit, not treatment only", () => {
+    // Cash a practitioner wrote down for a delivered CONSULTATION is attested
+    // money. Narrowing to treatment dropped it from the external total.
+    expect(CODE.model).toContain("deliveredAny.has(s.appointment_id)");
+    expect(CODE.model).not.toContain("deliveredTreatment.has(s.appointment_id)");
+  });
+
+  it("no sentence tells the owner a settlement names a visit OUTSIDE this window", () => {
+    // It was false for a payment recorded against a delivered consultation —
+    // on a screen already showing that consultation inside the window.
+    expect(ALL_CODE).not.toContain("a visit outside this window");
+  });
+});
+
 describe("P2-A — consultation is decided by the shared predicate, never by price", () => {
   it("FIN imports the SAME predicate the booking page and its server guard use", () => {
     expect(CODE.model).toContain('from "@/lib/booking/consultation"');

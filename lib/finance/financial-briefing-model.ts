@@ -372,7 +372,16 @@ export type DeliveryBasis = {
   readonly unvalued: number;
   /** `blocked_ends_at` unreadable, so chair time is unmeasurable. */
   readonly unmeasurable: number;
-  /** Settlement rows naming an appointment outside this window. */
+  /**
+   * Settlement rows naming an appointment that is not a delivered visit of
+   * this window.
+   *
+   * Settlements are read STUDIO-WIDE, so most such rows belong to other
+   * periods. The name is kept; the sentence on screen says what the count
+   * actually is, because the two are not identical: a row can also name a
+   * visit inside this window that has not yet elapsed, or one that was
+   * cancelled.
+   */
   readonly settlementsOutsideWindow: number;
   /**
    * Money or duration columns that did not arrive as a finite number.
@@ -428,6 +437,15 @@ export type DeliveredMoneyCensus = {
    * makes the two paid-visit numbers on the screen reconcile.
    */
   readonly cardPaidWithoutAPrice: Fact<number>;
+  /**
+   * Chargeable delivered treatment whose card payment was refunded to nothing.
+   *
+   * Its own line because such a visit belongs in none of the others: money was
+   * collected and sent back, so it is not in the collection rate, and it is
+   * emphatically not "No payment recorded". v1 refunds are always full
+   * reversals, so this is the shape every refund Hone writes produces.
+   */
+  readonly refundedToZeroVisits: Fact<number>;
   readonly collectionRateBasisPoints: Fact<number>;
   readonly unresolvedVisits: Fact<number>;
   readonly unresolvedServiceValueCents: Fact<number>;
@@ -490,6 +508,18 @@ export function summarizeDeliveredMoney(input: {
   let unreadableAmounts = 0;
 
   const deliveredTreatment = new Set<string>();
+  /**
+   * EVERY delivered visit in this window, whatever kind it turned out to be.
+   *
+   * SETTLEMENTS ARE NARROWED AGAINST THIS, NOT AGAINST THE TREATMENT SET. A
+   * practitioner who writes down cash for a delivered consultation attested
+   * real money. Narrowing to treatment dropped that money from the external
+   * total AND reported the loss as a settlement naming "a visit outside this
+   * window" — a sentence that was false on a screen already showing the
+   * consultation inside the window. An unclassifiable visit is in here too: a
+   * missing service row says nothing about whether somebody was paid.
+   */
+  const deliveredAny = new Set<string>();
   const chargeable = new Map<string, number>();
   const bookedMinutesOf = new Map<string, number>();
   let consultationVisits = 0;
@@ -512,6 +542,10 @@ export function summarizeDeliveredMoney(input: {
       continue;
     }
     if (endsAt >= at) continue; // has not elapsed: not delivered, not a defect
+
+    // Delivered, whatever it proves to be. Recorded BEFORE classification, so a
+    // visit whose service is gone is still a visit a settlement can name.
+    deliveredAny.add(row.id);
 
     const service = row.service_id === null ? null : serviceById.get(row.service_id);
     const serviceClass = classifyService(service);
@@ -572,7 +606,12 @@ export function summarizeDeliveredMoney(input: {
   // and the sum now describe the same set; the excluded rows are disclosed by
   // `basis.unreadableAmounts`.
   let summedCharges = 0;
-  const cardPaid = new Set<string>();
+  /**
+   * Visits a card charge LANDED on. Not yet "paid": whether the money stayed
+   * is not known until the charge has been netted by its own refund, which is
+   * why this set is no longer the one the collection rate reads.
+   */
+  const chargedVisits = new Set<string>();
   // Each charge netted by its OWN refund, whenever that refund happened. This
   // is the service-period numerator and it never touches the window.
   const netOnVisit = new Map<string, number>();
@@ -588,7 +627,7 @@ export function summarizeDeliveredMoney(input: {
     summedCharges += 1;
     const id = c.appointment_id;
     if (id === null || !deliveredTreatment.has(id)) continue;
-    cardPaid.add(id);
+    chargedVisits.add(id);
     // A SUCCEEDED REFUND WITH AN UNREADABLE AMOUNT MAKES THE NET UNKNOWABLE.
     // Treating it as zero would count the whole charge as collected and
     // OVERSTATE what the visit earned — the one direction a money figure must
@@ -606,6 +645,37 @@ export function summarizeDeliveredMoney(input: {
     }
     const previous = netOnVisit.get(id);
     netOnVisit.set(id, (previous === undefined ? 0 : previous) + amount - refunded);
+  }
+
+  /**
+   * WHETHER THE MONEY STAYED, decided AFTER the netting rather than when the
+   * charge was seen.
+   *
+   * The defect this replaces: membership was taken at the moment a charge
+   * landed, so a visit charged and then refunded in full counted as collected.
+   * The screen read "1 visit paid by card · 100.0%" directly above "Collected
+   * by card, after refunds: $0.00", claimed the account was complete, and kept
+   * the visit out of "No payment recorded" as well — so it appeared in no
+   * honest line at all. That overstates collection, the one direction a money
+   * figure must never fail in.
+   *
+   * IT IS NOT AN EDGE CASE. lib/billing/payment-refund.ts states its v1
+   * contract outright — "No partial refund. v1 sets refund_amount_cents =
+   * amount_cents always" — so a full reversal is the ONLY refund shape this
+   * product can currently write, and it is exactly the shape that nets to zero.
+   *
+   * A visit whose net could not be established joins NEITHER set: an unknown
+   * net is not a collection and it is not a reversal. It is already disclosed
+   * by `basis.unreadableAmounts`.
+   */
+  const cardPaid = new Set<string>();
+  const refundedToZero = new Set<string>();
+  for (const id of chargedVisits) {
+    if (unnettable.has(id)) continue;
+    const net = netOnVisit.get(id);
+    if (net === undefined) continue;
+    if (net > 0) cardPaid.add(id);
+    else refundedToZero.add(id);
   }
 
   // Windowed on `refunded_at` INDEPENDENTLY, because a refund can fall in a
@@ -654,9 +724,13 @@ export function summarizeDeliveredMoney(input: {
   let waivedCents = 0;
   let stillOwedCents = 0;
   let settlementsOutsideWindow = 0;
+  // Rows that named a delivered visit in this window AND carried a readable
+  // amount. This — not the studio's all-time row count — is what decides
+  // whether "nothing was attested" is a true thing to say about this window.
+  let attestedRows = 0;
   const settled = new Set<string>();
   for (const s of input.settlements) {
-    if (s.appointment_id === null || !deliveredTreatment.has(s.appointment_id)) {
+    if (s.appointment_id === null || !deliveredAny.has(s.appointment_id)) {
       settlementsOutsideWindow += 1;
       continue;
     }
@@ -666,6 +740,7 @@ export function summarizeDeliveredMoney(input: {
       unreadableAmounts += 1;
       continue;
     }
+    attestedRows += 1;
     if (EXTERNALLY_COLLECTED.has(s.method)) externallyAttestedCents += amount;
     else if (s.method === "waived") waivedCents += amount;
     else if (s.method === "still_owes") stillOwedCents += amount;
@@ -675,7 +750,16 @@ export function summarizeDeliveredMoney(input: {
   // nobody wrote it down, which is exactly the state production is in: one row
   // in the entire database, and none for this studio. Rendering 0 would tell an
   // owner who takes cash every week that she took none. Operator decision 4.
-  const nothingAttested = input.settlements.length === 0;
+  //
+  // AND IT IS A QUESTION ABOUT THIS WINDOW. Gating on `input.settlements.length`
+  // asked the studio's ALL-TIME row count instead: settlements are read
+  // studio-wide, so the first row a studio ever wrote flipped every OTHER
+  // window from "Nothing recorded" to a confident $0.00 — printing the exact
+  // sentence the paragraph above exists to prevent, in every period the studio
+  // had not settled. A row whose amount could not be read does not open the
+  // gate either: it is evidence that something was attested, never evidence of
+  // an amount, and it is disclosed by `basis.unreadableAmounts`.
+  const nothingAttested = attestedRows === 0;
   const attested = (cents: number): Fact<number> =>
     nothingAttested ? unknownBecause<number>("not_recorded") : known(cents);
 
@@ -696,6 +780,11 @@ export function summarizeDeliveredMoney(input: {
   // shown only when it actually happens. Production holds three null-priced
   // services today, so this is reachable, not hypothetical.
   let cardPaidWithoutAPrice = 0;
+  // Chargeable visits whose card payment was reversed to nothing. Counted so
+  // they leave the collection rate WITHOUT falling into "No payment recorded",
+  // which would be its own false sentence: a payment was recorded, and then it
+  // was sent back.
+  let refundedToZeroVisits = 0;
   for (const id of cardPaid) {
     if (!chargeable.has(id)) cardPaidWithoutAPrice += 1;
   }
@@ -704,6 +793,12 @@ export function summarizeDeliveredMoney(input: {
       cardPaidChargeable += 1;
       continue;
     }
+    if (refundedToZero.has(id)) {
+      refundedToZeroVisits += 1;
+      continue;
+    }
+    // Net unknowable: neither collected nor unrecorded. Carried by `basis`.
+    if (unnettable.has(id)) continue;
     if (settled.has(id)) continue;
     unresolvedVisits += 1;
     unresolvedServiceValueCents += value;
@@ -749,6 +844,7 @@ export function summarizeDeliveredMoney(input: {
 
     cardPaidVisits: known(cardPaidChargeable),
     cardPaidWithoutAPrice: known(cardPaidWithoutAPrice),
+    refundedToZeroVisits: known(refundedToZeroVisits),
     collectionRateBasisPoints,
     unresolvedVisits: known(unresolvedVisits),
     unresolvedServiceValueCents: known(unresolvedServiceValueCents),
@@ -808,6 +904,7 @@ export function unreadableDeliveredMoney(
     stillOwedCents: absent,
     cardPaidVisits: absent,
     cardPaidWithoutAPrice: absent,
+    refundedToZeroVisits: absent,
     collectionRateBasisPoints: absent,
     unresolvedVisits: absent,
     unresolvedServiceValueCents: absent,
