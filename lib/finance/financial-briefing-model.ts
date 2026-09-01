@@ -438,7 +438,7 @@ export type DeliveredMoneyCensus = {
    */
   readonly cardPaidWithoutAPrice: Fact<number>;
   /**
-   * Chargeable delivered treatment whose card payment was refunded to nothing.
+   * Delivered treatment whose card payment was refunded to nothing.
    *
    * Its own line because such a visit belongs in none of the others: money was
    * collected and sent back, so it is not in the collection rate, and it is
@@ -780,11 +780,6 @@ export function summarizeDeliveredMoney(input: {
   // shown only when it actually happens. Production holds three null-priced
   // services today, so this is reachable, not hypothetical.
   let cardPaidWithoutAPrice = 0;
-  // Chargeable visits whose card payment was reversed to nothing. Counted so
-  // they leave the collection rate WITHOUT falling into "No payment recorded",
-  // which would be its own false sentence: a payment was recorded, and then it
-  // was sent back.
-  let refundedToZeroVisits = 0;
   for (const id of cardPaid) {
     if (!chargeable.has(id)) cardPaidWithoutAPrice += 1;
   }
@@ -793,10 +788,10 @@ export function summarizeDeliveredMoney(input: {
       cardPaidChargeable += 1;
       continue;
     }
-    if (refundedToZero.has(id)) {
-      refundedToZeroVisits += 1;
-      continue;
-    }
+    // Reversed to nothing. Out of the rate, and NOT "No payment recorded" —
+    // a payment was recorded, and then it was sent back. Counted for the whole
+    // set below, not just here.
+    if (refundedToZero.has(id)) continue;
     // Net unknowable: neither collected nor unrecorded. Carried by `basis`.
     if (unnettable.has(id)) continue;
     if (settled.has(id)) continue;
@@ -844,7 +839,14 @@ export function summarizeDeliveredMoney(input: {
 
     cardPaidVisits: known(cardPaidChargeable),
     cardPaidWithoutAPrice: known(cardPaidWithoutAPrice),
-    refundedToZeroVisits: known(refundedToZeroVisits),
+    // EVERY delivered treatment visit reversed to nothing, not only the ones
+    // that carried a price. Counting only the chargeable ones left a priceless
+    // treatment that was charged and then refunded explaining nothing: it sat
+    // in the service-period visit count, outside `cardPaidVisits`, and outside
+    // `cardPaidWithoutAPrice` too — so two adjacent numbers on the screen
+    // disagreed with no line saying why, which is the mismatch that reads as a
+    // bug report.
+    refundedToZeroVisits: known(refundedToZero.size),
     collectionRateBasisPoints,
     unresolvedVisits: known(unresolvedVisits),
     unresolvedServiceValueCents: known(unresolvedServiceValueCents),

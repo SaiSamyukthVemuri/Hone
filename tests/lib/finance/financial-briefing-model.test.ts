@@ -870,6 +870,30 @@ describe("a card payment that was REFUNDED IN FULL is not a collection", () => {
     expect(value(c.collectedOnDeliveredCents)).toBe(10_000);
   });
 
+  it("a PRICELESS treatment reversed to nothing still explains the gap it opens", () => {
+    // THE REGRESSION THIS PINS. Counting only CHARGEABLE reversals left this
+    // visit in the service-period count, outside `cardPaidVisits`, and outside
+    // `cardPaidWithoutAPrice` as well — so the screen showed 1 against 0 with
+    // every explanatory line at zero and `basis.complete` still true. An
+    // unexplained mismatch between two adjacent numbers is a bug report.
+    const c = census({
+      appointments: [appt({ id: "f", service_id: FREE_TREATMENT })],
+      charges: [
+        charge({
+          appointment_id: "f",
+          amount_cents: 2_000,
+          refund_amount_cents: 2_000,
+          refund_status: "succeeded",
+        }),
+      ],
+    });
+    expect(value(c.chargeableTreatmentVisits)).toBe(0); // nothing to collect
+    expect(value(c.collectedOnDeliveredVisits)).toBe(1); // money did land
+    expect(value(c.cardPaidVisits)).toBe(0); // and did not stay
+    expect(value(c.cardPaidWithoutAPrice)).toBe(0); // not THIS explanation...
+    expect(value(c.refundedToZeroVisits)).toBe(1); // ...this one
+  });
+
   it("a visit whose net is UNKNOWABLE joins neither the rate nor the unresolved", () => {
     // A succeeded refund with an unreadable amount. Counting it either way
     // would assert something no row establishes.
