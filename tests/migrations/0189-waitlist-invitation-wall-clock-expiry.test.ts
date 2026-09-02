@@ -117,14 +117,22 @@ describe("0189 — 0188 IS FROZEN AND IS NOT EDITED", () => {
     expect(APPLY_PATH).not.toMatch(/\btruncate\b/i);
   });
 
-  it("replaces EXACTLY the three timestamp authorities and nothing else", () => {
+  it("replaces EXACTLY the nine timestamp authorities and nothing else", () => {
     // RELEASE joined them: it makes no TTL comparison, but it STAMPS twice and
     // both stamps used now(). Measured, it recorded a release six milliseconds
     // BEFORE the issued_at of the invitation it released.
     const defs = [...CODE.matchAll(/create or replace function public\.(\w+)/g)].map(
       (m) => m[1],
     );
-    expect(defs.sort()).toEqual([EXPIRE, REDEEM, RELEASE].sort());
+    expect(defs.sort()).toEqual([
+      "claim_new_client_waitlist_entries",
+      "claim_new_client_waitlist_entry",
+      "issue_new_client_waitlist_invitation",
+      "new_client_waitlist_entries_record_event",
+      "record_new_client_waitlist_conversion",
+      "remove_new_client_waitlist_entry",
+      EXPIRE, REDEEM, RELEASE,
+    ].sort());
   });
 });
 
@@ -340,14 +348,22 @@ describe("0189 — the clock is read AFTER the lock, and only there", () => {
     expect(body(EXPIRE)).toMatch(/status\s*=\s*'expired',\s*expired_at\s*=\s*v_decision_at/);
   });
 
-  it("does NOT text-replace now() elsewhere: issue() is untouched", () => {
+  it("issue() is replaced, but its INVITATION stamps are deliberately untouched", () => {
     // Scope discipline, and the boundary moved once on evidence. issue()
     // derives expires_at from now(); its failure direction is a SHORTER real
     // window, never a longer one, and no defect was reproduced there, so it
     // stays as applied. release() was ALSO excluded on the grounds that it makes
     // no clock comparison — true, and beside the point, because it stamps. It is
     // now in scope; issue() is still not.
-    expect(CODE).not.toMatch(/create or replace function public\.issue_new_client_waitlist_invitation/);
+    // issue() is in scope for its ENTRY evidence (invited_at) because a census
+    // path inverted on it. Its INVITATION stamps are not: no path inverts on
+    // them, issue() writes the invitation BEFORE the entry so
+    // issued_at <= invited_at stays truthful, and moving expires_at would change
+    // the window of every future invitation.
+    const b = body("issue_new_client_waitlist_invitation");
+    expect(b).toMatch(/invited_at = v_decision_at/);
+    expect(b).toMatch(/v_expires := now\(\) \+ make_interval/);
+    expect(CODE).not.toContain("new_client_waitlist_invitations_server_timestamps");
   });
 });
 
@@ -397,40 +413,39 @@ describe("0189 — the deployed contract is preserved", () => {
     expect(CODE).toMatch(/returns text\s*\nlanguage plpgsql/);
   });
 
-  it("keeps SECURITY DEFINER and the pinned search_path on all three", () => {
-    expect([...CODE.matchAll(/security definer/g)].length).toBe(3);
+  it("keeps SECURITY DEFINER and the pinned search_path on every replacement", () => {
+    // 8 commands carry SECURITY DEFINER and volatility; the 9th replacement is
+    // the event TRIGGER function, which has neither by design (0188 defines it
+    // as a plain trigger function) but does carry the pinned search_path.
+    expect([...CODE.matchAll(/security definer/g)].length).toBe(8);
+    expect([...CODE.matchAll(/^volatile$/gm)].length).toBe(8);
     expect(
       [...CODE.matchAll(/set search_path = pg_catalog, pg_temp/g)].length,
-    ).toBe(3);
-    expect([...CODE.matchAll(/language plpgsql/g)].length).toBe(3);
-    expect([...CODE.matchAll(/^volatile$/gm)].length).toBe(3);
+    ).toBe(9);
+    expect([...CODE.matchAll(/language plpgsql/g)].length).toBe(9);
   });
 
   it("adds no new result word to any closed vocabulary", () => {
-    const words = new Set(
-      [...CODE.matchAll(/'([a-z_]+)'::text|return '([a-z_]+)'/g)].map((m) => m[1] ?? m[2]),
+    // DERIVED FROM 0188, not transcribed. The invariant is "0189 introduces no
+    // word 0188 does not already contain", so the allowlist cannot drift out of
+    // date as more of 0188's commands come into scope — and a genuinely new
+    // word still fails.
+    const frozen = readFileSync(
+      path.join(ROOT, "supabase/migrations", fileForVersion("0188")),
+      "utf8",
     );
-    // Exactly 0188's vocabulary for these two commands.
-    for (const w of words) {
-      expect(
-        [
-          "invalid_token",
-          "redeemed",
-          "invalid_input",
-          "already_redeemed",
-          "not_expired",
-          "expired",
-          "not_invited",
-          "released",
-          "not_releasable",
-          "ok",
-        ],
-        `0189 introduces a new result word: ${w}`,
-      ).toContain(w);
+    const words = (src: string) =>
+      new Set(
+        [...src.matchAll(/'([a-z_]+)'::text|return '([a-z_]+)'/g)].map((m) => m[1] ?? m[2]),
+      );
+    const before = words(frozen);
+    for (const w of words(CODE)) {
+      expect(before, `0189 introduces a new result word: ${w}`).toContain(w);
     }
-    // ...and the words the repair depends on are still there.
+    // ...and the words this repair depends on are still there.
     expect(CODE).toContain("'invalid_token'");
     expect(CODE).toContain("'not_expired'");
+    expect(CODE).toContain("'already_redeemed'");
   });
 
   it("keeps redemption terminal in expire, checked before anything is written", () => {
@@ -572,5 +587,157 @@ describe("0189 — release stamps from one post-lock instant", () => {
     expect([...poisoned.matchAll(/clock_timestamp\(\)/g)].length).toBe(0);
     // ...while the REAL body still satisfies the law.
     expect([...real.matchAll(/clock_timestamp\(\)/g)].length).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE TEMPORAL CLASS, CLOSED.
+//
+// Four reviews found the same defect in a different command. These assert the
+// property rather than the instances: nothing in 0189 decides or stamps from a
+// transaction-bound clock, and the lifecycle event log takes the transition's
+// own evidence rather than a second reading of the moment.
+// ---------------------------------------------------------------------------
+describe("0189 — no transaction-bound clock survives anywhere", () => {
+  it("no replaced function uses now(), transaction_timestamp or statement_timestamp", () => {
+    // CODE is comment-stripped, so the prose above that names these does not
+    // satisfy the assertion.
+    // EXACTLY ONE now() survives in the whole file, and it is the deliberate
+    // §6 exception: issue()'s expires_at derivation, which no census path
+    // inverts and which is internally consistent with 0188's issued_at trigger.
+    const nows = [...CODE.matchAll(/\bnow\(\)/g)].length;
+    expect(nows, "a transaction-bound clock crept back in").toBe(1);
+    expect(CODE).toMatch(/v_expires := now\(\) \+ make_interval/);
+    expect(CODE).not.toMatch(/transaction_timestamp/);
+    expect(CODE).not.toMatch(/statement_timestamp/);
+    // ...and no LIFECYCLE stamp anywhere uses it.
+    expect(CODE).not.toMatch(/_at\s*=\s*now\(\)/);
+  });
+
+  it("replaces every command that stamps entry lifecycle evidence", () => {
+    const defs = [...CODE.matchAll(/create or replace function public\.(\w+)/g)].map((m) => m[1]);
+    for (const fn of [
+      "redeem_new_client_waitlist_invitation",
+      "expire_new_client_waitlist_invitation",
+      "release_new_client_waitlist_entry",
+      "claim_new_client_waitlist_entries",
+      "claim_new_client_waitlist_entry",
+      "issue_new_client_waitlist_invitation",
+      "record_new_client_waitlist_conversion",
+      "remove_new_client_waitlist_entry",
+      "new_client_waitlist_entries_record_event",
+    ]) {
+      expect(defs, `0189 does not replace ${fn}`).toContain(fn);
+    }
+    expect(defs).toHaveLength(9);
+  });
+
+  it("every replaced COMMAND reads the clock exactly once", () => {
+    for (const fn of [
+      "redeem_new_client_waitlist_invitation",
+      "expire_new_client_waitlist_invitation",
+      "release_new_client_waitlist_entry",
+      "claim_new_client_waitlist_entries",
+      "claim_new_client_waitlist_entry",
+      "issue_new_client_waitlist_invitation",
+      "record_new_client_waitlist_conversion",
+      "remove_new_client_waitlist_entry",
+    ]) {
+      const uses = [...body(fn).matchAll(/clock_timestamp\(\)/g)].length;
+      expect(uses, `${fn} reads the clock ${uses} times`).toBe(1);
+    }
+  });
+
+  it("every entry-lifecycle stamp comes from the post-lock local", () => {
+    for (const [fn, col] of [
+      ["claim_new_client_waitlist_entries", "claimed_at"],
+      ["claim_new_client_waitlist_entry", "claimed_at"],
+      ["issue_new_client_waitlist_invitation", "invited_at"],
+      ["record_new_client_waitlist_conversion", "converted_at"],
+      ["remove_new_client_waitlist_entry", "removed_at"],
+    ] as const) {
+      const b = body(fn);
+      expect(b, `${fn} does not stamp ${col} from v_decision_at`).toMatch(
+        new RegExp(`${col}\\s*=\\s*v_decision_at`),
+      );
+    }
+  });
+
+  it("the entry mutex precedes the clock in every command that takes one", () => {
+    // claim_new_client_waitlist_entries is the exception BY DESIGN: it uses
+    // FOR UPDATE SKIP LOCKED, which never waits, so there is no wait for a
+    // stamp to be backdated across.
+    for (const fn of [
+      "expire_new_client_waitlist_invitation",
+      "release_new_client_waitlist_entry",
+      "claim_new_client_waitlist_entry",
+      "issue_new_client_waitlist_invitation",
+      "record_new_client_waitlist_conversion",
+      "remove_new_client_waitlist_entry",
+    ]) {
+      const b = body(fn);
+      const lock = b.search(/from public\.new_client_waitlist_entries e[\s\S]*?for update/);
+      const clock = b.indexOf("v_decision_at := clock_timestamp()");
+      expect(lock, `${fn} takes no entry lock`).toBeGreaterThan(-1);
+      expect(clock, `${fn} reads no clock`).toBeGreaterThan(-1);
+      expect(clock, `${fn} reads the clock BEFORE the entry mutex`).toBeGreaterThan(lock);
+    }
+    expect(body("claim_new_client_waitlist_entries")).toContain("for update skip locked");
+  });
+
+  it("issue leaves the INVITATION's own stamps alone, deliberately", () => {
+    // §6 boundary, kept: no census path attributes an inversion to issued_at or
+    // expires_at, issue() writes the invitation BEFORE the entry so
+    // issued_at <= invited_at stays truthful, and moving expires_at would change
+    // the window of every future invitation.
+    const b = body("issue_new_client_waitlist_invitation");
+    expect(b).toMatch(/v_expires := now\(\) \+ make_interval/);
+    expect(b).toMatch(/invited_at = v_decision_at/);
+    // ...and the 0188 issued_at trigger is NOT replaced here.
+    expect(CODE).not.toContain("new_client_waitlist_invitations_server_timestamps");
+  });
+});
+
+describe("0189 — the lifecycle event log takes the transition's own evidence", () => {
+  const trig = () => body("new_client_waitlist_entries_record_event");
+
+  it("passes occurred_at explicitly instead of falling through to the column default", () => {
+    const b = trig();
+    expect([...b.matchAll(/occurred_at/g)].length).toBeGreaterThanOrEqual(2); // both arms
+    expect(b).toMatch(/coalesce\(new\.joined_at, clock_timestamp\(\)\)/);
+  });
+
+  it("maps every status to its own canonical evidence column", () => {
+    const b = trig();
+    for (const [status, col] of [
+      ["claimed", "claimed_at"],
+      ["invited", "invited_at"],
+      ["converted", "converted_at"],
+      ["expired", "expired_at"],
+      ["released", "released_at"],
+      ["removed", "removed_at"],
+    ] as const) {
+      expect(b, `${status} does not map to ${col}`).toMatch(
+        new RegExp(`when '${status}'\\s*then new\\.${col}`),
+      );
+    }
+    // `waiting` deliberately has none: requeue clears the cycle evidence.
+    expect(b).toMatch(/else null/);
+    expect(b).toMatch(/coalesce\(v_at, clock_timestamp\(\)\)/);
+  });
+
+  it("takes no time from the caller: no GUC, no setting, no argument", () => {
+    const b = trig();
+    expect(b).not.toMatch(/current_setting|set_config|pg_catalog\.set_config/);
+    expect(b).not.toMatch(/\bnow\(\)/);
+  });
+
+  it("NON-VACUITY: dropping the explicit occurred_at restores the default", () => {
+    const real = trig();
+    const poisoned = real.replace(/,\s*occurred_at\)/g, ")");
+    expect(poisoned, "the mutation did not apply — this control is vacuous").not.toEqual(real);
+    expect(poisoned).not.toMatch(/,\s*occurred_at\)/);
+    // The real body still names the column in both insert lists.
+    expect([...real.matchAll(/,\s*occurred_at\)/g)].length).toBe(2);
   });
 });

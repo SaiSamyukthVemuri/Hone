@@ -1447,3 +1447,270 @@ describe("RELEASE — concurrency stays coherent", () => {
     expect(["released", "not_releasable"]).toContain(rel);
   });
 });
+
+// ===========================================================================
+// TEMPORAL AUTHORITY — the whole lifecycle, not one command at a time.
+//
+// Four reviews in a row found the same defect in a different WAIT-03 command:
+// PostgreSQL's now() is transaction_timestamp(), so any command that stamps
+// with it records an instant that may precede the transition it describes. The
+// tests below stop asking "is THIS command fixed" and ask the class question:
+// can ANY legal lifecycle path be made to run backwards?
+//
+// Measured before the repair, with the commands already fixed but the event
+// trigger still on `default now()`, the append-only log read:
+//     waiting 15:03:34.430 / claimed .444 / released .491 / invited .499
+// — released BEFORE invited. And an adversarial census then found the same
+// inversion in claim, issue's invited_at, and removal.
+// ===========================================================================
+
+type EventRow = { from_status: string | null; to_status: string; occurred_at: Date };
+
+/**
+ * Events for an entry in TRANSITION order, reconstructed from the state chain.
+ *
+ * There is no sequence column and `id` is a v4 UUID, so physical order is not
+ * insertion order — an earlier draft used ctid and produced false inversions
+ * once rows moved. Ordering by occurred_at would be circular, since occurred_at
+ * is the thing under test. The chain is the only independent evidence: the
+ * INSERT event has from_status NULL, and every later event's from_status is the
+ * previous event's to_status.
+ */
+async function eventsInInsertionOrder(entryId: string): Promise<EventRow[]> {
+  const rows = (
+    await adminQuery(
+      `select from_status, to_status, occurred_at from public.new_client_waitlist_entry_events
+        where entry_id = $1`,
+      [entryId],
+    )
+  ).rows as EventRow[];
+  const remaining = [...rows];
+  const head = remaining.findIndex((r) => r.from_status === null);
+  expect(head, "no INSERT event for this entry").toBeGreaterThan(-1);
+  const chain: EventRow[] = remaining.splice(head, 1);
+  while (remaining.length) {
+    const prev = chain[chain.length - 1].to_status;
+    const nextAt = remaining.findIndex((r) => r.from_status === prev);
+    if (nextAt < 0) break; // not a single linear chain; stop rather than guess
+    chain.push(...remaining.splice(nextAt, 1));
+  }
+  expect(chain.length, "the event chain is not linear for this fixture").toBe(rows.length);
+  return chain;
+}
+
+/** The first place the append-only log goes backwards, or null. */
+function firstInversion(rows: EventRow[]): string | null {
+  for (let i = 1; i < rows.length; i += 1) {
+    if (rows[i].occurred_at.getTime() < rows[i - 1].occurred_at.getTime()) {
+      return `${rows[i - 1].to_status}(${rows[i - 1].occurred_at.toISOString()}) -> ${rows[i].to_status}(${rows[i].occurred_at.toISOString()})`;
+    }
+  }
+  return null;
+}
+
+/** A studio + owner, with no entry yet. */
+async function bareStudio(label: string) {
+  return seedStudioOwner(label);
+}
+async function joinEntry(s: { studioId: string; uniq: string }) {
+  const r = await adminQuery(
+    `select entry_id from public.join_new_client_waitlist($1,$2,$3,null)`,
+    [s.studioId, `P ${s.uniq}`, `p-${randomUUID().slice(0, 8)}@harness.local`],
+  );
+  return r.rows[0].entry_id as string;
+}
+/** An independent transaction opened NOW, whose transaction_timestamp is old. */
+async function oldTransaction() {
+  const c = await conn();
+  await c.query("begin");
+  await c.query(`select transaction_timestamp()`);
+  return c;
+}
+
+describe("the append-only log never runs backwards on any legal path", () => {
+  // Each case opens a transaction BEFORE the preceding transition commits, then
+  // performs its own transition from that older transaction. Under
+  // transaction-start stamping every one of these inverts.
+
+  it("JOIN -> CLAIM", async () => {
+    const s = await bareStudio("tmp-a");
+    const old = await oldTransaction();
+    const e = await joinEntry(s); // joined AFTER the claiming transaction began
+    await old.query(`select public.claim_new_client_waitlist_entry($1,$2,$3)`, [s.studioId, e, s.userId]);
+    await old.query("commit");
+    await old.end();
+    expect(firstInversion(await eventsInInsertionOrder(e))).toBeNull();
+  });
+
+  it("CLAIM -> INVITE", async () => {
+    const s = await bareStudio("tmp-b");
+    const e = await joinEntry(s);
+    const old = await oldTransaction();
+    await adminQuery(`select public.claim_new_client_waitlist_entry($1,$2,$3)`, [s.studioId, e, s.userId]);
+    await old.query(`select public.issue_new_client_waitlist_invitation($1,$2,$3,72)`, [s.studioId, e, s.userId]);
+    await old.query("commit");
+    await old.end();
+    const rows = await eventsInInsertionOrder(e);
+    expect(firstInversion(rows)).toBeNull();
+    // ...and the entry's own evidence agrees with the event.
+    const ent = await adminQuery(`select invited_at from public.new_client_waitlist_entries where id=$1`, [e]);
+    expect((rows.find((r) => r.to_status === "invited")!).occurred_at.getTime()).toBe(
+      (ent.rows[0].invited_at as Date).getTime(),
+    );
+  });
+
+  it("INVITE -> RELEASE", async () => {
+    const s = await bareStudio("tmp-c");
+    const e = await joinEntry(s);
+    await adminQuery(`select public.claim_new_client_waitlist_entry($1,$2,$3)`, [s.studioId, e, s.userId]);
+    const old = await oldTransaction();
+    await adminQuery(`select public.issue_new_client_waitlist_invitation($1,$2,$3,72)`, [s.studioId, e, s.userId]);
+    await old.query(`select public.release_new_client_waitlist_entry($1,$2,$3)`, [s.studioId, e, s.userId]);
+    await old.query("commit");
+    await old.end();
+    expect(firstInversion(await eventsInInsertionOrder(e))).toBeNull();
+  });
+
+  it("REDEEM -> CONVERT", async () => {
+    const s = await bareStudio("tmp-d");
+    const e = await joinEntry(s);
+    await adminQuery(`select public.claim_new_client_waitlist_entry($1,$2,$3)`, [s.studioId, e, s.userId]);
+    const iss = await adminQuery(
+      `select raw_token from public.issue_new_client_waitlist_invitation($1,$2,$3,72)`,
+      [s.studioId, e, s.userId],
+    );
+    const old = await oldTransaction();
+    await adminQuery(`select public.redeem_new_client_waitlist_invitation($1)`, [iss.rows[0].raw_token]);
+    const clientId = randomUUID();
+    await adminQuery(`insert into public.clients (id, studio_id, name, email) values ($1,$2,$3,$4)`, [
+      clientId, s.studioId, `C ${s.uniq}`, `c-${s.uniq}@harness.local`,
+    ]);
+    await old.query(`select public.record_new_client_waitlist_conversion($1,$2,$3)`, [s.studioId, e, clientId]);
+    await old.query("commit");
+    await old.end();
+    expect(firstInversion(await eventsInInsertionOrder(e))).toBeNull();
+  });
+
+  it("RELEASE -> REQUEUE (waiting carries no evidence of its own)", async () => {
+    const s = await bareStudio("tmp-e");
+    const e = await joinEntry(s);
+    await adminQuery(`select public.claim_new_client_waitlist_entry($1,$2,$3)`, [s.studioId, e, s.userId]);
+    await adminQuery(`select public.issue_new_client_waitlist_invitation($1,$2,$3,72)`, [s.studioId, e, s.userId]);
+    const old = await oldTransaction();
+    await adminQuery(`select public.release_new_client_waitlist_entry($1,$2,$3)`, [s.studioId, e, s.userId]);
+    await old.query(`select public.requeue_new_client_waitlist_entry($1,$2,$3)`, [s.studioId, e, s.userId]);
+    await old.query("commit");
+    await old.end();
+    const rows = await eventsInInsertionOrder(e);
+    expect(firstInversion(rows)).toBeNull();
+    // requeue CLEARS the cycle columns, so its event takes the trigger's own
+    // post-transition clock rather than a stale joined_at.
+    const requeued = rows[rows.length - 1];
+    expect(requeued.to_status).toBe("waiting");
+    const joined = await adminQuery(`select joined_at from public.new_client_waitlist_entries where id=$1`, [e]);
+    expect(
+      requeued.occurred_at.getTime(),
+      "the requeue event was backdated to the original join",
+    ).toBeGreaterThan((joined.rows[0].joined_at as Date).getTime());
+  });
+
+  for (const [name, viaInvite] of [["WAITING -> REMOVE", false], ["RELEASED -> REMOVE", true]] as const) {
+    it(name, async () => {
+      const s = await bareStudio(`tmp-${viaInvite ? "g" : "f"}`);
+      let e: string;
+      let old: Awaited<ReturnType<typeof conn>>;
+      if (viaInvite) {
+        e = await joinEntry(s);
+        await adminQuery(`select public.claim_new_client_waitlist_entry($1,$2,$3)`, [s.studioId, e, s.userId]);
+        await adminQuery(`select public.issue_new_client_waitlist_invitation($1,$2,$3,72)`, [s.studioId, e, s.userId]);
+        old = await oldTransaction();
+        await adminQuery(`select public.release_new_client_waitlist_entry($1,$2,$3)`, [s.studioId, e, s.userId]);
+      } else {
+        old = await oldTransaction();
+        e = await joinEntry(s);
+      }
+      await old.query(`select public.remove_new_client_waitlist_entry($1,$2,$3)`, [s.studioId, e, s.userId]);
+      await old.query("commit");
+      await old.end();
+      expect(firstInversion(await eventsInInsertionOrder(e))).toBeNull();
+    });
+  }
+});
+
+describe("the event IS the transition, not a second reading of it", () => {
+  it("released: event.occurred_at EQUALS entry.released_at", async () => {
+    const f = await issueExpiringIn("ev-rel", 300);
+    await release(f.studioId, f.entryId, f.userId);
+    const e = await entryRow(f.entryId);
+    const rows = await eventsInInsertionOrder(f.entryId);
+    expect(rows.find((r) => r.to_status === "released")!.occurred_at.getTime()).toBe(
+      e.released_at!.getTime(),
+    );
+  });
+
+  it("expired: event.occurred_at EQUALS entry.expired_at", async () => {
+    const f = await issueAlreadyElapsed("ev-exp");
+    await adminQuery(`select public.expire_new_client_waitlist_invitation($1,$2,$3)`, [
+      f.studioId, f.entryId, f.userId,
+    ]);
+    const e = await entryRow(f.entryId);
+    const rows = await eventsInInsertionOrder(f.entryId);
+    expect(rows.find((r) => r.to_status === "expired")!.occurred_at.getTime()).toBe(
+      e.expired_at!.getTime(),
+    );
+  });
+
+  it("a release that waited on the lock stamps its EVENT after the wait too", async () => {
+    const f = await issueExpiringIn("ev-wait", 300);
+    const holder = await holdInvitation(f.invId);
+    const b = await conn();
+    await b.query("begin");
+    const pid = (await b.query(`select pg_backend_pid() as pid`)).rows[0].pid as number;
+    const pending = b.query(`select public.release_new_client_waitlist_entry($1,$2,$3) as r`, [
+      f.studioId, f.entryId, f.userId,
+    ]);
+    expect(await waitUntilBlocked(pid)).not.toBeNull();
+    await sleep(HOLD_MS);
+    const boundary = (await adminQuery(`select clock_timestamp() as t`)).rows[0].t as Date;
+    await holder.query("rollback");
+    await holder.end();
+    await pending;
+    await b.query("commit");
+    await b.end();
+
+    const rows = await eventsInInsertionOrder(f.entryId);
+    const released = rows.find((r) => r.to_status === "released")!;
+    const drift = boundary.getTime() - released.occurred_at.getTime();
+    expect(drift, `the release EVENT is ${drift}ms older than the serializing lock`).toBeLessThan(250);
+    // ...and it still equals the entry stamp exactly.
+    expect(released.occurred_at.getTime()).toBe((await entryRow(f.entryId)).released_at!.getTime());
+  });
+
+  it("NEGATIVE CONTROL: the column default is still transaction-start", async () => {
+    // The repair is the trigger passing occurred_at explicitly. If someone drops
+    // that argument the column default takes over again — and this proves the
+    // default really is the old, backdating authority, so the control is not
+    // vacuous.
+    const d = await adminQuery(
+      `select column_default from information_schema.columns
+        where table_schema='public' and table_name='new_client_waitlist_entry_events'
+          and column_name='occurred_at'`,
+    );
+    expect(d.rows[0].column_default).toBe("now()");
+
+    const older = await conn();
+    await older.query("begin");
+    const t0 = (await older.query(`select transaction_timestamp() as t`)).rows[0].t as Date;
+    await sleep(400);
+    const nowInTx = (await older.query(`select now() as n, clock_timestamp() as c`)).rows[0] as {
+      n: Date; c: Date;
+    };
+    await older.query("rollback");
+    await older.end();
+    expect(nowInTx.n.getTime()).toBe(t0.getTime());
+    expect(
+      nowInTx.c.getTime() - nowInTx.n.getTime(),
+      "now() and clock_timestamp() no longer diverge — the control proves nothing",
+    ).toBeGreaterThan(300);
+  });
+});

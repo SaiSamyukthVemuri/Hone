@@ -4,8 +4,10 @@
 --
 -- 0188 IS APPLIED AND FROZEN. Its bytes are production truth and are NOT edited
 -- by this file. This migration corrects the deployed behaviour of exactly three
--- of its commands and touches nothing else: no table, no column, no index, no
--- policy, no trigger, no constraint, no new result word, no signature change.
+-- of its commands, plus the lifecycle-event trigger that timestamps what those
+-- commands do, and touches nothing else: no table, no column, no index, no
+-- policy, no constraint, no new result word, no signature change. The trigger
+-- itself is not re-created; only its function body is replaced.
 --
 -- THE DEFECT, REPRODUCED BEFORE IT WAS REPAIRED
 -- ---------------------------------------------------------------------------
@@ -567,6 +569,468 @@ end;
 $$;
 
 -- ---------------------------------------------------------------------------
+-- THE REMAINING ENTRY TRANSITIONS — closing the class, not just the finding.
+-- ---------------------------------------------------------------------------
+-- Repairing redeem, expire and release closed the three defects that had been
+-- REPORTED. An adversarial census of every legal WAIT-03 path then found the
+-- same defect in three more commands, each stamping entry evidence with now().
+-- Measured on this tree, with the event trigger already repaired:
+--
+--   JOIN -> CLAIM       waiting(15:17:16.729Z) -> claimed(15:17:16.721Z)
+--   CLAIM -> INVITE     claimed(15:17:16.897Z) -> invited(15:17:16.893Z)
+--   WAITING -> REMOVE   waiting(15:17:17.776Z) -> removed(15:17:17.773Z)
+--   RELEASED -> REMOVE  released(15:17:17.918Z) -> removed(15:17:17.913Z)
+--
+-- In each case a transaction that began before the PRECEDING transition
+-- committed stamped its own transition with that earlier instant, so the
+-- append-only log runs backwards. INVITE -> RELEASE, INVITE -> EXPIRE,
+-- REDEEM -> CONVERT and RELEASE -> REQUEUE were probed identically and did NOT
+-- invert: conversion is repaired here for symmetry of authority rather than on
+-- a reproduced inversion, and requeue needs nothing, because `waiting` carries
+-- no cycle evidence and its event already takes the trigger's post-transition
+-- clock.
+--
+-- Each repair is the shape already proven above: entry mutex, then ONE clock
+-- read, then the stamp. Nothing else changes -- not signatures, results,
+-- guards, ordering or privileges.
+--
+-- STILL DELIBERATELY NOT CHANGED: the invitation's own issued_at (0188's
+-- BEFORE-INSERT trigger) and expires_at. The census attributes no inversion to
+-- them. issue() writes the invitation BEFORE it updates the entry, so
+-- issued_at <= invited_at remains the TRUTHFUL order, and the cycle-identity
+-- law no longer reads issued_at at all. Changing them would move the expiry
+-- window of every future invitation, which no reproduced defect justifies.
+-- ---------------------------------------------------------------------------
+
+create or replace function public.claim_new_client_waitlist_entries(
+  p_studio_id     uuid,
+  p_actor_user_id uuid,
+  p_count         integer
+)
+returns table (result text, entry_id uuid)
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog, pg_temp
+as $$
+declare
+  v_decision_at timestamptz;
+  v_actor uuid;
+  v_code  text;
+begin
+  select r.practitioner_id, r.code into v_actor, v_code
+    from public.new_client_waitlist_resolve_owner(p_studio_id, p_actor_user_id) r;
+  if v_code <> 'ok' then
+    return query select v_code, null::uuid;
+    return;
+  end if;
+
+  if p_count is null or p_count < 1 or p_count > 100 then
+    return query select 'invalid_count'::text, null::uuid;
+    return;
+  end if;
+
+  -- FOR UPDATE SKIP LOCKED never waits, so this statement cannot be delayed by
+  -- contention and the clock read immediately before it IS the claim instant.
+  -- There is no wait for a stamp to be backdated across.
+  v_decision_at := clock_timestamp();
+
+  return query
+  with candidates as (
+    select e.id
+      from public.new_client_waitlist_entries e
+     where e.studio_id = p_studio_id
+       and e.status    = 'waiting'
+     order by e.joined_at, e.id
+     limit p_count
+     for update skip locked
+  ),
+  claimed as (
+    update public.new_client_waitlist_entries t
+       set status                     = 'claimed',
+           claimed_at                 = v_decision_at,
+           claimed_by_practitioner_id = v_actor
+      from candidates c
+     where t.id        = c.id
+       and t.studio_id = p_studio_id
+       and t.status    = 'waiting'
+    returning t.id
+  )
+  select 'claimed'::text, claimed.id from claimed;
+end;
+$$;
+
+create or replace function public.claim_new_client_waitlist_entry(
+  p_studio_id     uuid,
+  p_entry_id      uuid,
+  p_actor_user_id uuid
+)
+returns text
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog, pg_temp
+as $$
+declare
+  v_decision_at timestamptz;
+  v_actor uuid;
+  v_code  text;
+  v_hit   uuid;
+begin
+  select r.practitioner_id, r.code into v_actor, v_code
+    from public.new_client_waitlist_resolve_owner(p_studio_id, p_actor_user_id) r;
+  if v_code <> 'ok' then return v_code; end if;
+  if p_entry_id is null then return 'invalid_input'; end if;
+
+  -- ENTRY MUTEX FIRST, then the clock. The UPDATE below takes this same row
+  -- lock a moment later; taking it here means the stamp cannot be read before
+  -- the lock that serializes the claim, and it matches the entry-first order
+  -- every other command in this file uses.
+  perform 1
+     from public.new_client_waitlist_entries e
+    where e.id = p_entry_id and e.studio_id = p_studio_id
+    for update;
+
+  v_decision_at := clock_timestamp();
+
+  update public.new_client_waitlist_entries
+     set status                     = 'claimed',
+         claimed_at                 = v_decision_at,
+         claimed_by_practitioner_id = v_actor
+   where id        = p_entry_id
+     and studio_id = p_studio_id
+     and status    = 'waiting'
+  returning id into v_hit;
+
+  if v_hit is not null then return 'claimed'; end if;
+
+  if not exists (select 1 from public.new_client_waitlist_entries e
+                  where e.id = p_entry_id and e.studio_id = p_studio_id) then
+    return 'not_found';
+  end if;
+  return 'not_waiting';
+end;
+$$;
+
+create or replace function public.record_new_client_waitlist_conversion(
+  p_studio_id uuid,
+  p_entry_id  uuid,
+  p_client_id uuid
+)
+returns text
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog, pg_temp
+as $$
+declare
+  v_decision_at timestamptz;
+  v_hit uuid;
+begin
+  if p_studio_id is null or p_entry_id is null or p_client_id is null then
+    return 'invalid_input';
+  end if;
+
+  if not exists (select 1 from public.clients c
+                  where c.id = p_client_id and c.studio_id = p_studio_id) then
+    return 'client_not_found';
+  end if;
+
+  -- Same entry mutex the invalidating commands take, for the same reason: the
+  -- redemption test below and the status move must not straddle a concurrent
+  -- issue/redeem/release.
+  perform 1
+     from public.new_client_waitlist_entries e
+    where e.id = p_entry_id and e.studio_id = p_studio_id
+    for update;
+
+  -- THE CLOCK IS READ AFTER THE ENTRY MUTEX, so a transaction that began
+  -- earlier -- or waited here -- cannot stamp this transition with an instant
+  -- that precedes the transition it records.
+  v_decision_at := clock_timestamp();
+
+  -- CONVERSION REQUIRES A REDEEMED INVITATION. `invited` alone is not evidence
+  -- that the person ever accepted: it says an operator SENT an invitation. The
+  -- lifecycle is REDEEM -> BOOK -> RECORD, and recording a conversion straight
+  -- out of `invited` skipped the first step entirely -- measured: conversion
+  -- succeeded while the raw token was still live, so the token could then be
+  -- redeemed AFTER the entry had already reached a terminal state.
+  --
+  -- The test is `redeemed_at is not null` on this entry's own invitation, which
+  -- is durable: write-once under an append-only trigger, on an undeletable row,
+  -- with an immutable entry_id. A released or expired invitation that was never
+  -- redeemed carries no redeemed_at and is therefore refused here too.
+  --
+  -- NOTHING IS CONSUMED HERE. This command does not redeem, expire or release
+  -- anything: an unredeemed invitation is left exactly as it was, so the refusal
+  -- is repeatable and the operator can still have the prospect redeem properly.
+  if not exists (
+    select 1
+      from public.new_client_waitlist_invitations i
+     where i.entry_id    = p_entry_id
+       and i.studio_id   = p_studio_id
+       and i.redeemed_at is not null)
+  then
+    -- DISTINGUISHED FROM 'not_invited', which would be false: the entry may be
+    -- invited and simply not yet redeemed. The caller must be able to tell
+    -- "there was no invitation" from "they have not accepted it yet".
+    if exists (select 1 from public.new_client_waitlist_entries e
+                where e.id = p_entry_id and e.studio_id = p_studio_id
+                  and e.status = 'invited')
+    then
+      return 'not_redeemed';
+    end if;
+  end if;
+
+  update public.new_client_waitlist_entries
+     set status              = 'converted',
+         converted_at        = v_decision_at,
+         converted_client_id = p_client_id
+   where id = p_entry_id and studio_id = p_studio_id and status = 'invited'
+     and exists (
+       select 1
+         from public.new_client_waitlist_invitations i
+        where i.entry_id    = p_entry_id
+          and i.studio_id   = p_studio_id
+          and i.redeemed_at is not null)
+  returning id into v_hit;
+
+  if v_hit is null then return 'not_invited'; end if;
+  return 'converted';
+end;
+$$;
+
+create or replace function public.remove_new_client_waitlist_entry(
+  p_studio_id     uuid,
+  p_entry_id      uuid,
+  p_actor_user_id uuid
+)
+returns text
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog, pg_temp
+as $$
+declare
+  v_decision_at timestamptz;
+  v_actor  uuid;
+  v_code   text;
+  v_status text;
+begin
+  select r.practitioner_id, r.code into v_actor, v_code
+    from public.new_client_waitlist_resolve_owner(p_studio_id, p_actor_user_id) r;
+  if v_code <> 'ok' then return v_code; end if;
+  if p_entry_id is null then return 'invalid_input'; end if;
+
+  select e.status into v_status
+    from public.new_client_waitlist_entries e
+   where e.id = p_entry_id and e.studio_id = p_studio_id
+   for update;
+
+  -- THE CLOCK IS READ AFTER THE ENTRY MUTEX, so a transaction that began
+  -- earlier -- or waited here -- cannot stamp this transition with an instant
+  -- that precedes the transition it records.
+  v_decision_at := clock_timestamp();
+
+  if v_status is null then return 'not_found'; end if;
+  if v_status = 'removed' then return 'already_removed'; end if;
+
+  -- The ruling, stated as a distinguishable result code so the UI can tell the
+  -- operator to release first rather than reporting a generic failure.
+  if v_status in ('claimed','invited') then return 'release_required'; end if;
+  if v_status = 'converted' then return 'not_removable'; end if;
+
+  update public.new_client_waitlist_entries
+     set status                     = 'removed',
+         removed_at                 = v_decision_at,
+         removed_by_practitioner_id = v_actor
+   where id = p_entry_id
+     and studio_id = p_studio_id
+     and status in ('waiting','released','expired');
+
+  return 'removed';
+end;
+$$;
+
+create or replace function public.issue_new_client_waitlist_invitation(
+  p_studio_id     uuid,
+  p_entry_id      uuid,
+  p_actor_user_id uuid,
+  p_ttl_hours     integer default 72
+)
+returns table (result text, raw_token text, expires_at timestamptz)
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog, pg_temp
+as $$
+declare
+  v_decision_at timestamptz;
+  v_actor   uuid;
+  v_code    text;
+  v_status  text;
+  v_raw     text;
+  v_hash    text;
+  v_ttl     integer := coalesce(p_ttl_hours, 72);
+  v_expires timestamptz;
+begin
+  select r.practitioner_id, r.code into v_actor, v_code
+    from public.new_client_waitlist_resolve_owner(p_studio_id, p_actor_user_id) r;
+  if v_code <> 'ok' then
+    return query select v_code, null::text, null::timestamptz; return;
+  end if;
+  if p_entry_id is null then
+    return query select 'invalid_input'::text, null::text, null::timestamptz; return;
+  end if;
+  -- 1 hour .. 7 days. Out of range is REFUSED, never silently clamped: a
+  -- clamped TTL is a window the caller did not ask for and cannot see.
+  if v_ttl < 1 or v_ttl > 168 then
+    return query select 'invalid_ttl'::text, null::text, null::timestamptz; return;
+  end if;
+
+  select e.status into v_status
+    from public.new_client_waitlist_entries e
+   where e.id = p_entry_id and e.studio_id = p_studio_id
+   for update;
+
+  -- THE ENTRY'S OWN TRANSITION EVIDENCE IS READ AFTER THE MUTEX. Only
+  -- `invited_at` moves here. The INVITATION's issued_at and expires_at are
+  -- deliberately left exactly as 0188 computes them: no census path attributes
+  -- an inversion to them, issue() inserts the invitation BEFORE it updates the
+  -- entry, so issued_at <= invited_at stays the truthful order, and moving
+  -- expires_at would change the expiry window of every future invitation.
+  v_decision_at := clock_timestamp();
+
+  if v_status is null then
+    return query select 'not_found'::text, null::text, null::timestamptz; return;
+  end if;
+  if v_status <> 'claimed' then
+    return query select 'not_claimed'::text, null::text, null::timestamptz; return;
+  end if;
+
+  if exists (
+    select 1 from public.new_client_waitlist_invitations i
+     where i.entry_id = p_entry_id
+       and i.redeemed_at is null and i.expired_at is null and i.released_at is null
+  ) then
+    return query select 'already_invited'::text, null::text, null::timestamptz; return;
+  end if;
+
+  v_raw     := encode(extensions.gen_random_bytes(32), 'hex');
+  v_hash    := encode(extensions.digest(v_raw, 'sha256'), 'hex');
+  v_expires := now() + make_interval(hours => v_ttl);
+
+  insert into public.new_client_waitlist_invitations
+    (studio_id, entry_id, token_hash, expires_at, issued_by_practitioner_id)
+  values
+    (p_studio_id, p_entry_id, v_hash, v_expires, v_actor);
+
+  update public.new_client_waitlist_entries
+     set status = 'invited', invited_at = v_decision_at
+   where id = p_entry_id and studio_id = p_studio_id and status = 'claimed';
+
+  return query select 'invited'::text, v_raw, v_expires;
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- THE LIFECYCLE EVENT LOG — occurred_at must not be transaction-start either.
+-- ---------------------------------------------------------------------------
+-- Repairing the three commands was not enough. Every entry transition is
+-- appended to public.new_client_waitlist_entry_events by an AFTER trigger whose
+-- INSERT omits occurred_at, so it fell through to that column's
+-- `default now()` -- transaction_timestamp() again, and therefore the SAME
+-- defect one layer below the commands that were just fixed.
+--
+-- MEASURED ON THIS TREE, with the repaired commands already in place:
+--
+--   The append-only log ran BACKWARDS. A release issued from a transaction that
+--   began before the invitation existed produced, in occurred_at order:
+--       waiting  15:03:34.430
+--       claimed  15:03:34.444
+--       released 15:03:34.491   <-- released BEFORE invited
+--       invited  15:03:34.499
+--   The entry's own released_at was correct (15:03:34.533); only the evidence
+--   log lied.
+--
+--   A release that waited on the invitation lock recorded its event 2,582 ms
+--   before the instant that serialized it, and the expiry transition 2,567 ms
+--   before its own -- while both entry rows carried the correct post-lock value.
+--
+-- THE LAW: A LIFECYCLE EVENT IS NEVER TIMESTAMPED EARLIER THAN THE TRANSITION
+-- THAT CAUSED IT. The transition already records a canonical instant on the
+-- entry -- claimed_at, invited_at, expired_at, released_at, converted_at,
+-- removed_at -- so the event takes THAT value. It is not an approximation of
+-- the transition time; it IS the transition time, which makes
+-- `event.occurred_at = entry.<status>_at` an equality rather than a tolerance.
+-- For the repaired release and expiry that value is the post-lock decision
+-- instant, so the fix propagates without the trigger knowing anything about
+-- locks.
+--
+-- `waiting` is the one status with no surviving evidence of ITS OWN
+-- transition: requeue deliberately CLEARS the cycle columns, because `waiting`
+-- asserts no claim and no invitation. joined_at belongs to the original join,
+-- not to a later requeue, so using it would backdate a requeue by the entire
+-- time the prospect had been in the system. That case -- and only that case --
+-- takes clock_timestamp() inside the AFTER trigger, which is the actual
+-- post-transition instant.
+--
+-- NO CALLER CONTROL. occurred_at is still assigned by the database: the trigger
+-- reads the NEW row it was handed or reads the clock itself. No GUC, no session
+-- variable, no argument, and no application role can supply it -- the events
+-- table grants no INSERT to any application role, and the append-only trigger
+-- still refuses UPDATE unconditionally.
+--
+-- The INSERT arm keeps joined_at, which IS that row's own creation evidence.
+create or replace function public.new_client_waitlist_entries_record_event()
+returns trigger
+language plpgsql
+set search_path = pg_catalog, pg_temp
+as $$
+declare
+  v_at timestamptz;
+begin
+  if tg_op = 'INSERT' then
+    insert into public.new_client_waitlist_entry_events
+      (studio_id, entry_id, from_status, to_status, actor_practitioner_id, occurred_at)
+    values (new.studio_id, new.id, null, new.status, null,
+            coalesce(new.joined_at, clock_timestamp()));
+    return null;
+  end if;
+
+  if new.status is distinct from old.status then
+    -- The transition's OWN canonical evidence, so the event and the entry carry
+    -- one instant rather than two readings of the same moment.
+    v_at := case new.status
+              when 'claimed'   then new.claimed_at
+              when 'invited'   then new.invited_at
+              when 'converted' then new.converted_at
+              when 'expired'   then new.expired_at
+              when 'released'  then new.released_at
+              when 'removed'   then new.removed_at
+              else null
+            end;
+
+    insert into public.new_client_waitlist_entry_events
+      (studio_id, entry_id, from_status, to_status, actor_practitioner_id, occurred_at)
+    values (
+      new.studio_id, new.id, old.status, new.status,
+      -- NEW evidence first (the actor of the transition being made), then the
+      -- OLD claimer whose hold is being discarded by a requeue.
+      coalesce(new.removed_by_practitioner_id,
+               new.claimed_by_practitioner_id,
+               old.claimed_by_practitioner_id),
+      -- `waiting` (requeue) has no surviving evidence of its own transition, and
+      -- a NULL column would silently fall back to the transaction clock, so the
+      -- coalesce is load-bearing rather than defensive.
+      coalesce(v_at, clock_timestamp())
+    );
+  end if;
+  return null;
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
 -- PRIVILEGES — reasserted by name, never assumed.
 -- ---------------------------------------------------------------------------
 -- The intended posture, identical to 0188 and verified against production:
@@ -579,6 +1043,44 @@ revoke execute on function public.redeem_new_client_waitlist_invitation(text) fr
 revoke execute on function public.redeem_new_client_waitlist_invitation(text) from authenticated;
 revoke execute on function public.redeem_new_client_waitlist_invitation(text) from service_role;
 grant  execute on function public.redeem_new_client_waitlist_invitation(text) to service_role;
+
+revoke execute on function public.issue_new_client_waitlist_invitation(uuid, uuid, uuid, integer) from public;
+revoke execute on function public.issue_new_client_waitlist_invitation(uuid, uuid, uuid, integer) from anon;
+revoke execute on function public.issue_new_client_waitlist_invitation(uuid, uuid, uuid, integer) from authenticated;
+revoke execute on function public.issue_new_client_waitlist_invitation(uuid, uuid, uuid, integer) from service_role;
+grant  execute on function public.issue_new_client_waitlist_invitation(uuid, uuid, uuid, integer) to service_role;
+
+revoke execute on function public.claim_new_client_waitlist_entries(uuid, uuid, integer) from public;
+revoke execute on function public.claim_new_client_waitlist_entries(uuid, uuid, integer) from anon;
+revoke execute on function public.claim_new_client_waitlist_entries(uuid, uuid, integer) from authenticated;
+revoke execute on function public.claim_new_client_waitlist_entries(uuid, uuid, integer) from service_role;
+grant  execute on function public.claim_new_client_waitlist_entries(uuid, uuid, integer) to service_role;
+
+revoke execute on function public.claim_new_client_waitlist_entry(uuid, uuid, uuid) from public;
+revoke execute on function public.claim_new_client_waitlist_entry(uuid, uuid, uuid) from anon;
+revoke execute on function public.claim_new_client_waitlist_entry(uuid, uuid, uuid) from authenticated;
+revoke execute on function public.claim_new_client_waitlist_entry(uuid, uuid, uuid) from service_role;
+grant  execute on function public.claim_new_client_waitlist_entry(uuid, uuid, uuid) to service_role;
+
+revoke execute on function public.record_new_client_waitlist_conversion(uuid, uuid, uuid) from public;
+revoke execute on function public.record_new_client_waitlist_conversion(uuid, uuid, uuid) from anon;
+revoke execute on function public.record_new_client_waitlist_conversion(uuid, uuid, uuid) from authenticated;
+revoke execute on function public.record_new_client_waitlist_conversion(uuid, uuid, uuid) from service_role;
+grant  execute on function public.record_new_client_waitlist_conversion(uuid, uuid, uuid) to service_role;
+
+revoke execute on function public.remove_new_client_waitlist_entry(uuid, uuid, uuid) from public;
+revoke execute on function public.remove_new_client_waitlist_entry(uuid, uuid, uuid) from anon;
+revoke execute on function public.remove_new_client_waitlist_entry(uuid, uuid, uuid) from authenticated;
+revoke execute on function public.remove_new_client_waitlist_entry(uuid, uuid, uuid) from service_role;
+grant  execute on function public.remove_new_client_waitlist_entry(uuid, uuid, uuid) to service_role;
+
+-- The event trigger function is granted to NO application role: it runs as the
+-- table owner through the trigger, never by direct call. Verified in production
+-- as postgres=X only, and reasserted so a create-time default cannot widen it.
+revoke execute on function public.new_client_waitlist_entries_record_event() from public;
+revoke execute on function public.new_client_waitlist_entries_record_event() from anon;
+revoke execute on function public.new_client_waitlist_entries_record_event() from authenticated;
+revoke execute on function public.new_client_waitlist_entries_record_event() from service_role;
 
 revoke execute on function public.release_new_client_waitlist_entry(uuid, uuid, uuid) from public;
 revoke execute on function public.release_new_client_waitlist_entry(uuid, uuid, uuid) from anon;
