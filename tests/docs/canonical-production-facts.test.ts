@@ -575,10 +575,10 @@ describe("canonical production docs: the ledger's current block agrees with the 
     }
   });
 
-  it("no document claims parity while something is pending", () => {
-    // THE DOCUMENTATION HALF. The derived state can be honest while the prose
-    // still says "hosted == repo. Nothing pending." from a previous release —
-    // which is exactly the drift that made this file red after the 0188 apply.
+  it("the ledger's current block never claims parity while something is pending", () => {
+    // THE LEDGER HALF. The derived state can be honest while the prose still
+    // says "hosted == repo. Nothing pending." from a previous release — the
+    // drift that made this file red after the 0188 apply.
     if (DERIVED.pending_migrations.length === 0) return;
     expect(
       block,
@@ -593,6 +593,125 @@ describe("canonical production docs: the ledger's current block agrees with the 
     for (const v of DERIVED.pending_migrations) {
       expect(block, `the current block does not name pending migration ${v}`).toContain(v);
     }
+  });
+
+  // -----------------------------------------------------------------------
+  // THE OTHER HALF, WHICH THIS SUITE PREVIOUSLY ONLY CLAIMED TO HAVE.
+  //
+  // The rule above is named for every document and inspects ONE: the ledger's
+  // current block. So while it passed, current-state.md still said the two
+  // states reconciled "with nothing pending" and known-limitations.md said they
+  // were "at parity, with nothing pending" — both false against a recorded
+  // repo > hosted, and both invisible to this suite.
+  //
+  // The durable law is NOT "say the right numbers everywhere". It is the one
+  // these documents already apply to migration NUMBERS: outside the ledger,
+  // canonical current prose does not carry its own copy of a mutable migration
+  // fact — and the RELATIONSHIP between repo and hosted is exactly as mutable as
+  // the numbers are. Those documents reference the declared and derived
+  // authorities instead.
+  //
+  // THE LEDGER IS DELIBERATELY EXEMT FROM THIS RULE: stating the current
+  // relationship, with apply evidence, is its whole job, and its historical
+  // blocks legitimately record the parity that held when each apply landed.
+  // -----------------------------------------------------------------------
+  const MUTABLE_RELATIONSHIP_CLAIMS: ReadonlyArray<{ label: string; re: RegExp }> = [
+    {
+      label: "asserts repo and hosted are at parity / reconcile",
+      re: /\brepo(sitory)?\b[^.]{0,40}\band hosted\b[^.]{0,80}\b(are at parity|at parity|reconciles?|reconciled)\b/i,
+    },
+    {
+      label: "asserts nothing is pending",
+      re: /\b(migration|repo(sitory)?|hosted)\b[^.]{0,120}\bnothing pending\b/i,
+    },
+    { label: "asserts no migrations are pending", re: /\bno migrations?\s+(are\s+)?pending\b/i },
+    { label: "asserts hosted == repo", re: /\bhosted\s*={1,3}\s*repo\b/i },
+    { label: "asserts repo > hosted", re: /\brepo(sitory)?\s*>\s*hosted\b/i },
+    {
+      label: "names a specific pending migration",
+      re: /\b0\d{3}\b[^.]{0,60}\bis\s+(currently\s+)?pending\b/i,
+    },
+  ];
+
+  /** Whitespace-flattened current prose, so a claim wrapped across lines still matches. */
+  const flatCurrent = (doc: string) => currentProse(doc).replace(/\s+/g, " ");
+
+  const NON_LEDGER_CANONICAL: ReadonlyArray<[string, string]> = [
+    ["current-state.md", CURRENT_STATE],
+    ["capability-register.md", CAPABILITY_REGISTER],
+    ["known-limitations.md", KNOWN_LIMITATIONS],
+    ["release-changelog.md (preamble)", changelogPreamble()],
+  ];
+
+  function relationshipClaims(text: string): string[] {
+    const flat = text.replace(/\s+/g, " ");
+    return MUTABLE_RELATIONSHIP_CLAIMS.filter((c) => c.re.test(flat)).map((c) => c.label);
+  }
+
+  it("NO canonical current prose outside the ledger copies the migration relationship", () => {
+    for (const [name, doc] of NON_LEDGER_CANONICAL) {
+      expect(
+        relationshipClaims(flatCurrent(doc)),
+        `${name} carries its own copy of a mutable migration-state relationship; ` +
+          `reference migration-state.json / npm run migration:state / migration-ledger.md instead`,
+      ).toEqual([]);
+    }
+  });
+
+  it("NEGATIVE CONTROL: each stale shape is caught, in EVERY document collection", () => {
+    // Mutates copies; no file is touched. Without this the rule above could be
+    // satisfied by a regex that matches nothing at all.
+    const shapes = [
+      "Repo and hosted migration state are at parity, with nothing pending.",
+      "Repository and hosted migration state reconcile, with nothing pending and nothing remote-only.",
+      "There are no migrations pending.",
+      "Migration state: hosted == repo.",
+      "Migration state: repo > hosted.",
+    ];
+    for (const shape of shapes) {
+      expect(relationshipClaims(shape), `not caught: ${shape}`).not.toEqual([]);
+    }
+    // ...and it is not ledger-only any more: injected into EACH document's own
+    // current prose, every one is flagged.
+    for (const [name, doc] of NON_LEDGER_CANONICAL) {
+      const poisoned = `${flatCurrent(doc)} ${shapes[0]}`;
+      expect(relationshipClaims(poisoned), `${name} would not have been checked`).not.toEqual([]);
+    }
+  });
+
+  it("ordinary uses of `pending` and `parity` stay legal", () => {
+    for (const benign of [
+      "12 pending_invitations all-tenant, 5 of them expired.",
+      "The reconciled position with apply evidence is migration-ledger.md.",
+      "repo max and the next free number are derived by `npm run migration:state`.",
+      "Reproduced on a CI-parity database, then independently re-reproduced.",
+      "export-emission-parity.test.ts builds a real archive and compares it.",
+      "A pending invitation is not an appointment.",
+    ]) {
+      expect(relationshipClaims(benign), `false positive: ${benign}`).toEqual([]);
+    }
+  });
+
+  it("historical claims inside an auditable ignore region remain allowed", () => {
+    // currentProse() strips ignore-marked regions, which is how superseded
+    // evidence stays readable without becoming a current assertion. Proven on a
+    // synthetic document rather than by adding a marker to a real one.
+    const doc = [
+      "# synthetic",
+      "<!-- canonical-facts:ignore-start reason=then-state -->",
+      "Repo and hosted migration state are at parity, with nothing pending.",
+      "<!-- canonical-facts:ignore-end -->",
+      "Current prose says nothing about the relationship.",
+    ].join("\n");
+    expect(relationshipClaims(doc.replace(/\s+/g, " ")), "the control text is not detectable")
+      .not.toEqual([]);
+    expect(relationshipClaims(flatCurrent(doc))).toEqual([]);
+  });
+
+  it("the ledger keeps its authority to state the current relationship", () => {
+    // The exemption is real and load-bearing: the ledger's current block DOES
+    // assert the relationship today, and must stay legal.
+    expect(relationshipClaims(block.replace(/\s+/g, " ")).length).toBeGreaterThan(0);
   });
 });
 
