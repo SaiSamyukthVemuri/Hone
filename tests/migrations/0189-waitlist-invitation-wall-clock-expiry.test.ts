@@ -150,12 +150,88 @@ describe("0189 — the clock is read AFTER the lock, and only there", () => {
     ).toBeGreaterThan(lock);
   });
 
-  it("expire reads the clock AFTER the entry mutex it already took", () => {
+  // -----------------------------------------------------------------
+  // THE ORDERING LAW FOR EXPIRE, IN FULL:
+  //     ENTRY LOCK -> INVITATION LOCK -> clock -> decision/write
+  //
+  // The entry lock alone is NOT enough, and that was a real defect rather than
+  // a theoretical one. The statement that serializes the terminal outcome is
+  // the INVITATION lock, and it can block long after an earlier clock read:
+  // measured 3,150 ms of provenance drift, and unbounded in principle. The
+  // behavioural proof is in tests/db/waitlist-invitation-wall-clock.db.test.ts.
+  // -----------------------------------------------------------------
+  /** Offsets of each ordered landmark inside expire(), or -1. */
+  function expireLandmarks(src: string) {
+    const entryLock = src.search(
+      /from public\.new_client_waitlist_entries e[\s\S]*?for update/,
+    );
+    const invLock = src.search(
+      /from public\.new_client_waitlist_invitations i[\s\S]*?for update/,
+    );
+    const clock = src.indexOf("v_decision_at := clock_timestamp()");
+    const decision = src.indexOf("if v_expires > v_decision_at");
+    const write = src.search(/update public\.new_client_waitlist_invitations i\s*\n\s*set expired_at/);
+    return { entryLock, invLock, clock, decision, write };
+  }
+
+  it("expire orders ENTRY lock -> INVITATION lock -> clock -> decision -> write", () => {
+    const m = expireLandmarks(body(EXPIRE));
+    for (const [name, at] of Object.entries(m)) {
+      expect(at, `expire() has no ${name}`).toBeGreaterThan(-1);
+    }
+    expect(m.invLock, "the invitation is locked BEFORE the entry").toBeGreaterThan(m.entryLock);
+    expect(m.clock, "the clock is read BEFORE the invitation lock").toBeGreaterThan(m.invLock);
+    expect(m.decision, "the TTL decision precedes the clock").toBeGreaterThan(m.clock);
+    expect(m.write, "the stamp precedes the decision").toBeGreaterThan(m.decision);
+  });
+
+  it("J — NON-VACUITY: removing the invitation-lock limb turns that law red", () => {
+    // Codex's shape. Mutates a copy; the file on disk is never touched. Without
+    // this, the ordering assertion above could be satisfied by an expire() that
+    // never locks the invitation at all.
+    const real = body(EXPIRE);
+    expect(expireLandmarks(real).invLock).toBeGreaterThan(-1);
+
+    // Drop ONLY the `for update` from the invitation SELECT, which is exactly
+    // the pre-repair shape: identity is still read, the row is not locked.
+    const poisoned = real.replace(
+      /(from public\.new_client_waitlist_invitations i[\s\S]*?limit 1\s*\n)\s*for update/,
+      "$1",
+    );
+    expect(poisoned, "the mutation did not apply — this control is vacuous").not.toEqual(real);
+
+    const m = expireLandmarks(poisoned);
+    expect(m.invLock, "the poisoned body still appears to lock the invitation").toBe(-1);
+    // ...and the law above would have failed on it.
+    expect(m.clock).toBeGreaterThan(-1);
+    expect(m.invLock).toBeLessThan(m.clock);
+  });
+
+  it("the invitation lock is requested on the IMMUTABLE id, not on outcome columns", () => {
+    // A lock request keyed on redeemed_at/expired_at/released_at would let the
+    // target disappear from the request after a concurrent terminal transition.
     const b = body(EXPIRE);
-    const lock = b.search(/for update/i);
-    const clock = b.indexOf("v_decision_at := clock_timestamp()");
-    expect(lock).toBeGreaterThan(-1);
-    expect(clock).toBeGreaterThan(lock);
+    const sel = b.slice(
+      b.search(/select i\.id, i\.redeemed_at/),
+      b.indexOf("v_decision_at := clock_timestamp()"),
+    );
+    expect(sel).toContain("where i.entry_id = p_entry_id");
+    expect(sel).toContain("order by i.issued_at desc, i.id desc");
+    expect(sel).toContain("limit 1");
+    expect(sel).toMatch(/for update/);
+    // The lock request itself must not filter on mutable terminal columns.
+    expect(sel).not.toMatch(/where[\s\S]*redeemed_at is null/);
+    expect(sel).not.toMatch(/where[\s\S]*expired_at is null/);
+    expect(sel).not.toMatch(/where[\s\S]*released_at is null/);
+  });
+
+  it("the terminal state is read from the LOCKED row, not re-queried", () => {
+    const b = body(EXPIRE);
+    // Every branch reads a local populated by the locking SELECT.
+    expect(b).toMatch(/if v_redeemed is not null then\s*\n\s*return 'already_redeemed'/);
+    expect(b).toMatch(/if v_expired is not null then/);
+    expect(b).toMatch(/if v_released is not null then/);
+    expect(b).toMatch(/if v_expires > v_decision_at then/);
   });
 
   it("every TTL comparison uses the post-lock value, never now()", () => {
@@ -163,10 +239,13 @@ describe("0189 — the clock is read AFTER the lock, and only there", () => {
     // transaction start. A transaction that began before the deadline and
     // decided after it redeemed an expired invitation.
     for (const fn of [REDEEM, EXPIRE]) {
-      const b = body(fn);
-      expect(b, `${fn} still decides with now()`).not.toMatch(/\bnow\(\)/);
-      expect(b).toMatch(/expires_at\s*[<>]=?\s*v_decision_at/);
+      expect(body(fn), `${fn} still decides with now()`).not.toMatch(/\bnow\(\)/);
     }
+    // redeem compares the column under its own row lock...
+    expect(body(REDEEM)).toMatch(/i\.expires_at\s*>\s*v_decision_at/);
+    // ...and expire compares the value it read FROM the locked row, which is
+    // stronger: the comparison cannot be re-qualified against a newer version.
+    expect(body(EXPIRE)).toMatch(/v_expires\s*>\s*v_decision_at/);
   });
 
   it("clock_timestamp() is never evaluated inside a predicate", () => {

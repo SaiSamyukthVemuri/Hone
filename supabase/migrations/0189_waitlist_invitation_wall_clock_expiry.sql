@@ -64,9 +64,12 @@
 -- release() all take the entry row `for update` before they touch an
 -- invitation, so entry and invitation move as one unit.
 --
--- expire() KEEPS that exact order. Its entry lock already precedes the decision,
--- so the only change is where the clock is read — after the lock it already
--- took, not at transaction start.
+-- expire() KEEPS that exact order and now completes it. 0188 took the ENTRY lock
+-- and then decided; the statement that actually serializes the terminal outcome
+-- is the INVITATION update, which can block long afterwards. So expire() now
+-- locks the entry, THEN this cycle's invitation row by its immutable id, and
+-- only then reads the clock. Measured drift before that second lock existed:
+-- 3,150 ms, and unbounded in principle. See COMMAND 6 below.
 --
 -- redeem() took NO lock at all in 0188 and now takes ONE: the invitation row,
 -- by its immutable `token_hash`. It never asks for a second lock, so it cannot
@@ -96,7 +99,10 @@
 -- The public result vocabulary is UNCHANGED: redeem still answers
 -- `invalid_token` / `redeemed`; expire still answers the closed set
 -- 0188 defined, including `not_expired`. This file adds no word, because the
--- correction makes existing words TRUE rather than describing a new outcome.
+-- correction makes existing words TRUE rather than describing a new outcome —
+-- most visibly `already_redeemed`, which 0188 could miss entirely because it
+-- read the redemption BEFORE taking the invitation lock, and answered
+-- `not_expired` for an invitation that had in fact been redeemed.
 --
 -- PRESERVED VERBATIM: both signatures, both return types, SECURITY DEFINER,
 -- `set search_path = pg_catalog, pg_temp`, volatility, the entry mutex, the
@@ -187,9 +193,43 @@ end;
 $$;
 
 -- ---------------------------------------------------------------------------
--- COMMAND 6 — EXPIRE. The entry mutex already precedes the decision; the clock
--- now does too. Body is otherwise 0188's, unchanged.
+-- COMMAND 6 — EXPIRE. Entry mutex, THEN the invitation row, THEN the clock.
 -- ---------------------------------------------------------------------------
+-- WHY THE ENTRY LOCK ALONE IS NOT ENOUGH, MEASURED. An earlier draft of this
+-- file moved the clock read to just after 0188's entry mutex. That closes the
+-- transaction-start staleness but not the whole defect, because the statement
+-- that actually serializes the terminal outcome is the INVITATION update, and
+-- it can block long after the clock was read:
+--
+--   TTL already elapsed. A second session held the invitation row FOR UPDATE.
+--   This command took the entry mutex (proved: a third session then blocked on
+--   the ENTRY row), captured v_decision_at, and blocked in the invitation
+--   UPDATE. The holder ROLLED BACK 3.15 s later. Expiry succeeded and stamped
+--   expired_at 2026-09-02T00:50:39.229Z while the lock that serialized it was
+--   released at 00:50:42.379Z -- 3,150 ms of provenance drift, and unbounded in
+--   principle, because a holder may wait arbitrarily long.
+--
+--   Worse, in the COMMIT variant the pre-UPDATE "already redeemed" check ran
+--   BEFORE the invitation lock, so it read a snapshot in which the competing
+--   redemption had not yet committed. A redemption then committed, and this
+--   command answered `not_expired` for an invitation that was REDEEMED, leaving
+--   the entry `invited`. The vocabulary was not wrong; the read was too early.
+--
+-- SO THE INVITATION ROW IS LOCKED BEFORE ANY DECISION IS READ OR TAKEN, and
+-- every terminal fact below is read FROM THAT LOCKED ROW.
+--
+-- LOCK ORDER IS UNCHANGED AND STILL ENTRY -> INVITATION, which is 0188's
+-- reviewed global order (issue, release and this command all take the entry row
+-- first). redeem holds the invitation ONLY and never reaches for the entry, so
+-- no path acquires INVITATION -> ENTRY and there is no cycle.
+--
+-- THE CURRENT CYCLE IS IDENTIFIED DETERMINISTICALLY. An entry may be invited,
+-- expire, be requeued and be invited again, so it can carry several invitation
+-- rows. The newest by (issued_at, id) is this cycle's; the entry mutex is what
+-- makes that stable, because issue() cannot add one while we hold it. The lock
+-- is then requested on that row's IMMUTABLE id -- never on the mutable terminal
+-- columns, which would let the target disappear from the lock request after a
+-- concurrent terminal transition and hand back a spurious answer.
 create or replace function public.expire_new_client_waitlist_invitation(
   p_studio_id     uuid,
   p_entry_id      uuid,
@@ -206,6 +246,10 @@ declare
   v_code        text;
   v_hit         uuid;
   v_inv         uuid;
+  v_redeemed    timestamptz;
+  v_expired     timestamptz;
+  v_released    timestamptz;
+  v_expires     timestamptz;
   v_decision_at timestamptz;
 begin
   select r.practitioner_id, r.code into v_actor, v_code
@@ -213,65 +257,81 @@ begin
   if v_code <> 'ok' then return v_code; end if;
   if p_entry_id is null then return 'invalid_input'; end if;
 
-  -- SERIALIZE ON THE ENTRY ROW BEFORE LOOKING AT ANY INVITATION. Unchanged from
-  -- 0188, and still the only mutex: issue() takes this same lock before it
-  -- inserts, so entry+invitation move as one unit and no live token is left
-  -- behind a terminal entry.
+  -- 1. SERIALIZE ON THE ENTRY ROW FIRST. Unchanged from 0188, and still the
+  -- outer mutex: issue() takes this same lock before it inserts, so entry and
+  -- invitation move as one unit and no live token is left behind a terminal
+  -- entry.
   perform 1
      from public.new_client_waitlist_entries e
     where e.id = p_entry_id and e.studio_id = p_studio_id
     for update;
 
-  -- THE CLOCK IS READ AFTER THAT LOCK. 0188 read it at transaction start, so a
-  -- call that waited here decided the TTL against a stale instant and could
-  -- answer `not_expired` for a window that had in fact closed while it waited.
-  v_decision_at := clock_timestamp();
-
-  -- REDEMPTION IS TERMINAL, CHECKED BEFORE ANYTHING IS WRITTEN.
-  if exists (
-    select 1
-      from public.new_client_waitlist_invitations i
-     where i.entry_id    = p_entry_id
-       and i.studio_id   = p_studio_id
-       and i.redeemed_at is not null)
-  then
-    return 'already_redeemed';
-  end if;
-
-  -- EXPIRY MEANS THE TTL ELAPSED. It is not a second word for release. The
-  -- caller still supplies no clock and no expiry authority.
-  update public.new_client_waitlist_invitations i
-     set expired_at = v_decision_at
+  -- 2. IDENTIFY AND LOCK THIS CYCLE'S INVITATION, by immutable id. Ordering by
+  -- issued_at picks the current cycle rather than a historical one; the entry
+  -- mutex above is what makes that choice stable.
+  select i.id, i.redeemed_at, i.expired_at, i.released_at, i.expires_at
+    into v_inv, v_redeemed, v_expired, v_released, v_expires
+    from public.new_client_waitlist_invitations i
    where i.entry_id = p_entry_id
      and i.studio_id = p_studio_id
-     and i.redeemed_at is null and i.expired_at is null and i.released_at is null
-     and i.expires_at <= v_decision_at
-  returning i.id into v_inv;
+   order by i.issued_at desc, i.id desc
+   limit 1
+   for update;
 
-  -- THE ENTRY MOVES ONLY IF THIS COMMAND ACTUALLY EXPIRED AN INVITATION.
+  -- 3. THE CLOCK IS READ HERE -- after BOTH locks -- and nowhere else. Every
+  -- comparison and every stamp below uses this one value, so the decision and
+  -- the provenance it writes cannot disagree, and neither can be older than the
+  -- lock that serialized the outcome.
+  v_decision_at := clock_timestamp();
+
+  -- The entry was never invited, so there is nothing to expire.
   if v_inv is null then
-    if exists (
-      select 1
-        from public.new_client_waitlist_invitations i
-       where i.entry_id    = p_entry_id
-         and i.studio_id   = p_studio_id
-         and i.redeemed_at is null and i.expired_at is null and i.released_at is null
-         and i.expires_at  > v_decision_at)
-    then
-      -- Same closed word as 0188, now decided against the post-lock clock so it
-      -- cannot claim a window is open after it has closed.
-      return 'not_expired';
-    end if;
-    if exists (
-      select 1 from public.new_client_waitlist_entries e
-       where e.id = p_entry_id and e.studio_id = p_studio_id and e.status = 'expired')
-    then
-      return 'expired';
-    end if;
     return 'not_invited';
   end if;
 
-  -- REDEMPTION IS TERMINAL FOR THIS ENTRY, RESTATED AS DEFENCE IN DEPTH.
+  -- 4. TERMINAL STATE, READ FROM THE LOCKED ROW. Every branch below is decided
+  -- on values that were read under the invitation lock, so a redemption that
+  -- committed while this call waited is visible rather than missed.
+  --
+  -- REDEMPTION IS TERMINAL, and it is still checked before anything is written.
+  if v_redeemed is not null then
+    return 'already_redeemed';
+  end if;
+
+  -- Already expired by an earlier call: idempotent, same closed word.
+  if v_expired is not null then
+    return 'expired';
+  end if;
+
+  -- Released invitations are not expirable, and `released` is not this
+  -- command's word. 0188 reached `not_invited` here by exhaustion; it is stated
+  -- directly now that the row is in hand, and the answer is unchanged.
+  if v_released is not null then
+    return 'not_invited';
+  end if;
+
+  -- 5. EXPIRY MEANS THE TTL ELAPSED. It is not a second word for release, and
+  -- the caller still supplies no clock and no expiry authority.
+  if v_expires > v_decision_at then
+    -- TRUTHFUL, AND NOT ANY OTHER EXISTING CODE: the entry is invited and its
+    -- invitation is live, so the window simply has not closed yet.
+    return 'not_expired';
+  end if;
+
+  -- 6. STAMP. The row is already locked, so this update cannot block and cannot
+  -- be re-qualified against a newer version behind our back.
+  update public.new_client_waitlist_invitations i
+     set expired_at = v_decision_at
+   where i.id = v_inv
+  returning i.id into v_inv;
+
+  if v_inv is null then
+    return 'not_invited';
+  end if;
+
+  -- REDEMPTION IS TERMINAL FOR THIS ENTRY, RESTATED AS DEFENCE IN DEPTH. The
+  -- branch above already refused a redeemed entry; this repeats the test on the
+  -- statement that actually moves the entry, so the two can never disagree.
   update public.new_client_waitlist_entries
      set status = 'expired', expired_at = v_decision_at
    where id = p_entry_id and studio_id = p_studio_id and status = 'invited'

@@ -111,18 +111,14 @@ async function issueExpiringIn(label: string, seconds: number): Promise<Fixture>
   );
   expect(iss.rows[0].result).toBe("invited");
 
-  await adminQuery(
-    `alter table public.new_client_waitlist_invitations disable trigger new_client_waitlist_invitations_append_only`,
-  );
-  const upd = await adminQuery(
-    `update public.new_client_waitlist_invitations
-        set expires_at = clock_timestamp() + make_interval(secs => $2)
-      where entry_id = $1 and redeemed_at is null and expired_at is null and released_at is null
-      returning id, expires_at`,
-    [entryId, seconds],
-  );
-  await adminQuery(
-    `alter table public.new_client_waitlist_invitations enable trigger new_client_waitlist_invitations_append_only`,
+  const upd = await withAppendOnlyDisabled(() =>
+    adminQuery(
+      `update public.new_client_waitlist_invitations
+          set expires_at = clock_timestamp() + make_interval(secs => $2)
+        where entry_id = $1 and redeemed_at is null and expired_at is null and released_at is null
+        returning id, expires_at`,
+      [entryId, seconds],
+    ),
   );
 
   return {
@@ -133,6 +129,46 @@ async function issueExpiringIn(label: string, seconds: number): Promise<Fixture>
     invId: upd.rows[0].id as string,
     expiresAt: upd.rows[0].expires_at as Date,
   };
+}
+
+/**
+ * Re-stamp the deadline to `seconds` from NOW.
+ *
+ * WHY THIS EXISTS. Seeding a short window and only THEN opening connections
+ * makes the test depend on how long setup took: on a cold database straight
+ * after `db reset` the window elapsed before the contending transaction had
+ * even begun, and the run failed on its own precondition. Stamping the deadline
+ * at the last moment removes setup duration from the measurement entirely.
+ *
+ * Must be called BEFORE any session locks the row, or it would block itself.
+ */
+async function withAppendOnlyDisabled<T>(fn: () => Promise<T>): Promise<T> {
+  // try/finally IS LOAD-BEARING. An earlier draft called this while another
+  // session held the row; the UPDATE blocked, the trigger stayed DISABLED, and
+  // every later test in the file timed out behind the held ALTER TABLE lock.
+  // The guard is cheap and the failure it prevents is not local to one test.
+  await adminQuery(
+    `alter table public.new_client_waitlist_invitations disable trigger new_client_waitlist_invitations_append_only`,
+  );
+  try {
+    return await fn();
+  } finally {
+    await adminQuery(
+      `alter table public.new_client_waitlist_invitations enable trigger new_client_waitlist_invitations_append_only`,
+    );
+  }
+}
+
+async function restampExpiry(invId: string, seconds: number): Promise<Date> {
+  const u = await withAppendOnlyDisabled(() =>
+    adminQuery(
+      `update public.new_client_waitlist_invitations
+          set expires_at = clock_timestamp() + make_interval(secs => $2)
+        where id = $1 returning expires_at`,
+      [invId, seconds],
+    ),
+  );
+  return u.rows[0].expires_at as Date;
 }
 
 const stateOf = async (invId: string) =>
@@ -180,6 +216,10 @@ describe("C — THE LOAD-BEARING CASE: begins before, blocks, released after", (
   it("refuses a redemption whose window closed while it waited on a lock", async () => {
     const f = await issueExpiringIn("wc-c", 6);
 
+    // The deadline is stamped BEFORE anything locks the row, so setup duration
+    // cannot consume the window and this call cannot block on a holder.
+    const deadline = await restampExpiry(f.invId, 6);
+
     // TX-A holds the invitation row so redemption cannot complete.
     const a = await conn();
     await a.query("begin");
@@ -196,7 +236,7 @@ describe("C — THE LOAD-BEARING CASE: begins before, blocks, released after", (
     expect(
       t0.t.getTime(),
       "PRECONDITION: the redeeming transaction must begin BEFORE the deadline",
-    ).toBeLessThan(f.expiresAt.getTime());
+    ).toBeLessThan(deadline.getTime());
 
     // Fire the redemption WITHOUT awaiting it, then prove it is really blocked.
     const pending = b.query(
@@ -208,8 +248,8 @@ describe("C — THE LOAD-BEARING CASE: begins before, blocks, released after", (
     expect(ev).toContain("Lock");
 
     // The window closes WHILE it waits.
-    const releasedAt = await waitPastDeadline(f.expiresAt);
-    expect(releasedAt.getTime()).toBeGreaterThan(f.expiresAt.getTime());
+    const releasedAt = await waitPastDeadline(deadline);
+    expect(releasedAt.getTime()).toBeGreaterThan(deadline.getTime());
 
     // Release WITHOUT invalidating the invitation, so the only thing that can
     // refuse the redemption is the TTL itself.
@@ -288,6 +328,8 @@ describe("E — the expiry command decides on the post-lock clock too", () => {
     // invitation whose window had in fact closed while the call waited.
     const f = await issueExpiringIn("wc-e", 6);
 
+    const deadline = await restampExpiry(f.invId, 6);
+
     // TX-A holds the ENTRY row — the mutex expire() takes first.
     const a = await conn();
     await a.query("begin");
@@ -299,7 +341,7 @@ describe("E — the expiry command decides on the post-lock clock too", () => {
     await b.query("begin");
     const t0 = (await b.query(`select transaction_timestamp() as t, pg_backend_pid() as pid`))
       .rows[0] as { t: Date; pid: number };
-    expect(t0.t.getTime()).toBeLessThan(f.expiresAt.getTime());
+    expect(t0.t.getTime()).toBeLessThan(deadline.getTime());
 
     const pending = b.query(
       `select public.expire_new_client_waitlist_invitation($1,$2,$3) as r`,
@@ -308,7 +350,7 @@ describe("E — the expiry command decides on the post-lock clock too", () => {
     const ev = await waitUntilBlocked(t0.pid);
     expect(ev, "the expiring backend never actually blocked on the entry mutex").not.toBeNull();
 
-    await waitPastDeadline(f.expiresAt);
+    await waitPastDeadline(deadline);
     await a.query("rollback");
     await a.end();
 
@@ -343,7 +385,9 @@ describe("F — redeem || expire across the deadline stays coherent", () => {
   it("yields exactly one terminal state, never both", async () => {
     const f = await issueExpiringIn("wc-f", 5);
 
-    // A redemption begins while live and blocks behind the entry mutex holder.
+    const deadline = await restampExpiry(f.invId, 6);
+
+    // A redemption begins while live and blocks behind the invitation holder.
     const a = await conn();
     await a.query("begin");
     await a.query(`select 1 from public.new_client_waitlist_invitations where id = $1 for update`, [
@@ -354,14 +398,14 @@ describe("F — redeem || expire across the deadline stays coherent", () => {
     await b.query("begin");
     const t0 = (await b.query(`select transaction_timestamp() as t, pg_backend_pid() as pid`))
       .rows[0] as { t: Date; pid: number };
-    expect(t0.t.getTime()).toBeLessThan(f.expiresAt.getTime());
+    expect(t0.t.getTime()).toBeLessThan(deadline.getTime());
     const redeeming = b.query(
       `select result from public.redeem_new_client_waitlist_invitation($1)`,
       [f.token],
     );
     expect(await waitUntilBlocked(t0.pid)).not.toBeNull();
 
-    await waitPastDeadline(f.expiresAt);
+    await waitPastDeadline(deadline);
     await a.query("rollback");
     await a.end();
 
@@ -443,5 +487,325 @@ describe("H — the deployed contract is unchanged apart from the body", () => {
       `select has_column_privilege('authenticated','public.new_client_waitlist_invitations','token_hash','SELECT') as t`,
     );
     expect(r.rows[0].t).toBe(false);
+  });
+});
+
+// ===========================================================================
+// 0189 P2 — THE EXPIRY DECISION MUST FOLLOW THE INVITATION LOCK, NOT ONLY THE
+// ENTRY LOCK.
+//
+// The first draft of 0189 moved the clock read to just after 0188's ENTRY
+// mutex. That is not far enough: the statement that actually serializes the
+// terminal outcome is the INVITATION update, and it can block long after the
+// clock was read. Measured on that draft — TTL already elapsed, a second
+// session holding the invitation row, the holder rolling back 3.15 s later —
+// expiry succeeded and stamped `expired_at` 3,150 ms BEFORE the lock that
+// serialized it, and the interval is unbounded because a holder may wait
+// arbitrarily long.
+//
+// The commit variant was worse: the pre-UPDATE "already redeemed" check ran
+// before the invitation lock, so it read a snapshot without the competing
+// redemption. The command then answered `not_expired` for an invitation that
+// had been REDEEMED, leaving the entry `invited`.
+// ===========================================================================
+
+/** Lock an entry's current-cycle invitation from an independent session. */
+async function holdInvitation(invId: string) {
+  const c = await conn();
+  await c.query("begin");
+  await c.query(`select 1 from public.new_client_waitlist_invitations where id = $1 for update`, [
+    invId,
+  ]);
+  return c;
+}
+
+/** An invitation whose TTL has ALREADY elapsed. The ttl CHECK is
+ *  (expires_at > issued_at, within 7 days), so both anchors move together. */
+async function issueAlreadyElapsed(label: string): Promise<Fixture> {
+  const f = await issueExpiringIn(label, 60);
+  const u = await withAppendOnlyDisabled(() =>
+    adminQuery(
+      `update public.new_client_waitlist_invitations
+          set issued_at  = clock_timestamp() - interval '4 days',
+              expires_at = clock_timestamp() - interval '1 minute'
+        where id = $1 returning expires_at`,
+      [f.invId],
+    ),
+  );
+  return { ...f, expiresAt: u.rows[0].expires_at as Date };
+}
+
+const HOLD_MS = 2500;
+
+describe("A — NEGATIVE CONTROL: the entry-lock-only shape produces stale provenance", () => {
+  it("an early clock plus a blocked invitation update stamps before the serializing lock", async () => {
+    // THE PRE-REPAIR SHAPE, RUN INLINE. Not a paraphrase of the old function: it
+    // is the same order of operations — entry lock, THEN clock, THEN the
+    // invitation update that blocks. If this control ever stops drifting, the
+    // repair below has become untestable and this file says so.
+    const f = await issueAlreadyElapsed("p2-neg");
+    const holder = await holdInvitation(f.invId);
+
+    const b = await conn();
+    await b.query("begin");
+    const pid = (await b.query(`select pg_backend_pid() as pid`)).rows[0].pid as number;
+
+    // 1. entry mutex   2. clock   3. the update that will block
+    await b.query(`select 1 from public.new_client_waitlist_entries where id = $1 for update`, [
+      f.entryId,
+    ]);
+    const early = (await b.query(`select clock_timestamp() as t`)).rows[0].t as Date;
+    const blocked = b.query(
+      `update public.new_client_waitlist_invitations
+          set expired_at = $2::timestamptz
+        where entry_id = $1 and redeemed_at is null and expired_at is null and released_at is null
+          and expires_at <= $2::timestamptz
+        returning id`,
+      [f.entryId, early.toISOString()],
+    );
+    expect(await waitUntilBlocked(pid), "the control never blocked").not.toBeNull();
+
+    await sleep(HOLD_MS);
+    const releaseBoundary = (await adminQuery(`select clock_timestamp() as t`)).rows[0].t as Date;
+    await holder.query("rollback");
+    await holder.end();
+
+    const res = await blocked;
+    expect(res.rowCount).toBe(1);
+    await b.query("rollback");
+    await b.end();
+
+    const drift = releaseBoundary.getTime() - early.getTime();
+    expect(
+      drift,
+      "the control is vacuous: the pre-repair shape no longer drifts, so B proves nothing",
+    ).toBeGreaterThan(HOLD_MS - 500);
+  });
+});
+
+describe("B — REPAIRED: the decision instant follows the invitation lock", () => {
+  it("stamps expired_at at or after the moment the holder released", async () => {
+    const f = await issueAlreadyElapsed("p2-b");
+    const holder = await holdInvitation(f.invId);
+
+    const b = await conn();
+    await b.query("begin");
+    const pid = (await b.query(`select pg_backend_pid() as pid`)).rows[0].pid as number;
+    const pending = b.query(
+      `select public.expire_new_client_waitlist_invitation($1,$2,$3) as r`,
+      [f.studioId, f.entryId, f.userId],
+    );
+    expect(await waitUntilBlocked(pid), "expire never blocked on the invitation").not.toBeNull();
+
+    // It is past the ENTRY mutex and waiting on the INVITATION: a third session
+    // asking for the entry row must therefore block behind it.
+    const third = await conn();
+    await third.query("begin");
+    const tpid = (await third.query(`select pg_backend_pid() as pid`)).rows[0].pid as number;
+    const thirdPending = third.query(
+      `select 1 from public.new_client_waitlist_entries where id = $1 for update`,
+      [f.entryId],
+    );
+    expect(
+      await waitUntilBlocked(tpid, 5000),
+      "expire is not holding the entry mutex, so it never reached the invitation lock",
+    ).not.toBeNull();
+
+    await sleep(HOLD_MS);
+    const releaseBoundary = (await adminQuery(`select clock_timestamp() as t`)).rows[0].t as Date;
+    await holder.query("rollback");
+    await holder.end();
+
+    const r = (await pending).rows[0] as { r: string };
+    await b.query("commit");
+    await b.end();
+    await thirdPending.catch(() => undefined);
+    await third.query("rollback");
+    await third.end();
+
+    expect(r.r).toBe("expired");
+    const st = await stateOf(f.invId);
+    expect(st.expired_at).not.toBeNull();
+
+    // THE ASSERTION THE CONTROL ABOVE MAKES MEANINGFUL. The stamp must not
+    // predate the lock that serialized it. A small negative tolerance covers the
+    // ordering of two separate clock reads on the same server.
+    const drift = releaseBoundary.getTime() - st.expired_at!.getTime();
+    expect(
+      drift,
+      `expired_at is ${drift}ms BEFORE the serializing lock release — stale provenance`,
+    ).toBeLessThan(250);
+    expect(await entryStatus(f.entryId)).toBe("expired");
+
+    // Invitation and entry are stamped from the SAME decision value.
+    const ent = await adminQuery(
+      `select expired_at from public.new_client_waitlist_entries where id=$1`,
+      [f.entryId],
+    );
+    expect((ent.rows[0].expired_at as Date).getTime()).toBe(st.expired_at!.getTime());
+  });
+});
+
+describe("C — REPAIRED: a redemption that commits during the wait is seen", () => {
+  it("answers already_redeemed and expires nothing", async () => {
+    const f = await issueExpiringIn("p2-c", 4);
+
+    const deadline = await restampExpiry(f.invId, 6);
+
+    // TX-A redeems while the invitation is live, and holds it uncommitted.
+    const a = await conn();
+    await a.query("begin");
+    const red = await a.query(
+      `select result from public.redeem_new_client_waitlist_invitation($1)`,
+      [f.token],
+    );
+    expect(red.rows[0].result).toBe("redeemed");
+
+    const b = await conn();
+    await b.query("begin");
+    const pid = (await b.query(`select pg_backend_pid() as pid`)).rows[0].pid as number;
+    const pending = b.query(
+      `select public.expire_new_client_waitlist_invitation($1,$2,$3) as r`,
+      [f.studioId, f.entryId, f.userId],
+    );
+    // THE REPAIR IS WHAT MAKES THIS BLOCK. The pre-repair shape did not: its
+    // update matched no row (the TTL had not elapsed at its early clock), so it
+    // sailed past and answered `not_expired` for a redeemed invitation.
+    expect(await waitUntilBlocked(pid), "expire did not wait for the redemption").not.toBeNull();
+
+    await waitPastDeadline(deadline); // TTL elapses while it waits
+    await a.query("commit");
+    await a.end();
+
+    const r = (await pending).rows[0] as { r: string };
+    await b.query("commit");
+    await b.end();
+
+    expect(r.r).toBe("already_redeemed");
+    const st = await stateOf(f.invId);
+    expect(st.redeemed_at).not.toBeNull();
+    expect(st.expired_at, "a redeemed invitation must never be expired").toBeNull();
+    expect(await entryStatus(f.entryId)).toBe("invited");
+  });
+});
+
+describe("D/E — the uncontended cases are unchanged", () => {
+  it("D — an elapsed TTL expires normally", async () => {
+    const f = await issueAlreadyElapsed("p2-d");
+    const r = await adminQuery(
+      `select public.expire_new_client_waitlist_invitation($1,$2,$3) as r`,
+      [f.studioId, f.entryId, f.userId],
+    );
+    expect(r.rows[0].r).toBe("expired");
+    expect((await stateOf(f.invId)).expired_at).not.toBeNull();
+    expect(await entryStatus(f.entryId)).toBe("expired");
+  });
+
+  it("E — a live window is not_expired and writes no timestamp", async () => {
+    const f = await issueExpiringIn("p2-e", 120);
+    const r = await adminQuery(
+      `select public.expire_new_client_waitlist_invitation($1,$2,$3) as r`,
+      [f.studioId, f.entryId, f.userId],
+    );
+    expect(r.rows[0].r).toBe("not_expired");
+    expect((await stateOf(f.invId)).expired_at).toBeNull();
+    expect(await entryStatus(f.entryId)).toBe("invited");
+  });
+});
+
+describe("G/H — release and issue still interleave coherently", () => {
+  it("G — release || expire: no deadlock, exactly one terminal outcome", async () => {
+    const f = await issueAlreadyElapsed("p2-g");
+    const [rel, exp] = await Promise.all([
+      adminQuery(`select public.release_new_client_waitlist_entry($1,$2,$3) as r`, [
+        f.studioId,
+        f.entryId,
+        f.userId,
+      ]).then((x) => x.rows[0].r as string),
+      adminQuery(`select public.expire_new_client_waitlist_invitation($1,$2,$3) as r`, [
+        f.studioId,
+        f.entryId,
+        f.userId,
+      ]).then((x) => x.rows[0].r as string),
+    ]);
+    const st = await stateOf(f.invId);
+    const terminal = [st.redeemed_at, st.expired_at, st.released_at].filter((x) => x !== null);
+    expect(terminal, `release=${rel} expire=${exp} left ${terminal.length} terminal columns`)
+      .toHaveLength(1);
+    expect(["released", "expired"]).toContain(await entryStatus(f.entryId));
+  });
+
+  it("H — the entry mutex still orders issue against expire", async () => {
+    // issue() takes the same entry lock, so a second invitation cannot appear
+    // underneath an in-flight expiry.
+    const f = await issueAlreadyElapsed("p2-h");
+    const r = await adminQuery(
+      `select public.expire_new_client_waitlist_invitation($1,$2,$3) as r`,
+      [f.studioId, f.entryId, f.userId],
+    );
+    expect(r.rows[0].r).toBe("expired");
+    // The entry is `expired`, so issuing again is refused until it is requeued.
+    const again = await adminQuery(
+      `select result from public.issue_new_client_waitlist_invitation($1,$2,$3,72)`,
+      [f.studioId, f.entryId, f.userId],
+    );
+    expect(again.rows[0].result).toBe("not_claimed");
+  });
+});
+
+describe("I — expiry acts on the CURRENT cycle, never a historical invitation", () => {
+  it("locks and expires the newest invitation when the entry has been re-invited", async () => {
+    const f = await issueAlreadyElapsed("p2-i");
+    // Cycle 1 terminates.
+    expect(
+      (
+        await adminQuery(`select public.expire_new_client_waitlist_invitation($1,$2,$3) as r`, [
+          f.studioId,
+          f.entryId,
+          f.userId,
+        ])
+      ).rows[0].r,
+    ).toBe("expired");
+
+    // Requeue -> claim -> invite again: a SECOND invitation row for one entry.
+    expect(
+      (
+        await adminQuery(`select public.requeue_new_client_waitlist_entry($1,$2,$3) as r`, [
+          f.studioId,
+          f.entryId,
+          f.userId,
+        ])
+      ).rows[0].r,
+    ).toBe("requeued");
+    await adminQuery(`select public.claim_new_client_waitlist_entry($1,$2,$3)`, [
+      f.studioId,
+      f.entryId,
+      f.userId,
+    ]);
+    const second = await adminQuery(
+      `select result from public.issue_new_client_waitlist_invitation($1,$2,$3,72)`,
+      [f.studioId, f.entryId, f.userId],
+    );
+    expect(second.rows[0].result).toBe("invited");
+
+    const rows = await adminQuery(
+      `select id, expired_at from public.new_client_waitlist_invitations
+        where entry_id = $1 order by issued_at desc, id desc`,
+      [f.entryId],
+    );
+    expect(rows.rows).toHaveLength(2);
+    const current = rows.rows[0].id as string;
+    expect(current).not.toBe(f.invId);
+
+    // The current cycle is LIVE, so expiry must say so rather than reporting the
+    // historical row's terminal state.
+    const r = await adminQuery(
+      `select public.expire_new_client_waitlist_invitation($1,$2,$3) as r`,
+      [f.studioId, f.entryId, f.userId],
+    );
+    expect(r.rows[0].r).toBe("not_expired");
+    expect((await stateOf(current)).expired_at).toBeNull();
+    // ...and the historical row is untouched by this call.
+    expect((await stateOf(f.invId)).expired_at).not.toBeNull();
   });
 });
