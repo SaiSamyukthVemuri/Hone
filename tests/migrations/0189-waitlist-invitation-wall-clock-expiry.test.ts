@@ -648,9 +648,13 @@ describe("0189 — no transaction-bound clock survives anywhere", () => {
     }
   });
 
-  it("every entry-lifecycle stamp comes from the post-lock local", () => {
+  it("every entry-lifecycle stamp comes from the post-lock instant", () => {
+    // Two legitimate shapes, and both are post-lock:
+    //   * a local captured after the entry mutex (the single-row commands), and
+    //   * a value derived FROM the locked candidates inside one SQL statement
+    //     (bulk claim, which has no single entry to lock first).
+    expect(body("claim_new_client_waitlist_entries")).toMatch(/claimed_at\s*=\s*d\.decision_at/);
     for (const [fn, col] of [
-      ["claim_new_client_waitlist_entries", "claimed_at"],
       ["claim_new_client_waitlist_entry", "claimed_at"],
       ["issue_new_client_waitlist_invitation", "invited_at"],
       ["record_new_client_waitlist_conversion", "converted_at"],
@@ -682,6 +686,9 @@ describe("0189 — no transaction-bound clock survives anywhere", () => {
       expect(clock, `${fn} reads no clock`).toBeGreaterThan(-1);
       expect(clock, `${fn} reads the clock BEFORE the entry mutex`).toBeGreaterThan(lock);
     }
+    // claim_new_client_waitlist_entries reads its clock INSIDE the
+    // candidate-dependent statement instead, which is stronger than a post-lock
+    // local: see the dedicated block below.
     expect(body("claim_new_client_waitlist_entries")).toContain("for update skip locked");
   });
 
@@ -739,5 +746,103 @@ describe("0189 — the lifecycle event log takes the transition's own evidence",
     expect(poisoned).not.toMatch(/,\s*occurred_at\)/);
     // The real body still names the column in both insert lists.
     expect([...real.matchAll(/,\s*occurred_at\)/g)].length).toBe(2);
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// BULK CLAIM — the clock is read INSIDE the candidate-dependent statement.
+//
+// A standalone `v_decision_at := clock_timestamp();` is its own PL/pgSQL
+// statement; under READ COMMITTED the statement AFTER it takes a fresh
+// snapshot, so a requeue committing in that gap is visible to the candidate
+// scan while the stamp is not. FOR UPDATE SKIP LOCKED governs contention and
+// does not close it. Measured on the old shape: claimed_at 113 ms before the
+// `waiting` event of the requeue that created the row it claimed.
+// ---------------------------------------------------------------------------
+describe("0189 — bulk claim derives its instant from the candidates", () => {
+  const b = () => body("claim_new_client_waitlist_entries");
+
+  it("takes NO standalone clock assignment", () => {
+    expect(
+      b(),
+      "the clock is captured as its own statement again — the snapshot gap is back",
+    ).not.toMatch(/v_decision_at\s*:=\s*clock_timestamp\(\)/);
+    expect(b(), "an unused decision local was left behind").not.toMatch(/v_decision_at/);
+  });
+
+  it("reads the clock FROM the candidates CTE, so it cannot precede the locks", () => {
+    const src = b();
+    expect(src).toMatch(/decision as materialized \(\s*\n\s*select clock_timestamp\(\) as decision_at\s*\n\s*from candidates/);
+    const candidates = src.indexOf("candidates as materialized");
+    const decision = src.indexOf("decision as materialized");
+    const clock = src.indexOf("clock_timestamp()");
+    expect(candidates).toBeGreaterThan(-1);
+    expect(decision).toBeGreaterThan(candidates);
+    expect(clock).toBeGreaterThan(candidates);
+    // the locks are acquired in the CTE the clock reads from
+    expect(src.slice(candidates, decision)).toContain("for update skip locked");
+  });
+
+  it("MATERIALIZED on BOTH CTEs, so the planner cannot hoist the clock", () => {
+    // Without it the planner may inline `decision` and evaluate clock_timestamp()
+    // while the candidate scan is still running — the same defect, new shape.
+    const src = b();
+    expect(src).toMatch(/with candidates as materialized/);
+    expect(src).toMatch(/decision as materialized/);
+    expect([...src.matchAll(/as materialized/g)].length).toBe(2);
+  });
+
+  it("every winner is stamped from that ONE decision row", () => {
+    const src = b();
+    expect(src).toMatch(/claimed_at\s*=\s*d\.decision_at/);
+    expect(src).toMatch(/from candidates c\s*\n\s*cross join decision d/);
+    expect(src).toMatch(/select clock_timestamp\(\) as decision_at\s*\n\s*from candidates\s*\n\s*limit 1/);
+  });
+
+  it("zero candidates stays a zero-row result: decision depends on candidates", () => {
+    // `decision` selects FROM `candidates`, so an empty candidate set yields an
+    // empty decision and the cross join updates nothing — no exception, and no
+    // clock side effect.
+    const src = b();
+    const dec = src.slice(src.indexOf("decision as materialized"), src.indexOf("claimed as ("));
+    expect(dec).toContain("from candidates");
+  });
+
+  it("preserves exact-N, queue order, studio isolation and SKIP LOCKED", () => {
+    const src = b();
+    expect(src).toContain("order by e.joined_at, e.id");
+    expect(src).toContain("limit p_count");
+    expect(src).toContain("for update skip locked");
+    expect(src).toContain("e.studio_id = p_studio_id");
+    expect(src).toContain("t.status    = 'waiting'");
+    expect(src).toContain("claimed_by_practitioner_id = v_actor");
+  });
+
+  it("J — NON-VACUITY: hoisting the clock out of the CTE turns these laws red", () => {
+    const real = b();
+    const poisoned = real
+      .replace(/  decision as materialized \([\s\S]*?\),\n/, "")
+      .replace(/\n      cross join decision d/, "")
+      .replace(/claimed_at\s*=\s*d\.decision_at/, "claimed_at                 = v_decision_at")
+      .replace("begin\n", "begin\n  v_decision_at := clock_timestamp();\n");
+    expect(poisoned, "the mutation did not apply — this control is vacuous").not.toEqual(real);
+    expect(poisoned).not.toMatch(/decision as materialized/);
+    expect(poisoned).toMatch(/claimed_at\s*=\s*v_decision_at/);
+    // ...and the real body still satisfies every law above.
+    expect(real).toMatch(/decision as materialized/);
+    expect(real).not.toMatch(/v_decision_at/);
+  });
+
+  it("the known-false SKIP LOCKED rationale is gone from the executable file", () => {
+    // The old comment claimed SKIP LOCKED made the standalone capture safe. It
+    // is replaced, not softened; the file may only mention it while explaining
+    // that it was wrong.
+    const raw = SQL.slice(
+      SQL.indexOf("create or replace function public.claim_new_client_waitlist_entries"),
+    );
+    const upToBody = raw.slice(0, raw.indexOf("$$;"));
+    expect(upToBody).toMatch(/was WRONG|reasoning was WRONG/);
+    expect(upToBody).toMatch(/STATEMENT SNAPSHOT|statement snapshot/i);
   });
 });

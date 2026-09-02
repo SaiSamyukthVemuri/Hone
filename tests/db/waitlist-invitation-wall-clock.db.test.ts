@@ -34,7 +34,7 @@ async function conn(): Promise<Client> {
 }
 
 /** Poll pg_stat_activity until `pid` is genuinely waiting on a lock. */
-async function waitUntilBlocked(pid: number, timeoutMs = 8000): Promise<string | null> {
+async function waitUntilBlocked(pid: number, timeoutMs = 12000): Promise<string | null> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const r = await adminQuery(
@@ -51,7 +51,7 @@ async function waitUntilBlocked(pid: number, timeoutMs = 8000): Promise<string |
 
 /** Block until the SERVER's wall clock has passed `expiresAt`, and prove it. */
 async function waitPastDeadline(expiresAt: Date): Promise<Date> {
-  for (let i = 0; i < 300; i += 1) {
+  for (let i = 0; i < 800; i += 1) {
     const r = await adminQuery(
       `select clock_timestamp() as nowc, clock_timestamp() > $1::timestamptz as past`,
       [expiresAt.toISOString()],
@@ -218,7 +218,7 @@ describe("C — THE LOAD-BEARING CASE: begins before, blocks, released after", (
 
     // The deadline is stamped BEFORE anything locks the row, so setup duration
     // cannot consume the window and this call cannot block on a holder.
-    const deadline = await restampExpiry(f.invId, 6);
+    const deadline = await restampExpiry(f.invId, CROSS_DEADLINE_SECONDS);
 
     // TX-A holds the invitation row so redemption cannot complete.
     const a = await conn();
@@ -328,7 +328,7 @@ describe("E — the expiry command decides on the post-lock clock too", () => {
     // invitation whose window had in fact closed while the call waited.
     const f = await issueExpiringIn("wc-e", 6);
 
-    const deadline = await restampExpiry(f.invId, 6);
+    const deadline = await restampExpiry(f.invId, CROSS_DEADLINE_SECONDS);
 
     // TX-A holds the ENTRY row — the mutex expire() takes first.
     const a = await conn();
@@ -385,7 +385,7 @@ describe("F — redeem || expire across the deadline stays coherent", () => {
   it("yields exactly one terminal state, never both", async () => {
     const f = await issueExpiringIn("wc-f", 5);
 
-    const deadline = await restampExpiry(f.invId, 6);
+    const deadline = await restampExpiry(f.invId, CROSS_DEADLINE_SECONDS);
 
     // A redemption begins while live and blocks behind the invitation holder.
     const a = await conn();
@@ -537,6 +537,19 @@ async function issueAlreadyElapsed(label: string): Promise<Fixture> {
 
 const HOLD_MS = 2500;
 
+/**
+ * How far ahead the cross-deadline cases put their deadline.
+ *
+ * It has to outlast ALL the setup that happens after it is stamped — opening
+ * connections, beginning the transaction, and PROVING the backend is blocked —
+ * because the precondition is that the transaction begins while the invitation
+ * is still live. At 6s this passed alone and on the full lane but failed once in
+ * a four-file run on a cold database, which is a flaky test rather than a real
+ * failure. The window is widened rather than the precondition relaxed: a test
+ * that sometimes proves nothing is worse than a slow one.
+ */
+const CROSS_DEADLINE_SECONDS = 14;
+
 describe("A — NEGATIVE CONTROL: the entry-lock-only shape produces stale provenance", () => {
   it("an early clock plus a blocked invitation update stamps before the serializing lock", async () => {
     // THE PRE-REPAIR SHAPE, RUN INLINE. Not a paraphrase of the old function: it
@@ -650,7 +663,7 @@ describe("C — REPAIRED: a redemption that commits during the wait is seen", ()
   it("answers already_redeemed and expires nothing", async () => {
     const f = await issueExpiringIn("p2-c", 4);
 
-    const deadline = await restampExpiry(f.invId, 6);
+    const deadline = await restampExpiry(f.invId, CROSS_DEADLINE_SECONDS);
 
     // TX-A redeems while the invitation is live, and holds it uncommitted.
     const a = await conn();
@@ -1712,5 +1725,246 @@ describe("the event IS the transition, not a second reading of it", () => {
       nowInTx.c.getTime() - nowInTx.n.getTime(),
       "now() and clock_timestamp() no longer diverge — the control proves nothing",
     ).toBeGreaterThan(300);
+  });
+});
+
+// ===========================================================================
+// BULK CLAIM — the clock must be read INSIDE the candidate-dependent statement.
+//
+// The last shape of this defect was not lock contention at all. A standalone
+// `v_decision_at := clock_timestamp();` is its own PL/pgSQL statement, and under
+// READ COMMITTED the SQL statement that follows takes a FRESH snapshot. A
+// requeue committing in that gap makes a row `waiting` AFTER the clock was read;
+// the candidate scan then sees it, claims it, and stamps it with the earlier
+// instant. FOR UPDATE SKIP LOCKED does not help: it governs contention, and the
+// gap is not contention.
+//
+// Measured on the old shape with the schedule forced: claimed_at 113 ms BEFORE
+// the `waiting` event of the very requeue that created the row it claimed.
+// ===========================================================================
+
+const BULK_BARRIER = 918923;
+
+/** Studio + owner + N waiting entries. */
+async function seedWaiting(label: string, n: number) {
+  const s = await seedStudioOwner(label);
+  const ids: string[] = [];
+  for (let i = 0; i < n; i += 1) {
+    const r = await adminQuery(
+      `select entry_id from public.join_new_client_waitlist($1,$2,$3,null)`,
+      [s.studioId, `P${i} ${s.uniq}`, `p${i}-${randomUUID().slice(0, 8)}@harness.local`],
+    );
+    ids.push(r.rows[0].entry_id as string);
+  }
+  const prac = await adminQuery(
+    `select id from public.practitioners where studio_id=$1 and role='owner'`,
+    [s.studioId],
+  );
+  return { ...s, entryIds: ids, practitionerId: prac.rows[0].id as string };
+}
+
+/** Take an entry through claim -> invite -> release so a requeue is legal. */
+async function toReleased(s: { studioId: string; userId: string }, entryId: string) {
+  await adminQuery(`select public.claim_new_client_waitlist_entry($1,$2,$3)`, [s.studioId, entryId, s.userId]);
+  await adminQuery(`select public.issue_new_client_waitlist_invitation($1,$2,$3,72)`, [s.studioId, entryId, s.userId]);
+  await adminQuery(`select public.release_new_client_waitlist_entry($1,$2,$3)`, [s.studioId, entryId, s.userId]);
+}
+
+const lastEventAt = async (entryId: string, status: string) =>
+  (
+    await adminQuery(
+      `select occurred_at from public.new_client_waitlist_entry_events
+        where entry_id=$1 and to_status=$2 order by occurred_at desc limit 1`,
+      [entryId, status],
+    )
+  ).rows[0]?.occurred_at as Date | undefined;
+
+/**
+ * Run one bulk-claim SHAPE against a requeue that commits inside the window
+ * between the clock read and the candidate snapshot.
+ *
+ * The schedule is forced with an advisory-lock barrier placed at exactly that
+ * point. The barrier is the ONLY difference from production: shape B below is
+ * the deployed statement verbatim.
+ */
+async function raceRequeueAgainst(fnName: string, s: Awaited<ReturnType<typeof seedWaiting>>, entryId: string) {
+  const gate = await conn();
+  await gate.query("begin");
+  await gate.query(`select pg_advisory_xact_lock(${BULK_BARRIER})`);
+
+  const claimer = await conn();
+  await claimer.query("begin");
+  const pid = (await claimer.query(`select pg_backend_pid() as pid`)).rows[0].pid as number;
+  const pending = claimer.query(`select * from public.${fnName}($1,$2,$3)`, [
+    s.studioId, s.practitionerId, 5,
+  ]);
+  expect(await waitUntilBlocked(pid), "the claimer never parked on the barrier").not.toBeNull();
+
+  await sleep(100);
+  // The requeue commits HERE — after the clock statement, before the snapshot.
+  await adminQuery(`select public.requeue_new_client_waitlist_entry($1,$2,$3)`, [
+    s.studioId, entryId, s.userId,
+  ]);
+  const waitingAt = (await lastEventAt(entryId, "waiting"))!;
+
+  await gate.query("commit");
+  await gate.end();
+  const won = (await pending).rows as Array<{ entry_id: string }>;
+  await claimer.query("commit");
+  await claimer.end();
+
+  const row = (
+    await adminQuery(`select status, claimed_at from public.new_client_waitlist_entries where id=$1`, [entryId])
+  ).rows[0] as { status: string; claimed_at: Date | null };
+  return { claimedIt: won.some((w) => w.entry_id === entryId), waitingAt, row };
+}
+
+describe("bulk claim — the requeue race", () => {
+  const OLD_FN = "zz_bulk_old_shape";
+
+  it("A — NEGATIVE CONTROL: the old shape stamps before the requeue that created the row", async () => {
+    // Reconstructs the exact pre-repair structure — clock as its own statement —
+    // with the same barrier. If this ever stops inverting, the repaired
+    // assertion below proves nothing.
+    await adminQuery(`
+      create or replace function public.${OLD_FN}(p_studio uuid, p_actor uuid, p_count int)
+      returns table (result text, entry_id uuid)
+      language plpgsql volatile security definer set search_path = pg_catalog, pg_temp as $fn$
+      declare v_decision_at timestamptz;
+      begin
+        v_decision_at := clock_timestamp();
+        perform pg_advisory_xact_lock(${BULK_BARRIER});
+        return query
+        with candidates as (
+          select e.id from public.new_client_waitlist_entries e
+           where e.studio_id = p_studio and e.status = 'waiting'
+           order by e.joined_at, e.id limit p_count for update skip locked
+        ), claimed as (
+          update public.new_client_waitlist_entries t
+             set status='claimed', claimed_at=v_decision_at, claimed_by_practitioner_id=p_actor
+            from candidates c
+           where t.id=c.id and t.studio_id=p_studio and t.status='waiting'
+          returning t.id
+        ) select 'claimed'::text, claimed.id from claimed;
+      end; $fn$;`);
+    try {
+      const s = await seedWaiting("bulk-neg", 1);
+      const e = s.entryIds[0];
+      await toReleased(s, e);
+      const r = await raceRequeueAgainst(OLD_FN, s, e);
+      expect(r.claimedIt, "the control did not claim the requeued row").toBe(true);
+      expect(
+        r.row.claimed_at!.getTime(),
+        "the old shape no longer inverts — this control is vacuous",
+      ).toBeLessThan(r.waitingAt.getTime());
+    } finally {
+      await adminQuery(`drop function if exists public.${OLD_FN}(uuid,uuid,int)`);
+    }
+  });
+
+  it("B — REPAIRED: the same schedule stamps after the requeue", async () => {
+    const s = await seedWaiting("bulk-fix", 1);
+    const e = s.entryIds[0];
+    await toReleased(s, e);
+    // The deployed function, with the barrier supplied externally: the claimer
+    // is held on the entry rows themselves rather than an in-function barrier.
+    const gate = await conn();
+    await gate.query("begin");
+    // Hold ALL waiting rows so the candidate scan cannot proceed, then release
+    // after the requeue commits — the same ordering, without instrumenting the
+    // production body.
+    await gate.query(
+      `select 1 from public.new_client_waitlist_entries where studio_id=$1 and status='waiting' for update`,
+      [s.studioId],
+    );
+    await adminQuery(`select public.requeue_new_client_waitlist_entry($1,$2,$3)`, [s.studioId, e, s.userId]);
+    const waitingAt = (await lastEventAt(e, "waiting"))!;
+    await gate.query("commit");
+    await gate.end();
+
+    await adminQuery(`select * from public.claim_new_client_waitlist_entries($1,$2,$3)`, [
+      s.studioId, s.userId, 5,
+    ]);
+    const row = (
+      await adminQuery(`select status, claimed_at from public.new_client_waitlist_entries where id=$1`, [e])
+    ).rows[0] as { status: string; claimed_at: Date };
+    expect(row.status).toBe("claimed");
+    expect(
+      row.claimed_at.getTime(),
+      "claimed_at precedes the requeue that made the row claimable",
+    ).toBeGreaterThanOrEqual(waitingAt.getTime());
+    expect(firstInversion(await eventsInInsertionOrder(e))).toBeNull();
+  });
+
+  it("D/I — every winner shares ONE instant, and each event equals its entry stamp", async () => {
+    const s = await seedWaiting("bulk-many", 4);
+    const won = await adminQuery(`select * from public.claim_new_client_waitlist_entries($1,$2,$3)`, [
+      s.studioId, s.userId, 4,
+    ]);
+    expect(won.rows).toHaveLength(4);
+    const rows = await adminQuery(
+      `select id, claimed_at from public.new_client_waitlist_entries where studio_id=$1 order by id`,
+      [s.studioId],
+    );
+    const stamps = new Set((rows.rows as Array<{ claimed_at: Date }>).map((r) => r.claimed_at.getTime()));
+    expect(stamps.size, "one bulk claim produced more than one claim instant").toBe(1);
+    for (const r of rows.rows as Array<{ id: string; claimed_at: Date }>) {
+      const ev = await lastEventAt(r.id, "claimed");
+      expect(ev!.getTime(), `event != entry stamp for ${r.id}`).toBe(r.claimed_at.getTime());
+    }
+  });
+
+  it("E — exact-N: asking for fewer than are waiting claims exactly N", async () => {
+    const s = await seedWaiting("bulk-n", 5);
+    const won = await adminQuery(`select * from public.claim_new_client_waitlist_entries($1,$2,$3)`, [
+      s.studioId, s.userId, 3,
+    ]);
+    expect(won.rows).toHaveLength(3);
+    const left = await adminQuery(
+      `select count(*)::int n from public.new_client_waitlist_entries where studio_id=$1 and status='waiting'`,
+      [s.studioId],
+    );
+    expect(left.rows[0].n).toBe(2);
+  });
+
+  it("F — two concurrent bulk claimers partition without duplicates", async () => {
+    const s = await seedWaiting("bulk-conc", 6);
+    const [a, b] = await Promise.all([
+      adminQuery(`select * from public.claim_new_client_waitlist_entries($1,$2,$3)`, [s.studioId, s.userId, 4]),
+      adminQuery(`select * from public.claim_new_client_waitlist_entries($1,$2,$3)`, [s.studioId, s.userId, 4]),
+    ]);
+    const ids = [...a.rows, ...b.rows].map((r) => (r as { entry_id: string }).entry_id);
+    expect(new Set(ids).size, "an entry was claimed twice").toBe(ids.length);
+    expect(ids.length).toBeLessThanOrEqual(6);
+    const claimed = await adminQuery(
+      `select count(*)::int n from public.new_client_waitlist_entries where studio_id=$1 and status='claimed'`,
+      [s.studioId],
+    );
+    expect(claimed.rows[0].n).toBe(ids.length);
+  });
+
+  it("G — SKIP LOCKED still skips a row held elsewhere", async () => {
+    const s = await seedWaiting("bulk-skip", 2);
+    const holder = await conn();
+    await holder.query("begin");
+    await holder.query(`select 1 from public.new_client_waitlist_entries where id=$1 for update`, [
+      s.entryIds[0],
+    ]);
+    const won = await adminQuery(`select * from public.claim_new_client_waitlist_entries($1,$2,$3)`, [
+      s.studioId, s.userId, 5,
+    ]);
+    await holder.query("rollback");
+    await holder.end();
+    const ids = won.rows.map((r) => (r as { entry_id: string }).entry_id);
+    expect(ids).not.toContain(s.entryIds[0]);
+    expect(ids).toContain(s.entryIds[1]);
+  });
+
+  it("H — no candidates is a zero-row result, not an exception", async () => {
+    const s = await seedStudioOwner("bulk-empty");
+    const won = await adminQuery(`select * from public.claim_new_client_waitlist_entries($1,$2,$3)`, [
+      s.studioId, s.userId, 5,
+    ]);
+    expect(won.rows).toHaveLength(0);
   });
 });

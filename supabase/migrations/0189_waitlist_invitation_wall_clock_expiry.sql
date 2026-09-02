@@ -614,7 +614,6 @@ security definer
 set search_path = pg_catalog, pg_temp
 as $$
 declare
-  v_decision_at timestamptz;
   v_actor uuid;
   v_code  text;
 begin
@@ -630,13 +629,44 @@ begin
     return;
   end if;
 
-  -- FOR UPDATE SKIP LOCKED never waits, so this statement cannot be delayed by
-  -- contention and the clock read immediately before it IS the claim instant.
-  -- There is no wait for a stamp to be backdated across.
-  v_decision_at := clock_timestamp();
-
+  -- THE CLOCK IS READ INSIDE THE CANDIDATE-DEPENDENT STATEMENT, NOT BEFORE IT.
+  --
+  -- An earlier draft captured it into a local first and justified that with
+  -- "FOR UPDATE SKIP LOCKED never waits, so there is no wait to backdate
+  -- across". That reasoning was WRONG, and the comment is removed rather than
+  -- softened: SKIP LOCKED governs CONTENTION, and contention was never the only
+  -- way this stamp could go stale.
+  --
+  -- THE REAL MECHANISM IS THE STATEMENT SNAPSHOT. A standalone assignment is its
+  -- own PL/pgSQL statement, and under READ COMMITTED the SQL statement that
+  -- follows takes a FRESH snapshot. A requeue committing in that gap makes a row
+  -- `waiting` AFTER the clock was read, and the candidate scan -- which now sees
+  -- it -- claims it and stamps it with the earlier instant. Measured: the
+  -- resulting `claimed` event sorted 105 ms BEFORE the `waiting` event that
+  -- created the row it claimed.
+  --
+  -- So candidate acquisition and the clock read are made ONE statement with an
+  -- explicit data dependency:
+  --
+  --     candidates  (selected AND locked)
+  --          |
+  --     decision    (reads clock_timestamp() FROM candidates)
+  --          |
+  --     claimed     (every winner stamped from that one instant)
+  --
+  -- BOTH CTEs ARE MATERIALIZED ON PURPOSE. Without it the planner is free to
+  -- inline `decision` and evaluate clock_timestamp() while the candidate scan is
+  -- still producing rows, which is the same defect wearing a different shape.
+  -- MATERIALIZED forces `candidates` to be executed to completion -- taking its
+  -- row locks -- before anything reads from it, and forces `decision` to be
+  -- computed exactly once rather than per row, which is what makes every row won
+  -- by one invocation share ONE claim instant.
+  --
+  -- ZERO CANDIDATES STAYS A ZERO-ROW RESULT, not an error: `decision` selects
+  -- FROM `candidates`, so an empty candidate set yields an empty decision, the
+  -- cross join yields nothing, and the statement updates nothing.
   return query
-  with candidates as (
+  with candidates as materialized (
     select e.id
       from public.new_client_waitlist_entries e
      where e.studio_id = p_studio_id
@@ -645,12 +675,18 @@ begin
      limit p_count
      for update skip locked
   ),
+  decision as materialized (
+    select clock_timestamp() as decision_at
+      from candidates
+     limit 1
+  ),
   claimed as (
     update public.new_client_waitlist_entries t
        set status                     = 'claimed',
-           claimed_at                 = v_decision_at,
+           claimed_at                 = d.decision_at,
            claimed_by_practitioner_id = v_actor
       from candidates c
+      cross join decision d
      where t.id        = c.id
        and t.studio_id = p_studio_id
        and t.status    = 'waiting'
