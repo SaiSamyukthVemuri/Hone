@@ -19,8 +19,8 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0188** (`0188_new_client_waitlist_invitations.sql`) |
-| **Repo migration max** | **0188** — **hosted == repo.** Nothing pending. Next free number is **0189** (available, **not claimed**). |
-| **Total migrations in repo** | **187** (`0001` … `0157`, `0159` … `0188` — **no `0158`**) — derived by `npm run migration:state` |
+| **Repo migration max** | **0189** — **repo > hosted.** `0189_waitlist_invitation_wall_clock_expiry.sql` (the WAIT-03 TTL wall-clock repair) is **AUTHORED AND TESTED, NOT APPLIED** — it exists in the repository and production does not have it. **Pending: `0189`.** Next free number is **0190** (available, **not claimed**). |
+| **Total migrations in repo** | **188** (`0001` … `0157`, `0159` … `0189` — **no `0158`**) — derived by `npm run migration:state` |
 | **Apply timestamp** | ⚠️ **NO SERVER-GENERATED APPLY TIMESTAMP WAS CAPTURED**, so `hosted_applied_at` is `null`. The **operator-observed client-side window** is `2026-09-01T21:40:32.695Z` – `2026-09-01T21:40:52.645Z`, **19.950 s**, read from the apply host's clock around the CLI invocation. **That window is not a server apply time and is never represented as one.** |
 | **Verified applied** | **2026-09-01** |
 | **Applied from** | the exact reviewed **PR #664** head `378ec6949808d1e34f01debb8a3ea6ac1bc9353f` — **applied BEFORE #664 merged**, so the merge commit did not exist at apply time |

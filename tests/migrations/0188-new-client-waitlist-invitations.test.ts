@@ -49,23 +49,40 @@ describe("0188 — identity and position", () => {
     expect(FILE).toBe("0188_new_client_waitlist_invitations.sql");
   });
 
-  it("is the current repository maximum", () => {
-    // Per CLAUDE.md only the CURRENT max asserts this, so that a future
-    // migration does not turn this file red. Whoever adds 0189 moves it.
-    expect(isRepoMax(VERSION)).toBe(true);
-    expect(versionsAbove(VERSION)).toEqual([]);
+  it("is NO LONGER the repository maximum — 0189 took that claim", () => {
+    // HANDED OVER exactly as the previous wording instructed ("whoever adds
+    // 0189 moves it"). Per CLAUDE.md only the CURRENT max asserts isRepoMax,
+    // so that claim now lives in
+    // tests/migrations/0189-waitlist-invitation-wall-clock-expiry.test.ts and
+    // this file asserts the converse.
+    expect(isRepoMax(VERSION)).toBe(false);
+    expect(versionsAbove(VERSION).length).toBeGreaterThan(0);
   });
 
-  it("is AUTHORED AND TESTED, NOT APPLIED to production", () => {
-    // The honest posture for a local candidate. Hosted state advances ONLY in
-    // the change that records an authorized production apply, so this asserts
-    // the gap rather than hiding it. When 0188 is applied, this block is the
-    // one that moves — deliberately, by a human, in that change.
+  it("IS APPLIED to production, and is the CURRENT hosted head", () => {
+    // MOVED WHEN 0188 WAS APPLIED (2026-09-01), deliberately, exactly as the
+    // previous wording said it would be. 0188 was applied from the exact
+    // reviewed #664 head 378ec694, BEFORE that PR merged, and hosted advanced
+    // from 0187 to 0188.
+    //
+    // 0188 now owns the CURRENT-head claims that 0187's file used to hold;
+    // 0187's file keeps only its own durable, permanent facts.
     const state = migrationState();
-    expect(state.repo_migration_max).toBe(VERSION);
+    expect(state.hosted_migration_max).toBe(VERSION);
+    expect(state.pending_migrations).not.toContain(FILE);
+  });
+
+  it("the repo has legitimately moved ahead again — 0189 is pending", () => {
+    // MIGRATION-FIRST, RESTATED HONESTLY. A reviewed migration authored above
+    // the hosted head is the NORMAL state of this repository while a repair is
+    // in review; it is not drift and it is not a documentation error. Parity
+    // returns only when an AUTHORIZED apply advances hosted state.
+    const state = migrationState();
     expect(Number(state.repo_migration_max)).toBeGreaterThan(
       Number(state.hosted_migration_max),
     );
+    expect(state.pending_migrations.length).toBeGreaterThan(0);
+    expect(state.pending_migrations).not.toContain(FILE);
   });
 });
 

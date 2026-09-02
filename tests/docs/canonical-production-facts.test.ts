@@ -499,9 +499,100 @@ describe("canonical production docs: the ledger's current block agrees with the 
       ).toMatch(/not claimed/i);
   });
 
-  it("repo and hosted agree, so no document can contradict another about parity", () => {
+  // ---------------------------------------------------------------------
+  // PARITY IS PENDING-AWARE, BECAUSE MIGRATION-FIRST DEPLOYMENT REQUIRES IT.
+  //
+  // The old invariant was `repo_migration_max === hosted_migration_max`. It
+  // cannot coexist with the runbook this repository actually follows: a
+  // migration is applied to production FROM the exact reviewed PR head, BEFORE
+  // that PR merges. Between authoring and applying, the repo legitimately sits
+  // ABOVE hosted, so NO pre-apply head of such a PR could ever satisfy it.
+  //
+  // That is not a hypothetical. The 0188 apply record states it as recorded
+  // history: exactly one test failed out of 12,908 on the reviewed head —
+  // this one — and the operator had to waive that specific red in writing to
+  // authorize the apply. The record's own conclusion is quoted in it: "THE
+  // GUARD SHOULD BE MADE PENDING-AWARE so a future migration-first apply is
+  // not forced to choose between a red head and pre-filling this file."
+  //
+  // Waiving it again would be the third time. Pre-filling the canonical record
+  // with an apply that has not happened would be a lie. So the invariant is
+  // restated to admit EXACTLY TWO legal shapes and nothing else:
+  //
+  //   PARITY                 nothing pending, and hosted == repo
+  //   MIGRATION-FIRST PENDING  hosted is the applied PREFIX, and the repo
+  //                            carries a CONTIGUOUS pending suffix that
+  //                            `pending_migrations` names exactly
+  //
+  // Both shapes forbid a remote-only migration (hosted ahead of repo), which is
+  // the genuinely dangerous state the original guard existed to catch — and
+  // which the equality caught only incidentally.
+  // ---------------------------------------------------------------------
+  it("the canonical record and the derived state agree about HOSTED state", () => {
+    // Unconditional, and unchanged in force: the hosted head is DECLARED, never
+    // derived from filenames, so these two must never disagree.
     expect(DERIVED.hosted_migration_max).toBe(CANONICAL_RECORD.hosted_migration_max);
-    expect(DERIVED.repo_migration_max).toBe(CANONICAL_RECORD.hosted_migration_max);
+  });
+
+  it("repo/hosted is either PARITY or MIGRATION-FIRST PENDING, never anything else", () => {
+    const repo = Number(DERIVED.repo_migration_max);
+    const hosted = Number(DERIVED.hosted_migration_max);
+    const pending: string[] = DERIVED.pending_migrations;
+
+    // NEVER a remote-only migration. Production holding something the
+    // repository does not is unreviewable and unreproducible, and it is the
+    // one shape neither mode admits.
+    expect(
+      hosted,
+      "hosted is AHEAD of the repository: production holds a migration this " +
+        "repo does not contain, which no review can reach",
+    ).toBeLessThanOrEqual(repo);
+
+    if (pending.length === 0) {
+      // PARITY.
+      expect(repo).toBe(hosted);
+    } else {
+      // MIGRATION-FIRST PENDING.
+      expect(repo).toBeGreaterThan(hosted);
+      // `pending_migrations` must name the suffix EXACTLY — every version
+      // above hosted, in order, and nothing else. A pending list that is
+      // merely non-empty would let a gap or a stale entry through.
+      const expectedSuffix = DERIVED.versions.filter((v: string) => Number(v) > hosted);
+      expect(pending).toEqual(expectedSuffix);
+      // CONTIGUOUS: hosted + 1 … repo, allowing for permanently-skipped slots.
+      const skipped = new Set(DERIVED.permanently_skipped.map((v: string) => Number(v)));
+      const contiguous: string[] = [];
+      for (let n = hosted + 1; n <= repo; n += 1) {
+        if (!skipped.has(n)) contiguous.push(String(n).padStart(4, "0"));
+      }
+      expect(
+        pending,
+        "the pending suffix has a HOLE in it: a migration between the hosted " +
+          "head and the repo max is missing from the repository",
+      ).toEqual(contiguous);
+      // The repo max is itself the last pending entry.
+      expect(pending[pending.length - 1]).toBe(DERIVED.repo_migration_max);
+    }
+  });
+
+  it("no document claims parity while something is pending", () => {
+    // THE DOCUMENTATION HALF. The derived state can be honest while the prose
+    // still says "hosted == repo. Nothing pending." from a previous release —
+    // which is exactly the drift that made this file red after the 0188 apply.
+    if (DERIVED.pending_migrations.length === 0) return;
+    expect(
+      block,
+      "the current ledger block claims parity while migrations are pending",
+    ).not.toMatch(/hosted == repo/i);
+    expect(
+      block,
+      "the current ledger block claims nothing is pending while migrations are pending",
+    ).not.toMatch(/Nothing pending/i);
+    // ...and it must name the pending suffix rather than merely omitting the
+    // parity claim.
+    for (const v of DERIVED.pending_migrations) {
+      expect(block, `the current block does not name pending migration ${v}`).toContain(v);
+    }
   });
 });
 
