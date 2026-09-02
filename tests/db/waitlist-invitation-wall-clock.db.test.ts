@@ -1968,3 +1968,258 @@ describe("bulk claim — the requeue race", () => {
     expect(won.rows).toHaveLength(0);
   });
 });
+
+// ===========================================================================
+// CONVERSION — the entry mutex does NOT serialize a redemption.
+//
+// redeem() locks the INVITATION and deliberately never asks for the entry, so
+// it runs to completion while conversion holds the entry row. Conversion read
+// its clock before testing for redemption, so a redemption committing in that
+// window produced converted_at EARLIER than redeemed_at.
+//
+// Measured on the pre-repair shape: redemption committed 19:47:08.980Z while
+// conversion held the entry; conversion stamped 19:47:08.973Z — the conversion
+// recorded BEFORE the redemption that authorised it.
+// ===========================================================================
+
+const CONVERT_GATE = 771144;
+
+async function seedInvitedWithClient(label: string) {
+  const f = await issueExpiringIn(label, 600);
+  const clientId = randomUUID();
+  await adminQuery(`insert into public.clients (id, studio_id, name, email) values ($1,$2,$3,$4)`, [
+    clientId, f.studioId, `C ${label}`, `c-${randomUUID().slice(0, 8)}@harness.local`,
+  ]);
+  return { ...f, clientId };
+}
+
+const convert = (studioId: string, entryId: string, clientId: string) =>
+  adminQuery(`select public.record_new_client_waitlist_conversion($1,$2,$3) as r`, [
+    studioId, entryId, clientId,
+  ]).then((x) => x.rows[0].r as string);
+
+const convertedAt = async (entryId: string) =>
+  (
+    await adminQuery(
+      `select status, converted_at from public.new_client_waitlist_entries where id=$1`,
+      [entryId],
+    )
+  ).rows[0] as { status: string; converted_at: Date | null };
+
+const redeemedAtOf = async (invId: string) =>
+  (await adminQuery(`select redeemed_at from public.new_client_waitlist_invitations where id=$1`, [invId]))
+    .rows[0].redeemed_at as Date | null;
+
+describe("conversion — serialization against an in-flight redemption", () => {
+  const OLD_FN = "zz_convert_old_shape";
+
+  it("J — NEGATIVE CONTROL: the old ordering stamps before the redemption", async () => {
+    // Reconstructs the pre-repair structure — entry lock, clock, THEN the
+    // redemption test — with a barrier in that gap. If this stops inverting,
+    // the repaired assertions below prove nothing.
+    await adminQuery(`
+      create or replace function public.${OLD_FN}(p_studio uuid, p_entry uuid, p_client uuid)
+      returns text language plpgsql volatile security definer set search_path = pg_catalog, pg_temp as $fn$
+      declare v_decision_at timestamptz; v_hit uuid;
+      begin
+        perform 1 from public.new_client_waitlist_entries e
+         where e.id = p_entry and e.studio_id = p_studio for update;
+        v_decision_at := clock_timestamp();
+        perform pg_advisory_xact_lock(${CONVERT_GATE});
+        update public.new_client_waitlist_entries
+           set status='converted', converted_at=v_decision_at, converted_client_id=p_client
+         where id=p_entry and studio_id=p_studio and status='invited'
+           and exists (select 1 from public.new_client_waitlist_invitations i
+                        where i.entry_id=p_entry and i.studio_id=p_studio and i.redeemed_at is not null)
+        returning id into v_hit;
+        if v_hit is null then return 'not_invited'; end if;
+        return 'converted';
+      end; $fn$;`);
+    try {
+      const f = await seedInvitedWithClient("cv-neg");
+      const gate = await conn();
+      await gate.query("begin");
+      await gate.query(`select pg_advisory_xact_lock(${CONVERT_GATE})`);
+
+      const conv = await conn();
+      await conv.query("begin");
+      const pid = (await conv.query(`select pg_backend_pid() as pid`)).rows[0].pid as number;
+      const pending = conv.query(`select public.${OLD_FN}($1,$2,$3) as r`, [
+        f.studioId, f.entryId, f.clientId,
+      ]);
+      expect(await waitUntilBlocked(pid), "the control never parked").not.toBeNull();
+
+      // THE PREMISE: redemption succeeds while conversion holds the ENTRY.
+      expect(
+        (await adminQuery(`select result from public.redeem_new_client_waitlist_invitation($1)`, [f.token]))
+          .rows[0].result,
+        "the entry mutex blocked the redemption — the premise does not hold",
+      ).toBe("redeemed");
+      const redeemed = (await redeemedAtOf(f.invId))!;
+
+      await gate.query("commit");
+      await gate.end();
+      expect((await pending).rows[0].r).toBe("converted");
+      await conv.query("commit");
+      await conv.end();
+
+      const e = await convertedAt(f.entryId);
+      expect(
+        e.converted_at!.getTime(),
+        "the old ordering no longer inverts — this control is vacuous",
+      ).toBeLessThan(redeemed.getTime());
+    } finally {
+      await adminQuery(`drop function if exists public.${OLD_FN}(uuid,uuid,uuid)`);
+    }
+  });
+
+  it("B — REPAIRED: conversion waits for the redemption, then stamps after it", async () => {
+    // NO artificial barrier: the redemption itself holds the invitation, which
+    // is the real production schedule.
+    const f = await seedInvitedWithClient("cv-commit");
+    const redeemer = await conn();
+    await redeemer.query("begin");
+    expect(
+      (await redeemer.query(`select result from public.redeem_new_client_waitlist_invitation($1)`, [f.token]))
+        .rows[0].result,
+    ).toBe("redeemed");
+
+    const conv = await conn();
+    await conv.query("begin");
+    const pid = (await conv.query(`select pg_backend_pid() as pid`)).rows[0].pid as number;
+    const pending = conv.query(`select public.record_new_client_waitlist_conversion($1,$2,$3) as r`, [
+      f.studioId, f.entryId, f.clientId,
+    ]);
+    expect(
+      await waitUntilBlocked(pid),
+      "conversion did not serialize against the in-flight redemption",
+    ).not.toBeNull();
+
+    await redeemer.query("commit");
+    await redeemer.end();
+    expect((await pending).rows[0].r).toBe("converted");
+    await conv.query("commit");
+    await conv.end();
+
+    const redeemed = (await redeemedAtOf(f.invId))!;
+    const e = await convertedAt(f.entryId);
+    expect(e.status).toBe("converted");
+    expect(
+      e.converted_at!.getTime(),
+      "converted_at precedes the redemption that authorised it",
+    ).toBeGreaterThanOrEqual(redeemed.getTime());
+    // ...and the event is the transition, not a second reading of it.
+    const ev = await lastEventAt(f.entryId, "converted");
+    expect(ev!.getTime()).toBe(e.converted_at!.getTime());
+    expect(firstInversion(await eventsInInsertionOrder(f.entryId))).toBeNull();
+  });
+
+  it("C — REPAIRED: a redemption that ROLLS BACK leaves conversion refusing", async () => {
+    const f = await seedInvitedWithClient("cv-rollback");
+    const redeemer = await conn();
+    await redeemer.query("begin");
+    await redeemer.query(`select result from public.redeem_new_client_waitlist_invitation($1)`, [f.token]);
+
+    const conv = await conn();
+    await conv.query("begin");
+    const pid = (await conv.query(`select pg_backend_pid() as pid`)).rows[0].pid as number;
+    const pending = conv.query(`select public.record_new_client_waitlist_conversion($1,$2,$3) as r`, [
+      f.studioId, f.entryId, f.clientId,
+    ]);
+    expect(await waitUntilBlocked(pid)).not.toBeNull();
+
+    await redeemer.query("rollback");
+    await redeemer.end();
+    expect((await pending).rows[0].r).toBe("not_redeemed");
+    await conv.query("commit");
+    await conv.end();
+
+    expect(await redeemedAtOf(f.invId)).toBeNull();
+    const e = await convertedAt(f.entryId);
+    expect(e.converted_at).toBeNull();
+    expect(e.status).toBe("invited");
+  });
+
+  it("A/D — an already-committed redemption converts normally", async () => {
+    const f = await seedInvitedWithClient("cv-normal");
+    await adminQuery(`select public.redeem_new_client_waitlist_invitation($1)`, [f.token]);
+    const redeemed = (await redeemedAtOf(f.invId))!;
+    expect(await convert(f.studioId, f.entryId, f.clientId)).toBe("converted");
+    const e = await convertedAt(f.entryId);
+    expect(e.converted_at!.getTime()).toBeGreaterThanOrEqual(redeemed.getTime());
+    expect((await lastEventAt(f.entryId, "converted"))!.getTime()).toBe(e.converted_at!.getTime());
+  });
+
+  it("E — an unredeemed invitation still refuses, and writes nothing", async () => {
+    const f = await seedInvitedWithClient("cv-unredeemed");
+    expect(await convert(f.studioId, f.entryId, f.clientId)).toBe("not_redeemed");
+    expect((await convertedAt(f.entryId)).converted_at).toBeNull();
+  });
+
+  it("F — two concurrent conversions yield exactly one winner", async () => {
+    const f = await seedInvitedWithClient("cv-dup");
+    await adminQuery(`select public.redeem_new_client_waitlist_invitation($1)`, [f.token]);
+    const [a, b] = await Promise.all([
+      convert(f.studioId, f.entryId, f.clientId),
+      convert(f.studioId, f.entryId, f.clientId),
+    ]);
+    expect([a, b].filter((r) => r === "converted"), `a=${a} b=${b}`).toHaveLength(1);
+    expect((await convertedAt(f.entryId)).status).toBe("converted");
+  });
+
+  for (const [name, cmd] of [
+    ["G — conversion || release", "release_new_client_waitlist_entry"],
+    ["H — conversion || expire", "expire_new_client_waitlist_invitation"],
+  ] as const) {
+    it(`${name}: coherent, no deadlock`, async () => {
+      const f = await seedInvitedWithClient(`cv-${cmd.slice(0, 6)}`);
+      await adminQuery(`select public.redeem_new_client_waitlist_invitation($1)`, [f.token]);
+      const [conv, other] = await Promise.all([
+        convert(f.studioId, f.entryId, f.clientId),
+        adminQuery(`select public.${cmd}($1,$2,$3) as r`, [f.studioId, f.entryId, f.userId]).then(
+          (x) => x.rows[0].r as string,
+        ),
+      ]);
+      // Redemption is terminal for the entry, so the other command must refuse.
+      expect(other, `conv=${conv} other=${other}`).toBe("already_redeemed");
+      expect(conv).toBe("converted");
+      expect((await convertedAt(f.entryId)).status).toBe("converted");
+    });
+  }
+
+  it("I — the existing refusal vocabulary is unchanged", async () => {
+    const f = await seedInvitedWithClient("cv-vocab");
+    expect(await convert(f.studioId, f.entryId, randomUUID())).toBe("client_not_found");
+    const other = await seedStudioOwner("cv-other");
+    expect(await convert(other.studioId, f.entryId, f.clientId)).toBe("client_not_found");
+    const nulls = await adminQuery(
+      `select public.record_new_client_waitlist_conversion(null,null,null) as r`,
+    );
+    expect(nulls.rows[0].r).toBe("invalid_input");
+  });
+
+  it("at most ONE redeemed invitation can exist per entry", async () => {
+    // The assumption the no-live-invitation branch rests on, asserted rather
+    // than commented: conversion never has to identify a redeemed row by
+    // chronology because a second one cannot exist.
+    const f = await seedInvitedWithClient("cv-unique");
+    await adminQuery(`select public.redeem_new_client_waitlist_invitation($1)`, [f.token]);
+    for (const [cmd, expected] of [
+      ["release_new_client_waitlist_entry", "already_redeemed"],
+      ["expire_new_client_waitlist_invitation", "already_redeemed"],
+      ["requeue_new_client_waitlist_entry", "not_requeueable"],
+    ] as const) {
+      const r = await adminQuery(`select public.${cmd}($1,$2,$3) as r`, [f.studioId, f.entryId, f.userId]);
+      expect(r.rows[0].r, cmd).toBe(expected);
+    }
+    expect(
+      (
+        await adminQuery(
+          `select count(*)::int n from public.new_client_waitlist_invitations
+            where entry_id=$1 and redeemed_at is not null`,
+          [f.entryId],
+        )
+      ).rows[0].n,
+    ).toBe(1);
+  });
+});

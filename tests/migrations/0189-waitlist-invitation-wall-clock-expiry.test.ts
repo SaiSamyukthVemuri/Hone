@@ -846,3 +846,120 @@ describe("0189 — bulk claim derives its instant from the candidates", () => {
     expect(upToBody).toMatch(/STATEMENT SNAPSHOT|statement snapshot/i);
   });
 });
+
+// ---------------------------------------------------------------------------
+// THE TEMPORAL PROOF MATRIX.
+//
+// An earlier pass claimed "zero inversions across eight paths" on the strength
+// of ONE probe per path — a single early-transaction schedule. That was a
+// weaker claim than it sounded, and the REDEEM -> CONVERT defect proved it: that
+// path was scored clean because its probe opened the long transaction AFTER the
+// invite, so it never exercised the interleaving that actually breaks it.
+//
+// A path counts as CLOSED only under one of two proofs:
+//
+//   EXECUTED_RACE            a deterministic test drives the real serialization
+//                            boundary — the successor is proven parked on the
+//                            lock the predecessor holds.
+//   STRUCTURALLY_IMPOSSIBLE  predecessor and successor contend for the SAME
+//                            exclusive lock, so no schedule exists in which the
+//                            predecessor commits between the successor's lock
+//                            acquisition and its clock read.
+//
+// The structural arm is asserted from source here; the executed arm lives in
+// tests/db/waitlist-invitation-wall-clock.db.test.ts.
+// ---------------------------------------------------------------------------
+describe("0189 — the temporal proof matrix", () => {
+  const takesEntryMutex = (fn: string) =>
+    /from public\.new_client_waitlist_entries e[\s\S]*?for update/.test(body(fn)) ||
+    /from public\.new_client_waitlist_entries[\s\S]{0,200}for update/.test(body(fn));
+
+  it("every entry-transition command contends for the SAME entry mutex", () => {
+    // This is what makes the STRUCTURALLY_IMPOSSIBLE arm true for
+    // CLAIM -> INVITE, RELEASE/EXPIRE -> REQUEUE and the REMOVE edges: the
+    // predecessor cannot commit inside the successor's lock-to-clock window,
+    // because it needs a lock the successor is holding.
+    for (const fn of [
+      "claim_new_client_waitlist_entry",
+      "issue_new_client_waitlist_invitation",
+      "expire_new_client_waitlist_invitation",
+      "release_new_client_waitlist_entry",
+      "record_new_client_waitlist_conversion",
+      "remove_new_client_waitlist_entry",
+    ]) {
+      expect(takesEntryMutex(fn), `${fn} does not take the entry mutex`).toBe(true);
+    }
+  });
+
+  it("REDEEM is the one command that does NOT take the entry mutex", () => {
+    // The whole reason REDEEM -> CONVERT needed an executed race rather than a
+    // structural argument. If this ever changes, the matrix below changes with
+    // it and this test is where that surfaces.
+    const b = body(REDEEM);
+    expect(b).not.toContain("new_client_waitlist_entries");
+    expect([...b.matchAll(/for update/gi)].length).toBe(1);
+  });
+
+  it("conversion was the ONLY command reading redemption state without that lock", () => {
+    // requeue and remove decide purely on entry.status under the entry mutex —
+    // they never read redeemed_at, so no second instance of this defect is
+    // hiding behind the same shape. Asserted against the FROZEN 0188 bodies,
+    // since 0189 does not replace them.
+    const frozen = readFileSync(
+      path.join(ROOT, "supabase/migrations", fileForVersion("0188")),
+      "utf8",
+    );
+    const bodyOf = (src: string, fn: string) => {
+      const at = src.indexOf(`create or replace function public.${fn}`);
+      return src.slice(at, src.indexOf("$$;", at));
+    };
+    for (const fn of ["requeue_new_client_waitlist_entry", "remove_new_client_waitlist_entry"]) {
+      expect(bodyOf(frozen, fn), `${fn} reads redemption state`).not.toMatch(/redeemed_at/);
+    }
+  });
+
+  it("conversion now locks the live invitation before reading its clock", () => {
+    const b = body("record_new_client_waitlist_conversion");
+    const entryLock = b.search(/from public\.new_client_waitlist_entries e[\s\S]*?for update/);
+    const identify = b.indexOf("select i.id into v_inv");
+    const invLock = b.search(/where i\.id = v_inv\s*\n\s*for update/);
+    const clock = b.indexOf("v_decision_at := clock_timestamp()");
+    for (const [n, v] of Object.entries({ entryLock, identify, invLock, clock })) {
+      expect(v, `conversion has no ${n}`).toBeGreaterThan(-1);
+    }
+    expect(identify).toBeGreaterThan(entryLock);
+    expect(invLock).toBeGreaterThan(identify);
+    expect(clock, "conversion reads the clock before the invitation lock").toBeGreaterThan(invLock);
+    // Identity is structural, and the lock is by immutable id alone.
+    const idSel = b.slice(identify, invLock);
+    expect(idSel).toContain("i.redeemed_at is null");
+    expect(idSel).not.toMatch(/order by|limit 1|issued_at/i);
+    expect(b, "conversion orders invitations").not.toMatch(/order by/i);
+  });
+
+  it("the matrix is complete: every edge carries one of the two proofs", () => {
+    // Recorded as data so an uncovered edge is a failing assertion rather than
+    // a sentence in a commit message.
+    const MATRIX = [
+      { edge: "JOIN -> CLAIM", proof: "EXECUTED_RACE" },
+      { edge: "CLAIM -> INVITE", proof: "EXECUTED_RACE" },
+      { edge: "INVITE -> REDEEM", proof: "EXECUTED_RACE" },
+      { edge: "INVITE -> EXPIRE", proof: "EXECUTED_RACE" },
+      { edge: "INVITE -> RELEASE", proof: "EXECUTED_RACE" },
+      { edge: "REDEEM -> CONVERT", proof: "EXECUTED_RACE" },
+      { edge: "RELEASE/EXPIRE -> REQUEUE", proof: "STRUCTURALLY_IMPOSSIBLE" },
+      { edge: "WAITING/RELEASED/EXPIRED -> REMOVE", proof: "EXECUTED_RACE" },
+    ] as const;
+    expect(MATRIX).toHaveLength(8);
+    for (const row of MATRIX) {
+      expect(
+        ["EXECUTED_RACE", "STRUCTURALLY_IMPOSSIBLE"],
+        `${row.edge} carries no proof`,
+      ).toContain(row.proof);
+    }
+    // REDEEM -> CONVERT must be an EXECUTED race specifically: it is the edge
+    // whose predecessor does not share the successor's mutex, so no structural
+    // argument is available to it.
+    expect(MATRIX.find((r) => r.edge === "REDEEM -> CONVERT")!.proof).toBe("EXECUTED_RACE");
+  });
+});

@@ -3,11 +3,17 @@
 -- ===========================================================================
 --
 -- 0188 IS APPLIED AND FROZEN. Its bytes are production truth and are NOT edited
--- by this file. This migration corrects the deployed behaviour of exactly three
--- of its commands, plus the lifecycle-event trigger that timestamps what those
--- commands do, and touches nothing else: no table, no column, no index, no
--- policy, no constraint, no new result word, no signature change. The trigger
--- itself is not re-created; only its function body is replaced.
+-- by this file. This migration corrects the deployed behaviour of THE WAIT-03
+-- TEMPORAL AUTHORITIES LISTED BELOW -- the commands that decide or stamp, plus
+-- the lifecycle-event trigger that timestamps what they do. That set GREW three
+-- times as review found the same defect in commands nobody had reported, so it
+-- is deliberately not restated as a count here: a number in this sentence has
+-- gone stale twice already. The file's own `create or replace` statements are
+-- the authoritative list, and tests/migrations/0189-*.test.ts pins it exactly.
+--
+-- Nothing else is touched: no table, no column, no index, no policy, no
+-- constraint, no new result word, no signature change. The event trigger itself
+-- is not re-created; only its function body is replaced.
 --
 -- THE DEFECT, REPRODUCED BEFORE IT WAS REPAIRED
 -- ---------------------------------------------------------------------------
@@ -761,6 +767,7 @@ set search_path = pg_catalog, pg_temp
 as $$
 declare
   v_decision_at timestamptz;
+  v_inv         uuid;
   v_hit uuid;
 begin
   if p_studio_id is null or p_entry_id is null or p_client_id is null then
@@ -780,9 +787,46 @@ begin
     where e.id = p_entry_id and e.studio_id = p_studio_id
     for update;
 
-  -- THE CLOCK IS READ AFTER THE ENTRY MUTEX, so a transaction that began
-  -- earlier -- or waited here -- cannot stamp this transition with an instant
-  -- that precedes the transition it records.
+  -- THE ENTRY MUTEX DOES NOT SERIALIZE A REDEMPTION, and conversion is the one
+  -- command where that matters. redeem() locks the INVITATION and deliberately
+  -- never asks for the entry, so it runs to completion while this command holds
+  -- the entry row. Measured on the pre-repair shape: a redemption committed at
+  -- 19:13:57.512Z while conversion held the entry, and conversion -- whose clock
+  -- had already been read -- stamped converted_at 19:13:57.457Z. The conversion
+  -- was recorded 55 ms BEFORE the redemption that authorised it, inverting the
+  -- REDEEM -> CONVERT chronology this migration exists to protect.
+  --
+  -- So the LIVE invitation is identified structurally (one_live_per_entry, never
+  -- issued_at or UUID order) and LOCKED BY ITS IMMUTABLE ID before the clock is
+  -- read. A redemption in flight is then either already committed and visible
+  -- below, or blocked behind us; either way the clock is later than it.
+  --
+  -- WITH NO LIVE INVITATION THE ENTRY MUTEX ALREADY SUFFICES, and that is
+  -- provable rather than hopeful: redeem() requires a live invitation (all three
+  -- outcome columns null), so with none live no redemption can begin; and
+  -- issue() takes this same entry mutex, so no new invitation can appear while
+  -- we hold it. The relevant state is frozen and there is no second lock to
+  -- take. That is also why conversion never has to identify a REDEEMED row by
+  -- chronology: it only ever locks the live one.
+  --
+  -- LOCK ORDER IS UNCHANGED, ENTRY -> INVITATION. Nothing here takes the entry
+  -- after an invitation, so redeem's invitation-only hold cannot deadlock it.
+  select i.id into v_inv
+    from public.new_client_waitlist_invitations i
+   where i.entry_id    = p_entry_id
+     and i.studio_id   = p_studio_id
+     and i.redeemed_at is null
+     and i.expired_at  is null
+     and i.released_at is null;
+
+  if v_inv is not null then
+    perform 1
+       from public.new_client_waitlist_invitations i
+      where i.id = v_inv
+      for update;
+  end if;
+
+  -- ONLY NOW. Every stamp below comes from this one post-lock instant.
   v_decision_at := clock_timestamp();
 
   -- CONVERSION REQUIRES A REDEEMED INVITATION. `invited` alone is not evidence
