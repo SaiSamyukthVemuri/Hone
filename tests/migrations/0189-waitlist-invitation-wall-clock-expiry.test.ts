@@ -195,8 +195,8 @@ describe("0189 — the clock is read AFTER the lock, and only there", () => {
     // Drop ONLY the `for update` from the invitation SELECT, which is exactly
     // the pre-repair shape: identity is still read, the row is not locked.
     const poisoned = real.replace(
-      /(from public\.new_client_waitlist_invitations i[\s\S]*?limit 1\s*\n)\s*for update/,
-      "$1",
+      /(where i\.id = v_inv\s*\n)\s*for update;/,
+      "$1  ;",
     );
     expect(poisoned, "the mutation did not apply — this control is vacuous").not.toEqual(real);
 
@@ -207,28 +207,84 @@ describe("0189 — the clock is read AFTER the lock, and only there", () => {
     expect(m.invLock).toBeLessThan(m.clock);
   });
 
-  it("the invitation lock is requested on the IMMUTABLE id, not on outcome columns", () => {
-    // A lock request keyed on redeemed_at/expired_at/released_at would let the
-    // target disappear from the request after a concurrent terminal transition.
+  it("the current cycle is identified by LIVE STATE, never by chronology", () => {
+    // 0188 stamps `issued_at := now()` = transaction_timestamp(), so issuance
+    // order and issued_at order are different relations: a transaction that
+    // began earlier but issues later stamps the NEWER row with the OLDER
+    // instant, and two cycles inside one transaction tie exactly. The schema's
+    // one_live_per_entry unique index makes "the live row" a definition rather
+    // than a guess.
     const b = body(EXPIRE);
-    const sel = b.slice(
-      b.search(/select i\.id, i\.redeemed_at/),
+    const identify = b.slice(
+      b.indexOf("select i.id into v_inv"),
+      b.indexOf("if v_inv is null then"),
+    );
+    expect(identify).toContain("i.redeemed_at is null");
+    expect(identify).toContain("i.expired_at  is null");
+    expect(identify).toContain("i.released_at is null");
+    // NO ordering, NO limit, NO chronology, anywhere in expire().
+    expect(b, "expire() orders invitations by issued_at").not.toMatch(/order by/i);
+    expect(b, "expire() still picks a cycle with limit 1").not.toMatch(/limit 1/i);
+    expect(b).not.toMatch(/max\(\s*issued_at/i);
+    expect(b).not.toMatch(/issued_at\s+desc/i);
+  });
+
+  it("J — NON-VACUITY: restoring issued_at ordering turns that law red", () => {
+    // Mutates a copy; the file on disk is never touched.
+    const real = body(EXPIRE);
+    expect(real).not.toMatch(/order by/i);
+
+    const poisoned = real.replace(
+      /(select i\.id into v_inv[\s\S]*?and i\.released_at is null;)/,
+      "select i.id into v_inv from x order by i.issued_at desc, i.id desc limit 1;",
+    );
+    expect(poisoned, "the mutation did not apply — this control is vacuous").not.toEqual(real);
+    expect(poisoned).toMatch(/order by/i);
+    expect(poisoned).toMatch(/issued_at\s+desc/i);
+    expect(poisoned).toMatch(/limit 1/i);
+  });
+
+  it("the invitation lock is requested on the IMMUTABLE id ALONE", () => {
+    // A lock request carrying the mutable live-state predicate could be
+    // re-qualified away by EvalPlanQual after a concurrent redemption commits,
+    // losing the row and answering as though the entry was never invited.
+    // Identity is read WITHOUT a lock; the lock is taken on `id`.
+    const b = body(EXPIRE);
+    const lockSel = b.slice(
+      b.indexOf("select i.expired_at, i.released_at, i.expires_at"),
       b.indexOf("v_decision_at := clock_timestamp()"),
     );
-    expect(sel).toContain("where i.entry_id = p_entry_id");
-    expect(sel).toContain("order by i.issued_at desc, i.id desc");
-    expect(sel).toContain("limit 1");
-    expect(sel).toMatch(/for update/);
-    // The lock request itself must not filter on mutable terminal columns.
-    expect(sel).not.toMatch(/where[\s\S]*redeemed_at is null/);
-    expect(sel).not.toMatch(/where[\s\S]*expired_at is null/);
-    expect(sel).not.toMatch(/where[\s\S]*released_at is null/);
+    expect(lockSel).toMatch(/where i\.id = v_inv\s*\n\s*for update/);
+    expect(lockSel).not.toMatch(/redeemed_at is null/);
+    expect(lockSel).not.toMatch(/expired_at  is null/);
+    expect(lockSel).not.toMatch(/released_at is null/);
+    // The identifying SELECT must NOT take a lock of its own.
+    const identify = b.slice(
+      b.indexOf("select i.id into v_inv"),
+      b.indexOf("if v_inv is null then"),
+    );
+    expect(identify, "the identifying select must not lock").not.toMatch(/for update/i);
+  });
+
+  it("the no-live-row branch derives from lifecycle invariants, not chronology", () => {
+    const b = body(EXPIRE);
+    const branch = b.slice(
+      b.indexOf("if v_inv is null then"),
+      b.indexOf("select i.expired_at, i.released_at, i.expires_at"),
+    );
+    expect(branch).toContain("'already_redeemed'");
+    expect(branch).toContain("'expired'");
+    expect(branch).toContain("'not_invited'");
+    expect(branch).toMatch(/i\.redeemed_at is not null/);
+    expect(branch).not.toMatch(/issued_at/i);
+    expect(branch).not.toMatch(/order by|limit 1/i);
   });
 
   it("the terminal state is read from the LOCKED row, not re-queried", () => {
     const b = body(EXPIRE);
-    // Every branch reads a local populated by the locking SELECT.
-    expect(b).toMatch(/if v_redeemed is not null then\s*\n\s*return 'already_redeemed'/);
+    // Every branch reads a local populated by the locking SELECT — except
+    // already_redeemed, which is the cross-cycle `exists` check 0188 used and
+    // which subsumes the locked row's own redeemed_at.
     expect(b).toMatch(/if v_expired is not null then/);
     expect(b).toMatch(/if v_released is not null then/);
     expect(b).toMatch(/if v_expires > v_decision_at then/);

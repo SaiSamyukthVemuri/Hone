@@ -246,7 +246,6 @@ declare
   v_code        text;
   v_hit         uuid;
   v_inv         uuid;
-  v_redeemed    timestamptz;
   v_expired     timestamptz;
   v_released    timestamptz;
   v_expires     timestamptz;
@@ -266,46 +265,111 @@ begin
     where e.id = p_entry_id and e.studio_id = p_studio_id
     for update;
 
-  -- 2. IDENTIFY AND LOCK THIS CYCLE'S INVITATION, by immutable id. Ordering by
-  -- issued_at picks the current cycle rather than a historical one; the entry
-  -- mutex above is what makes that choice stable.
-  select i.id, i.redeemed_at, i.expired_at, i.released_at, i.expires_at
-    into v_inv, v_redeemed, v_expired, v_released, v_expires
+  -- 2. IDENTIFY THIS CYCLE STRUCTURALLY, NEVER BY CHRONOLOGY.
+  --
+  -- An earlier draft ordered by `issued_at desc, id desc`. That is wrong twice
+  -- over, and both were reproduced:
+  --
+  --   INVERSION. 0188 stamps `issued_at := now()` in its insert trigger, and
+  --   now() is transaction_timestamp(). A transaction that BEGAN earlier but
+  --   issues later stamps the NEW row with the OLDER instant. Measured: TX began
+  --   12:28:37.684Z; cycle A was issued and released from ordinary autocommit
+  --   calls at 12:28:37.689Z; the old transaction then issued cycle B, stamped
+  --   .684Z. The ordering picked the RELEASED historical row, expire() answered
+  --   `not_invited`, and the genuine live cycle was left live and unstamped.
+  --
+  --   TIES. Two cycles completed inside ONE transaction share an identical
+  --   issued_at, so the tiebreak fell to `id desc` -- a random v4 UUID. Which
+  --   invitation was called "current" was then decided by coin flip.
+  --
+  -- THE SCHEMA ALREADY CARRIES THE ANSWER, and it is an invariant rather than a
+  -- heuristic: `new_client_waitlist_invitations_one_live_per_entry` is a UNIQUE
+  -- index on (entry_id) WHERE redeemed_at, expired_at and released_at are all
+  -- null. At most ONE invitation per entry can be live, so the live row IS the
+  -- current cycle, by construction, with no ordering of any kind.
+  --
+  -- THIS SELECT TAKES NO LOCK ON PURPOSE. The live-state predicate is mutable,
+  -- and a FOR UPDATE carrying it could have the row re-qualified away by
+  -- EvalPlanQual after a concurrent redemption commits -- losing the row and
+  -- answering as though the entry had never been invited. So identity is read
+  -- here, and the LOCK below is requested on the immutable id alone.
+  select i.id into v_inv
     from public.new_client_waitlist_invitations i
-   where i.entry_id = p_entry_id
-     and i.studio_id = p_studio_id
-   order by i.issued_at desc, i.id desc
-   limit 1
+   where i.entry_id    = p_entry_id
+     and i.studio_id   = p_studio_id
+     and i.redeemed_at is null
+     and i.expired_at  is null
+     and i.released_at is null;
+
+  -- 3. NO LIVE INVITATION. Derived from WAIT-03's lifecycle invariants, and
+  -- deliberately NOT from max(issued_at) or any other chronology guess.
+  --
+  -- Redemption is the state that produces this legally: redeem() terminates the
+  -- invitation and leaves the entry `invited` (conversion is a separate,
+  -- explicit command). It is also structurally unambiguous, because an entry
+  -- holding a redeemed invitation can never acquire a later cycle: release and
+  -- expire both refuse a redeemed entry, and requeue only accepts an entry that
+  -- one of them has already moved. So "this entry has a redeemed invitation" and
+  -- "this entry's current cycle was redeemed" are the same statement, which is
+  -- exactly what 0188 relied on and why its wording is kept.
+  if v_inv is null then
+    if exists (
+      select 1
+        from public.new_client_waitlist_invitations i
+       where i.entry_id    = p_entry_id
+         and i.studio_id   = p_studio_id
+         and i.redeemed_at is not null)
+    then
+      return 'already_redeemed';
+    end if;
+    if exists (
+      select 1 from public.new_client_waitlist_entries e
+       where e.id = p_entry_id and e.studio_id = p_studio_id and e.status = 'expired')
+    then
+      -- Already expired by an earlier call: idempotent, same closed word.
+      return 'expired';
+    end if;
+    return 'not_invited';
+  end if;
+
+  -- 4. LOCK THE IDENTIFIED ROW BY ITS IMMUTABLE ID, and only then read the
+  -- clock. `id` cannot change (0188's immutability trigger), so a wait that ends
+  -- in an EvalPlanQual re-check still resolves to the SAME invitation instead of
+  -- dropping it. If a redemption commits between step 2 and this lock, we still
+  -- hold this row and observe redeemed_at below -- the truthful
+  -- `already_redeemed` -- rather than losing the row.
+  -- redeemed_at is deliberately NOT read into a local here: the cross-cycle
+  -- `exists` check below is 0188's precedence and subsumes the locked row, so a
+  -- second copy of the same fact would only be a chance for the two to diverge.
+  select i.expired_at, i.released_at, i.expires_at
+    into v_expired, v_released, v_expires
+    from public.new_client_waitlist_invitations i
+   where i.id = v_inv
    for update;
 
-  -- 3. THE CLOCK IS READ HERE -- after BOTH locks -- and nowhere else. Every
+  -- THE CLOCK IS READ HERE -- after BOTH locks -- and nowhere else. Every
   -- comparison and every stamp below uses this one value, so the decision and
   -- the provenance it writes cannot disagree, and neither can be older than the
   -- lock that serialized the outcome.
   v_decision_at := clock_timestamp();
 
-  -- The entry was never invited, so there is nothing to expire.
-  if v_inv is null then
-    return 'not_invited';
-  end if;
-
-  -- 4. TERMINAL STATE, READ FROM THE LOCKED ROW. Every branch below is decided
-  -- on values that were read under the invitation lock, so a redemption that
-  -- committed while this call waited is visible rather than missed.
-  --
-  -- REDEMPTION IS TERMINAL, and it is still checked before anything is written.
-  if v_redeemed is not null then
+  -- REDEMPTION IS TERMINAL, re-tested UNDER the lock and across every cycle,
+  -- which is 0188's precedence. Reading it before the lock is what let a
+  -- redemption that committed during the wait go unseen.
+  if exists (
+    select 1
+      from public.new_client_waitlist_invitations i
+     where i.entry_id    = p_entry_id
+       and i.studio_id   = p_studio_id
+       and i.redeemed_at is not null)
+  then
     return 'already_redeemed';
   end if;
 
-  -- Already expired by an earlier call: idempotent, same closed word.
+  -- The remaining terminal facts come from the LOCKED row.
   if v_expired is not null then
     return 'expired';
   end if;
-
-  -- Released invitations are not expirable, and `released` is not this
-  -- command's word. 0188 reached `not_invited` here by exhaustion; it is stated
-  -- directly now that the row is in hand, and the answer is unchanged.
   if v_released is not null then
     return 'not_invited';
   end if;

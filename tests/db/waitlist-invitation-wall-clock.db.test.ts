@@ -809,3 +809,339 @@ describe("I — expiry acts on the CURRENT cycle, never a historical invitation"
     expect((await stateOf(f.invId)).expired_at).not.toBeNull();
   });
 });
+
+// ===========================================================================
+// 0189 P2 — THE CURRENT CYCLE IS IDENTIFIED STRUCTURALLY, NOT BY CHRONOLOGY.
+//
+// An earlier draft ordered by `issued_at desc, id desc`. 0188 stamps
+// `issued_at := now()` in its insert trigger, and now() is
+// transaction_timestamp(), so issuance ORDER and issued_at ORDER are not the
+// same relation. Reproduced: a transaction that began at 12:28:37.684Z issued
+// the CURRENT cycle while an entire earlier cycle was issued and released from
+// autocommit calls at .689Z. The ordering picked the RELEASED historical row,
+// expire() answered `not_invited`, and the genuine live cycle was left live and
+// unstamped. Two cycles completed inside one transaction share an issued_at
+// exactly, so the tiebreak fell to a random v4 UUID.
+//
+// The schema already carries the answer as an INVARIANT:
+// new_client_waitlist_invitations_one_live_per_entry is UNIQUE on (entry_id)
+// WHERE redeemed_at, expired_at and released_at are all null.
+// ===========================================================================
+
+const liveIdOf = async (entryId: string) =>
+  (
+    await adminQuery(
+      `select id from public.new_client_waitlist_invitations
+        where entry_id = $1 and redeemed_at is null and expired_at is null and released_at is null`,
+      [entryId],
+    )
+  ).rows[0]?.id as string | undefined;
+
+/** The row `issued_at desc, id desc` would have chosen. */
+const chronologyPickOf = async (entryId: string) =>
+  (
+    await adminQuery(
+      `select id from public.new_client_waitlist_invitations
+        where entry_id = $1 order by issued_at desc, id desc limit 1`,
+      [entryId],
+    )
+  ).rows[0].id as string;
+
+const cyclesOf = async (entryId: string) =>
+  (
+    await adminQuery(
+      `select id, expired_at, released_at, redeemed_at from public.new_client_waitlist_invitations
+        where entry_id = $1`,
+      [entryId],
+    )
+  ).rows as Array<{ id: string; expired_at: Date | null; released_at: Date | null; redeemed_at: Date | null }>;
+
+/**
+ * Build TWO cycles on one entry whose issued_at order is INVERTED against real
+ * issuance order, using genuine transaction semantics.
+ *
+ * A long-running transaction is opened first; an entire cycle is then issued
+ * and terminated by ordinary autocommit calls; and only then does the old
+ * transaction issue the current cycle — which the insert trigger stamps with
+ * that transaction's START instant, i.e. BEFORE the historical row.
+ */
+async function seedInvertedCycles(label: string, terminate: "release" | "expire") {
+  const f = await issueExpiringIn(label, 120);
+  // Cycle 1 (the one seeded above) is terminated, then the entry is requeued.
+  if (terminate === "release") {
+    expect(
+      (
+        await adminQuery(`select public.release_new_client_waitlist_entry($1,$2,$3) as r`, [
+          f.studioId,
+          f.entryId,
+          f.userId,
+        ])
+      ).rows[0].r,
+    ).toBe("released");
+  } else {
+    await withAppendOnlyDisabled(() =>
+      adminQuery(
+        `update public.new_client_waitlist_invitations
+            set issued_at = clock_timestamp() - interval '4 days',
+                expires_at = clock_timestamp() - interval '1 minute'
+          where id = $1`,
+        [f.invId],
+      ),
+    );
+    expect(
+      (
+        await adminQuery(`select public.expire_new_client_waitlist_invitation($1,$2,$3) as r`, [
+          f.studioId,
+          f.entryId,
+          f.userId,
+        ])
+      ).rows[0].r,
+    ).toBe("expired");
+  }
+  await adminQuery(`select public.requeue_new_client_waitlist_entry($1,$2,$3)`, [
+    f.studioId,
+    f.entryId,
+    f.userId,
+  ]);
+  await adminQuery(`select public.claim_new_client_waitlist_entry($1,$2,$3)`, [
+    f.studioId,
+    f.entryId,
+    f.userId,
+  ]);
+
+  // A transaction opened NOW; its issued_at will be this instant.
+  const old = await conn();
+  await old.query("begin");
+  await old.query(`select transaction_timestamp()`);
+
+  // ...while ANOTHER whole cycle is issued and terminated after it began.
+  const mid = await adminQuery(
+    `select result from public.issue_new_client_waitlist_invitation($1,$2,$3,72)`,
+    [f.studioId, f.entryId, f.userId],
+  );
+  expect(mid.rows[0].result).toBe("invited");
+  const midId = (await liveIdOf(f.entryId))!;
+  expect(
+    (
+      await adminQuery(`select public.release_new_client_waitlist_entry($1,$2,$3) as r`, [
+        f.studioId,
+        f.entryId,
+        f.userId,
+      ])
+    ).rows[0].r,
+  ).toBe("released");
+  await adminQuery(`select public.requeue_new_client_waitlist_entry($1,$2,$3)`, [
+    f.studioId,
+    f.entryId,
+    f.userId,
+  ]);
+  await adminQuery(`select public.claim_new_client_waitlist_entry($1,$2,$3)`, [
+    f.studioId,
+    f.entryId,
+    f.userId,
+  ]);
+
+  // The OLD transaction issues the genuine current cycle — stamped earlier.
+  const cur = await old.query(
+    `select result from public.issue_new_client_waitlist_invitation($1,$2,$3,72)`,
+    [f.studioId, f.entryId, f.userId],
+  );
+  expect(cur.rows[0].result).toBe("invited");
+  await old.query("commit");
+  await old.end();
+
+  const liveId = (await liveIdOf(f.entryId))!;
+  expect(liveId).not.toBe(midId);
+  return { ...f, liveId, midId };
+}
+
+describe("A — TIMESTAMP INVERSION: the live row wins, whatever issued_at says", () => {
+  it("expires the genuine current cycle even though a historical row sorts newer", async () => {
+    const f = await seedInvertedCycles("cyc-a", "release");
+
+    // THE INVERSION IS REAL, asserted rather than assumed: the chronology the
+    // old code trusted points at a row that is NOT live.
+    const picked = await chronologyPickOf(f.entryId);
+    expect(
+      picked,
+      "no inversion was constructed — this test would pass vacuously",
+    ).not.toBe(f.liveId);
+
+    await withAppendOnlyDisabled(() =>
+      adminQuery(
+        `update public.new_client_waitlist_invitations
+            set issued_at = clock_timestamp() - interval '4 days',
+                expires_at = clock_timestamp() - interval '1 minute'
+          where id = $1`,
+        [f.liveId],
+      ),
+    );
+
+    const r = await adminQuery(
+      `select public.expire_new_client_waitlist_invitation($1,$2,$3) as r`,
+      [f.studioId, f.entryId, f.userId],
+    );
+    expect(r.rows[0].r).toBe("expired");
+    expect(await entryStatus(f.entryId)).toBe("expired");
+
+    const cycles = await cyclesOf(f.entryId);
+    const live = cycles.find((c) => c.id === f.liveId)!;
+    expect(live.expired_at, "the true current cycle was not stamped").not.toBeNull();
+    // ...and no historical row was touched by this call.
+    for (const c of cycles.filter((x) => x.id !== f.liveId)) {
+      expect(c.expired_at, `historical row ${c.id} was expired by this call`).toBeNull();
+    }
+  });
+});
+
+describe("B — SAME issued_at: identity never falls to UUID order", () => {
+  it("two cycles sharing an issued_at still resolve to the live one", async () => {
+    // Both cycles are completed inside ONE transaction, so the insert trigger
+    // stamps them with an identical transaction_timestamp and `id desc` is a
+    // coin flip.
+    const f = await issueExpiringIn("cyc-b", 120);
+    // BOTH of the tied cycles must be issued inside ONE transaction, so the
+    // insert trigger stamps them with the same transaction_timestamp.
+    const one = await conn();
+    await one.query("begin");
+    for (let cycle = 0; cycle < 2; cycle += 1) {
+      await one.query(`select public.release_new_client_waitlist_entry($1,$2,$3)`, [
+        f.studioId,
+        f.entryId,
+        f.userId,
+      ]);
+      await one.query(`select public.requeue_new_client_waitlist_entry($1,$2,$3)`, [
+        f.studioId,
+        f.entryId,
+        f.userId,
+      ]);
+      await one.query(`select public.claim_new_client_waitlist_entry($1,$2,$3)`, [
+        f.studioId,
+        f.entryId,
+        f.userId,
+      ]);
+      await one.query(`select public.issue_new_client_waitlist_invitation($1,$2,$3,72)`, [
+        f.studioId,
+        f.entryId,
+        f.userId,
+      ]);
+    }
+    await one.query("commit");
+    await one.end();
+
+    const liveId0 = (await liveIdOf(f.entryId))!;
+    const tied = await adminQuery(
+      `select count(*)::int as n from public.new_client_waitlist_invitations
+        where entry_id = $1
+          and issued_at = (select issued_at from public.new_client_waitlist_invitations where id = $2)`,
+      [f.entryId, liveId0],
+    );
+    expect(
+      tied.rows[0].n,
+      "no issued_at tie was constructed — this test would pass vacuously",
+    ).toBeGreaterThanOrEqual(2);
+    const liveId = liveId0;
+    await withAppendOnlyDisabled(() =>
+      adminQuery(
+        `update public.new_client_waitlist_invitations
+            set issued_at = issued_at - interval '4 days',
+                expires_at = clock_timestamp() - interval '1 minute'
+          where id = $1`,
+        [liveId],
+      ),
+    );
+
+    const r = await adminQuery(
+      `select public.expire_new_client_waitlist_invitation($1,$2,$3) as r`,
+      [f.studioId, f.entryId, f.userId],
+    );
+    expect(r.rows[0].r).toBe("expired");
+    const cycles = await cyclesOf(f.entryId);
+    expect(cycles.find((c) => c.id === liveId)!.expired_at).not.toBeNull();
+    for (const c of cycles.filter((x) => x.id !== liveId)) {
+      expect(c.expired_at, `historical row ${c.id} was expired by this call`).toBeNull();
+    }
+  });
+});
+
+describe("C/D — a historical terminal row never shadows the current live one", () => {
+  for (const mode of ["expire", "release"] as const) {
+    it(`historical ${mode}d cycle + current live cycle: only the live one moves`, async () => {
+      const f = await seedInvertedCycles(`cyc-${mode}`, mode);
+      const liveId = f.liveId;
+      await withAppendOnlyDisabled(() =>
+        adminQuery(
+          `update public.new_client_waitlist_invitations
+              set issued_at = clock_timestamp() - interval '4 days',
+                  expires_at = clock_timestamp() - interval '1 minute'
+            where id = $1`,
+          [liveId],
+        ),
+      );
+      const before = await cyclesOf(f.entryId);
+      const r = await adminQuery(
+        `select public.expire_new_client_waitlist_invitation($1,$2,$3) as r`,
+        [f.studioId, f.entryId, f.userId],
+      );
+      expect(r.rows[0].r).toBe("expired");
+      const after = await cyclesOf(f.entryId);
+      for (const b of before.filter((x) => x.id !== liveId)) {
+        const a = after.find((x) => x.id === b.id)!;
+        expect(a.expired_at?.getTime() ?? null).toBe(b.expired_at?.getTime() ?? null);
+        expect(a.released_at?.getTime() ?? null).toBe(b.released_at?.getTime() ?? null);
+      }
+      expect(after.find((x) => x.id === liveId)!.expired_at).not.toBeNull();
+    });
+  }
+});
+
+describe("I — the invariants the identity law rests on", () => {
+  it("at most ONE live invitation per entry is structurally enforced", async () => {
+    const f = await issueExpiringIn("cyc-uniq", 120);
+    // A second live row for the same entry is refused by the partial unique
+    // index, which is precisely what makes 'the live row' a definition.
+    await expect(
+      adminQuery(
+        `insert into public.new_client_waitlist_invitations
+           (studio_id, entry_id, token_hash, expires_at, issued_by_practitioner_id)
+         select studio_id, entry_id, repeat('a',64), expires_at, issued_by_practitioner_id
+           from public.new_client_waitlist_invitations where id = $1`,
+        [f.invId],
+      ),
+    ).rejects.toThrow(/one_live_per_entry/);
+  });
+
+  it("a redeemed entry can never acquire a later cycle", async () => {
+    // This is what makes "any redeemed invitation" and "this entry's CURRENT
+    // cycle was redeemed" the same statement, so the no-live-row branch needs
+    // no chronology.
+    const f = await issueExpiringIn("cyc-term", 120);
+    expect(
+      (
+        await adminQuery(`select result from public.redeem_new_client_waitlist_invitation($1)`, [
+          f.token,
+        ])
+      ).rows[0].result,
+    ).toBe("redeemed");
+    expect(await entryStatus(f.entryId)).toBe("invited");
+    expect(await liveIdOf(f.entryId)).toBeUndefined();
+
+    for (const [cmd, expected] of [
+      ["select public.release_new_client_waitlist_entry($1,$2,$3) as r", "already_redeemed"],
+      ["select public.expire_new_client_waitlist_invitation($1,$2,$3) as r", "already_redeemed"],
+      ["select public.requeue_new_client_waitlist_entry($1,$2,$3) as r", "not_requeueable"],
+    ] as const) {
+      const r = await adminQuery(cmd, [f.studioId, f.entryId, f.userId]);
+      expect(r.rows[0].r, cmd).toBe(expected);
+    }
+    expect(
+      (
+        await adminQuery(
+          `select result from public.issue_new_client_waitlist_invitation($1,$2,$3,72)`,
+          [f.studioId, f.entryId, f.userId],
+        )
+      ).rows[0].result,
+    ).toBe("not_claimed");
+    expect((await cyclesOf(f.entryId)).length, "a later cycle was created").toBe(1);
+  });
+});
