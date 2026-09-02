@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import {
   fileForVersion,
@@ -7,6 +7,13 @@ import {
   versionsAbove,
   migrationState,
 } from "./helpers/migration-state";
+import {
+  CANONICAL_EDGES,
+  MECHANISM_EVIDENCE,
+  PREDECESSOR_RELEASE,
+  TEMPORAL_EDGES,
+  VERDICT_EVIDENCE,
+} from "../db/helpers/temporal-edges";
 
 // 0189 — WAIT-03 TTL decisions must use the wall clock, taken AFTER the lock.
 //
@@ -848,118 +855,176 @@ describe("0189 — bulk claim derives its instant from the candidates", () => {
 });
 
 // ---------------------------------------------------------------------------
-// THE TEMPORAL PROOF MATRIX.
+// TEMPORAL CLOSURE — DERIVED FROM THE IMPLEMENTING TESTS, NOT DECLARED.
 //
-// An earlier pass claimed "zero inversions across eight paths" on the strength
-// of ONE probe per path — a single early-transaction schedule. That was a
-// weaker claim than it sounded, and the REDEEM -> CONVERT defect proved it: that
-// path was scored clean because its probe opened the long transaction AFTER the
-// invite, so it never exercised the interleaving that actually breaks it.
+// WHAT WAS HERE BEFORE, AND WHY IT WAS WORTHLESS. This section used to hold a
+// hand-written table of edges, each carrying a label, and its only assertion
+// was that each label was one of the two labels the table allowed:
 //
-// A path counts as CLOSED only under one of two proofs:
+//     expect(["EXECUTED_RACE", "STRUCTURALLY_IMPOSSIBLE"]).toContain(row.proof)
 //
-//   EXECUTED_RACE            a deterministic test drives the real serialization
-//                            boundary — the successor is proven parked on the
-//                            lock the predecessor holds.
-//   STRUCTURALLY_IMPOSSIBLE  predecessor and successor contend for the SAME
-//                            exclusive lock, so no schedule exists in which the
-//                            predecessor commits between the successor's lock
-//                            acquisition and its clock read.
+// Since the table was a literal in the same file, that could not fail. It
+// certified an edge — RELEASE/EXPIRE -> REQUEUE — as structurally impossible
+// while `requeue_new_client_waitlist_entry` was not even in the mutex census it
+// appealed to, and it would have stayed green if every race test behind it were
+// deleted. It proved that we had typed an allowed word.
 //
-// The structural arm is asserted from source here; the executed arm lives in
-// tests/db/waitlist-invitation-wall-clock.db.test.ts.
+// WHAT REPLACES IT. tests/db/helpers/temporal-edges.ts holds identities and
+// REQUIRED EVIDENCE — never a result. This guard reads the implementing test for
+// each edge and fails unless the evidence its proof kind demands is present, by
+// tokens taken from the manifest itself rather than retyped here. Deleting a
+// race test, dropping a lock proof, or removing an edge's registration turns
+// this red. EVIDENCE -> CLOSURE, never LABEL -> CLOSURE.
+//
+// The three proof kinds are not interchangeable, and which one an edge needs was
+// MEASURED rather than assumed — see the manifest's note on REQUEUE, which was
+// written as an executed race until the database declined to produce one.
 // ---------------------------------------------------------------------------
-describe("0189 — the temporal proof matrix", () => {
-  const takesEntryMutex = (fn: string) =>
-    /from public\.new_client_waitlist_entries e[\s\S]*?for update/.test(body(fn)) ||
-    /from public\.new_client_waitlist_entries[\s\S]{0,200}for update/.test(body(fn));
+describe("0189 — temporal closure is derived from executable evidence", () => {
+  const DB_TEST = "tests/db/waitlist-invitation-wall-clock.db.test.ts";
+  const dbPath = path.join(ROOT, DB_TEST);
 
-  it("every entry-transition command contends for the SAME entry mutex", () => {
-    // This is what makes the STRUCTURALLY_IMPOSSIBLE arm true for
-    // CLAIM -> INVITE, RELEASE/EXPIRE -> REQUEUE and the REMOVE edges: the
-    // predecessor cannot commit inside the successor's lock-to-clock window,
-    // because it needs a lock the successor is holding.
-    for (const fn of [
-      "claim_new_client_waitlist_entry",
-      "issue_new_client_waitlist_invitation",
-      "expire_new_client_waitlist_invitation",
-      "release_new_client_waitlist_entry",
-      "record_new_client_waitlist_conversion",
-      "remove_new_client_waitlist_entry",
+  it("the implementing test file the manifest points at exists", () => {
+    expect(existsSync(dbPath), `${DB_TEST} is missing`).toBe(true);
+  });
+
+  const dbSrc = readFileSync(dbPath, "utf8");
+
+  /**
+   * WHERE AN EDGE IS CONSIDERED REGISTERED. Only two positions count: the id
+   * passed literally to `edgeTitle("…", …)`, or the leading element of a tuple
+   * in a parameterised test's data array. An id that merely appears somewhere in
+   * the file — `id === "JOIN->CLAIM" ? … : …` inside a shared body, say — is NOT
+   * a registration.
+   *
+   * This distinction is load-bearing, and was found by mutation: deleting the
+   * JOIN->CLAIM tuple left an incidental mention behind, and a `includes(id)`
+   * check happily certified an edge whose test had just been removed.
+   */
+  const registrationOf = (id: string): RegExp =>
+    new RegExp(`(edgeTitle\\(\\s*"${id}")|(\\[\\s*"${id}"\\s*,)`);
+
+  /** The smallest `describe(...)` block containing `needle`. */
+  const enclosingDescribe = (needle: string): string => {
+    const at = dbSrc.search(new RegExp(needle));
+    if (at < 0) return "";
+    const start = dbSrc.lastIndexOf("\ndescribe(", at);
+    if (start < 0) return "";
+    const open = dbSrc.indexOf("{", dbSrc.indexOf("=>", start));
+    let depth = 0;
+    for (let i = open; i < dbSrc.length; i += 1) {
+      if (dbSrc[i] === "{") depth += 1;
+      else if (dbSrc[i] === "}") {
+        depth -= 1;
+        if (depth === 0) return dbSrc.slice(open, i);
+      }
+    }
+    return "";
+  };
+
+  it("every proof helper the manifest requires is actually DEFINED in the test file", () => {
+    // A required token that no function defines would be satisfiable by a
+    // comment. Each one must be a real function in the implementing file.
+    for (const token of [
+      ...Object.values(MECHANISM_EVIDENCE),
+      ...Object.values(VERDICT_EVIDENCE),
     ]) {
-      expect(takesEntryMutex(fn), `${fn} does not take the entry mutex`).toBe(true);
-    }
-  });
-
-  it("REDEEM is the one command that does NOT take the entry mutex", () => {
-    // The whole reason REDEEM -> CONVERT needed an executed race rather than a
-    // structural argument. If this ever changes, the matrix below changes with
-    // it and this test is where that surfaces.
-    const b = body(REDEEM);
-    expect(b).not.toContain("new_client_waitlist_entries");
-    expect([...b.matchAll(/for update/gi)].length).toBe(1);
-  });
-
-  it("conversion was the ONLY command reading redemption state without that lock", () => {
-    // requeue and remove decide purely on entry.status under the entry mutex —
-    // they never read redeemed_at, so no second instance of this defect is
-    // hiding behind the same shape. Asserted against the FROZEN 0188 bodies,
-    // since 0189 does not replace them.
-    const frozen = readFileSync(
-      path.join(ROOT, "supabase/migrations", fileForVersion("0188")),
-      "utf8",
-    );
-    const bodyOf = (src: string, fn: string) => {
-      const at = src.indexOf(`create or replace function public.${fn}`);
-      return src.slice(at, src.indexOf("$$;", at));
-    };
-    for (const fn of ["requeue_new_client_waitlist_entry", "remove_new_client_waitlist_entry"]) {
-      expect(bodyOf(frozen, fn), `${fn} reads redemption state`).not.toMatch(/redeemed_at/);
-    }
-  });
-
-  it("conversion now locks the live invitation before reading its clock", () => {
-    const b = body("record_new_client_waitlist_conversion");
-    const entryLock = b.search(/from public\.new_client_waitlist_entries e[\s\S]*?for update/);
-    const identify = b.indexOf("select i.id into v_inv");
-    const invLock = b.search(/where i\.id = v_inv\s*\n\s*for update/);
-    const clock = b.indexOf("v_decision_at := clock_timestamp()");
-    for (const [n, v] of Object.entries({ entryLock, identify, invLock, clock })) {
-      expect(v, `conversion has no ${n}`).toBeGreaterThan(-1);
-    }
-    expect(identify).toBeGreaterThan(entryLock);
-    expect(invLock).toBeGreaterThan(identify);
-    expect(clock, "conversion reads the clock before the invitation lock").toBeGreaterThan(invLock);
-    // Identity is structural, and the lock is by immutable id alone.
-    const idSel = b.slice(identify, invLock);
-    expect(idSel).toContain("i.redeemed_at is null");
-    expect(idSel).not.toMatch(/order by|limit 1|issued_at/i);
-    expect(b, "conversion orders invitations").not.toMatch(/order by/i);
-  });
-
-  it("the matrix is complete: every edge carries one of the two proofs", () => {
-    // Recorded as data so an uncovered edge is a failing assertion rather than
-    // a sentence in a commit message.
-    const MATRIX = [
-      { edge: "JOIN -> CLAIM", proof: "EXECUTED_RACE" },
-      { edge: "CLAIM -> INVITE", proof: "EXECUTED_RACE" },
-      { edge: "INVITE -> REDEEM", proof: "EXECUTED_RACE" },
-      { edge: "INVITE -> EXPIRE", proof: "EXECUTED_RACE" },
-      { edge: "INVITE -> RELEASE", proof: "EXECUTED_RACE" },
-      { edge: "REDEEM -> CONVERT", proof: "EXECUTED_RACE" },
-      { edge: "RELEASE/EXPIRE -> REQUEUE", proof: "STRUCTURALLY_IMPOSSIBLE" },
-      { edge: "WAITING/RELEASED/EXPIRED -> REMOVE", proof: "EXECUTED_RACE" },
-    ] as const;
-    expect(MATRIX).toHaveLength(8);
-    for (const row of MATRIX) {
+      const fn = token.replace("(", "");
       expect(
-        ["EXECUTED_RACE", "STRUCTURALLY_IMPOSSIBLE"],
-        `${row.edge} carries no proof`,
-      ).toContain(row.proof);
+        new RegExp(`(async )?function ${fn}\\(`).test(dbSrc),
+        `${fn} is required as evidence but is not defined in ${DB_TEST}`,
+      ).toBe(true);
     }
-    // REDEEM -> CONVERT must be an EXECUTED race specifically: it is the edge
-    // whose predecessor does not share the successor's mutex, so no structural
-    // argument is available to it.
-    expect(MATRIX.find((r) => r.edge === "REDEEM -> CONVERT")!.proof).toBe("EXECUTED_RACE");
+  });
+
+  it("every canonical WAIT-03 transition is represented by at least one edge", () => {
+    for (const canonical of CANONICAL_EDGES) {
+      expect(
+        TEMPORAL_EDGES.some((e) => e.canonical === canonical),
+        `no edge implements the canonical transition ${canonical}`,
+      ).toBe(true);
+    }
+    // ...and no edge invents a canonical transition of its own.
+    for (const e of TEMPORAL_EDGES) {
+      expect(CANONICAL_EDGES, `${e.id} names an unknown canonical edge`).toContain(e.canonical);
+    }
+  });
+
+  it("edge ids are unique, so one test cannot certify two edges by accident", () => {
+    const ids = TEMPORAL_EDGES.map((e) => e.id);
+    expect(new Set(ids).size, `duplicate edge ids: ${ids.join(", ")}`).toBe(ids.length);
+  });
+
+  describe("each edge is certified by its implementing test, or not at all", () => {
+    for (const edge of TEMPORAL_EDGES) {
+      it(`${edge.id} — ${edge.proof}`, () => {
+        // 1. The edge is REGISTERED: its id appears in the implementing file.
+        //    Deleting the test, or the loop tuple that generates it, removes
+        //    this and the edge loses its proof.
+        const marker = registrationOf(edge.id);
+        expect(
+          marker.test(dbSrc),
+          `${edge.id} has no implementing test in ${DB_TEST} — an id mentioned ` +
+            `elsewhere in a shared body is not a registration`,
+        ).toBe(true);
+
+        const block = enclosingDescribe(marker.source);
+        expect(block.length, `${edge.id} is not inside a describe block`).toBeGreaterThan(0);
+
+        // 2. It is registered THROUGH the shared helper, so the manifest and the
+        //    test cannot drift into two independent spellings of the same name.
+        expect(
+          /\bit\(\s*edgeTitle\(/.test(block),
+          `${edge.id}'s test does not take its title from edgeTitle()`,
+        ).toBe(true);
+
+        // 3. The MECHANISM its proof kind demands is exercised.
+        expect(
+          block.includes(MECHANISM_EVIDENCE[edge.proof]),
+          `${edge.id} claims ${edge.proof} but its test never calls ${MECHANISM_EVIDENCE[edge.proof]})`,
+        ).toBe(true);
+
+        // 4. Every VERDICT it claims is asserted.
+        for (const verdict of edge.verdicts) {
+          expect(
+            block.includes(VERDICT_EVIDENCE[verdict]),
+            `${edge.id} claims a ${verdict} verdict but its test never calls ${VERDICT_EVIDENCE[verdict]})`,
+          ).toBe(true);
+        }
+
+        // 5. An executed race must RELEASE the predecessor inside the test —
+        //    otherwise "the successor was blocked" is the whole story and the
+        //    ordering after the release was never observed.
+        if (edge.proof === "EXECUTED_BLOCKING_RACE") {
+          expect(
+            PREDECESSOR_RELEASE.some((t) => block.includes(t)),
+            `${edge.id} parks its successor but never releases the predecessor`,
+          ).toBe(true);
+        }
+      });
+    }
+  });
+
+  it("no edge is certified by a label alone", () => {
+    // The failure mode this whole section replaced: a row whose proof kind names
+    // a mechanism no test performs. Asserted directly, over every row.
+    const uncertified = TEMPORAL_EDGES.filter((e) => {
+      if (!registrationOf(e.id).test(dbSrc)) return true;
+      const block = enclosingDescribe(registrationOf(e.id).source);
+      return !block || !block.includes(MECHANISM_EVIDENCE[e.proof]);
+    });
+    expect(
+      uncertified.map((e) => e.id),
+      "these edges carry a proof kind that no implementing test performs",
+    ).toEqual([]);
+  });
+
+  it("REDEEM -> CONVERT is an executed race specifically", () => {
+    // It is the one edge whose predecessor does not share the successor's entry
+    // mutex — REDEEM takes only the invitation lock — so no visibility or
+    // predicate argument is available to it. If this edge is ever reclassified,
+    // the reclassification is the thing to review.
+    const e = TEMPORAL_EDGES.find((x) => x.id === "REDEEM->CONVERT")!;
+    expect(e.proof).toBe("EXECUTED_BLOCKING_RACE");
   });
 });
