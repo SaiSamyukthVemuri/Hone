@@ -3,6 +3,11 @@ import { Client } from "pg";
 import { randomUUID } from "node:crypto";
 import { adminQuery, closePool, resolveLocalDbUrl } from "./helpers/harness";
 import { edgeTitle } from "./helpers/temporal-edges";
+import {
+  firstInversion,
+  linearizeByTransitionChain,
+  type EventRow,
+} from "./helpers/event-order";
 
 // 0189 — TTL decisions must use the WALL CLOCK, read AFTER the lock.
 //
@@ -281,7 +286,7 @@ describe("B — after the deadline, transaction also starts after it", () => {
 });
 
 describe("C — THE LOAD-BEARING CASE: begins before, blocks, released after", () => {
-  it(edgeTitle("INVITE->REDEEM", "refuses a redemption whose window closed while it waited on the invitation lock"), async () => {
+  temporalEdgeTest("INVITE->REDEEM", "refuses a redemption whose window closed while it waited on the invitation lock", async () => {
     const f = await issueExpiringIn("wc-c", 6);
 
     // The deadline is stamped BEFORE anything locks the row, so setup duration
@@ -665,7 +670,7 @@ describe("A — NEGATIVE CONTROL: the entry-lock-only shape produces stale prove
 });
 
 describe("B — REPAIRED: the decision instant follows the invitation lock", () => {
-  it(edgeTitle("INVITE->EXPIRE", "stamps expired_at at or after the moment the holder released"), async () => {
+  temporalEdgeTest("INVITE->EXPIRE", "stamps expired_at at or after the moment the holder released", async () => {
     const f = await issueAlreadyElapsed("p2-b");
     const holder = await holdInvitation(f.invId);
 
@@ -1361,7 +1366,7 @@ describe("RELEASE C — a release can never predate the invitation it releases",
 });
 
 describe("RELEASE D — a wait on the invitation lock does not backdate the stamp", () => {
-  it(edgeTitle("INVITE->RELEASE", "stamps released_at at or after the moment the holder released"), async () => {
+  temporalEdgeTest("INVITE->RELEASE", "stamps released_at at or after the moment the holder released", async () => {
     const f = await issueExpiringIn("rel-wait", 300);
     const holder = await holdInvitation(f.invId);
 
@@ -1550,19 +1555,19 @@ describe("RELEASE — concurrency stays coherent", () => {
 // inversion in claim, issue's invited_at, and removal.
 // ===========================================================================
 
-type EventRow = { from_status: string | null; to_status: string; occurred_at: Date };
-
 /**
- * Events for an entry in TRANSITION order, reconstructed from the state chain.
+ * Events for an entry in TRANSITION order, reconstructed from the state chain
+ * ALONE — never from `occurred_at`, which is the evidence under test.
  *
- * There is no sequence column and `id` is a v4 UUID, so physical order is not
- * insertion order — an earlier draft used ctid and produced false inversions
- * once rows moved. Ordering by occurred_at would be circular, since occurred_at
- * is the thing under test. The chain is the only independent evidence: the
- * INSERT event has from_status NULL, and every later event's from_status is the
- * previous event's to_status.
+ * THIS IS NOT AN INSERTION-ORDER READ, and it is deliberately no longer named
+ * as though it were. The events table stores no sequence: `id` is a random uuid
+ * and there is no ordinal. So this recovers an order only when the transition
+ * labels determine exactly one, and REFUSES a history that repeats a transition
+ * — two release/requeue cycles, say — because the repeats could only be told
+ * apart by their timestamps. Those histories use `observed()` below, which knows
+ * the order because it watched the operations happen.
  */
-async function eventsInInsertionOrder(entryId: string): Promise<EventRow[]> {
+async function eventsAlongTransitionChain(entryId: string): Promise<EventRow[]> {
   const rows = (
     await adminQuery(
       `select from_status, to_status, occurred_at from public.new_client_waitlist_entry_events
@@ -1570,87 +1575,119 @@ async function eventsInInsertionOrder(entryId: string): Promise<EventRow[]> {
       [entryId],
     )
   ).rows as EventRow[];
-  // ORDER BY THE TRANSITION CHAIN, NEVER BY occurred_at — the timestamps are the
-  // thing under test, so using them to sort would assume the conclusion. Rows
-  // come back unordered, so the chain is reconstructed from from_status ->
-  // to_status alone.
-  //
-  // WHY THIS SEARCHES RATHER THAN WALKS GREEDILY. A history may revisit a
-  // status: `released -> waiting` (requeue) puts a second `waiting` in the
-  // chain, and a greedy "first row whose from_status matches" can step onto the
-  // WRONG branch and dead-end — or, worse, pick a different branch on a
-  // different run, because the result set has no defined order. This walks every
-  // branch and requires that exactly ONE ordering consumes all of the events. A
-  // genuinely ambiguous history fails loudly instead of being guessed at.
-  const head = rows.filter((r) => r.from_status === null);
-  expect(head.length, "an entry must have exactly one INSERT event").toBe(1);
-  const used = rows.map(() => false);
-  const path: EventRow[] = [];
-  const found: EventRow[][] = [];
-  const walk = (i: number): void => {
-    if (found.length > 1) return; // ambiguity already established; stop early
-    used[i] = true;
-    path.push(rows[i]);
-    if (path.length === rows.length) {
-      found.push([...path]);
-    } else {
-      for (let j = 0; j < rows.length; j += 1) {
-        if (!used[j] && rows[j].from_status === rows[i].to_status) walk(j);
-      }
-    }
-    path.pop();
-    used[i] = false;
-  };
-  walk(rows.indexOf(head[0]));
-  expect(
-    found.length,
-    `no ordering of these ${rows.length} events forms a single chain: ${rows
-      .map((r) => `${r.from_status}->${r.to_status}`)
-      .join(", ")}`,
-  ).toBeGreaterThan(0);
-
-  // WHERE SEVERAL ORDERINGS EXIST, AND WHY THAT IS NOT A GUESS. A history can
-  // contain the SAME transition twice — `waiting -> claimed` happens again after
-  // a requeue — and two rows carrying identical from/to labels are, to a walk
-  // over labels alone, interchangeable. The SHAPE of the chain must still be
-  // unique: if two orderings disagree about the sequence of labels, the history
-  // is genuinely ambiguous and this fails rather than picking one.
-  const shape = (sol: EventRow[]) => sol.map((r) => `${r.from_status}->${r.to_status}`).join("|");
-  expect(
-    new Set(found.map(shape)).size,
-    "this event history has more than one valid transition sequence, so it cannot be linearized",
-  ).toBe(1);
-
-  // The shape is fixed; all that remains is which of two INDISTINGUISHABLE
-  // repeats sits in the earlier slot, and the schema offers nothing but the
-  // timestamp to decide it (`id` is a random uuid; there is no insertion key).
-  // So they are assigned in timestamp order.
-  //
-  // THE LIMIT THIS IMPOSES, STATED PLAINLY: an inversion BETWEEN TWO IDENTICAL
-  // transitions cannot be detected this way, because no reading of the log can
-  // tell those two apart. Inversions between DIFFERENT transitions — every case
-  // these tests exist for — are unaffected: their order is fixed by the chain,
-  // never by their timestamps. Tests that need the stronger claim assert the two
-  // specific stamps against each other directly.
-  const byLabel = new Map<string, EventRow[]>();
-  for (const r of rows) {
-    const k = `${r.from_status}->${r.to_status}`;
-    byLabel.set(k, [...(byLabel.get(k) ?? []), r]);
-  }
-  for (const list of byLabel.values()) {
-    list.sort((x, y) => x.occurred_at.getTime() - y.occurred_at.getTime());
-  }
-  return found[0].map((r) => byLabel.get(`${r.from_status}->${r.to_status}`)!.shift()!);
+  const out = linearizeByTransitionChain(rows);
+  expect(out.ok ? "" : out.detail, "the event history could not be linearized").toBe("");
+  return out.ok ? out.chain : [];
 }
 
-/** The first place the append-only log goes backwards, or null. */
-function firstInversion(rows: EventRow[]): string | null {
-  for (let i = 1; i < rows.length; i += 1) {
-    if (rows[i].occurred_at.getTime() < rows[i - 1].occurred_at.getTime()) {
-      return `${rows[i - 1].to_status}(${rows[i - 1].occurred_at.toISOString()}) -> ${rows[i].to_status}(${rows[i].occurred_at.toISOString()})`;
-    }
+// ---------------------------------------------------------------------------
+// INDEPENDENT EVENT IDENTITY.
+//
+// The harness controls the operations, so it — unlike the database — knows what
+// order they ran in. Each controlled transition is bracketed: snapshot the entry's
+// event ids, perform the transition, then take the id that is NEW. That set
+// difference is the identity, and it owes nothing to `occurred_at`, to uuid
+// ordering, to ctid, or to the order a query happened to return rows in.
+//
+// The timestamps are then CHECKED against that independently established order,
+// which is the direction the evidence has to flow.
+// ---------------------------------------------------------------------------
+type ObservedEvent = EventRow & { id: string };
+
+async function eventIdSet(entryId: string): Promise<Set<string>> {
+  const r = await adminQuery(
+    `select id from public.new_client_waitlist_entry_events where entry_id = $1`,
+    [entryId],
+  );
+  return new Set(r.rows.map((x: Record<string, unknown>) => x.id as string));
+}
+
+/** The single event a controlled transition appended. More than one, or none, is
+ *  itself a failure: the caller believed it performed exactly one transition. */
+async function expectExactlyOneNewEvent(
+  entryId: string,
+  before: Set<string>,
+  from: string | null,
+  to: string,
+): Promise<ObservedEvent> {
+  const rows = (
+    await adminQuery(
+      `select id, from_status, to_status, occurred_at
+         from public.new_client_waitlist_entry_events where entry_id = $1`,
+      [entryId],
+    )
+  ).rows as ObservedEvent[];
+  const fresh = rows.filter((r) => !before.has(r.id));
+  expect(
+    fresh.map((r) => `${r.from_status}->${r.to_status}`),
+    `expected exactly ONE new event for ${from}->${to}`,
+  ).toHaveLength(1);
+  expect(fresh[0].from_status).toBe(from);
+  expect(fresh[0].to_status).toBe(to);
+  return fresh[0];
+}
+
+/** Records transitions in the order the harness executed them. */
+function observed(entryId: string) {
+  const seq: ObservedEvent[] = [];
+  return {
+    seq,
+    /** Adopt the INSERT event of a freshly created entry as step zero. */
+    async adopt(from: string | null, to: string): Promise<ObservedEvent> {
+      const e = await expectExactlyOneNewEvent(entryId, new Set<string>(), from, to);
+      seq.push(e);
+      return e;
+    },
+    /** Run one controlled transition and capture the event it appended. */
+    async step(from: string | null, to: string, run: () => Promise<void>): Promise<ObservedEvent> {
+      const before = await eventIdSet(entryId);
+      await run();
+      const e = await expectExactlyOneNewEvent(entryId, before, from, to);
+      seq.push(e);
+      return e;
+    },
+  };
+}
+
+/** All events appended since the snapshot, identified by set difference. */
+async function newEventsSince(entryId: string, before: Set<string>): Promise<ObservedEvent[]> {
+  const rows = (
+    await adminQuery(
+      `select id, from_status, to_status, occurred_at
+         from public.new_client_waitlist_entry_events where entry_id = $1`,
+      [entryId],
+    )
+  ).rows as ObservedEvent[];
+  return rows.filter((r) => !before.has(r.id));
+}
+
+/** Pick one of those by its transition, which is unique among them. Identity
+ *  comes from the id set and the label — never from the timestamp. */
+function pickEvent(events: ObservedEvent[], from: string, to: string): ObservedEvent {
+  const hits = events.filter((e) => e.from_status === from && e.to_status === to);
+  expect(hits, `expected exactly one new ${from}->${to} event`).toHaveLength(1);
+  return hits[0];
+}
+
+/**
+ * Register a temporal-edge proof. The edge id is a STRING LITERAL so the closure
+ * guard can bind this test to its manifest row from the syntax tree rather than
+ * from source text — see EDGE_TEST_HELPER for why that distinction is the whole
+ * point.
+ */
+function temporalEdgeTest(edgeId: string, what: string, fn: () => Promise<void>): void {
+  it(edgeTitle(edgeId, what), fn);
+}
+
+/** Chronology asserted over an INDEPENDENTLY established order. */
+function expectChronological(seq: ObservedEvent[], why: string): void {
+  for (let i = 1; i < seq.length; i += 1) {
+    expect(
+      seq[i].occurred_at.getTime(),
+      `${why} — step ${i} (${seq[i].from_status}->${seq[i].to_status}) precedes step ${i - 1} ` +
+        `(${seq[i - 1].from_status}->${seq[i - 1].to_status})`,
+    ).toBeGreaterThanOrEqual(seq[i - 1].occurred_at.getTime());
   }
-  return null;
 }
 
 /** A studio + owner, with no entry yet. */
@@ -1693,7 +1730,7 @@ describe("STALE-TRANSACTION-TIMESTAMP PROBES — the log never runs backwards", 
     await old.query(`select public.claim_new_client_waitlist_entry($1,$2,$3)`, [s.studioId, e, s.userId]);
     await old.query("commit");
     await old.end();
-    expect(firstInversion(await eventsInInsertionOrder(e))).toBeNull();
+    expect(firstInversion(await eventsAlongTransitionChain(e))).toBeNull();
   });
 
   it("CLAIM -> INVITE", async () => {
@@ -1704,7 +1741,7 @@ describe("STALE-TRANSACTION-TIMESTAMP PROBES — the log never runs backwards", 
     await old.query(`select public.issue_new_client_waitlist_invitation($1,$2,$3,72)`, [s.studioId, e, s.userId]);
     await old.query("commit");
     await old.end();
-    const rows = await eventsInInsertionOrder(e);
+    const rows = await eventsAlongTransitionChain(e);
     expect(firstInversion(rows)).toBeNull();
     // ...and the entry's own evidence agrees with the event.
     const ent = await adminQuery(`select invited_at from public.new_client_waitlist_entries where id=$1`, [e]);
@@ -1722,7 +1759,7 @@ describe("STALE-TRANSACTION-TIMESTAMP PROBES — the log never runs backwards", 
     await old.query(`select public.release_new_client_waitlist_entry($1,$2,$3)`, [s.studioId, e, s.userId]);
     await old.query("commit");
     await old.end();
-    expect(firstInversion(await eventsInInsertionOrder(e))).toBeNull();
+    expect(firstInversion(await eventsAlongTransitionChain(e))).toBeNull();
   });
 
   it("REDEEM -> CONVERT", async () => {
@@ -1742,7 +1779,7 @@ describe("STALE-TRANSACTION-TIMESTAMP PROBES — the log never runs backwards", 
     await old.query(`select public.record_new_client_waitlist_conversion($1,$2,$3)`, [s.studioId, e, clientId]);
     await old.query("commit");
     await old.end();
-    expect(firstInversion(await eventsInInsertionOrder(e))).toBeNull();
+    expect(firstInversion(await eventsAlongTransitionChain(e))).toBeNull();
   });
 
   it("RELEASE -> REQUEUE (waiting carries no evidence of its own)", async () => {
@@ -1755,7 +1792,7 @@ describe("STALE-TRANSACTION-TIMESTAMP PROBES — the log never runs backwards", 
     await old.query(`select public.requeue_new_client_waitlist_entry($1,$2,$3)`, [s.studioId, e, s.userId]);
     await old.query("commit");
     await old.end();
-    const rows = await eventsInInsertionOrder(e);
+    const rows = await eventsAlongTransitionChain(e);
     expect(firstInversion(rows)).toBeNull();
     // requeue CLEARS the cycle columns, so its event takes the trigger's own
     // post-transition clock rather than a stale joined_at.
@@ -1786,7 +1823,7 @@ describe("STALE-TRANSACTION-TIMESTAMP PROBES — the log never runs backwards", 
       await old.query(`select public.remove_new_client_waitlist_entry($1,$2,$3)`, [s.studioId, e, s.userId]);
       await old.query("commit");
       await old.end();
-      expect(firstInversion(await eventsInInsertionOrder(e))).toBeNull();
+      expect(firstInversion(await eventsAlongTransitionChain(e))).toBeNull();
     });
   }
 });
@@ -1796,7 +1833,7 @@ describe("the event IS the transition, not a second reading of it", () => {
     const f = await issueExpiringIn("ev-rel", 300);
     await release(f.studioId, f.entryId, f.userId);
     const e = await entryRow(f.entryId);
-    const rows = await eventsInInsertionOrder(f.entryId);
+    const rows = await eventsAlongTransitionChain(f.entryId);
     expect(rows.find((r) => r.to_status === "released")!.occurred_at.getTime()).toBe(
       e.released_at!.getTime(),
     );
@@ -1808,7 +1845,7 @@ describe("the event IS the transition, not a second reading of it", () => {
       f.studioId, f.entryId, f.userId,
     ]);
     const e = await entryRow(f.entryId);
-    const rows = await eventsInInsertionOrder(f.entryId);
+    const rows = await eventsAlongTransitionChain(f.entryId);
     expect(rows.find((r) => r.to_status === "expired")!.occurred_at.getTime()).toBe(
       e.expired_at!.getTime(),
     );
@@ -1832,7 +1869,7 @@ describe("the event IS the transition, not a second reading of it", () => {
     await b.query("commit");
     await b.end();
 
-    const rows = await eventsInInsertionOrder(f.entryId);
+    const rows = await eventsAlongTransitionChain(f.entryId);
     const released = rows.find((r) => r.to_status === "released")!;
     const drift = boundary.getTime() - released.occurred_at.getTime();
     expect(drift, `the release EVENT is ${drift}ms older than the serializing lock`).toBeLessThan(250);
@@ -1911,14 +1948,33 @@ async function toReleased(s: { studioId: string; userId: string }, entryId: stri
   await adminQuery(`select public.release_new_client_waitlist_entry($1,$2,$3)`, [s.studioId, entryId, s.userId]);
 }
 
-const lastEventAt = async (entryId: string, status: string) =>
-  (
+/**
+ * The event whose `to_status` is `status` — and only when the entry visited that
+ * status EXACTLY ONCE.
+ *
+ * This replaced a helper that took `order by occurred_at desc limit 1`. That was
+ * the same circularity as the retired chain reconstruction, hiding in a
+ * one-liner: on an entry that reached `waiting` twice it used the timestamp to
+ * decide WHICH `waiting` event was meant, and the answer was then used to prove
+ * the timestamps were ordered. Where a status genuinely repeats, the caller must
+ * capture the event by observed identity instead — this refuses rather than
+ * guessing.
+ */
+const soleEventAt = async (entryId: string, status: string): Promise<Date> => {
+  const rows = (
     await adminQuery(
       `select occurred_at from public.new_client_waitlist_entry_events
-        where entry_id=$1 and to_status=$2 order by occurred_at desc limit 1`,
+        where entry_id=$1 and to_status=$2`,
       [entryId, status],
     )
-  ).rows[0]?.occurred_at as Date | undefined;
+  ).rows as Array<{ occurred_at: Date }>;
+  expect(
+    rows.length,
+    `this entry reached '${status}' ${rows.length} times — choosing between them needs ` +
+      `observed event identity, never occurred_at`,
+  ).toBe(1);
+  return rows[0].occurred_at;
+};
 
 /**
  * Run one bulk-claim SHAPE against a requeue that commits inside the window
@@ -1943,10 +1999,14 @@ async function raceRequeueAgainst(fnName: string, s: Awaited<ReturnType<typeof s
 
   await sleep(100);
   // The requeue commits HERE — after the clock statement, before the snapshot.
+  // The requeue's own event, identified by the id it appended — this entry has
+  // reached `waiting` twice, so a timestamp could not tell them apart.
+  const beforeRequeue = await eventIdSet(entryId);
   await adminQuery(`select public.requeue_new_client_waitlist_entry($1,$2,$3)`, [
     s.studioId, entryId, s.userId,
   ]);
-  const waitingAt = (await lastEventAt(entryId, "waiting"))!;
+  const waitingAt = (await expectExactlyOneNewEvent(entryId, beforeRequeue, "released", "waiting"))
+    .occurred_at;
 
   await gate.query("commit");
   await gate.end();
@@ -2018,23 +2078,27 @@ describe("bulk claim — the requeue race", () => {
       `select 1 from public.new_client_waitlist_entries where studio_id=$1 and status='waiting' for update`,
       [s.studioId],
     );
+    const beforeRequeue = await eventIdSet(e);
     await adminQuery(`select public.requeue_new_client_waitlist_entry($1,$2,$3)`, [s.studioId, e, s.userId]);
-    const waitingAt = (await lastEventAt(e, "waiting"))!;
+    const waitingAt = (await expectExactlyOneNewEvent(e, beforeRequeue, "released", "waiting"))
+      .occurred_at;
     await gate.query("commit");
     await gate.end();
 
+    const beforeClaim = await eventIdSet(e);
     await adminQuery(`select * from public.claim_new_client_waitlist_entries($1,$2,$3)`, [
       s.studioId, s.userId, 5,
     ]);
+    const claimedEv = await expectExactlyOneNewEvent(e, beforeClaim, "waiting", "claimed");
     const row = (
       await adminQuery(`select status, claimed_at from public.new_client_waitlist_entries where id=$1`, [e])
     ).rows[0] as { status: string; claimed_at: Date };
     expect(row.status).toBe("claimed");
-    expect(
-      row.claimed_at.getTime(),
-      "claimed_at precedes the requeue that made the row claimable",
-    ).toBeGreaterThanOrEqual(waitingAt.getTime());
-    expect(firstInversion(await eventsInInsertionOrder(e))).toBeNull();
+    expectOrdered(row.claimed_at, waitingAt, "claimed_at precedes the requeue that made the row claimable");
+    // Both events captured by identity, so this compares the SECOND `waiting`
+    // against the SECOND `claimed` — which is the comparison that matters and the
+    // one a timestamp-sorted chain could silently get wrong.
+    expectOrdered(claimedEv.occurred_at, waitingAt, "the claimed event predates the requeue that enabled it");
   });
 
   it("D/I — every winner shares ONE instant, and each event equals its entry stamp", async () => {
@@ -2050,7 +2114,7 @@ describe("bulk claim — the requeue race", () => {
     const stamps = new Set((rows.rows as Array<{ claimed_at: Date }>).map((r) => r.claimed_at.getTime()));
     expect(stamps.size, "one bulk claim produced more than one claim instant").toBe(1);
     for (const r of rows.rows as Array<{ id: string; claimed_at: Date }>) {
-      const ev = await lastEventAt(r.id, "claimed");
+      const ev = await soleEventAt(r.id, "claimed");
       expect(ev!.getTime(), `event != entry stamp for ${r.id}`).toBe(r.claimed_at.getTime());
     }
   });
@@ -2214,7 +2278,7 @@ describe("conversion — serialization against an in-flight redemption", () => {
     }
   });
 
-  it(edgeTitle("REDEEM->CONVERT", "conversion waits for the redemption, then stamps after it"), async () => {
+  temporalEdgeTest("REDEEM->CONVERT", "conversion waits for the redemption, then stamps after it", async () => {
     // NO artificial barrier: the redemption itself holds the invitation, which
     // is the real production schedule.
     const f = await seedInvitedWithClient("cv-commit");
@@ -2244,9 +2308,9 @@ describe("conversion — serialization against an in-flight redemption", () => {
     expect(e.status).toBe("converted");
     expectOrdered(e.converted_at!, redeemed, "converted_at precedes the redemption that authorised it");
     // ...and the event is the transition, not a second reading of it.
-    const ev = await lastEventAt(f.entryId, "converted");
+    const ev = await soleEventAt(f.entryId, "converted");
     expect(ev!.getTime()).toBe(e.converted_at!.getTime());
-    expect(firstInversion(await eventsInInsertionOrder(f.entryId))).toBeNull();
+    expect(firstInversion(await eventsAlongTransitionChain(f.entryId))).toBeNull();
   });
 
   it("C — REPAIRED: a redemption that ROLLS BACK leaves conversion refusing", async () => {
@@ -2282,7 +2346,7 @@ describe("conversion — serialization against an in-flight redemption", () => {
     expect(await convert(f.studioId, f.entryId, f.clientId)).toBe("converted");
     const e = await convertedAt(f.entryId);
     expect(e.converted_at!.getTime()).toBeGreaterThanOrEqual(redeemed.getTime());
-    expect((await lastEventAt(f.entryId, "converted"))!.getTime()).toBe(e.converted_at!.getTime());
+    expect((await soleEventAt(f.entryId, "converted")).getTime()).toBe(e.converted_at!.getTime());
   });
 
   it("E — an unredeemed invitation still refuses, and writes nothing", async () => {
@@ -2385,71 +2449,222 @@ describe("conversion — serialization against an in-flight redemption", () => {
 // unrelated timeouts.
 // =============================================================================
 
-describe("temporal edge — JOIN is ordered by row visibility, not by contention", () => {
-  for (const [id, successor, refusal] of [
-    ["JOIN->CLAIM", "claim_new_client_waitlist_entry", "not_found"],
-    ["JOIN->REMOVE", "remove_new_client_waitlist_entry", "not_found"],
-  ] as const) {
-    it(
-      edgeTitle(id, `an uncommitted join is invisible to ${successor}, and the transition that follows is ordered`),
-      async () => {
-        const s = await bareStudio(`edge-${id === "JOIN->CLAIM" ? "jc" : "jr"}`);
+// ---------------------------------------------------------------------------
+// DRIVERS. These do SETUP only. Every evidence call — proveBlockedOn,
+// proveInvisibleWhileUncommitted, proveNotYetVisible, expectOrdered,
+// expectRefused — stays inside the registered edge callback, because that is the
+// scope the closure guard inspects. A driver that quietly performed the proof
+// would put the evidence out of the guard's reach.
+// ---------------------------------------------------------------------------
 
-        // TX-JOIN creates the entry and does NOT commit.
-        const joiner = await conn();
-        let e: string;
-        try {
-          await joiner.query("begin");
-          e = (
-            await joiner.query(`select entry_id from public.join_new_client_waitlist($1,$2,$3,null)`, [
-              s.studioId,
-              `P ${s.uniq}`,
-              `p-${randomUUID().slice(0, 8)}@harness.local`,
-            ])
-          ).rows[0].entry_id as string;
+/** A JOIN that has not committed: the row exists for the joiner and nobody else. */
+async function uncommittedJoin(label: string) {
+  const s = await bareStudio(label);
+  const joiner = await conn();
+  await joiner.query("begin");
+  const e = (
+    await joiner.query(`select entry_id from public.join_new_client_waitlist($1,$2,$3,null)`, [
+      s.studioId,
+      `P ${s.uniq}`,
+      `p-${randomUUID().slice(0, 8)}@harness.local`,
+    ])
+  ).rows[0].entry_id as string;
+  return { s, e, joiner };
+}
 
-          // There is nothing to park on, because there is nothing to see.
-          await proveInvisibleWhileUncommitted(e, "the joining transaction is still open");
-          const blind = (
-            await adminQuery(`select public.${successor}($1,$2,$3) as r`, [s.studioId, e, s.userId])
-          ).rows[0].r as string;
-          expectRefused(blind, refusal, `${successor} acted on an entry whose JOIN had not committed`);
+/** A terminal transition performed and HELD inside its own open transaction. */
+async function heldTerminal(label: string, terminal: "release" | "expire") {
+  const f =
+    terminal === "release" ? await issueExpiringIn(label, 300) : await issueAlreadyElapsed(label);
+  const a = await conn();
+  await a.query("begin");
+  const code = (
+    terminal === "release"
+      ? await a.query(`select public.release_new_client_waitlist_entry($1,$2,$3) as r`, [
+          f.studioId,
+          f.entryId,
+          f.userId,
+        ])
+      : await a.query(`select public.expire_new_client_waitlist_invitation($1,$2,$3) as r`, [
+          f.studioId,
+          f.entryId,
+          f.userId,
+        ])
+  ).rows[0].r as string;
+  expect(code).toBe(terminal === "release" ? "released" : "expired");
+  return { f, a };
+}
 
-          await joiner.query("commit");
-        } finally {
-          await joiner.end().catch(() => undefined);
-        }
+/** REQUEUE, run from a session that cannot see the uncommitted terminal state. */
+const blindRequeue = async (f: Fixture) =>
+  (
+    await adminQuery(`select public.requeue_new_client_waitlist_entry($1,$2,$3) as r`, [
+      f.studioId,
+      f.entryId,
+      f.userId,
+    ])
+  ).rows[0].r as string;
 
-        // Committed: the row becomes eligible, and its transition is ordered
-        // after the join that created it.
-        const r = (
-          await adminQuery(`select public.${successor}($1,$2,$3) as r`, [s.studioId, e, s.userId])
-        ).rows[0].r as string;
-        expect(r).toBe(id === "JOIN->CLAIM" ? "claimed" : "removed");
-
-        const ent = (
-          await adminQuery(
-            `select joined_at, claimed_at, removed_at from public.new_client_waitlist_entries where id = $1`,
-            [e],
-          )
-        ).rows[0] as { joined_at: Date; claimed_at: Date | null; removed_at: Date | null };
-        const stamp = (id === "JOIN->CLAIM" ? ent.claimed_at : ent.removed_at)!;
-        expect(stamp, "the transition wrote no timestamp at all").not.toBeNull();
-        expectOrdered(stamp, ent.joined_at, `${successor} stamped before the join it followed`);
-
-        const rows = await eventsInInsertionOrder(e);
-        expect(firstInversion(rows)).toBeNull();
-        // The event IS the transition, not a second reading of it.
-        expect(rows[rows.length - 1].occurred_at.getTime()).toBe(stamp.getTime());
-      },
-    );
+/** A predecessor holding the entry, with REMOVE started and waiting behind it.
+ *  The event-id snapshot is taken BEFORE the predecessor runs, so both the
+ *  predecessor's event and the removal's can be identified by set difference. */
+async function removeParkedBehind(label: string, terminal: "release" | "expire" | "requeue") {
+  const f = terminal === "expire" ? await issueAlreadyElapsed(label) : await issueExpiringIn(label, 300);
+  if (terminal === "requeue") {
+    // REQUEUE only acts on an entry that has already left the active set.
+    expect(
+      (
+        await adminQuery(`select public.release_new_client_waitlist_entry($1,$2,$3) as r`, [
+          f.studioId,
+          f.entryId,
+          f.userId,
+        ])
+      ).rows[0].r,
+    ).toBe("released");
   }
-});
+  const before = await eventIdSet(f.entryId);
 
-describe("temporal edge — CLAIM -> INVITE parks on the entry mutex", () => {
-  it(
-    edgeTitle("CLAIM->INVITE", "issue parks on the entry row the claim holds, and is stamped after it"),
+  const a = await conn();
+  await a.query("begin");
+  const sql =
+    terminal === "release"
+      ? `select public.release_new_client_waitlist_entry($1,$2,$3) as r`
+      : terminal === "expire"
+        ? `select public.expire_new_client_waitlist_invitation($1,$2,$3) as r`
+        : `select public.requeue_new_client_waitlist_entry($1,$2,$3) as r`;
+  expect((await a.query(sql, [f.studioId, f.entryId, f.userId])).rows[0].r).toBe(
+    terminal === "release" ? "released" : terminal === "expire" ? "expired" : "requeued",
+  );
+
+  const b = await conn();
+  await b.query("begin");
+  const pid = (await b.query(`select pg_backend_pid() as pid`)).rows[0].pid as number;
+  const pending = b.query(`select public.remove_new_client_waitlist_entry($1,$2,$3) as r`, [
+    f.studioId,
+    f.entryId,
+    f.userId,
+  ]);
+  return { f, a, b, pid, pending, before };
+}
+
+type RemoveRace = Awaited<ReturnType<typeof removeParkedBehind>>;
+
+/** Let the removal finish and identify BOTH events by the ids they appended —
+ *  never by their timestamps. The predecessor's release is deliberately NOT done
+ *  here: it is the decisive moment of the schedule, so each test performs it
+ *  itself, in the scope the closure guard inspects. */
+async function collectRemoveRace(h: RemoveRace, prevFrom: string, prevTo: string) {
+  expect((await h.pending).rows[0].r, "remove lost its deployed vocabulary").toBe("removed");
+  await h.b.query("commit");
+
+  const fresh = await newEventsSince(h.f.entryId, h.before);
+  const prev = pickEvent(fresh, prevFrom, prevTo);
+  const removed = pickEvent(fresh, prevTo, "removed");
+  const ent = (
+    await adminQuery(`select removed_at from public.new_client_waitlist_entries where id = $1`, [
+      h.f.entryId,
+    ])
+  ).rows[0] as { removed_at: Date };
+  return { prev, removed, removedAt: ent.removed_at };
+}
+
+const closeAll = async (...cs: Array<{ end: () => Promise<void> }>) => {
+  for (const c of cs) await c.end().catch(() => undefined);
+};
+
+describe("temporal edge — JOIN is ordered by row visibility, not by contention", () => {
+  temporalEdgeTest(
+    "JOIN->CLAIM",
+    "an uncommitted join is invisible to the claimer, and the claim that follows is ordered",
     async () => {
+      const { s, e, joiner } = await uncommittedJoin("edge-jc");
+      try {
+        // Nothing to park on, because there is nothing to see.
+        await proveInvisibleWhileUncommitted(e, "the joining transaction is still open");
+        const blind = (
+          await adminQuery(`select public.claim_new_client_waitlist_entry($1,$2,$3) as r`, [
+            s.studioId,
+            e,
+            s.userId,
+          ])
+        ).rows[0].r as string;
+        expectRefused(blind, "not_found", "a claim acted on an entry whose JOIN had not committed");
+        await joiner.query("commit");
+      } finally {
+        await closeAll(joiner);
+      }
+
+      expect(
+        (
+          await adminQuery(`select public.claim_new_client_waitlist_entry($1,$2,$3) as r`, [
+            s.studioId,
+            e,
+            s.userId,
+          ])
+        ).rows[0].r,
+      ).toBe("claimed");
+      const ent = (
+        await adminQuery(
+          `select joined_at, claimed_at from public.new_client_waitlist_entries where id = $1`,
+          [e],
+        )
+      ).rows[0] as { joined_at: Date; claimed_at: Date };
+      expectOrdered(ent.claimed_at, ent.joined_at, "claimed_at predates the join it followed");
+
+      const chain = await eventsAlongTransitionChain(e);
+      expect(firstInversion(chain)).toBeNull();
+      expect(chain[chain.length - 1].occurred_at.getTime()).toBe(ent.claimed_at.getTime());
+    },
+  );
+
+  temporalEdgeTest(
+    "JOIN->REMOVE",
+    "an uncommitted join cannot be removed, and the removal that follows is ordered",
+    async () => {
+      const { s, e, joiner } = await uncommittedJoin("edge-jr");
+      try {
+        await proveInvisibleWhileUncommitted(e, "the joining transaction is still open");
+        const blind = (
+          await adminQuery(`select public.remove_new_client_waitlist_entry($1,$2,$3) as r`, [
+            s.studioId,
+            e,
+            s.userId,
+          ])
+        ).rows[0].r as string;
+        expectRefused(blind, "not_found", "a removal acted on an entry whose JOIN had not committed");
+        await joiner.query("commit");
+      } finally {
+        await closeAll(joiner);
+      }
+
+      expect(
+        (
+          await adminQuery(`select public.remove_new_client_waitlist_entry($1,$2,$3) as r`, [
+            s.studioId,
+            e,
+            s.userId,
+          ])
+        ).rows[0].r,
+      ).toBe("removed");
+      const ent = (
+        await adminQuery(
+          `select joined_at, removed_at from public.new_client_waitlist_entries where id = $1`,
+          [e],
+        )
+      ).rows[0] as { joined_at: Date; removed_at: Date };
+      expectOrdered(ent.removed_at, ent.joined_at, "removed_at predates the join it followed");
+
+      const chain = await eventsAlongTransitionChain(e);
+      expect(firstInversion(chain)).toBeNull();
+      expect(chain[chain.length - 1].occurred_at.getTime()).toBe(ent.removed_at.getTime());
+    },
+  );
+});
+describe("temporal edge — CLAIM -> INVITE parks on the entry mutex", () => {
+  temporalEdgeTest(
+  "CLAIM->INVITE",
+  "issue parks on the entry row the claim holds, and is stamped after it",
+  async () => {
       const s = await bareStudio("edge-ci");
       const e = await joinEntry(s);
 
@@ -2496,7 +2711,7 @@ describe("temporal edge — CLAIM -> INVITE parks on the entry mutex", () => {
       ).rows[0] as { claimed_at: Date; invited_at: Date };
       expectOrdered(ent.invited_at, ent.claimed_at, "invited_at predates the claim it waited for");
 
-      const rows = await eventsInInsertionOrder(e);
+      const rows = await eventsAlongTransitionChain(e);
       expect(firstInversion(rows)).toBeNull();
       expect(rows.find((x) => x.to_status === "invited")!.occurred_at.getTime()).toBe(
         ent.invited_at.getTime(),
@@ -2524,198 +2739,301 @@ describe("temporal edge — REQUEUE is excluded by its own predicate, not parked
   // other session still sees `invited`, REQUEUE's
   // `status in ('released','expired')` predicate matches zero rows, and the
   // statement returns `not_requeueable` WITHOUT EVER WAITING. Asserting a lock
-  // wait here would have been asserting a schedule PostgreSQL does not produce.
+  // wait here would have asserted a schedule PostgreSQL does not produce.
   //
   // The temporal claim survives in a stronger form: the successor cannot act
   // early because it cannot see the state that authorises it, and when it can
-  // see that state, the transition it writes follows it.
-  for (const [id, terminal, stamp] of [
-    ["RELEASE->REQUEUE", "release", "released"],
-    ["EXPIRE->REQUEUE", "expire", "expired"],
-  ] as const) {
-    it(
-      edgeTitle(id, `requeue cannot see the uncommitted ${terminal}, refuses it, and follows it once committed`),
-      async () => {
-        const f =
-          terminal === "release"
-            ? await issueExpiringIn(`rq-${terminal}`, 300)
-            : await issueAlreadyElapsed(`rq-${terminal}`);
-
-        const a = await conn();
-        try {
-          await a.query("begin");
-          const code = (
-            terminal === "release"
-              ? await a.query(`select public.release_new_client_waitlist_entry($1,$2,$3) as r`, [
-                  f.studioId,
-                  f.entryId,
-                  f.userId,
-                ])
-              : await a.query(`select public.expire_new_client_waitlist_invitation($1,$2,$3) as r`, [
-                  f.studioId,
-                  f.entryId,
-                  f.userId,
-                ])
-          ).rows[0].r as string;
-          expect(code).toBe(terminal === "release" ? "released" : "expired");
-
-          // The state REQUEUE requires is not visible to anyone else yet.
-          await proveNotYetVisible(f.entryId, "invited", `the ${terminal} is still uncommitted`);
-          const blind = (
-            await adminQuery(`select public.requeue_new_client_waitlist_entry($1,$2,$3) as r`, [
-              f.studioId,
-              f.entryId,
-              f.userId,
-            ])
-          ).rows[0].r as string;
-          expectRefused(
-            blind,
-            "not_requeueable",
-            `requeue acted on an entry whose ${terminal} had not committed`,
-          );
-          // ...and it wrote nothing on the way to refusing.
-          expect(await entryStatus(f.entryId)).toBe("invited");
-
-          await a.query("commit");
-        } finally {
-          await a.end().catch(() => undefined);
-        }
-
-        // Committed: now REQUEUE acts, and what it writes follows the terminal
-        // transition that authorised it.
-        expect(
-          (
-            await adminQuery(`select public.requeue_new_client_waitlist_entry($1,$2,$3) as r`, [
-              f.studioId,
-              f.entryId,
-              f.userId,
-            ])
-          ).rows[0].r,
-          "requeue lost its deployed vocabulary",
-        ).toBe("requeued");
-
-        const rows = await eventsInInsertionOrder(f.entryId);
-        expect(firstInversion(rows)).toBeNull();
-        const terminalEv = rows.find((x) => x.to_status === stamp);
-        expect(terminalEv, `requeue erased the ${terminal} event that preceded it`).toBeDefined();
-        const requeued = rows[rows.length - 1];
-        expect(requeued.to_status).toBe("waiting");
-        expectOrdered(
-          requeued.occurred_at,
-          terminalEv!.occurred_at,
-          `the requeue event predates the ${terminal} it followed`,
+  // see that state, what it writes follows it.
+  temporalEdgeTest(
+    "RELEASE->REQUEUE",
+    "requeue cannot see the uncommitted release, refuses it, and follows it once committed",
+    async () => {
+      const { f, a } = await heldTerminal("rq-release", "release");
+      try {
+        await proveNotYetVisible(f.entryId, "invited", "the release is still uncommitted");
+        expectRefused(
+          await blindRequeue(f),
+          "not_requeueable",
+          "requeue acted on an entry whose release had not committed",
         );
-        expect(await entryStatus(f.entryId)).toBe("waiting");
+        expect(await entryStatus(f.entryId), "the refused requeue wrote something").toBe("invited");
+        await a.query("commit");
+      } finally {
+        await closeAll(a);
+      }
 
-        // Requeue clears the entry's cycle columns, so the INVITATION's terminal
-        // stamp is the surviving evidence of the cycle that ended. It is history,
-        // and a later requeue does not rewrite it.
-        const st = await stateOf(f.invId);
-        const survived = terminal === "release" ? st.released_at : st.expired_at;
-        expect(survived, `the ${terminal} stamp was erased from the invitation`).not.toBeNull();
-        expectOrdered(
-          requeued.occurred_at,
-          survived!,
-          `the requeue event predates the invitation's ${terminal} stamp`,
+      // Visible now: requeue acts, and its event is identified by the id it
+      // appended — this entry reaches `waiting` twice, so nothing else could.
+      const before = await eventIdSet(f.entryId);
+      expect(await blindRequeue(f), "requeue lost its deployed vocabulary").toBe("requeued");
+      const requeued = await expectExactlyOneNewEvent(f.entryId, before, "released", "waiting");
+      expectOrdered(
+        requeued.occurred_at,
+        await soleEventAt(f.entryId, "released"),
+        "the requeue event predates the release it followed",
+      );
+      expect(await entryStatus(f.entryId)).toBe("waiting");
+
+      // Requeue clears the entry's cycle columns, so the INVITATION's stamp is
+      // the surviving evidence of the cycle that ended. History is not rewritten.
+      const st = await stateOf(f.invId);
+      expect(st.released_at, "the release stamp was erased from the invitation").not.toBeNull();
+      expectOrdered(
+        requeued.occurred_at,
+        st.released_at!,
+        "the requeue event predates the invitation's release stamp",
+      );
+    },
+  );
+
+  temporalEdgeTest(
+    "EXPIRE->REQUEUE",
+    "requeue cannot see the uncommitted expire, refuses it, and follows it once committed",
+    async () => {
+      const { f, a } = await heldTerminal("rq-expire", "expire");
+      try {
+        await proveNotYetVisible(f.entryId, "invited", "the expire is still uncommitted");
+        expectRefused(
+          await blindRequeue(f),
+          "not_requeueable",
+          "requeue acted on an entry whose expire had not committed",
         );
-      },
-    );
-  }
+        expect(await entryStatus(f.entryId), "the refused requeue wrote something").toBe("invited");
+        await a.query("commit");
+      } finally {
+        await closeAll(a);
+      }
+
+      const before = await eventIdSet(f.entryId);
+      expect(await blindRequeue(f), "requeue lost its deployed vocabulary").toBe("requeued");
+      const requeued = await expectExactlyOneNewEvent(f.entryId, before, "expired", "waiting");
+      expectOrdered(
+        requeued.occurred_at,
+        await soleEventAt(f.entryId, "expired"),
+        "the requeue event predates the expire it followed",
+      );
+      expect(await entryStatus(f.entryId)).toBe("waiting");
+
+      const st = await stateOf(f.invId);
+      expect(st.expired_at, "the expire stamp was erased from the invitation").not.toBeNull();
+      expectOrdered(
+        requeued.occurred_at,
+        st.expired_at!,
+        "the requeue event predates the invitation's expire stamp",
+      );
+    },
+  );
 });
 
 describe("temporal edge — REMOVE parks on the entry mutex, whatever it follows", () => {
   // "WAITING/RELEASED/EXPIRED -> REMOVE" is three source states reached by three
-  // different commands. One label cannot certify them, so each predecessor is
-  // exercised on its own. (The fourth — an entry that is `waiting` because it was
-  // just JOINed — is a visibility edge, not a lock edge, and is proven above.)
+  // different commands, and one label cannot certify three mechanisms — so each
+  // predecessor is exercised on its own. (The fourth route to `waiting`, a fresh
+  // JOIN, is a visibility edge rather than a lock edge and is proven above.)
   //
-  // REMOVE locks by identity alone: `where e.id = … for update`, with no status
-  // predicate. That is exactly why it DOES park where REQUEUE does not.
-  for (const [id, terminal, prevStatus] of [
-    ["RELEASE->REMOVE", "release", "released"],
-    ["EXPIRE->REMOVE", "expire", "expired"],
-    ["REQUEUE->REMOVE", "requeue", "waiting"],
-  ] as const) {
-    it(
-      edgeTitle(id, `remove parks on the entry mutex the ${terminal} holds, and is stamped after it`),
-      async () => {
-        const f =
-          terminal === "expire"
-            ? await issueAlreadyElapsed(`rm-${terminal}`)
-            : await issueExpiringIn(`rm-${terminal}`, 300);
+  // REMOVE locks by identity alone — `where e.id = … for update`, with no status
+  // predicate — which is exactly why it DOES park where REQUEUE does not.
+  temporalEdgeTest(
+    "RELEASE->REMOVE",
+    "remove parks on the entry mutex the release holds, and is stamped after it",
+    async () => {
+      const h = await removeParkedBehind("rm-release", "release");
+      try {
+        await proveBlockedOn(h.pid, "remove never parked on the entry mutex the release holds");
+        await sleep(HOLD_MS);
+        await h.a.query("commit");
+        const out = await collectRemoveRace(h, "invited", "released");
+        expectOrdered(out.removedAt, out.prev.occurred_at, "removed_at predates the release it waited for");
+        expect(out.removed.occurred_at.getTime()).toBe(out.removedAt.getTime());
+        const again = (await newEventsSince(h.f.entryId, h.before)).find((x) => x.id === out.prev.id)!;
+        expect(again.occurred_at.getTime(), "the released event moved while remove ran").toBe(
+          out.prev.occurred_at.getTime(),
+        );
+      } finally {
+        await closeAll(h.a, h.b);
+      }
+    },
+  );
 
-        // REQUEUE can only act on an entry that has already left the active set,
-        // so its predecessor state is established and COMMITTED first.
-        if (terminal === "requeue") {
+  temporalEdgeTest(
+    "EXPIRE->REMOVE",
+    "remove parks on the entry mutex the expire holds, and is stamped after it",
+    async () => {
+      const h = await removeParkedBehind("rm-expire", "expire");
+      try {
+        await proveBlockedOn(h.pid, "remove never parked on the entry mutex the expire holds");
+        await sleep(HOLD_MS);
+        await h.a.query("commit");
+        const out = await collectRemoveRace(h, "invited", "expired");
+        expectOrdered(out.removedAt, out.prev.occurred_at, "removed_at predates the expire it waited for");
+        expect(out.removed.occurred_at.getTime()).toBe(out.removedAt.getTime());
+        const again = (await newEventsSince(h.f.entryId, h.before)).find((x) => x.id === out.prev.id)!;
+        expect(again.occurred_at.getTime(), "the expired event moved while remove ran").toBe(
+          out.prev.occurred_at.getTime(),
+        );
+      } finally {
+        await closeAll(h.a, h.b);
+      }
+    },
+  );
+
+  temporalEdgeTest(
+    "REQUEUE->REMOVE",
+    "remove parks on the entry mutex the requeue holds, and is stamped after it",
+    async () => {
+      // This entry reaches `waiting` twice, so the predecessor event is picked
+      // out of the ids that appeared since the snapshot — never by timestamp.
+      const h = await removeParkedBehind("rm-requeue", "requeue");
+      try {
+        await proveBlockedOn(h.pid, "remove never parked on the entry mutex the requeue holds");
+        await sleep(HOLD_MS);
+        await h.a.query("commit");
+        const out = await collectRemoveRace(h, "released", "waiting");
+        expectOrdered(out.removedAt, out.prev.occurred_at, "removed_at predates the requeue it waited for");
+        expect(out.removed.occurred_at.getTime()).toBe(out.removedAt.getTime());
+        const again = (await newEventsSince(h.f.entryId, h.before)).find((x) => x.id === out.prev.id)!;
+        expect(again.occurred_at.getTime(), "the requeue event moved while remove ran").toBe(
+          out.prev.occurred_at.getTime(),
+        );
+      } finally {
+        await closeAll(h.a, h.b);
+      }
+    },
+  );
+});
+
+// =============================================================================
+// REPEATED LIFECYCLE CYCLES — chronology checked against INDEPENDENT identity.
+//
+// An entry may go round the loop more than once, and that is where reconstructing
+// order from the transition labels stops working: the second `waiting -> claimed`
+// is indistinguishable from the first. The retired helper resolved those repeats
+// by sorting them on `occurred_at` — the evidence under test — which can move a
+// row from one cycle into the other and hide an inversion outright.
+// tests/lib/waitlist-event-order.test.ts executes that history and shows the old
+// algorithm calling a backwards log ordered.
+//
+// Here the harness supplies identity itself. It performs each transition and
+// takes the event id that is NEW, so the sequence comes from watching the
+// operations rather than from reading their timestamps. Only then are the
+// timestamps checked against it.
+//
+// NOTE WHAT IS *NOT* CLAIMED. The database stores no sequence — `id` is a random
+// uuid and there is no ordinal — and nothing here adds one. The ordering is the
+// TEST's knowledge of what it executed, which is exactly why it is trustworthy
+// as an independent axis.
+// =============================================================================
+
+describe("repeated cycles — the log never runs backwards across two full loops", () => {
+  for (const terminal of ["release", "expire"] as const) {
+    it(`two complete claim -> invite -> ${terminal} -> requeue cycles stay chronological`, async () => {
+      const s = await bareStudio(`cyc-${terminal}`);
+      const e = await joinEntry(s);
+      const log = observed(e);
+      await log.adopt(null, "waiting");
+
+      for (let cycle = 1; cycle <= 2; cycle += 1) {
+        await log.step("waiting", "claimed", async () => {
           expect(
             (
-              await adminQuery(`select public.release_new_client_waitlist_entry($1,$2,$3) as r`, [
-                f.studioId,
-                f.entryId,
-                f.userId,
+              await adminQuery(`select public.claim_new_client_waitlist_entry($1,$2,$3) as r`, [
+                s.studioId,
+                e,
+                s.userId,
               ])
             ).rows[0].r,
-          ).toBe("released");
-        }
+            `cycle ${cycle} claim`,
+          ).toBe("claimed");
+        });
 
-        const a = await conn();
-        const b = await conn();
-        let prevAt: Date;
-        try {
-          await a.query("begin");
+        await log.step("claimed", "invited", async () => {
+          expect(
+            (
+              await adminQuery(
+                `select result from public.issue_new_client_waitlist_invitation($1,$2,$3,72)`,
+                [s.studioId, e, s.userId],
+              )
+            ).rows[0].result,
+            `cycle ${cycle} issue`,
+          ).toBe("invited");
+        });
+
+        await log.step("invited", terminal === "release" ? "released" : "expired", async () => {
+          if (terminal === "expire") {
+            // Bring the deadline forward and PROVE the server clock passed it,
+            // rather than assuming elapsed wall time.
+            const deadline = await restampExpiry((await liveIdOf(e))!, 1);
+            await waitPastDeadline(deadline);
+          }
           const sql =
             terminal === "release"
               ? `select public.release_new_client_waitlist_entry($1,$2,$3) as r`
-              : terminal === "expire"
-                ? `select public.expire_new_client_waitlist_invitation($1,$2,$3) as r`
-                : `select public.requeue_new_client_waitlist_entry($1,$2,$3) as r`;
-          const code = (await a.query(sql, [f.studioId, f.entryId, f.userId])).rows[0].r as string;
-          expect(code).toBe(
-            terminal === "release" ? "released" : terminal === "expire" ? "expired" : "requeued",
-          );
+              : `select public.expire_new_client_waitlist_invitation($1,$2,$3) as r`;
+          expect(
+            (await adminQuery(sql, [s.studioId, e, s.userId])).rows[0].r,
+            `cycle ${cycle} ${terminal}`,
+          ).toBe(terminal === "release" ? "released" : "expired");
+        });
 
-          await b.query("begin");
-          const pid = (await b.query(`select pg_backend_pid() as pid`)).rows[0].pid as number;
-          const pending = b.query(`select public.remove_new_client_waitlist_entry($1,$2,$3) as r`, [
-            f.studioId,
-            f.entryId,
-            f.userId,
-          ]);
-          await proveBlockedOn(pid, `remove never parked on the entry mutex the ${terminal} holds`);
+        await log.step(
+          terminal === "release" ? "released" : "expired",
+          "waiting",
+          async () => {
+            expect(
+              (
+                await adminQuery(`select public.requeue_new_client_waitlist_entry($1,$2,$3) as r`, [
+                  s.studioId,
+                  e,
+                  s.userId,
+                ])
+              ).rows[0].r,
+              `cycle ${cycle} requeue`,
+            ).toBe("requeued");
+          },
+        );
+      }
 
-          await sleep(HOLD_MS);
-          await a.query("commit");
+      // Nine transitions, each identified by the id it appended.
+      expect(log.seq).toHaveLength(9);
+      expectChronological(log.seq, "the repeated lifecycle log ran backwards");
 
-          // The predecessor's evidence, captured the moment it became visible.
-          prevAt = (await lastEventAt(f.entryId, prevStatus))!;
-          expect(prevAt, `the ${terminal} wrote no ${prevStatus} event`).not.toBeNull();
-
-          expect((await pending).rows[0].r, "remove lost its deployed vocabulary").toBe("removed");
-          await b.query("commit");
-        } finally {
-          await a.end().catch(() => undefined);
-          await b.end().catch(() => undefined);
-        }
-
-        const ent = (
-          await adminQuery(`select removed_at from public.new_client_waitlist_entries where id = $1`, [
-            f.entryId,
-          ])
-        ).rows[0] as { removed_at: Date };
-        expectOrdered(ent.removed_at, prevAt, `removed_at predates the ${terminal} it waited for`);
-
-        const rows = await eventsInInsertionOrder(f.entryId);
-        expect(firstInversion(rows)).toBeNull();
-        const removedEv = rows[rows.length - 1];
-        expect(removedEv.to_status).toBe("removed");
-        // The event IS the transition, not a second reading of it.
-        expect(removedEv.occurred_at.getTime()).toBe(ent.removed_at.getTime());
-        // ...and the predecessor's event was not rewritten on the way past.
-        expect(
-          (await lastEventAt(f.entryId, prevStatus))!.getTime(),
-          `the ${prevStatus} event moved while remove ran`,
-        ).toBe(prevAt.getTime());
-      },
-    );
+      // THE POINT OF ALL THIS, asserted rather than asserted-about: the label
+      // chain genuinely cannot recover this history, so the independent identity
+      // above is doing real work and is not decoration.
+      const raw = (
+        await adminQuery(
+          `select from_status, to_status, occurred_at
+             from public.new_client_waitlist_entry_events where entry_id = $1`,
+          [e],
+        )
+      ).rows as EventRow[];
+      const attempt = linearizeByTransitionChain(raw);
+      expect(attempt.ok, "a two-cycle history must not be linearizable from labels").toBe(false);
+      if (!attempt.ok) expect(attempt.reason).toBe("ambiguous");
+    });
   }
+
+  it("NEGATIVE CONTROL: the chronology check fails when a captured event is moved earlier", async () => {
+    // Proves the assertion above can fail. The perturbation is IN MEMORY — the
+    // append-only table is never written to, and no trigger is disabled.
+    const s = await bareStudio("cyc-neg");
+    const e = await joinEntry(s);
+    const log = observed(e);
+    await log.adopt(null, "waiting");
+    await log.step("waiting", "claimed", async () => {
+      await adminQuery(`select public.claim_new_client_waitlist_entry($1,$2,$3)`, [
+        s.studioId,
+        e,
+        s.userId,
+      ]);
+    });
+    expectChronological(log.seq, "the real capture should be chronological");
+
+    const perturbed = log.seq.map((ev, i) =>
+      i === log.seq.length - 1
+        ? { ...ev, occurred_at: new Date(log.seq[0].occurred_at.getTime() - 1000) }
+        : ev,
+    );
+    expect(() => expectChronological(perturbed, "control"), "the chronology check never bit").toThrow();
+  });
 });

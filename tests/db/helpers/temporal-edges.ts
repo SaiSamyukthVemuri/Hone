@@ -56,25 +56,32 @@ export const VERDICTS = ["ORDERED", "REFUSED"] as const;
 export type Verdict = (typeof VERDICTS)[number];
 
 /**
- * The EXACT source tokens an implementing test must contain. The guard reads
- * these constants rather than hand-typed regexes, so the evidence contract has
- * exactly one definition and a renamed helper cannot silently stop being
- * required.
+ * The FUNCTIONS an implementing test must actually call. These are identifier
+ * names, resolved against the syntax tree — not substrings matched against
+ * source text. A call that appears only in a comment, a string literal or a
+ * template does not exist in the AST and therefore does not count.
+ *
+ * The guard reads these constants rather than hand-typed names, so the evidence
+ * contract has exactly one definition and a renamed helper cannot silently stop
+ * being required.
  */
 export const MECHANISM_EVIDENCE: Record<ProofKind, string> = {
-  EXECUTED_BLOCKING_RACE: "proveBlockedOn(",
-  MVCC_VISIBILITY_ORDERED: "proveInvisibleWhileUncommitted(",
-  PREDICATE_VISIBILITY_ORDERED: "proveNotYetVisible(",
+  EXECUTED_BLOCKING_RACE: "proveBlockedOn",
+  MVCC_VISIBILITY_ORDERED: "proveInvisibleWhileUncommitted",
+  PREDICATE_VISIBILITY_ORDERED: "proveNotYetVisible",
 };
 
 export const VERDICT_EVIDENCE: Record<Verdict, string> = {
-  ORDERED: "expectOrdered(",
-  REFUSED: "expectRefused(",
+  ORDERED: "expectOrdered",
+  REFUSED: "expectRefused",
 };
 
-/** The predecessor must be released INSIDE the test, after the successor is
- *  proven parked. At least one of these must appear. */
-export const PREDECESSOR_RELEASE = ['.query("commit")', '.query("rollback")'] as const;
+/** The predecessor must be released INSIDE the registered callback, after the
+ *  successor is proven parked — `<conn>.query("commit" | "rollback")`. Delegating
+ *  it to a helper would put the decisive moment of the schedule outside the scope
+ *  the guard inspects, so it is written out in each test. */
+export const PREDECESSOR_RELEASE_METHOD = "query";
+export const PREDECESSOR_RELEASE_ARGS = ["commit", "rollback"] as const;
 
 /** The eight canonical WAIT-03 transitions. Two of them are aggregates: a
  *  single label cannot certify materially different mechanisms, so they are
@@ -230,7 +237,21 @@ export const TEMPORAL_EDGES: readonly TemporalEdge[] = [
   },
 ];
 
-/** The implementing test's title. The edge id is embedded verbatim so the guard
- *  can find the one test that carries it — and so deleting that test removes the
- *  id from the file and turns closure red. */
+/** The implementing test's title. */
 export const edgeTitle = (id: string, what: string): string => `[${id}] ${what}`;
+
+/**
+ * THE REGISTRATION HELPER. Every implementing test registers through a call to
+ * this function, whose FIRST ARGUMENT IS A STRING LITERAL edge id.
+ *
+ * The guard resolves registrations from the TypeScript AST, not from source
+ * text. That matters: an earlier raw-text guard could be satisfied by a test
+ * that had been commented out entirely — Vitest registered nothing, while the
+ * scanner still saw `edgeTitle`, the evidence helpers and the commit tokens
+ * sitting in the comment, and certified the edge. Comments are trivia and do not
+ * appear in the AST, so a commented-out test now simply does not exist.
+ *
+ * A literal first argument is what makes the association static; a loop variable
+ * would put the id beyond the reach of any syntactic check.
+ */
+export const EDGE_TEST_HELPER = "temporalEdgeTest";
