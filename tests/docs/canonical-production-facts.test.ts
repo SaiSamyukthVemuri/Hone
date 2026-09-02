@@ -625,8 +625,18 @@ describe("canonical production docs: the ledger's current block agrees with the 
       re: /\b(migration|repo(sitory)?|hosted)\b[^.]{0,120}\bnothing pending\b/i,
     },
     { label: "asserts no migrations are pending", re: /\bno migrations?\s+(are\s+)?pending\b/i },
-    { label: "asserts hosted == repo", re: /\bhosted\s*={1,3}\s*repo\b/i },
-    { label: "asserts repo > hosted", re: /\brepo(sitory)?\s*>\s*hosted\b/i },
+    {
+      // SYMMETRIC ON PURPOSE. The first draft matched only `hosted == repo`, so
+      // the equally natural `repo == hosted` spelling slipped through and the
+      // rule could pass with the very assertion it forbids still in a document.
+      // One expression rather than two copies, so the two orders cannot drift.
+      label: "asserts repo and hosted are equal (either operand order)",
+      re: /\b(hosted\s*={1,3}\s*repo(sitory)?|repo(sitory)?\s*={1,3}\s*hosted)\b/i,
+    },
+    {
+      label: "asserts a repo/hosted inequality (either operand order)",
+      re: /\b(repo(sitory)?\s*[<>]\s*hosted|hosted\s*[<>]\s*repo(sitory)?)\b/i,
+    },
     {
       label: "names a specific pending migration",
       re: /\b0\d{3}\b[^.]{0,60}\bis\s+(currently\s+)?pending\b/i,
@@ -666,7 +676,10 @@ describe("canonical production docs: the ledger's current block agrees with the 
       "Repository and hosted migration state reconcile, with nothing pending and nothing remote-only.",
       "There are no migrations pending.",
       "Migration state: hosted == repo.",
+      "Migration state: repo == hosted.",
+      "Migration state: repository == hosted.",
       "Migration state: repo > hosted.",
+      "Migration state: hosted < repo.",
     ];
     for (const shape of shapes) {
       expect(relationshipClaims(shape), `not caught: ${shape}`).not.toEqual([]);
@@ -679,6 +692,19 @@ describe("canonical production docs: the ledger's current block agrees with the 
     }
   });
 
+  it("operand order alone cannot defeat the equality rule", () => {
+    // The reported hole: `hosted == repo` was caught and `repo == hosted` was
+    // not. Asserted as a PAIR so a future edit cannot silently drop one side.
+    for (const [a, b] of [
+      ["Migration state: hosted == repo.", "Migration state: repo == hosted."],
+      ["Migration state: hosted = repository.", "Migration state: repository = hosted."],
+      ["Migration state: repo > hosted.", "Migration state: hosted < repo."],
+    ]) {
+      expect(relationshipClaims(a), `not caught: ${a}`).not.toEqual([]);
+      expect(relationshipClaims(b), `not caught in reversed order: ${b}`).not.toEqual([]);
+    }
+  });
+
   it("ordinary uses of `pending` and `parity` stay legal", () => {
     for (const benign of [
       "12 pending_invitations all-tenant, 5 of them expired.",
@@ -687,6 +713,9 @@ describe("canonical production docs: the ledger's current block agrees with the 
       "Reproduced on a CI-parity database, then independently re-reproduced.",
       "export-emission-parity.test.ts builds a real archive and compares it.",
       "A pending invitation is not an appointment.",
+      // `==` must not become a generic ban: ordinary code prose keeps using it.
+      "The guard asserts `wait_event_type == 'Lock'` before proceeding.",
+      "hosted_migration_max is declared in migration-state.json.",
     ]) {
       expect(relationshipClaims(benign), `false positive: ${benign}`).toEqual([]);
     }
