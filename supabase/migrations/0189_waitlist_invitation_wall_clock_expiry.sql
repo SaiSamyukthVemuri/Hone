@@ -3,7 +3,7 @@
 -- ===========================================================================
 --
 -- 0188 IS APPLIED AND FROZEN. Its bytes are production truth and are NOT edited
--- by this file. This migration corrects the deployed behaviour of exactly two
+-- by this file. This migration corrects the deployed behaviour of exactly three
 -- of its commands and touches nothing else: no table, no column, no index, no
 -- policy, no trigger, no constraint, no new result word, no signature change.
 --
@@ -92,9 +92,13 @@
 -- and changing it would move the expires_at value of every future invitation —
 -- a semantic change this repair has no evidence to justify. It stays as applied.
 --
--- release_new_client_waitlist_entry makes no clock comparison at all: it is
--- operator-driven and terminates an invitation regardless of its window. It is
--- untouched.
+-- release_new_client_waitlist_entry makes no clock COMPARISON -- it is
+-- operator-driven and terminates an invitation regardless of its window -- and
+-- an earlier draft of this file stopped there and left it alone. That was the
+-- wrong cut: release makes no comparison but it does STAMP, twice, and both
+-- stamps used now(). Measured, it recorded a release SIX MILLISECONDS BEFORE
+-- the issued_at of the invitation it was releasing, and backdated by 2,674 ms
+-- when it waited on a lock. It is repaired in COMMAND 7 below.
 --
 -- The public result vocabulary is UNCHANGED: redeem still answers
 -- `invalid_token` / `redeemed`; expire still answers the closed set
@@ -415,6 +419,154 @@ end;
 $$;
 
 -- ---------------------------------------------------------------------------
+-- COMMAND 7 — RELEASE. Same law, and it needed it for a second reason.
+-- ---------------------------------------------------------------------------
+-- 0188 stamped BOTH release timestamps with now(). Two defects, both measured
+-- against the frozen function before this was written:
+--
+--   INVERSION. A transaction that began BEFORE the invitation was issued
+--   records a release that predates the thing it releases. Measured: TX began
+--   14:17:41.822Z, the invitation was issued at 14:17:41.828Z from another
+--   transaction, and release stamped released_at 14:17:41.822Z -- SIX
+--   MILLISECONDS BEFORE issued_at. That is not merely imprecise; it inverts the
+--   append-only lifecycle chronology these columns exist to preserve.
+--
+--   LOCK BACKDATE. Holding the invitation row and letting release wait behind
+--   it backdates the stamp by the whole wait. Measured: release blocked on the
+--   invitation row (pg_stat_activity Lock/transactionid) while already holding
+--   the entry mutex, the holder rolled back 2.5 s later, and released_at was
+--   stamped 2,674 ms before the instant that serialized the outcome.
+--
+-- RELEASE HAS A CLAIM-ONLY PATH, AND IT IS NOT AN EDGE CASE. 0188 permits
+-- release from `claimed`, `invited` AND `expired`. A `claimed` entry may have
+-- no invitation at all, and an `expired` entry's invitation is already terminal.
+-- Requiring an invitation that was never issued would change the product, so the
+-- lock is CONDITIONAL while the clock read is not:
+--
+--     ENTRY lock  ->  [ identify + lock the live invitation, if one exists ]
+--                 ->  ONE clock read  ->  decide  ->  stamp both rows
+--
+-- On the claim-only and already-expired paths the entry row IS the whole
+-- serialization authority, so the clock still follows every lock that path
+-- takes. There is exactly ONE clock_timestamp() call site in the function, so
+-- the invitation stamp and the entry stamp cannot be read at different instants.
+--
+-- IDENTITY IS STRUCTURAL, exactly as in COMMAND 6: the live invitation is found
+-- through one_live_per_entry, never by issued_at ordering, UUID ordering or
+-- max(). The identifying SELECT takes no lock; the lock is requested on the
+-- immutable id alone, so a redemption committing in between cannot make the row
+-- vanish from the request -- release then observes it and answers the truthful
+-- `already_redeemed`, which is 0188's word.
+--
+-- TERMINAL EVIDENCE IS NEVER REWRITTEN. An invitation already carrying
+-- expired_at keeps it: the one-outcome CHECK forbids a second terminal column,
+-- and 0188 already expressed that by guarding its invitation UPDATE on all
+-- three being null. Only the ENTRY transitions in that case, which is what
+-- release from `expired` has always meant.
+--
+-- PRESERVED: signature, return type, SECURITY DEFINER, volatility, search_path,
+-- the legal source states ('claimed','invited','expired'), the redeemed-entry
+-- guard on the entry move, and the closed vocabulary
+-- released / already_redeemed / not_releasable / invalid_input.
+create or replace function public.release_new_client_waitlist_entry(
+  p_studio_id     uuid,
+  p_entry_id      uuid,
+  p_actor_user_id uuid
+)
+returns text
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog, pg_temp
+as $$
+declare
+  v_actor       uuid;
+  v_code        text;
+  v_hit         uuid;
+  v_inv         uuid;
+  v_decision_at timestamptz;
+begin
+  select r.practitioner_id, r.code into v_actor, v_code
+    from public.new_client_waitlist_resolve_owner(p_studio_id, p_actor_user_id) r;
+  if v_code <> 'ok' then return v_code; end if;
+  if p_entry_id is null then return 'invalid_input'; end if;
+
+  -- 1. SERIALIZE ON THE ENTRY ROW FIRST. Unchanged from 0188: issue() takes this
+  -- same lock before it inserts, so entry and invitation move as one unit and no
+  -- live token is left behind a terminal entry.
+  perform 1
+     from public.new_client_waitlist_entries e
+    where e.id = p_entry_id and e.studio_id = p_studio_id
+    for update;
+
+  -- 2. IDENTIFY THE LIVE INVITATION STRUCTURALLY, if there is one. NULL is a
+  -- legitimate, common answer here: a `claimed` entry may never have been
+  -- invited, and an `expired` entry's invitation is already terminal.
+  -- No lock is taken by this SELECT -- see COMMAND 6.
+  select i.id into v_inv
+    from public.new_client_waitlist_invitations i
+   where i.entry_id    = p_entry_id
+     and i.studio_id   = p_studio_id
+     and i.redeemed_at is null
+     and i.expired_at  is null
+     and i.released_at is null;
+
+  -- 3. LOCK IT BY IMMUTABLE ID ALONE, when it exists.
+  if v_inv is not null then
+    perform 1
+       from public.new_client_waitlist_invitations i
+      where i.id = v_inv
+      for update;
+  end if;
+
+  -- 4. ONE CLOCK READ, after every lock this path required. Both stamps below
+  -- come from it, so the invitation and the entry can never disagree about when
+  -- the release happened.
+  v_decision_at := clock_timestamp();
+
+  -- 5. Invalidate the live invitation, under its own lock. The three null
+  -- guards are 0188's and are kept: a redemption that committed between step 2
+  -- and step 3 leaves redeemed_at set, this matches nothing, and the entry move
+  -- below refuses too -- yielding `already_redeemed` rather than a release that
+  -- overwrites a redemption.
+  if v_inv is not null then
+    update public.new_client_waitlist_invitations i
+       set released_at = v_decision_at
+     where i.id = v_inv
+       and i.redeemed_at is null and i.expired_at is null and i.released_at is null;
+  end if;
+
+  -- 6. The entry move, guarded against a redeemed prospect exactly as 0188
+  -- guards it, and stamped from the SAME instant as the invitation.
+  update public.new_client_waitlist_entries
+     set status = 'released', released_at = v_decision_at
+   where id = p_entry_id and studio_id = p_studio_id
+     and status in ('claimed','invited','expired')
+     and not exists (
+       select 1
+         from public.new_client_waitlist_invitations i
+        where i.entry_id    = p_entry_id
+          and i.studio_id   = p_studio_id
+          and i.redeemed_at is not null)
+  returning id into v_hit;
+
+  if v_hit is null then
+    if exists (
+      select 1
+        from public.new_client_waitlist_invitations i
+       where i.entry_id    = p_entry_id
+         and i.studio_id   = p_studio_id
+         and i.redeemed_at is not null)
+    then
+      return 'already_redeemed';
+    end if;
+    return 'not_releasable';
+  end if;
+  return 'released';
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
 -- PRIVILEGES — reasserted by name, never assumed.
 -- ---------------------------------------------------------------------------
 -- The intended posture, identical to 0188 and verified against production:
@@ -427,6 +579,12 @@ revoke execute on function public.redeem_new_client_waitlist_invitation(text) fr
 revoke execute on function public.redeem_new_client_waitlist_invitation(text) from authenticated;
 revoke execute on function public.redeem_new_client_waitlist_invitation(text) from service_role;
 grant  execute on function public.redeem_new_client_waitlist_invitation(text) to service_role;
+
+revoke execute on function public.release_new_client_waitlist_entry(uuid, uuid, uuid) from public;
+revoke execute on function public.release_new_client_waitlist_entry(uuid, uuid, uuid) from anon;
+revoke execute on function public.release_new_client_waitlist_entry(uuid, uuid, uuid) from authenticated;
+revoke execute on function public.release_new_client_waitlist_entry(uuid, uuid, uuid) from service_role;
+grant  execute on function public.release_new_client_waitlist_entry(uuid, uuid, uuid) to service_role;
 
 revoke execute on function public.expire_new_client_waitlist_invitation(uuid, uuid, uuid) from public;
 revoke execute on function public.expire_new_client_waitlist_invitation(uuid, uuid, uuid) from anon;

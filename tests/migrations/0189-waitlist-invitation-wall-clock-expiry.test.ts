@@ -55,6 +55,7 @@ function body(fn: string): string {
 
 const REDEEM = "redeem_new_client_waitlist_invitation";
 const EXPIRE = "expire_new_client_waitlist_invitation";
+const RELEASE = "release_new_client_waitlist_entry";
 
 describe("0189 — identity and position", () => {
   it("is named for what it repairs", () => {
@@ -116,11 +117,14 @@ describe("0189 — 0188 IS FROZEN AND IS NOT EDITED", () => {
     expect(APPLY_PATH).not.toMatch(/\btruncate\b/i);
   });
 
-  it("replaces EXACTLY the two TTL authorities and nothing else", () => {
+  it("replaces EXACTLY the three timestamp authorities and nothing else", () => {
+    // RELEASE joined them: it makes no TTL comparison, but it STAMPS twice and
+    // both stamps used now(). Measured, it recorded a release six milliseconds
+    // BEFORE the issued_at of the invitation it released.
     const defs = [...CODE.matchAll(/create or replace function public\.(\w+)/g)].map(
       (m) => m[1],
     );
-    expect(defs.sort()).toEqual([EXPIRE, REDEEM].sort());
+    expect(defs.sort()).toEqual([EXPIRE, REDEEM, RELEASE].sort());
   });
 });
 
@@ -294,8 +298,9 @@ describe("0189 — the clock is read AFTER the lock, and only there", () => {
     // THE LOAD-BEARING ASSERTION. `now()` is transaction_timestamp(): fixed at
     // transaction start. A transaction that began before the deadline and
     // decided after it redeemed an expired invitation.
-    for (const fn of [REDEEM, EXPIRE]) {
+    for (const fn of [REDEEM, EXPIRE, RELEASE]) {
       expect(body(fn), `${fn} still decides with now()`).not.toMatch(/\bnow\(\)/);
+      expect(body(fn), `${fn} uses a statement clock`).not.toMatch(/statement_timestamp|transaction_timestamp/);
     }
     // redeem compares the column under its own row lock...
     expect(body(REDEEM)).toMatch(/i\.expires_at\s*>\s*v_decision_at/);
@@ -309,7 +314,7 @@ describe("0189 — the clock is read AFTER the lock, and only there", () => {
     // afterwards by EvalPlanQual, so clock_timestamp() in a WHERE clause would
     // reintroduce the same staleness by a different route. It may appear ONCE
     // per function, as the assignment into the local.
-    for (const fn of [REDEEM, EXPIRE]) {
+    for (const fn of [REDEEM, EXPIRE, RELEASE]) {
       const b = body(fn);
       const uses = [...b.matchAll(/clock_timestamp\(\)/g)].length;
       expect(uses, `${fn} evaluates clock_timestamp() more than once`).toBe(1);
@@ -335,12 +340,14 @@ describe("0189 — the clock is read AFTER the lock, and only there", () => {
     expect(body(EXPIRE)).toMatch(/status\s*=\s*'expired',\s*expired_at\s*=\s*v_decision_at/);
   });
 
-  it("does NOT text-replace now() elsewhere: issue() and release() are untouched", () => {
-    // Scope discipline. issue() derives expires_at from now(); its failure
-    // direction is a SHORTER real window, never a longer one, and no defect was
-    // reproduced there. release() makes no clock comparison at all.
-    expect(CODE).not.toContain("issue_new_client_waitlist_invitation");
-    expect(CODE).not.toContain("release_new_client_waitlist_entry");
+  it("does NOT text-replace now() elsewhere: issue() is untouched", () => {
+    // Scope discipline, and the boundary moved once on evidence. issue()
+    // derives expires_at from now(); its failure direction is a SHORTER real
+    // window, never a longer one, and no defect was reproduced there, so it
+    // stays as applied. release() was ALSO excluded on the grounds that it makes
+    // no clock comparison — true, and beside the point, because it stamps. It is
+    // now in scope; issue() is still not.
+    expect(CODE).not.toMatch(/create or replace function public\.issue_new_client_waitlist_invitation/);
   });
 });
 
@@ -390,16 +397,16 @@ describe("0189 — the deployed contract is preserved", () => {
     expect(CODE).toMatch(/returns text\s*\nlanguage plpgsql/);
   });
 
-  it("keeps SECURITY DEFINER and the pinned search_path on both", () => {
-    expect([...CODE.matchAll(/security definer/g)].length).toBe(2);
+  it("keeps SECURITY DEFINER and the pinned search_path on all three", () => {
+    expect([...CODE.matchAll(/security definer/g)].length).toBe(3);
     expect(
       [...CODE.matchAll(/set search_path = pg_catalog, pg_temp/g)].length,
-    ).toBe(2);
-    expect([...CODE.matchAll(/language plpgsql/g)].length).toBe(2);
-    expect([...CODE.matchAll(/^volatile$/gm)].length).toBe(2);
+    ).toBe(3);
+    expect([...CODE.matchAll(/language plpgsql/g)].length).toBe(3);
+    expect([...CODE.matchAll(/^volatile$/gm)].length).toBe(3);
   });
 
-  it("adds no new result word to either closed vocabulary", () => {
+  it("adds no new result word to any closed vocabulary", () => {
     const words = new Set(
       [...CODE.matchAll(/'([a-z_]+)'::text|return '([a-z_]+)'/g)].map((m) => m[1] ?? m[2]),
     );
@@ -414,6 +421,8 @@ describe("0189 — the deployed contract is preserved", () => {
           "not_expired",
           "expired",
           "not_invited",
+          "released",
+          "not_releasable",
           "ok",
         ],
         `0189 introduces a new result word: ${w}`,
@@ -448,6 +457,7 @@ describe("0189 — privileges are reasserted by name, never assumed", () => {
   for (const [fn, sig] of [
     [REDEEM, "text"],
     [EXPIRE, "uuid, uuid, uuid"],
+    [RELEASE, "uuid, uuid, uuid"],
   ] as const) {
     it(`${fn} revokes from public, anon, authenticated and service_role, then grants ONLY service_role`, () => {
       for (const role of ["public", "anon", "authenticated", "service_role"]) {
@@ -471,4 +481,96 @@ describe("0189 — privileges are reasserted by name, never assumed", () => {
       expect(grants).toEqual(["service_role"]);
     });
   }
+});
+
+// ---------------------------------------------------------------------------
+// RELEASE — the same ordering law, with a CONDITIONAL invitation lock.
+//
+// 0188 permits release from 'claimed', 'invited' AND 'expired'. A claimed entry
+// may have no invitation at all, so requiring one would change the product. The
+// lock is therefore conditional while the clock read is not: there is exactly
+// ONE clock_timestamp() call site, placed after every lock the path took, and
+// both stamps come from it.
+// ---------------------------------------------------------------------------
+describe("0189 — release stamps from one post-lock instant", () => {
+  const b = () => body(RELEASE);
+
+  it("orders ENTRY lock -> INVITATION lock -> clock -> stamps", () => {
+    const src = b();
+    const entryLock = src.search(/from public\.new_client_waitlist_entries e[\s\S]*?for update/);
+    const invLock = src.search(/where i\.id = v_inv\s*\n\s*for update/);
+    const clock = src.indexOf("v_decision_at := clock_timestamp()");
+    const invStamp = src.search(/set released_at = v_decision_at/);
+    const entryStamp = src.search(/set status = 'released', released_at = v_decision_at/);
+    for (const [name, at] of Object.entries({ entryLock, invLock, clock, invStamp, entryStamp })) {
+      expect(at, `release() has no ${name}`).toBeGreaterThan(-1);
+    }
+    expect(invLock, "the invitation is locked before the entry").toBeGreaterThan(entryLock);
+    expect(clock, "the clock is read before the invitation lock").toBeGreaterThan(invLock);
+    expect(invStamp).toBeGreaterThan(clock);
+    expect(entryStamp).toBeGreaterThan(clock);
+  });
+
+  it("the invitation lock is CONDITIONAL, so the claim-only path still works", () => {
+    // A `claimed` entry legitimately has no invitation. Requiring one would be a
+    // product change, not a timestamp repair.
+    expect(b()).toMatch(/if v_inv is not null then\s*\n\s*perform 1[\s\S]*?for update;\s*\n\s*end if;/);
+    // ...and the clock read sits OUTSIDE that conditional.
+    const src = b();
+    const endIf = src.indexOf("end if;", src.indexOf("if v_inv is not null then"));
+    expect(src.indexOf("v_decision_at := clock_timestamp()")).toBeGreaterThan(endIf);
+  });
+
+  it("BOTH stamps come from the SAME single clock read", () => {
+    const src = b();
+    expect([...src.matchAll(/clock_timestamp\(\)/g)].length).toBe(1);
+    expect([...src.matchAll(/v_decision_at/g)].length).toBeGreaterThanOrEqual(3); // assign + 2 stamps
+    expect(src).not.toMatch(/released_at\s*=\s*(now|clock_timestamp|statement_timestamp)\(\)/);
+  });
+
+  it("identifies the live invitation structurally, never by chronology", () => {
+    const src = b();
+    const identify = src.slice(src.indexOf("select i.id into v_inv"), src.indexOf("if v_inv is not null then"));
+    expect(identify).toContain("i.redeemed_at is null");
+    expect(identify).toContain("i.expired_at  is null");
+    expect(identify).toContain("i.released_at is null");
+    expect(identify, "the identifying select must not lock").not.toMatch(/for update/i);
+    expect(src, "release() orders invitations").not.toMatch(/order by/i);
+    expect(src).not.toMatch(/issued_at/i);
+  });
+
+  it("preserves 0188's legal source states and its redeemed guard", () => {
+    const src = b();
+    expect(src).toContain("status in ('claimed','invited','expired')");
+    expect(src).toMatch(/not exists \(\s*\n\s*select 1[\s\S]*?redeemed_at is not null\)/);
+    expect(src).toContain("'already_redeemed'");
+    expect(src).toContain("'not_releasable'");
+    expect(src).toContain("'released'");
+    expect(src).toContain("'invalid_input'");
+  });
+
+  it("never rewrites terminal evidence: the invitation update keeps all three guards", () => {
+    // An invitation already carrying expired_at must keep it; the one-outcome
+    // CHECK forbids a second terminal column, and this is where that is honoured.
+    expect(b()).toMatch(
+      /set released_at = v_decision_at\s*\n\s*where i\.id = v_inv\s*\n\s*and i\.redeemed_at is null and i\.expired_at is null and i\.released_at is null;/,
+    );
+  });
+
+  it("K — NON-VACUITY: restoring the now() stamps turns these laws red", () => {
+    // Mutates a copy; the file on disk is never touched.
+    // Reconstruct 0188's actual shape: drop the post-lock capture entirely and
+    // stamp from now(), which is what the frozen function does.
+    const real = b();
+    const poisoned = real
+      .replace(/\n\s*v_decision_at := clock_timestamp\(\);/, "")
+      .replace(/v_decision_at/g, "now()");
+    expect(poisoned, "the mutation did not apply — this control is vacuous").not.toEqual(real);
+    expect(poisoned).toMatch(/set released_at = now\(\)/);
+    expect(poisoned).toMatch(/set status = 'released', released_at = now\(\)/);
+    // The single post-lock read is gone, which is exactly the defect.
+    expect([...poisoned.matchAll(/clock_timestamp\(\)/g)].length).toBe(0);
+    // ...while the REAL body still satisfies the law.
+    expect([...real.matchAll(/clock_timestamp\(\)/g)].length).toBe(1);
+  });
 });

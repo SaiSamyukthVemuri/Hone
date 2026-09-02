@@ -1145,3 +1145,305 @@ describe("I — the invariants the identity law rests on", () => {
     expect((await cyclesOf(f.entryId)).length, "a later cycle was created").toBe(1);
   });
 });
+
+// ===========================================================================
+// 0189 — RELEASE STAMPS FROM A POST-LOCK WALL CLOCK.
+//
+// 0188 stamped both release timestamps with now(). Measured against the frozen
+// function: a transaction that began BEFORE the invitation was issued recorded
+// released_at 14:17:41.822Z against an issued_at of 14:17:41.828Z — a release
+// six milliseconds BEFORE the thing it released, inverting the append-only
+// lifecycle chronology. And a release that waited on the invitation row was
+// backdated by the whole wait: stamped 2,674 ms before the instant that
+// serialized it.
+//
+// Release also has a CLAIM-ONLY path — 0188 permits release from 'claimed',
+// 'invited' and 'expired', and a claimed entry may have no invitation at all —
+// so the invitation lock is conditional while the clock read is not.
+// ===========================================================================
+
+/** A studio + owner + entry in `claimed`, with NO invitation issued. */
+async function seedClaimedNoInvitation(label: string) {
+  const s = await seedStudioOwner(label);
+  const j = await adminQuery(
+    `select entry_id from public.join_new_client_waitlist($1,$2,$3,null)`,
+    [s.studioId, `P ${s.uniq}`, `p-${s.uniq}@harness.local`],
+  );
+  const entryId = j.rows[0].entry_id as string;
+  await adminQuery(`select public.claim_new_client_waitlist_entry($1,$2,$3)`, [
+    s.studioId,
+    entryId,
+    s.userId,
+  ]);
+  return { ...s, entryId };
+}
+
+const entryRow = async (entryId: string) =>
+  (
+    await adminQuery(
+      `select status, released_at, expired_at from public.new_client_waitlist_entries where id=$1`,
+      [entryId],
+    )
+  ).rows[0] as { status: string; released_at: Date | null; expired_at: Date | null };
+
+const release = (studioId: string, entryId: string, userId: string) =>
+  adminQuery(`select public.release_new_client_waitlist_entry($1,$2,$3) as r`, [
+    studioId,
+    entryId,
+    userId,
+  ]).then((x) => x.rows[0].r as string);
+
+describe("RELEASE A — claimed with NO invitation still releases", () => {
+  it("stamps the entry from a post-entry-lock clock and needs no invitation", async () => {
+    const f = await seedClaimedNoInvitation("rel-claim");
+    expect(
+      (await adminQuery(`select count(*)::int n from public.new_client_waitlist_invitations where entry_id=$1`, [f.entryId])).rows[0].n,
+      "the claim-only fixture must have no invitation",
+    ).toBe(0);
+
+    const before = (await adminQuery(`select clock_timestamp() as t`)).rows[0].t as Date;
+    expect(await release(f.studioId, f.entryId, f.userId)).toBe("released");
+    const after = (await adminQuery(`select clock_timestamp() as t`)).rows[0].t as Date;
+
+    const e = await entryRow(f.entryId);
+    expect(e.status).toBe("released");
+    expect(e.released_at).not.toBeNull();
+    expect(e.released_at!.getTime()).toBeGreaterThanOrEqual(before.getTime() - 5);
+    expect(e.released_at!.getTime()).toBeLessThanOrEqual(after.getTime() + 5);
+  });
+});
+
+describe("RELEASE B — invitation and entry share ONE instant", () => {
+  it("stamps both rows from the same decision value", async () => {
+    const f = await issueExpiringIn("rel-both", 120);
+    expect(await release(f.studioId, f.entryId, f.userId)).toBe("released");
+    const inv = await stateOf(f.invId);
+    const e = await entryRow(f.entryId);
+    expect(inv.released_at).not.toBeNull();
+    expect(e.released_at).not.toBeNull();
+    expect(
+      e.released_at!.getTime(),
+      "the invitation and the entry were stamped at different instants",
+    ).toBe(inv.released_at!.getTime());
+  });
+});
+
+describe("RELEASE C — a release can never predate the invitation it releases", () => {
+  it("does not stamp released_at before issued_at when the transaction began earlier", async () => {
+    const f = await seedClaimedNoInvitation("rel-inv");
+
+    const b = await conn();
+    await b.query("begin");
+    const t0 = (await b.query(`select transaction_timestamp() as t`)).rows[0].t as Date;
+
+    // The invitation is issued AFTER that transaction began.
+    expect(
+      (
+        await adminQuery(
+          `select result from public.issue_new_client_waitlist_invitation($1,$2,$3,72)`,
+          [f.studioId, f.entryId, f.userId],
+        )
+      ).rows[0].result,
+    ).toBe("invited");
+    const inv = (
+      await adminQuery(
+        `select id, issued_at from public.new_client_waitlist_invitations where entry_id=$1`,
+        [f.entryId],
+      )
+    ).rows[0] as { id: string; issued_at: Date };
+    expect(
+      inv.issued_at.getTime(),
+      "PRECONDITION: the invitation must be issued after the releasing transaction began",
+    ).toBeGreaterThan(t0.getTime());
+
+    const r = (
+      await b.query(`select public.release_new_client_waitlist_entry($1,$2,$3) as r`, [
+        f.studioId,
+        f.entryId,
+        f.userId,
+      ])
+    ).rows[0].r as string;
+    await b.query("commit");
+    await b.end();
+
+    expect(r).toBe("released");
+    const st = await stateOf(inv.id);
+    expect(st.released_at).not.toBeNull();
+    expect(
+      st.released_at!.getTime(),
+      "released_at PREDATES issued_at — the lifecycle chronology is inverted",
+    ).toBeGreaterThanOrEqual(inv.issued_at.getTime());
+    // ...and the entry agrees with the invitation.
+    expect((await entryRow(f.entryId)).released_at!.getTime()).toBe(st.released_at!.getTime());
+  });
+});
+
+describe("RELEASE D — a wait on the invitation lock does not backdate the stamp", () => {
+  it("stamps at or after the moment the holder released", async () => {
+    const f = await issueExpiringIn("rel-wait", 300);
+    const holder = await holdInvitation(f.invId);
+
+    const b = await conn();
+    await b.query("begin");
+    const pid = (await b.query(`select pg_backend_pid() as pid`)).rows[0].pid as number;
+    const pending = b.query(`select public.release_new_client_waitlist_entry($1,$2,$3) as r`, [
+      f.studioId,
+      f.entryId,
+      f.userId,
+    ]);
+    expect(await waitUntilBlocked(pid), "release never blocked on the invitation").not.toBeNull();
+
+    // Past the ENTRY mutex and waiting on the INVITATION.
+    const third = await conn();
+    await third.query("begin");
+    const tpid = (await third.query(`select pg_backend_pid() as pid`)).rows[0].pid as number;
+    const thirdPending = third.query(
+      `select 1 from public.new_client_waitlist_entries where id = $1 for update`,
+      [f.entryId],
+    );
+    expect(
+      await waitUntilBlocked(tpid, 5000),
+      "release is not holding the entry mutex",
+    ).not.toBeNull();
+
+    await sleep(HOLD_MS);
+    const boundary = (await adminQuery(`select clock_timestamp() as t`)).rows[0].t as Date;
+    await holder.query("rollback");
+    await holder.end();
+
+    const r = (await pending).rows[0].r as string;
+    await b.query("commit");
+    await b.end();
+    await thirdPending.catch(() => undefined);
+    await third.query("rollback");
+    await third.end();
+
+    expect(r).toBe("released");
+    const st = await stateOf(f.invId);
+    const drift = boundary.getTime() - st.released_at!.getTime();
+    expect(drift, `released_at is ${drift}ms BEFORE the serializing lock release`).toBeLessThan(250);
+    expect((await entryRow(f.entryId)).released_at!.getTime()).toBe(st.released_at!.getTime());
+  });
+});
+
+describe("RELEASE E — a redemption that commits during the wait is seen", () => {
+  it("answers already_redeemed and releases nothing", async () => {
+    const f = await issueExpiringIn("rel-redeem", 300);
+
+    const a = await conn();
+    await a.query("begin");
+    expect(
+      (await a.query(`select result from public.redeem_new_client_waitlist_invitation($1)`, [f.token])).rows[0].result,
+    ).toBe("redeemed");
+
+    const b = await conn();
+    await b.query("begin");
+    const pid = (await b.query(`select pg_backend_pid() as pid`)).rows[0].pid as number;
+    const pending = b.query(`select public.release_new_client_waitlist_entry($1,$2,$3) as r`, [
+      f.studioId,
+      f.entryId,
+      f.userId,
+    ]);
+    expect(await waitUntilBlocked(pid), "release did not wait for the redemption").not.toBeNull();
+
+    await a.query("commit");
+    await a.end();
+    const r = (await pending).rows[0].r as string;
+    await b.query("commit");
+    await b.end();
+
+    expect(r).toBe("already_redeemed");
+    const st = await stateOf(f.invId);
+    expect(st.redeemed_at).not.toBeNull();
+    expect(st.released_at, "a redeemed invitation must never be released").toBeNull();
+    expect((await entryRow(f.entryId)).status).toBe("invited");
+  });
+});
+
+describe("RELEASE — terminal evidence is never rewritten", () => {
+  it("releasing an EXPIRED entry keeps the invitation's expired_at and moves only the entry", async () => {
+    // 0188 permits release from `expired`; the one-outcome CHECK forbids a
+    // second terminal column on the invitation, so only the ENTRY transitions.
+    const f = await issueAlreadyElapsed("rel-exp");
+    expect(
+      (
+        await adminQuery(`select public.expire_new_client_waitlist_invitation($1,$2,$3) as r`, [
+          f.studioId,
+          f.entryId,
+          f.userId,
+        ])
+      ).rows[0].r,
+    ).toBe("expired");
+    const expiredAt = (await stateOf(f.invId)).expired_at!;
+    expect(expiredAt).not.toBeNull();
+
+    expect(await release(f.studioId, f.entryId, f.userId)).toBe("released");
+
+    const st = await stateOf(f.invId);
+    expect(st.expired_at!.getTime(), "the expired evidence was rewritten").toBe(expiredAt.getTime());
+    expect(st.released_at, "a second terminal outcome was written").toBeNull();
+    const e = await entryRow(f.entryId);
+    expect(e.status).toBe("released");
+    expect(e.released_at).not.toBeNull();
+  });
+
+  it("release targets the STRUCTURAL current cycle, never a historical one", async () => {
+    const f = await seedInvertedCycles("rel-cyc", "release");
+    const picked = await chronologyPickOf(f.entryId);
+    expect(picked, "no inversion was constructed").not.toBe(f.liveId);
+
+    expect(await release(f.studioId, f.entryId, f.userId)).toBe("released");
+
+    const cycles = await cyclesOf(f.entryId);
+    expect(cycles.find((c) => c.id === f.liveId)!.released_at).not.toBeNull();
+    // The historical rows keep exactly the terminal evidence they had.
+    const stamps = await adminQuery(
+      `select id, released_at from public.new_client_waitlist_invitations where entry_id=$1 and id <> $2`,
+      [f.entryId, f.liveId],
+    );
+    for (const row of stamps.rows as Array<{ id: string; released_at: Date | null }>) {
+      expect(
+        row.released_at!.getTime(),
+        `historical row ${row.id} was re-stamped by this release`,
+      ).toBeLessThan(cycles.find((c) => c.id === f.liveId)!.released_at!.getTime());
+    }
+  });
+});
+
+describe("RELEASE — concurrency stays coherent", () => {
+  it("release || redeem yields exactly one terminal outcome", async () => {
+    const f = await issueExpiringIn("rel-vs-redeem", 300);
+    const [rel, red] = await Promise.all([
+      release(f.studioId, f.entryId, f.userId),
+      adminQuery(`select result from public.redeem_new_client_waitlist_invitation($1)`, [
+        f.token,
+      ]).then((x) => x.rows[0].result as string),
+    ]);
+    const st = await stateOf(f.invId);
+    const terminal = [st.redeemed_at, st.expired_at, st.released_at].filter((x) => x !== null);
+    expect(terminal, `release=${rel} redeem=${red} left ${terminal.length} terminal columns`)
+      .toHaveLength(1);
+  });
+
+  it("issue || release: the entry mutex still serializes", async () => {
+    const f = await seedClaimedNoInvitation("rel-vs-issue");
+    const [iss, rel] = await Promise.all([
+      adminQuery(`select result from public.issue_new_client_waitlist_invitation($1,$2,$3,72)`, [
+        f.studioId,
+        f.entryId,
+        f.userId,
+      ]).then((x) => x.rows[0].result as string),
+      release(f.studioId, f.entryId, f.userId),
+    ]);
+    const e = await entryRow(f.entryId);
+    if (iss === "invited") {
+      // Whatever the order, a live token may never survive a released entry.
+      const live = await liveIdOf(f.entryId);
+      if (e.status === "released") {
+        expect(live, "a live token survived a released entry").toBeUndefined();
+      }
+    }
+    expect([`released`, `invited`]).toContain(e.status);
+    expect(["released", "not_releasable"]).toContain(rel);
+  });
+});
