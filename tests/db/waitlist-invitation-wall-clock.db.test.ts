@@ -7,7 +7,8 @@ import {
   expectBlockedOn,
   expectExactlyOneNewEvent,
   expectInvisibleWhileUncommitted,
-  expectOrdered,
+  expectOrderedWithinMs,
+  expectPostgresOrdered,
   expectStillSees,
   newEventsSince,
   pickEvent,
@@ -789,7 +790,7 @@ describe("B — REPAIRED: the decision instant follows the invitation lock", () 
     // THE ASSERTION THE CONTROL ABOVE MAKES MEANINGFUL. The stamp must not
     // predate the lock that serialized it. A small negative tolerance covers the
     // ordering of two separate clock reads on the same server.
-    expectOrdered(
+    expectOrderedWithinMs(
       st.expired_at!,
       releaseBoundary,
       "expired_at predates the serializing lock release — stale provenance",
@@ -1515,7 +1516,7 @@ describe("RELEASE D — a wait on the invitation lock does not backdate the stam
 
     expect(r).toBe("released");
     const st = await stateOf(f.invId);
-    expectOrdered(
+    expectOrderedWithinMs(
       st.released_at!,
       boundary,
       "released_at predates the serializing lock release",
@@ -1601,10 +1602,16 @@ describe("RELEASE — terminal evidence is never rewritten", () => {
       [f.entryId, f.liveId],
     );
     for (const row of stamps.rows as Array<{ id: string; released_at: Date | null }>) {
-      expect(
-        row.released_at!.getTime(),
+      // Strictly older, judged in PostgreSQL: a re-stamp that landed within the
+      // same millisecond would read as unchanged through JS Date.
+      await expectPostgresOrdered(
+        {
+          sql: `select live.released_at, hist.released_at from public.new_client_waitlist_invitations live, public.new_client_waitlist_invitations hist
+                  where live.id = $1 and hist.id = $2`,
+          params: [f.liveId, row.id],
+        },
         `historical row ${row.id} was re-stamped by this release`,
-      ).toBeLessThan(cycles.find((c) => c.id === f.liveId)!.released_at!.getTime());
+      );
     }
   });
 });
@@ -1808,11 +1815,15 @@ describe("STALE-TRANSACTION-TIMESTAMP PROBES — the log never runs backwards", 
     // post-transition clock rather than a stale joined_at.
     const requeued = rows[rows.length - 1];
     expect(requeued.to_status).toBe("waiting");
-    const joined = await adminQuery(`select joined_at from public.new_client_waitlist_entries where id=$1`, [e]);
-    expect(
-      requeued.occurred_at.getTime(),
+    await expectPostgresOrdered(
+      {
+        sql: `select ev.occurred_at, en.joined_at from public.new_client_waitlist_entry_events ev, public.new_client_waitlist_entries en
+                where ev.entry_id = $1 and ev.to_status = 'waiting'
+                  and ev.from_status = 'released' and en.id = $1`,
+        params: [e],
+      },
       "the requeue event was backdated to the original join",
-    ).toBeGreaterThan((joined.rows[0].joined_at as Date).getTime());
+    );
   });
 
   for (const [name, viaInvite] of [["WAITING -> REMOVE", false], ["RELEASED -> REMOVE", true]] as const) {
@@ -2015,8 +2026,7 @@ async function raceRequeueAgainst(fnName: string, s: Awaited<ReturnType<typeof s
   await adminQuery(`select public.requeue_new_client_waitlist_entry($1,$2,$3)`, [
     s.studioId, entryId, s.userId,
   ]);
-  const waitingAt = (await expectExactlyOneNewEvent(entryId, beforeRequeue, "released", "waiting"))
-    .occurred_at;
+  const waitingEv = await expectExactlyOneNewEvent(entryId, beforeRequeue, "released", "waiting");
 
   await gate.query("commit");
   await gate.end();
@@ -2027,7 +2037,7 @@ async function raceRequeueAgainst(fnName: string, s: Awaited<ReturnType<typeof s
   const row = (
     await adminQuery(`select status, claimed_at from public.new_client_waitlist_entries where id=$1`, [entryId])
   ).rows[0] as { status: string; claimed_at: Date | null };
-  return { claimedIt: won.some((w) => w.entry_id === entryId), waitingAt, row };
+  return { claimedIt: won.some((w) => w.entry_id === entryId), waitingEv, row };
 }
 
 describe("bulk claim — the requeue race", () => {
@@ -2064,10 +2074,20 @@ describe("bulk claim — the requeue race", () => {
       await toReleased(s, e);
       const r = await raceRequeueAgainst(OLD_FN, s, e);
       expect(r.claimedIt, "the control did not claim the requeued row").toBe(true);
+      // The control must show a STRICT inversion, and the inversion it produces
+      // can be sub-millisecond — so PostgreSQL compares the stored columns.
+      const inverted = (
+        await adminQuery(
+          `select en.claimed_at < ev.occurred_at as old_shape_inverts,
+                  round(extract(epoch from (en.claimed_at - ev.occurred_at)) * 1000000)::bigint as delta_us
+             from public.new_client_waitlist_entries en, public.new_client_waitlist_entry_events ev where en.id = $1 and ev.id = $2`,
+          [e, r.waitingEv.id],
+        )
+      ).rows[0] as { old_shape_inverts: boolean; delta_us: string };
       expect(
-        r.row.claimed_at!.getTime(),
-        "the old shape no longer inverts — this control is vacuous",
-      ).toBeLessThan(r.waitingAt.getTime());
+        inverted.old_shape_inverts,
+        `the old shape no longer inverts — this control is vacuous (delta ${inverted.delta_us}us)`,
+      ).toBe(true);
     } finally {
       await adminQuery(`drop function if exists public.${OLD_FN}(uuid,uuid,int)`);
     }
@@ -2090,8 +2110,7 @@ describe("bulk claim — the requeue race", () => {
     );
     const beforeRequeue = await eventIdSet(e);
     await adminQuery(`select public.requeue_new_client_waitlist_entry($1,$2,$3)`, [s.studioId, e, s.userId]);
-    const waitingAt = (await expectExactlyOneNewEvent(e, beforeRequeue, "released", "waiting"))
-      .occurred_at;
+    const waitingEv = await expectExactlyOneNewEvent(e, beforeRequeue, "released", "waiting");
     await gate.query("commit");
     await gate.end();
 
@@ -2104,11 +2123,25 @@ describe("bulk claim — the requeue race", () => {
       await adminQuery(`select status, claimed_at from public.new_client_waitlist_entries where id=$1`, [e])
     ).rows[0] as { status: string; claimed_at: Date };
     expect(row.status).toBe("claimed");
-    expectOrdered(row.claimed_at, waitingAt, "claimed_at precedes the requeue that made the row claimable");
+    await expectPostgresOrdered(
+      {
+        sql: `select en.claimed_at, ev.occurred_at from public.new_client_waitlist_entries en, public.new_client_waitlist_entry_events ev
+                where en.id = $1 and ev.id = $2`,
+        params: [e, waitingEv.id],
+      },
+      "claimed_at precedes the requeue that made the row claimable",
+    );
     // Both events captured by identity, so this compares the SECOND `waiting`
     // against the SECOND `claimed` — which is the comparison that matters and the
     // one a timestamp-sorted chain could silently get wrong.
-    expectOrdered(claimedEv.occurred_at, waitingAt, "the claimed event predates the requeue that enabled it");
+    await expectPostgresOrdered(
+      {
+        sql: `select a.occurred_at, b.occurred_at from public.new_client_waitlist_entry_events a, public.new_client_waitlist_entry_events b
+                where a.id = $1 and b.id = $2`,
+        params: [claimedEv.id, waitingEv.id],
+      },
+      "the claimed event predates the requeue that enabled it",
+    );
   });
 
   it("D/I — every winner shares ONE instant, and each event equals its entry stamp", async () => {
@@ -2649,7 +2682,10 @@ describe("temporal edge — JOIN is ordered by row visibility, not by contention
           [e],
         )
       ).rows[0] as { joined_at: Date; claimed_at: Date };
-      expectOrdered(ent.claimed_at, ent.joined_at, "claimed_at predates the join it followed");
+      await expectPostgresOrdered(
+        { sql: `select claimed_at, joined_at from public.new_client_waitlist_entries where id = $1`, params: [e] },
+        "claimed_at predates the join it followed",
+      );
 
       const chain = await eventsAlongTransitionChain(e);
       expect(firstInversion(chain)).toBeNull();
@@ -2688,7 +2724,10 @@ describe("temporal edge — JOIN is ordered by row visibility, not by contention
           [e],
         )
       ).rows[0] as { joined_at: Date; removed_at: Date };
-      expectOrdered(ent.removed_at, ent.joined_at, "removed_at predates the join it followed");
+      await expectPostgresOrdered(
+        { sql: `select removed_at, joined_at from public.new_client_waitlist_entries where id = $1`, params: [e] },
+        "removed_at predates the join it followed",
+      );
 
       const chain = await eventsAlongTransitionChain(e);
       expect(firstInversion(chain)).toBeNull();
@@ -2741,7 +2780,10 @@ describe("temporal edge — CLAIM -> INVITE parks on the entry mutex", () => {
           [e],
         )
       ).rows[0] as { claimed_at: Date; invited_at: Date };
-      expectOrdered(ent.invited_at, ent.claimed_at, "invited_at predates the claim it waited for");
+      await expectPostgresOrdered(
+        { sql: `select invited_at, claimed_at from public.new_client_waitlist_entries where id = $1`, params: [e] },
+        "invited_at predates the claim it waited for",
+      );
 
       const rows = await eventsAlongTransitionChain(e);
       expect(firstInversion(rows)).toBeNull();
@@ -2791,9 +2833,16 @@ describe("temporal edge — REQUEUE is excluded by its own predicate, not parked
       const before = await eventIdSet(f.entryId);
       expect(await blindRequeue(f), "requeue lost its deployed vocabulary").toBe("requeued");
       const requeued = await expectExactlyOneNewEvent(f.entryId, before, "released", "waiting");
-      expectOrdered(
-        requeued.occurred_at,
-        await soleEventAt(f.entryId, "released"),
+      // Event identity still comes from the captured id and the unique terminal
+      // status — never from a timestamp. PostgreSQL then compares the two
+      // stored occurred_at values.
+      await soleEventAt(f.entryId, "released");
+      await expectPostgresOrdered(
+        {
+          sql: `select r.occurred_at, t.occurred_at from public.new_client_waitlist_entry_events r, public.new_client_waitlist_entry_events t
+                  where r.id = $1 and t.entry_id = $2 and t.to_status = 'released'`,
+          params: [requeued.id, f.entryId],
+        },
         "the requeue event predates the release it followed",
       );
       expect(await entryStatus(f.entryId)).toBe("waiting");
@@ -2802,9 +2851,12 @@ describe("temporal edge — REQUEUE is excluded by its own predicate, not parked
       // the surviving evidence of the cycle that ended. History is not rewritten.
       const st = await stateOf(f.invId);
       expect(st.released_at, "the release stamp was erased from the invitation").not.toBeNull();
-      expectOrdered(
-        requeued.occurred_at,
-        st.released_at!,
+      await expectPostgresOrdered(
+        {
+          sql: `select ev.occurred_at, i.released_at from public.new_client_waitlist_entry_events ev, public.new_client_waitlist_invitations i
+                  where ev.id = $1 and i.id = $2`,
+          params: [requeued.id, f.invId],
+        },
         "the requeue event predates the invitation's release stamp",
       );
     });
@@ -2823,18 +2875,28 @@ describe("temporal edge — REQUEUE is excluded by its own predicate, not parked
       const before = await eventIdSet(f.entryId);
       expect(await blindRequeue(f), "requeue lost its deployed vocabulary").toBe("requeued");
       const requeued = await expectExactlyOneNewEvent(f.entryId, before, "expired", "waiting");
-      expectOrdered(
-        requeued.occurred_at,
-        await soleEventAt(f.entryId, "expired"),
+      // Event identity still comes from the captured id and the unique terminal
+      // status — never from a timestamp. PostgreSQL then compares the two
+      // stored occurred_at values.
+      await soleEventAt(f.entryId, "expired");
+      await expectPostgresOrdered(
+        {
+          sql: `select r.occurred_at, t.occurred_at from public.new_client_waitlist_entry_events r, public.new_client_waitlist_entry_events t
+                  where r.id = $1 and t.entry_id = $2 and t.to_status = 'expired'`,
+          params: [requeued.id, f.entryId],
+        },
         "the requeue event predates the expire it followed",
       );
       expect(await entryStatus(f.entryId)).toBe("waiting");
 
       const st = await stateOf(f.invId);
       expect(st.expired_at, "the expire stamp was erased from the invitation").not.toBeNull();
-      expectOrdered(
-        requeued.occurred_at,
-        st.expired_at!,
+      await expectPostgresOrdered(
+        {
+          sql: `select ev.occurred_at, i.expired_at from public.new_client_waitlist_entry_events ev, public.new_client_waitlist_invitations i
+                  where ev.id = $1 and i.id = $2`,
+          params: [requeued.id, f.invId],
+        },
         "the requeue event predates the invitation's expire stamp",
       );
     });
@@ -2855,7 +2917,14 @@ describe("temporal edge — REMOVE parks on the entry mutex, whatever it follows
         await sleep(HOLD_MS);
         await h.a.query("commit");
         const out = await collectRemoveRace(h, "invited", "released");
-        expectOrdered(out.removedAt, out.prev.occurred_at, "removed_at predates the release it waited for");
+        await expectPostgresOrdered(
+          {
+            sql: `select en.removed_at, ev.occurred_at from public.new_client_waitlist_entries en, public.new_client_waitlist_entry_events ev
+                    where en.id = $1 and ev.id = $2`,
+            params: [h.f.entryId, out.prev.id],
+          },
+          "removed_at predates the release it waited for",
+        );
         expect(out.removed.occurred_at.getTime()).toBe(out.removedAt.getTime());
         const again = (await newEventsSince(h.f.entryId, h.before)).find((x) => x.id === out.prev.id)!;
         expect(again.occurred_at.getTime(), "the released event moved while remove ran").toBe(
@@ -2873,7 +2942,14 @@ describe("temporal edge — REMOVE parks on the entry mutex, whatever it follows
         await sleep(HOLD_MS);
         await h.a.query("commit");
         const out = await collectRemoveRace(h, "invited", "expired");
-        expectOrdered(out.removedAt, out.prev.occurred_at, "removed_at predates the expire it waited for");
+        await expectPostgresOrdered(
+          {
+            sql: `select en.removed_at, ev.occurred_at from public.new_client_waitlist_entries en, public.new_client_waitlist_entry_events ev
+                    where en.id = $1 and ev.id = $2`,
+            params: [h.f.entryId, out.prev.id],
+          },
+          "removed_at predates the expire it waited for",
+        );
         expect(out.removed.occurred_at.getTime()).toBe(out.removedAt.getTime());
         const again = (await newEventsSince(h.f.entryId, h.before)).find((x) => x.id === out.prev.id)!;
         expect(again.occurred_at.getTime(), "the expired event moved while remove ran").toBe(
@@ -2893,7 +2969,14 @@ describe("temporal edge — REMOVE parks on the entry mutex, whatever it follows
         await sleep(HOLD_MS);
         await h.a.query("commit");
         const out = await collectRemoveRace(h, "released", "waiting");
-        expectOrdered(out.removedAt, out.prev.occurred_at, "removed_at predates the requeue it waited for");
+        await expectPostgresOrdered(
+          {
+            sql: `select en.removed_at, ev.occurred_at from public.new_client_waitlist_entries en, public.new_client_waitlist_entry_events ev
+                    where en.id = $1 and ev.id = $2`,
+            params: [h.f.entryId, out.prev.id],
+          },
+          "removed_at predates the requeue it waited for",
+        );
         expect(out.removed.occurred_at.getTime()).toBe(out.removedAt.getTime());
         const again = (await newEventsSince(h.f.entryId, h.before)).find((x) => x.id === out.prev.id)!;
         expect(again.occurred_at.getTime(), "the requeue event moved while remove ran").toBe(
@@ -3088,5 +3171,64 @@ describe("repeated cycles — the log never runs backwards across two full loops
     );
     expect(attempt.ok, "a two-cycle history must not be linearizable from labels").toBe(false);
     if (!attempt.ok) expect(attempt.reason).toBe("ambiguous");
+  });
+});
+
+// =============================================================================
+// THE HELPER ITSELF — chronology must be decided at PostgreSQL precision.
+//
+// Every chronology verdict in this file rests on expectPostgresOrdered, so the
+// helper needs its own regression test. The defect it replaced was invisible by
+// inspection: node-postgres converts `timestamptz` to a JS `Date` before any
+// assertion runs, and PostgreSQL stores MICROSECONDS while `Date` stores
+// milliseconds — so a real sub-millisecond inversion arrived as equality and a
+// zero-tolerance comparison passed.
+// =============================================================================
+
+describe("stored chronology is judged by PostgreSQL, not by JS Date", () => {
+  // 300us apart, successor FIRST: a genuine inversion that shares one JS
+  // millisecond. Fixed literals, so this proves the same thing on every host.
+  const INVERTED = `select timestamptz '2026-01-01 00:00:00.500300+00',
+                           timestamptz '2026-01-01 00:00:00.500600+00'`;
+  const ORDERED = `select timestamptz '2026-01-01 00:00:00.500600+00',
+                          timestamptz '2026-01-01 00:00:00.500300+00'`;
+
+  it("NEGATIVE CONTROL: the JS-Date comparison this replaced would have passed", async () => {
+    const r = await adminQuery(
+      `select s, p, s >= p as pg_ordered,
+              round(extract(epoch from (s - p)) * 1000000)::bigint as delta_us
+         from (${INVERTED}) as t(s, p)`,
+    );
+    const row = r.rows[0] as { s: Date; p: Date; pg_ordered: boolean; delta_us: string };
+
+    // PostgreSQL sees the inversion.
+    expect(row.pg_ordered, "the fixture is supposed to be inverted").toBe(false);
+    expect(Number(row.delta_us), "the inversion should be sub-millisecond").toBe(-300);
+
+    // JavaScript cannot: both timestamps collapse into the same millisecond, so
+    // the retired `predecessor.getTime() - successor.getTime() <= 0` check
+    // yielded 0 and PASSED on this very row.
+    expect(row.s.getTime(), "the two stamps must share one JS millisecond").toBe(
+      row.p.getTime(),
+    );
+    expect(row.p.getTime() - row.s.getTime()).toBe(0);
+  });
+
+  it("rejects a sub-millisecond inversion that JS Date cannot see", async () => {
+    await expect(
+      expectPostgresOrdered({ sql: INVERTED }, "control"),
+    ).rejects.toThrow(/-300us|EARLIER/);
+  });
+
+  it("accepts a correctly ordered pair", async () => {
+    await expectPostgresOrdered({ sql: ORDERED }, "a correctly ordered pair must pass");
+  });
+
+  it("refuses a zero or negative tolerance on the boundary helper", () => {
+    // The boundary helper exists for an externally observed instant, never as a
+    // zero-tolerance path around the database comparison.
+    const t = new Date();
+    expect(() => expectOrderedWithinMs(t, t, "why", 0)).toThrow(/expectPostgresOrdered/);
+    expect(() => expectOrderedWithinMs(t, t, "why", 250)).not.toThrow();
   });
 });

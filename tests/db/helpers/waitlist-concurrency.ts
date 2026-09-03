@@ -118,16 +118,77 @@ export async function expectStillSees(
 }
 
 /**
- * Assert a successor stamp does not predate its predecessor. `toleranceMs` is
- * non-zero only where the boundary instant is read on a different connection
- * from the one that stamps; when both come from the rows themselves it is 0.
+ * CHRONOLOGY OF TWO STORED POSTGRESQL TIMESTAMPS — compared BY POSTGRESQL.
+ *
+ * THE DEFECT THIS REPLACES. The previous `expectOrdered` took two JS `Date`s.
+ * By the time it ran, node-postgres had already converted `timestamptz` to
+ * `Date`, and PostgreSQL stores MICROSECONDS while `Date` stores milliseconds.
+ * A genuine sub-millisecond inversion therefore collapsed to equality and a
+ * zero-tolerance assertion PASSED. Reproduced against real stored values: two
+ * timestamps 300us apart, successor first, gave `s >= p` = false in PostgreSQL
+ * and `successor.getTime() === predecessor.getTime()` in JavaScript.
+ *
+ * So the values never leave the database. The caller supplies a query selecting
+ * exactly TWO timestamptz columns — successor first, predecessor second — and
+ * PostgreSQL evaluates the ordering. JavaScript only chooses WHICH rows to
+ * compare, which is the one thing it can do without losing precision.
+ *
+ * IDENTITY IS STILL ESTABLISHED INDEPENDENTLY. Where events are compared, the
+ * caller passes the event ids it captured by before/after set difference. The
+ * timestamps decide nothing about which row is which; they are only the values
+ * being judged.
  */
-export function expectOrdered(
+export async function expectPostgresOrdered(
+  source: { sql: string; params?: readonly unknown[] },
+  why: string,
+): Promise<void> {
+  const r = await adminQuery(
+    `select src.s >= src.p                                       as ordered,
+            to_char(src.s, 'YYYY-MM-DD"T"HH24:MI:SS.USOF')       as successor,
+            to_char(src.p, 'YYYY-MM-DD"T"HH24:MI:SS.USOF')       as predecessor,
+            round(extract(epoch from (src.s - src.p)) * 1000000)::bigint as delta_us
+       from (${source.sql}) as src(s, p)`,
+    [...(source.params ?? [])],
+  );
+  expect(r.rows, `${why} — the chronology query matched no row`).toHaveLength(1);
+  const row = r.rows[0] as {
+    ordered: boolean | null;
+    successor: string | null;
+    predecessor: string | null;
+    delta_us: string | null;
+  };
+  expect(
+    row.ordered,
+    `${why} — successor ${row.successor} is ${row.delta_us}us relative to ` +
+      `predecessor ${row.predecessor} (negative means the successor is EARLIER)`,
+  ).toBe(true);
+}
+
+/**
+ * Chronology against an EXTERNALLY OBSERVED boundary instant, where a
+ * millisecond tolerance is the intended semantics rather than a precision leak.
+ *
+ * This exists so the two cases that legitimately need it cannot be confused
+ * with stored-vs-stored chronology: one operand here is an instant read on a
+ * DIFFERENT connection from the one that stamped the row, so the two clocks are
+ * genuinely separate observations and a small tolerance is meaningful.
+ *
+ * The tolerance is REQUIRED and must be positive. There is deliberately no
+ * zero-tolerance path through this helper — a zero-tolerance comparison of two
+ * stored columns belongs in expectPostgresOrdered, where PostgreSQL decides it.
+ */
+export function expectOrderedWithinMs(
   successor: Date,
   predecessor: Date,
   why: string,
-  toleranceMs = 0,
+  toleranceMs: number,
 ): void {
+  if (!(toleranceMs > 0)) {
+    throw new Error(
+      `expectOrderedWithinMs requires a positive tolerance; for two stored ` +
+        `PostgreSQL timestamps use expectPostgresOrdered so the database compares them`,
+    );
+  }
   const drift = predecessor.getTime() - successor.getTime();
   expect(
     drift,
