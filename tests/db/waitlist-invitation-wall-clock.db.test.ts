@@ -50,6 +50,41 @@ async function conn(): Promise<Client> {
   return c;
 }
 
+/**
+ * Block until the SERVER's wall clock has passed an invitation's OWN
+ * `expires_at`, comparing the stored `timestamptz` in place.
+ *
+ * WHY THIS EXISTS ALONGSIDE waitPastDeadline. That helper takes a JS `Date` and
+ * sends `expiresAt.toISOString()`, which carries only MILLISECONDS —
+ * PostgreSQL stores microseconds. So it can report "past" while the true
+ * `expires_at` is still up to 1ms in the future, and a test that then asserts
+ * `clock_timestamp() > expires_at` can legitimately fail. That is not
+ * hypothetical: CI observed it twice, on runners fast enough for the remaining
+ * margin to fall inside a single millisecond. Here the column never leaves the
+ * database, so no precision is lost and the wait means what it says.
+ */
+async function waitPastInvitationExpiry(invId: string): Promise<void> {
+  for (let i = 0; i < 800; i += 1) {
+    const r = await adminQuery(
+      `select clock_timestamp() > i.expires_at as past
+         from public.new_client_waitlist_invitations i where i.id = $1`,
+      [invId],
+    );
+    if (r.rows[0]?.past) return;
+    await sleep(50);
+  }
+  const diag = await adminQuery(
+    `select to_char(clock_timestamp(), 'HH24:MI:SS.US') as clock,
+            to_char(i.expires_at,      'HH24:MI:SS.US') as expires_at
+       from public.new_client_waitlist_invitations i where i.id = $1`,
+    [invId],
+  );
+  throw new Error(
+    `the wall clock never passed expires_at for ${invId} — ` +
+      `clock ${diag.rows[0]?.clock}, expires_at ${diag.rows[0]?.expires_at}`,
+  );
+}
+
 /** Block until the SERVER's wall clock has passed `expiresAt`, and prove it. */
 async function waitPastDeadline(expiresAt: Date): Promise<Date> {
   for (let i = 0; i < 800; i += 1) {
@@ -248,8 +283,18 @@ describe("C — THE LOAD-BEARING CASE: begins before, blocks, released after", (
     expect(ev).toContain("Lock");
 
     // The window closes WHILE it waits.
-    const releasedAt = await waitPastDeadline(deadline);
-    expect(releasedAt.getTime()).toBeGreaterThan(deadline.getTime());
+    // Same precision rule as the two preconditions above: the margin between the
+    // wall clock and the deadline is milliseconds, so PostgreSQL compares its own
+    // stored `expires_at` rather than a JS-truncated copy of it.
+    await waitPastInvitationExpiry(f.invId);
+    const past = (
+      await adminQuery(
+        `select clock_timestamp() > i.expires_at as past
+           from public.new_client_waitlist_invitations i where i.id = $1`,
+        [f.invId],
+      )
+    ).rows[0].past as boolean;
+    expect(past, "the wall clock has not actually passed the deadline").toBe(true);
 
     // Release WITHOUT invalidating the invitation, so the only thing that can
     // refuse the redemption is the TTL itself.
@@ -276,16 +321,36 @@ describe("D — NEGATIVE CONTROL: 0188's frozen predicate would have redeemed it
     const t0 = (await b.query(`select transaction_timestamp() as t`)).rows[0] as { t: Date };
     expect(t0.t.getTime()).toBeLessThan(f.expiresAt.getTime());
 
-    await waitPastDeadline(f.expiresAt);
+    await waitPastInvitationExpiry(f.invId);
 
     // Inside this transaction the two clocks now disagree, which is the whole
-    // mechanism.
-    const clocks = (await b.query(`select now() as n, clock_timestamp() as c`)).rows[0] as {
-      n: Date;
-      c: Date;
-    };
-    expect(clocks.n.getTime()).toBeLessThan(f.expiresAt.getTime());
-    expect(clocks.c.getTime()).toBeGreaterThan(f.expiresAt.getTime());
+    // mechanism — and POSTGRESQL decides that, not JavaScript.
+    //
+    // Both operands are `timestamptz` with microsecond precision. Reading them
+    // into JS `Date` truncates to milliseconds, and the real margin here is
+    // single-digit milliseconds, so a truncated comparison can collapse a
+    // genuinely strict ordering into equality and fail. CI hit exactly that:
+    // `expected 1788446948552 to be greater than 1788446948552`. The comparison
+    // is therefore evaluated in the database, against the stored column.
+    const clocks = (
+      await b.query(
+        `select now() < i.expires_at              as txn_clock_still_inside,
+                clock_timestamp() > i.expires_at  as wall_clock_past,
+                to_char(now(), 'HH24:MI:SS.US')            as txn_clock,
+                to_char(clock_timestamp(), 'HH24:MI:SS.US') as wall_clock,
+                to_char(i.expires_at, 'HH24:MI:SS.US')      as expires_at
+           from public.new_client_waitlist_invitations i where i.id = $1`,
+        [f.invId],
+      )
+    ).rows[0] as Record<string, boolean | string>;
+    expect(
+      clocks.txn_clock_still_inside,
+      `the transaction clock should still be inside the window (txn ${clocks.txn_clock}, expires ${clocks.expires_at})`,
+    ).toBe(true);
+    expect(
+      clocks.wall_clock_past,
+      `the wall clock should be past the window (wall ${clocks.wall_clock}, expires ${clocks.expires_at})`,
+    ).toBe(true);
 
     // 0188's EXACT guarded update, run inline. It is not a paraphrase: it is the
     // frozen predicate, and it still matches the row — so 0188 would have
@@ -1346,10 +1411,28 @@ describe("RELEASE C — a release can never predate the invitation it releases",
         [f.entryId],
       )
     ).rows[0] as { id: string; issued_at: Date };
+    // POSTGRESQL DECIDES THIS ORDERING, not JavaScript. `issued_at` and the
+    // releasing transaction's start are both microsecond `timestamptz` values a
+    // few milliseconds apart; read into JS `Date` they truncate to milliseconds
+    // and can land in the same bucket, which is how CI produced
+    // `expected 1788446996275 to be greater than 1788446996275` for an ordering
+    // that was strictly true in the database. Evaluated from inside the OLD
+    // transaction, so `transaction_timestamp()` is exactly the authority the
+    // precondition is about.
+    const ordering = (
+      await b.query(
+        `select i.issued_at > transaction_timestamp() as issued_after_txn_start,
+                to_char(i.issued_at, 'HH24:MI:SS.US')             as issued_at,
+                to_char(transaction_timestamp(), 'HH24:MI:SS.US') as txn_start
+           from public.new_client_waitlist_invitations i where i.id = $1`,
+        [inv.id],
+      )
+    ).rows[0] as Record<string, boolean | string>;
     expect(
-      inv.issued_at.getTime(),
-      "PRECONDITION: the invitation must be issued after the releasing transaction began",
-    ).toBeGreaterThan(t0.getTime());
+      ordering.issued_after_txn_start,
+      `PRECONDITION: the invitation must be issued after the releasing transaction began ` +
+        `(issued ${ordering.issued_at}, txn start ${ordering.txn_start})`,
+    ).toBe(true);
 
     const r = (
       await b.query(`select public.release_new_client_waitlist_entry($1,$2,$3) as r`, [
