@@ -56,32 +56,107 @@ export const VERDICTS = ["ORDERED", "REFUSED"] as const;
 export type Verdict = (typeof VERDICTS)[number];
 
 /**
- * The FUNCTIONS an implementing test must actually call. These are identifier
- * names, resolved against the syntax tree — not substrings matched against
- * source text. A call that appears only in a comment, a string literal or a
- * template does not exist in the AST and therefore does not count.
+ * EVIDENCE TOKENS — recorded at RUNTIME, and only by a helper that has just
+ * finished proving the thing.
  *
- * The guard reads these constants rather than hand-typed names, so the evidence
- * contract has exactly one definition and a renamed helper cannot silently stop
- * being required.
+ * WHY THIS REPLACED A SYNTACTIC CHECK. The previous guard read the syntax tree
+ * and counted a call because it existed. Review pointed out that existing is not
+ * executing, and all three of its examples reproduce: an early `return` before
+ * the proof, the proof inside `if (false)`, and the wrapper switched to
+ * `it.skip` each left every closure assertion green while no proof ran at all.
+ *
+ * So a token is now a SIDE EFFECT OF A SUCCESSFUL ASSERTION. The recording line
+ * sits after the `expect(...)` that can throw, so it is unreachable unless the
+ * proof actually held. Nothing may announce evidence in advance.
  */
-export const MECHANISM_EVIDENCE: Record<ProofKind, string> = {
-  EXECUTED_BLOCKING_RACE: "proveBlockedOn",
-  MVCC_VISIBILITY_ORDERED: "proveInvisibleWhileUncommitted",
-  PREDICATE_VISIBILITY_ORDERED: "proveNotYetVisible",
+export const EVIDENCE_TOKENS = [
+  /** A backend was observed parked on a lock via pg_stat_activity. */
+  "BLOCKED_ON_EXPECTED_LOCK",
+  /** A successor stamp was compared against its predecessor and did not precede it. */
+  "ORDERED",
+  /** A successor declined, in the exact deployed vocabulary. */
+  "REFUSED",
+  /** An uncommitted row was shown to be invisible to another session. */
+  "MVCC_INVISIBLE",
+  /** A committed row was shown to still present its PRE-transition state. */
+  "PREDICATE_NOT_YET_VISIBLE",
+  /** One transition was identified by the event id it appended, via set difference. */
+  "INDEPENDENT_EVENT_CAPTURE",
+  /** A chronology assertion ran over a causally captured sequence. */
+  "CHRONOLOGY_CHECK_EXECUTED",
+  /** A repeated-lifecycle proof completed its full expected cycle count. */
+  "REPEATED_CYCLE_COMPLETE",
+] as const;
+export type EvidenceToken = (typeof EVIDENCE_TOKENS)[number];
+
+/** The runtime evidence each proof kind requires. */
+export const MECHANISM_EVIDENCE: Record<ProofKind, EvidenceToken> = {
+  EXECUTED_BLOCKING_RACE: "BLOCKED_ON_EXPECTED_LOCK",
+  MVCC_VISIBILITY_ORDERED: "MVCC_INVISIBLE",
+  PREDICATE_VISIBILITY_ORDERED: "PREDICATE_NOT_YET_VISIBLE",
 };
 
-export const VERDICT_EVIDENCE: Record<Verdict, string> = {
-  ORDERED: "expectOrdered",
-  REFUSED: "expectRefused",
+export const VERDICT_EVIDENCE: Record<Verdict, EvidenceToken> = {
+  ORDERED: "ORDERED",
+  REFUSED: "REFUSED",
 };
 
-/** The predecessor must be released INSIDE the registered callback, after the
- *  successor is proven parked — `<conn>.query("commit" | "rollback")`. Delegating
- *  it to a helper would put the decisive moment of the schedule outside the scope
- *  the guard inspects, so it is written out in each test. */
-export const PREDECESSOR_RELEASE_METHOD = "query";
-export const PREDECESSOR_RELEASE_ARGS = ["commit", "rollback"] as const;
+/**
+ * The registration helper. Its first argument is a string literal edge id, and
+ * it must ultimately register a LIVE `it(...)` — never `.skip`, `.todo` or
+ * `.only`, which the source guard checks, and which the runtime
+ * started/completed bookkeeping catches independently.
+ */
+export const EDGE_TEST_HELPER = "temporalEdgeTest";
+export const REPEATED_CYCLE_TEST_HELPER = "repeatedCycleTest";
+
+/**
+ * REPEATED-LIFECYCLE PROOFS. A history that goes round the loop twice cannot be
+ * ordered from its transition labels, so these are proven against identity
+ * captured at each controlled boundary. The manifest states how many transitions
+ * must be captured and in what order; it records no result.
+ */
+export const REPEATED_CYCLE_PROOFS = [
+  {
+    id: "RELEASE/REQUEUE x2",
+    terminal: "release",
+    captures: 9,
+    statuses: [
+      "waiting",
+      "claimed",
+      "invited",
+      "released",
+      "waiting",
+      "claimed",
+      "invited",
+      "released",
+      "waiting",
+    ],
+  },
+  {
+    id: "EXPIRE/REQUEUE x2",
+    terminal: "expire",
+    captures: 9,
+    statuses: [
+      "waiting",
+      "claimed",
+      "invited",
+      "expired",
+      "waiting",
+      "claimed",
+      "invited",
+      "expired",
+      "waiting",
+    ],
+  },
+] as const;
+
+/** Every repeated-cycle proof must record all of these at runtime. */
+export const REPEATED_CYCLE_EVIDENCE: readonly EvidenceToken[] = [
+  "INDEPENDENT_EVENT_CAPTURE",
+  "CHRONOLOGY_CHECK_EXECUTED",
+  "REPEATED_CYCLE_COMPLETE",
+];
 
 /** The eight canonical WAIT-03 transitions. Two of them are aggregates: a
  *  single label cannot certify materially different mechanisms, so they are
@@ -239,19 +314,3 @@ export const TEMPORAL_EDGES: readonly TemporalEdge[] = [
 
 /** The implementing test's title. */
 export const edgeTitle = (id: string, what: string): string => `[${id}] ${what}`;
-
-/**
- * THE REGISTRATION HELPER. Every implementing test registers through a call to
- * this function, whose FIRST ARGUMENT IS A STRING LITERAL edge id.
- *
- * The guard resolves registrations from the TypeScript AST, not from source
- * text. That matters: an earlier raw-text guard could be satisfied by a test
- * that had been commented out entirely — Vitest registered nothing, while the
- * scanner still saw `edgeTitle`, the evidence helpers and the commit tokens
- * sitting in the comment, and certified the edge. Comments are trivia and do not
- * appear in the AST, so a commented-out test now simply does not exist.
- *
- * A literal first argument is what makes the association static; a loop variable
- * would put the id beyond the reach of any syntactic check.
- */
-export const EDGE_TEST_HELPER = "temporalEdgeTest";

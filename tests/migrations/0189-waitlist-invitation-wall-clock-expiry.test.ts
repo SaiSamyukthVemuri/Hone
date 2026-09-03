@@ -11,10 +11,14 @@ import ts from "typescript";
 import {
   CANONICAL_EDGES,
   EDGE_TEST_HELPER,
+  EVIDENCE_TOKENS,
   MECHANISM_EVIDENCE,
-  PREDECESSOR_RELEASE_ARGS,
-  PREDECESSOR_RELEASE_METHOD,
+  PROOF_KINDS,
+  REPEATED_CYCLE_EVIDENCE,
+  REPEATED_CYCLE_PROOFS,
+  REPEATED_CYCLE_TEST_HELPER,
   TEMPORAL_EDGES,
+  VERDICTS,
   VERDICT_EVIDENCE,
 } from "../db/helpers/temporal-edges";
 
@@ -858,37 +862,35 @@ describe("0189 — bulk claim derives its instant from the candidates", () => {
 });
 
 // ---------------------------------------------------------------------------
-// TEMPORAL CLOSURE — DERIVED FROM EXECUTABLE REGISTRATIONS, NOT FROM SOURCE TEXT.
+// TEMPORAL CLOSURE — WHERE THE AUTHORITY ACTUALLY LIVES.
 //
-// TWO GENERATIONS OF THIS GUARD HAVE NOW BEEN WRONG, and both failures are worth
-// keeping written down.
+// THREE GENERATIONS OF THIS GUARD HAVE NOW BEEN WRONG, and each failure narrowed
+// the next one usefully:
 //
-//   1. It began as a hand-written table whose only assertion was that each label
-//      it held was one of the labels it allowed. The table was a literal in the
-//      same file, so it could not fail. It proved we had typed an allowed word.
+//   1. A hand-written table whose only assertion was that each label it held was
+//      one of the labels it allowed. It could not fail.
+//   2. A raw-source scanner. Block-comment an implementing test and Vitest
+//      registered zero tests while the scanner still saw the id, the helpers and
+//      the commit token in the comment — and certified the edge.
+//   3. An AST scanner. Better: comments are trivia, strings are not calls. But it
+//      counted a call because it EXISTED. `return` before the proof, the proof
+//      inside `if (false)`, and the wrapper switched to `it.skip` all reproduce —
+//      green closure, nothing proven.
 //
-//   2. It was then rewritten to read the implementing tests — but by SCANNING
-//      SOURCE TEXT. Review pointed out the consequence and it reproduces exactly:
-//      wrap an entire implementing test in `/* … */` and Vitest registers ZERO
-//      tests, while the scanner still sees the edge id, the `edgeTitle` call, the
-//      evidence helpers and the commit token sitting in the comment — and
-//      certifies the edge. (Line-commenting happened to trip a different check,
-//      by accident rather than by design, which is its own warning.)
+// So execution is no longer inferred here at all. THE AUTHORITY IS RUNTIME
+// EVIDENCE, recorded inside the DB suite by the assertion helpers themselves,
+// after the expect that could throw, and checked by the registration wrapper
+// against this manifest — plus a started/completed set equality in that suite's
+// afterAll, which is what makes a skipped or filtered-away proof impossible to
+// miss. None of that can live in this file: this file does not execute the
+// proofs.
 //
-// So this generation does not read text. It parses the implementing file with
-// the TypeScript compiler and works on the syntax tree. Comments are trivia and
-// never become nodes, string literals are not call expressions, and a call in a
-// sibling test is in a different subtree — so none of them can stand in for a
-// proof. Each edge must be registered by a real `temporalEdgeTest(...)` CALL with
-// a STRING-LITERAL id, and the evidence its proof kind demands must be a genuine
-// call inside THAT callback.
-//
-// Deliberately NOT done: stripping comments with a regex before scanning. A
-// hand-rolled comment stripper has to understand strings, template literals,
-// regex literals and escapes, and getting that subtly wrong would simply move
-// the bug. The compiler already knows.
+// WHAT REMAINS HERE is registration and scope SUPPORT, and it is deliberately
+// not called proof: the manifest is well-formed, every edge has exactly one
+// executable registration, and the wrappers really do register a live `it(...)`
+// rather than `.skip`, `.todo` or `.only`.
 // ---------------------------------------------------------------------------
-describe("0189 — temporal closure is derived from executable evidence", () => {
+describe("0189 — temporal closure: registration and scope support", () => {
   const DB_TEST = "tests/db/waitlist-invitation-wall-clock.db.test.ts";
   const dbPath = path.join(ROOT, DB_TEST);
 
@@ -899,14 +901,13 @@ describe("0189 — temporal closure is derived from executable evidence", () => 
   const dbSrc = readFileSync(dbPath, "utf8");
   const sourceFile = ts.createSourceFile(DB_TEST, dbSrc, ts.ScriptTarget.Latest, true);
 
-  /** Every function NAME actually invoked somewhere in this subtree. */
   const callsWithin = (node: ts.Node): Set<string> => {
     const names = new Set<string>();
     const visit = (n: ts.Node): void => {
       if (ts.isCallExpression(n)) {
         const callee = n.expression;
         if (ts.isIdentifier(callee)) names.add(callee.text);
-        else if (ts.isPropertyAccessExpression(callee)) names.add(callee.name.text);
+        else if (ts.isPropertyAccessExpression(callee)) names.add(`${callee.name.text}`);
       }
       ts.forEachChild(n, visit);
     };
@@ -914,39 +915,14 @@ describe("0189 — temporal closure is derived from executable evidence", () => 
     return names;
   };
 
-  /** Does this subtree release a held transaction — `x.query("commit"|"rollback")`? */
-  const releasesPredecessor = (node: ts.Node): boolean => {
-    let found = false;
-    const visit = (n: ts.Node): void => {
-      if (found) return;
-      if (
-        ts.isCallExpression(n) &&
-        ts.isPropertyAccessExpression(n.expression) &&
-        n.expression.name.text === PREDECESSOR_RELEASE_METHOD &&
-        n.arguments.length > 0 &&
-        ts.isStringLiteral(n.arguments[0]) &&
-        (PREDECESSOR_RELEASE_ARGS as readonly string[]).includes(n.arguments[0].text)
-      ) {
-        found = true;
-        return;
-      }
-      ts.forEachChild(n, visit);
-    };
-    visit(node);
-    return found;
-  };
-
-  /**
-   * Executable registrations, from the AST. A commented-out test contributes
-   * nothing here, because comments are trivia and never become call expressions.
-   */
-  const registrations = (() => {
+  /** Registrations of one helper, keyed by their string-literal first argument. */
+  const registrationsOf = (helper: string): Map<string, ts.Node[]> => {
     const found = new Map<string, ts.Node[]>();
     const visit = (n: ts.Node): void => {
       if (
         ts.isCallExpression(n) &&
         ts.isIdentifier(n.expression) &&
-        n.expression.text === EDGE_TEST_HELPER &&
+        n.expression.text === helper &&
         n.arguments.length >= 3 &&
         ts.isStringLiteral(n.arguments[0])
       ) {
@@ -957,25 +933,48 @@ describe("0189 — temporal closure is derived from executable evidence", () => 
     };
     visit(sourceFile);
     return found;
-  })();
+  };
 
-  it("the implementing file parses, and registers through the shared helper", () => {
+  /** The declaration body of a top-level function. */
+  const declarationOf = (name: string): ts.FunctionDeclaration | null => {
+    let hit: ts.FunctionDeclaration | null = null;
+    const visit = (n: ts.Node): void => {
+      if (ts.isFunctionDeclaration(n) && n.name?.text === name) hit = n;
+      ts.forEachChild(n, visit);
+    };
+    visit(sourceFile);
+    return hit;
+  };
+
+  const edgeRegistrations = registrationsOf(EDGE_TEST_HELPER);
+  const cycleRegistrations = registrationsOf(REPEATED_CYCLE_TEST_HELPER);
+
+  it("the implementing file parses and registers through the shared helpers", () => {
     expect(
       (sourceFile as unknown as { parseDiagnostics?: unknown[] }).parseDiagnostics ?? [],
       `${DB_TEST} does not parse`,
     ).toHaveLength(0);
-    expect(registrations.size, "no executable temporal edge registrations were found").toBeGreaterThan(0);
+    expect(edgeRegistrations.size, "no executable edge registrations were found").toBeGreaterThan(0);
+    expect(cycleRegistrations.size, "no repeated-cycle registrations were found").toBeGreaterThan(0);
   });
 
-  it("every proof helper the manifest requires is actually DEFINED in the test file", () => {
-    // A required name that nothing defines could be satisfied by any stray call.
-    for (const name of [...Object.values(MECHANISM_EVIDENCE), ...Object.values(VERDICT_EVIDENCE)]) {
-      expect(
-        new RegExp(`(async )?function ${name}\\(`).test(dbSrc),
-        `${name} is required as evidence but is not defined in ${DB_TEST}`,
-      ).toBe(true);
-    }
-  });
+  for (const helper of [EDGE_TEST_HELPER, REPEATED_CYCLE_TEST_HELPER]) {
+    it(`${helper} registers a LIVE it(), never .skip/.todo/.only`, () => {
+      // A wrapper quietly changed to `it.skip` would run no proof at all. The
+      // suite's started/completed bookkeeping catches that at runtime; this
+      // catches it at review time, which is cheaper.
+      const decl = declarationOf(helper);
+      expect(decl, `${helper} is not declared in ${DB_TEST}`).not.toBeNull();
+      const called = callsWithin(decl!);
+      expect(called.has("it"), `${helper} never registers a test`).toBe(true);
+      for (const forbidden of ["skip", "todo", "only"]) {
+        expect(
+          called.has(forbidden),
+          `${helper} registers with it.${forbidden}, so its proofs would not execute`,
+        ).toBe(false);
+      }
+    });
+  }
 
   it("every canonical WAIT-03 transition is represented by at least one edge", () => {
     for (const canonical of CANONICAL_EDGES) {
@@ -994,119 +993,84 @@ describe("0189 — temporal closure is derived from executable evidence", () => 
     expect(new Set(ids).size, `duplicate edge ids: ${ids.join(", ")}`).toBe(ids.length);
   });
 
-  it("no test registers an edge the manifest does not declare", () => {
-    const declared = new Set(TEMPORAL_EDGES.map((e) => e.id));
-    const stray = [...registrations.keys()].filter((id) => !declared.has(id));
-    expect(stray, "these tests register edge ids with no manifest row").toEqual([]);
-  });
-
-  describe("each edge is certified by its implementing test, or not at all", () => {
-    for (const edge of TEMPORAL_EDGES) {
-      it(`${edge.id} — ${edge.proof}`, () => {
-        // 1. EXECUTABLE registration. Exactly one, and it must be a real call:
-        //    commenting the test out removes it from the tree entirely.
-        const callbacks = registrations.get(edge.id) ?? [];
-        expect(
-          callbacks.length,
-          `${edge.id} has no EXECUTABLE registration in ${DB_TEST} — a commented-out ` +
-            `test, or an id that appears only in text, does not count`,
-        ).toBe(1);
-
-        const callback = callbacks[0];
-        expect(
-          ts.isArrowFunction(callback) || ts.isFunctionExpression(callback),
-          `${edge.id}'s registration does not pass a function body`,
-        ).toBe(true);
-
-        // 2. The evidence must be CALLED inside that callback's own subtree —
-        //    not in a sibling test, and not in a comment.
-        const called = callsWithin(callback);
-
-        expect(
-          called.has(MECHANISM_EVIDENCE[edge.proof]),
-          `${edge.id} claims ${edge.proof} but its callback never calls ` +
-            `${MECHANISM_EVIDENCE[edge.proof]}()`,
-        ).toBe(true);
-
-        for (const verdict of edge.verdicts) {
-          expect(
-            called.has(VERDICT_EVIDENCE[verdict]),
-            `${edge.id} claims a ${verdict} verdict but its callback never calls ` +
-              `${VERDICT_EVIDENCE[verdict]}()`,
-          ).toBe(true);
-        }
-
-        // 3. An executed race must release the predecessor inside the callback,
-        //    after the successor is proven parked. Otherwise "it was blocked" is
-        //    the whole story and what happened next was never observed.
-        if (edge.proof === "EXECUTED_BLOCKING_RACE") {
-          expect(
-            releasesPredecessor(callback),
-            `${edge.id} parks its successor but never releases the predecessor`,
-          ).toBe(true);
-        }
-      });
-    }
-  });
-
-  it("no edge is certified by a label alone", () => {
-    const uncertified = TEMPORAL_EDGES.filter((e) => {
-      const cbs = registrations.get(e.id) ?? [];
-      if (cbs.length !== 1) return true;
-      return !callsWithin(cbs[0]).has(MECHANISM_EVIDENCE[e.proof]);
-    });
+  it("no test registers an edge or cycle the manifest does not declare", () => {
+    const declaredEdges = new Set(TEMPORAL_EDGES.map((e) => e.id));
     expect(
-      uncertified.map((e) => e.id),
-      "these edges carry a proof kind that no executable test performs",
+      [...edgeRegistrations.keys()].filter((id) => !declaredEdges.has(id)),
+      "these tests register edge ids with no manifest row",
+    ).toEqual([]);
+    const declaredCycles = new Set<string>(REPEATED_CYCLE_PROOFS.map((c) => c.id));
+    expect(
+      [...cycleRegistrations.keys()].filter((id) => !declaredCycles.has(id)),
+      "these tests register cycle ids with no manifest row",
     ).toEqual([]);
   });
 
+  it("every declared edge has exactly ONE executable registration", () => {
+    // Presence is necessary, not sufficient: whether the proof RAN is decided by
+    // the runtime evidence check inside the wrapper, and by the started/completed
+    // equality in the DB suite's afterAll.
+    for (const edge of TEMPORAL_EDGES) {
+      expect(
+        (edgeRegistrations.get(edge.id) ?? []).length,
+        `${edge.id} has no executable registration in ${DB_TEST}`,
+      ).toBe(1);
+    }
+    for (const cycle of REPEATED_CYCLE_PROOFS) {
+      expect(
+        (cycleRegistrations.get(cycle.id) ?? []).length,
+        `${cycle.id} has no executable registration in ${DB_TEST}`,
+      ).toBe(1);
+    }
+  });
+
+  it("the manifest states requirements only — never a result", () => {
+    // The failure mode generation 1 died of. No row may carry a verdict.
+    for (const edge of TEMPORAL_EDGES) {
+      expect(Object.keys(edge).sort()).toEqual(
+        ["boundary", "canonical", "id", "predecessor", "proof", "successor", "verdicts"].sort(),
+      );
+      expect(PROOF_KINDS, `${edge.id} has an unknown proof kind`).toContain(edge.proof);
+      for (const v of edge.verdicts) expect(VERDICTS, `${edge.id} verdict`).toContain(v);
+    }
+  });
+
+  it("every required evidence token is one the helpers can actually record", () => {
+    const required = [
+      ...Object.values(MECHANISM_EVIDENCE),
+      ...Object.values(VERDICT_EVIDENCE),
+      ...REPEATED_CYCLE_EVIDENCE,
+    ];
+    for (const token of required) {
+      expect(EVIDENCE_TOKENS, `${token} is required but is not a declared token`).toContain(token);
+      // ...and something in the suite records it. A token nothing can emit would
+      // make its edge permanently unprovable rather than silently proven.
+      expect(
+        dbSrc.includes(`record("${token}")`),
+        `${token} is required but no helper records it`,
+      ).toBe(true);
+    }
+  });
+
   it("REDEEM -> CONVERT is an executed race specifically", () => {
-    // The one edge whose predecessor does not share the successor's entry mutex —
-    // REDEEM takes only the invitation lock — so no visibility or predicate
-    // argument is available to it.
     expect(TEMPORAL_EDGES.find((x) => x.id === "REDEEM->CONVERT")!.proof).toBe(
       "EXECUTED_BLOCKING_RACE",
     );
   });
 
-  it("repeated-cycle chronology never derives identity from the timestamps", () => {
-    // The retired reconstruction sorted repeated transitions by `occurred_at` —
-    // the evidence under test — and could reassign rows between cycles. Neither
-    // it, nor the `order by occurred_at desc limit 1` lookup that hid the same
-    // circularity in a one-liner, may come back.
+  it("HYGIENE ONLY — the two retired circular helpers are not called again", () => {
+    // NOT AUTHORITATIVE, and deliberately labelled so. A name ban cannot express
+    // the invariant: an in-memory `.sort` on occurred_at, a `reduce` picking the
+    // minimum, and a composed `order by ${col}` all evade it, and all three were
+    // reproduced as vacuously green proofs. The real protection is that the
+    // repeated-cycle sequence is private and can only be appended to by capturing
+    // one controlled transition — a caller cannot supply an order at all.
     //
-    // CHECKED ON THE TREE, NOT THE TEXT — for the same reason as everything else
-    // here. A first draft of this very assertion matched raw source and failed on
-    // the COMMENT above `soleEventAt` that explains what was removed: prose about
-    // a retired defect is not the defect.
-    const executedCalls = callsWithin(sourceFile);
+    // This survives only because these two specific helpers were removed in this
+    // PR and should not reappear by copy-paste.
+    const called = callsWithin(sourceFile);
     for (const retired of ["eventsInInsertionOrder", "lastEventAt"]) {
-      expect(
-        executedCalls.has(retired),
-        `${retired}() established event order from timestamps and was replaced; ` +
-          `it is being called again`,
-      ).toBe(false);
+      expect(called.has(retired), `${retired}() was retired as circular`).toBe(false);
     }
-
-    // No SQL the file executes may order events by the column under test.
-    const literals: string[] = [];
-    const collect = (n: ts.Node): void => {
-      if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) literals.push(n.text);
-      else if (ts.isTemplateExpression(n)) {
-        literals.push(n.head.text, ...n.templateSpans.map((sp) => sp.literal.text));
-      }
-      ts.forEachChild(n, collect);
-    };
-    collect(sourceFile);
-    const offending = literals.filter((l) => /order by occurred_at/i.test(l));
-    expect(offending, "an executed query orders events by occurred_at").toEqual([]);
-
-    // ...and the independent capture is present and actually used.
-    expect(executedCalls.has("eventIdSet"), "event identity is never snapshotted").toBe(true);
-    expect(
-      executedCalls.has("expectExactlyOneNewEvent"),
-      "no transition is identified by the event it appended",
-    ).toBe(true);
   });
 });
