@@ -112,10 +112,15 @@ invitation with more than one terminal outcome, no orphaned invitation, no
 cross-studio contradiction, no `invited` entry lacking a live invitation, no
 orphaned lifecycle event.
 
-**What the zero invitation count means, stated carefully.** The invitation
-lifecycle has **never been exercised in production**, so 0189's invitation-side
-repairs are **preventative** and had no existing row to correct. That is **not** a
-claim that this database carries no production traffic — the entries table holds
+**What the zero invitation count means, and what it cannot mean.** It establishes
+that there were **no extant invitations to repair** and that the apply changed no
+rows, so 0189's invitation-side repairs took effect with nothing outstanding to
+correct. It does **not** establish that the lifecycle has never been exercised —
+an earlier draft of this record wrongly said so. Both invitation foreign keys are
+`ON DELETE CASCADE` (`0188` lines 193–216), so invitations belonging to a deleted
+studio or entry would have gone with it and would not appear in a present-day
+count; **lifetime usage is not observable from this measurement.** Nor is this a
+claim that the database carries no production traffic — the entries table holds
 real rows, and `remove_new_client_waitlist_entry` has a live application caller.
 
 ### Live caller compatibility
