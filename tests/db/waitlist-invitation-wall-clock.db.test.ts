@@ -1447,10 +1447,27 @@ describe("RELEASE C — a release can never predate the invitation it releases",
     expect(r).toBe("released");
     const st = await stateOf(inv.id);
     expect(st.released_at).not.toBeNull();
+
+    // THE VERDICT, ALSO DECIDED BY POSTGRESQL. Fixing only the precondition
+    // above would have left the finding half-closed: this comparison is
+    // NON-STRICT, so truncating both microsecond columns to JS milliseconds
+    // turns a real sub-millisecond backdating into an accepted equality — the
+    // test would pass while missing the exact inversion it exists to catch.
+    // Compared in place, against the stored columns.
+    const chronology = (
+      await adminQuery(
+        `select i.released_at >= i.issued_at as release_not_before_issue,
+                to_char(i.released_at, 'HH24:MI:SS.US') as released_at,
+                to_char(i.issued_at,   'HH24:MI:SS.US') as issued_at
+           from public.new_client_waitlist_invitations i where i.id = $1`,
+        [inv.id],
+      )
+    ).rows[0] as Record<string, boolean | string>;
     expect(
-      st.released_at!.getTime(),
-      "released_at PREDATES issued_at — the lifecycle chronology is inverted",
-    ).toBeGreaterThanOrEqual(inv.issued_at.getTime());
+      chronology.release_not_before_issue,
+      `released_at PREDATES issued_at — the lifecycle chronology is inverted ` +
+        `(released ${chronology.released_at}, issued ${chronology.issued_at})`,
+    ).toBe(true);
     // ...and the entry agrees with the invitation.
     expect((await entryRow(f.entryId)).released_at!.getTime()).toBe(st.released_at!.getTime());
   });
@@ -2262,10 +2279,27 @@ describe("conversion — serialization against an in-flight redemption", () => {
       await conv.end();
 
       const e = await convertedAt(f.entryId);
+      // The control must show a STRICT inversion, and a sub-millisecond one is
+      // exactly what it is built to produce — so it cannot be judged on
+      // truncated copies either.
+      const inverted = (
+        await adminQuery(
+          `select e.converted_at < i.redeemed_at as old_ordering_inverts,
+                  to_char(e.converted_at, 'HH24:MI:SS.US') as converted_at,
+                  to_char(i.redeemed_at,  'HH24:MI:SS.US') as redeemed_at
+             from public.new_client_waitlist_entries e
+             join public.new_client_waitlist_invitations i on i.id = $2
+            where e.id = $1`,
+          [f.entryId, f.invId],
+        )
+      ).rows[0] as Record<string, boolean | string>;
       expect(
-        e.converted_at!.getTime(),
-        "the old ordering no longer inverts — this control is vacuous",
-      ).toBeLessThan(redeemed.getTime());
+        inverted.old_ordering_inverts,
+        `the old ordering no longer inverts — this control is vacuous ` +
+          `(converted ${inverted.converted_at}, redeemed ${inverted.redeemed_at})`,
+      ).toBe(true);
+      void e;
+      void redeemed;
     } finally {
       await adminQuery(`drop function if exists public.${OLD_FN}(uuid,uuid,uuid)`);
     }
@@ -2299,7 +2333,26 @@ describe("conversion — serialization against an in-flight redemption", () => {
     const redeemed = (await redeemedAtOf(f.invId))!;
     const e = await convertedAt(f.entryId);
     expect(e.status).toBe("converted");
-    expectOrdered(e.converted_at!, redeemed, "converted_at precedes the redemption that authorised it");
+    // Same rule as RELEASE C's verdict: both are microsecond columns and the
+    // margin is a lock wait, so PostgreSQL compares them rather than their
+    // millisecond-truncated copies.
+    const order = (
+      await adminQuery(
+        `select e.converted_at >= i.redeemed_at as converted_not_before_redeem,
+                to_char(e.converted_at, 'HH24:MI:SS.US') as converted_at,
+                to_char(i.redeemed_at,  'HH24:MI:SS.US') as redeemed_at
+           from public.new_client_waitlist_entries e
+           join public.new_client_waitlist_invitations i on i.id = $2
+          where e.id = $1`,
+        [f.entryId, f.invId],
+      )
+    ).rows[0] as Record<string, boolean | string>;
+    expect(
+      order.converted_not_before_redeem,
+      `converted_at precedes the redemption that authorised it ` +
+        `(converted ${order.converted_at}, redeemed ${order.redeemed_at})`,
+    ).toBe(true);
+    void redeemed;
     // ...and the event is the transition, not a second reading of it.
     const ev = await soleEventAt(f.entryId, "converted");
     expect(ev!.getTime()).toBe(e.converted_at!.getTime());
