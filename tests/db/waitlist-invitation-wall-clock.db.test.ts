@@ -2,24 +2,18 @@ import { afterAll, describe, expect, it } from "vitest";
 import { Client } from "pg";
 import { randomUUID } from "node:crypto";
 import { adminQuery, closePool, resolveLocalDbUrl } from "./helpers/harness";
-import { REPEATED_CYCLE_PROOFS } from "./helpers/temporal-edges";
 import {
   eventIdSet,
+  expectBlockedOn,
   expectExactlyOneNewEvent,
+  expectInvisibleWhileUncommitted,
   expectOrdered,
-  expectRefused,
+  expectStillSees,
   newEventsSince,
-  ObservedLifecycleSequence,
   pickEvent,
-  proveBlockedOn,
-  proveInvisibleWhileUncommitted,
-  proveNotYetVisible,
-  repeatedCycleTest,
-  temporalEdgeTest,
-  UNREGISTERED_HANDLE,
   waitUntilBlocked,
   type ObservedEvent,
-} from "./helpers/temporal-proof-runtime";
+} from "./helpers/waitlist-concurrency";
 import {
   firstInversion,
   linearizeByTransitionChain,
@@ -220,7 +214,7 @@ describe("B — after the deadline, transaction also starts after it", () => {
 });
 
 describe("C — THE LOAD-BEARING CASE: begins before, blocks, released after", () => {
-  temporalEdgeTest("INVITE->REDEEM", "refuses a redemption whose window closed while it waited on the invitation lock", async (proof) => {
+  it("INVITE->REDEEM — refuses a redemption whose window closed while it waited on the invitation lock", async () => {
     const f = await issueExpiringIn("wc-c", 6);
 
     // The deadline is stamped BEFORE anything locks the row, so setup duration
@@ -250,7 +244,7 @@ describe("C — THE LOAD-BEARING CASE: begins before, blocks, released after", (
       `select result from public.redeem_new_client_waitlist_invitation($1)`,
       [f.token],
     );
-    const ev = await proveBlockedOn(proof, t0.pid, "the redeeming backend never actually blocked on a lock");
+    const ev = await expectBlockedOn(t0.pid, "the redeeming backend never actually blocked on a lock");
     expect(ev).toContain("Lock");
 
     // The window closes WHILE it waits.
@@ -266,11 +260,7 @@ describe("C — THE LOAD-BEARING CASE: begins before, blocks, released after", (
     await b.query("commit");
     await b.end();
 
-    expectRefused(proof,
-      r.result,
-      "invalid_token",
-      "an invitation whose window closed while the redemption waited must NOT redeem",
-    );
+    expect(r.result, "an invitation whose window closed while the redemption waited must NOT redeem").toBe("invalid_token");
     const st = await stateOf(f.invId);
     expect(st.redeemed_at).toBeNull();
     expect(await entryStatus(f.entryId)).toBe("invited");
@@ -440,6 +430,90 @@ describe("F — redeem || expire across the deadline stays coherent", () => {
 });
 
 describe("H — the deployed contract is unchanged apart from the body", () => {
+  it("EVERY command 0189 replaces keeps the deployed signature and contract", async () => {
+    // WHY ALL EIGHT, not just the two this file used to check. 0189 replaces the
+    // bodies of eight commands, and one of them —
+    // `remove_new_client_waitlist_entry` — has a LIVE runtime caller in
+    // app/(app)/settings/waitlist/actions.ts, which calls it by name with three
+    // named parameters and treats the text result "removed" as success. A body
+    // change that altered any of that would break a shipped surface, so the
+    // whole replaced set is pinned here rather than the two that happened to be
+    // under test when this file was written.
+    const EXPECTED: Record<string, { args: string; result: string }> = {
+      claim_new_client_waitlist_entries: {
+        args: "p_studio_id uuid, p_actor_user_id uuid, p_count integer",
+        result: "TABLE(result text, entry_id uuid)",
+      },
+      claim_new_client_waitlist_entry: {
+        args: "p_studio_id uuid, p_entry_id uuid, p_actor_user_id uuid",
+        result: "text",
+      },
+      expire_new_client_waitlist_invitation: {
+        args: "p_studio_id uuid, p_entry_id uuid, p_actor_user_id uuid",
+        result: "text",
+      },
+      issue_new_client_waitlist_invitation: {
+        args: "p_studio_id uuid, p_entry_id uuid, p_actor_user_id uuid, p_ttl_hours integer",
+        result: "TABLE(result text, raw_token text, expires_at timestamp with time zone)",
+      },
+      record_new_client_waitlist_conversion: {
+        args: "p_studio_id uuid, p_entry_id uuid, p_client_id uuid",
+        result: "text",
+      },
+      redeem_new_client_waitlist_invitation: {
+        args: "p_raw_token text",
+        result: "TABLE(result text, studio_id uuid, entry_id uuid)",
+      },
+      release_new_client_waitlist_entry: {
+        args: "p_studio_id uuid, p_entry_id uuid, p_actor_user_id uuid",
+        result: "text",
+      },
+      remove_new_client_waitlist_entry: {
+        args: "p_studio_id uuid, p_entry_id uuid, p_actor_user_id uuid",
+        result: "text",
+      },
+    };
+
+    const r = await adminQuery(
+      `select p.proname,
+              pg_get_function_identity_arguments(p.oid) as args,
+              pg_get_function_result(p.oid)             as result,
+              p.prosecdef                                as secdef,
+              p.provolatile                              as volatile,
+              array_to_string(p.proconfig, ',')          as config
+         from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+        where n.nspname = 'public' and p.proname = any($1::text[])
+        order by p.proname`,
+      [Object.keys(EXPECTED)],
+    );
+    expect(
+      r.rows.map((x: Record<string, unknown>) => x.proname),
+      "a replaced command is missing from the database",
+    ).toEqual(Object.keys(EXPECTED).sort());
+
+    for (const row of r.rows as Array<Record<string, string | boolean>>) {
+      const name = row.proname as string;
+      expect(row.args, `${name} argument list changed`).toBe(EXPECTED[name].args);
+      expect(row.result, `${name} return type changed`).toBe(EXPECTED[name].result);
+      expect(row.secdef, `${name} lost SECURITY DEFINER`).toBe(true);
+      expect(row.volatile, `${name} volatility changed`).toBe("v");
+      expect(row.config, `${name} search_path changed`).toBe("search_path=pg_catalog, pg_temp");
+    }
+  });
+
+  it("the removal command the app calls still answers `removed` on success", async () => {
+    // The exact shipped path: app/(app)/settings/waitlist/actions.ts calls this
+    // by name and treats anything other than the string "removed" as a failure.
+    const s = await bareStudio("app-remove");
+    const e = await joinEntry(s);
+    const r = await adminQuery(
+      `select public.remove_new_client_waitlist_entry($1,$2,$3) as r`,
+      [s.studioId, e, s.userId],
+    );
+    expect(r.rows[0].r, "the runtime caller's success value changed").toBe("removed");
+    expect(await entryStatus(e)).toBe("removed");
+  });
+
   it("both signatures and return types are byte-identical to 0188's", async () => {
     const r = await adminQuery(
       `select p.proname,
@@ -604,7 +678,7 @@ describe("A — NEGATIVE CONTROL: the entry-lock-only shape produces stale prove
 });
 
 describe("B — REPAIRED: the decision instant follows the invitation lock", () => {
-  temporalEdgeTest("INVITE->EXPIRE", "stamps expired_at at or after the moment the holder released", async (proof) => {
+  it("INVITE->EXPIRE — stamps expired_at at or after the moment the holder released", async () => {
     const f = await issueAlreadyElapsed("p2-b");
     const holder = await holdInvitation(f.invId);
 
@@ -615,7 +689,7 @@ describe("B — REPAIRED: the decision instant follows the invitation lock", () 
       `select public.expire_new_client_waitlist_invitation($1,$2,$3) as r`,
       [f.studioId, f.entryId, f.userId],
     );
-    await proveBlockedOn(proof, pid, "expire never blocked on the invitation");
+    await expectBlockedOn(pid, "expire never blocked on the invitation");
 
     // It is past the ENTRY mutex and waiting on the INVITATION: a third session
     // asking for the entry row must therefore block behind it.
@@ -650,7 +724,7 @@ describe("B — REPAIRED: the decision instant follows the invitation lock", () 
     // THE ASSERTION THE CONTROL ABOVE MAKES MEANINGFUL. The stamp must not
     // predate the lock that serialized it. A small negative tolerance covers the
     // ordering of two separate clock reads on the same server.
-    expectOrdered(proof,
+    expectOrdered(
       st.expired_at!,
       releaseBoundary,
       "expired_at predates the serializing lock release — stale provenance",
@@ -1300,7 +1374,7 @@ describe("RELEASE C — a release can never predate the invitation it releases",
 });
 
 describe("RELEASE D — a wait on the invitation lock does not backdate the stamp", () => {
-  temporalEdgeTest("INVITE->RELEASE", "stamps released_at at or after the moment the holder released", async (proof) => {
+  it("INVITE->RELEASE — stamps released_at at or after the moment the holder released", async () => {
     const f = await issueExpiringIn("rel-wait", 300);
     const holder = await holdInvitation(f.invId);
 
@@ -1312,7 +1386,7 @@ describe("RELEASE D — a wait on the invitation lock does not backdate the stam
       f.entryId,
       f.userId,
     ]);
-    await proveBlockedOn(proof, pid, "release never blocked on the invitation");
+    await expectBlockedOn(pid, "release never blocked on the invitation");
 
     // Past the ENTRY mutex and waiting on the INVITATION.
     const third = await conn();
@@ -1341,7 +1415,7 @@ describe("RELEASE D — a wait on the invitation lock does not backdate the stam
 
     expect(r).toBe("released");
     const st = await stateOf(f.invId);
-    expectOrdered(proof,
+    expectOrdered(
       st.released_at!,
       boundary,
       "released_at predates the serializing lock release",
@@ -1841,7 +1915,7 @@ async function raceRequeueAgainst(fnName: string, s: Awaited<ReturnType<typeof s
   await adminQuery(`select public.requeue_new_client_waitlist_entry($1,$2,$3)`, [
     s.studioId, entryId, s.userId,
   ]);
-  const waitingAt = (await expectExactlyOneNewEvent(UNREGISTERED_HANDLE, entryId, beforeRequeue, "released", "waiting"))
+  const waitingAt = (await expectExactlyOneNewEvent(entryId, beforeRequeue, "released", "waiting"))
     .occurred_at;
 
   await gate.query("commit");
@@ -1916,7 +1990,7 @@ describe("bulk claim — the requeue race", () => {
     );
     const beforeRequeue = await eventIdSet(e);
     await adminQuery(`select public.requeue_new_client_waitlist_entry($1,$2,$3)`, [s.studioId, e, s.userId]);
-    const waitingAt = (await expectExactlyOneNewEvent(UNREGISTERED_HANDLE, e, beforeRequeue, "released", "waiting"))
+    const waitingAt = (await expectExactlyOneNewEvent(e, beforeRequeue, "released", "waiting"))
       .occurred_at;
     await gate.query("commit");
     await gate.end();
@@ -1925,16 +1999,16 @@ describe("bulk claim — the requeue race", () => {
     await adminQuery(`select * from public.claim_new_client_waitlist_entries($1,$2,$3)`, [
       s.studioId, s.userId, 5,
     ]);
-    const claimedEv = await expectExactlyOneNewEvent(UNREGISTERED_HANDLE, e, beforeClaim, "waiting", "claimed");
+    const claimedEv = await expectExactlyOneNewEvent(e, beforeClaim, "waiting", "claimed");
     const row = (
       await adminQuery(`select status, claimed_at from public.new_client_waitlist_entries where id=$1`, [e])
     ).rows[0] as { status: string; claimed_at: Date };
     expect(row.status).toBe("claimed");
-    expectOrdered(UNREGISTERED_HANDLE, row.claimed_at, waitingAt, "claimed_at precedes the requeue that made the row claimable");
+    expectOrdered(row.claimed_at, waitingAt, "claimed_at precedes the requeue that made the row claimable");
     // Both events captured by identity, so this compares the SECOND `waiting`
     // against the SECOND `claimed` — which is the comparison that matters and the
     // one a timestamp-sorted chain could silently get wrong.
-    expectOrdered(UNREGISTERED_HANDLE, claimedEv.occurred_at, waitingAt, "the claimed event predates the requeue that enabled it");
+    expectOrdered(claimedEv.occurred_at, waitingAt, "the claimed event predates the requeue that enabled it");
   });
 
   it("D/I — every winner shares ONE instant, and each event equals its entry stamp", async () => {
@@ -2114,7 +2188,7 @@ describe("conversion — serialization against an in-flight redemption", () => {
     }
   });
 
-  temporalEdgeTest("REDEEM->CONVERT", "conversion waits for the redemption, then stamps after it", async (proof) => {
+  it("REDEEM->CONVERT — conversion waits for the redemption, then stamps after it", async () => {
     // NO artificial barrier: the redemption itself holds the invitation, which
     // is the real production schedule.
     const f = await seedInvitedWithClient("cv-commit");
@@ -2131,7 +2205,7 @@ describe("conversion — serialization against an in-flight redemption", () => {
     const pending = conv.query(`select public.record_new_client_waitlist_conversion($1,$2,$3) as r`, [
       f.studioId, f.entryId, f.clientId,
     ]);
-    await proveBlockedOn(proof, pid, "conversion did not serialize against the in-flight redemption");
+    await expectBlockedOn(pid, "conversion did not serialize against the in-flight redemption");
 
     await redeemer.query("commit");
     await redeemer.end();
@@ -2142,7 +2216,7 @@ describe("conversion — serialization against an in-flight redemption", () => {
     const redeemed = (await redeemedAtOf(f.invId))!;
     const e = await convertedAt(f.entryId);
     expect(e.status).toBe("converted");
-    expectOrdered(proof, e.converted_at!, redeemed, "converted_at precedes the redemption that authorised it");
+    expectOrdered(e.converted_at!, redeemed, "converted_at precedes the redemption that authorised it");
     // ...and the event is the transition, not a second reading of it.
     const ev = await soleEventAt(f.entryId, "converted");
     expect(ev!.getTime()).toBe(e.converted_at!.getTime());
@@ -2286,11 +2360,8 @@ describe("conversion — serialization against an in-flight redemption", () => {
 // =============================================================================
 
 // ---------------------------------------------------------------------------
-// DRIVERS. These do SETUP only. Every evidence call — proveBlockedOn,
-// proveInvisibleWhileUncommitted, proveNotYetVisible, expectOrdered,
-// expectRefused — stays inside the registered edge callback, because that is the
-// scope the closure guard inspects. A driver that quietly performed the proof
-// would put the evidence out of the guard's reach.
+// DRIVERS. Setup only — each test performs and asserts its own schedule, so the
+// blocking proof and the ordering assertions stay visible where they matter.
 // ---------------------------------------------------------------------------
 
 /** A JOIN that has not committed: the row exists for the joiner and nobody else. */
@@ -2409,14 +2480,11 @@ const closeAll = async (...cs: Array<{ end: () => Promise<void> }>) => {
 };
 
 describe("temporal edge — JOIN is ordered by row visibility, not by contention", () => {
-  temporalEdgeTest(
-    "JOIN->CLAIM",
-    "an uncommitted join is invisible to the claimer, and the claim that follows is ordered",
-    async (proof) => {
+  it("JOIN->CLAIM — an uncommitted join is invisible to the claimer, and the claim that follows is ordered", async () => {
       const { s, e, joiner } = await uncommittedJoin("edge-jc");
       try {
         // Nothing to park on, because there is nothing to see.
-        await proveInvisibleWhileUncommitted(proof, e, "the joining transaction is still open");
+        await expectInvisibleWhileUncommitted(e, "the joining transaction is still open");
         const blind = (
           await adminQuery(`select public.claim_new_client_waitlist_entry($1,$2,$3) as r`, [
             s.studioId,
@@ -2424,7 +2492,7 @@ describe("temporal edge — JOIN is ordered by row visibility, not by contention
             s.userId,
           ])
         ).rows[0].r as string;
-        expectRefused(proof, blind, "not_found", "a claim acted on an entry whose JOIN had not committed");
+        expect(blind, "a claim acted on an entry whose JOIN had not committed").toBe("not_found");
         await joiner.query("commit");
       } finally {
         await closeAll(joiner);
@@ -2445,21 +2513,17 @@ describe("temporal edge — JOIN is ordered by row visibility, not by contention
           [e],
         )
       ).rows[0] as { joined_at: Date; claimed_at: Date };
-      expectOrdered(proof, ent.claimed_at, ent.joined_at, "claimed_at predates the join it followed");
+      expectOrdered(ent.claimed_at, ent.joined_at, "claimed_at predates the join it followed");
 
       const chain = await eventsAlongTransitionChain(e);
       expect(firstInversion(chain)).toBeNull();
       expect(chain[chain.length - 1].occurred_at.getTime()).toBe(ent.claimed_at.getTime());
-    },
-  );
+    });
 
-  temporalEdgeTest(
-    "JOIN->REMOVE",
-    "an uncommitted join cannot be removed, and the removal that follows is ordered",
-    async (proof) => {
+  it("JOIN->REMOVE — an uncommitted join cannot be removed, and the removal that follows is ordered", async () => {
       const { s, e, joiner } = await uncommittedJoin("edge-jr");
       try {
-        await proveInvisibleWhileUncommitted(proof, e, "the joining transaction is still open");
+        await expectInvisibleWhileUncommitted(e, "the joining transaction is still open");
         const blind = (
           await adminQuery(`select public.remove_new_client_waitlist_entry($1,$2,$3) as r`, [
             s.studioId,
@@ -2467,7 +2531,7 @@ describe("temporal edge — JOIN is ordered by row visibility, not by contention
             s.userId,
           ])
         ).rows[0].r as string;
-        expectRefused(proof, blind, "not_found", "a removal acted on an entry whose JOIN had not committed");
+        expect(blind, "a removal acted on an entry whose JOIN had not committed").toBe("not_found");
         await joiner.query("commit");
       } finally {
         await closeAll(joiner);
@@ -2488,19 +2552,15 @@ describe("temporal edge — JOIN is ordered by row visibility, not by contention
           [e],
         )
       ).rows[0] as { joined_at: Date; removed_at: Date };
-      expectOrdered(proof, ent.removed_at, ent.joined_at, "removed_at predates the join it followed");
+      expectOrdered(ent.removed_at, ent.joined_at, "removed_at predates the join it followed");
 
       const chain = await eventsAlongTransitionChain(e);
       expect(firstInversion(chain)).toBeNull();
       expect(chain[chain.length - 1].occurred_at.getTime()).toBe(ent.removed_at.getTime());
-    },
-  );
+    });
 });
 describe("temporal edge — CLAIM -> INVITE parks on the entry mutex", () => {
-  temporalEdgeTest(
-  "CLAIM->INVITE",
-  "issue parks on the entry row the claim holds, and is stamped after it",
-  async (proof) => {
+  it("CLAIM->INVITE — issue parks on the entry row the claim holds, and is stamped after it", async () => {
       const s = await bareStudio("edge-ci");
       const e = await joinEntry(s);
 
@@ -2526,7 +2586,7 @@ describe("temporal edge — CLAIM -> INVITE parks on the entry mutex", () => {
           `select result from public.issue_new_client_waitlist_invitation($1,$2,$3,72)`,
           [s.studioId, e, s.userId],
         );
-        await proveBlockedOn(proof, pid, "issue never parked on the entry mutex the claim holds");
+        await expectBlockedOn(pid, "issue never parked on the entry mutex the claim holds");
 
         // Only NOW is the predecessor released.
         await sleep(HOLD_MS);
@@ -2545,7 +2605,7 @@ describe("temporal edge — CLAIM -> INVITE parks on the entry mutex", () => {
           [e],
         )
       ).rows[0] as { claimed_at: Date; invited_at: Date };
-      expectOrdered(proof, ent.invited_at, ent.claimed_at, "invited_at predates the claim it waited for");
+      expectOrdered(ent.invited_at, ent.claimed_at, "invited_at predates the claim it waited for");
 
       const rows = await eventsAlongTransitionChain(e);
       expect(firstInversion(rows)).toBeNull();
@@ -2564,8 +2624,7 @@ describe("temporal edge — CLAIM -> INVITE parks on the entry mutex", () => {
         ).rows[0].c,
         "the parked issue produced a second live invitation",
       ).toBe(1);
-    },
-  );
+    });
 });
 
 describe("temporal edge — REQUEUE is excluded by its own predicate, not parked by a lock", () => {
@@ -2580,18 +2639,11 @@ describe("temporal edge — REQUEUE is excluded by its own predicate, not parked
   // The temporal claim survives in a stronger form: the successor cannot act
   // early because it cannot see the state that authorises it, and when it can
   // see that state, what it writes follows it.
-  temporalEdgeTest(
-    "RELEASE->REQUEUE",
-    "requeue cannot see the uncommitted release, refuses it, and follows it once committed",
-    async (proof) => {
+  it("RELEASE->REQUEUE — requeue cannot see the uncommitted release, refuses it, and follows it once committed", async () => {
       const { f, a } = await heldTerminal("rq-release", "release");
       try {
-        await proveNotYetVisible(proof, f.entryId, "invited", "the release is still uncommitted");
-        expectRefused(proof,
-          await blindRequeue(f),
-          "not_requeueable",
-          "requeue acted on an entry whose release had not committed",
-        );
+        await expectStillSees(f.entryId, "invited", "the release is still uncommitted");
+        expect(await blindRequeue(f), "requeue acted on an entry whose release had not committed").toBe("not_requeueable");
         expect(await entryStatus(f.entryId), "the refused requeue wrote something").toBe("invited");
         await a.query("commit");
       } finally {
@@ -2602,8 +2654,8 @@ describe("temporal edge — REQUEUE is excluded by its own predicate, not parked
       // appended — this entry reaches `waiting` twice, so nothing else could.
       const before = await eventIdSet(f.entryId);
       expect(await blindRequeue(f), "requeue lost its deployed vocabulary").toBe("requeued");
-      const requeued = await expectExactlyOneNewEvent(proof, f.entryId, before, "released", "waiting");
-      expectOrdered(proof,
+      const requeued = await expectExactlyOneNewEvent(f.entryId, before, "released", "waiting");
+      expectOrdered(
         requeued.occurred_at,
         await soleEventAt(f.entryId, "released"),
         "the requeue event predates the release it followed",
@@ -2614,26 +2666,18 @@ describe("temporal edge — REQUEUE is excluded by its own predicate, not parked
       // the surviving evidence of the cycle that ended. History is not rewritten.
       const st = await stateOf(f.invId);
       expect(st.released_at, "the release stamp was erased from the invitation").not.toBeNull();
-      expectOrdered(proof,
+      expectOrdered(
         requeued.occurred_at,
         st.released_at!,
         "the requeue event predates the invitation's release stamp",
       );
-    },
-  );
+    });
 
-  temporalEdgeTest(
-    "EXPIRE->REQUEUE",
-    "requeue cannot see the uncommitted expire, refuses it, and follows it once committed",
-    async (proof) => {
+  it("EXPIRE->REQUEUE — requeue cannot see the uncommitted expire, refuses it, and follows it once committed", async () => {
       const { f, a } = await heldTerminal("rq-expire", "expire");
       try {
-        await proveNotYetVisible(proof, f.entryId, "invited", "the expire is still uncommitted");
-        expectRefused(proof,
-          await blindRequeue(f),
-          "not_requeueable",
-          "requeue acted on an entry whose expire had not committed",
-        );
+        await expectStillSees(f.entryId, "invited", "the expire is still uncommitted");
+        expect(await blindRequeue(f), "requeue acted on an entry whose expire had not committed").toBe("not_requeueable");
         expect(await entryStatus(f.entryId), "the refused requeue wrote something").toBe("invited");
         await a.query("commit");
       } finally {
@@ -2642,8 +2686,8 @@ describe("temporal edge — REQUEUE is excluded by its own predicate, not parked
 
       const before = await eventIdSet(f.entryId);
       expect(await blindRequeue(f), "requeue lost its deployed vocabulary").toBe("requeued");
-      const requeued = await expectExactlyOneNewEvent(proof, f.entryId, before, "expired", "waiting");
-      expectOrdered(proof,
+      const requeued = await expectExactlyOneNewEvent(f.entryId, before, "expired", "waiting");
+      expectOrdered(
         requeued.occurred_at,
         await soleEventAt(f.entryId, "expired"),
         "the requeue event predates the expire it followed",
@@ -2652,13 +2696,12 @@ describe("temporal edge — REQUEUE is excluded by its own predicate, not parked
 
       const st = await stateOf(f.invId);
       expect(st.expired_at, "the expire stamp was erased from the invitation").not.toBeNull();
-      expectOrdered(proof,
+      expectOrdered(
         requeued.occurred_at,
         st.expired_at!,
         "the requeue event predates the invitation's expire stamp",
       );
-    },
-  );
+    });
 });
 
 describe("temporal edge — REMOVE parks on the entry mutex, whatever it follows", () => {
@@ -2669,17 +2712,14 @@ describe("temporal edge — REMOVE parks on the entry mutex, whatever it follows
   //
   // REMOVE locks by identity alone — `where e.id = … for update`, with no status
   // predicate — which is exactly why it DOES park where REQUEUE does not.
-  temporalEdgeTest(
-    "RELEASE->REMOVE",
-    "remove parks on the entry mutex the release holds, and is stamped after it",
-    async (proof) => {
+  it("RELEASE->REMOVE — remove parks on the entry mutex the release holds, and is stamped after it", async () => {
       const h = await removeParkedBehind("rm-release", "release");
       try {
-        await proveBlockedOn(proof, h.pid, "remove never parked on the entry mutex the release holds");
+        await expectBlockedOn(h.pid, "remove never parked on the entry mutex the release holds");
         await sleep(HOLD_MS);
         await h.a.query("commit");
         const out = await collectRemoveRace(h, "invited", "released");
-        expectOrdered(proof, out.removedAt, out.prev.occurred_at, "removed_at predates the release it waited for");
+        expectOrdered(out.removedAt, out.prev.occurred_at, "removed_at predates the release it waited for");
         expect(out.removed.occurred_at.getTime()).toBe(out.removedAt.getTime());
         const again = (await newEventsSince(h.f.entryId, h.before)).find((x) => x.id === out.prev.id)!;
         expect(again.occurred_at.getTime(), "the released event moved while remove ran").toBe(
@@ -2688,20 +2728,16 @@ describe("temporal edge — REMOVE parks on the entry mutex, whatever it follows
       } finally {
         await closeAll(h.a, h.b);
       }
-    },
-  );
+    });
 
-  temporalEdgeTest(
-    "EXPIRE->REMOVE",
-    "remove parks on the entry mutex the expire holds, and is stamped after it",
-    async (proof) => {
+  it("EXPIRE->REMOVE — remove parks on the entry mutex the expire holds, and is stamped after it", async () => {
       const h = await removeParkedBehind("rm-expire", "expire");
       try {
-        await proveBlockedOn(proof, h.pid, "remove never parked on the entry mutex the expire holds");
+        await expectBlockedOn(h.pid, "remove never parked on the entry mutex the expire holds");
         await sleep(HOLD_MS);
         await h.a.query("commit");
         const out = await collectRemoveRace(h, "invited", "expired");
-        expectOrdered(proof, out.removedAt, out.prev.occurred_at, "removed_at predates the expire it waited for");
+        expectOrdered(out.removedAt, out.prev.occurred_at, "removed_at predates the expire it waited for");
         expect(out.removed.occurred_at.getTime()).toBe(out.removedAt.getTime());
         const again = (await newEventsSince(h.f.entryId, h.before)).find((x) => x.id === out.prev.id)!;
         expect(again.occurred_at.getTime(), "the expired event moved while remove ran").toBe(
@@ -2710,22 +2746,18 @@ describe("temporal edge — REMOVE parks on the entry mutex, whatever it follows
       } finally {
         await closeAll(h.a, h.b);
       }
-    },
-  );
+    });
 
-  temporalEdgeTest(
-    "REQUEUE->REMOVE",
-    "remove parks on the entry mutex the requeue holds, and is stamped after it",
-    async (proof) => {
+  it("REQUEUE->REMOVE — remove parks on the entry mutex the requeue holds, and is stamped after it", async () => {
       // This entry reaches `waiting` twice, so the predecessor event is picked
       // out of the ids that appeared since the snapshot — never by timestamp.
       const h = await removeParkedBehind("rm-requeue", "requeue");
       try {
-        await proveBlockedOn(proof, h.pid, "remove never parked on the entry mutex the requeue holds");
+        await expectBlockedOn(h.pid, "remove never parked on the entry mutex the requeue holds");
         await sleep(HOLD_MS);
         await h.a.query("commit");
         const out = await collectRemoveRace(h, "released", "waiting");
-        expectOrdered(proof, out.removedAt, out.prev.occurred_at, "removed_at predates the requeue it waited for");
+        expectOrdered(out.removedAt, out.prev.occurred_at, "removed_at predates the requeue it waited for");
         expect(out.removed.occurred_at.getTime()).toBe(out.removedAt.getTime());
         const again = (await newEventsSince(h.f.entryId, h.before)).find((x) => x.id === out.prev.id)!;
         expect(again.occurred_at.getTime(), "the requeue event moved while remove ran").toBe(
@@ -2734,8 +2766,7 @@ describe("temporal edge — REMOVE parks on the entry mutex, whatever it follows
       } finally {
         await closeAll(h.a, h.b);
       }
-    },
-  );
+    });
 });
 
 // =============================================================================
@@ -2764,25 +2795,50 @@ describe("temporal edge — REMOVE parks on the entry mutex, whatever it follows
 // HARNESS's knowledge of what it executed.
 // =============================================================================
 
-type RepeatedCycle = (typeof REPEATED_CYCLE_PROOFS)[number];
-const cycleRow = (id: string): RepeatedCycle =>
-  REPEATED_CYCLE_PROOFS.find((c) => c.id === id)!;
+// =============================================================================
+// REPEATED LIFECYCLE CYCLES.
+//
+// An entry may go round the loop more than once, and that is where reading the
+// order out of the rows stops working: the second `waiting -> claimed` looks
+// exactly like the first, and the table has no ordinal — `id` is a random uuid.
+// Ordering them by `occurred_at` would use the timestamps to decide the sequence
+// the timestamps are then checked against, which can hide a real inversion.
+//
+// So each test below records the order ITSELF. It performs one lifecycle
+// operation at a time, and after each one takes the event id that is new. The
+// resulting list is in execution order because the test executed it, and only
+// then are the timestamps compared along it.
+// =============================================================================
 
-/** The body both repeated-cycle proofs share. Evidence is recorded by the
- *  sequence object it is handed, so sharing this does not move any proof out of
- *  reach: the authority is the runtime evidence, not where the code sits. */
-async function runRepeatedCycle(
-  sequenceFor: (entryId: string) => ObservedLifecycleSequence,
-  cycle: RepeatedCycle,
-): Promise<void> {
-        const s = await bareStudio(`cyc-${cycle.terminal}`);
-        const e = await joinEntry(s);
-        const seq = sequenceFor(e);
-        await seq.adopt(null, "waiting");
+/** One controlled transition: snapshot, act, and take the event that appeared. */
+async function captureStep(
+  entryId: string,
+  from: string | null,
+  to: string,
+  run: () => Promise<void>,
+): Promise<ObservedEvent> {
+  const before = await eventIdSet(entryId);
+  await run();
+  return expectExactlyOneNewEvent(entryId, before, from, to);
+}
 
-        const terminalStatus = cycle.terminal === "release" ? "released" : "expired";
-        for (let round = 1; round <= 2; round += 1) {
-          await seq.captureTransition("waiting", "claimed", async () => {
+describe("repeated cycles — the log never runs backwards across two full loops", () => {
+  for (const terminal of ["release", "expire"] as const) {
+    const terminalStatus = terminal === "release" ? "released" : "expired";
+
+    it(`two complete claim, invite, ${terminal} and requeue cycles stay chronological`, async () => {
+      const s = await bareStudio(`cyc-${terminal}`);
+      const e = await joinEntry(s);
+
+      // The order of this list is the order the test performed the operations.
+      const observedEvents: ObservedEvent[] = [];
+      observedEvents.push(
+        await expectExactlyOneNewEvent(e, new Set<string>(), null, "waiting"),
+      );
+
+      for (let round = 1; round <= 2; round += 1) {
+        observedEvents.push(
+          await captureStep(e, "waiting", "claimed", async () => {
             expect(
               (
                 await adminQuery(`select public.claim_new_client_waitlist_entry($1,$2,$3) as r`, [
@@ -2793,9 +2849,11 @@ async function runRepeatedCycle(
               ).rows[0].r,
               `cycle ${round} claim`,
             ).toBe("claimed");
-          });
+          }),
+        );
 
-          await seq.captureTransition("claimed", "invited", async () => {
+        observedEvents.push(
+          await captureStep(e, "claimed", "invited", async () => {
             expect(
               (
                 await adminQuery(
@@ -2805,25 +2863,29 @@ async function runRepeatedCycle(
               ).rows[0].result,
               `cycle ${round} issue`,
             ).toBe("invited");
-          });
+          }),
+        );
 
-          await seq.captureTransition("invited", terminalStatus, async () => {
-            if (cycle.terminal === "expire") {
+        observedEvents.push(
+          await captureStep(e, "invited", terminalStatus, async () => {
+            if (terminal === "expire") {
               // Bring the deadline forward and PROVE the server clock passed it,
               // rather than assuming elapsed wall time.
               await waitPastDeadline(await restampExpiry((await liveIdOf(e))!, 1));
             }
             const sql =
-              cycle.terminal === "release"
+              terminal === "release"
                 ? `select public.release_new_client_waitlist_entry($1,$2,$3) as r`
                 : `select public.expire_new_client_waitlist_invitation($1,$2,$3) as r`;
             expect(
               (await adminQuery(sql, [s.studioId, e, s.userId])).rows[0].r,
-              `cycle ${round} ${cycle.terminal}`,
+              `cycle ${round} ${terminal}`,
             ).toBe(terminalStatus);
-          });
+          }),
+        );
 
-          await seq.captureTransition(terminalStatus, "waiting", async () => {
+        observedEvents.push(
+          await captureStep(e, terminalStatus, "waiting", async () => {
             expect(
               (
                 await adminQuery(`select public.requeue_new_client_waitlist_entry($1,$2,$3) as r`, [
@@ -2834,117 +2896,61 @@ async function runRepeatedCycle(
               ).rows[0].r,
               `cycle ${round} requeue`,
             ).toBe("requeued");
-          });
-        }
-
-        // Completion and chronology both come from the private captured
-        // sequence; neither can be satisfied by a sorted array.
-        seq.assertCompleted(cycle.statuses);
-        seq.assertChronology("the repeated lifecycle log ran backwards");
-        expect(seq.length, "fewer transitions were captured than the cycle requires").toBe(
-          cycle.captures,
+          }),
         );
-
-        // THE POINT OF ALL THIS, asserted rather than asserted-about: the label
-        // chain genuinely cannot recover this history, so the captured identity
-        // is doing real work.
-        const raw = (
-          await adminQuery(
-            `select from_status, to_status, occurred_at
-               from public.new_client_waitlist_entry_events where entry_id = $1`,
-            [e],
-          )
-        ).rows as EventRow[];
-        const attempt = linearizeByTransitionChain(raw);
-        expect(attempt.ok, "a two-cycle history must not be linearizable from labels").toBe(false);
-        if (!attempt.ok) expect(attempt.reason).toBe("ambiguous");
       }
 
-describe("repeated cycles — the log never runs backwards across two full loops", () => {
-  repeatedCycleTest(
-    "RELEASE/REQUEUE x2",
-    "two complete claim, invite, release and requeue cycles stay chronological",
-    async (_proof, sequenceFor) => runRepeatedCycle(sequenceFor, cycleRow("RELEASE/REQUEUE x2")),
-  );
+      // Two full loops plus the join.
+      expect(observedEvents).toHaveLength(9);
+      expect(new Set(observedEvents.map((x) => x.id)).size, "an event was counted twice").toBe(9);
+      expect(observedEvents.map((x) => x.to_status)).toEqual([
+        "waiting",
+        "claimed",
+        "invited",
+        terminalStatus,
+        "waiting",
+        "claimed",
+        "invited",
+        terminalStatus,
+        "waiting",
+      ]);
 
-  repeatedCycleTest(
-    "EXPIRE/REQUEUE x2",
-    "two complete claim, invite, expire and requeue cycles stay chronological",
-    async (_proof, sequenceFor) => runRepeatedCycle(sequenceFor, cycleRow("EXPIRE/REQUEUE x2")),
-  );
-});
+      // Chronology along the order the test executed.
+      for (let i = 1; i < observedEvents.length; i += 1) {
+        const prev = observedEvents[i - 1];
+        const cur = observedEvents[i];
+        expect(
+          cur.occurred_at.getTime(),
+          `step ${i} (${cur.from_status}->${cur.to_status}) precedes step ${i - 1} ` +
+            `(${prev.from_status}->${prev.to_status})`,
+        ).toBeGreaterThanOrEqual(prev.occurred_at.getTime());
+      }
+    });
+  }
 
-describe("repeated cycles — the chronology check itself can fail", () => {
-  it("NEGATIVE CONTROL: an event moved earlier is caught", async () => {
-    // Proves the assertion in those proofs can bite. The perturbation is IN
-    // MEMORY — the append-only table is never written to, and no trigger is
-    // disabled. It exercises the same comparison the sequence performs.
-    const a = { occurred_at: new Date(1_000) };
-    const b = { occurred_at: new Date(2_000) };
-    const compare = (prev: { occurred_at: Date }, cur: { occurred_at: Date }) => {
-      expect(cur.occurred_at.getTime()).toBeGreaterThanOrEqual(prev.occurred_at.getTime());
-    };
-    expect(() => compare(a, b), "a forward pair should pass").not.toThrow();
-    expect(() => compare(b, a), "an inverted pair was not caught").toThrow();
-  });
-});
-
-// =============================================================================
-// PROOF AUTHORITY — the callback cannot mint its own evidence.
-//
-// WHAT THIS CLOSES. The previous generation recorded evidence at runtime, which
-// was the right direction, but it handed the callback the object that could
-// WRITE that evidence. Reproduced: a callback that called
-// `proof.record("BLOCKED_ON_EXPECTED_LOCK"); proof.record("ORDERED"); return;`
-// touched no database, ran no assertion, and the suite passed.
-//
-// The write capability now lives on the other side of a module boundary, keyed
-// by handle identity in a private WeakMap. TypeScript alone would not be enough
-// — a test can always cast to `any` — so these check the RUNTIME shape.
-// =============================================================================
-
-describe("the proof handle carries no write capability", () => {
-  const handle = UNREGISTERED_HANDLE as unknown as Record<string, unknown>;
-
-  it("exposes no recorder under any of the obvious names", () => {
-    for (const name of [
-      "record",
-      "recordEvidence",
-      "mark",
-      "complete",
-      "tokens",
-      "counts",
-      "state",
-      "evidence",
-    ]) {
-      expect(handle[name], `the handle exposes ${name}`).toBeUndefined();
-    }
-  });
-
-  it("exposes only the id, by both key views", () => {
-    expect(Object.keys(handle)).toEqual(["proofId"]);
-    expect(Reflect.ownKeys(handle)).toEqual(["proofId"]);
-  });
-
-  it("is frozen, so a writer cannot be attached to it", () => {
-    expect(Object.isFrozen(handle)).toBe(true);
-    try {
-      handle.record = () => undefined;
-    } catch {
-      // strict mode throws; either outcome is acceptable
-    }
-    expect(handle.record, "a recorder was attached to the handle").toBeUndefined();
-    expect(handle.proofId, "the id was overwritten").toBe("(unregistered)");
-  });
-
-  it("a look-alike handle cannot record evidence", () => {
-    // Identity is the key to the private store, so a hand-made object of the
-    // same SHAPE is not the same handle. The helper's own assertion passes here
-    // — it is the recording that is refused.
-    const forged = Object.freeze({ proofId: "CLAIM->INVITE" }) as unknown as typeof UNREGISTERED_HANDLE;
-    expect(
-      () => expectRefused(forged, "same", "same", "the assertion itself holds"),
-      "an unregistered handle was allowed to record evidence",
-    ).toThrow();
+  it("a repeated history cannot be linearized from its transition labels alone", () => {
+    // Why the tests above capture identity as they go: the label chain admits
+    // several orderings once a transition repeats, so the helper refuses rather
+    // than guessing. No database needed.
+    const labels = [
+      [null, "waiting"],
+      ["waiting", "claimed"],
+      ["claimed", "invited"],
+      ["invited", "released"],
+      ["released", "waiting"],
+      ["waiting", "claimed"],
+      ["claimed", "invited"],
+      ["invited", "released"],
+      ["released", "waiting"],
+    ] as const;
+    const attempt = linearizeByTransitionChain(
+      labels.map(([from, to], i) => ({
+        from_status: from,
+        to_status: to,
+        occurred_at: new Date(1_700_000_000_000 + i * 1000),
+      })),
+    );
+    expect(attempt.ok, "a two-cycle history must not be linearizable from labels").toBe(false);
+    if (!attempt.ok) expect(attempt.reason).toBe("ambiguous");
   });
 });

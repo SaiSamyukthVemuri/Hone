@@ -5,18 +5,15 @@ import {
   type EventRow,
 } from "../db/helpers/event-order";
 
-// WAIT-03 — the reconstruction of lifecycle event order, proven WITHOUT a
-// database, because the defect is in the algorithm rather than in any data.
+// WAIT-03 — reconstructing the order of an entry's lifecycle events from its
+// transition labels, with no database needed.
 //
-// THE FINDING THIS FILE RECORDS. The previous reconstruction walked the
-// transition chain and, where a transition REPEATED, assigned the repeats to
-// their slots in `occurred_at` order. Review pointed out that this can reassign
-// rows between cycles and so hide an inversion involving DIFFERENT transitions —
-// contradicting the limit the code claimed for itself, which was that only
-// inversions between IDENTICAL transitions could go undetected.
-//
-// That is reproduced below against the real history shape it concerns: two
-// complete release/requeue cycles.
+// The contract that matters: this recovers an order ONLY when the labels
+// determine exactly one, and refuses otherwise. A history that repeats a
+// transition — two release/requeue cycles reach `waiting` three times — could
+// only be disambiguated by `occurred_at`, which is the evidence these suites
+// exist to check. So it refuses, and the concurrency tests capture event
+// identity as they go instead.
 
 const at = (ms: number) => new Date(1_700_000_000_000 + ms);
 const ev = (from: string | null, to: string, ms: number): EventRow => ({
@@ -24,38 +21,6 @@ const ev = (from: string | null, to: string, ms: number): EventRow => ({
   to_status: to,
   occurred_at: at(ms),
 });
-
-/**
- * THE RETIRED ALGORITHM, reproduced exactly so the reproduction is executable
- * rather than argued. Shape-check, then assign each repeated transition class to
- * its slots in timestamp order.
- */
-function legacyCanonicalize(rows: EventRow[]): EventRow[] {
-  const heads = rows.filter((r) => r.from_status === null);
-  const used = rows.map(() => false);
-  const path: EventRow[] = [];
-  const found: EventRow[][] = [];
-  const walk = (i: number): void => {
-    used[i] = true;
-    path.push(rows[i]);
-    if (path.length === rows.length) found.push([...path]);
-    else {
-      for (let j = 0; j < rows.length; j += 1) {
-        if (!used[j] && rows[j].from_status === rows[i].to_status) walk(j);
-      }
-    }
-    path.pop();
-    used[i] = false;
-  };
-  walk(rows.indexOf(heads[0]));
-  const key = (r: EventRow) => `${r.from_status}->${r.to_status}`;
-  const byLabel = new Map<string, EventRow[]>();
-  for (const r of rows) byLabel.set(key(r), [...(byLabel.get(key(r)) ?? []), r]);
-  for (const list of byLabel.values()) {
-    list.sort((x, y) => x.occurred_at.getTime() - y.occurred_at.getTime());
-  }
-  return found[0].map((r) => byLabel.get(key(r))!.shift()!);
-}
 
 // TWO COMPLETE CYCLES. Both orderings below contain exactly the same eight rows;
 // they differ only in which cycle each repeated transition belongs to — which is
@@ -85,28 +50,7 @@ const TRUE_EXECUTION_ORDER: EventRow[] = [
   ev("invited", "released", 70),
 ];
 
-describe("P2-B — timestamps must never establish event identity", () => {
-  it("REPRODUCTION: the retired algorithm reports a backwards history as ordered", () => {
-    // The observer's record shows the inversion plainly.
-    expect(
-      firstInversion(TRUE_EXECUTION_ORDER),
-      "the fixture is supposed to contain an inversion",
-    ).not.toBeNull();
-
-    // The retired reconstruction sees the same eight rows and, because it sorts
-    // each repeated transition class by the timestamp under test, hands back a
-    // sequence that is perfectly ordered. The inversion is GONE.
-    const rebuilt = legacyCanonicalize(TWO_CYCLES);
-    expect(
-      firstInversion(rebuilt),
-      "the retired algorithm was supposed to hide this inversion",
-    ).toBeNull();
-
-    // And it is the same history: identical rows, only the cycle identity differs.
-    const bag = (rows: EventRow[]) =>
-      rows.map((r) => `${r.from_status}->${r.to_status}@${r.occurred_at.getTime()}`).sort();
-    expect(bag(rebuilt)).toEqual(bag(TRUE_EXECUTION_ORDER));
-  });
+describe("lifecycle event ordering — labels alone, never timestamps", () => {
 
   it("the replacement REFUSES rather than guessing", () => {
     const out = linearizeByTransitionChain(TWO_CYCLES);
