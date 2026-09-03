@@ -901,6 +901,11 @@ describe("0189 — temporal closure: registration and scope support", () => {
   const dbSrc = readFileSync(dbPath, "utf8");
   const sourceFile = ts.createSourceFile(DB_TEST, dbSrc, ts.ScriptTarget.Latest, true);
 
+  // The proof runtime — where the write capability lives, and where it must STAY.
+  const RUNTIME = "tests/db/helpers/temporal-proof-runtime.ts";
+  const runtimeSrc = readFileSync(path.join(ROOT, RUNTIME), "utf8");
+  const runtimeFile = ts.createSourceFile(RUNTIME, runtimeSrc, ts.ScriptTarget.Latest, true);
+
   const callsWithin = (node: ts.Node): Set<string> => {
     const names = new Set<string>();
     const visit = (n: ts.Node): void => {
@@ -936,14 +941,34 @@ describe("0189 — temporal closure: registration and scope support", () => {
   };
 
   /** The declaration body of a top-level function. */
-  const declarationOf = (name: string): ts.FunctionDeclaration | null => {
+  const declarationOf = (name: string, file: ts.SourceFile): ts.FunctionDeclaration | null => {
     let hit: ts.FunctionDeclaration | null = null;
     const visit = (n: ts.Node): void => {
       if (ts.isFunctionDeclaration(n) && n.name?.text === name) hit = n;
       ts.forEachChild(n, visit);
     };
-    visit(sourceFile);
+    visit(file);
     return hit;
+  };
+
+  /** Names this module actually exports. */
+  const exportedNames = (file: ts.SourceFile): Set<string> => {
+    const names = new Set<string>();
+    const visit = (n: ts.Node): void => {
+      const mods = ts.canHaveModifiers(n) ? (ts.getModifiers(n) ?? []) : [];
+      const isExported = mods.some((m) => m.kind === ts.SyntaxKind.ExportKeyword);
+      if (isExported) {
+        if ((ts.isFunctionDeclaration(n) || ts.isClassDeclaration(n)) && n.name) names.add(n.name.text);
+        if (ts.isVariableStatement(n)) {
+          for (const d of n.declarationList.declarations) {
+            if (ts.isIdentifier(d.name)) names.add(d.name.text);
+          }
+        }
+      }
+      ts.forEachChild(n, visit);
+    };
+    visit(file);
+    return names;
   };
 
   const edgeRegistrations = registrationsOf(EDGE_TEST_HELPER);
@@ -963,8 +988,8 @@ describe("0189 — temporal closure: registration and scope support", () => {
       // A wrapper quietly changed to `it.skip` would run no proof at all. The
       // suite's started/completed bookkeeping catches that at runtime; this
       // catches it at review time, which is cheaper.
-      const decl = declarationOf(helper);
-      expect(decl, `${helper} is not declared in ${DB_TEST}`).not.toBeNull();
+      const decl = declarationOf(helper, runtimeFile);
+      expect(decl, `${helper} is not declared in ${RUNTIME}`).not.toBeNull();
       const called = callsWithin(decl!);
       expect(called.has("it"), `${helper} never registers a test`).toBe(true);
       for (const forbidden of ["skip", "todo", "only"]) {
@@ -1046,8 +1071,9 @@ describe("0189 — temporal closure: registration and scope support", () => {
       // ...and something in the suite records it. A token nothing can emit would
       // make its edge permanently unprovable rather than silently proven.
       expect(
-        dbSrc.includes(`record("${token}")`),
-        `${token} is required but no helper records it`,
+        runtimeSrc.includes(`recordEvidenceInternal(handle, "${token}")`) ||
+          runtimeSrc.includes(`recordEvidenceInternal(this.#handle, "${token}")`),
+        `${token} is required but no assertion helper records it`,
       ).toBe(true);
     }
   });
@@ -1056,6 +1082,41 @@ describe("0189 — temporal closure: registration and scope support", () => {
     expect(TEMPORAL_EDGES.find((x) => x.id === "REDEEM->CONVERT")!.proof).toBe(
       "EXECUTED_BLOCKING_RACE",
     );
+  });
+
+  it("the proof runtime exports NO way to mint evidence", () => {
+    // THE DEFECT THIS CLOSES. Evidence used to be recorded at runtime — correct
+    // in direction — but the callback held the object that could write it, so a
+    // test could record every required token and return having proven nothing.
+    // The writer is module-private now, and must stay that way.
+    const exported = exportedNames(runtimeFile);
+    for (const forbidden of [
+      "recordEvidenceInternal",
+      "ProofContext",
+      "STATE",
+      "STARTED",
+      "COMPLETED",
+      "newHandle",
+    ]) {
+      expect(exported.has(forbidden), `${RUNTIME} exports ${forbidden}`).toBe(false);
+    }
+    // ...and the handle type carries an id and nothing else.
+    expect(runtimeSrc).toMatch(/export type ProofHandle = \{ readonly proofId: string \}/);
+  });
+
+  it("every evidence recording is reached only AFTER an assertion", () => {
+    // ASSERT then RECORD. A recorder on the line before its expect would make
+    // the token a declaration again rather than a consequence.
+    const lines = runtimeSrc.split("\n");
+    for (let i = 0; i < lines.length; i += 1) {
+      if (!lines[i].includes("recordEvidenceInternal(")) continue;
+      if (lines[i].includes("function recordEvidenceInternal")) continue;
+      const preceding = lines.slice(Math.max(0, i - 25), i).join("\n");
+      expect(
+        /expect\(/.test(preceding),
+        `a recordEvidenceInternal call at line ${i + 1} has no assertion before it`,
+      ).toBe(true);
+    }
   });
 
   it("HYGIENE ONLY — the two retired circular helpers are not called again", () => {

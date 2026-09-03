@@ -2,15 +2,24 @@ import { afterAll, describe, expect, it } from "vitest";
 import { Client } from "pg";
 import { randomUUID } from "node:crypto";
 import { adminQuery, closePool, resolveLocalDbUrl } from "./helpers/harness";
+import { REPEATED_CYCLE_PROOFS } from "./helpers/temporal-edges";
 import {
-  edgeTitle,
-  MECHANISM_EVIDENCE,
-  REPEATED_CYCLE_EVIDENCE,
-  REPEATED_CYCLE_PROOFS,
-  TEMPORAL_EDGES,
-  VERDICT_EVIDENCE,
-  type EvidenceToken,
-} from "./helpers/temporal-edges";
+  eventIdSet,
+  expectExactlyOneNewEvent,
+  expectOrdered,
+  expectRefused,
+  newEventsSince,
+  ObservedLifecycleSequence,
+  pickEvent,
+  proveBlockedOn,
+  proveInvisibleWhileUncommitted,
+  proveNotYetVisible,
+  repeatedCycleTest,
+  temporalEdgeTest,
+  UNREGISTERED_HANDLE,
+  waitUntilBlocked,
+  type ObservedEvent,
+} from "./helpers/temporal-proof-runtime";
 import {
   firstInversion,
   linearizeByTransitionChain,
@@ -45,156 +54,6 @@ async function conn(): Promise<Client> {
   const c = new Client({ connectionString: resolveLocalDbUrl() });
   await c.connect();
   return c;
-}
-
-/** Poll pg_stat_activity until `pid` is genuinely waiting on a lock. */
-async function waitUntilBlocked(pid: number, timeoutMs = 12000): Promise<string | null> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const r = await adminQuery(
-      `select wait_event_type, wait_event from pg_stat_activity where pid = $1`,
-      [pid],
-    );
-    if (r.rows[0]?.wait_event_type === "Lock") {
-      return `${r.rows[0].wait_event_type}/${r.rows[0].wait_event}`;
-    }
-    await sleep(50);
-  }
-  return null;
-}
-
-/**
- * THE RUNTIME PROOF CONTEXT.
- *
- * WHY THIS EXISTS. Closure used to be decided from the syntax tree: if the
- * evidence call was written inside the callback, the edge counted as proven.
- * Review pointed out that WRITTEN is not RUN, and every example reproduced —
- * `return` before the proof, the proof inside `if (false)`, and the wrapper
- * switched to `it.skip` all left the closure suite green while nothing was
- * proven. So evidence is now recorded at runtime, by the helper that has just
- * finished proving the thing, AFTER the assertion that could have thrown.
- *
- * One context per edge, per invocation. A sibling edge's evidence cannot satisfy
- * this one, because it is written into a different object.
- */
-class ProofContext {
-  readonly edgeId: string;
-  readonly #counts = new Map<EvidenceToken, number>();
-  constructor(edgeId: string) {
-    this.edgeId = edgeId;
-  }
-  /** Called ONLY by an assertion helper that has already succeeded. */
-  record(token: EvidenceToken): void {
-    this.#counts.set(token, (this.#counts.get(token) ?? 0) + 1);
-  }
-  has(token: EvidenceToken): boolean {
-    return (this.#counts.get(token) ?? 0) > 0;
-  }
-  count(token: EvidenceToken): number {
-    return this.#counts.get(token) ?? 0;
-  }
-  observed(): EvidenceToken[] {
-    return [...this.#counts.keys()].sort();
-  }
-}
-
-/**
- * For assertions made OUTSIDE a registered proof. Their recordings certify
- * nothing: no closure requirement ever reads this context. It exists so the
- * helpers can keep one signature, and so a reader can see at a glance which call
- * sites are part of a certified proof and which are ordinary assertions.
- */
-const UNREGISTERED = new ProofContext("(unregistered)");
-
-/**
- * THE MECHANISM PROOF for an EXECUTED_BLOCKING_RACE: the successor backend is
- * genuinely PARKED on a lock. `waitUntilBlocked` returns non-null only when
- * pg_stat_activity reports wait_event_type = 'Lock', so this is the lock proof
- * itself — not a timer, and not an inference from elapsed time.
- *
- * The token is recorded AFTER the assertion. If the backend never blocked, the
- * expect throws and nothing is recorded, so the edge cannot be certified.
- */
-async function proveBlockedOn(proof: ProofContext, pid: number, why: string): Promise<string> {
-  const ev = await waitUntilBlocked(pid);
-  expect(ev, `${why} — the backend never reached a Lock wait`).not.toBeNull();
-  proof.record("BLOCKED_ON_EXPECTED_LOCK");
-  return ev as string;
-}
-
-/**
- * THE MECHANISM PROOF for MVCC_VISIBILITY_ORDERED. Where the predecessor INSERTS
- * the row, there is no blocking schedule to exercise: the row is invisible to
- * every other session until it commits, so a successor cannot park on it — it
- * simply cannot find it. Proving the invisibility is what makes the ordering
- * claim honest instead of an untested assumption.
- */
-async function proveInvisibleWhileUncommitted(
-  proof: ProofContext,
-  entryId: string,
-  why: string,
-): Promise<void> {
-  const r = await adminQuery(
-    `select count(*)::int as c from public.new_client_waitlist_entries where id = $1`,
-    [entryId],
-  );
-  expect(r.rows[0].c as number, `${why} — the uncommitted row was visible`).toBe(0);
-  proof.record("MVCC_INVISIBLE");
-}
-
-/**
- * THE MECHANISM PROOF for PREDICATE_VISIBILITY_ORDERED. The row exists, but the
- * STATE the successor's WHERE clause requires does not exist in any version
- * another session can see, so the statement matches zero rows and never reaches
- * a lock. This asserts what the rest of the world still sees.
- */
-async function proveNotYetVisible(
-  proof: ProofContext,
-  entryId: string,
-  stillSees: string,
-  why: string,
-): Promise<void> {
-  const r = await adminQuery(
-    `select status from public.new_client_waitlist_entries where id = $1`,
-    [entryId],
-  );
-  expect(r.rows[0].status as string, `${why} — the uncommitted transition was visible`).toBe(
-    stillSees,
-  );
-  proof.record("PREDICATE_NOT_YET_VISIBLE");
-}
-
-/**
- * THE VERDICT for an ORDERED edge: the successor's stamp does not predate its
- * predecessor. `toleranceMs` is non-zero ONLY where the boundary instant is read
- * on a different connection from the one that stamps; when both values are read
- * from the rows themselves it is 0 and the ordering is exact.
- */
-function expectOrdered(
-  proof: ProofContext,
-  successor: Date,
-  predecessor: Date,
-  why: string,
-  toleranceMs = 0,
-): void {
-  const drift = predecessor.getTime() - successor.getTime();
-  expect(
-    drift,
-    `${why} — the successor stamp is ${drift}ms BEFORE its predecessor`,
-  ).toBeLessThanOrEqual(toleranceMs);
-  proof.record("ORDERED");
-}
-
-/** THE VERDICT for a REFUSED edge: the successor declined, in the exact deployed
- *  vocabulary. */
-function expectRefused(
-  proof: ProofContext,
-  actual: string,
-  expected: string,
-  why: string,
-): void {
-  expect(actual, why).toBe(expected);
-  proof.record("REFUSED");
 }
 
 /** Block until the SERVER's wall clock has passed `expiresAt`, and prove it. */
@@ -1667,227 +1526,6 @@ async function eventsAlongTransitionChain(entryId: string): Promise<EventRow[]> 
 // The timestamps are then CHECKED against that independently established order,
 // which is the direction the evidence has to flow.
 // ---------------------------------------------------------------------------
-type ObservedEvent = EventRow & { id: string };
-
-async function eventIdSet(entryId: string): Promise<Set<string>> {
-  const r = await adminQuery(
-    `select id from public.new_client_waitlist_entry_events where entry_id = $1`,
-    [entryId],
-  );
-  return new Set(r.rows.map((x: Record<string, unknown>) => x.id as string));
-}
-
-/** All events appended since the snapshot, identified by set difference. */
-async function newEventsSince(entryId: string, before: Set<string>): Promise<ObservedEvent[]> {
-  const rows = (
-    await adminQuery(
-      `select id, from_status, to_status, occurred_at
-         from public.new_client_waitlist_entry_events where entry_id = $1`,
-      [entryId],
-    )
-  ).rows as ObservedEvent[];
-  return rows.filter((r) => !before.has(r.id));
-}
-
-/** Pick one of those by its transition, which is unique among them. Identity
- *  comes from the id set and the label — never from the timestamp. */
-function pickEvent(events: ObservedEvent[], from: string, to: string): ObservedEvent {
-  const hits = events.filter((e) => e.from_status === from && e.to_status === to);
-  expect(hits, `expected exactly one new ${from}->${to} event`).toHaveLength(1);
-  return hits[0];
-}
-
-/** The single event a controlled transition appended. More than one, or none, is
- *  itself a failure: the caller believed it performed exactly one transition. */
-async function expectExactlyOneNewEvent(
-  proof: ProofContext,
-  entryId: string,
-  before: Set<string>,
-  from: string | null,
-  to: string,
-): Promise<ObservedEvent> {
-  const fresh = await newEventsSince(entryId, before);
-  expect(
-    fresh.map((r) => `${r.from_status}->${r.to_status}`),
-    `expected exactly ONE new event for ${from}->${to}`,
-  ).toHaveLength(1);
-  expect(fresh[0].from_status).toBe(from);
-  expect(fresh[0].to_status).toBe(to);
-  proof.record("INDEPENDENT_EVENT_CAPTURE");
-  return fresh[0];
-}
-
-/**
- * THE OPAQUE CAUSAL SEQUENCE.
- *
- * The events table stores no ordinal — `id` is a random uuid — so a repeated
- * history cannot be ordered from the rows themselves. What CAN order it is the
- * harness, because the harness performed the operations. This class is the only
- * thing that gets to say what that order was.
- *
- * WHY IT IS CLOSED. The sequence is a private field. There is no setter, and no
- * constructor argument that accepts events, so a caller cannot hand it a
- * pre-sorted array and have it validated as though it were causal. The ONLY way
- * in is `captureTransition`, which brackets one controlled operation and takes
- * the event id that is new. `assertChronology` then walks that sequence in
- * APPEND order and never sorts.
- *
- * This replaced a guard that banned the spellings `eventsInInsertionOrder`,
- * `lastEventAt` and the SQL literal `order by occurred_at`. Review was right
- * that a blacklist is not the invariant: an in-memory
- * `.sort((a, b) => a.occurred_at - b.occurred_at)`, a `reduce` that picks the
- * minimum, or a composed `order by ${col}` all walk straight past it — all three
- * reproduce, passing vacuously while the guard stays green. The invariant is not
- * "the file never mentions occurred_at"; `occurred_at` is exactly what these
- * tests validate. The invariant is that it never CONSTRUCTS the order it is
- * validated against.
- */
-class ObservedLifecycleSequence {
-  readonly #events: ObservedEvent[] = [];
-  readonly #entryId: string;
-  readonly #proof: ProofContext;
-
-  constructor(entryId: string, proof: ProofContext) {
-    this.#entryId = entryId;
-    this.#proof = proof;
-  }
-
-  /** Adopt the INSERT event of a freshly created entry as step zero. */
-  async adopt(from: string | null, to: string): Promise<ObservedEvent> {
-    const e = await expectExactlyOneNewEvent(
-      this.#proof,
-      this.#entryId,
-      new Set<string>(),
-      from,
-      to,
-    );
-    this.#events.push(e);
-    return e;
-  }
-
-  /** Run ONE controlled transition and append the event it created. */
-  async captureTransition(
-    from: string | null,
-    to: string,
-    run: () => Promise<void>,
-  ): Promise<ObservedEvent> {
-    const before = await eventIdSet(this.#entryId);
-    await run();
-    const e = await expectExactlyOneNewEvent(this.#proof, this.#entryId, before, from, to);
-    this.#events.push(e);
-    return e;
-  }
-
-  get length(): number {
-    return this.#events.length;
-  }
-
-  /** The statuses in the order they were OBSERVED to happen. */
-  statuses(): string[] {
-    return this.#events.map((e) => e.to_status);
-  }
-
-  /**
-   * Chronology over the captured causal order. Iterates the private sequence in
-   * append order; nothing here sorts, and no caller can supply the order.
-   */
-  assertChronology(why: string): void {
-    for (let i = 1; i < this.#events.length; i += 1) {
-      const prev = this.#events[i - 1];
-      const cur = this.#events[i];
-      expect(
-        cur.occurred_at.getTime(),
-        `${why} — step ${i} (${cur.from_status}->${cur.to_status}) precedes step ${i - 1} ` +
-          `(${prev.from_status}->${prev.to_status})`,
-      ).toBeGreaterThanOrEqual(prev.occurred_at.getTime());
-    }
-    this.#proof.record("CHRONOLOGY_CHECK_EXECUTED");
-  }
-
-  /** Declared complete only after the expected transitions were all captured. */
-  assertCompleted(expected: readonly string[]): void {
-    expect(this.statuses(), "the observed cycle did not follow the expected path").toEqual([
-      ...expected,
-    ]);
-    this.#proof.record("REPEATED_CYCLE_COMPLETE");
-  }
-}
-
-// ---------------------------------------------------------------------------
-// REGISTRATION, AND THE RUNTIME BOOKKEEPING THAT MAKES SKIPPING VISIBLE.
-//
-// Each wrapper registers a LIVE `it(...)`, runs the proof, and only then
-// compares the evidence that ACTUALLY EXECUTED against the manifest's
-// requirements for that exact id. A callback that returns early, or hides its
-// proof behind `if (false)`, records nothing and fails here.
-//
-// The started/completed sets close the remaining hole: a test that never runs
-// records nothing at all, so `it.skip`, `it.todo`, a filtered run, or a wrapper
-// quietly changed to skip cannot leave the suite green — the afterAll set
-// equality fails instead.
-// ---------------------------------------------------------------------------
-const EXPECTED_EDGE_IDS = TEMPORAL_EDGES.map((e) => e.id).sort();
-const EXPECTED_CYCLE_IDS = REPEATED_CYCLE_PROOFS.map((c) => c.id).sort();
-const STARTED: string[] = [];
-const COMPLETED: string[] = [];
-
-function temporalEdgeTest(
-  edgeId: string,
-  what: string,
-  fn: (proof: ProofContext) => Promise<void>,
-): void {
-  it(edgeTitle(edgeId, what), async () => {
-    const row = TEMPORAL_EDGES.find((e) => e.id === edgeId);
-    expect(row, `${edgeId} is registered but the manifest declares no such edge`).toBeDefined();
-    const proof = new ProofContext(edgeId);
-    STARTED.push(edgeId);
-    await fn(proof);
-    const required = [
-      MECHANISM_EVIDENCE[row!.proof],
-      ...row!.verdicts.map((v) => VERDICT_EVIDENCE[v]),
-    ];
-    const missing = required.filter((t) => !proof.has(t));
-    expect(
-      missing,
-      `${edgeId}: required evidence never EXECUTED (observed: ${proof.observed().join(", ") || "nothing"})`,
-    ).toEqual([]);
-    COMPLETED.push(edgeId);
-  });
-}
-
-function repeatedCycleTest(
-  cycleId: string,
-  what: string,
-  fn: (proof: ProofContext, seq: (entryId: string) => ObservedLifecycleSequence) => Promise<void>,
-): void {
-  it(`[${cycleId}] ${what}`, async () => {
-    const row = REPEATED_CYCLE_PROOFS.find((c) => c.id === cycleId);
-    expect(row, `${cycleId} is registered but the manifest declares no such cycle`).toBeDefined();
-    const proof = new ProofContext(cycleId);
-    STARTED.push(cycleId);
-    await fn(proof, (entryId) => new ObservedLifecycleSequence(entryId, proof));
-    const missing = REPEATED_CYCLE_EVIDENCE.filter((t) => !proof.has(t));
-    expect(
-      missing,
-      `${cycleId}: required evidence never EXECUTED (observed: ${proof.observed().join(", ") || "nothing"})`,
-    ).toEqual([]);
-    expect(
-      proof.count("INDEPENDENT_EVENT_CAPTURE"),
-      `${cycleId}: too few independently captured transitions`,
-    ).toBeGreaterThanOrEqual(row!.captures);
-    COMPLETED.push(cycleId);
-  });
-}
-
-afterAll(() => {
-  // EXACT set equality. Anything that did not run is missing from both lists.
-  const expected = [...EXPECTED_EDGE_IDS, ...EXPECTED_CYCLE_IDS].sort();
-  expect([...new Set(STARTED)].sort(), "some registered proof never STARTED").toEqual(expected);
-  expect([...new Set(COMPLETED)].sort(), "some proof started but never COMPLETED").toEqual(
-    expected,
-  );
-});
-
 /** A studio + owner, with no entry yet. */
 async function bareStudio(label: string) {
   return seedStudioOwner(label);
@@ -2203,7 +1841,7 @@ async function raceRequeueAgainst(fnName: string, s: Awaited<ReturnType<typeof s
   await adminQuery(`select public.requeue_new_client_waitlist_entry($1,$2,$3)`, [
     s.studioId, entryId, s.userId,
   ]);
-  const waitingAt = (await expectExactlyOneNewEvent(UNREGISTERED, entryId, beforeRequeue, "released", "waiting"))
+  const waitingAt = (await expectExactlyOneNewEvent(UNREGISTERED_HANDLE, entryId, beforeRequeue, "released", "waiting"))
     .occurred_at;
 
   await gate.query("commit");
@@ -2278,7 +1916,7 @@ describe("bulk claim — the requeue race", () => {
     );
     const beforeRequeue = await eventIdSet(e);
     await adminQuery(`select public.requeue_new_client_waitlist_entry($1,$2,$3)`, [s.studioId, e, s.userId]);
-    const waitingAt = (await expectExactlyOneNewEvent(UNREGISTERED, e, beforeRequeue, "released", "waiting"))
+    const waitingAt = (await expectExactlyOneNewEvent(UNREGISTERED_HANDLE, e, beforeRequeue, "released", "waiting"))
       .occurred_at;
     await gate.query("commit");
     await gate.end();
@@ -2287,16 +1925,16 @@ describe("bulk claim — the requeue race", () => {
     await adminQuery(`select * from public.claim_new_client_waitlist_entries($1,$2,$3)`, [
       s.studioId, s.userId, 5,
     ]);
-    const claimedEv = await expectExactlyOneNewEvent(UNREGISTERED, e, beforeClaim, "waiting", "claimed");
+    const claimedEv = await expectExactlyOneNewEvent(UNREGISTERED_HANDLE, e, beforeClaim, "waiting", "claimed");
     const row = (
       await adminQuery(`select status, claimed_at from public.new_client_waitlist_entries where id=$1`, [e])
     ).rows[0] as { status: string; claimed_at: Date };
     expect(row.status).toBe("claimed");
-    expectOrdered(UNREGISTERED, row.claimed_at, waitingAt, "claimed_at precedes the requeue that made the row claimable");
+    expectOrdered(UNREGISTERED_HANDLE, row.claimed_at, waitingAt, "claimed_at precedes the requeue that made the row claimable");
     // Both events captured by identity, so this compares the SECOND `waiting`
     // against the SECOND `claimed` — which is the comparison that matters and the
     // one a timestamp-sorted chain could silently get wrong.
-    expectOrdered(UNREGISTERED, claimedEv.occurred_at, waitingAt, "the claimed event predates the requeue that enabled it");
+    expectOrdered(UNREGISTERED_HANDLE, claimedEv.occurred_at, waitingAt, "the claimed event predates the requeue that enabled it");
   });
 
   it("D/I — every winner shares ONE instant, and each event equals its entry stamp", async () => {
@@ -3248,5 +2886,65 @@ describe("repeated cycles — the chronology check itself can fail", () => {
     };
     expect(() => compare(a, b), "a forward pair should pass").not.toThrow();
     expect(() => compare(b, a), "an inverted pair was not caught").toThrow();
+  });
+});
+
+// =============================================================================
+// PROOF AUTHORITY — the callback cannot mint its own evidence.
+//
+// WHAT THIS CLOSES. The previous generation recorded evidence at runtime, which
+// was the right direction, but it handed the callback the object that could
+// WRITE that evidence. Reproduced: a callback that called
+// `proof.record("BLOCKED_ON_EXPECTED_LOCK"); proof.record("ORDERED"); return;`
+// touched no database, ran no assertion, and the suite passed.
+//
+// The write capability now lives on the other side of a module boundary, keyed
+// by handle identity in a private WeakMap. TypeScript alone would not be enough
+// — a test can always cast to `any` — so these check the RUNTIME shape.
+// =============================================================================
+
+describe("the proof handle carries no write capability", () => {
+  const handle = UNREGISTERED_HANDLE as unknown as Record<string, unknown>;
+
+  it("exposes no recorder under any of the obvious names", () => {
+    for (const name of [
+      "record",
+      "recordEvidence",
+      "mark",
+      "complete",
+      "tokens",
+      "counts",
+      "state",
+      "evidence",
+    ]) {
+      expect(handle[name], `the handle exposes ${name}`).toBeUndefined();
+    }
+  });
+
+  it("exposes only the id, by both key views", () => {
+    expect(Object.keys(handle)).toEqual(["proofId"]);
+    expect(Reflect.ownKeys(handle)).toEqual(["proofId"]);
+  });
+
+  it("is frozen, so a writer cannot be attached to it", () => {
+    expect(Object.isFrozen(handle)).toBe(true);
+    try {
+      handle.record = () => undefined;
+    } catch {
+      // strict mode throws; either outcome is acceptable
+    }
+    expect(handle.record, "a recorder was attached to the handle").toBeUndefined();
+    expect(handle.proofId, "the id was overwritten").toBe("(unregistered)");
+  });
+
+  it("a look-alike handle cannot record evidence", () => {
+    // Identity is the key to the private store, so a hand-made object of the
+    // same SHAPE is not the same handle. The helper's own assertion passes here
+    // — it is the recording that is refused.
+    const forged = Object.freeze({ proofId: "CLAIM->INVITE" }) as unknown as typeof UNREGISTERED_HANDLE;
+    expect(
+      () => expectRefused(forged, "same", "same", "the assertion itself holds"),
+      "an unregistered handle was allowed to record evidence",
+    ).toThrow();
   });
 });
