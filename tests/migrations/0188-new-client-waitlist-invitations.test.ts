@@ -59,30 +59,26 @@ describe("0188 — identity and position", () => {
     expect(versionsAbove(VERSION).length).toBeGreaterThan(0);
   });
 
-  it("IS APPLIED to production, and is the CURRENT hosted head", () => {
-    // MOVED WHEN 0188 WAS APPLIED (2026-09-01), deliberately, exactly as the
-    // previous wording said it would be. 0188 was applied from the exact
-    // reviewed #664 head 378ec694, BEFORE that PR merged, and hosted advanced
-    // from 0187 to 0188.
-    //
-    // 0188 now owns the CURRENT-head claims that 0187's file used to hold;
-    // 0187's file keeps only its own durable, permanent facts.
+  it("IS APPLIED to production, and is no longer the hosted head", () => {
+    // MOVED AGAIN WHEN 0189 WAS APPLIED (2026-09-03). 0188 was applied on
+    // 2026-09-01 from the exact reviewed #664 head 378ec694 and held the hosted
+    // head until 0189 was applied from head 0f5cbf78 — both BEFORE that PR
+    // merged. So 0188 keeps its own durable fact, that it is applied and not
+    // pending, and hands the CURRENT-head claim to 0189's file exactly as 0187's
+    // file handed it here.
     const state = migrationState();
-    expect(state.hosted_migration_max).toBe(VERSION);
+    expect(Number(state.hosted_migration_max)).toBeGreaterThanOrEqual(Number(VERSION));
     expect(state.pending_migrations).not.toContain(FILE);
   });
 
-  it("the repo has legitimately moved ahead again — 0189 is pending", () => {
-    // MIGRATION-FIRST, RESTATED HONESTLY. A reviewed migration authored above
-    // the hosted head is the NORMAL state of this repository while a repair is
-    // in review; it is not drift and it is not a documentation error. Parity
-    // returns only when an AUTHORIZED apply advances hosted state.
+  it("hosted state has caught up — nothing is pending above 0188", () => {
+    // MIGRATION-FIRST, COMPLETED. A reviewed migration authored above the hosted
+    // head is the normal state of this repository while a repair is in review,
+    // and parity returns when an AUTHORIZED apply advances hosted state. That
+    // apply has happened: 0189 is applied and the pending set is empty.
     const state = migrationState();
-    expect(Number(state.repo_migration_max)).toBeGreaterThan(
-      Number(state.hosted_migration_max),
-    );
-    expect(state.pending_migrations.length).toBeGreaterThan(0);
-    expect(state.pending_migrations).not.toContain(FILE);
+    expect(state.repo_migration_max).toBe(state.hosted_migration_max);
+    expect(state.pending_migrations).toEqual([]);
   });
 });
 

@@ -69,15 +69,18 @@ describe("0189 — identity and position", () => {
     expect(versionsAbove(VERSION)).toEqual([]);
   });
 
-  it("is AUTHORED AND TESTED, NOT APPLIED to production", () => {
-    // The honest posture for a repair in review. Hosted state advances ONLY in
-    // the change that records an authorized production apply, so this asserts
-    // the gap rather than hiding it. When 0189 is applied, this block moves —
-    // deliberately, by a human, in that change.
+  it("IS APPLIED to production, and is the CURRENT hosted head", () => {
+    // THIS BLOCK MOVED WHEN 0189 WAS APPLIED (2026-09-03), deliberately, exactly
+    // as the previous wording said it would. 0189 was applied from the exact
+    // reviewed #664 head 0f5cbf78, BEFORE that PR merged, and hosted advanced
+    // from 0188 to 0189 — restoring parity.
+    //
+    // 0189 now owns the CURRENT-head claim that 0188's file used to hold; 0188's
+    // file keeps only its own durable facts.
     const state = migrationState();
     expect(state.repo_migration_max).toBe(VERSION);
-    expect(state.hosted_migration_max).toBe("0188");
-    expect(state.pending_migrations).toEqual([VERSION]);
+    expect(state.hosted_migration_max).toBe(VERSION);
+    expect(state.pending_migrations).toEqual([]);
   });
 });
 
