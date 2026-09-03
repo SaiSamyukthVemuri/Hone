@@ -101,8 +101,20 @@ export function linearizeByTransitionChain<T extends EventRow>(rows: T[]): Linea
   return { ok: true, chain: found[0] };
 }
 
-/** The first place a sequence goes backwards in time, or null. The sequence must
- *  already be in a known execution order — this function establishes nothing. */
+/**
+ * The first place a sequence goes backwards in time, or null.
+ *
+ * SYNTHETIC FIXTURES ONLY. This compares JS `Date` milliseconds, and
+ * node-postgres has already truncated PostgreSQL's microseconds by the time a
+ * real row reaches it — so a sub-millisecond inversion in a REAL event chain is
+ * invisible here. It was the chronology authority for ten database-backed tests
+ * and is no longer: those hand their chain's event ids to
+ * `expectChainChronological`, which lets PostgreSQL compare the stored columns.
+ *
+ * What remains legitimate is exactly what tests/lib/waitlist-event-order.test.ts
+ * does with it — reasoning about hand-built fixtures whose values are chosen in
+ * JavaScript and therefore have no precision to lose.
+ */
 export function firstInversion(rows: EventRow[]): string | null {
   for (let i = 1; i < rows.length; i += 1) {
     if (rows[i].occurred_at.getTime() < rows[i - 1].occurred_at.getTime()) {

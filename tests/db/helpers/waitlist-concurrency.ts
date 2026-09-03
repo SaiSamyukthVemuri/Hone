@@ -118,82 +118,163 @@ export async function expectStillSees(
 }
 
 /**
- * CHRONOLOGY OF TWO STORED POSTGRESQL TIMESTAMPS — compared BY POSTGRESQL.
+ * A RELATION BETWEEN TWO STORED POSTGRESQL TIMESTAMPS — evaluated BY POSTGRESQL.
  *
- * THE DEFECT THIS REPLACES. The previous `expectOrdered` took two JS `Date`s.
- * By the time it ran, node-postgres had already converted `timestamptz` to
- * `Date`, and PostgreSQL stores MICROSECONDS while `Date` stores milliseconds.
- * A genuine sub-millisecond inversion therefore collapsed to equality and a
- * zero-tolerance assertion PASSED. Reproduced against real stored values: two
- * timestamps 300us apart, successor first, gave `s >= p` = false in PostgreSQL
- * and `successor.getTime() === predecessor.getTime()` in JavaScript.
+ * THE DEFECT THIS EXISTS FOR. node-postgres converts `timestamptz` to a JS
+ * `Date` before any assertion runs. PostgreSQL keeps MICROSECONDS; `Date` keeps
+ * milliseconds. So two stored values 300us apart arrive identical, and BOTH
+ * kinds of verdict lie: an ordering check accepts a real inversion, and an
+ * equality check accepts two DIFFERENT instants as "the same decision instant".
+ * The second is the one that matters most here, because "the event IS the
+ * transition" is the whole claim 0189's post-lock clock is meant to guarantee.
  *
  * So the values never leave the database. The caller supplies a query selecting
- * exactly TWO timestamptz columns — successor first, predecessor second — and
- * PostgreSQL evaluates the ordering. JavaScript only chooses WHICH rows to
- * compare, which is the one thing it can do without losing precision.
+ * exactly TWO timestamptz columns — left first, right second — and names the
+ * relation. JavaScript chooses WHICH rows to compare, which is the one thing it
+ * can do without losing precision; PostgreSQL decides the relation.
  *
- * IDENTITY IS STILL ESTABLISHED INDEPENDENTLY. Where events are compared, the
- * caller passes the event ids it captured by before/after set difference. The
- * timestamps decide nothing about which row is which; they are only the values
- * being judged.
+ * The relation is a CLOSED enum mapped to an operator in trusted code here. No
+ * caller-supplied operator is ever interpolated.
  */
+export type PostgresTemporalRelation = "eq" | "lt" | "lte" | "gt" | "gte";
+
+const RELATION_SQL: Record<PostgresTemporalRelation, string> = {
+  eq: "=",
+  lt: "<",
+  lte: "<=",
+  gt: ">",
+  gte: ">=",
+};
+
+export async function expectPostgresTemporalRelation(
+  source: {
+    sql: string;
+    params?: readonly unknown[];
+    relation: PostgresTemporalRelation;
+  },
+  why: string,
+): Promise<void> {
+  const op = RELATION_SQL[source.relation];
+  if (!op) throw new Error(`unknown temporal relation ${source.relation}`);
+  const r = await adminQuery(
+    `select src.l ${op} src.r                                    as holds,
+            to_char(src.l, 'YYYY-MM-DD"T"HH24:MI:SS.USOF')       as left_ts,
+            to_char(src.r, 'YYYY-MM-DD"T"HH24:MI:SS.USOF')       as right_ts,
+            round(extract(epoch from (src.l - src.r)) * 1000000)::bigint as delta_us
+       from (${source.sql}) as src(l, r)`,
+    [...(source.params ?? [])],
+  );
+  expect(r.rows, `${why} — the relation query matched no row`).toHaveLength(1);
+  const row = r.rows[0] as {
+    holds: boolean | null;
+    left_ts: string | null;
+    right_ts: string | null;
+    delta_us: string | null;
+  };
+  expect(
+    row.holds,
+    `${why} — expected left ${source.relation} right, but left ${row.left_ts} is ` +
+      `${row.delta_us}us from right ${row.right_ts}`,
+  ).toBe(true);
+}
+
+/** `successor >= predecessor`, decided by PostgreSQL. */
 export async function expectPostgresOrdered(
   source: { sql: string; params?: readonly unknown[] },
   why: string,
 ): Promise<void> {
-  const r = await adminQuery(
-    `select src.s >= src.p                                       as ordered,
-            to_char(src.s, 'YYYY-MM-DD"T"HH24:MI:SS.USOF')       as successor,
-            to_char(src.p, 'YYYY-MM-DD"T"HH24:MI:SS.USOF')       as predecessor,
-            round(extract(epoch from (src.s - src.p)) * 1000000)::bigint as delta_us
-       from (${source.sql}) as src(s, p)`,
-    [...(source.params ?? [])],
-  );
-  expect(r.rows, `${why} — the chronology query matched no row`).toHaveLength(1);
-  const row = r.rows[0] as {
-    ordered: boolean | null;
-    successor: string | null;
-    predecessor: string | null;
-    delta_us: string | null;
-  };
-  expect(
-    row.ordered,
-    `${why} — successor ${row.successor} is ${row.delta_us}us relative to ` +
-      `predecessor ${row.predecessor} (negative means the successor is EARLIER)`,
-  ).toBe(true);
+  await expectPostgresTemporalRelation({ ...source, relation: "gte" }, why);
 }
 
 /**
- * Chronology against an EXTERNALLY OBSERVED boundary instant, where a
- * millisecond tolerance is the intended semantics rather than a precision leak.
+ * EXACT equality of two stored instants — no tolerance, by design.
  *
- * This exists so the two cases that legitimately need it cannot be confused
- * with stored-vs-stored chronology: one operand here is an instant read on a
- * DIFFERENT connection from the one that stamped the row, so the two clocks are
- * genuinely separate observations and a small tolerance is meaningful.
- *
- * The tolerance is REQUIRED and must be positive. There is deliberately no
- * zero-tolerance path through this helper — a zero-tolerance comparison of two
- * stored columns belongs in expectPostgresOrdered, where PostgreSQL decides it.
+ * "The event IS the transition, not a second reading of it" is only meaningful
+ * at the precision the database actually stores. A sub-millisecond difference
+ * means two clock reads, which is exactly the defect 0189 removes, so it must
+ * fail here rather than round away.
  */
-export function expectOrderedWithinMs(
-  successor: Date,
-  predecessor: Date,
+export async function expectPostgresSameInstant(
+  source: { sql: string; params?: readonly unknown[] },
   why: string,
-  toleranceMs: number,
-): void {
-  if (!(toleranceMs > 0)) {
-    throw new Error(
-      `expectOrderedWithinMs requires a positive tolerance; for two stored ` +
-        `PostgreSQL timestamps use expectPostgresOrdered so the database compares them`,
-    );
-  }
-  const drift = predecessor.getTime() - successor.getTime();
+): Promise<void> {
+  await expectPostgresTemporalRelation({ ...source, relation: "eq" }, why);
+}
+
+/**
+ * CHRONOLOGY ALONG AN ALREADY-ORDERED CHAIN OF EVENTS, judged by PostgreSQL.
+ *
+ * The ORDER is established in JavaScript and stays there: either by walking the
+ * transition labels, or by the order the test executed the operations. That is
+ * deliberate and unchanged — timestamps must never decide which event is which.
+ *
+ * What moves is the VERDICT. The ids are handed back to PostgreSQL, which walks
+ * the sequence with `lag` and compares the stored `occurred_at` values at full
+ * precision. `firstInversion` used to do this on truncated JS Dates.
+ */
+export async function expectChainChronological(
+  eventIdsInOrder: readonly string[],
+  why: string,
+): Promise<void> {
+  if (eventIdsInOrder.length < 2) return;
+  const r = await adminQuery(
+    `with seq as (
+       select t.ord, e.occurred_at
+         from unnest($1::uuid[]) with ordinality as t(id, ord)
+         join public.new_client_waitlist_entry_events e on e.id = t.id
+     ),
+     paired as (
+       select ord, occurred_at,
+              lag(occurred_at) over (order by ord) as prev
+         from seq
+     )
+     select count(*) filter (where prev is not null and occurred_at < prev) as inversions,
+            count(*)                                                        as rows_found,
+            min(to_char(occurred_at, 'YYYY-MM-DD"T"HH24:MI:SS.USOF'))
+              filter (where prev is not null and occurred_at < prev)        as first_bad,
+            min(round(extract(epoch from (occurred_at - prev)) * 1000000)::bigint)
+              filter (where prev is not null and occurred_at < prev)        as worst_delta_us
+       from paired`,
+    [[...eventIdsInOrder]],
+  );
+  const row = r.rows[0] as {
+    inversions: string;
+    rows_found: string;
+    first_bad: string | null;
+    worst_delta_us: string | null;
+  };
   expect(
-    drift,
-    `${why} — the successor stamp is ${drift}ms BEFORE its predecessor`,
-  ).toBeLessThanOrEqual(toleranceMs);
+    Number(row.rows_found),
+    `${why} — the chain referenced ${eventIdsInOrder.length} events but ` +
+      `${row.rows_found} were found`,
+  ).toBe(eventIdsInOrder.length);
+  expect(
+    Number(row.inversions),
+    `${why} — the log runs backwards at ${row.first_bad} (${row.worst_delta_us}us)`,
+  ).toBe(0);
+}
+
+/**
+ * Read a stored instant as its FULL-PRECISION text rendering.
+ *
+ * WHY TEXT. To prove a stored timestamp was not rewritten, the "before" value
+ * has to survive the round trip. Passing it back as a JS `Date` parameter does
+ * not: it is already truncated, and the comparison then fails against its own
+ * source (observed exactly that — a stored `…279342+00` compared against a
+ * parameter that arrived as `…279000+00`). Rendered to microsecond text inside
+ * PostgreSQL, the value never becomes a `Date`, and two renderings compare
+ * exactly as strings.
+ */
+export async function readStoredInstant(
+  sql: string,
+  params: readonly unknown[] = [],
+): Promise<string | null> {
+  const r = await adminQuery(
+    `select to_char(src.t, 'YYYY-MM-DD"T"HH24:MI:SS.USOF') as ts from (${sql}) as src(t)`,
+    [...params],
+  );
+  expect(r.rows, "the instant query matched no row").toHaveLength(1);
+  return (r.rows[0] as { ts: string | null }).ts;
 }
 
 /** The ids of an entry's lifecycle events, for before/after set difference. */
