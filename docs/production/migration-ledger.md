@@ -14,14 +14,15 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-09-03, post-0189 apply)
+## Current state (verified 2026-09-03, post-0189 apply, 0190 authored and PENDING)
 
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0189** (`0189_waitlist_invitation_wall_clock_expiry.sql`) |
-| **Repo migration max** | **0189** — **repository and hosted are at parity**, with nothing pending. No migration is authored above the hosted head. Next free number is **0190** (available, **not claimed**). |
+| **Repo migration max** | **0190** (`0190_waitlist_invitation_ttl_anchor.sql`) — **authored above the hosted head and NOT APPLIED**. Repository and hosted are **deliberately not at parity**: migration-first is the normal state while a repair is in review. Exactly **one** migration is pending — `0190`. Next free number is **0191** (available, **not claimed**). |
 | **Remote-only migrations** | **none** — no migration exists on production that the repository lacks |
-| **Total migrations in repo** | **188** (`0001` … `0157`, `0159` … `0189` — **no `0158`**) — derived by `npm run migration:state`, not counted by hand |
+| **Pending (repo-only, awaiting an authorized apply)** | **`0190_waitlist_invitation_ttl_anchor.sql`** — reviewed on PR #664, **not applied**. It anchors an invitation's TTL to the post-lock issuance instant; production continues to run 0189's behaviour until an authorized apply advances hosted state. Every apply row below describes the **0189** apply and is not rewritten. |
+| **Total migrations in repo** | **189** (`0001` … `0157`, `0159` … `0190` — **no `0158`**) — derived by `npm run migration:state`, not counted by hand |
 | **Apply timestamp** | ⚠️ **NO SERVER-GENERATED APPLY TIMESTAMP WAS CAPTURED**, so `hosted_applied_at` is `null`. The **operator-observed client-side window** is `2026-09-03T13:57:50.801Z` – `2026-09-03T13:58:07.253Z`, **16.452 s**, read from the apply host's clock around the CLI invocation. **That window is not a server apply time and is never represented as one.** |
 | **Verified applied** | **2026-09-03** |
 | **Applied from** | the exact reviewed **PR #664** head `0f5cbf78c930ac5ebd0f058a9bdc6af91b7f3b42` — **applied BEFORE #664 merged**, so the merge commit did not exist at apply time |

@@ -62,11 +62,15 @@ describe("0189 — identity and position", () => {
     expect(FILE).toBe("0189_waitlist_invitation_wall_clock_expiry.sql");
   });
 
-  it("is the current repository maximum", () => {
-    // Per CLAUDE.md only the CURRENT max asserts this, so that a future
-    // migration does not turn this file red. Whoever adds 0190 moves it.
-    expect(isRepoMax(VERSION)).toBe(true);
-    expect(versionsAbove(VERSION)).toEqual([]);
+  it("is no longer the repository maximum — 0190 took that role", () => {
+    // THE HAND-OFF THIS FILE ASKED FOR. The previous wording asserted
+    // isRepoMax and said "whoever adds 0190 moves it"; 0190 exists, so the
+    // tripwire moved to tests/migrations/0190-*.test.ts. Per CLAUDE.md only the
+    // CURRENT max may assert isRepoMax — an older per-migration test asserting
+    // it turns red on every subsequent migration, which is the sweep that rule
+    // exists to prevent.
+    expect(isRepoMax(VERSION)).toBe(false);
+    expect(versionsAbove(VERSION)).toEqual(["0190"]);
   });
 
   it("IS APPLIED to production, and is the CURRENT hosted head", () => {
@@ -77,10 +81,11 @@ describe("0189 — identity and position", () => {
     //
     // 0189 now owns the CURRENT-head claim that 0188's file used to hold; 0188's
     // file keeps only its own durable facts.
+    // The repo-max and empty-pending halves of this claim moved to 0190's own
+    // test when 0190 was authored above the hosted head. What stays here is
+    // 0189's DURABLE fact: it is applied, and it is what production is running.
     const state = migrationState();
-    expect(state.repo_migration_max).toBe(VERSION);
     expect(state.hosted_migration_max).toBe(VERSION);
-    expect(state.pending_migrations).toEqual([]);
   });
 });
 

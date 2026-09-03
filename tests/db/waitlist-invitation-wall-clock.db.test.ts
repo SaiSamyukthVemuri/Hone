@@ -1068,12 +1068,22 @@ const cyclesOf = async (entryId: string) =>
 
 /**
  * Build TWO cycles on one entry whose issued_at order is INVERTED against real
- * issuance order, using genuine transaction semantics.
+ * issuance order.
  *
- * A long-running transaction is opened first; an entire cycle is then issued
- * and terminated by ordinary autocommit calls; and only then does the old
- * transaction issue the current cycle — which the insert trigger stamps with
- * that transaction's START instant, i.e. BEFORE the historical row.
+ * HOW THIS USED TO WORK, AND WHY IT NO LONGER CAN. A long-running transaction
+ * was opened first, an entire cycle was issued and terminated by ordinary
+ * autocommit calls, and only then did the old transaction issue the current
+ * cycle — which the insert trigger stamped with that transaction's START
+ * instant, i.e. BEFORE the historical row. The inversion came for free because
+ * `issued_at` was transaction-start.
+ *
+ * 0190 anchors `issued_at` to the post-lock issuance instant, so an old
+ * transaction no longer back-stamps anything and that inversion cannot arise
+ * from ordinary use. The fixture therefore constructs it DELIBERATELY, by
+ * backdating the live row below the historical one with the append-only trigger
+ * disabled — the same owner-only path the rest of this file uses to move frozen
+ * evidence. The property under test is unchanged: identity is STRUCTURAL, via
+ * the one_live_per_entry index, and never a timestamp sort.
  */
 async function seedInvertedCycles(label: string, terminate: "release" | "expire") {
   const f = await issueExpiringIn(label, 120);
@@ -1119,12 +1129,8 @@ async function seedInvertedCycles(label: string, terminate: "release" | "expire"
     f.userId,
   ]);
 
-  // A transaction opened NOW; its issued_at will be this instant.
-  const old = await conn();
-  await old.query("begin");
-  await old.query(`select transaction_timestamp()`);
-
-  // ...while ANOTHER whole cycle is issued and terminated after it began.
+  // ANOTHER whole cycle is issued and terminated; it becomes the historical row
+  // that must NOT be mistaken for the live one.
   const mid = await adminQuery(
     `select result from public.issue_new_client_waitlist_invitation($1,$2,$3,72)`,
     [f.studioId, f.entryId, f.userId],
@@ -1151,17 +1157,40 @@ async function seedInvertedCycles(label: string, terminate: "release" | "expire"
     f.userId,
   ]);
 
-  // The OLD transaction issues the genuine current cycle — stamped earlier.
-  const cur = await old.query(
+  // The genuine current cycle is issued normally...
+  const cur = await adminQuery(
     `select result from public.issue_new_client_waitlist_invitation($1,$2,$3,72)`,
     [f.studioId, f.entryId, f.userId],
   );
   expect(cur.rows[0].result).toBe("invited");
-  await old.query("commit");
-  await old.end();
 
   const liveId = (await liveIdOf(f.entryId))!;
   expect(liveId).not.toBe(midId);
+
+  // ...and then backdated BELOW the historical row, so a chronology sort points
+  // at the wrong cycle. PostgreSQL performs and confirms the comparison, since
+  // the two stamps can be well under a millisecond apart.
+  await withAppendOnlyDisabled(() =>
+    adminQuery(
+      `update public.new_client_waitlist_invitations
+          set issued_at = (select i.issued_at - interval '1 hour'
+                             from public.new_client_waitlist_invitations i where i.id = $2)
+        where id = $1`,
+      [liveId, midId],
+    ),
+  );
+  expect(
+    (
+      await adminQuery(
+        `select l.issued_at < m.issued_at as inverted
+           from public.new_client_waitlist_invitations l,
+                public.new_client_waitlist_invitations m
+          where l.id = $1 and m.id = $2`,
+        [liveId, midId],
+      )
+    ).rows[0].inverted,
+    "the fixture did not invert the two stamps",
+  ).toBe(true);
   return { ...f, liveId, midId };
 }
 
@@ -1206,12 +1235,12 @@ describe("A — TIMESTAMP INVERSION: the live row wins, whatever issued_at says"
 
 describe("B — SAME issued_at: identity never falls to UUID order", () => {
   it("two cycles sharing an issued_at still resolve to the live one", async () => {
-    // Both cycles are completed inside ONE transaction, so the insert trigger
-    // stamps them with an identical transaction_timestamp and `id desc` is a
-    // coin flip.
+    // A TIE used to arrive for free: both cycles issued inside ONE transaction
+    // were stamped with that transaction's start, so `issued_at` matched exactly
+    // and `id desc` decided — a coin flip. 0190 anchors issued_at to the
+    // post-lock issuance instant, so same-transaction issues no longer collide
+    // and the tie is now constructed deliberately below.
     const f = await issueExpiringIn("cyc-b", 120);
-    // BOTH of the tied cycles must be issued inside ONE transaction, so the
-    // insert trigger stamps them with the same transaction_timestamp.
     const one = await conn();
     await one.query("begin");
     for (let cycle = 0; cycle < 2; cycle += 1) {
@@ -1240,6 +1269,17 @@ describe("B — SAME issued_at: identity never falls to UUID order", () => {
     await one.end();
 
     const liveId0 = (await liveIdOf(f.entryId))!;
+    // Force the collision: every invitation on this entry shares ONE issued_at,
+    // so a chronology sort has nothing left but `id desc` to choose with.
+    await withAppendOnlyDisabled(() =>
+      adminQuery(
+        `update public.new_client_waitlist_invitations
+            set issued_at = (select i.issued_at
+                               from public.new_client_waitlist_invitations i where i.id = $2)
+          where entry_id = $1`,
+        [f.entryId, liveId0],
+      ),
+    );
     const tied = await adminQuery(
       `select count(*)::int as n from public.new_client_waitlist_invitations
         where entry_id = $1
