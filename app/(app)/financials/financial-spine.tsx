@@ -769,6 +769,14 @@ function BasisNote({ briefing }: { briefing: FinancialBriefing }) {
       `${b.unvalued} delivered treatment visit${b.unvalued === 1 ? "" : "s"} had no price on record, so ${b.unvalued === 1 ? "it is" : "they are"} counted as delivered work with no service value`,
     );
   }
+  if (b.ambiguouslyPriced > 0) {
+    // A SUBSET of `unvalued`, given its own sentence because the remedy is
+    // different and it is the only one the owner can act on directly: two of
+    // their own price rows disagree, and Hone will not pick between them.
+    reasons.push(
+      `${b.ambiguouslyPriced} of those had two custom prices that start on the same day and disagree, so Hone will not choose one`,
+    );
+  }
   if (b.unmeasurable > 0) {
     reasons.push(
       `${b.unmeasurable} delivered appointment${b.unmeasurable === 1 ? "" : "s"} did not supply readable times for the chair, so ${b.unmeasurable === 1 ? "its" : "their"} clinic time is not in the hours above`,

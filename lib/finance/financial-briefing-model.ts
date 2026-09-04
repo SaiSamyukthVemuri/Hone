@@ -285,6 +285,7 @@ export function unreadableCalendar(cause: FinancialUnknownCause): CalendarCensus
 // population to be a rate OF. It is replaced, not relabelled.
 
 import { isConsultationService } from "@/lib/booking/consultation";
+import { resolveAuthoritativeSessionPaymentAmount } from "@/lib/billing/session-payment-amount";
 
 /** The settlement vocabulary migration 0187 closes by CHECK. No card, no Hone. */
 export const SETTLEMENT_METHODS = [
@@ -296,6 +297,9 @@ export const SETTLEMENT_METHODS = [
 ] as const;
 
 export type SettlementMethodName = (typeof SETTLEMENT_METHODS)[number];
+
+/** Allocated once. A per-visit `[]` would churn an array for every row. */
+const EMPTY_PRICING: readonly CustomPricingRow[] = [];
 
 const EXTERNALLY_COLLECTED: ReadonlySet<string> = new Set([
   "paid_cash",
@@ -320,12 +324,47 @@ export type ServiceRow = {
 
 export type DeliveryRow = {
   readonly id: string;
+  /**
+   * WHOSE VISIT, and the ONLY reason this column is read.
+   *
+   * `client_pricing` is keyed by client, so a per-client price cannot be
+   * resolved without knowing whose visit this is. It is read, grouped, and
+   * discarded: nothing derived from it reaches the census, and no component
+   * may render it. This is the first client identifier the money read model
+   * has ever carried, and an aggregate screen must not quietly become a way
+   * to learn who paid what — `tests/app/finance/financials-truth.test.ts`
+   * pins that.
+   */
+  readonly client_id: string | null;
   readonly service_id: string | null;
   readonly status: string;
   readonly starts_at: string;
   readonly ends_at: string;
   readonly duration_minutes: number | null;
   readonly blocked_ends_at: string | null;
+};
+
+/**
+ * A per-client price, as `client_pricing` stores it.
+ *
+ * MATCHED BY SERVICE NAME, NOT BY ID. That is the table's own long-standing
+ * linkage rather than a choice made here — `lib/billing/session-payment-amount.ts`
+ * preserves it deliberately, and changing it is a migration-shaped decision
+ * belonging to its own slice.
+ *
+ * The consequence is worth stating because it is live: RENAMING A SERVICE
+ * SILENTLY DETACHES every custom price attached to it, and that client quietly
+ * reverts to the menu price. Production already shows this — the two
+ * `client_pricing` rows in the entire database name services that no longer
+ * exist under those names, so today they resolve for nobody.
+ */
+export type CustomPricingRow = {
+  readonly client_id: string;
+  readonly service_name: string;
+  readonly price_cents: number;
+  readonly notes: string | null;
+  /** Studio-local `YYYY-MM-DD`. */
+  readonly effective_from: string;
 };
 
 export type ChargeRow = {
@@ -375,6 +414,23 @@ export type DeliveryBasis = {
   readonly unclassifiable: number;
   /** Classified TREATMENT but carrying no price, so it cannot be valued. */
   readonly unvalued: number;
+  /**
+   * Visits whose CUSTOM price could not be determined because two equally
+   * current `client_pricing` rows disagree.
+   *
+   * A SUBSET OF `unvalued`, reported separately because the two have different
+   * remedies and the owner can only act on one of them. An unpriced service
+   * needs a price; a contradiction needs one of two rows removed. Collapsing
+   * them into a single sentence would tell an owner to go and price a service
+   * that already carries two prices.
+   *
+   * FAILING CLOSED IS THE POINT. `client_pricing` has no uniqueness
+   * constraint, so two rows may share an `effective_from` and disagree. The
+   * resolver refuses to pick one, and the visit is counted and left unvalued
+   * rather than valued at a guess — the same rule the billing path already
+   * follows, so the two cannot disagree about what a visit was worth.
+   */
+  readonly ambiguouslyPriced: number;
   /** `blocked_ends_at` unreadable, so chair time is unmeasurable. */
   readonly unmeasurable: number;
   /**
@@ -421,6 +477,15 @@ export type DeliveredMoneyCensus = {
    * leaves this part alone.
    */
   readonly visitsValuedAtRecordedPrice: Fact<number>;
+  /**
+   * Visits valued at THIS CLIENT'S negotiated price rather than the menu.
+   *
+   * Reported so the basis of the service-value figure is legible: an owner
+   * looking at a total that includes custom rates should be able to see that
+   * it does, without being shown WHICH clients — the count is an aggregate
+   * and carries no identity.
+   */
+  readonly visitsValuedAtClientPrice: Fact<number>;
 
   // --- CONTRACT 1: CASH MOVEMENT (transaction period) ---------------------
   readonly movedInGrossCents: Fact<number>;
@@ -506,6 +571,9 @@ export function summarizeDeliveredMoney(input: {
   readonly charges: readonly ChargeRow[];
   readonly refunds: readonly RefundRow[];
   readonly settlements: readonly SettlementRow[];
+  readonly customPricing: readonly CustomPricingRow[];
+  /** Studio-local `YYYY-MM-DD`. Injected: this module never reads a clock. */
+  readonly todayLocal: string;
   readonly snapshot: Date;
   readonly windowStartUtc: string;
   readonly windowEndUtc: string;
@@ -515,6 +583,23 @@ export function summarizeDeliveredMoney(input: {
   const windowEnd = Date.parse(input.windowEndUtc);
   const serviceById = new Map<string, ServiceRow>();
   for (const s of input.services) serviceById.set(s.id, s);
+
+  /**
+   * Custom prices grouped by client, ONCE.
+   *
+   * The resolver takes the candidate rows for one client and applies the
+   * precedence itself; grouping here keeps the per-visit work a map lookup
+   * rather than a filter over every pricing row in the studio.
+   *
+   * `client_id` GOES NO FURTHER THAN THIS MAP. It is the key, never a value,
+   * and nothing derived from it reaches the census.
+   */
+  const customPricingByClient = new Map<string, CustomPricingRow[]>();
+  for (const row of input.customPricing) {
+    const existing = customPricingByClient.get(row.client_id);
+    if (existing) existing.push(row);
+    else customPricingByClient.set(row.client_id, [row]);
+  }
 
   /**
    * THE PRICE EACH VISIT WAS ACTUALLY QUOTED, where a settlement recorded one.
@@ -565,6 +650,8 @@ export function summarizeDeliveredMoney(input: {
   let treatmentBlockedMinutes = 0;
   let consultationBlockedMinutes = 0;
   let valuedAtRecordedPrice = 0;
+  let valuedAtClientPrice = 0;
+  let ambiguouslyPriced = 0;
 
   for (const row of input.appointments) {
     if (row.status !== "completed" && row.status !== "confirmed") continue;
@@ -599,13 +686,56 @@ export function summarizeDeliveredMoney(input: {
         : (blockedEndsAt - startsAt) / 60_000;
     if (blockedMinutes === null) unmeasurable += 1;
 
-    // THE PRICE ON RECORD WINS, and it falls back rather than inventing: a
-    // visit nobody settled has no snapshot, and a snapshot the resolver could
-    // not produce is null. In both cases today's price is the only evidence
-    // there is, and the screen says which basis each figure used.
+    // ---------------------------------------------------------------------
+    // WHAT THIS VISIT WAS WORTH — three tiers, tried in order
+    // ---------------------------------------------------------------------
+    //
+    //   1. THE PRICE ON RECORD. `appointment_settlements.quoted_amount_cents`,
+    //      snapshotted by 0187 at settlement time. Frozen: a later menu edit
+    //      cannot rewrite what a settled visit was worth.
+    //
+    //   2. THE PRICE THIS CLIENT PAYS. `resolveAuthoritativeSessionPaymentAmount`
+    //      — the SAME resolver the billing path uses to decide what to charge.
+    //      That sharing is the whole point of tier 2: a screen that valued work
+    //      differently from the code that collected for it would disagree with
+    //      the client's own card statement, and the owner would have no way to
+    //      tell which number was wrong.
+    //
+    //   3. UNKNOWN. Counted, disclosed, never zero.
+    //
+    // TIER 2 REPLACES A BARE `services.price_cents` READ, and that read was
+    // wrong rather than merely coarse: it ignored `client_pricing` entirely, so
+    // every client on a negotiated rate was valued at the menu price they do
+    // not pay. It was invisible in production only because this studio's two
+    // custom-price rows name services that have since been renamed.
     const recordedPrice = recordedPriceOf.get(row.id);
-    const price = recordedPrice ?? finite(service?.price_cents);
-    if (recordedPrice !== undefined) valuedAtRecordedPrice += 1;
+    let price: number | null;
+    if (recordedPrice !== undefined) {
+      price = recordedPrice;
+      valuedAtRecordedPrice += 1;
+    } else {
+      const resolved = resolveAuthoritativeSessionPaymentAmount({
+        service: service ? { name: service.name, price_cents: service.price_cents } : null,
+        appointmentDurationMinutes: finite(row.duration_minutes),
+        customPricing: row.client_id === null
+          ? EMPTY_PRICING
+          : customPricingByClient.get(row.client_id) ?? EMPTY_PRICING,
+        today: input.todayLocal,
+      });
+      if (resolved.kind === "resolved") {
+        price = resolved.amountCents;
+        if (resolved.source === "custom_pricing") valuedAtClientPrice += 1;
+      } else if (resolved.kind === "free") {
+        // FREE-01. A studio pricing a service at $0 made a DECISION, and this
+        // is a real zero rather than an absence. It is not `unvalued`.
+        price = 0;
+      } else {
+        // `missing_price`, `missing_service`, `ambiguous_custom_pricing`.
+        // The visit still counts; only its value is absent.
+        price = null;
+        if (resolved.kind === "ambiguous_custom_pricing") ambiguouslyPriced += 1;
+      }
+    }
 
     if (serviceClass === "consultation") {
       consultationVisits += 1;
@@ -864,6 +994,7 @@ export function summarizeDeliveredMoney(input: {
     treatmentServiceValueCents: known(treatmentServiceValueCents),
     consultationServiceValueCents: known(consultationServiceValueCents),
     visitsValuedAtRecordedPrice: known(valuedAtRecordedPrice),
+    visitsValuedAtClientPrice: known(valuedAtClientPrice),
 
     movedInGrossCents: known(movedInGrossCents),
     movedOutRefundedCents: known(movedOutRefundedCents),
@@ -911,6 +1042,7 @@ export function summarizeDeliveredMoney(input: {
       undatable,
       unclassifiable,
       unvalued,
+      ambiguouslyPriced,
       unmeasurable,
       settlementsOutsideWindow,
       unreadableAmounts,
@@ -936,6 +1068,7 @@ export function unreadableDeliveredMoney(
     treatmentServiceValueCents: absent,
     consultationServiceValueCents: absent,
     visitsValuedAtRecordedPrice: absent,
+    visitsValuedAtClientPrice: absent,
     movedInGrossCents: absent,
     movedOutRefundedCents: absent,
     netMovementCents: absent,
@@ -964,6 +1097,7 @@ export function unreadableDeliveredMoney(
       undatable: 0,
       unclassifiable: 0,
       unvalued: 0,
+      ambiguouslyPriced: 0,
       unmeasurable: 0,
       settlementsOutsideWindow: 0,
       unreadableAmounts: 0,

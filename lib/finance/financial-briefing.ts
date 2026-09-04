@@ -24,6 +24,7 @@ import {
   unreadableDeliveredMoney,
   type CalendarCensus,
   type ChargeRow,
+  type CustomPricingRow,
   type DeliveredMoneyCensus,
   type DeliveryRow,
   type RefundRow,
@@ -251,6 +252,8 @@ export async function loadFinancialsView(
               charges: ledgers.charges,
               refunds: ledgers.refunds,
               settlements: ledgers.settlements,
+              customPricing: ledgers.customPricing,
+              todayLocal,
               snapshot: now,
               windowStartUtc: moneyStartUtc,
               windowEndUtc: endUtc,
@@ -347,6 +350,7 @@ type MoneyLedgers =
       readonly charges: readonly ChargeRow[];
       readonly refunds: readonly RefundRow[];
       readonly settlements: readonly SettlementRow[];
+      readonly customPricing: readonly CustomPricingRow[];
       readonly ledgerOpensAt: string | null;
     }
   | { readonly ok: false; readonly cause: FinancialUnknownCause };
@@ -371,7 +375,7 @@ async function readMoneyLedgers(
       .eq("status", "succeeded")
       .eq("stripe_livemode", livemode);
 
-  const [services, charges, refunds, settlements, opened] =
+  const [services, charges, refunds, settlements, customPricing, opened] =
     await Promise.all([
       supabase
         .from("services")
@@ -409,6 +413,27 @@ async function readMoneyLedgers(
         .is("superseded_at", null)
         .order("id")
         .range(0, API_PAGE_SIZE - 1),
+      // THE PRICE A PARTICULAR CLIENT PAYS, for visits no settlement froze.
+      //
+      // Read STUDIO-WIDE and narrowed in memory, for the same reason the
+      // settlements read is: an `.in(client_id, [...])` list grows with the
+      // period and an over-long generated URL is a live production failure
+      // mode on this codebase, not a hypothetical. Studio-wide keeps the
+      // request a constant size and lets the shared ceiling rule fail it
+      // closed instead.
+      //
+      // `notes` is projected because the shared resolver's input type requires
+      // it. It is never read here and never rendered: it is free text a
+      // practitioner wrote about ONE client, and it has no business on a
+      // studio aggregate.
+      supabase
+        .from("client_pricing")
+        .select("client_id, service_name, price_cents, notes, effective_from", {
+          count: "exact",
+        })
+        .eq("studio_id", studioId)
+        .order("id")
+        .range(0, API_PAGE_SIZE - 1),
       // HEAD-ONLY COUNT. These rows are succeeded and carry NO collection time,
       // so they belong to no period and cannot be windowed. FIN-C9 surfaces
       // them rather than dropping money that was actually made.
@@ -427,11 +452,16 @@ async function readMoneyLedgers(
   const c = complete<ChargeRow>(charges.data, charges.error, charges.count);
   const r = complete<RefundRow>(refunds.data, refunds.error, refunds.count);
   const t = complete<SettlementRow>(settlements.data, settlements.error, settlements.count);
+  const cp = complete<CustomPricingRow>(
+    customPricing.data,
+    customPricing.error,
+    customPricing.count,
+  );
 
   // FAIL CLOSED, AND FAIL WHOLE. A money census assembled from the reads that
   // happened to succeed is the exact shape of a confident understatement, so
   // one bad read withdraws every figure with the cause that caused it.
-  for (const part of [s, c, r, t]) {
+  for (const part of [s, c, r, t, cp]) {
     if (!part.ok) return { ok: false, cause: part.cause };
   }
   if (opened.error) return { ok: false, cause: "unavailable" };
@@ -444,6 +474,7 @@ async function readMoneyLedgers(
     charges: c.ok ? c.rows : [],
     refunds: r.ok ? r.rows : [],
     settlements: t.ok ? t.rows : [],
+    customPricing: cp.ok ? cp.rows : [],
     ledgerOpensAt: openedRows[0]?.charged_at ?? null,
   };
 }
@@ -532,7 +563,10 @@ async function readAppointments(
   const { data, error, count } = await supabase
     .from("appointments")
     .select(
-      "id, service_id, status, starts_at, ends_at, duration_minutes, blocked_ends_at",
+      // `client_id` joins a visit to the price ITS CLIENT pays. It is grouped
+      // in memory and discarded; nothing derived from it reaches the census,
+      // and the source guard forbids it reaching a component.
+      "id, client_id, service_id, status, starts_at, ends_at, duration_minutes, blocked_ends_at",
       { count: "exact" },
     )
     .eq("studio_id", studioId)

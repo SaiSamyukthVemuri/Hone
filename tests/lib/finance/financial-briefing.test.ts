@@ -24,13 +24,17 @@ function stubClient(stub: {
   rows?: Array<{ status: string; starts_at: string }>;
   count?: number | null;
   error?: { code: string } | null;
+  /** Fail exactly ONE table, to prove a single bad read withdraws the census. */
+  failTable?: string;
 }) {
   const tables: string[] = [];
   const filters: Filter[] = [];
   const from = (table: string) => {
     tables.push(table);
     const result = () =>
-      stub.error
+      stub.failTable === table
+        ? { data: null, error: { code: "57014" }, count: null }
+        : stub.error
         ? { data: null, error: stub.error, count: null }
         : {
             data: stub.rows ?? [],
@@ -155,8 +159,16 @@ describe("the read projects enough to answer 'still to happen' truthfully", () =
     // `payment_charge_attempts` appears four times: charges, refunds, the
     // unattributed count, and the ledger-opening probe — four different
     // windows over one authority, never a second table pretending to be it.
+    // `client_pricing` joined in Slice 2b: the price a PARTICULAR client
+    // pays, for visits no settlement froze a snapshot for.
     expect(new Set(tables)).toEqual(
-      new Set(["appointments", "services", "payment_charge_attempts", "appointment_settlements"]),
+      new Set([
+        "appointments",
+        "services",
+        "client_pricing",
+        "payment_charge_attempts",
+        "appointment_settlements",
+      ]),
     );
     for (const decoy of [
       "manual_fee_charge_attempts",
@@ -167,6 +179,32 @@ describe("the read projects enough to answer 'still to happen' truthfully", () =
     ]) {
       expect(tables, decoy).not.toContain(decoy);
     }
+  });
+
+  it("reads client_pricing scoped to the studio, and never by an id list", async () => {
+    // The price a PARTICULAR client pays. Read studio-wide and narrowed in
+    // memory: an `.in(client_id, [...])` list grows with the period, and an
+    // over-long generated URL is a live production failure mode here.
+    const { client, tables, filters } = stubClient({ rows: [] });
+    await loadFinancialsView(OWNER, studio("America/Toronto"), "month", client);
+    expect(tables).toContain("client_pricing");
+    expect(filters.filter((f) => f.op === "in")).toHaveLength(0);
+    expect(
+      filters.some((f) => f.op === "eq" && f.args[0] === "studio_id"),
+    ).toBe(true);
+  });
+
+  it("a FAILED client_pricing read withdraws the whole money census", async () => {
+    // FAIL CLOSED, AND FAIL WHOLE. A census assembled from the reads that
+    // happened to succeed is the exact shape of a confident understatement:
+    // every visit would silently fall back to the menu price and the total
+    // would look complete.
+    const { client } = stubClient({ rows: [], failTable: "client_pricing" });
+    const view = await loadFinancialsView(OWNER, studio("America/Toronto"), "month", client);
+    if (view.access !== "granted") throw new Error("expected granted");
+    const { money } = view.briefing;
+    expect(money.census.treatmentServiceValueCents.known).toBe(false);
+    expect(money.census.movedInGrossCents.known).toBe(false);
   });
 
   it("a PAST confirmed appointment does not reach the owner as 'still to happen'", async () => {

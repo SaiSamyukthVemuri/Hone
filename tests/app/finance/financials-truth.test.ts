@@ -93,11 +93,15 @@ describe("NC2 — every read names its authority, and every ledger read is filte
   const tablesRead = () =>
     [...CODE.loader.matchAll(/\.from\((["'])([^"']+)\1\)/g)].map((m) => m[2]);
 
-  it("reads exactly the four authorities this slice is entitled to", () => {
+  it("reads exactly the five authorities this slice is entitled to", () => {
+    // `client_pricing` joined the list in Slice 2b. It is the price a
+    // PARTICULAR client pays, and without it this surface valued every
+    // negotiated rate at the menu price the client does not pay.
     expect(new Set(tablesRead())).toEqual(
       new Set([
         "appointments",
         "services",
+        "client_pricing",
         "payment_charge_attempts",
         "appointment_settlements",
       ]),
@@ -164,6 +168,27 @@ describe("NC2 — every read names its authority, and every ledger read is filte
     expect(CODE.loader).toContain('.gte("refunded_at", startUtc)');
     expect(CODE.loader).toContain('.lt("refunded_at", endUtc)');
     expect(CODE.loader).toContain('.eq("refund_status", "succeeded")');
+  });
+
+  it("CLIENT IDENTITY reaches the read model and goes no further", () => {
+    // Slice 2b is the first time this surface reads a client identifier at all.
+    // It exists for one reason — client_pricing is keyed by client — and it is
+    // a MAP KEY, never a value. An owner aggregate must not quietly become a
+    // way to learn who paid what, and the render layer is where that would
+    // happen, so the boundary is asserted at the render layer.
+    expect(CODE.loader).toContain("client_id");
+    expect(CODE.model).toContain("client_id");
+    for (const key of ["spine", "page", "copy", "fact"] as const) {
+      expect(codeOnly(CODE[key]), key).not.toContain("client_id");
+      expect(codeOnly(CODE[key]), key).not.toContain("clientId");
+    }
+  });
+
+  it("no per-client figure is exposed on the census — only counts", () => {
+    // `visitsValuedAtClientPrice` is a COUNT. Anything shaped like a per-client
+    // map or list would carry identity into the briefing.
+    expect(CODE.model).toContain("visitsValuedAtClientPrice: known(valuedAtClientPrice)");
+    expect(codeOnly(CODE.model)).not.toMatch(/readonly\s+\w*[Bb]yClient\w*\s*:/);
   });
 
   it("no read filters an unbounded id list into the URL", () => {
@@ -283,16 +308,42 @@ describe("NC6 — past work is valued at the price on record, never at today's m
     expect(CODE.loader).toContain("quoted_amount_cents");
   });
 
-  it("the recorded price WINS over services.price_cents", () => {
-    // `services.price_cents` is a single CURRENT value. Using it for past work
-    // is the same defect `blocked_ends_at` is read per appointment to avoid.
-    expect(CODE.model).toContain("recordedPrice ?? finite(service?.price_cents)");
+  it("values a visit in THREE tiers, snapshot first", () => {
+    // 1. the price 0187 froze at settlement; 2. the price THIS CLIENT pays,
+    // via the resolver the billing path already uses; 3. UNKNOWN.
+    //
+    // Tier 2 replaced a bare `services.price_cents` read, which was WRONG
+    // rather than merely coarse: it ignored client_pricing entirely, so every
+    // client on a negotiated rate was valued at the menu price they do not pay.
+    expect(CODE.model).toContain("recordedPriceOf.get(row.id)");
+    expect(CODE.model).toContain("resolveAuthoritativeSessionPaymentAmount({");
+    // The snapshot is consulted BEFORE the resolver, never after.
+    expect(CODE.model.indexOf("recordedPriceOf.get(row.id)")).toBeLessThan(
+      CODE.model.indexOf("resolveAuthoritativeSessionPaymentAmount({"),
+    );
   });
 
-  it("the fallback is NULLISH, so a recorded price of zero survives", () => {
+  it("SHARES the billing resolver rather than re-deriving pricing precedence", () => {
+    // A second implementation of "what does this client pay" would let the
+    // screen disagree with the code that actually charged them, and the owner
+    // would have no way to tell which number was wrong.
+    expect(CODE.model).toContain('from "@/lib/billing/session-payment-amount"');
+    // The wire TYPE may name these columns — it has to, to pass them on. What
+    // it must never do is COMPARE them, which is the precedence logic itself:
+    // picking the newest effective_from, matching a service by name, or
+    // deciding a tie. Every one of those lives in the resolver, once.
+    const model = codeOnly(CODE.model);
+    expect(model).not.toMatch(/effective_from\s*(<=|>=|<|>|===)/);
+    expect(model).not.toMatch(/service_name\s*(===|\.toLowerCase)/);
+    expect(model).not.toContain("client_pricing");
+  });
+
+  it("a recorded price of ZERO survives — presence is tested, not truthiness", () => {
     // `quoted_amount_cents >= 0` is legal and means the visit was quoted
-    // nothing. `||` would discard that and silently re-price it from the menu.
-    expect(CODE.model).not.toMatch(/recordedPrice\s*\|\|/);
+    // nothing. `??` or `||` on the value would discard that and silently
+    // re-price it from the menu, so the tier is chosen on PRESENCE.
+    expect(CODE.model).toContain("recordedPrice !== undefined");
+    expect(CODE.model).not.toMatch(/recordedPrice\s*(\|\||\?\?)/);
   });
 
   it("no sentence claims Hone keeps no record of the price at the time", () => {
@@ -1759,6 +1810,14 @@ describe("NC-reach — money is confined to the FIN-owned modules of the closure
     // next author who adds a ledger read to this file trips this test.
     const ENTITLED: ReadonlyMap<string, ReadonlySet<string>> = new Map([
       ["lib/stripe/livemode.ts", new Set(["inferStripeLivemode"])],
+      // Slice 2b. The SHARED pricing resolver, entitled to `price_cents` and
+      // to nothing else. Granted for the same reason livemode is, and on the
+      // same terms: it is a PURE LEAF with zero imports, so nothing rides in
+      // behind it, and the alternative was a second implementation of "what
+      // does this client pay" that could disagree with the code that actually
+      // charged them. A named identifier, never a file exemption — a file
+      // exemption is what let a money helper hide inside lib/types/database.ts.
+      ["lib/billing/session-payment-amount.ts", new Set(["price_cents"])],
     ]);
     const offences: string[] = [];
     for (const [file, via] of CLOSURE) {
@@ -1789,6 +1848,14 @@ describe("NC-reach — money is confined to the FIN-owned modules of the closure
     const leaf = path.join(ROOT, "lib/stripe/livemode.ts");
     expect(CLOSURE.has(leaf)).toBe(true);
     expect(forbiddenValueOccurrences(readFileSync(leaf, "utf8"), leaf)).not.toEqual([]);
+
+    // The pricing resolver, on the same terms. Its entitlement is only safe
+    // because it imports NOTHING — an entitled module that pulled in a client
+    // would drag that whole subtree into this route unexamined.
+    const resolver = path.join(ROOT, "lib/billing/session-payment-amount.ts");
+    expect(CLOSURE.has(resolver)).toBe(true);
+    expect(forbiddenValueOccurrences(readFileSync(resolver, "utf8"), resolver)).not.toEqual([]);
+    expect(codeOnly(readFileSync(resolver, "utf8"))).not.toContain("import ");
 
     const owned = [FILES.loader, FILES.model].map((rel) => path.join(ROOT, rel));
     for (const file of owned) {

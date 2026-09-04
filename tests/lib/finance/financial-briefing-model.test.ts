@@ -308,6 +308,7 @@ import {
   summarizeDeliveredMoney,
   unreadableDeliveredMoney,
   type ChargeRow,
+  type CustomPricingRow,
   type DeliveryRow,
   type ServiceRow,
   type SettlementRow,
@@ -342,6 +343,9 @@ const SERVICES: ServiceRow[] = [
 /** One appointment. Defaults describe a delivered 60-minute treatment. */
 function appt(over: Partial<DeliveryRow> & { id: string }): DeliveryRow {
   return {
+    // No custom price by default: the menu is the ordinary case, and a test
+    // that wants a client rate has to name the client explicitly.
+    client_id: null,
     service_id: TREATMENT,
     status: "completed",
     starts_at: "2026-08-27T10:00:00.000Z",
@@ -379,6 +383,8 @@ function census(over: Partial<Parameters<typeof summarizeDeliveredMoney>[0]> = {
     charges: [],
     refunds: [],
     settlements: [],
+    customPricing: [],
+    todayLocal: "2026-08-27",
     snapshot: NOW,
     windowStartUtc: WINDOW_START,
     windowEndUtc: WINDOW_END,
@@ -1148,4 +1154,146 @@ describe("a failed read withdraws EVERY figure, with one cause", () => {
       expect(c.basis.complete).toBe(false);
     },
   );
+});
+
+// ---------------------------------------------------------------------------
+// SLICE 2B — what a visit was worth, in three tiers
+// ---------------------------------------------------------------------------
+//
+// Tier 1 is the price 0187 froze at settlement. Tier 2 is the price THIS
+// CLIENT pays, resolved by the same module the billing path uses. Tier 3 is
+// UNKNOWN — counted, disclosed, never zero.
+
+describe("SLICE 2B — the price a particular client pays", () => {
+  const CLIENT = "client-a";
+  const custom = (over: Partial<CustomPricingRow> = {}): CustomPricingRow => ({
+    client_id: CLIENT,
+    service_name: "60 minute session",
+    price_cents: 12_500,
+    notes: null,
+    effective_from: "2026-08-01",
+    ...over,
+  });
+
+  it("values a visit at the CLIENT'S price, not the menu price", () => {
+    // The defect this closes: the menu says 150.00, this client pays 125.00,
+    // and the surface used to report the price they do not pay.
+    const c = census({
+      appointments: [appt({ id: "a", client_id: CLIENT })],
+      customPricing: [custom()],
+    });
+    expect(value(c.treatmentServiceValueCents)).toBe(12_500);
+    expect(value(c.visitsValuedAtClientPrice)).toBe(1);
+  });
+
+  it("falls back to the menu when the client has no custom price", () => {
+    const c = census({ appointments: [appt({ id: "a", client_id: CLIENT })] });
+    expect(value(c.treatmentServiceValueCents)).toBe(15_000);
+    expect(value(c.visitsValuedAtClientPrice)).toBe(0);
+  });
+
+  it("matches by service NAME, so a renamed service detaches the custom price", () => {
+    // Not a bug introduced here: client_pricing has always linked by name.
+    // Production already holds two such orphans. The surface must degrade to
+    // the menu rather than mis-price, and it must be possible to see that it did.
+    const c = census({
+      appointments: [appt({ id: "a", client_id: CLIENT })],
+      customPricing: [custom({ service_name: "Electrolysis 1 hr" })],
+    });
+    expect(value(c.treatmentServiceValueCents)).toBe(15_000);
+    expect(value(c.visitsValuedAtClientPrice)).toBe(0);
+  });
+
+  it("ignores a custom price that has not started yet", () => {
+    const c = census({
+      appointments: [appt({ id: "a", client_id: CLIENT })],
+      customPricing: [custom({ effective_from: "2026-09-15" })],
+      todayLocal: "2026-08-27",
+    });
+    expect(value(c.treatmentServiceValueCents)).toBe(15_000);
+  });
+
+  it("takes the NEWEST effective_from when several have started", () => {
+    const c = census({
+      appointments: [appt({ id: "a", client_id: CLIENT })],
+      customPricing: [
+        custom({ price_cents: 9_000, effective_from: "2026-06-01" }),
+        custom({ price_cents: 12_500, effective_from: "2026-08-01" }),
+      ],
+    });
+    expect(value(c.treatmentServiceValueCents)).toBe(12_500);
+  });
+
+  it("FAILS CLOSED when two equally-current prices disagree", () => {
+    // client_pricing has no uniqueness constraint, so this is reachable.
+    // Picking one would mean valuing the work at a guess; the visit counts and
+    // its value is absent, with its own sentence on the screen.
+    const c = census({
+      appointments: [appt({ id: "a", client_id: CLIENT })],
+      customPricing: [
+        custom({ price_cents: 9_000, effective_from: "2026-08-01" }),
+        custom({ price_cents: 12_500, effective_from: "2026-08-01" }),
+      ],
+    });
+    expect(value(c.treatmentServiceValueCents)).toBe(0);
+    expect(value(c.deliveredTreatmentVisits)).toBe(1);
+    expect(c.basis.ambiguouslyPriced).toBe(1);
+    expect(c.basis.complete).toBe(false);
+  });
+
+  it("an ambiguous price is NOT a zero-priced visit", () => {
+    // A zero would put the visit outside the collection rate as though nothing
+    // was owed on it. Nothing is known about what was owed.
+    const c = census({
+      appointments: [appt({ id: "a", client_id: CLIENT })],
+      customPricing: [
+        custom({ price_cents: 9_000, effective_from: "2026-08-01" }),
+        custom({ price_cents: 12_500, effective_from: "2026-08-01" }),
+      ],
+    });
+    expect(c.collectionRateBasisPoints.known).toBe(false);
+  });
+
+  it("one client's price never reaches another client's visit", () => {
+    const c = census({
+      appointments: [
+        appt({ id: "a", client_id: CLIENT }),
+        appt({ id: "b", client_id: "client-b" }),
+      ],
+      customPricing: [custom()],
+    });
+    expect(value(c.treatmentServiceValueCents)).toBe(12_500 + 15_000);
+    expect(value(c.visitsValuedAtClientPrice)).toBe(1);
+  });
+
+  it("a visit with no client falls back to the menu rather than throwing", () => {
+    const c = census({
+      appointments: [appt({ id: "a", client_id: null })],
+      customPricing: [custom()],
+    });
+    expect(value(c.treatmentServiceValueCents)).toBe(15_000);
+  });
+
+  it("THE SNAPSHOT STILL WINS over the client's current price", () => {
+    // Tier 1 before tier 2. A settled visit was worth what it was quoted, and a
+    // later renegotiation must not rewrite it.
+    const c = census({
+      appointments: [appt({ id: "a", client_id: CLIENT })],
+      customPricing: [custom({ price_cents: 12_500 })],
+      settlements: [
+        settlement({ appointment_id: "a", quoted_amount_cents: 20_000, amount_cents: 20_000 }),
+      ],
+    });
+    expect(value(c.treatmentServiceValueCents)).toBe(20_000);
+    expect(value(c.visitsValuedAtRecordedPrice)).toBe(1);
+    expect(value(c.visitsValuedAtClientPrice)).toBe(0);
+  });
+
+  it("a free service stays a REAL zero, never an unknown", () => {
+    // FREE-01: pricing a service at nothing is a decision, not an absence.
+    const c = census({ appointments: [appt({ id: "a", service_id: FREE_TREATMENT })] });
+    expect(value(c.treatmentServiceValueCents)).toBe(0);
+    expect(c.basis.unvalued).toBe(0);
+    expect(c.basis.ambiguouslyPriced).toBe(0);
+  });
 });
