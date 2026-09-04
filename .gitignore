@@ -27,6 +27,12 @@ coverage
 
 # Local harness state (not relevant to repo)
 .claude/scheduled_tasks.lock
+# SEC-ADAPTER-01. A developer's own security-guidance file is local, never Hone
+# policy: the tracked adapter is the only repository security-guidance prompt,
+# and tests/security/security-guidance-parity.test.ts fails if this is committed.
+# Ignored because the delivery sequence starts `git add -A`, which would
+# otherwise track it automatically.
+.claude/claude-security-guidance.local.md
 # Per PR #160 closure: pilot tracker lives outside the repo
 Hone_Pilot_Control_Sheet.xlsx
 
