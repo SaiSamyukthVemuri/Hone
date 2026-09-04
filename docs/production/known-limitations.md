@@ -3,9 +3,11 @@
 **Verified residual limitations as of 2026-08-27**, against the runtime-bearing application HEAD
 recorded in [current-state.md](./current-state.md) *Reconciliation header* — **the single
 authority for that SHA, which is deliberately not copied here.** A second copy is a second thing
-to go stale, and the fourth derived fact drifted for exactly that reason. **Repo and hosted
-migration state are at parity, with nothing pending** — the reconciling *numbers* are likewise
-not written here.
+to go stale, and the fourth derived fact drifted for exactly that reason. **The migration
+RELATIONSHIP is not asserted here either** — this file once declared the two maxima equal and the
+pending set empty, which avoided copying the numbers but copied the mutable claim about them
+instead, and went stale as soon as a reviewed migration was authored above hosted. That
+relationship is derived, never restated here.
 Hosted max is declared once in [`migration-state.json`](./migration-state.json); repo max and the
 next free number are derived by `npm run migration:state`; the reconciled position with apply
 evidence is [migration-ledger.md](./migration-ledger.md). (`0158` is permanently skipped.)

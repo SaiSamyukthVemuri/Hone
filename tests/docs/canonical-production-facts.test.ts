@@ -499,9 +499,248 @@ describe("canonical production docs: the ledger's current block agrees with the 
       ).toMatch(/not claimed/i);
   });
 
-  it("repo and hosted agree, so no document can contradict another about parity", () => {
+  // ---------------------------------------------------------------------
+  // PARITY IS PENDING-AWARE, BECAUSE MIGRATION-FIRST DEPLOYMENT REQUIRES IT.
+  //
+  // The old invariant was `repo_migration_max === hosted_migration_max`. It
+  // cannot coexist with the runbook this repository actually follows: a
+  // migration is applied to production FROM the exact reviewed PR head, BEFORE
+  // that PR merges. Between authoring and applying, the repo legitimately sits
+  // ABOVE hosted, so NO pre-apply head of such a PR could ever satisfy it.
+  //
+  // That is not a hypothetical. The 0188 apply record states it as recorded
+  // history: exactly one test failed out of 12,908 on the reviewed head —
+  // this one — and the operator had to waive that specific red in writing to
+  // authorize the apply. The record's own conclusion is quoted in it: "THE
+  // GUARD SHOULD BE MADE PENDING-AWARE so a future migration-first apply is
+  // not forced to choose between a red head and pre-filling this file."
+  //
+  // Waiving it again would be the third time. Pre-filling the canonical record
+  // with an apply that has not happened would be a lie. So the invariant is
+  // restated to admit EXACTLY TWO legal shapes and nothing else:
+  //
+  //   PARITY                 nothing pending, and hosted == repo
+  //   MIGRATION-FIRST PENDING  hosted is the applied PREFIX, and the repo
+  //                            carries a CONTIGUOUS pending suffix that
+  //                            `pending_migrations` names exactly
+  //
+  // Both shapes forbid a remote-only migration (hosted ahead of repo), which is
+  // the genuinely dangerous state the original guard existed to catch — and
+  // which the equality caught only incidentally.
+  // ---------------------------------------------------------------------
+  it("the canonical record and the derived state agree about HOSTED state", () => {
+    // Unconditional, and unchanged in force: the hosted head is DECLARED, never
+    // derived from filenames, so these two must never disagree.
     expect(DERIVED.hosted_migration_max).toBe(CANONICAL_RECORD.hosted_migration_max);
-    expect(DERIVED.repo_migration_max).toBe(CANONICAL_RECORD.hosted_migration_max);
+  });
+
+  it("repo/hosted is either PARITY or MIGRATION-FIRST PENDING, never anything else", () => {
+    const repo = Number(DERIVED.repo_migration_max);
+    const hosted = Number(DERIVED.hosted_migration_max);
+    const pending: string[] = DERIVED.pending_migrations;
+
+    // NEVER a remote-only migration. Production holding something the
+    // repository does not is unreviewable and unreproducible, and it is the
+    // one shape neither mode admits.
+    expect(
+      hosted,
+      "hosted is AHEAD of the repository: production holds a migration this " +
+        "repo does not contain, which no review can reach",
+    ).toBeLessThanOrEqual(repo);
+
+    if (pending.length === 0) {
+      // PARITY.
+      expect(repo).toBe(hosted);
+    } else {
+      // MIGRATION-FIRST PENDING.
+      expect(repo).toBeGreaterThan(hosted);
+      // `pending_migrations` must name the suffix EXACTLY — every version
+      // above hosted, in order, and nothing else. A pending list that is
+      // merely non-empty would let a gap or a stale entry through.
+      const expectedSuffix = DERIVED.versions.filter((v: string) => Number(v) > hosted);
+      expect(pending).toEqual(expectedSuffix);
+      // CONTIGUOUS: hosted + 1 … repo, allowing for permanently-skipped slots.
+      const skipped = new Set(DERIVED.permanently_skipped.map((v: string) => Number(v)));
+      const contiguous: string[] = [];
+      for (let n = hosted + 1; n <= repo; n += 1) {
+        if (!skipped.has(n)) contiguous.push(String(n).padStart(4, "0"));
+      }
+      expect(
+        pending,
+        "the pending suffix has a HOLE in it: a migration between the hosted " +
+          "head and the repo max is missing from the repository",
+      ).toEqual(contiguous);
+      // The repo max is itself the last pending entry.
+      expect(pending[pending.length - 1]).toBe(DERIVED.repo_migration_max);
+    }
+  });
+
+  it("the ledger's current block never claims parity while something is pending", () => {
+    // THE LEDGER HALF. The derived state can be honest while the prose still
+    // says "hosted == repo. Nothing pending." from a previous release — the
+    // drift that made this file red after the 0188 apply.
+    if (DERIVED.pending_migrations.length === 0) return;
+    expect(
+      block,
+      "the current ledger block claims parity while migrations are pending",
+    ).not.toMatch(/hosted == repo/i);
+    expect(
+      block,
+      "the current ledger block claims nothing is pending while migrations are pending",
+    ).not.toMatch(/Nothing pending/i);
+    // ...and it must name the pending suffix rather than merely omitting the
+    // parity claim.
+    for (const v of DERIVED.pending_migrations) {
+      expect(block, `the current block does not name pending migration ${v}`).toContain(v);
+    }
+  });
+
+  // -----------------------------------------------------------------------
+  // THE OTHER HALF, WHICH THIS SUITE PREVIOUSLY ONLY CLAIMED TO HAVE.
+  //
+  // The rule above is named for every document and inspects ONE: the ledger's
+  // current block. So while it passed, current-state.md still said the two
+  // states reconciled "with nothing pending" and known-limitations.md said they
+  // were "at parity, with nothing pending" — both false against a recorded
+  // repo > hosted, and both invisible to this suite.
+  //
+  // The durable law is NOT "say the right numbers everywhere". It is the one
+  // these documents already apply to migration NUMBERS: outside the ledger,
+  // canonical current prose does not carry its own copy of a mutable migration
+  // fact — and the RELATIONSHIP between repo and hosted is exactly as mutable as
+  // the numbers are. Those documents reference the declared and derived
+  // authorities instead.
+  //
+  // THE LEDGER IS DELIBERATELY EXEMT FROM THIS RULE: stating the current
+  // relationship, with apply evidence, is its whole job, and its historical
+  // blocks legitimately record the parity that held when each apply landed.
+  // -----------------------------------------------------------------------
+  const MUTABLE_RELATIONSHIP_CLAIMS: ReadonlyArray<{ label: string; re: RegExp }> = [
+    {
+      label: "asserts repo and hosted are at parity / reconcile",
+      re: /\brepo(sitory)?\b[^.]{0,40}\band hosted\b[^.]{0,80}\b(are at parity|at parity|reconciles?|reconciled)\b/i,
+    },
+    {
+      label: "asserts nothing is pending",
+      re: /\b(migration|repo(sitory)?|hosted)\b[^.]{0,120}\bnothing pending\b/i,
+    },
+    { label: "asserts no migrations are pending", re: /\bno migrations?\s+(are\s+)?pending\b/i },
+    {
+      // SYMMETRIC ON PURPOSE. The first draft matched only `hosted == repo`, so
+      // the equally natural `repo == hosted` spelling slipped through and the
+      // rule could pass with the very assertion it forbids still in a document.
+      // One expression rather than two copies, so the two orders cannot drift.
+      label: "asserts repo and hosted are equal (either operand order)",
+      re: /\b(hosted\s*={1,3}\s*repo(sitory)?|repo(sitory)?\s*={1,3}\s*hosted)\b/i,
+    },
+    {
+      label: "asserts a repo/hosted inequality (either operand order)",
+      re: /\b(repo(sitory)?\s*[<>]\s*hosted|hosted\s*[<>]\s*repo(sitory)?)\b/i,
+    },
+    {
+      label: "names a specific pending migration",
+      re: /\b0\d{3}\b[^.]{0,60}\bis\s+(currently\s+)?pending\b/i,
+    },
+  ];
+
+  /** Whitespace-flattened current prose, so a claim wrapped across lines still matches. */
+  const flatCurrent = (doc: string) => currentProse(doc).replace(/\s+/g, " ");
+
+  const NON_LEDGER_CANONICAL: ReadonlyArray<[string, string]> = [
+    ["current-state.md", CURRENT_STATE],
+    ["capability-register.md", CAPABILITY_REGISTER],
+    ["known-limitations.md", KNOWN_LIMITATIONS],
+    ["release-changelog.md (preamble)", changelogPreamble()],
+  ];
+
+  function relationshipClaims(text: string): string[] {
+    const flat = text.replace(/\s+/g, " ");
+    return MUTABLE_RELATIONSHIP_CLAIMS.filter((c) => c.re.test(flat)).map((c) => c.label);
+  }
+
+  it("NO canonical current prose outside the ledger copies the migration relationship", () => {
+    for (const [name, doc] of NON_LEDGER_CANONICAL) {
+      expect(
+        relationshipClaims(flatCurrent(doc)),
+        `${name} carries its own copy of a mutable migration-state relationship; ` +
+          `reference migration-state.json / npm run migration:state / migration-ledger.md instead`,
+      ).toEqual([]);
+    }
+  });
+
+  it("NEGATIVE CONTROL: each stale shape is caught, in EVERY document collection", () => {
+    // Mutates copies; no file is touched. Without this the rule above could be
+    // satisfied by a regex that matches nothing at all.
+    const shapes = [
+      "Repo and hosted migration state are at parity, with nothing pending.",
+      "Repository and hosted migration state reconcile, with nothing pending and nothing remote-only.",
+      "There are no migrations pending.",
+      "Migration state: hosted == repo.",
+      "Migration state: repo == hosted.",
+      "Migration state: repository == hosted.",
+      "Migration state: repo > hosted.",
+      "Migration state: hosted < repo.",
+    ];
+    for (const shape of shapes) {
+      expect(relationshipClaims(shape), `not caught: ${shape}`).not.toEqual([]);
+    }
+    // ...and it is not ledger-only any more: injected into EACH document's own
+    // current prose, every one is flagged.
+    for (const [name, doc] of NON_LEDGER_CANONICAL) {
+      const poisoned = `${flatCurrent(doc)} ${shapes[0]}`;
+      expect(relationshipClaims(poisoned), `${name} would not have been checked`).not.toEqual([]);
+    }
+  });
+
+  it("operand order alone cannot defeat the equality rule", () => {
+    // The reported hole: `hosted == repo` was caught and `repo == hosted` was
+    // not. Asserted as a PAIR so a future edit cannot silently drop one side.
+    for (const [a, b] of [
+      ["Migration state: hosted == repo.", "Migration state: repo == hosted."],
+      ["Migration state: hosted = repository.", "Migration state: repository = hosted."],
+      ["Migration state: repo > hosted.", "Migration state: hosted < repo."],
+    ]) {
+      expect(relationshipClaims(a), `not caught: ${a}`).not.toEqual([]);
+      expect(relationshipClaims(b), `not caught in reversed order: ${b}`).not.toEqual([]);
+    }
+  });
+
+  it("ordinary uses of `pending` and `parity` stay legal", () => {
+    for (const benign of [
+      "12 pending_invitations all-tenant, 5 of them expired.",
+      "The reconciled position with apply evidence is migration-ledger.md.",
+      "repo max and the next free number are derived by `npm run migration:state`.",
+      "Reproduced on a CI-parity database, then independently re-reproduced.",
+      "export-emission-parity.test.ts builds a real archive and compares it.",
+      "A pending invitation is not an appointment.",
+      // `==` must not become a generic ban: ordinary code prose keeps using it.
+      "The guard asserts `wait_event_type == 'Lock'` before proceeding.",
+      "hosted_migration_max is declared in migration-state.json.",
+    ]) {
+      expect(relationshipClaims(benign), `false positive: ${benign}`).toEqual([]);
+    }
+  });
+
+  it("historical claims inside an auditable ignore region remain allowed", () => {
+    // currentProse() strips ignore-marked regions, which is how superseded
+    // evidence stays readable without becoming a current assertion. Proven on a
+    // synthetic document rather than by adding a marker to a real one.
+    const doc = [
+      "# synthetic",
+      "<!-- canonical-facts:ignore-start reason=then-state -->",
+      "Repo and hosted migration state are at parity, with nothing pending.",
+      "<!-- canonical-facts:ignore-end -->",
+      "Current prose says nothing about the relationship.",
+    ].join("\n");
+    expect(relationshipClaims(doc.replace(/\s+/g, " ")), "the control text is not detectable")
+      .not.toEqual([]);
+    expect(relationshipClaims(flatCurrent(doc))).toEqual([]);
+  });
+
+  it("the ledger keeps its authority to state the current relationship", () => {
+    // The exemption is real and load-bearing: the ledger's current block DOES
+    // assert the relationship today, and must stay legal.
+    expect(relationshipClaims(block.replace(/\s+/g, " ")).length).toBeGreaterThan(0);
   });
 });
 

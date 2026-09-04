@@ -422,7 +422,20 @@ describe("removal", () => {
   it.each([
     ["not_found", "That waitlist entry no longer exists."],
     ["already_removed", "That entry has already been removed."],
-    ["not_waiting", "That entry is no longer waiting."],
+    // The two outcomes 0188 added so the operator could be told what to do.
+    // Reachable here even though the queue page renders only `waiting` rows: a
+    // second operator can claim, invite or convert the entry between the page
+    // render and this submit.
+    [
+      "release_required",
+      "That entry has been claimed or invited. Release it before removing it.",
+    ],
+    [
+      "not_removable",
+      "That person is already a client. Converted entries stay in waitlist history.",
+    ],
+    // Kept despite the route's own role check: the command re-derives membership
+    // and role in the database, so a change committed in between lands here.
     ["not_owner", "Only studio owners can change the waitlist."],
     ["not_a_member", "Only studio owners can change the waitlist."],
   ])("maps the command refusal `%s` to copy an owner can act on", async (code, message) => {
@@ -431,6 +444,78 @@ describe("removal", () => {
     fd.set("entry_id", "entry-1");
     await expect(removeWaitlistEntryAction(fd)).rejects.toThrow(message);
     expect(revalidated).toHaveLength(0);
+  });
+
+  /**
+   * Every result the deployed command can produce, read from migration 0188:
+   * the removal command's own `return '...'` codes, plus the ones it propagates
+   * from `new_client_waitlist_resolve_owner` when that answers anything but
+   * `ok`. Derived rather than transcribed, because the transcription is exactly
+   * what went stale — the map carried 0185's `not_waiting` for two migrations
+   * while 0188's `release_required` and `not_removable` fell through to the
+   * generic error.
+   */
+  const deployedRemovalCodes = (): string[] => {
+    const sql = readFileSync(
+      path.join(process.cwd(), "supabase/migrations/0188_new_client_waitlist_invitations.sql"),
+      "utf8",
+    );
+    const bodyOf = (fn: string) => {
+      const at = sql.indexOf(`create or replace function public.${fn}`);
+      expect(at, `${fn} is not defined in 0188`).toBeGreaterThan(-1);
+      return sql.slice(at, sql.indexOf("$$;", at));
+    };
+    const remove = bodyOf("remove_new_client_waitlist_entry");
+    const owner = bodyOf("new_client_waitlist_resolve_owner");
+    return [
+      ...new Set([
+        ...[...remove.matchAll(/return '([a-z_]+)'/g)].map((m) => m[1]),
+        // `if v_code <> 'ok' then return v_code` — resolve_owner's refusals
+        // arrive through the removal command verbatim.
+        ...[...owner.matchAll(/'([a-z_]+)'::text/g)].map((m) => m[1]).filter((c) => c !== "ok"),
+      ]),
+    ].sort();
+  };
+
+  it("the deployed command's result vocabulary is exactly what this action expects", () => {
+    expect(deployedRemovalCodes()).toEqual([
+      "already_removed",
+      "invalid_input",
+      "not_a_member",
+      "not_found",
+      "not_owner",
+      "not_removable",
+      "release_required",
+      "removed",
+    ]);
+  });
+
+  it("every refusal is either mapped to copy, or deliberately generic", async () => {
+    // The partition, stated: `invalid_input` means a null studio, actor or entry
+    // id, and this action guards all three before the RPC — so it is upstream
+    // breakage rather than something an owner can act on, and generic is the
+    // honest answer. Everything else must say something specific.
+    const GENERIC = "Could not remove that entry. Please try again.";
+    const DELIBERATELY_GENERIC = new Set(["invalid_input"]);
+
+    for (const code of deployedRemovalCodes()) {
+      if (code === "removed") continue;
+      reset();
+      scenario.removeResult = code;
+      const fd = new FormData();
+      fd.set("entry_id", "entry-1");
+      const error = await removeWaitlistEntryAction(fd).then(
+        () => null,
+        (e: Error) => e,
+      );
+      expect(error, `${code} did not refuse`).not.toBeNull();
+      if (DELIBERATELY_GENERIC.has(code)) {
+        expect(error!.message, `${code} should be deliberately generic`).toBe(GENERIC);
+      } else {
+        expect(error!.message, `${code} falls through to the generic error`).not.toBe(GENERIC);
+      }
+      expect(revalidated, `${code} revalidated despite refusing`).toHaveLength(0);
+    }
   });
 
   it("an unrecognised outcome or a database error is generic, never a raw code", async () => {

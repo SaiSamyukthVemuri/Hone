@@ -5,7 +5,7 @@ import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 
 // ===========================================================================
-// NEW-CLIENT WAITLIST — OPERATOR REMOVAL (WAIT-02)
+// NEW-CLIENT WAITLIST — OPERATOR REMOVAL (WAIT-02 surface, 0188 command)
 // ===========================================================================
 //
 // THE ONLY MUTATION THIS SURFACE HAS, and it is not a write from here at all.
@@ -29,11 +29,52 @@ import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 // PII. Names, emails and phone numbers never reach a log line here.
 // ===========================================================================
 
-/** Refusals the command can return, mapped to copy an owner can act on. */
-const REFUSAL_MESSAGES: Readonly<Record<string, string>> = {
+/**
+ * EVERY result `remove_new_client_waitlist_entry` can return, derived from the
+ * command itself in migration 0188 — its own codes, plus the three it propagates
+ * from `new_client_waitlist_resolve_owner` whenever that answers anything but
+ * `ok`.
+ *
+ * This list drifted once already. The command was rewritten in 0188 to give the
+ * removal ruling distinguishable codes, and the map below still carried 0185's
+ * vocabulary: `not_waiting`, which the command can no longer return, while
+ * `release_required` and `not_removable` — the two outcomes 0188 added
+ * specifically so the operator could be told what to do — fell through to the
+ * generic "please try again". Typing the map against this union means the next
+ * added code is a compile error rather than a silent generic error.
+ */
+type RemoveWaitlistEntryResult =
+  | "removed"
+  | "not_found"
+  | "already_removed"
+  | "release_required"
+  | "not_removable"
+  | "not_owner"
+  | "not_a_member"
+  | "invalid_input";
+
+/**
+ * The refusals given their own copy.
+ *
+ * `invalid_input` is deliberately absent. The command returns it for a null
+ * studio, actor or entry id, and all three are guarded above before the RPC is
+ * issued — so reaching it means something upstream is broken rather than
+ * something the operator can act on, and the generic message is the honest
+ * answer. It stays in the union so that assumption is stated rather than
+ * implied.
+ *
+ * `not_owner` and `not_a_member` DO keep copy even though the route checks the
+ * role first: the command re-derives membership and role in the database, and a
+ * role or membership change committed between that check and this call still
+ * arrives here.
+ */
+const REFUSAL_MESSAGES: Readonly<
+  Record<Exclude<RemoveWaitlistEntryResult, "removed" | "invalid_input">, string>
+> = {
   not_found: "That waitlist entry no longer exists.",
   already_removed: "That entry has already been removed.",
-  not_waiting: "That entry is no longer waiting.",
+  release_required: "That entry has been claimed or invited. Release it before removing it.",
+  not_removable: "That person is already a client. Converted entries stay in waitlist history.",
   not_owner: "Only studio owners can change the waitlist.",
   not_a_member: "Only studio owners can change the waitlist.",
 };
@@ -79,7 +120,10 @@ export async function removeWaitlistEntryAction(formData: FormData): Promise<voi
         timestamp: new Date().toISOString(),
       }),
     );
-    const known = typeof data === "string" ? REFUSAL_MESSAGES[data] : undefined;
+    const known =
+      typeof data === "string"
+        ? REFUSAL_MESSAGES[data as keyof typeof REFUSAL_MESSAGES]
+        : undefined;
     throw new Error(known ?? "Could not remove that entry. Please try again.");
   }
 
