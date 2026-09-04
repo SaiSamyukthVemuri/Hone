@@ -239,9 +239,16 @@ export const COLLECTION_RATE_IS_VISITS =
  *
  * Telling an owner Hone keeps no such record, on a screen reading that record,
  * is the same class of untrue sentence this file exists to prevent.
+ *
+ * NARROWED IN SLICE 2B, and the old clause was FALSE by then. It said editing
+ * a SERVICE price changes the figure for every unsettled visit. Slice 2b made
+ * an unsettled visit resolve through the shared pricing authority, so a client
+ * with their own current rate is valued at THAT — and repricing the service
+ * moves nothing for them. The sentence now names both sources and attributes
+ * the movement to repricing generally, which is true of either.
  */
 export const SERVICE_VALUE_PRICE_BASIS =
-  "Service value uses the price recorded when a visit was settled, wherever Hone has one. Every other visit uses today's price, because no record was kept of what it was priced at — so editing a service price changes this figure for those visits.";
+  "Service value uses the price recorded when a visit was settled, wherever Hone has one. Every other visit uses the price in force today — this client's own price where one is set, otherwise the service price — because no record was kept of what it was priced at. Repricing changes this figure for those visits.";
 
 /**
  * Shown ONLY when the two bases are actually mixed.

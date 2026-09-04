@@ -349,6 +349,13 @@ describe("NC6 — past work is valued at the price on record, never at today's m
   it("no sentence claims Hone keeps no record of the price at the time", () => {
     // It kept one from 0187 onward, and said so in the column comment.
     expect(ALL_CODE).not.toContain("Hone does not keep the price a visit carried at the time");
+    // SLICE 2B NARROWED THIS SENTENCE. It used to say editing a SERVICE price
+    // changes the figure for every unsettled visit; once an unsettled visit
+    // resolves through the shared pricing authority, a client on their own
+    // current rate is valued at that instead, and repricing the service moves
+    // nothing for them. The copy must name both sources rather than only one.
+    expect(CODE.copy).toContain("this client's own price where one is set");
+    expect(CODE.copy).not.toContain("editing a service price changes this figure");
     expect(CODE.copy).toContain("SERVICE_VALUE_PRICE_BASIS");
     expect(CODE.spine).toContain("SERVICE_VALUE_PRICE_BASIS");
   });
