@@ -68,6 +68,39 @@ function body(fn: string): string {
 
 const ISSUE = "issue_new_client_waitlist_invitation";
 const STAMPS = "new_client_waitlist_invitations_server_timestamps";
+const GUARD = "new_client_waitlist_entries_transition_guard";
+
+/** The twelve legal transitions, and the evidence each one OWNS. Derived from
+ *  the `set` clause of every UPDATE of the entries table across the deployed
+ *  commands — not from prose, and not from memory. */
+const OWNED: ReadonlyArray<readonly [string, readonly string[]]> = [
+  ["waiting->claimed", ["claimed_at", "claimed_by_practitioner_id"]],
+  ["waiting->removed", ["removed_at", "removed_by_practitioner_id"]],
+  ["claimed->invited", ["invited_at"]],
+  ["claimed->released", ["released_at"]],
+  ["invited->converted", ["converted_at", "converted_client_id"]],
+  ["invited->expired", ["expired_at"]],
+  ["invited->released", ["released_at"]],
+  ["expired->released", ["released_at"]],
+  ["expired->removed", ["removed_at", "removed_by_practitioner_id"]],
+  ["released->removed", ["removed_at", "removed_by_practitioner_id"]],
+  // requeue is the ONE transition that legitimately erases earned evidence.
+  ["expired->waiting", ["claimed_at", "claimed_by_practitioner_id", "invited_at", "expired_at", "released_at"]],
+  ["released->waiting", ["claimed_at", "claimed_by_practitioner_id", "invited_at", "expired_at", "released_at"]],
+];
+
+/** Every evidence column the guard must police. */
+const EVIDENCE = [
+  "claimed_at",
+  "claimed_by_practitioner_id",
+  "invited_at",
+  "expired_at",
+  "released_at",
+  "converted_at",
+  "converted_client_id",
+  "removed_at",
+  "removed_by_practitioner_id",
+] as const;
 
 describe("0190 — identity and position", () => {
   it("is named for what it repairs", () => {
@@ -263,11 +296,11 @@ describe("0190 — the deployed contract is preserved", () => {
     }
   });
 
-  it("replaces exactly two function bodies, and no others", () => {
+  it("replaces exactly three function bodies, and no others", () => {
     const defined = [...CODE.matchAll(/create or replace function public\.(\w+)/g)].map(
       (m) => m[1],
     );
-    expect(defined.sort()).toEqual([ISSUE, STAMPS].sort());
+    expect(defined.sort()).toEqual([ISSUE, STAMPS, GUARD].sort());
   });
 });
 
@@ -296,6 +329,93 @@ describe("0190 — privileges are reasserted by name, never assumed", () => {
     expect(
       CODE.includes(`grant  execute on function ${STAMPS_SIG}`),
       "the trigger function was granted to an application role",
+    ).toBe(false);
+  });
+});
+
+describe("0190 — a legal transition is not a licence to rewrite history", () => {
+  it("gates evidence per transition, not merely on the status pair", () => {
+    const b = body(GUARD);
+    // The pre-0190 shape validated the pair and then fell straight through to
+    // `return new`. The repair consults an allowed-delta map after it.
+    expect(b).toContain("v_allowed := case old.status || '->' || new.status");
+    expect(b).toContain("that evidence belongs to an earlier transition");
+  });
+
+  it("names every legal transition in the delta map, with the evidence it owns", () => {
+    const b = body(GUARD);
+    for (const [transition, columns] of OWNED) {
+      const arm = new RegExp(
+        `when '${transition}'\\s+then array\\[([^\\]]*)\\]`,
+        "s",
+      ).exec(b);
+      expect(arm, `the delta map has no arm for ${transition}`).not.toBeNull();
+      const listed = [...arm![1].matchAll(/'(\w+)'/g)].map((m) => m[1]).sort();
+      expect(listed, `${transition} owns the wrong evidence`).toEqual([...columns].sort());
+    }
+  });
+
+  it("has an arm for every pair it calls legal — the two lists cannot drift", () => {
+    const b = body(GUARD);
+    const legal = [...b.matchAll(/\('(\w+)',\s*'(\w+)'\)/g)].map((m) => `${m[1]}->${m[2]}`);
+    const mapped = [...b.matchAll(/when '(\w+->\w+)'/g)].map((m) => m[1]);
+    expect(legal.sort()).toEqual(OWNED.map(([t]) => t).sort());
+    expect(mapped.sort()).toEqual(OWNED.map(([t]) => t).sort());
+  });
+
+  it("FAILS CLOSED: an unmapped transition may change no evidence at all", () => {
+    // A transition added to the legal list but not to the map must refuse every
+    // evidence change rather than permit all of them.
+    const b = body(GUARD);
+    expect(b).toContain("else array[]::text[]");
+  });
+
+  it("checks every evidence column against the allowed set", () => {
+    const b = body(GUARD);
+    for (const column of EVIDENCE) {
+      expect(b, `${column} is never checked against the allowed set`).toContain(
+        `if not ('${column}' = any (v_allowed))`,
+      );
+    }
+  });
+
+  it("appends offending column names as text, so the refusal is a check violation", () => {
+    // Without the cast the append raises `malformed array literal` (22P02)
+    // instead of the intended check_violation — the row is still refused, but
+    // for the wrong reason and with an unusable message. Observed exactly that.
+    const b = body(GUARD);
+    for (const column of EVIDENCE) {
+      expect(b).toContain(`v_bad := v_bad || '${column}'::text;`);
+    }
+    expect(b).toContain("using errcode = 'check_violation'");
+  });
+
+  it("carries the rest of the frozen guard over unchanged", () => {
+    const b = body(GUARD);
+    // Identity, contact details, and the status-unchanged freeze all survive.
+    expect(b).toContain("id, studio_id, joined_at and source are immutable");
+    expect(b).toContain("contact details are immutable in this release");
+    expect(b).toContain(
+      "lifecycle evidence changes only in the statement that performs a legal transition",
+    );
+    expect(b).toContain("illegal lifecycle transition");
+  });
+
+  it("does not re-create the trigger, only its function body", () => {
+    expect(OUTSIDE_FUNCTIONS.toLowerCase().includes("create trigger")).toBe(false);
+    expect(OUTSIDE_FUNCTIONS.toLowerCase().includes("drop trigger")).toBe(false);
+  });
+
+  it("grants the guard function to NO application role", () => {
+    const sig = "public.new_client_waitlist_entries_transition_guard()";
+    for (const role of ["public", "anon", "authenticated", "service_role"]) {
+      expect(CODE, `the guard is not revoked from ${role}`).toContain(
+        `revoke execute on function ${sig} from ${role};`,
+      );
+    }
+    expect(
+      CODE.includes(`grant  execute on function ${sig}`),
+      "the guard was granted to an application role",
     ).toBe(false);
   });
 });

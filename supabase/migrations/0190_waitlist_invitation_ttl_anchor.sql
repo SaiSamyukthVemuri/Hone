@@ -1,9 +1,22 @@
 -- ===========================================================================
--- WAIT-03 — THE REQUESTED TTL MUST START WHEN THE INVITATION IS ISSUED — 0190
+-- WAIT-03 — TWO EVIDENCE REPAIRS THE FROZEN MIGRATIONS CANNOT MAKE — 0190
 -- ===========================================================================
 --
 -- 0188 AND 0189 ARE APPLIED AND FROZEN. Their bytes are production truth and
 -- are NOT edited by this file. This migration is forward-only.
+--
+-- TWO DEFECTS, both found by review against the frozen files, both reproduced
+-- on this schema before anything was written:
+--
+--   1. THE REQUESTED TTL DID NOT START AT ISSUANCE. An invitation's window was
+--      anchored to transaction-start, so it was shortened by however long the
+--      issuing transaction had already been alive.
+--   2. A LEGAL STATUS TRANSITION WAS A LICENCE TO REWRITE HISTORY. The
+--      transition guard checked only that the status PAIR was legal, and let
+--      the same statement overwrite evidence the transition does not own.
+--
+-- They are unrelated in mechanism and share this file only because 0190 is the
+-- one unapplied migration and both repairs are forward-only.
 --
 -- 0189 moved every TTL *decision* onto the post-lock wall clock. It deliberately
 -- left the invitation's own `issued_at` and `expires_at` alone, and said so at
@@ -98,11 +111,14 @@
 -- WHAT IS NOT TOUCHED
 -- ---------------------------------------------------------------------------
 -- No table, column, index, default, constraint, policy or trigger DEFINITION
--- changes; only two function bodies are replaced. No backfill: rows already
--- issued keep the windows they were issued with, because rewriting a stored
--- expiry would move an evidence column that the append-only trigger exists to
--- freeze. Signatures, result vocabulary, SECURITY DEFINER, search_path, token
--- hashing and the one-live-per-entry partial unique index are all unchanged.
+-- changes; only three function bodies are replaced -- the issue command, the
+-- invitation timestamp trigger, and the entry transition guard. No backfill:
+-- rows already issued keep the windows they were issued with, because rewriting
+-- a stored expiry would move an evidence column that the append-only trigger
+-- exists to freeze, and no historical row is re-attributed by the guard repair
+-- either. Signatures, result vocabulary, SECURITY DEFINER, search_path, token
+-- hashing, the legal transition graph and the one-live-per-entry partial unique
+-- index are all unchanged. No currently valid transition becomes impossible.
 --
 -- ACLs ARE RE-ASSERTED BY NAME. Supabase's ALTER DEFAULT PRIVILEGES grants
 -- EXECUTE to anon, authenticated AND service_role at function-create time, and
@@ -231,7 +247,190 @@ end;
 $$;
 
 -- ---------------------------------------------------------------------------
--- ACLs — re-asserted by name, for both replaced functions.
+-- THE TRANSITION GUARD — a legal transition is not a licence to rewrite history
+-- ---------------------------------------------------------------------------
+-- SECOND DEFECT, FOUND BY REVIEW AND REPRODUCED BEFORE REPAIR. 0188's guard has
+-- two branches. When `status` does NOT change it freezes every evidence column,
+-- which closes the 0183 hole it was written for. When `status` DOES change it
+-- validates only that the `(old.status, new.status)` PAIR is legal -- and then
+-- lets the same statement write anything it likes to evidence the transition
+-- does not own.
+--
+-- REPRODUCED on this schema, as the table owner (the only role holding UPDATE):
+-- a single legal `claimed -> released` statement moved `claimed_at` back ten
+-- days AND replaced `claimed_by_practitioner_id` with a different practitioner.
+-- The row was accepted, and the append-only event log then recorded the
+-- SUBSTITUTED practitioner as the actor of the release. Provenance was rewritten
+-- silently, inside a transition the guard considered correct.
+--
+-- The delta each transition is allowed to make is derived from the commands
+-- themselves -- the `set` clause of every UPDATE of this table across the
+-- deployed functions -- not from prose:
+--
+--   waiting  -> claimed    claimed_at, claimed_by_practitioner_id
+--   waiting  -> removed    removed_at, removed_by_practitioner_id
+--   claimed  -> invited    invited_at
+--   claimed  -> released   released_at
+--   invited  -> converted  converted_at, converted_client_id
+--   invited  -> expired    expired_at
+--   invited  -> released   released_at
+--   expired  -> released   released_at
+--   expired  -> removed    removed_at, removed_by_practitioner_id
+--   released -> removed    removed_at, removed_by_practitioner_id
+--   expired  -> waiting  } the five CYCLE columns, deliberately cleared to NULL
+--   released -> waiting  } by requeue so the next cycle starts with no evidence
+--
+-- REQUEUE IS THE CASE THAT MAKES A BLANKET FREEZE WRONG. It is the one
+-- transition that legitimately erases earned evidence, so the repair models
+-- per-transition deltas rather than "previously earned evidence is immutable".
+-- Note also what requeue may NOT touch: `converted_*` and `removed_*` are
+-- terminal and are not part of a cycle.
+--
+-- FAIL-CLOSED. The allowed-delta map is consulted after the legality check, and
+-- its `else` yields the EMPTY set. A transition added to the legal list but not
+-- to this map therefore refuses every evidence change rather than permitting
+-- all of them, so the two lists cannot silently drift apart in the permissive
+-- direction.
+--
+-- Everything else in the guard is carried over verbatim: the identity columns,
+-- the contact-detail freeze, the legal transition graph itself, and the
+-- status-unchanged branch.
+create or replace function public.new_client_waitlist_entries_transition_guard()
+returns trigger
+language plpgsql
+set search_path = pg_catalog, pg_temp
+as $$
+declare
+  v_legal   boolean;
+  v_allowed text[];
+  v_bad     text[] := '{}';
+begin
+  if new.id is distinct from old.id
+     or new.studio_id is distinct from old.studio_id
+     or new.joined_at is distinct from old.joined_at
+     or new.source is distinct from old.source then
+    raise exception
+      'new_client_waitlist_entries: id, studio_id, joined_at and source are immutable'
+      using errcode = 'check_violation';
+  end if;
+
+  if new.name is distinct from old.name
+     or new.email is distinct from old.email
+     or new.phone is distinct from old.phone then
+    raise exception
+      'new_client_waitlist_entries: contact details are immutable in this release; there is no correction command yet'
+      using errcode = 'check_violation';
+  end if;
+
+  if new.status is distinct from old.status then
+    v_legal := (old.status, new.status) in (
+      ('waiting',  'claimed'),
+      ('waiting',  'removed'),
+      ('claimed',  'invited'),
+      ('claimed',  'released'),
+      ('invited',  'converted'),
+      ('invited',  'expired'),
+      ('invited',  'released'),
+      ('expired',  'released'),
+      ('expired',  'waiting'),
+      ('expired',  'removed'),
+      ('released', 'waiting'),
+      ('released', 'removed')
+    );
+
+    if not v_legal then
+      raise exception
+        'new_client_waitlist_entries: illegal lifecycle transition % -> % (a claimed or invited entry must be released or expired before removal)',
+        old.status, new.status
+        using errcode = 'check_violation';
+    end if;
+
+    -- ONLY the evidence this transition owns may move.
+    v_allowed := case old.status || '->' || new.status
+      when 'waiting->claimed'   then array['claimed_at', 'claimed_by_practitioner_id']
+      when 'waiting->removed'   then array['removed_at', 'removed_by_practitioner_id']
+      when 'claimed->invited'   then array['invited_at']
+      when 'claimed->released'  then array['released_at']
+      when 'invited->converted' then array['converted_at', 'converted_client_id']
+      when 'invited->expired'   then array['expired_at']
+      when 'invited->released'  then array['released_at']
+      when 'expired->released'  then array['released_at']
+      when 'expired->removed'   then array['removed_at', 'removed_by_practitioner_id']
+      when 'released->removed'  then array['removed_at', 'removed_by_practitioner_id']
+      when 'expired->waiting'   then array['claimed_at', 'claimed_by_practitioner_id',
+                                           'invited_at', 'expired_at', 'released_at']
+      when 'released->waiting'  then array['claimed_at', 'claimed_by_practitioner_id',
+                                           'invited_at', 'expired_at', 'released_at']
+      else array[]::text[]
+    end;
+
+    if not ('claimed_at' = any (v_allowed))
+       and new.claimed_at is distinct from old.claimed_at then
+      v_bad := v_bad || 'claimed_at'::text;
+    end if;
+    if not ('claimed_by_practitioner_id' = any (v_allowed))
+       and new.claimed_by_practitioner_id is distinct from old.claimed_by_practitioner_id then
+      v_bad := v_bad || 'claimed_by_practitioner_id'::text;
+    end if;
+    if not ('invited_at' = any (v_allowed))
+       and new.invited_at is distinct from old.invited_at then
+      v_bad := v_bad || 'invited_at'::text;
+    end if;
+    if not ('expired_at' = any (v_allowed))
+       and new.expired_at is distinct from old.expired_at then
+      v_bad := v_bad || 'expired_at'::text;
+    end if;
+    if not ('released_at' = any (v_allowed))
+       and new.released_at is distinct from old.released_at then
+      v_bad := v_bad || 'released_at'::text;
+    end if;
+    if not ('converted_at' = any (v_allowed))
+       and new.converted_at is distinct from old.converted_at then
+      v_bad := v_bad || 'converted_at'::text;
+    end if;
+    if not ('converted_client_id' = any (v_allowed))
+       and new.converted_client_id is distinct from old.converted_client_id then
+      v_bad := v_bad || 'converted_client_id'::text;
+    end if;
+    if not ('removed_at' = any (v_allowed))
+       and new.removed_at is distinct from old.removed_at then
+      v_bad := v_bad || 'removed_at'::text;
+    end if;
+    if not ('removed_by_practitioner_id' = any (v_allowed))
+       and new.removed_by_practitioner_id is distinct from old.removed_by_practitioner_id then
+      v_bad := v_bad || 'removed_by_practitioner_id'::text;
+    end if;
+
+    if array_length(v_bad, 1) is not null then
+      raise exception
+        'new_client_waitlist_entries: transition % -> % may not change %; that evidence belongs to an earlier transition',
+        old.status, new.status, array_to_string(v_bad, ', ')
+        using errcode = 'check_violation';
+    end if;
+  else
+    -- Status unchanged: the record is frozen. Nothing may be re-attributed,
+    -- re-timed, or quietly reverted to NULL.
+    if new.claimed_at is distinct from old.claimed_at
+       or new.claimed_by_practitioner_id is distinct from old.claimed_by_practitioner_id
+       or new.invited_at is distinct from old.invited_at
+       or new.expired_at is distinct from old.expired_at
+       or new.released_at is distinct from old.released_at
+       or new.converted_at is distinct from old.converted_at
+       or new.converted_client_id is distinct from old.converted_client_id
+       or new.removed_at is distinct from old.removed_at
+       or new.removed_by_practitioner_id is distinct from old.removed_by_practitioner_id then
+      raise exception
+        'new_client_waitlist_entries: lifecycle evidence changes only in the statement that performs a legal transition'
+        using errcode = 'check_violation';
+    end if;
+  end if;
+
+  return new;
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- ACLs — re-asserted by name, for every replaced function.
 -- ---------------------------------------------------------------------------
 revoke execute on function public.issue_new_client_waitlist_invitation(uuid, uuid, uuid, integer) from public;
 revoke execute on function public.issue_new_client_waitlist_invitation(uuid, uuid, uuid, integer) from anon;
@@ -245,5 +444,12 @@ revoke execute on function public.new_client_waitlist_invitations_server_timesta
 revoke execute on function public.new_client_waitlist_invitations_server_timestamps() from anon;
 revoke execute on function public.new_client_waitlist_invitations_server_timestamps() from authenticated;
 revoke execute on function public.new_client_waitlist_invitations_server_timestamps() from service_role;
+
+-- The transition guard likewise runs only as the table owner through its
+-- trigger, and is granted to no application role.
+revoke execute on function public.new_client_waitlist_entries_transition_guard() from public;
+revoke execute on function public.new_client_waitlist_entries_transition_guard() from anon;
+revoke execute on function public.new_client_waitlist_entries_transition_guard() from authenticated;
+revoke execute on function public.new_client_waitlist_entries_transition_guard() from service_role;
 
 commit;
