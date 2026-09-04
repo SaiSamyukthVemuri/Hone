@@ -666,7 +666,19 @@ describe("PR CI — path-aware lane selection", () => {
     // lane would pass or be cancelled according to which runner it drew.
     expect(budget("payment-browser-e2e")).toBeGreaterThan(14);
     expect(budget("payment-browser-e2e")).toBeLessThanOrEqual(18);
-    expect(budget("google-browser-e2e")).toBeLessThanOrEqual(10);
+    // google-browser-e2e: TARGET unchanged, HARD TIMEOUT 15. On head 2a23e3e7
+    // `npm ci` alone consumed ~5 min; the Supabase stack then started, the full
+    // migration chain applied from scratch, and Playwright reported
+    // `Running 13 tests using 1 worker`. Tests 1-12 PASSED with zero assertion
+    // failures and the 10-minute ceiling cancelled the job as test 13 began --
+    // a healthy suite cut mid-run, which reads like a broken diff and is not one.
+    //
+    // The lower bound is 10, not 14, so a revert to the old ceiling turns this
+    // red rather than silently reinstating the cancellation. The upper bound
+    // keeps the ceiling FINITE: a removed timeout would let a hung lane burn a
+    // full runner allocation.
+    expect(budget("google-browser-e2e")).toBeGreaterThan(10);
+    expect(budget("google-browser-e2e")).toBeLessThanOrEqual(15);
     expect(budget("mobile-completion-e2e")).toBeLessThanOrEqual(10);
     // Targeted hard timeout 15, extended shard hard timeout 18 — both above
     // their <10 min targets. Parsed, not line-matched, so reformatting the

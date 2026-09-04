@@ -918,7 +918,24 @@ jobs:
     needs: changes
     if: ${{ needs.changes.outputs.google_calendar == 'true' || needs.changes.outputs.full_matrix_required == 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # A FAILURE CEILING, NOT A PERFORMANCE TARGET. The target for this lane is
+    # UNCHANGED and it should still finish materially faster under normal runner
+    # conditions; 15 minutes is only the point at which a run is declared broken,
+    # and is NOT an acceptable runtime.
+    #
+    # MEASURED on head 2a23e3e7. `npm ci` alone consumed ~5 min before the lane
+    # could do any useful work. Everything then SUCCEEDED -- the Supabase stack
+    # started, the full migration chain applied from scratch, and Playwright
+    # reported `Running 13 tests using 1 worker`. Tests 1 through 12 passed with
+    # ZERO assertion failures, and the 10-minute ceiling cancelled the job as
+    # test 13 was beginning. Nothing failed; the suite was cut mid-run.
+    #
+    # This is the third lane on this branch to hit the same shape: a ceiling that
+    # doubles as the target cannot absorb the runner-batch variance in dependency
+    # installation, so a slow runner is reported as a broken diff. Test selection,
+    # Playwright config, Supabase startup, worker count and every assertion are
+    # deliberately unchanged by this bump.
+    timeout-minutes: 15
 
     steps:
       - name: Checkout repository
