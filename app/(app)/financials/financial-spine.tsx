@@ -787,13 +787,16 @@ function BasisNote({ briefing }: { briefing: FinancialBriefing }) {
       `${b.unreadableAmounts} amount${b.unreadableAmounts === 1 ? "" : "s"} did not arrive as a number Hone could read, so ${b.unreadableAmounts === 1 ? "it is" : "they are"} left out of the totals rather than counted as nothing`,
     );
   }
-  if (b.settlementsOutsideWindow > 0) {
-    // NOT "a visit outside this window". Settlements are read studio-wide, so
-    // most of these do belong to other periods — but a row can also name a
-    // visit inside the window that has not elapsed, or one that was cancelled,
-    // and the old sentence asserted something false about it.
+  // `settlementsOutsideWindow` is NOT a reason. Settlements are read
+  // studio-wide, so after a studio's first settlement every later window sees
+  // the earlier ones, and listing them here warned that the current window was
+  // incomplete whenever the studio had any history at all. Those rows keep
+  // their own neutral disclosure beside the money they are not in
+  // (SETTLEMENTS_NOT_IN_THIS_WINDOW), which is information rather than a
+  // warning. What remains a reason is a row that names NOTHING.
+  if (b.settlementsUnattributable > 0) {
     reasons.push(
-      `${b.settlementsOutsideWindow} payment${b.settlementsOutsideWindow === 1 ? "" : "s"} recorded outside Hone name${b.settlementsOutsideWindow === 1 ? "s" : ""} a visit that is not one of the delivered visits in this window, so ${b.settlementsOutsideWindow === 1 ? "it is" : "they are"} not counted here`,
+      `${b.settlementsUnattributable} payment${b.settlementsUnattributable === 1 ? "" : "s"} recorded outside Hone name${b.settlementsUnattributable === 1 ? "s" : ""} no visit at all, so ${b.settlementsUnattributable === 1 ? "it cannot" : "they cannot"} be attributed to this window or any other`,
     );
   }
   return (

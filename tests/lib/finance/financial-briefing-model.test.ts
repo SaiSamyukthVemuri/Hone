@@ -575,6 +575,100 @@ describe("P2-B — the per-hour rate has ONE population on both sides", () => {
     expect(value(c.treatmentBookedMinutes)).toBe(120);
   });
 
+  // -------------------------------------------------------------------------
+  // A FULLY REFUNDED VISIT IS NOT COLLECTED — Codex P1-A
+  // -------------------------------------------------------------------------
+  //
+  // The defect: the collected-on-delivered loop walked `netOnVisit` and skipped
+  // only the unnettable, so a visit whose charge was fully reversed still added
+  // its MINUTES and a VISIT COUNT while adding zero money. That labelled it
+  // "paid by card" and halved the per-hour rate, on the same screen that says
+  // fully refunded visits are not collected.
+
+  it("A — a single collected visit sets the rate", () => {
+    const c = census({
+      appointments: [appt({ id: "a" })],
+      charges: [charge({ appointment_id: "a" })],
+    });
+    expect(value(c.collectedOnDeliveredVisits)).toBe(1);
+    expect(value(c.collectedOnDeliveredMinutes)).toBe(60);
+    expect(value(c.perTreatmentHourCents)).toBe(15_000);
+  });
+
+  it("B — a FULLY REFUNDED visit is in NO collected figure at all", () => {
+    const c = census({
+      appointments: [appt({ id: "b" })],
+      charges: [
+        charge({ appointment_id: "b", refund_status: "succeeded", refund_amount_cents: 15_000 }),
+      ],
+    });
+    expect(value(c.collectedOnDeliveredVisits)).toBe(0);
+    expect(value(c.collectedOnDeliveredMinutes)).toBe(0);
+    expect(value(c.collectedOnDeliveredCents)).toBe(0);
+    // No population, so there is no rate to state — not a rate of zero.
+    expect(c.perTreatmentHourCents.known).toBe(false);
+    // It is still counted, and still visible, as the reversal it was...
+    expect(value(c.refundedToZeroVisits)).toBe(1);
+    // ...and the money still moved, in contract 1 where it belongs.
+    expect(value(c.movedInGrossCents)).toBe(15_000);
+  });
+
+  it("C — a fully refunded visit CANNOT halve a true $150/hour rate", () => {
+    // The reported harm, exactly: $150 over one hour, plus a reversed hour,
+    // was reported as $75/hour.
+    const c = census({
+      appointments: [appt({ id: "kept" }), appt({ id: "reversed" })],
+      charges: [
+        charge({ appointment_id: "kept" }),
+        charge({
+          appointment_id: "reversed",
+          refund_status: "succeeded",
+          refund_amount_cents: 15_000,
+        }),
+      ],
+    });
+    expect(value(c.perTreatmentHourCents)).toBe(15_000);
+    expect(value(c.collectedOnDeliveredVisits)).toBe(1);
+    expect(value(c.collectedOnDeliveredMinutes)).toBe(60);
+    expect(value(c.collectedOnDeliveredCents)).toBe(15_000);
+    // Both visits were still DELIVERED — the reversal removes money, not work.
+    expect(value(c.deliveredTreatmentVisits)).toBe(2);
+    expect(value(c.treatmentBookedMinutes)).toBe(120);
+  });
+
+  it("D — a PARTIAL refund with a positive net stays, at its NET", () => {
+    const c = census({
+      appointments: [appt({ id: "d" })],
+      charges: [
+        charge({ appointment_id: "d", refund_status: "succeeded", refund_amount_cents: 5_000 }),
+      ],
+    });
+    expect(value(c.collectedOnDeliveredVisits)).toBe(1);
+    expect(value(c.collectedOnDeliveredCents)).toBe(10_000);
+    expect(value(c.collectedOnDeliveredMinutes)).toBe(60);
+    expect(value(c.perTreatmentHourCents)).toBe(10_000);
+    // A positive net is a collection, so it is NOT a reversal.
+    expect(value(c.refundedToZeroVisits)).toBe(0);
+  });
+
+  it("a NEGATIVE net is not a collection either, and never subtracts", () => {
+    // v1 refunds are always full reversals, so this shape is defensive rather
+    // than reachable today. The rule is stated anyway, because the failure it
+    // prevents — a refund larger than its charge silently REDUCING collected
+    // money and dragging the rate down — is worse than the one it replaces.
+    const c = census({
+      appointments: [appt({ id: "neg" }), appt({ id: "kept" })],
+      charges: [
+        charge({ appointment_id: "kept" }),
+        charge({ appointment_id: "neg", refund_status: "succeeded", refund_amount_cents: 20_000 }),
+      ],
+    });
+    expect(value(c.collectedOnDeliveredVisits)).toBe(1);
+    expect(value(c.collectedOnDeliveredCents)).toBe(15_000);
+    expect(value(c.perTreatmentHourCents)).toBe(15_000);
+    expect(value(c.refundedToZeroVisits)).toBe(1);
+  });
+
   it("a charge for a visit OUTSIDE the delivered set never reaches the rate", () => {
     // It is real cash movement, so it belongs in contract 1 and nowhere else.
     const c = census({
@@ -779,7 +873,14 @@ describe("the three evidence classes stay apart", () => {
       settlements: [settlement({ appointment_id: "elsewhere", method: "paid_cash", amount_cents: 9_000 })],
     });
     expect(c.basis.settlementsOutsideWindow).toBe(1);
-    expect(c.basis.complete).toBe(false);
+    // WAS `complete === false`. Settlements are read studio-wide, so after a
+    // studio's first settlement EVERY later window saw earlier rows here and
+    // warned that the current window was not a complete account. An alarm that
+    // fires on the normal case says nothing. The row is still counted and
+    // still disclosed — which is what this test is actually about — and only a
+    // row naming NO appointment withdraws completeness now.
+    expect(c.basis.complete).toBe(true);
+    expect(c.basis.settlementsUnattributable).toBe(0);
     // AND IT DOES NOT MAKE THIS WINDOW A CONFIDENT ZERO. The earlier build
     // gated on the studio's ALL-TIME row count, so this row — which says
     // nothing whatever about this window — turned the three figures into
@@ -885,6 +986,75 @@ describe("a card payment that was REFUNDED IN FULL is not a collection", () => {
     expect(value(c.collectedOnDeliveredCents)).toBe(10_000);
   });
 
+  // -------------------------------------------------------------------------
+  // HISTORICAL SETTLEMENTS ARE NOT CURRENT-WINDOW INCOMPLETENESS — Codex P2-B
+  // -------------------------------------------------------------------------
+  //
+  // Settlements are read studio-wide on purpose (an `.in(appointment_id, ...)`
+  // list grows with the period and an over-long URL is a live failure mode on
+  // this codebase). The consequence was that every routine row from another
+  // period incremented `settlementsOutsideWindow`, cleared `basis.complete`,
+  // and warned that THIS window was not a complete account — for every window
+  // after a studio's first settlement.
+
+  it("a valid settlement for work OUTSIDE the window does not withdraw completeness", () => {
+    const c = census({
+      appointments: [appt({ id: "in" })],
+      settlements: [settlement({ appointment_id: "last-month" })],
+    });
+    expect(c.basis.complete).toBe(true);
+    // Still DISCLOSED — the studio-wide read means an owner can otherwise
+    // wonder where those payments went — it simply no longer clears complete.
+    expect(c.basis.settlementsOutsideWindow).toBe(1);
+    expect(c.basis.settlementsUnattributable).toBe(0);
+    // ...and it contributes nothing to this window's money either.
+    expect(c.externallyAttestedCents.known).toBe(false);
+  });
+
+  it("many historical settlements still leave the window complete", () => {
+    const c = census({
+      appointments: [appt({ id: "in" })],
+      settlements: Array.from({ length: 50 }, (_, i) =>
+        settlement({ appointment_id: `old-${i}` }),
+      ),
+    });
+    expect(c.basis.complete).toBe(true);
+  });
+
+  it("a settlement naming NO appointment DOES withdraw completeness", () => {
+    // It cannot be attributed to any window, including this one, so it is a
+    // genuinely unusable row rather than routine history.
+    const c = census({
+      appointments: [appt({ id: "in" })],
+      settlements: [settlement({ appointment_id: "x", method: "paid_cash" })].map((s) => ({
+        ...s,
+        appointment_id: null as unknown as string,
+      })),
+    });
+    expect(c.basis.complete).toBe(false);
+    expect(c.basis.settlementsUnattributable).toBe(1);
+    // ...and it is NOT filed as routine history.
+    expect(c.basis.settlementsOutsideWindow).toBe(0);
+  });
+
+  it("an IN-WINDOW settlement with an unreadable amount still withdraws completeness", () => {
+    const c = census({
+      appointments: [appt({ id: "in" })],
+      settlements: [settlement({ appointment_id: "in", amount_cents: null })],
+    });
+    expect(c.basis.complete).toBe(false);
+    expect(c.basis.unreadableAmounts).toBe(1);
+  });
+
+  it("a valid IN-WINDOW settlement is counted, and keeps the window complete", () => {
+    const c = census({
+      appointments: [appt({ id: "in" })],
+      settlements: [settlement({ appointment_id: "in", amount_cents: 9_000 })],
+    });
+    expect(c.basis.complete).toBe(true);
+    expect(value(c.externallyAttestedCents)).toBe(9_000);
+  });
+
   it("a PRICELESS treatment reversed to nothing still explains the gap it opens", () => {
     // THE REGRESSION THIS PINS. Counting only CHARGEABLE reversals left this
     // visit in the service-period count, outside `cardPaidVisits`, and outside
@@ -903,10 +1073,19 @@ describe("a card payment that was REFUNDED IN FULL is not a collection", () => {
       ],
     });
     expect(value(c.chargeableTreatmentVisits)).toBe(0); // nothing to collect
-    expect(value(c.collectedOnDeliveredVisits)).toBe(1); // money did land
+    // WAS 1, UNDER THE PRE-P1-A SEMANTICS. This line asserted that money
+    // "did land", which is true of contract 1 and was never true of the
+    // collected-on-delivered population: the money did not STAY. Only a
+    // positive net is a collection now, so the two adjacent numbers agree
+    // instead of differing-and-being-explained — which is what this test was
+    // really about. The explanation below still carries the visit.
+    expect(value(c.collectedOnDeliveredVisits)).toBe(0);
     expect(value(c.cardPaidVisits)).toBe(0); // and did not stay
     expect(value(c.cardPaidWithoutAPrice)).toBe(0); // not THIS explanation...
     expect(value(c.refundedToZeroVisits)).toBe(1); // ...this one
+    // ...and the money it moved is still visible where it belongs.
+    expect(value(c.movedInGrossCents)).toBe(2_000);
+    expect(value(c.movedOutRefundedCents)).toBe(0); // refunds window on refunded_at
   });
 
   it("a visit whose net is UNKNOWABLE joins neither the rate nor the unresolved", () => {

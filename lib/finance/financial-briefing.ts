@@ -5,6 +5,7 @@ import {
   resolvePeriodRange,
   type ReportingPeriod,
 } from "@/lib/booking/reporting-period";
+import { fetchAllRows } from "@/lib/export/paginate";
 import { createClient } from "@/lib/supabase/server";
 import type { Studio } from "@/lib/types/database";
 
@@ -236,14 +237,28 @@ export async function loadFinancialsView(
     ? summarizeCalendar(appointments.rows, now)
     : unreadableCalendar(appointments.cause);
 
+  // `ledgerOpensAt` IS A FACT, NOT A NULLABLE STRING.
+  //
+  // There are THREE truths here and the old shape could only carry two: a
+  // successful read finding no card ledger, a successful read finding the
+  // earliest instant, and a read that FAILED. Collapsing the third into `null`
+  // let the failure branch below read "Hone could not look" as "the studio had
+  // no prior payment", and the screen then stated the window predates the
+  // owner's first payment on the strength of a read that never came back.
   const money = !moneyCovered
-    ? { census: unreadableDeliveredMoney("records_incomplete"), ledgerOpensAt: null }
+    ? {
+        census: unreadableDeliveredMoney("records_incomplete"),
+        ledgerOpensAt: unknownBecause<string | null>("records_incomplete"),
+      }
     : !appointments.ok
-      ? { census: unreadableDeliveredMoney(appointments.cause), ledgerOpensAt: null }
+      ? {
+          census: unreadableDeliveredMoney(appointments.cause),
+          ledgerOpensAt: unknownBecause<string | null>(appointments.cause),
+        }
       : ledgers === null || !ledgers.ok
         ? {
             census: unreadableDeliveredMoney(ledgers?.cause ?? "unavailable"),
-            ledgerOpensAt: null,
+            ledgerOpensAt: unknownBecause<string | null>(ledgers?.cause ?? "unavailable"),
           }
         : {
             census: summarizeDeliveredMoney({
@@ -258,7 +273,9 @@ export async function loadFinancialsView(
               windowStartUtc: moneyStartUtc,
               windowEndUtc: endUtc,
             }),
-            ledgerOpensAt: ledgers.ledgerOpensAt,
+            // KNOWN, and `null` inside it means the read succeeded and found
+            // no card ledger — a different claim from the unknowns above.
+            ledgerOpensAt: known<string | null>(ledgers.ledgerOpensAt),
           };
 
   return {
@@ -283,8 +300,13 @@ export async function loadFinancialsView(
             // payment covers time Hone was not yet collecting, and a flat
             // figure over it reads as a quiet studio rather than as an absent
             // instrument. No ledger at all is the same statement, maximally.
+            // ONLY A SUCCESSFUL READ MAY AUTHORIZE THIS. An unknown opening
+            // instant yields `false` — the banner is simply not shown — rather
+            // than the confident claim a failed read used to produce.
             precedesLedger:
-              money.ledgerOpensAt === null || moneyStartUtc < money.ledgerOpensAt,
+              money.ledgerOpensAt.known &&
+              (money.ledgerOpensAt.value === null ||
+                moneyStartUtc < money.ledgerOpensAt.value),
             census: money.census,
           }
         : {
@@ -375,6 +397,50 @@ async function readMoneyLedgers(
       .eq("status", "succeeded")
       .eq("stripe_livemode", livemode);
 
+  // PAGINATED, BECAUSE THIS READ IS THE ONE THAT CANNOT BE NARROWED.
+  //
+  // The defect this replaces: a single `.range(0, 999)` against a studio-wide
+  // query. Past 1000 live settlement rows PostgREST returned one page while
+  // `count: "exact"` reported the true total, `complete()` rejected the read,
+  // and every money figure was withdrawn. Because the read is deliberately not
+  // narrowed by the period — an `.in("appointment_id", [...])` list grows with
+  // the period, and an over-long URL is a live failure mode here — no shorter
+  // day, week or month could recover the screen. Financials disappeared
+  // permanently once a studio crossed a lifetime threshold.
+  //
+  // `fetchAllRows` is the repository's existing page-safe read, written for the
+  // same PostgREST ceiling in the studio export. It orders by the unique `id`
+  // so a row cannot land on two pages or none, stops on a short page, asks once
+  // more when a page comes back exactly full, fails the WHOLE read if any page
+  // fails, and refuses rather than returning a capped set.
+  //
+  // THE EXACT COUNT IS CAPTURED FROM THE FIRST PAGE so `complete()` still
+  // compares the FULL enumeration against what PostgREST says exists. A short
+  // final page is not, on its own, evidence that the read was complete.
+  let settlementCount: number | null = null;
+  const settlementsRead = fetchAllRows<SettlementRow>(async (from, to) => {
+    const page = await supabase
+      .from("appointment_settlements")
+      // `quoted_amount_cents` is THE PRICE AT THE TIME. 0187 snapshots it
+      // from the same authoritative resolver the card path uses, precisely
+      // so this surface stops valuing past work at a mutable menu price —
+      // its column comment names FIN-01A as the reason it exists.
+      .select("appointment_id, method, amount_cents, quoted_amount_cents", {
+        count: "exact",
+      })
+      .eq("studio_id", studioId)
+      .is("superseded_at", null)
+      .order("id")
+      .range(from, to);
+    if (settlementCount === null && typeof page.count === "number") {
+      settlementCount = page.count;
+    }
+    return {
+      data: (page.data ?? null) as SettlementRow[] | null,
+      error: page.error as { message: string } | null,
+    };
+  }, { pageSize: API_PAGE_SIZE });
+
   const [services, charges, refunds, settlements, customPricing, opened] =
     await Promise.all([
       supabase
@@ -400,19 +466,7 @@ async function readMoneyLedgers(
         .lt("refunded_at", endUtc)
         .order("id")
         .range(0, API_PAGE_SIZE - 1),
-      supabase
-        .from("appointment_settlements")
-        // `quoted_amount_cents` is THE PRICE AT THE TIME. 0187 snapshots it
-        // from the same authoritative resolver the card path uses, precisely
-        // so this surface stops valuing past work at a mutable menu price —
-        // its column comment names FIN-01A as the reason it exists.
-        .select("appointment_id, method, amount_cents, quoted_amount_cents", {
-          count: "exact",
-        })
-        .eq("studio_id", studioId)
-        .is("superseded_at", null)
-        .order("id")
-        .range(0, API_PAGE_SIZE - 1),
+      settlementsRead,
       // THE PRICE A PARTICULAR CLIENT PAYS, for visits no settlement froze.
       //
       // Read STUDIO-WIDE and narrowed in memory, for the same reason the
@@ -451,7 +505,9 @@ async function readMoneyLedgers(
   const s = complete<ServiceRow>(services.data, services.error, services.count);
   const c = complete<ChargeRow>(charges.data, charges.error, charges.count);
   const r = complete<RefundRow>(refunds.data, refunds.error, refunds.count);
-  const t = complete<SettlementRow>(settlements.data, settlements.error, settlements.count);
+  // `settlementCount` rather than a per-page count: the claim is about the
+  // whole enumeration, which is the only thing that can be complete.
+  const t = complete<SettlementRow>(settlements.data, settlements.error, settlementCount);
   const cp = complete<CustomPricingRow>(
     customPricing.data,
     customPricing.error,

@@ -342,17 +342,44 @@ describe("a read that did not succeed never becomes a zero", () => {
  * is left untouched: the Slice 1 tests assert against it and it still says what
  * they were written to say.
  */
-function stubTables(byTable: Record<string, { rows?: unknown[]; count?: number | null }>) {
+function stubTables(
+  byTable: Record<
+    string,
+    {
+      rows?: unknown[];
+      count?: number | null;
+      error?: { code: string } | null;
+      /** Successive pages, returned in call order, for a paginated read. */
+      pages?: unknown[][];
+      /** Fail the Nth page (0-based) of a paginated read. */
+      failPage?: number;
+    }
+  >,
+) {
   const tables: string[] = [];
   const filters: Array<Filter & { table: string }> = [];
+  const pageCalls: Record<string, number> = {};
   const from = (table: string) => {
     tables.push(table);
     const stub = byTable[table] ?? { rows: [] };
-    const result = () => ({
-      data: stub.rows ?? [],
-      error: null,
-      count: stub.count === undefined ? (stub.rows ?? []).length : stub.count,
-    });
+    const call = (pageCalls[table] = (pageCalls[table] ?? 0) + 1) - 1;
+    const result = () => {
+      if (stub.error) return { data: null, error: stub.error, count: null };
+      if (stub.pages) {
+        if (stub.failPage === call) return { data: null, error: { code: "57014" }, count: null };
+        const page = stub.pages[call] ?? [];
+        return {
+          data: page,
+          error: null,
+          count: stub.count === undefined ? page.length : stub.count,
+        };
+      }
+      return {
+        data: stub.rows ?? [],
+        error: null,
+        count: stub.count === undefined ? (stub.rows ?? []).length : stub.count,
+      };
+    };
     const proxy: unknown = new Proxy(
       {},
       {
@@ -370,7 +397,7 @@ function stubTables(byTable: Record<string, { rows?: unknown[]; count?: number |
     );
     return proxy;
   };
-  return { client: { from } as unknown as SupabaseClient, tables, filters };
+  return { client: { from } as unknown as SupabaseClient, tables, filters, pageCalls };
 }
 
 const granted = (view: Awaited<ReturnType<typeof loadFinancialsView>>) => {
@@ -477,12 +504,143 @@ describe("FIN-C11 — a window reaching back before the ledger is flagged, never
     expect(b.money.covered && b.money.precedesLedger).toBe(false);
   });
 
+  // -------------------------------------------------------------------------
+  // A FAILED READ IS NOT AN EMPTY LEDGER — Codex P2-A
+  // -------------------------------------------------------------------------
+  //
+  // The defect: every failure branch set `ledgerOpensAt` to null, and the
+  // expression then read null as PROOF that the studio had no prior card
+  // payment. The screen stated the window predates the owner's first payment
+  // on the strength of a read that did not come back. There are three truths
+  // here, not two, and the third one is UNKNOWN.
+
+  it("a FAILED ledger read never authorizes the predates-first-payment claim", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-15T16:00:00.000Z"));
+    const { client } = stubTables({
+      payment_charge_attempts: { error: { code: "57014" } },
+    });
+    const b = granted(await loadFinancialsView(OWNER, studio("America/Toronto"), "month", client));
+    // NOT flagged: Hone could not look, so it cannot say the window came first.
+    expect(b.money.covered && b.money.precedesLedger).toBe(false);
+    // And the census is withdrawn with the cause that caused it, rather than
+    // being reported as a quiet studio.
+    expect(b.money.census.collectedOnDeliveredCents.known).toBe(false);
+  });
+
+  it("a TRUNCATED ledger read never authorizes it either", async () => {
+    // Not an error — a short page against a larger exact count. The read
+    // "succeeded" and is still not an enumeration.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-15T16:00:00.000Z"));
+    const { client } = stubTables({
+      payment_charge_attempts: { rows: [{ charged_at: "2026-08-10T12:00:00.000Z" }], count: 5_000 },
+    });
+    const b = granted(await loadFinancialsView(OWNER, studio("America/Toronto"), "month", client));
+    expect(b.money.covered && b.money.precedesLedger).toBe(false);
+    expect(b.money.census.collectedOnDeliveredCents.known).toBe(false);
+  });
+
   it("NO LEDGER AT ALL is the same statement, maximally — flagged, not zeroed", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-15T16:00:00.000Z"));
     const { client } = stubTables({});
     const b = granted(await loadFinancialsView(OWNER, studio("America/Toronto"), "month", client));
     expect(b.money.covered && b.money.precedesLedger).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE STUDIO-WIDE SETTLEMENT READ MUST PAGINATE — Codex P1-B
+// ---------------------------------------------------------------------------
+//
+// `supabase/config.toml` sets `max_rows = 1000`, so a studio-wide read of
+// `appointment_settlements` returns at most one page while `count: "exact"`
+// reports the true total. `complete()` then rejects the read and withdraws
+// EVERY money figure — and because this read is deliberately not narrowed by
+// the period, choosing a shorter day, week or month cannot recover the screen.
+// Any studio that crosses the lifetime threshold loses Financials permanently.
+//
+// The read stays studio-wide: an `.in("appointment_id", [...])` list grows with
+// the period and an over-long generated URL is a live failure mode on this
+// codebase. It is enumerated page by page instead, with the completeness claim
+// made about the FULL enumerated set rather than about a short final page.
+
+describe("the studio-wide settlement read enumerates every page", () => {
+  const settlementRows = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      appointment_id: `old-${i}`,
+      method: "paid_cash",
+      amount_cents: 1_000,
+      quoted_amount_cents: null,
+    }));
+
+  const pagesOf = (n: number) => {
+    const all = settlementRows(n);
+    const pages: unknown[][] = [];
+    for (let i = 0; i < all.length; i += 1_000) pages.push(all.slice(i, i + 1_000));
+    // A read whose total is an exact multiple ends on an empty page.
+    if (all.length % 1_000 === 0) pages.push([]);
+    return pages;
+  };
+
+  const load = async (n: number) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-15T16:00:00.000Z"));
+    const { client, pageCalls } = stubTables({
+      appointment_settlements: { pages: pagesOf(n), count: n },
+    });
+    const b = granted(await loadFinancialsView(OWNER, studio("America/Toronto"), "month", client));
+    return { b, pageCalls };
+  };
+
+  for (const n of [999, 1_000, 1_001, 2_001]) {
+    it(`${n} live settlements still yield a money census`, async () => {
+      const { b } = await load(n);
+      // The census is NOT withdrawn: every figure survives the read.
+      expect(b.money.covered && b.money.census.deliveredTreatmentVisits.known).toBe(true);
+      // Every row was enumerated exactly once, and none of them belongs to this
+      // window, so they are disclosed as history rather than counted here.
+      expect(
+        b.money.covered ? b.money.census.basis.settlementsOutsideWindow : -1,
+      ).toBe(n);
+      expect(b.money.covered ? b.money.census.basis.settlementsUnattributable : -1).toBe(0);
+    });
+  }
+
+  it("pages are requested until the read is exhausted, not just once", async () => {
+    const { pageCalls } = await load(2_001);
+    // 1000 + 1000 + 1 → three pages. A single request would have been the bug.
+    expect(pageCalls.appointment_settlements).toBe(3);
+  });
+
+  it("an exact multiple of the page size ends on an empty page, losing nothing", async () => {
+    const { b, pageCalls } = await load(2_000);
+    expect(b.money.covered && b.money.census.basis.settlementsOutsideWindow).toBe(2_000);
+    // 1000 + 1000 + the empty page that proves the end.
+    expect(pageCalls.appointment_settlements).toBe(3);
+  });
+
+  it("A FAILING PAGE WITHDRAWS THE WHOLE READ — never the pages that worked", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-15T16:00:00.000Z"));
+    const { client } = stubTables({
+      appointment_settlements: { pages: pagesOf(2_001), count: 2_001, failPage: 1 },
+    });
+    const b = granted(await loadFinancialsView(OWNER, studio("America/Toronto"), "month", client));
+    expect(b.money.covered && b.money.census.deliveredTreatmentVisits.known).toBe(false);
+  });
+
+  it("A SHORT ENUMERATION IS NOT COMPLETE — the count is still the authority", async () => {
+    // Every page returned successfully, and they still do not add up to what
+    // PostgREST said exists. That is `not_enumerable`, not a complete read.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-15T16:00:00.000Z"));
+    const { client } = stubTables({
+      appointment_settlements: { pages: [settlementRows(500)], count: 900 },
+    });
+    const b = granted(await loadFinancialsView(OWNER, studio("America/Toronto"), "month", client));
+    expect(b.money.covered && b.money.census.deliveredTreatmentVisits.known).toBe(false);
   });
 });
 

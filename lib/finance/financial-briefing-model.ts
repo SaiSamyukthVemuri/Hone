@@ -443,7 +443,24 @@ export type DeliveryBasis = {
    * visit inside this window that has not yet elapsed, or one that was
    * cancelled.
    */
+  /**
+   * Live settlements naming a delivered visit from ANOTHER period.
+   *
+   * DISCLOSED, BUT NOT AN INCOMPLETENESS. Settlements are read studio-wide on
+   * purpose, so after a studio's first settlement every later window sees the
+   * earlier ones here. Letting that clear `complete` warned that the CURRENT
+   * window was not a complete account whenever the studio had any history at
+   * all — an alarm that fires on the normal case says nothing.
+   */
   readonly settlementsOutsideWindow: number;
+  /**
+   * Live settlements naming NO appointment at all.
+   *
+   * These DO withdraw completeness: a row that names nothing cannot be
+   * attributed to any window, so it is a contradictory row rather than routine
+   * history, and it may belong to the money population being reported.
+   */
+  readonly settlementsUnattributable: number;
   /**
    * Money or duration columns that did not arrive as a finite number.
    *
@@ -878,6 +895,20 @@ export function summarizeDeliveredMoney(input: {
   let collectedOnDeliveredVisits = 0;
   for (const [id, net] of netOnVisit) {
     if (unnettable.has(id)) continue;
+    // ONLY A POSITIVE NET IS A COLLECTION.
+    //
+    // The defect this replaces: the loop admitted every nettable visit, so one
+    // whose charge was fully reversed added its MINUTES and a VISIT COUNT while
+    // adding zero money. A true $150 hour beside one reversed hour was reported
+    // as $75/hour, and the reversed visit was labelled "paid by card" on the
+    // same screen that says fully refunded visits are not collected.
+    //
+    // `<= 0` rather than `=== 0` deliberately. v1 refunds are always full
+    // reversals so zero is the only shape reachable today, but a refund larger
+    // than its charge would otherwise SUBTRACT from collected money and drag
+    // the rate down — a worse failure than the one being fixed, and silent.
+    // Such a visit is already counted as a reversal by `refundedToZero`.
+    if (net <= 0) continue;
     const minutes = bookedMinutesOf.get(id);
     // A visit whose booked time could not be read cannot join a per-hour rate:
     // including its money over no time would inflate the rate without bound.
@@ -896,13 +927,23 @@ export function summarizeDeliveredMoney(input: {
   let waivedCents = 0;
   let stillOwedCents = 0;
   let settlementsOutsideWindow = 0;
+  let settlementsUnattributable = 0;
   // Rows that named a delivered visit in this window AND carried a readable
   // amount. This — not the studio's all-time row count — is what decides
   // whether "nothing was attested" is a true thing to say about this window.
   let attestedRows = 0;
   const settled = new Set<string>();
   for (const s of input.settlements) {
-    if (s.appointment_id === null || !deliveredAny.has(s.appointment_id)) {
+    // A ROW THAT NAMES NOTHING is unusable, and stays an incompleteness.
+    if (s.appointment_id === null) {
+      settlementsUnattributable += 1;
+      continue;
+    }
+    // A ROW NAMING WORK FROM ANOTHER PERIOD is routine history, not evidence
+    // that this window was read incompletely. It is still disclosed, because
+    // the studio-wide read means an owner can otherwise wonder where those
+    // payments went; it simply no longer clears `complete`.
+    if (!deliveredAny.has(s.appointment_id)) {
       settlementsOutsideWindow += 1;
       continue;
     }
@@ -1037,7 +1078,7 @@ export function summarizeDeliveredMoney(input: {
         unclassifiable === 0 &&
         unvalued === 0 &&
         unmeasurable === 0 &&
-        settlementsOutsideWindow === 0 &&
+        settlementsUnattributable === 0 &&
         unreadableAmounts === 0,
       undatable,
       unclassifiable,
@@ -1045,6 +1086,7 @@ export function summarizeDeliveredMoney(input: {
       ambiguouslyPriced,
       unmeasurable,
       settlementsOutsideWindow,
+      settlementsUnattributable,
       unreadableAmounts,
     },
   };
@@ -1100,6 +1142,7 @@ export function unreadableDeliveredMoney(
       ambiguouslyPriced: 0,
       unmeasurable: 0,
       settlementsOutsideWindow: 0,
+      settlementsUnattributable: 0,
       unreadableAmounts: 0,
     },
   };
