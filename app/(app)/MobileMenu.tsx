@@ -110,10 +110,15 @@ export function MobileMenu({
             // Gated on the `role` this component is ALREADY given — no second
             // authority query, and nothing rendered-but-disabled for a
             // practitioner, who simply has no such item. The presentation gate
-            // is not the boundary: /dashboard/capacity keeps its own
-            // server-side owner check.
+            // is not the boundary: /business keeps its own server-side owner
+            // check, as do the two surfaces it leads to.
+            //
+            // POINTS AT /business, matching the desktop tab. Both halves of
+            // the same entry must resolve to the same place or the phone and
+            // the laptop disagree about where "Business" is; layout.tsx
+            // carries the reasoning for the destination change.
             ...(role === "owner"
-              ? [{ href: "/dashboard/capacity", label: "Business" }]
+              ? [{ href: "/business", label: "Business" }]
               : []),
           ].map((item) => (
             <Link
