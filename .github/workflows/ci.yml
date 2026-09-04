@@ -174,7 +174,22 @@ jobs:
     needs: changes
     if: ${{ needs.changes.outputs.docs_only != 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    # A FAILURE CEILING, NOT A PERFORMANCE TARGET. The target for this lane is
+    # UNCHANGED; 15 minutes is only the point at which a run is declared broken,
+    # and is NOT an acceptable runtime.
+    #
+    # MEASURED on head e77b83cd. `npm ci` alone took 7.1 MINUTES on that runner
+    # -- against a lane that normally finishes in 3.7-4.7 min in total. Typecheck
+    # then passed (0.6 min) and Lint was 0.2 min in when the 8-minute ceiling
+    # killed the job: under one minute of budget survived install and typecheck,
+    # so Build, Unit tests and every safety gate were skipped without running.
+    # NO ASSERTION FAILED; nothing was even given the chance to.
+    #
+    # The same 7.1 min install appeared in db-integration and the Google lane on
+    # that run, so this is runner-batch variance in dependency installation, not
+    # workload growth. A ceiling that cannot absorb it reports a slow runner as a
+    # broken diff. Commands, test selection and assertions are unchanged.
+    timeout-minutes: 15
 
     # Dummy / test-safe env values. The build and test harness do not
     # need real Supabase / Stripe / Resend / Twilio / cron credentials
@@ -314,7 +329,18 @@ jobs:
     # must EXCEED its performance target, or a merely slow runner is reported as
     # a test failure. Test selection, Supabase startup and the assertions
     # themselves are deliberately unchanged by this bump.
-    timeout-minutes: 12
+    #
+    # 12 WAS STILL NOT ENOUGH, measured on head e77b83cd. `npm ci` alone took
+    # 7.1 MINUTES on that runner. Supabase then started, the full 0001->0190
+    # chain applied, the fresh-managed proof passed, and the DB suite ran real
+    # tests -- including the WAIT-03 wall-clock suite at 80/80 -- before the
+    # 12-minute ceiling cancelled it at 12.3 min. Install plus stack plus chain
+    # alone were 10.6 min, leaving under two minutes for the suite. Again NO
+    # branch assertion failed.
+    #
+    # 20 minutes is sized so that a slow-install runner still reaches a real
+    # VERDICT. It is a ceiling, not a target, and is not an acceptable runtime.
+    timeout-minutes: 20
 
     steps:
       - name: Checkout repository

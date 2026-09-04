@@ -625,7 +625,14 @@ describe("PR CI — path-aware lane selection", () => {
       return m ? Number(m[1]) : -1;
     };
     expect(budget("changes")).toBeLessThanOrEqual(2);
-    expect(budget("validate")).toBeLessThanOrEqual(8);
+    // validate: TARGET unchanged, HARD TIMEOUT 15. On head e77b83cd `npm ci`
+    // alone took 7.1 min against a lane that normally finishes in 3.7-4.7 min
+    // TOTAL; typecheck then passed and Lint was 0.2 min in when the 8-minute
+    // ceiling killed the job, skipping Build, Unit tests and every safety gate.
+    // No assertion failed -- most were never run. Lower bound 8 so a revert
+    // turns this red.
+    expect(budget("validate")).toBeGreaterThan(8);
+    expect(budget("validate")).toBeLessThanOrEqual(15);
     // db-integration: TARGET unchanged, HARD TIMEOUT 12. It carried a single 8
     // that served as both, which is the same shape as the payment lane below.
     // The lane historically finished at 6.1-7.5 min — the ceiling and the
@@ -637,10 +644,15 @@ describe("PR CI — path-aware lane selection", () => {
     // with ZERO failures. Startup plus chain alone were ~3.6 min, and dependency
     // install added ~2.6 min, so ~6.3 min elapsed before the first test ran.
     //
-    // The lower bound is 8, not 11, so a revert to the old ceiling turns this
-    // red rather than silently reinstating the cancellation.
-    expect(budget("db-integration")).toBeGreaterThan(8);
-    expect(budget("db-integration")).toBeLessThanOrEqual(12);
+    // 12 was still not enough: on head e77b83cd `npm ci` alone took 7.1 min, and
+    // install plus Supabase startup plus the chain came to 10.6 min before the
+    // suite began. It ran real tests -- the WAIT-03 wall-clock suite passed
+    // 80/80 -- and was cancelled at 12.3 min with no assertion failing.
+    //
+    // The lower bound is 12, not 19, so a revert to either old ceiling turns
+    // this red rather than silently reinstating the cancellation.
+    expect(budget("db-integration")).toBeGreaterThan(12);
+    expect(budget("db-integration")).toBeLessThanOrEqual(20);
     // payment-browser-e2e: TARGET ~10 min, HARD TIMEOUT 18. It carried a single
     // 10 that served as both, which is precisely the shape the comment below
     // warns about. F-PAY-002 measured the lane at 9.6-10.4 min locally across
