@@ -908,6 +908,95 @@ test("a practitioner gets no Business entry on the desktop nav, and the route st
   }
 });
 
+// ---------------------------------------------------------------------------
+// Financials, reached the way an owner actually reaches it
+// ---------------------------------------------------------------------------
+//
+// The pair below is the browser half of FIN-01A's authority. Everything else
+// about the money model is proved in unit tests against the read model; what
+// only a browser can establish is that the route an owner is GIVEN leads to the
+// surface, and that a practitioner who types the same route is refused by the
+// server rather than merely un-linked.
+
+test("an owner reaches Financials THROUGH Business, and the money surface renders", async ({
+  page,
+}) => {
+  await loginAsOwner(page, seed);
+  await page.goto("/dashboard");
+
+  // NAVIGATED, NOT TYPED. Asserting `goto("/financials")` renders would prove
+  // the route exists while saying nothing about whether an owner can get to it
+  // — and the whole point of the hub is that Financials is reachable without
+  // knowing its URL.
+  const business = primaryNav(page).getByRole("link", { name: "Business", exact: true });
+  await business.click();
+  await page.waitForURL("**/business");
+
+  await page
+    .getByRole("navigation", { name: "Business" })
+    .getByRole("link", { name: "Financials", exact: true })
+    .click();
+  await page.waitForURL("**/financials");
+  // The URL itself, exactly: a hub that rendered money inline without moving
+  // would satisfy every content assertion below.
+  expect(new URL(page.url()).pathname).toBe("/financials");
+
+  // REAL CONTENT, by the section headings the spine actually renders — one from
+  // the service-value half and one from the studio-attested half, so a surface
+  // that lost either contract fails here.
+  await expect(
+    page.getByRole("heading", { name: "Service value of delivered work" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Collected outside Hone" }),
+  ).toBeVisible();
+
+  // The Business context travels with them and knows where they are...
+  await expect(
+    page
+      .getByRole("navigation", { name: "Business" })
+      .getByRole("link", { name: "Financials", exact: true }),
+  ).toHaveAttribute("aria-current", "page");
+  // ...and the permanent tab survives arrival, exactly as it does on Capacity.
+  await expect(
+    primaryNav(page).getByRole("link", { name: "Business", exact: true }),
+  ).toBeVisible();
+});
+
+test("a practitioner who types /financials is refused, and no money reaches them", async ({
+  page,
+}) => {
+  await loginByMagicLink(page, member.email);
+  await page.goto("/financials");
+
+  // The CURRENT product contract, asserted rather than assumed: the page
+  // renders a refusal IN PLACE. It does not redirect, so the URL is checked
+  // too — a test that only looked for the sentence would pass just as well
+  // against a redirect to /dashboard, and would then be describing a product
+  // that does not exist.
+  await expect(
+    page.getByText("Only the studio owner can see studio financials."),
+  ).toBeVisible();
+  expect(new URL(page.url()).pathname).toBe("/financials");
+
+  // THE REFUSAL IS THE WHOLE PAGE. The subnav renders only past the owner gate,
+  // so a practitioner is not shown two sibling owner surfaces they cannot open.
+  await expect(page.getByRole("navigation", { name: "Business" })).toHaveCount(0);
+
+  // AND NO MONEY REACHES THEM — both contracts by heading, and not one figure.
+  // `p.tabular-nums` is what the spine renders for every known value, so zero
+  // of them is the strongest single statement that no number leaked, including
+  // from a section whose heading was renamed.
+  for (const heading of ["Service value of delivered work", "Collected outside Hone"]) {
+    await expect(
+      page.getByRole("heading", { name: heading }),
+      `${heading} must not reach a practitioner`,
+    ).toHaveCount(0);
+  }
+  await expect(page.locator("p.tabular-nums")).toHaveCount(0);
+});
+
+
 test("an owner's mobile menu carries Business, and tapping it closes the menu and lands", async ({
   page,
 }) => {
