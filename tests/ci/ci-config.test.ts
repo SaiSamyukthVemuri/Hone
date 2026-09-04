@@ -625,8 +625,34 @@ describe("PR CI — path-aware lane selection", () => {
       return m ? Number(m[1]) : -1;
     };
     expect(budget("changes")).toBeLessThanOrEqual(2);
-    expect(budget("validate")).toBeLessThanOrEqual(8);
-    expect(budget("db-integration")).toBeLessThanOrEqual(8);
+    // validate: TARGET unchanged, HARD TIMEOUT 15. On head e77b83cd `npm ci`
+    // alone took 7.1 min against a lane that normally finishes in 3.7-4.7 min
+    // TOTAL; typecheck then passed and Lint was 0.2 min in when the 8-minute
+    // ceiling killed the job, skipping Build, Unit tests and every safety gate.
+    // No assertion failed -- most were never run. Lower bound 8 so a revert
+    // turns this red.
+    expect(budget("validate")).toBeGreaterThan(8);
+    expect(budget("validate")).toBeLessThanOrEqual(15);
+    // db-integration: TARGET unchanged, HARD TIMEOUT 12. It carried a single 8
+    // that served as both, which is the same shape as the payment lane below.
+    // The lane historically finished at 6.1-7.5 min — the ceiling and the
+    // observed run time were effectively the same number. Both attempts on head
+    // 3013de3 were cancelled at ~8.3 min at DIFFERENT points: the first inside
+    // "Start local Supabase", with the migration chain and every test skipped;
+    // the second after Supabase started (2.7 min), the full 0001->0190 chain
+    // applied (0.9 min) and the suite had completed 1,030 tests across 21 files
+    // with ZERO failures. Startup plus chain alone were ~3.6 min, and dependency
+    // install added ~2.6 min, so ~6.3 min elapsed before the first test ran.
+    //
+    // 12 was still not enough: on head e77b83cd `npm ci` alone took 7.1 min, and
+    // install plus Supabase startup plus the chain came to 10.6 min before the
+    // suite began. It ran real tests -- the WAIT-03 wall-clock suite passed
+    // 80/80 -- and was cancelled at 12.3 min with no assertion failing.
+    //
+    // The lower bound is 12, not 19, so a revert to either old ceiling turns
+    // this red rather than silently reinstating the cancellation.
+    expect(budget("db-integration")).toBeGreaterThan(12);
+    expect(budget("db-integration")).toBeLessThanOrEqual(20);
     // payment-browser-e2e: TARGET ~10 min, HARD TIMEOUT 18. It carried a single
     // 10 that served as both, which is precisely the shape the comment below
     // warns about. F-PAY-002 measured the lane at 9.6-10.4 min locally across
@@ -640,7 +666,19 @@ describe("PR CI — path-aware lane selection", () => {
     // lane would pass or be cancelled according to which runner it drew.
     expect(budget("payment-browser-e2e")).toBeGreaterThan(14);
     expect(budget("payment-browser-e2e")).toBeLessThanOrEqual(18);
-    expect(budget("google-browser-e2e")).toBeLessThanOrEqual(10);
+    // google-browser-e2e: TARGET unchanged, HARD TIMEOUT 15. On head 2a23e3e7
+    // `npm ci` alone consumed ~5 min; the Supabase stack then started, the full
+    // migration chain applied from scratch, and Playwright reported
+    // `Running 13 tests using 1 worker`. Tests 1-12 PASSED with zero assertion
+    // failures and the 10-minute ceiling cancelled the job as test 13 began --
+    // a healthy suite cut mid-run, which reads like a broken diff and is not one.
+    //
+    // The lower bound is 10, not 14, so a revert to the old ceiling turns this
+    // red rather than silently reinstating the cancellation. The upper bound
+    // keeps the ceiling FINITE: a removed timeout would let a hung lane burn a
+    // full runner allocation.
+    expect(budget("google-browser-e2e")).toBeGreaterThan(10);
+    expect(budget("google-browser-e2e")).toBeLessThanOrEqual(15);
     expect(budget("mobile-completion-e2e")).toBeLessThanOrEqual(10);
     // Targeted hard timeout 15, extended shard hard timeout 18 — both above
     // their <10 min targets. Parsed, not line-matched, so reformatting the
