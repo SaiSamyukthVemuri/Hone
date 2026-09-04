@@ -833,14 +833,31 @@ test("an owner's desktop navigation carries Business, once, and it reaches the b
     nav.getByRole("link", { name: /Practice capacity/ }),
   ).toHaveCount(0);
 
-  // WHERE IT GOES, not just that it exists.
+  // WHERE IT GOES, not just that it exists — and RETARGETED BY FIN-01A: the
+  // tab now reaches the Business hub, and Capacity is one step further, through
+  // the shared subnav. Walking the WHOLE path rather than just the first hop is
+  // the point: an owner who could reach /business but not get from there to
+  // Capacity would have lost a destination this entry used to give them.
   await business.click();
+  await page.waitForURL("**/business");
+  await expect(page.getByRole("heading", { name: "Business" })).toBeVisible();
+
+  // BUSINESS -> CAPACITY, through the subnav.
+  const subnav = page.getByRole("navigation", { name: "Business" });
+  await subnav.getByRole("link", { name: "Capacity", exact: true }).click();
   await page.waitForURL("**/dashboard/capacity");
   await expect(
     page.getByRole("heading", { name: "Practice capacity" }),
   ).toBeVisible();
-  // ...and it is still there once you have arrived: this is a permanent entry,
-  // not a one-shot promotion that disappears on the destination.
+  // The subnav travels WITH the owner: it is on the destination too, and it
+  // knows where they are.
+  await expect(
+    page.getByRole("navigation", { name: "Business" })
+      .getByRole("link", { name: "Capacity", exact: true }),
+  ).toHaveAttribute("aria-current", "page");
+
+  // ...and the tab is still there once you have arrived: this is a permanent
+  // entry, not a one-shot promotion that disappears on the destination.
   await expect(
     primaryNav(page).getByRole("link", { name: "Business", exact: true }),
   ).toBeVisible();
@@ -939,8 +956,19 @@ test("an owner's mobile menu carries Business, and tapping it closes the menu an
   // TAPPING IT CLOSES THE SHEET AND NAVIGATES — the behaviour PR #229 exists
   // to provide, which a new item could silently miss.
   await business.click();
-  await page.waitForURL("**/dashboard/capacity");
+  // RETARGETED BY FIN-01A: the sheet's entry reaches the hub, same as desktop.
+  await page.waitForURL("**/business");
   await expect(nav).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Business" })).toBeVisible();
+
+  // AND CAPACITY IS STILL REACHABLE FROM THERE on a phone, which is the claim
+  // that matters: the subnav must be usable at 390px, not merely present.
+  const subnav = page.getByRole("navigation", { name: "Business" });
+  const capacity = subnav.getByRole("link", { name: "Capacity", exact: true });
+  const capacityBox = (await capacity.boundingBox())!;
+  expect(capacityBox.height).toBeGreaterThanOrEqual(44);
+  await capacity.click();
+  await page.waitForURL("**/dashboard/capacity");
   await expect(
     page.getByRole("heading", { name: "Practice capacity" }),
   ).toBeVisible();
