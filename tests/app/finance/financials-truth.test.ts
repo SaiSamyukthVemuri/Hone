@@ -1038,12 +1038,62 @@ describe("NC-scope — the later slice is absent, and says so", () => {
     }
   });
 
-  it("does not register or advertise the route", () => {
-    // The nav landing is its own slice. This PR must not add a NAV_ENTRIES row.
+  it("REGISTERS the route, and this assertion is the inverse of the one it replaced", () => {
+    // INVERTED DELIBERATELY, NOT DELETED. Through Slice 1 and Slice 2 this
+    // test asserted the OPPOSITE — that /financials carried no NAV_ENTRIES row
+    // and sat in NON_SEARCHABLE_ROUTES — because the surface named figures it
+    // could not yet show, and advertising it would have resolved an owner's
+    // search to a disappointment.
+    //
+    // This release is the registration slice those comments named. The guard
+    // is turned around rather than removed, so the file still has an opinion
+    // about the route's discoverability and a future change that silently
+    // un-registers it fails here.
     const registry = read("lib/search/navigation-registry.ts");
-    expect(registry).toContain('route: "/financials"');
-    const navEntries = registry.slice(0, registry.indexOf("NON_SEARCHABLE_ROUTES"));
-    expect(navEntries).not.toContain("/financials");
+    // SLICED ON THE DECLARATION, NOT THE FIRST MENTION. `NON_SEARCHABLE_ROUTES`
+    // appears in a header comment on line 32, so slicing at indexOf() of the
+    // bare name cut the "nav entries" region down to 32 lines of prose. The
+    // assertion this replaced was `.not.toContain`, which passed against that
+    // empty slice for the wrong reason and would never have failed. Anchoring
+    // on the export makes the region real.
+    const navEntries = registry.slice(
+      0,
+      registry.indexOf("export const NON_SEARCHABLE_ROUTES"),
+    );
+    expect(navEntries).toContain('href: "/financials"');
+    expect(registry).not.toContain('route: "/financials"');
+  });
+
+  it("is owner-visible in search, never practitioner-visible", () => {
+    // Search visibility must match the server gate. A practitioner who cannot
+    // open the page must not be offered it by the search box either — not
+    // because search is the boundary (it is not; the page's own role check is)
+    // but because offering a destination that refuses on arrival is a defect
+    // in its own right.
+    const registry = read("lib/search/navigation-registry.ts");
+    const start = registry.indexOf('id: "financials"');
+    expect(start).toBeGreaterThan(-1);
+    const entry = registry.slice(start, registry.indexOf("},", start));
+    expect(entry).toContain('visibility: "owner"');
+  });
+
+  it("never claims REVENUE, EARNINGS or INCOME in what the registry ASSERTS", () => {
+    // The distinction this file exists to keep: a KEYWORD is a word the owner
+    // types, a DESCRIPTION is a claim the product makes. "revenue" and
+    // "earnings" are legitimate search aliases — that is how people talk about
+    // money — but the description must not assert them, because cash and
+    // e-transfer are invisible to Hone until somebody records them, so what
+    // this surface shows is a FLOOR and never the whole of what was earned.
+    const registry = read("lib/search/navigation-registry.ts");
+    const start = registry.indexOf('id: "financials"');
+    const entry = registry.slice(start, registry.indexOf("},", start));
+    const description = /description:\s*\n?\s*"([^"]+)"/.exec(entry)?.[1] ?? "";
+    expect(description.length).toBeGreaterThan(0);
+    for (const claim of ["revenue", "earning", "income", "profit", "made"]) {
+      expect(description.toLowerCase(), claim).not.toContain(claim);
+    }
+    // ...and it DOES say what it actually is.
+    expect(description.toLowerCase()).toContain("collected by card through hone");
   });
 });
 
