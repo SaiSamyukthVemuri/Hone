@@ -71,19 +71,19 @@ describe("0188 — identity and position", () => {
     expect(state.pending_migrations).not.toContain(FILE);
   });
 
-  it("hosted state is at or above 0188, with only reviewed work pending", () => {
-    // MIGRATION-FIRST, IN REVIEW AGAIN. A reviewed migration authored above the
+  it("hosted state is at or above 0188, with nothing pending", () => {
+    // MIGRATION-FIRST, COMPLETED AGAIN. A reviewed migration authored above the
     // hosted head is the normal state of this repository while a repair is in
-    // review; parity returns when an AUTHORIZED apply advances hosted state.
-    // 0189's apply restored parity, and 0190 — the TTL-anchor repair — has since
-    // been authored above it, so exactly one file is pending.
+    // review, and parity returns when an AUTHORIZED apply advances hosted state.
+    // That has now happened twice above 0188: 0189, then 0190.
     //
-    // This assertion is deliberately NOT "repo max equals hosted max": that
-    // phrasing makes every pre-apply migration head red by construction, which
-    // is a fact about the workflow rather than a defect in the diff.
+    // The first limb is deliberately NOT "repo max equals hosted max": that
+    // phrasing makes every FUTURE pre-apply migration head red by construction,
+    // which is a fact about the workflow rather than a defect in the diff. The
+    // pending set is the limb that carries real information here.
     const state = migrationState();
     expect(Number(state.hosted_migration_max)).toBeGreaterThanOrEqual(188);
-    expect(state.pending_migrations).toEqual(["0190"]);
+    expect(state.pending_migrations).toEqual([]);
   });
 });
 

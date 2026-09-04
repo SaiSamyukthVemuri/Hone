@@ -73,7 +73,7 @@ describe("0189 — identity and position", () => {
     expect(versionsAbove(VERSION)).toEqual(["0190"]);
   });
 
-  it("IS APPLIED to production, and is the CURRENT hosted head", () => {
+  it("IS APPLIED to production, and production has since moved past it", () => {
     // THIS BLOCK MOVED WHEN 0189 WAS APPLIED (2026-09-03), deliberately, exactly
     // as the previous wording said it would. 0189 was applied from the exact
     // reviewed #664 head 0f5cbf78, BEFORE that PR merged, and hosted advanced
@@ -81,11 +81,14 @@ describe("0189 — identity and position", () => {
     //
     // 0189 now owns the CURRENT-head claim that 0188's file used to hold; 0188's
     // file keeps only its own durable facts.
-    // The repo-max and empty-pending halves of this claim moved to 0190's own
-    // test when 0190 was authored above the hosted head. What stays here is
-    // 0189's DURABLE fact: it is applied, and it is what production is running.
+    // THIS BLOCK MOVED AGAIN WHEN 0190 WAS APPLIED (2026-09-04), exactly as the
+    // 0188 file's equivalent block moved when 0189 was applied. 0189's DURABLE
+    // fact is that it IS applied; the CURRENT-head claim now belongs to 0190's
+    // own test. A migration's file keeps only what stays true forever.
     const state = migrationState();
-    expect(state.hosted_migration_max).toBe(VERSION);
+    expect(Number(state.hosted_migration_max)).toBeGreaterThanOrEqual(
+      Number(VERSION),
+    );
   });
 });
 

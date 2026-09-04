@@ -114,15 +114,19 @@ describe("0190 — identity and position", () => {
     expect(versionsAbove(VERSION)).toEqual([]);
   });
 
-  it("is AUTHORED ABOVE the hosted head and is the only pending file", () => {
-    // MIGRATION-FIRST. 0190 is reviewed but NOT applied; production is still
-    // running 0189. Parity returns only when an AUTHORIZED apply advances
-    // hosted state, and this assertion is what will turn red if someone records
-    // that apply without actually performing it.
+  it("IS APPLIED to production, and is the CURRENT hosted head", () => {
+    // THIS BLOCK MOVED WHEN 0190 WAS APPLIED (2026-09-04), deliberately, exactly
+    // as the previous wording said it would. 0190 was applied from the exact
+    // reviewed #664 head 86d52da8, BEFORE that PR merged, and hosted advanced
+    // from 0189 to 0190 — restoring parity.
+    //
+    // 0190 now owns the CURRENT-head claim that 0189's file used to hold;
+    // 0189's file keeps only its own durable facts. Whoever applies 0191 moves
+    // this block again.
     const state = migrationState();
     expect(state.repo_migration_max).toBe(VERSION);
-    expect(state.hosted_migration_max).toBe("0189");
-    expect(state.pending_migrations).toEqual([VERSION]);
+    expect(state.hosted_migration_max).toBe(VERSION);
+    expect(state.pending_migrations).toEqual([]);
   });
 });
 
