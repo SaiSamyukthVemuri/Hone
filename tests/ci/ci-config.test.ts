@@ -626,7 +626,21 @@ describe("PR CI — path-aware lane selection", () => {
     };
     expect(budget("changes")).toBeLessThanOrEqual(2);
     expect(budget("validate")).toBeLessThanOrEqual(8);
-    expect(budget("db-integration")).toBeLessThanOrEqual(8);
+    // db-integration: TARGET unchanged, HARD TIMEOUT 12. It carried a single 8
+    // that served as both, which is the same shape as the payment lane below.
+    // The lane historically finished at 6.1-7.5 min — the ceiling and the
+    // observed run time were effectively the same number. Both attempts on head
+    // 3013de3 were cancelled at ~8.3 min at DIFFERENT points: the first inside
+    // "Start local Supabase", with the migration chain and every test skipped;
+    // the second after Supabase started (2.7 min), the full 0001->0190 chain
+    // applied (0.9 min) and the suite had completed 1,030 tests across 21 files
+    // with ZERO failures. Startup plus chain alone were ~3.6 min, and dependency
+    // install added ~2.6 min, so ~6.3 min elapsed before the first test ran.
+    //
+    // The lower bound is 8, not 11, so a revert to the old ceiling turns this
+    // red rather than silently reinstating the cancellation.
+    expect(budget("db-integration")).toBeGreaterThan(8);
+    expect(budget("db-integration")).toBeLessThanOrEqual(12);
     // payment-browser-e2e: TARGET ~10 min, HARD TIMEOUT 18. It carried a single
     // 10 that served as both, which is precisely the shape the comment below
     // warns about. F-PAY-002 measured the lane at 9.6-10.4 min locally across

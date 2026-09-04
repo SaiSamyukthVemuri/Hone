@@ -287,7 +287,34 @@ jobs:
     needs: changes
     if: ${{ needs.changes.outputs.database == 'true' || needs.changes.outputs.security == 'true' || needs.changes.outputs.full_matrix_required == 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    # A FAILURE CEILING, NOT A PERFORMANCE TARGET. The target for this lane is
+    # UNCHANGED; 12 minutes is only the point at which a run is declared broken.
+    # Twelve minutes is NOT an acceptable runtime for this lane.
+    #
+    # WHY 8 WAS TOO LOW. This lane historically finished at 6.1-7.5 min, which
+    # only fits when setup happens to be fast -- the ceiling and the observed
+    # run time were the same number, with nothing left for a slow runner. Both
+    # attempts on head 3013de3 were cancelled at ~8.3 min, at DIFFERENT points:
+    #
+    #   attempt 1 -- cancelled inside "Start local Supabase"; the migration
+    #     chain and every test step were skipped, so no branch code ran at all;
+    #   attempt 2 -- Supabase started (2.7 min), the full 0001->0190 chain
+    #     applied (0.9 min), fresh-managed extension proof passed, and the DB
+    #     suite then completed 1,030 tests across 21 files with ZERO failures
+    #     before the ceiling cancelled it mid-run.
+    #
+    # Supabase startup plus the migration chain alone were ~3.6 min on attempt
+    # 2, and dependency install added ~2.6 min on top, so ~6.3 min elapsed
+    # before the first test executed -- leaving under two minutes of an eight
+    # minute budget for the suite itself. Eight minutes therefore sits inside
+    # normal runner and setup variance and can cancel a HEALTHY DB suite before
+    # it reports any verdict, which reads like a broken diff and is not one.
+    #
+    # This is the same doctrine the browser lanes already carry: a hard timeout
+    # must EXCEED its performance target, or a merely slow runner is reported as
+    # a test failure. Test selection, Supabase startup and the assertions
+    # themselves are deliberately unchanged by this bump.
+    timeout-minutes: 12
 
     steps:
       - name: Checkout repository
