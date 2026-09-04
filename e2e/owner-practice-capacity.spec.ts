@@ -279,9 +279,14 @@ async function assertShellAt(
     sheet.getByRole("link", { name: "Business", exact: true }),
     `${at}: Business is owner-only`,
   ).toHaveCount(opts.owner ? 1 : 0);
-  await expect(sheet.locator('a[href="/dashboard/capacity"]')).toHaveCount(
+  // RETARGETED BY FIN-01A. The Business entry points at /business now, not
+  // straight at capacity: capacity was the only owner surface when this was
+  // written, and Financials made it two. Capacity is reached THROUGH Business,
+  // via the shared subnav, so the menu must no longer link it directly.
+  await expect(sheet.locator('a[href="/business"]')).toHaveCount(
     opts.owner ? 1 : 0,
   );
+  await expect(sheet.locator('a[href="/dashboard/capacity"]')).toHaveCount(0);
   // The account actions the desktop button would have offered.
   await expect(
     sheet.getByRole("link", { name: "Settings" }),
@@ -794,10 +799,15 @@ test("an owner's desktop navigation carries Business, once, and it reaches the b
   await expect(nav).toBeVisible();
   const business = nav.getByRole("link", { name: "Business", exact: true });
   await expect(business).toHaveCount(1);
-  await expect(business).toHaveAttribute("href", "/dashboard/capacity");
+  // RETARGETED BY FIN-01A: the entry points at the Business hub, and capacity
+  // is reached from there through the shared subnav.
+  await expect(business).toHaveAttribute("href", "/business");
   // Once BY DESTINATION as well: a second, relabelled link to the owner
   // surface is a duplicate entry point that counting by name cannot see.
-  await expect(nav.locator('a[href="/dashboard/capacity"]')).toHaveCount(1);
+  await expect(nav.locator('a[href="/business"]')).toHaveCount(1);
+  // The primary nav no longer reaches capacity directly — that is the whole
+  // point of the hub, and a stale direct link would be a second entry point.
+  await expect(nav.locator('a[href="/dashboard/capacity"]')).toHaveCount(0);
 
   // THE WHOLE ROW, IN ORDER. Business sits AFTER Records, and the four working
   // surfaces are untouched — a nav that gained Business by displacing Records,
@@ -902,10 +912,12 @@ test("an owner's mobile menu carries Business, and tapping it closes the menu an
 
   const business = nav.getByRole("link", { name: "Business", exact: true });
   await expect(business).toHaveCount(1);
-  await expect(business).toHaveAttribute("href", "/dashboard/capacity");
+  // RETARGETED BY FIN-01A, same as the desktop entry: the hub, not capacity.
+  await expect(business).toHaveAttribute("href", "/business");
   // Bound to the SHEET'S OWN SUBTREE, so the hidden desktop link is not merely
   // out of the a11y tree — it is out of the search scope entirely.
-  await expect(nav.locator('a[href="/dashboard/capacity"]')).toHaveCount(1);
+  await expect(nav.locator('a[href="/business"]')).toHaveCount(1);
+  await expect(nav.locator('a[href="/dashboard/capacity"]')).toHaveCount(0);
 
   // IN THE WORKING-SURFACE SECTION, above the account divider. These are the
   // sheet's DIRECT link children; Settings / Getting Started / Sign out sit one
