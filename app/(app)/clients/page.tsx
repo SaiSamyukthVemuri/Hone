@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { PendingLink } from "@/components/pending-link";
 import {
   getArchivedClientsForStudio,
   getClientsForStudio,
@@ -113,9 +114,10 @@ function ViewTabs({ current }: { current: View }) {
       {tabs.map((tab) => {
         const active = tab.value === current;
         return (
-          <Link
+          <PendingLink
             key={tab.value}
             href={tab.href}
+            pendingLabel="Loading clients…"
             aria-current={active ? "page" : undefined}
             className={
               active
@@ -124,7 +126,7 @@ function ViewTabs({ current }: { current: View }) {
             }
           >
             {tab.label}
-          </Link>
+          </PendingLink>
         );
       })}
     </nav>

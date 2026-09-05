@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { PendingLink } from "@/components/pending-link";
 import {
   getClientsForStudio,
   getCurrentPractitionerWithStudio,
@@ -227,9 +228,10 @@ export default async function RecordKeepingPage({
           there. */}
       <nav className="flex flex-wrap gap-2" aria-label="Record keeping sections">
         {SECTIONS.map((s) => (
-          <Link
+          <PendingLink
             key={s.key}
             href={`/records?section=${s.key}`}
+            pendingLabel="Loading section…"
             aria-current={section === s.key ? "page" : undefined}
             className={
               section === s.key
@@ -238,7 +240,7 @@ export default async function RecordKeepingPage({
             }
           >
             {s.label}
-          </Link>
+          </PendingLink>
         ))}
         <Link
           href={`/records/print?section=${section}${section === "procedures" ? procedureFilterQuery : ""}`}
