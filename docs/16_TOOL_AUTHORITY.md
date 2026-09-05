@@ -115,12 +115,29 @@ latest branch head; different claims have different anchors.
 | **Runtime behaviour** | The identity of the deployment actually **serving** production | A **successful** deployment or promotion that changes the serving identity | Current while that deployment still serves |
 | **Schema / migration state** | The observed instance + its applied migration identity | An apply to *that* instance | Current until that instance is applied to |
 | **Mutable data state** — row counts, tenant counts, open-alert counts, current settings | The observed instance + **`observed_at`**, plus any data revision or event that changes with the fact | Ordinary DML, an authorized production write, or any such event | **Point-in-time.** Never current merely because migration max did not move |
-| **Hosted — event fact** ("deployment X occurred") | The event identity | Nothing | **Permanently true as history.** An event that happened does not expire |
+| **Hosted — event fact** ("deployment X occurred") | The event identity | Nothing | **Permanently authoritative for the OCCURRENCE claim** — and it proves nothing about current state. See below |
 | **Hosted — current config observation** | The config revision read | A config change superseding that revision | Current until superseded |
 | **Hosted — health / reachability probe** | The probe + `observed_at` | Expiry of its stated freshness window | **Point-in-time, window must be stated** |
-| **Hosted — current deployment identity** | The serving deployment id / alias | A successful promotion or deployment | Current until serving identity changes |
+| **Hosted — current deployment identity** | The **resolved deployment ID**, or an alias→deployment mapping observed at a stated instant. **Never an alias alone** | A successful promotion or deployment that changes the resolved target | Current until the resolved target changes |
 | **PR review** | The exact PR head SHA | Any push to that PR, including a docs-only one | Current only at that head |
 | **Source claim** | The source SHA | Any commit touching the cited source | Current at that SHA |
+
+**Occurrence authority is not current-state authority.** That an event happened
+is settled permanently by the evidence of that event, and no later change makes
+it un-happen. This is *not* the HISTORY tier of §2 — history there means
+*superseded* evidence, which may not settle a claim. An event fact is neither
+superseded nor current-state evidence; it is authoritative for exactly one
+question, **did X occur**, and for no other. It does not show that X is current,
+that X is still serving, or that X is healthy now. Each of those is a separate
+claim with its own row above.
+
+**`ALIAS_NAME` is not `SERVING_DEPLOYMENT_IDENTITY`.** A promotion retargets a
+stable alias rather than renaming it, so `hone.care` can keep its name while the
+deployment behind it changes. Keying on the alias would leave the validity key
+unchanged across exactly the transition it exists to detect — the same
+wrong-fact error corrected for mutable data above. Key on the resolved
+deployment ID, or on an alias→deployment mapping with the instant it was
+observed.
 
 **Merge is not proof that production moved.** A merge may *initiate* a runtime
 transition; only a successful deployment completes one. A merge whose deployment
