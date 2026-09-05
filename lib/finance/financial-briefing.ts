@@ -299,6 +299,7 @@ export async function loadFinancialsView(
               everPaidUndatedAppointmentIds: ledgers.everPaidUndatedAppointmentIds,
               terminalCardMoneyAppointmentIds: ledgers.terminalCardMoneyAppointmentIds,
               everFullyRefundedAppointmentIds: ledgers.everFullyRefundedAppointmentIds,
+              refundTimingUnknownAppointmentIds: ledgers.refundTimingUnknownAppointmentIds,
               todayLocal,
               snapshot: now,
               windowStartUtc: moneyStartUtc,
@@ -426,6 +427,7 @@ type MoneyLedgers =
       readonly everPaidUndatedAppointmentIds: readonly string[];
       readonly terminalCardMoneyAppointmentIds: readonly string[];
       readonly everFullyRefundedAppointmentIds: readonly string[];
+      readonly refundTimingUnknownAppointmentIds: readonly string[];
       readonly ledgerOpensAt: string | null;
     }
   | { readonly ok: false; readonly cause: FinancialUnknownCause };
@@ -505,6 +507,7 @@ async function readMoneyLedgers(
     amount_cents: number | null;
     refund_status: string | null;
     refund_amount_cents: number | null;
+    refunded_at: string | null;
   };
   const everPaidRead = fetchAllRows<ExistenceRow>(
     async (from, to) => {
@@ -519,9 +522,16 @@ async function readMoneyLedgers(
         // succeeded and not fully reversed? That is 0187's own predicate, and
         // it is what may outrank a `still_owes` attestation. A fully refunded
         // payment stays a payment RECORD and is not terminal money.
-        .select("appointment_id, charged_at, amount_cents, refund_status, refund_amount_cents", {
-          count: "exact",
-        })
+        // `refunded_at` IS THE SECOND HALF OF THE SNAPSHOT. Bounding the
+        // CHARGE by the evidence instant while reading its REFUND state as of
+        // now let a refund that succeeded after the instant reach back into the
+        // snapshot: the payment became fully refunded under a timestamp
+        // preceding the refund, its terminal-money state vanished, and a stale
+        // `still_owes` it had been overriding became visible again.
+        .select(
+          "appointment_id, charged_at, amount_cents, refund_status, refund_amount_cents, refunded_at",
+          { count: "exact" },
+        )
         .eq("studio_id", studioId)
         .eq("status", "succeeded")
         .eq("stripe_livemode", livemode)
@@ -594,6 +604,28 @@ async function readMoneyLedgers(
     { pageSize: API_PAGE_SIZE },
   );
 
+  // LIVE AT THE EVIDENCE INSTANT, NOT LIVE NOW.
+  //
+  // 0187 makes this table a true version store, and the reconstruction is only
+  // sound because of what it guarantees: `recorded_at` is server-stamped on
+  // insert and then frozen by the append-only trigger; `superseded_at` is
+  // write-once and can never be re-pointed or returned to null; no role holds
+  // DELETE. A version therefore occupies one closed interval that nothing can
+  // rewrite afterwards.
+  //
+  // THE BOUNDARY IS FORCED, NOT CHOSEN. A correction retires the predecessor
+  // with `superseded_at = now()` and inserts its successor in the SAME
+  // transaction, where the insert trigger stamps `recorded_at = now()` — so the
+  // predecessor's end and the successor's start are the SAME instant, to the
+  // microsecond. Only `recorded_at < T <= superseded_at` yields exactly one
+  // live row at that instant. Making the upper bound exclusive as well would
+  // return ZERO rows for a T landing exactly on a supersession, and a visit's
+  // settled money would vanish from the snapshot entirely.
+  //
+  // Filtering on the CURRENT row instead let a correction recorded after the
+  // instant — while these concurrent reads were still running — replace what
+  // the studio had actually attested at T, silently moving money between
+  // collected-outside-Hone, waived and still-owed.
   let settlementCount: number | null = null;
   const settlementsRead = fetchAllRows<SettlementRow>(async (from, to) => {
     const page = await supabase
@@ -602,11 +634,17 @@ async function readMoneyLedgers(
       // from the same authoritative resolver the card path uses, precisely
       // so this surface stops valuing past work at a mutable menu price —
       // its column comment names FIN-01A as the reason it exists.
-      .select("appointment_id, method, amount_cents, quoted_amount_cents", {
-        count: "exact",
-      })
+      //
+      // `recorded_at` and `superseded_at` are the version interval itself, and
+      // are projected so the model can prove exactly one version was live —
+      // rather than trust that the filter returned one.
+      .select(
+        "id, appointment_id, method, amount_cents, quoted_amount_cents, recorded_at, superseded_at",
+        { count: "exact" },
+      )
       .eq("studio_id", studioId)
-      .is("superseded_at", null)
+      .lt("recorded_at", evidenceInstantUtc)
+      .or(`superseded_at.is.null,superseded_at.gte.${evidenceInstantUtc}`)
       .order("id")
       .range(from, to);
     if (settlementCount === null && typeof page.count === "number") {
@@ -699,6 +737,67 @@ async function readMoneyLedgers(
 
   const openedRows = (opened.data ?? []) as ReadonlyArray<{ charged_at: string | null }>;
 
+  // INSTANTS ARE COMPARED AS INSTANTS, NEVER AS STRINGS.
+  //
+  // PostgREST renders `timestamptz` as `2026-08-15T16:00:00.000123+00:00`;
+  // `toISOString()` produces `2026-08-15T16:00:00.000Z`. Those two formats do
+  // not order lexicographically against each other — a refund 123µs AFTER the
+  // instant string-compares as BEFORE it, because '1' sorts under 'Z'. This
+  // codebase has been bitten by the same mismatch before, in the opposite
+  // direction, so both halves go through Date.parse.
+  //
+  // The truncation to milliseconds that Date.parse performs is FAIL-SAFE here
+  // and only here: a sub-millisecond-after-T event collapses onto T exactly,
+  // and every bound below is exclusive, so it reads as not-yet-visible. The
+  // snapshot never gains evidence it should not have — at worst it waits one
+  // millisecond to see it. Do not reuse this reasoning for an inclusive bound.
+  const isBefore = (value: string | null, instantUtc: string): boolean => {
+    if (value === null) return false;
+    const t = Date.parse(value);
+    const limit = Date.parse(instantUtc);
+    return Number.isNaN(t) || Number.isNaN(limit) ? false : t < limit;
+  };
+
+  // THE REFUND STATE OF ONE PAYMENT, AS AT THE EVIDENCE INSTANT.
+  //
+  // Written once and shared by all three derived sets, so they cannot drift
+  // into disagreeing about the same row — which is the defect this closes.
+  //
+  // Three outcomes, and the third is the point:
+  //
+  //   "reversed"  the refund succeeded, covered the charge, and was dated
+  //               BEFORE the instant. The money came back.
+  //   "stood"     no refund, or one that had not happened yet at the instant,
+  //               or one too small to reverse the charge. The money stayed.
+  //   "unknown"   a refund that WOULD reverse the charge but carries no
+  //               `refunded_at`. Schema-legal: every refund column is
+  //               nullable, and only the writer's convention fills this one.
+  //               Hone cannot place it before or after the instant, so it
+  //               claims neither. Not "reversed" and not "stood".
+  const refundStateAt = (
+    row: ExistenceRow,
+    instantUtc: string,
+  ): "reversed" | "stood" | "unknown" => {
+    // NOT REVERSING AT ALL — decided exactly as 0187 decides it, and before
+    // any question of dates arises. A succeeded refund with no readable
+    // amount does not establish that the payment was reversed, so it is not
+    // an unknown either: the money stood.
+    const reversing =
+      row.refund_status === "succeeded" &&
+      typeof row.refund_amount_cents === "number" &&
+      typeof row.amount_cents === "number" &&
+      row.refund_amount_cents >= row.amount_cents;
+    if (!reversing) return "stood";
+    if (row.refunded_at === null) return "unknown";
+    // Exclusive, the same boundary every other snapshot-bearing read uses.
+    return isBefore(row.refunded_at, instantUtc) ? "reversed" : "stood";
+  };
+
+  // A payment the snapshot cannot see contributes nothing at all — not its
+  // existence, not its refund state.
+  const chargeVisible = (row: ExistenceRow): boolean =>
+    row.charged_at === null || isBefore(row.charged_at, evidenceInstantUtc);
+
   return {
     ok: true,
     services: s.ok ? s.rows : [],
@@ -728,7 +827,7 @@ async function readMoneyLedgers(
       ? ep.rows.flatMap((row) =>
           row.appointment_id === null ||
           row.charged_at === null ||
-          row.charged_at >= evidenceInstantUtc
+          !isBefore(row.charged_at, evidenceInstantUtc)
             ? []
             : [row.appointment_id],
         )
@@ -749,31 +848,40 @@ async function readMoneyLedgers(
           if (row.appointment_id === null) return [];
           // A payment the snapshot cannot see cannot carry a refund state into
           // it either; an undated payment stays visible, as its own truth.
-          if (row.charged_at !== null && row.charged_at >= evidenceInstantUtc) return [];
-          if (typeof row.amount_cents !== "number") return [];
-          const reversed =
-            row.refund_status === "succeeded" &&
-            typeof row.refund_amount_cents === "number" &&
-            row.refund_amount_cents >= row.amount_cents;
-          return reversed ? [row.appointment_id] : [];
+          if (!chargeVisible(row)) return [];
+          return refundStateAt(row, evidenceInstantUtc) === "reversed"
+            ? [row.appointment_id]
+            : [];
         })
       : [],
+    // FAIL CLOSED, AND SAY SO. A refund that would reverse the charge but
+    // carries no date cannot be placed relative to the instant, so this visit
+    // is neither refunded nor terminal — it is unplaceable, and the model
+    // withdraws the counts that would otherwise have to guess.
+    refundTimingUnknownAppointmentIds: ep.ok
+      ? ep.rows.flatMap((row) => {
+          if (row.appointment_id === null) return [];
+          if (!chargeVisible(row)) return [];
+          return refundStateAt(row, evidenceInstantUtc) === "unknown"
+            ? [row.appointment_id]
+            : [];
+        })
+      : [],
+    // NO `?? 0` ANYWHERE IN `refundStateAt`. 0187 spells the reversal test with
+    // `coalesce(...,0)`, but a default inside a money comparison is exactly
+    // what this file's own guard forbids, and the explicit form says the same
+    // thing: a succeeded refund with no readable amount does not establish that
+    // the payment was reversed, so the money still counts as terminal.
     terminalCardMoneyAppointmentIds: ep.ok
       ? ep.rows.flatMap((row) => {
           if (row.appointment_id === null) return [];
-          if (row.charged_at !== null && row.charged_at >= evidenceInstantUtc) return [];
+          if (!chargeVisible(row)) return [];
           if (typeof row.amount_cents !== "number") return [];
-          // NO `?? 0` HERE. 0187 spells this with `coalesce(...,0)`, but a
-          // default inside a money comparison is exactly what this file's own
-          // guard forbids, and the explicit form says the same thing: a
-          // succeeded refund with no readable amount does not establish that
-          // the payment was fully reversed, so the money still counts as
-          // terminal.
-          const reversed =
-            row.refund_status === "succeeded" &&
-            typeof row.refund_amount_cents === "number" &&
-            row.refund_amount_cents >= row.amount_cents;
-          return reversed ? [] : [row.appointment_id];
+          // ONLY "stood" IS TERMINAL. "unknown" must not assert that the money
+          // stayed, because asserting that is what overrides a `still_owes`.
+          return refundStateAt(row, evidenceInstantUtc) === "stood"
+            ? [row.appointment_id]
+            : [];
         })
       : [],
     ledgerOpensAt: openedRows[0]?.charged_at ?? null,

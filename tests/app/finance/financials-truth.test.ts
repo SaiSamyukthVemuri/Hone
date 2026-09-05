@@ -5,6 +5,8 @@ import ts from "typescript";
 
 import {
   CAPACITY_NOT_YET,
+  MONEY_AS_AT_MEANING,
+  VISIT_FIGURES_ARE_CURRENT,
   CASH_MOVEMENT_IS_NOT_EARNINGS,
   COLLECTED_ON_DELIVERED_IS_ONE_POPULATION,
   HISTORY_BEFORE_OUTCOMES,
@@ -150,14 +152,29 @@ describe("NC2 — every read names its authority, and every ledger read is filte
     expect(leaf, "the leaf module must import nothing").not.toContain("import ");
   });
 
-  it("EVERY appointment_settlements read excludes superseded rows", () => {
+  it("EVERY appointment_settlements read reconstructs the version live at the instant", () => {
+    // WHAT THIS RULE USED TO SAY: every read filters `superseded_at is null`.
+    // That kept a correction from being counted twice, which is still the
+    // requirement — but it bought it by reading the row live NOW, so a
+    // correction recorded after the evidence instant replaced what the studio
+    // had actually attested at that instant, under a timestamp predating it.
+    //
+    // The version interval enforces the same single-truth rule AND obeys the
+    // snapshot. What must never come back is the unfiltered read: every
+    // version of every row would double-count every correction.
     const reads = CODE.loader.split('.from("appointment_settlements")').slice(1);
     expect(reads.length).toBeGreaterThanOrEqual(1);
     for (const r of reads) {
-      // A superseded row is a correction's predecessor. Summing it counts the
-      // correction twice.
-      expect(r.slice(0, 400)).toContain('.is("superseded_at", null)');
+      const head = r.slice(0, 700);
+      expect(head).toContain('.lt("recorded_at", evidenceInstantUtc)');
+      expect(head).toContain("superseded_at.is.null,superseded_at.gte.");
+      // The predecessor's end and the successor's start are the SAME instant,
+      // so an exclusive upper bound would select NEITHER version.
+      expect(head).not.toContain("superseded_at.gt.$");
     }
+    // AND THE RESULT IS CHECKED, not trusted: the model proves exactly one
+    // version came back per visit and withdraws the money when it did not.
+    expect(CODE.model).toContain("settlementVersionsAmbiguous");
   });
 
   it("charges and refunds are windowed on their OWN columns, independently", () => {
@@ -630,6 +647,38 @@ describe("NC4/NC9 — an absence has no coercion route to a number", () => {
       "byStatus.set(row.status, (byStatus.get(row.status) ?? 0) + 1);",
       "const count = (status: AppointmentStatusName) => known(byStatus.get(status) ?? 0);",
     ]);
+  });
+
+  it("the as-at claim is made only over the money it can be proven for", () => {
+    // THE PAGE-WIDE CLAIM WAS TOO STRONG. "Figures as at T" sat in the footer
+    // under everything, including visit counts and service value — whose
+    // sources (`appointments.status`, `services.price_cents`, `client_pricing`)
+    // are mutated in place with no version interval and no history rows
+    // anywhere in the schema. What they held at a past instant is not
+    // recoverable, so the page asserted something Hone cannot establish.
+    //
+    // Money CAN carry it: payments and refunds are event-timed, and 0187 makes
+    // settlements a version store. So the claim is scoped rather than dropped.
+    expect(CODE.spine).not.toContain("Figures as at");
+    expect(CODE.spine).toContain("Money figures are as at");
+    expect(CODE.spine).toContain("MONEY_AS_AT_MEANING");
+    // BOTH HALVES, ALWAYS. A money guarantee printed without the sentence
+    // saying what it does NOT cover reads as the old page-wide claim again.
+    expect(CODE.spine).toContain("VISIT_FIGURES_ARE_CURRENT");
+    expect(CODE.copy).toContain("VISIT_FIGURES_ARE_CURRENT");
+    // The instant itself stays machine-readable and unrounded.
+    expect(CODE.spine).toContain("dateTime={briefing.evidenceInstant}");
+  });
+
+  it("the current-state sentence names the figures it actually covers", () => {
+    // Naming them matters: an owner who cannot tell which half of the screen a
+    // caveat applies to has to assume the worse half applies to all of it.
+    expect(VISIT_FIGURES_ARE_CURRENT).toContain("Visit counts");
+    expect(VISIT_FIGURES_ARE_CURRENT).toContain("clinic time");
+    expect(VISIT_FIGURES_ARE_CURRENT).toContain("service value");
+    expect(MONEY_AS_AT_MEANING).toContain("payment");
+    expect(MONEY_AS_AT_MEANING).toContain("refund");
+    expect(MONEY_AS_AT_MEANING).toContain("settlement");
   });
 
   it("no figure is rendered as a bare dash or an em dash placeholder", () => {

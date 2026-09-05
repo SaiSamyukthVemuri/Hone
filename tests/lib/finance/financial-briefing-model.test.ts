@@ -382,8 +382,21 @@ function charge(over: Partial<ChargeRow>): ChargeRow {
  * row written before a resolver could produce one has — so a test that wants
  * the 0187 snapshot has to ask for it explicitly.
  */
+let settlementSeq = 0;
 function settlement(over: Partial<SettlementRow> & { appointment_id: string }): SettlementRow {
-  return { method: "paid_cash", amount_cents: 15_000, quoted_amount_cents: null, ...over };
+  // DEFAULTS DESCRIBE A VALID, SINGLE, LIVE VERSION — recorded long before any
+  // snapshot these tests take and never superseded. A test about version
+  // history states its own interval; every other test is unaffected by one.
+  settlementSeq += 1;
+  return {
+    id: `settlement-${settlementSeq}`,
+    method: "paid_cash",
+    amount_cents: 15_000,
+    quoted_amount_cents: null,
+    recorded_at: "2000-01-01T00:00:00.000Z",
+    superseded_at: null,
+    ...over,
+  };
 }
 
 function census(over: Partial<Parameters<typeof summarizeDeliveredMoney>[0]> = {}) {
@@ -393,6 +406,7 @@ function census(over: Partial<Parameters<typeof summarizeDeliveredMoney>[0]> = {
     charges: [],
     refunds: [],
     settlements: [],
+    refundTimingUnknownAppointmentIds: [],
     customPricing: [],
     everPaidDatedAppointmentIds: [],
     everPaidUndatedAppointmentIds: [],
@@ -1902,5 +1916,158 @@ describe("SLICE 2B — the price a particular client pays", () => {
     expect(value(c.treatmentServiceValueCents)).toBe(0);
     expect(c.basis.unvalued).toBe(0);
     expect(c.basis.ambiguouslyPriced).toBe(0);
+  });
+});
+
+// ===========================================================================
+// SETTLEMENT VERSION HISTORY — the model proves what the query claims
+// ===========================================================================
+//
+// The loader asks the database for the version live at the evidence instant.
+// 0187's interval arithmetic makes that exactly one row for valid history: a
+// correction retires the predecessor with `superseded_at = now()` and inserts
+// its successor in the SAME transaction, where the insert trigger stamps
+// `recorded_at = now()`, so predecessor-end and successor-start are the same
+// instant to the microsecond.
+//
+// The model does not TRUST that. It counts what came back, because a history
+// that is malformed — overlapping intervals, or a gap — would otherwise be
+// resolved by row order, and row order is not evidence about money.
+
+describe("the settlement version live at the instant decides the money", () => {
+  const AT = "2026-08-27T10:00:00.000Z";
+  const SUPERSEDED_AT = "2026-08-27T11:30:00.000Z";
+  const visit = appt({ id: "v" });
+
+  it("a version recorded before the instant and never superseded is counted", () => {
+    const c = census({
+      appointments: [visit],
+      settlements: [settlement({ appointment_id: "v", method: "paid_cash", amount_cents: 15_000 })],
+    });
+    expect(value(c.externallyAttestedCents)).toBe(15_000);
+    expect(c.basis.settlementVersionsAmbiguous).toBe(0);
+    expect(c.basis.complete).toBe(true);
+  });
+
+  it("a predecessor superseded AFTER the instant is the one that counts", () => {
+    // This is what the query returns for T before the correction: the
+    // predecessor alone. Its money is the money the studio had attested at T.
+    const c = census({
+      appointments: [visit],
+      settlements: [
+        settlement({
+          id: "predecessor", appointment_id: "v", method: "paid_cash", amount_cents: 15_000,
+          recorded_at: AT, superseded_at: SUPERSEDED_AT,
+        }),
+      ],
+    });
+    expect(value(c.externallyAttestedCents)).toBe(15_000);
+    expect(value(c.waivedCents)).toBe(0);
+    expect(c.basis.complete).toBe(true);
+  });
+
+  it("a later snapshot sees the replacement and NOT its predecessor", () => {
+    // What the query returns for T after the correction: the successor alone.
+    const c = census({
+      appointments: [visit],
+      settlements: [
+        settlement({
+          id: "replacement", appointment_id: "v", method: "waived", amount_cents: 0,
+          recorded_at: SUPERSEDED_AT, superseded_at: null,
+        }),
+      ],
+    });
+    expect(value(c.waivedCents)).toBe(0);
+    expect(value(c.externallyAttestedCents)).toBe(0);
+    expect(c.basis.complete).toBe(true);
+  });
+
+  it("a long correction chain still yields exactly one live version", () => {
+    // Three versions, T landing inside the middle interval. Only the middle
+    // one satisfies the query, and the model agrees it is unambiguous.
+    const c = census({
+      appointments: [visit],
+      settlements: [
+        settlement({
+          id: "middle", appointment_id: "v", method: "paid_e_transfer", amount_cents: 12_000,
+          recorded_at: AT, superseded_at: SUPERSEDED_AT,
+        }),
+      ],
+    });
+    expect(value(c.externallyAttestedCents)).toBe(12_000);
+    expect(c.basis.settlementVersionsAmbiguous).toBe(0);
+  });
+
+  it("OVERLAPPING versions fail closed — no arbitrary winner, and no money", () => {
+    // Two rows for one visit both satisfying live-at-T is impossible under
+    // 0187's arithmetic, so its presence means the history itself is broken.
+    // The money enters NO total and the completeness claim is withdrawn —
+    // rather than the first or the largest row silently deciding the figure.
+    const c = census({
+      appointments: [visit],
+      settlements: [
+        settlement({ id: "a", appointment_id: "v", method: "paid_cash", amount_cents: 15_000 }),
+        settlement({ id: "b", appointment_id: "v", method: "waived", amount_cents: 0 }),
+      ],
+    });
+    expect(c.basis.settlementVersionsAmbiguous).toBe(1);
+    // WITHDRAWN, NOT ZEROED — and that distinction is the whole point. Every
+    // version of the visit was skipped, so no row attested anything about this
+    // window, and the existing "nothing attested" rule makes the figures
+    // unknown rather than a confident zero the owner would read as "no cash".
+    expect(c.externallyAttestedCents.known).toBe(false);
+    expect(c.waivedCents.known).toBe(false);
+    expect(c.basis.complete).toBe(false);
+  });
+
+  it("ambiguity on one visit does not discard another visit's money", () => {
+    const c = census({
+      appointments: [visit, appt({ id: "w" })],
+      settlements: [
+        settlement({ id: "a", appointment_id: "v", method: "paid_cash", amount_cents: 15_000 }),
+        settlement({ id: "b", appointment_id: "v", method: "waived", amount_cents: 0 }),
+        settlement({ id: "c", appointment_id: "w", method: "paid_cash", amount_cents: 9_000 }),
+      ],
+    });
+    expect(c.basis.settlementVersionsAmbiguous).toBe(1);
+    expect(value(c.externallyAttestedCents)).toBe(9_000);
+  });
+
+  it("NO VERSION live at the instant is simply no attestation, not an error", () => {
+    // A visit settled only AFTER the instant returns nothing from the query.
+    // That is an honest absence — the studio had attested nothing yet — and
+    // must not be confused with the malformed case above.
+    const c = census({ appointments: [visit], settlements: [] });
+    expect(c.basis.settlementVersionsAmbiguous).toBe(0);
+    // Also unknown — but for the ordinary reason the census has always used,
+    // and with the completeness claim INTACT. That is what separates an honest
+    // absence from the malformed case above.
+    expect(c.externallyAttestedCents.known).toBe(false);
+    expect(c.basis.complete).toBe(true);
+  });
+});
+
+describe("refund timing that cannot be placed withdraws the count it feeds", () => {
+  it("an undatable reversing refund makes the reversed-visit count unknown", () => {
+    const c = census({
+      appointments: [appt({ id: "v" })],
+      refundTimingUnknownAppointmentIds: ["v"],
+    });
+    expect(c.refundedToZeroVisits.known).toBe(false);
+  });
+
+  it("and leaves it known when every refund can be placed", () => {
+    const c = census({ appointments: [appt({ id: "v" })], refundTimingUnknownAppointmentIds: [] });
+    expect(c.refundedToZeroVisits.known).toBe(true);
+  });
+
+  it("an undatable refund on a visit OUTSIDE this window changes nothing here", () => {
+    // The set is all-time; only visits delivered in this window can withdraw
+    // a count this window publishes.
+    const c = census({
+      appointments: [appt({ id: "v" })],
+      refundTimingUnknownAppointmentIds: ["somewhere-else"],
+    });
+    expect(c.refundedToZeroVisits.known).toBe(true);
   });
 });

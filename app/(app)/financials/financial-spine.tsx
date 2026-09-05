@@ -20,9 +20,11 @@ import {
   PERIOD_IS_BEFORE_MONEY_WINDOW,
   PERMANENT_LINES,
   REFUNDED_TO_ZERO_EXPLAINED,
+  MONEY_AS_AT_MEANING,
   SERVICE_VALUE_PRICE_BASIS,
   SETTLEMENTS_NOT_IN_THIS_WINDOW,
   SOME_VISITS_PRICED_AT_THE_TIME,
+  VISIT_FIGURES_ARE_CURRENT,
   THREE_CLASSES_NEVER_ADD_UP,
   UNATTRIBUTED_IS_ALL_TIME,
   UNCLASSIFIED_VISITS_EXPLAINED,
@@ -345,13 +347,22 @@ export function FinancialSpine({ briefing }: { briefing: FinancialBriefing }) {
           without the instant an owner comparing them concludes Hone is broken.
           `dateTime` carries the machine-readable form; the visible text is the
           same instant, not a prettier approximation of it.
+
+          SCOPED, NOT WEAKENED. This said "Figures as at" over the whole page.
+          Money can carry that claim and now does; visit counts, clinic time and
+          service value cannot, because their sources are mutated in place with
+          no version history. Both sentences are printed together so the
+          guarantee is stated exactly where it holds — see MONEY_AS_AT_MEANING.
         */}
         <p className="max-w-[68ch] text-xs leading-relaxed text-fg-muted">
-          Figures as at{" "}
+          Money figures are as at{" "}
           <time dateTime={briefing.evidenceInstant} className="tabular-nums">
             {briefing.evidenceInstant}
           </time>
-          .
+          . {MONEY_AS_AT_MEANING}
+        </p>
+        <p className="max-w-[68ch] text-xs leading-relaxed text-fg-muted">
+          {VISIT_FIGURES_ARE_CURRENT}
         </p>
       </footer>
     </div>

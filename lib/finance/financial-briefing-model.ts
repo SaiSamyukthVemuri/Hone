@@ -392,6 +392,7 @@ export type RefundRow = {
 };
 
 export type SettlementRow = {
+  readonly id: string;
   readonly appointment_id: string | null;
   readonly method: string;
   readonly amount_cents: number | null;
@@ -400,6 +401,14 @@ export type SettlementRow = {
    * one, which that migration deliberately keeps as a fact rather than a zero.
    */
   readonly quoted_amount_cents: number | null;
+  /**
+   * THE VERSION INTERVAL, from 0187. `recorded_at` is stamped by the insert
+   * trigger and frozen by the append-only guard; `superseded_at` is write-once
+   * and null while the row is live. The loader filters on these, and the model
+   * re-checks the result rather than trusting it — see `settlementVersionsAmbiguous`.
+   */
+  readonly recorded_at: string;
+  readonly superseded_at: string | null;
 };
 
 /**
@@ -471,6 +480,19 @@ export type DeliveryBasis = {
    * history, and it may belong to the money population being reported.
    */
   readonly settlementsUnattributable: number;
+  /**
+   * Delivered visits for which the as-of-T reconstruction did NOT yield exactly
+   * one live settlement version.
+   *
+   * 0187's interval arithmetic makes this unreachable for valid history: a
+   * correction ends the predecessor at the very instant it starts the
+   * successor, so every T selects exactly one. A visit landing here therefore
+   * means the history itself is malformed — overlapping or gapped versions —
+   * and the money on it is not attested by any single row Hone can name. Its
+   * rows are skipped and the completeness claim is withdrawn, rather than one
+   * version being picked arbitrarily.
+   */
+  readonly settlementVersionsAmbiguous: number;
   /**
    * Money or duration columns that did not arrive as a finite number.
    *
@@ -674,6 +696,18 @@ export function summarizeDeliveredMoney(input: {
    * own predicate: succeeded AND NOT (refund succeeded AND refunded >= amount).
    */
   readonly terminalCardMoneyAppointmentIds: readonly string[];
+  /**
+   * Delivered appointments whose card money can be placed NEITHER as reversed
+   * NOR as standing at the evidence instant, because a refund that would
+   * reverse the charge carries no `refunded_at`.
+   *
+   * ITS OWN SET, and neither of the two above. Folding it into the refunded set
+   * would assert a reversal Hone cannot date; folding it into the terminal set
+   * would assert money that stayed, which is what overrides a `still_owes`.
+   * Both are guesses about chronology, so the model withdraws the counts that
+   * depend on the answer instead of choosing one.
+   */
+  readonly refundTimingUnknownAppointmentIds: readonly string[];
   /** Studio-local `YYYY-MM-DD`. Injected: this module never reads a clock. */
   readonly todayLocal: string;
   readonly snapshot: Date;
@@ -1035,6 +1069,24 @@ export function summarizeDeliveredMoney(input: {
   let settlementsOutsideWindow = 0;
   let settlementsUnattributable = 0;
   let stillOwedSupersededByCard = 0;
+  // PROVEN, NOT ASSUMED. The loader asks for the versions live at the evidence
+  // instant; this counts how many actually came back per visit, so a malformed
+  // history is caught here rather than silently deciding the money by row
+  // order. Only visits delivered in this window matter — history elsewhere is
+  // none of this census's business.
+  //
+  // NO `?? 0` COUNTER HERE. Two sets say the same thing without a default, and
+  // this file's own guard permits exactly one defaulted counter — the status
+  // census — for a reason worth keeping.
+  const versionSeen = new Set<string>();
+  const ambiguousAppointments = new Set<string>();
+  for (const s of input.settlements) {
+    if (s.appointment_id === null) continue;
+    if (!deliveredAny.has(s.appointment_id)) continue;
+    if (versionSeen.has(s.appointment_id)) ambiguousAppointments.add(s.appointment_id);
+    else versionSeen.add(s.appointment_id);
+  }
+  const settlementVersionsAmbiguous = ambiguousAppointments.size;
   // Rows that named a delivered visit in this window AND carried a readable
   // amount. This — not the studio's all-time row count — is what decides
   // whether "nothing was attested" is a true thing to say about this window.
@@ -1046,6 +1098,9 @@ export function summarizeDeliveredMoney(input: {
       settlementsUnattributable += 1;
       continue;
     }
+    // NO ARBITRARY WINNER. Counted once above; every version of an ambiguous
+    // visit is skipped, so its money enters no total at all.
+    if (ambiguousAppointments.has(s.appointment_id)) continue;
     // A ROW NAMING WORK FROM ANOTHER PERIOD is routine history, not evidence
     // that this window was read incompletely. It is still disclosed, because
     // the studio-wide read means an owner can otherwise wonder where those
@@ -1118,6 +1173,16 @@ export function summarizeDeliveredMoney(input: {
   // shown only when it actually happens. Production holds three null-priced
   // services today, so this is reachable, not hypothetical.
   const everFullyRefunded = new Set(input.everFullyRefundedAppointmentIds);
+  // UNPLACEABLE MONEY. The visit's PERIOD is still known — its charge is dated
+  // and before the instant — so it classifies normally below. What cannot be
+  // stated is whether that money came back by the instant, which is exactly
+  // the count `refundedToZeroVisits` publishes. So the count is withdrawn
+  // rather than reported short.
+  const refundTimingUnknown = new Set(input.refundTimingUnknownAppointmentIds);
+  let refundTimingUnknownVisits = 0;
+  for (const id of deliveredAny) {
+    if (refundTimingUnknown.has(id)) refundTimingUnknownVisits += 1;
+  }
   const everPaidDated = new Set(input.everPaidDatedAppointmentIds);
   const everPaidUndated = new Set(input.everPaidUndatedAppointmentIds);
   let paidInAnotherPeriodVisits = 0;
@@ -1216,7 +1281,13 @@ export function summarizeDeliveredMoney(input: {
     // `cardPaidWithoutAPrice` too — so two adjacent numbers on the screen
     // disagreed with no line saying why, which is the mismatch that reads as a
     // bug report.
-    refundedToZeroVisits: known(refundedToZero.size),
+    // WITHDRAWN, NOT ROUNDED DOWN. One visit whose refund cannot be dated
+    // makes this count unprovable; reporting the rest would publish a number
+    // that is confidently wrong by an amount the screen does not disclose.
+    refundedToZeroVisits:
+      refundTimingUnknownVisits > 0
+        ? unknownBecause<number>("not_recorded")
+        : known(refundedToZero.size),
     paidInAnotherPeriodVisits: known(paidInAnotherPeriodVisits),
     paidWithUnknownDateVisits: known(paidWithUnknownDateVisits),
     stillOwedSupersededByCard: known(stillOwedSupersededByCard),
@@ -1237,6 +1308,7 @@ export function summarizeDeliveredMoney(input: {
         unvalued === 0 &&
         unmeasurable === 0 &&
         settlementsUnattributable === 0 &&
+        settlementVersionsAmbiguous === 0 &&
         unreadableAmounts === 0,
       undatable,
       unclassifiable,
@@ -1245,6 +1317,7 @@ export function summarizeDeliveredMoney(input: {
       unmeasurable,
       settlementsOutsideWindow,
       settlementsUnattributable,
+      settlementVersionsAmbiguous,
       unreadableAmounts,
     },
   };
@@ -1305,6 +1378,7 @@ export function unreadableDeliveredMoney(
       unmeasurable: 0,
       settlementsOutsideWindow: 0,
       settlementsUnattributable: 0,
+      settlementVersionsAmbiguous: 0,
       unreadableAmounts: 0,
     },
   };

@@ -283,5 +283,39 @@ export const CONSULTATIONS_ARE_UNPAID_TIME =
   "Consultations still take clinic time. They are kept out of the treatment figures and shown separately, so consultation time never reads as treatment earnings.";
 
 /** What is still not on this screen. */
+/**
+ * THE SNAPSHOT CLAIM, SCOPED TO WHAT CAN ACTUALLY BE PROVEN.
+ *
+ * This footer used to say "Figures as at T" over the whole page, and that was
+ * a stronger claim than the data supports. A census of every source behind
+ * this screen split them in two:
+ *
+ *   * MONEY — payments, refunds and settlements — is reconstructable as at an
+ *     instant. Payments and refunds carry their own event times; settlements
+ *     are a true version store under 0187, with a frozen `recorded_at` and a
+ *     write-once `superseded_at`. Each of those reads is bounded by the
+ *     instant, so the claim is literally true of them.
+ *
+ *   * VISITS, CLINIC TIME AND SERVICE VALUE are not. `appointments.status`,
+ *     `services.price_cents` and `client_pricing` are all mutated IN PLACE,
+ *     with no version interval and no history rows anywhere in the schema.
+ *     What they were at any past instant is not recoverable, so a page-wide
+ *     "as at" was asserting something Hone cannot establish — and could not be
+ *     repaired the way the money reads were.
+ *
+ * Making one honest sentence out of two different guarantees would have meant
+ * weakening the money claim to match the weakest source. These stay separate
+ * so the strong guarantee is still stated where it holds.
+ */
+export const MONEY_AS_AT_MEANING =
+  "Every payment, refund and settlement counted above is one Hone had on record at that instant. Money recorded after it is not here, and appears the next time this page is prepared.";
+
+/**
+ * Shown beside the money sentence, never instead of it. The distinction is
+ * only useful if both halves are visible at once.
+ */
+export const VISIT_FIGURES_ARE_CURRENT =
+  "Visit counts, clinic time and service value are read as the records stand, not frozen to that instant. A visit completed or moved, or a service repriced, while this page was being prepared can already be in them.";
+
 export const CAPACITY_NOT_YET =
   "How full your schedule is, and what an extra day would be worth, are not on this screen. Answering them needs your blocked-out time, which this release does not read.";

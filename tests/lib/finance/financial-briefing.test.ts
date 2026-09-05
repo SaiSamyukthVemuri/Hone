@@ -842,8 +842,8 @@ describe("the all-time payment-existence read", () => {
       path.join(process.cwd(), "lib/finance/financial-briefing.ts"),
       "utf8",
     );
-    const read = src.slice(src.indexOf('.select("appointment_id, charged_at, amount_cents'));
-    const head = read.slice(0, 400);
+    const read = src.slice(src.indexOf('"appointment_id, charged_at, amount_cents'));
+    const head = read.slice(0, 500);
     expect(head).toContain('.eq("status", "succeeded")');
     expect(head).toContain('.eq("stripe_livemode", livemode)');
     expect(head).toContain('.not("appointment_id", "is", null)');
@@ -1035,15 +1035,197 @@ describe("all-time payment evidence is bounded by the evidence instant", () => {
 
   it("the read stays status- and mode-scoped, so failed and TEST rows never qualify", () => {
     const src = readFileSync(path.join(process.cwd(), "lib/finance/financial-briefing.ts"), "utf8");
-    const read = src.slice(src.indexOf('.select("appointment_id, charged_at, amount_cents'));
-    expect(read.slice(0, 400)).toContain('.eq("status", "succeeded")');
-    expect(read.slice(0, 400)).toContain('.eq("stripe_livemode", livemode)');
+    const read = src.slice(src.indexOf('"appointment_id, charged_at, amount_cents'));
+    expect(read.slice(0, 500)).toContain('.eq("status", "succeeded")');
+    expect(read.slice(0, 500)).toContain('.eq("stripe_livemode", livemode)');
   });
 });
 
 // ---------------------------------------------------------------------------
 // THE THIRD 1000-ROW CLIFF — Codex B
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// ALL-TIME REFUND STATE OBEYS THE SNAPSHOT TOO — Codex A
+// ---------------------------------------------------------------------------
+//
+// The charge side was bounded first, and that left the read half-snapshotted:
+// it asked "did this visit ever acquire a payment BY the instant" and then
+// answered "and is that payment refunded NOW". A refund succeeding after the
+// instant, while these concurrent reads were still running, therefore reached
+// back into the snapshot — the payment became fully refunded under a timestamp
+// preceding the refund, its terminal-money state vanished, and the stale
+// `still_owes` it had been overriding became visible again.
+
+describe("all-time REFUND state is bounded by the evidence instant", () => {
+  const T = "2026-08-15T16:00:00.000Z";
+
+  const load = async (
+    over: Record<string, unknown>,
+    settlements: unknown[] = [],
+    nowIso = T,
+  ) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(nowIso));
+    const { client } = stubTables({
+      payment_charge_attempts: {
+        resolve: (ops) =>
+          ops.includes('not(["appointment_id","is",null])')
+            ? {
+                rows: [
+                  {
+                    appointment_id: "v",
+                    charged_at: "2026-08-10T12:00:00.000Z",
+                    amount_cents: 15_000,
+                    refund_status: "succeeded",
+                    refund_amount_cents: 15_000,
+                    ...over,
+                  },
+                ],
+              }
+            : { rows: [] },
+      },
+      appointment_settlements: { rows: settlements },
+      appointments: {
+        rows: [
+          { id: "v", status: "completed", starts_at: "2026-08-10T10:00:00.000Z",
+            ends_at: "2026-08-10T11:00:00.000Z", duration_minutes: 60,
+            blocked_ends_at: "2026-08-10T11:00:00.000Z", service_id: "svc", client_id: null },
+        ],
+      },
+      services: {
+        rows: [{ id: "svc", name: "60 minute session", modality: "electrolysis", price_cents: 15_000 }],
+      },
+    });
+    return granted(await loadFinancialsView(OWNER, studio("America/Toronto"), "month", client));
+  };
+
+  it("PostgREST's timestamp format is compared as an instant, not as a string", () => {
+    // THE FORMAT MISMATCH THIS GUARDS. PostgREST renders timestamptz as
+    // `...T16:00:00.000123+00:00`; `toISOString()` gives `...T16:00:00.000Z`.
+    // Lexically '1' sorts under 'Z', so a refund 123 MICROSECONDS AFTER the
+    // instant string-compares as BEFORE it — and would be published as a
+    // reversal under a timestamp that predates the refund. The exact defect
+    // this whole round exists to close, reintroduced by the fix for it.
+    const src = readFileSync(path.join(process.cwd(), "lib/finance/financial-briefing.ts"), "utf8");
+    const body = src.slice(src.indexOf("const refundStateAt"), src.indexOf("terminalCardMoneyAppointmentIds"));
+    expect(body).not.toMatch(/refunded_at\s*[<>]=?\s*instantUtc/);
+    expect(body).not.toMatch(/charged_at\s*[<>]=?\s*evidenceInstantUtc/);
+  });
+
+  it("a refund microseconds after the instant is NOT seen at the instant", async () => {
+    // The real wire format, not the tidy one every other test uses.
+    const b = await load({ refunded_at: "2026-08-15T16:00:00.000123+00:00" });
+    expect(b.money.covered && b.money.census.refundedToZeroVisits).toEqual({ known: true, value: 0 });
+  });
+
+  it("and one microseconds BEFORE it still is", async () => {
+    const b = await load({ refunded_at: "2026-08-15T15:59:59.999123+00:00" });
+    expect(b.money.covered && b.money.census.refundedToZeroVisits).toEqual({ known: true, value: 1 });
+  });
+
+  it("the projection ASKS for refunded_at — the bound is inert without it", () => {
+    // FOUND BY MUTATION. Every behavioural test above passed with the column
+    // removed from the `.select()`, because a stub returns whatever it is
+    // handed. Against the real database `refunded_at` would arrive undefined,
+    // every reversing refund would read as undatable, and the fail-closed path
+    // would silently swallow the entire refund dimension.
+    const src = readFileSync(path.join(process.cwd(), "lib/finance/financial-briefing.ts"), "utf8");
+    const read = src.slice(src.indexOf('"appointment_id, charged_at, amount_cents'));
+    expect(read.slice(0, 200)).toContain("refunded_at");
+  });
+
+  it("charge before T, refund before T — the refund is seen", async () => {
+    const b = await load({ refunded_at: "2026-08-12T09:00:00.000Z" });
+    expect(b.money.covered && b.money.census.refundedToZeroVisits).toEqual({ known: true, value: 1 });
+  });
+
+  it("charge before T, refund AFTER T — the payment is not refunded at T", async () => {
+    const b = await load({ refunded_at: "2026-08-15T16:00:05.000Z" });
+    expect(b.money.covered && b.money.census.refundedToZeroVisits).toEqual({ known: true, value: 0 });
+    // The money stood at T, so the visit is card-paid in another period.
+    expect(b.money.covered && b.money.census.paidInAnotherPeriodVisits).toEqual({ known: true, value: 1 });
+  });
+
+  it("a refund EXACTLY at T is not yet visible, per the shared exclusive bound", async () => {
+    const b = await load({ refunded_at: T });
+    expect(b.money.covered && b.money.census.refundedToZeroVisits).toEqual({ known: true, value: 0 });
+  });
+
+  it("a later snapshot sees the refund", async () => {
+    const b = await load({ refunded_at: "2026-08-15T16:00:05.000Z" }, [], "2026-08-15T18:00:00.000Z");
+    expect(b.money.covered && b.money.census.refundedToZeroVisits).toEqual({ known: true, value: 1 });
+  });
+
+  it("a succeeded refund with NO refunded_at fails closed — no chronology is invented", async () => {
+    const b = await load({ refunded_at: null });
+    // Neither refunded nor standing. The count is withdrawn rather than guessed.
+    expect(b.money.covered && b.money.census.refundedToZeroVisits.known).toBe(false);
+  });
+
+  it("terminal-money precedence over a stale still_owes survives a refund AFTER T", async () => {
+    const b = await load({ refunded_at: "2026-08-15T16:00:05.000Z" }, [
+      { id: "s1", appointment_id: "v", method: "still_owes", amount_cents: 15_000,
+        quoted_amount_cents: 15_000, recorded_at: "2026-08-10T12:00:00.000Z", superseded_at: null },
+    ]);
+    expect(b.money.covered && b.money.census.stillOwedSupersededByCard).toEqual({ known: true, value: 1 });
+  });
+
+  it("and is correctly withdrawn once the refund IS visible", async () => {
+    const b = await load({ refunded_at: "2026-08-12T09:00:00.000Z" }, [
+      { id: "s1", appointment_id: "v", method: "still_owes", amount_cents: 15_000,
+        quoted_amount_cents: 15_000, recorded_at: "2026-08-10T12:00:00.000Z", superseded_at: null },
+    ]);
+    // Money that came back cannot outrank a debt.
+    expect(b.money.covered && b.money.census.stillOwedSupersededByCard).toEqual({ known: true, value: 0 });
+  });
+
+  it("an UNDATABLE refund does not override a still_owes either", async () => {
+    const b = await load({ refunded_at: null }, [
+      { id: "s1", appointment_id: "v", method: "still_owes", amount_cents: 15_000,
+        quoted_amount_cents: 15_000, recorded_at: "2026-08-10T12:00:00.000Z", superseded_at: null },
+    ]);
+    // Overriding asserts the money STAYED, which is exactly what is unknown.
+    expect(b.money.covered && b.money.census.stillOwedSupersededByCard).toEqual({ known: true, value: 0 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SETTLEMENTS ARE READ AS OF THE PRINTED INSTANT — Codex B
+// ---------------------------------------------------------------------------
+
+describe("the settlement read carries the evidence instant into its predicates", () => {
+  it("bounds the version start and admits the version still live at the instant", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-15T16:00:00.000Z"));
+    const { client, filters } = stubTables({});
+    const b = granted(
+      await loadFinancialsView(OWNER, studio("America/Toronto"), "month", client),
+    );
+    const lt = filters.filter(
+      (f) => f.op === "lt" && Array.isArray(f.args) && f.args[0] === "recorded_at",
+    );
+    expect(lt.length).toBeGreaterThan(0);
+    for (const f of lt) {
+      expect(String((f.args as unknown[])[1])).toBe(b.evidenceInstant);
+    }
+    const or = filters
+      .filter((f) => f.op === "or")
+      .map((f) => String((f.args as unknown[])[0]));
+    expect(or.some((o) => o === `superseded_at.is.null,superseded_at.gte.${b.evidenceInstant}`)).toBe(
+      true,
+    );
+  });
+
+  it("a row recorded AFTER the instant is excluded by the query, not in memory", () => {
+    // The bound is expressed in SQL because the alternative — reading every
+    // version studio-wide and discarding most of them — makes a page-safe read
+    // enumerate the entire correction history of the studio.
+    const src = readFileSync(path.join(process.cwd(), "lib/finance/financial-briefing.ts"), "utf8");
+    const read = src.slice(src.indexOf('.from("appointment_settlements")'));
+    expect(read.slice(0, 800)).toContain('.lt("recorded_at", evidenceInstantUtc)');
+  });
+});
 
 describe("the studio-wide services read enumerates every page", () => {
   const serviceRows = (n: number) =>
