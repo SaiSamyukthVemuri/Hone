@@ -47,6 +47,7 @@
 import { readdirSync, readFileSync, statSync, existsSync } from "node:fs";
 import { join, relative, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = resolve(HERE, "..", "..");
@@ -57,47 +58,148 @@ const EXTS = ["", ".ts", ".tsx", ".mjs", ".js", ".jsx", "/index.ts", "/index.tsx
 const BUILTIN_FROM = new Set(["Array", "Object", "Buffer", "Date", "Number", "String", "Set", "Map",
   "Promise", "BigInt", "Int8Array", "Uint8Array", "Float64Array"]);
 
-/** Conclusions this tool refuses to draw. Surfaced in output, not just prose. */
+/**
+ * THE REFUSAL CONTRACT — one canonical definition, stamped on EVERY result.
+ *
+ * Emitted as an OBJECT with every field always present, never as a list of
+ * names. A consumer must not be able to confuse "not implemented by accident"
+ * with "intentionally refused": if the field is absent the tool is broken, and
+ * if it is present it always reads HOSTED_CURRENT_UNKNOWN.
+ */
+export const HOSTED_CURRENT_UNKNOWN = "HOSTED_CURRENT_UNKNOWN";
 export const REFUSED_CONCLUSIONS = Object.freeze([
-  "effective_rls_permission", "effective_grants", "function_owner", "effective_search_path",
-  "hosted_function_exists", "hosted_function_definition", "hosted_schema_truth",
-  "production_state", "release_readiness",
+  "effectiveRlsPermission", "effectiveGrants", "functionOwner", "effectiveSearchPath",
+  "hostedFunctionExistence", "hostedFunctionDefinition", "hostedSchemaTruth",
+  "productionState", "releaseReadiness",
 ]);
+export function refusalContract() {
+  return Object.fromEntries(REFUSED_CONCLUSIONS.map((k) => [k, HOSTED_CURRENT_UNKNOWN]));
+}
 
 /**
- * Blank comments while preserving byte offsets, so reported line numbers stay
- * exact. String and template-literal aware: `https://` must survive, and a
- * comment reading "No createAdminClient" must not be read as a call — that
- * exact inversion was observed during the pilot.
+ * CODE MASK — the detectors must never read non-code.
+ *
+ * Returns a string of identical length and line structure in which every byte
+ * that is NOT executable code is blanked: line comments, block comments,
+ * single/double-quoted string bodies, template-literal TEXT, and regex-literal
+ * bodies. Offsets and newlines are preserved so reported line numbers stay
+ * exact.
+ *
+ * Template interpolations are CODE: in `` `x${admin.from("t")}y` `` the `x`/`y`
+ * text is blanked but the expression inside `${...}` is preserved, because a
+ * real call can live there.
+ *
+ * Blanking rather than deleting is deliberate. A previous version only stripped
+ * comments, so a string containing `.from('ghost')` or a comment reading
+ * "No createAdminClient" manufactured edges that did not exist — the second one
+ * inverted a service-role conclusion.
+ *
+ * Regex-vs-division is resolved by the preceding significant code character,
+ * the standard lexical heuristic: after a value (identifier, number, `)`, `]`,
+ * backtick, quote) a `/` is division; anywhere else it opens a regex literal.
  */
-export function stripComments(src) {
-  let out = "", i = 0;
+const REGEX_PRECEDING_KEYWORDS = new Set([
+  "return", "typeof", "instanceof", "in", "of", "new", "delete", "void", "do",
+  "else", "yield", "await", "case", "throw",
+]);
+
+export function codeSpans(src) {
   const n = src.length;
-  let inStr = null, inTpl = false;
+  const flag = new Uint8Array(n); // 1 = code-bearing, 0 = comment/string/regex body
+  const out = new Array(n);
+  const blank = (i) => { out[i] = src[i] === "\n" ? "\n" : " "; flag[i] = 0; };
+  const keep = (i) => { out[i] = src[i]; flag[i] = 1; };
+
+  // Template stack: each entry tracks whether we are in template TEXT or inside
+  // a ${ } interpolation, plus brace depth so nested objects close correctly.
+  const tpl = [];
+  let i = 0;
+  let lastSig = ""; // last significant CODE character emitted
+
+  const prevWord = (at) => {
+    let e = at - 1;
+    while (e >= 0 && /\s/.test(src[e])) e--;
+    let b = e;
+    while (b >= 0 && /[A-Za-z_$]/.test(src[b])) b--;
+    return src.slice(b + 1, e + 1);
+  };
+  const regexCanStart = (at) => {
+    if (lastSig === "") return true;
+    if (/[)\]}]/.test(lastSig)) return false;
+    if (/[A-Za-z0-9_$]/.test(lastSig)) return REGEX_PRECEDING_KEYWORDS.has(prevWord(at));
+    return true;
+  };
+
   while (i < n) {
     const c = src[i], c2 = src[i + 1];
-    if (inStr) {
-      out += c;
-      if (c === "\\") { out += src[i + 1] ?? ""; i += 2; continue; }
-      if (c === inStr) inStr = null;
-      i++; continue;
+    const inTplText = tpl.length > 0 && tpl[tpl.length - 1].mode === "text";
+
+    if (inTplText) {
+      if (c === "\\") { blank(i); blank(i + 1); i += 2; continue; }
+      if (c === "`") { keep(i); tpl.pop(); lastSig = "`"; i++; continue; }
+      if (c === "$" && c2 === "{") { keep(i); keep(i + 1); tpl[tpl.length - 1].mode = "expr"; tpl[tpl.length - 1].depth = 0; lastSig = "{"; i += 2; continue; }
+      blank(i); i++; continue;
     }
-    if (inTpl) {
-      out += c;
-      if (c === "\\") { out += src[i + 1] ?? ""; i += 2; continue; }
-      if (c === "`") inTpl = false;
-      i++; continue;
-    }
-    if (c === '"' || c === "'") { inStr = c; out += c; i++; continue; }
-    if (c === "`") { inTpl = true; out += c; i++; continue; }
-    if (c === "/" && c2 === "/") { while (i < n && src[i] !== "\n") { out += " "; i++; } continue; }
+
+    // line comment
+    if (c === "/" && c2 === "/") { while (i < n && src[i] !== "\n") { blank(i); i++; } continue; }
+    // block comment
     if (c === "/" && c2 === "*") {
-      while (i < n && !(src[i] === "*" && src[i + 1] === "/")) { out += src[i] === "\n" ? "\n" : " "; i++; }
-      out += "  "; i += 2; continue;
+      blank(i); blank(i + 1); i += 2;
+      while (i < n && !(src[i] === "*" && src[i + 1] === "/")) { blank(i); i++; }
+      if (i < n) { blank(i); blank(i + 1); i += 2; }
+      continue;
     }
-    out += c; i++;
+    // string
+    if (c === '"' || c === "'") {
+      keep(i); const q = c; i++;
+      while (i < n && src[i] !== q) {
+        if (src[i] === "\\") { blank(i); if (i + 1 < n) blank(i + 1); i += 2; continue; }
+        if (src[i] === "\n") break;
+        blank(i); i++;
+      }
+      if (i < n && src[i] === q) { keep(i); i++; }
+      lastSig = q;
+      continue;
+    }
+    // template open
+    if (c === "`") { keep(i); tpl.push({ mode: "text", depth: 0 }); lastSig = "`"; i++; continue; }
+    // regex literal
+    if (c === "/" && regexCanStart(i)) {
+      keep(i); i++;
+      let cls = false;
+      while (i < n) {
+        const d = src[i];
+        if (d === "\\") { blank(i); if (i + 1 < n) blank(i + 1); i += 2; continue; }
+        if (d === "\n") break;
+        if (d === "[") cls = true;
+        else if (d === "]") cls = false;
+        else if (d === "/" && !cls) { keep(i); i++; break; }
+        blank(i); i++;
+      }
+      while (i < n && /[dgimsuvy]/.test(src[i])) { keep(i); i++; }
+      lastSig = "/";
+      continue;
+    }
+    // template interpolation brace tracking
+    if (tpl.length > 0 && tpl[tpl.length - 1].mode === "expr") {
+      const top = tpl[tpl.length - 1];
+      if (c === "{") top.depth++;
+      else if (c === "}") {
+        if (top.depth === 0) { keep(i); top.mode = "text"; lastSig = "}"; i++; continue; }
+        top.depth--;
+      }
+    }
+    keep(i);
+    if (!/\s/.test(c)) lastSig = c;
+    i++;
   }
-  return out;
+  return { masked: out.join(""), code: flag };
+}
+
+/** Offset-preserving blanked source. Non-code bytes become spaces. */
+export function codeMask(src) {
+  return codeSpans(src).masked;
 }
 
 function walk(dir, acc = []) {
@@ -159,7 +261,12 @@ export function buildGraph(root = REPO_ROOT) {
   for (const f of codeFiles) {
     const r = rel(f);
     const raw = readFileSync(f, "utf8");
-    const text = stripComments(raw);
+    // Detect on RAW so string LITERAL VALUES survive (a table name lives inside
+    // quotes), but require the CALL SITE itself to sit in a code-bearing span.
+    // `".from('ghost')"` therefore yields nothing: its `.from(` is string body.
+    const { code } = codeSpans(raw);
+    const text = raw;
+    const isCode = (i) => code[i] === 1;
     const lineOf = (i) => text.slice(0, i).split("\n").length;
 
     nodes.set(r, {
@@ -176,30 +283,46 @@ export function buildGraph(root = REPO_ROOT) {
     // the newline-forbidding form silently dropped 17.9% of them.
     const imp = /(^|\n)\s*(import|export)\b[\s\S]{0,600}?from\s*["']([^"']+)["']/g;
     while ((m = imp.exec(text))) {
+      if (!isCode(m.index + m[0].search(/\S/))) continue;
       const to = resolveSpec(m[3], f);
       if (!to) continue;
       const typeOnly = /\b(import|export)\s+type\b/.test(m[0]);
       add(r, to, typeOnly ? "TYPE_ONLY" : m[2] === "export" ? "REEXPORT" : "IMPORT", lineOf(m.index));
     }
-    const dyn = /\bimport\(\s*["']([^"']+)["']\s*\)/g;
+    const dyn = /\bimport\(\s*["']([^"']+)["']\s*,?\s*\)/g;
     while ((m = dyn.exec(text))) {
+      if (!isCode(m.index)) continue;
       const to = resolveSpec(m[1], f);
-      if (to) add(r, to, "IMPORT", lineOf(m.index), "dynamic");
+      if (!to) continue;
+      // TYPE-POSITION import() is erased: `typeof import("x")`, and an
+      // `import("x").Thing` used inside a type alias / interface / annotation.
+      const before = text.slice(Math.max(0, m.index - 200), m.index);
+      const typePosition = /\btypeof\s*$/.test(before) ||
+        /(^|[\n;{}])\s*(export\s+)?(type|interface)\b[^\n;]*$/.test(before) ||
+        /:\s*$/.test(before);
+      add(r, to, typePosition ? "TYPE_ONLY" : "IMPORT", lineOf(m.index), typePosition ? "type-position" : "dynamic");
     }
 
     // RPC_STRING_LITERAL — the half a TypeScript-only graph discards.
     const rpc = /\.rpc\(\s*["'`]([A-Za-z0-9_]+)["'`]/g;
-    while ((m = rpc.exec(text))) add(r, `sqlfn:${m[1].toLowerCase()}`, "RPC_STRING_LITERAL", lineOf(m.index));
+    while ((m = rpc.exec(text))) {
+      if (!isCode(m.index)) continue;
+      add(r, `sqlfn:${m[1].toLowerCase()}`, "RPC_STRING_LITERAL", lineOf(m.index));
+    }
 
     // CREATE_ADMIN_CLIENT — service-role authority, by call site not import.
     const adm = /\bcreateAdminClient\s*\(/g;
-    while ((m = adm.exec(text))) add(r, "authority:service_role", "CREATE_ADMIN_CLIENT", lineOf(m.index));
+    while ((m = adm.exec(text))) {
+      if (!isCode(m.index)) continue;
+      add(r, "authority:service_role", "CREATE_ADMIN_CLIENT", lineOf(m.index));
+    }
 
     // TABLE_QUERY. Generated declarations name every table and query none.
     if (!/^lib\/types\/database\.ts$/.test(r) && !/\.d\.ts$/.test(r)) {
       const from = /(?:([A-Za-z_$][\w$]*)\s*)?\.from\(\s*(?:(["'`])([a-z0-9_]+)\2|([A-Za-z_$][\w$.]*))\s*[,)]/g;
       while ((m = from.exec(text))) {
         if (m[1] && BUILTIN_FROM.has(m[1])) continue;
+        if (!isCode(m.index + m[0].indexOf(".from("))) continue;
         // Attribute the line to `.from(`, not to the match start: a chained
         // `await supabase\n  .from("x")` begins at the receiver's line.
         const line = lineOf(m.index + m[0].indexOf(".from("));
@@ -215,6 +338,7 @@ export function buildGraph(root = REPO_ROOT) {
     // specifiers are erased and excluded.
     const named = /import\s*\{([^}]+)\}\s*from\s*["']([^"']+)["']/g;
     while ((m = named.exec(text))) {
+      if (!isCode(m.index)) continue;
       const to = resolveSpec(m[2], f);
       if (!to) continue;
       for (const raw2 of m[1].split(",")) {
@@ -245,7 +369,55 @@ export function buildGraph(root = REPO_ROOT) {
     hostedSearchPath: "HOSTED_CURRENT_UNKNOWN",
   }));
 
-  return { root, nodes, edges, sqlFunctions, counts: { codeFiles: codeFiles.length, sqlMigrations: sqlFiles.length, sqlIdentities: sqlFunctions.length } };
+  return { root, nodes, edges, sqlFunctions, resolveSpec, counts: { codeFiles: codeFiles.length, sqlMigrations: sqlFiles.length, sqlIdentities: sqlFunctions.length } };
+}
+
+/**
+ * Independent import oracle. Uses the TypeScript compiler's own file
+ * pre-processor — a different implementation by a different author — to
+ * enumerate module specifiers, then checks this extractor found at least as
+ * many resolvable internal ones per file.
+ *
+ * If TypeScript cannot be loaded the oracle is UNAVAILABLE and the selftest
+ * FAILS: an unprovable graph is refused rather than trusted.
+ */
+export function importOracle(g) {
+  let ts;
+  try {
+    ts = createRequire(join(g.root, "package.json"))("typescript");
+  } catch (e) {
+    return { available: false, ok: false, reason: `typescript not resolvable (${e.code ?? e.message})`, deficitFiles: [], filesCompared: 0 };
+  }
+  const found = new Map();
+  for (const e of g.edges) {
+    if (e.type !== "IMPORT" && e.type !== "REEXPORT" && e.type !== "TYPE_ONLY") continue;
+    found.set(e.from, (found.get(e.from) ?? 0) + 1);
+  }
+  const deficitFiles = [];
+  let filesCompared = 0;
+  for (const [file] of g.nodes) {
+    if (!/\.(ts|tsx)$/.test(file)) continue;
+    const abs = join(g.root, file);
+    if (!existsSync(abs)) continue;
+    const raw = readFileSync(abs, "utf8");
+    const pre = ts.preProcessFile(raw, true, true);
+    // `preProcessFile` is a naive scanner: it reports `from "@/x"` even when it
+    // sits inside a REGEX LITERAL in a test assertion. Its POSITION is used to
+    // drop those, so TypeScript still independently decides what is an import
+    // and only the code/non-code judgement is shared. That judgement is proven
+    // separately by the negative fixtures in the test suite.
+    const { code } = codeSpans(raw);
+    const internal = pre.importedFiles
+      .filter((x) => code[x.pos] === 1)
+      .map((x) => x.fileName)
+      .filter((spec) => spec.startsWith("@/") || spec.startsWith("."))
+      .filter((spec) => g.resolveSpec(spec, abs));
+    if (internal.length === 0) continue;
+    filesCompared++;
+    const got = found.get(file) ?? 0;
+    if (got < internal.length) deficitFiles.push({ file, found: got, expected: internal.length });
+  }
+  return { available: true, ok: deficitFiles.length === 0, tsVersion: ts.version, filesCompared, deficitFiles, reason: null };
 }
 
 /** Completeness invariants. Every one is MANDATORY: failure means UNAVAILABLE. */
@@ -255,10 +427,25 @@ export function selftest(g) {
   const inv = [];
   const chk = (id, pass, detail) => inv.push({ id, pass: !!pass, detail });
 
-  const imports = byType("IMPORT").length;
-  const perFile = imports / Math.max(1, g.counts.codeFiles);
-  chk("parser_import_coverage", perFile >= 1.4,
-    `${imports} IMPORT edges / ${g.counts.codeFiles} files = ${perFile.toFixed(2)} (floor 1.40)`);
+  // ---------------------------------------------------------------------
+  // IMPORT COMPLETENESS — proved against an INDEPENDENT parser, per file.
+  //
+  // The previous form was a repo-wide ratio (imports/file >= 1.4). That is not
+  // a completeness proof: it is the extractor grading itself, and it survives
+  // the exact defect it was written for. Deleting 17.9% of imports leaves the
+  // ratio at ~1.42 and the selftest PASSED.
+  //
+  // Now: TypeScript's own `preProcessFile` scanner (already a devDependency,
+  // no new package) enumerates the module specifiers in every file. Any file
+  // where this extractor found FEWER resolvable internal specifiers than the
+  // compiler did is a completeness failure. Per-file comparison catches the
+  // loss of a SINGLE import, not only a wholesale collapse.
+  // ---------------------------------------------------------------------
+  const oracle = importOracle(g);
+  chk("import_completeness_vs_typescript", oracle.ok,
+    oracle.available
+      ? `${oracle.filesCompared} files compared against TypeScript ${oracle.tsVersion}; ${oracle.deficitFiles.length} file(s) missing specifiers${oracle.deficitFiles.length ? " — e.g. " + oracle.deficitFiles.slice(0, 3).map((d) => `${d.file} (${d.found}/${d.expected})`).join(", ") : ""}`
+      : `UNPROVABLE: ${oracle.reason} — completeness cannot be demonstrated, so the graph is refused`);
   chk("reexport_recognition", byType("REEXPORT").length >= 5, `${byType("REEXPORT").length} REEXPORT (floor 5)`);
   chk("type_only_recognition", byType("TYPE_ONLY").length >= 100, `${byType("TYPE_ONLY").length} TYPE_ONLY (floor 100)`);
   chk("table_query_recognition", tableEdges.length >= 400, `${tableEdges.length} TABLE_* (floor 400)`);
@@ -302,9 +489,7 @@ export function queryRpc(g, name) {
     sqlDefinitionInMigrationHistory: def ? def.history.map((h) => `${h.migration}:L${h.line}`) : [],
     definitionCount: def?.definitionCount ?? 0,
     securityDefinerDeclaredInSource: def?.securityDefinerDeclaredInSource ?? null,
-    hosted: { existence: "HOSTED_CURRENT_UNKNOWN", definition: "HOSTED_CURRENT_UNKNOWN",
-      grants: "HOSTED_CURRENT_UNKNOWN", owner: "HOSTED_CURRENT_UNKNOWN", searchPath: "HOSTED_CURRENT_UNKNOWN" },
-    refuses: REFUSED_CONCLUSIONS,
+    refuses: refusalContract(),
   };
 }
 
@@ -317,7 +502,7 @@ export function queryTable(g, table) {
     runtimeQuerySites: group((f) => isRuntime(g, f)),
     testQuerySites: group((f) => isTest(g, f)),
     caveat: "reachability only: the source can ADDRESS this relation. It says NOTHING about whether RLS permits the operation.",
-    refuses: REFUSED_CONCLUSIONS,
+    refuses: refusalContract(),
   };
 }
 
@@ -334,6 +519,7 @@ export function queryModule(g, path) {
     productionConsumers: [...b.productionConsumers].sort(), testConsumers: [...b.testConsumers].sort(),
     reexports: [...b.reexports].sort(), typeOnlyConsumers: [...b.typeOnly].sort(),
     note: "TYPE_ONLY consumers are erased at runtime and are NOT runtime dependencies.",
+    refuses: refusalContract(),
   };
 }
 
@@ -355,8 +541,8 @@ export function queryAuthority(g) {
     entryPoints: entries.length,
     entryPointsHoldingDirectly: entries.filter((f) => direct.has(f)).length,
     securityDefinerCallSitesDeclaredInSource: sec.length,
-    caveat: "DIRECT holders are the source-visible boundary; the transitive tail is import reach, not authority. Effective grants are HOSTED_CURRENT_UNKNOWN.",
-    refuses: REFUSED_CONCLUSIONS,
+    caveat: "DIRECT holders are the source-visible boundary; the transitive tail is import reach, not authority.",
+    refuses: refusalContract(),
   };
 }
 
