@@ -27,7 +27,7 @@ it states the contract FIN-02 must meet.
 > already existed.**
 
 Stated as a row-visibility property, deliberately. A *timestamp* does not freeze
-anything; only the database's snapshot does. See §7.0 for why the two must never
+anything; only the database's snapshot does. See §7.0.1 for why the two must never
 be treated as interchangeable.
 
 Application-side bounding cannot establish this. It can bound a row by a
@@ -235,7 +235,22 @@ the same guard.**
 **`RECOMMENDED_FIN_AUTHORITY` = a single database read that observes every
 financial input under ONE SHARED MVCC SNAPSHOT.**
 
-### 7.0 Two different things, never interchangeable
+### 7.0 The six statements this section must keep in agreement
+
+Listed together because the last defect in this document was not a wrong claim
+but a **drift**: a permission granted in one subsection while another forbade it,
+with nothing holding the two side by side. Any edit to §7 must leave all six true.
+
+| # | Invariant |
+|---|---|
+| 1 | `INVOKER_RIGHTS` = **YES** — FIN-02's read authority runs as the caller |
+| 2 | `EXISTING_0187_DEFINER_EXECUTE_WIDENED` = **NO** — no grant, to any role |
+| 3 | `FIN02_CALLS_0187_DEFINER` = **NO** |
+| 4 | `PRICING_LAW` = **0187** — the law, not the callable helper |
+| 5 | `FIN02_V1_PRICING_EXPRESSION` = the **existing TypeScript resolver**, over same-snapshot RLS-visible inputs |
+| 6 | `MVCC_CONTRACT` = **one SQL statement / one shared snapshot** |
+
+### 7.0.1 Two different things, never interchangeable
 
 | Term | What it is |
 |---|---|
@@ -264,9 +279,14 @@ FIN-02 v1 **should** compose every required finance read inside **one SQL
 statement** — CTEs and subqueries as appropriate — executed through a single
 invoker-rights RPC call. One statement is one snapshot, by construction.
 
-`STABLE` functions invoked from that statement observe the calling statement's
-snapshot, so reusing an existing `STABLE` resolver inside it preserves the
-invariant. A resolver called in a **separate** round trip does not.
+Anything the statement calls must share that statement's snapshot — a `STABLE`
+function invoked from it does; **a separate round trip does not**, and reading the
+same table twice across two calls is exactly the split this section forbids.
+
+**That is a snapshot rule and nothing more.** It grants no permission to call any
+particular function: whether a given helper may be invoked at all is a
+*privilege* question, decided in §7.6, and the answer for the existing 0187
+pricing helper is **no**. FIN-02 v1 calls no SQL pricing helper.
 
 Preferred because:
 
@@ -308,8 +328,10 @@ AMBIGUOUS SETTLEMENT   UNKNOWN for EVERY derived consumer — money, service
                        value, chargeability, unresolved value
 
 SERVICE PRICE BASIS    the settlement quote where frozen; otherwise the ONE
-                       canonical resolver of §7.6, evaluated inside the same
-                       shared snapshot. Ambiguous resolution = UNKNOWN
+                       canonical pricing LAW of §7.6, evaluated inside the same
+                       shared snapshot and within the caller's RLS scope —
+                       never by calling the 0187 helper.
+                       Ambiguous resolution = UNKNOWN
 
 UNKNOWN                withdraw the affected fact with its cause; never
                        manufacture 0, "no payment", or "no refund"
@@ -371,9 +393,13 @@ implementations kept in deliberate parity:
 | SQL | `public.appointment_quoted_amount_cents` — `supabase/migrations/0187_appointment_settlement.sql` |
 | TypeScript | `resolveAuthoritativeSessionPaymentAmount` — `lib/billing/session-payment-amount.ts` |
 
-They are pinned against each other by a parity matrix in
-`tests/db/appointment-settlement.db.test.ts`. **The source is the authority; if
-the summary below ever disagrees with it, the source wins.**
+They are pinned against each other by the parity matrix in
+`tests/db/appointment-quoted-amount-parity.db.test.ts` — see §7.7, which
+distinguishes that oracle from the separate privilege oracle. **The source is the
+authority; if the summary below ever disagrees with it, the source wins.**
+
+**Neither is callable by FIN-02's caller.** The SQL entry is listed because it is
+where the law is written, not because it may be invoked — see §7.6.
 
 **FIN-02 must not invent a different law.** Whether it adds a further
 *expression* of this one is a narrower question, decided by §7.6's privilege
@@ -485,10 +511,28 @@ law**, and §7.7 governs it.
 ### 7.7 Parity is the price of a second expression
 
 Any SQL evaluation of the pricing law written for FIN-02 must be **mechanically
-parity-tested against 0187**, using the existing resolver and its parity matrix
-in `tests/db/appointment-settlement.db.test.ts` as the **oracle**. Expected values
-are derived from that law, never authored independently. **The source remains the
-authority.**
+parity-tested against 0187**, using the existing parity matrix as the **oracle**.
+Expected values are derived from that law, never authored independently. **The
+source remains the authority.**
+
+**Two different oracles, and they are not interchangeable:**
+
+| Oracle | File | What it proves |
+|---|---|---|
+| **PRICING PARITY** | `tests/db/appointment-quoted-amount-parity.db.test.ts` | the SQL law and its TypeScript twin agree, case by case |
+| **PRIVILEGE** | `tests/db/appointment-settlement.db.test.ts` | the 0187 helper stays callable by nobody (`has_function_privilege`) |
+
+An earlier draft of this document sent the reader to the privilege file for
+parity. That file mentions the resolver exactly once — a privilege assertion —
+so a FIN implementation following it would have found no anti-drift coverage at
+all and concluded there was none to match.
+
+**Where that error came from is worth recording**, because it is a trap for the
+next reader too: `0187_appointment_settlement.sql:525-526` itself names
+`tests/db/appointment-settlement.db.test.ts` as the parity matrix, and that
+comment is stale — the SQL-versus-TypeScript cases live in the parity file
+above. The migration is frozen, so the comment cannot be corrected in place;
+**this table is the authority on where the oracles live.**
 
 Parity must hold on every case enumerated above and in §10.2: normalized service
 matching · studio-local effective date · newest applicable row · future price
@@ -612,7 +656,8 @@ one being tested.
 
 ### 10.2 Anti-drift pricing tests
 
-Expected results are **derived from the existing 0187 resolver**, not authored
+Expected results are **derived from the 0187 law via the pricing-parity oracle**
+(`tests/db/appointment-quoted-amount-parity.db.test.ts`), not authored
 independently — the point is to prove FIN-02 did not fork the law.
 
 | # | Case | Expectation source |
