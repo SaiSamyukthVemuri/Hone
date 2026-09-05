@@ -164,6 +164,58 @@ export type DeliveredMoneyWindow =
  */
 export const MONEY_WINDOW_OPENS_LOCAL = "2026-08-01";
 
+// ---------------------------------------------------------------------------
+// INSTANTS ARE COMPARED AS INSTANTS. NEVER AS ISO SPELLINGS.
+// ---------------------------------------------------------------------------
+//
+// THE SAME INSTANT HAS MANY VALID SPELLINGS, and this stack mixes two of them
+// constantly: PostgREST renders `timestamptz` as `2026-08-01T04:00:00+00:00`,
+// dropping the fractional part when it is zero and rendering microseconds when
+// it is not, while `toISOString()` always produces `2026-08-01T04:00:00.000Z`.
+// Those two strings denote one instant and do not order lexicographically
+// against each other — `'+'` (0x2B) and `'.'` (0x2E) and `'Z'` (0x5A) decide
+// the answer instead of the clock.
+//
+// The failures are not theoretical and were not all the same shape: a visit
+// starting exactly on the money floor was dropped from every money figure while
+// staying in the calendar census, and a refund 123µs after the evidence instant
+// read as though it had already happened.
+//
+// So this file orders no timestamp with `<`. A guard in the FIN truth tests
+// keeps it that way, because the next comparison to be added will look
+// perfectly reasonable too.
+
+/**
+ * Epoch milliseconds, or `null` when the value is absent or unparseable.
+ *
+ * NEVER 0 AND NEVER THE EPOCH for a bad value. A zero here is a real instant —
+ * 1970 — and would make malformed time sort before everything, which is the
+ * silent wrong answer this whole helper exists to prevent.
+ */
+function toEpochMs(value: string | null | undefined): number | null {
+  if (typeof value !== "string") return null;
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+/**
+ * `-1` / `0` / `1`, or `null` when either side cannot be read.
+ *
+ * The null is the point: a caller must decide what an unreadable instant means
+ * for ITS question, and the type stops it defaulting to "before" by accident.
+ */
+function compareInstant(a: string | null | undefined, b: string | null | undefined): -1 | 0 | 1 | null {
+  const left = toEpochMs(a);
+  const right = toEpochMs(b);
+  if (left === null || right === null) return null;
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+/** Strictly before, and never for an unreadable value. */
+function isBeforeInstant(value: string | null | undefined, limit: string | null | undefined): boolean {
+  return compareInstant(value, limit) === -1;
+}
+
 /**
  * The whole outcome of asking for this screen, INCLUDING the refusal.
  *
@@ -219,7 +271,10 @@ export async function loadFinancialsView(
    * written the way it must behave when one is.
    */
   const evidenceInstantUtc = now.toISOString();
-  const transactionEndUtc = endUtc < evidenceInstantUtc ? endUtc : evidenceInstantUtc;
+  // Both sides are `toISOString()` output, so this one was never at risk — but
+  // it goes through the comparator anyway, so "no raw ordering in this file" is
+  // a rule with no exceptions to remember.
+  const transactionEndUtc = isBeforeInstant(endUtc, evidenceInstantUtc) ? endUtc : evidenceInstantUtc;
 
   const moneyStartLocal =
     range.startLocal > MONEY_WINDOW_OPENS_LOCAL ? range.startLocal : MONEY_WINDOW_OPENS_LOCAL;
@@ -290,7 +345,20 @@ export async function loadFinancialsView(
         : {
             census: summarizeDeliveredMoney({
               services: ledgers.services,
-              appointments: appointments.rows.filter((r) => r.starts_at >= moneyStartUtc),
+              // AT THE FLOOR IS INSIDE THE WINDOW. `>=` on the strings put a
+              // visit starting exactly on the boundary OUTSIDE the money
+              // census while leaving it in the calendar census — the same
+              // visit, counted on one half of the screen and missing from the
+              // other, with its value, hours and settlement all gone.
+              //
+              // AN UNREADABLE START IS KEPT, deliberately. Dropping it would
+              // be silently deciding it fell before the floor; keeping it lets
+              // the census count it as `undatable` and withdraw completeness,
+              // which is the disclosure the Fact doctrine asks for.
+              appointments: appointments.rows.filter((r) => {
+                const order = compareInstant(r.starts_at, moneyStartUtc);
+                return order === null || order >= 0;
+              }),
               charges: ledgers.charges,
               refunds: ledgers.refunds,
               settlements: ledgers.settlements,
@@ -356,7 +424,10 @@ export async function loadFinancialsView(
             precedesLedger:
               money.ledgerOpensAt.known &&
               (money.ledgerOpensAt.value === null ||
-                moneyStartUtc < money.ledgerOpensAt.value),
+                // FOUND BY THE FAMILY CENSUS, not by review. `ledgerOpensAt`
+                // comes straight from PostgREST while `moneyStartUtc` is
+                // `toISOString()`, so this decided a banner by spelling too.
+                isBeforeInstant(moneyStartUtc, money.ledgerOpensAt.value)),
             census: money.census,
           }
         : {
@@ -737,26 +808,10 @@ async function readMoneyLedgers(
 
   const openedRows = (opened.data ?? []) as ReadonlyArray<{ charged_at: string | null }>;
 
-  // INSTANTS ARE COMPARED AS INSTANTS, NEVER AS STRINGS.
-  //
-  // PostgREST renders `timestamptz` as `2026-08-15T16:00:00.000123+00:00`;
-  // `toISOString()` produces `2026-08-15T16:00:00.000Z`. Those two formats do
-  // not order lexicographically against each other — a refund 123µs AFTER the
-  // instant string-compares as BEFORE it, because '1' sorts under 'Z'. This
-  // codebase has been bitten by the same mismatch before, in the opposite
-  // direction, so both halves go through Date.parse.
-  //
-  // The truncation to milliseconds that Date.parse performs is FAIL-SAFE here
-  // and only here: a sub-millisecond-after-T event collapses onto T exactly,
-  // and every bound below is exclusive, so it reads as not-yet-visible. The
-  // snapshot never gains evidence it should not have — at worst it waits one
-  // millisecond to see it. Do not reuse this reasoning for an inclusive bound.
-  const isBefore = (value: string | null, instantUtc: string): boolean => {
-    if (value === null) return false;
-    const t = Date.parse(value);
-    const limit = Date.parse(instantUtc);
-    return Number.isNaN(t) || Number.isNaN(limit) ? false : t < limit;
-  };
+  // The millisecond truncation `toEpochMs` performs is FAIL-SAFE against the
+  // exclusive bounds below: a sub-millisecond-after-T event collapses onto T
+  // exactly and reads as not-yet-visible, so the snapshot never gains evidence
+  // it should not have. Do not reuse that reasoning for an inclusive bound.
 
   // THE REFUND STATE OF ONE PAYMENT, AS AT THE EVIDENCE INSTANT.
   //
@@ -790,13 +845,77 @@ async function readMoneyLedgers(
     if (!reversing) return "stood";
     if (row.refunded_at === null) return "unknown";
     // Exclusive, the same boundary every other snapshot-bearing read uses.
-    return isBefore(row.refunded_at, instantUtc) ? "reversed" : "stood";
+    return isBeforeInstant(row.refunded_at, instantUtc) ? "reversed" : "stood";
   };
 
   // A payment the snapshot cannot see contributes nothing at all — not its
   // existence, not its refund state.
   const chargeVisible = (row: ExistenceRow): boolean =>
-    row.charged_at === null || isBefore(row.charged_at, evidenceInstantUtc);
+    row.charged_at === null || isBeforeInstant(row.charged_at, evidenceInstantUtc);
+
+  // ---------------------------------------------------------------------
+  // ONE PAYMENT STATE PER APPOINTMENT, REDUCED ACROSS EVERY VISIBLE ROW.
+  // ---------------------------------------------------------------------
+  //
+  // AN APPOINTMENT MAY CARRY SEVERAL SUCCEEDED PAYMENTS. The active-charge
+  // unique is `(session_id, stripe_livemode)` — per SESSION — and 0068 states
+  // outright that one appointment may legitimately have more than one session.
+  // So the row-wise projection this replaces could put the SAME appointment in
+  // the fully-refunded set and the terminal-money set at once, from two
+  // different rows. The model checks refunded first, so a visit with one
+  // reversed charge and one standing charge reported "paid by card, then
+  // refunded in full" while the studio had in fact kept money on it.
+  //
+  // Reducing per appointment makes the contradiction unrepresentable rather
+  // than merely unlikely: `fullyRefunded` is computed as the ABSENCE of
+  // standing money, so the two sets cannot both contain an id.
+  type AppointmentPaymentState = {
+    dated: boolean;
+    undated: boolean;
+    /** At least one visible row whose money STAYED at the instant. */
+    terminal: boolean;
+    /** At least one visible row whose money CAME BACK by the instant. */
+    reversed: boolean;
+    /** At least one visible row that can be placed neither way. */
+    unplaceable: boolean;
+  };
+  const paymentStateByAppointment = new Map<string, AppointmentPaymentState>();
+  if (ep.ok) {
+    for (const row of ep.rows) {
+      if (row.appointment_id === null) continue;
+      // A payment the snapshot cannot see contributes nothing at all — not its
+      // existence, not its refund state.
+      if (!chargeVisible(row)) continue;
+      let state = paymentStateByAppointment.get(row.appointment_id);
+      if (state === undefined) {
+        state = { dated: false, undated: false, terminal: false, reversed: false, unplaceable: false };
+        paymentStateByAppointment.set(row.appointment_id, state);
+      }
+      if (row.charged_at === null) state.undated = true;
+      else state.dated = true;
+      // A row with no readable amount cannot establish that money stayed OR
+      // came back — `refundStateAt` returns "stood" for it, which is the
+      // existing documented behaviour and is preserved deliberately.
+      if (typeof row.amount_cents !== "number") {
+        state.terminal = true;
+        continue;
+      }
+      const at = refundStateAt(row, evidenceInstantUtc);
+      if (at === "reversed") state.reversed = true;
+      else if (at === "stood") state.terminal = true;
+      else state.unplaceable = true;
+    }
+  }
+
+  const appointmentsWhere = (
+    predicate: (state: AppointmentPaymentState) => boolean,
+  ): string[] => {
+    const ids: string[] = [];
+    for (const [id, state] of paymentStateByAppointment) {
+      if (predicate(state)) ids.push(id);
+    }
+    return ids;
+  };
 
   return {
     ok: true,
@@ -807,83 +926,33 @@ async function readMoneyLedgers(
     customPricing: cp.ok ? cp.rows : [],
     // SPLIT BY WHETHER A DATE EXISTS. A visit carrying both a dated and an
     // undated payment belongs in the DATED set: the dated row establishes a
-    // period, so nothing about that visit is in doubt.
-    // DATED EVIDENCE IS BOUNDED BY THE SNAPSHOT. A payment committing after the
-    // instant was captured — and before this query returned — is not part of
-    // the snapshot the screen labels, and treating it as evidence made a
-    // same-period payment render as "Paid by card in another period" under a
-    // timestamp that predates it.
+    // period, so nothing about that visit is in doubt. Period and refund state
+    // stay INDEPENDENT dimensions — this says nothing about whether the money
+    // is still there.
     //
-    // FILTERED HERE RATHER THAN IN SQL, deliberately. The bound applies only to
-    // the DATED half; expressing "dated-and-before-T OR undated" as a PostgREST
-    // predicate needs an `.or(...)`, which would put a second, differently
-    // shaped ledger filter beside the mode/status pair every read is checked
-    // for. `charged_at` is already projected, so the same law costs one
-    // comparison and leaves the query shape uniform.
-    //
-    // Exclusive, the same bound the transaction ledger and the per-visit refund
-    // state both use.
-    everPaidDatedAppointmentIds: ep.ok
-      ? ep.rows.flatMap((row) =>
-          row.appointment_id === null ||
-          row.charged_at === null ||
-          !isBefore(row.charged_at, evidenceInstantUtc)
-            ? []
-            : [row.appointment_id],
-        )
-      : [],
-    everPaidUndatedAppointmentIds: ep.ok
-      ? ep.rows.flatMap((row) =>
-          row.appointment_id === null || row.charged_at !== null ? [] : [row.appointment_id],
-        )
-      : [],
-    // TERMINAL MONEY: succeeded and NOT fully reversed, spelled exactly as
-    // 0187 spells it. A missing amount cannot establish that money stayed, so
-    // it fails closed and is excluded.
-    // THE MIRROR OF TERMINAL MONEY: money that came back, in any period. The
-    // same read already carries what this needs; it was being reduced to
-    // terminal ids and the refunded half discarded.
-    everFullyRefundedAppointmentIds: ep.ok
-      ? ep.rows.flatMap((row) => {
-          if (row.appointment_id === null) return [];
-          // A payment the snapshot cannot see cannot carry a refund state into
-          // it either; an undated payment stays visible, as its own truth.
-          if (!chargeVisible(row)) return [];
-          return refundStateAt(row, evidenceInstantUtc) === "reversed"
-            ? [row.appointment_id]
-            : [];
-        })
-      : [],
-    // FAIL CLOSED, AND SAY SO. A refund that would reverse the charge but
-    // carries no date cannot be placed relative to the instant, so this visit
-    // is neither refunded nor terminal — it is unplaceable, and the model
-    // withdraws the counts that would otherwise have to guess.
-    refundTimingUnknownAppointmentIds: ep.ok
-      ? ep.rows.flatMap((row) => {
-          if (row.appointment_id === null) return [];
-          if (!chargeVisible(row)) return [];
-          return refundStateAt(row, evidenceInstantUtc) === "unknown"
-            ? [row.appointment_id]
-            : [];
-        })
-      : [],
-    // NO `?? 0` ANYWHERE IN `refundStateAt`. 0187 spells the reversal test with
-    // `coalesce(...,0)`, but a default inside a money comparison is exactly
-    // what this file's own guard forbids, and the explicit form says the same
-    // thing: a succeeded refund with no readable amount does not establish that
-    // the payment was reversed, so the money still counts as terminal.
-    terminalCardMoneyAppointmentIds: ep.ok
-      ? ep.rows.flatMap((row) => {
-          if (row.appointment_id === null) return [];
-          if (!chargeVisible(row)) return [];
-          if (typeof row.amount_cents !== "number") return [];
-          // ONLY "stood" IS TERMINAL. "unknown" must not assert that the money
-          // stayed, because asserting that is what overrides a `still_owes`.
-          return refundStateAt(row, evidenceInstantUtc) === "stood"
-            ? [row.appointment_id]
-            : [];
-        })
-      : [],
+    // The snapshot bound lives in `chargeVisible` above, applied once as rows
+    // are reduced. It is expressed here rather than in SQL because it applies
+    // only to the DATED half: "dated-and-before-T OR undated" needs an
+    // `.or(...)`, which would put a second, differently shaped ledger filter
+    // beside the mode/status pair every read here is guarded for.
+    everPaidDatedAppointmentIds: appointmentsWhere((v) => v.dated),
+    everPaidUndatedAppointmentIds: appointmentsWhere((v) => v.undated && !v.dated),
+    // FULLY REFUNDED IS AN ABSENCE, NOT A SIGHTING. Every visible payment on
+    // the visit came back, none stood, and nothing was unplaceable. One
+    // standing charge is enough to make this false — which is exactly the
+    // multi-charge defect, stated as the definition rather than patched.
+    everFullyRefundedAppointmentIds: appointmentsWhere(
+      (v) => v.reversed && !v.terminal && !v.unplaceable,
+    ),
+    // TERMINAL MONEY: at least one payment that stood. Spelled as 0187 spells
+    // it — succeeded and NOT fully reversed — and it is what may outrank a
+    // stale `still_owes`, because that money is still with the studio.
+    terminalCardMoneyAppointmentIds: appointmentsWhere((v) => v.terminal),
+    // UNPLACEABLE, AND ONLY WHERE IT STILL DECIDES SOMETHING. If money stood
+    // on this visit then it was NOT reversed to zero, whatever the undatable
+    // row turns out to have done — the question this set withdraws is already
+    // answered, so withdrawing it would hide a fact rather than protect one.
+    refundTimingUnknownAppointmentIds: appointmentsWhere((v) => v.unplaceable && !v.terminal),
     ledgerOpensAt: openedRows[0]?.charged_at ?? null,
   };
 }

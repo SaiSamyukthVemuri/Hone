@@ -1227,6 +1227,250 @@ describe("the settlement read carries the evidence instant into its predicates",
   });
 });
 
+// ===========================================================================
+// INSTANTS, NOT SPELLINGS — Codex round 2, finding A
+// ===========================================================================
+
+describe("business time is decided by the clock, not by ISO spelling", () => {
+  const svc = { id: "svc", name: "60 minute session", modality: "electrolysis", price_cents: 15_000 };
+  const visit = (startsAt: string, endsAt: string) => ({
+    id: "v", status: "completed", starts_at: startsAt, ends_at: endsAt,
+    duration_minutes: 60, blocked_ends_at: endsAt, service_id: "svc", client_id: null,
+  });
+  const load = async (startsAt: string, endsAt: string) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-15T16:00:00.000Z"));
+    const { client } = stubTables({
+      appointments: { rows: [visit(startsAt, endsAt)] },
+      services: { rows: [svc] },
+    });
+    return granted(await loadFinancialsView(OWNER, studio("America/Toronto"), "month", client));
+  };
+  const delivered = (b: Awaited<ReturnType<typeof load>>) =>
+    b.money.covered && b.money.census.deliveredTreatmentVisits;
+
+  // The money floor for an August month window in Toronto.
+  const FLOOR_PG = "2026-08-01T04:00:00+00:00";
+  const FLOOR_Z = "2026-08-01T04:00:00.000Z";
+
+  it("AT the floor is INSIDE the window — PostgREST spelling", async () => {
+    // THE DEFECT. `>=` on strings put '+' (0x2B) under '.' (0x2E), so this
+    // visit left every money figure while staying in the calendar census.
+    expect(delivered(await load(FLOOR_PG, "2026-08-01T05:00:00+00:00"))).toEqual({ known: true, value: 1 });
+  });
+
+  it("AT the floor is INSIDE the window — toISOString spelling", async () => {
+    // The control that isolates it: same instant, other spelling, always worked.
+    expect(delivered(await load(FLOOR_Z, "2026-08-01T05:00:00.000Z"))).toEqual({ known: true, value: 1 });
+  });
+
+  it("one millisecond BEFORE the floor is excluded", async () => {
+    expect(delivered(await load("2026-08-01T03:59:59.999+00:00", "2026-08-01T04:59:59.999+00:00")))
+      .toEqual({ known: true, value: 0 });
+  });
+
+  it("one millisecond AFTER the floor is included", async () => {
+    expect(delivered(await load("2026-08-01T04:00:00.001+00:00", "2026-08-01T05:00:00.001+00:00")))
+      .toEqual({ known: true, value: 1 });
+  });
+
+  it("an UNREADABLE start is kept and disclosed, never silently dropped", async () => {
+    // Dropping it would be deciding it fell before the floor. It is kept, and
+    // the census counts it as undatable and withdraws completeness.
+    const b = await load("not-a-timestamp", "also-not-a-timestamp");
+    expect(b.money.covered && b.money.census.basis.undatable).toBeGreaterThan(0);
+    expect(b.money.covered && b.money.census.basis.complete).toBe(false);
+  });
+
+  it("THE FAMILY GUARD — this file orders no timestamp with a raw operator", () => {
+    // The census that found the second instance (`precedesLedger`, which Codex
+    // did not report) is kept as a rule rather than as a one-time sweep: the
+    // next such comparison will look just as reasonable as these two did.
+    const src = readFileSync(path.join(process.cwd(), "lib/finance/financial-briefing.ts"), "utf8");
+    const code = src
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "");
+    const columns =
+      "moneyStartUtc|evidenceInstantUtc|transactionEndUtc|startUtc|endUtc|instantUtc|" +
+      "charged_at|refunded_at|recorded_at|superseded_at|starts_at|ends_at|blocked_ends_at";
+    const offenders = [
+      ...code.matchAll(new RegExp(`(?:${columns})\\s*(?:<=|>=|<|>)\\s*`, "g")),
+      ...code.matchAll(new RegExp(`(?:<=|>=|<|>)\\s*(?:${columns})\\b`, "g")),
+    ].map((m) => m[0].trim());
+    expect(offenders).toEqual([]);
+  });
+});
+
+// ===========================================================================
+// PAYMENT STATE IS PER APPOINTMENT — Codex round 2, finding B
+// ===========================================================================
+//
+// The active-charge unique is `(session_id, stripe_livemode)` — per SESSION —
+// and 0068 says one appointment may legitimately carry several sessions. A
+// row-wise projection therefore put one appointment in the fully-refunded set
+// and the terminal-money set at the same time, from two different rows, and
+// the model checks refunded first.
+
+describe("one appointment, many charges, one reduced payment state", () => {
+  const T = "2026-08-15T16:00:00.000Z";
+  const svc = { id: "svc", name: "60 minute session", modality: "electrolysis", price_cents: 15_000 };
+  const charge = (over: Record<string, unknown>) => ({
+    appointment_id: "v", charged_at: "2026-07-10T12:00:00+00:00", amount_cents: 15_000,
+    refund_status: null, refund_amount_cents: null, refunded_at: null, ...over,
+  });
+  const REVERSED = charge({
+    refund_status: "succeeded", refund_amount_cents: 15_000,
+    refunded_at: "2026-07-11T12:00:00+00:00",
+  });
+  const TERMINAL = charge({});
+  const PARTIAL = charge({
+    refund_status: "succeeded", refund_amount_cents: 5_000,
+    refunded_at: "2026-07-11T12:00:00+00:00",
+  });
+  const UNPLACEABLE = charge({
+    refund_status: "succeeded", refund_amount_cents: 15_000, refunded_at: null,
+  });
+
+  const load = async (rows: unknown[], settlements: unknown[] = []) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(T));
+    const { client } = stubTables({
+      payment_charge_attempts: {
+        resolve: (ops) =>
+          ops.includes('not(["appointment_id","is",null])') ? { rows } : { rows: [] },
+      },
+      appointment_settlements: { rows: settlements },
+      appointments: {
+        rows: [
+          { id: "v", status: "completed", starts_at: "2026-08-10T10:00:00+00:00",
+            ends_at: "2026-08-10T11:00:00+00:00", duration_minutes: 60,
+            blocked_ends_at: "2026-08-10T11:00:00+00:00", service_id: "svc", client_id: null },
+        ],
+      },
+      services: { rows: [svc] },
+    });
+    return granted(await loadFinancialsView(OWNER, studio("America/Toronto"), "month", client));
+  };
+  // Narrowed here rather than at every call site: a census that is not covered
+  // is a test-setup failure, and should say so loudly rather than compare as
+  // `false` against a Fact.
+  const covered = (b: Awaited<ReturnType<typeof load>>) => {
+    if (!b.money.covered) throw new Error("expected a covered money census");
+    return b.money.census;
+  };
+  const refunded = (b: Awaited<ReturnType<typeof load>>) => covered(b).refundedToZeroVisits;
+  const anotherPeriod = (b: Awaited<ReturnType<typeof load>>) => covered(b).paidInAnotherPeriodVisits;
+
+  it("1. one terminal charge — terminal", async () => {
+    const b = await load([TERMINAL]);
+    expect(refunded(b)).toEqual({ known: true, value: 0 });
+    expect(anotherPeriod(b)).toEqual({ known: true, value: 1 });
+  });
+
+  it("2. one fully refunded charge — fully refunded", async () => {
+    const b = await load([REVERSED]);
+    expect(refunded(b)).toEqual({ known: true, value: 1 });
+  });
+
+  it("3. one reversed + one terminal — TERMINAL, not fully refunded", async () => {
+    // THE DEFECT. Money stayed on this visit; saying "refunded in full" is a
+    // false statement about money the studio still holds.
+    const b = await load([REVERSED, TERMINAL]);
+    expect(refunded(b)).toEqual({ known: true, value: 0 });
+    expect(anotherPeriod(b)).toEqual({ known: true, value: 1 });
+  });
+
+  it("4. both charges fully refunded — fully refunded", async () => {
+    const b = await load([REVERSED, REVERSED]);
+    expect(refunded(b)).toEqual({ known: true, value: 1 });
+  });
+
+  it("5. a PARTIAL refund retains money, so the visit is not fully refunded", async () => {
+    const b = await load([PARTIAL, REVERSED]);
+    expect(refunded(b)).toEqual({ known: true, value: 0 });
+    expect(anotherPeriod(b)).toEqual({ known: true, value: 1 });
+  });
+
+  it("6. one reversed + one UNPLACEABLE — unknown, and NOT fully refunded", async () => {
+    const b = await load([REVERSED, UNPLACEABLE]);
+    expect(refunded(b).known).toBe(false);
+    // FOUND BY MUTATION. The withdrawn count above is produced whether or not
+    // the visit also lands in the fully-refunded SET, so it cannot tell the
+    // two apart. This can: being in that set makes the model stop at the
+    // refunded branch, so the visit's real dated payment stops being reported
+    // at all. The visit was paid, in another period, and that stays true while
+    // the reversal total is unknown.
+    expect(anotherPeriod(b)).toEqual({ known: true, value: 1 });
+  });
+
+  it("7. one terminal + one unplaceable — terminal answers the question", async () => {
+    // NOT hiding the unknown. The count asks whether this visit was reversed
+    // to zero; standing money answers that definitively, whatever the
+    // undatable row did. The unknown is not load-bearing for THIS fact.
+    const b = await load([TERMINAL, UNPLACEABLE]);
+    expect(refunded(b)).toEqual({ known: true, value: 0 });
+    expect(anotherPeriod(b)).toEqual({ known: true, value: 1 });
+  });
+
+  it("8. the two sets can never both contain the same appointment", async () => {
+    // Structural, not incidental: `fullyRefunded` is defined as the ABSENCE of
+    // standing money, so a contradiction is unrepresentable.
+    for (const rows of [[REVERSED, TERMINAL], [TERMINAL, REVERSED], [PARTIAL, REVERSED], [REVERSED, REVERSED], [TERMINAL]]) {
+      const b = await load(rows);
+      const r = refunded(b);
+      const a = anotherPeriod(b);
+      const bothClaimed = r.known && r.value > 0 && a.known && a.value > 0;
+      expect(bothClaimed).toBe(false);
+    }
+  });
+
+  // --- SEMANTICS CLOSED IN EARLIER ROUNDS, PINNED HERE ---------------------
+
+  it("A. terminal card money still outranks a stale still_owes", async () => {
+    const b = await load([REVERSED, TERMINAL], [
+      { id: "s1", appointment_id: "v", method: "still_owes", amount_cents: 15_000,
+        quoted_amount_cents: 15_000, recorded_at: "2026-07-01T12:00:00+00:00", superseded_at: null },
+    ]);
+    expect(b.money.covered && b.money.census.stillOwedSupersededByCard).toEqual({ known: true, value: 1 });
+  });
+
+  it("B. fully refunded money does NOT outrank a still_owes", async () => {
+    const b = await load([REVERSED], [
+      { id: "s1", appointment_id: "v", method: "still_owes", amount_cents: 15_000,
+        quoted_amount_cents: 15_000, recorded_at: "2026-07-01T12:00:00+00:00", superseded_at: null },
+    ]);
+    expect(b.money.covered && b.money.census.stillOwedSupersededByCard).toEqual({ known: true, value: 0 });
+  });
+
+  it("C. period and terminal refund state stay independent dimensions", async () => {
+    // Out-of-window payment, fully reversed: reported as reversed, and NOT as
+    // merely "paid in another period".
+    const b = await load([REVERSED]);
+    expect(refunded(b)).toEqual({ known: true, value: 1 });
+    expect(anotherPeriod(b)).toEqual({ known: true, value: 0 });
+  });
+
+  it("D. an undated payment does not become another period", async () => {
+    const b = await load([charge({ charged_at: null })]);
+    expect(anotherPeriod(b)).toEqual({ known: true, value: 0 });
+    expect(b.money.covered && b.money.census.paidWithUnknownDateVisits).toEqual({ known: true, value: 1 });
+  });
+
+  it("E. a refund AFTER the instant does not affect this snapshot", async () => {
+    const b = await load([charge({
+      refund_status: "succeeded", refund_amount_cents: 15_000,
+      refunded_at: "2026-08-15T16:00:05.000Z",
+    })]);
+    expect(refunded(b)).toEqual({ known: true, value: 0 });
+    expect(anotherPeriod(b)).toEqual({ known: true, value: 1 });
+  });
+
+  it("F. unreadable refund evidence becomes UNKNOWN, never a confident state", async () => {
+    const b = await load([UNPLACEABLE]);
+    expect(refunded(b).known).toBe(false);
+  });
+});
+
 describe("the studio-wide services read enumerates every page", () => {
   const serviceRows = (n: number) =>
     Array.from({ length: n }, (_, i) => ({
