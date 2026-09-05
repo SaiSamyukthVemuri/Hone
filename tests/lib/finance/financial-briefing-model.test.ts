@@ -358,13 +358,23 @@ function appt(over: Partial<DeliveryRow> & { id: string }): DeliveryRow {
 
 /** A charge. Defaults describe a full, unrefunded payment. */
 function charge(over: Partial<ChargeRow>): ChargeRow {
-  return {
+  const base = {
     appointment_id: null,
     amount_cents: 15_000,
     refund_amount_cents: null,
     refund_status: null,
+    refunded_at: null,
     ...over,
   };
+  // A REFUND IN A FIXTURE HAPPENED BEFORE THE SNAPSHOT unless the test says
+  // otherwise. That is the ordinary case, and it keeps every test about NETTING
+  // about netting. The snapshot boundary itself is proved by the tests that set
+  // `refunded_at` explicitly — including the one that omits it entirely, which
+  // must fail closed.
+  if (base.refund_status === "succeeded" && !("refunded_at" in over)) {
+    return { ...base, refunded_at: AN_HOUR_BEFORE };
+  }
+  return base;
 }
 
 /**
@@ -387,6 +397,7 @@ function census(over: Partial<Parameters<typeof summarizeDeliveredMoney>[0]> = {
     everPaidDatedAppointmentIds: [],
     everPaidUndatedAppointmentIds: [],
     terminalCardMoneyAppointmentIds: [],
+    everFullyRefundedAppointmentIds: [],
     todayLocal: "2026-08-27",
     snapshot: NOW,
     windowStartUtc: WINDOW_START,
@@ -1311,6 +1322,165 @@ describe("a card payment that was REFUNDED IN FULL is not a collection", () => {
     });
     expect(value(c.refundsReversingOtherPeriods)).toBe(1);
     expect(value(c.refundsReversingUnknownPeriod)).toBe(0);
+  });
+
+  // -------------------------------------------------------------------------
+  // A REFUND AFTER THE SNAPSHOT IS NOT IN THE SNAPSHOT — Codex P2-A
+  // -------------------------------------------------------------------------
+  //
+  // The refund LEDGER is bounded by the evidence instant. The refund state
+  // riding on charge rows was not, so a refund committing after `now` was
+  // captured but before the query returned reduced service-period collection
+  // while the separately bounded movement figure excluded it — and the footer
+  // published the earlier instant over both. A torn snapshot.
+  //
+  // BOUNDARY: `refunded_at < snapshot`, the same exclusive upper bound the
+  // ledger query uses with `.lt("refunded_at", …)`. One convention, both places.
+
+  it("a refund BEFORE the snapshot nets the visit", () => {
+    const c = census({
+      appointments: [appt({ id: "a" })],
+      charges: [
+        charge({
+          appointment_id: "a",
+          refund_status: "succeeded",
+          refund_amount_cents: 5_000,
+          refunded_at: "2026-08-27T11:59:00.000Z",
+        }),
+      ],
+    });
+    expect(value(c.collectedOnDeliveredCents)).toBe(10_000);
+  });
+
+  it("a refund AFTER the snapshot does not touch this snapshot", () => {
+    const c = census({
+      appointments: [appt({ id: "a" })],
+      charges: [
+        charge({
+          appointment_id: "a",
+          refund_status: "succeeded",
+          refund_amount_cents: 15_000,
+          refunded_at: "2026-08-27T12:00:01.000Z", // one second after NOW
+        }),
+      ],
+    });
+    // For THIS evidence instant the charge stands unreversed.
+    expect(value(c.collectedOnDeliveredCents)).toBe(15_000);
+    expect(value(c.refundedToZeroVisits)).toBe(0);
+  });
+
+  it("a refund EXACTLY at the snapshot follows the exclusive upper bound", () => {
+    const c = census({
+      appointments: [appt({ id: "a" })],
+      charges: [
+        charge({
+          appointment_id: "a",
+          refund_status: "succeeded",
+          refund_amount_cents: 15_000,
+          refunded_at: EXACTLY_NOW,
+        }),
+      ],
+    });
+    // `.lt` excludes the boundary, so it is NOT in this snapshot.
+    expect(value(c.collectedOnDeliveredCents)).toBe(15_000);
+  });
+
+  it("a LATER snapshot sees the same refund", () => {
+    const later = census({
+      appointments: [appt({ id: "a" })],
+      charges: [
+        charge({
+          appointment_id: "a",
+          refund_status: "succeeded",
+          refund_amount_cents: 15_000,
+          refunded_at: "2026-08-27T12:00:01.000Z",
+        }),
+      ],
+      snapshot: new Date("2026-08-27T13:00:00.000Z"),
+    });
+    expect(value(later.collectedOnDeliveredCents)).toBe(0);
+    expect(value(later.refundedToZeroVisits)).toBe(1);
+  });
+
+  it("a succeeded refund with NO date does not invent a chronology", () => {
+    // Fails closed, exactly as an unreadable refund AMOUNT already does: the
+    // net cannot be established, so the visit joins neither the collection nor
+    // the reversal, and it is disclosed by `basis`.
+    const c = census({
+      appointments: [appt({ id: "a" })],
+      charges: [
+        charge({
+          appointment_id: "a",
+          refund_status: "succeeded",
+          refund_amount_cents: 15_000,
+          refunded_at: null,
+        }),
+      ],
+    });
+    expect(value(c.collectedOnDeliveredVisits)).toBe(0);
+    expect(value(c.refundedToZeroVisits)).toBe(0);
+    expect(c.basis.complete).toBe(false);
+  });
+
+  it("an unrefunded charge is unaffected by any of this", () => {
+    const c = census({
+      appointments: [appt({ id: "a" })],
+      charges: [charge({ appointment_id: "a" })],
+    });
+    expect(value(c.collectedOnDeliveredCents)).toBe(15_000);
+  });
+
+  // -------------------------------------------------------------------------
+  // A FULL REFUND IS STILL A FULL REFUND OUTSIDE THE WINDOW — Codex P2-B
+  // -------------------------------------------------------------------------
+  //
+  // Payment PERIOD and terminal REFUND state are independent dimensions. A
+  // visit whose only dated payment sat outside the window and was fully
+  // refunded read as "Paid by card in another period" and never appeared under
+  // "then refunded in full" — it said paid when the money had come back.
+
+  it("an out-of-window payment FULLY REFUNDED keeps its refunded state", () => {
+    const c = census({
+      appointments: [appt({ id: "r" })],
+      everPaidDatedAppointmentIds: ["r"],
+      everFullyRefundedAppointmentIds: ["r"],
+    });
+    expect(value(c.refundedToZeroVisits)).toBe(1);
+    expect(value(c.paidInAnotherPeriodVisits)).toBe(0);
+    expect(value(c.unresolvedVisits)).toBe(0);
+  });
+
+  it("an out-of-window payment NOT refunded is still another period", () => {
+    const c = census({
+      appointments: [appt({ id: "p" })],
+      everPaidDatedAppointmentIds: ["p"],
+    });
+    expect(value(c.paidInAnotherPeriodVisits)).toBe(1);
+    expect(value(c.refundedToZeroVisits)).toBe(0);
+  });
+
+  it("an UNDATED payment fully refunded is not given a period either", () => {
+    const c = census({
+      appointments: [appt({ id: "u" })],
+      everPaidUndatedAppointmentIds: ["u"],
+      everFullyRefundedAppointmentIds: ["u"],
+    });
+    expect(value(c.refundedToZeroVisits)).toBe(1);
+    expect(value(c.paidInAnotherPeriodVisits)).toBe(0);
+    expect(value(c.paidWithUnknownDateVisits)).toBe(0);
+  });
+
+  it("REGRESSION: a fully refunded payment still does NOT outrank a debt", () => {
+    // The just-closed still_owes precedence must survive this change: only
+    // money that STAYED outranks an attestation.
+    const c = census({
+      appointments: [appt({ id: "d" })],
+      everPaidDatedAppointmentIds: ["d"],
+      everFullyRefundedAppointmentIds: ["d"],
+      settlements: [settlement({ appointment_id: "d", method: "still_owes", amount_cents: 15_000 })],
+    });
+    expect(value(c.stillOwedCents)).toBe(15_000);
+    expect(value(c.stillOwedSupersededByCard)).toBe(0);
   });
 
   it("a PRICELESS treatment reversed to nothing still explains the gap it opens", () => {

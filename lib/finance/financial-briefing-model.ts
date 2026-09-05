@@ -373,6 +373,16 @@ export type ChargeRow = {
   /** Netted against its OWN charge, whenever the refund happened. */
   readonly refund_amount_cents: number | null;
   readonly refund_status: string | null;
+  /**
+   * WHEN the refund happened, so the snapshot can bound it.
+   *
+   * The refund LEDGER is already bounded by the evidence instant. This state
+   * rides on charge rows and was not, so a refund committing after the instant
+   * was captured — but before this query returned — reduced service-period
+   * collection while the movement figure excluded it, under one published
+   * timestamp. A torn snapshot.
+   */
+  readonly refunded_at: string | null;
 };
 
 /** `charged_at` rides along so a cross-period reversal can be COUNTED. */
@@ -646,6 +656,15 @@ export function summarizeDeliveredMoney(input: {
    */
   readonly everPaidUndatedAppointmentIds: readonly string[];
   /**
+   * Delivered appointments whose card payment was FULLY reversed, in any period.
+   *
+   * PAYMENT PERIOD AND TERMINAL REFUND STATE ARE INDEPENDENT. A full refund does
+   * not stop being one because its originating charge belongs to another
+   * period, and reporting such a visit as merely "paid in another period" says
+   * paid when the money came back.
+   */
+  readonly everFullyRefundedAppointmentIds: readonly string[];
+  /**
    * Delivered appointments carrying HONE-VERIFIED TERMINAL CARD MONEY — a
    * succeeded payment that was not fully reversed, in any period.
    *
@@ -896,7 +915,21 @@ export function summarizeDeliveredMoney(input: {
         unnettable.add(id);
         continue;
       }
-      refunded = amountRefunded;
+      // A SUCCEEDED REFUND WITH NO DATE CANNOT BE PLACED against this
+      // snapshot. Treating it as reversed would understate collection and
+      // treating it as unreversed would OVERSTATE it — the direction a money
+      // figure must never fail in — so the net is unestablished, exactly as it
+      // already is for an unreadable amount. Disclosed by `basis`.
+      const refundedAt = parseInstant(c.refunded_at);
+      if (refundedAt === null) {
+        unreadableAmounts += 1;
+        unnettable.add(id);
+        continue;
+      }
+      // BOUNDED BY THE EVIDENCE INSTANT, exclusive — the same convention the
+      // refund ledger query uses with `.lt("refunded_at", …)`. A refund at or
+      // after the snapshot is not part of it; a later refresh will see it.
+      if (refundedAt < at) refunded = amountRefunded;
     }
     const previous = netOnVisit.get(id);
     netOnVisit.set(id, (previous === undefined ? 0 : previous) + amount - refunded);
@@ -1084,6 +1117,7 @@ export function summarizeDeliveredMoney(input: {
   // Rather than describe that possibility in prose, it is counted here and
   // shown only when it actually happens. Production holds three null-priced
   // services today, so this is reachable, not hypothetical.
+  const everFullyRefunded = new Set(input.everFullyRefundedAppointmentIds);
   const everPaidDated = new Set(input.everPaidDatedAppointmentIds);
   const everPaidUndated = new Set(input.everPaidUndatedAppointmentIds);
   let paidInAnotherPeriodVisits = 0;
@@ -1108,6 +1142,15 @@ export function summarizeDeliveredMoney(input: {
     // this visit, but the studio's ledger does. Saying "No payment recorded"
     // would be false; saying "collected" would move money into a period it did
     // not move in. It gets its own line instead.
+    // A FULL REFUND OUTRANKS THE PERIOD BRANCHES. It is a terminal state about
+    // what happened to the money, and it stays true wherever the charge landed.
+    // Saying only "paid in another period" would say paid when the money came
+    // back. This does NOT claim the refund happened in this period — that is
+    // what `refundsReversing*` counts, from `refunded_at`.
+    if (everFullyRefunded.has(id)) {
+      refundedToZero.add(id);
+      continue;
+    }
     // A DATED payment establishes a period, so it wins over an undated one:
     // a visit carrying both is not in doubt about whether a period is known.
     if (everPaidDated.has(id)) {

@@ -292,6 +292,7 @@ export async function loadFinancialsView(
               everPaidDatedAppointmentIds: ledgers.everPaidDatedAppointmentIds,
               everPaidUndatedAppointmentIds: ledgers.everPaidUndatedAppointmentIds,
               terminalCardMoneyAppointmentIds: ledgers.terminalCardMoneyAppointmentIds,
+              everFullyRefundedAppointmentIds: ledgers.everFullyRefundedAppointmentIds,
               todayLocal,
               snapshot: now,
               windowStartUtc: moneyStartUtc,
@@ -418,6 +419,7 @@ type MoneyLedgers =
       readonly everPaidDatedAppointmentIds: readonly string[];
       readonly everPaidUndatedAppointmentIds: readonly string[];
       readonly terminalCardMoneyAppointmentIds: readonly string[];
+      readonly everFullyRefundedAppointmentIds: readonly string[];
       readonly ledgerOpensAt: string | null;
     }
   | { readonly ok: false; readonly cause: FinancialUnknownCause };
@@ -435,7 +437,11 @@ async function readMoneyLedgers(
       // The refund columns ride along so a charge can be netted by ITS OWN
       // refund, whenever that refund happened. That is the service-period
       // numerator, and it must never be netted by a window instead.
-      .select("appointment_id, amount_cents, refund_amount_cents, refund_status", {
+      // `refunded_at` rides along so the refund state on a charge row obeys the
+      // SAME evidence boundary the refund ledger already does. Without it a
+      // refund landing after the snapshot was captured still reduced
+      // service-period collection.
+      .select("appointment_id, amount_cents, refund_amount_cents, refund_status, refunded_at", {
         count: "exact",
       })
       .eq("studio_id", studioId)
@@ -678,6 +684,20 @@ async function readMoneyLedgers(
     // TERMINAL MONEY: succeeded and NOT fully reversed, spelled exactly as
     // 0187 spells it. A missing amount cannot establish that money stayed, so
     // it fails closed and is excluded.
+    // THE MIRROR OF TERMINAL MONEY: money that came back, in any period. The
+    // same read already carries what this needs; it was being reduced to
+    // terminal ids and the refunded half discarded.
+    everFullyRefundedAppointmentIds: ep.ok
+      ? ep.rows.flatMap((row) => {
+          if (row.appointment_id === null) return [];
+          if (typeof row.amount_cents !== "number") return [];
+          const reversed =
+            row.refund_status === "succeeded" &&
+            typeof row.refund_amount_cents === "number" &&
+            row.refund_amount_cents >= row.amount_cents;
+          return reversed ? [row.appointment_id] : [];
+        })
+      : [],
     terminalCardMoneyAppointmentIds: ep.ok
       ? ep.rows.flatMap((row) => {
           if (row.appointment_id === null) return [];
