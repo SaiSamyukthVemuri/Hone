@@ -1,6 +1,12 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { FROM_ADDRESS, resend } from "@/lib/email/client";
 import {
+  buildFromHeader,
+  resolveReplyTo,
+  studioClientContactEmail,
+  type StudioEmailIdentity,
+} from "@/lib/email/studio-identity";
+import {
   buildClientConfirmationEmail,
   buildPractitionerNotificationEmail,
   buildCancellationEmail,
@@ -79,6 +85,12 @@ export async function sendEmailSafely(opts: {
   html: string;
   text: string;
   icsContent?: string;
+  /**
+   * COMMS-01A. Server-resolved studio identity. OPTIONAL on purpose: a caller
+   * that has no studio in scope (ops alerts, team invitations — Hone speaking
+   * as Hone) omits it and keeps today's exact From with no Reply-To.
+   */
+  studioIdentity?: StudioEmailIdentity;
 }): Promise<EmailSendResult> {
   if (!resend) {
     return {
@@ -96,13 +108,23 @@ export async function sendEmailSafely(opts: {
     };
   }
 
+  // The From header is built in ONE place. `buildFromHeader` sanitises the
+  // studio name, so an operator-supplied name cannot inject a header here, and
+  // an absent/unsafe name yields exactly FROM_ADDRESS.
   const payload: Parameters<typeof resend.emails.send>[0] = {
-    from: FROM_ADDRESS,
+    from: opts.studioIdentity
+      ? buildFromHeader(opts.studioIdentity.displayName)
+      : FROM_ADDRESS,
     to: opts.to,
     subject: opts.subject,
     html: opts.html,
     text: opts.text,
   };
+  // Reply-To is attached ONLY when the studio has a usable address. A missing
+  // or malformed one omits the header rather than inventing a destination.
+  if (opts.studioIdentity?.replyTo) {
+    payload.replyTo = opts.studioIdentity.replyTo;
+  }
   if (opts.icsContent) {
     payload.attachments = [
       {
@@ -397,6 +419,7 @@ export async function sendBookingConfirmationToClient(params: {
   });
 
   return sendEmailSafely({
+    studioIdentity: identityFor(params.studio),
     to: params.clientEmail,
     subject,
     html,
@@ -531,7 +554,7 @@ export async function send24hReminderToClient(
     treatmentTimeLine: p.treatmentTimeLine,
     intakeUrl: p.intakeUrl ?? null,
   });
-  return sendEmailSafely({ to: p.clientEmail, subject, html, text });
+  return sendEmailSafely({ studioIdentity: identityFor(p.studio), to: p.clientEmail, subject, html, text });
 }
 
 export async function send2hReminderToClient(
@@ -559,7 +582,7 @@ export async function send2hReminderToClient(
     treatmentTimeLine: p.treatmentTimeLine,
     intakeUrl: p.intakeUrl ?? null,
   });
-  return sendEmailSafely({ to: p.clientEmail, subject, html, text });
+  return sendEmailSafely({ studioIdentity: identityFor(p.studio), to: p.clientEmail, subject, html, text });
 }
 
 // STANDALONE intake-form reminder, sent by the reminder cron at the ~24h or
@@ -589,7 +612,7 @@ export async function sendIntakeReminderToClient(p: {
     startsAt: p.startsAt,
     timezone: p.timezone,
   });
-  return sendEmailSafely({ to: p.clientEmail, subject, html, text });
+  return sendEmailSafely({ studioIdentity: { displayName: p.studioName, replyTo: null }, to: p.clientEmail, subject, html, text });
 }
 
 export async function sendNoShowFollowupToClient(params: {
@@ -606,7 +629,7 @@ export async function sendNoShowFollowupToClient(params: {
     studioName: params.studio.name,
     rebookUrl: params.rebookUrl,
   });
-  return sendEmailSafely({ to: params.clientEmail, subject, html, text });
+  return sendEmailSafely({ studioIdentity: identityFor(params.studio), to: params.clientEmail, subject, html, text });
 }
 
 
@@ -660,7 +683,7 @@ export async function sendPostcareToClient(params: {
     reviewUrl: params.reviewUrl,
     reviewPromptText: params.reviewPromptText,
   });
-  return sendEmailSafely({ to: params.clientEmail, subject, html, text });
+  return sendEmailSafely({ studioIdentity: identityFor(params.studio), to: params.clientEmail, subject, html, text });
 }
 
 // Resolve which email to render in the postcare Contact line. The
@@ -670,11 +693,23 @@ export async function sendPostcareToClient(params: {
 export function postcareContactEmail(
   studio: Pick<Studio, "postcare_contact_email" | "owner_email">,
 ): string | null {
-  const override = studio.postcare_contact_email?.trim();
-  if (override && override.length > 0) return override;
-  const fallback = studio.owner_email?.trim();
-  if (fallback && fallback.length > 0) return fallback;
-  return null;
+  // COMMS-01A: delegates to the shared authority so the postcare Contact line
+  // and the transactional Reply-To can never disagree about which address is
+  // the studio's client-facing contact.
+  return studioClientContactEmail(studio);
+}
+
+// COMMS-01A. Build the sender identity for a client-facing send from a studio
+// row we already loaded server-side. Callers never assemble headers themselves.
+function identityFor(studio: {
+  name?: string | null;
+  postcare_contact_email?: string | null;
+  owner_email?: string | null;
+}): StudioEmailIdentity {
+  return {
+    displayName: studio.name ?? null,
+    replyTo: resolveReplyTo(studioClientContactEmail(studio)),
+  };
 }
 
 // Practitioner-triggered intake reissue email. Sent when the
@@ -696,5 +731,5 @@ export async function sendIntakeUpdateRequestToClient(params: {
     studioName: params.studioName,
     intakeUrl: params.intakeUrl,
   });
-  return sendEmailSafely({ to: params.clientEmail, subject, html, text });
+  return sendEmailSafely({ studioIdentity: { displayName: params.studioName, replyTo: null }, to: params.clientEmail, subject, html, text });
 }
