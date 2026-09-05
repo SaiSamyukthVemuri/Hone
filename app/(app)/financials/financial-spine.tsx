@@ -641,10 +641,19 @@ function DeliveredMoney({ briefing }: { briefing: FinancialBriefing }) {
       <section className="flex flex-col gap-3">
         <SectionLabel as="h2">Service value of delivered work</SectionLabel>
         <div className="flex flex-col">
-          <Line label="Treatment, at today's prices">
+          {/*
+            NAMED BY POPULATION, NOT BY BASIS. These two labels used to say
+            "at today's prices", which the paragraph directly below them
+            contradicts: a visit settled from 0187 onward is valued at the
+            price it carried then, and repricing the menu does not move it.
+            Whether a given visit is valued that way or from today's price is
+            exactly what varies inside the total, so no single label can state
+            it truthfully — only the paragraph can, and it does.
+          */}
+          <Line label="Treatment service value">
             <Money fact={c.treatmentServiceValueCents} />
           </Line>
-          <Line label="Consultations, at today's prices">
+          <Line label="Consultation service value">
             <Money fact={c.consultationServiceValueCents} />
           </Line>
         </div>

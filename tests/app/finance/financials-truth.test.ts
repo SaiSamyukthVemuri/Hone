@@ -365,6 +365,26 @@ describe("NC6 — past work is valued at the price on record, never at today's m
     expect(CODE.spine).toContain("visitsValuedAtRecordedPrice");
     expect(CODE.spine).toContain("SOME_VISITS_PRICED_AT_THE_TIME");
   });
+
+  it("neither service-value total carries a basis claim its own copy contradicts", () => {
+    // SLICE 2 FINDING. The paragraph directly beneath these two lines says the
+    // figure MIXES two bases — the price recorded at settlement wherever Hone
+    // has one, the price in force today everywhere else. The labels said "at
+    // today's prices" flatly, so each label denied the sentence under it, and
+    // the recorded-price half of the total was described as something it is
+    // not. A settled visit's value does not move when the menu is repriced.
+    //
+    // The replacement states the population, not the basis: the basis is
+    // exactly what varies row by row, so only the paragraph can carry it.
+    expect(CODE.spine).not.toContain("today's prices");
+    expect(CODE.spine).toContain('label="Treatment service value"');
+    expect(CODE.spine).toContain('label="Consultation service value"');
+    // And it must still be VALUE, never money that moved — the whole reason
+    // these two lines are a section of their own, away from the card-money
+    // ones — and the paragraph that carries the basis must still be here.
+    expect(CODE.spine).toContain("Service value of delivered work");
+    expect(CODE.spine).toContain("SERVICE_VALUE_PRICE_BASIS");
+  });
 });
 
 describe("P2-A — consultation is decided by the shared predicate, never by price", () => {

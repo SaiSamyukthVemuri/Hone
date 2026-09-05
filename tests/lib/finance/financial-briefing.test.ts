@@ -951,6 +951,146 @@ describe("transaction reads are bounded by the evidence instant", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// THE ALL-TIME EXISTENCE READ MUST OBEY THE SNAPSHOT TOO — Codex A
+// ---------------------------------------------------------------------------
+//
+// The read is intentionally NOT period-scoped — it answers whether a visit has
+// EVER acquired card-payment evidence. But it must still obey the published
+// instant. A payment committing after `evidenceInstant` and before this query
+// returned was excluded from the windowed movement read and included here, so a
+// same-period payment rendered as "Paid by card in another period" under a
+// timestamp that predates it.
+//
+// DATED and UNDATED remain separate truths: bounding the dated side must not
+// erase rows that carry no date at all.
+
+describe("all-time payment evidence is bounded by the evidence instant", () => {
+  const existence = (rows: unknown[]) =>
+    stubTables({
+      payment_charge_attempts: {
+        // The existence read is the one filtering appointment_id NOT NULL.
+        resolve: (ops) =>
+          ops.includes('not(["appointment_id","is",null])') ? { rows } : { rows: [] },
+      },
+      appointments: {
+        rows: [
+          { id: "v", status: "completed", starts_at: "2026-08-10T10:00:00.000Z",
+            ends_at: "2026-08-10T11:00:00.000Z", duration_minutes: 60,
+            blocked_ends_at: "2026-08-10T11:00:00.000Z", service_id: "svc", client_id: null },
+        ],
+      },
+      services: { rows: [{ id: "svc", name: "60 minute session", modality: "electrolysis", price_cents: 15_000 }] },
+    });
+
+  const load = async (rows: unknown[], nowIso = "2026-08-15T16:00:00.000Z") => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(nowIso));
+    const { client } = existence(rows);
+    return granted(await loadFinancialsView(OWNER, studio("America/Toronto"), "month", client));
+  };
+
+  const row = (over: Record<string, unknown>) => ({
+    appointment_id: "v", charged_at: null, amount_cents: 15_000,
+    refund_status: null, refund_amount_cents: null, ...over,
+  });
+
+  it("a dated payment BEFORE the snapshot is evidence", async () => {
+    const b = await load([row({ charged_at: "2026-08-10T12:00:00.000Z" })]);
+    expect(b.money.covered && b.money.census.paidInAnotherPeriodVisits.known).toBe(true);
+  });
+
+  it("a dated payment AFTER the snapshot is invisible to this snapshot", async () => {
+    const b = await load([row({ charged_at: "2026-08-15T16:00:01.000Z" })]);
+    // Not "another period" — the payment is not part of this snapshot at all.
+    expect(b.money.covered && b.money.census.paidInAnotherPeriodVisits).toEqual({ known: true, value: 0 });
+    expect(b.money.covered && b.money.census.unresolvedVisits).toEqual({ known: true, value: 1 });
+  });
+
+  it("a dated payment EXACTLY at the instant is excluded, per the shared bound", async () => {
+    const b = await load([row({ charged_at: "2026-08-15T16:00:00.000Z" })]);
+    expect(b.money.covered && b.money.census.paidInAnotherPeriodVisits).toEqual({ known: true, value: 0 });
+  });
+
+  it("a LATER snapshot sees the same payment", async () => {
+    const b = await load([row({ charged_at: "2026-08-15T16:00:01.000Z" })], "2026-08-15T18:00:00.000Z");
+    expect(b.money.covered && b.money.census.paidInAnotherPeriodVisits).toEqual({ known: true, value: 1 });
+  });
+
+  it("an UNDATED payment is NOT erased by bounding the dated side", async () => {
+    const b = await load([row({ charged_at: null })]);
+    expect(b.money.covered && b.money.census.paidWithUnknownDateVisits).toEqual({ known: true, value: 1 });
+    expect(b.money.covered && b.money.census.paidInAnotherPeriodVisits).toEqual({ known: true, value: 0 });
+  });
+
+  it("the ledger-opening read obeys the same bound", () => {
+    // A FLOOR, so it almost never binds — but a ledger whose only dated row
+    // commits after the instant would otherwise print "money starts here" at a
+    // moment later than the timestamp printed above it. Same law, same file.
+    const src = readFileSync(path.join(process.cwd(), "lib/finance/financial-briefing.ts"), "utf8");
+    const open = src.slice(src.indexOf('.select("charged_at")'));
+    expect(open.slice(0, 400)).toContain('.lt("charged_at", evidenceInstantUtc)');
+    expect(open.slice(0, 400)).toContain('ascending: true');
+  });
+
+  it("the read stays status- and mode-scoped, so failed and TEST rows never qualify", () => {
+    const src = readFileSync(path.join(process.cwd(), "lib/finance/financial-briefing.ts"), "utf8");
+    const read = src.slice(src.indexOf('.select("appointment_id, charged_at, amount_cents'));
+    expect(read.slice(0, 400)).toContain('.eq("status", "succeeded")');
+    expect(read.slice(0, 400)).toContain('.eq("stripe_livemode", livemode)');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE THIRD 1000-ROW CLIFF — Codex B
+// ---------------------------------------------------------------------------
+
+describe("the studio-wide services read enumerates every page", () => {
+  const serviceRows = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      id: `svc-${i}`, name: "60 minute session", modality: "electrolysis", price_cents: 15_000,
+    }));
+  const pagesOf = (n: number) => {
+    const all = serviceRows(n);
+    const pages: unknown[][] = [];
+    for (let i = 0; i < all.length; i += 1_000) pages.push(all.slice(i, i + 1_000));
+    if (all.length % 1_000 === 0) pages.push([]);
+    return pages;
+  };
+  const load = async (n: number, over: Record<string, unknown> = {}) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-15T16:00:00.000Z"));
+    const { client, pageCalls } = stubTables({ services: { pages: pagesOf(n), count: n, ...over } });
+    const b = granted(await loadFinancialsView(OWNER, studio("America/Toronto"), "month", client));
+    return { b, pageCalls };
+  };
+
+  for (const n of [999, 1_000, 1_001, 2_000, 2_001]) {
+    it(`${n} services still yield a money census`, async () => {
+      const { b } = await load(n);
+      expect(b.money.covered && b.money.census.deliveredTreatmentVisits.known).toBe(true);
+    });
+  }
+
+  it("pages until exhausted", async () => {
+    const { pageCalls } = await load(2_001);
+    expect(pageCalls.services).toBe(3);
+  });
+
+  it("A FAILING PAGE WITHDRAWS THE WHOLE READ", async () => {
+    const { b } = await load(2_001, { failPage: 1 });
+    expect(b.money.covered && b.money.census.deliveredTreatmentVisits.known).toBe(false);
+  });
+
+  it("A SHORT ENUMERATION IS NOT COMPLETE", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-15T16:00:00.000Z"));
+    const { client } = stubTables({ services: { pages: [serviceRows(500)], count: 900 } });
+    const b = granted(await loadFinancialsView(OWNER, studio("America/Toronto"), "month", client));
+    expect(b.money.covered && b.money.census.deliveredTreatmentVisits.known).toBe(false);
+  });
+});
+
 describe("the evidence instant is pinned and published", () => {
   it("one clock read anchors the period, the delivered split AND the printed instant", async () => {
     vi.useFakeTimers();

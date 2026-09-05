@@ -238,7 +238,13 @@ export async function loadFinancialsView(
     // belong to this window. The two authorities are derived separately.
     readAppointments(supabase, studio.id, startUtc, endUtc),
     moneyCovered
-      ? readMoneyLedgers(supabase, studio.id, moneyStartUtc, transactionEndUtc)
+      ? readMoneyLedgers(
+          supabase,
+          studio.id,
+          moneyStartUtc,
+          transactionEndUtc,
+          evidenceInstantUtc,
+        )
       : Promise.resolve(null),
     // ISSUED UNCONDITIONALLY, and that is the point. This count is ALL-TIME, so
     // the money window's floor has no bearing on it. It used to ride inside the
@@ -429,6 +435,11 @@ async function readMoneyLedgers(
   studioId: string,
   startUtc: string,
   endUtc: string,
+  /**
+   * The published snapshot instant. The all-time existence read is deliberately
+   * NOT period-scoped, but it must still obey the timestamp the screen prints.
+   */
+  evidenceInstantUtc: string,
 ): Promise<MoneyLedgers> {
   const livemode = inferStripeLivemode();
   const ledger = () =>
@@ -528,6 +539,34 @@ async function readMoneyLedgers(
     { pageSize: API_PAGE_SIZE },
   );
 
+  // THE THIRD COPY OF THE SAME CEILING, and the last studio-wide read that
+  // still had it. A studio past 1000 services got its first page back while the
+  // exact count reported more, `complete()` refused the read, and the whole
+  // money census went unknown with it — and unlike a windowed read, no shorter
+  // period recovers it, because the service menu is not period-scoped at all.
+  // Same helper, same terms; no third strategy.
+  let servicesCount: number | null = null;
+  const servicesRead = fetchAllRows<ServiceRow>(
+    async (from, to) => {
+      const page = await supabase
+        .from("services")
+        // `name` and `modality` are what `isConsultationService` reads;
+        // `price_cents` decides only whether there was anything to collect.
+        .select("id, name, modality, price_cents", { count: "exact" })
+        .eq("studio_id", studioId)
+        .order("id")
+        .range(from, to);
+      if (servicesCount === null && typeof page.count === "number") {
+        servicesCount = page.count;
+      }
+      return {
+        data: (page.data ?? null) as ServiceRow[] | null,
+        error: page.error as { message: string } | null,
+      };
+    },
+    { pageSize: API_PAGE_SIZE },
+  );
+
   // THE SAME CEILING, ON THE READ NEXT DOOR. Studio-wide for the identical
   // reason — an `.in("client_id", [...])` list grows with the period — and it
   // had the identical lifetime cliff: past 1000 rows the first page came back
@@ -581,14 +620,7 @@ async function readMoneyLedgers(
 
   const [services, charges, refunds, settlements, customPricing, opened, everPaid] =
     await Promise.all([
-      supabase
-        .from("services")
-        // `name` and `modality` are what `isConsultationService` reads;
-        // `price_cents` decides only whether there was anything to collect.
-        .select("id, name, modality, price_cents", { count: "exact" })
-        .eq("studio_id", studioId)
-        .order("id")
-        .range(0, API_PAGE_SIZE - 1),
+      servicesRead,
       ledger().gte("charged_at", startUtc).lt("charged_at", endUtc).order("id").range(0, API_PAGE_SIZE - 1),
       supabase
         .from("payment_charge_attempts")
@@ -622,6 +654,11 @@ async function readMoneyLedgers(
       // HEAD-ONLY COUNT. These rows are succeeded and carry NO collection time,
       // so they belong to no period and cannot be windowed. FIN-C9 surfaces
       // them rather than dropping money that was actually made.
+      //
+      // BOUNDED BY THE SNAPSHOT, on the same law as the existence read. This is
+      // a FLOOR, so the bound almost never binds — but on a ledger whose only
+      // dated row commits after the instant, the unbounded form would print
+      // "money starts here" at a moment later than the timestamp above it.
       supabase
         .from("payment_charge_attempts")
         .select("charged_at")
@@ -629,12 +666,13 @@ async function readMoneyLedgers(
         .eq("status", "succeeded")
         .eq("stripe_livemode", livemode)
         .not("charged_at", "is", null)
+        .lt("charged_at", evidenceInstantUtc)
         .order("charged_at", { ascending: true })
         .limit(1),
       everPaidRead,
     ]);
 
-  const s = complete<ServiceRow>(services.data, services.error, services.count);
+  const s = complete<ServiceRow>(services.data, services.error, servicesCount);
   const c = complete<ChargeRow>(charges.data, charges.error, charges.count);
   const r = complete<RefundRow>(refunds.data, refunds.error, refunds.count);
   // `settlementCount` rather than a per-page count: the claim is about the
@@ -671,9 +709,28 @@ async function readMoneyLedgers(
     // SPLIT BY WHETHER A DATE EXISTS. A visit carrying both a dated and an
     // undated payment belongs in the DATED set: the dated row establishes a
     // period, so nothing about that visit is in doubt.
+    // DATED EVIDENCE IS BOUNDED BY THE SNAPSHOT. A payment committing after the
+    // instant was captured — and before this query returned — is not part of
+    // the snapshot the screen labels, and treating it as evidence made a
+    // same-period payment render as "Paid by card in another period" under a
+    // timestamp that predates it.
+    //
+    // FILTERED HERE RATHER THAN IN SQL, deliberately. The bound applies only to
+    // the DATED half; expressing "dated-and-before-T OR undated" as a PostgREST
+    // predicate needs an `.or(...)`, which would put a second, differently
+    // shaped ledger filter beside the mode/status pair every read is checked
+    // for. `charged_at` is already projected, so the same law costs one
+    // comparison and leaves the query shape uniform.
+    //
+    // Exclusive, the same bound the transaction ledger and the per-visit refund
+    // state both use.
     everPaidDatedAppointmentIds: ep.ok
       ? ep.rows.flatMap((row) =>
-          row.appointment_id === null || row.charged_at === null ? [] : [row.appointment_id],
+          row.appointment_id === null ||
+          row.charged_at === null ||
+          row.charged_at >= evidenceInstantUtc
+            ? []
+            : [row.appointment_id],
         )
       : [],
     everPaidUndatedAppointmentIds: ep.ok
@@ -690,6 +747,9 @@ async function readMoneyLedgers(
     everFullyRefundedAppointmentIds: ep.ok
       ? ep.rows.flatMap((row) => {
           if (row.appointment_id === null) return [];
+          // A payment the snapshot cannot see cannot carry a refund state into
+          // it either; an undated payment stays visible, as its own truth.
+          if (row.charged_at !== null && row.charged_at >= evidenceInstantUtc) return [];
           if (typeof row.amount_cents !== "number") return [];
           const reversed =
             row.refund_status === "succeeded" &&
@@ -701,6 +761,7 @@ async function readMoneyLedgers(
     terminalCardMoneyAppointmentIds: ep.ok
       ? ep.rows.flatMap((row) => {
           if (row.appointment_id === null) return [];
+          if (row.charged_at !== null && row.charged_at >= evidenceInstantUtc) return [];
           if (typeof row.amount_cents !== "number") return [];
           // NO `?? 0` HERE. 0187 spells this with `coalesce(...,0)`, but a
           // default inside a money comparison is exactly what this file's own
