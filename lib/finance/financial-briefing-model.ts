@@ -511,6 +511,13 @@ export type DeliveredMoneyCensus = {
   readonly chargeCount: Fact<number>;
   /** Of the refunds in this window, how many reverse a charge from another. */
   readonly refundsReversingOtherPeriods: Fact<number>;
+  /**
+   * Refunds in this window reversing a payment whose own date is UNKNOWN.
+   *
+   * Not "another period": that states a chronology nothing establishes. The
+   * same distinction the delivered-visit classification makes.
+   */
+  readonly refundsReversingUnknownPeriod: Fact<number>;
 
   // --- CONTRACT 2: COLLECTED ON DELIVERED TREATMENT (service period) ------
   readonly collectedOnDeliveredCents: Fact<number>;
@@ -558,6 +565,15 @@ export type DeliveredMoneyCensus = {
    * "No payment recorded", because a payment plainly was.
    */
   readonly paidWithUnknownDateVisits: Fact<number>;
+  /**
+   * `still_owes` attestations outranked by a later card success.
+   *
+   * 0187: the row "is NOT retired by the later card success. It stays live and
+   * immutable, and the AUTHORITATIVE disposition is derived by ranking
+   * Hone-verified terminal money above any attestation." Counted and shown, so
+   * the money leaving the owed total is explained rather than silently dropped.
+   */
+  readonly stillOwedSupersededByCard: Fact<number>;
   readonly collectionRateBasisPoints: Fact<number>;
   readonly unresolvedVisits: Fact<number>;
   readonly unresolvedServiceValueCents: Fact<number>;
@@ -629,6 +645,16 @@ export function summarizeDeliveredMoney(input: {
    * which correctly says these payments belong to no period at all.
    */
   readonly everPaidUndatedAppointmentIds: readonly string[];
+  /**
+   * Delivered appointments carrying HONE-VERIFIED TERMINAL CARD MONEY — a
+   * succeeded payment that was not fully reversed, in any period.
+   *
+   * DELIBERATELY NARROWER THAN THE EXISTENCE SETS ABOVE. A fully refunded
+   * payment is still a payment RECORD (so it is not "No payment recorded") but
+   * it is not money that stayed, so it cannot outrank a debt. That is 0187's
+   * own predicate: succeeded AND NOT (refund succeeded AND refunded >= amount).
+   */
+  readonly terminalCardMoneyAppointmentIds: readonly string[];
   /** Studio-local `YYYY-MM-DD`. Injected: this module never reads a clock. */
   readonly todayLocal: string;
   readonly snapshot: Date;
@@ -914,6 +940,7 @@ export function summarizeDeliveredMoney(input: {
   // than left for the reader to assume away.
   let movedOutRefundedCents = 0;
   let refundsReversingOtherPeriods = 0;
+  let refundsReversingUnknownPeriod = 0;
   for (const r of input.refunds) {
     const amount = finite(r.refund_amount_cents);
     if (amount === null) {
@@ -922,7 +949,12 @@ export function summarizeDeliveredMoney(input: {
     }
     movedOutRefundedCents += amount;
     const chargedAt = parseInstant(r.charged_at);
-    if (chargedAt === null || chargedAt < windowStart || chargedAt >= windowEnd) {
+    // AN UNDATED PAYMENT HAS NO PERIOD, so a refund reversing one cannot be
+    // said to reverse ANOTHER period. Its own line, for the same reason the
+    // delivered-visit classification has one.
+    if (chargedAt === null) {
+      refundsReversingUnknownPeriod += 1;
+    } else if (chargedAt < windowStart || chargedAt >= windowEnd) {
       refundsReversingOtherPeriods += 1;
     }
   }
@@ -966,8 +998,10 @@ export function summarizeDeliveredMoney(input: {
   let externallyAttestedCents = 0;
   let waivedCents = 0;
   let stillOwedCents = 0;
+  const terminalCardMoney = new Set(input.terminalCardMoneyAppointmentIds);
   let settlementsOutsideWindow = 0;
   let settlementsUnattributable = 0;
+  let stillOwedSupersededByCard = 0;
   // Rows that named a delivered visit in this window AND carried a readable
   // amount. This — not the studio's all-time row count — is what decides
   // whether "nothing was attested" is a true thing to say about this window.
@@ -987,13 +1021,31 @@ export function summarizeDeliveredMoney(input: {
       settlementsOutsideWindow += 1;
       continue;
     }
-    settled.add(s.appointment_id);
     const amount = finite(s.amount_cents);
     if (amount === null) {
       unreadableAmounts += 1;
       continue;
     }
+    // HONE-VERIFIED TERMINAL MONEY OUTRANKS A still_owes ATTESTATION, and
+    // ONLY that one. 0187 permits this pairing on purpose — a debt followed by
+    // a card payment is the ordinary progression — and says the authoritative
+    // disposition ranks verified money above the attestation. Without that
+    // ranking one visit read as card-paid AND still owed at once.
+    //
+    // The other four methods BLOCK a card charge at the database, so a card
+    // success beside them is a real conflict rather than a progression;
+    // overriding those would conceal the double-collection 0187 prevents.
+    // COUNTED AS ATTESTED EVEN WHEN SUPERSEDED. Something WAS written down —
+    // it was outranked, not absent — so "nothing was attested about this
+    // window" stays false and the three attested figures remain known. What is
+    // withheld is the AMOUNT and the resolved-by-attestation status, not the
+    // fact that a row exists.
     attestedRows += 1;
+    if (s.method === "still_owes" && terminalCardMoney.has(s.appointment_id)) {
+      stillOwedSupersededByCard += 1;
+      continue;
+    }
+    settled.add(s.appointment_id);
     if (EXTERNALLY_COLLECTED.has(s.method)) externallyAttestedCents += amount;
     else if (s.method === "waived") waivedCents += amount;
     else if (s.method === "still_owes") stillOwedCents += amount;
@@ -1101,6 +1153,7 @@ export function summarizeDeliveredMoney(input: {
     netMovementCents: known(movedInGrossCents - movedOutRefundedCents),
     chargeCount: known(summedCharges),
     refundsReversingOtherPeriods: known(refundsReversingOtherPeriods),
+    refundsReversingUnknownPeriod: known(refundsReversingUnknownPeriod),
 
     collectedOnDeliveredCents: known(collectedOnDeliveredCents),
     collectedOnDeliveredVisits: known(collectedOnDeliveredVisits),
@@ -1123,6 +1176,7 @@ export function summarizeDeliveredMoney(input: {
     refundedToZeroVisits: known(refundedToZero.size),
     paidInAnotherPeriodVisits: known(paidInAnotherPeriodVisits),
     paidWithUnknownDateVisits: known(paidWithUnknownDateVisits),
+    stillOwedSupersededByCard: known(stillOwedSupersededByCard),
     collectionRateBasisPoints,
     unresolvedVisits: known(unresolvedVisits),
     unresolvedServiceValueCents: known(unresolvedServiceValueCents),
@@ -1177,6 +1231,7 @@ export function unreadableDeliveredMoney(
     netMovementCents: absent,
     chargeCount: absent,
     refundsReversingOtherPeriods: absent,
+    refundsReversingUnknownPeriod: absent,
     collectedOnDeliveredCents: absent,
     collectedOnDeliveredVisits: absent,
     collectedOnDeliveredMinutes: absent,
@@ -1189,6 +1244,7 @@ export function unreadableDeliveredMoney(
     refundedToZeroVisits: absent,
     paidInAnotherPeriodVisits: absent,
     paidWithUnknownDateVisits: absent,
+    stillOwedSupersededByCard: absent,
     collectionRateBasisPoints: absent,
     unresolvedVisits: absent,
     unresolvedServiceValueCents: absent,

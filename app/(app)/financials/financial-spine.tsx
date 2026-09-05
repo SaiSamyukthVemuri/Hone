@@ -540,6 +540,19 @@ function DeliveredMoney({ briefing }: { briefing: FinancialBriefing }) {
             work would suggest.
           </p>
         ) : null}
+        {/*
+          A refund reversing a payment that carries NO date of its own. Not
+          "another period" — that would state a chronology nothing establishes —
+          so it is disclosed as the unplaceable reversal it is.
+        */}
+        {c.refundsReversingUnknownPeriod.known && c.refundsReversingUnknownPeriod.value > 0 ? (
+          <p className="max-w-[68ch] text-xs leading-relaxed text-warning-fg">
+            {c.refundsReversingUnknownPeriod.value.toLocaleString()} of these refund
+            {c.refundsReversingUnknownPeriod.value === 1 ? "" : "s"} reverse
+            {c.refundsReversingUnknownPeriod.value === 1 ? "s" : ""} a payment whose own
+            date was never recorded, so which period it came from is unknown.
+          </p>
+        ) : null}
         <p className="max-w-[68ch] text-xs leading-relaxed text-fg">{COLLECTED_IS_GROSS}</p>
         {window.precedesLedger ? (
           <p className="max-w-[68ch] text-xs leading-relaxed text-fg">
@@ -596,6 +609,22 @@ function DeliveredMoney({ briefing }: { briefing: FinancialBriefing }) {
             <Money fact={c.stillOwedCents} />
           </Line>
         </div>
+        {/*
+          Migration 0187 permits "still owes" followed by a card payment on
+          purpose — it is the ordinary progression of a debt — and says the
+          authoritative disposition ranks Hone-verified money above the
+          attestation. The money leaving the owed total is explained here rather
+          than silently disappearing from it.
+        */}
+        {c.stillOwedSupersededByCard.known && c.stillOwedSupersededByCard.value > 0 ? (
+          <p className="max-w-[68ch] text-xs leading-relaxed text-fg">
+            {c.stillOwedSupersededByCard.value.toLocaleString()} visit
+            {c.stillOwedSupersededByCard.value === 1 ? " was" : "s were"} recorded as
+            still owed and later paid by card. The card payment is what happened, so
+            {c.stillOwedSupersededByCard.value === 1 ? " it is" : " they are"} not counted
+            as owed here.
+          </p>
+        ) : null}
         {/*
           Shown beside the money it affects, not only in the basis note at the
           foot of the screen: a studio that settles a visit outside this window

@@ -386,6 +386,7 @@ function census(over: Partial<Parameters<typeof summarizeDeliveredMoney>[0]> = {
     customPricing: [],
     everPaidDatedAppointmentIds: [],
     everPaidUndatedAppointmentIds: [],
+    terminalCardMoneyAppointmentIds: [],
     todayLocal: "2026-08-27",
     snapshot: NOW,
     windowStartUtc: WINDOW_START,
@@ -754,11 +755,16 @@ describe("P2-C — cash movement and service-period collection are DIFFERENT met
     expect(value(c.refundsReversingOtherPeriods)).toBe(1);
   });
 
-  it("a refund with NO readable charge time counts as cross-period", () => {
+  it("a refund with NO readable charge time is disclosed as UNPLACEABLE", () => {
     // Fails toward disclosure: an unplaceable reversal is exactly the case the
-    // owner most needs told about.
+    // owner most needs told about — that intent is unchanged.
+    //
+    // WAS counted in `refundsReversingOtherPeriods`. An undated payment has no
+    // period, so calling its reversal "from another period" stated a chronology
+    // nothing establishes. It is disclosed in its own line instead.
     const c = census({ refunds: [{ refund_amount_cents: 500, charged_at: null }] });
-    expect(value(c.refundsReversingOtherPeriods)).toBe(1);
+    expect(value(c.refundsReversingUnknownPeriod)).toBe(1);
+    expect(value(c.refundsReversingOtherPeriods)).toBe(0);
   });
 
   it("cash movement and service-period collection are separate fields, never merged", () => {
@@ -1201,6 +1207,110 @@ describe("a card payment that was REFUNDED IN FULL is not a collection", () => {
     expect(value(c.unresolvedVisits)).toBe(1);
     expect(value(c.paidWithUnknownDateVisits)).toBe(0);
     expect(value(c.paidInAnotherPeriodVisits)).toBe(0);
+  });
+
+  // -------------------------------------------------------------------------
+  // A CARD SUCCESS OUTRANKS A STALE still_owes — Codex P1
+  // -------------------------------------------------------------------------
+  //
+  // 0187 states the rule this implements: `still_owes` deliberately does NOT
+  // block a later card charge, because "the client still owes" followed by "the
+  // client paid by card" is the ordinary progression of a debt. The row stays
+  // live and immutable, and "the AUTHORITATIVE disposition is derived by ranking
+  // Hone-verified terminal money above any attestation".
+  //
+  // Nothing applied that ranking, so one visit could appear as card-paid AND
+  // still owed at once — and, because the settlement check ran first, a stale
+  // still_owes also suppressed the paid-in-another-period classification.
+  //
+  // ONLY still_owes IS SUPERSEDED. The other four methods BLOCK a card charge
+  // at the database, so a card success beside them is a genuine conflict, and
+  // silently overriding it would hide exactly what 0187 exists to prevent.
+
+  it("a card payment IN THIS WINDOW supersedes a stale still_owes", () => {
+    const c = census({
+      appointments: [appt({ id: "debt" })],
+      charges: [charge({ appointment_id: "debt" })],
+      terminalCardMoneyAppointmentIds: ["debt"],
+      settlements: [settlement({ appointment_id: "debt", method: "still_owes", amount_cents: 15_000 })],
+    });
+    expect(value(c.collectedOnDeliveredVisits)).toBe(1);
+    // The contradiction: it must not ALSO be owed.
+    expect(value(c.stillOwedCents)).toBe(0);
+    expect(value(c.stillOwedSupersededByCard)).toBe(1);
+  });
+
+  it("a card payment in ANOTHER period supersedes it too, and classifies the visit", () => {
+    // The second half of the finding: the settlement check ran first, so a
+    // stale still_owes hid the paid-in-another-period state entirely.
+    const c = census({
+      appointments: [appt({ id: "debt" })],
+      everPaidDatedAppointmentIds: ["debt"],
+      terminalCardMoneyAppointmentIds: ["debt"],
+      settlements: [settlement({ appointment_id: "debt", method: "still_owes", amount_cents: 15_000 })],
+    });
+    expect(value(c.paidInAnotherPeriodVisits)).toBe(1);
+    expect(value(c.stillOwedCents)).toBe(0);
+    expect(value(c.unresolvedVisits)).toBe(0);
+  });
+
+  it("a FULLY REFUNDED card payment does NOT supersede the debt", () => {
+    // Terminal money means money that STAYED. A reversed payment leaves the
+    // debt standing, and 0187's own predicate spells the same rule.
+    const c = census({
+      appointments: [appt({ id: "debt" })],
+      charges: [
+        charge({ appointment_id: "debt", refund_status: "succeeded", refund_amount_cents: 15_000 }),
+      ],
+      settlements: [settlement({ appointment_id: "debt", method: "still_owes", amount_cents: 15_000 })],
+    });
+    expect(value(c.stillOwedCents)).toBe(15_000);
+    expect(value(c.stillOwedSupersededByCard)).toBe(0);
+  });
+
+  it("a still_owes with NO card payment stands untouched", () => {
+    const c = census({
+      appointments: [appt({ id: "debt" })],
+      settlements: [settlement({ appointment_id: "debt", method: "still_owes", amount_cents: 9_000 })],
+    });
+    expect(value(c.stillOwedCents)).toBe(9_000);
+    expect(value(c.stillOwedSupersededByCard)).toBe(0);
+  });
+
+  it("a PAID_CASH attestation is NEVER overridden by a card payment", () => {
+    // Those four block the charge at the database, so this pairing is a real
+    // conflict. Overriding it would conceal the double-collection 0187
+    // exists to prevent.
+    const c = census({
+      appointments: [appt({ id: "cash" })],
+      charges: [charge({ appointment_id: "cash" })],
+      terminalCardMoneyAppointmentIds: ["cash"],
+      settlements: [settlement({ appointment_id: "cash", method: "paid_cash", amount_cents: 15_000 })],
+    });
+    expect(value(c.externallyAttestedCents)).toBe(15_000);
+    expect(value(c.stillOwedSupersededByCard)).toBe(0);
+  });
+
+  // -------------------------------------------------------------------------
+  // AN UNDATED REFUND REVERSES AN UNDATED PAYMENT — Codex P2
+  // -------------------------------------------------------------------------
+
+  it("a refund reversing an UNDATED payment is not from another period", () => {
+    const c = census({
+      appointments: [appt({ id: "a" })],
+      refunds: [{ refund_amount_cents: 5_000, charged_at: null } as never],
+    });
+    expect(value(c.refundsReversingOtherPeriods)).toBe(0);
+    expect(value(c.refundsReversingUnknownPeriod)).toBe(1);
+  });
+
+  it("a refund reversing a DATED payment from another period still counts as one", () => {
+    const c = census({
+      appointments: [appt({ id: "a" })],
+      refunds: [{ refund_amount_cents: 5_000, charged_at: "2026-07-01T10:00:00.000Z" } as never],
+    });
+    expect(value(c.refundsReversingOtherPeriods)).toBe(1);
+    expect(value(c.refundsReversingUnknownPeriod)).toBe(0);
   });
 
   it("a PRICELESS treatment reversed to nothing still explains the gap it opens", () => {

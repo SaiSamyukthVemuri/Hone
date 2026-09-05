@@ -291,6 +291,7 @@ export async function loadFinancialsView(
               customPricing: ledgers.customPricing,
               everPaidDatedAppointmentIds: ledgers.everPaidDatedAppointmentIds,
               everPaidUndatedAppointmentIds: ledgers.everPaidUndatedAppointmentIds,
+              terminalCardMoneyAppointmentIds: ledgers.terminalCardMoneyAppointmentIds,
               todayLocal,
               snapshot: now,
               windowStartUtc: moneyStartUtc,
@@ -416,6 +417,7 @@ type MoneyLedgers =
       readonly customPricing: readonly CustomPricingRow[];
       readonly everPaidDatedAppointmentIds: readonly string[];
       readonly everPaidUndatedAppointmentIds: readonly string[];
+      readonly terminalCardMoneyAppointmentIds: readonly string[];
       readonly ledgerOpensAt: string | null;
     }
   | { readonly ok: false; readonly cause: FinancialUnknownCause };
@@ -480,7 +482,14 @@ async function readMoneyLedgers(
   // was unmistakably recorded. Studio-wide and page-safe, for the same reason
   // the settlements read is.
   let everPaidCount: number | null = null;
-  const everPaidRead = fetchAllRows<{ appointment_id: string | null; charged_at: string | null }>(
+  type ExistenceRow = {
+    appointment_id: string | null;
+    charged_at: string | null;
+    amount_cents: number | null;
+    refund_status: string | null;
+    refund_amount_cents: number | null;
+  };
+  const everPaidRead = fetchAllRows<ExistenceRow>(
     async (from, to) => {
       const page = await supabase
         .from("payment_charge_attempts")
@@ -488,7 +497,14 @@ async function readMoneyLedgers(
         // succeeded payment may carry no date at all, which proves a payment
         // exists while leaving its period unknown — a third state, and one that
         // must not be filed as "another period".
-        .select("appointment_id, charged_at", { count: "exact" })
+        // `amount_cents` and the refund columns come along so the SAME read can
+        // answer a second, narrower question: is any of this money TERMINAL —
+        // succeeded and not fully reversed? That is 0187's own predicate, and
+        // it is what may outrank a `still_owes` attestation. A fully refunded
+        // payment stays a payment RECORD and is not terminal money.
+        .select("appointment_id, charged_at, amount_cents, refund_status, refund_amount_cents", {
+          count: "exact",
+        })
         .eq("studio_id", studioId)
         .eq("status", "succeeded")
         .eq("stripe_livemode", livemode)
@@ -499,10 +515,7 @@ async function readMoneyLedgers(
         everPaidCount = page.count;
       }
       return {
-        data: (page.data ?? null) as Array<{
-          appointment_id: string | null;
-          charged_at: string | null;
-        }> | null,
+        data: (page.data ?? null) as ExistenceRow[] | null,
         error: page.error as { message: string } | null,
       };
     },
@@ -621,7 +634,7 @@ async function readMoneyLedgers(
   // `settlementCount` rather than a per-page count: the claim is about the
   // whole enumeration, which is the only thing that can be complete.
   const t = complete<SettlementRow>(settlements.data, settlements.error, settlementCount);
-  const ep = complete<{ appointment_id: string | null; charged_at: string | null }>(
+  const ep = complete<ExistenceRow>(
     everPaid.data,
     everPaid.error,
     everPaidCount,
@@ -661,6 +674,26 @@ async function readMoneyLedgers(
       ? ep.rows.flatMap((row) =>
           row.appointment_id === null || row.charged_at !== null ? [] : [row.appointment_id],
         )
+      : [],
+    // TERMINAL MONEY: succeeded and NOT fully reversed, spelled exactly as
+    // 0187 spells it. A missing amount cannot establish that money stayed, so
+    // it fails closed and is excluded.
+    terminalCardMoneyAppointmentIds: ep.ok
+      ? ep.rows.flatMap((row) => {
+          if (row.appointment_id === null) return [];
+          if (typeof row.amount_cents !== "number") return [];
+          // NO `?? 0` HERE. 0187 spells this with `coalesce(...,0)`, but a
+          // default inside a money comparison is exactly what this file's own
+          // guard forbids, and the explicit form says the same thing: a
+          // succeeded refund with no readable amount does not establish that
+          // the payment was fully reversed, so the money still counts as
+          // terminal.
+          const reversed =
+            row.refund_status === "succeeded" &&
+            typeof row.refund_amount_cents === "number" &&
+            row.refund_amount_cents >= row.amount_cents;
+          return reversed ? [] : [row.appointment_id];
+        })
       : [],
     ledgerOpensAt: openedRows[0]?.charged_at ?? null,
   };

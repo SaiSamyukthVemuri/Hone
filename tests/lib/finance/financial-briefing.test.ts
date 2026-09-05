@@ -842,7 +842,7 @@ describe("the all-time payment-existence read", () => {
       path.join(process.cwd(), "lib/finance/financial-briefing.ts"),
       "utf8",
     );
-    const read = src.slice(src.indexOf('.select("appointment_id, charged_at", { count: "exact" })'));
+    const read = src.slice(src.indexOf('.select("appointment_id, charged_at, amount_cents'));
     const head = read.slice(0, 400);
     expect(head).toContain('.eq("status", "succeeded")');
     expect(head).toContain('.eq("stripe_livemode", livemode)');
