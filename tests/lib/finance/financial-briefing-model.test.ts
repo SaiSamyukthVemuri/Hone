@@ -384,7 +384,8 @@ function census(over: Partial<Parameters<typeof summarizeDeliveredMoney>[0]> = {
     refunds: [],
     settlements: [],
     customPricing: [],
-    everPaidAppointmentIds: [],
+    everPaidDatedAppointmentIds: [],
+    everPaidUndatedAppointmentIds: [],
     todayLocal: "2026-08-27",
     snapshot: NOW,
     windowStartUtc: WINDOW_START,
@@ -1069,14 +1070,14 @@ describe("a card payment that was REFUNDED IN FULL is not a collection", () => {
   // ledger.
   //
   // The two authorities stay separate: the cash-movement window is untouched,
-  // and `everPaidAppointmentIds` answers only whether the visit has ever
+  // and `everPaidDatedAppointmentIds` answers only whether the visit has ever
   // acquired authoritative card-payment evidence.
 
   it("a visit paid in a LATER period is not No payment recorded", () => {
     const c = census({
       appointments: [appt({ id: "aug31" })],
       charges: [], // the September charge is outside this window, correctly
-      everPaidAppointmentIds: ["aug31"],
+      everPaidDatedAppointmentIds: ["aug31"],
     });
     expect(value(c.unresolvedVisits)).toBe(0);
     expect(value(c.paidInAnotherPeriodVisits)).toBe(1);
@@ -1089,7 +1090,7 @@ describe("a card payment that was REFUNDED IN FULL is not a collection", () => {
     const c = census({
       appointments: [appt({ id: "sep1" })],
       charges: [],
-      everPaidAppointmentIds: ["sep1"],
+      everPaidDatedAppointmentIds: ["sep1"],
     });
     expect(value(c.unresolvedVisits)).toBe(0);
     expect(value(c.paidInAnotherPeriodVisits)).toBe(1);
@@ -1100,7 +1101,7 @@ describe("a card payment that was REFUNDED IN FULL is not a collection", () => {
     const c = census({
       appointments: [appt({ id: "none" })],
       charges: [],
-      everPaidAppointmentIds: [],
+      everPaidDatedAppointmentIds: [],
     });
     expect(value(c.unresolvedVisits)).toBe(1);
     expect(value(c.paidInAnotherPeriodVisits)).toBe(0);
@@ -1110,7 +1111,7 @@ describe("a card payment that was REFUNDED IN FULL is not a collection", () => {
     const c = census({
       appointments: [appt({ id: "here" })],
       charges: [charge({ appointment_id: "here" })],
-      everPaidAppointmentIds: ["here"],
+      everPaidDatedAppointmentIds: ["here"],
     });
     expect(value(c.collectedOnDeliveredVisits)).toBe(1);
     expect(value(c.paidInAnotherPeriodVisits)).toBe(0);
@@ -1125,7 +1126,7 @@ describe("a card payment that was REFUNDED IN FULL is not a collection", () => {
       charges: [
         charge({ appointment_id: "rev", refund_status: "succeeded", refund_amount_cents: 15_000 }),
       ],
-      everPaidAppointmentIds: ["rev"],
+      everPaidDatedAppointmentIds: ["rev"],
     });
     expect(value(c.unresolvedVisits)).toBe(0);
     expect(value(c.refundedToZeroVisits)).toBe(1);
@@ -1136,9 +1137,69 @@ describe("a card payment that was REFUNDED IN FULL is not a collection", () => {
     const c = census({
       appointments: [appt({ id: "cash" })],
       settlements: [settlement({ appointment_id: "cash", amount_cents: 15_000 })],
-      everPaidAppointmentIds: [],
+      everPaidDatedAppointmentIds: [],
     });
     expect(value(c.unresolvedVisits)).toBe(0);
+    expect(value(c.paidInAnotherPeriodVisits)).toBe(0);
+  });
+
+  // -------------------------------------------------------------------------
+  // AN UNDATED PAYMENT IS NOT "ANOTHER PERIOD" — Codex P2-A
+  // -------------------------------------------------------------------------
+  //
+  // A succeeded payment can carry `charged_at = NULL`. That proves a payment
+  // EXISTS while leaving its period UNKNOWN, and those are different facts.
+  // Filing it under "Paid by card in another period" asserts a chronology
+  // nothing establishes, and contradicts the unattributed section on the same
+  // screen, which correctly says such payments belong to no period at all.
+
+  it("a payment with NO DATE is its own state, not another period", () => {
+    const c = census({
+      appointments: [appt({ id: "u" })],
+      everPaidUndatedAppointmentIds: ["u"],
+    });
+    expect(value(c.paidWithUnknownDateVisits)).toBe(1);
+    expect(value(c.paidInAnotherPeriodVisits)).toBe(0);
+    expect(value(c.unresolvedVisits)).toBe(0);
+    expect(value(c.collectedOnDeliveredVisits)).toBe(0);
+  });
+
+  it("a DATED payment outside the window is still another period", () => {
+    const c = census({
+      appointments: [appt({ id: "d" })],
+      everPaidDatedAppointmentIds: ["d"],
+    });
+    expect(value(c.paidInAnotherPeriodVisits)).toBe(1);
+    expect(value(c.paidWithUnknownDateVisits)).toBe(0);
+  });
+
+  it("a payment IN this window outranks both — it is collected", () => {
+    const c = census({
+      appointments: [appt({ id: "h" })],
+      charges: [charge({ appointment_id: "h" })],
+      everPaidDatedAppointmentIds: ["h"],
+    });
+    expect(value(c.collectedOnDeliveredVisits)).toBe(1);
+    expect(value(c.paidInAnotherPeriodVisits)).toBe(0);
+    expect(value(c.paidWithUnknownDateVisits)).toBe(0);
+  });
+
+  it("a visit carrying BOTH a dated and an undated payment is a KNOWN period", () => {
+    // The dated row establishes a period; the undated one adds no doubt about
+    // whether a payment exists, so the stronger of the two states wins.
+    const c = census({
+      appointments: [appt({ id: "b" })],
+      everPaidDatedAppointmentIds: ["b"],
+      everPaidUndatedAppointmentIds: ["b"],
+    });
+    expect(value(c.paidInAnotherPeriodVisits)).toBe(1);
+    expect(value(c.paidWithUnknownDateVisits)).toBe(0);
+  });
+
+  it("no payment evidence of any kind is still No payment recorded", () => {
+    const c = census({ appointments: [appt({ id: "n" })] });
+    expect(value(c.unresolvedVisits)).toBe(1);
+    expect(value(c.paidWithUnknownDateVisits)).toBe(0);
     expect(value(c.paidInAnotherPeriodVisits)).toBe(0);
   });
 

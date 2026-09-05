@@ -12,6 +12,7 @@ import {
   CONSULTATIONS_ARE_UNPAID_TIME,
   DELIVERED_MEANS,
   MONEY_WINDOW_IS_NARROWER,
+  COMPLETED_IS_NOT_THE_MONEY_POPULATION,
   NO_PAYMENT_RECORDED_IS_NOT_OWED,
   PAID_BUT_NOTHING_TO_COLLECT,
   PER_HOUR_POPULATION,
@@ -316,8 +317,15 @@ export function FinancialSpine({ briefing }: { briefing: FinancialBriefing }) {
         ) : (
           <Unknown cause={calendar.completed.cause} />
         )}
+        {/*
+          CONDITIONED, NOT DELETED. Below the money floor there genuinely is no
+          service value on this screen and saying so is useful; above it, the
+          section renders immediately underneath and the old sentence denied it.
+        */}
         <p className="text-sm text-fg">
-          What this work was worth is not on this screen yet.
+          {briefing.money.covered
+            ? COMPLETED_IS_NOT_THE_MONEY_POPULATION
+            : "What this work was worth is not on this screen yet."}
         </p>
       </section>
 
@@ -657,6 +665,18 @@ function DeliveredMoney({ briefing }: { briefing: FinancialBriefing }) {
           {c.paidInAnotherPeriodVisits.known && c.paidInAnotherPeriodVisits.value > 0 ? (
             <Line label="Paid by card in another period">
               <Visits fact={c.paidInAnotherPeriodVisits} />
+            </Line>
+          ) : null}
+          {/*
+            A succeeded payment can carry no date at all. That is a THIRD state:
+            the payment exists, and which period it belongs to is unknown. It is
+            not "another period" — that would assert a chronology nothing
+            establishes, and would contradict the undated-payment count this
+            screen already reports.
+          */}
+          {c.paidWithUnknownDateVisits.known && c.paidWithUnknownDateVisits.value > 0 ? (
+            <Line label="Paid by card, date not recorded">
+              <Visits fact={c.paidWithUnknownDateVisits} />
             </Line>
           ) : null}
           <Line label="No payment recorded">

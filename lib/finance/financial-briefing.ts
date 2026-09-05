@@ -203,6 +203,23 @@ export async function loadFinancialsView(
   // appointment into the wrong period twice a year.
   const startUtc = utcInstantFromLocal(range.startLocal, "00:00", tz).toISOString();
   const endUtc = utcInstantFromLocal(range.endLocalExclusive, "00:00", tz).toISOString();
+  /**
+   * THE TRANSACTION WINDOW, BOUNDED BY THE EVIDENCE THAT LABELS IT.
+   *
+   * Every period this surface offers is anchored on today, so `endUtc` is
+   * always a FUTURE boundary — "month" ends at next month's first local
+   * midnight. Reading money up to that boundary while stamping the census with
+   * the captured `evidenceInstant` let a charge committing after that instant,
+   * while these asynchronous reads were still running, enter totals labelled
+   * with an earlier time. The published timestamp did not bound the money it
+   * labelled.
+   *
+   * `min` rather than a bare substitution: a genuinely CLOSED period must keep
+   * its canonical end. No such period is reachable here today, and the law is
+   * written the way it must behave when one is.
+   */
+  const evidenceInstantUtc = now.toISOString();
+  const transactionEndUtc = endUtc < evidenceInstantUtc ? endUtc : evidenceInstantUtc;
 
   const moneyStartLocal =
     range.startLocal > MONEY_WINDOW_OPENS_LOCAL ? range.startLocal : MONEY_WINDOW_OPENS_LOCAL;
@@ -215,9 +232,13 @@ export async function loadFinancialsView(
 
   const supabase = supabaseClient ?? (await createClient());
   const [appointments, ledgers, unattributed] = await Promise.all([
+    // THE SERVICE-PERIOD READ KEEPS THE PERIOD END, deliberately. Delivered
+    // work is governed by when it was scheduled, not by the transaction clock;
+    // capping it at the evidence instant would hide appointments that genuinely
+    // belong to this window. The two authorities are derived separately.
     readAppointments(supabase, studio.id, startUtc, endUtc),
     moneyCovered
-      ? readMoneyLedgers(supabase, studio.id, moneyStartUtc, endUtc)
+      ? readMoneyLedgers(supabase, studio.id, moneyStartUtc, transactionEndUtc)
       : Promise.resolve(null),
     // ISSUED UNCONDITIONALLY, and that is the point. This count is ALL-TIME, so
     // the money window's floor has no bearing on it. It used to ride inside the
@@ -268,15 +289,34 @@ export async function loadFinancialsView(
               refunds: ledgers.refunds,
               settlements: ledgers.settlements,
               customPricing: ledgers.customPricing,
-              everPaidAppointmentIds: ledgers.everPaidAppointmentIds,
+              everPaidDatedAppointmentIds: ledgers.everPaidDatedAppointmentIds,
+              everPaidUndatedAppointmentIds: ledgers.everPaidUndatedAppointmentIds,
               todayLocal,
               snapshot: now,
               windowStartUtc: moneyStartUtc,
-              windowEndUtc: endUtc,
+              // The MODEL's transaction window matches the READ's, or the two
+              // would classify a refund's originating period against different
+              // boundaries.
+              windowEndUtc: transactionEndUtc,
             }),
             // KNOWN, and `null` inside it means the read succeeded and found
             // no card ledger — a different claim from the unknowns above.
-            ledgerOpensAt: known<string | null>(ledgers.ledgerOpensAt),
+            //
+            // UNLESS UNDATED PAYMENTS EXIST. The opening read orders by
+            // `charged_at` and takes one row, so a studio whose succeeded
+            // payments all carry a null date yields zero rows — and reading
+            // that as "no card ledger" licenses a chronological claim the
+            // evidence contradicts, on a screen that separately reports those
+            // very payments. A dated row is no better: an undated payment could
+            // precede it, so it cannot be called the FIRST one either.
+            //
+            // Distinct from the read-failure case above: this query SUCCEEDED.
+            // What is unknown is the chronology, not the read, so the census is
+            // untouched and only the banner is withheld.
+            ledgerOpensAt:
+              unattributed.known && unattributed.value > 0
+                ? unknownBecause<string | null>("unknowable")
+                : known<string | null>(ledgers.ledgerOpensAt),
           };
 
   return {
@@ -289,7 +329,7 @@ export async function loadFinancialsView(
       endLocalExclusive: range.endLocalExclusive,
       label: range.label,
       calendar,
-      evidenceInstant: now.toISOString(),
+      evidenceInstant: evidenceInstantUtc,
       unattributedChargesAllTime: unattributed,
       money: moneyCovered
         ? {
@@ -374,7 +414,8 @@ type MoneyLedgers =
       readonly refunds: readonly RefundRow[];
       readonly settlements: readonly SettlementRow[];
       readonly customPricing: readonly CustomPricingRow[];
-      readonly everPaidAppointmentIds: readonly string[];
+      readonly everPaidDatedAppointmentIds: readonly string[];
+      readonly everPaidUndatedAppointmentIds: readonly string[];
       readonly ledgerOpensAt: string | null;
     }
   | { readonly ok: false; readonly cause: FinancialUnknownCause };
@@ -439,11 +480,15 @@ async function readMoneyLedgers(
   // was unmistakably recorded. Studio-wide and page-safe, for the same reason
   // the settlements read is.
   let everPaidCount: number | null = null;
-  const everPaidRead = fetchAllRows<{ appointment_id: string | null }>(
+  const everPaidRead = fetchAllRows<{ appointment_id: string | null; charged_at: string | null }>(
     async (from, to) => {
       const page = await supabase
         .from("payment_charge_attempts")
-        .select("appointment_id", { count: "exact" })
+        // `charged_at` IS PROJECTED, and it is not a second money read. A
+        // succeeded payment may carry no date at all, which proves a payment
+        // exists while leaving its period unknown — a third state, and one that
+        // must not be filed as "another period".
+        .select("appointment_id, charged_at", { count: "exact" })
         .eq("studio_id", studioId)
         .eq("status", "succeeded")
         .eq("stripe_livemode", livemode)
@@ -454,7 +499,10 @@ async function readMoneyLedgers(
         everPaidCount = page.count;
       }
       return {
-        data: (page.data ?? null) as Array<{ appointment_id: string | null }> | null,
+        data: (page.data ?? null) as Array<{
+          appointment_id: string | null;
+          charged_at: string | null;
+        }> | null,
         error: page.error as { message: string } | null,
       };
     },
@@ -573,7 +621,7 @@ async function readMoneyLedgers(
   // `settlementCount` rather than a per-page count: the claim is about the
   // whole enumeration, which is the only thing that can be complete.
   const t = complete<SettlementRow>(settlements.data, settlements.error, settlementCount);
-  const ep = complete<{ appointment_id: string | null }>(
+  const ep = complete<{ appointment_id: string | null; charged_at: string | null }>(
     everPaid.data,
     everPaid.error,
     everPaidCount,
@@ -601,8 +649,18 @@ async function readMoneyLedgers(
     refunds: r.ok ? r.rows : [],
     settlements: t.ok ? t.rows : [],
     customPricing: cp.ok ? cp.rows : [],
-    everPaidAppointmentIds: ep.ok
-      ? ep.rows.flatMap((row) => (row.appointment_id === null ? [] : [row.appointment_id]))
+    // SPLIT BY WHETHER A DATE EXISTS. A visit carrying both a dated and an
+    // undated payment belongs in the DATED set: the dated row establishes a
+    // period, so nothing about that visit is in doubt.
+    everPaidDatedAppointmentIds: ep.ok
+      ? ep.rows.flatMap((row) =>
+          row.appointment_id === null || row.charged_at === null ? [] : [row.appointment_id],
+        )
+      : [],
+    everPaidUndatedAppointmentIds: ep.ok
+      ? ep.rows.flatMap((row) =>
+          row.appointment_id === null || row.charged_at !== null ? [] : [row.appointment_id],
+        )
       : [],
     ledgerOpensAt: openedRows[0]?.charged_at ?? null,
   };

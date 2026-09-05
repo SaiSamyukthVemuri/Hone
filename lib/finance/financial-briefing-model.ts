@@ -551,6 +551,13 @@ export type DeliveredMoneyCensus = {
    * emphatically not "No payment recorded".
    */
   readonly paidInAnotherPeriodVisits: Fact<number>;
+  /**
+   * Delivered treatment whose only card payment carries no date.
+   *
+   * Neither collected here, nor "another period" — the period is unknown — nor
+   * "No payment recorded", because a payment plainly was.
+   */
+  readonly paidWithUnknownDateVisits: Fact<number>;
   readonly collectionRateBasisPoints: Fact<number>;
   readonly unresolvedVisits: Fact<number>;
   readonly unresolvedServiceValueCents: Fact<number>;
@@ -611,7 +618,17 @@ export function summarizeDeliveredMoney(input: {
    * REQUIRED, not optional. A caller that forgets it would silently reintroduce
    * the defect, so the compiler asks for it.
    */
-  readonly everPaidAppointmentIds: readonly string[];
+  readonly everPaidDatedAppointmentIds: readonly string[];
+  /**
+   * Delivered appointments whose succeeded live payments carry NO `charged_at`.
+   *
+   * A THIRD STATE, not a variant of the other two. Such a payment proves that
+   * money changed hands and leaves its PERIOD unknown, and those are different
+   * facts. Filing it under "another period" asserts a chronology nothing
+   * establishes — and contradicts the unattributed section on the same screen,
+   * which correctly says these payments belong to no period at all.
+   */
+  readonly everPaidUndatedAppointmentIds: readonly string[];
   /** Studio-local `YYYY-MM-DD`. Injected: this module never reads a clock. */
   readonly todayLocal: string;
   readonly snapshot: Date;
@@ -1015,8 +1032,10 @@ export function summarizeDeliveredMoney(input: {
   // Rather than describe that possibility in prose, it is counted here and
   // shown only when it actually happens. Production holds three null-priced
   // services today, so this is reachable, not hypothetical.
-  const everPaid = new Set(input.everPaidAppointmentIds);
+  const everPaidDated = new Set(input.everPaidDatedAppointmentIds);
+  const everPaidUndated = new Set(input.everPaidUndatedAppointmentIds);
   let paidInAnotherPeriodVisits = 0;
+  let paidWithUnknownDateVisits = 0;
   let cardPaidWithoutAPrice = 0;
   for (const id of cardPaid) {
     if (!chargeable.has(id)) cardPaidWithoutAPrice += 1;
@@ -1037,8 +1056,15 @@ export function summarizeDeliveredMoney(input: {
     // this visit, but the studio's ledger does. Saying "No payment recorded"
     // would be false; saying "collected" would move money into a period it did
     // not move in. It gets its own line instead.
-    if (everPaid.has(id)) {
+    // A DATED payment establishes a period, so it wins over an undated one:
+    // a visit carrying both is not in doubt about whether a period is known.
+    if (everPaidDated.has(id)) {
       paidInAnotherPeriodVisits += 1;
+      continue;
+    }
+    // Paid, but Hone cannot say when. Its own line rather than a guess.
+    if (everPaidUndated.has(id)) {
+      paidWithUnknownDateVisits += 1;
       continue;
     }
     unresolvedVisits += 1;
@@ -1096,6 +1122,7 @@ export function summarizeDeliveredMoney(input: {
     // bug report.
     refundedToZeroVisits: known(refundedToZero.size),
     paidInAnotherPeriodVisits: known(paidInAnotherPeriodVisits),
+    paidWithUnknownDateVisits: known(paidWithUnknownDateVisits),
     collectionRateBasisPoints,
     unresolvedVisits: known(unresolvedVisits),
     unresolvedServiceValueCents: known(unresolvedServiceValueCents),
@@ -1161,6 +1188,7 @@ export function unreadableDeliveredMoney(
     cardPaidWithoutAPrice: absent,
     refundedToZeroVisits: absent,
     paidInAnotherPeriodVisits: absent,
+    paidWithUnknownDateVisits: absent,
     collectionRateBasisPoints: absent,
     unresolvedVisits: absent,
     unresolvedServiceValueCents: absent,

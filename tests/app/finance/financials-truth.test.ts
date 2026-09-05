@@ -560,7 +560,17 @@ describe("NC-snapshot — one instant, passed as a parameter", () => {
 
   it("the snapshot reaches the model as an argument, and reaches the screen", () => {
     expect(CODE.model).toContain("snapshot: Date");
-    expect(CODE.loader).toContain("evidenceInstant: now.toISOString()");
+    // DERIVED FROM THE ONE CAPTURED CLOCK. Previously spelled inline as
+    // `evidenceInstant: now.toISOString()`; it is a named constant now because
+    // the transaction window is bounded by the same value, and the guarantee
+    // this pins is that BOTH come from that single `now` rather than from a
+    // second clock read.
+    expect(CODE.loader).toContain("const evidenceInstantUtc = now.toISOString()");
+    expect(CODE.loader).toContain("evidenceInstant: evidenceInstantUtc");
+    expect(CODE.loader).toContain("transactionEndUtc");
+    // ONE CLOCK READ in the whole loader — a second `new Date()` would let the
+    // stamp and the window disagree.
+    expect((CODE.loader.match(/new Date\(\)/g) ?? []).length).toBe(1);
     // ON SCREEN, not in a tooltip: two reports minutes apart legitimately
     // disagree, and without the instant that reads as a broken system.
     expect(CODE.spine).toContain("briefing.evidenceInstant");
@@ -2159,5 +2169,51 @@ describe("the payment count is counted in payments, not visits", () => {
         `<Visits fact={c.${visitFact}} />`,
       );
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE SCREEN MUST NOT CONTRADICT ITSELF — Codex P2-D
+// ---------------------------------------------------------------------------
+//
+// The completed-work card retained a Slice-1 sentence saying what this work was
+// worth is not on this screen yet. Slice 2 renders "Service value of delivered
+// work" immediately below it. On every covered August-or-later period an owner
+// saw both at once.
+//
+// The sentence is not simply deleted: for a period entirely below the money
+// floor there IS no service value on the screen, and saying so is useful. It is
+// CONDITIONED instead.
+
+describe("the completed-work card does not deny what the money section shows", () => {
+  const spine = () => codeOnly(read(FILES.spine));
+
+  it("the absence claim is not rendered unconditionally", () => {
+    const src = spine();
+    const at = src.indexOf("What this work was worth is not on this screen yet");
+    expect(at, "the sentence has moved; this guard needs rewriting").toBeGreaterThan(-1);
+    // It must sit inside a coverage branch rather than in the card's body.
+    const before = src.slice(Math.max(0, at - 600), at);
+    expect(
+      before,
+      "the Slice-1 absence claim still renders whether or not money is covered",
+    ).toMatch(/money\.covered/);
+  });
+
+  it("a covered period says something TRUE about the two sections instead", () => {
+    const src = spine();
+    expect(src).toContain("COMPLETED_IS_NOT_THE_MONEY_POPULATION");
+  });
+
+  it("the replacement names the real distinction, not a slogan", () => {
+    const copy = codeOnly(read("lib/finance/financial-copy.ts"));
+    const at = copy.indexOf("COMPLETED_IS_NOT_THE_MONEY_POPULATION");
+    expect(at).toBeGreaterThan(-1);
+    const sentence = copy.slice(at, at + 400);
+    // The distinction that actually exists: completed is a calendar status;
+    // the money below is measured over DELIVERED work.
+    expect(sentence).toMatch(/delivered/i);
+    // ...and it must not resurrect the absence claim.
+    expect(sentence).not.toMatch(/not on this screen yet/);
   });
 });

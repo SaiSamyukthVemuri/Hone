@@ -356,6 +356,17 @@ function stubTables(
       pages?: unknown[][];
       /** Fail the Nth page (0-based) of a paginated read. */
       failPage?: number;
+      /**
+       * Answer per-read, from the filters THAT read used.
+       *
+       * `payment_charge_attempts` is read four different ways on this screen —
+       * windowed charges, windowed refunds, the all-time existence read, the
+       * undated head count and the earliest-dated opening read. A stub that
+       * returns one shape for the whole table cannot express "the opening read
+       * finds nothing while undated payments exist", which is the entire
+       * subject of the undated-ledger finding.
+       */
+      resolve?: (ops: string) => { rows?: unknown[]; count?: number | null } | undefined;
     }
   >,
 ) {
@@ -366,8 +377,21 @@ function stubTables(
     tables.push(table);
     const stub = byTable[table] ?? { rows: [] };
     const call = (pageCalls[table] = (pageCalls[table] ?? 0) + 1) - 1;
+    const mine: Filter[] = [];
     const result = () => {
       if (stub.error) return { data: null, error: stub.error, count: null };
+      if (stub.resolve) {
+        const ops = mine.map((f) => `${f.op}(${JSON.stringify(f.args)})`).join(" ");
+        const answer = stub.resolve(ops);
+        if (answer) {
+          const rows = answer.rows ?? [];
+          return {
+            data: rows,
+            error: null,
+            count: answer.count === undefined ? rows.length : answer.count,
+          };
+        }
+      }
       if (stub.pages) {
         if (stub.failPage === call) return { data: null, error: { code: "57014" }, count: null };
         const page = stub.pages[call] ?? [];
@@ -393,6 +417,7 @@ function stubTables(
           }
           return (...args: unknown[]) => {
             filters.push({ table, op: String(prop), args });
+            mine.push({ op: String(prop), args });
             return proxy;
           };
         },
@@ -490,8 +515,16 @@ describe("FIN-C11 — a window reaching back before the ledger is flagged, never
   it("flags a window that starts before this studio's first verified payment", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-15T16:00:00.000Z"));
+    // The undated count is stated EXPLICITLY as zero. A stub that answered every
+    // read with the same row made the undated head count 1 as well, which now
+    // (correctly) withholds the banner — so the fixture has to say which of the
+    // two facts it means.
     const { client } = stubTables({
-      payment_charge_attempts: { rows: [{ charged_at: "2026-08-10T12:00:00.000Z" }] },
+      payment_charge_attempts: {
+        resolve: (ops) =>
+          ops.includes('is(["charged_at",null])') ? { rows: [], count: 0 } : undefined,
+        rows: [{ charged_at: "2026-08-10T12:00:00.000Z" }],
+      },
     });
     const b = granted(await loadFinancialsView(OWNER, studio("America/Toronto"), "month", client));
     expect(b.money.covered && b.money.precedesLedger).toBe(true);
@@ -542,6 +575,84 @@ describe("FIN-C11 — a window reaching back before the ledger is flagged, never
     const b = granted(await loadFinancialsView(OWNER, studio("America/Toronto"), "month", client));
     expect(b.money.covered && b.money.precedesLedger).toBe(false);
     expect(b.money.census.collectedOnDeliveredCents.known).toBe(false);
+  });
+
+  // -------------------------------------------------------------------------
+  // AN UNDATED PAYMENT IS NOT AN EMPTY LEDGER — Codex P2-B
+  // -------------------------------------------------------------------------
+  //
+  // Unlike the read-failure case above, this query SUCCEEDS. It orders by
+  // `charged_at` and takes one row, so a studio whose succeeded payments all
+  // carry `charged_at = NULL` yields zero rows — and that was read as "this
+  // studio has no card ledger", licensing "before your first card payment".
+  // The separately loaded unattributed count proves those payments exist.
+  //
+  // The banner states a CHRONOLOGY. It may render only when Hone can prove one.
+
+  it("only UNDATED payments cannot prove an empty ledger", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-15T16:00:00.000Z"));
+    // The opening read finds no dated row; the head-count read reports 3
+    // succeeded payments. Both are true at once, and only one of them is
+    // evidence about chronology.
+    const { client } = stubTables({
+      payment_charge_attempts: {
+        // The OPENING read (ordered by charged_at, limit 1) finds no dated row.
+        // The UNDATED head count reports three. Every other read is empty and
+        // consistent, so nothing is withdrawn and the banner decision is the
+        // only thing under test.
+        resolve: (ops) =>
+          ops.includes('limit([1])')
+            ? { rows: [] }
+            : ops.includes('is(["charged_at",null])')
+              ? { rows: [], count: 3 }
+              : { rows: [] },
+      },
+    });
+    const b = granted(await loadFinancialsView(OWNER, studio("America/Toronto"), "month", client));
+    expect(b.money.covered && b.money.precedesLedger).toBe(false);
+    // ...and the census is NOT withdrawn: this is a truthful-claim fix, not a
+    // read failure, so every other figure must survive it.
+    expect(b.money.covered && b.money.census.deliveredTreatmentVisits.known).toBe(true);
+  });
+
+  it("a DATED payment cannot be called FIRST while an undated one exists", async () => {
+    // The conservative truth: an undated row could chronologically precede the
+    // earliest dated one, so "first" is not established and the window cannot
+    // be said to precede it.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-15T16:00:00.000Z"));
+    const { client } = stubTables({
+      payment_charge_attempts: {
+        resolve: (ops) =>
+          ops.includes('limit([1])')
+            ? { rows: [{ charged_at: "2026-08-10T12:00:00.000Z" }] }
+            : ops.includes('is(["charged_at",null])')
+              ? { rows: [], count: 5 }
+              : { rows: [] },
+      },
+    });
+    const b = granted(await loadFinancialsView(OWNER, studio("America/Toronto"), "month", client));
+    expect(b.money.covered && b.money.precedesLedger).toBe(false);
+    expect(b.money.covered && b.money.census.deliveredTreatmentVisits.known).toBe(true);
+  });
+
+  it("a dated payment with NO undated rows still proves the chronology", async () => {
+    // The control: without an undated row the banner is exactly as before.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-15T16:00:00.000Z"));
+    const { client } = stubTables({
+      payment_charge_attempts: {
+        resolve: (ops) =>
+          ops.includes('limit([1])')
+            ? { rows: [{ charged_at: "2026-08-10T12:00:00.000Z" }] }
+            : ops.includes('is(["charged_at",null])')
+              ? { rows: [], count: 0 }
+              : { rows: [] },
+      },
+    });
+    const b = granted(await loadFinancialsView(OWNER, studio("America/Toronto"), "month", client));
+    expect(b.money.covered && b.money.precedesLedger).toBe(true);
   });
 
   it("NO LEDGER AT ALL is the same statement, maximally — flagged, not zeroed", async () => {
@@ -731,7 +842,7 @@ describe("the all-time payment-existence read", () => {
       path.join(process.cwd(), "lib/finance/financial-briefing.ts"),
       "utf8",
     );
-    const read = src.slice(src.indexOf('.select("appointment_id", { count: "exact" })'));
+    const read = src.slice(src.indexOf('.select("appointment_id, charged_at", { count: "exact" })'));
     const head = read.slice(0, 400);
     expect(head).toContain('.eq("status", "succeeded")');
     expect(head).toContain('.eq("stripe_livemode", livemode)');
@@ -750,6 +861,93 @@ describe("the all-time payment-existence read", () => {
     const b = granted(await loadFinancialsView(OWNER, studio("America/Toronto"), "month", client));
     expect(b.money.covered && b.money.census.unresolvedVisits.known).toBe(false);
     expect(b.money.covered && b.money.census.paidInAnotherPeriodVisits.known).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE EVIDENCE INSTANT MUST ACTUALLY BOUND THE READ — Codex P2-C
+// ---------------------------------------------------------------------------
+//
+// Every period this surface offers is anchored on today, so `endLocalExclusive`
+// is always in the FUTURE: "month" ends at next month's first local midnight.
+// The transaction reads used that future boundary while the footer stamped the
+// census with the captured `evidenceInstant`, so a charge committing after that
+// instant while these asynchronous reads were in flight could enter totals
+// labelled with an earlier time. The published timestamp did not bound the
+// money it labelled.
+//
+// The filter is applied by the DATABASE, so what decides inclusion in
+// production is the bound SENT. That is what these tests assert — deterministic,
+// no sleeps, no wall clock.
+
+describe("transaction reads are bounded by the evidence instant", () => {
+  const boundsFor = async (nowIso: string, period: "today" | "week" | "month") => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(nowIso));
+    const { client, filters } = stubTables({});
+    const b = granted(await loadFinancialsView(OWNER, studio("America/Toronto"), period, client));
+    const upper = (col: string) =>
+      filters
+        .filter((f) => f.op === "lt" && Array.isArray(f.args) && f.args[0] === col)
+        .map((f) => String((f.args as unknown[])[1]));
+    return { evidenceInstant: b.evidenceInstant, charged: upper("charged_at"), refunded: upper("refunded_at") };
+  };
+
+  it("the charge window ends at the evidence instant, not the period end", async () => {
+    const { evidenceInstant, charged } = await boundsFor("2026-08-15T16:00:00.000Z", "month");
+    expect(charged.length).toBeGreaterThan(0);
+    for (const bound of charged) {
+      expect(bound, "a charge read reached past the evidence instant").toBe(evidenceInstant);
+    }
+  });
+
+  it("the refund window ends there too — the same authority governs both", async () => {
+    const { evidenceInstant, refunded } = await boundsFor("2026-08-15T16:00:00.000Z", "month");
+    expect(refunded.length).toBeGreaterThan(0);
+    for (const bound of refunded) {
+      expect(bound, "a refund read reached past the evidence instant").toBe(evidenceInstant);
+    }
+  });
+
+  it("holds for every period this surface offers", async () => {
+    for (const period of ["today", "week", "month"] as const) {
+      const { evidenceInstant, charged, refunded } = await boundsFor(
+        "2026-08-15T16:00:00.000Z",
+        period,
+      );
+      for (const bound of [...charged, ...refunded]) {
+        expect(bound, `${period} reached past the evidence instant`).toBe(evidenceInstant);
+      }
+    }
+  });
+
+  it("a LATER evidence instant moves the bound with it", async () => {
+    // The same query at a newer instant admits what the earlier one excluded —
+    // the row becomes visible because the boundary moved, not because the
+    // window was widened.
+    const earlier = await boundsFor("2026-08-15T16:00:00.000Z", "month");
+    const later = await boundsFor("2026-08-15T18:30:00.000Z", "month");
+    expect(later.evidenceInstant > earlier.evidenceInstant).toBe(true);
+    expect(later.charged[0] > earlier.charged[0]).toBe(true);
+  });
+
+  it("THE SERVICE-PERIOD READ IS NOT TRUNCATED — a different authority", async () => {
+    // Delivered work is governed by the period, not by the transaction clock.
+    // Capping it here would hide appointments that genuinely belong to the
+    // window, so this asserts the two authorities stayed separate.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-15T16:00:00.000Z"));
+    const { client, filters } = stubTables({});
+    const b = granted(await loadFinancialsView(OWNER, studio("America/Toronto"), "month", client));
+    const startsAtUpper = filters
+      .filter((f) => f.op === "lt" && Array.isArray(f.args) && f.args[0] === "starts_at")
+      .map((f) => String((f.args as unknown[])[1]));
+    expect(startsAtUpper.length).toBeGreaterThan(0);
+    for (const bound of startsAtUpper) {
+      expect(bound, "the appointments read was capped at the evidence instant").not.toBe(
+        b.evidenceInstant,
+      );
+    }
   });
 });
 

@@ -120,6 +120,24 @@ export const UNKNOWN_ACTION: Partial<Record<FinancialUnknownCause, string>> = {
   not_enumerable: "Choose a shorter period",
 };
 
+/**
+ * What the completed-work card says once the money section is on the screen.
+ *
+ * IT REPLACES AN ABSENCE CLAIM THAT STOPPED BEING TRUE. The card carried
+ * "What this work was worth is not on this screen yet" from Slice 1, and Slice
+ * 2 renders "Service value of delivered work" immediately below it — so on
+ * every covered period an owner read both at once.
+ *
+ * The replacement names the distinction that actually exists rather than
+ * apologising for one that no longer does: COMPLETED is a calendar status
+ * somebody set, and the money below is measured over DELIVERED work — visits
+ * that had finished when the page was built, whether or not anyone marked them
+ * afterwards. The two counts can legitimately differ, and that is worth saying
+ * exactly where they sit next to each other.
+ */
+export const COMPLETED_IS_NOT_THE_MONEY_POPULATION =
+  "Completed is a status someone set. The money below is measured over delivered work — visits that had finished when this page was built — so these two counts can differ.";
+
 // ---------------------------------------------------------------------------
 // Slice 2 — delivered money
 // ---------------------------------------------------------------------------
