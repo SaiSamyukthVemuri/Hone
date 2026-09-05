@@ -9,6 +9,15 @@ Working agreements for anyone (human or agent) changing this repository.
 [ENGINEERING_STANDARDS.md](./ENGINEERING_STANDARDS.md) is canonical and is **not
 restated here**. Follow it.
 
+[docs/16_TOOL_AUTHORITY.md](./docs/16_TOOL_AUTHORITY.md) names which sources may
+settle a question and which may only raise one. It adds no process. **T0/T1 work
+acquires no role, review or evidence-stamping ceremony from it** — a one-line UI
+change asserting nothing about production gets none of it. But whenever work of
+*any* tier makes a claim about production, database state, a deployment, provider
+state, or current-versus-historical evidence, that document's claim-validity and
+source-of-truth rules apply. A T0 production reconciliation is exactly such a
+claim.
+
 **Validation depth follows risk, not habit.** Determine the baseline risk tier
 (T0–T3) before choosing how much to prove.
 
