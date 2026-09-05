@@ -21,9 +21,14 @@ it states the contract FIN-02 must meet.
 
 ## 0. The one property the current architecture cannot prove
 
-> **A row that comes into existence after the snapshot instant must be incapable
-> of affecting the snapshot — even when its business-event date is NULL, and
-> even when it is a correction to a row that already existed.**
+> **A row that becomes visible after the FIN read's MVCC snapshot is
+> established must be incapable of affecting that response — even when its
+> business-event date is NULL, and even when it is a correction to a row that
+> already existed.**
+
+Stated as a row-visibility property, deliberately. A *timestamp* does not freeze
+anything; only the database's snapshot does. See §7.0 for why the two must never
+be treated as interchangeable.
 
 Application-side bounding cannot establish this. It can bound a row by a
 timestamp the row *carries*, but it cannot bound a row by *when the row came into
@@ -227,16 +232,69 @@ the same guard.**
 
 ## 7. The required authority — pinned architecture decision
 
-**`RECOMMENDED_FIN_AUTHORITY` = a single transaction-scoped database read.**
+**`RECOMMENDED_FIN_AUTHORITY` = a single database read that observes every
+financial input under ONE SHARED MVCC SNAPSHOT.**
 
-All financial input rows are observed inside **one** database transaction
-snapshot, with the snapshot instant taken from that same transaction.
+### 7.0 Two different things, never interchangeable
+
+| Term | What it is |
+|---|---|
+| **`SNAPSHOT_INSTANT`** | The timestamp associated with the read, and printed on the page. |
+| **`MVCC_SNAPSHOT`** | The database's row-visibility state — which committed rows the read can see. |
+
+They are related and they are **not** substitutes. `transaction_timestamp()`
+stays fixed for a whole transaction while row visibility does **not**: under
+PostgreSQL's default `READ COMMITTED`, **every statement takes a new snapshot**.
+A FIN implementation that issues several statements inside one ordinary
+transaction therefore holds a fixed instant while a payment, refund or settlement
+correction committed between its statements becomes visible to the later ones —
+satisfying a "one transaction" wording while breaking the actual property in §0.
+
+**Do not depend on `transaction_timestamp()` alone. A fixed timestamp does not
+freeze row visibility.**
+
+### 7.1 The invariant
+
+> **A concurrent commit occurring after the FIN statement begins MUST NOT become
+> visible to any sibling FIN input read within that response.**
+
+### 7.2 Required shape — one SQL statement
+
+FIN-02 v1 **should** compose every required finance read inside **one SQL
+statement** — CTEs and subqueries as appropriate — executed through a single
+invoker-rights RPC call. One statement is one snapshot, by construction.
+
+`STABLE` functions invoked from that statement observe the calling statement's
+snapshot, so reusing an existing `STABLE` resolver inside it preserves the
+invariant. A resolver called in a **separate** round trip does not.
+
+Preferred because:
+
+- the invariant is simpler — "one statement" is checkable by reading the code;
+- it integrates cleanly with PostgREST, which gives each call its own transaction;
+- concurrency is far easier to test deterministically;
+- it needs no transaction characteristics set through an RPC;
+- there are fewer ways for a future refactor to split the snapshot by accident.
+
+### 7.3 Fallback — explicit isolation, if ever multi-statement
+
+If FIN-02 ever genuinely requires multiple SQL statements, it **must** run them
+under an isolation level that preserves one snapshot across them —
+`REPEATABLE READ` or stronger — **established before the reads begin**.
+
+**An ordinary `READ COMMITTED` transaction does not provide this**, and no
+wording in this contract may be read as saying it does.
+
+### 7.4 What the snapshot then gives
 
 ```
-SNAPSHOT_INSTANT       transaction_timestamp() (or equivalent) inside the one
-                       read transaction
+SNAPSHOT_INSTANT       the timestamp associated with the shared snapshot; it
+                       LABELS the read and does not bound it
 
-PAYMENT VISIBILITY     the row must EXIST in the snapshot
+MVCC_SNAPSHOT          one shared row-visibility state across every FIN input
+                       read — one SQL statement, or REPEATABLE READ+
+
+PAYMENT VISIBILITY     the row must be VISIBLE in the shared MVCC snapshot
 
 UNDATED PAYMENT        charged_at NULL does NOT mean invisible; the row's
                        existence is decided by the MVCC snapshot
@@ -249,8 +307,9 @@ SETTLEMENT VERSION     the current/live settlement inside that same snapshot
 AMBIGUOUS SETTLEMENT   UNKNOWN for EVERY derived consumer — money, service
                        value, chargeability, unresolved value
 
-SERVICE PRICE BASIS    the settlement quote where frozen; otherwise the price
-                       visible in the same snapshot
+SERVICE PRICE BASIS    the settlement quote where frozen; otherwise the ONE
+                       canonical resolver of §7.6, evaluated inside the same
+                       shared snapshot. Ambiguous resolution = UNKNOWN
 
 UNKNOWN                withdraw the affected fact with its cause; never
                        manufacture 0, "no payment", or "no refund"
@@ -258,15 +317,15 @@ UNKNOWN                withdraw the affected fact with its cause; never
 
 Under this authority, most of §4 and §5.1 stop being application concerns:
 
-- a row created after the snapshot is **invisible by construction** — snapshot
-  visibility *is* the bound, including for `charged_at IS NULL` rows;
+- a row that commits after the snapshot is **invisible by construction** —
+  snapshot visibility *is* the bound, including for `charged_at IS NULL` rows;
 - "currently live" is exactly "live at the snapshot" again;
 - appointments, services and client pricing are read at the same instant as the
   money, so cross-source figures cannot disagree;
 - the published instant is true of *every* figure on the page rather than of some
   of them.
 
-### 7.1 Execution rights — INVOKER, not `SECURITY DEFINER`
+### 7.5 Execution rights — INVOKER, not `SECURITY DEFINER`
 
 **`EXECUTION RIGHTS = INVOKER RIGHTS.`**
 
@@ -288,6 +347,99 @@ must not bypass RLS for convenience.
 by name.** Supabase's `ALTER DEFAULT PRIVILEGES` grants EXECUTE to all three at
 function-create time. This was missed in migration 0129 (`anon`) and again in
 0164 (`service_role`).
+
+**A snapshot-consistency problem is never a reason to reach for
+`SECURITY DEFINER`.** The two authorities stay separate:
+
+| Authority | Owned by |
+|---|---|
+| **Tenancy** — who may see these rows | RLS |
+| **Temporal consistency** — which committed rows this response sees | the MVCC snapshot |
+
+### 7.6 The canonical pricing law — one definition, and it already exists
+
+**"The price visible in the snapshot" is not a selection rule.** When several
+`client_pricing` rows are visible, it does not identify a unique price, and an
+implementation could pick a future-effective or arbitrarily-tied row and still
+claim compliance — changing service value, chargeability and unresolved value.
+
+The authority already exists in **two** implementations kept in deliberate
+parity, and **FIN-02 must not add a third**:
+
+| Implementation | Location |
+|---|---|
+| SQL | `public.appointment_quoted_amount_cents` — `supabase/migrations/0187_appointment_settlement.sql` |
+| TypeScript | `resolveAuthoritativeSessionPaymentAmount` — `lib/billing/session-payment-amount.ts` |
+
+They are pinned against each other by a parity matrix in
+`tests/db/appointment-settlement.db.test.ts`. **The source is the authority; if
+the summary below ever disagrees with it, the source wins.**
+
+#### The order IS the law
+
+Read from the SQL function body and confirmed against its TypeScript twin:
+
+1. **The appointment, inside the named studio** — both `id` and `studio_id` match.
+2. **Its booked service, through the same-studio lineage** — the service must
+   belong to the same studio as the appointment.
+3. **`client_pricing` matched by NORMALIZED SERVICE NAME** — `lower(btrim(...))`
+   on both sides. The linkage has always been by name, not by id.
+4. **Only rows effective ON OR BEFORE the STUDIO-LOCAL date qualify** —
+   `effective_from <= (now() at time zone studio.timezone)::date`. **A price that
+   starts tomorrow never prices today's visit.** The date comes from the studio's
+   own timezone, never from UTC and never from a caller.
+5. **Only strictly POSITIVE custom rows qualify** — `price_cents > 0`. A zero or
+   negative custom price reads as *"no custom price recorded"*, not as *"charge
+   nothing"*, and falls through to the menu.
+6. **Newest `effective_from` wins** among the qualifying rows.
+7. **Equally-current rows that DISAGREE resolve to NULL** — never by row order,
+   because a pick there is decided by the planner, not by anything the studio
+   recorded.
+8. **Equally-current rows that AGREE resolve** — every candidate yields the same
+   number, so no row-order dependence exists.
+9. **Otherwise a POSITIVE menu price wins.**
+10. **An explicit menu price of `0` is an authoritative zero.**
+11. **A missing service, a NULL price, or ambiguity is NULL** — a configuration
+    gap is never "free", and never a manufactured number.
+
+Two consequences that are easy to get wrong and are part of the law:
+
+- **An applicable custom price makes the menu unreachable.** Once step 6 finds a
+  qualifying row, the result is either that price or NULL — a disagreeing tie
+  returns NULL and does **not** fall back to the menu.
+- **An appointment with no `client_id` skips custom pricing entirely** and is
+  priced from the menu.
+
+#### How FIN-02 must use it
+
+```
+SETTLEMENT QUOTED PRICE   frozen authority when valid — a settled visit is
+                          worth what it was quoted, and later repricing of the
+                          menu or the client rate does not move it
+
+ELSE                      the canonical resolver above, evaluated INSIDE the
+                          same shared snapshot
+
+IF AMBIGUOUS              PRICE = UNKNOWN
+```
+
+The SQL resolver is `STABLE`, so invoking it from within the single FIN statement
+observes that statement's snapshot and preserves §7.1. Resolving in TypeScript
+instead is equally acceptable **provided the input rows came from that same
+statement** — what must never happen is a second round trip, or a second
+definition of the law.
+
+*(The SQL resolver is itself `SECURITY DEFINER` and takes an explicit
+`p_studio_id`. Reusing it does not weaken §7.5: FIN-02 must pass a studio id it
+has already authorized, and its own read authority stays invoker-rights.)*
+
+#### Ambiguity propagates, consistently
+
+When the price is UNKNOWN, **every dependent fact fails closed together** —
+service value, chargeability, unresolved value, and any downstream aggregate. **No
+sibling consumer may independently choose a tied price.** This is the same class
+as §5.2: a leak there let a price map select a settlement version the money total
+had already refused.
 
 ---
 
@@ -342,7 +494,7 @@ FIN-02 must prove, at minimum:
 
 | # | Must prove |
 |---|---|
-| 1 | **One DB snapshot** — all financial input rows come from one transaction snapshot |
+| 1 | **One shared MVCC snapshot** — every financial input read observes the same row-visibility state (one SQL statement, or `REPEATABLE READ`+) |
 | 2 | **Post-snapshot insert** cannot affect the current result |
 | 3 | **Post-snapshot refund** cannot affect the current result |
 | 4 | **Post-snapshot settlement correction** cannot affect the current result |
@@ -353,6 +505,60 @@ FIN-02 must prove, at minimum:
 
 Cases 2–5 are the properties the current architecture cannot establish, and are
 the reason FIN-02 exists. They must be proven against a real database, not a stub.
+
+### 10.1 The decisive concurrency test
+
+Cases 1–5 are one experiment, and it is the proof the whole architecture rests
+on:
+
+```
+FIN read begins
+        ↓
+shared MVCC snapshot established
+        ↓
+a CONCURRENT transaction inserts / updates:
+      · a succeeded DATED payment
+      · a succeeded UNDATED payment   (charged_at IS NULL)
+      · a refund
+      · a settlement correction       (retire + replace)
+      · a pricing change              (client_pricing and/or services)
+        ↓
+the concurrent transaction COMMITS
+        ↓
+the in-flight FIN read completes
+```
+
+**Required:** *none* of those post-snapshot changes alters the in-flight FIN
+result — no figure, no state, no completeness claim. **And** a second FIN
+invocation issued after the commit **does** see them, which is what proves the
+test was not passing vacuously.
+
+**Synchronize deterministically.** Use advisory locks, a blocking statement, or
+another explicit rendezvous. A `sleep` is not authority: it makes the test pass
+on a fast machine and flake on a slow one, and the failure mode it hides is the
+one being tested.
+
+### 10.2 Anti-drift pricing tests
+
+Expected results are **derived from the existing 0187 resolver**, not authored
+independently — the point is to prove FIN-02 did not fork the law.
+
+| # | Case | Expectation source |
+|---|---|---|
+| 1 | one applicable custom price | resolver |
+| 2 | multiple historical prices | newest applicable wins |
+| 3 | a future-effective price | never selected |
+| 4 | same-date equal-value duplicates (if the source permits them) | resolves deterministically |
+| 5 | same-date disagreeing ties | UNKNOWN, and **no** menu fallback |
+| 6 | custom price zero | treated as no custom price → menu |
+| 7 | custom price NULL | treated as no custom price → menu |
+| 8 | menu price zero | authoritative zero |
+| 9 | menu price NULL | UNKNOWN, never zero |
+| 10 | a settlement frozen quote, with the menu **and** the client rate repriced afterwards | the frozen quote still wins |
+
+Each must also assert that when the price is UNKNOWN, every dependent fact
+withdraws **together** — service value, chargeability, unresolved value, and any
+downstream aggregate.
 
 FIN-02 must also **retain the domain-state matrix already paid for in #666** —
 §1 money classes, §2 payment states and the full-refund law, §3 precedence, §4
