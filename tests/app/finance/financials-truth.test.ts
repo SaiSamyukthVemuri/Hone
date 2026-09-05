@@ -3,7 +3,18 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import ts from "typescript";
 
-import { UNKNOWN_EXPLANATION, UNKNOWN_LABEL, PERMANENT_LINES } from "@/lib/finance/financial-copy";
+import {
+  CAPACITY_NOT_YET,
+  MONEY_AS_AT_MEANING,
+  VISIT_FIGURES_ARE_CURRENT,
+  CASH_MOVEMENT_IS_NOT_EARNINGS,
+  COLLECTED_ON_DELIVERED_IS_ONE_POPULATION,
+  HISTORY_BEFORE_OUTCOMES,
+  UNATTRIBUTED_IS_ALL_TIME,
+  PERMANENT_LINES,
+  UNKNOWN_EXPLANATION,
+  UNKNOWN_LABEL,
+} from "@/lib/finance/financial-copy";
 import { summarizeCalendar } from "@/lib/finance/financial-briefing-model";
 import type { FinancialUnknownCause } from "@/lib/finance/financial-fact";
 
@@ -49,64 +60,557 @@ const ALL_CAUSES: FinancialUnknownCause[] = [
   "unknowable",
   "not_yet_supported",
   "not_enumerable",
+  "records_incomplete",
 ];
 
 // ---------------------------------------------------------------------------
-// 1. No money arithmetic entered Slice 1
+// 1. Money entered in Slice 2 — from the right authorities, and only those
 // ---------------------------------------------------------------------------
+//
+// SLICE 1 FORBADE MONEY OUTRIGHT. That assertion is gone because it is no
+// longer the contract: Slice 2 reads money deliberately. What replaces it is
+// strictly narrower and strictly harder — WHICH authority, under WHICH filters,
+// and never a decoy.
 
-describe("NC1-3 — Slice 1 contains no money, from any of the three truth classes", () => {
-  const LEDGERS = [
-    // Hone-verified card money.
-    "payment_charge_attempts",
-    "charged_at",
-    "refunded_at",
-    "refund_status",
-    "stripe_livemode",
-    // Practitioner-attested disposition (migration 0187).
-    "appointment_settlements",
-    "amount_cents",
-    "quoted_amount_cents",
-    "paid_cash",
-    "paid_e_transfer",
-    "still_owes",
-    // Service value.
-    "price_cents",
-    "price_paid_cents",
-    // The dormant and legacy decoys, which must never be read by anything.
-    "manual_fee_charge_attempts",
-    "stripe_charge_attempts",
+describe("NC1 — the dormant and legacy money tables are never read", () => {
+  // These are not "not yet". They are schema that exists, receives no runtime
+  // write, and would report payments that never moved. `manual_fee_charge_attempts`
+  // is pinned test-mode by a CHECK constraint, so it is structurally never real
+  // money. Reading any of them is a defect in every slice, forever.
+  const DECOYS = [
     "appointment_payments",
+    "stripe_charge_attempts",
     "stripe_refunds",
     "stripe_refund_attempts",
+    "manual_fee_charge_attempts",
+    "payment_recovery_tokens",
   ];
 
-  it.each(LEDGERS)("no executable reference to %s", (identifier) => {
+  it.each(DECOYS)("no executable reference to %s", (identifier) => {
     expect(ALL_CODE).not.toContain(identifier);
   });
+});
 
-  it("reads exactly ONE table, and it is appointments", () => {
-    const tables = [...CODE.loader.matchAll(/\.from\((["'])([^"']+)\1\)/g)].map((m) => m[2]);
-    expect(tables).toEqual(["appointments"]);
-    expect(ALL_CODE.match(/\.from\(/g) ?? []).toHaveLength(1);
+describe("NC2 — every read names its authority, and every ledger read is filtered", () => {
+  const tablesRead = () =>
+    [...CODE.loader.matchAll(/\.from\((["'])([^"']+)\1\)/g)].map((m) => m[2]);
+
+  it("reads exactly the five authorities this slice is entitled to", () => {
+    // `client_pricing` joined the list in Slice 2b. It is the price a
+    // PARTICULAR client pays, and without it this surface valued every
+    // negotiated rate at the menu price the client does not pay.
+    expect(new Set(tablesRead())).toEqual(
+      new Set([
+        "appointments",
+        "services",
+        "client_pricing",
+        "payment_charge_attempts",
+        "appointment_settlements",
+      ]),
+    );
+    // Nothing outside the loader reads anything at all.
+    for (const key of ["fact", "copy", "model", "page", "spine"] as const) {
+      expect(CODE[key], key).not.toContain(".from(");
+    }
   });
 
-  it("selects only status and starts_at — no amount, no price, no join", () => {
-    // `starts_at` joined `status` when "still to happen" became a claim about
-    // TIME rather than a restatement of `status = 'confirmed'`. The projection
-    // is pinned EXACTLY, so widening it again is a decision someone has to make
-    // here in the open rather than a column that quietly appears.
-    expect(CODE.loader).toContain('.select("status, starts_at", { count: "exact" })');
+  it("ONE appointments read feeds both censuses", () => {
+    // Two reads of the same table over different windows would let the calendar
+    // and the money panel disagree about which appointments exist.
+    expect(tablesRead().filter((t) => t === "appointments")).toHaveLength(1);
+  });
 
-    // ...and the intent the exact string is standing in for, asserted
-    // independently of its spelling: exactly two columns, neither financial.
-    const projection = CODE.loader.match(/\.select\("([^"]+)"/)?.[1] ?? "";
-    const columns = projection.split(",").map((c) => c.trim());
-    expect(columns).toEqual(["status", "starts_at"]);
-    for (const forbidden of ["price", "amount", "cent", "payment", "charge", "refund", "settle", "stripe"]) {
-      expect(projection.toLowerCase(), projection).not.toContain(forbidden);
+  it("EVERY payment_charge_attempts read is mode-scoped AND status-scoped", () => {
+    // Migration 0105 permits one TEST and one LIVE succeeded attempt for the
+    // same session, so an unfiltered sum double-counts one real payment.
+    // FAILED rows also carry a populated `amount_cents`, so the status filter
+    // is not redundant with the mode filter. Both are required on all four
+    // windows this slice opens over the ledger.
+    const reads = CODE.loader.split('.from("payment_charge_attempts")').slice(1);
+    expect(reads.length).toBeGreaterThanOrEqual(3);
+    for (const read of reads) {
+      const head = read.slice(0, 600);
+      expect(head, read.slice(0, 120)).toContain('.eq("stripe_livemode", livemode)');
+      expect(head, read.slice(0, 120)).toContain('.eq("status", "succeeded")');
     }
-    expect(projection).not.toContain("(");
+    // The shared builder covers the remaining window; it carries both filters.
+    expect(CODE.loader).toMatch(/\.eq\("status", "succeeded"\)\s*\.eq\("stripe_livemode", livemode\)/);
+  });
+
+  it("the mode comes from inferStripeLivemode, never from a literal", () => {
+    expect(CODE.loader).toContain("inferStripeLivemode()");
+    // A hard-coded mode would show a test deployment nothing and would show
+    // production the wrong ledger the day the key changes.
+    expect(CODE.loader).not.toMatch(/stripe_livemode",\s*(true|false)/);
+  });
+
+  it("the Stripe SDK is NOT imported — only the mode flag, from the leaf module", () => {
+    expect(CODE.loader).toContain('from "@/lib/stripe/livemode"');
+    expect(ALL_CODE).not.toMatch(/from ["']@\/lib\/stripe\/server["']/);
+    expect(ALL_CODE).not.toMatch(/from ["']stripe["']/);
+    const leaf = codeOnly(read("lib/stripe/livemode.ts"));
+    expect(leaf, "the leaf module must import nothing").not.toContain("import ");
+  });
+
+  it("EVERY appointment_settlements read reconstructs the version live at the instant", () => {
+    // WHAT THIS RULE USED TO SAY: every read filters `superseded_at is null`.
+    // That kept a correction from being counted twice, which is still the
+    // requirement — but it bought it by reading the row live NOW, so a
+    // correction recorded after the evidence instant replaced what the studio
+    // had actually attested at that instant, under a timestamp predating it.
+    //
+    // The version interval enforces the same single-truth rule AND obeys the
+    // snapshot. What must never come back is the unfiltered read: every
+    // version of every row would double-count every correction.
+    const reads = CODE.loader.split('.from("appointment_settlements")').slice(1);
+    expect(reads.length).toBeGreaterThanOrEqual(1);
+    for (const r of reads) {
+      const head = r.slice(0, 700);
+      expect(head).toContain('.lt("recorded_at", evidenceInstantUtc)');
+      expect(head).toContain("superseded_at.is.null,superseded_at.gte.");
+      // The predecessor's end and the successor's start are the SAME instant,
+      // so an exclusive upper bound would select NEITHER version.
+      expect(head).not.toContain("superseded_at.gt.$");
+    }
+    // AND THE RESULT IS CHECKED, not trusted: the model proves exactly one
+    // version came back per visit and withdraws the money when it did not.
+    expect(CODE.model).toContain("settlementVersionsAmbiguous");
+  });
+
+  it("charges and refunds are windowed on their OWN columns, independently", () => {
+    // A refund can fall in a different period from the charge it reverses.
+    // Windowing both on `charged_at` would move money between periods.
+    expect(CODE.loader).toContain('.gte("charged_at", startUtc)');
+    expect(CODE.loader).toContain('.lt("charged_at", endUtc)');
+    expect(CODE.loader).toContain('.gte("refunded_at", startUtc)');
+    expect(CODE.loader).toContain('.lt("refunded_at", endUtc)');
+    expect(CODE.loader).toContain('.eq("refund_status", "succeeded")');
+  });
+
+  it("CLIENT IDENTITY reaches the read model and goes no further", () => {
+    // Slice 2b is the first time this surface reads a client identifier at all.
+    // It exists for one reason — client_pricing is keyed by client — and it is
+    // a MAP KEY, never a value. An owner aggregate must not quietly become a
+    // way to learn who paid what, and the render layer is where that would
+    // happen, so the boundary is asserted at the render layer.
+    expect(CODE.loader).toContain("client_id");
+    expect(CODE.model).toContain("client_id");
+    for (const key of ["spine", "page", "copy", "fact"] as const) {
+      expect(codeOnly(CODE[key]), key).not.toContain("client_id");
+      expect(codeOnly(CODE[key]), key).not.toContain("clientId");
+    }
+  });
+
+  it("no per-client figure is exposed on the census — only counts", () => {
+    // `visitsValuedAtClientPrice` is a COUNT. Anything shaped like a per-client
+    // map or list would carry identity into the briefing.
+    expect(CODE.model).toContain("visitsValuedAtClientPrice: known(valuedAtClientPrice)");
+    expect(codeOnly(CODE.model)).not.toMatch(/readonly\s+\w*[Bb]yClient\w*\s*:/);
+  });
+
+  it("no read filters an unbounded id list into the URL", () => {
+    // Building `.in("appointment_id", [...])` from a period's appointments is
+    // unbounded in the period length, and an over-long generated URL is a live
+    // production failure mode on this codebase, not a hypothetical one.
+    expect(CODE.loader).not.toMatch(/\.in\(/);
+  });
+});
+
+describe("NC3 — the three evidence classes are never summed into one another", () => {
+  it("no arithmetic joins card money, attested money and service value", () => {
+    // The census exposes each class as its own field and offers no total. A
+    // reader wanting one has to write the addition themselves, in the open.
+    for (const forbidden of [
+      /collectedGrossCents\s*\+\s*externallyAttestedCents/,
+      /externallyAttestedCents\s*\+\s*collectedGrossCents/,
+      /collected\w*\s*\+\s*serviceValue/i,
+      /serviceValue\w*\s*\+\s*collected/i,
+      /totalMoney|totalCollected|allMoney|grandTotal/i,
+    ]) {
+      expect(ALL_CODE, String(forbidden)).not.toMatch(forbidden);
+    }
+  });
+
+  it("the collection rate is a VISIT-COUNT ratio, never a dollar ratio", () => {
+    // The numerator would be an operator-authored till total and the
+    // denominator a mutable menu price. That quotient is not a rate.
+    expect(CODE.model).toContain("cardPaidChargeable / chargeable.size");
+    for (const forbidden of [
+      /collected\w*Cents\s*\/\s*\w*serviceValue/i,
+      /serviceValue\w*\s*\/\s*collected/i,
+      /collectionRate\w*\s*=\s*[^;]*Cents\s*\//i,
+    ]) {
+      expect(ALL_CODE, String(forbidden)).not.toMatch(forbidden);
+    }
+  });
+
+  it("price_paid_cents is never summed into a money total", () => {
+    // It carries no date, no method and no provenance, and in production every
+    // populated row sits on a session with no appointment. It is not a payment
+    // record and cannot be added to one.
+    expect(ALL_CODE).not.toContain("price_paid_cents");
+  });
+
+  it("buffer is read per appointment, never recomputed from the studio setting", () => {
+    // `studios.buffer_minutes` is a single CURRENT value; production carries
+    // per-appointment snapshots of both 15 and 20 minutes, so recomputing from
+    // the studio setting is wrong on every row booked under the other one.
+    expect(CODE.loader).toContain("blocked_ends_at");
+    expect(ALL_CODE).not.toContain("buffer_minutes");
+    expect(ALL_CODE).not.toContain("buffer_minutes_snapshot");
+  });
+
+  it("no timezone-bearing date_trunc is pushed into SQL", () => {
+    // A second timezone implementation already made the dashboard and the
+    // calendar disagree by a full week every Sunday. Bucketing happens in
+    // TypeScript, off the one period contract.
+    expect(ALL_CODE.toLowerCase()).not.toContain("date_trunc");
+    expect(ALL_CODE).not.toContain("at time zone");
+  });
+});
+
+describe("NC5 — a reversed payment is not a collection, an absent one is not a zero", () => {
+  it("collection-rate membership is decided AFTER netting, never when the charge lands", () => {
+    // THE DEFECT: `cardPaid.add(id)` sat inside the charge loop, before the
+    // refund was read. A visit charged and then refunded in full counted as
+    // collected, so the screen printed "1 visit paid by card / 100.0%" directly
+    // above "Collected by card, after refunds: $0.00" — and claimed the account
+    // was complete. It also kept the visit out of "No payment recorded", so it
+    // appeared in no honest line at all.
+    //
+    // NOT AN EDGE CASE: lib/billing/payment-refund.ts writes full reversals
+    // only, so a net of zero is the shape of EVERY refund Hone can issue.
+    expect(CODE.model).toMatch(/net\s*>\s*0\)\s*cardPaid\.add/);
+    expect(CODE.model).not.toMatch(
+      /deliveredTreatment\.has\(id\)\)\s*continue;\s*cardPaid\.add/,
+    );
+  });
+
+  it("a reversed visit gets its own line rather than either false sentence", () => {
+    expect(CODE.model).toContain("refundedToZeroVisits");
+    expect(CODE.spine).toContain("refundedToZeroVisits");
+    expect(CODE.copy).toContain("REFUNDED_TO_ZERO_EXPLAINED");
+    expect(CODE.spine).toContain("REFUNDED_TO_ZERO_EXPLAINED");
+  });
+
+  it("the attested gate asks about THIS WINDOW, never the studio's all-time rows", () => {
+    // Settlements are read studio-wide, so gating on `input.settlements.length`
+    // let the FIRST settlement a studio ever wrote turn every OTHER window's
+    // external money into a confident $0.00 — the exact sentence Operator
+    // decision 4 exists to prevent, printed in every unsettled period.
+    expect(CODE.model).toContain("const nothingAttested = attestedRows === 0;");
+    expect(CODE.model).not.toContain("input.settlements.length === 0");
+  });
+
+  it("settlements are narrowed against every delivered visit, not treatment only", () => {
+    // Cash a practitioner wrote down for a delivered CONSULTATION is attested
+    // money. Narrowing to treatment dropped it from the external total.
+    expect(CODE.model).toContain("deliveredAny.has(s.appointment_id)");
+    expect(CODE.model).not.toContain("deliveredTreatment.has(s.appointment_id)");
+  });
+
+  it("no sentence tells the owner a settlement names a visit OUTSIDE this window", () => {
+    // It was false for a payment recorded against a delivered consultation —
+    // on a screen already showing that consultation inside the window.
+    expect(ALL_CODE).not.toContain("a visit outside this window");
+  });
+});
+
+describe("NC6 — past work is valued at the price on record, never at today's menu", () => {
+  it("the settlement read asks for the 0187 price snapshot", () => {
+    // The column exists FOR this surface: "without the snapshot, a service
+    // repriced in March silently rewrites what February's completed visits
+    // were worth, and FIN-01A's collection rate drifts away from what Checkout
+    // actually showed" (0187, quoted_amount_cents).
+    expect(CODE.loader).toContain("quoted_amount_cents");
+  });
+
+  it("values a visit in THREE tiers, snapshot first", () => {
+    // 1. the price 0187 froze at settlement; 2. the price THIS CLIENT pays,
+    // via the resolver the billing path already uses; 3. UNKNOWN.
+    //
+    // Tier 2 replaced a bare `services.price_cents` read, which was WRONG
+    // rather than merely coarse: it ignored client_pricing entirely, so every
+    // client on a negotiated rate was valued at the menu price they do not pay.
+    expect(CODE.model).toContain("recordedPriceOf.get(row.id)");
+    expect(CODE.model).toContain("resolveAuthoritativeSessionPaymentAmount({");
+    // The snapshot is consulted BEFORE the resolver, never after.
+    expect(CODE.model.indexOf("recordedPriceOf.get(row.id)")).toBeLessThan(
+      CODE.model.indexOf("resolveAuthoritativeSessionPaymentAmount({"),
+    );
+  });
+
+  it("SHARES the billing resolver rather than re-deriving pricing precedence", () => {
+    // A second implementation of "what does this client pay" would let the
+    // screen disagree with the code that actually charged them, and the owner
+    // would have no way to tell which number was wrong.
+    expect(CODE.model).toContain('from "@/lib/billing/session-payment-amount"');
+    // The wire TYPE may name these columns — it has to, to pass them on. What
+    // it must never do is COMPARE them, which is the precedence logic itself:
+    // picking the newest effective_from, matching a service by name, or
+    // deciding a tie. Every one of those lives in the resolver, once.
+    const model = codeOnly(CODE.model);
+    expect(model).not.toMatch(/effective_from\s*(<=|>=|<|>|===)/);
+    expect(model).not.toMatch(/service_name\s*(===|\.toLowerCase)/);
+    expect(model).not.toContain("client_pricing");
+  });
+
+  it("a recorded price of ZERO survives — presence is tested, not truthiness", () => {
+    // `quoted_amount_cents >= 0` is legal and means the visit was quoted
+    // nothing. `??` or `||` on the value would discard that and silently
+    // re-price it from the menu, so the tier is chosen on PRESENCE.
+    expect(CODE.model).toContain("recordedPrice !== undefined");
+    expect(CODE.model).not.toMatch(/recordedPrice\s*(\|\||\?\?)/);
+  });
+
+  it("no sentence claims Hone keeps no record of the price at the time", () => {
+    // It kept one from 0187 onward, and said so in the column comment.
+    expect(ALL_CODE).not.toContain("Hone does not keep the price a visit carried at the time");
+    // SLICE 2B NARROWED THIS SENTENCE. It used to say editing a SERVICE price
+    // changes the figure for every unsettled visit; once an unsettled visit
+    // resolves through the shared pricing authority, a client on their own
+    // current rate is valued at that instead, and repricing the service moves
+    // nothing for them. The copy must name both sources rather than only one.
+    expect(CODE.copy).toContain("this client's own price where one is set");
+    expect(CODE.copy).not.toContain("editing a service price changes this figure");
+    expect(CODE.copy).toContain("SERVICE_VALUE_PRICE_BASIS");
+    expect(CODE.spine).toContain("SERVICE_VALUE_PRICE_BASIS");
+  });
+
+  it("the screen says when the two price bases are MIXED", () => {
+    expect(CODE.model).toContain("visitsValuedAtRecordedPrice");
+    expect(CODE.spine).toContain("visitsValuedAtRecordedPrice");
+    expect(CODE.spine).toContain("SOME_VISITS_PRICED_AT_THE_TIME");
+  });
+
+  it("neither service-value total carries a basis claim its own copy contradicts", () => {
+    // SLICE 2 FINDING. The paragraph directly beneath these two lines says the
+    // figure MIXES two bases — the price recorded at settlement wherever Hone
+    // has one, the price in force today everywhere else. The labels said "at
+    // today's prices" flatly, so each label denied the sentence under it, and
+    // the recorded-price half of the total was described as something it is
+    // not. A settled visit's value does not move when the menu is repriced.
+    //
+    // The replacement states the population, not the basis: the basis is
+    // exactly what varies row by row, so only the paragraph can carry it.
+    expect(CODE.spine).not.toContain("today's prices");
+    expect(CODE.spine).toContain('label="Treatment service value"');
+    expect(CODE.spine).toContain('label="Consultation service value"');
+    // And it must still be VALUE, never money that moved — the whole reason
+    // these two lines are a section of their own, away from the card-money
+    // ones — and the paragraph that carries the basis must still be here.
+    expect(CODE.spine).toContain("Service value of delivered work");
+    expect(CODE.spine).toContain("SERVICE_VALUE_PRICE_BASIS");
+  });
+});
+
+describe("P2-A — consultation is decided by the shared predicate, never by price", () => {
+  it("FIN imports the SAME predicate the booking page and its server guard use", () => {
+    expect(CODE.model).toContain('from "@/lib/booking/consultation"');
+    expect(CODE.model).toContain("isConsultationService");
+  });
+
+  it("EVERY price comparison in the model is one of the three that may exist", () => {
+    // AN ENUMERATION, NOT A DENYLIST, and the reason is the defect this
+    // replaced. The old code classified with `if (price === 0)` — a LOCAL. A
+    // denylist written against the column name (`price_cents === 0`) would
+    // never have matched it, and a future author reintroducing the defect would
+    // reach for the local again. Pinning the exact SET means any new price
+    // comparison fails here and has to be justified in the open, whatever it is
+    // spelled.
+    //
+    // The three permitted comparisons all answer "what was this worth", never
+    // "what was this":
+    //   === null  ->  cannot be valued
+    //   !== null  ->  a consultation's own value line
+    //   > 0       ->  there was something to collect
+    const comparisons = [
+      ...CODE.model.matchAll(/[^\n]*\bprice\w*\s*(===|!==|>=|<=|>|<)[^\n]*/g),
+    ].map((m) => m[0].trim());
+    expect(comparisons).toEqual([
+      "if (price !== null) consultationServiceValueCents += price;",
+      "if (price === null) {",
+      "if (price > 0) chargeable.set(row.id, price);",
+    ]);
+  });
+
+  it("THE PREDICATE'S OWN BODY never mentions price, whatever the spelling", () => {
+    // `classifyService` is the authority. If price cannot reach it, no spelling
+    // of a price test can decide what a visit is.
+    const start = CODE.model.indexOf("export function classifyService(");
+    expect(start).toBeGreaterThan(-1);
+    const body = CODE.model.slice(start, CODE.model.indexOf("\n}", start));
+    expect(body).not.toMatch(/price/i);
+    expect(body).toContain("isConsultationService");
+  });
+
+  it("the consultation branch is keyed on the CLASS, never on a value", () => {
+    expect(CODE.model).toContain('if (serviceClass === "consultation")');
+    expect(CODE.model).toContain('if (serviceClass === "unknown")');
+    // And a price test never gates a classification, in either spelling.
+    expect(ALL_CODE).not.toMatch(
+      /\bprice\w*\s*(===|!==)\s*0\s*\)[\s\S]{0,80}?(consultation|treatment)/i,
+    );
+  });
+
+  it("the predicate's own inputs are read, and nothing else", () => {
+    // `isConsultationService` reads modality and name. The projection has to
+    // carry both or the predicate silently degrades to its name fallback — or,
+    // worse, to `unknown` for every row.
+    expect(CODE.loader).toContain('.select("id, name, modality, price_cents"');
+  });
+
+  it("price decides ONLY whether there was something to collect", () => {
+    expect(CODE.model).toContain("if (price > 0) chargeable.set(row.id, price)");
+    // ...and the collection rate divides by THAT set, not by delivered visits.
+    expect(CODE.model).toContain("chargeable.size === 0");
+  });
+
+  it("a missing service is UNKNOWN, not silently treatment", () => {
+    expect(CODE.model).toContain('if (!service) return "unknown"');
+    expect(CODE.model).toContain("unclassifiable");
+  });
+});
+
+describe("P2-B / P2-C — the two money contracts are named apart and never merged", () => {
+  it("the per-hour rate divides one population by itself", () => {
+    // Numerator and denominator are accumulated in the SAME loop over the same
+    // visits, so they cannot describe different periods.
+    expect(CODE.model).toContain(
+      "collectedOnDeliveredCents / (collectedOnDeliveredMinutes / 60)",
+    );
+  });
+
+  it("the cash-movement net NEVER feeds the per-hour rate", () => {
+    // The refuted form: cash-movement net (charged_at-windowed, minus
+    // refunded_at-windowed refunds) over delivered-visit hours. Those are
+    // different populations, so the quotient was a rate of nothing.
+    for (const forbidden of [
+      /netMovementCents\s*\/\s*/,
+      /movedInGrossCents\s*\/\s*/,
+      /perTreatmentHour\w*\s*=\s*[^;]*netMovement/,
+      /perTreatmentHour\w*\s*=\s*[^;]*treatmentBookedMinutes/,
+    ]) {
+      expect(ALL_CODE, String(forbidden)).not.toMatch(forbidden);
+    }
+  });
+
+  it("a service-period charge is netted by ITS OWN refund, not by a window", () => {
+    expect(CODE.model).toContain('c.refund_status === "succeeded"');
+    // The charge read has to carry the refund columns for that to be possible.
+    expect(CODE.loader).toContain("refund_amount_cents, refund_status");
+  });
+
+  it("cross-period reversals are COUNTED, so the caveat is measured not asserted", () => {
+    expect(CODE.model).toContain("refundsReversingOtherPeriods");
+    // `charged_at` on the refund read is what makes the comparison possible.
+    expect(CODE.loader).toContain('.select("refund_amount_cents, charged_at"');
+    expect(CODE.spine).toContain("refundsReversingOtherPeriods");
+  });
+
+  it("the two contracts carry DIFFERENT owner-facing names", () => {
+    expect(CODE.spine).toContain("Card money that moved this period");
+    expect(CODE.spine).toContain("Collected on treatment delivered in this window");
+    // No surviving name that would read as one overloaded number.
+    expect(CODE.spine).not.toContain("Net of refunds");
+    expect(ALL_CODE).not.toContain("collectedNetCents");
+  });
+
+  it("both contracts publish the sentence that says what they are NOT", () => {
+    expect(CASH_MOVEMENT_IS_NOT_EARNINGS).toMatch(/not what this period.s work earned/);
+    expect(COLLECTED_ON_DELIVERED_IS_ONE_POPULATION).toMatch(/same visits/);
+    expect(CODE.spine).toContain("CASH_MOVEMENT_IS_NOT_EARNINGS");
+    expect(CODE.spine).toContain("COLLECTED_ON_DELIVERED_IS_ONE_POPULATION");
+  });
+});
+
+describe("P2-D — the unattributed count is all-time, and says so", () => {
+  it("it is NOT inside the windowed money census", () => {
+    // It sat beside the windowed figures in the first draft, where it read as
+    // a claim about the chosen period.
+    expect(CODE.model).not.toContain("unattributedCharges");
+  });
+
+  it("it travels on the briefing, explicitly named all-time", () => {
+    expect(CODE.loader).toContain("unattributedChargesAllTime");
+    expect(CODE.spine).toContain("unattributedChargesAllTime");
+    expect(CODE.spine).toMatch(/\(all time\)/);
+    expect(UNATTRIBUTED_IS_ALL_TIME).toMatch(/all time, not this period/);
+  });
+
+  it("no window is invented for it from created_at", () => {
+    // `created_at` records when the ATTEMPT ROW was written, not when money
+    // moved. Windowing by it would file real money into a period on a guess.
+    expect(CODE.loader).not.toContain("created_at");
+  });
+
+  it("it is still SURFACED — dropping it would deny money that was made", () => {
+    expect(CODE.loader).toContain('.is("charged_at", null)');
+    expect(CODE.spine).toContain("UnattributedAllTime");
+  });
+
+  it("its read is INDEPENDENT of the money window, structurally", () => {
+    // It used to ride inside the ledger bundle, so a period below the money
+    // floor suppressed an ALL-TIME figure for a reason that had nothing to do
+    // with it. Its own reader makes the independence structural rather than a
+    // comment, and that reader takes no window arguments at all.
+    expect(CODE.loader).toContain("async function readUnattributedChargeCount(");
+    const reader = CODE.loader.slice(
+      CODE.loader.indexOf("async function readUnattributedChargeCount("),
+    );
+    const body = reader.slice(0, reader.indexOf("\n}"));
+    expect(body).toContain('.is("charged_at", null)');
+    for (const windowed of ["startUtc", "endUtc", "moneyStartUtc", '.gte(', '.lt(']) {
+      expect(body, windowed).not.toContain(windowed);
+    }
+  });
+
+  it("NEVER reports its absence as not_yet_supported", () => {
+    // That cause's sentence says Hone can answer this and does not answer it
+    // yet. Hone answers it in every period, so the sentence would be false —
+    // which is the one thing this whole surface exists to prevent.
+    expect(CODE.loader).not.toContain("not_yet_supported");
+    expect(UNKNOWN_EXPLANATION.not_yet_supported).toMatch(/later release/);
+  });
+
+  it("an UNKNOWN count does not render identically to a zero one", () => {
+    // Returning null for both made "Hone could not look" indistinguishable
+    // from "there are none" — the same collapse financial-copy.ts refuses when
+    // it rejects a shared "Not available".
+    expect(CODE.spine).toContain("if (fact.known && fact.value === 0) return null;");
+    expect(CODE.spine).not.toContain("if (!fact.known || fact.value === 0) return null;");
+    const section = CODE.spine.slice(CODE.spine.indexOf("function UnattributedAllTime("));
+    expect(section.slice(0, section.indexOf("\n}"))).toContain("<Unknown cause={fact.cause} />");
+  });
+});
+
+describe("NC-snapshot — one instant, passed as a parameter", () => {
+  it("the loader reads the clock exactly ONCE", () => {
+    expect((CODE.loader.match(/new Date\(\)/g) ?? []).length).toBe(1);
+  });
+
+  it("no pure module reads a clock at all", () => {
+    for (const key of ["model", "fact", "copy", "spine"] as const) {
+      expect(CODE[key], key).not.toMatch(/new Date\(\)|Date\.now\(\)/);
+    }
+  });
+
+  it("the snapshot reaches the model as an argument, and reaches the screen", () => {
+    expect(CODE.model).toContain("snapshot: Date");
+    // DERIVED FROM THE ONE CAPTURED CLOCK. Previously spelled inline as
+    // `evidenceInstant: now.toISOString()`; it is a named constant now because
+    // the transaction window is bounded by the same value, and the guarantee
+    // this pins is that BOTH come from that single `now` rather than from a
+    // second clock read.
+    expect(CODE.loader).toContain("const evidenceInstantUtc = now.toISOString()");
+    expect(CODE.loader).toContain("evidenceInstant: evidenceInstantUtc");
+    expect(CODE.loader).toContain("transactionEndUtc");
+    // ONE CLOCK READ in the whole loader — a second `new Date()` would let the
+    // stamp and the window disagree.
+    expect((CODE.loader.match(/new Date\(\)/g) ?? []).length).toBe(1);
+    // ON SCREEN, not in a tooltip: two reports minutes apart legitimately
+    // disagree, and without the instant that reads as a broken system.
+    expect(CODE.spine).toContain("briefing.evidenceInstant");
   });
 });
 
@@ -143,6 +647,38 @@ describe("NC4/NC9 — an absence has no coercion route to a number", () => {
       "byStatus.set(row.status, (byStatus.get(row.status) ?? 0) + 1);",
       "const count = (status: AppointmentStatusName) => known(byStatus.get(status) ?? 0);",
     ]);
+  });
+
+  it("the as-at claim is made only over the money it can be proven for", () => {
+    // THE PAGE-WIDE CLAIM WAS TOO STRONG. "Figures as at T" sat in the footer
+    // under everything, including visit counts and service value — whose
+    // sources (`appointments.status`, `services.price_cents`, `client_pricing`)
+    // are mutated in place with no version interval and no history rows
+    // anywhere in the schema. What they held at a past instant is not
+    // recoverable, so the page asserted something Hone cannot establish.
+    //
+    // Money CAN carry it: payments and refunds are event-timed, and 0187 makes
+    // settlements a version store. So the claim is scoped rather than dropped.
+    expect(CODE.spine).not.toContain("Figures as at");
+    expect(CODE.spine).toContain("Money figures are as at");
+    expect(CODE.spine).toContain("MONEY_AS_AT_MEANING");
+    // BOTH HALVES, ALWAYS. A money guarantee printed without the sentence
+    // saying what it does NOT cover reads as the old page-wide claim again.
+    expect(CODE.spine).toContain("VISIT_FIGURES_ARE_CURRENT");
+    expect(CODE.copy).toContain("VISIT_FIGURES_ARE_CURRENT");
+    // The instant itself stays machine-readable and unrounded.
+    expect(CODE.spine).toContain("dateTime={briefing.evidenceInstant}");
+  });
+
+  it("the current-state sentence names the figures it actually covers", () => {
+    // Naming them matters: an owner who cannot tell which half of the screen a
+    // caveat applies to has to assume the worse half applies to all of it.
+    expect(VISIT_FIGURES_ARE_CURRENT).toContain("Visit counts");
+    expect(VISIT_FIGURES_ARE_CURRENT).toContain("clinic time");
+    expect(VISIT_FIGURES_ARE_CURRENT).toContain("service value");
+    expect(MONEY_AS_AT_MEANING).toContain("payment");
+    expect(MONEY_AS_AT_MEANING).toContain("refund");
+    expect(MONEY_AS_AT_MEANING).toContain("settlement");
   });
 
   it("no figure is rendered as a bare dash or an em dash placeholder", () => {
@@ -185,8 +721,15 @@ describe("NC7/NC8 — the causes are not collapsed at the render boundary", () =
     // hosted_applied_at: null and states no server apply instant was captured.
     // Printing one to an owner would claim precision the canonical record
     // explicitly declines to claim.
+    // SCOPED TO THE SENTENCE IT IS ABOUT. Slice 2 states a date deliberately —
+    // the record-keeping floor — and that is a different claim from an apply
+    // instant. The rule is that the HISTORICAL BOUNDARY line carries no date,
+    // because the canonical record explicitly declines to assert one.
+    expect(HISTORY_BEFORE_OUTCOMES).not.toMatch(/\b20\d\d\b/);
+    expect(HISTORY_BEFORE_OUTCOMES).not.toMatch(/\b(January|February|March|April|May|June|July|August|September|October|November|December)\b/);
+    // ...and no ISO instant is printed anywhere in copy, in any sentence: an
+    // owner-facing date is a calendar date, never a timestamp.
     expect(SOURCE.copy).not.toMatch(/\b20\d\d-\d\d-\d\d\b/);
-    expect(CODE.copy).not.toMatch(/\b(August|September|October)\b/);
   });
 });
 
@@ -539,11 +1082,24 @@ describe("NC-mobile/a11y — order carries the meaning, colour never does", () =
   });
 
   it("renders the sections in the frozen Direction B order", () => {
+    // Direction B's spine, now that the money sections are real. The three
+    // evidence classes appear in provenance order — what Hone VERIFIED, then
+    // what a practitioner ATTESTED, then what is only a PRICE — so a reader
+    // who stops early stops on the strongest evidence, not the weakest.
+    // Provenance order, now that the money contracts are named apart: what
+    // MOVED (transaction period), then what this window's delivered work
+    // COLLECTED (service period), then what was only ATTESTED, then what is
+    // only a PRICE. A reader who stops early stops on the strongest evidence.
     const order = [
       "The calendar",
       "Work actually completed",
-      "Where the completed work went",
-      "Money in this period",
+      "Delivered in this window",
+      "Card money that moved this period",
+      "Collected on treatment delivered in this window",
+      "Collected outside Hone",
+      "Service value of delivered work",
+      "Visits with a payment recorded",
+      "Where the clinic time went",
     ].map((heading) => CODE.spine.indexOf(heading));
     expect(order.every((i) => i > -1)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
@@ -588,19 +1144,93 @@ describe("NC-mobile/a11y — order carries the meaning, colour never does", () =
 // 7. Slice boundary
 // ---------------------------------------------------------------------------
 
-describe("NC-scope — the later slices are absent, and say so", () => {
-  it("names both unbuilt sections in a sentence rather than a zero", () => {
-    expect(CODE.spine).toContain("DISPOSITION_CHAIN_NOT_YET");
-    expect(CODE.spine).toContain("MONEY_BRIDGES_NOT_YET");
-    expect(CODE.spine).toContain('<Unknown cause="not_yet_supported" />');
+describe("NC-scope — the later slice is absent, and says so", () => {
+  it("names the unbuilt capacity work in a sentence rather than a zero", () => {
+    expect(CODE.spine).toContain("CAPACITY_NOT_YET");
+    expect(CAPACITY_NOT_YET).toMatch(/not on this screen/);
   });
 
-  it("does not register or advertise the route", () => {
-    // The nav landing is its own slice. This PR must not add a NAV_ENTRIES row.
+  it("NO capacity, utilisation, forecast or client projection shipped", () => {
+    // The packet defers all of these. Each needs blocked-out time, interval
+    // merging and an elapsed denominator, and an approximation of any of them
+    // would be read as an answer.
+    for (const forbidden of [
+      "studio_timed_blocks",
+      "studio_blockouts",
+      "studio_availability_default",
+      "studio_availability_overrides",
+      "studio_recurring_break_rules",
+      "utilisation",
+      "utilization",
+      "sellable",
+      "sustainable",
+      "forecast",
+      "scenario",
+      "spareCapacity",
+      "perOpenHour",
+      "halfDay",
+      "fullDay",
+    ]) {
+      expect(ALL_CODE.toLowerCase(), forbidden).not.toContain(forbidden.toLowerCase());
+    }
+  });
+
+  it("REGISTERS the route, and this assertion is the inverse of the one it replaced", () => {
+    // INVERTED DELIBERATELY, NOT DELETED. Through Slice 1 and Slice 2 this
+    // test asserted the OPPOSITE — that /financials carried no NAV_ENTRIES row
+    // and sat in NON_SEARCHABLE_ROUTES — because the surface named figures it
+    // could not yet show, and advertising it would have resolved an owner's
+    // search to a disappointment.
+    //
+    // This release is the registration slice those comments named. The guard
+    // is turned around rather than removed, so the file still has an opinion
+    // about the route's discoverability and a future change that silently
+    // un-registers it fails here.
     const registry = read("lib/search/navigation-registry.ts");
-    expect(registry).toContain('route: "/financials"');
-    const navEntries = registry.slice(0, registry.indexOf("NON_SEARCHABLE_ROUTES"));
-    expect(navEntries).not.toContain("/financials");
+    // SLICED ON THE DECLARATION, NOT THE FIRST MENTION. `NON_SEARCHABLE_ROUTES`
+    // appears in a header comment on line 32, so slicing at indexOf() of the
+    // bare name cut the "nav entries" region down to 32 lines of prose. The
+    // assertion this replaced was `.not.toContain`, which passed against that
+    // empty slice for the wrong reason and would never have failed. Anchoring
+    // on the export makes the region real.
+    const navEntries = registry.slice(
+      0,
+      registry.indexOf("export const NON_SEARCHABLE_ROUTES"),
+    );
+    expect(navEntries).toContain('href: "/financials"');
+    expect(registry).not.toContain('route: "/financials"');
+  });
+
+  it("is owner-visible in search, never practitioner-visible", () => {
+    // Search visibility must match the server gate. A practitioner who cannot
+    // open the page must not be offered it by the search box either — not
+    // because search is the boundary (it is not; the page's own role check is)
+    // but because offering a destination that refuses on arrival is a defect
+    // in its own right.
+    const registry = read("lib/search/navigation-registry.ts");
+    const start = registry.indexOf('id: "financials"');
+    expect(start).toBeGreaterThan(-1);
+    const entry = registry.slice(start, registry.indexOf("},", start));
+    expect(entry).toContain('visibility: "owner"');
+  });
+
+  it("never claims REVENUE, EARNINGS or INCOME in what the registry ASSERTS", () => {
+    // The distinction this file exists to keep: a KEYWORD is a word the owner
+    // types, a DESCRIPTION is a claim the product makes. "revenue" and
+    // "earnings" are legitimate search aliases — that is how people talk about
+    // money — but the description must not assert them, because cash and
+    // e-transfer are invisible to Hone until somebody records them, so what
+    // this surface shows is a FLOOR and never the whole of what was earned.
+    const registry = read("lib/search/navigation-registry.ts");
+    const start = registry.indexOf('id: "financials"');
+    const entry = registry.slice(start, registry.indexOf("},", start));
+    const description = /description:\s*\n?\s*"([^"]+)"/.exec(entry)?.[1] ?? "";
+    expect(description.length).toBeGreaterThan(0);
+    for (const claim of ["revenue", "earning", "income", "profit", "made"]) {
+      expect(description.toLowerCase(), claim).not.toContain(claim);
+    }
+    // ...and it DOES say what it actually is.
+    expect(description.toLowerCase()).toContain("collected by card through hone");
   });
 });
 
@@ -1215,7 +1845,7 @@ describe("NC-static — an unreadable or unresolvable dependency is a violation"
 // 10. The money-path closure
 // ---------------------------------------------------------------------------
 
-describe("NC-reach — no money path is in FIN Slice 1's static ESM closure", () => {
+describe("NC-reach — money is confined to the FIN-owned modules of the closure", () => {
   it("ANTI-VACUITY: the walk actually resolved a real graph", () => {
     expect(CLOSURE.size).toBeGreaterThanOrEqual(12);
     expect(CLOSURE_REL).toContain("lib/booking/reporting-period.ts");
@@ -1241,19 +1871,86 @@ describe("NC-reach — no money path is in FIN Slice 1's static ESM closure", ()
     expect(CLOSURE_REL.filter((f) => f.startsWith("lib/dashboard/"))).toEqual([]);
   });
 
-  it("no module in the closure names a forbidden identifier in VALUE position", () => {
-    // The title says value position because that is what is checked. A type
-    // declaration naming `price_cents` is a shape, not a read, and
-    // lib/types/database.ts is in this closure precisely so that distinction
-    // has to be made rather than assumed.
+  it("money is named ONLY by the FIN-owned modules, nowhere else in the closure", () => {
+    // THE CONTRACT INVERTED FOR SLICE 2, and deliberately not weakened.
+    //
+    // Slice 1 proved no module in the closure named money at all. Slice 2 reads
+    // money, so that assertion is now false BY DESIGN — and the useful claim is
+    // the one that survives: money identifiers appear in the four FIN-owned
+    // modules that are entitled to them, and in NO other module the compiler
+    // can reach from this route.
+    //
+    // What that still catches is the failure that mattered: a shared utility,
+    // a type module or a booking helper quietly growing a money read, and
+    // reaching this surface through a dependency nobody re-examined.
+    //
+    // Position is still the boundary. lib/types/database.ts is in the closure
+    // and names `price_cents` as a `name: type` property signature; it passes
+    // on its merits, not on an exemption.
+    const OWNED = /^(lib\/finance\/|app\/\(app\)\/financials\/)/;
+    // lib/stripe/livemode.ts is entitled to EXACTLY ONE of these names — its
+    // own export — and to nothing else. Granted as a named identifier rather
+    // than as a file exemption, because a file exemption is what let a money
+    // helper hide inside lib/types/database.ts in the first place: the premise
+    // "declaration only" was never verified and turned out to be false. The
+    // next author who adds a ledger read to this file trips this test.
+    const ENTITLED: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+      ["lib/stripe/livemode.ts", new Set(["inferStripeLivemode"])],
+      // Slice 2b. The SHARED pricing resolver, entitled to `price_cents` and
+      // to nothing else. Granted for the same reason livemode is, and on the
+      // same terms: it is a PURE LEAF with zero imports, so nothing rides in
+      // behind it, and the alternative was a second implementation of "what
+      // does this client pay" that could disagree with the code that actually
+      // charged them. A named identifier, never a file exemption — a file
+      // exemption is what let a money helper hide inside lib/types/database.ts.
+      ["lib/billing/session-payment-amount.ts", new Set(["price_cents"])],
+    ]);
     const offences: string[] = [];
     for (const [file, via] of CLOSURE) {
       const rel = path.relative(ROOT, file);
+      if (OWNED.test(rel)) continue;
+      const entitled = ENTITLED.get(rel);
+      if (entitled) {
+        for (const hit of forbiddenValueOccurrences(readFileSync(file, "utf8"), file)) {
+          const named = FORBIDDEN_ON_THE_PATH.find((id) => hit.includes(`"${id}"`));
+          if (named === undefined || !entitled.has(named)) {
+            offences.push(`${rel} ${hit} (reached via ${via ?? "entry point"})`);
+          }
+        }
+        continue;
+      }
       for (const hit of forbiddenValueOccurrences(readFileSync(file, "utf8"), file)) {
         offences.push(`${rel} ${hit} (reached via ${via ?? "entry point"})`);
       }
     }
     expect(offences).toEqual([]);
+  });
+
+  it("ANTI-VACUITY: the FIN-owned modules DO name money, so the exclusion is load-bearing", () => {
+    // Without this, the rule above could pass by the closure having no money in
+    // it at all — which is what Slice 1 asserted and Slice 2 must not.
+    // The entitlement above must also be load-bearing rather than decorative:
+    // the leaf module really is in the closure, and really does name the flag.
+    const leaf = path.join(ROOT, "lib/stripe/livemode.ts");
+    expect(CLOSURE.has(leaf)).toBe(true);
+    expect(forbiddenValueOccurrences(readFileSync(leaf, "utf8"), leaf)).not.toEqual([]);
+
+    // The pricing resolver, on the same terms. Its entitlement is only safe
+    // because it imports NOTHING — an entitled module that pulled in a client
+    // would drag that whole subtree into this route unexamined.
+    const resolver = path.join(ROOT, "lib/billing/session-payment-amount.ts");
+    expect(CLOSURE.has(resolver)).toBe(true);
+    expect(forbiddenValueOccurrences(readFileSync(resolver, "utf8"), resolver)).not.toEqual([]);
+    expect(codeOnly(readFileSync(resolver, "utf8"))).not.toContain("import ");
+
+    const owned = [FILES.loader, FILES.model].map((rel) => path.join(ROOT, rel));
+    for (const file of owned) {
+      expect(
+        forbiddenValueOccurrences(readFileSync(file, "utf8"), file),
+        path.relative(ROOT, file),
+      ).not.toEqual([]);
+      expect(CLOSURE.has(file), `${path.relative(ROOT, file)} must be in the closure`).toBe(true);
+    }
   });
 
   it("the position rule distinguishes a declaration from a read", () => {
@@ -1483,5 +2180,109 @@ describe("NC-lint — the configured rules reject these FIN-owned loader forms",
       const ruleIds = await lintRuleIds(read(rel), path.join(ROOT, rel));
       expect(ruleIds, rel).toEqual([]);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A PAYMENT COUNT IS RENDERED IN PAYMENTS — Codex P2
+// ---------------------------------------------------------------------------
+//
+// `chargeCount` counts succeeded PAYMENT ROWS in the movement window. It was
+// rendered through `Visits`, so the Payments line read "2 visits" — asserting a
+// visit population the number does not describe. Cash movement legitimately
+// includes no-show and late-cancellation fee payments, which are money with no
+// delivered visit behind them, so the vocabulary was not merely untidy.
+
+describe("the payment count is counted in payments, not visits", () => {
+  const spine = () => codeOnly(read(FILES.spine));
+
+  it("chargeCount renders through the payment renderer", () => {
+    const src = spine();
+    expect(src).toContain("<Payments fact={c.chargeCount} />");
+    // ...and NOT through the visit renderer, by destination as well as by name.
+    expect(src).not.toContain("<Visits fact={c.chargeCount} />");
+  });
+
+  it("the payment renderer says payment / payments, and never visit", () => {
+    const src = spine();
+    const fn = src.slice(src.indexOf("function Payments("));
+    const body = fn.slice(0, fn.indexOf("}\n"));
+    expect(body).toContain('one="payment"');
+    expect(body).toContain('many="payments"');
+    expect(body).not.toMatch(/"visits?"/);
+  });
+
+  it("the shared counter is what pluralizes, so the two units cannot drift", () => {
+    // Both renderers delegate to one `Counted`, which owns the singular/plural
+    // rule. A second hand-rolled pluralization is how "1 payments" appears.
+    const src = spine();
+    const counted = src.slice(src.indexOf("function Counted("));
+    expect(counted.slice(0, 400)).toContain("fact.value === 1 ? one : many");
+    expect(src).toContain('function Visits({ fact }: { fact: Fact<number> }) {');
+    expect(src).toContain('<Counted fact={fact} one="visit" many="visits" />');
+    expect(src).toContain('<Counted fact={fact} one="payment" many="payments" />');
+  });
+
+  it("no OTHER money-row count is rendered in visit vocabulary by mistake", () => {
+    // The visit renderer is legitimate for visit populations; this pins that
+    // the only payment-row count on the screen is not one of them.
+    const src = spine();
+    for (const visitFact of [
+      "collectedOnDeliveredVisits",
+      "cardPaidVisits",
+      "refundedToZeroVisits",
+      "paidInAnotherPeriodVisits",
+      "unresolvedVisits",
+    ]) {
+      expect(src, `${visitFact} should stay a visit count`).toContain(
+        `<Visits fact={c.${visitFact}} />`,
+      );
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE SCREEN MUST NOT CONTRADICT ITSELF — Codex P2-D
+// ---------------------------------------------------------------------------
+//
+// The completed-work card retained a Slice-1 sentence saying what this work was
+// worth is not on this screen yet. Slice 2 renders "Service value of delivered
+// work" immediately below it. On every covered August-or-later period an owner
+// saw both at once.
+//
+// The sentence is not simply deleted: for a period entirely below the money
+// floor there IS no service value on the screen, and saying so is useful. It is
+// CONDITIONED instead.
+
+describe("the completed-work card does not deny what the money section shows", () => {
+  const spine = () => codeOnly(read(FILES.spine));
+
+  it("the absence claim is not rendered unconditionally", () => {
+    const src = spine();
+    const at = src.indexOf("What this work was worth is not on this screen yet");
+    expect(at, "the sentence has moved; this guard needs rewriting").toBeGreaterThan(-1);
+    // It must sit inside a coverage branch rather than in the card's body.
+    const before = src.slice(Math.max(0, at - 600), at);
+    expect(
+      before,
+      "the Slice-1 absence claim still renders whether or not money is covered",
+    ).toMatch(/money\.covered/);
+  });
+
+  it("a covered period says something TRUE about the two sections instead", () => {
+    const src = spine();
+    expect(src).toContain("COMPLETED_IS_NOT_THE_MONEY_POPULATION");
+  });
+
+  it("the replacement names the real distinction, not a slogan", () => {
+    const copy = codeOnly(read("lib/finance/financial-copy.ts"));
+    const at = copy.indexOf("COMPLETED_IS_NOT_THE_MONEY_POPULATION");
+    expect(at).toBeGreaterThan(-1);
+    const sentence = copy.slice(at, at + 400);
+    // The distinction that actually exists: completed is a calendar status;
+    // the money below is measured over DELIVERED work.
+    expect(sentence).toMatch(/delivered/i);
+    // ...and it must not resurrect the absence claim.
+    expect(sentence).not.toMatch(/not on this screen yet/);
   });
 });

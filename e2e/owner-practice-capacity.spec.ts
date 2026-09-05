@@ -279,9 +279,14 @@ async function assertShellAt(
     sheet.getByRole("link", { name: "Business", exact: true }),
     `${at}: Business is owner-only`,
   ).toHaveCount(opts.owner ? 1 : 0);
-  await expect(sheet.locator('a[href="/dashboard/capacity"]')).toHaveCount(
+  // RETARGETED BY FIN-01A. The Business entry points at /business now, not
+  // straight at capacity: capacity was the only owner surface when this was
+  // written, and Financials made it two. Capacity is reached THROUGH Business,
+  // via the shared subnav, so the menu must no longer link it directly.
+  await expect(sheet.locator('a[href="/business"]')).toHaveCount(
     opts.owner ? 1 : 0,
   );
+  await expect(sheet.locator('a[href="/dashboard/capacity"]')).toHaveCount(0);
   // The account actions the desktop button would have offered.
   await expect(
     sheet.getByRole("link", { name: "Settings" }),
@@ -794,10 +799,15 @@ test("an owner's desktop navigation carries Business, once, and it reaches the b
   await expect(nav).toBeVisible();
   const business = nav.getByRole("link", { name: "Business", exact: true });
   await expect(business).toHaveCount(1);
-  await expect(business).toHaveAttribute("href", "/dashboard/capacity");
+  // RETARGETED BY FIN-01A: the entry points at the Business hub, and capacity
+  // is reached from there through the shared subnav.
+  await expect(business).toHaveAttribute("href", "/business");
   // Once BY DESTINATION as well: a second, relabelled link to the owner
   // surface is a duplicate entry point that counting by name cannot see.
-  await expect(nav.locator('a[href="/dashboard/capacity"]')).toHaveCount(1);
+  await expect(nav.locator('a[href="/business"]')).toHaveCount(1);
+  // The primary nav no longer reaches capacity directly — that is the whole
+  // point of the hub, and a stale direct link would be a second entry point.
+  await expect(nav.locator('a[href="/dashboard/capacity"]')).toHaveCount(0);
 
   // THE WHOLE ROW, IN ORDER. Business sits AFTER Records, and the four working
   // surfaces are untouched — a nav that gained Business by displacing Records,
@@ -823,14 +833,31 @@ test("an owner's desktop navigation carries Business, once, and it reaches the b
     nav.getByRole("link", { name: /Practice capacity/ }),
   ).toHaveCount(0);
 
-  // WHERE IT GOES, not just that it exists.
+  // WHERE IT GOES, not just that it exists — and RETARGETED BY FIN-01A: the
+  // tab now reaches the Business hub, and Capacity is one step further, through
+  // the shared subnav. Walking the WHOLE path rather than just the first hop is
+  // the point: an owner who could reach /business but not get from there to
+  // Capacity would have lost a destination this entry used to give them.
   await business.click();
+  await page.waitForURL("**/business");
+  await expect(page.getByRole("heading", { name: "Business" })).toBeVisible();
+
+  // BUSINESS -> CAPACITY, through the subnav.
+  const subnav = page.getByRole("navigation", { name: "Business" });
+  await subnav.getByRole("link", { name: "Capacity", exact: true }).click();
   await page.waitForURL("**/dashboard/capacity");
   await expect(
     page.getByRole("heading", { name: "Practice capacity" }),
   ).toBeVisible();
-  // ...and it is still there once you have arrived: this is a permanent entry,
-  // not a one-shot promotion that disappears on the destination.
+  // The subnav travels WITH the owner: it is on the destination too, and it
+  // knows where they are.
+  await expect(
+    page.getByRole("navigation", { name: "Business" })
+      .getByRole("link", { name: "Capacity", exact: true }),
+  ).toHaveAttribute("aria-current", "page");
+
+  // ...and the tab is still there once you have arrived: this is a permanent
+  // entry, not a one-shot promotion that disappears on the destination.
   await expect(
     primaryNav(page).getByRole("link", { name: "Business", exact: true }),
   ).toBeVisible();
@@ -881,6 +908,95 @@ test("a practitioner gets no Business entry on the desktop nav, and the route st
   }
 });
 
+// ---------------------------------------------------------------------------
+// Financials, reached the way an owner actually reaches it
+// ---------------------------------------------------------------------------
+//
+// The pair below is the browser half of FIN-01A's authority. Everything else
+// about the money model is proved in unit tests against the read model; what
+// only a browser can establish is that the route an owner is GIVEN leads to the
+// surface, and that a practitioner who types the same route is refused by the
+// server rather than merely un-linked.
+
+test("an owner reaches Financials THROUGH Business, and the money surface renders", async ({
+  page,
+}) => {
+  await loginAsOwner(page, seed);
+  await page.goto("/dashboard");
+
+  // NAVIGATED, NOT TYPED. Asserting `goto("/financials")` renders would prove
+  // the route exists while saying nothing about whether an owner can get to it
+  // — and the whole point of the hub is that Financials is reachable without
+  // knowing its URL.
+  const business = primaryNav(page).getByRole("link", { name: "Business", exact: true });
+  await business.click();
+  await page.waitForURL("**/business");
+
+  await page
+    .getByRole("navigation", { name: "Business" })
+    .getByRole("link", { name: "Financials", exact: true })
+    .click();
+  await page.waitForURL("**/financials");
+  // The URL itself, exactly: a hub that rendered money inline without moving
+  // would satisfy every content assertion below.
+  expect(new URL(page.url()).pathname).toBe("/financials");
+
+  // REAL CONTENT, by the section headings the spine actually renders — one from
+  // the service-value half and one from the studio-attested half, so a surface
+  // that lost either contract fails here.
+  await expect(
+    page.getByRole("heading", { name: "Service value of delivered work" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Collected outside Hone" }),
+  ).toBeVisible();
+
+  // The Business context travels with them and knows where they are...
+  await expect(
+    page
+      .getByRole("navigation", { name: "Business" })
+      .getByRole("link", { name: "Financials", exact: true }),
+  ).toHaveAttribute("aria-current", "page");
+  // ...and the permanent tab survives arrival, exactly as it does on Capacity.
+  await expect(
+    primaryNav(page).getByRole("link", { name: "Business", exact: true }),
+  ).toBeVisible();
+});
+
+test("a practitioner who types /financials is refused, and no money reaches them", async ({
+  page,
+}) => {
+  await loginByMagicLink(page, member.email);
+  await page.goto("/financials");
+
+  // The CURRENT product contract, asserted rather than assumed: the page
+  // renders a refusal IN PLACE. It does not redirect, so the URL is checked
+  // too — a test that only looked for the sentence would pass just as well
+  // against a redirect to /dashboard, and would then be describing a product
+  // that does not exist.
+  await expect(
+    page.getByText("Only the studio owner can see studio financials."),
+  ).toBeVisible();
+  expect(new URL(page.url()).pathname).toBe("/financials");
+
+  // THE REFUSAL IS THE WHOLE PAGE. The subnav renders only past the owner gate,
+  // so a practitioner is not shown two sibling owner surfaces they cannot open.
+  await expect(page.getByRole("navigation", { name: "Business" })).toHaveCount(0);
+
+  // AND NO MONEY REACHES THEM — both contracts by heading, and not one figure.
+  // `p.tabular-nums` is what the spine renders for every known value, so zero
+  // of them is the strongest single statement that no number leaked, including
+  // from a section whose heading was renamed.
+  for (const heading of ["Service value of delivered work", "Collected outside Hone"]) {
+    await expect(
+      page.getByRole("heading", { name: heading }),
+      `${heading} must not reach a practitioner`,
+    ).toHaveCount(0);
+  }
+  await expect(page.locator("p.tabular-nums")).toHaveCount(0);
+});
+
+
 test("an owner's mobile menu carries Business, and tapping it closes the menu and lands", async ({
   page,
 }) => {
@@ -902,10 +1018,12 @@ test("an owner's mobile menu carries Business, and tapping it closes the menu an
 
   const business = nav.getByRole("link", { name: "Business", exact: true });
   await expect(business).toHaveCount(1);
-  await expect(business).toHaveAttribute("href", "/dashboard/capacity");
+  // RETARGETED BY FIN-01A, same as the desktop entry: the hub, not capacity.
+  await expect(business).toHaveAttribute("href", "/business");
   // Bound to the SHEET'S OWN SUBTREE, so the hidden desktop link is not merely
   // out of the a11y tree — it is out of the search scope entirely.
-  await expect(nav.locator('a[href="/dashboard/capacity"]')).toHaveCount(1);
+  await expect(nav.locator('a[href="/business"]')).toHaveCount(1);
+  await expect(nav.locator('a[href="/dashboard/capacity"]')).toHaveCount(0);
 
   // IN THE WORKING-SURFACE SECTION, above the account divider. These are the
   // sheet's DIRECT link children; Settings / Getting Started / Sign out sit one
@@ -927,8 +1045,19 @@ test("an owner's mobile menu carries Business, and tapping it closes the menu an
   // TAPPING IT CLOSES THE SHEET AND NAVIGATES — the behaviour PR #229 exists
   // to provide, which a new item could silently miss.
   await business.click();
-  await page.waitForURL("**/dashboard/capacity");
+  // RETARGETED BY FIN-01A: the sheet's entry reaches the hub, same as desktop.
+  await page.waitForURL("**/business");
   await expect(nav).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Business" })).toBeVisible();
+
+  // AND CAPACITY IS STILL REACHABLE FROM THERE on a phone, which is the claim
+  // that matters: the subnav must be usable at 390px, not merely present.
+  const subnav = page.getByRole("navigation", { name: "Business" });
+  const capacity = subnav.getByRole("link", { name: "Capacity", exact: true });
+  const capacityBox = (await capacity.boundingBox())!;
+  expect(capacityBox.height).toBeGreaterThanOrEqual(44);
+  await capacity.click();
+  await page.waitForURL("**/dashboard/capacity");
   await expect(
     page.getByRole("heading", { name: "Practice capacity" }),
   ).toBeVisible();

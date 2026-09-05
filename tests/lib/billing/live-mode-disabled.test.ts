@@ -29,6 +29,7 @@ function codeOnly(src: string): string {
 }
 
 const STRIPE_SERVER_CODE = codeOnly(read("lib/stripe/server.ts"));
+const STRIPE_LIVEMODE_CODE = read("lib/stripe/livemode.ts");
 const CHARGE = read("lib/billing/session-payment-charge.ts");
 const CHARGE_CODE = codeOnly(CHARGE);
 const REFUND_CODE = codeOnly(read("lib/billing/payment-refund.ts"));
@@ -66,8 +67,31 @@ describe("Layer 1: Stripe key/env gate still requires explicit live opt-in", () 
     );
   });
   it("inferStripeLivemode is derived only from an sk_live_ key prefix", () => {
-    expect(STRIPE_SERVER_CODE).toMatch(/export function inferStripeLivemode/);
-    expect(STRIPE_SERVER_CODE).toMatch(/startsWith\("sk_live_"\)/);
+    // THE RULE MOVED, THE RULE DID NOT CHANGE. It now lives in
+    // lib/stripe/livemode.ts, a leaf module with no imports, so a caller that
+    // needs only the MODE does not acquire the Stripe SDK with it — the owner
+    // Financials surface proves it makes no Stripe call by walking its static
+    // import closure, and importing the flag from lib/stripe/server.ts would
+    // put the SDK inside that closure.
+    //
+    // WHAT THIS TEST PROTECTS IS UNCHANGED: exactly one definition, derived
+    // from nothing but the key prefix. Both halves are asserted — the leaf
+    // defines it, and lib/stripe/server.ts re-exports rather than redefining,
+    // so a second copy cannot appear without failing here.
+    expect(STRIPE_LIVEMODE_CODE).toMatch(/export function inferStripeLivemode/);
+    expect(STRIPE_LIVEMODE_CODE).toMatch(/startsWith\("sk_live_"\)/);
+    expect(STRIPE_LIVEMODE_CODE).toMatch(/process\.env\.STRIPE_SECRET_KEY/);
+
+    expect(STRIPE_SERVER_CODE).toMatch(
+      /export \{ inferStripeLivemode \} from "\.\/livemode"/,
+    );
+    expect(STRIPE_SERVER_CODE, "no second definition").not.toMatch(
+      /export function inferStripeLivemode/,
+    );
+
+    // The leaf imports nothing, which is the property that makes it safe to
+    // depend on from a surface that must not reach Stripe.
+    expect(codeOnly(STRIPE_LIVEMODE_CODE)).not.toMatch(/^\s*import\s/m);
   });
 });
 

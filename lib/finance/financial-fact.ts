@@ -65,7 +65,32 @@ export type FinancialUnknownCause =
    * figure would be computed over a set that was never fully in hand. A short
    * sum presented as a total is the specific lie this prevents.
    */
-  | "not_enumerable";
+  | "not_enumerable"
+  /**
+   * THE RECORDS FOR THIS WINDOW ARE TOO INCOMPLETE TO REPORT.
+   *
+   * The read succeeded and rows exist. What is missing is the RECORD-KEEPING
+   * those rows would have to carry for a figure over them to mean anything.
+   *
+   * The measured instance, and the reason this cause exists: the share of
+   * elapsed appointments ever marked `completed` ran 0.0% -> 20.8% -> 82.6% ->
+   * 98.4% across 2026-05 to 2026-08 in production. A figure computed over the
+   * earlier months does not describe a quieter studio; it describes a studio
+   * that had not started closing appointments out. Worse, because the omission
+   * SHRINKS over time, any trend across that boundary manufactures growth that
+   * did not happen — a delivered-visit series over those four months reads as
+   * 12x while the real movement was 2.6x.
+   *
+   * WHY IT IS NOT ONE OF THE FIVE ABOVE. `not_recorded` is about one visit
+   * nobody settled; this is about a whole window nobody closed out.
+   * `unknowable` claims no record could ever have existed, which is false —
+   * records existed and were incomplete. `not_yet_supported` says the gap is
+   * Hone's and says nothing about the studio, and this is the opposite: Hone
+   * can compute it, and declines because the studio's own history will not
+   * carry it. Reusing any of those three would print a sentence that is not
+   * true.
+   */
+  | "records_incomplete";
 
 export type Fact<T> =
   | { readonly known: true; readonly value: T }

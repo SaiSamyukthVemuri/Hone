@@ -115,11 +115,14 @@ export { STRIPE_API_VERSION };
  * Whether the current process is configured against Stripe live mode.
  * Used to set the `stripe_livemode` column on payment-settings /
  * provisioning-attempt / events rows.
+ *
+ * RE-EXPORTED, NOT DEFINED HERE. The rule now lives in ./livemode, a leaf
+ * module with no imports, so a caller that needs only the mode does not
+ * acquire the Stripe SDK along with it — see that file for why the owner
+ * Financials surface cannot. Every existing importer of this module is
+ * unaffected: there is still exactly one implementation, at one name.
  */
-export function inferStripeLivemode(): boolean {
-  const key = process.env.STRIPE_SECRET_KEY ?? "";
-  return key.startsWith("sk_live_");
-}
+export { inferStripeLivemode } from "./livemode";
 
 /**
  * Country for Express connected-account creation. Hardcoded to Canada
