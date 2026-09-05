@@ -345,6 +345,19 @@ describe("a live claim EXCLUDES a second request", () => {
   it("the studio row is locked so claimants serialize", () => {
     expect(body(CLAIM)).toContain("for update");
   });
+
+  it("the FIRST-EVER claim cannot race, because there is no row to lock", () => {
+    // Regression pin. `for update` locks nothing when no row exists, so two
+    // simultaneous first submits both reach the INSERT; without `on conflict`
+    // the loser gets a raw duplicate-key exception instead of a result word.
+    // Proved behaviourally in tests/db/studio-sms-sender.db.test.ts
+    // (CONCURRENT_FIRST_CLAIM).
+    const claim = body(CLAIM);
+    expect(claim).toMatch(/on conflict do nothing\s*\n\s*returning \* into v_row;/);
+    // ...and the loser re-reads the winner rather than inventing an answer.
+    const after = claim.slice(claim.indexOf("on conflict do nothing"));
+    expect(after).toMatch(/select \*\s*\n\s*into v_row/);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -378,6 +391,15 @@ describe("readiness — active is unreachable without proof", () => {
 
   it("finalize never silently overwrites a different provider resource", () => {
     expect(body(FINALIZE)).toContain("'conflict'");
+  });
+
+  it("a cross-studio resource collision is NAMED, not raised as a bare 23505", () => {
+    // The three resource unique indexes can fire during finalize when another
+    // studio already owns the number or the service. A caller receiving a raw
+    // Postgres message would have to parse it to tell that apart from any other
+    // failure, so the command catches and names it.
+    const finalize = body(FINALIZE);
+    expect(finalize).toMatch(/exception when unique_violation then\s*\n\s*return 'conflict';/);
   });
 
   it("finalize is addressed by studio AND claim key together", () => {
