@@ -212,6 +212,150 @@ function walk(dir, acc = []) {
   return acc;
 }
 
+/**
+ * TypeScript, loaded once. Used for two things a regex cannot do correctly:
+ * classifying `import()` by TYPE POSITION, and the completeness oracle. It is
+ * an existing devDependency; nothing is added. If it cannot be loaded the
+ * selftest fails and no result is emitted.
+ */
+let _ts = null, _tsTried = false;
+export function loadTypeScript(root = REPO_ROOT) {
+  if (_tsTried) return _ts;
+  _tsTried = true;
+  try { _ts = createRequire(join(root, "package.json"))("typescript"); }
+  catch { _ts = null; }
+  return _ts;
+}
+
+/**
+ * Classify every `import(...)` in a file BY SYNTAX, not by proximity.
+ *
+ * TypeScript models a type-position import as its own AST node, `ImportTypeNode`
+ * — that covers `typeof import("x")`, `import("x").Thing`, and every operand of
+ * a union, intersection, conditional or generic argument, however deeply
+ * nested. A runtime dynamic import is a CallExpression whose callee is the
+ * `import` keyword. The two are structurally distinct, so no regex heuristic is
+ * needed and none can drift.
+ *
+ * Returns { typePositions:Set<pos>, runtimePositions:Map<pos,specifier> }.
+ */
+export function classifyImportCalls(ts, fileName, text) {
+  const typePositions = new Set();
+  const runtimePositions = new Map();
+  const src = ts.createSourceFile(fileName, text, ts.ScriptTarget.Latest, true,
+    /\.tsx$/.test(fileName) ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
+  const lit = (n) => (n && ts.isStringLiteralLike(n) ? n.text : null);
+  (function visit(node) {
+    if (ts.isImportTypeNode(node)) {
+      // `import("x").A`, `typeof import("x")` — always erased.
+      const arg = node.argument && ts.isLiteralTypeNode(node.argument) ? node.argument.literal : null;
+      const spec = lit(arg);
+      if (spec) typePositions.add(spec + "@" + node.getStart(src));
+    } else if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
+      const spec = lit(node.arguments[0]);
+      if (spec) runtimePositions.set(node.getStart(src), spec);
+    }
+    ts.forEachChild(node, visit);
+  })(src);
+  return { typePositions, runtimePositions, parsed: true };
+}
+
+/**
+ * POSTGRES FUNCTION IDENTITY = NAME + INPUT SIGNATURE, never the bare name.
+ *
+ * `calendar_required_event_scopes()` and `calendar_required_event_scopes(text)`
+ * are two different functions; `start_session` with four and with five
+ * arguments are two different functions. Collapsing them by name would report
+ * one identity's call sites, SECURITY DEFINER flag and history against the
+ * other. Repeated CREATE OR REPLACE of the SAME name+signature is one identity
+ * with N historical definitions.
+ *
+ * OUT parameters are excluded: PostgreSQL identity is the INPUT signature.
+ * INOUT and VARIADIC count. Names and DEFAULT expressions are dropped.
+ */
+const PG_TYPE_ALIASES = {
+  "timestamp with time zone": "timestamptz",
+  "timestamp without time zone": "timestamp",
+  "time with time zone": "timetz",
+  "time without time zone": "time",
+  "character varying": "varchar",
+  "double precision": "float8",
+  "int": "integer", "int4": "integer", "int2": "smallint", "int8": "bigint",
+  "bool": "boolean", "decimal": "numeric", "real": "float4", "char": "character",
+};
+const PG_TYPE_HEAD = new Set(["text","uuid","integer","int","int2","int4","int8","bigint","smallint",
+  "boolean","bool","jsonb","json","numeric","decimal","real","double","float","money","date","time",
+  "timestamp","timestamptz","interval","bytea","character","varchar","char","citext","inet","cidr",
+  "macaddr","oid","name","record","trigger","void","anyelement","anyarray","tsvector","tsquery","xml",
+  "point","line","lseg","box","path","polygon","circle","bit","uuid[]","setof"]);
+
+export function splitTopLevel(argText) {
+  const parts = [];
+  let depth = 0, cur = "", q = null;
+  for (let i = 0; i < argText.length; i++) {
+    const c = argText[i];
+    if (q) { cur += c; if (c === q) q = null; continue; }
+    if (c === "'" || c === '"') { q = c; cur += c; continue; }
+    if (c === "(" || c === "[") depth++;
+    else if (c === ")" || c === "]") depth--;
+    if (c === "," && depth === 0) { parts.push(cur); cur = ""; continue; }
+    cur += c;
+  }
+  if (cur.trim()) parts.push(cur);
+  return parts;
+}
+
+export function normalizeArg(argRaw) {
+  let a = argRaw.replace(/\s+/g, " ").trim();
+  if (!a) return null;
+  a = a.replace(/\s+default\s+[\s\S]*$/i, "").replace(/\s*=\s*[\s\S]*$/, "").trim();
+  const mode = a.match(/^(in|out|inout|variadic)\s+/i);
+  let m = null;
+  if (mode) { m = mode[1].toLowerCase(); a = a.slice(mode[0].length).trim(); }
+  if (m === "out") return null; // OUT params are not part of PG identity
+  const toks = a.split(" ");
+  // `argname type...` vs a bare multi-word type. Drop a leading identifier only
+  // when it cannot itself start a type.
+  if (toks.length > 1 && !PG_TYPE_HEAD.has(toks[0].toLowerCase().replace(/\[\]$/, ""))) toks.shift();
+  let type = toks.join(" ").toLowerCase().replace(/\s*\(\s*\d+(\s*,\s*\d+)?\s*\)/g, "");
+  // Canonicalise PG type ALIASES. `timestamptz` and `timestamp with time zone`
+  // are the same type; leaving both spellings manufactures a phantom overload,
+  // which is exactly the false-positive class this tool must not produce.
+  const suffix = type.endsWith("[]") ? "[]" : "";
+  const base = suffix ? type.slice(0, -2).trim() : type;
+  type = (PG_TYPE_ALIASES[base] ?? base) + suffix;
+  return type || null;
+}
+
+/** Balanced-paren argument list starting at the "(" index. */
+export function readArgList(text, openIdx) {
+  let depth = 0, q = null;
+  for (let i = openIdx; i < text.length; i++) {
+    const c = text[i];
+    if (q) { if (c === q) q = null; continue; }
+    if (c === "'" || c === '"') { q = c; continue; }
+    if (c === "(") depth++;
+    else if (c === ")") { depth--; if (depth === 0) return text.slice(openIdx + 1, i); }
+  }
+  return "";
+}
+
+/** Strip SQL comments from an argument list before parsing it. A `--` comment
+ *  inside the parameter list otherwise leaks into the signature and manufactures
+ *  a phantom overload. */
+export function stripSqlComments(text) {
+  return text
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/--[^\n]*/g, " ");
+}
+
+export function signatureOf(text, openIdx) {
+  const args = splitTopLevel(stripSqlComments(readArgList(text, openIdx)))
+    .map(normalizeArg)
+    .filter(Boolean);
+  return `(${args.join(",")})`;
+}
+
 export function buildGraph(root = REPO_ROOT) {
   const rel = (p) => relative(root, p).split("\\").join("/");
   const all = walk(root);
@@ -246,13 +390,16 @@ export function buildGraph(root = REPO_ROOT) {
     let m;
     while ((m = re.exec(text))) {
       const name = m[1].toLowerCase();
+      const openIdx = m.index + m[0].length - 1;
+      const signature = signatureOf(text, openIdx);
+      const identity = `${name}${signature}`; // PG identity: name + INPUT signature
       const after = text.slice(m.index, m.index + 4000);
       const bodyAt = after.search(/\bas\s*\$\$|\blanguage\b/i);
       const header = bodyAt > 0 ? after.slice(0, bodyAt + 200) : after.slice(0, 800);
       const line = text.slice(0, m.index).split("\n").length;
-      if (!sqlFns.has(name)) sqlFns.set(name, []);
-      sqlFns.get(name).push({
-        migration: rel(f), number: migNum(f), line,
+      if (!sqlFns.has(identity)) sqlFns.set(identity, []);
+      sqlFns.get(identity).push({
+        migration: rel(f), number: migNum(f), line, name, signature,
         securityDefinerDeclaredInSource: /security\s+definer/i.test(header),
       });
     }
@@ -266,6 +413,8 @@ export function buildGraph(root = REPO_ROOT) {
     // `".from('ghost')"` therefore yields nothing: its `.from(` is string body.
     const { code } = codeSpans(raw);
     const text = raw;
+    const tsLib = /\.(ts|tsx)$/.test(r) && raw.includes("import(") ? loadTypeScript(root) : null;
+    const importCalls = tsLib ? classifyImportCalls(tsLib, r, raw) : null;
     const isCode = (i) => code[i] === 1;
     const lineOf = (i) => text.slice(0, i).split("\n").length;
 
@@ -294,13 +443,16 @@ export function buildGraph(root = REPO_ROOT) {
       if (!isCode(m.index)) continue;
       const to = resolveSpec(m[1], f);
       if (!to) continue;
-      // TYPE-POSITION import() is erased: `typeof import("x")`, and an
-      // `import("x").Thing` used inside a type alias / interface / annotation.
-      const before = text.slice(Math.max(0, m.index - 200), m.index);
-      const typePosition = /\btypeof\s*$/.test(before) ||
-        /(^|[\n;{}])\s*(export\s+)?(type|interface)\b[^\n;]*$/.test(before) ||
-        /:\s*$/.test(before);
-      add(r, to, typePosition ? "TYPE_ONLY" : "IMPORT", lineOf(m.index), typePosition ? "type-position" : "dynamic");
+      // Classification comes from the TypeScript AST, never from surrounding
+      // text: an ImportTypeNode is type position wherever it appears, including
+      // every operand of a union/intersection/conditional/generic.
+      const runtime = importCalls && importCalls.runtimePositions.has(m.index);
+      const known = importCalls
+        ? runtime || [...importCalls.typePositions].some((k) => k.startsWith(m[1] + "@"))
+        : false;
+      if (!known && importCalls) continue; // AST saw neither: not a real import call
+      add(r, to, runtime ? "IMPORT" : "TYPE_ONLY", lineOf(m.index),
+        runtime ? "dynamic" : "type-position");
     }
 
     // RPC_STRING_LITERAL — the half a TypeScript-only graph discards.
@@ -354,14 +506,15 @@ export function buildGraph(root = REPO_ROOT) {
     }
   }
 
-  for (const [name, defs] of sqlFns)
+  for (const defs of sqlFns.values())
     for (const d of defs) {
-      add(d.migration, `sqlfn:${name}`, "SQL_FUNCTION_DEFINITION", d.line);
-      if (d.securityDefinerDeclaredInSource) add(d.migration, `sqlfn:${name}`, "SECURITY_DEFINER_DECLARED_IN_SOURCE", d.line);
+      add(d.migration, `sqlfn:${d.name}`, "SQL_FUNCTION_DEFINITION", d.line, `${d.name}${d.signature}`);
+      if (d.securityDefinerDeclaredInSource) add(d.migration, `sqlfn:${d.name}`, "SECURITY_DEFINER_DECLARED_IN_SOURCE", d.line, `${d.name}${d.signature}`);
     }
 
-  const sqlFunctions = [...sqlFns].map(([name, history]) => ({
-    name, definitionCount: history.length, latest: history[history.length - 1], history,
+  const sqlFunctions = [...sqlFns].map(([identity, history]) => ({
+    identity, name: history[0].name, signature: history[0].signature,
+    definitionCount: history.length, latest: history[history.length - 1], history,
     securityDefinerDeclaredInSource: history[history.length - 1].securityDefinerDeclaredInSource,
     hostedCurrentDefinition: "HOSTED_CURRENT_UNKNOWN",
     hostedGrants: "HOSTED_CURRENT_UNKNOWN",
@@ -480,15 +633,34 @@ const isRuntime = (g, f) => g.nodes.has(f) && !isTest(g, f) && !isScript(g, f);
 export function queryRpc(g, name) {
   const key = `sqlfn:${name.toLowerCase()}`;
   const calls = g.edges.filter((e) => e.type === "RPC_STRING_LITERAL" && e.to === key);
-  const def = g.sqlFunctions.find((f) => f.name === name.toLowerCase());
+  // PostgreSQL identity is NAME + INPUT SIGNATURE. A bare RPC name may address
+  // several overloads; the caller passes arguments we do not model, so which
+  // overload runs is NOT decidable from source. Surface the ambiguity, never
+  // pick one.
+  const identities = g.sqlFunctions.filter((f) => f.name === name.toLowerCase());
+  const overloaded = identities.length > 1;
   return {
     rpc: name,
     runtimeCallers: calls.filter((e) => isRuntime(g, e.from)).map((e) => `${e.from}:L${e.line}`),
     testCallers: calls.filter((e) => isTest(g, e.from)).map((e) => `${e.from}:L${e.line}`),
     scriptCallers: calls.filter((e) => isScript(g, e.from)).map((e) => `${e.from}:L${e.line}`),
-    sqlDefinitionInMigrationHistory: def ? def.history.map((h) => `${h.migration}:L${h.line}`) : [],
-    definitionCount: def?.definitionCount ?? 0,
-    securityDefinerDeclaredInSource: def?.securityDefinerDeclaredInSource ?? null,
+    matchedIdentities: identities.map((f) => ({
+      identity: f.identity,
+      signature: f.signature,
+      definitionCount: f.definitionCount,
+      sqlDefinitionInMigrationHistory: f.history.map((h) => `${h.migration}:L${h.line}`),
+      securityDefinerDeclaredInSource: f.securityDefinerDeclaredInSource,
+    })),
+    overloadAmbiguity: overloaded,
+    overloadNote: overloaded
+      ? `${identities.length} overloads share this name (${identities.map((f) => f.signature).join(" | ")}). Which one a call resolves to depends on the ARGUMENTS, which this tool does not model. No single definition is claimed.`
+      : null,
+    // Convenience fields, only when the name is unambiguous.
+    sqlDefinitionInMigrationHistory: overloaded ? null : (identities[0]?.history.map((h) => `${h.migration}:L${h.line}`) ?? []),
+    definitionCount: overloaded ? null : (identities[0]?.definitionCount ?? 0),
+    securityDefinerDeclaredInSource: overloaded
+      ? (identities.some((f) => f.securityDefinerDeclaredInSource) ? "AMBIGUOUS_SOME_OVERLOADS_DECLARE_IT" : false)
+      : (identities[0]?.securityDefinerDeclaredInSource ?? null),
     refuses: refusalContract(),
   };
 }
@@ -534,7 +706,7 @@ export function queryAuthority(g) {
   while (q.length) { const c = q.shift(); for (const p of rev.get(c) ?? []) if (!seen.has(p)) { seen.add(p); q.push(p); } }
   const entries = [...seen].filter((f) => isRuntime(g, f) && (g.nodes.get(f)?.routeEntry || g.nodes.get(f)?.serverAction));
   const sec = g.edges.filter((e) => e.type === "RPC_STRING_LITERAL" && isRuntime(g, e.from) &&
-    g.sqlFunctions.find((f) => f.name === e.to.slice(6))?.securityDefinerDeclaredInSource);
+    g.sqlFunctions.some((f) => f.name === e.to.slice(6) && f.securityDefinerDeclaredInSource));
   return {
     directServiceRoleHolders: [...direct].sort(),
     runtimeTransitiveReach: [...seen].filter((f) => isRuntime(g, f)).length,

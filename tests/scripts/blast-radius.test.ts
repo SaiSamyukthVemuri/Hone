@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 // @ts-expect-error - .mjs utility ships without type declarations
-import { buildGraph, selftest, codeMask, codeSpans, importOracle, refusalContract, queryRpc, queryTable, queryModule, queryAuthority, REFUSED_CONCLUSIONS } from "../../scripts/eng/blast-radius.mjs";
+import { buildGraph, selftest, codeMask, codeSpans, importOracle, refusalContract, loadTypeScript, classifyImportCalls, signatureOf, normalizeArg, queryRpc, queryTable, queryModule, queryAuthority, REFUSED_CONCLUSIONS } from "../../scripts/eng/blast-radius.mjs";
 
 // ===========================================================================
 // BLAST-RADIUS RECON — SOURCE OBSERVATION ONLY
@@ -147,6 +147,8 @@ describe("blast-radius: frozen oracles must not drift", () => {
 
   it("a redefined function is ONE identity with N historical definitions", () => {
     const r = queryRpc(g, "join_new_client_waitlist");
+    expect(r.overloadAmbiguity).toBe(false);
+    expect(r.matchedIdentities).toHaveLength(1);
     expect(r.definitionCount).toBeGreaterThan(1);
     expect(r.sqlDefinitionInMigrationHistory.length).toBe(r.definitionCount);
   });
@@ -325,5 +327,106 @@ describe("blast-radius: the refusal contract is structural (P1)", () => {
       "productionState", "releaseReadiness",
     ]);
     expect(Object.keys(refusalContract()).sort()).toEqual([...REFUSED_CONCLUSIONS].sort());
+  });
+});
+
+
+describe("blast-radius: import() in a TYPE EXPRESSION is erased, syntactically (P2)", () => {
+  const ts = loadTypeScript();
+  const FIXTURE = [
+    'type Union = import("@/a").A | import("@/b").B;',
+    'type Inter = import("@/c").C & import("@/d").D;',
+    'type Cond<T> = T extends import("@/e").E ? import("@/f").F : import("@/g").G;',
+    'type Gen = Map<string, import("@/h").H>;',
+    'type TOf = typeof import("@/i");',
+    'const mod = await import("@/runtime1");',
+    'const lazy = import("@/runtime2");',
+  ].join("\n");
+
+  it("the TypeScript AST is available for classification", () => {
+    expect(ts, "typescript must be resolvable").toBeTruthy();
+  });
+
+  it("EVERY operand of a union/intersection/conditional/generic is type-only", () => {
+    const { typePositions } = classifyImportCalls(ts, "fixture.ts", FIXTURE);
+    const typeSpecs = [...typePositions].map((k: string) => k.split("@")[0] + "@" + k.split("@")[1]);
+    // a..i = 9 type-position imports, including BOTH operands of the union.
+    expect(typePositions.size, `type positions: ${typeSpecs.join(", ")}`).toBe(9);
+    for (const letter of ["a", "b", "c", "d", "e", "f", "g", "h", "i"]) {
+      expect(
+        [...typePositions].some((k: string) => k.startsWith(`@/${letter}@`)),
+        `@/${letter} must be type-only`,
+      ).toBe(true);
+    }
+  });
+
+  it("a runtime dynamic import stays runtime", () => {
+    const { runtimePositions } = classifyImportCalls(ts, "fixture.ts", FIXTURE);
+    const specs = [...runtimePositions.values()].sort();
+    expect(specs).toEqual(["@/runtime1", "@/runtime2"]);
+  });
+
+  it("classification is syntactic, so a second operand cannot lose type context", () => {
+    const src = 'type X =\n  import("@/one").A |\n  import("@/two").B;';
+    const { typePositions, runtimePositions } = classifyImportCalls(ts, "f.ts", src);
+    expect(typePositions.size).toBe(2);
+    expect(runtimePositions.size).toBe(0);
+  });
+});
+
+describe("blast-radius: PostgreSQL identity is name + input signature (P2)", () => {
+  const byName = new Map<string, string[]>();
+  for (const f of g.sqlFunctions as Array<{ name: string; signature: string }>) {
+    if (!byName.has(f.name)) byName.set(f.name, []);
+    byName.get(f.name)!.push(f.signature);
+  }
+
+  it("keeps zero-arg and one-arg overloads as SEPARATE identities", () => {
+    const sigs = byName.get("calendar_required_event_scopes") ?? [];
+    expect(sigs.sort()).toEqual(["()", "(text)"]);
+  });
+
+  it("keeps four-arg and five-arg start_session as SEPARATE identities", () => {
+    const sigs = byName.get("start_session") ?? [];
+    expect(sigs).toHaveLength(2);
+    const arity = sigs.map((s) => (s === "()" ? 0 : s.slice(1, -1).split(",").length)).sort();
+    expect(arity).toEqual([4, 5]);
+  });
+
+  it("repeated CREATE OR REPLACE of ONE signature stays ONE identity", () => {
+    const one = (g.sqlFunctions as Array<{ name: string; definitionCount: number }>).find(
+      (f) => f.name === "join_new_client_waitlist",
+    );
+    expect(one?.definitionCount).toBeGreaterThan(1);
+    expect(byName.get("join_new_client_waitlist")).toHaveLength(1);
+  });
+
+  it("surfaces overload ambiguity instead of choosing one function", () => {
+    const r = queryRpc(g, "calendar_required_event_scopes");
+    expect(r.overloadAmbiguity).toBe(true);
+    expect(r.matchedIdentities.length).toBeGreaterThan(1);
+    expect(r.overloadNote).toMatch(/depends on the ARGUMENTS/);
+    // The singular convenience fields must NOT assert one definition.
+    expect(r.sqlDefinitionInMigrationHistory).toBeNull();
+    expect(r.definitionCount).toBeNull();
+  });
+
+  it("canonicalises PG type aliases so spelling cannot manufacture an overload", () => {
+    expect(normalizeArg("p_at timestamp with time zone")).toBe("timestamptz");
+    expect(normalizeArg("p_at timestamptz")).toBe("timestamptz");
+    expect(normalizeArg("p_n int4")).toBe("integer");
+    expect(normalizeArg("p_flag bool")).toBe("boolean");
+  });
+
+  it("excludes OUT params and DEFAULT expressions from identity", () => {
+    expect(normalizeArg("OUT p_result text")).toBeNull();
+    expect(normalizeArg("p_limit integer DEFAULT 10")).toBe("integer");
+    expect(normalizeArg("p_limit integer = 10")).toBe("integer");
+    expect(normalizeArg("VARIADIC p_ids uuid[]")).toBe("uuid[]");
+  });
+
+  it("a SQL comment inside the parameter list cannot corrupt a signature", () => {
+    const src = "create function f(\n  p_a uuid, -- the studio\n  p_b jsonb\n)";
+    expect(signatureOf(src, src.indexOf("("))).toBe("(uuid,jsonb)");
   });
 });
