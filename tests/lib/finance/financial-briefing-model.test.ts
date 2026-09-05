@@ -384,6 +384,7 @@ function census(over: Partial<Parameters<typeof summarizeDeliveredMoney>[0]> = {
     refunds: [],
     settlements: [],
     customPricing: [],
+    everPaidAppointmentIds: [],
     todayLocal: "2026-08-27",
     snapshot: NOW,
     windowStartUtc: WINDOW_START,
@@ -1053,6 +1054,92 @@ describe("a card payment that was REFUNDED IN FULL is not a collection", () => {
     });
     expect(c.basis.complete).toBe(true);
     expect(value(c.externallyAttestedCents)).toBe(9_000);
+  });
+
+  // -------------------------------------------------------------------------
+  // A PAYMENT IN ANOTHER PERIOD IS STILL A PAYMENT RECORD — Codex P1
+  // -------------------------------------------------------------------------
+  //
+  // "No payment recorded" means Hone holds NO evidence of any payment for the
+  // visit. The card ledger is windowed on `charged_at`, correctly — cash
+  // movement is a period statement — but that window is the wrong authority for
+  // an existence question. An August 31 treatment charged on September 1 has no
+  // charge row inside August, so it fell through to unresolved and the screen
+  // told the owner nobody had paid, while a succeeded live payment sat in the
+  // ledger.
+  //
+  // The two authorities stay separate: the cash-movement window is untouched,
+  // and `everPaidAppointmentIds` answers only whether the visit has ever
+  // acquired authoritative card-payment evidence.
+
+  it("a visit paid in a LATER period is not No payment recorded", () => {
+    const c = census({
+      appointments: [appt({ id: "aug31" })],
+      charges: [], // the September charge is outside this window, correctly
+      everPaidAppointmentIds: ["aug31"],
+    });
+    expect(value(c.unresolvedVisits)).toBe(0);
+    expect(value(c.paidInAnotherPeriodVisits)).toBe(1);
+    // It is NOT collected here either — the money moved in another period.
+    expect(value(c.collectedOnDeliveredVisits)).toBe(0);
+    expect(value(c.collectedOnDeliveredCents)).toBe(0);
+  });
+
+  it("a visit paid in an EARLIER period is likewise not unrecorded", () => {
+    const c = census({
+      appointments: [appt({ id: "sep1" })],
+      charges: [],
+      everPaidAppointmentIds: ["sep1"],
+    });
+    expect(value(c.unresolvedVisits)).toBe(0);
+    expect(value(c.paidInAnotherPeriodVisits)).toBe(1);
+  });
+
+  it("a visit with NO payment evidence anywhere IS still unresolved", () => {
+    // The control that keeps the fix from swallowing the real case.
+    const c = census({
+      appointments: [appt({ id: "none" })],
+      charges: [],
+      everPaidAppointmentIds: [],
+    });
+    expect(value(c.unresolvedVisits)).toBe(1);
+    expect(value(c.paidInAnotherPeriodVisits)).toBe(0);
+  });
+
+  it("a payment IN this window is collected, not filed as another period", () => {
+    const c = census({
+      appointments: [appt({ id: "here" })],
+      charges: [charge({ appointment_id: "here" })],
+      everPaidAppointmentIds: ["here"],
+    });
+    expect(value(c.collectedOnDeliveredVisits)).toBe(1);
+    expect(value(c.paidInAnotherPeriodVisits)).toBe(0);
+    expect(value(c.unresolvedVisits)).toBe(0);
+  });
+
+  it("a FULLY REFUNDED payment still counts as a payment record", () => {
+    // It is not collected — that is P1-A — but it emphatically is not "nobody
+    // ever paid". It stays in its own reversal line.
+    const c = census({
+      appointments: [appt({ id: "rev" })],
+      charges: [
+        charge({ appointment_id: "rev", refund_status: "succeeded", refund_amount_cents: 15_000 }),
+      ],
+      everPaidAppointmentIds: ["rev"],
+    });
+    expect(value(c.unresolvedVisits)).toBe(0);
+    expect(value(c.refundedToZeroVisits)).toBe(1);
+    expect(value(c.collectedOnDeliveredVisits)).toBe(0);
+  });
+
+  it("an external settlement still satisfies payment evidence on its own", () => {
+    const c = census({
+      appointments: [appt({ id: "cash" })],
+      settlements: [settlement({ appointment_id: "cash", amount_cents: 15_000 })],
+      everPaidAppointmentIds: [],
+    });
+    expect(value(c.unresolvedVisits)).toBe(0);
+    expect(value(c.paidInAnotherPeriodVisits)).toBe(0);
   });
 
   it("a PRICELESS treatment reversed to nothing still explains the gap it opens", () => {

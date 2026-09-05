@@ -543,6 +543,14 @@ export type DeliveredMoneyCensus = {
    * reversals, so this is the shape every refund Hone writes produces.
    */
   readonly refundedToZeroVisits: Fact<number>;
+  /**
+   * Delivered treatment carrying a card payment from ANOTHER period.
+   *
+   * Its own line because it belongs in none of the others: the money is real
+   * but it did not move in this window, so it is not collected here — and it is
+   * emphatically not "No payment recorded".
+   */
+  readonly paidInAnotherPeriodVisits: Fact<number>;
   readonly collectionRateBasisPoints: Fact<number>;
   readonly unresolvedVisits: Fact<number>;
   readonly unresolvedServiceValueCents: Fact<number>;
@@ -589,6 +597,21 @@ export function summarizeDeliveredMoney(input: {
   readonly refunds: readonly RefundRow[];
   readonly settlements: readonly SettlementRow[];
   readonly customPricing: readonly CustomPricingRow[];
+  /**
+   * Delivered appointments that have EVER acquired a succeeded, live-mode card
+   * payment — whatever period it landed in.
+   *
+   * A SEPARATE AUTHORITY FROM CASH MOVEMENT, deliberately. `charges` is windowed
+   * on `charged_at` because cash movement is a statement about a period. But
+   * "No payment recorded" is an EXISTENCE claim, and the window is the wrong
+   * instrument for it: an August 31 treatment charged on September 1 has no
+   * charge row inside August, and reading that absence as "nobody paid" told the
+   * owner something false while a succeeded payment sat in the ledger.
+   *
+   * REQUIRED, not optional. A caller that forgets it would silently reintroduce
+   * the defect, so the compiler asks for it.
+   */
+  readonly everPaidAppointmentIds: readonly string[];
   /** Studio-local `YYYY-MM-DD`. Injected: this module never reads a clock. */
   readonly todayLocal: string;
   readonly snapshot: Date;
@@ -992,6 +1015,8 @@ export function summarizeDeliveredMoney(input: {
   // Rather than describe that possibility in prose, it is counted here and
   // shown only when it actually happens. Production holds three null-priced
   // services today, so this is reachable, not hypothetical.
+  const everPaid = new Set(input.everPaidAppointmentIds);
+  let paidInAnotherPeriodVisits = 0;
   let cardPaidWithoutAPrice = 0;
   for (const id of cardPaid) {
     if (!chargeable.has(id)) cardPaidWithoutAPrice += 1;
@@ -1008,6 +1033,14 @@ export function summarizeDeliveredMoney(input: {
     // Net unknowable: neither collected nor unrecorded. Carried by `basis`.
     if (unnettable.has(id)) continue;
     if (settled.has(id)) continue;
+    // PAID, JUST NOT HERE. The card ledger for THIS window holds nothing for
+    // this visit, but the studio's ledger does. Saying "No payment recorded"
+    // would be false; saying "collected" would move money into a period it did
+    // not move in. It gets its own line instead.
+    if (everPaid.has(id)) {
+      paidInAnotherPeriodVisits += 1;
+      continue;
+    }
     unresolvedVisits += 1;
     unresolvedServiceValueCents += value;
   }
@@ -1062,6 +1095,7 @@ export function summarizeDeliveredMoney(input: {
     // disagreed with no line saying why, which is the mismatch that reads as a
     // bug report.
     refundedToZeroVisits: known(refundedToZero.size),
+    paidInAnotherPeriodVisits: known(paidInAnotherPeriodVisits),
     collectionRateBasisPoints,
     unresolvedVisits: known(unresolvedVisits),
     unresolvedServiceValueCents: known(unresolvedServiceValueCents),
@@ -1126,6 +1160,7 @@ export function unreadableDeliveredMoney(
     cardPaidVisits: absent,
     cardPaidWithoutAPrice: absent,
     refundedToZeroVisits: absent,
+    paidInAnotherPeriodVisits: absent,
     collectionRateBasisPoints: absent,
     unresolvedVisits: absent,
     unresolvedServiceValueCents: absent,

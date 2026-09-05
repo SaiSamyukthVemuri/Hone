@@ -157,16 +157,33 @@ function Unknown({ cause }: { cause: FinancialUnknownCause }) {
 }
 
 /** A count, or the one sentence saying why there isn't one. */
-function Visits({ fact }: { fact: Fact<number> }) {
+function Counted({ fact, one, many }: { fact: Fact<number>; one: string; many: string }) {
   if (!fact.known) return <Unknown cause={fact.cause} />;
   return (
     <p className="tabular-nums text-sm font-medium">
       {fact.value.toLocaleString()}
       <span className="ml-1 font-normal text-fg-muted">
-        {fact.value === 1 ? "visit" : "visits"}
+        {fact.value === 1 ? one : many}
       </span>
     </p>
   );
+}
+
+function Visits({ fact }: { fact: Fact<number> }) {
+  return <Counted fact={fact} one="visit" many="visits" />;
+}
+
+/**
+ * PAYMENT ROWS, NOT VISITS.
+ *
+ * `chargeCount` counts succeeded payment rows in the movement window, and the
+ * two are not the same population: cash movement legitimately includes no-show
+ * and late-cancellation fee payments, which are money without a delivered
+ * visit behind them. Rendering that count as "2 visits" asserted visits this
+ * period may not have had.
+ */
+function Payments({ fact }: { fact: Fact<number> }) {
+  return <Counted fact={fact} one="payment" many="payments" />;
 }
 
 /**
@@ -495,7 +512,7 @@ function DeliveredMoney({ briefing }: { briefing: FinancialBriefing }) {
             <Money fact={c.netMovementCents} />
           </Line>
           <Line label="Payments">
-            <Visits fact={c.chargeCount} />
+            <Payments fact={c.chargeCount} />
           </Line>
         </div>
         <p className="max-w-[68ch] text-xs leading-relaxed text-fg">
@@ -629,6 +646,17 @@ function DeliveredMoney({ briefing }: { briefing: FinancialBriefing }) {
           {c.refundedToZeroVisits.known && c.refundedToZeroVisits.value > 0 ? (
             <Line label="Paid by card, then refunded in full">
               <Visits fact={c.refundedToZeroVisits} />
+            </Line>
+          ) : null}
+          {/*
+            Shown only when it happens, like the reversal line above. These
+            visits were paid — just not in this window — so they are neither
+            collected here nor "No payment recorded", and leaving them out of
+            both without a line would make the counts stop adding up.
+          */}
+          {c.paidInAnotherPeriodVisits.known && c.paidInAnotherPeriodVisits.value > 0 ? (
+            <Line label="Paid by card in another period">
+              <Visits fact={c.paidInAnotherPeriodVisits} />
             </Line>
           ) : null}
           <Line label="No payment recorded">

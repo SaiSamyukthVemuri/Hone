@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
+
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -641,6 +644,112 @@ describe("the studio-wide settlement read enumerates every page", () => {
     });
     const b = granted(await loadFinancialsView(OWNER, studio("America/Toronto"), "month", client));
     expect(b.money.covered && b.money.census.deliveredTreatmentVisits.known).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CLIENT PRICING HAS THE SAME CEILING AS SETTLEMENTS — Codex P2
+// ---------------------------------------------------------------------------
+//
+// The identical studio-wide lifetime cliff, on the read next to it: past 1000
+// `client_pricing` rows the first page came back while `count: "exact"`
+// reported the true total, `complete()` rejected it, and the whole census went
+// with it. Also unrecoverable by choosing a shorter period, for the same reason.
+
+describe("the studio-wide client-pricing read enumerates every page", () => {
+  const pricingRows = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      client_id: `c-${i}`,
+      service_name: "60 minute session",
+      price_cents: 12_000,
+      notes: null,
+      effective_from: "2026-01-01",
+    }));
+
+  const pagesOf = (n: number) => {
+    const all = pricingRows(n);
+    const pages: unknown[][] = [];
+    for (let i = 0; i < all.length; i += 1_000) pages.push(all.slice(i, i + 1_000));
+    if (all.length % 1_000 === 0) pages.push([]);
+    return pages;
+  };
+
+  const load = async (n: number, over: Record<string, unknown> = {}) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-15T16:00:00.000Z"));
+    const { client, pageCalls } = stubTables({
+      client_pricing: { pages: pagesOf(n), count: n, ...over },
+    });
+    const b = granted(await loadFinancialsView(OWNER, studio("America/Toronto"), "month", client));
+    return { b, pageCalls };
+  };
+
+  for (const n of [999, 1_000, 1_001, 2_001]) {
+    it(`${n} client-pricing rows still yield a money census`, async () => {
+      const { b } = await load(n);
+      expect(b.money.covered && b.money.census.deliveredTreatmentVisits.known).toBe(true);
+    });
+  }
+
+  it("pages are requested until the read is exhausted", async () => {
+    const { pageCalls } = await load(2_001);
+    expect(pageCalls.client_pricing).toBe(3);
+  });
+
+  it("an exact multiple ends on an empty page, losing nothing", async () => {
+    const { b, pageCalls } = await load(2_000);
+    expect(b.money.covered && b.money.census.deliveredTreatmentVisits.known).toBe(true);
+    expect(pageCalls.client_pricing).toBe(3);
+  });
+
+  it("A FAILING PAGE WITHDRAWS THE WHOLE READ", async () => {
+    const { b } = await load(2_001, { failPage: 1 });
+    expect(b.money.covered && b.money.census.deliveredTreatmentVisits.known).toBe(false);
+  });
+
+  it("A SHORT ENUMERATION IS NOT COMPLETE", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-15T16:00:00.000Z"));
+    const { client } = stubTables({
+      client_pricing: { pages: [pricingRows(500)], count: 900 },
+    });
+    const b = granted(await loadFinancialsView(OWNER, studio("America/Toronto"), "month", client));
+    expect(b.money.covered && b.money.census.deliveredTreatmentVisits.known).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PAYMENT-RECORD EXISTENCE IS ITS OWN AUTHORITY — Codex P1
+// ---------------------------------------------------------------------------
+
+describe("the all-time payment-existence read", () => {
+  it("is mode-scoped and status-scoped, like every other ledger read", () => {
+    // A TEST-mode row must not satisfy LIVE evidence, and a FAILED attempt is
+    // not a payment. Asserted against the source because the filters are the
+    // whole authority — there is no arithmetic here to catch a missing one.
+    const src = readFileSync(
+      path.join(process.cwd(), "lib/finance/financial-briefing.ts"),
+      "utf8",
+    );
+    const read = src.slice(src.indexOf('.select("appointment_id", { count: "exact" })'));
+    const head = read.slice(0, 400);
+    expect(head).toContain('.eq("status", "succeeded")');
+    expect(head).toContain('.eq("stripe_livemode", livemode)');
+    expect(head).toContain('.not("appointment_id", "is", null)');
+  });
+
+  it("A FAILED existence read withdraws the census — never a confident unrecorded", async () => {
+    // The whole point: absence of evidence from a read that did not happen is
+    // not evidence of absence. `complete()` already fails whole, so the census
+    // is withdrawn rather than reporting "No payment recorded".
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-15T16:00:00.000Z"));
+    const { client } = stubTables({
+      payment_charge_attempts: { error: { code: "57014" } },
+    });
+    const b = granted(await loadFinancialsView(OWNER, studio("America/Toronto"), "month", client));
+    expect(b.money.covered && b.money.census.unresolvedVisits.known).toBe(false);
+    expect(b.money.covered && b.money.census.paidInAnotherPeriodVisits.known).toBe(false);
   });
 });
 

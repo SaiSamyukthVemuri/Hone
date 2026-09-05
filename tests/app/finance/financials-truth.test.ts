@@ -2103,3 +2103,61 @@ describe("NC-lint — the configured rules reject these FIN-owned loader forms",
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// A PAYMENT COUNT IS RENDERED IN PAYMENTS — Codex P2
+// ---------------------------------------------------------------------------
+//
+// `chargeCount` counts succeeded PAYMENT ROWS in the movement window. It was
+// rendered through `Visits`, so the Payments line read "2 visits" — asserting a
+// visit population the number does not describe. Cash movement legitimately
+// includes no-show and late-cancellation fee payments, which are money with no
+// delivered visit behind them, so the vocabulary was not merely untidy.
+
+describe("the payment count is counted in payments, not visits", () => {
+  const spine = () => codeOnly(read(FILES.spine));
+
+  it("chargeCount renders through the payment renderer", () => {
+    const src = spine();
+    expect(src).toContain("<Payments fact={c.chargeCount} />");
+    // ...and NOT through the visit renderer, by destination as well as by name.
+    expect(src).not.toContain("<Visits fact={c.chargeCount} />");
+  });
+
+  it("the payment renderer says payment / payments, and never visit", () => {
+    const src = spine();
+    const fn = src.slice(src.indexOf("function Payments("));
+    const body = fn.slice(0, fn.indexOf("}\n"));
+    expect(body).toContain('one="payment"');
+    expect(body).toContain('many="payments"');
+    expect(body).not.toMatch(/"visits?"/);
+  });
+
+  it("the shared counter is what pluralizes, so the two units cannot drift", () => {
+    // Both renderers delegate to one `Counted`, which owns the singular/plural
+    // rule. A second hand-rolled pluralization is how "1 payments" appears.
+    const src = spine();
+    const counted = src.slice(src.indexOf("function Counted("));
+    expect(counted.slice(0, 400)).toContain("fact.value === 1 ? one : many");
+    expect(src).toContain('function Visits({ fact }: { fact: Fact<number> }) {');
+    expect(src).toContain('<Counted fact={fact} one="visit" many="visits" />');
+    expect(src).toContain('<Counted fact={fact} one="payment" many="payments" />');
+  });
+
+  it("no OTHER money-row count is rendered in visit vocabulary by mistake", () => {
+    // The visit renderer is legitimate for visit populations; this pins that
+    // the only payment-row count on the screen is not one of them.
+    const src = spine();
+    for (const visitFact of [
+      "collectedOnDeliveredVisits",
+      "cardPaidVisits",
+      "refundedToZeroVisits",
+      "paidInAnotherPeriodVisits",
+      "unresolvedVisits",
+    ]) {
+      expect(src, `${visitFact} should stay a visit count`).toContain(
+        `<Visits fact={c.${visitFact}} />`,
+      );
+    }
+  });
+});

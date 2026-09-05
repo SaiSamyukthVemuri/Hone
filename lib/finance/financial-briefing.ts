@@ -268,6 +268,7 @@ export async function loadFinancialsView(
               refunds: ledgers.refunds,
               settlements: ledgers.settlements,
               customPricing: ledgers.customPricing,
+              everPaidAppointmentIds: ledgers.everPaidAppointmentIds,
               todayLocal,
               snapshot: now,
               windowStartUtc: moneyStartUtc,
@@ -373,6 +374,7 @@ type MoneyLedgers =
       readonly refunds: readonly RefundRow[];
       readonly settlements: readonly SettlementRow[];
       readonly customPricing: readonly CustomPricingRow[];
+      readonly everPaidAppointmentIds: readonly string[];
       readonly ledgerOpensAt: string | null;
     }
   | { readonly ok: false; readonly cause: FinancialUnknownCause };
@@ -417,6 +419,75 @@ async function readMoneyLedgers(
   // THE EXACT COUNT IS CAPTURED FROM THE FIRST PAGE so `complete()` still
   // compares the FULL enumeration against what PostgREST says exists. A short
   // final page is not, on its own, evidence that the read was complete.
+  // PAYMENT-RECORD EXISTENCE, ALL TIME — a SEPARATE authority from cash
+  // movement, and the smallest read that can answer it.
+  //
+  // The charge reads above are windowed on `charged_at`, correctly: cash
+  // movement is a statement about a period. But "No payment recorded" is an
+  // EXISTENCE claim about a delivered visit, and the window is the wrong
+  // instrument for it — an August 31 treatment charged on September 1 has no
+  // row inside August, and reading that absence as "nobody paid" is false while
+  // a succeeded payment sits in the ledger.
+  //
+  // The window is NOT widened to fix this. This read answers only "has this
+  // visit ever acquired authoritative card-payment evidence", and it projects
+  // ONE column so the answer cannot be mistaken for money.
+  //
+  // Mode- and status-scoped like every other ledger read: a TEST-mode row
+  // cannot satisfy live evidence, and a FAILED attempt is not a payment. A
+  // fully refunded payment still qualifies — it is not collected, but a payment
+  // was unmistakably recorded. Studio-wide and page-safe, for the same reason
+  // the settlements read is.
+  let everPaidCount: number | null = null;
+  const everPaidRead = fetchAllRows<{ appointment_id: string | null }>(
+    async (from, to) => {
+      const page = await supabase
+        .from("payment_charge_attempts")
+        .select("appointment_id", { count: "exact" })
+        .eq("studio_id", studioId)
+        .eq("status", "succeeded")
+        .eq("stripe_livemode", livemode)
+        .not("appointment_id", "is", null)
+        .order("id")
+        .range(from, to);
+      if (everPaidCount === null && typeof page.count === "number") {
+        everPaidCount = page.count;
+      }
+      return {
+        data: (page.data ?? null) as Array<{ appointment_id: string | null }> | null,
+        error: page.error as { message: string } | null,
+      };
+    },
+    { pageSize: API_PAGE_SIZE },
+  );
+
+  // THE SAME CEILING, ON THE READ NEXT DOOR. Studio-wide for the identical
+  // reason — an `.in("client_id", [...])` list grows with the period — and it
+  // had the identical lifetime cliff: past 1000 rows the first page came back
+  // while the exact count reported more, and the whole census went with it.
+  // Enumerated page-safely by the same helper, on the same terms.
+  let customPricingCount: number | null = null;
+  const customPricingRead = fetchAllRows<CustomPricingRow>(
+    async (from, to) => {
+      const page = await supabase
+        .from("client_pricing")
+        .select("client_id, service_name, price_cents, notes, effective_from", {
+          count: "exact",
+        })
+        .eq("studio_id", studioId)
+        .order("id")
+        .range(from, to);
+      if (customPricingCount === null && typeof page.count === "number") {
+        customPricingCount = page.count;
+      }
+      return {
+        data: (page.data ?? null) as CustomPricingRow[] | null,
+        error: page.error as { message: string } | null,
+      };
+    },
+    { pageSize: API_PAGE_SIZE },
+  );
+
   let settlementCount: number | null = null;
   const settlementsRead = fetchAllRows<SettlementRow>(async (from, to) => {
     const page = await supabase
@@ -441,7 +512,7 @@ async function readMoneyLedgers(
     };
   }, { pageSize: API_PAGE_SIZE });
 
-  const [services, charges, refunds, settlements, customPricing, opened] =
+  const [services, charges, refunds, settlements, customPricing, opened, everPaid] =
     await Promise.all([
       supabase
         .from("services")
@@ -480,14 +551,7 @@ async function readMoneyLedgers(
       // it. It is never read here and never rendered: it is free text a
       // practitioner wrote about ONE client, and it has no business on a
       // studio aggregate.
-      supabase
-        .from("client_pricing")
-        .select("client_id, service_name, price_cents, notes, effective_from", {
-          count: "exact",
-        })
-        .eq("studio_id", studioId)
-        .order("id")
-        .range(0, API_PAGE_SIZE - 1),
+      customPricingRead,
       // HEAD-ONLY COUNT. These rows are succeeded and carry NO collection time,
       // so they belong to no period and cannot be windowed. FIN-C9 surfaces
       // them rather than dropping money that was actually made.
@@ -500,6 +564,7 @@ async function readMoneyLedgers(
         .not("charged_at", "is", null)
         .order("charged_at", { ascending: true })
         .limit(1),
+      everPaidRead,
     ]);
 
   const s = complete<ServiceRow>(services.data, services.error, services.count);
@@ -508,16 +573,21 @@ async function readMoneyLedgers(
   // `settlementCount` rather than a per-page count: the claim is about the
   // whole enumeration, which is the only thing that can be complete.
   const t = complete<SettlementRow>(settlements.data, settlements.error, settlementCount);
+  const ep = complete<{ appointment_id: string | null }>(
+    everPaid.data,
+    everPaid.error,
+    everPaidCount,
+  );
   const cp = complete<CustomPricingRow>(
     customPricing.data,
     customPricing.error,
-    customPricing.count,
+    customPricingCount,
   );
 
   // FAIL CLOSED, AND FAIL WHOLE. A money census assembled from the reads that
   // happened to succeed is the exact shape of a confident understatement, so
   // one bad read withdraws every figure with the cause that caused it.
-  for (const part of [s, c, r, t, cp]) {
+  for (const part of [s, c, r, t, cp, ep]) {
     if (!part.ok) return { ok: false, cause: part.cause };
   }
   if (opened.error) return { ok: false, cause: "unavailable" };
@@ -531,6 +601,9 @@ async function readMoneyLedgers(
     refunds: r.ok ? r.rows : [],
     settlements: t.ok ? t.rows : [],
     customPricing: cp.ok ? cp.rows : [],
+    everPaidAppointmentIds: ep.ok
+      ? ep.rows.flatMap((row) => (row.appointment_id === null ? [] : [row.appointment_id]))
+      : [],
     ledgerOpensAt: openedRows[0]?.charged_at ?? null,
   };
 }
