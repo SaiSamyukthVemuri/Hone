@@ -356,15 +356,15 @@ function-create time. This was missed in migration 0129 (`anon`) and again in
 | **Tenancy** — who may see these rows | RLS |
 | **Temporal consistency** — which committed rows this response sees | the MVCC snapshot |
 
-### 7.6 The canonical pricing law — one definition, and it already exists
+### 7.6 The canonical pricing law — one LAW, and it already exists
 
 **"The price visible in the snapshot" is not a selection rule.** When several
 `client_pricing` rows are visible, it does not identify a unique price, and an
 implementation could pick a future-effective or arbitrarily-tied row and still
 claim compliance — changing service value, chargeability and unresolved value.
 
-The authority already exists in **two** implementations kept in deliberate
-parity, and **FIN-02 must not add a third**:
+There is **one law**, and it already exists — expressed today in two
+implementations kept in deliberate parity:
 
 | Implementation | Location |
 |---|---|
@@ -374,6 +374,11 @@ parity, and **FIN-02 must not add a third**:
 They are pinned against each other by a parity matrix in
 `tests/db/appointment-settlement.db.test.ts`. **The source is the authority; if
 the summary below ever disagrees with it, the source wins.**
+
+**FIN-02 must not invent a different law.** Whether it adds a further
+*expression* of this one is a narrower question, decided by §7.6's privilege
+boundary and priced by §7.7's parity requirement — the preferred v1 shape adds
+none at all.
 
 #### The order IS the law
 
@@ -417,21 +422,87 @@ SETTLEMENT QUOTED PRICE   frozen authority when valid — a settled visit is
                           worth what it was quoted, and later repricing of the
                           menu or the client rate does not move it
 
-ELSE                      the canonical resolver above, evaluated INSIDE the
-                          same shared snapshot
+ELSE                      the canonical LAW above, evaluated INSIDE the same
+                          shared snapshot and within the caller's RLS scope
+                          (never by calling the 0187 helper — see below)
 
 IF AMBIGUOUS              PRICE = UNKNOWN
 ```
 
-The SQL resolver is `STABLE`, so invoking it from within the single FIN statement
-observes that statement's snapshot and preserves §7.1. Resolving in TypeScript
-instead is equally acceptable **provided the input rows came from that same
-statement** — what must never happen is a second round trip, or a second
-definition of the law.
+#### FIN-02 MUST NOT CALL THE 0187 HELPER. The boundary stays shut.
 
-*(The SQL resolver is itself `SECURITY DEFINER` and takes an explicit
-`p_studio_id`. Reusing it does not weaken §7.5: FIN-02 must pass a studio id it
-has already authorized, and its own read authority stays invoker-rights.)*
+An earlier draft of this section implied FIN-02 could invoke
+`appointment_quoted_amount_cents` from inside its statement. **It cannot, and it
+must not be made able to.**
+
+Migration 0187 revokes `EXECUTE` on that function from **all four** roles —
+`public`, `anon`, `authenticated` and `service_role` — and says why in its own
+words: so that `authenticated` "cannot ... probe another studio's prices through
+the snapshot helper". The function is `SECURITY DEFINER`, it takes
+`p_studio_id` as a parameter, and it performs **no membership check** — it filters
+on the studio id it is handed. That is safe *only* because nobody can call it;
+it is reachable exclusively from the settlement commands, which authorize first.
+
+So:
+
+- **No `EXECUTE` widening.** Granting it to `authenticated` so an invoker-rights
+  FIN function could call it would simultaneously expose it **directly** through
+  PostgREST, where an authenticated caller could pass any studio id and read
+  another studio's price. Authorization inside an outer FIN function cannot
+  protect a call that never goes through the outer function.
+- **The existing boundary is not weakened, and FIN-02 does not become
+  `SECURITY DEFINER` to get around it.** A pricing-access problem is no more a
+  reason to reach for definer rights than a snapshot problem was (§7.5).
+
+#### Law and implementation are different things
+
+**0187 remains the authoritative pricing LAW.** What FIN-02 may not do is invent
+a different law; what it must do is reach the same outcome without widening
+access to a privileged helper.
+
+**FIN-02 evaluates the canonical law inside its own single invoker-rights
+statement, over only the rows visible through the caller's RLS scope.**
+
+This is sound precisely because RLS is doing the work the definer helper had to
+do by hand. `client_pricing`, `services` and `appointments` are all RLS-protected
+by `is_studio_member(studio_id)`, so a cross-studio row is **not visible to the
+statement at all**. The definer helper needs an explicit studio filter because it
+bypasses RLS; an invoker-rights read does not, because RLS *is* the check. The
+hazard the revoke exists to prevent cannot arise on this path.
+
+**Preferred v1 shape — no new implementation of the law at all.** The single
+statement returns the pricing INPUT ROWS under RLS, and the price is derived by
+the **existing TypeScript resolver**, `resolveAuthoritativeSessionPaymentAmount`.
+That already is one of the two parity-pinned implementations, it is what the
+current surface uses, and the snapshot invariant holds because every input row
+came from the one statement. Nothing is forged, nothing is widened, and no third
+expression of the law is written.
+
+If a future FIN-02 needs the price computed server-side inside the statement
+instead, that is permitted — but it is then a **third expression of the same
+law**, and §7.7 governs it.
+
+### 7.7 Parity is the price of a second expression
+
+Any SQL evaluation of the pricing law written for FIN-02 must be **mechanically
+parity-tested against 0187**, using the existing resolver and its parity matrix
+in `tests/db/appointment-settlement.db.test.ts` as the **oracle**. Expected values
+are derived from that law, never authored independently. **The source remains the
+authority.**
+
+Parity must hold on every case enumerated above and in §10.2: normalized service
+matching · studio-local effective date · newest applicable row · future price
+excluded · equal-value ties · disagreeing ties → UNKNOWN · positive custom
+precedence · custom zero/NULL semantics · menu zero/NULL semantics · the
+no-client path · frozen settlement-quote precedence.
+
+**A future consolidation is allowed, and is not required for v1.** A shared
+NON-PRIVILEGED pricing core could later be extracted for both authorities to
+consume — but only if separately proven to do all of the following: not make the
+existing definer callable by `authenticated`; not accept arbitrary cross-studio
+authority; not bypass RLS; and not change existing settlement behaviour. Until
+then, two expressions kept in parity is the correct trade, and it is a smaller
+risk than widening a privilege.
 
 #### Ambiguity propagates, consistently
 
@@ -502,6 +573,7 @@ FIN-02 must prove, at minimum:
 | 6 | **Ambiguous settlement** yields no arbitrary quote winner and no arbitrary money winner |
 | 7 | **RLS** — the same studio/tenant protections remain effective |
 | 8 | **UNKNOWN** — a failed or unprovable fact never becomes zero |
+| 9 | **The 0187 privilege boundary is intact** — see §10.3 |
 
 Cases 2–5 are the properties the current architecture cannot establish, and are
 the reason FIN-02 exists. They must be proven against a real database, not a stub.
@@ -559,6 +631,21 @@ independently — the point is to prove FIN-02 did not fork the law.
 Each must also assert that when the price is UNKNOWN, every dependent fact
 withdraws **together** — service value, chargeability, unresolved value, and any
 downstream aggregate.
+
+### 10.3 Security acceptance — proven with real database tests
+
+| Actor | Must |
+|---|---|
+| `authenticated`, member of Studio A | **can** calculate Studio A's figures |
+| `authenticated`, member of Studio A | **cannot** derive Studio B's pricing, by any parameter it can supply |
+| `authenticated` | **still cannot** directly `EXECUTE` the 0187 definer helper |
+| `anon` | **cannot** use the FIN authority at all |
+| definer / `service_role` widening | **NONE** — no grant added anywhere |
+
+The third row is a standing regression guard, not a one-time check: the whole
+reason this section exists is that a plausible-looking reuse would have required
+exactly that grant.
+
 
 FIN-02 must also **retain the domain-state matrix already paid for in #666** —
 §1 money classes, §2 payment states and the full-refund law, §3 precedence, §4
