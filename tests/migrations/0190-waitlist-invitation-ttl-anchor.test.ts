@@ -107,11 +107,16 @@ describe("0190 — identity and position", () => {
     expect(FILE).toBe("0190_waitlist_invitation_ttl_anchor.sql");
   });
 
-  it("is the current repository maximum", () => {
-    // Per CLAUDE.md only the CURRENT max asserts this, so that a future
-    // migration does not turn this file red. Whoever adds 0191 moves it.
-    expect(isRepoMax(VERSION)).toBe(true);
-    expect(versionsAbove(VERSION)).toEqual([]);
+  it("is no longer the repository maximum — 0191 took that role", () => {
+    // THE HAND-OFF THIS FILE ASKED FOR. The previous wording asserted
+    // isRepoMax and said "whoever adds 0191 moves it"; 0191 (per-studio SMS
+    // sender provisioning, COMMS-01B) exists, so the tripwire moved to
+    // tests/migrations/0191-studio-sms-sender-provisioning.test.ts. Per
+    // CLAUDE.md only the CURRENT max may assert isRepoMax — an older
+    // per-migration test asserting it turns red on every subsequent migration,
+    // which is the sweep that rule exists to prevent.
+    expect(isRepoMax(VERSION)).toBe(false);
+    expect(versionsAbove(VERSION)).toContain("0191");
   });
 
   it("IS APPLIED to production, and is the CURRENT hosted head", () => {
@@ -121,12 +126,19 @@ describe("0190 — identity and position", () => {
     // from 0189 to 0190 — restoring parity.
     //
     // 0190 now owns the CURRENT-head claim that 0189's file used to hold;
-    // 0189's file keeps only its own durable facts. Whoever applies 0191 moves
+    // 0189's file keeps only its own durable facts. Whoever APPLIES 0191 moves
     // this block again.
+    //
+    // 0191 has since been AUTHORED (COMMS-01B) and is NOT applied, so the repo
+    // max is 0191 while hosted remains 0190. That is the ordinary pre-apply
+    // position, not drift -- so the two limbs that described the whole
+    // repository rather than this migration are gone. Asserting
+    // `repo_migration_max === '0190'` or a globally empty pending set would
+    // make every future migration-bearing branch red by construction, which is
+    // the failure mode the sibling 0188 block already names.
     const state = migrationState();
-    expect(state.repo_migration_max).toBe(VERSION);
     expect(state.hosted_migration_max).toBe(VERSION);
-    expect(state.pending_migrations).toEqual([]);
+    expect(state.pending_migrations).not.toContain(VERSION);
   });
 });
 
