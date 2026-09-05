@@ -197,10 +197,17 @@ export const twilioProvisioningProvider: SmsProvisioningProvider = {
     const creds = readCredentials();
     if (!creds) return providerError("provider_not_configured", false);
 
-    // `Contains` accepts a full E.164 value, so this asks about exactly the
-    // number the owner chose rather than paging through a candidate list.
+    // `Contains` MATCHES ON DIGITS AND `*`, NOT ON E.164. Passing the leading
+    // `+` makes Twilio answer 400, which this adapter maps to a rejection --
+    // so with the live provider armed, EVERY provisioning attempt would have
+    // died here, before any purchase, on a number that was perfectly
+    // available. The fake never saw it because a fake does not enforce a
+    // provider's parameter grammar.
+    //
+    // Send digits; keep the E.164 comparison on the RESPONSE, where the
+    // provider does speak E.164.
     const params = new URLSearchParams();
-    params.set("Contains", input.phoneNumber);
+    params.set("Contains", input.phoneNumber.replace(/\D/g, ""));
     params.set("SmsEnabled", "true");
     params.set("PageSize", "1");
 
@@ -304,11 +311,31 @@ export const twilioProvisioningProvider: SmsProvisioningProvider = {
         if (rec !== null && asString(rec.friendly_name) === tag) matches.push(rec);
       }
 
-      // Twilio paginates via `meta.next_page_url`, null on the last page.
+      // Twilio paginates via `meta.next_page_url`, explicitly null on the last
+      // page. AN EXPLICIT null IS THE ONLY THING THAT ENDS THIS SCAN.
+      //
+      // Collapsing "absent metadata", "a non-string cursor" and "a cursor
+      // pointing somewhere else" into null would let a 200 with a valid
+      // `services` array but broken pagination read as proof that no matching
+      // service exists -- and creating the duplicate that proof licenses is
+      // exactly what the exhaustive scan exists to prevent. Malformed is not
+      // finished.
       const meta = servicesBody ? asRecord(servicesBody.meta) : null;
-      const next = meta ? asString(meta.next_page_url) : null;
-      // Only follow Twilio's own host; a redirected cursor is not a page of ours.
-      nextUrl = next && next.startsWith(MESSAGING_BASE) ? next : null;
+      if (!meta || !("next_page_url" in meta)) {
+        return providerError("provider_response_unparseable", false);
+      }
+      const rawNext = meta.next_page_url;
+      if (rawNext === null) {
+        nextUrl = null;
+      } else {
+        const next = asString(rawNext);
+        // Only follow Twilio's own host; a redirected cursor is not a page of
+        // ours, and is a response we refuse rather than quietly truncate on.
+        if (!next || !next.startsWith(MESSAGING_BASE)) {
+          return providerError("provider_response_unparseable", false);
+        }
+        nextUrl = next;
+      }
     }
 
     if (matches.length > 1) {

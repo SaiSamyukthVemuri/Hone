@@ -201,6 +201,43 @@ describe("provider responses are parsed fail-closed", () => {
     expect(validated.length).toBeGreaterThanOrEqual(rawSidReads.length);
   });
 
+  it("Contains is sent as digits, not as E.164", () => {
+    // Regression pin. Twilio's Contains matches digits and `*`; the E.164 plus
+    // yields a 400, which this adapter maps to a rejection -- so with the live
+    // provider armed EVERY attempt died before purchase, on an available
+    // number. Proved on the wire in tests/lib/sms/twilio-provider.test.ts.
+    const src = code(TWILIO_ADAPTER);
+    expect(src).toMatch(/params\.set\("Contains", input\.phoneNumber\.replace\(\/\\D\/g, ""\)\)/);
+  });
+
+  it("pagination ends only on an EXPLICIT null cursor", () => {
+    // Malformed metadata is not end-of-list: treating it as one licenses the
+    // duplicate messaging service the exhaustive scan exists to prevent.
+    const src = code(TWILIO_ADAPTER);
+    expect(src).toContain('!("next_page_url" in meta)');
+    expect(src).toMatch(/if \(rawNext === null\)/);
+  });
+
+  it("a 400 is classified by the provider's own error code", () => {
+    const src = code(TWILIO_ADAPTER);
+    expect(src).toContain("NUMBER_UNAVAILABLE_CODES");
+    expect(src).toMatch(/unavailable \? "number_no_longer_available" : "provider_rejected"/);
+  });
+
+  it("every provider MUTATION is fenced, not just the purchase", () => {
+    // Gating only the purchase left the adopted path unfenced: a worker that
+    // stalled AFTER buying skips that branch entirely.
+    const src = code(ORCHESTRATION);
+    const fenceChecks = src.match(/await stillOurs\(\)/g) ?? [];
+    // purchase, service, attach, inbound webhook, status callback, test send.
+    expect(fenceChecks.length).toBeGreaterThanOrEqual(6);
+  });
+
+  it("a displaced worker's provider error never outranks lease_lost", () => {
+    const src = code(ORCHESTRATION);
+    expect(src).toMatch(/if \(parked === "lease_lost"\)/);
+  });
+
   it("an unparseable response is a failure, not a partial success", () => {
     const src = code(TWILIO_ADAPTER);
     expect(src).toContain("provider_response_unparseable");

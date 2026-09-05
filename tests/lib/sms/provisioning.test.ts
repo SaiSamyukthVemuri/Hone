@@ -637,6 +637,113 @@ describe("at most one purchase per studio attempt", () => {
     expect(provider.ownedNumbers()).toEqual([]);
   });
 
+  it("ADOPTED_PATH_FENCED: a worker that stalled AFTER buying is still stopped", async () => {
+    // The fencing fix's own blind spot, found on re-review. A worker that
+    // stalls AFTER purchasing skips the purchase branch entirely on retry --
+    // its number is already adopted -- so gating only the purchase left it free
+    // to create a SECOND messaging service and race the current worker to
+    // attach the same number. One attach takes the already-in-pool path, the
+    // live worker ends up testing an empty service, and reconciliation then
+    // finds two claim-tagged services and fails closed forever.
+    const claim = await store.claim({
+      studioId: STUDIO_A,
+      actorUserId: OWNER_A,
+      country: "CA",
+      areaCode: "416",
+    });
+    // Its purchase landed at the provider.
+    await provider.purchaseNumber({ claimKey: claim.claimKey!, phoneNumber: CHOSEN });
+    const purchasesBefore = provider.calls.purchase;
+
+    // It stalls; another worker takes over.
+    store.now += store.leaseMs + 1;
+    await store.claim({
+      studioId: STUDIO_A,
+      actorUserId: OWNER_A,
+      country: "CA",
+      areaCode: "416",
+    });
+
+    // The displaced worker resumes on the ADOPTED path.
+    const outcome = await provisionStudioSmsSender({
+      store: {
+        claim: async () => ({ ...claim, result: "claimed" as const }),
+        finalize: store.finalize.bind(store),
+        fail: store.fail.bind(store),
+        assertLease: store.assertLease.bind(store),
+      },
+      provider,
+      studioId: STUDIO_A,
+      actorUserId: OWNER_A,
+      country: "CA",
+      areaCode: "416",
+      phoneNumber: CHOSEN,
+      inboundWebhookUrl: "https://hone.care/api/twilio/inbound-sms",
+      statusCallbackUrl: "https://hone.care/api/twilio/status",
+      testDestination: "+14165559999",
+      serviceLabel: "Studio A",
+      testBody: "Hone provisioning test.",
+    });
+
+    expect(outcome).toMatchObject({ ok: false, result: "lease_lost" });
+    // It bought nothing more AND created no second messaging service.
+    expect(provider.calls.purchase).toBe(purchasesBefore);
+    expect(provider.calls.createService).toBe(0);
+    expect(provider.calls.attach).toBe(0);
+    expect(provider.calls.testSend).toBe(0);
+  });
+
+  it("LEASE_LOST_OUTRANKS_A_STALE_ERROR: the owner is not told a live number is gone", async () => {
+    // A stale worker's provider error must not be reported over the database's
+    // "you were displaced". Otherwise an availability check that resumed after
+    // a takeover tells the owner "that number is gone" while the current
+    // generation is busy successfully provisioning it.
+    const claim = await store.claim({
+      studioId: STUDIO_A,
+      actorUserId: OWNER_A,
+      country: "CA",
+      areaCode: "416",
+    });
+    store.now += store.leaseMs + 1;
+    await store.claim({
+      studioId: STUDIO_A,
+      actorUserId: OWNER_A,
+      country: "CA",
+      areaCode: "416",
+    });
+
+    // The stale worker's provider call comes back "number gone".
+    provider.reset({ availabilityFails: undefined, unavailableNumbers: [CHOSEN] });
+
+    const outcome = await provisionStudioSmsSender({
+      store: {
+        claim: async () => ({ ...claim, result: "claimed" as const }),
+        finalize: store.finalize.bind(store),
+        fail: store.fail.bind(store),
+        // Fence check passes so the flow reaches the failure write, which is
+        // where the database reveals the takeover.
+        assertLease: async () => true,
+      },
+      provider,
+      studioId: STUDIO_A,
+      actorUserId: OWNER_A,
+      country: "CA",
+      areaCode: "416",
+      phoneNumber: CHOSEN,
+      inboundWebhookUrl: "https://hone.care/api/twilio/inbound-sms",
+      statusCallbackUrl: "https://hone.care/api/twilio/status",
+      testDestination: "+14165559999",
+      serviceLabel: "Studio A",
+      testBody: "Hone provisioning test.",
+    });
+
+    // lease_lost, NOT number_no_longer_available.
+    expect(outcome).toMatchObject({ ok: false, result: "lease_lost" });
+    expect(outcome).not.toMatchObject({ reason: "number_no_longer_available" });
+    // And the live attempt was not parked in `error` by the stale worker.
+    expect(store.live(STUDIO_A)?.status).toBe("provisioning");
+  });
+
   it("MUTATION CONTROL (fencing): without the fence, a displaced worker buys a second number", async () => {
     // Perform the mutation for real. With assertLease always true, the stalled
     // worker resumes, reconciles against a claim nothing has been bought under
