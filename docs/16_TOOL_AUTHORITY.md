@@ -6,7 +6,9 @@ This document adds **no process**. It names an ordering the repository already
 follows, so that a new tool cannot quietly acquire authority it was never
 granted. It is governance only: nothing here runs, gates, or blocks.
 
-**It does not apply to T0/T1 work.** See §7.
+**Its added ceremony does not apply to T0/T1 work** — roles, review mechanics
+and evidence stamping. Its truth rules apply to any document that makes the
+relevant claim, at any risk tier. See §7.
 
 ---
 
@@ -80,7 +82,9 @@ human ask a better question of tier 1.
 - **Old PR descriptions**
 - **Archived reports**
 
-...and **anything from the tiers above whose head has moved**.
+...and **anything from the tiers above whose `CLAIM_VALIDITY_KEY` has moved**
+(§4). A claim drops to history when the state it measured is superseded — not
+because some unrelated commit advanced a branch.
 
 ---
 
@@ -106,13 +110,33 @@ A claim is current while its validity key still describes the thing being
 asked about, and becomes history when that key moves. The key is **not** the
 latest branch head; different claims have different anchors.
 
-| Claim | CLAIM_VALIDITY_KEY | Moved by |
-|---|---|---|
-| Runtime behaviour | The runtime-bearing application SHA / deployment | A merge that changes deployed files, or a deploy |
-| Database state | The observed database instance + its applied migration identity | An apply to *that* instance |
-| Provider / hosted state | The provider observation + its timestamp and config identity | Time, or a config change |
-| PR review | The exact PR head SHA | Any push to that PR, including a docs-only one |
-| Source claim | The source SHA | Any commit touching the cited source |
+| Claim | CLAIM_VALIDITY_KEY | INVALIDATED_BY | FRESHNESS |
+|---|---|---|---|
+| **Runtime behaviour** | The identity of the deployment actually **serving** production | A **successful** deployment or promotion that changes the serving identity | Current while that deployment still serves |
+| **Schema / migration state** | The observed instance + its applied migration identity | An apply to *that* instance | Current until that instance is applied to |
+| **Mutable data state** — row counts, tenant counts, open-alert counts, current settings | The observed instance + **`observed_at`**, plus any data revision or event that changes with the fact | Ordinary DML, an authorized production write, or any such event | **Point-in-time.** Never current merely because migration max did not move |
+| **Hosted — event fact** ("deployment X occurred") | The event identity | Nothing | **Permanently true as history.** An event that happened does not expire |
+| **Hosted — current config observation** | The config revision read | A config change superseding that revision | Current until superseded |
+| **Hosted — health / reachability probe** | The probe + `observed_at` | Expiry of its stated freshness window | **Point-in-time, window must be stated** |
+| **Hosted — current deployment identity** | The serving deployment id / alias | A successful promotion or deployment | Current until serving identity changes |
+| **PR review** | The exact PR head SHA | Any push to that PR, including a docs-only one | Current only at that head |
+| **Source claim** | The source SHA | Any commit touching the cited source | Current at that SHA |
+
+**Merge is not proof that production moved.** A merge may *initiate* a runtime
+transition; only a successful deployment completes one. A merge whose deployment
+fails, or never receives traffic, leaves the previous deployment serving — and
+evidence about that still-serving runtime remains current.
+`docs/production/current-state.md` already separates these states explicitly
+(*merged · DB applied · deployed · enabled · production exercised · human
+accepted*), and records that a Vercel commit status was "the whole of the
+evidence that a production deployment for this head succeeded".
+
+**Schema identity does not vouch for data.** Tenant counts, row counts and
+open-alert counts change through ordinary DML with no migration, so the instance
+and its applied-migration identity are unchanged while the answer is not.
+`current-state.md` already binds such figures to a measurement date and warns
+when they were not re-measured; this table states that rule rather than
+inventing one.
 
 **A docs-only commit does not invalidate a still-current deployment or database
 observation.** The branch advancing is not, by itself, a change of runtime or of
@@ -196,15 +220,29 @@ introduce one.**
 
 ---
 
-## 7. T0 / T1 — this document does not apply
+## 7. T0 / T1 — ceremony is exempt, truth is not
 
-None of the above adds a step to low-risk work.
+**Exempt at T0/T1 — the added ceremony:**
 
 ```
 T0 — docs / non-runtime:   the docs lanes CI already selects. Nothing else.
 T1 — low-risk UI / local:  typecheck, lint, and the checks ci:plan selects.
                            No role claim. No reviewer. No evidence stamp.
 ```
+
+**Not exempt at any tier — the truth rules.** Whenever a document makes a claim
+about a deployment, a database, or a provider, it names `TARGET`,
+`STATE/REVISION` and `EVIDENCE`, and it distinguishes CURRENT from HISTORY —
+regardless of the risk tier of the change that writes it.
+
+This distinction is load-bearing, not pedantic. A production reconciliation or a
+migration apply record is **T0** by path classification, and is exactly the kind
+of document that carries deployment and database claims. Exempting it from the
+truth rules because it is low-risk would exempt the very artifacts those rules
+exist for, and would let a stale handoff be cited as current authority.
+
+A one-line UI edit acquires no paperwork from this, because it makes no such
+claim.
 
 Escalate when the *behaviour* crosses a higher boundary. Path classification
 cannot see what a file does, so it may raise a tier and may never lower one.
