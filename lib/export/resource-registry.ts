@@ -1614,6 +1614,14 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "Private invitation history for the new-client waitlist, live since migration 0188. The lifecycle itself is studio-owned demand truth and belongs in the backlog alongside new_client_waitlist_entries, so this is PENDING rather than EXCLUDED. It is tier 2 and field-review-required because the row is not only that history: token_hash is security material and MUST NEVER be emitted, raw or otherwise, and the row also carries operational attribution and lifecycle stamps (issued_by_practitioner_id, redeemed_at, expired_at, released_at) whose export shape has not been reviewed. Excluding the whole resource on account of one column would hide legitimate studio-owned invitation history from the backlog; the field review decides the payload column by column, the way calendar_connections separates its non-secret half from secrets that stay permanently excluded.",
   },
+  studio_sms_senders: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    fieldReviewRequired: true,
+    reason:
+      "The per-studio SMS sender Hone rents on a studio's behalf, live since migration 0191 (COMMS-01B). Studio-scoped and genuinely split down the middle, which is why this is a field review rather than a whole-resource verdict: the E.164 number IS studio-meaningful — it is the number their clients see and reply to — while phone_number_sid, messaging_service_sid and provisioning_claim_key are Hone's provider-infrastructure identifiers, carry no customer meaning, and are already withheld from the studio's own browser session by a column-level grant. Dumping them into an export would hand out through one door what the schema deliberately closes at another. The claim key is additionally an idempotency handle whose whole purpose is to be the unique thing that identifies one billable provisioning attempt. Same shape as calendar_connections: a real customer-facing half beside provider material that must never be emitted raw, decided column by column rather than by excluding the resource and hiding the studio's own number from the backlog. No export surface ships in COMMS-01B.",
+  },
   new_client_waitlist_entry_events: {
     kind: "pending",
     ticket: "TRUTH-01B",
