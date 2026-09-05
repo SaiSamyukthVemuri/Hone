@@ -33,6 +33,7 @@ type ClaimRow = {
   sender_id: string | null;
   claim_key: string | null;
   sender_status: string | null;
+  lease_generation: number | null;
 };
 
 async function claim(
@@ -42,7 +43,7 @@ async function claim(
   areaCode: string | null = "416",
 ): Promise<ClaimRow> {
   const res = await adminQuery(
-    `select result, sender_id, claim_key, sender_status
+    `select result, sender_id, claim_key, sender_status, lease_generation
        from public.claim_studio_sms_provisioning($1, $2, $3, $4)`,
     [studioId, actorUserId, country, areaCode],
   );
@@ -56,22 +57,48 @@ async function finalize(
   phoneNumberSid: string,
   messagingServiceSid: string,
   testOk: boolean,
+  leaseGeneration?: number,
 ): Promise<string> {
+  const gen = leaseGeneration ?? (await currentGeneration(studioId));
   const res = await adminQuery(
-    `select public.finalize_studio_sms_provisioning($1, $2, $3, $4, $5, $6) as r`,
-    [studioId, claimKey, phoneNumber, phoneNumberSid, messagingServiceSid, testOk],
+    `select public.finalize_studio_sms_provisioning($1, $2, $3, $4, $5, $6, $7) as r`,
+    [studioId, claimKey, gen, phoneNumber, phoneNumberSid, messagingServiceSid, testOk],
   );
   return (res.rows[0] as { r: string }).r;
+}
+
+/** The live row's current fencing token. */
+async function currentGeneration(studioId: string): Promise<number | null> {
+  const res = await adminQuery(
+    `select provisioning_lease_generation as g from public.studio_sms_senders
+      where studio_id = $1 and status <> 'released'`,
+    [studioId],
+  );
+  return (res.rows[0] as { g: number } | undefined)?.g ?? null;
+}
+
+async function assertLease(
+  studioId: string,
+  claimKey: string,
+  generation: number,
+): Promise<boolean> {
+  const res = await adminQuery(
+    `select public.assert_studio_sms_lease($1, $2, $3) as ok`,
+    [studioId, claimKey, generation],
+  );
+  return (res.rows[0] as { ok: boolean }).ok;
 }
 
 async function failAttempt(
   studioId: string,
   claimKey: string,
   code: string,
+  leaseGeneration?: number,
 ): Promise<string> {
+  const gen = leaseGeneration ?? (await currentGeneration(studioId));
   const res = await adminQuery(
-    `select public.fail_studio_sms_provisioning($1, $2, $3) as r`,
-    [studioId, claimKey, code],
+    `select public.fail_studio_sms_provisioning($1, $2, $3, $4) as r`,
+    [studioId, claimKey, gen, code],
   );
   return (res.rows[0] as { r: string }).r;
 }
@@ -258,10 +285,86 @@ describe("DOUBLE_SUBMIT_ONE_CLAIM", () => {
       );
     }
 
+    const beforeGen = before?.provisioning_lease_generation as number;
+
     const takeover = await claim(a.studioId, a.userId);
     expect(takeover.result).toBe("claimed");
     // Same key: the takeover can still discover what the crashed attempt bought.
     expect(takeover.claim_key).toBe(key);
+    // NEW generation: that is what fences the displaced worker out.
+    expect(takeover.lease_generation).toBe(beforeGen + 1);
+  });
+
+  it("STALLED_WORKER_FENCED: the displaced worker cannot spend and cannot write", async () => {
+    // The claim key alone does NOT cover this. A worker that merely STALLED
+    // past its lease -- not crashed, just slow -- resumes believing it still
+    // owns the attempt. Sharing the key then lets BOTH reconcile to nothing
+    // and BOTH purchase, which is the original catastrophe reintroduced by the
+    // very mechanism that recovers from crashes.
+    const fresh = await seedStudio("comms01b-fence");
+    try {
+      const mine = await claim(fresh.studioId, fresh.userId);
+      expect(mine.result).toBe("claimed");
+      const staleGen = mine.lease_generation as number;
+
+      // Still mine, right now.
+      expect(await assertLease(fresh.studioId, mine.claim_key!, staleGen)).toBe(true);
+
+      // I stall. My lease expires and another worker takes over.
+      await adminQuery(
+        `alter table public.studio_sms_senders disable trigger studio_sms_senders_transition_guard`,
+      );
+      try {
+        await adminQuery(
+          `update public.studio_sms_senders
+              set provisioning_claim_at = clock_timestamp() - interval '10 minutes'
+            where studio_id = $1 and status <> 'released'`,
+          [fresh.studioId],
+        );
+      } finally {
+        await adminQuery(
+          `alter table public.studio_sms_senders enable trigger studio_sms_senders_transition_guard`,
+        );
+      }
+      const takeover = await claim(fresh.studioId, fresh.userId);
+      expect(takeover.lease_generation).toBe(staleGen + 1);
+
+      // I wake up. THE ASSERTION: the fence refuses me BEFORE any billable call.
+      expect(await assertLease(fresh.studioId, mine.claim_key!, staleGen)).toBe(false);
+
+      // And I cannot write over the live attempt either.
+      expect(
+        await finalize(
+          fresh.studioId, mine.claim_key!, "+14165550888", pn("9"), mg("9"), true, staleGen,
+        ),
+      ).toBe("lease_lost");
+      expect(
+        await failAttempt(fresh.studioId, mine.claim_key!, "provider_timeout", staleGen),
+      ).toBe("lease_lost");
+
+      // The current holder is unaffected.
+      expect(
+        await assertLease(fresh.studioId, takeover.claim_key!, takeover.lease_generation!),
+      ).toBe(true);
+      expect((await row(fresh.studioId))?.status).toBe("provisioning");
+    } finally {
+      await adminQuery(`delete from public.studio_sms_senders where studio_id = $1`, [
+        fresh.studioId,
+      ]);
+    }
+  });
+
+  it("the lease generation is monotonic: rewinding it is REFUSED", async () => {
+    // NEGATIVE CONTROL. A generation that could go backwards would hand a
+    // displaced worker its fence back, which is the whole failure this closes.
+    await expect(
+      adminQuery(
+        `update public.studio_sms_senders set provisioning_lease_generation = 1
+          where studio_id = $1 and status <> 'released'
+            and provisioning_lease_generation > 1`,
+        [a.studioId],
+      ),
+    ).rejects.toThrow(/monotonic/i);
   });
 });
 
@@ -529,7 +632,7 @@ describe("privileges", () => {
     async (role) => {
       await denied(
         role,
-        `select public.fail_studio_sms_provisioning($1, $2, 'x_y_z')`,
+        `select public.fail_studio_sms_provisioning($1, $2, 1, 'x_y_z')`,
         [a.studioId, `hone-sms-${"0".repeat(32)}`],
       );
     },
@@ -540,9 +643,19 @@ describe("privileges", () => {
     async (role) => {
       await denied(
         role,
-        `select public.finalize_studio_sms_provisioning($1, $2, $3, $4, $5, true)`,
+        `select public.finalize_studio_sms_provisioning($1, $2, 1, $3, $4, $5, true)`,
         [a.studioId, `hone-sms-${"0".repeat(32)}`, "+14165550100", pn("a"), mg("a")],
       );
+    },
+  );
+
+  it.each(["anon", "authenticated"] as const)(
+    "%s cannot execute assert_studio_sms_lease",
+    async (role) => {
+      await denied(role, `select public.assert_studio_sms_lease($1, $2, 1)`, [
+        a.studioId,
+        `hone-sms-${"0".repeat(32)}`,
+      ]);
     },
   );
 

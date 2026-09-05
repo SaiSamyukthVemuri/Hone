@@ -132,6 +132,14 @@ create table if not exists public.studio_sms_senders (
   provisioning_claim_at  timestamptz,
   provisioning_claim_by_practitioner_id uuid,
 
+  -- THE FENCING TOKEN. Incremented every time an expired lease is taken over.
+  -- Reusing the claim key makes a SEQUENTIAL retry safe, but it does not fence
+  -- a CONCURRENT one: a worker that merely stalled past its lease resumes
+  -- believing it still holds the attempt, and two workers sharing one key both
+  -- reconcile to nothing and both purchase. The generation is what a displaced
+  -- worker fails to revalidate, so it aborts before spending.
+  provisioning_lease_generation integer not null default 1,
+
   provisioned_at  timestamptz,
   last_test_ok_at timestamptz,
 
@@ -214,6 +222,12 @@ alter table public.studio_sms_senders
 
 -- A claim is evidence or it is nothing: the key, its instant and its actor
 -- arrive together or not at all.
+alter table public.studio_sms_senders
+  drop constraint if exists studio_sms_senders_lease_generation_check;
+alter table public.studio_sms_senders
+  add constraint studio_sms_senders_lease_generation_check
+  check (provisioning_lease_generation >= 1);
+
 alter table public.studio_sms_senders
   drop constraint if exists studio_sms_senders_claim_evidence_check;
 alter table public.studio_sms_senders
@@ -391,6 +405,14 @@ begin
       using errcode = 'check_violation';
   end if;
 
+  -- A generation that could go backwards would hand a displaced worker its
+  -- fence back, which is the entire failure this token exists to close.
+  if new.provisioning_lease_generation < old.provisioning_lease_generation then
+    raise exception
+      'studio_sms_senders: the lease generation is monotonic; rewinding it would re-arm a worker that was already displaced'
+      using errcode = 'check_violation';
+  end if;
+
   if old.provisioning_claim_by_practitioner_id is not null
      and new.provisioning_claim_by_practitioner_id
          is distinct from old.provisioning_claim_by_practitioner_id then
@@ -502,7 +524,8 @@ returns table (
   result      text,
   sender_id   uuid,
   claim_key   text,
-  sender_status text
+  sender_status text,
+  lease_generation integer
 )
 language plpgsql
 volatile
@@ -525,18 +548,18 @@ declare
   v_key             text;
 begin
   if p_studio_id is null or p_actor_user_id is null then
-    return query select 'invalid_input'::text, null::uuid, null::text, null::text;
+    return query select 'invalid_input'::text, null::uuid, null::text, null::text, null::integer;
     return;
   end if;
 
   if v_country is null or v_country !~ '^[A-Z]{2}$'
      or (v_area is not null and v_area !~ '^[0-9]{2,5}$') then
-    return query select 'invalid_input'::text, null::uuid, null::text, null::text;
+    return query select 'invalid_input'::text, null::uuid, null::text, null::text, null::integer;
     return;
   end if;
 
   if not exists (select 1 from public.studios s where s.id = p_studio_id) then
-    return query select 'studio_not_found'::text, null::uuid, null::text, null::text;
+    return query select 'studio_not_found'::text, null::uuid, null::text, null::text, null::integer;
     return;
   end if;
 
@@ -549,11 +572,11 @@ begin
    limit 1;
 
   if v_practitioner_id is null then
-    return query select 'not_a_member'::text, null::uuid, null::text, null::text;
+    return query select 'not_a_member'::text, null::uuid, null::text, null::text, null::integer;
     return;
   end if;
   if v_role <> 'owner' then
-    return query select 'not_owner'::text, null::uuid, null::text, null::text;
+    return query select 'not_owner'::text, null::uuid, null::text, null::text, null::integer;
     return;
   end if;
 
@@ -588,13 +611,14 @@ begin
       provisioning_claim_by_practitioner_id
     ) values (
       p_studio_id, 'twilio', 'provisioning', v_country, v_area,
-      v_key, now(), v_practitioner_id
+      v_key, clock_timestamp(), v_practitioner_id
     )
     on conflict do nothing
     returning * into v_row;
 
     if v_row.id is not null then
-      return query select 'claimed'::text, v_row.id, v_row.provisioning_claim_key, v_row.status;
+      return query select 'claimed'::text, v_row.id, v_row.provisioning_claim_key,
+                          v_row.status, v_row.provisioning_lease_generation;
       return;
     end if;
 
@@ -608,13 +632,14 @@ begin
      for update;
 
     if v_row.id is null then
-      return query select 'not_claimable'::text, null::uuid, null::text, null::text;
+      return query select 'not_claimable'::text, null::uuid, null::text, null::text, null::integer;
       return;
     end if;
   end if;
 
   if v_row.status = 'active' then
-    return query select 'already_active'::text, v_row.id, v_row.provisioning_claim_key, v_row.status;
+    return query select 'already_active'::text, v_row.id, v_row.provisioning_claim_key,
+                        v_row.status, v_row.provisioning_lease_generation;
     return;
   end if;
 
@@ -625,8 +650,13 @@ begin
     -- would then reconcile (finding nothing yet, because neither has bought)
     -- and both would purchase. The claim has to EXCLUDE, so a live attempt
     -- turns the second request away and it performs no provider effect at all.
-    if v_row.provisioning_claim_at > now() - c_claim_lease then
-      return query select 'claim_held'::text, v_row.id, null::text, v_row.status;
+    -- clock_timestamp(), NOT now(). `now()` is fixed at TRANSACTION start, so a
+    -- claim that waited on the FOR UPDATE lock above evaluates expiry against a
+    -- reading from before the wait -- and, worse, would REFRESH the lease to
+    -- that same stale instant, handing back a lease that is already expired the
+    -- moment the RPC returns.
+    if v_row.provisioning_claim_at > clock_timestamp() - c_claim_lease then
+      return query select 'claim_held'::text, v_row.id, null::text, v_row.status, null::integer;
       return;
     end if;
 
@@ -635,11 +665,13 @@ begin
     -- would enforce anyway -- so this attempt's first act is to discover
     -- whatever the crashed one may already have purchased.
     update public.studio_sms_senders
-       set provisioning_claim_at = now()
+       set provisioning_claim_at         = clock_timestamp(),
+           provisioning_lease_generation = v_row.provisioning_lease_generation + 1
      where id = v_row.id
     returning * into v_row;
 
-    return query select 'claimed'::text, v_row.id, v_row.provisioning_claim_key, v_row.status;
+    return query select 'claimed'::text, v_row.id, v_row.provisioning_claim_key,
+                        v_row.status, v_row.provisioning_lease_generation;
     return;
   end if;
 
@@ -648,20 +680,22 @@ begin
     -- refuse anyway). Country and area code may be re-stated but the identity
     -- of the attempt does not move.
     update public.studio_sms_senders
-       set status                = 'provisioning',
-           country               = v_country,
-           requested_area_code   = v_area,
-           provisioning_claim_at = now()
+       set status                        = 'provisioning',
+           country                       = v_country,
+           requested_area_code           = v_area,
+           provisioning_claim_at         = clock_timestamp(),
+           provisioning_lease_generation = v_row.provisioning_lease_generation + 1
      where id = v_row.id
     returning * into v_row;
 
-    return query select 'claimed'::text, v_row.id, v_row.provisioning_claim_key, v_row.status;
+    return query select 'claimed'::text, v_row.id, v_row.provisioning_claim_key,
+                        v_row.status, v_row.provisioning_lease_generation;
     return;
   end if;
 
   -- suspended / releasing: a deliberate operator state. Provisioning does not
   -- silently reopen it.
-  return query select 'not_claimable'::text, v_row.id, null::text, v_row.status;
+  return query select 'not_claimable'::text, v_row.id, null::text, v_row.status, null::integer;
 end;
 $$;
 
@@ -679,6 +713,7 @@ $$;
 create or replace function public.finalize_studio_sms_provisioning(
   p_studio_id            uuid,
   p_claim_key            text,
+  p_lease_generation     integer,
   p_phone_number         text,
   p_phone_number_sid     text,
   p_messaging_service_sid text,
@@ -711,6 +746,15 @@ begin
 
   if v_row.id is null then
     return 'claim_not_found';
+  end if;
+
+  -- FENCING. A worker whose lease was taken over must not write. Its purchase
+  -- (if any) stays discoverable under the shared claim key and the CURRENT
+  -- holder adopts it; what must not happen is the displaced worker recording
+  -- ITS resources over the live attempt's.
+  if p_lease_generation is not null
+     and v_row.provisioning_lease_generation <> p_lease_generation then
+    return 'lease_lost';
   end if;
 
   if v_row.status = 'active' then
@@ -777,9 +821,10 @@ $$;
 -- reconcile from, not a reset. Anything already purchased under this key stays
 -- discoverable.
 create or replace function public.fail_studio_sms_provisioning(
-  p_studio_id  uuid,
-  p_claim_key  text,
-  p_error_code text
+  p_studio_id      uuid,
+  p_claim_key      text,
+  p_lease_generation integer,
+  p_error_code     text
 )
 returns text
 language plpgsql
@@ -811,6 +856,11 @@ begin
   if v_row.id is null then
     return 'claim_not_found';
   end if;
+  -- A displaced worker does not get to park the live attempt in `error`.
+  if p_lease_generation is not null
+     and v_row.provisioning_lease_generation <> p_lease_generation then
+    return 'lease_lost';
+  end if;
   if v_row.status = 'active' then
     return 'already_active';
   end if;
@@ -826,6 +876,53 @@ begin
 
   return 'failed';
 end;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- Command: revalidate the fence, immediately before spending money
+-- ---------------------------------------------------------------------------
+--
+-- THE LAST THING A WORKER DOES BEFORE A BILLABLE CALL.
+--
+-- Reusing the claim key across a takeover makes a SEQUENTIAL retry safe: the
+-- new worker reconciles against what the old one bought. It does NOT fence a
+-- CONCURRENT one. A worker that merely STALLED past its five-minute lease --
+-- not crashed, just slow, paused, or wedged on a socket -- resumes believing it
+-- still owns the attempt. Both workers then hold the same key, both reconcile
+-- while neither purchase is visible yet, and both buy. That is the original
+-- catastrophe, reintroduced by the very mechanism that recovers from crashes.
+--
+-- The lease generation is the fence. It advances on every takeover, so the
+-- displaced worker's copy is stale and this returns false, and it aborts
+-- WITHOUT spending.
+--
+-- HONEST LIMIT, STATED RATHER THAN IMPLIED: this narrows the window, it does
+-- not close it. A takeover landing between this check and the provider call
+-- still races, because Twilio's number-purchase API accepts no idempotency key
+-- for Hone to bind the effect to. What remains is a few milliseconds rather
+-- than the whole provisioning sequence, and the claim-key FriendlyName still
+-- makes the aftermath DISCOVERABLE -- lookupResourcesByClaim refuses to choose
+-- when it finds two, so the condition surfaces to an operator instead of being
+-- silently absorbed.
+create or replace function public.assert_studio_sms_lease(
+  p_studio_id        uuid,
+  p_claim_key        text,
+  p_lease_generation integer
+)
+returns boolean
+language sql
+stable
+security definer
+set search_path = pg_catalog, pg_temp
+as $$
+  select exists (
+    select 1
+      from public.studio_sms_senders s
+     where s.studio_id                     = p_studio_id
+       and s.provisioning_claim_key        = p_claim_key
+       and s.provisioning_lease_generation = p_lease_generation
+       and s.status                        = 'provisioning'
+  );
 $$;
 
 -- ---------------------------------------------------------------------------
@@ -881,15 +978,15 @@ revoke execute on function public.claim_studio_sms_provisioning(uuid, uuid, text
 revoke execute on function public.claim_studio_sms_provisioning(uuid, uuid, text, text) from authenticated;
 revoke execute on function public.claim_studio_sms_provisioning(uuid, uuid, text, text) from service_role;
 
-revoke execute on function public.finalize_studio_sms_provisioning(uuid, text, text, text, text, boolean) from public;
-revoke execute on function public.finalize_studio_sms_provisioning(uuid, text, text, text, text, boolean) from anon;
-revoke execute on function public.finalize_studio_sms_provisioning(uuid, text, text, text, text, boolean) from authenticated;
-revoke execute on function public.finalize_studio_sms_provisioning(uuid, text, text, text, text, boolean) from service_role;
+revoke execute on function public.finalize_studio_sms_provisioning(uuid, text, integer, text, text, text, boolean) from public;
+revoke execute on function public.finalize_studio_sms_provisioning(uuid, text, integer, text, text, text, boolean) from anon;
+revoke execute on function public.finalize_studio_sms_provisioning(uuid, text, integer, text, text, text, boolean) from authenticated;
+revoke execute on function public.finalize_studio_sms_provisioning(uuid, text, integer, text, text, text, boolean) from service_role;
 
-revoke execute on function public.fail_studio_sms_provisioning(uuid, text, text) from public;
-revoke execute on function public.fail_studio_sms_provisioning(uuid, text, text) from anon;
-revoke execute on function public.fail_studio_sms_provisioning(uuid, text, text) from authenticated;
-revoke execute on function public.fail_studio_sms_provisioning(uuid, text, text) from service_role;
+revoke execute on function public.fail_studio_sms_provisioning(uuid, text, integer, text) from public;
+revoke execute on function public.fail_studio_sms_provisioning(uuid, text, integer, text) from anon;
+revoke execute on function public.fail_studio_sms_provisioning(uuid, text, integer, text) from authenticated;
+revoke execute on function public.fail_studio_sms_provisioning(uuid, text, integer, text) from service_role;
 
 revoke execute on function public.resolve_studio_by_sms_messaging_service(text) from public;
 revoke execute on function public.resolve_studio_by_sms_messaging_service(text) from anon;
@@ -897,9 +994,15 @@ revoke execute on function public.resolve_studio_by_sms_messaging_service(text) 
 revoke execute on function public.resolve_studio_by_sms_messaging_service(text) from service_role;
 
 grant execute on function public.claim_studio_sms_provisioning(uuid, uuid, text, text) to service_role;
-grant execute on function public.finalize_studio_sms_provisioning(uuid, text, text, text, text, boolean) to service_role;
-grant execute on function public.fail_studio_sms_provisioning(uuid, text, text) to service_role;
+grant execute on function public.finalize_studio_sms_provisioning(uuid, text, integer, text, text, text, boolean) to service_role;
+grant execute on function public.fail_studio_sms_provisioning(uuid, text, integer, text) to service_role;
 grant execute on function public.resolve_studio_by_sms_messaging_service(text) to service_role;
+
+revoke execute on function public.assert_studio_sms_lease(uuid, text, integer) from public;
+revoke execute on function public.assert_studio_sms_lease(uuid, text, integer) from anon;
+revoke execute on function public.assert_studio_sms_lease(uuid, text, integer) from authenticated;
+revoke execute on function public.assert_studio_sms_lease(uuid, text, integer) from service_role;
+grant execute on function public.assert_studio_sms_lease(uuid, text, integer) to service_role;
 
 revoke all privileges on function public.studio_sms_senders_server_timestamps()
   from public, anon, authenticated, service_role;
@@ -932,13 +1035,19 @@ comment on column public.studio_sms_senders.last_error_code is
   'A stable taxonomy slug from the adapter''s error vocabulary -- never a provider message, payload or phone number. The shape CHECK (lowercase slug, 3-64 chars) makes it structurally impossible to park a number or a token here.';
 
 comment on function public.claim_studio_sms_provisioning(uuid, uuid, text, text) is
-  'Acquire the durable provisioning claim. THE COMMIT POINT of an attempt: everything billable happens after this returns, under the key it returns. Re-derives studio membership AND owner role from (studio_id, actor user id); the caller never supplies a role. Takes the studio''s live row FOR UPDATE, so concurrent requests serialize. A live attempt EXCLUDES the second request: it is turned away as `claim_held` with no key and performs no provider effect, which is what makes a double click, a second tab and a network retry produce ONE purchase. Sharing the key instead would let both reconcile (finding nothing, since neither has bought yet) and both purchase. A claim whose 5-minute lease has expired is taken over ON THE SAME KEY, so the taking-over attempt discovers whatever the crashed one bought. The FIRST-EVER claim for a studio is the one case the row lock cannot serialize -- there is no row to lock -- so the insert carries `on conflict do nothing` and the loser re-reads the winner and is answered `claim_held`; without it the loser received a raw duplicate-key exception instead of a result word. Returns claimed | claim_held | already_active | not_claimable | not_a_member | not_owner | studio_not_found | invalid_input. service_role only.';
+  'Acquire the durable provisioning claim. THE COMMIT POINT of an attempt: everything billable happens after this returns, under the key it returns. Re-derives studio membership AND owner role from (studio_id, actor user id); the caller never supplies a role. Takes the studio''s live row FOR UPDATE, so concurrent requests serialize. A live attempt EXCLUDES the second request: it is turned away as `claim_held` with no key and performs no provider effect, which is what makes a double click, a second tab and a network retry produce ONE purchase. Sharing the key instead would let both reconcile (finding nothing, since neither has bought yet) and both purchase. A claim whose 5-minute lease has expired is taken over ON THE SAME KEY, so the taking-over attempt discovers whatever the crashed one bought, and the lease GENERATION advances so the displaced worker is fenced out by assert_studio_sms_lease before it can spend. Expiry is evaluated against clock_timestamp(), not now(): a claim that waited on the row lock would otherwise judge -- and refresh -- the lease against a reading from before the wait. The FIRST-EVER claim for a studio is the one case the row lock cannot serialize -- there is no row to lock -- so the insert carries `on conflict do nothing` and the loser re-reads the winner and is answered `claim_held`; without it the loser received a raw duplicate-key exception instead of a result word. Returns claimed | claim_held | already_active | not_claimable | not_a_member | not_owner | studio_not_found | invalid_input. service_role only.';
 
-comment on function public.finalize_studio_sms_provisioning(uuid, text, text, text, text, boolean) is
-  'Record the provider resources an attempt produced, addressed by (studio_id, claim_key) together. Reaches `active` ONLY with p_test_ok = true; without proof the row keeps its identifiers and stays in `provisioning`, which is precisely the state reconciliation needs. Replaying identical resources is benign (`already_active`); DIFFERENT resources against the same claim return `conflict` and are never silently overwritten. A provider resource already recorded against ANOTHER studio raises a unique violation, which is caught and returned as `conflict` rather than propagating a bare 23505. Returns activated | provisioned_untested | already_active | conflict | claim_not_found | not_provisioning | invalid_input. service_role only.';
+comment on function public.finalize_studio_sms_provisioning(uuid, text, integer, text, text, text, boolean) is
+  'Record the provider resources an attempt produced, addressed by (studio_id, claim_key) together. Reaches `active` ONLY with p_test_ok = true; without proof the row keeps its identifiers and stays in `provisioning`, which is precisely the state reconciliation needs. Replaying identical resources is benign (`already_active`); DIFFERENT resources against the same claim return `conflict` and are never silently overwritten. A provider resource already recorded against ANOTHER studio raises a unique violation, which is caught and returned as `conflict` rather than propagating a bare 23505. A worker whose lease was taken over is refused with `lease_lost` rather than allowed to record its resources over the live attempt''s. Returns activated | provisioned_untested | already_active | conflict | lease_lost | claim_not_found | not_provisioning | invalid_input. service_role only.';
 
-comment on function public.fail_studio_sms_provisioning(uuid, text, text) is
-  'Park a failed attempt in `error` WITHOUT surrendering the claim key, so anything already purchased under it stays discoverable by reconciliation. Coerces any non-conforming error tag to `provider_error_unspecified` rather than storing it. Returns failed | already_active | not_provisioning | claim_not_found | invalid_input. service_role only.';
+comment on function public.fail_studio_sms_provisioning(uuid, text, integer, text) is
+  'Park a failed attempt in `error` WITHOUT surrendering the claim key, so anything already purchased under it stays discoverable by reconciliation. Coerces any non-conforming error tag to `provider_error_unspecified` rather than storing it. A displaced worker is refused with `lease_lost` and does not get to park the live attempt in `error`. Returns failed | lease_lost | already_active | not_provisioning | claim_not_found | invalid_input. service_role only.';
+
+comment on column public.studio_sms_senders.provisioning_lease_generation is
+  'THE FENCING TOKEN, and the answer to a defect the claim key alone does not close. Reusing the key across a stale-lease takeover makes a SEQUENTIAL retry safe -- the new worker reconciles against what the old one bought -- but it does not fence a CONCURRENT one: a worker that merely STALLED past its lease (not crashed; slow, paused, or wedged on a socket) resumes believing it still owns the attempt, and two workers holding one key both reconcile while neither purchase is visible and both buy. This integer advances on every takeover, so the displaced worker fails assert_studio_sms_lease and aborts BEFORE spending. Monotonic by trigger: rewinding it would re-arm a worker that was already displaced.';
+
+comment on function public.assert_studio_sms_lease(uuid, text, integer) is
+  'Revalidate the fence immediately before a billable provider call; false means this worker was displaced and must not spend. Narrows the double-purchase window from the whole provisioning sequence to the gap between this check and the provider call -- it does NOT close it, because Twilio''s number-purchase API accepts no idempotency key to bind the effect to. The claim-key FriendlyName still makes the residue discoverable: lookupResourcesByClaim refuses to choose when it finds two, so the condition reaches an operator rather than being absorbed. service_role only.';
 
 comment on function public.resolve_studio_by_sms_messaging_service(text) is
   'Resolve an inbound provider callback to exactly one studio via the messaging-service unique index -- a stronger key than any sender-controlled payload field, and no scan over tenant state. Returns null when the SID is not one of ours; the caller must treat that as "not attributable", never as "any studio". service_role only.';

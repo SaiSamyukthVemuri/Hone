@@ -48,6 +48,18 @@ const API_BASE = "https://api.twilio.com/2010-04-01";
 const MESSAGING_BASE = "https://messaging.twilio.com/v1";
 const TIMEOUT_MS = 15_000;
 
+/** Upper bound on the Services pagination walk; reaching it fails closed. */
+const SERVICE_PAGE_LIMIT = 50;
+
+/**
+ * Twilio error codes that genuinely mean "this number cannot be bought".
+ *   21422 - phone number is not available for purchase
+ *   21421 - phone number is invalid
+ *   21452 - no phone numbers found matching the request
+ * Any other 400 is a rejection choosing a different number will not fix.
+ */
+const NUMBER_UNAVAILABLE_CODES = new Set<number>([21421, 21422, 21452]);
+
 type Credentials = { accountSid: string; authToken: string };
 
 function readCredentials(): Credentials | null {
@@ -252,24 +264,53 @@ export const twilioProvisioningProvider: SmsProvisioningProvider = {
     }
 
     // 2. Did a messaging service get created under this claim? Twilio's
-    //    Messaging API has no FriendlyName filter, so this is a bounded scan
-    //    of Hone's OWN services -- never of tenant state.
-    const servicesRes = await request(
-      creds,
-      `${MESSAGING_BASE}/Services?PageSize=100`,
-      { method: "GET" },
-    );
-    if (!servicesRes.ok) return servicesRes;
-    if (servicesRes.status !== 200) return httpError(servicesRes.status);
+    //    Messaging API has no FriendlyName filter, so this is a scan of Hone's
+    //    OWN services -- never of tenant state.
+    //
+    //    IT MUST FOLLOW EVERY PAGE. One service per SMS-enabled studio means
+    //    the account crosses a single page at ~100 studios, and a first-page-only
+    //    scan would then report "no service under this claim" while the service
+    //    sits on page two. Reconciliation would create a second one, and the
+    //    number already attached to the missed service would take the
+    //    already-in-pool path -- leaving provisioning quietly inconsistent.
+    //    An incomplete scan is not absence, so exhausting the pages is the only
+    //    reading of "not found" this function is allowed to make.
+    const matches: unknown[] = [];
+    let nextUrl: string | null = `${MESSAGING_BASE}/Services?PageSize=100`;
+    let pagesFetched = 0;
 
-    const servicesBody = asRecord(servicesRes.json);
-    const services = servicesBody ? asArray(servicesBody.services) : null;
-    if (!services) return providerError("provider_response_unparseable", false);
+    while (nextUrl) {
+      // Bound the walk so a malformed `next_page_url` cannot loop forever.
+      // Reaching the bound is NOT treated as absence; it fails closed.
+      if (pagesFetched >= SERVICE_PAGE_LIMIT) {
+        return providerError("provider_response_unparseable", false);
+      }
+      pagesFetched += 1;
 
-    const matches = services.filter((raw) => {
-      const rec = asRecord(raw);
-      return rec !== null && asString(rec.friendly_name) === tag;
-    });
+      const servicesRes: ProviderResult<RawResponse> = await request(
+        creds,
+        nextUrl,
+        { method: "GET" },
+      );
+      if (!servicesRes.ok) return servicesRes;
+      if (servicesRes.status !== 200) return httpError(servicesRes.status);
+
+      const servicesBody = asRecord(servicesRes.json);
+      const services = servicesBody ? asArray(servicesBody.services) : null;
+      if (!services) return providerError("provider_response_unparseable", false);
+
+      for (const raw of services) {
+        const rec = asRecord(raw);
+        if (rec !== null && asString(rec.friendly_name) === tag) matches.push(rec);
+      }
+
+      // Twilio paginates via `meta.next_page_url`, null on the last page.
+      const meta = servicesBody ? asRecord(servicesBody.meta) : null;
+      const next = meta ? asString(meta.next_page_url) : null;
+      // Only follow Twilio's own host; a redirected cursor is not a page of ours.
+      nextUrl = next && next.startsWith(MESSAGING_BASE) ? next : null;
+    }
+
     if (matches.length > 1) {
       return providerError("provider_resource_mismatch", false);
     }
@@ -332,9 +373,22 @@ export const twilioProvisioningProvider: SmsProvisioningProvider = {
     if (!res.ok) return res;
 
     if (res.status === 400 || res.status === 404) {
-      // Twilio 21422 / 21421: the number is no longer purchasable. The owner
-      // chose THAT number; we surface it and stop.
-      return providerError("number_no_longer_available", false);
+      // READ THE CODE, DO NOT ASSUME IT. Twilio returns 400 for plenty that has
+      // nothing to do with availability -- invalid configuration, a missing
+      // regulatory bundle or address, an account restriction. Telling an owner
+      // "that number is gone, pick another" when the real problem follows them
+      // to every number sends them round a loop that cannot terminate.
+      //
+      // Only the documented unavailable-number codes mean what the retry advice
+      // implies; everything else is a rejection the owner cannot fix by
+      // choosing differently.
+      const code = asRecord(res.json)?.code;
+      const unavailable =
+        typeof code === "number" && NUMBER_UNAVAILABLE_CODES.has(code);
+      return providerError(
+        unavailable ? "number_no_longer_available" : "provider_rejected",
+        false,
+      );
     }
     if (res.status !== 201 && res.status !== 200) return httpError(res.status);
 
