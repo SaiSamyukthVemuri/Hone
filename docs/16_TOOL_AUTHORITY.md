@@ -184,7 +184,21 @@ claim — is what decays.
 | **One production mover** | Only operations that can actually move production state — see below | Claim is exclusive **for those operations only**. Release states branch, exact head, and evidence state. The successor re-fetches and re-verifies the base before acting: it may have moved. |
 | **One migration-number owner** | The next free migration number | Never hard-coded; derived at authoring time. A number is claimed when the file is committed. An applied migration is frozen — a correction is a new migration, never an edit. |
 | **One shared-DB owner** | The shared local database stack | Claimed before any reset, because a reset is destructive to every other worktree. Released explicitly; after release, no further reset without re-authorization. |
-| **One browser-stack owner** | The local browser/E2E stack and its reserved singleton fixtures | Claimed before a run, released when the last lane exits. Per-worktree ports are derived, not registered; reserved singleton fixtures are shared and cannot be. |
+| **One browser destructive-resource owner** | Only the browser/E2E resources that cannot be isolated: destructive operations (a stack reset), reserved **singleton** fixtures, and any suite proven to share a non-isolated mutable resource | Claimed before *those* operations only, released when they finish. **Ordinary isolated E2E runs concurrently and needs no claim.** |
+
+### Ordinary browser runs are not serialized
+
+Concurrent E2E is a supported mode, not a hazard to be coordinated away.
+`scripts/worktree-resources.mjs` derives a per-worktree app port, refuses server
+reuse unconditionally, and makes an occupied port **fail loudly** rather than
+attach to another worktree's server; `e2e/helpers/seed.ts` gives each run
+run-unique rows and addresses. A rule requiring a claim before every browser run
+would serialize parallelism the harness was deliberately built to provide.
+
+What still needs exclusive coordination is only what isolation cannot cover: a
+destructive reset, a **reserved singleton** fixture that is shared by
+construction, and any suite *demonstrated* to touch a non-isolated mutable
+resource. "Demonstrated" is the bar — a suspicion is not a claim.
 
 ### What counts as moving production
 
@@ -216,16 +230,29 @@ is serialized by that fact, not by being a push.
 ## 6. Review
 
 **Codex is an independent reviewer, not a source of authority.** One request per
-head, after CI settles. Its findings are questions for tier 1 to answer. Silence
-from it is not proof of correctness, and a finding from it is not proof of a
-defect until tier 1 or 2 confirms one.
+head, after CI settles. Its findings are questions for current
+authority to answer. Silence from it is not proof of correctness, and a finding
+from it is not proof of a defect until the authority *able to observe that
+claim* confirms one.
 
-**A review finding is an observation until it is adjudicated.** Codex, guidance
-and analysis output are candidate defects, not defects; they become findings
-with a disposition only once tier 1 or 2 confirms one. How a confirmed finding
-is then dispositioned at release is governed by the applicable engineering and
-release standard — **this document does not set that standard and does not
-introduce one.**
+**A review finding is an observation until it is adjudicated** — and it is
+adjudicated by **the current-authority source capable of observing that
+particular claim**, not by tier number. Repository source cannot confirm a live
+deployment identity; a database catalog cannot confirm provider configuration or
+reachability. Matching the claim to its observer is the whole of the rule:
+
+| Claim | Settled by |
+|---|---|
+| Source claim | Repository source at the identified SHA |
+| Database schema / data claim | The matching observed instance — catalog or query |
+| Hosted deployment claim | Deployment / provider evidence |
+| Health or reachability claim | A fresh probe, inside its stated validity window |
+
+Human GO governs **actions**; it is not factual evidence about any of these.
+
+How a confirmed finding is then dispositioned at release is governed by the
+applicable engineering and release standard — **this document does not set that
+standard and does not introduce one.**
 
 > **DEFERRED_STANDARDS_CHANGE.** An earlier draft of this file carried a
 > universal P2 release cutoff. It was removed: it was a new release gate, and
