@@ -1,4 +1,6 @@
 import Link from "next/link";
+
+import { buttonClasses } from "@/components/ui/button";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import type { ClientAppointmentTimelineRow } from "@/lib/supabase/queries";
 
@@ -326,14 +328,14 @@ function TimelineActions({
         {row.linked_session && (
           <Link
             href={`/clients/${clientId}/sessions/${row.linked_session.id}`}
-            className="rounded-md border border-neutral-300 px-3 py-1.5 text-xs font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+            className={buttonClasses({ variant: "secondary", size: "sm" })}
           >
             View session
           </Link>
         )}
         <Link
           href={`/calendar/${row.id}`}
-          className="rounded-md border border-neutral-300 px-3 py-1.5 text-xs font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+          className={buttonClasses({ variant: "secondary", size: "sm" })}
         >
           Open appointment
         </Link>
@@ -347,13 +349,13 @@ function TimelineActions({
       <div className="flex flex-wrap gap-2">
         <Link
           href={`/clients/${clientId}/sessions/${row.linked_session.id}`}
-          className="rounded-md border border-neutral-900 bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-neutral-800 dark:border-white dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+          className={buttonClasses({ variant: "primary", size: "sm" })}
         >
           View session
         </Link>
         <Link
           href={`/calendar/${row.id}`}
-          className="rounded-md border border-neutral-300 px-3 py-1.5 text-xs font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+          className={buttonClasses({ variant: "secondary", size: "sm" })}
         >
           Open appointment
         </Link>
@@ -368,13 +370,13 @@ function TimelineActions({
       <div className="flex flex-wrap gap-2">
         <Link
           href={`/clients/${clientId}/sessions/new?appointment_id=${encodeURIComponent(row.id)}`}
-          className="rounded-md border border-neutral-900 bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-neutral-800 dark:border-white dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+          className={buttonClasses({ variant: "primary", size: "sm" })}
         >
           Chart session
         </Link>
         <Link
           href={`/calendar/${row.id}`}
-          className="rounded-md border border-neutral-300 px-3 py-1.5 text-xs font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+          className={buttonClasses({ variant: "secondary", size: "sm" })}
         >
           Open appointment
         </Link>
@@ -390,7 +392,7 @@ function TimelineActions({
   return (
     <Link
       href={`/calendar/${row.id}`}
-      className="rounded-md border border-neutral-900 bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-neutral-800 dark:border-white dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+      className={buttonClasses({ variant: "primary", size: "sm" })}
     >
       Open appointment
     </Link>

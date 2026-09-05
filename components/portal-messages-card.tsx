@@ -1,6 +1,8 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
+
+import { Button } from "@/components/ui/button";
 import type { PortalMessageForPractitioner } from "@/lib/portal-messages/queries";
 import type { PortalMessageReplyForPractitioner } from "@/lib/portal-messages/replies-queries";
 import { FormattedDateTime } from "@/components/formatted-date-time";
@@ -164,16 +166,17 @@ export function PortalMessagesCard({
           </p>
         </div>
         {!clientIsArchived && !open && (
-          <button
-            type="button"
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={() => {
               setOpen(true);
               setError(null);
             }}
-            className="self-start rounded-md border border-neutral-300 px-3 py-1.5 text-xs font-medium text-neutral-700 hover:border-neutral-500 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
+            className="self-start"
           >
             + New message
-          </button>
+          </Button>
         )}
       </div>
 
@@ -237,16 +240,18 @@ export function PortalMessagesCard({
           )}
 
           <div className="flex items-center gap-2">
-            <button
-              type="button"
+            <Button
+              variant="primary"
+              size="sm"
               onClick={submit}
-              disabled={pending}
-              className="rounded-md bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900"
+              pending={pending}
+              busyLabel="Sending…"
             >
-              {pending ? "Sending…" : "Send secure portal message"}
-            </button>
-            <button
-              type="button"
+              Send secure portal message
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
               onClick={() => {
                 setOpen(false);
                 setSubject("");
@@ -254,10 +259,9 @@ export function PortalMessagesCard({
                 setError(null);
               }}
               disabled={pending}
-              className="rounded-md border border-neutral-300 px-3 py-1.5 text-xs text-neutral-700 hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
             >
               Cancel
-            </button>
+            </Button>
           </div>
         </div>
       )}

@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useTransition } from "react";
+
+import { Button } from "@/components/ui/button";
 import { useRouter } from "next/navigation";
 import type { TreatmentPlanWithStages } from "@/lib/treatment-plans/queries";
 import { FormattedDateTime } from "@/components/formatted-date-time";
@@ -569,14 +571,15 @@ function PlanCard({
 
       {onClose && !isClosed && (
         <div className="flex flex-col gap-2 pt-1">
-          <button
-            type="button"
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={onClose}
             disabled={pending}
-            className="self-start rounded-md border border-neutral-300 px-3 py-1.5 text-xs text-neutral-700 hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
+            className="self-start"
           >
             Close plan
-          </button>
+          </Button>
         </div>
       )}
     </div>
@@ -872,22 +875,18 @@ function PlanNotesEditor({
       )}
 
       <div className="flex items-center gap-2">
-        <button
-          type="button"
+        <Button
+          variant="primary"
+          size="sm"
           onClick={submit}
-          disabled={pending}
-          className="rounded-md bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900"
+          pending={pending}
+          busyLabel="Saving…"
         >
-          {pending ? "Saving…" : "Save plan"}
-        </button>
-        <button
-          type="button"
-          onClick={cancel}
-          disabled={pending}
-          className="rounded-md border border-neutral-300 px-3 py-1.5 text-xs text-neutral-700 hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
-        >
+          Save plan
+        </Button>
+        <Button variant="secondary" size="sm" onClick={cancel} disabled={pending}>
           Cancel
-        </button>
+        </Button>
       </div>
     </div>
   );
