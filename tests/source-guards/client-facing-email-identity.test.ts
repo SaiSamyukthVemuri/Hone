@@ -11,9 +11,16 @@ import { join } from "node:path";
 // claimed to fix.
 //
 // So this guard does not pin the current call sites. It DISCOVERS every caller
-// of the canonical transport and requires each one to either pass
+// of every CLIENT EMAIL TRANSPORT and requires each one to either pass
 // `studioIdentity` or be explicitly declared Hone-facing below. A newly added
 // client-facing caller is in neither set, and fails.
+//
+// IT ENUMERATES TRANSPORTS, NOT ONE FUNCTION NAME. The first version scanned
+// only for `sendEmailSafely({` and therefore could not see
+// `sendWaitlistEmailIdempotent`, a SECOND client-facing transport with its own
+// hard-coded From. It passed green while a client-facing email still arrived as
+// Hone. A guard that cannot see a whole transport is worse than a missing call
+// site, because it is the mechanism meant to make missing call sites impossible.
 //
 //   new caller + studio context + no identity  =>  RED
 //
@@ -21,6 +28,19 @@ import { join } from "node:path";
 // "this mail is Hone speaking as Hone". Forgetting is not possible.
 
 const ROOT = process.cwd();
+
+/**
+ * Every transport that can put mail in front of a CLIENT. Adding a new one
+ * without listing it here is caught by `no unlisted client email transport
+ * exists` below, so this list cannot silently fall behind the code.
+ */
+const CLIENT_EMAIL_TRANSPORTS = ["sendEmailSafely", "sendWaitlistEmailIdempotent"] as const;
+
+/** Modules that DEFINE a transport; their own declaration is not a call site. */
+const TRANSPORT_DEFINITIONS: Record<string, string> = {
+  sendEmailSafely: "lib/email/send-appointment.ts",
+  sendWaitlistEmailIdempotent: "lib/email/new-client-waitlist-send.ts",
+};
 
 /**
  * Callers that legitimately send UNBRANDED, with the recipient that makes it
@@ -41,6 +61,11 @@ const HONE_FACING_CALLERS: ReadonlyArray<{ file: string; to: string; why: string
     to: "recipient",
     why: "notifies the STUDIO that a client wrote in; recipient resolves to the studio's own contact address",
   },
+  {
+    file: "app/book/[slug]/waitlist-actions.ts",
+    to: "recipient",
+    why: "waitlist namespace:'studio' notification — tells the STUDIO someone joined; the client acknowledgement on the same path IS branded",
+  },
 ];
 
 function walk(dir: string, out: string[] = []): string[] {
@@ -53,32 +78,42 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-type CallSite = { file: string; line: number; to: string; branded: boolean };
+type CallSite = {
+  transport: string;
+  file: string;
+  line: number;
+  to: string;
+  branded: boolean;
+};
 
 function discoverCallSites(): CallSite[] {
   const files = [...walk(join(ROOT, "lib")), ...walk(join(ROOT, "app"))];
   const sites: CallSite[] = [];
   for (const abs of files) {
     const rel = abs.slice(ROOT.length + 1);
-    // The transport's own definition is not a call site.
-    if (rel === "lib/email/send-appointment.ts") {
-      // still scan it — it contains real callers too — but skip the declaration.
-    }
     const src = readFileSync(abs, "utf8");
-    if (!src.includes("sendEmailSafely({")) continue;
     const lines = src.split("\n");
-    lines.forEach((l, i) => {
-      if (!l.includes("sendEmailSafely({")) return;
-      // The identity, when present, is within the object literal that follows.
-      const window = lines.slice(i, i + 8).join("\n");
-      const to = window.match(/\bto:\s*([^,\n]+)/);
-      sites.push({
-        file: rel,
-        line: i + 1,
-        to: (to?.[1] ?? "(unknown)").trim(),
-        branded: /studioIdentity\s*:/.test(window),
+    for (const transport of CLIENT_EMAIL_TRANSPORTS) {
+      const marker = `${transport}({`;
+      if (!src.includes(marker)) continue;
+      lines.forEach((l, i) => {
+        if (!l.includes(marker)) return;
+        // Skip the transport's own declaration line in its defining module.
+        if (rel === TRANSPORT_DEFINITIONS[transport] && /export\s+(async\s+)?function/.test(l)) return;
+        // The identity, when present, is inside the object literal that follows.
+        // The waitlist transport takes a wider argument object, so the window
+        // is generous enough to contain it.
+        const window = lines.slice(i, i + 14).join("\n");
+        const to = window.match(/\bto:\s*([^,\n]+)/);
+        sites.push({
+          transport,
+          file: rel,
+          line: i + 1,
+          to: (to?.[1] ?? "(unknown)").trim(),
+          branded: /studioIdentity\s*:/.test(window),
+        });
       });
-    });
+    }
   }
   return sites;
 }

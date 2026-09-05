@@ -15,12 +15,21 @@ const CLIENT = read("lib/email/client.ts");
 const DOC10 = read("docs/10_DEPLOYMENT_AND_ENV.md");
 
 describe("one place builds the From header", () => {
-  it("only the shared transport constructs From", () => {
-    // Any other module assembling "... via Hone <...>" is a second
-    // implementation that will drift and will not be sanitised.
-    const offenders = ["lib/email/send-welcome.ts", "lib/email/new-client-waitlist-send.ts"]
+  it("nobody HAND-ASSEMBLES a From header", () => {
+    // The rule is "no second implementation", not "no second caller". Using the
+    // shared buildFromHeader is exactly right; interpolating "... via Hone <...>"
+    // by hand is the drift-and-unsanitised path. An earlier form of this test
+    // banned buildFromHeader outright, which went red the moment the waitlist
+    // transport correctly adopted it.
+    const modules = [
+      "lib/email/send-welcome.ts",
+      "lib/email/new-client-waitlist-send.ts",
+      "lib/email/send-appointment.ts",
+      "lib/ops/alert-email.ts",
+    ];
+    const offenders = modules
       .map((f) => [f, read(f)] as const)
-      .filter(([, src]) => /via Hone <|buildFromHeader\(/.test(src));
+      .filter(([, src]) => /via Hone\s*</.test(src) || /from:\s*`/.test(src));
     expect(offenders.map(([f]) => f)).toEqual([]);
   });
 

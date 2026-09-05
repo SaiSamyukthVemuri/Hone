@@ -502,7 +502,15 @@ export async function sendCancellationEmail(params: {
     rebookUrl: params.rebookUrl,
   });
   await sendEmailSafely({
-    studioIdentity: identityFor(params.studio),
+    // ONE helper, TWO recipients. `isClient` decides who is reading:
+    //   true  -> the CLIENT: brand as the studio, reply to the studio.
+    //   false -> the STUDIO OWNER: stay Hone. Branding this would make the
+    //            owner receive mail apparently from their own studio, with
+    //            replies routed to their own postcare inbox.
+    // The recipient decides the identity; the function name never does.
+    studioIdentity: params.isClient
+      ? identityFor(params.studio)
+      : undefined,
     to: params.to,
     subject,
     html,

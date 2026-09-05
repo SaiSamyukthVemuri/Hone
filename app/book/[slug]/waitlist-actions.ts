@@ -17,6 +17,10 @@ import {
 import { limitNewClientBookingWaitlist, RATE_LIMIT_MESSAGE } from "@/lib/rate-limit/public";
 import { sendWaitlistEmailIdempotent } from "@/lib/email/new-client-waitlist-send";
 import {
+  resolveReplyTo,
+  studioClientContactEmail,
+} from "@/lib/email/studio-identity";
+import {
   buildNewClientWaitlistClientEmail,
   buildNewClientWaitlistStudioEmail,
 } from "@/lib/email/templates/new-client-waitlist";
@@ -212,6 +216,12 @@ async function sendClientAcknowledgement(
       name: submission.name,
     });
     const clientSend = await sendWaitlistEmailIdempotent({
+      // CLIENT-facing: this goes to the visitor, who has never heard of Hone.
+      // The studio-facing notification below deliberately stays unbranded.
+      studioIdentity: {
+        displayName: studio.name,
+        replyTo: resolveReplyTo(studioClientContactEmail(studio)),
+      },
       namespace: "client",
       studioId: studio.id,
       eventScope,
