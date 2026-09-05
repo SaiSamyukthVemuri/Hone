@@ -256,6 +256,9 @@ export async function requestPortalMagicLinkAction(
     });
 
     const sendResult = await sendEmailSafely({
+      // Display-only. The studio select above deliberately reads `name` and
+      // nothing else; widening it for a Reply-To is a separate decision.
+      studioIdentity: { displayName: studioName, replyTo: null },
       to: trimmed,
       subject: email.subject,
       html: email.html,

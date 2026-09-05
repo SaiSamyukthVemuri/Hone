@@ -502,6 +502,7 @@ export async function sendCancellationEmail(params: {
     rebookUrl: params.rebookUrl,
   });
   await sendEmailSafely({
+    studioIdentity: identityFor(params.studio),
     to: params.to,
     subject,
     html,
