@@ -131,8 +131,15 @@ space, not by example.
 |---|---|---|
 | **Business-event timestamp** | `charged_at`, `refunded_at` | When did the money move? |
 | **Row-existence timestamp** | `created_at`, `recorded_at` | When did Hone learn of it? |
-| **Snapshot timestamp** | the published instant | What was true when this page was prepared? |
+| **`MVCC_SNAPSHOT`** | the read's visibility state | Which committed rows can this read see? |
+| **`SNAPSHOT_INSTANT`** | the published instant | Which database instant labels this read? |
+| **`STUDIO_LOCAL_SNAPSHOT_DATE`** | `(snapshot instant AT TIME ZONE studio.timezone)::date` | Which business DAY governs effective-date pricing for this read? |
 | **Version interval** | `recorded_at` → `superseded_at` | Which version of this record was live then? |
+
+**The third and fifth rows are not the same thing, and the fifth is not
+`today`.** Row visibility decides which pricing rows the read can see; the
+studio-local snapshot date decides which of those visible rows are *eligible*.
+Bounding only the first leaves the second free to move — see §7.8.
 
 **The defect this table exists to prevent:** a succeeded payment with
 `charged_at IS NULL` was treated as unbounded by the snapshot, on the reasoning
@@ -235,11 +242,12 @@ the same guard.**
 **`RECOMMENDED_FIN_AUTHORITY` = a single database read that observes every
 financial input under ONE SHARED MVCC SNAPSHOT.**
 
-### 7.0 The six statements this section must keep in agreement
+### 7.0 The statements this section must keep in agreement
 
 Listed together because the last defect in this document was not a wrong claim
 but a **drift**: a permission granted in one subsection while another forbade it,
-with nothing holding the two side by side. Any edit to §7 must leave all six true.
+with nothing holding the two side by side. Any edit to §7 must leave **all** of
+them true.
 
 | # | Invariant |
 |---|---|
@@ -249,6 +257,8 @@ with nothing holding the two side by side. Any edit to §7 must leave all six tr
 | 4 | `PRICING_LAW` = **0187** — the law, not the callable helper |
 | 5 | `FIN02_V1_PRICING_EXPRESSION` = the **existing TypeScript resolver**, over same-snapshot RLS-visible inputs |
 | 6 | `MVCC_CONTRACT` = **one SQL statement / one shared snapshot** |
+| 7 | `PRICING_TODAY_AUTHORITY` = the **database-returned studio-local snapshot date** — never an application clock |
+| 8 | `FROZEN_QUOTE_PRECEDENCE` = **explicit**, and ambiguous settlement history never falls through to a current price |
 
 ### 7.0.1 Two different things, never interchangeable
 
@@ -418,7 +428,10 @@ Read from the SQL function body and confirmed against its TypeScript twin:
 4. **Only rows effective ON OR BEFORE the STUDIO-LOCAL date qualify** —
    `effective_from <= (now() at time zone studio.timezone)::date`. **A price that
    starts tomorrow never prices today's visit.** The date comes from the studio's
-   own timezone, never from UTC and never from a caller.
+   own timezone, never from UTC and never from a caller — **and, in FIN-02, never
+   from an application clock either: it is the `STUDIO_LOCAL_SNAPSHOT_DATE`
+   returned by the statement. See §7.8, which this step must stay consistent
+   with.**
 5. **Only strictly POSITIVE custom rows qualify** — `price_cents > 0`. A zero or
    negative custom price reads as *"no custom price recorded"*, not as *"charge
    nothing"*, and falls through to the menu.
@@ -515,12 +528,9 @@ parity-tested against 0187**, using the existing parity matrix as the **oracle**
 Expected values are derived from that law, never authored independently. **The
 source remains the authority.**
 
-**Two different oracles, and they are not interchangeable:**
-
-| Oracle | File | What it proves |
-|---|---|---|
-| **PRICING PARITY** | `tests/db/appointment-quoted-amount-parity.db.test.ts` | the SQL law and its TypeScript twin agree, case by case |
-| **PRIVILEGE** | `tests/db/appointment-settlement.db.test.ts` | the 0187 helper stays callable by nobody (`has_function_privilege`) |
+**Oracles are not interchangeable, and each property has exactly one.** They are
+listed once, in §10.0 — deliberately in a single table, so that no section can
+quietly cite an oracle that cannot exercise the property it claims.
 
 An earlier draft of this document sent the reader to the privilege file for
 parity. That file mentions the resolver exactly once — a privilege assertion —
@@ -547,6 +557,70 @@ existing definer callable by `authenticated`; not accept arbitrary cross-studio
 authority; not bypass RLS; and not change existing settlement behaviour. Until
 then, two expressions kept in parity is the correct trade, and it is a smaller
 risk than widening a privilege.
+
+### 7.8 The pricing date comes from the database, never from an application clock
+
+**Row visibility is not enough.** `resolveAuthoritativeSessionPaymentAmount`
+takes `today` as a **separate input**, and the existing adapter supplies it as
+`todayInTz(studioTimezone)` → `localDateString(new Date(), tz)` — a fresh
+application clock read, entirely independent of the database snapshot.
+
+So this sequence is possible, and it breaks the contract:
+
+```
+DB snapshot established     2026-09-05 23:59:59.999  studio-local
+application resumes after   2026-09-06 00:00:00
+resolver receives           today = 2026-09-06
+```
+
+A `client_pricing` row with `effective_from = 2026-09-06` was **already visible**
+in that snapshot — visibility was never the issue — but becomes *eligible* only
+because the application clock advanced afterwards. The FIN result then applies a
+price that was not in force at the instant printed on the page.
+
+**The rule.** The one SQL statement must return, alongside its rows:
+
+```
+SNAPSHOT_INSTANT             the statement-consistent database instant
+STUDIO_LOCAL_SNAPSHOT_DATE   (snapshot instant AT TIME ZONE studio.timezone)::date
+```
+
+computed by PostgreSQL from that same instant, using the convention 0187's own
+resolver already uses: `(now() at time zone studios.timezone)::date`.
+
+**The TypeScript resolver MUST receive that returned date.** For this FIN result
+it must not call `new Date()`, `Date.now()`, or `todayInTz(...)` against a fresh
+application clock to decide pricing eligibility.
+
+> **MVCC row visibility and pricing effective-date selection are pinned to the
+> same temporal authority.** One of them bounded and the other floating is not a
+> snapshot; it is two reads wearing one timestamp.
+
+### 7.9 Two stages, and no fallback across the boundary
+
+Service value is decided in this order, and the order is the law.
+
+**STAGE A — a valid frozen settlement quote.** If exactly one valid settlement
+version is live at the shared snapshot and it carries the authoritative quoted
+amount, then
+
+```
+SERVICE_VALUE_PRICE = that frozen quote
+```
+
+Later changes to `services.price_cents`, to `client_pricing`, or to any
+effective date **must not** change that appointment's historical service value.
+That is the entire reason 0187 snapshots the quote server-side.
+
+**STAGE B — no frozen quote.** Only then is the canonical 0187 pricing law
+evaluated, using same-snapshot RLS-visible inputs **and** the
+`STUDIO_LOCAL_SNAPSHOT_DATE` returned by the statement.
+
+**AMBIGUOUS SETTLEMENT HISTORY IS NOT STAGE B.** If more than one version is
+live at the snapshot (§5.2), the price is **UNKNOWN** and the evaluation
+**stops**. It must not fall through to current client or menu pricing: doing so
+would answer a question about a settled visit with a number from today's menu,
+which is precisely the substitution the frozen quote exists to prevent.
 
 #### Ambiguity propagates, consistently
 
@@ -605,6 +679,32 @@ arithmetic, precedence and Fact semantics carry over intact.
 
 ## 10. FIN-02 acceptance contract
 
+### 10.0 One table: property → oracle
+
+**No property may cite an oracle incapable of exercising it.** That rule exists
+because this document has now made that mistake twice — once pointing the pricing
+parity requirement at a privilege test, and once requiring frozen-quote
+precedence from a matrix that cannot express it.
+
+| Property | Oracle |
+|---|---|
+| **Canonical pricing law** (SQL ↔ TypeScript agree) | `tests/db/appointment-quoted-amount-parity.db.test.ts` |
+| **The 0187 definer stays uncallable** | `tests/db/appointment-settlement.db.test.ts` — its `has_function_privilege` assertion |
+| **Frozen settlement-quote precedence** | **`FIN02_ACCEPTANCE_TEST_REQUIRED`** — see §10.4. No existing test proves it |
+| **One shared MVCC snapshot** | **FIN-02 required concurrency DB test** — §10.1 |
+| **Studio-local snapshot date** | **FIN-02 required midnight-boundary DB test** — §10.5 |
+
+**On frozen-quote precedence, stated honestly rather than cited optimistically.**
+The *write* side exists in production: `appointment_settlements.quoted_amount_cents`
+is derived server-side by `appointment_quoted_amount_cents` and never accepted
+from a caller. The *read* precedence — using that frozen quote instead of
+recomputing from current rates — **does not exist in production at all**; the
+production FIN model only mentions it in a comment as Slice 2's decision, and the
+implementation lives solely in the held #666 prototype. Neither implementation
+compared by the parity matrix reads `appointment_settlements`, and no production
+test records a quote, reprices afterwards, and checks which wins. So the oracle
+is a FIN-02 deliverable, not a citation.
+
 FIN-02 must prove, at minimum:
 
 | # | Must prove |
@@ -618,6 +718,8 @@ FIN-02 must prove, at minimum:
 | 7 | **RLS** — the same studio/tenant protections remain effective |
 | 8 | **UNKNOWN** — a failed or unprovable fact never becomes zero |
 | 9 | **The 0187 privilege boundary is intact** — see §10.3 |
+| 10 | **The studio-local snapshot date governs pricing eligibility** — see §10.5 |
+| 11 | **A valid frozen settlement quote outranks later repricing** — see §10.4 |
 
 Cases 2–5 are the properties the current architecture cannot establish, and are
 the reason FIN-02 exists. They must be proven against a real database, not a stub.
@@ -690,6 +792,45 @@ downstream aggregate.
 The third row is a standing regression guard, not a one-time check: the whole
 reason this section exists is that a plausible-looking reuse would have required
 exactly that grant.
+
+### 10.4 Frozen settlement-quote precedence — a NEW oracle FIN-02 must write
+
+No existing test proves this transition (§10.0). The required scenario:
+
+1. create an appointment with eligible pricing;
+2. settle it, so an authoritative `quoted_amount_cents` is frozen;
+3. **then** change the menu price (`services.price_cents`);
+4. **then** change the client price (`client_pricing`);
+5. invoke the FIN snapshot;
+6. require the service value to be the **frozen quote**;
+7. require that **neither** later price wins.
+
+And its two companions, without which the test proves only one branch:
+
+- **no frozen quote** → the canonical pricing law of §7.6 applies normally;
+- **ambiguous settlement versions** → **UNKNOWN**, and **no** fallback to current
+  client or menu pricing (§7.9).
+
+### 10.5 The studio-local snapshot date — the midnight-boundary test
+
+1. establish the snapshot just **before** studio-local midnight;
+2. a `client_pricing` row already exists with `effective_from` = **tomorrow**;
+3. allow application processing to continue **past** midnight.
+
+**Required:** the in-flight FIN result uses the **pre-midnight** studio-local
+snapshot date, and the tomorrow price is **not** eligible — even though that row
+was visible in the snapshot all along, and even though the application clock has
+since rolled over.
+
+A **second** FIN invocation whose database snapshot occurs after midnight may use
+the newly-effective price, according to the canonical resolver law. That second
+call is what proves the first was not passing vacuously.
+
+**The test must control the database snapshot date deterministically** — inject
+it, or drive the boundary from the database. A wall-clock `sleep` is not proof
+here for the same reason it is not proof in §10.1: it makes the test pass on a
+fast machine and flake on a slow one, and the failure it hides is the one under
+test.
 
 
 FIN-02 must also **retain the domain-state matrix already paid for in #666** —
