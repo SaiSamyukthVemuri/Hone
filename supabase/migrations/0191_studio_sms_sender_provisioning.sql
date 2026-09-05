@@ -567,6 +567,20 @@ begin
    for update;
 
   if v_row.id is null then
+    -- FIRST-EVER CLAIM FOR THIS STUDIO, AND THE ONE CASE `for update` CANNOT
+    -- SERIALIZE. There is no row yet, so there is nothing to lock: two
+    -- simultaneous first submits both read nothing and both reach this INSERT.
+    -- Measured, not theorised -- before `on conflict` was added here, the
+    -- loser received a raw `duplicate key value violates unique constraint
+    -- "studio_sms_senders_one_live_per_studio"` instead of a result word. That
+    -- is exactly the double-click-a-brand-new-studio case this whole design
+    -- exists for. No number was ever bought twice (the loser aborts long before
+    -- any provider effect), but a caller must get an answer, not an exception.
+    --
+    -- Same idiom as 0185's join_new_client_waitlist: insert, and on conflict
+    -- re-read the winner and answer from it. `on conflict do nothing` also
+    -- BLOCKS on a concurrent uncommitted insert until it commits, so the
+    -- re-read below always sees the winning row rather than a phantom.
     v_key := 'hone-sms-' || replace(gen_random_uuid()::text, '-', '');
     insert into public.studio_sms_senders (
       studio_id, provider, status, country, requested_area_code,
@@ -576,10 +590,27 @@ begin
       p_studio_id, 'twilio', 'provisioning', v_country, v_area,
       v_key, now(), v_practitioner_id
     )
+    on conflict do nothing
     returning * into v_row;
 
-    return query select 'claimed'::text, v_row.id, v_row.provisioning_claim_key, v_row.status;
-    return;
+    if v_row.id is not null then
+      return query select 'claimed'::text, v_row.id, v_row.provisioning_claim_key, v_row.status;
+      return;
+    end if;
+
+    -- Lost the race. Re-read the winner and fall through to the ordinary
+    -- existing-row logic below, which turns this caller away as `claim_held`.
+    select *
+      into v_row
+      from public.studio_sms_senders s
+     where s.studio_id = p_studio_id
+       and s.status <> 'released'
+     for update;
+
+    if v_row.id is null then
+      return query select 'not_claimable'::text, null::uuid, null::text, null::text;
+      return;
+    end if;
   end if;
 
   if v_row.status = 'active' then
@@ -707,19 +738,29 @@ begin
     return 'conflict';
   end if;
 
-  update public.studio_sms_senders
-     set phone_number          = coalesce(v_row.phone_number, p_phone_number),
-         phone_number_sid      = coalesce(v_row.phone_number_sid, p_phone_number_sid),
-         messaging_service_sid = coalesce(v_row.messaging_service_sid, p_messaging_service_sid),
-         provisioned_at        = coalesce(v_row.provisioned_at, now()),
-         last_test_ok_at       = case when p_test_ok is true then now() else v_row.last_test_ok_at end,
-         status                = case
-                                   when p_test_ok is true then 'active'
-                                   else 'provisioning'
-                                 end,
-         last_error_code       = case when p_test_ok is true then null else v_row.last_error_code end,
-         last_error_at         = case when p_test_ok is true then null else v_row.last_error_at end
-   where id = v_row.id;
+  -- A provider resource belongs to exactly one studio, enforced by three unique
+  -- indexes. Reaching one here means this attempt is trying to record a number
+  -- or a service ANOTHER studio already owns -- a genuine conflict an operator
+  -- must look at, and never something to overwrite. Caught and named rather
+  -- than raised: a caller receiving a bare 23505 would have to parse a Postgres
+  -- message to tell this apart from any other failure.
+  begin
+    update public.studio_sms_senders
+       set phone_number          = coalesce(v_row.phone_number, p_phone_number),
+           phone_number_sid      = coalesce(v_row.phone_number_sid, p_phone_number_sid),
+           messaging_service_sid = coalesce(v_row.messaging_service_sid, p_messaging_service_sid),
+           provisioned_at        = coalesce(v_row.provisioned_at, now()),
+           last_test_ok_at       = case when p_test_ok is true then now() else v_row.last_test_ok_at end,
+           status                = case
+                                     when p_test_ok is true then 'active'
+                                     else 'provisioning'
+                                   end,
+           last_error_code       = case when p_test_ok is true then null else v_row.last_error_code end,
+           last_error_at         = case when p_test_ok is true then null else v_row.last_error_at end
+     where id = v_row.id;
+  exception when unique_violation then
+    return 'conflict';
+  end;
 
   if p_test_ok is true then
     return 'activated';
@@ -891,10 +932,10 @@ comment on column public.studio_sms_senders.last_error_code is
   'A stable taxonomy slug from the adapter''s error vocabulary -- never a provider message, payload or phone number. The shape CHECK (lowercase slug, 3-64 chars) makes it structurally impossible to park a number or a token here.';
 
 comment on function public.claim_studio_sms_provisioning(uuid, uuid, text, text) is
-  'Acquire the durable provisioning claim. THE COMMIT POINT of an attempt: everything billable happens after this returns, under the key it returns. Re-derives studio membership AND owner role from (studio_id, actor user id); the caller never supplies a role. Takes the studio''s live row FOR UPDATE, so concurrent requests serialize. A live attempt EXCLUDES the second request: it is turned away as `claim_held` with no key and performs no provider effect, which is what makes a double click, a second tab and a network retry produce ONE purchase. Sharing the key instead would let both reconcile (finding nothing, since neither has bought yet) and both purchase. A claim whose 5-minute lease has expired is taken over ON THE SAME KEY, so the taking-over attempt discovers whatever the crashed one bought. Returns claimed | claim_held | already_active | not_claimable | not_a_member | not_owner | studio_not_found | invalid_input. service_role only.';
+  'Acquire the durable provisioning claim. THE COMMIT POINT of an attempt: everything billable happens after this returns, under the key it returns. Re-derives studio membership AND owner role from (studio_id, actor user id); the caller never supplies a role. Takes the studio''s live row FOR UPDATE, so concurrent requests serialize. A live attempt EXCLUDES the second request: it is turned away as `claim_held` with no key and performs no provider effect, which is what makes a double click, a second tab and a network retry produce ONE purchase. Sharing the key instead would let both reconcile (finding nothing, since neither has bought yet) and both purchase. A claim whose 5-minute lease has expired is taken over ON THE SAME KEY, so the taking-over attempt discovers whatever the crashed one bought. The FIRST-EVER claim for a studio is the one case the row lock cannot serialize -- there is no row to lock -- so the insert carries `on conflict do nothing` and the loser re-reads the winner and is answered `claim_held`; without it the loser received a raw duplicate-key exception instead of a result word. Returns claimed | claim_held | already_active | not_claimable | not_a_member | not_owner | studio_not_found | invalid_input. service_role only.';
 
 comment on function public.finalize_studio_sms_provisioning(uuid, text, text, text, text, boolean) is
-  'Record the provider resources an attempt produced, addressed by (studio_id, claim_key) together. Reaches `active` ONLY with p_test_ok = true; without proof the row keeps its identifiers and stays in `provisioning`, which is precisely the state reconciliation needs. Replaying identical resources is benign (`already_active`); DIFFERENT resources against the same claim return `conflict` and are never silently overwritten. Returns activated | provisioned_untested | already_active | conflict | claim_not_found | not_provisioning | invalid_input. service_role only.';
+  'Record the provider resources an attempt produced, addressed by (studio_id, claim_key) together. Reaches `active` ONLY with p_test_ok = true; without proof the row keeps its identifiers and stays in `provisioning`, which is precisely the state reconciliation needs. Replaying identical resources is benign (`already_active`); DIFFERENT resources against the same claim return `conflict` and are never silently overwritten. A provider resource already recorded against ANOTHER studio raises a unique violation, which is caught and returned as `conflict` rather than propagating a bare 23505. Returns activated | provisioned_untested | already_active | conflict | claim_not_found | not_provisioning | invalid_input. service_role only.';
 
 comment on function public.fail_studio_sms_provisioning(uuid, text, text) is
   'Park a failed attempt in `error` WITHOUT surrendering the claim key, so anything already purchased under it stays discoverable by reconciliation. Coerces any non-conforming error tag to `provider_error_unspecified` rather than storing it. Returns failed | already_active | not_provisioning | claim_not_found | invalid_input. service_role only.';

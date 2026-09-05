@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   adminQuery,
+  adminTx,
   asRole,
   closePool,
   seedMember,
@@ -174,17 +175,88 @@ describe("DOUBLE_SUBMIT_ONE_CLAIM", () => {
     ).rejects.toThrow(/one_live_per_studio|duplicate key/i);
   });
 
+  it("CONCURRENT_FIRST_CLAIM: two simultaneous first submits yield one row and no exception", async () => {
+    // THE ONE CASE `for update` CANNOT SERIALIZE, and the regression test for a
+    // bug this suite actually caught. A studio with no sender row yet has
+    // nothing to lock, so two simultaneous first submits both read nothing and
+    // both reach the INSERT. Before the command carried `on conflict do
+    // nothing`, the loser received a raw
+    //   duplicate key value violates unique constraint
+    //   "studio_sms_senders_one_live_per_studio"
+    // instead of a result word -- in the exact double-click-a-new-studio
+    // scenario the design exists for.
+    //
+    // Both transactions are opened and both call the command BEFORE either
+    // commits; a sequential pair would not reproduce it.
+    const fresh = await seedStudio("comms01b-race");
+    try {
+      const attempt = () =>
+        adminTx(async (q) => {
+          const res = await q(
+            `select result, claim_key from public.claim_studio_sms_provisioning($1, $2, 'CA', '416')`,
+            [fresh.studioId, fresh.userId],
+          );
+          // Hold the transaction open so the other one is genuinely in flight.
+          await new Promise((r) => setTimeout(r, 250));
+          return res.rows[0] as { result: string; claim_key: string | null };
+        });
+
+      const [first, second] = await Promise.all([attempt(), attempt()]);
+      const results = [first.result, second.result].sort();
+
+      // One winner, one turned away -- and NEITHER threw.
+      expect(results).toEqual(["claim_held", "claimed"]);
+
+      // The winner holds a key; the excluded caller gets none, so it cannot
+      // perform a provider effect.
+      const winner = first.result === "claimed" ? first : second;
+      const held = first.result === "claimed" ? second : first;
+      expect(winner.claim_key).toMatch(/^hone-sms-[0-9a-f]{32}$/);
+      expect(held.claim_key).toBeNull();
+
+      // Exactly one sender row exists for the studio.
+      const count = await adminQuery(
+        `select count(*)::int as n from public.studio_sms_senders where studio_id = $1`,
+        [fresh.studioId],
+      );
+      expect((count.rows[0] as { n: number }).n).toBe(1);
+    } finally {
+      await adminQuery(`delete from public.studio_sms_senders where studio_id = $1`, [
+        fresh.studioId,
+      ]);
+    }
+  });
+
   it("a stale lease is taken over ON THE SAME KEY", async () => {
     const before = await row(a.studioId);
     const key = before?.provisioning_claim_key as string;
 
-    // Age the lease past its window.
+    // AGE THE LEASE. Backdating it is REFUSED by the forward-only guard -- which
+    // is the guard working, and is proved directly in "refuses to backdate the
+    // lease" below. In production a lease goes stale because wall-clock time
+    // passes, which a test cannot wait out.
+    //
+    // So the state is constructed the only way the shipped schema permits: as
+    // the table OWNER, with the guard momentarily disabled. That is deliberate
+    // and deliberately noisy, exactly as the harness's seedLegacyRecordStatus
+    // is: it is proof that no role -- not anon, not authenticated, not
+    // service_role, not a definer command -- can reach this state through the
+    // shipped surface. Only the migration channel can.
     await adminQuery(
-      `update public.studio_sms_senders
-          set provisioning_claim_at = now() - interval '10 minutes'
-        where studio_id = $1 and status <> 'released'`,
-      [a.studioId],
+      `alter table public.studio_sms_senders disable trigger studio_sms_senders_transition_guard`,
     );
+    try {
+      await adminQuery(
+        `update public.studio_sms_senders
+            set provisioning_claim_at = now() - interval '10 minutes'
+          where studio_id = $1 and status <> 'released'`,
+        [a.studioId],
+      );
+    } finally {
+      await adminQuery(
+        `alter table public.studio_sms_senders enable trigger studio_sms_senders_transition_guard`,
+      );
+    }
 
     const takeover = await claim(a.studioId, a.userId);
     expect(takeover.result).toBe("claimed");
@@ -397,10 +469,15 @@ describe("provider identifiers", () => {
   it("two studios cannot record the same messaging service", async () => {
     const fresh = await seedStudio("comms01b-e");
     const claimed = await claim(fresh.studioId, fresh.userId);
-    // mg("a") already belongs to studio A.
+    // mg("a") already belongs to studio A. The unique index catches it and the
+    // command NAMES it -- an earlier revision let the bare 23505 propagate, so
+    // a caller had to parse a Postgres message to tell this apart from any
+    // other failure.
     expect(
       await finalize(fresh.studioId, claimed.claim_key!, "+14165550777", pn("f"), mg("a"), true),
-    ).toBe("invalid_input");
+    ).toBe("conflict");
+    // And studio A's record is untouched.
+    expect((await row(a.studioId))?.messaging_service_sid).toBe(mg("a"));
     await adminQuery(`delete from public.studio_sms_senders where studio_id = $1`, [
       fresh.studioId,
     ]);
@@ -428,31 +505,71 @@ describe("provider identifiers", () => {
 // ---------------------------------------------------------------------------
 
 describe("privileges", () => {
+  // ONE PROBE PER asRole CALL, DELIBERATELY. asRole runs its callback inside a
+  // single transaction, so the first permission-denied error ABORTS it and every
+  // later statement reports "current transaction is aborted, commands ignored"
+  // instead of the denial being tested. Batching probes turns a real privilege
+  // assertion into an assertion about the previous probe's failure.
+  const denied = (role: "anon" | "authenticated", sql: string, params: unknown[] = []) =>
+    expect(asRole(role, (q) => q(sql, params))).rejects.toThrow(/permission denied/i);
+
   it.each(["anon", "authenticated"] as const)(
-    "%s cannot execute any provisioning command",
+    "%s cannot execute claim_studio_sms_provisioning",
     async (role) => {
-      await asRole(role, async (q) => {
-        for (const call of [
-          `select * from public.claim_studio_sms_provisioning($1, $2, 'CA', '416')`,
-          `select public.fail_studio_sms_provisioning($1, 'hone-sms-${"0".repeat(32)}', 'x_y_z')`,
-        ]) {
-          await expect(q(call, [a.studioId, a.userId].slice(0, (call.match(/\$/g) ?? []).length)))
-            .rejects.toThrow(/permission denied/i);
-        }
-      });
+      await denied(
+        role,
+        `select * from public.claim_studio_sms_provisioning($1, $2, 'CA', '416')`,
+        [a.studioId, a.userId],
+      );
     },
   );
 
-  it("authenticated cannot read a provider identifier even for its own studio", async () => {
-    // The grant is COLUMN-LEVEL: status is readable, the SIDs are not.
-    await asRole("authenticated", async (q) => {
-      await expect(
-        q(`select phone_number_sid from public.studio_sms_senders limit 1`),
-      ).rejects.toThrow(/permission denied/i);
-      await expect(
-        q(`select provisioning_claim_key from public.studio_sms_senders limit 1`),
-      ).rejects.toThrow(/permission denied/i);
-    });
+  it.each(["anon", "authenticated"] as const)(
+    "%s cannot execute fail_studio_sms_provisioning",
+    async (role) => {
+      await denied(
+        role,
+        `select public.fail_studio_sms_provisioning($1, $2, 'x_y_z')`,
+        [a.studioId, `hone-sms-${"0".repeat(32)}`],
+      );
+    },
+  );
+
+  it.each(["anon", "authenticated"] as const)(
+    "%s cannot execute finalize_studio_sms_provisioning",
+    async (role) => {
+      await denied(
+        role,
+        `select public.finalize_studio_sms_provisioning($1, $2, $3, $4, $5, true)`,
+        [a.studioId, `hone-sms-${"0".repeat(32)}`, "+14165550100", pn("a"), mg("a")],
+      );
+    },
+  );
+
+  it.each(["anon", "authenticated"] as const)(
+    "%s cannot execute resolve_studio_by_sms_messaging_service",
+    async (role) => {
+      await denied(role, `select public.resolve_studio_by_sms_messaging_service($1)`, [mg("a")]);
+    },
+  );
+
+  it("authenticated cannot read phone_number_sid, even for its own studio", async () => {
+    // The grant is COLUMN-LEVEL: status is readable, the provider ids are not.
+    await denied("authenticated", `select phone_number_sid from public.studio_sms_senders limit 1`);
+  });
+
+  it("authenticated cannot read the claim key", async () => {
+    await denied("authenticated", `select provisioning_claim_key from public.studio_sms_senders limit 1`);
+  });
+
+  it("authenticated CAN read its own studio's sender status", async () => {
+    // The positive half: without it, the two assertions above would pass just as
+    // well if the whole table were unreadable, and would prove nothing about the
+    // column grant.
+    const res = await asRole("authenticated", (q) =>
+      q(`select status from public.studio_sms_senders limit 0`),
+    );
+    expect(res.rows).toEqual([]);
   });
 
   it("anon cannot read the table at all", async () => {
