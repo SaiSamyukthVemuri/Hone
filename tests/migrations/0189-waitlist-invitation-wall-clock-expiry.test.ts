@@ -70,7 +70,10 @@ describe("0189 — identity and position", () => {
     // it turns red on every subsequent migration, which is the sweep that rule
     // exists to prevent.
     expect(isRepoMax(VERSION)).toBe(false);
-    expect(versionsAbove(VERSION)).toEqual(["0190"]);
+    // `toContain`, not `toEqual`: an exact list here has to be widened by hand
+    // on every subsequent migration, which is precisely the per-file sweep
+    // CLAUDE.md's central tripwire exists to end. 0191 made that concrete.
+    expect(versionsAbove(VERSION)).toContain("0190");
   });
 
   it("IS APPLIED to production, and production has since moved past it", () => {
