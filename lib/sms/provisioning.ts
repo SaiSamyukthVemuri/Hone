@@ -370,12 +370,22 @@ export async function provisionStudioSmsSender(
   ): Promise<ProvisionOutcome> => {
     // The claim key is NOT surrendered here. That is the point: whatever this
     // attempt may already have bought stays discoverable under it.
-    await input.store.fail({
+    const parked = await input.store.fail({
       studioId: input.studioId,
       claimKey,
       leaseGeneration,
       errorCode: code,
     });
+
+    // THE DATABASE MAY HAVE JUST TOLD US WE ARE THE STALE WORKER, and that
+    // answer outranks whatever provider error we arrived with. Reporting the
+    // stale error instead would surface a lie to the owner: an availability
+    // check that resumed after a takeover would say "that number is gone"
+    // while the current generation is busy successfully provisioning it.
+    if (parked === "lease_lost") {
+      return { ok: false, result: "lease_lost", senderId };
+    }
+
     return {
       ok: false,
       result: "failed",
@@ -384,6 +394,31 @@ export async function provisionStudioSmsSender(
       mayOwnUnfinalizedResources: mayOwn,
     };
   };
+
+  /**
+   * Revalidate the fence. Called before EVERY provider mutation, not only
+   * before a purchase.
+   *
+   * Gating the purchase alone left the ADOPTED path unfenced: a worker that
+   * stalled AFTER buying skips the purchase branch entirely, so a displaced
+   * one would sail on to create a second messaging service and race the
+   * current worker to attach the same number. One attach takes the
+   * already-in-pool path, the live worker ends up testing an empty service,
+   * and reconciliation then finds two claim-tagged services and fails closed
+   * forever. Every mutation needs the fence, not just the billable one.
+   */
+  const stillOurs = (): Promise<boolean> =>
+    input.store.assertLease({
+      studioId: input.studioId,
+      claimKey,
+      leaseGeneration,
+    });
+
+  const displaced = (): ProvisionOutcome => ({
+    ok: false,
+    result: "lease_lost",
+    senderId,
+  });
 
   // --- 5a. RECONCILE FIRST. Always, on every attempt. -----------------------
   // Before considering a purchase we ask the provider what already exists
@@ -432,15 +467,10 @@ export async function provisionStudioSmsSender(
     // because Twilio's purchase API takes no idempotency key -- but it shrinks
     // it from the whole provisioning sequence to a few milliseconds, and the
     // claim-key FriendlyName keeps the residue discoverable rather than silent.
-    const stillOurs = await input.store.assertLease({
-      studioId: input.studioId,
-      claimKey,
-      leaseGeneration,
-    });
-    if (!stillOurs) {
+    if (!(await stillOurs())) {
       // Displaced. Stop WITHOUT spending, and without writing: the row now
       // belongs to the worker that took over.
-      return { ok: false, result: "lease_lost", senderId };
+      return displaced();
     }
 
     const purchase = await input.provider.purchaseNumber({
@@ -464,6 +494,10 @@ export async function provisionStudioSmsSender(
   }
 
   // --- 7. Messaging service (adopted if this claim already made one) --------
+  // Fenced even on the adopted path: a worker that stalled AFTER purchasing
+  // never passes through the purchase gate above.
+  if (!(await stillOurs())) return displaced();
+
   if (!messagingServiceSid) {
     const service = await input.provider.createMessagingService({
       claimKey,
@@ -476,6 +510,7 @@ export async function provisionStudioSmsSender(
   }
 
   // --- 8. Associate the number with the service ----------------------------
+  if (!(await stillOurs())) return displaced();
   const attach = await input.provider.attachNumberToService({
     messagingServiceSid,
     phoneNumberSid,
@@ -483,6 +518,7 @@ export async function provisionStudioSmsSender(
   if (!attach.ok) return failWith(attach.code, attach.retryable, true);
 
   // --- 9. Inbound webhook: this is what makes To-number -> studio work ------
+  if (!(await stillOurs())) return displaced();
   const inbound = await input.provider.configureInboundWebhook({
     messagingServiceSid,
     inboundWebhookUrl: input.inboundWebhookUrl,
@@ -490,6 +526,7 @@ export async function provisionStudioSmsSender(
   if (!inbound.ok) return failWith(inbound.code, inbound.retryable, true);
 
   // --- 10. Delivery status callback ----------------------------------------
+  if (!(await stillOurs())) return displaced();
   const status = await input.provider.configureStatusCallback({
     messagingServiceSid,
     statusCallbackUrl: input.statusCallbackUrl,
@@ -497,6 +534,7 @@ export async function provisionStudioSmsSender(
   if (!status.ok) return failWith(status.code, status.retryable, true);
 
   // --- 12. Prove it can actually send --------------------------------------
+  if (!(await stillOurs())) return displaced();
   const test = await input.provider.sendProvisioningTest({
     messagingServiceSid,
     to: input.testDestination,
