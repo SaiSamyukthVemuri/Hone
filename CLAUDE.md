@@ -9,6 +9,10 @@ Working agreements for anyone (human or agent) changing this repository.
 [ENGINEERING_STANDARDS.md](./ENGINEERING_STANDARDS.md) is canonical and is **not
 restated here**. Follow it.
 
+[docs/16_TOOL_AUTHORITY.md](./docs/16_TOOL_AUTHORITY.md) names which sources may
+settle a question and which may only raise one. It adds no process and does not
+apply to T0/T1.
+
 **Validation depth follows risk, not habit.** Determine the baseline risk tier
 (T0–T3) before choosing how much to prove.
 
