@@ -53,11 +53,20 @@ type Row = {
   lastErrorCode: string | null;
   /** Liveness lease. A live attempt excludes a second one; a stale one is taken over. */
   claimAt: number;
+  /** Fencing token. Advances on every takeover, so a displaced worker is refused. */
+  leaseGeneration: number;
 };
 
 type StoreOptions = {
   /** MUTATION: skip the owner-role check the database performs. */
   skipOwnerCheck?: boolean;
+  /**
+   * MUTATION: remove the fence ENTIRELY -- the pre-purchase check and the
+   * generation checks in finalize/fail -- so a worker displaced by a
+   * stale-lease takeover keeps going and buys alongside the worker that took
+   * the attempt over. Half a fence is not the mutation being modelled.
+   */
+  ignoreFence?: boolean;
   /** MUTATION: mint a fresh claim key on every request instead of reusing. */
   remintClaimKeyEveryCall?: boolean;
   /** MUTATION: let `active` be reached without a successful provider test. */
@@ -103,6 +112,7 @@ class InMemoryStore implements ProvisioningStore {
       senderId: null,
       claimKey: null,
       senderStatus: null,
+      leaseGeneration: null,
     });
 
     if (!/^[A-Z]{2}$/.test(input.country)) return refuse("invalid_input");
@@ -134,6 +144,7 @@ class InMemoryStore implements ProvisioningStore {
         lastTestOkAt: null,
         lastErrorCode: null,
         claimAt: this.now,
+        leaseGeneration: 1,
       };
       this.rows.push(row);
       return {
@@ -141,6 +152,7 @@ class InMemoryStore implements ProvisioningStore {
         senderId: row.id,
         claimKey: row.claimKey,
         senderStatus: row.status,
+        leaseGeneration: row.leaseGeneration,
       };
     }
 
@@ -150,6 +162,7 @@ class InMemoryStore implements ProvisioningStore {
         senderId: existing.id,
         claimKey: existing.claimKey,
         senderStatus: existing.status,
+        leaseGeneration: existing.leaseGeneration,
       };
     }
 
@@ -161,6 +174,7 @@ class InMemoryStore implements ProvisioningStore {
             senderId: existing.id,
             claimKey: existing.claimKey,
             senderStatus: existing.status,
+            leaseGeneration: existing.leaseGeneration,
           };
         }
         // A live attempt EXCLUDES this request: it is told the claim is held
@@ -170,16 +184,19 @@ class InMemoryStore implements ProvisioningStore {
           senderId: existing.id,
           claimKey: null,
           senderStatus: existing.status,
+          leaseGeneration: null,
         };
       }
       // Stale: take over on the SAME key and refresh the lease.
       if (this.options.remintClaimKeyEveryCall) existing.claimKey = this.nextKey();
       existing.claimAt = this.now;
+      existing.leaseGeneration += 1;
       return {
         result: "claimed",
         senderId: existing.id,
         claimKey: existing.claimKey,
         senderStatus: existing.status,
+        leaseGeneration: existing.leaseGeneration,
       };
     }
 
@@ -189,11 +206,13 @@ class InMemoryStore implements ProvisioningStore {
       if (this.options.remintClaimKeyEveryCall) existing.claimKey = this.nextKey();
       existing.status = "provisioning";
       existing.claimAt = this.now;
+      existing.leaseGeneration += 1;
       return {
         result: "claimed",
         senderId: existing.id,
         claimKey: existing.claimKey,
         senderStatus: existing.status,
+        leaseGeneration: existing.leaseGeneration,
       };
     }
 
@@ -202,12 +221,14 @@ class InMemoryStore implements ProvisioningStore {
       senderId: existing.id,
       claimKey: null,
       senderStatus: existing.status,
+      leaseGeneration: null,
     };
   }
 
   async finalize(input: {
     studioId: string;
     claimKey: string;
+    leaseGeneration: number;
     phoneNumber: string;
     phoneNumberSid: string;
     messagingServiceSid: string;
@@ -224,6 +245,9 @@ class InMemoryStore implements ProvisioningStore {
         r.status !== "released",
     );
     if (!row) return "claim_not_found";
+    if (!this.options.ignoreFence && row.leaseGeneration !== input.leaseGeneration) {
+      return "lease_lost";
+    }
 
     if (row.status === "active") {
       return row.phoneNumberSid === input.phoneNumberSid &&
@@ -268,6 +292,7 @@ class InMemoryStore implements ProvisioningStore {
   async fail(input: {
     studioId: string;
     claimKey: string;
+    leaseGeneration: number;
     errorCode: AttemptErrorCode;
   }): Promise<FailResult> {
     const row = this.rows.find(
@@ -277,12 +302,36 @@ class InMemoryStore implements ProvisioningStore {
         r.status !== "released",
     );
     if (!row) return "claim_not_found";
+    if (!this.options.ignoreFence && row.leaseGeneration !== input.leaseGeneration) {
+      return "lease_lost";
+    }
     if (row.status === "active") return "already_active";
     if (row.status !== "provisioning") return "not_provisioning";
     row.status = "error";
     row.lastErrorCode = input.errorCode;
     // The claim key is deliberately NOT cleared.
     return "failed";
+  }
+
+  async assertLease(input: {
+    studioId: string;
+    claimKey: string;
+    leaseGeneration: number;
+  }): Promise<boolean> {
+    // MUTATION: with the fence removed, a displaced worker keeps going and
+    // buys alongside the worker that took the attempt over.
+    if (this.options.ignoreFence) return true;
+    const row = this.rows.find(
+      (r) =>
+        r.studioId === input.studioId &&
+        r.claimKey === input.claimKey &&
+        r.status !== "released",
+    );
+    return (
+      row !== undefined &&
+      row.status === "provisioning" &&
+      row.leaseGeneration === input.leaseGeneration
+    );
   }
 }
 
@@ -470,6 +519,167 @@ describe("at most one purchase per studio attempt", () => {
     const again = await attempt();
     expect(again).toMatchObject({ ok: true, result: "already_active" });
     expect(provider.calls.purchase).toBe(1);
+  });
+
+  it("STALLED_WORKER_FENCED: a worker displaced by a takeover stops before spending", async () => {
+    // THE CASE THE CLAIM KEY ALONE DOES NOT COVER, and the reason the lease
+    // generation exists. Reusing the key across a takeover makes a SEQUENTIAL
+    // retry safe. It does NOT fence a worker that merely STALLED past its lease
+    // -- not crashed, just slow -- and then resumed believing it still owned
+    // the attempt.
+    const claim = await store.claim({
+      studioId: STUDIO_A,
+      actorUserId: OWNER_A,
+      country: "CA",
+      areaCode: "416",
+    });
+    expect(claim.result).toBe("claimed");
+    const stalled = claim.leaseGeneration!;
+
+    // While that worker is stalled, its lease expires and another takes over.
+    store.now += store.leaseMs + 1;
+    const takeover = await store.claim({
+      studioId: STUDIO_A,
+      actorUserId: OWNER_A,
+      country: "CA",
+      areaCode: "416",
+    });
+    expect(takeover.result).toBe("claimed");
+    // Same key -- so the new worker can adopt anything already bought...
+    expect(takeover.claimKey).toBe(claim.claimKey);
+    // ...but a NEW generation, which is what fences the old one.
+    expect(takeover.leaseGeneration).toBe(stalled + 1);
+
+    // The stalled worker wakes up and tries to continue.
+    expect(
+      await store.assertLease({
+        studioId: STUDIO_A,
+        claimKey: claim.claimKey!,
+        leaseGeneration: stalled,
+      }),
+    ).toBe(false);
+
+    // It cannot write either, so it cannot stomp the live attempt.
+    expect(
+      await store.finalize({
+        studioId: STUDIO_A,
+        claimKey: claim.claimKey!,
+        leaseGeneration: stalled,
+        phoneNumber: "+14165550101",
+        phoneNumberSid: `PN${"a".repeat(32)}`,
+        messagingServiceSid: `MG${"a".repeat(32)}`,
+        testOk: true,
+      }),
+    ).toBe("lease_lost");
+    expect(
+      await store.fail({
+        studioId: STUDIO_A,
+        claimKey: claim.claimKey!,
+        leaseGeneration: stalled,
+        errorCode: "provider_timeout",
+      }),
+    ).toBe("lease_lost");
+
+    // And the current holder is unharmed.
+    expect(
+      await store.assertLease({
+        studioId: STUDIO_A,
+        claimKey: takeover.claimKey!,
+        leaseGeneration: takeover.leaseGeneration!,
+      }),
+    ).toBe(true);
+  });
+
+  it("the fence is checked immediately before the purchase, and refuses to spend", async () => {
+    // End-to-end: the orchestration is displaced mid-flight and must abort
+    // with NO provider effect.
+    const claim = await store.claim({
+      studioId: STUDIO_A,
+      actorUserId: OWNER_A,
+      country: "CA",
+      areaCode: "416",
+    });
+    // Someone else takes the attempt over while this one is still working.
+    store.now += store.leaseMs + 1;
+    await store.claim({
+      studioId: STUDIO_A,
+      actorUserId: OWNER_A,
+      country: "CA",
+      areaCode: "416",
+    });
+    provider.reset();
+
+    // The displaced worker resumes. It holds the OLD generation.
+    const displaced = await provisionStudioSmsSender({
+      store: {
+        ...store,
+        claim: async () => ({ ...claim, result: "claimed" as const }),
+        finalize: store.finalize.bind(store),
+        fail: store.fail.bind(store),
+        assertLease: store.assertLease.bind(store),
+      },
+      provider,
+      studioId: STUDIO_A,
+      actorUserId: OWNER_A,
+      country: "CA",
+      areaCode: "416",
+      phoneNumber: CHOSEN,
+      inboundWebhookUrl: "https://hone.care/api/twilio/inbound-sms",
+      statusCallbackUrl: "https://hone.care/api/twilio/status",
+      testDestination: "+14165559999",
+      serviceLabel: "Studio A",
+      testBody: "Hone provisioning test.",
+    });
+
+    expect(displaced).toMatchObject({ ok: false, result: "lease_lost" });
+    // THE ASSERTION: no money was spent.
+    expect(provider.calls.purchase).toBe(0);
+    expect(provider.ownedNumbers()).toEqual([]);
+  });
+
+  it("MUTATION CONTROL (fencing): without the fence, a displaced worker buys a second number", async () => {
+    // Perform the mutation for real. With assertLease always true, the stalled
+    // worker resumes, reconciles against a claim nothing has been bought under
+    // yet, and buys -- alongside the worker that displaced it.
+    store = new InMemoryStore(MEMBERS, { ignoreFence: true });
+    const claim = await store.claim({
+      studioId: STUDIO_A,
+      actorUserId: OWNER_A,
+      country: "CA",
+      areaCode: "416",
+    });
+    store.now += store.leaseMs + 1;
+    await store.claim({
+      studioId: STUDIO_A,
+      actorUserId: OWNER_A,
+      country: "CA",
+      areaCode: "416",
+    });
+
+    const displaced = await provisionStudioSmsSender({
+      store: {
+        claim: async () => ({ ...claim, result: "claimed" as const }),
+        finalize: store.finalize.bind(store),
+        fail: store.fail.bind(store),
+        assertLease: store.assertLease.bind(store),
+      },
+      provider,
+      studioId: STUDIO_A,
+      actorUserId: OWNER_A,
+      country: "CA",
+      areaCode: "416",
+      phoneNumber: CHOSEN,
+      inboundWebhookUrl: "https://hone.care/api/twilio/inbound-sms",
+      statusCallbackUrl: "https://hone.care/api/twilio/status",
+      testDestination: "+14165559999",
+      serviceLabel: "Studio A",
+      testBody: "Hone provisioning test.",
+    });
+
+    // It spent money it had no right to spend.
+    expect(displaced.result).not.toBe("lease_lost");
+    expect(provider.calls.purchase).toBe(1);
+    expect(provider.ownedNumbers()).toEqual([CHOSEN]);
   });
 
   it("MUTATION CONTROL (claim exclusivity): sharing a live claim's key buys two numbers", async () => {

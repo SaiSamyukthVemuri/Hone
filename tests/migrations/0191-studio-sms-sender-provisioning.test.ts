@@ -68,10 +68,11 @@ const CLAIM = "claim_studio_sms_provisioning";
 const FINALIZE = "finalize_studio_sms_provisioning";
 const FAIL = "fail_studio_sms_provisioning";
 const RESOLVE = "resolve_studio_by_sms_messaging_service";
+const FENCE = "assert_studio_sms_lease";
 const GUARD = "studio_sms_senders_transition_guard";
 const STAMPS = "studio_sms_senders_server_timestamps";
 
-const COMMANDS = [CLAIM, FINALIZE, FAIL, RESOLVE] as const;
+const COMMANDS = [CLAIM, FINALIZE, FAIL, RESOLVE, FENCE] as const;
 
 // ---------------------------------------------------------------------------
 // 1. Identity and position
@@ -330,16 +331,55 @@ describe("a live claim EXCLUDES a second request", () => {
   it("a fresh claim returns claim_held with NO key", () => {
     const claim = body(CLAIM);
     expect(claim).toMatch(
-      /if v_row\.provisioning_claim_at > now\(\) - c_claim_lease then\s*\n\s*return query select 'claim_held'::text, v_row\.id, null::text/,
+      /if v_row\.provisioning_claim_at > clock_timestamp\(\) - c_claim_lease then\s*\n\s*return query select 'claim_held'::text, v_row\.id, null::text/,
     );
   });
 
   it("a stale claim is taken over on the SAME key", () => {
     const claim = body(CLAIM);
     const takeover = claim.slice(claim.indexOf("c_claim_lease then"));
-    expect(takeover).toMatch(/set provisioning_claim_at = now\(\)/);
+    expect(takeover).toMatch(/set provisioning_claim_at\s*=\s*clock_timestamp\(\)/);
     // The takeover updates only the lease; it does not touch the key.
     expect(takeover).not.toMatch(/set[\s\S]{0,120}provisioning_claim_key\s*=/);
+  });
+
+  it("the lease is judged and refreshed on clock_timestamp(), not now()", () => {
+    // `now()` is fixed at TRANSACTION start. A claim that waited on the row
+    // lock would judge expiry against a reading from before the wait -- and,
+    // worse, REFRESH the lease to that same stale instant, handing back a lease
+    // already expired when the RPC returns.
+    const claim = body(CLAIM);
+    expect(claim).toContain("clock_timestamp() - c_claim_lease");
+    expect(claim).toMatch(/provisioning_claim_at\s*=\s*clock_timestamp\(\)/);
+    // No lease arithmetic anywhere still uses now().
+    expect(claim).not.toMatch(/now\(\) - c_claim_lease/);
+  });
+
+  it("FENCING: a takeover advances the generation, and the fence gates the money", () => {
+    // Reusing the claim key makes a SEQUENTIAL retry safe; it does NOT fence a
+    // worker that merely stalled past its lease and resumed. The generation is
+    // what the displaced worker fails to revalidate.
+    const claim = body(CLAIM);
+    expect(claim).toMatch(/provisioning_lease_generation\s*=\s*v_row\.provisioning_lease_generation \+ 1/);
+
+    const fence = body(FENCE);
+    expect(fence).toContain("s.provisioning_lease_generation = p_lease_generation");
+    expect(fence).toContain("s.status                        = 'provisioning'");
+  });
+
+  it("a displaced worker cannot write over the live attempt", () => {
+    for (const fn of [FINALIZE, FAIL]) {
+      const src = body(fn);
+      expect(src).toMatch(
+        /v_row\.provisioning_lease_generation <> p_lease_generation then\s*\n\s*return 'lease_lost';/,
+      );
+    }
+  });
+
+  it("the generation is monotonic by trigger", () => {
+    const guard = body(GUARD);
+    expect(guard).toMatch(/new\.provisioning_lease_generation < old\.provisioning_lease_generation/);
+    expect(guard).toContain("monotonic");
   });
 
   it("the studio row is locked so claimants serialize", () => {

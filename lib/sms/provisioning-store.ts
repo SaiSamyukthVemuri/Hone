@@ -36,6 +36,7 @@ const FINALIZE_RESULTS: readonly FinalizeResult[] = [
   "provisioned_untested",
   "already_active",
   "conflict",
+  "lease_lost",
   "claim_not_found",
   "not_provisioning",
   "invalid_input",
@@ -43,6 +44,7 @@ const FINALIZE_RESULTS: readonly FinalizeResult[] = [
 
 const FAIL_RESULTS: readonly FailResult[] = [
   "failed",
+  "lease_lost",
   "already_active",
   "not_provisioning",
   "claim_not_found",
@@ -85,6 +87,7 @@ export function createProvisioningStore(
         senderId: null,
         claimKey: null,
         senderStatus: null,
+        leaseGeneration: null,
       };
       // A failed claim RPC means NO claim was taken, so nothing billable may
       // follow. The error is not logged here: it can carry SQL text, and the
@@ -107,6 +110,8 @@ export function createProvisioningStore(
         senderId: asNullableString(row.sender_id),
         claimKey: asNullableString(row.claim_key),
         senderStatus: asNullableString(row.sender_status),
+        leaseGeneration:
+          typeof row.lease_generation === "number" ? row.lease_generation : null,
       };
     },
 
@@ -116,6 +121,7 @@ export function createProvisioningStore(
         {
           p_studio_id: input.studioId,
           p_claim_key: input.claimKey,
+          p_lease_generation: input.leaseGeneration,
           p_phone_number: input.phoneNumber,
           p_phone_number_sid: input.phoneNumberSid,
           p_messaging_service_sid: input.messagingServiceSid,
@@ -136,6 +142,7 @@ export function createProvisioningStore(
       const { data, error } = await admin.rpc("fail_studio_sms_provisioning", {
         p_studio_id: input.studioId,
         p_claim_key: input.claimKey,
+        p_lease_generation: input.leaseGeneration,
         p_error_code: input.errorCode,
       });
       if (error) return "invalid_input";
@@ -146,6 +153,19 @@ export function createProvisioningStore(
         return "invalid_input";
       }
       return data as FailResult;
+    },
+
+    async assertLease(input): Promise<boolean> {
+      const { data, error } = await admin.rpc("assert_studio_sms_lease", {
+        p_studio_id: input.studioId,
+        p_claim_key: input.claimKey,
+        p_lease_generation: input.leaseGeneration,
+      });
+      // FAIL CLOSED, and this is the one place it matters most: an error or an
+      // unrecognised answer must read as "you do not hold this lease", never as
+      // "carry on and buy a phone number". Only an explicit true spends money.
+      if (error) return false;
+      return data === true;
     },
   };
 }

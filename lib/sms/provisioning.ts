@@ -79,6 +79,12 @@ export type ClaimRow = {
   senderId: string | null;
   claimKey: string | null;
   senderStatus: string | null;
+  /**
+   * The fencing token. Advances on every stale-lease takeover, so a worker
+   * that merely stalled past its lease can be told it no longer owns the
+   * attempt BEFORE it spends money.
+   */
+  leaseGeneration: number | null;
 };
 
 export type FinalizeResult =
@@ -86,6 +92,7 @@ export type FinalizeResult =
   | "provisioned_untested"
   | "already_active"
   | "conflict"
+  | "lease_lost"
   | "claim_not_found"
   | "not_provisioning"
   | "invalid_input";
@@ -99,10 +106,12 @@ export type FinalizeResult =
 export type AttemptErrorCode =
   | ProviderErrorCode
   | "finalize_failed"
-  | "finalize_conflict";
+  | "finalize_conflict"
+  | "lease_lost";
 
 export type FailResult =
   | "failed"
+  | "lease_lost"
   | "already_active"
   | "not_provisioning"
   | "claim_not_found"
@@ -119,6 +128,7 @@ export interface ProvisioningStore {
   finalize(input: {
     studioId: string;
     claimKey: string;
+    leaseGeneration: number;
     phoneNumber: string;
     phoneNumberSid: string;
     messagingServiceSid: string;
@@ -128,8 +138,19 @@ export interface ProvisioningStore {
   fail(input: {
     studioId: string;
     claimKey: string;
+    leaseGeneration: number;
     errorCode: AttemptErrorCode;
   }): Promise<FailResult>;
+
+  /**
+   * Revalidate the fence immediately before a billable call. False means this
+   * worker was displaced by a takeover and must not spend.
+   */
+  assertLease(input: {
+    studioId: string;
+    claimKey: string;
+    leaseGeneration: number;
+  }): Promise<boolean>;
 }
 
 // ---------------------------------------------------------------------------
@@ -231,6 +252,17 @@ export type ProvisionOutcome =
       senderId: string | null;
     }
   | {
+      /**
+       * This worker stalled past its lease and another took the attempt over.
+       * It stopped BEFORE spending. Whatever it may already have bought stays
+       * discoverable under the shared claim key, and the current holder adopts
+       * it.
+       */
+      ok: false;
+      result: "lease_lost";
+      senderId: string | null;
+    }
+  | {
       ok: false;
       result: "failed";
       reason: AttemptErrorCode | FinalizeResult;
@@ -273,7 +305,7 @@ export type ProvisionInput = {
  *        eligibility  -- all three inside claim(), re-derived by the database.
  *   4.   acquire the durable claim -- EXCLUSIVELY. A live attempt turns this
  *        request away before any provider effect.
- *   5.   RECONCILE, then re-check availability.
+ *   5.   RECONCILE, re-check availability, then REVALIDATE THE FENCE.
  *   6.   purchase exactly once (or adopt).
  *   7-8. create and attach the messaging service.
  *   9-10. configure inbound webhook and status callback.
@@ -318,7 +350,8 @@ export async function provisionStudioSmsSender(
 
   const claimKey = claim.claimKey;
   const senderId = claim.senderId;
-  if (!claimKey || !senderId) {
+  const leaseGeneration = claim.leaseGeneration;
+  if (!claimKey || !senderId || leaseGeneration === null) {
     // A claim without its key cannot be reconciled later, so it must not be
     // spent against.
     return {
@@ -340,6 +373,7 @@ export async function provisionStudioSmsSender(
     await input.store.fail({
       studioId: input.studioId,
       claimKey,
+      leaseGeneration,
       errorCode: code,
     });
     return {
@@ -382,6 +416,31 @@ export async function provisionStudioSmsSender(
     if (!availability.available) {
       // The owner chose THAT number. We do not quietly hand them another one.
       return failWith("number_no_longer_available", false, false);
+    }
+
+    // THE FENCE, AND IT SITS AS CLOSE TO THE MONEY AS IT CAN.
+    //
+    // Reusing the claim key across a takeover makes a SEQUENTIAL retry safe.
+    // It does not fence a CONCURRENT one: a worker that merely stalled past
+    // its five-minute lease -- not crashed, just slow or wedged on a socket --
+    // resumes believing it still owns this attempt. Both workers would then
+    // hold the same key, both would reconcile while neither purchase is
+    // visible, and both would buy.
+    //
+    // This is the last statement before the billable call, deliberately. It
+    // does not close the window -- a takeover landing in the gap still races,
+    // because Twilio's purchase API takes no idempotency key -- but it shrinks
+    // it from the whole provisioning sequence to a few milliseconds, and the
+    // claim-key FriendlyName keeps the residue discoverable rather than silent.
+    const stillOurs = await input.store.assertLease({
+      studioId: input.studioId,
+      claimKey,
+      leaseGeneration,
+    });
+    if (!stillOurs) {
+      // Displaced. Stop WITHOUT spending, and without writing: the row now
+      // belongs to the worker that took over.
+      return { ok: false, result: "lease_lost", senderId };
     }
 
     const purchase = await input.provider.purchaseNumber({
@@ -451,6 +510,7 @@ export async function provisionStudioSmsSender(
     await input.store.finalize({
       studioId: input.studioId,
       claimKey,
+      leaseGeneration,
       phoneNumber,
       phoneNumberSid,
       messagingServiceSid,
@@ -463,6 +523,7 @@ export async function provisionStudioSmsSender(
   const finalized = await input.store.finalize({
     studioId: input.studioId,
     claimKey,
+    leaseGeneration,
     phoneNumber,
     phoneNumberSid,
     messagingServiceSid,
@@ -485,6 +546,13 @@ export async function provisionStudioSmsSender(
   // this call fails too (the database is simply unreachable) the lease expires
   // on its own and a later attempt takes over, which is the slower path to the
   // same place.
+  if (finalized === "lease_lost") {
+    // Another worker owns this attempt now. Do NOT park the row in `error`:
+    // that would stomp a live attempt. Its resources stay discoverable under
+    // the shared claim key.
+    return { ok: false, result: "lease_lost", senderId };
+  }
+
   await failWith(
     finalized === "conflict" ? "finalize_conflict" : "finalize_failed",
     finalized !== "conflict",
