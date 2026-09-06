@@ -122,6 +122,15 @@ export type FakeProviderScript = {
   testSendFromMissing?: boolean;
   /** Fail the service configuration read. */
   serviceConfigFails?: ProviderErrorCode;
+  /**
+   * The provider ACKNOWLEDGES a configuration write and does not apply it.
+   *
+   * This is why post-write verification exists at all: a 2xx says the request
+   * was accepted, not that the resource now holds the value. Without a fake
+   * that can lie this way, a verification step is untestable and every "we
+   * verified" claim is really a claim about the fake.
+   */
+  configureSilentlyDrops?: boolean;
   /** Numbers the fake considers already taken by someone else. */
   unavailableNumbers?: string[];
 };
@@ -170,6 +179,17 @@ export class FakeSmsProvisioningProvider implements SmsProvisioningProvider {
     statusCallback: 0,
     testSend: 0,
   };
+
+  /**
+   * Configuration actually applied to a service, overlaying the scripted
+   * starting state. Twilio persists these writes; a fake that only counted
+   * them would make a re-read return the pre-write value and turn every
+   * verification test green for the wrong reason.
+   */
+  private readonly serviceConfig = new Map<
+    string,
+    { inbound?: string | null; status?: string | null }
+  >();
 
   script: FakeProviderScript = {};
 
@@ -361,11 +381,14 @@ export class FakeSmsProvisioningProvider implements SmsProvisioningProvider {
     if (this.script.serviceConfigFails) return this.fail(this.script.serviceConfigFails);
     const svc = (this.script.accountServices ?? []).find((x) => x?.sid === input.messagingServiceSid);
     if (!svc) return this.fail("provider_resource_mismatch");
+    const applied = this.serviceConfig.get(input.messagingServiceSid);
     return {
       ok: true,
       config: {
-        inboundRequestUrl: svc.inboundUrl ?? null,
-        statusCallbackUrl: svc.statusUrl ?? null,
+        inboundRequestUrl:
+          applied && "inbound" in applied ? (applied.inbound ?? null) : (svc.inboundUrl ?? null),
+        statusCallbackUrl:
+          applied && "status" in applied ? (applied.status ?? null) : (svc.statusUrl ?? null),
       },
     };
   }
@@ -465,16 +488,32 @@ export class FakeSmsProvisioningProvider implements SmsProvisioningProvider {
     return { ok: true };
   }
 
-  async configureInboundWebhook(): Promise<ProviderAck> {
+  async configureInboundWebhook(input: {
+    messagingServiceSid: string;
+    inboundWebhookUrl: string;
+  }): Promise<ProviderAck> {
     this.calls.inboundWebhook += 1;
     if (this.script.webhookFails) return this.fail(this.script.webhookFails);
+    if (!this.script.configureSilentlyDrops) {
+      const cur = this.serviceConfig.get(input.messagingServiceSid) ?? {};
+      cur.inbound = input.inboundWebhookUrl;
+      this.serviceConfig.set(input.messagingServiceSid, cur);
+    }
     return { ok: true };
   }
 
-  async configureStatusCallback(): Promise<ProviderAck> {
+  async configureStatusCallback(input: {
+    messagingServiceSid: string;
+    statusCallbackUrl: string;
+  }): Promise<ProviderAck> {
     this.calls.statusCallback += 1;
     if (this.script.statusCallbackFails) {
       return this.fail(this.script.statusCallbackFails);
+    }
+    if (!this.script.configureSilentlyDrops) {
+      const cur = this.serviceConfig.get(input.messagingServiceSid) ?? {};
+      cur.status = input.statusCallbackUrl;
+      this.serviceConfig.set(input.messagingServiceSid, cur);
     }
     return { ok: true };
   }

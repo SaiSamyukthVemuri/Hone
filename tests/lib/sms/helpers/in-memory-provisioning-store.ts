@@ -73,7 +73,50 @@ export class InMemoryProvisioningStore implements ProvisioningStore {
   /** Force what the IDENTIFIER write answers, independently of the parking write. */
   failReturnsFinalize: FinalizeResult | null = null;
 
+  /**
+   * Attempts started. Lets a test prove a refusal happened BEFORE any claim --
+   * a malformed target must never reach the authority check, let alone the
+   * provider.
+   */
+  claimCalls = 0;
+
+  /**
+   * Finalize attempts. "This capability never activates a sender" is only
+   * worth stating if it is a NUMBER that is asserted, not a comment.
+   */
+  finalizeCalls = 0;
+
+  /**
+   * Force the fence to refuse, modelling a worker displaced by a takeover
+   * between claiming and acting.
+   */
+  denyRenew = false;
+
   constructor(private readonly members: Membership[]) {}
+
+  /**
+   * Seed an ALREADY ACTIVE sender: the one state a configuration change must
+   * refuse, because its webhooks are carrying live client traffic.
+   */
+  forceActive(studioId: string, phoneNumber: string): Row {
+    const row: Row = {
+      id: `sender-active-${this.rows.length + 1}`,
+      studioId,
+      status: "active",
+      claimKey: this.nextKey(),
+      claimedPhoneNumber: phoneNumber,
+      phoneNumber,
+      phoneNumberSid: `PN${"f".repeat(32)}`,
+      messagingServiceSid: `MG${"f".repeat(32)}`,
+      provisionedAt: "2026-01-01T00:00:00.000Z",
+      lastTestOkAt: "2026-01-01T00:00:00.000Z",
+      lastErrorCode: null,
+      claimAt: this.now,
+      leaseGeneration: 1,
+    };
+    this.rows.push(row);
+    return row;
+  }
 
   private nextKey(): string {
     this.seq += 1;
@@ -91,6 +134,7 @@ export class InMemoryProvisioningStore implements ProvisioningStore {
     areaCode: string | null;
     phoneNumber: string;
   }): Promise<ClaimRow> {
+    this.claimCalls += 1;
     const refuse = (result: ClaimRow["result"]): ClaimRow => ({
       result,
       senderId: null,
@@ -228,6 +272,7 @@ export class InMemoryProvisioningStore implements ProvisioningStore {
       (r) => r.studioId === input.studioId && r.claimKey === input.claimKey && r.status !== "released",
     );
     const granted =
+      this.denyRenew !== true &&
       row !== undefined &&
       row.status === "provisioning" &&
       row.leaseGeneration === input.leaseGeneration &&
@@ -252,6 +297,7 @@ export class InMemoryProvisioningStore implements ProvisioningStore {
     messagingServiceSid: string;
     testOk: boolean;
   }): Promise<FinalizeResult> {
+    this.finalizeCalls += 1;
     if (this.failReturnsFinalize !== null) return this.failReturnsFinalize;
     if (this.failFinalizeWithoutCommitting) return "invalid_input";
     const row = this.rows.find(
