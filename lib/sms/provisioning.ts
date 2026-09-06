@@ -1,5 +1,6 @@
 import "server-only";
 import { fenceProviderMutations } from "./provider/fenced";
+import { normalizePhoneForSms } from "./twilio";
 import {
   SEARCH_LIMITS,
   type AvailableNumberCandidate,
@@ -299,7 +300,10 @@ export type ProvisionOutcome =
       /** The failure write's own verdict, never discarded. */
       parkResult: FailResult;
       /**
-       * Whether the provider identifiers were DURABLY RECORDED.
+       * Whether the DATABASE ACKNOWLEDGED persisting the current provider
+       * identifiers. True is claimed only on that acknowledgement -- never
+       * inferred from provider success, test success, or Hone merely holding
+       * the SID in memory.
        *
        * False means the SIDs exist at the provider and Hone does not have them
        * written down -- which outranks "the provisioning test failed" as the
@@ -358,7 +362,24 @@ export async function provisionStudioSmsSender(
   input: ProvisionInput,
 ): Promise<ProvisionOutcome> {
   // --- 1-4. Authorization and the durable claim -----------------------------
-  const chosenNumber = input.phoneNumber;
+  // ONE CANONICAL NUMBER FOR THE WHOLE ATTEMPT, decided here and nowhere else.
+  //
+  // The database stores `btrim(p_phone_number)`, so a padded selection was
+  // persisted trimmed while every later renewLease() still carried the raw
+  // string. The fence compares `claimed_phone_number = p_phone_number`, so the
+  // LEGITIMATE generation failed its own fence and every attempt died -- fail
+  // closed, but comprehensively broken for any input with whitespace.
+  //
+  // The fix is not to trim in more places; it is to have ONE value. Everything
+  // downstream -- claim, fence, availability, purchase, finalize, comparison --
+  // uses `chosenNumber`, and the raw input is never read again.
+  const chosenNumber = normalizePhoneForSms(input.phoneNumber);
+
+  // Reject before the claim, so an unusable selection never opens an attempt
+  // or reaches the provider.
+  if (!chosenNumber) {
+    return { ok: false, result: "refused", reason: "invalid_input" };
+  }
 
   const claim = await input.store.claim({
     studioId: input.studioId,
@@ -403,10 +424,10 @@ export async function provisionStudioSmsSender(
       retryable: false,
       mayOwnUnfinalizedResources: false,
       // Nothing was attempted and nothing was parked: there is no usable claim
-      // to park against.
+      // to park against, and no identifier write was made.
       parked: false,
       parkResult: "invalid_input",
-      identifiersRecorded: true,
+      identifiersRecorded: false,
       identifierResult: null,
     };
   }
@@ -449,9 +470,13 @@ export async function provisionStudioSmsSender(
       mayOwnUnfinalizedResources: mayOwn,
       parked: parked === "failed",
       parkResult: parked,
-      // failWith is reached from paths that never touched identifiers; the
-      // test-failure path overrides these with what it actually observed.
-      identifiersRecorded: true,
+      // failWith is reached from paths where no identifier write was
+      // attempted at all, so there is no acknowledgement to report. FALSE with
+      // a null verdict says exactly that; `true` would assert a persistence
+      // nothing established. Callers pair this with
+      // mayOwnUnfinalizedResources, which is what distinguishes "nothing was
+      // bought" from "something was bought and is unrecorded".
+      identifiersRecorded: false,
       identifierResult: null,
     };
   };
@@ -515,7 +540,7 @@ export async function provisionStudioSmsSender(
     // the purchase below remains the authority (see isNumberAvailable).
     const availability = await provider.isNumberAvailable({
       country: input.country.trim().toUpperCase(),
-      phoneNumber: input.phoneNumber,
+      phoneNumber: chosenNumber,
     });
     if (!availability.ok) {
       if (availability.code === "lease_lost") return displaced();
@@ -542,7 +567,7 @@ export async function provisionStudioSmsSender(
     // claim-key FriendlyName keeps the residue discoverable rather than silent.
     const purchase = await provider.purchaseNumber({
       claimKey,
-      phoneNumber: input.phoneNumber,
+      phoneNumber: chosenNumber,
     });
     if (!purchase.ok) {
       if (purchase.code === "lease_lost") return displaced();
@@ -708,7 +733,14 @@ export async function provisionStudioSmsSender(
     mayOwnUnfinalizedResources: true,
     parked: parked.result === "failed" ? parked.parked : false,
     parkResult: parked.result === "failed" ? parked.parkResult : "invalid_input",
-    identifiersRecorded: true,
+    // REACHING HERE MEANS THE DATABASE REFUSED THE WRITE. `activated` and
+    // `already_active` returned success far above and `lease_lost` returned
+    // displacement, so `finalized` is necessarily conflict / not_provisioning /
+    // claim_not_found / invalid_input -- every one of which means the current
+    // provider identifiers were NOT durably stored, however well the provider
+    // test went. Claiming otherwise here was the defect: a successful test and
+    // a SID in hand are not persistence.
+    identifiersRecorded: false,
     identifierResult: finalized,
   };
 }

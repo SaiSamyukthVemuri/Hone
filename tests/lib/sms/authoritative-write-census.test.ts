@@ -154,7 +154,15 @@ function vocabularyOf(cmd: AuthoritativeCommand): Vocabulary {
     if (/^return\s*;$/.test(stmt.text)) continue;
 
     // `return query select 'word'::text, ...` — the verdict is the first column.
-    const queried = stmt.text.match(/^return query select '([a-z_]+)'::text\b/);
+    //
+    // The COMMA is required, not decorative. Stopping at a word boundary
+    // accepted any expression that merely BEGINS with a literal cast --
+    // `select 'claimed'::text || '_new', ...` was read as the existing
+    // `claimed` verdict while the function actually returns `claimed_new`.
+    // Requiring the column to end right there keeps the vocabulary a set of
+    // whole literals; a concatenation or any other expression falls through to
+    // the violation branch and fails closed.
+    const queried = stmt.text.match(/^return query select '([a-z_]+)'::text\s*,/);
     if (queried) {
       words.add(queried[1]);
       continue;
@@ -409,6 +417,176 @@ describe("the parking write: every result word is handled", () => {
     expect(outcome.parkResult).toBe(word);
     // The provider's own error is still reported alongside -- both facts.
     expect(outcome.reason).toBe("provider_rejected");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The canonical number: ONE value for the whole attempt
+// ---------------------------------------------------------------------------
+
+describe("the selected number is canonicalized once", () => {
+  const PADDED = "  +14165550100  ";
+
+  /** Records the number every boundary actually receives. */
+  class NumberWitnessStore implements ProvisioningStore {
+    seen: { claim?: string; renew: string[]; finalize?: string } = { renew: [] };
+    async claim(input: { phoneNumber: string }): Promise<ClaimRow> {
+      this.seen.claim = input.phoneNumber;
+      return {
+        result: "claimed",
+        senderId: "sender-1",
+        claimKey: CLAIM_KEY,
+        senderStatus: "provisioning",
+        leaseGeneration: GEN,
+      };
+    }
+    async finalize(input: { phoneNumber: string }): Promise<FinalizeResult> {
+      this.seen.finalize = input.phoneNumber;
+      return "activated";
+    }
+    async fail(): Promise<FailResult> {
+      return "failed";
+    }
+    async renewLease(input: { phoneNumber: string }): Promise<boolean> {
+      this.seen.renew.push(input.phoneNumber);
+      // THE DATABASE'S RULE, MODELLED: the row stores btrim(...), so the fence
+      // only matches a value that is already canonical. A raw padded string
+      // fails here -- which is exactly how the legitimate generation used to
+      // fail its own fence.
+      return input.phoneNumber === CHOSEN;
+    }
+  }
+
+  it("a padded selection is canonicalized and the fence SUCCEEDS", async () => {
+    const store = new NumberWitnessStore();
+    const outcome = await provisionStudioSmsSender({
+      store,
+      provider,
+      studioId: STUDIO,
+      actorUserId: OWNER,
+      country: "CA",
+      areaCode: "416",
+      phoneNumber: PADDED,
+      inboundWebhookUrl: "https://hone.care/api/twilio/inbound-sms",
+      statusCallbackUrl: "https://hone.care/api/twilio/status",
+      testDestination: "+14165559999",
+      serviceLabel: "Studio A",
+      testBody: "Hone provisioning test.",
+    });
+
+    expect(outcome).toMatchObject({ ok: true, result: "activated" });
+    // ONE value everywhere: claim, every fence, and the finalize.
+    expect(store.seen.claim).toBe(CHOSEN);
+    expect(store.seen.finalize).toBe(CHOSEN);
+    expect(store.seen.renew.length).toBeGreaterThan(0);
+    expect([...new Set(store.seen.renew)]).toEqual([CHOSEN]);
+    // ...and the provider was asked about the canonical number too.
+    expect(provider.ownedNumbers()).toEqual([CHOSEN]);
+  });
+
+  it("a selection that cannot be canonicalized is refused BEFORE the claim", async () => {
+    const store = new NumberWitnessStore();
+    const outcome = await provisionStudioSmsSender({
+      store,
+      provider,
+      studioId: STUDIO,
+      actorUserId: OWNER,
+      country: "CA",
+      areaCode: "416",
+      phoneNumber: "not-a-number",
+      inboundWebhookUrl: "https://hone.care/api/twilio/inbound-sms",
+      statusCallbackUrl: "https://hone.care/api/twilio/status",
+      testDestination: "+14165559999",
+      serviceLabel: "Studio A",
+      testBody: "Hone provisioning test.",
+    });
+
+    expect(outcome).toMatchObject({ ok: false, result: "refused", reason: "invalid_input" });
+    // No claim opened, no provider work.
+    expect(store.seen.claim).toBeUndefined();
+    expect(provider.calls.purchase).toBe(0);
+  });
+
+  it("MUTATION CONTROL: without canonicalization the legitimate worker fails its own fence", async () => {
+    // The defect, performed. Passing the raw padded value to the fence -- as
+    // the code did before -- means the row (which stores the trimmed value)
+    // never matches, so the worker that legitimately holds the claim is
+    // refused by its own lease check.
+    const store = new NumberWitnessStore();
+    expect(await store.renewLease({ phoneNumber: PADDED })).toBe(false);
+    expect(await store.renewLease({ phoneNumber: CHOSEN })).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Persistence is the database's word, on the SUCCESSFUL-test path too
+// ---------------------------------------------------------------------------
+
+describe("identifiersRecorded reflects DB acknowledgement, never inference", () => {
+  /** Provider test SUCCEEDS; the activating finalize answers `verdict`. */
+  class ActivatingVerdictStore implements ProvisioningStore {
+    constructor(private readonly verdict: FinalizeResult) {}
+    async claim(): Promise<ClaimRow> {
+      return {
+        result: "claimed",
+        senderId: "sender-1",
+        claimKey: CLAIM_KEY,
+        senderStatus: "provisioning",
+        leaseGeneration: GEN,
+      };
+    }
+    async finalize(input: { testOk: boolean }): Promise<FinalizeResult> {
+      return input.testOk ? this.verdict : "provisioned_untested";
+    }
+    async fail(): Promise<FailResult> {
+      return "failed";
+    }
+    async renewLease(): Promise<boolean> {
+      return true;
+    }
+  }
+
+  it.each(["conflict", "not_provisioning", "claim_not_found", "invalid_input"] as const)(
+    "provider test PASSED but finalize -> %s: identifiersRecorded is false",
+    async (verdict) => {
+      // Everything at the provider went right and Hone holds the SIDs. None of
+      // that is persistence. Only the database's acknowledgement is.
+      const outcome = await run(new ActivatingVerdictStore(verdict));
+
+      expect(outcome).toMatchObject({ ok: false, result: "failed" });
+      if (outcome.ok || outcome.result !== "failed") return;
+      expect(outcome.identifiersRecorded).toBe(false);
+      expect(outcome.identifierResult).toBe(verdict);
+      // And the caller is told resources may be outstanding.
+      expect(outcome.mayOwnUnfinalizedResources).toBe(true);
+    },
+  );
+
+  it("provider test PASSED but finalize -> lease_lost: displacement authority is preserved", async () => {
+    const outcome = await run(new ActivatingVerdictStore("lease_lost"));
+    expect(outcome).toMatchObject({ ok: false, result: "lease_lost" });
+  });
+
+  it.each(["activated", "already_active"] as const)(
+    "finalize -> %s is the ONLY shape that reports success",
+    async (verdict) => {
+      const outcome = await run(new ActivatingVerdictStore(verdict));
+      expect(outcome).toMatchObject({ ok: true, result: "activated" });
+    },
+  );
+
+  it("no failed outcome ever claims persistence the database did not acknowledge", async () => {
+    // Sweep: every non-success activating verdict, plus a provider failure with
+    // no identifier write at all. None may report identifiersRecorded true.
+    for (const verdict of FINALIZE_RESULTS) {
+      if (verdict === "activated" || verdict === "already_active") continue;
+      if (verdict === "lease_lost") continue;
+      const outcome = await run(new ActivatingVerdictStore(verdict));
+      if (!outcome.ok && outcome.result === "failed") {
+        expect(outcome.identifiersRecorded, `verdict ${verdict}`).toBe(false);
+      }
+      provider.reset();
+    }
   });
 });
 
