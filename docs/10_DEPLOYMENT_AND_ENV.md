@@ -79,7 +79,9 @@
 ## Twilio
 
 - Off by default per `studios.send_*_sms`. Per-client gated by `sms_consent_at` / `sms_opted_out_at`. STOP webhook at `/api/twilio/inbound-sms` signature-verifies via Twilio's standard validator.
-- Either `TWILIO_MESSAGING_SERVICE_SID` (preferred) or `TWILIO_FROM_NUMBER` (E.164) must be set. `TWILIO_WEBHOOK_BASE_URL` should be the public origin Twilio POSTs to (`https://hone.care` in production).
+- **The outbound sender is resolved from the DATABASE, not from the environment.** A studio's messages leave from that studio's own number: `studio_id` → its **ACTIVE** `studio_sms_senders` row → `messaging_service_sid` → Twilio. A studio with no ACTIVE sender **fails closed** — it does not fall back to a deployment-global number, because that would put one studio's client message on a number belonging to another. Provisioning that row is COMMS-01C; migration `0192` supplies the server-side lookup.
+- `TWILIO_ACCOUNT_SID` and `TWILIO_AUTH_TOKEN` are still required: they are the **deployment-global credentials** every per-studio provider resource is inert without. Per-studio senders hold identifiers, never credentials.
+- `TWILIO_WEBHOOK_BASE_URL` should be the public origin Twilio POSTs to (`https://hone.care` in production).
 
 ## Upstash Redis
 
@@ -130,10 +132,10 @@ Authoritative source: [`.env.local.example`](../.env.local.example). The summary
 | `STRIPE_CONNECT_COUNTRY` | Default `CA` | Hardcoded for Canadian rollout. |
 | `UPSTASH_REDIS_REST_URL` | **Required in production** | Public rate limit. Missing in prod → the production build fails (PR #262 gate). Runtime still fails open on a transient outage. |
 | `UPSTASH_REDIS_REST_TOKEN` | **Required in production** | Same. |
-| `TWILIO_ACCOUNT_SID` | Optional | SMS subsystem gated on this. |
-| `TWILIO_AUTH_TOKEN` | Optional | Same. |
-| `TWILIO_FROM_NUMBER` | Optional | E.164 number. Either this or `TWILIO_MESSAGING_SERVICE_SID` must be set if SMS is in use. |
-| `TWILIO_MESSAGING_SERVICE_SID` | Optional | Preferred over `TWILIO_FROM_NUMBER` when both are set. |
+| `TWILIO_ACCOUNT_SID` | Optional | SMS subsystem gated on this. **Still runtime-required** — the deployment-global credential every per-studio sender is inert without (`lib/sms/twilio.ts`, `lib/sms/provider/*`). |
+| `TWILIO_AUTH_TOKEN` | Optional | Same, and additionally validates the inbound STOP webhook signature (`app/api/twilio/inbound-sms/route.ts`). |
+| `TWILIO_FROM_NUMBER` | **Not read at runtime** | **No longer configures outbound SMS.** Zero runtime references remain: the sender is resolved per studio from `studio_sms_senders`. Still set by the local e2e harness (`e2e/helpers/local-env.ts`) and deliberately set by a mutation control that proves a deployment-global value **cannot** rescue an unrouted send. Do not reintroduce it as a fallback. |
+| `TWILIO_MESSAGING_SERVICE_SID` | **Not read at runtime** | **No longer configures outbound SMS.** Zero runtime references remain. Each studio's messaging service lives on its own `studio_sms_senders` row and is resolved server-side; a value here is ignored and must not be relied on. |
 | `HONE_PERF_TIMING` | Optional, **off by default** | Set to the literal `"1"` to enable the coarse authenticated-route timing spans in `lib/observability/perf-timing.ts` (app shell, Clients, Client profile, Calendar, Records). Any other value, including unset, is a true passthrough that records nothing. Emits ONE structured `perf_route_timing` JSON line per request to stderr (Vercel logs) plus a Sentry span per phase on sampled traces — **no new observability vendor**. The payload carries durations and a closed set of span names only; there is no free-text field, the request path is never read (an authenticated path such as `/clients/<uuid>` is itself a client identifier), and a span name outside the allowlist is dropped without being logged. **Intended for a measurement window, not as a permanent production default** — every line is written at error level, so leaving it on will colour error-rate dashboards. No production env gate: this var guards a feature's *absence*, not its presence.
 | `TWILIO_WEBHOOK_BASE_URL` | Recommended | Public origin Twilio POSTs to. Falls back to `request.url`. |
 | `NEW_CLIENT_WAITLIST_STUDIO_SLUGS` | Optional | **Server-only** comma-separated allowlist of studio **slugs**, matched exactly after trim + lowercase. Unset or empty disables the feature. Never prefix `NEXT_PUBLIC_`. Read by `lib/booking/new-client-waitlist.ts`; behaviour is defined by PR #601. |
