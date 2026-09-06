@@ -14,7 +14,57 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-09-04, post-0190 apply; `0191` authored and PENDING)
+## Current state (verified 2026-09-06, post-0191 apply; `0192` authored and PENDING)
+
+> **This block is an APPLY RECORD written by a RECONCILIATION lane, not by the lane
+> that applied `0191`.** It therefore records the **verified result** of the apply and
+> deliberately does **not** assert the apply's own mechanics — no client-side window, no
+> exit code, no CLI transcript, no pre-apply census, no apply worktree. Those are the
+> applying lane's evidence, they were not captured here, and inventing them would be
+> exactly the fabrication this ledger exists to prevent. Every value below was read
+> read-only from production; nothing is copied from prose.
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0191** (`0191_studio_sms_sender_provisioning.sql`) |
+| **Repo migration max** | **0191** — **repository and hosted are at parity**, with nothing pending. Next free number is **0192**; note `0192_studio_sms_sender_outbound_lookup.sql` is **authored on PR #674**, which is **not merged**, so the number is spoken for but absent from this tree. |
+| **Remote-only migrations** | **none** — no migration exists on production that the repository lacks |
+| **Total migrations in repo** | **191** (`0001` … `0157`, `0159` … `0191` — **no `0158`**) — derived by `npm run migration:state`, not counted by hand |
+| **Apply timestamp** | ⚠️ **NO SERVER-GENERATED APPLY TIMESTAMP WAS CAPTURED**, so `hosted_applied_at` is `null`. **AND NO OPERATOR-OBSERVED CLIENT-SIDE WINDOW IS ASSERTED EITHER** — unlike 0190, 0189, 0188 and 0187, this record was written by a lane that did not perform the apply and had no CLI invocation to bracket. See `hosted_applied_at_precision`. |
+| **Verified applied** | **2026-09-06** — state observed at `2026-09-06T16:03:53Z` (server clock), read-only |
+| **Applied from** | **not captured by this lane.** The migration in production matches `0191_studio_sms_sender_provisioning.sql` as merged in **PR #673** (merge `7e4e09d897f403dd560571978fb33b72516f0fa7`). The apply owner is the **#673 production operator lane**. |
+| **Application production at apply time** | **#673 is merged and deployed.** Production application head `7e4e09d897f403dd560571978fb33b72516f0fa7`; Vercel production deployment **success** at `2026-09-06T14:49:18Z`; `hone.care` smoke `/`, `/login`, `/privacy`, `/terms` all **200**. |
+| **Project ref** | `alhhybgqdmcdyzpybykj` — confirmed as **Hone**, not **Hone Staging** (`ndcqadeirszuzmytvobk`), before every command |
+| **Supabase CLI** | **2.102.0** — read-only `supabase db query --linked` only; **no `db execute`, no `db push`** was issued by this lane |
+| **Post-apply verification** | hosted max **0191**; **190** history rows; `0191` present **exactly once**; **`0192` absent**; nothing above `0191` |
+| **Schema objects** | `public.studio_sms_senders` exists — **18** CHECK constraints, **2** foreign keys, **6** unique indexes (5 declared + pkey), **3** triggers, **1** RLS policy, **0 rows** |
+| **Functions** | **8** — five `SECURITY DEFINER` (`claim_studio_sms_provisioning`, `finalize_studio_sms_provisioning`, `fail_studio_sms_provisioning`, `renew_studio_sms_lease`, `resolve_studio_by_sms_messaging_service`) and three invoker (`studio_sms_lease_window`, `studio_sms_senders_server_timestamps`, `studio_sms_senders_transition_guard`). **All eight** carry `search_path=pg_catalog, pg_temp`. |
+| **EXECUTE posture** | `authenticated` **false** and `anon` **false** on all eight. `service_role` **true** on exactly the five definer commands, **false** on the three internal functions. |
+| **Table privilege** | table-level `SELECT`/`INSERT`/`UPDATE`/`DELETE` are **false for `anon`, `authenticated` AND `service_role`**. `service_role` reaches rows only through the definer commands. |
+| **Column grant** | `authenticated` may read **only**: `id`, `studio_id`, `provider`, `status`, `country`, `requested_area_code`, `phone_number`, `provisioned_at`, `last_test_ok_at`, `last_error_code`, `last_error_at`, `released_at`, `created_at`, `updated_at`. **Verified WITHHELD in production**: `claimed_phone_number`, `phone_number_sid`, `messaging_service_sid`, `provisioning_claim_key`, `provisioning_claim_at`, `provisioning_claim_by_practitioner_id`, `provisioning_lease_generation` — **no provider SID, claim key or lease internal is reachable from a browser session**. |
+| **RLS** | **enabled**; policy `studio_sms_senders_owner_select` for `SELECT` using `is_studio_owner(studio_id)` |
+| **Live SMS path** | **unchanged.** `lib/sms/twilio.ts` still resolves its sender from `TWILIO_MESSAGING_SERVICE_SID` / `TWILIO_FROM_NUMBER`; `lib/sms/send-appointment.ts` holds **no** reference to the new table; `studio_sms_senders` was empty when read on 2026-09-06 (**0 rows**). The only production code naming the table is `lib/export/resource-registry.ts` (registered `kind: "pending"`, ticket **TRUTH-01B**) and comments in `lib/sms/provider/types.ts` — **neither is on the transport**. |
+| **Business-data observations** | studios with `send_confirmation_sms` **1**, unchanged; client SMS consent **53** with **0** opt-outs, unchanged. No row was written by this lane. |
+| **Not observed, and therefore not claimed** | The apply's own exit code, CLI output, confirmation prompt, notice/error classes, pre-apply census and apply host — none were captured by this lane and none are asserted. No SMS was sent, no Twilio call made, and no provider resource exists (`studio_sms_senders` is empty). |
+
+### What 0191 establishes
+
+`0191` creates the **per-studio SMS sender model** — the table, its lifecycle guard,
+and the provisioning commands that make "one claim, one number" a schema invariant
+rather than a convention. It is **deployed and dark**: nothing in the running
+application reads it, and the live SMS path is untouched.
+
+The privilege shape is the point. Provider identifiers and the provisioning claim key
+are **excluded from the browser's column grant**, so a Twilio SID can never become
+something the browser knows — and therefore never something it can echo back as
+authority. `service_role` was granted no table privilege at all when read on 2026-09-06, and
+reaches rows only through the five definer commands.
+
+**`0192` (PR #674) is authored and NOT applied.** It is the migration that teaches the
+send path to consult this table, which is the first point at which existing SMS
+traffic is genuinely exposed. That is a separate gate.
+
+## Previous state (verified 2026-09-04, post-0190 apply)
 
 | Field | Value |
 |---|---|
