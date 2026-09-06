@@ -159,9 +159,27 @@ create unique index if not exists new_client_waitlist_invitations_one_live_per_e
 -- "No immediate re-invitation to the SAME declined round", without inventing a
 -- time-based exclusion: the identical offer cannot be re-issued to the same
 -- entry while that declined record stands. A DIFFERENT offer is unaffected.
+-- P3-2 CORRECTION. The key omitted scope_allowed_weekdays, so two genuinely
+-- different offers -- same service and dates, different permitted weekdays --
+-- collided and the second was refused. The key must name every field that
+-- defines the SAME LOGICAL OFFER.
+--
+-- NULLS NOT DISTINCT is required, not incidental. Adding a nullable column to a
+-- unique index would otherwise WEAKEN the guard: PostgreSQL treats NULLs as
+-- distinct by default, so two identical all-days offers (weekdays NULL) would
+-- stop colliding -- the opposite of the intent. PG15+ / this stack is 17.
+--
+-- NULL and array[0,1,2,3,4,5,6] remain DIFFERENT keys. The contract defines
+-- NULL as "every day inside the range" but does NOT define it as equivalent to
+-- the explicit full array, so they are not made equivalent here.
+--
+-- Weekday ordering is already canonical: the issue command writes a sorted
+-- DISTINCT array, so array equality is well defined on the supported path.
+drop index if exists public.new_client_waitlist_invitations_no_repeat_declined_offer;
 create unique index if not exists new_client_waitlist_invitations_no_repeat_declined_offer
   on public.new_client_waitlist_invitations
-     (entry_id, scope_service_id, scope_start_date, scope_end_date)
+     (entry_id, scope_service_id, scope_start_date, scope_end_date, scope_allowed_weekdays)
+  nulls not distinct
   where declined_at is not null;
 
 -- ---------------------------------------------------------------------
