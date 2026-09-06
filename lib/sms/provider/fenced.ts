@@ -20,10 +20,12 @@ import { providerError, type SmsProvisioningProvider } from "./types";
 // site added months later by someone who never read this comment.
 //
 // So the fence stops being a rule and becomes a TYPE. This wrapper implements
-// the whole provider port. Every externally-mutating method proves the
-// generation immediately before it; every read-only method passes straight
-// through. The orchestration receives a provider that CANNOT perform an
-// unfenced effect, so there is no call site left at which to forget.
+// the whole provider port. EVERY operation a provisioning attempt performs --
+// billable effect and claim-scoped read alike -- proves the generation
+// immediately before it. Only the pre-claim browse passes through, because no
+// generation exists yet to check. The orchestration receives a provider that
+// CANNOT perform an unfenced operation, so there is no call site left at which
+// to forget.
 //
 // THE COMPILE-TIME PART, WHICH IS THE POINT: this is an explicit object
 // implementing `SmsProvisioningProvider`, not a Proxy and not a spread. Adding
@@ -38,11 +40,10 @@ import { providerError, type SmsProvisioningProvider } from "./types";
 // what makes the residue discoverable afterwards.
 
 /**
- * Provider methods that change something OUTSIDE Hone -- money, a rented
- * resource, provider configuration, or a message to a real handset. Each is
- * fenced.
+ * Effects that change something OUTSIDE Hone -- money, a rented resource,
+ * provider configuration, or a message to a real handset. Fenced.
  */
-export const MUTATING_PROVIDER_EFFECTS = [
+export const BILLABLE_OR_MUTATING_EFFECTS = [
   "purchaseNumber",
   "createMessagingService",
   "attachNumberToService",
@@ -52,20 +53,37 @@ export const MUTATING_PROVIDER_EFFECTS = [
 ] as const;
 
 /**
- * Provider methods that only READ. They reserve nothing and spend nothing, so
- * a displaced worker running one costs nothing and is not fenced.
+ * Reads performed UNDER A CLAIM. Also fenced -- and the reasoning is worth
+ * stating, because "it's only a GET" is exactly the argument that would leave
+ * them out.
  *
- * A stale worker must still never REPORT one of these answers as the outcome
- * -- an availability check that resumed after a takeover would otherwise tell
- * the owner "that number is gone" while the current generation is busy
- * provisioning it successfully. That is the orchestration's job, not this
- * file's: it inspects every authoritative write's result and lets the
- * database's `lease_lost` outrank whatever this worker was about to say.
+ * A displaced worker running these spends nothing. What it must not do is ACT
+ * on them, and every action it could take is one await away. Fencing the read
+ * makes the worker stop at the earliest possible point rather than carrying a
+ * stale answer forward toward a decision, and it removes the judgement call
+ * ("is this one safe to leave open?") that produced three defects already.
+ *
+ * It also closes a real reporting hazard: an availability check that resumed
+ * after a takeover would otherwise hand back "that number is gone" for a
+ * number the CURRENT generation is provisioning successfully.
  */
-export const READ_ONLY_PROVIDER_CALLS = [
-  "searchAvailableNumbers",
+export const CLAIM_SCOPED_READS = [
   "isNumberAvailable",
   "lookupResourcesByClaim",
+] as const;
+
+/**
+ * Reads that happen BEFORE any claim exists -- an owner browsing candidate
+ * numbers. There is no generation to check, so there is nothing to fence.
+ * This is the only unfenced member of the port, and it is unreachable from a
+ * provisioning attempt.
+ */
+export const PRE_CLAIM_READS = ["searchAvailableNumbers"] as const;
+
+/** Everything a provisioning attempt may do. All of it fenced. */
+export const FENCED_PROVIDER_OPERATIONS = [
+  ...BILLABLE_OR_MUTATING_EFFECTS,
+  ...CLAIM_SCOPED_READS,
 ] as const;
 
 /** Proves the caller still holds the lease it started with. */
@@ -96,12 +114,15 @@ export function fenceProviderMutations(
   return {
     name: provider.name,
 
-    // --- read-only: no fence, nothing to protect --------------------------
+    // --- pre-claim browse: no generation exists, nothing to fence ---------
     searchAvailableNumbers: (input) => provider.searchAvailableNumbers(input),
-    isNumberAvailable: (input) => provider.isNumberAvailable(input),
-    lookupResourcesByClaim: (claimKey) => provider.lookupResourcesByClaim(claimKey),
 
-    // --- mutating: fenced, every one --------------------------------------
+    // --- claim-scoped reads: fenced, so a displaced worker stops early -----
+    isNumberAvailable: (input) => guarded(() => provider.isNumberAvailable(input)),
+    lookupResourcesByClaim: (claimKey) =>
+      guarded(() => provider.lookupResourcesByClaim(claimKey)),
+
+    // --- billable / mutating: fenced, every one ---------------------------
     purchaseNumber: (input) => guarded(() => provider.purchaseNumber(input)),
     createMessagingService: (input) =>
       guarded(() => provider.createMessagingService(input)),

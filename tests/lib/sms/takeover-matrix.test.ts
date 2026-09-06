@@ -7,78 +7,93 @@ import {
   type ProvisioningStore,
 } from "@/lib/sms/provisioning";
 import { FakeSmsProvisioningProvider } from "@/lib/sms/provider/fake-provider";
-import { MUTATING_PROVIDER_EFFECTS } from "@/lib/sms/provider/fenced";
+import {
+  BILLABLE_OR_MUTATING_EFFECTS,
+  FENCED_PROVIDER_OPERATIONS,
+} from "@/lib/sms/provider/fenced";
 
-// COMMS-01B — THE DETERMINISTIC TAKEOVER MATRIX.
+// COMMS-01B — THE STALL / TAKEOVER MATRIX.
 //
-// THE INVARIANT, STATED ONCE AND CHECKED EVERYWHERE:
+// THE INVARIANT, STATED ONCE AND CHECKED AT EVERY POINT:
 //
-//   Once provisioning generation G loses its lease, G has ZERO authority for
-//   any later provider mutation or authoritative final-state database write.
+//   Once lease generation G is displaced, G may execute ZERO provider
+//   mutations and ZERO authoritative final-state writes.
 //
 // A stall can occur between ANY two awaits, so proving the invariant at one
-// point proves nothing about the others -- which is exactly how three
-// consecutive reviews each found the same defect at a different await. This
-// file therefore walks the takeover across EVERY point in the sequence and
-// requires the same four numbers at each one:
+// point proves nothing about the others. That is not a hypothetical: three
+// consecutive reviews each found the same defect at a DIFFERENT await, because
+// each fix was applied where the last one was found. This file walks the
+// takeover across the whole sequence instead.
 //
-//   UNFENCED_EFFECTS                        = 0
-//   OLD_PROVIDER_MUTATIONS_AFTER_TAKEOVER   = 0
+// INJECTION IS DETERMINISTIC, NOT TIMED. The fence answers true for the first
+// k checks and false afterwards, so "k allowed checks" IS "another worker took
+// the attempt over immediately before operation k+1". No sleeps, no clocks, no
+// flakes, and the same rows run identically on every machine.
+//
+// Every row requires the same three numbers, plus one positive control:
+//
+//   OLD_PROVIDER_EFFECTS_AFTER_TAKEOVER     = 0
 //   OLD_AUTHORITATIVE_WRITES_AFTER_TAKEOVER = 0
 //   OLD_RESULT                              = lease_lost
-//
-// The takeover is injected DETERMINISTICALLY, not by timing: the fence answers
-// true for the first k-1 checks and false from the k-th onward, which is
-// exactly "another worker took the attempt over immediately before effect k".
-// No sleeps, no clocks, no flakes.
+//   ...and the CURRENT worker can still reconcile and finish.
 
 const STUDIO = "studio-a";
 const OWNER = "owner-a";
 const CHOSEN = "+14165550100";
+const CLAIM_KEY = `hone-sms-${"a".repeat(32)}`;
 
-type WriteRecord = { call: "finalize" | "fail"; result: string };
-
-/**
- * A store that answers a fixed claim and records every authoritative write.
- * Generation `STALE` is the displaced worker's; the row has moved to `LIVE`.
- */
+/** The displaced worker's generation, and the one that superseded it. */
 const STALE = 7;
 const LIVE = 8;
 
-class DisplacedWorkerStore implements ProvisioningStore {
+type WriteRecord = { call: "finalize" | "fail"; generation: number; result: string };
+
+class TakeoverStore implements ProvisioningStore {
   writes: WriteRecord[] = [];
-  /** Fence answers true until this many checks have been made, then false. */
-  constructor(private readonly allowChecks: number) {}
   fenceChecks = 0;
+
+  /**
+   * @param allowChecks how many fence checks succeed before the takeover lands.
+   * @param generation  the generation this worker was handed at claim time.
+   */
+  constructor(
+    private readonly allowChecks: number,
+    private readonly generation: number = STALE,
+  ) {}
 
   async claim(): Promise<ClaimRow> {
     return {
       result: "claimed",
       senderId: "sender-1",
-      claimKey: `hone-sms-${"a".repeat(32)}`,
+      claimKey: CLAIM_KEY,
       senderStatus: "provisioning",
-      leaseGeneration: STALE,
+      leaseGeneration: this.generation,
     };
   }
 
+  /** The database is the authority: a stale generation is refused, always. */
   async finalize(input: { leaseGeneration: number }): Promise<FinalizeResult> {
-    // The database is the authority: a stale generation is refused, always.
     const result: FinalizeResult =
       input.leaseGeneration === LIVE ? "activated" : "lease_lost";
-    this.writes.push({ call: "finalize", result });
+    this.writes.push({ call: "finalize", generation: input.leaseGeneration, result });
     return result;
   }
 
   async fail(input: { leaseGeneration: number }): Promise<FailResult> {
     const result: FailResult =
       input.leaseGeneration === LIVE ? "failed" : "lease_lost";
-    this.writes.push({ call: "fail", result });
+    this.writes.push({ call: "fail", generation: input.leaseGeneration, result });
     return result;
   }
 
   async assertLease(): Promise<boolean> {
     this.fenceChecks += 1;
     return this.fenceChecks <= this.allowChecks;
+  }
+
+  /** Authoritative writes that actually LANDED. Must be empty for a stale worker. */
+  landedWrites(): WriteRecord[] {
+    return this.writes.filter((w) => w.result !== "lease_lost");
   }
 }
 
@@ -89,8 +104,8 @@ beforeEach(() => {
   provider.reset();
 });
 
-/** Every externally-mutating call the fake actually executed. */
-function mutatingCalls(p: FakeSmsProvisioningProvider): number {
+/** Externally-mutating calls the fake actually executed. */
+function providerEffects(p: FakeSmsProvisioningProvider): number {
   return (
     p.calls.purchase +
     p.calls.createService +
@@ -101,7 +116,7 @@ function mutatingCalls(p: FakeSmsProvisioningProvider): number {
   );
 }
 
-function run(store: ProvisioningStore, phoneNumber = CHOSEN) {
+function run(store: ProvisioningStore) {
   return provisionStudioSmsSender({
     store,
     provider,
@@ -109,7 +124,7 @@ function run(store: ProvisioningStore, phoneNumber = CHOSEN) {
     actorUserId: OWNER,
     country: "CA",
     areaCode: "416",
-    phoneNumber,
+    phoneNumber: CHOSEN,
     inboundWebhookUrl: "https://hone.care/api/twilio/inbound-sms",
     statusCallbackUrl: "https://hone.care/api/twilio/status",
     testDestination: "+14165559999",
@@ -119,90 +134,93 @@ function run(store: ProvisioningStore, phoneNumber = CHOSEN) {
 }
 
 // ---------------------------------------------------------------------------
-// The matrix
+// The named takeover points
 // ---------------------------------------------------------------------------
+//
+// The fenced sequence a fresh attempt performs, in order:
+//
+//   1 lookupResourcesByClaim   (reconcile)
+//   2 isNumberAvailable        (exact availability)
+//   3 purchaseNumber           (BILLABLE)
+//   4 createMessagingService
+//   5 attachNumberToService
+//   6 configureInboundWebhook
+//   7 configureStatusCallback
+//   8 sendProvisioningTest
+//   then the authoritative write.
+//
+// "after X" and "before Y" are the same instant when X and Y are adjacent, and
+// both names are kept: the point is to state the requested enumeration in the
+// requester's words, not to pretend there are more distinct moments than the
+// sequence has.
 
-describe("takeover matrix: a displaced generation has ZERO authority, everywhere", () => {
-  // k = how many fence checks succeed before the takeover lands. k=0 is a
-  // worker displaced before it does anything; k=5 is one displaced at the very
-  // last effect (the provisioning test send).
-  const POINTS = [0, 1, 2, 3, 4, 5] as const;
+const POINTS: Array<{ name: string; allow: number; effectsExpected: number }> = [
+  { name: "before reconcile", allow: 0, effectsExpected: 0 },
+  { name: "before exact number availability", allow: 1, effectsExpected: 0 },
+  { name: "before purchase", allow: 2, effectsExpected: 0 },
+  { name: "after purchase / before service create", allow: 3, effectsExpected: 1 },
+  { name: "after service create / before attach", allow: 4, effectsExpected: 2 },
+  { name: "after attach / before inbound webhook", allow: 5, effectsExpected: 3 },
+  { name: "before status callback", allow: 6, effectsExpected: 4 },
+  { name: "before provider test", allow: 7, effectsExpected: 5 },
+  { name: "after provider test / before finalize", allow: 8, effectsExpected: 6 },
+];
 
-  it.each(POINTS)(
-    "takeover immediately before mutating effect #%i",
-    async (allowed) => {
-      const store = new DisplacedWorkerStore(allowed);
-      const outcome = await run(store);
+describe("takeover matrix: a displaced generation has ZERO authority", () => {
+  it.each(POINTS)("takeover $name", async ({ allow, effectsExpected }) => {
+    const store = new TakeoverStore(allow);
+    const outcome = await run(store);
 
-      // OLD_RESULT = lease_lost
-      expect(outcome).toMatchObject({ ok: false, result: "lease_lost" });
+    // OLD_RESULT = lease_lost
+    expect(outcome).toMatchObject({ ok: false, result: "lease_lost" });
 
-      // OLD_PROVIDER_MUTATIONS_AFTER_TAKEOVER = 0.
-      // Exactly `allowed` effects ran -- the ones BEFORE the takeover. Not one
-      // more executed after the fence turned.
-      expect(mutatingCalls(provider)).toBe(allowed);
+    // OLD_PROVIDER_EFFECTS_AFTER_TAKEOVER = 0.
+    // Exactly the effects BEFORE the takeover ran; not one after it.
+    expect(providerEffects(provider)).toBe(effectsExpected);
 
-      // UNFENCED_EFFECTS = 0. Every mutating effect consumed a fence check, so
-      // the counts agree; a call that slipped past the wrapper would make the
-      // effects outnumber the checks.
-      expect(mutatingCalls(provider)).toBeLessThanOrEqual(store.fenceChecks);
-
-      // OLD_AUTHORITATIVE_WRITES_AFTER_TAKEOVER = 0. Any write the stale
-      // worker attempted was REFUSED by the database; none landed.
-      const landed = store.writes.filter((w) => w.result !== "lease_lost");
-      expect(landed).toEqual([]);
-    },
-  );
-
-  it("a worker displaced before it starts buys nothing at all", async () => {
-    const store = new DisplacedWorkerStore(0);
-    await run(store);
-    expect(provider.ownedNumbers()).toEqual([]);
-    expect(provider.calls.purchase).toBe(0);
+    // OLD_AUTHORITATIVE_WRITES_AFTER_TAKEOVER = 0.
+    expect(store.landedWrites()).toEqual([]);
   });
 
-  it("ADOPTED PATH: a worker that stalled AFTER buying is fenced too", async () => {
-    // It never re-enters the purchase branch, which is precisely how this path
-    // stayed unfenced through the first fix.
-    const claimKey = `hone-sms-${"a".repeat(32)}`;
-    await provider.purchaseNumber({ claimKey, phoneNumber: CHOSEN });
-    const boughtBefore = provider.calls.purchase;
-    const ownedBefore = provider.ownedNumbers();
-
-    const store = new DisplacedWorkerStore(0);
+  it("takeover on the FINALIZE FAILURE path: the write is refused and reported as displacement", async () => {
+    // Every provider operation succeeds, the provisioning TEST fails, and the
+    // takeover has already landed. The worker must not narrate its test
+    // failure over the newer generation's truth.
+    provider.reset({ testSendFails: "provider_rejected" });
+    const store = new TakeoverStore(Number.MAX_SAFE_INTEGER); // fence never turns
     const outcome = await run(store);
 
     expect(outcome).toMatchObject({ ok: false, result: "lease_lost" });
-    // No SECOND purchase, and no service/attach/webhook/test either.
+    expect(outcome).not.toMatchObject({ reason: "provider_rejected" });
+    expect(store.landedWrites()).toEqual([]);
+    // It DID attempt the write -- and the database refused it. That is the
+    // second layer, independent of the fence.
+    expect(store.writes.length).toBeGreaterThan(0);
+    expect(store.writes.every((w) => w.generation === STALE)).toBe(true);
+  });
+
+  it("ADOPTED RESOURCES: a worker that stalled AFTER buying is fenced too", async () => {
+    // It never re-enters the purchase branch, which is exactly how this path
+    // stayed unfenced through the first repair.
+    await provider.purchaseNumber({ claimKey: CLAIM_KEY, phoneNumber: CHOSEN });
+    const boughtBefore = provider.calls.purchase;
+    const ownedBefore = provider.ownedNumbers();
+
+    const store = new TakeoverStore(0);
+    const outcome = await run(store);
+
+    expect(outcome).toMatchObject({ ok: false, result: "lease_lost" });
     expect(provider.calls.purchase).toBe(boughtBefore);
     expect(provider.calls.createService).toBe(0);
     expect(provider.calls.attach).toBe(0);
     expect(provider.calls.testSend).toBe(0);
     expect(provider.ownedNumbers()).toEqual(ownedBefore);
-    expect(store.writes.filter((w) => w.result !== "lease_lost")).toEqual([]);
+    expect(store.landedWrites()).toEqual([]);
   });
 
-  it("FINALIZE WINDOW: displaced after all provider work, the write is still refused", async () => {
-    // Every effect succeeds; the takeover lands in the gap before the
-    // authoritative write. The database refuses it and the worker must say so.
-    const store = new DisplacedWorkerStore(Number.MAX_SAFE_INTEGER);
-    // Its generation is stale even though the fence never turned -- exactly
-    // the race the fence cannot close.
-    const outcome = await run(store);
-
-    expect(outcome).toMatchObject({ ok: false, result: "lease_lost" });
-    const landed = store.writes.filter((w) => w.result !== "lease_lost");
-    expect(landed).toEqual([]);
-    // It did do the provider work; what it could not do was record it.
-    expect(mutatingCalls(provider)).toBeGreaterThan(0);
-  });
-
-  it("a stale worker never narrates a provider error over the database's verdict", async () => {
-    // The availability read is unfenced by design (it spends nothing), so a
-    // displaced worker can still receive "number gone". It must not REPORT
-    // that: a newer generation may be provisioning that very number.
+  it("a stale worker never narrates a provider answer over the database's verdict", async () => {
     provider.reset({ unavailableNumbers: [CHOSEN] });
-    const store = new DisplacedWorkerStore(Number.MAX_SAFE_INTEGER);
+    const store = new TakeoverStore(Number.MAX_SAFE_INTEGER);
     const outcome = await run(store);
 
     expect(outcome).toMatchObject({ ok: false, result: "lease_lost" });
@@ -211,29 +229,61 @@ describe("takeover matrix: a displaced generation has ZERO authority, everywhere
 });
 
 // ---------------------------------------------------------------------------
-// The matrix is exhaustive, and stays exhaustive
+// The positive control: the CURRENT worker must still be able to finish
 // ---------------------------------------------------------------------------
 
-describe("the matrix covers every mutating effect the port declares", () => {
-  it("walks one takeover point per mutating effect", () => {
-    // If a seventh mutating effect is added to the port, this fails until the
-    // matrix grows a row for it -- so coverage cannot quietly fall behind.
-    expect(MUTATING_PROVIDER_EFFECTS).toHaveLength(6);
+describe("the current worker reconciles and finishes", () => {
+  it("provisions to ACTIVE when it holds the live generation", async () => {
+    const store = new TakeoverStore(Number.MAX_SAFE_INTEGER, LIVE);
+    const outcome = await run(store);
+
+    expect(outcome).toMatchObject({ ok: true, result: "activated", adopted: false });
+    expect(provider.calls.purchase).toBe(1);
+    expect(store.landedWrites().map((w) => w.result)).toEqual(["activated"]);
   });
 
-  it("DEFENCE IN DEPTH: even with the fence never turning, no stale write lands", async () => {
-    // NOT a mutation control -- the fence simply never fires here, which is
-    // the in-flight race it cannot close. What this shows is the SECOND layer:
-    // the database refuses the stale generation independently of the wrapper,
-    // so the worst case is wasted provider work, never a corrupted row.
-    //
-    // The real mutation control is external and was performed for this file:
-    // removing the fence check from lib/sms/provider/fenced.ts turns 8 of
-    // these 12 tests red, with the displaced worker executing all six effects
-    // instead of stopping at k.
-    const store = new DisplacedWorkerStore(Number.MAX_SAFE_INTEGER);
-    await run(store);
-    expect(mutatingCalls(provider)).toBeGreaterThan(0);
-    expect(store.writes.filter((w) => w.result !== "lease_lost")).toEqual([]);
+  it("ADOPTS what a displaced predecessor bought, and buys nothing more", async () => {
+    // The whole point of reusing the claim key across a takeover: the number
+    // the crashed worker paid for is found, not paid for twice.
+    await provider.purchaseNumber({ claimKey: CLAIM_KEY, phoneNumber: CHOSEN });
+    const store = new TakeoverStore(Number.MAX_SAFE_INTEGER, LIVE);
+
+    const outcome = await run(store);
+
+    expect(outcome).toMatchObject({ ok: true, result: "activated", adopted: true });
+    expect(provider.calls.purchase).toBe(1); // the predecessor's, not a second
+    expect(provider.ownedNumbers()).toEqual([CHOSEN]);
+    expect(store.landedWrites().map((w) => w.result)).toEqual(["activated"]);
+  });
+
+  it("a fence that fails CLOSED never lets an unprovable worker spend", async () => {
+    // assertLease returning false because the database is unreachable is
+    // indistinguishable from displacement, and must be treated the same way.
+    const store = new TakeoverStore(0, LIVE);
+    const outcome = await run(store);
+    expect(outcome).toMatchObject({ ok: false, result: "lease_lost" });
+    expect(providerEffects(provider)).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Coverage cannot quietly fall behind
+// ---------------------------------------------------------------------------
+
+describe("the matrix stays exhaustive", () => {
+  it("has a row for every fenced operation", () => {
+    // One takeover point per fenced operation, plus the finalize window. If an
+    // operation is added to the port and fenced, this fails until the matrix
+    // grows a row for it.
+    expect(POINTS).toHaveLength(FENCED_PROVIDER_OPERATIONS.length + 1);
+  });
+
+  it("counts effects, not operations: reads are fenced but cost nothing", () => {
+    expect(BILLABLE_OR_MUTATING_EFFECTS).toHaveLength(6);
+    expect(FENCED_PROVIDER_OPERATIONS).toHaveLength(8);
+    // The last row lets all 8 operations through, so all 6 effects ran.
+    expect(POINTS[POINTS.length - 1].effectsExpected).toBe(
+      BILLABLE_OR_MUTATING_EFFECTS.length,
+    );
   });
 });

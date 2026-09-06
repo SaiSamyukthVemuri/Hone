@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
-  MUTATING_PROVIDER_EFFECTS,
-  READ_ONLY_PROVIDER_CALLS,
+  BILLABLE_OR_MUTATING_EFFECTS,
+  CLAIM_SCOPED_READS,
+  FENCED_PROVIDER_OPERATIONS,
+  PRE_CLAIM_READS,
 } from "@/lib/sms/provider/fenced";
 
 // COMMS-01B — THE LEASE-FENCING FAMILY GUARD.
@@ -66,11 +68,20 @@ const PROVISION_BODY = SRC.slice(SRC.indexOf("export async function provisionStu
 // ---------------------------------------------------------------------------
 
 describe("A — every provider port method is classified", () => {
-  it("no method is in both lists", () => {
-    const overlap = MUTATING_PROVIDER_EFFECTS.filter((m) =>
-      (READ_ONLY_PROVIDER_CALLS as readonly string[]).includes(m),
+  it("the three groups are disjoint", () => {
+    const groups = [BILLABLE_OR_MUTATING_EFFECTS, CLAIM_SCOPED_READS, PRE_CLAIM_READS];
+    const all = groups.flatMap((g) => [...g]);
+    expect(new Set(all).size, "a method appears in more than one group").toBe(all.length);
+  });
+
+  it("everything a provisioning attempt can do is fenced", () => {
+    // The union the wrapper actually guards. `searchAvailableNumbers` is the
+    // ONLY unfenced member of the port, and it is pre-claim: unreachable from
+    // an attempt, because no generation exists yet to check.
+    expect([...FENCED_PROVIDER_OPERATIONS].sort()).toEqual(
+      [...BILLABLE_OR_MUTATING_EFFECTS, ...CLAIM_SCOPED_READS].sort(),
     );
-    expect(overlap).toEqual([]);
+    expect(PRE_CLAIM_READS).toEqual(["searchAvailableNumbers"]);
   });
 
   it("every method the PORT declares appears in exactly one list", () => {
@@ -92,8 +103,9 @@ describe("A — every provider port method is classified", () => {
     expect(declared.size).toBeGreaterThanOrEqual(9);
 
     const classified = new Set<string>([
-      ...MUTATING_PROVIDER_EFFECTS,
-      ...READ_ONLY_PROVIDER_CALLS,
+      ...BILLABLE_OR_MUTATING_EFFECTS,
+      ...CLAIM_SCOPED_READS,
+      ...PRE_CLAIM_READS,
     ]);
     const unclassified = [...declared].filter((m) => !classified.has(m));
     expect(
@@ -117,8 +129,8 @@ describe("B — the raw provider is unreachable after the fence is built", () =>
     expect((PROVISION_BODY.match(/fenceProviderMutations\(/g) ?? [])).toHaveLength(1);
   });
 
-  it("never calls a MUTATING effect on the unfenced provider", () => {
-    for (const effect of MUTATING_PROVIDER_EFFECTS) {
+  it("never calls a fenced operation on the unfenced provider", () => {
+    for (const effect of FENCED_PROVIDER_OPERATIONS) {
       const bypass = new RegExp(`input\\.provider\\.${effect}\\(`);
       expect(
         bypass.test(PROVISION_BODY),

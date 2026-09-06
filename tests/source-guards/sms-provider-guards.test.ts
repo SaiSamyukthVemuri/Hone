@@ -224,7 +224,7 @@ describe("provider responses are parsed fail-closed", () => {
     expect(src).toMatch(/unavailable \? "number_no_longer_available" : "provider_rejected"/);
   });
 
-  it("every provider MUTATION is fenced BY CONSTRUCTION, not by six reminders", () => {
+  it("every claim-scoped provider operation is fenced BY CONSTRUCTION", () => {
     // This used to count six hand-written `await stillOurs()` calls. Counting
     // reminders was the wrong guard for the wrong design: gating only the
     // purchase had already left the adopted path unfenced, and a seventh
