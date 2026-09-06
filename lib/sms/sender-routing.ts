@@ -125,3 +125,121 @@ export const SENDER_NOT_ACTIVE_ERROR = "sms_sender_not_active_for_studio";
 export const SENDER_READ_FAILED_ERROR = "sms_sender_read_failed";
 /** A violated one-live-per-studio invariant. Fail closed, never pick a row. */
 export const SENDER_AMBIGUOUS_ERROR = "sms_sender_ambiguous";
+
+// ---------------------------------------------------------------------------
+// The operator signal for a routing failure — durable, and not one per cron pass
+// ---------------------------------------------------------------------------
+//
+// TWO PROBLEMS THIS CLOSES, both consequences of routing failing BEFORE the
+// claim (which is itself correct — a missing sender must not burn one of the
+// row's three send attempts).
+//
+// 1. DURABILITY. The general SMS failure logger persists its ops alert from an
+//    unawaited async IIFE. For a transient provider error that is fine: the row
+//    will be retried and re-logged. For a TERMINAL routing failure it is not —
+//    a serverless invocation can return, and be frozen or torn down, before the
+//    insert lands, so the one signal an operator gets is the one most likely to
+//    be lost. The terminal path therefore AWAITS the persistence attempt.
+//
+// 2. REPETITION. Because no attempt is consumed, the appointment stays eligible
+//    and the every-15-minute reminder cron re-selects it forever. Un-deduped,
+//    one unprovisioned studio produces ~96 identical unresolved alerts a day and
+//    the ops list becomes unreadable — which is the same as having no alert.
+//
+//    The fix is NOT to consume a fake send attempt to quiet it: that would be a
+//    false statement about the provider, and it would permanently strand the
+//    appointment after three passes even once the sender went live.
+//
+// DEDUPE SCOPE IS THE ACTIONABLE CONDITION, WHICH IS THE STUDIO, NOT THE
+// APPOINTMENT. An operator fixes "this studio has no active sender" once; being
+// told about it per appointment is noise, not information. So one unresolved
+// alert per (studio, reason).
+//
+// It reuses the repository's existing mechanism rather than inventing one: an
+// unresolved `ops_alerts` row for the same event suppresses a new insert, the
+// same shape recordReminderSchedulerHealthAlert uses. Resolution therefore
+// re-arms it — a recurrence after an operator resolves the row creates a new
+// alert, so nothing is suppressed forever.
+//
+// FAIL-OPEN, ALWAYS. Alerting is not the business transaction. If the alert
+// read or insert fails, the send still returns its ordinary routing failure and
+// booking/reschedule are untouched. An operator notification must never be able
+// to take down a booking.
+
+/** Terminal reasons worth an actionable, durable alert. */
+type TerminalRoutingReason = "none_active" | "ambiguous";
+
+const ROUTING_ALERT_EVENT: Record<TerminalRoutingReason, string> = {
+  none_active: SENDER_NOT_ACTIVE_ERROR,
+  ambiguous: SENDER_AMBIGUOUS_ERROR,
+};
+
+export type RoutingAlertOutcome =
+  | { alerted: true }
+  | { alerted: false; reason: "deduped" | "not_terminal" | "alert_failed" };
+
+export async function recordRoutingFailureAlert(
+  admin: SupabaseClient,
+  input: {
+    studioId: string | null;
+    appointmentId: string;
+    reason: "none_active" | "ambiguous" | "read_failed";
+    smsType: string;
+  },
+): Promise<RoutingAlertOutcome> {
+  // The synchronous operator line is emitted for EVERY routing failure,
+  // including the retryable one. Only the terminal reasons escalate to a
+  // durable alert; a transient read failure that alerted on every cron pass
+  // would be the spam this function exists to prevent.
+  console.error(
+    JSON.stringify({
+      event: "sms_routing_failed",
+      appointmentId: input.appointmentId,
+      studioId: input.studioId,
+      smsType: input.smsType,
+      reason: input.reason,
+      terminal: input.reason !== "read_failed",
+      timestamp: new Date().toISOString(),
+    }),
+  );
+  if (input.reason === "read_failed") return { alerted: false, reason: "not_terminal" };
+
+  const event = ROUTING_ALERT_EVENT[input.reason];
+  try {
+    // Dedupe on the ACTIONABLE CONDITION: one unresolved alert per studio per
+    // reason. A null studio cannot be scoped, so it is never deduped away.
+    if (input.studioId) {
+      const { data: open, error: readErr } = await admin
+        .from("ops_alerts")
+        .select("id")
+        .eq("event", event)
+        .eq("studio_id", input.studioId)
+        .is("resolved_at", null)
+        .limit(1);
+      // A failed read must not silently suppress the alert. Falling through and
+      // recording a possible duplicate is strictly better than dropping the only
+      // notice that a studio cannot send.
+      if (!readErr && (open ?? []).length > 0) {
+        return { alerted: false, reason: "deduped" };
+      }
+    }
+    const { recordOpsAlert } = await import("@/lib/ops/alerts");
+    await recordOpsAlert({
+      severity: "warning",
+      event,
+      message:
+        input.reason === "none_active"
+          ? "This studio has no ACTIVE SMS sender, so its messages cannot be routed and are not being sent."
+          : "This studio resolved MORE THAN ONE active SMS sender; sending is refused rather than choosing a number.",
+      studioId: input.studioId,
+      appointmentId: input.appointmentId,
+      route: "lib/sms/sender-routing:recordRoutingFailureAlert",
+      safeDetails: { reason: input.reason, sms_type: input.smsType },
+    });
+    return { alerted: true };
+  } catch {
+    // Fail-open. The caller still returns its routing failure; booking and
+    // reschedule are unaffected by an alerting fault.
+    return { alerted: false, reason: "alert_failed" };
+  }
+}

@@ -95,10 +95,15 @@ describe("a terminal routing failure is surfaced, and consumes no attempt", () =
     });
     // The claim is what consumes one of the three attempts. It must not run.
     expect(a.calls).not.toContain("claim_sms_send");
-    // And it must be LOUD: a structured failure line for the operator.
+    // And it must be LOUD: a structured failure line for the operator. The
+    // routing signal moved out of the general SMS failure logger into its own
+    // `sms_routing_failed` event when it became awaited and deduped, so the
+    // assertion follows the signal rather than pinning the old location.
     expect(errSpy).toHaveBeenCalled();
     const logged = String(errSpy.mock.calls[0]?.[0] ?? "");
-    expect(logged).toContain("sms_sender_not_active_for_studio");
+    expect(logged).toContain("sms_routing_failed");
+    expect(logged).toContain("none_active");
+    expect(logged).toContain('"terminal":true');
   });
 
   it("an ambiguous sender is equally terminal and equally loud", async () => {

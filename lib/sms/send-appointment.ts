@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
+  recordRoutingFailureAlert,
   resolveActiveStudioSender,
   SENDER_AMBIGUOUS_ERROR,
   SENDER_NOT_ACTIVE_ERROR,
@@ -430,7 +431,7 @@ async function sendOne(args: SendOneArgs): Promise<SmsSendResult> {
     // than one active sender" is a violated invariant that needs an operator.
     const retryable = routed.reason === "read_failed";
 
-    // THE OPERATOR SIGNAL, AND WHY IT HAS TO BE HERE.
+    // THE OPERATOR SIGNAL, AND WHY IT IS AWAITED HERE.
     //
     // This return happens before `claimSmsSend`, so no attempt is consumed and
     // the reminder query keeps seeing attempts below the 3-strike cap forever.
@@ -441,16 +442,24 @@ async function sendOne(args: SendOneArgs): Promise<SmsSendResult> {
     // in complete silence — the failure would be permanent and invisible at the
     // same time, which is the worst combination available.
     //
-    // `attemptNumber` is deliberately omitted: no attempt was made, and
-    // claiming one would be a false statement about the provider. The terminal
-    // cases carry retryable=false, which is what makes logSmsFailure escalate
-    // to a warning-severity ops alert rather than a log line.
-    logSmsFailure({
-      appointmentId: args.appointmentId,
-      smsType: args.smsType,
-      error,
-      retryable,
+    // AWAITED, not fire-and-forget. The general failure logger persists its
+    // alert from an unawaited IIFE, which is fine for a transient provider
+    // error that will be retried and re-logged — and wrong for a TERMINAL
+    // routing failure, where a serverless invocation can return and be torn
+    // down before the insert lands, losing the single signal an operator gets.
+    //
+    // Deduped by (studio, reason), because the actionable condition is the
+    // STUDIO: an operator fixes "no active sender" once, and being told per
+    // appointment every 15 minutes is noise rather than information.
+    //
+    // FAIL-OPEN by construction: recordRoutingFailureAlert returns an outcome
+    // and never throws, so an alerting fault cannot take down a booking. No
+    // send attempt is claimed either way — this is still a pre-provider failure.
+    await recordRoutingFailureAlert(args.admin, {
       studioId: args.studio.id ?? null,
+      appointmentId: args.appointmentId,
+      reason: routed.reason,
+      smsType: args.smsType,
     });
 
     return { ok: false, preProvider: true, error, retryable };
