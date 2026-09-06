@@ -178,10 +178,23 @@ export class FakeSmsProvisioningProvider implements SmsProvisioningProvider {
   }
 
   /** Everything the fake believes it owns. Test-facing inspection only. */
+  /**
+   * EVERY number this fake account holds, from either source.
+   *
+   * The union matters because `preOwnedNumbers` models inventory the studio
+   * bought outside Hone -- it carries no claim-key tag, so it is invisible to
+   * the claim-key store. Reading only that store let one number be reported as
+   * already owned by the adoption path AND advertised as available AND
+   * purchased, three answers no real account can give at once. A fake that
+   * permits what the provider cannot is worse than a missing test: it makes
+   * green meaningless exactly where the orchestration relies on it.
+   */
   ownedNumbers(): string[] {
-    return [...this.store.values()].flatMap((r) =>
+    const fromClaims = [...this.store.values()].flatMap((r) =>
       r.numbers.map((n) => n.phoneNumber),
     );
+    const preOwned = Object.keys(this.script.preOwnedNumbers ?? {});
+    return [...new Set([...fromClaims, ...preOwned])];
   }
 
   reset(script: FakeProviderScript = {}): void {
@@ -400,6 +413,19 @@ export class FakeSmsProvisioningProvider implements SmsProvisioningProvider {
     this.calls.purchase += 1;
 
     if (this.script.unavailableNumbers?.includes(input.phoneNumber)) {
+      return this.fail("number_no_longer_available");
+    }
+    // ALREADY OWNED OUTSIDE HONE. Twilio cannot sell an account a number that
+    // account already holds, so neither can the fake -- and the existing "gone"
+    // code is the honest answer rather than a new vocabulary.
+    //
+    // Scoped to `preOwnedNumbers` rather than to all of ownedNumbers(): that is
+    // the narrowest thing that models the defect, and it leaves the claim-key
+    // store's own same-claim repurchase behaviour (return the existing SID
+    // rather than mint a second) exactly as it was. Widening it to ownedNumbers()
+    // was tried against the full suite and changed nothing, so this is a choice
+    // about blast radius, NOT a claim that a test would catch the difference.
+    if (this.script.preOwnedNumbers && input.phoneNumber in this.script.preOwnedNumbers) {
       return this.fail("number_no_longer_available");
     }
     if (this.script.purchaseFails) return this.fail(this.script.purchaseFails);
