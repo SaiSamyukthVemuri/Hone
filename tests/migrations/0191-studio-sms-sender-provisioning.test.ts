@@ -91,13 +91,20 @@ describe("0191 — identity and position", () => {
     expect(versionsAbove(VERSION)).toEqual([]);
   });
 
-  it("is NOT applied to production, and does not claim to be", () => {
-    // COMMS-01B builds the model; applying it is a separate, separately
-    // authorized act. The hosted head is whatever the canonical record says,
-    // and it is not this file.
+  it("IS APPLIED to production, and is the CURRENT hosted head", () => {
+    // COMMS-01B built the model; applying it was a separate, separately
+    // authorized act, and it has now happened -- verified read-only against the
+    // canonical Hone production project on 2026-09-06 and recorded in
+    // migration-state.json plus the ledger's current block.
+    //
+    // This block asserted the PRE-apply position (`hosted < 191`, and 0191
+    // present in `pending_migrations`). Both were true only until the apply and
+    // both are false now. 0191 takes over the CURRENT-head claim 0190's file
+    // used to hold; whoever APPLIES 0192 moves this block again and narrows it
+    // to a floor, the way 0190's just was.
     const state = migrationState();
-    expect(state.hosted_migration_max_number).toBeLessThan(191);
-    expect(state.pending_migrations).toContain(VERSION);
+    expect(state.hosted_migration_max).toBe(VERSION);
+    expect(state.pending_migrations).not.toContain(VERSION);
   });
 
   it("edits no applied migration", () => {

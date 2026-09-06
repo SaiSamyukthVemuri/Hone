@@ -129,15 +129,15 @@ describe("0190 — identity and position", () => {
     // 0189's file keeps only its own durable facts. Whoever APPLIES 0191 moves
     // this block again.
     //
-    // 0191 has since been AUTHORED (COMMS-01B) and is NOT applied, so the repo
-    // max is 0191 while hosted remains 0190. That is the ordinary pre-apply
-    // position, not drift -- so the two limbs that described the whole
-    // repository rather than this migration are gone. Asserting
-    // `repo_migration_max === '0190'` or a globally empty pending set would
-    // make every future migration-bearing branch red by construction, which is
-    // the failure mode the sibling 0188 block already names.
+    // THE 0191 HANDOFF HAPPENED. This block asserted
+    // `hosted_migration_max === '0190'`, which was true only while 0190 was the
+    // hosted head. 0191 is applied now and owns that claim, so this file keeps a
+    // FLOOR -- "hosted is at least me" -- which is the durable fact about 0190
+    // and stays true for every migration that follows. Asserting equality here
+    // again would make this file red the moment 0192 applies, which is exactly
+    // the mechanical sweep CLAUDE.md forbids.
     const state = migrationState();
-    expect(state.hosted_migration_max).toBe(VERSION);
+    expect(Number(state.hosted_migration_max)).toBeGreaterThanOrEqual(190);
     expect(state.pending_migrations).not.toContain(VERSION);
   });
 });
