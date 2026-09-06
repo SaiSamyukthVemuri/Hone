@@ -330,10 +330,30 @@ export interface SmsProvisioningProvider {
     messagingServiceSid: string;
     to: string;
     body: string;
+    /**
+     * Send AS this exact sender, rather than letting the service choose.
+     *
+     * Twilio accepts `From` alongside `MessagingServiceSid` when the number is
+     * already in that service's sender pool, and rejects the message when it is
+     * not. So supplying it turns "which sender was used" from something we infer
+     * afterwards into something the provider either accepts or refuses up front.
+     *
+     * OPTIONAL, and the purchase path does not supply it: a service Hone just
+     * created holds exactly one number, so there is nothing to disambiguate and
+     * its existing sender-selection semantics are unchanged.
+     */
+    fromPhoneNumber?: string;
   }): Promise<ProviderResult<{
     messageSid: string;
     /**
-     * The sender the provider ACTUALLY used, as it reported it.
+     * The sender the provider reported, when it reported one.
+     *
+     * NOT the primary proof of which sender was used, and deliberately so: with
+     * only a MessagingServiceSid, Twilio may answer before sender selection has
+     * completed, so this can be null for a send that is perfectly fine. Proof
+     * that depends on a field which may not be populated yet is not proof.
+     * `fromPhoneNumber` above is how a caller NAMES its sender; this field is
+     * only useful as a contradiction check.
      *
      * A Messaging Service is a POOL. Sending through one proves that SOME
      * sender in it works, which is the same statement as "this number works"

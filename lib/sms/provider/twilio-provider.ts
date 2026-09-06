@@ -681,6 +681,7 @@ export const twilioProvisioningProvider: SmsProvisioningProvider = {
     messagingServiceSid: string;
     to: string;
     body: string;
+      fromPhoneNumber?: string;
   }): Promise<ProviderResult<{ messageSid: string; sentFrom: string | null }>> {
     const creds = readCredentials();
     if (!creds) return providerError("provider_not_configured", false);
@@ -689,6 +690,12 @@ export const twilioProvisioningProvider: SmsProvisioningProvider = {
     form.set("MessagingServiceSid", input.messagingServiceSid);
     form.set("To", input.to);
     form.set("Body", input.body);
+      // BOTH, when the caller names its sender. Twilio accepts the pair when
+      // the number is in that service's sender pool and REFUSES the message
+      // when it is not -- so the acknowledgement arrives with the create call
+      // rather than in a `from` field that may not be populated yet. Omitted
+      // entirely by the purchase path, whose service holds one sender.
+      if (input.fromPhoneNumber) form.set("From", input.fromPhoneNumber);
 
     const res = await request(
       creds,

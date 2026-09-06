@@ -295,6 +295,14 @@ export async function adoptExistingStudioSmsSender(
   // --- 4. A REAL provider test. There is no adoption shortcut. -------------
   const test = await provider.sendProvisioningTest({
     messagingServiceSid: input.messagingServiceSid,
+    // NAME THE SENDER. Ownership of this exact number and its membership of this
+    // exact service are both already proven above, so there is no reason to let
+    // the pool choose -- and every reason not to: a service Hone is adopting may
+    // hold several senders, and "the service sent" would then not be a statement
+    // about this number at all. Twilio accepts From alongside the service when
+    // the number is in its sender pool and refuses the message when it is not,
+    // so the acknowledgement arrives with the send itself.
+    fromPhoneNumber: phoneNumber,
     to: input.testDestination,
     body: input.testBody,
   });
@@ -316,19 +324,19 @@ export async function adoptExistingStudioSmsSender(
     return failWith(test.code, test.retryable);
   }
 
-  // --- 4b. THE TEST PROVED A SERVICE. DID IT PROVE THIS NUMBER? -----------
-  // A Messaging Service is a POOL. On a sender Hone just purchased the pool
-  // holds exactly one number, so "the service sent" and "this number sent" are
-  // the same statement. On an ADOPTED service they are not: the studio's
-  // existing service may hold several senders, the provider picks one, and a
-  // successful send proves only that SOME sender worked. Activating the
-  // selected number on that evidence would mark a number ACTIVE that nothing
-  // ever tested.
+  // --- 4b. THE SENDER WAS NAMED, NOT INFERRED -----------------------------
+  // The proof that this number sent is the provider ACCEPTING the send with an
+  // explicit From. Twilio refuses a From that is not in the named service's
+  // sender pool, so a successful create is its acknowledgement of the exact
+  // sender -- and it arrives with the call rather than in a field that may not
+  // be populated yet.
   //
-  // So the sender is OBSERVED, never assumed, and a missing observation is a
-  // refusal rather than a benefit of the doubt. No second message is sent: the
-  // provider reports the sender it used on the message it already created.
-  if (test.sentFrom !== phoneNumber) {
+  // `sentFrom` is therefore a CONTRADICTION CHECK and nothing more. Null means
+  // "sender selection had not been written back yet", which is ordinary and must
+  // not fail a send that succeeded. A populated value that disagrees with the
+  // From we named is a different thing entirely: the provider is telling us it
+  // did something other than what we asked, and that is never activated.
+  if (test.sentFrom !== null && test.sentFrom !== phoneNumber) {
     const parkedIdentifiers = await input.store.finalize({
       studioId: input.studioId,
       claimKey,

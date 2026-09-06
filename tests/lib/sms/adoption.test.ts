@@ -848,15 +848,24 @@ describe("CODEX P2-2 — malformed service entries fail the census closed", () =
 // worked. Finalizing the selected number on that evidence activates a number
 // nothing ever tested.
 
-describe("CODEX P2-A — the provisioning test must prove THIS number sent", () => {
+describe("CODEX P2-A — activation evidence is about THIS number", () => {
+  // SUPERSEDED CONTRACT, KEPT HONEST. This suite originally proved the sender by
+  // reading it back off the create response. That inference was timing-sensitive
+  // and was replaced by naming the sender on the send itself, so the assertions
+  // below now state what the NEW contract makes true. They are not deleted:
+  // the property under test — a number only reaches ACTIVE if IT sent — is the
+  // same one, and it is worth keeping a suite that would notice if the newer
+  // mechanism stopped delivering it.
+
   it("1. a single-sender service: the adopted number is the sender -> adopted", async () => {
     expect(await adopt()).toMatchObject({ ok: true, result: "adopted" });
     expect(store.live(STUDIO_A)!.status).toBe("active");
   });
 
-  it("2. MULTI-SENDER service, another number sends -> MUST NOT activate", async () => {
-    // The pool answers with a different sender. The service is healthy; the
-    // adopted number is unproven.
+  it("2. a MULTI-SENDER service cannot substitute another sender", async () => {
+    // Under the old contract the pool's choice decided this. Now the send names
+    // its sender, so the pool's preference is simply not consulted -- and the
+    // adopted number is the one proven.
     provider = new FakeSmsProvisioningProvider({
       preOwnedNumbers: { [WILLOW_NUMBER]: WILLOW_PN_SID },
       accountServices: [
@@ -870,36 +879,45 @@ describe("CODEX P2-A — the provisioning test must prove THIS number sent", () 
       testSendFrom: "+14165550777",
     });
     const outcome = await adopt();
-    expect(store.live(STUDIO_A)!.status).not.toBe("active");
-    expect(outcome.ok).toBe(false);
+    expect(outcome).toMatchObject({ ok: true, result: "adopted" });
+    expect(store.live(STUDIO_A)!.phoneNumber).toBe(WILLOW_NUMBER);
   });
 
-  it("3. observed sender == the canonical adopted number -> may finalize", async () => {
+  it("3. a number NOT in the service's sender pool is refused by the provider", async () => {
+    // The provider is the authority on its own pool. This is the case the old
+    // inference could never see: it would have read back whatever the service
+    // chose and been satisfied.
     provider = new FakeSmsProvisioningProvider({
-      ...ownedAndAssociated(),
-      testSendFrom: WILLOW_NUMBER,
-    });
-    expect(await adopt()).toMatchObject({ ok: true, result: "adopted" });
-  });
-
-  it("4. observed sender mismatch -> fail closed", async () => {
-    provider = new FakeSmsProvisioningProvider({
-      ...ownedAndAssociated(),
-      testSendFrom: "+14165550888",
+      preOwnedNumbers: { [WILLOW_NUMBER]: WILLOW_PN_SID },
+      accountServices: [
+        { sid: WILLOW_MG_SID, numbers: [WILLOW_NUMBER], inboundUrl: INBOUND, statusUrl: STATUS },
+      ],
+      rejectExplicitFrom: true,
     });
     const outcome = await adopt();
     expect(outcome).toMatchObject({ ok: false, result: "failed" });
     expect(store.live(STUDIO_A)!.status).not.toBe("active");
   });
 
-  it("5. missing / unparseable sender evidence -> fail closed", async () => {
+  it("4. a CONTRADICTORY reported sender still fails closed", async () => {
+    provider = new FakeSmsProvisioningProvider({
+      ...ownedAndAssociated(),
+      reportContradictorySender: "+14165550888",
+    });
+    const outcome = await adopt();
+    expect(outcome).toMatchObject({ ok: false, result: "failed" });
+    expect(store.live(STUDIO_A)!.status).not.toBe("active");
+  });
+
+  it("5. an UNPOPULATED reported sender is no longer a failure", async () => {
+    // The inversion, and the whole reason for the change: with only a service
+    // sid, `from` can be absent for a send that is perfectly fine. Failing on it
+    // rejected healthy adoptions.
     provider = new FakeSmsProvisioningProvider({
       ...ownedAndAssociated(),
       testSendFromMissing: true,
     });
-    const outcome = await adopt();
-    expect(outcome).toMatchObject({ ok: false, result: "failed" });
-    expect(store.live(STUDIO_A)!.status).not.toBe("active");
+    expect(await adopt()).toMatchObject({ ok: true, result: "adopted" });
   });
 
   it("6. the verification causes NO second provider test", async () => {
@@ -907,14 +925,13 @@ describe("CODEX P2-A — the provisioning test must prove THIS number sent", () 
     expect(provider.calls.testSend).toBe(1);
   });
 
-  it("6b. a mismatch still sends only one test, and records the identifiers", async () => {
+  it("6b. a contradiction sends one test and records identifiers, unproven", async () => {
     provider = new FakeSmsProvisioningProvider({
       ...ownedAndAssociated(),
-      testSendFrom: "+14165550888",
+      reportContradictorySender: "+14165550888",
     });
     await adopt();
     expect(provider.calls.testSend).toBe(1);
-    // The resources are real and must be remembered, but unproven.
     expect(store.live(STUDIO_A)!.phoneNumberSid).toBe(WILLOW_PN_SID);
     expect(store.live(STUDIO_A)!.lastTestOkAt).toBeNull();
   });
@@ -993,4 +1010,121 @@ describe("CODEX P2-B — no adoption-only string reaches last_error_code", () =>
       expect(VALID, `${reason} persisted "${persisted}"`).toContain(persisted);
     });
   }
+});
+
+// ---------------------------------------------------------------------------
+// CODEX P2 — bind the test message to the adopted sender.
+// ---------------------------------------------------------------------------
+//
+// Reading the sender back off the create response is timing-sensitive: with
+// only a MessagingServiceSid, Twilio may not have completed sender selection
+// when it answers, so `from` can be absent for a send that is perfectly fine.
+// Proof that depends on a field that may not be populated yet is not proof.
+//
+// Ownership and exact service association are ALREADY established before this
+// point, so the test can simply ask for the sender it means: MessagingServiceSid
+// plus an explicit From. Twilio accepts both together when the From is in that
+// service's sender pool, and rejects the message otherwise — which turns the
+// proof into the provider's own acknowledgement instead of our inference.
+
+describe("CODEX P2 — the provisioning test names its sender", () => {
+  function recordSends() {
+    const seen: Array<{ messagingServiceSid: string; fromPhoneNumber?: string }> = [];
+    const inner = provider.sendProvisioningTest.bind(provider);
+    provider.sendProvisioningTest = async (input) => {
+      seen.push({
+        messagingServiceSid: input.messagingServiceSid,
+        fromPhoneNumber: input.fromPhoneNumber,
+      });
+      return inner(input);
+    };
+    return seen;
+  }
+
+  it("1. sends BOTH the expected service and the exact canonical From", async () => {
+    const seen = recordSends();
+    expect(await adopt()).toMatchObject({ ok: true, result: "adopted" });
+    expect(seen).toEqual([
+      { messagingServiceSid: WILLOW_MG_SID, fromPhoneNumber: WILLOW_NUMBER },
+    ]);
+  });
+
+  it("2. a whitespace-padded input still sends the CANONICAL From", async () => {
+    const seen = recordSends();
+    await adopt({ phoneNumber: `  ${WILLOW_NUMBER}  ` });
+    expect(seen[0].fromPhoneNumber).toBe(WILLOW_NUMBER);
+  });
+
+  it("3. another pool member can never satisfy the adopted-number test", async () => {
+    // The service holds two senders. With an explicit From there is nothing for
+    // the pool to choose, so the other member cannot stand in.
+    provider = new FakeSmsProvisioningProvider({
+      preOwnedNumbers: { [WILLOW_NUMBER]: WILLOW_PN_SID },
+      accountServices: [
+        {
+          sid: WILLOW_MG_SID,
+          numbers: [WILLOW_NUMBER, "+14165550777"],
+          inboundUrl: INBOUND,
+          statusUrl: STATUS,
+        },
+      ],
+      // The pool WOULD have picked the other one.
+      testSendFrom: "+14165550777",
+    });
+    const seen = recordSends();
+    const outcome = await adopt();
+    expect(seen[0].fromPhoneNumber).toBe(WILLOW_NUMBER);
+    expect(outcome).toMatchObject({ ok: true, result: "adopted" });
+    expect(store.live(STUDIO_A)!.phoneNumber).toBe(WILLOW_NUMBER);
+  });
+
+  it("4. the provider rejecting the requested From fails closed", async () => {
+    // Twilio refuses a From that is not in the service's sender pool.
+    provider = new FakeSmsProvisioningProvider({
+      ...ownedAndAssociated(),
+      rejectExplicitFrom: true,
+    });
+    const outcome = await adopt();
+    expect(outcome).toMatchObject({ ok: false, result: "failed" });
+    expect(store.live(STUDIO_A)!.status).not.toBe("active");
+    expect(store.live(STUDIO_A)!.lastTestOkAt).toBeNull();
+  });
+
+  it("5. an invalid adopted number never reaches the provider test", async () => {
+    for (const bad of ["4165550100", "  ", "not-a-number"]) {
+      provider = new FakeSmsProvisioningProvider(ownedAndAssociated());
+      store = new InMemoryProvisioningStore(MEMBERS);
+      const outcome = await adopt({ phoneNumber: bad });
+      expect(outcome.ok, bad).toBe(false);
+      expect(provider.calls.testSend, bad).toBe(0);
+    }
+  });
+
+  it("6. exactly one provisioning test message is sent", async () => {
+    await adopt();
+    expect(provider.calls.testSend).toBe(1);
+  });
+
+  it("7. an unpopulated response sender is NOT a failure any more", async () => {
+    // This is the timing sensitivity the change removes: with an explicit From,
+    // a create response that has not yet filled in `from` is still a successful
+    // send of the sender we named.
+    provider = new FakeSmsProvisioningProvider({
+      ...ownedAndAssociated(),
+      testSendFromMissing: true,
+    });
+    expect(await adopt()).toMatchObject({ ok: true, result: "adopted" });
+  });
+
+  it("8. a CONTRADICTORY reported sender still fails closed", async () => {
+    // Null means "not known yet". A populated value that disagrees with the
+    // From we asked for is a real contradiction, not a timing artifact.
+    provider = new FakeSmsProvisioningProvider({
+      ...ownedAndAssociated(),
+      reportContradictorySender: "+14165550888",
+    });
+    const outcome = await adopt();
+    expect(outcome).toMatchObject({ ok: false, result: "failed" });
+    expect(store.live(STUDIO_A)!.status).not.toBe("active");
+  });
 });

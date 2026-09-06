@@ -449,7 +449,50 @@ describe("readMessagingServiceConfig: read-only", () => {
   });
 });
 
-describe("sendProvisioningTest: the observed sender (WILLOW ADOPTION)", () => {
+describe("sendProvisioningTest: naming the sender on the wire (WILLOW ADOPTION)", () => {
+  it("sends BOTH MessagingServiceSid and From when a sender is named", async () => {
+    stubFetch([{ status: 201, json: { sid: "SM1", from: NUMBER } }]);
+    await (await adapter()).sendProvisioningTest({
+      messagingServiceSid: MG("b"),
+      to: "+14165559999",
+      body: "test",
+      fromPhoneNumber: NUMBER,
+    });
+    const body = new URLSearchParams(calls[0].body ?? "");
+    expect(body.get("MessagingServiceSid")).toBe(MG("b"));
+    expect(body.get("From")).toBe(NUMBER);
+    expect(body.get("To")).toBe("+14165559999");
+    expect(calls[0].method).toBe("POST");
+  });
+
+  it("OMITS From entirely when no sender is named — the purchase path", async () => {
+    // The purchase path's service holds exactly one number, so it has nothing to
+    // disambiguate and its request grammar must not change.
+    stubFetch([{ status: 201, json: { sid: "SM1", from: NUMBER } }]);
+    await (await adapter()).sendProvisioningTest({
+      messagingServiceSid: MG("b"),
+      to: "+14165559999",
+      body: "test",
+    });
+    const body = new URLSearchParams(calls[0].body ?? "");
+    expect(body.has("From")).toBe(false);
+    expect(body.get("MessagingServiceSid")).toBe(MG("b"));
+  });
+
+  it("a provider rejection of the named From surfaces as a failure", async () => {
+    // Twilio refuses a From that is not in the service's sender pool.
+    stubFetch([{ status: 400, json: { code: 21606, message: "From not in pool" } }]);
+    const r = await (await adapter()).sendProvisioningTest({
+      messagingServiceSid: MG("b"),
+      to: "+14165559999",
+      body: "test",
+      fromPhoneNumber: NUMBER,
+    });
+    expect(r.ok).toBe(false);
+  });
+});
+
+describe("sendProvisioningTest: the reported sender is secondary", () => {
   it("returns the sender Twilio reports, so exact-number proof needs no second send", async () => {
     stubFetch([{ status: 201, json: { sid: "SM1", from: NUMBER } }]);
     const r = await (await adapter()).sendProvisioningTest({

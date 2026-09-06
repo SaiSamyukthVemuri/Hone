@@ -107,6 +107,10 @@ export type FakeProviderScript = {
   ownedLookupFails?: ProviderErrorCode;
   /** Which sender the POOL used for the test send. Defaults to the service's first number. */
   testSendFrom?: string;
+  /** The provider refuses the explicit From (not in the service's sender pool). */
+  rejectExplicitFrom?: boolean;
+  /** The response names a sender that CONTRADICTS the requested From. */
+  reportContradictorySender?: string;
   /** The provider reported no sender at all. Must never read as success. */
   testSendFromMissing?: boolean;
   /** Fail the service configuration read. */
@@ -161,9 +165,6 @@ export class FakeSmsProvisioningProvider implements SmsProvisioningProvider {
   };
 
   script: FakeProviderScript = {};
-
-  /** No-op seam so the method body reads the same as the others. */
-  private async phaseNoop(): Promise<void> {}
 
   constructor(script: FakeProviderScript = {}) {
     this.script = script;
@@ -451,17 +452,36 @@ export class FakeSmsProvisioningProvider implements SmsProvisioningProvider {
     messagingServiceSid: string;
     to: string;
     body: string;
+    fromPhoneNumber?: string;
   }): Promise<ProviderResult<{ messageSid: string; sentFrom: string | null }>> {
-    await this.phaseNoop();
     this.calls.testSend += 1;
     if (this.script.testSendFails) return this.fail(this.script.testSendFails);
 
-    // Which sender did the POOL use? An adopted service may hold several.
     const svc = (this.script.accountServices ?? []).find(
       (x) => x?.sid === input.messagingServiceSid,
     );
+
+    if (input.fromPhoneNumber) {
+      // EXPLICIT SENDER. Twilio refuses a From that is not in the service's
+      // sender pool, so the fake refuses it too -- otherwise adoption's proof
+      // would be a statement about the fake's leniency.
+      const inPool = svc?.numbers.includes(input.fromPhoneNumber) ?? false;
+      if (this.script.rejectExplicitFrom || (svc && !inPool)) {
+        return this.fail("provider_rejected");
+      }
+      return {
+        ok: true,
+        messageSid: `SM${hex32(`test:${input.fromPhoneNumber}`)}`,
+        // The response may not have caught up; null is normal, not a failure.
+        sentFrom: this.script.testSendFromMissing
+          ? null
+          : (this.script.reportContradictorySender ?? input.fromPhoneNumber),
+      };
+    }
+
+    // NO explicit sender: the service chooses. This is the purchase path, whose
+    // pool holds exactly one number.
     const fromOwned = svc?.numbers[0] ?? null;
-    // A service Hone created under a claim holds the number it purchased.
     const fromClaim =
       [...this.store.values()].find((r) => r.messagingServiceSid === input.messagingServiceSid)
         ?.numbers[0]?.phoneNumber ?? null;
@@ -471,5 +491,6 @@ export class FakeSmsProvisioningProvider implements SmsProvisioningProvider {
 
     return { ok: true, messageSid: `SM${hex32(`test:${input.messagingServiceSid}`)}`, sentFrom };
   }
+
 
 }
