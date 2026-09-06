@@ -448,3 +448,38 @@ describe("readMessagingServiceConfig: read-only", () => {
     });
   });
 });
+
+describe("sendProvisioningTest: the observed sender (WILLOW ADOPTION)", () => {
+  it("returns the sender Twilio reports, so exact-number proof needs no second send", async () => {
+    stubFetch([{ status: 201, json: { sid: "SM1", from: NUMBER } }]);
+    const r = await (await adapter()).sendProvisioningTest({
+      messagingServiceSid: MG("b"),
+      to: "+14165559999",
+      body: "test",
+    });
+    expect(r.ok && r.sentFrom).toBe(NUMBER);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("reports a DIFFERENT pool sender truthfully rather than echoing the request", async () => {
+    stubFetch([{ status: 201, json: { sid: "SM1", from: "+14165550777" } }]);
+    const r = await (await adapter()).sendProvisioningTest({
+      messagingServiceSid: MG("b"),
+      to: "+14165559999",
+      body: "test",
+    });
+    expect(r.ok && r.sentFrom).toBe("+14165550777");
+  });
+
+  it("an absent or unparseable sender is null, never invented", async () => {
+    for (const from of [undefined, null, "", "not-a-number", 42]) {
+      stubFetch([{ status: 201, json: { sid: "SM1", from } }]);
+      const r = await (await adapter()).sendProvisioningTest({
+        messagingServiceSid: MG("b"),
+        to: "+14165559999",
+        body: "test",
+      });
+      expect(r.ok && r.sentFrom, String(from)).toBeNull();
+    }
+  });
+});

@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { BILLABLE_OR_MUTATING_EFFECTS, CLAIM_SCOPED_READS } from "@/lib/sms/provider/fenced";
+import { PROVIDER_ERROR_CODES } from "@/lib/sms/provider/types";
+import { REFUSAL_TO_STORE_CODE } from "@/lib/sms/adoption";
 
 // WILLOW ADOPTION — the boundary guard.
 //
@@ -21,7 +23,8 @@ const codeOnly = (src: string) =>
     .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
     .join("\n");
 
-const ADOPTION = codeOnly(read("lib/sms/adoption.ts"));
+const ADOPTION_RAW = read("lib/sms/adoption.ts");
+const ADOPTION = codeOnly(ADOPTION_RAW);
 const TWILIO_ADAPTER = read("lib/sms/provider/twilio-provider.ts");
 
 describe("adoption cannot purchase, create or move", () => {
@@ -192,5 +195,78 @@ describe("the fence classification stays total", () => {
       "searchAvailableNumbers",
     ]);
     expect(methods.filter((m) => !classified.has(m))).toEqual([]);
+  });
+});
+
+describe("CODEX P2-B — the refusal mapping is total by construction", () => {
+  it("every AdoptionRefusal member in the SOURCE has a mapping entry", () => {
+    // Read the union out of the source rather than importing it: a type cannot
+    // be enumerated at runtime, and a hand-kept list is the thing that drifted.
+    const start = ADOPTION_RAW.indexOf("export type AdoptionRefusal =");
+    const block = ADOPTION_RAW.slice(start, ADOPTION_RAW.indexOf(";", start));
+    const members = [...block.matchAll(/"([a-z_]+)"/g)].map((m) => m[1]);
+    expect(members.length).toBeGreaterThanOrEqual(8);
+
+    const mapped = Object.keys(REFUSAL_TO_STORE_CODE);
+    expect(members.filter((m) => !mapped.includes(m)), "unmapped refusal").toEqual([]);
+    expect(mapped.filter((m) => !members.includes(m)), "stale mapping entry").toEqual([]);
+  });
+
+  it("every mapped value is vocabulary 0191 actually accepts", () => {
+    const valid = new Set<string>([
+      ...PROVIDER_ERROR_CODES,
+      "finalize_failed",
+      "finalize_conflict",
+      "lease_lost",
+    ]);
+    for (const [refusal, code] of Object.entries(REFUSAL_TO_STORE_CODE)) {
+      expect(valid.has(code), `${refusal} -> ${code}`).toBe(true);
+    }
+  });
+
+  it("A SYNTHETIC UNMAPPED MEMBER IS CAUGHT — the guard is not vacuous", () => {
+    // Simulate the future edit this exists to catch: a new member added to the
+    // union with no mapping entry. The check above must reject it.
+    const members = [...Object.keys(REFUSAL_TO_STORE_CODE), "number_some_future_refusal"];
+    const mapped = Object.keys(REFUSAL_TO_STORE_CODE);
+    expect(members.filter((m) => !mapped.includes(m))).toEqual(["number_some_future_refusal"]);
+  });
+
+  it("no adoption-only string can reach the store", () => {
+    // The single call site must go through the map.
+    expect(ADOPTION).toMatch(/errorCode: storeCodeFor\(reason\)/);
+    expect(ADOPTION).not.toMatch(/errorCode: reason\b/);
+  });
+});
+
+describe("CODEX P2-A — activation evidence names the adopted number", () => {
+  it("the sender is compared to the canonical number, not assumed", () => {
+    expect(ADOPTION).toMatch(/test\.sentFrom !== phoneNumber/);
+    expect(ADOPTION).toContain("provider_test_sender_mismatch");
+  });
+
+  it("the comparison happens BEFORE the activating finalize", () => {
+    const cmpAt = ADOPTION.indexOf("test.sentFrom !== phoneNumber");
+    const okAt = ADOPTION.indexOf("testOk: true");
+    expect(cmpAt).toBeGreaterThan(-1);
+    expect(cmpAt).toBeLessThan(okAt);
+  });
+
+  it("a mismatch records the identifiers WITHOUT activating", () => {
+    // Search FROM the comparison: `provider_test_sender_mismatch` also appears
+    // in the type union near the top of the file, and slicing to that earlier
+    // occurrence produced an empty window that would have passed anything.
+    const at = ADOPTION.indexOf("test.sentFrom !== phoneNumber");
+    const branch = ADOPTION.slice(
+      at,
+      ADOPTION.indexOf("provider_test_sender_mismatch", at),
+    );
+    expect(branch.length).toBeGreaterThan(50);
+    expect(branch).toContain("testOk: false");
+  });
+
+  it("the adapter reads the sender off the message it already created", () => {
+    // No second send, and no second provider call, for the proof.
+    expect(TWILIO_ADAPTER).toMatch(/sentFrom: asE164\(rec\?\.from\)/);
   });
 });

@@ -681,7 +681,7 @@ export const twilioProvisioningProvider: SmsProvisioningProvider = {
     messagingServiceSid: string;
     to: string;
     body: string;
-  }): Promise<ProviderResult<{ messageSid: string }>> {
+  }): Promise<ProviderResult<{ messageSid: string; sentFrom: string | null }>> {
     const creds = readCredentials();
     if (!creds) return providerError("provider_not_configured", false);
 
@@ -698,8 +698,13 @@ export const twilioProvisioningProvider: SmsProvisioningProvider = {
     if (!res.ok) return res;
     if (res.status !== 201 && res.status !== 200) return httpError(res.status);
 
-    const sid = asString(asRecord(res.json)?.sid);
+      const rec = asRecord(res.json);
+      const sid = asString(rec?.sid);
     if (!sid) return providerError("provider_response_unparseable", false);
-    return { ok: true, messageSid: sid };
+      // Twilio reports the sender it selected from the service on the Message
+      // resource itself, so exact-sender proof needs no second call and no
+      // second message. Parsed fail-closed: anything that is not E.164 becomes
+      // null, and null is never read as "the number we asked for".
+      return { ok: true, messageSid: sid, sentFrom: asE164(rec?.from) };
   },
 };

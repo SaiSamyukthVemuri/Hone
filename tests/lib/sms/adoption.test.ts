@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { adoptExistingStudioSmsSender } from "@/lib/sms/adoption";
 import { provisionStudioSmsSender } from "@/lib/sms/provisioning";
+import { PROVIDER_ERROR_CODES } from "@/lib/sms/provider/types";
 import {
   FakeSmsProvisioningProvider,
   type FakeProviderScript,
@@ -467,7 +468,7 @@ describe("6. a competing or stale claim cannot take over", () => {
     let takenOver = false;
     const stalling = new FakeSmsProvisioningProvider(ownedAndAssociated());
     const original = stalling.sendProvisioningTest.bind(stalling);
-    stalling.sendProvisioningTest = async () => {
+    stalling.sendProvisioningTest = async (input) => {
       if (!takenOver) {
         takenOver = true;
         store.now += store.leaseMs + 1;
@@ -480,7 +481,7 @@ describe("6. a competing or stale claim cannot take over", () => {
           phoneNumber: WILLOW_NUMBER,
         });
       }
-      return original();
+      return original(input);
     };
     provider = stalling;
 
@@ -833,4 +834,163 @@ describe("CODEX P2-2 — malformed service entries fail the census closed", () =
     expect(provider.calls.serviceConfigRead).toBe(0);
     expect(store.live(STUDIO_A)!.status).not.toBe("active");
   });
+});
+
+// ---------------------------------------------------------------------------
+// CODEX P2-A — activation evidence must name the adopted number.
+// ---------------------------------------------------------------------------
+//
+// sendProvisioningTest posts to a MESSAGING SERVICE, and a service is a POOL.
+// On a freshly purchased sender the pool holds exactly one number, so "the
+// service can send" and "this number can send" are the same statement. On an
+// ADOPTED service they are not: the studio's existing service may hold several
+// senders, Twilio picks one, and a successful send proves only that SOME sender
+// worked. Finalizing the selected number on that evidence activates a number
+// nothing ever tested.
+
+describe("CODEX P2-A — the provisioning test must prove THIS number sent", () => {
+  it("1. a single-sender service: the adopted number is the sender -> adopted", async () => {
+    expect(await adopt()).toMatchObject({ ok: true, result: "adopted" });
+    expect(store.live(STUDIO_A)!.status).toBe("active");
+  });
+
+  it("2. MULTI-SENDER service, another number sends -> MUST NOT activate", async () => {
+    // The pool answers with a different sender. The service is healthy; the
+    // adopted number is unproven.
+    provider = new FakeSmsProvisioningProvider({
+      preOwnedNumbers: { [WILLOW_NUMBER]: WILLOW_PN_SID },
+      accountServices: [
+        {
+          sid: WILLOW_MG_SID,
+          numbers: [WILLOW_NUMBER, "+14165550777"],
+          inboundUrl: INBOUND,
+          statusUrl: STATUS,
+        },
+      ],
+      testSendFrom: "+14165550777",
+    });
+    const outcome = await adopt();
+    expect(store.live(STUDIO_A)!.status).not.toBe("active");
+    expect(outcome.ok).toBe(false);
+  });
+
+  it("3. observed sender == the canonical adopted number -> may finalize", async () => {
+    provider = new FakeSmsProvisioningProvider({
+      ...ownedAndAssociated(),
+      testSendFrom: WILLOW_NUMBER,
+    });
+    expect(await adopt()).toMatchObject({ ok: true, result: "adopted" });
+  });
+
+  it("4. observed sender mismatch -> fail closed", async () => {
+    provider = new FakeSmsProvisioningProvider({
+      ...ownedAndAssociated(),
+      testSendFrom: "+14165550888",
+    });
+    const outcome = await adopt();
+    expect(outcome).toMatchObject({ ok: false, result: "failed" });
+    expect(store.live(STUDIO_A)!.status).not.toBe("active");
+  });
+
+  it("5. missing / unparseable sender evidence -> fail closed", async () => {
+    provider = new FakeSmsProvisioningProvider({
+      ...ownedAndAssociated(),
+      testSendFromMissing: true,
+    });
+    const outcome = await adopt();
+    expect(outcome).toMatchObject({ ok: false, result: "failed" });
+    expect(store.live(STUDIO_A)!.status).not.toBe("active");
+  });
+
+  it("6. the verification causes NO second provider test", async () => {
+    await adopt();
+    expect(provider.calls.testSend).toBe(1);
+  });
+
+  it("6b. a mismatch still sends only one test, and records the identifiers", async () => {
+    provider = new FakeSmsProvisioningProvider({
+      ...ownedAndAssociated(),
+      testSendFrom: "+14165550888",
+    });
+    await adopt();
+    expect(provider.calls.testSend).toBe(1);
+    // The resources are real and must be remembered, but unproven.
+    expect(store.live(STUDIO_A)!.phoneNumberSid).toBe(WILLOW_PN_SID);
+    expect(store.live(STUDIO_A)!.lastTestOkAt).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CODEX P2-B — every adoption refusal maps into 0191's vocabulary.
+// ---------------------------------------------------------------------------
+//
+// ProvisioningStore.fail persists `errorCode` as `last_error_code`, and 0191
+// constrains only its SHAPE (^[a-z][a-z0-9_]{2,63}$) -- which an adoption-only
+// string satisfies. So an unmapped refusal does not fail loudly; it persists
+// quietly as a code no other part of Hone understands.
+
+describe("CODEX P2-B — no adoption-only string reaches last_error_code", () => {
+  const VALID: string[] = [
+    ...PROVIDER_ERROR_CODES,
+    "finalize_failed",
+    "finalize_conflict",
+    "lease_lost",
+  ];
+
+  const REFUSALS: Array<[string, FakeProviderScript]> = [
+    ["number_not_owned_by_account", { preOwnedNumbers: {} }],
+    [
+      "number_in_other_service",
+      {
+        preOwnedNumbers: { [WILLOW_NUMBER]: WILLOW_PN_SID },
+        accountServices: [
+          { sid: WILLOW_MG_SID, numbers: [] },
+          { sid: OTHER_MG_SID, numbers: [WILLOW_NUMBER] },
+        ],
+      },
+    ],
+    [
+      "number_not_in_named_service",
+      {
+        preOwnedNumbers: { [WILLOW_NUMBER]: WILLOW_PN_SID },
+        accountServices: [{ sid: WILLOW_MG_SID, numbers: [] }],
+      },
+    ],
+    [
+      "number_association_ambiguous",
+      {
+        preOwnedNumbers: { [WILLOW_NUMBER]: WILLOW_PN_SID },
+        accountServices: [
+          { sid: WILLOW_MG_SID, numbers: [WILLOW_NUMBER] },
+          { sid: OTHER_MG_SID, numbers: [WILLOW_NUMBER] },
+        ],
+      },
+    ],
+    ["number_association_unavailable", { ...ownedAndAssociated(), membershipProbeFails: true }],
+    [
+      "provider_configuration_required",
+      {
+        preOwnedNumbers: { [WILLOW_NUMBER]: WILLOW_PN_SID },
+        accountServices: [
+          { sid: WILLOW_MG_SID, numbers: [WILLOW_NUMBER], inboundUrl: null, statusUrl: null },
+        ],
+      },
+    ],
+  ];
+
+  for (const [reason, script] of REFUSALS) {
+    it(`${reason} persists a VALID store error code`, async () => {
+      provider = new FakeSmsProvisioningProvider(script);
+      store = new InMemoryProvisioningStore(MEMBERS);
+      const outcome = await adopt();
+
+      // The caller still receives the RICH adoption reason.
+      expect((outcome as { reason?: string }).reason).toBe(reason);
+
+      // But what persists must be vocabulary 0191 understands.
+      const persisted = store.live(STUDIO_A)?.lastErrorCode;
+      expect(persisted, `${reason} persisted "${persisted}"`).not.toBeNull();
+      expect(VALID, `${reason} persisted "${persisted}"`).toContain(persisted);
+    });
+  }
 });

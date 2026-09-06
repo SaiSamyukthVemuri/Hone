@@ -79,7 +79,8 @@ export type AdoptionRefusal =
   | "number_association_ambiguous"
   | "number_association_unavailable"
   | "provider_configuration_required"
-  | "provider_number_mismatch";
+  | "provider_number_mismatch"
+  | "provider_test_sender_mismatch";
 
 export type AdoptionInput = {
   store: ProvisioningStore;
@@ -178,7 +179,7 @@ export async function adoptExistingStudioSmsSender(
       leaseGeneration,
       // The store's vocabulary is 0191's; an adoption-specific refusal is
       // recorded under the closest provider code it already accepts.
-      errorCode: isAdoptionRefusal(reason) ? "provider_resource_mismatch" : reason,
+      errorCode: storeCodeFor(reason),
     });
     if (parked === "lease_lost") {
       return { ok: false, result: "lease_lost", senderId };
@@ -315,6 +316,32 @@ export async function adoptExistingStudioSmsSender(
     return failWith(test.code, test.retryable);
   }
 
+  // --- 4b. THE TEST PROVED A SERVICE. DID IT PROVE THIS NUMBER? -----------
+  // A Messaging Service is a POOL. On a sender Hone just purchased the pool
+  // holds exactly one number, so "the service sent" and "this number sent" are
+  // the same statement. On an ADOPTED service they are not: the studio's
+  // existing service may hold several senders, the provider picks one, and a
+  // successful send proves only that SOME sender worked. Activating the
+  // selected number on that evidence would mark a number ACTIVE that nothing
+  // ever tested.
+  //
+  // So the sender is OBSERVED, never assumed, and a missing observation is a
+  // refusal rather than a benefit of the doubt. No second message is sent: the
+  // provider reports the sender it used on the message it already created.
+  if (test.sentFrom !== phoneNumber) {
+    const parkedIdentifiers = await input.store.finalize({
+      studioId: input.studioId,
+      claimKey,
+      leaseGeneration,
+      phoneNumber,
+      phoneNumberSid,
+      messagingServiceSid: input.messagingServiceSid,
+      testOk: false,
+    });
+    if (parkedIdentifiers === "lease_lost") return { ok: false, result: "lease_lost", senderId };
+    return failWith("provider_test_sender_mismatch", false);
+  }
+
   // --- 5. 0191's finalize, unchanged --------------------------------------
   const finalized = await input.store.finalize({
     studioId: input.studioId,
@@ -338,11 +365,47 @@ export async function adoptExistingStudioSmsSender(
   );
 }
 
-function isAdoptionRefusal(reason: string): reason is AdoptionRefusal {
-  return (
-    reason === "number_not_owned_by_account" ||
-    reason === "number_not_in_named_service" ||
-    reason === "service_membership_unknown" ||
-    reason === "provider_number_mismatch"
-  );
+/**
+ * Every adoption-specific refusal, mapped deliberately into 0191's own
+ * AttemptErrorCode vocabulary.
+ *
+ * WHY THIS IS A TOTAL RECORD AND NOT A PREDICATE. The previous form was a
+ * hand-written `||` chain, and it drifted: it still named
+ * `service_membership_unknown`, a member that had been renamed away, and it
+ * covered four of seven. The four it missed passed straight through to
+ * `store.fail({ errorCode })` and persisted as `last_error_code` — which 0191
+ * does not reject, because its CHECK constrains only the SHAPE
+ * (`^[a-z][a-z0-9_]{2,63}$`) and an adoption-only string satisfies that. So the
+ * failure was silent: a code no other part of Hone understands, sitting in the
+ * column every other reader treats as provider vocabulary.
+ *
+ * As a `Record<AdoptionRefusal, AttemptErrorCode>` a new refusal added without a
+ * mapping is a COMPILE ERROR, which is the only version of this that stays true.
+ *
+ * The caller still receives the rich adoption reason; only what PERSISTS is
+ * normalized.
+ */
+export const REFUSAL_TO_STORE_CODE: Record<AdoptionRefusal, AttemptErrorCode> = {
+  // The account does not hold it, holds it somewhere else, holds it twice, or
+  // answered about a different number: in every case a resource we asked about
+  // does not match what we expected, which is exactly what this code means.
+  number_not_owned_by_account: "provider_resource_mismatch",
+  number_not_in_named_service: "provider_resource_mismatch",
+  number_in_other_service: "provider_resource_mismatch",
+  number_association_ambiguous: "provider_resource_mismatch",
+  provider_number_mismatch: "provider_resource_mismatch",
+  // The service exists and does not carry the configuration Hone requires.
+  provider_configuration_required: "provider_resource_mismatch",
+  // The census could not be COMPLETED — the provider could not be fully read.
+  // Retryable in nature, and `provider_unavailable` is the honest code for it.
+  number_association_unavailable: "provider_unavailable",
+  // The pool sent from someone else, or reported no sender. The message went
+  // out and the provider is healthy; what failed is the proof about THIS number.
+  provider_test_sender_mismatch: "provider_resource_mismatch",
+};
+
+function storeCodeFor(reason: AttemptErrorCode | AdoptionRefusal): AttemptErrorCode {
+  return reason in REFUSAL_TO_STORE_CODE
+    ? REFUSAL_TO_STORE_CODE[reason as AdoptionRefusal]
+    : (reason as AttemptErrorCode);
 }

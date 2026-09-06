@@ -330,7 +330,23 @@ export interface SmsProvisioningProvider {
     messagingServiceSid: string;
     to: string;
     body: string;
-  }): Promise<ProviderResult<{ messageSid: string }>>;
+  }): Promise<ProviderResult<{
+    messageSid: string;
+    /**
+     * The sender the provider ACTUALLY used, as it reported it.
+     *
+     * A Messaging Service is a POOL. Sending through one proves that SOME
+     * sender in it works, which is the same statement as "this number works"
+     * only when the pool holds exactly one number — true for a sender Hone just
+     * purchased, and not true for an existing service Hone is adopting into.
+     * So the sender is observed rather than assumed.
+     *
+     * Null when the provider did not report one. That is NOT a synonym for
+     * "the number we asked for": a caller that needs exact-sender proof must
+     * fail closed on null.
+     */
+    sentFrom: string | null;
+  }>>;
 }
 
 // ---------------------------------------------------------------------------

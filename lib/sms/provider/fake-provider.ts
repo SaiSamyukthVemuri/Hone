@@ -105,6 +105,10 @@ export type FakeProviderScript = {
   membershipProbeFails?: boolean;
   /** Fail the ownership lookup itself. */
   ownedLookupFails?: ProviderErrorCode;
+  /** Which sender the POOL used for the test send. Defaults to the service's first number. */
+  testSendFrom?: string;
+  /** The provider reported no sender at all. Must never read as success. */
+  testSendFromMissing?: boolean;
   /** Fail the service configuration read. */
   serviceConfigFails?: ProviderErrorCode;
   /** Numbers the fake considers already taken by someone else. */
@@ -157,6 +161,9 @@ export class FakeSmsProvisioningProvider implements SmsProvisioningProvider {
   };
 
   script: FakeProviderScript = {};
+
+  /** No-op seam so the method body reads the same as the others. */
+  private async phaseNoop(): Promise<void> {}
 
   constructor(script: FakeProviderScript = {}) {
     this.script = script;
@@ -440,9 +447,29 @@ export class FakeSmsProvisioningProvider implements SmsProvisioningProvider {
     return { ok: true };
   }
 
-  async sendProvisioningTest(): Promise<ProviderResult<{ messageSid: string }>> {
+  async sendProvisioningTest(input: {
+    messagingServiceSid: string;
+    to: string;
+    body: string;
+  }): Promise<ProviderResult<{ messageSid: string; sentFrom: string | null }>> {
+    await this.phaseNoop();
     this.calls.testSend += 1;
     if (this.script.testSendFails) return this.fail(this.script.testSendFails);
-    return { ok: true, messageSid: `SM${hex32("test")}` };
+
+    // Which sender did the POOL use? An adopted service may hold several.
+    const svc = (this.script.accountServices ?? []).find(
+      (x) => x?.sid === input.messagingServiceSid,
+    );
+    const fromOwned = svc?.numbers[0] ?? null;
+    // A service Hone created under a claim holds the number it purchased.
+    const fromClaim =
+      [...this.store.values()].find((r) => r.messagingServiceSid === input.messagingServiceSid)
+        ?.numbers[0]?.phoneNumber ?? null;
+    const sentFrom = this.script.testSendFromMissing
+      ? null
+      : (this.script.testSendFrom ?? fromOwned ?? fromClaim);
+
+    return { ok: true, messageSid: `SM${hex32(`test:${input.messagingServiceSid}`)}`, sentFrom };
   }
+
 }
