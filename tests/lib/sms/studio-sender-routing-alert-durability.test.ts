@@ -24,11 +24,14 @@ vi.mock("@/lib/sms/sender-routing", async (orig) => {
 });
 
 let alertSettled = false;
-const recordOpsAlert = vi.fn<(...a: unknown[]) => Promise<void>>(async () => {
+type Outcome = { recorded: true } | { recorded: false; reason: string };
+let nextOutcome: Outcome = { recorded: true };
+const recordOpsAlert = vi.fn<(...a: unknown[]) => Promise<Outcome>>(async () => {
   // Force real asynchrony so "was it awaited?" is observable rather than
   // accidentally true because the mock resolved synchronously.
   await new Promise((r) => setTimeout(r, 5));
   alertSettled = true;
+  return nextOutcome;
 });
 vi.mock("@/lib/ops/alerts", () => ({
   recordOpsAlert: (...a: unknown[]) => recordOpsAlert(...a),
@@ -37,29 +40,20 @@ vi.mock("@/lib/ops/alerts", () => ({
 import { sendBookingConfirmationSmsToClient } from "@/lib/sms/send-appointment";
 
 /** Admin double over ops_alerts + the claim RPC. */
-function admin(openAlerts: Array<{ id: string }> = [], readError: unknown = null) {
+/**
+ * The dedupe is no longer an in-process SELECT, so this double only has to
+ * observe that no claim RPC is reached. Whether an alert was deduped is decided
+ * by PostgreSQL and reported back through recordOpsAlert's outcome.
+ */
+function admin() {
   const rpcCalls: string[] = [];
-  const filters: Record<string, unknown> = {};
   const client = {
     rpc: async (fn: string) => {
       rpcCalls.push(fn);
       return { data: true, error: null };
     },
-    from(table: string) {
-      filters.table = table;
-      const chain = {
-        select: () => chain,
-        eq: (c: string, v: unknown) => {
-          filters[c] = v;
-          return chain;
-        },
-        is: () => chain,
-        limit: async () => ({ data: openAlerts, error: readError }),
-      };
-      return chain;
-    },
   };
-  return { client: client as never, rpcCalls, filters };
+  return { client: client as never, rpcCalls };
 }
 
 const studio = (id: string | null) =>
@@ -94,6 +88,7 @@ beforeEach(() => {
   resolveMock.mockReset();
   recordOpsAlert.mockReset();
   alertSettled = false;
+  nextOutcome = { recorded: true };
   errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 });
 afterEach(() => errSpy.mockRestore());
@@ -140,59 +135,60 @@ describe("the terminal alert is DURABLE — awaited, not fire-and-forget", () =>
   it("an alert READ failure records rather than silently suppressing", async () => {
     // A failed dedupe read must not be mistaken for "already alerted".
     resolveMock.mockResolvedValue({ ok: false, reason: "none_active" });
-    await send(admin([], { message: "read failed" }));
+    nextOutcome = { recorded: false, reason: "insert_failed" };
+    const r = await send(admin());
     expect(recordOpsAlert).toHaveBeenCalledTimes(1);
+    expect(r).toMatchObject({ ok: false, preProvider: true });
   });
 });
 
-describe("the actionable condition is deduped at STUDIO scope", () => {
-  it("an existing unresolved alert for this studio+reason suppresses a new one", async () => {
+describe("dedupe is decided atomically by the database, not by this process", () => {
+  it("a UNIQUE conflict is reported as DEDUPED, never as an alert failure", async () => {
+    // 0192's partial unique index over unresolved rows makes the loser of a
+    // concurrent insert get 23505. That is "already reported", not a fault.
     resolveMock.mockResolvedValue({ ok: false, reason: "none_active" });
-    const a = admin([{ id: "already-open" }]);
+    nextOutcome = { recorded: false, reason: "deduped" };
+    const a = admin();
 
     const r = await send(a);
 
-    expect(recordOpsAlert).not.toHaveBeenCalled();
-    // The SEND still fails the same way — dedupe changes notification, never
-    // the routing decision.
+    expect(recordOpsAlert).toHaveBeenCalledTimes(1);
+    // The SEND still fails identically — dedupe changes notification, never the
+    // routing decision.
     expect(r).toMatchObject({ ok: false, preProvider: true, retryable: false });
+    expect(a.rpcCalls).not.toContain("claim_sms_send");
   });
 
-  it("it scopes by studio_id AND event, not by appointment", async () => {
+  it("NO in-process pre-check SELECT is issued — a second check is the same race", async () => {
     resolveMock.mockResolvedValue({ ok: false, reason: "none_active" });
-    const a = admin();
-    await send(a, "studio-a");
-    expect(a.filters.table).toBe("ops_alerts");
-    expect(a.filters.studio_id).toBe("studio-a");
-    expect(a.filters.event).toBe("sms_sender_not_active_for_studio");
-    // Appointment scope would defeat the purpose: an operator fixes the studio.
-    expect(a.filters.appointment_id).toBeUndefined();
-  });
-
-  it("a DIFFERENT studio is not suppressed by another studio's open alert", async () => {
-    resolveMock.mockResolvedValue({ ok: false, reason: "none_active" });
-    // This double answers "no open rows" for studio-b's query.
-    const b = admin([]);
-    await send(b, "studio-b");
-    expect(recordOpsAlert).toHaveBeenCalledTimes(1);
-    expect(b.filters.studio_id).toBe("studio-b");
-  });
-
-  it("a DIFFERENT reason gets its own event, so it is not deduped away", async () => {
-    resolveMock.mockResolvedValue({ ok: false, reason: "ambiguous" });
-    const a = admin();
-    await send(a);
-    expect(a.filters.event).toBe("sms_sender_ambiguous");
+    // This admin double has no `.from()` at all. If the implementation still
+    // read ops_alerts before inserting, it would throw here.
+    await expect(send(admin())).resolves.toMatchObject({ preProvider: true });
     expect(recordOpsAlert).toHaveBeenCalledTimes(1);
   });
 
-  it("after resolution, a recurrence alerts again — never suppressed forever", async () => {
+  it("each routing reason carries its OWN event, so one never hides another", async () => {
+    const seen: string[] = [];
+    for (const reason of ["none_active", "ambiguous", "read_failed"]) {
+      resolveMock.mockResolvedValue({ ok: false, reason });
+      recordOpsAlert.mockClear();
+      await send(admin());
+      seen.push(String((recordOpsAlert.mock.calls[0][0] as { event: string }).event));
+    }
+    expect(seen).toEqual([
+      "sms_sender_not_active_for_studio",
+      "sms_sender_ambiguous",
+      "sms_sender_read_failed",
+    ]);
+    expect(new Set(seen).size).toBe(3);
+  });
+
+  it("the alert is scoped to the studio, not the appointment", async () => {
     resolveMock.mockResolvedValue({ ok: false, reason: "none_active" });
-    // Resolved rows do not match `resolved_at is null`, so the double returns
-    // none and the condition re-alerts. This is the existing ops doctrine:
-    // resolution re-arms the alert.
-    await send(admin([]));
-    expect(recordOpsAlert).toHaveBeenCalledTimes(1);
+    await send(admin(), "studio-a");
+    const arg = recordOpsAlert.mock.calls[0][0] as Record<string, unknown>;
+    expect(arg.studioId).toBe("studio-a");
+    expect(arg.severity).toBe("warning");
   });
 });
 
@@ -229,17 +225,20 @@ describe("the retryable path is VISIBLE, and still costs nothing", () => {
     // This is why log-only was never the right mitigation: the dedupe already
     // solves the volume the old exemption was protecting against.
     resolveMock.mockResolvedValue({ ok: false, reason: "read_failed" });
-    await send(admin([{ id: "already-open" }]));
-    expect(recordOpsAlert).not.toHaveBeenCalled();
+    nextOutcome = { recorded: false, reason: "deduped" };
+    const r = await send(admin());
+    // One attempt, and the database refuses the duplicate row.
+    expect(recordOpsAlert).toHaveBeenCalledTimes(1);
+    expect(r).toMatchObject({ preProvider: true, retryable: true });
   });
 
   it("a broken lookup is NOT deduped away by an open no-sender alert", async () => {
     // Different faults, different operator actions, so different events.
     resolveMock.mockResolvedValue({ ok: false, reason: "read_failed" });
-    const a = admin();
-    await send(a);
-    expect(a.filters.event).toBe("sms_sender_read_failed");
-    expect(a.filters.event).not.toBe("sms_sender_not_active_for_studio");
+    await send(admin());
+    const arg = recordOpsAlert.mock.calls[0][0] as { event: string };
+    expect(arg.event).toBe("sms_sender_read_failed");
+    expect(arg.event).not.toBe("sms_sender_not_active_for_studio");
   });
 
   it("an alert failure on the retryable path still does not break booking", async () => {

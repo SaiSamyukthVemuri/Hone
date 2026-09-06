@@ -98,6 +98,43 @@ describe("0192 — the lookup returns the minimum authority, and no more", () =>
   });
 });
 
+describe("0192 — the routing-alert dedupe index is NARROW", () => {
+  it("is a partial unique index over UNRESOLVED rows only", () => {
+    // Partial on resolved_at is null is what makes resolution RE-ARM the alert:
+    // a resolved row no longer collides, so a recurrence is reported again.
+    expect(SQL).toMatch(/create unique index if not exists ops_alerts_sms_routing_open_uniq/);
+    expect(SQL).toMatch(/on public\.ops_alerts \(studio_id, event\)/);
+    expect(SQL).toMatch(/where resolved_at is null/);
+  });
+
+  it("is scoped to the three SMS routing events and nothing else", () => {
+    // The whole point of the narrowing: no other ops_alerts class may acquire a
+    // uniqueness rule it never had.
+    const idx = SQL.slice(SQL.indexOf("ops_alerts_sms_routing_open_uniq"));
+    for (const ev of [
+      "sms_sender_not_active_for_studio",
+      "sms_sender_ambiguous",
+      "sms_sender_read_failed",
+    ]) {
+      expect(idx).toContain(ev);
+    }
+    expect(idx).toMatch(/event in \(/);
+  });
+
+  it("adds NO uniqueness rule to ops_alerts beyond that one partial index", () => {
+    const opsIdx = SQL.match(/create unique index[^;]*public\.ops_alerts[^;]*;/gi) ?? [];
+    expect(opsIdx).toHaveLength(1);
+    // And it must not be a table-wide constraint, which would change unrelated
+    // alert semantics.
+    expect(SQL).not.toMatch(/alter table public\.ops_alerts[^;]*add constraint[^;]*unique/i);
+  });
+
+  it("documents that a conflict means ALREADY REPORTED, not a failure", () => {
+    expect(SQL).toMatch(/comment on index public\.ops_alerts_sms_routing_open_uniq/);
+    expect(SQL).toMatch(/ALREADY REPORTED/);
+  });
+});
+
 describe("0192 — hardening follows the repository idiom", () => {
   it("is SECURITY DEFINER with a fixed search_path", () => {
     expect(SQL).toMatch(/security definer/);

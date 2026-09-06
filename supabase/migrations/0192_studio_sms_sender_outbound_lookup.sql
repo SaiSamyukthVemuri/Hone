@@ -104,4 +104,52 @@ grant execute on function public.resolve_active_studio_sms_sender(uuid) to servi
 -- that is a different decision with a different blast radius and belongs in its
 -- own migration with its own review -- not smuggled in beside a lookup.
 
+-- ---------------------------------------------------------------------------
+-- ONE OPEN ROUTING ALERT PER STUDIO PER REASON — enforced by the database
+-- ---------------------------------------------------------------------------
+--
+-- The application dedupes routing alerts by reading `ops_alerts` for an
+-- unresolved row and inserting only when it finds none. That is check-then-act:
+-- two concurrent sends for the same studio -- a booking and a cron pass, or two
+-- cron passes overlapping -- can both observe no open row and both insert. The
+-- invariant the operator actually relies on ("tell me once that this studio
+-- cannot send") is not enforceable in application code, because the two
+-- statements are not one decision.
+--
+-- So the database owns it. This is the same shape `ops_alerts` already uses for
+-- `calendar_enqueue_skipped`: a PARTIAL UNIQUE INDEX over unresolved rows,
+-- scoped to specific events. Nothing about any other alert class changes.
+--
+-- NARROW BY CONSTRUCTION, in two directions at once:
+--   * `where resolved_at is null` -- only OPEN alerts collide. Resolving one
+--     therefore RE-ARMS the condition: a recurrence after an operator resolves
+--     the row inserts a new alert, so nothing is suppressed forever.
+--   * `and event in (...)` -- only these three SMS routing events. Every other
+--     ops_alerts event keeps exactly the semantics it has today, including the
+--     ability to record many open rows for one studio.
+--
+-- The three events stay SEPARATE keys deliberately. "No active sender", "more
+-- than one active sender" and "the lookup itself is broken" need different
+-- operator actions, and one being open must never hide another.
+--
+-- studio_id is nullable, and PostgreSQL treats NULLs as distinct in a unique
+-- index. A routing alert with no studio therefore never dedupes -- which is the
+-- existing application behaviour, preserved rather than changed.
+--
+-- CONFLICT IS A DEDUPE, NOT A FAILURE. The insert loser gets 23505; the caller
+-- reads that as "already reported" and returns a deduped outcome. It must never
+-- be surfaced as an alerting fault, and it never fails the send: the routing
+-- refusal is decided before any of this and is unaffected.
+create unique index if not exists ops_alerts_sms_routing_open_uniq
+  on public.ops_alerts (studio_id, event)
+  where resolved_at is null
+    and event in (
+      'sms_sender_not_active_for_studio',
+      'sms_sender_ambiguous',
+      'sms_sender_read_failed'
+    );
+
+comment on index public.ops_alerts_sms_routing_open_uniq is
+  'COMMS-01B2. At most ONE unresolved ops_alert per (studio, SMS routing event). The application dedupe is check-then-act and cannot hold this under concurrency, so the invariant lives here. Partial on resolved_at is null, so resolving an alert re-arms it; scoped to the three sms_sender_* routing events, so no other alert class is affected. A 23505 from this index means ALREADY REPORTED, not a failure.';
+
 commit;

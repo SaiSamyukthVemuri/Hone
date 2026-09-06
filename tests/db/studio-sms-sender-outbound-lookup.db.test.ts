@@ -164,6 +164,98 @@ describe("the lookup resolves each studio to its own sender", () => {
   });
 });
 
+describe("the routing-alert dedupe is enforced by PostgreSQL, under concurrency", () => {
+  const EVENTS = [
+    "sms_sender_not_active_for_studio",
+    "sms_sender_ambiguous",
+    "sms_sender_read_failed",
+  ] as const;
+
+  async function insertAlert(studioId: string, event: string) {
+    return adminQuery(
+      `insert into public.ops_alerts (severity, event, message, studio_id, safe_details)
+       values ('warning', $2, 'routing failure', $1, '{}'::jsonb)`,
+      [studioId, event],
+    );
+  }
+
+  afterAll(async () => {
+    await adminQuery(
+      `delete from public.ops_alerts where studio_id = any($1::uuid[])`,
+      [[studioA.studioId, studioB.studioId]],
+    ).catch(() => {});
+  });
+
+  it("TWO SIMULTANEOUS inserts produce exactly ONE unresolved alert", async () => {
+    // THE ACTUAL RACE. An application check-then-act cannot hold this: both
+    // callers read zero open rows and both insert. Fired together with no
+    // ordering between them, so the winner is decided by the index, not by us.
+    const both = await Promise.allSettled([
+      insertAlert(studioA.studioId, EVENTS[0]),
+      insertAlert(studioA.studioId, EVENTS[0]),
+    ]);
+    const ok = both.filter((r) => r.status === "fulfilled").length;
+    const conflicted = both.filter(
+      (r) => r.status === "rejected" && (r.reason as { code?: string })?.code === "23505",
+    ).length;
+
+    expect(ok).toBe(1);
+    expect(conflicted).toBe(1);
+
+    const rows = await adminQuery(
+      `select count(*)::int n from public.ops_alerts
+        where studio_id = $1 and event = $2 and resolved_at is null`,
+      [studioA.studioId, EVENTS[0]],
+    );
+    expect(rows.rows[0].n).toBe(1);
+  });
+
+  it("a THIRD later attempt is still refused while the alert is open", async () => {
+    await expect(insertAlert(studioA.studioId, EVENTS[0])).rejects.toMatchObject({
+      code: "23505",
+    });
+  });
+
+  it("a DIFFERENT routing reason is independent", async () => {
+    // Different faults need different operator actions, so one open alert must
+    // never hide another.
+    await expect(insertAlert(studioA.studioId, EVENTS[1])).resolves.toBeDefined();
+    await expect(insertAlert(studioA.studioId, EVENTS[2])).resolves.toBeDefined();
+  });
+
+  it("a DIFFERENT studio is independent", async () => {
+    await expect(insertAlert(studioB.studioId, EVENTS[0])).resolves.toBeDefined();
+  });
+
+  it("RESOLVING the alert re-arms it — nothing is suppressed forever", async () => {
+    await adminQuery(
+      `update public.ops_alerts set resolved_at = now()
+        where studio_id = $1 and event = $2 and resolved_at is null`,
+      [studioA.studioId, EVENTS[0]],
+    );
+    // The partial index only covers unresolved rows, so the recurrence lands.
+    await expect(insertAlert(studioA.studioId, EVENTS[0])).resolves.toBeDefined();
+    const rows = await adminQuery(
+      `select count(*)::int n from public.ops_alerts
+        where studio_id = $1 and event = $2 and resolved_at is null`,
+      [studioA.studioId, EVENTS[0]],
+    );
+    expect(rows.rows[0].n).toBe(1);
+  });
+
+  it("UNRELATED ops_alert events keep their existing many-open-rows semantics", async () => {
+    // The index must not have quietly changed any other alert class.
+    await expect(insertAlert(studioA.studioId, "cron_route_failed")).resolves.toBeDefined();
+    await expect(insertAlert(studioA.studioId, "cron_route_failed")).resolves.toBeDefined();
+    const rows = await adminQuery(
+      `select count(*)::int n from public.ops_alerts
+        where studio_id = $1 and event = 'cron_route_failed' and resolved_at is null`,
+      [studioA.studioId],
+    );
+    expect(rows.rows[0].n).toBe(2);
+  });
+});
+
 describe("ambiguity is unrepresentable, so the lookup can never pick a winner", () => {
   it("a SECOND live sender for one studio is refused by the database", async () => {
     // 0192's resolver returns a SET rather than a scalar precisely so a violated

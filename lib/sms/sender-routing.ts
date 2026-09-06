@@ -225,25 +225,22 @@ export async function recordRoutingFailureAlert(
   );
   const event = ROUTING_ALERT_EVENT[input.reason];
   try {
-    // Dedupe on the ACTIONABLE CONDITION: one unresolved alert per studio per
-    // reason. A null studio cannot be scoped, so it is never deduped away.
-    if (input.studioId) {
-      const { data: open, error: readErr } = await admin
-        .from("ops_alerts")
-        .select("id")
-        .eq("event", event)
-        .eq("studio_id", input.studioId)
-        .is("resolved_at", null)
-        .limit(1);
-      // A failed read must not silently suppress the alert. Falling through and
-      // recording a possible duplicate is strictly better than dropping the only
-      // notice that a studio cannot send.
-      if (!readErr && (open ?? []).length > 0) {
-        return { alerted: false, reason: "deduped" };
-      }
-    }
+    // THE DATABASE IS THE AUTHORITY, NOT THIS FUNCTION.
+    //
+    // An earlier revision read ops_alerts for an unresolved row and inserted
+    // only when it found none. That is check-then-act: two concurrent sends for
+    // the same studio -- a booking and a cron pass, or two overlapping cron
+    // passes -- can both observe no open row and both insert, so the invariant
+    // an operator relies on ("tell me once") did not hold under exactly the
+    // conditions that produce repeats.
+    //
+    // 0192 adds a partial unique index over UNRESOLVED rows for these three
+    // events only. The insert is now simply attempted, and a 23505 means the
+    // condition is ALREADY REPORTED -- a dedupe, decided atomically by
+    // PostgreSQL rather than guessed by a prior SELECT. No second in-process
+    // check is layered on top, because a second check would be the same race.
     const { recordOpsAlert } = await import("@/lib/ops/alerts");
-    await recordOpsAlert({
+    const outcome = await recordOpsAlert({
       severity: "warning",
       event,
       message:
@@ -257,6 +254,12 @@ export async function recordRoutingFailureAlert(
       route: "lib/sms/sender-routing:recordRoutingFailureAlert",
       safeDetails: { reason: input.reason, sms_type: input.smsType },
     });
+    if (!outcome.recorded) {
+      return {
+        alerted: false,
+        reason: outcome.reason === "deduped" ? "deduped" : "alert_failed",
+      };
+    }
     return { alerted: true };
   } catch {
     // Fail-open. The caller still returns its routing failure; booking and
