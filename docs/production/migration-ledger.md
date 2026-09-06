@@ -14,7 +14,7 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-09-06, post-0191 apply; `0192` authored and PENDING)
+## Current state (verified 2026-09-06, post-0191 apply; nothing pending in this tree)
 
 > **This block is an APPLY RECORD written by a RECONCILIATION lane, not by the lane
 > that applied `0191`.** It therefore records the **verified result** of the apply and
@@ -43,9 +43,9 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | **Table privilege** | table-level `SELECT`/`INSERT`/`UPDATE`/`DELETE` are **false for `anon`, `authenticated` AND `service_role`**. `service_role` reaches rows only through the definer commands. |
 | **Column grant** | `authenticated` may read **only**: `id`, `studio_id`, `provider`, `status`, `country`, `requested_area_code`, `phone_number`, `provisioned_at`, `last_test_ok_at`, `last_error_code`, `last_error_at`, `released_at`, `created_at`, `updated_at`. **Verified WITHHELD in production**: `claimed_phone_number`, `phone_number_sid`, `messaging_service_sid`, `provisioning_claim_key`, `provisioning_claim_at`, `provisioning_claim_by_practitioner_id`, `provisioning_lease_generation` — **no provider SID, claim key or lease internal is reachable from a browser session**. |
 | **RLS** | **enabled**; policy `studio_sms_senders_owner_select` for `SELECT` using `is_studio_owner(studio_id)` |
-| **Live SMS path** | **unchanged.** `lib/sms/twilio.ts` still resolves its sender from `TWILIO_MESSAGING_SERVICE_SID` / `TWILIO_FROM_NUMBER`; `lib/sms/send-appointment.ts` holds **no** reference to the new table; `studio_sms_senders` was empty when read on 2026-09-06 (**0 rows**). The only production code naming the table is `lib/export/resource-registry.ts` (registered `kind: "pending"`, ticket **TRUTH-01B**) and comments in `lib/sms/provider/types.ts` — **neither is on the transport**. |
+| **Live SMS path** | **By source inspection, not by before/after comparison:** `lib/sms/twilio.ts` resolves its sender from `TWILIO_MESSAGING_SERVICE_SID` / `TWILIO_FROM_NUMBER`; `lib/sms/send-appointment.ts` holds **no** reference to the new table; `studio_sms_senders` was empty when read on 2026-09-06 (**0 rows**). The only production code naming the table is `lib/export/resource-registry.ts` (registered `kind: "pending"`, ticket **TRUTH-01B**) and comments in `lib/sms/provider/types.ts` — **neither is on the transport**. |
 | **Business-data observations** | Observed **after** the apply, on 2026-09-06: studios with `send_confirmation_sms` **1**; client SMS consent **53** with **0** opt-outs. **These are not before/after comparisons** — this lane captured no pre-apply census, so it cannot claim the values held across the apply interval. What IS structural: `0191` performs no `INSERT`/`UPDATE`/`DELETE`/`TRUNCATE` against any pre-existing table and alters none, so the migration itself could not have moved them. No row was written by this lane. |
-| **Not observed, and therefore not claimed** | The apply's own exit code, CLI output, confirmation prompt, notice/error classes, pre-apply census and apply host — none were captured by this lane and none are asserted. No SMS was sent, no Twilio call made, and no provider resource exists (`studio_sms_senders` is empty). |
+| **Not observed, and therefore not claimed** | The apply's own exit code, CLI output, confirmation prompt, notice/error classes, pre-apply census and apply host — none were captured by this lane and none are asserted. No SMS was sent and **no Twilio call was made by this lane**, so **external provider state is NOT OBSERVED**: Hone database sender rows observed **0**, but a provider resource created manually or orphaned outside the database would not appear in that table, so neither its existence nor its absence is claimed. |
 
 ### What 0191 establishes
 
@@ -60,7 +60,8 @@ something the browser knows — and therefore never something it can echo back a
 authority. `service_role` was granted no table privilege at all when read on 2026-09-06, and
 reaches rows only through the five definer commands.
 
-**`0192` (PR #674) is authored and NOT applied.** It is the migration that teaches the
+**`0192` is authored on PR #674 and is ABSENT FROM THIS TREE**, so it is not this tree's
+pending migration; `pending_migrations` is empty here. It is the migration that teaches the
 send path to consult this table, which is the first point at which existing SMS
 traffic is genuinely exposed. That is a separate gate.
 
