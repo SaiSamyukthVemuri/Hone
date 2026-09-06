@@ -1,6 +1,7 @@
 import "server-only";
 import { fenceProviderMutations } from "./provider/fenced";
 import type { SmsProvisioningProvider } from "./provider/types";
+import { canonicalClaimPhoneNumber } from "./claim-phone-number";
 import { safeResourceId } from "./provider/association";
 import type { NumberAssociation } from "./provider/types";
 import type { AttemptErrorCode, ProvisioningStore } from "./provisioning";
@@ -108,6 +109,17 @@ export type AdoptionInput = {
 export async function adoptExistingStudioSmsSender(
   input: AdoptionInput,
 ): Promise<AdoptionOutcome> {
+  // --- 0. ONE canonical number, derived at the boundary --------------------
+  // Everything below uses `phoneNumber`, never `input.phoneNumber`. The claim
+  // stores the canonical form and the lease fence compares against exactly that,
+  // so carrying the caller's raw string past this line reintroduces the defect.
+  const phoneNumber = canonicalClaimPhoneNumber(input.phoneNumber);
+  if (!phoneNumber) {
+    // Refused, never repaired. A number that is not E.164 after trimming is not
+    // a number this studio chose.
+    return { ok: false, result: "refused", reason: "invalid_input" };
+  }
+
   // --- 1. The SAME claim the purchase path takes ---------------------------
   // Same command, same arguments, same authorization: the database re-derives
   // membership and owner role from (studio_id, actor_user_id). Adoption gets no
@@ -118,7 +130,7 @@ export async function adoptExistingStudioSmsSender(
     actorUserId: input.actorUserId,
     country: input.country.trim().toUpperCase(),
     areaCode: null,
-    phoneNumber: input.phoneNumber,
+    phoneNumber,
   });
 
   if (claim.result === "already_active") {
@@ -147,7 +159,7 @@ export async function adoptExistingStudioSmsSender(
       studioId: input.studioId,
       claimKey,
       leaseGeneration,
-      phoneNumber: input.phoneNumber,
+      phoneNumber,
     }),
   );
 
@@ -196,7 +208,7 @@ export async function adoptExistingStudioSmsSender(
 
   // --- 2. PROVE OWNERSHIP AND ASSOCIATION, before touching anything --------
   const facts = await provider.lookupOwnedNumber({
-    phoneNumber: input.phoneNumber,
+    phoneNumber,
     expectedMessagingServiceSid: input.messagingServiceSid,
   });
   if (!facts.ok) {
@@ -204,14 +216,14 @@ export async function adoptExistingStudioSmsSender(
     return failWith(facts.code, facts.retryable);
   }
 
-  const { phoneNumberSid, phoneNumber, association } = facts.facts;
+  const { phoneNumberSid, phoneNumber: reported, association } = facts.facts;
 
   if (!phoneNumberSid) {
     // The account does not own it. Adoption has nothing to adopt, and the one
     // thing it must never do here is fall through to buying it.
     return failWith("number_not_owned_by_account", false);
   }
-  if (phoneNumber !== input.phoneNumber) {
+  if (reported !== phoneNumber) {
     return failWith("provider_number_mismatch", false);
   }
 
@@ -294,7 +306,7 @@ export async function adoptExistingStudioSmsSender(
       studioId: input.studioId,
       claimKey,
       leaseGeneration,
-      phoneNumber: input.phoneNumber,
+      phoneNumber,
       phoneNumberSid,
       messagingServiceSid: input.messagingServiceSid,
       testOk: false,
@@ -308,14 +320,14 @@ export async function adoptExistingStudioSmsSender(
     studioId: input.studioId,
     claimKey,
     leaseGeneration,
-    phoneNumber: input.phoneNumber,
+    phoneNumber,
     phoneNumberSid,
     messagingServiceSid: input.messagingServiceSid,
     testOk: true,
   });
 
   if (finalized === "activated" || finalized === "already_active") {
-    return { ok: true, result: "adopted", senderId, phoneNumber: input.phoneNumber };
+    return { ok: true, result: "adopted", senderId, phoneNumber };
   }
   if (finalized === "lease_lost") {
     return { ok: false, result: "lease_lost", senderId };

@@ -268,3 +268,183 @@ describe("credentials", () => {
     expect(calls).toHaveLength(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// lookupOwnedNumber — the census, on the wire (WILLOW ADOPTION)
+// ---------------------------------------------------------------------------
+//
+// The fake proves the orchestration reacts correctly to each verdict. It cannot
+// prove the ADAPTER produces the right verdict from a real payload, and that
+// gap is not theoretical: breaking the adapter's fail-closed entry check turned
+// nothing red until these tests existed.
+
+const PN = (c: string) => `PN${c.repeat(32)}`;
+const NUMBER = "+14165550100";
+
+/** One owned number, then a services page, then per-service membership probes. */
+function ownedThen(...rest: Array<{ status: number; json: unknown }>) {
+  return [
+    { status: 200, json: { incoming_phone_numbers: [{ sid: PN("a"), phone_number: NUMBER }] } },
+    ...rest,
+  ];
+}
+
+describe("lookupOwnedNumber: read-only census", () => {
+  it("issues GETs only — it can never purchase, attach or move", async () => {
+    stubFetch(
+      ownedThen(
+        { status: 200, json: { services: [{ sid: MG("b") }], meta: { next_page_url: null } } },
+        { status: 200, json: {} },
+      ),
+    );
+    await (await adapter()).lookupOwnedNumber({
+      phoneNumber: NUMBER,
+      expectedMessagingServiceSid: MG("b"),
+    });
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.every((c) => c.method === "GET")).toBe(true);
+    expect(calls.every((c) => c.body === null)).toBe(true);
+  });
+
+  it("IN_EXPECTED_SERVICE when the probe says the number is a member", async () => {
+    stubFetch(
+      ownedThen(
+        { status: 200, json: { services: [{ sid: MG("b") }], meta: { next_page_url: null } } },
+        { status: 200, json: {} },
+      ),
+    );
+    const r = await (await adapter()).lookupOwnedNumber({
+      phoneNumber: NUMBER,
+      expectedMessagingServiceSid: MG("b"),
+    });
+    expect(r.ok && r.facts.association).toEqual({
+      kind: "in_expected_service",
+      messagingServiceSid: MG("b"),
+    });
+  });
+
+  it("A MALFORMED SERVICE ENTRY FAILS THE CENSUS CLOSED", async () => {
+    // The skipped entry could be the one holding the number, so a census that
+    // ignored it and reported `not_associated` would license an attach.
+    stubFetch(
+      ownedThen({
+        status: 200,
+        json: { services: [{ sid: MG("b") }, { sid: "MG-not-a-sid" }], meta: { next_page_url: null } },
+      }),
+    );
+    const r = await (await adapter()).lookupOwnedNumber({
+      phoneNumber: NUMBER,
+      expectedMessagingServiceSid: MG("b"),
+    });
+    expect(r.ok && r.facts.association).toEqual({
+      kind: "unavailable",
+      reason: "service_page_unparseable",
+    });
+  });
+
+  it("an entry that is not an object fails closed too", async () => {
+    stubFetch(
+      ownedThen({
+        status: 200,
+        json: { services: [{ sid: MG("b") }, "not-an-object"], meta: { next_page_url: null } },
+      }),
+    );
+    const r = await (await adapter()).lookupOwnedNumber({
+      phoneNumber: NUMBER,
+      expectedMessagingServiceSid: MG("b"),
+    });
+    expect(r.ok && r.facts.association.kind).toBe("unavailable");
+  });
+
+  it("a missing SID fails closed", async () => {
+    stubFetch(
+      ownedThen({
+        status: 200,
+        json: { services: [{ sid: MG("b") }, { friendly_name: "no sid here" }], meta: { next_page_url: null } },
+      }),
+    );
+    const r = await (await adapter()).lookupOwnedNumber({
+      phoneNumber: NUMBER,
+      expectedMessagingServiceSid: MG("b"),
+    });
+    expect(r.ok && r.facts.association.kind).toBe("unavailable");
+  });
+
+  it("A MALFORMED ENTRY NEVER YIELDS not_associated", async () => {
+    // The malformed entry is the holder. This is the exact misclassification.
+    stubFetch(
+      ownedThen({
+        status: 200,
+        json: { services: [{ sid: "garbage" }], meta: { next_page_url: null } },
+      }),
+    );
+    const r = await (await adapter()).lookupOwnedNumber({
+      phoneNumber: NUMBER,
+      expectedMessagingServiceSid: MG("b"),
+    });
+    expect(r.ok && r.facts.association.kind).not.toBe("not_associated");
+    expect(r.ok && r.facts.association.kind).toBe("unavailable");
+  });
+
+  it("a failed services page is UNAVAILABLE, never absence", async () => {
+    stubFetch(ownedThen({ status: 500, json: {} }));
+    const r = await (await adapter()).lookupOwnedNumber({
+      phoneNumber: NUMBER,
+      expectedMessagingServiceSid: MG("b"),
+    });
+    expect(r.ok && r.facts.association.kind).toBe("unavailable");
+  });
+
+  it("an unreadable pagination cursor is UNAVAILABLE, never absence", async () => {
+    // Only an EXPLICIT null ends the walk; a cursor we cannot read is not proof
+    // that no further pages exist.
+    stubFetch(
+      ownedThen({ status: 200, json: { services: [], meta: { next_page_url: 12345 } } }),
+    );
+    const r = await (await adapter()).lookupOwnedNumber({
+      phoneNumber: NUMBER,
+      expectedMessagingServiceSid: MG("b"),
+    });
+    expect(r.ok && r.facts.association).toEqual({
+      kind: "unavailable",
+      reason: "service_pagination_unreadable",
+    });
+  });
+
+  it("NOT_ASSOCIATED only after a complete, fully-readable census", async () => {
+    stubFetch(
+      ownedThen(
+        { status: 200, json: { services: [{ sid: MG("b") }], meta: { next_page_url: null } } },
+        { status: 404, json: {} },
+      ),
+    );
+    const r = await (await adapter()).lookupOwnedNumber({
+      phoneNumber: NUMBER,
+      expectedMessagingServiceSid: MG("b"),
+    });
+    expect(r.ok && r.facts.association).toEqual({ kind: "not_associated" });
+  });
+
+  it("a number this account does not own reports no SID", async () => {
+    stubFetch([{ status: 200, json: { incoming_phone_numbers: [] } }]);
+    const r = await (await adapter()).lookupOwnedNumber({
+      phoneNumber: NUMBER,
+      expectedMessagingServiceSid: MG("b"),
+    });
+    expect(r.ok && r.facts.phoneNumberSid).toBeNull();
+  });
+});
+
+describe("readMessagingServiceConfig: read-only", () => {
+  it("issues a GET and returns the current URLs without writing", async () => {
+    stubFetch([
+      { status: 200, json: { inbound_request_url: "https://hone.care/in", status_callback: "https://hone.care/st" } },
+    ]);
+    const r = await (await adapter()).readMessagingServiceConfig({ messagingServiceSid: MG("b") });
+    expect(calls.every((c) => c.method === "GET")).toBe(true);
+    expect(r.ok && r.config).toEqual({
+      inboundRequestUrl: "https://hone.care/in",
+      statusCallbackUrl: "https://hone.care/st",
+    });
+  });
+});

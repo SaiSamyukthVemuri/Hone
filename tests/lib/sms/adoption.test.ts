@@ -688,3 +688,149 @@ describe("CODEX P2 — activation that commits with a lost response", () => {
     expect(provider.calls.statusCallback).toBe(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// CODEX P2-1 — one canonical phone number for the whole operation.
+// ---------------------------------------------------------------------------
+//
+// 0191's claim does `nullif(btrim(coalesce(p_phone_number,'')),'')` and stores
+// the TRIMMED value in `claimed_phone_number`. `renew_studio_sms_lease` then
+// compares `s.claimed_phone_number = p_phone_number` with NO trim. So a caller
+// that claims with a raw value and keeps carrying that raw value fails its own
+// fence on the very first provider call -- and reports `lease_lost`, which says
+// "another worker took over" about a whitespace mismatch.
+
+describe("CODEX P2-1 — the canonical number is derived once", () => {
+  const PADDED = `  ${WILLOW_NUMBER}  `;
+
+  it("1. a canonical E.164 works", async () => {
+    expect(await adopt()).toMatchObject({ ok: true, result: "adopted" });
+  });
+
+  it("2. the SAME number with surrounding whitespace behaves identically", async () => {
+    const outcome = await adopt({ phoneNumber: PADDED });
+    expect(outcome).toMatchObject({ ok: true, result: "adopted" });
+    expect(store.live(STUDIO_A)!.status).toBe("active");
+  });
+
+  it("3. claim and lease agree on ONE value", async () => {
+    await adopt({ phoneNumber: PADDED });
+    const row = store.live(STUDIO_A)!;
+    expect(row.claimedPhoneNumber).toBe(WILLOW_NUMBER);
+    // Every fence call must carry exactly what the claim stored, or the fence
+    // is comparing two different strings.
+    expect(store.fenceCalls.length).toBeGreaterThan(0);
+    expect(store.fenceCalls.every((c) => c.phoneNumber === WILLOW_NUMBER)).toBe(true);
+  });
+
+  it("4. the provider lookup receives the canonical value", async () => {
+    const seen: string[] = [];
+    const inner = provider.lookupOwnedNumber.bind(provider);
+    provider.lookupOwnedNumber = async (input) => {
+      seen.push(input.phoneNumber);
+      return inner(input);
+    };
+    await adopt({ phoneNumber: PADDED });
+    expect(seen).toEqual([WILLOW_NUMBER]);
+  });
+
+  it("5. a genuinely invalid number is still refused, never coerced", async () => {
+    // Trimming is canonicalization. Turning "4165550100" into "+14165550100"
+    // would be INVENTING a number the operator did not choose.
+    for (const bad of ["4165550100", "+1 416 555 0100", "not-a-number", "  ", "+0123456789"]) {
+      store = new InMemoryProvisioningStore(MEMBERS);
+      provider = new FakeSmsProvisioningProvider(ownedAndAssociated());
+      const outcome = await adopt({ phoneNumber: bad });
+      expect(outcome.ok, bad).toBe(false);
+      expect(provider.calls.purchase, bad).toBe(0);
+    }
+  });
+
+  it("6. the finalized row records the canonical value", async () => {
+    await adopt({ phoneNumber: PADDED });
+    expect(store.live(STUDIO_A)!.phoneNumber).toBe(WILLOW_NUMBER);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CODEX P2-2 — a service entry we cannot read makes the census UNAVAILABLE.
+// ---------------------------------------------------------------------------
+//
+// The page walker parsed each entry and SKIPPED the ones it could not read,
+// then reported the census complete. But the skipped service could be the one
+// holding the number, so "complete" was a claim the evidence did not support --
+// and the verdict became `not_associated`, which is exactly the reading that
+// licenses attaching a number out of a service that already has it.
+//
+// This is the same rule already applied one level up, to pages. It simply was
+// not applied to the entries inside a page.
+
+describe("CODEX P2-2 — malformed service entries fail the census closed", () => {
+  const withEntries = (services: unknown[]): FakeProviderScript => ({
+    preOwnedNumbers: { [WILLOW_NUMBER]: WILLOW_PN_SID },
+    accountServices: services as FakeProviderScript["accountServices"],
+  });
+
+  it("1. an all-valid page still works", async () => {
+    expect(await adopt()).toMatchObject({ ok: true, result: "adopted" });
+  });
+
+  it("2. an entry that is not an object -> UNAVAILABLE", async () => {
+    provider = new FakeSmsProvisioningProvider(
+      withEntries([{ sid: WILLOW_MG_SID, numbers: [WILLOW_NUMBER] }, null]),
+    );
+    expect(await adopt()).toMatchObject({ reason: "number_association_unavailable" });
+  });
+
+  it("3. a missing SID -> UNAVAILABLE", async () => {
+    provider = new FakeSmsProvisioningProvider(
+      withEntries([{ sid: WILLOW_MG_SID, numbers: [WILLOW_NUMBER] }, { sid: null, numbers: [] }]),
+    );
+    expect(await adopt()).toMatchObject({ reason: "number_association_unavailable" });
+  });
+
+  it("4. a malformed SID -> UNAVAILABLE", async () => {
+    provider = new FakeSmsProvisioningProvider(
+      withEntries([{ sid: WILLOW_MG_SID, numbers: [WILLOW_NUMBER] }, { sid: "MG-not-a-sid", numbers: [] }]),
+    );
+    expect(await adopt()).toMatchObject({ reason: "number_association_unavailable" });
+  });
+
+  it("5. a mixed valid + malformed page -> UNAVAILABLE, not a partial verdict", async () => {
+    provider = new FakeSmsProvisioningProvider(
+      withEntries([
+        { sid: WILLOW_MG_SID, numbers: [WILLOW_NUMBER] },
+        { sid: "garbage", numbers: [] },
+        { sid: OTHER_MG_SID, numbers: [] },
+      ]),
+    );
+    const outcome = await adopt();
+    expect(outcome).toMatchObject({ reason: "number_association_unavailable" });
+    // NOT adopted, even though the expected service was among the readable ones.
+    expect(outcome.ok).toBe(false);
+  });
+
+  it("6. THE DEFECT: a malformed entry can never yield NOT_ASSOCIATED", async () => {
+    // The malformed entry is the one holding the number. Skipping it and
+    // reporting "not associated" is the reading that would license an attach.
+    provider = new FakeSmsProvisioningProvider(
+      withEntries([
+        { sid: WILLOW_MG_SID, numbers: [] },
+        { sid: "MG-malformed-holder", numbers: [WILLOW_NUMBER] },
+      ]),
+    );
+    const outcome = await adopt();
+    expect((outcome as { reason: string }).reason).not.toBe("number_not_in_named_service");
+    expect(outcome).toMatchObject({ reason: "number_association_unavailable" });
+  });
+
+  it("7. a malformed entry never lets adoption proceed", async () => {
+    provider = new FakeSmsProvisioningProvider(
+      withEntries([{ sid: WILLOW_MG_SID, numbers: [WILLOW_NUMBER] }, { sid: "bad", numbers: [] }]),
+    );
+    await adopt();
+    expect(provider.calls.testSend).toBe(0);
+    expect(provider.calls.serviceConfigRead).toBe(0);
+    expect(store.live(STUDIO_A)!.status).not.toBe("active");
+  });
+});

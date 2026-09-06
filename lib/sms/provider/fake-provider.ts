@@ -1,6 +1,7 @@
 import "server-only";
 import crypto from "node:crypto";
 import { classifyAssociation } from "./association";
+import { asMessagingServiceSid } from "./types";
 import {
   claimFriendlyName,
   providerError,
@@ -89,7 +90,13 @@ export type FakeProviderScript = {
    * them, each with the numbers it holds. The fake PAGINATES over this exactly
    * as the real adapter does, so a pagination test exercises real walking.
    */
-  accountServices?: Array<{ sid: string; numbers: string[]; inboundUrl?: string | null; statusUrl?: string | null }>;
+  accountServices?: Array<{
+    /** Null/undefined models a page entry with no SID; a bad string models a malformed one. */
+    sid: string | null | undefined;
+    numbers: string[];
+    inboundUrl?: string | null;
+    statusUrl?: string | null;
+  } | null>;
   /** Page size for the service list walk. Small values force multiple pages. */
   servicePageSize?: number;
   /** 1-based page index that fails, to prove a partial census is never absence. */
@@ -280,6 +287,21 @@ export class FakeSmsProvisioningProvider implements SmsProvisioningProvider {
         };
       }
       for (const svc of services.slice(i, i + pageSize)) {
+        // Mirror the adapter's per-entry parse. Whatever the adapter does with
+        // an entry it cannot read, the fake must do too, or every census test
+        // is a statement about the fake rather than about the adapter.
+        // Mirror the adapter: an unreadable entry fails the census closed.
+        const svcSid = asMessagingServiceSid(svc?.sid ?? null);
+        if (!svcSid) {
+          return {
+            ok: true,
+            facts: {
+              phoneNumberSid: sid,
+              phoneNumber: input.phoneNumber,
+              association: { kind: "unavailable", reason: "service_page_unparseable" },
+            },
+          };
+        }
         if (this.script.membershipProbeFails) {
           return {
             ok: true,
@@ -290,7 +312,7 @@ export class FakeSmsProvisioningProvider implements SmsProvisioningProvider {
             },
           };
         }
-        if (svc.numbers.includes(input.phoneNumber)) holders.push(svc.sid);
+        if (svc!.numbers.includes(input.phoneNumber)) holders.push(svcSid);
       }
       if (services.length === 0) break;
     }
@@ -311,7 +333,7 @@ export class FakeSmsProvisioningProvider implements SmsProvisioningProvider {
   }): Promise<ProviderResult<{ config: MessagingServiceConfig }>> {
     this.calls.serviceConfigRead += 1;
     if (this.script.serviceConfigFails) return this.fail(this.script.serviceConfigFails);
-    const svc = (this.script.accountServices ?? []).find((x) => x.sid === input.messagingServiceSid);
+    const svc = (this.script.accountServices ?? []).find((x) => x?.sid === input.messagingServiceSid);
     if (!svc) return this.fail("provider_resource_mismatch");
     return {
       ok: true,

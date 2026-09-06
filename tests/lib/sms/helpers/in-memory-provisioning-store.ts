@@ -89,7 +89,14 @@ export class InMemoryProvisioningStore implements ProvisioningStore {
     });
 
     if (!/^[A-Z]{2}$/.test(input.country)) return refuse("invalid_input");
-    if (!/^\+[1-9][0-9]{7,14}$/.test(input.phoneNumber)) return refuse("invalid_input");
+    // 0191: v_number := nullif(btrim(coalesce(p_phone_number,'')),'')
+    // The claim TRIMS and stores the trimmed value. renewLease then compares
+    // `claimed_phone_number = p_phone_number` with NO trim, so a caller that
+    // keeps carrying its raw value fails its own fence. Modelling the trim here
+    // is what makes that reachable in a test; the earlier version validated the
+    // raw string and refused whitespace outright, which hid the defect.
+    const number = input.phoneNumber.trim();
+    if (!/^\+[1-9][0-9]{7,14}$/.test(number)) return refuse("invalid_input");
 
     // Authorization is re-derived from (studio, authenticated user). Adoption
     // gets no privileged entry: an operator acting for a studio is subject to
@@ -110,7 +117,7 @@ export class InMemoryProvisioningStore implements ProvisioningStore {
         studioId: input.studioId,
         status: "provisioning",
         claimKey: this.nextKey(),
-        claimedPhoneNumber: input.phoneNumber,
+        claimedPhoneNumber: number,
         phoneNumber: null,
         phoneNumberSid: null,
         messagingServiceSid: null,
@@ -134,7 +141,7 @@ export class InMemoryProvisioningStore implements ProvisioningStore {
     // one is how one claim buys two.
     if (
       existing.claimedPhoneNumber !== null &&
-      existing.claimedPhoneNumber !== input.phoneNumber
+      existing.claimedPhoneNumber !== number
     ) {
       return {
         result: "number_mismatch",
@@ -179,7 +186,7 @@ export class InMemoryProvisioningStore implements ProvisioningStore {
 
     if (existing.status === "off" || existing.status === "selecting" || existing.status === "error") {
       existing.status = "provisioning";
-      existing.claimedPhoneNumber ??= input.phoneNumber;
+      existing.claimedPhoneNumber ??= number;
       existing.claimAt = this.now;
       existing.leaseGeneration += 1;
       return {

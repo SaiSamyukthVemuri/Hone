@@ -324,9 +324,26 @@ export const twilioProvisioningProvider: SmsProvisioningProvider = {
         };
       }
       for (const raw of list) {
+        // AN ENTRY WE CANNOT READ MAKES THE CENSUS INCOMPLETE, and this is the
+        // same rule already applied to whole pages -- it simply was not applied
+        // to the entries inside one. Skipping a malformed entry and continuing
+        // would report a COMPLETE census over a list we only partly understood,
+        // and the skipped service could be the one holding the number. The
+        // verdict would then be `not_associated`: exactly the reading that
+        // licenses attaching a number out of a service that already has it.
         const svc = asRecord(raw);
-        const svcSid = svc ? asString(svc.sid) : null;
-        if (svcSid) services.push(svcSid);
+        const svcSid = svc ? asMessagingServiceSid(svc.sid) : null;
+        if (!svcSid) {
+          return {
+            ok: true,
+            facts: {
+              phoneNumberSid: sid,
+              phoneNumber: num,
+              association: { kind: "unavailable", reason: "service_page_unparseable" },
+            },
+          };
+        }
+        services.push(svcSid);
       }
 
       // Only an EXPLICIT null ends the walk. Absent or non-string metadata means
