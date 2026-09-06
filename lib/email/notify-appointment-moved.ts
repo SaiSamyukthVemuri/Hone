@@ -1,6 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { sendEmailSafely } from "./send-appointment";
+import { resolveReplyTo, studioClientContactEmail } from "@/lib/email/studio-identity";
 import { generateCancellationToken } from "@/lib/booking/tokens";
 import { localLongDate, formatTimeForStudio } from "@/lib/booking/tz";
 
@@ -64,7 +65,7 @@ export async function notifyAppointmentMoved(
     const { data } = await admin
       .from("appointments")
       .select(
-        "id, starts_at, client:clients(name, email), service:services(name), studio:studios(name, timezone), practitioner:practitioners!appointments_practitioner_same_studio_fk(display_name)",
+        "id, starts_at, client:clients(name, email), service:services(name), studio:studios(name, timezone, owner_email, postcare_contact_email), practitioner:practitioners!appointments_practitioner_same_studio_fk(display_name)",
       )
       .eq("id", input.appointmentId)
       .eq("studio_id", input.studioId)
@@ -75,7 +76,12 @@ export async function notifyAppointmentMoved(
       starts_at: string;
       client: { name: string | null; email: string | null } | null;
       service: { name: string | null } | null;
-      studio: { name: string | null; timezone: string | null } | null;
+      studio: {
+        name: string | null;
+        timezone: string | null;
+        owner_email: string | null;
+        postcare_contact_email: string | null;
+      } | null;
       practitioner: { display_name: string | null } | null;
     };
 
@@ -141,7 +147,21 @@ export async function notifyAppointmentMoved(
 </body></html>`;
     const text = `Hi ${clientName},\n\n${bodyText}\n\nManage or reschedule: ${manageUrl}\n`;
 
-    const res = await sendEmailSafely({ to: email, subject, html, text });
+    const res = await sendEmailSafely({
+      studioIdentity: {
+        displayName: row.studio?.name ?? null,
+        replyTo: resolveReplyTo(
+          studioClientContactEmail({
+            postcare_contact_email: row.studio?.postcare_contact_email ?? null,
+            owner_email: row.studio?.owner_email ?? null,
+          }),
+        ),
+      },
+      to: email,
+      subject,
+      html,
+      text,
+    });
     if (res.ok) return "sent";
     // Provider failure → degraded + a safe category signal (never the raw provider error).
     await safeMoveAlert(input.studioId, input.appointmentId, res.retryable ? "provider_retryable" : "provider_permanent");

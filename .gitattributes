@@ -18,3 +18,11 @@
 # strips the licence body (name ID 13). Next serves public/ verbatim, so these
 # are reachable at /fonts/LICENSE-*.txt in the deployed app. See FONTS.md.
 public/fonts/LICENSE-*.txt -whitespace
+
+# COMMS-01A. These two carry escaped control-code fixtures for the header
+# sanitiser. The pre-repair blobs contained literal NUL bytes, so git classified
+# them as binary and rendered "+0/-0" — hiding changes to security-sensitive code
+# behind "Binary files differ". Forcing the diff attribute keeps them reviewable
+# across the repair commit itself, not merely afterwards.
+lib/email/studio-identity.ts diff
+tests/lib/email/studio-identity.test.ts diff

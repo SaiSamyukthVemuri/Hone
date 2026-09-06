@@ -1,6 +1,10 @@
 import "server-only";
 import { createHash } from "crypto";
 import { FROM_ADDRESS, resend } from "./client";
+import {
+  buildFromHeader,
+  type StudioEmailIdentity,
+} from "@/lib/email/studio-identity";
 
 // ===========================================================================
 // P0 EMERGENCY — TENANT-SCOPED, PAYLOAD-DERIVED IDEMPOTENT SEND
@@ -114,6 +118,8 @@ export type ProviderPayload = {
   subject: string;
   html: string;
   text: string;
+  /** COMMS-01A. Present only for client-facing sends with a studio authority. */
+  replyTo?: string;
 };
 
 /**
@@ -122,9 +128,14 @@ export type ProviderPayload = {
  * separator would allow whenever a field contained the separator.
  */
 function canonicalPayload(p: ProviderPayload): string {
-  return [p.from, p.to, p.subject, p.html, p.text]
-    .map((f) => `${f.length}:${f}`)
-    .join("");
+  const fields = [p.from, p.to, p.subject, p.html, p.text];
+  // APPENDED, and ONLY when set. A payload without a Reply-To serializes to
+  // exactly the bytes it did before this field existed, so every key the
+  // notification path has ever minted is unchanged. Length prefixing stays
+  // injective across differing field counts: a shorter serialization is a
+  // proper prefix of a longer one and an empty field still emits "0:".
+  if (p.replyTo) fields.push(p.replyTo);
+  return fields.map((f) => `${f.length}:${f}`).join("");
 }
 
 /**
@@ -261,6 +272,11 @@ export async function sendWaitlistEmailIdempotent(args: {
   subject: string;
   html: string;
   text: string;
+  /**
+   * COMMS-01A. Server-resolved studio identity for a CLIENT-facing send.
+   * Omitted for studio-facing mail, which stays `Hone <hello@hone.care>`.
+   */
+  studioIdentity?: StudioEmailIdentity;
   /** Test seam. Defaults to the shared Resend client. */
   transport?: IdempotentEmailTransport | null;
 }): Promise<WaitlistSendOutcome> {
@@ -280,11 +296,14 @@ export async function sendWaitlistEmailIdempotent(args: {
   }
 
   const payload: ProviderPayload = {
-    from: FROM_ADDRESS,
+    from: args.studioIdentity
+      ? buildFromHeader(args.studioIdentity.displayName)
+      : FROM_ADDRESS,
     to: args.to,
     subject: args.subject,
     html: args.html,
     text: args.text,
+    ...(args.studioIdentity?.replyTo ? { replyTo: args.studioIdentity.replyTo } : {}),
   };
   // Derived from THIS object — the one about to be sent — plus the tenant, so
   // neither component can drift from what is actually transmitted.

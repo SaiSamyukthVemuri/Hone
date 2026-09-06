@@ -2,6 +2,10 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { inferStripeLivemode } from "@/lib/stripe/server";
 import { sendEmailSafely } from "@/lib/email/send-appointment";
+import {
+  resolveReplyTo,
+  studioClientContactEmail,
+} from "@/lib/email/studio-identity";
 import { recordOpsAlert } from "@/lib/ops/alerts";
 import {
   buildPaymentReceiptEmail,
@@ -267,11 +271,9 @@ type ClientRow = {
 // owner_email; if neither is set we pass null and the template
 // omits the contact line.
 function resolveStudioContactEmail(studio: StudioRow): string | null {
-  const override = studio.postcare_contact_email?.trim();
-  if (override && override.length > 0) return override;
-  const fallback = studio.owner_email?.trim();
-  if (fallback && fallback.length > 0) return fallback;
-  return null;
+  // COMMS-01A: delegates to the shared authority. This was a THIRD copy of
+  // the same precedence; three copies cannot be kept in agreement by hand.
+  return studioClientContactEmail(studio);
 }
 
 export async function sendPaymentChargeReceipt(args: {
@@ -490,6 +492,10 @@ export async function sendPaymentChargeReceipt(args: {
   });
 
   const sendResult = await sendEmailSafely({
+    studioIdentity: {
+      displayName: studio.name,
+      replyTo: resolveReplyTo(resolveStudioContactEmail(studio)),
+    },
     to: clientEmail,
     subject,
     html,
