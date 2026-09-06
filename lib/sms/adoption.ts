@@ -4,7 +4,7 @@ import type { SmsProvisioningProvider } from "./provider/types";
 import { canonicalClaimPhoneNumber } from "./claim-phone-number";
 import { safeResourceId } from "./provider/association";
 import type { NumberAssociation } from "./provider/types";
-import type { AttemptErrorCode, ProvisioningStore } from "./provisioning";
+import type { AttemptErrorCode, FailResult, ProvisioningStore } from "./provisioning";
 
 // ===========================================================================
 // WILLOW ADOPTION — establish the 0191 lifecycle over an ALREADY-OWNED sender
@@ -60,6 +60,22 @@ export type AdoptionOutcome =
       result: "failed";
       reason: AttemptErrorCode | AdoptionRefusal;
       retryable: boolean;
+      /**
+       * Whether the attempt was actually PARKED in `error`.
+       *
+       * False means the parking write itself was not acknowledged -- the store
+       * answered `invalid_input` (an unreachable database, or a shape it refuses
+       * to trust), `not_provisioning`, or `claim_not_found`. The row is then very
+       * likely still `provisioning` behind a live lease, so the retry this
+       * outcome invites would be turned away as `in_progress`.
+       *
+       * REPORTING `retryable` WITHOUT THIS IS TRUE AND STILL MISLEADING: the
+       * provider error may well be retryable while the door is still shut. Both
+       * facts travel together, exactly as provisionStudioSmsSender already does.
+       */
+      parked: boolean;
+      /** The parking write's own verdict, never discarded. */
+      parkResult: FailResult;
       /**
        * What the census actually found, when the refusal is about WHERE the
        * number lives. Redacted to a recognisable-but-unusable form: an operator
@@ -204,7 +220,17 @@ export async function adoptExistingStudioSmsSender(
     if (parked === "already_active") {
       return { ok: true, result: "already_active", senderId };
     }
-    return { ok: false, result: "failed", reason, retryable, ...detail };
+    return {
+      ok: false,
+      result: "failed",
+      reason,
+      retryable,
+      // Only `failed` means the row moved. Everything else means the attempt was
+      // not parked, and the caller must be able to see that.
+      parked: parked === "failed",
+      parkResult: parked,
+      ...detail,
+    };
   };
 
   // --- 2. PROVE OWNERSHIP AND ASSOCIATION, before touching anything --------

@@ -62,6 +62,14 @@ export class InMemoryProvisioningStore implements ProvisioningStore {
    */
   failFinalizeWithoutCommitting = false;
 
+  /**
+   * Force what the parking write ANSWERS, without changing whether the row
+   * moved. Models `createProvisioningStore.fail`, which maps a transport error
+   * or an unrecognised payload to `invalid_input` — an answer that says nothing
+   * about whether the transition landed.
+   */
+  failReturns: FailResult | null = null;
+
   constructor(private readonly members: Membership[]) {}
 
   private nextKey(): string {
@@ -297,6 +305,7 @@ export class InMemoryProvisioningStore implements ProvisioningStore {
     leaseGeneration: number;
     errorCode: string;
   }): Promise<FailResult> {
+    if (this.failReturns !== null) return this.failReturns;
     const row = this.rows.find(
       (r) => r.studioId === input.studioId && r.claimKey === input.claimKey && r.status !== "released",
     );

@@ -1128,3 +1128,91 @@ describe("CODEX P2 — the provisioning test names its sender", () => {
     expect(store.live(STUDIO_A)!.status).not.toBe("active");
   });
 });
+
+// ---------------------------------------------------------------------------
+// CODEX P2 — the parking write has its own verdict.
+// ---------------------------------------------------------------------------
+//
+// Adoption parks a failed attempt with store.fail(). Only `failed` means the row
+// actually moved to `error`. `invalid_input` (an unreachable database, or a shape
+// the store refuses to trust), `not_provisioning` and `claim_not_found` all mean
+// the attempt was NOT parked — so the row is probably still `provisioning`
+// behind a live lease, and the retry the failure invites would be turned away as
+// `in_progress`.
+//
+// Reporting the provider error alone is true and still misleading. Both facts
+// have to travel together, exactly as provisionStudioSmsSender already does.
+
+describe("CODEX P2 — an unacknowledged park stays visible", () => {
+  /** Drive a genuine provider failure so the parking write is reached. */
+  function failingProvider() {
+    return new FakeSmsProvisioningProvider({
+      ...ownedAndAssociated(),
+      testSendFails: "provider_timeout",
+    });
+  }
+
+  it("1. provider failure + acknowledged park -> ordinary parked failure", async () => {
+    provider = failingProvider();
+    const outcome = await adopt();
+    expect(outcome).toMatchObject({
+      ok: false,
+      result: "failed",
+      reason: "provider_timeout",
+      parked: true,
+      parkResult: "failed",
+    });
+    expect(store.live(STUDIO_A)!.status).toBe("error");
+  });
+
+  for (const verdict of ["invalid_input", "not_provisioning", "claim_not_found"] as const) {
+    it(`fail() => ${verdict} is preserved distinctly, not shown as a parked failure`, async () => {
+      provider = failingProvider();
+      store.failReturns = verdict;
+      const outcome = await adopt();
+      expect(outcome).toMatchObject({
+        ok: false,
+        result: "failed",
+        parked: false,
+        parkResult: verdict,
+      });
+    });
+  }
+
+  it("5. fail() => already_active remains terminal SUCCESS", async () => {
+    provider = failingProvider();
+    store.failReturns = "already_active";
+    expect(await adopt()).toMatchObject({ ok: true, result: "already_active" });
+  });
+
+  it("6. fail() => lease_lost remains lease_lost", async () => {
+    provider = failingProvider();
+    store.failReturns = "lease_lost";
+    expect(await adopt()).toMatchObject({ ok: false, result: "lease_lost" });
+  });
+
+  it("7. an unacknowledged park is NOT presented as retry-safe truth", async () => {
+    // The provider error was retryable; the park was not acknowledged. A caller
+    // that reads only `retryable` would retry into a row that is still
+    // provisioning behind a live lease and be turned away as in_progress.
+    provider = failingProvider();
+    store.failReturns = "invalid_input";
+    const outcome = await adopt();
+    expect(outcome).toMatchObject({ retryable: true, parked: false });
+
+    // The row never moved, which is exactly what `parked: false` is reporting.
+    expect(store.live(STUDIO_A)!.status).toBe("provisioning");
+
+    // And an immediate retry is indeed excluded — the outcome above is the only
+    // warning a caller gets.
+    store.failReturns = null;
+    const retry = await adopt();
+    expect(retry).toMatchObject({ result: "in_progress" });
+  });
+
+  it("8. every refusal path also reports its parking verdict", async () => {
+    provider = new FakeSmsProvisioningProvider({ preOwnedNumbers: {} });
+    const outcome = await adopt();
+    expect(outcome).toMatchObject({ reason: "number_not_owned_by_account", parked: true });
+  });
+});

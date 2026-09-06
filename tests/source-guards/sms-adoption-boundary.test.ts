@@ -270,3 +270,43 @@ describe("CODEX P2-A — activation evidence names the adopted number", () => {
     expect(TWILIO_ADAPTER).toMatch(/sentFrom: asE164\(rec\?\.from\)/);
   });
 });
+
+describe("CODEX P2 — the parking verdict travels with the failure", () => {
+  it("adoption reports parked and parkResult, mirroring the purchase path", () => {
+    expect(ADOPTION).toMatch(/parked: parked === "failed"/);
+    expect(ADOPTION).toMatch(/parkResult: parked/);
+  });
+
+  it("the contract matches provisionStudioSmsSender's, field for field", () => {
+    // Not a second model. If the purchase path's shape changes, this fails and
+    // someone has to decide deliberately rather than letting the two drift.
+    const purchase = read("lib/sms/provisioning.ts");
+    for (const field of ["parked: boolean;", "parkResult: FailResult;"]) {
+      expect(purchase, `purchase lost ${field}`).toContain(field);
+      expect(ADOPTION_RAW, `adoption missing ${field}`).toContain(field);
+    }
+  });
+
+  it("no failure outcome is built without the verdict", () => {
+    // Every CONSTRUCTION of a failed outcome must be the one that carries
+    // parked/parkResult. Matched with a trailing comma so the type declaration
+    // (`result: "failed";`) is not counted as a construction — an earlier form
+    // of this counted both and reported two.
+    const constructions = [...ADOPTION.matchAll(/result: "failed",/g)];
+    expect(constructions.length).toBe(1);
+    const declarations = [...ADOPTION.matchAll(/result: "failed";/g)];
+    expect(declarations.length).toBe(1);
+  });
+
+  it("an unacknowledged park is never silently retried away", () => {
+    // The two terminal database truths still outrank the failure story, and
+    // they are checked BEFORE the verdict is reported.
+    const fw = ADOPTION.slice(ADOPTION.indexOf("const failWith"));
+    const leaseAt = fw.indexOf('parked === "lease_lost"');
+    const activeAt = fw.indexOf('parked === "already_active"');
+    const failedAt = fw.indexOf('result: "failed"');
+    expect(leaseAt).toBeGreaterThan(-1);
+    expect(activeAt).toBeGreaterThan(leaseAt);
+    expect(failedAt).toBeGreaterThan(activeAt);
+  });
+});
