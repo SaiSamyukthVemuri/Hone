@@ -267,6 +267,54 @@ describe("the current worker reconciles and finishes", () => {
 });
 
 // ---------------------------------------------------------------------------
+// The parking write's own verdict is reported, never assumed
+// ---------------------------------------------------------------------------
+
+describe("a failure write that did not land is not reported as parked", () => {
+  /** A store whose `fail()` refuses for a reason that is NOT displacement. */
+  class UnparkableStore extends TakeoverStore {
+    constructor(private readonly verdict: FailResult) {
+      super(Number.MAX_SAFE_INTEGER, LIVE);
+    }
+    async fail(): Promise<FailResult> {
+      return this.verdict;
+    }
+  }
+
+  it.each(["invalid_input", "not_provisioning", "claim_not_found"] as const)(
+    "fail() -> %s is surfaced, not swallowed",
+    async (verdict) => {
+      // The provider fails, so the attempt tries to park -- and the parking
+      // write itself is refused for a reason unrelated to displacement.
+      provider.reset({ purchaseFails: "provider_rejected" });
+      const store = new UnparkableStore(verdict);
+      const outcome = await run(store);
+
+      expect(outcome).toMatchObject({ ok: false, result: "failed" });
+      if (outcome.ok || outcome.result !== "failed") return;
+
+      // The row was NOT moved to `error`. Saying otherwise would invite a
+      // retry into a door still held shut by the live lease.
+      expect(outcome.parked).toBe(false);
+      expect(outcome.parkResult).toBe(verdict);
+      // The provider's own error is still reported -- both facts travel.
+      expect(outcome.reason).toBe("provider_rejected");
+    },
+  );
+
+  it("a write that DID land reports parked: true", async () => {
+    provider.reset({ purchaseFails: "provider_rejected" });
+    const store = new TakeoverStore(Number.MAX_SAFE_INTEGER, LIVE);
+    const outcome = await run(store);
+
+    expect(outcome).toMatchObject({ ok: false, result: "failed" });
+    if (outcome.ok || outcome.result !== "failed") return;
+    expect(outcome.parked).toBe(true);
+    expect(outcome.parkResult).toBe("failed");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Coverage cannot quietly fall behind
 // ---------------------------------------------------------------------------
 

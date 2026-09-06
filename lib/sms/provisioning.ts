@@ -274,6 +274,19 @@ export type ProvisionOutcome =
        * claim is intact, so a retry will find and adopt it.
        */
       mayOwnUnfinalizedResources: boolean;
+      /**
+       * Whether the attempt was actually PARKED in `error`.
+       *
+       * False means the failure write itself did not land -- the database was
+       * unreachable, or the row had already moved. The row is then very likely
+       * still `provisioning` behind a live lease, so an immediate retry is
+       * EXCLUDED (`in_progress`) rather than resuming, until the lease expires.
+       * Reporting "failed, retryable" without this would invite the owner to
+       * try again into a door that is still shut.
+       */
+      parked: boolean;
+      /** The failure write's own verdict, never discarded. */
+      parkResult: FailResult;
     };
 
 export type ProvisionInput = {
@@ -361,6 +374,10 @@ export async function provisionStudioSmsSender(
       reason: "provider_error_unspecified",
       retryable: false,
       mayOwnUnfinalizedResources: false,
+      // Nothing was attempted and nothing was parked: there is no usable claim
+      // to park against.
+      parked: false,
+      parkResult: "invalid_input",
     };
   }
 
@@ -385,12 +402,23 @@ export async function provisionStudioSmsSender(
     // while the current generation is busy successfully provisioning it.
     if (wrote(parked)) return displaced();
 
+    // THE PARKING WRITE HAS ITS OWN VERDICT, and only `failed` means the row
+    // actually moved to `error`. `invalid_input` (an unreachable database, or a
+    // shape this store refuses to trust), `not_provisioning` and
+    // `claim_not_found` all mean the attempt was NOT parked -- so the row is
+    // probably still `provisioning` behind a live lease, and the retry this
+    // outcome invites would be turned away as `in_progress`.
+    //
+    // Reporting the provider error alone would be true and still misleading.
+    // Both facts travel together.
     return {
       ok: false,
       result: "failed",
       reason: code,
       retryable,
       mayOwnUnfinalizedResources: mayOwn,
+      parked: parked === "failed",
+      parkResult: parked,
     };
   };
 
@@ -615,11 +643,16 @@ export async function provisionStudioSmsSender(
   );
   if (parked.result === "lease_lost") return parked;
 
+  // Carry the parking write's own verdict here too. `failWith` already decided
+  // whether the row actually moved to `error`; re-asserting "parked" from this
+  // branch would be inventing a fact rather than reporting one.
   return {
     ok: false,
     result: "failed",
     reason: finalized,
     retryable: finalized !== "conflict",
     mayOwnUnfinalizedResources: true,
+    parked: parked.result === "failed" ? parked.parked : false,
+    parkResult: parked.result === "failed" ? parked.parkResult : "invalid_input",
   };
 }
