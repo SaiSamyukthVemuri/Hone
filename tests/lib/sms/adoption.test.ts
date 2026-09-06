@@ -604,3 +604,87 @@ describe("10. ordinary purchase-new behaviour is unchanged", () => {
     expect(provider.calls.ownedLookup).toBe(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// CODEX P2 — a lost finalize response must not become a false failure.
+// ---------------------------------------------------------------------------
+//
+// createProvisioningStore.finalize maps BOTH a transport error and an
+// unrecognised payload to `invalid_input`, and neither of those says anything
+// about whether the transaction committed. So the realistic bad case is:
+// finalize COMMITS the sender to `active`, the response is lost, the store
+// reports `invalid_input`, adoption goes to park the attempt -- and the park
+// discovers the row is already live.
+//
+// The purchase path already answers this: its failWith returns
+// `{ ok: true, result: "already_active" }` when the store says so. Adoption
+// omitted that branch, so it reported FAILED over a sender the database had
+// just activated.
+
+describe("CODEX P2 — activation that commits with a lost response", () => {
+  it("1. finalize succeeds normally -> adopted", async () => {
+    const outcome = await adopt();
+    expect(outcome).toMatchObject({ ok: true, result: "adopted" });
+    expect(store.live(STUDIO_A)!.status).toBe("active");
+  });
+
+  it("2. finalize COMMITS but the response is lost -> success, not failure", async () => {
+    store.loseFinalizeResponse = true;
+    const outcome = await adopt();
+
+    // The database is the authority, and it says this sender is live.
+    expect(store.live(STUDIO_A)!.status).toBe("active");
+    expect(outcome).toMatchObject({ ok: true, result: "already_active" });
+    // The established identity is returned through the existing result shape.
+    expect((outcome as { senderId: string }).senderId).toBe(store.live(STUDIO_A)!.id);
+  });
+
+  it("3. finalize genuinely fails and the park lands -> stays failed", async () => {
+    // Success must be justified by the STORE saying already_active, never by
+    // finalize having merely returned invalid_input.
+    provider = new FakeSmsProvisioningProvider({
+      ...ownedAndAssociated(),
+      testSendFails: "provider_rejected",
+    });
+    const outcome = await adopt();
+    expect(outcome).toMatchObject({ ok: false, result: "failed" });
+    expect(store.live(STUDIO_A)!.status).toBe("error");
+  });
+
+  it("3b. finalize returns invalid_input but NOTHING committed -> stays failed", async () => {
+    // THE DISCRIMINATING CASE, and the one an earlier version of this suite
+    // missed. `invalid_input` is returned both when the write committed and its
+    // answer was lost, and when the write never landed at all — the two are
+    // indistinguishable from the answer alone. So success must be justified by
+    // the STORE saying `already_active`, never by the reason code. A mutation
+    // that returned success on `finalize_failed` passed every other test here.
+    store.failFinalizeWithoutCommitting = true;
+    const outcome = await adopt();
+    expect(store.live(STUDIO_A)!.status).not.toBe("active");
+    expect(outcome).toMatchObject({ ok: false, result: "failed", reason: "finalize_failed" });
+  });
+
+  it("4. fail() answers lease_lost -> stays lease_lost", async () => {
+    // Displacement still outranks everything; the new branch must not swallow it.
+    store.loseFinalizeResponse = true;
+    store.fail = async () => "lease_lost";
+    const outcome = await adopt();
+    expect(outcome).toMatchObject({ ok: false, result: "lease_lost" });
+  });
+
+  it("5. no duplicate provider test on the recovery path", async () => {
+    store.loseFinalizeResponse = true;
+    await adopt();
+    expect(provider.calls.testSend).toBe(1);
+  });
+
+  it("6 + 7. recovery performs no purchase and no configuration mutation", async () => {
+    store.loseFinalizeResponse = true;
+    await adopt();
+    expect(provider.calls.purchase).toBe(0);
+    expect(provider.calls.createService).toBe(0);
+    expect(provider.calls.attach).toBe(0);
+    expect(provider.calls.inboundWebhook).toBe(0);
+    expect(provider.calls.statusCallback).toBe(0);
+  });
+});

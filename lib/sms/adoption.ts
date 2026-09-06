@@ -171,6 +171,26 @@ export async function adoptExistingStudioSmsSender(
     if (parked === "lease_lost") {
       return { ok: false, result: "lease_lost", senderId };
     }
+    // AND IT MAY HAVE TOLD US THE OPPOSITE: that this sender is already ACTIVE.
+    //
+    // `fail_studio_sms_provisioning` answers `already_active` by reading the
+    // row's status, so this is the DATABASE stating the terminal state has been
+    // reached -- not an inference from provider success, not from Hone holding a
+    // SID, and emphatically not from finalize having returned `invalid_input`.
+    // The store maps BOTH a transport error and an unrecognised payload to
+    // `invalid_input`, and neither says anything about whether the transaction
+    // committed; the realistic path here is a finalize that COMMITTED while its
+    // response was lost, so we came to park and the park found the row live.
+    //
+    // Reporting a transport error over that would tell the operator adoption
+    // failed while the database says the sender is provisioned. The newer
+    // terminal truth wins, and it reuses the outcome the claim path already
+    // returns for this exact state rather than inventing a new one. This is the
+    // same branch provisionStudioSmsSender's failWith already carries; adoption
+    // omitted it, which is the whole of the defect.
+    if (parked === "already_active") {
+      return { ok: true, result: "already_active", senderId };
+    }
     return { ok: false, result: "failed", reason, retryable, ...detail };
   };
 

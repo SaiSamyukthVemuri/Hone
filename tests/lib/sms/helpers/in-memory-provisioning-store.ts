@@ -46,6 +46,22 @@ export class InMemoryProvisioningStore implements ProvisioningStore {
   /** Every renewLease answer, so a test can prove the fence was consulted. */
   readonly fenceCalls: Array<{ generation: number; phoneNumber: string; granted: boolean }> = [];
 
+  /**
+   * Model the LOST RESPONSE: finalize COMMITS, and the caller is told
+   * `invalid_input` anyway. This is not hypothetical — createProvisioningStore
+   * maps both a transport error and an unrecognised payload to `invalid_input`,
+   * and neither says anything about whether the transaction committed.
+   */
+  loseFinalizeResponse = false;
+
+  /**
+   * finalize fails and NOTHING commits: the row stays `provisioning`. The
+   * caller sees the same `invalid_input` as the lost-response case, which is
+   * the point — the two are indistinguishable from the answer alone, so only
+   * the STORE can say which one happened.
+   */
+  failFinalizeWithoutCommitting = false;
+
   constructor(private readonly members: Membership[]) {}
 
   private nextKey(): string {
@@ -218,6 +234,7 @@ export class InMemoryProvisioningStore implements ProvisioningStore {
     messagingServiceSid: string;
     testOk: boolean;
   }): Promise<FinalizeResult> {
+    if (this.failFinalizeWithoutCommitting) return "invalid_input";
     const row = this.rows.find(
       (r) => r.studioId === input.studioId && r.claimKey === input.claimKey && r.status !== "released",
     );
@@ -259,8 +276,11 @@ export class InMemoryProvisioningStore implements ProvisioningStore {
     if (ready) {
       row.status = "active";
       row.lastErrorCode = null;
+      // THE COMMIT LANDED. Only the answer was lost.
+      if (this.loseFinalizeResponse) return "invalid_input";
       return input.testOk ? "activated" : "provisioned_untested";
     }
+    if (this.loseFinalizeResponse) return "invalid_input";
     return "provisioned_untested";
   }
 
