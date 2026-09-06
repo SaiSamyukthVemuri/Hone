@@ -23,66 +23,75 @@ import {
 // the lookup as anon or authenticated, the boundary would be gone and these
 // tests are what say so.
 
-// ---------------------------------------------------------------------------
-// DEFERRED UNTIL #673's FINAL HEAD — and skipped rather than left red.
-// ---------------------------------------------------------------------------
-//
-// The fixtures below are NOT schema-valid against 0191 today, and review said
-// so correctly: every status other than `off` requires a non-null provisioning
-// claim and the complete claim-evidence triple, so the first `active` insert
-// fails before any 0192 assertion runs — and the two seeds would then collide
-// on the globally-unique phone_number and phone_number_sid anyway.
-//
-// They are not repaired here on purpose. #673 is still changing 0191's claim,
-// selection and fencing contract, so a fixture built around the intermediate
-// schema would have to be rebuilt regardless — and one that merely PASSED
-// against a schema in flux would be worse than none, because it would look like
-// proof.
-//
-// Skipped rather than deleted so the intended assertions stay visible and
-// reviewable, and skipped rather than left failing so CI reports the truth: this
-// evidence does not exist yet. It is rebuilt at the refresh onto #673's final
-// reviewed head — seeded through claim/finalize with complete, DISTINCT provider
-// evidence — and only then is it claimed as passing.
-//
-// Nothing in this PR or its body cites this suite as proof of anything.
-// ---------------------------------------------------------------------------
-
 let studioA: SeededStudio;
 let studioB: SeededStudio;
 
-const A_SID = "MG000000000000000000000000000a01";
-const B_SID = "MG000000000000000000000000000b01";
+const A_SID = "MG" + "a2".repeat(16);
+const B_SID = "MG" + "b2".repeat(16);
 
-/** Put a studio's sender row directly into a given terminal state. */
+/**
+ * Seed one studio's sender row directly into a terminal state.
+ *
+ * REBUILT AGAINST THE FINAL 0191 SCHEMA. The earlier version of this helper was
+ * not schema-valid and review said so: every status other than `off` requires a
+ * complete provisioning claim, and two rows cannot share a number or a SID.
+ * The final 0191 enforces all of it, so the fixture must satisfy, per row:
+ *
+ *   * the CLAIM EVIDENCE TRIPLE — key + instant + actor arrive together or not
+ *     at all (studio_sms_senders_claim_evidence_check), and the actor must be a
+ *     practitioner OF THAT STUDIO (composite FK to practitioners(id, studio_id));
+ *   * claimed_phone_number present for any non-`off` status, and
+ *     phone_number = claimed_phone_number — what was bought is what was claimed;
+ *   * the shape checks: +E.164, PN + 32 hex, MG + 32 hex, hone-sms- + 32 hex;
+ *   * for `active` specifically, the readiness check: both SIDs, the number,
+ *     provisioned_at AND last_test_ok_at;
+ *   * global uniqueness of phone_number_sid, messaging_service_sid and the
+ *     claim key — so A and B must be given genuinely DISTINCT evidence, not the
+ *     same literals twice.
+ */
 async function seedSender(
-  studioId: string,
+  s: SeededStudio,
   status: string,
-  sid: string,
+  ev: { phone: string; pnSid: string; msgSid: string; claimKey: string },
   complete = true,
 ): Promise<void> {
-  // The readiness CHECK makes `active` unreachable without the full set, so a
-  // complete row is required for the active cases and deliberately withheld
-  // for the non-active ones.
   await adminQuery(
     `insert into public.studio_sms_senders
-       (studio_id, provider, status, country, phone_number, phone_number_sid,
-        messaging_service_sid, provisioned_at, last_test_ok_at)
+       (studio_id, provider, status, country,
+        claimed_phone_number, phone_number, phone_number_sid, messaging_service_sid,
+        provisioning_claim_key, provisioning_claim_at, provisioning_claim_by_practitioner_id,
+        provisioning_lease_generation, provisioned_at, last_test_ok_at)
      values ($1, 'twilio', $2, 'CA',
-             case when $4 then '+15555550100' end,
-             case when $4 then 'PN' || repeat('a', 32) end,
              $3,
-             case when $4 then now() end,
-             case when $4 then now() end)`,
-    [studioId, status, sid, complete],
+             case when $7 then $3 end,
+             case when $7 then $4 end,
+             $5,
+             $6, now(), $8,
+             1,
+             case when $7 then now() end,
+             case when $7 then now() end)`,
+    [s.studioId, status, ev.phone, ev.pnSid, ev.msgSid, ev.claimKey, complete, s.practitionerId],
   );
 }
+
+const EV_A = {
+  phone: "+15555550101",
+  pnSid: "PN" + "a1".repeat(16),
+  msgSid: "MG" + "a2".repeat(16),
+  claimKey: "hone-sms-" + "a3".repeat(16),
+};
+const EV_B = {
+  phone: "+15555550202",
+  pnSid: "PN" + "b1".repeat(16),
+  msgSid: "MG" + "b2".repeat(16),
+  claimKey: "hone-sms-" + "b3".repeat(16),
+};
 
 beforeAll(async () => {
   studioA = await seedStudio("sms-out-a");
   studioB = await seedStudio("sms-out-b");
-  await seedSender(studioA.studioId, "active", A_SID);
-  await seedSender(studioB.studioId, "active", B_SID);
+  await seedSender(studioA, "active", EV_A);
+  await seedSender(studioB, "active", EV_B);
 });
 
 afterAll(async () => {
@@ -93,7 +102,7 @@ afterAll(async () => {
   await closePool();
 });
 
-describe.skip("the lookup resolves each studio to its own sender", () => {
+describe("the lookup resolves each studio to its own sender", () => {
   it("Studio A resolves A's messaging service", async () => {
     const r = await asRole("service_role", (q) =>
       q(`select messaging_service_sid from public.resolve_active_studio_sms_sender($1)`, [
@@ -136,7 +145,13 @@ describe.skip("the lookup resolves each studio to its own sender", () => {
 
   it("a NON-ACTIVE sender resolves to nothing", async () => {
     const pending = await seedStudio("sms-out-pending");
-    await seedSender(pending.studioId, "provisioning", "MG0000000000000000000000000p01", false);
+    await seedSender(
+      pending,
+      "provisioning",
+      { phone: "+15555550303", pnSid: "PN" + "c1".repeat(16),
+        msgSid: "MG" + "c2".repeat(16), claimKey: "hone-sms-" + "c3".repeat(16) },
+      false,
+    );
     const r = await asRole("service_role", (q) =>
       q(`select messaging_service_sid from public.resolve_active_studio_sms_sender($1)`, [
         pending.studioId,
@@ -149,7 +164,36 @@ describe.skip("the lookup resolves each studio to its own sender", () => {
   });
 });
 
-describe.skip("only the narrow function crosses 0191's boundary", () => {
+describe("ambiguity is unrepresentable, so the lookup can never pick a winner", () => {
+  it("a SECOND live sender for one studio is refused by the database", async () => {
+    // 0192's resolver returns a SET rather than a scalar precisely so a violated
+    // invariant surfaces as ambiguity instead of a silently chosen first row.
+    // This proves the invariant it leans on is real: one_live_per_studio is
+    // UNIQUE (studio_id) WHERE status <> 'released', so the second row cannot
+    // exist for the resolver to be ambiguous about.
+    const dup = {
+      phone: "+15555550404",
+      pnSid: "PN" + "d1".repeat(16),
+      msgSid: "MG" + "d2".repeat(16),
+      claimKey: "hone-sms-" + "d3".repeat(16),
+    };
+    await expect(seedSender(studioA, "active", dup)).rejects.toMatchObject({
+      code: "23505",
+    });
+  });
+
+  it("the studio still resolves to exactly ONE sender afterwards", async () => {
+    const r = await asRole("service_role", (q) =>
+      q(`select messaging_service_sid from public.resolve_active_studio_sms_sender($1)`, [
+        studioA.studioId,
+      ]),
+    );
+    expect(r.rows).toHaveLength(1);
+    expect(r.rows[0].messaging_service_sid).toBe(A_SID);
+  });
+});
+
+describe("only the narrow function crosses 0191's boundary", () => {
   it("anon is DENIED execute", async () => {
     await expect(
       asRole("anon", (q) =>

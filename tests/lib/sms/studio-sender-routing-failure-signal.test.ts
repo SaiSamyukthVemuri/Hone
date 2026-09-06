@@ -22,7 +22,7 @@ vi.mock("@/lib/sms/sender-routing", async (orig) => {
   return { ...actual, resolveActiveStudioSender: (...a: unknown[]) => resolveMock(...a) };
 });
 
-const recordOpsAlert = vi.fn(async (..._a: unknown[]) => {});
+const recordOpsAlert = vi.fn<(...a: unknown[]) => Promise<void>>(async () => {});
 vi.mock("@/lib/ops/alerts", () => ({
   recordOpsAlert: (...a: unknown[]) => recordOpsAlert(...a),
 }));

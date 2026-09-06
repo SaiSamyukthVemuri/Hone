@@ -14,12 +14,12 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-09-06, post-0190 apply; `0191` and `0192` authored and PENDING)
+## Current state (verified 2026-09-06, post-0190 apply; `0192` authored and PENDING — see the hosted note below)
 
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0190** (`0190_waitlist_invitation_ttl_anchor.sql`) |
-| **Repo migration max** | **0192** — the repository sits **two migrations ABOVE hosted**. **`0191` is PENDING** (COMMS-01B, per-studio SMS sender provisioning) and **`0192` is PENDING** (COMMS-01B2, the outbound sender lookup that lets the server dispatcher resolve a studio's messaging service without granting any role a read on `studio_sms_senders`). Neither is **applied to production**, and neither is authorized for apply. This is the ordinary pre-apply position of a migration-bearing stack, not drift. Next free number is **0193** (available, **not claimed**). |
+| **Repo migration max** | **0192** — **`0192` is PENDING** (COMMS-01B2, the outbound sender lookup that lets the server dispatcher resolve a studio's messaging service without granting any role a read on `studio_sms_senders`). It is **not applied to production** and **not authorized for apply**; that is a separate gate. **THIS ROW DOES NOT RESTATE 0191's HOSTED STATUS.** 0191 belongs to #673 and its apply record is owned by the change that performed the apply, not by this one — see `migration-state.json`, which is the single declared authority for hosted state. Next free number is **0193** (available, **not claimed**). |
 | **Remote-only migrations** | **none** — no migration exists on production that the repository lacks |
 | **Total migrations in repo** | **191** (`0001` … `0157`, `0159` … `0192` — **no `0158`**) — derived by `npm run migration:state`, not counted by hand |
 | **Apply timestamp** | ⚠️ **NO SERVER-GENERATED APPLY TIMESTAMP WAS CAPTURED**, so `hosted_applied_at` is `null`. The **operator-observed client-side window** is `2026-09-04T05:46:48.031Z` – `2026-09-04T05:47:04.197Z`, **16.166 s**, read from the apply host's clock around the CLI invocation. **That window is not a server apply time and is never represented as one.** |
