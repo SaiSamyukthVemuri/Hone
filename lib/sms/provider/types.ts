@@ -140,6 +140,29 @@ export type ClaimedResources = {
   messagingServiceSid: string | null;
 };
 
+/**
+ * What the account already owns for a specific E.164, as the provider reports
+ * it. WILLOW ADOPTION.
+ *
+ * This is the evidence adoption is allowed to act on, and it is deliberately
+ * narrow: whether THIS account owns the number, its SID, and whether it is
+ * already a member of the Messaging Service the operator named. Nothing here
+ * describes a resource Hone could create.
+ *
+ * `inNamedService` is a THREE-STATE answer, not a boolean, because "we could
+ * not determine membership" must never collapse into "not a member" -- that
+ * reading is what would license an attach, and an attach on a number that is
+ * already in another service is a silent move.
+ */
+export type OwnedNumberFacts = {
+  /** Null when this account does not own the number at all. */
+  phoneNumberSid: string | null;
+  /** Echoed back so the caller can prove the provider answered about the right number. */
+  phoneNumber: string | null;
+  /** Membership in the Messaging Service the operator named. */
+  inNamedService: "yes" | "no" | "unknown";
+};
+
 // ---------------------------------------------------------------------------
 // The port
 // ---------------------------------------------------------------------------
@@ -215,6 +238,23 @@ export interface SmsProvisioningProvider {
   lookupResourcesByClaim(
     claimKey: string,
   ): Promise<ProviderResult<{ found: ClaimedResources }>>;
+
+  /**
+   * READ-ONLY. Does this account already own `phoneNumber`, and is it already a
+   * member of `messagingServiceSid`?
+   *
+   * WILLOW ADOPTION. `lookupResourcesByClaim` cannot answer this: it searches on
+   * the `hone-sms-claim:<key>` FriendlyName Hone stamps at purchase time, so it
+   * finds only numbers Hone itself bought. A number the studio already owned
+   * carries no such tag and is invisible to it.
+   *
+   * Performs NO mutation. It cannot purchase, attach, move or create — which is
+   * what makes it safe to run before the operator has committed to anything.
+   */
+  lookupOwnedNumber(input: {
+    phoneNumber: string;
+    messagingServiceSid: string;
+  }): Promise<ProviderResult<{ facts: OwnedNumberFacts }>>;
 
   /** Create a messaging service tagged with the claim key. */
   createMessagingService(

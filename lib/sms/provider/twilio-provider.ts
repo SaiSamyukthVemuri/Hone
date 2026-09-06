@@ -11,6 +11,7 @@ import {
   providerError,
   type AvailableNumberCandidate,
   type ClaimedResources,
+  type OwnedNumberFacts,
   type ProviderError,
   type ProviderAck,
   type ProviderResult,
@@ -230,6 +231,76 @@ export const twilioProvisioningProvider: SmsProvisioningProvider = {
       return rec !== null && asE164(rec.phone_number) === input.phoneNumber;
     });
     return { ok: true, available };
+  },
+
+  /**
+   * WILLOW ADOPTION -- read-only ownership + association evidence.
+   *
+   * TWO GETs, and it cannot be anything else: this function performs no POST,
+   * PUT or DELETE, so calling it can never purchase, attach, move or create.
+   * That is the property that lets an operator run it before deciding anything.
+   *
+   * MEMBERSHIP IS ASKED OF THE NAMED SERVICE DIRECTLY, not derived by scanning
+   * every service. Twilio does not expose a number's Messaging Service on the
+   * IncomingPhoneNumber resource, so the only alternative is walking every
+   * service's PhoneNumbers subresource -- one request per service, and a walk
+   * whose "not found" is only as trustworthy as its pagination. Asking the one
+   * service the operator named is a single deterministic request, and anything
+   * it cannot answer becomes `unknown` rather than `no`.
+   */
+  async lookupOwnedNumber(input: {
+    phoneNumber: string;
+    messagingServiceSid: string;
+  }): Promise<ProviderResult<{ facts: OwnedNumberFacts }>> {
+    const creds = readCredentials();
+    if (!creds) return providerError("provider_not_configured", false);
+
+    // 1. Does THIS account own the number? Filtering by PhoneNumber returns the
+    //    account's own inventory only, so a number belonging to someone else
+    //    simply is not there -- which is the refusal we want, not an error.
+    const url =
+      `${API_BASE}/Accounts/${encodeURIComponent(creds.accountSid)}` +
+      `/IncomingPhoneNumbers.json?PhoneNumber=${encodeURIComponent(input.phoneNumber)}&PageSize=2`;
+    const res = await request(creds, url, { method: "GET" });
+    if (!res.ok) return res;
+    if (res.status !== 200) return httpError(res.status);
+
+    const body = asRecord(res.json);
+    const numbers = body ? asArray(body.incoming_phone_numbers) : null;
+    if (!numbers) return providerError("provider_response_unparseable", false);
+
+    if (numbers.length === 0) {
+      return { ok: true, facts: { phoneNumberSid: null, phoneNumber: null, inNamedService: "unknown" } };
+    }
+    if (numbers.length > 1) {
+      // One E.164 cannot legitimately be two records. Refuse to choose.
+      return providerError("provider_resource_mismatch", false);
+    }
+
+    const rec = asRecord(numbers[0]);
+    const sid = rec ? asPhoneNumberSid(rec.sid) : null;
+    const num = rec ? asE164(rec.phone_number) : null;
+    if (!sid || !num) return providerError("provider_response_unparseable", false);
+    if (num !== input.phoneNumber) {
+      // The provider answered about a different number than we asked about.
+      return providerError("provider_resource_mismatch", false);
+    }
+
+    // 2. Is it already a member of the service the operator named? A 404 is a
+    //    definite NO from the service itself; anything else is UNKNOWN, because
+    //    treating an unreadable answer as "not a member" is what would license
+    //    an attach that silently moves the number out of another service.
+    const memberUrl =
+      `${MESSAGING_BASE}/Services/${encodeURIComponent(input.messagingServiceSid)}` +
+      `/PhoneNumbers/${encodeURIComponent(sid)}`;
+    const memberRes = await request(creds, memberUrl, { method: "GET" });
+    if (!memberRes.ok) {
+      return { ok: true, facts: { phoneNumberSid: sid, phoneNumber: num, inNamedService: "unknown" } };
+    }
+    const inNamedService: OwnedNumberFacts["inNamedService"] =
+      memberRes.status === 200 ? "yes" : memberRes.status === 404 ? "no" : "unknown";
+
+    return { ok: true, facts: { phoneNumberSid: sid, phoneNumber: num, inNamedService } };
   },
 
   async lookupResourcesByClaim(

@@ -70,6 +70,11 @@ export const BILLABLE_OR_MUTATING_EFFECTS = [
 export const CLAIM_SCOPED_READS = [
   "isNumberAvailable",
   "lookupResourcesByClaim",
+  // WILLOW ADOPTION. A read, so it spends nothing -- but fenced for the same
+  // reason as the other two: a displaced worker must not carry "the account
+  // owns this number and it is in the right service" forward toward a finalize
+  // that belongs to a newer generation.
+  "lookupOwnedNumber",
 ] as const;
 
 /**
@@ -121,6 +126,7 @@ export function fenceProviderMutations(
     isNumberAvailable: (input) => guarded(() => provider.isNumberAvailable(input)),
     lookupResourcesByClaim: (claimKey) =>
       guarded(() => provider.lookupResourcesByClaim(claimKey)),
+    lookupOwnedNumber: (input) => guarded(() => provider.lookupOwnedNumber(input)),
 
     // --- billable / mutating: fenced, every one ---------------------------
     purchaseNumber: (input) => guarded(() => provider.purchaseNumber(input)),

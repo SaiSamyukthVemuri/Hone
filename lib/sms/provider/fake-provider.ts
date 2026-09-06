@@ -5,6 +5,7 @@ import {
   providerError,
   type AvailableNumberCandidate,
   type ClaimedResources,
+  type OwnedNumberFacts,
   type ProviderErrorCode,
   type ProviderAck,
   type ProviderResult,
@@ -75,6 +76,16 @@ export type FakeProviderScript = {
   webhookFails?: ProviderErrorCode;
   statusCallbackFails?: ProviderErrorCode;
   testSendFails?: ProviderErrorCode;
+  /**
+   * WILLOW ADOPTION. Numbers this ACCOUNT already owns, as if bought outside
+   * Hone -- keyed E.164 -> the service it already belongs to (null = owned but
+   * in no service). Absent from this map means the account does not own it.
+   */
+  preOwnedNumbers?: Record<string, { phoneNumberSid: string; messagingServiceSid: string | null }>;
+  /** Force the membership answer to be unreadable, to prove UNKNOWN never adopts. */
+  membershipUnknown?: boolean;
+  /** Fail the ownership lookup itself. */
+  ownedLookupFails?: ProviderErrorCode;
   /** Numbers the fake considers already taken by someone else. */
   unavailableNumbers?: string[];
 };
@@ -113,6 +124,7 @@ export class FakeSmsProvisioningProvider implements SmsProvisioningProvider {
     search: 0,
     availability: 0,
     lookup: 0,
+    ownedLookup: 0,
     createService: 0,
     purchase: 0,
     attach: 0,
@@ -202,6 +214,46 @@ export class FakeSmsProvisioningProvider implements SmsProvisioningProvider {
       ...this.ownedNumbers(),
     ]);
     return { ok: true, available: !taken.has(input.phoneNumber) };
+  }
+
+  /**
+   * WILLOW ADOPTION. Reports what the account already owns. Mutates nothing --
+   * in particular it never adds to `store`, so a test cannot accidentally
+   * conjure an adopted resource by asking about it.
+   */
+  async lookupOwnedNumber(input: {
+    phoneNumber: string;
+    messagingServiceSid: string;
+  }): Promise<ProviderResult<{ facts: OwnedNumberFacts }>> {
+    this.calls.ownedLookup += 1;
+    if (this.script.ownedLookupFails) return this.fail(this.script.ownedLookupFails);
+
+    const owned = this.script.preOwnedNumbers?.[input.phoneNumber];
+    if (!owned) {
+      return {
+        ok: true,
+        facts: { phoneNumberSid: null, phoneNumber: null, inNamedService: "unknown" },
+      };
+    }
+    if (this.script.membershipUnknown) {
+      return {
+        ok: true,
+        facts: {
+          phoneNumberSid: owned.phoneNumberSid,
+          phoneNumber: input.phoneNumber,
+          inNamedService: "unknown",
+        },
+      };
+    }
+    return {
+      ok: true,
+      facts: {
+        phoneNumberSid: owned.phoneNumberSid,
+        phoneNumber: input.phoneNumber,
+        inNamedService:
+          owned.messagingServiceSid === input.messagingServiceSid ? "yes" : "no",
+      },
+    };
   }
 
   async lookupResourcesByClaim(

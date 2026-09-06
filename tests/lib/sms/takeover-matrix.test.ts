@@ -154,6 +154,28 @@ function run(store: ProvisioningStore) {
 // requester's words, not to pretend there are more distinct moments than the
 // sequence has.
 
+/**
+ * The fenced operations a PURCHASE attempt actually performs, in order. The
+ * matrix below stalls at each one.
+ */
+const PURCHASE_PATH_OPERATIONS = [
+  "lookupResourcesByClaim",
+  "isNumberAvailable",
+  "purchaseNumber",
+  "createMessagingService",
+  "attachNumberToService",
+  "configureInboundWebhook",
+  "configureStatusCallback",
+  "sendProvisioningTest",
+] as const;
+
+/**
+ * Fenced operations that belong to a DIFFERENT orchestration. Each one must be
+ * covered by that path's own takeover proof -- naming it here is a declaration
+ * that it is, not an exemption from being tested.
+ */
+const ADOPTION_PATH_ONLY_OPERATIONS = ["lookupOwnedNumber"] as const;
+
 const POINTS: Array<{ name: string; allow: number; effectsExpected: number }> = [
   { name: "before reconcile", allow: 0, effectsExpected: 0 },
   { name: "before exact number availability", allow: 1, effectsExpected: 0 },
@@ -378,13 +400,31 @@ describe("the matrix stays exhaustive", () => {
     // One takeover point per fenced operation, plus the finalize window. If an
     // operation is added to the port and fenced, this fails until the matrix
     // grows a row for it.
-    expect(POINTS).toHaveLength(FENCED_PROVIDER_OPERATIONS.length + 1);
+    // WILLOW ADOPTION widened the port. `lookupOwnedNumber` is fenced, but it
+    // is unreachable from provisionStudioSmsSender -- it exists only on the
+    // adoption path -- so this matrix cannot have a row for it. The invariant
+    // is not "one row per fenced operation"; it is "every fenced operation is
+    // covered by SOME takeover matrix", and the partition below keeps that
+    // total. A new operation on the PURCHASE path still fails here.
+    expect(POINTS).toHaveLength(PURCHASE_PATH_OPERATIONS.length + 1);
   });
 
   it("counts effects, not operations: reads are fenced but cost nothing", () => {
     expect(BILLABLE_OR_MUTATING_EFFECTS).toHaveLength(6);
-    expect(FENCED_PROVIDER_OPERATIONS).toHaveLength(8);
-    // The last row lets all 8 operations through, so all 6 effects ran.
+    expect(PURCHASE_PATH_OPERATIONS).toHaveLength(8);
+    // TOTALITY. Every fenced operation belongs to exactly one path. A new one
+    // that is added to neither list fails here, so it cannot ship untested.
+    const partitioned = new Set<string>([
+      ...PURCHASE_PATH_OPERATIONS,
+      ...ADOPTION_PATH_ONLY_OPERATIONS,
+    ]);
+    expect(
+      FENCED_PROVIDER_OPERATIONS.filter((op) => !partitioned.has(op)),
+      "a fenced operation belongs to no takeover matrix",
+    ).toEqual([]);
+    expect(partitioned.size).toBe(FENCED_PROVIDER_OPERATIONS.length);
+
+    // The last row lets all 8 purchase-path operations through, so all 6 effects ran.
     expect(POINTS[POINTS.length - 1].effectsExpected).toBe(
       BILLABLE_OR_MUTATING_EFFECTS.length,
     );
