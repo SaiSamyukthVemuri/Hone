@@ -50,7 +50,31 @@ import {
 export type SmsSendResult =
   | { ok: true; messageSid: string }
   | { ok: false; skipped: true; reason: string }
-  | { ok: false; skipped?: false; error: string; retryable: boolean };
+  // COMMS-01B2. A failure that happened BEFORE any provider request: the
+  // studio's sender could not be resolved, so no Twilio call was made and no
+  // send attempt was consumed. It is not a `skipped` — a skip is benign and
+  // self-correcting, this is a terminal condition an operator must fix — but it
+  // must not be counted as a provider attempt either, or a studio with no
+  // active sender inflates attempted/failed on every cron pass and corrupts the
+  // delivery metrics the heartbeat reports.
+  | {
+      ok: false;
+      skipped?: false;
+      preProvider: true;
+      error: string;
+      retryable: boolean;
+    }
+  // The ordinary provider failure: a Twilio request WAS made and did not
+  // succeed. `preProvider` is present-but-false rather than absent so the
+  // union stays a total discriminant — a caller can branch on it without the
+  // compiler having to guess which member it is holding.
+  | {
+      ok: false;
+      skipped?: false;
+      preProvider?: false;
+      error: string;
+      retryable: boolean;
+    };
 
 // Re-export for callers that import alongside the send helpers.
 export type { SmsType };
@@ -395,20 +419,41 @@ async function sendOne(args: SendOneArgs): Promise<SmsSendResult> {
   // fault deserves.
   const routed = await resolveActiveStudioSender(args.admin, args.studio.id ?? "");
   if (!routed.ok) {
-    return {
-      ok: false,
-      error:
-        routed.reason === "read_failed"
-          ? SENDER_READ_FAILED_ERROR
-          : routed.reason === "ambiguous"
-            ? SENDER_AMBIGUOUS_ERROR
-            : SENDER_NOT_ACTIVE_ERROR,
-      // "I could not perform the lookup" may resolve on its own. "This studio
-      // has no active sender" cannot, and retrying only repeats the answer.
-      // "More than one active sender" is a violated invariant that needs an
-      // operator, not a retry.
-      retryable: routed.reason === "read_failed",
-    };
+    const error =
+      routed.reason === "read_failed"
+        ? SENDER_READ_FAILED_ERROR
+        : routed.reason === "ambiguous"
+          ? SENDER_AMBIGUOUS_ERROR
+          : SENDER_NOT_ACTIVE_ERROR;
+    // "I could not perform the lookup" may resolve on its own. "This studio has
+    // no active sender" cannot, and retrying only repeats the answer. "More
+    // than one active sender" is a violated invariant that needs an operator.
+    const retryable = routed.reason === "read_failed";
+
+    // THE OPERATOR SIGNAL, AND WHY IT HAS TO BE HERE.
+    //
+    // This return happens before `claimSmsSend`, so no attempt is consumed and
+    // the reminder query keeps seeing attempts below the 3-strike cap forever.
+    // The row is therefore re-selected every cron pass and fails identically
+    // every time. Meanwhile the booking and reschedule callers discard this
+    // result entirely. Without a signal raised right here, a missing sender or
+    // a violated uniqueness invariant would suppress every SMS for that studio
+    // in complete silence — the failure would be permanent and invisible at the
+    // same time, which is the worst combination available.
+    //
+    // `attemptNumber` is deliberately omitted: no attempt was made, and
+    // claiming one would be a false statement about the provider. The terminal
+    // cases carry retryable=false, which is what makes logSmsFailure escalate
+    // to a warning-severity ops alert rather than a log line.
+    logSmsFailure({
+      appointmentId: args.appointmentId,
+      smsType: args.smsType,
+      error,
+      retryable,
+      studioId: args.studio.id ?? null,
+    });
+
+    return { ok: false, preProvider: true, error, retryable };
   }
 
   const claimed = await claimSmsSend(args.admin, args.appointmentId, args.smsType);
