@@ -16,6 +16,7 @@ vi.stubGlobal("fetch", (...a: unknown[]) => fetchMock(...a));
 
 import {
   resolveActiveStudioSender,
+  SENDER_AMBIGUOUS_ERROR,
   SENDER_NOT_ACTIVE_ERROR,
   SENDER_READ_FAILED_ERROR,
 } from "@/lib/sms/sender-routing";
@@ -24,35 +25,24 @@ import { sendSmsSafely } from "@/lib/sms/twilio";
 const A_SID = "MG00000000000000000000000000000a";
 const B_SID = "MG00000000000000000000000000000b";
 
-/** Minimal admin double: records the filters it was given, answers once. */
-function adminReturning(
-  row: { messaging_service_sid: string } | null,
+/** Minimal admin double over the 0192 RPC. Records what it was asked. */
+function adminRpc(
+  rows: Array<{ messaging_service_sid: string | null }> | null,
   error: { message: string } | null = null,
 ) {
-  const filters: Record<string, unknown> = {};
+  const calls: Array<{ fn: string; args: Record<string, unknown> }> = [];
   const client = {
-    from(table: string) {
-      filters.table = table;
-      const chain = {
-        select(cols: string) {
-          filters.select = cols;
-          return chain;
-        },
-        eq(col: string, val: unknown) {
-          filters[col] = val;
-          return chain;
-        },
-        maybeSingle: async () => ({ data: row, error }),
-      };
-      return chain;
+    rpc: async (fn: string, args: Record<string, unknown>) => {
+      calls.push({ fn, args });
+      return { data: rows, error };
     },
   };
-  return { client: client as never, filters };
+  return { client: client as never, calls };
 }
 
 function adminThrowing() {
   return {
-    from() {
+    rpc: async () => {
       throw new Error("connection reset");
     },
   } as never;
@@ -68,37 +58,37 @@ afterEach(() => {
   delete process.env.TWILIO_FROM_NUMBER;
 });
 
-describe("resolution reads only this studio's ACTIVE row", () => {
-  it("Studio A resolves A's sender", async () => {
-    const { client, filters } = adminReturning({ messaging_service_sid: A_SID });
+describe("resolution goes through the 0192 definer lookup, not the table", () => {
+  it("calls resolve_active_studio_sms_sender with the studio id", async () => {
+    const { client, calls } = adminRpc([{ messaging_service_sid: A_SID }]);
     const r = await resolveActiveStudioSender(client, "studio-a");
     expect(r).toEqual({ ok: true, sender: { messagingServiceSid: A_SID } });
-    expect(filters.table).toBe("studio_sms_senders");
-    expect(filters.studio_id).toBe("studio-a");
-    // `active` is a PROOF under 0191's readiness check, so it is the only
-    // status that may be routed to.
-    expect(filters.status).toBe("active");
+    expect(calls).toHaveLength(1);
+    // 0191 revokes ALL on studio_sms_senders from service_role, so a direct
+    // select could never have worked. The RPC is the only route.
+    expect(calls[0].fn).toBe("resolve_active_studio_sms_sender");
+    expect(calls[0].args).toEqual({ p_studio_id: "studio-a" });
   });
 
   it("Studio B resolves B's sender — the two never share a value", async () => {
-    const { client } = adminReturning({ messaging_service_sid: B_SID });
+    const { client } = adminRpc([{ messaging_service_sid: B_SID }]);
     const r = await resolveActiveStudioSender(client, "studio-b");
     expect(r.ok && r.sender.messagingServiceSid).toBe(B_SID);
     expect(B_SID).not.toBe(A_SID);
   });
 
-  it("no ACTIVE row is `none_active` — a fact about the studio", async () => {
-    const { client } = adminReturning(null);
+  it("zero rows is `none_active` — a fact about the studio", async () => {
+    const { client } = adminRpc([]);
     expect(await resolveActiveStudioSender(client, "studio-c")).toEqual({
       ok: false,
       reason: "none_active",
     });
   });
 
-  it("a driver error is `read_failed`, NOT `none_active`", async () => {
-    // The distinction is the point: an unreadable table says nothing about
-    // whether a sender exists, and must not send an operator to provision one.
-    const { client } = adminReturning(null, { message: "57014 canceled" });
+  it("an RPC error is `read_failed`, NOT `none_active`", async () => {
+    // A privilege or transport failure says nothing about whether a sender
+    // exists, and must not send an operator to provision one.
+    const { client } = adminRpc(null, { message: "42501 permission denied" });
     expect(await resolveActiveStudioSender(client, "studio-a")).toEqual({
       ok: false,
       reason: "read_failed",
@@ -112,17 +102,44 @@ describe("resolution reads only this studio's ACTIVE row", () => {
     });
   });
 
-  it("an empty studio id resolves nothing and issues no query", async () => {
-    const { client, filters } = adminReturning({ messaging_service_sid: A_SID });
+  it("TWO active rows fail closed — never pick-first", async () => {
+    // 0191's one-live-per-studio index should make this unreachable. If the
+    // invariant is ever violated, sending from an arbitrarily chosen number is
+    // worse than not sending.
+    const { client } = adminRpc([
+      { messaging_service_sid: A_SID },
+      { messaging_service_sid: B_SID },
+    ]);
+    expect(await resolveActiveStudioSender(client, "studio-a")).toEqual({
+      ok: false,
+      reason: "ambiguous",
+    });
+  });
+
+  it("a row with a null SID is refused, not sent as an empty sender", async () => {
+    const { client } = adminRpc([{ messaging_service_sid: null }]);
+    expect(await resolveActiveStudioSender(client, "studio-a")).toEqual({
+      ok: false,
+      reason: "ambiguous",
+    });
+  });
+
+  it("an empty studio id resolves nothing and issues no lookup", async () => {
+    const { client, calls } = adminRpc([{ messaging_service_sid: A_SID }]);
     expect(await resolveActiveStudioSender(client, "")).toEqual({
       ok: false,
       reason: "none_active",
     });
-    expect(filters.table).toBeUndefined();
+    expect(calls).toHaveLength(0);
   });
 
-  it("the two failure tags are distinct strings", () => {
-    expect(SENDER_NOT_ACTIVE_ERROR).not.toBe(SENDER_READ_FAILED_ERROR);
+  it("the three failure tags are distinct strings", () => {
+    const tags = [
+      SENDER_NOT_ACTIVE_ERROR,
+      SENDER_READ_FAILED_ERROR,
+      SENDER_AMBIGUOUS_ERROR,
+    ];
+    expect(new Set(tags).size).toBe(3);
   });
 });
 

@@ -30,6 +30,20 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 // number when the real fault is a failed read — the same unknown-versus-absent
 // defect already corrected once in the reminder heartbeat.
 //
+// WHY AN RPC AND NOT A SELECT. An earlier revision of this file read the table
+// directly. It could never have worked: 0191 revokes ALL on
+// public.studio_sms_senders from public, anon, authenticated AND service_role,
+// and re-grants only a column-level select to `authenticated` that deliberately
+// omits messaging_service_sid. The dispatcher runs as service_role, which holds
+// no table privilege at all, so the read would have failed at the privilege
+// layer -- and, worse, failed in a way this module would have reported as
+// `read_failed`, i.e. as a transient fault to retry forever.
+//
+// 0192 adds the one capability that was missing rather than the grant that
+// would have dissolved the boundary: a SECURITY DEFINER lookup that answers
+// which messaging service this studio sends from, and returns nothing else.
+// service_role still cannot read the table.
+//
 // WHAT THIS DELIBERATELY DOES NOT DO. It does not consult the browser, it does
 // not accept a caller-supplied SID, and it does not touch provisioning. The
 // only input is a server-resolved studio id.
@@ -39,10 +53,16 @@ export type ResolvedStudioSender = { messagingServiceSid: string };
 
 export type StudioSenderResolution =
   | { ok: true; sender: ResolvedStudioSender }
-  // The table answered and this studio has no ACTIVE sender. Real evidence.
+  // The lookup answered and this studio has no ACTIVE sender. Real evidence
+  // about the studio; retrying cannot change it.
   | { ok: false; reason: "none_active" }
-  // The table could not be read. Evidence about the store, not the studio.
-  | { ok: false; reason: "read_failed" };
+  // The lookup could not be performed. Evidence about the database, and none
+  // about the studio. Retryable.
+  | { ok: false; reason: "read_failed" }
+  // The lookup returned more than one ACTIVE sender, which 0191's
+  // one-live-per-studio index should make impossible. Refuse rather than pick:
+  // sending from an arbitrarily chosen number is worse than not sending.
+  | { ok: false; reason: "ambiguous" };
 
 /**
  * Resolve the sender a studio's outbound SMS must leave from.
@@ -66,18 +86,29 @@ export async function resolveActiveStudioSender(
 ): Promise<StudioSenderResolution> {
   if (!studioId) return { ok: false, reason: "none_active" };
   try {
-    const { data, error } = await admin
-      .from("studio_sms_senders")
-      .select("messaging_service_sid")
-      .eq("studio_id", studioId)
-      .eq("status", "active")
-      .maybeSingle();
-    // A driver error is a failure to observe, never a finding about the studio.
+    const { data, error } = await admin.rpc("resolve_active_studio_sms_sender", {
+      p_studio_id: studioId,
+    });
+    // A driver or privilege error is a failure to OBSERVE, never a finding
+    // about the studio. Reporting it as "no sender" would send an operator to
+    // provision a number they already have.
     if (error) return { ok: false, reason: "read_failed" };
-    const sid = (data as { messaging_service_sid?: string | null } | null)
-      ?.messaging_service_sid;
+
+    // The function returns a SET. Zero rows is genuine absence; more than one
+    // means 0191's one-live-per-studio invariant has been violated, and this
+    // module refuses to manufacture a winner from row order.
+    const rows = Array.isArray(data)
+      ? (data as Array<{ messaging_service_sid?: string | null }>)
+      : [];
+    if (rows.length === 0) return { ok: false, reason: "none_active" };
+    if (rows.length > 1) return { ok: false, reason: "ambiguous" };
+
+    const sid = rows[0]?.messaging_service_sid;
+    // An active row cannot lack its SID -- 0191's readiness CHECK makes that
+    // unreachable -- so this is a shape guard, not an expected branch. It is
+    // still refused rather than passed to the provider as an empty sender.
     if (typeof sid !== "string" || sid.length === 0) {
-      return { ok: false, reason: "none_active" };
+      return { ok: false, reason: "ambiguous" };
     }
     return { ok: true, sender: { messagingServiceSid: sid } };
   } catch {
@@ -92,3 +123,5 @@ export async function resolveActiveStudioSender(
  */
 export const SENDER_NOT_ACTIVE_ERROR = "sms_sender_not_active_for_studio";
 export const SENDER_READ_FAILED_ERROR = "sms_sender_read_failed";
+/** A violated one-live-per-studio invariant. Fail closed, never pick a row. */
+export const SENDER_AMBIGUOUS_ERROR = "sms_sender_ambiguous";

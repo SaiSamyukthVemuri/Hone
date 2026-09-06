@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   resolveActiveStudioSender,
+  SENDER_AMBIGUOUS_ERROR,
   SENDER_NOT_ACTIVE_ERROR,
   SENDER_READ_FAILED_ERROR,
 } from "@/lib/sms/sender-routing";
@@ -399,9 +400,13 @@ async function sendOne(args: SendOneArgs): Promise<SmsSendResult> {
       error:
         routed.reason === "read_failed"
           ? SENDER_READ_FAILED_ERROR
-          : SENDER_NOT_ACTIVE_ERROR,
-      // "I could not read the table" may resolve on its own; "this studio has
-      // no active sender" cannot, and retrying it only repeats the same answer.
+          : routed.reason === "ambiguous"
+            ? SENDER_AMBIGUOUS_ERROR
+            : SENDER_NOT_ACTIVE_ERROR,
+      // "I could not perform the lookup" may resolve on its own. "This studio
+      // has no active sender" cannot, and retrying only repeats the answer.
+      // "More than one active sender" is a violated invariant that needs an
+      // operator, not a retry.
       retryable: routed.reason === "read_failed",
     };
   }
