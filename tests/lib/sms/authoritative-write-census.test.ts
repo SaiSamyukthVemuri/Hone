@@ -37,21 +37,153 @@ import { FakeSmsProvisioningProvider } from "@/lib/sms/provider/fake-provider";
 // produce an outcome that claims something the database did not say.
 
 const ROOT = path.resolve(__dirname, "../../..");
-const MIGRATION = readFileSync(
-  path.join(ROOT, "supabase/migrations/0191_studio_sms_sender_provisioning.sql"),
-  "utf8",
-);
+const MIGRATION_PATH = "supabase/migrations/0191_studio_sms_sender_provisioning.sql";
+const MIGRATION = readFileSync(path.join(ROOT, MIGRATION_PATH), "utf8");
+const MIGRATION_LINES = MIGRATION.split("\n");
 
-/** Result words a SQL command can actually return, read from the migration. */
-function sqlResultWords(fn: string): string[] {
-  const start = MIGRATION.indexOf(`create or replace function public.${fn}`);
-  expect(start, `${fn} not found`).toBeGreaterThan(-1);
-  const end = MIGRATION.indexOf("$$;", start);
-  const body = MIGRATION.slice(start, end);
+// ---------------------------------------------------------------------------
+// READING THE SQL'S RESULT VOCABULARY — AND FAILING CLOSED WHEN IT CANNOT BE READ
+// ---------------------------------------------------------------------------
+//
+// An earlier revision of this file grepped the function bodies for
+// `return '<word>'` and `'<word>'::text`. That is a guard that recognises the
+// spellings it happens to know, and review found the hole: SQL can assign a
+// literal to a variable and return the VARIABLE.
+//
+//     v_indirect text := 'mystery_verdict';
+//     ...
+//     return v_indirect;
+//
+// The grep sees no word, the SQL list stays unchanged, it still equals the
+// application list, and the whole suite goes GREEN while the database can
+// return a verdict the application has never heard of. Reproduced before
+// fixing: that exact mutant left this file at 36/36.
+//
+// Adding a second regex for that spelling would leave the same hole one shape
+// further out. So the rule is inverted: every RETURN in an authoritative
+// command must be a form whose vocabulary can be enumerated COMPLETELY, and
+// anything else is a failure that names the function and the line. A guard
+// that cannot read the vocabulary must say so, not shrug.
+
+type AuthoritativeCommand = {
+  readonly fn: string;
+  /** `words` returns a result vocabulary; `boolean` answers yes/no. */
+  readonly returns: "words" | "boolean";
+};
+
+/**
+ * The 0191 commands whose answers decide provisioning state. `resolve_...`
+ * (uuid) and `studio_sms_lease_window()` (interval) are excluded: neither
+ * carries a verdict a caller must interpret.
+ */
+const AUTHORITATIVE_COMMANDS: readonly AuthoritativeCommand[] = [
+  { fn: "claim_studio_sms_provisioning", returns: "words" },
+  { fn: "finalize_studio_sms_provisioning", returns: "words" },
+  { fn: "fail_studio_sms_provisioning", returns: "words" },
+  { fn: "renew_studio_sms_lease", returns: "boolean" },
+];
+
+type ReturnStatement = { line: number; text: string };
+type Vocabulary = { words: string[]; violations: string[] };
+
+/** The body of one function, with its offset so line numbers stay real. */
+function functionBody(fn: string): { body: string; firstLine: number } {
+  const at = MIGRATION.indexOf(`create or replace function public.${fn}`);
+  expect(at, `${fn} is not defined in ${MIGRATION_PATH}`).toBeGreaterThan(-1);
+  const end = MIGRATION.indexOf("$$;", at);
+  expect(end, `${fn} has no terminator`).toBeGreaterThan(at);
+  return {
+    body: MIGRATION.slice(at, end),
+    firstLine: MIGRATION.slice(0, at).split("\n").length,
+  };
+}
+
+/**
+ * Every RETURN statement in a function, comment-stripped, with real line
+ * numbers.
+ *
+ * Scans for EVERY `return` token rather than for lines that begin with one.
+ * The first version of this did the latter and a mutation caught it: an
+ * idiomatic one-liner
+ *
+ *     if false then return 'brand_new_word'; end if;
+ *
+ * starts with `if`, so the return was invisible and a new word entered the SQL
+ * with this suite green -- the same failure as the indirect return, one shape
+ * further out. Position in a line is not a property worth trusting.
+ */
+function returnStatements(fn: string): ReturnStatement[] {
+  const { body, firstLine } = functionBody(fn);
+  // Strip line comments first so a `return` mentioned in prose is not a
+  // statement, and a `--` cannot swallow a real one.
+  const code = body
+    .split("\n")
+    .map((line) => line.replace(/--.*$/, ""))
+    .join("\n");
+
+  const out: ReturnStatement[] = [];
+  // `\breturn\b` does not match `returns`, so the signature is not a hit.
+  for (const match of code.matchAll(/\breturn\b/g)) {
+    const from = match.index ?? 0;
+    const semi = code.indexOf(";", from);
+    const text = code
+      .slice(from, semi === -1 ? code.length : semi + 1)
+      .replace(/\s+/g, " ")
+      .trim();
+    // `return query select ...` is one statement; the inner `return` of a
+    // nested form would be found separately, which is the conservative
+    // direction: extra candidates become violations, never silent omissions.
+    out.push({
+      line: firstLine + code.slice(0, from).split("\n").length - 1,
+      text,
+    });
+  }
+  return out;
+}
+
+/**
+ * Classify every return in a command. Enumerable forms contribute their word;
+ * ANY other shape is a violation, so an unreadable vocabulary fails closed.
+ */
+function vocabularyOf(cmd: AuthoritativeCommand): Vocabulary {
   const words = new Set<string>();
-  for (const m of body.matchAll(/'([a-z_]+)'::text/g)) words.add(m[1]);
-  for (const m of body.matchAll(/return '([a-z_]+)';/g)) words.add(m[1]);
-  return [...words].sort();
+  const violations: string[] = [];
+
+  for (const stmt of returnStatements(cmd.fn)) {
+    // `return;` — terminates after a `return query`, carries no verdict.
+    if (/^return\s*;$/.test(stmt.text)) continue;
+
+    // `return query select 'word'::text, ...` — the verdict is the first column.
+    const queried = stmt.text.match(/^return query select '([a-z_]+)'::text\b/);
+    if (queried) {
+      words.add(queried[1]);
+      continue;
+    }
+
+    // `return 'word';`
+    const literal = stmt.text.match(/^return '([a-z_]+)';$/);
+    if (literal) {
+      words.add(literal[1]);
+      continue;
+    }
+
+    // Boolean commands answer yes/no; their vocabulary is not words.
+    if (
+      cmd.returns === "boolean" &&
+      /^return (true|false|coalesce\([a-z_]+, (true|false)\));$/.test(stmt.text)
+    ) {
+      continue;
+    }
+
+    violations.push(
+      `${cmd.fn} at ${MIGRATION_PATH}:${stmt.line} returns a shape whose ` +
+        `vocabulary cannot be enumerated: \`${stmt.text}\`. Return a literal ` +
+        "so the vocabulary stays mechanically readable -- an indirect return " +
+        "hides a word from this guard and defeats the fail-closed check.",
+    );
+  }
+
+  return { words: [...words].sort(), violations };
 }
 
 const STUDIO = "studio-a";
@@ -127,19 +259,40 @@ function run(store: ProvisioningStore) {
 // The vocabularies agree with the database
 // ---------------------------------------------------------------------------
 
-describe("the application knows every word the database can say", () => {
+describe("the SQL vocabulary is READABLE, and the application knows all of it", () => {
+  it.each(AUTHORITATIVE_COMMANDS.map((c) => [c.fn, c] as const))(
+    "%s exposes a mechanically enumerable vocabulary",
+    (_fn, cmd) => {
+      // FAIL CLOSED. A command that returns a variable, or any expression this
+      // guard cannot enumerate, is reported by function and line rather than
+      // silently contributing nothing -- which is how a word the application
+      // has never heard of would otherwise slip through with the suite green.
+      const { violations } = vocabularyOf(cmd);
+      expect(violations).toEqual([]);
+    },
+  );
+
   it.each([
     ["claim_studio_sms_provisioning", CLAIM_RESULTS],
     ["finalize_studio_sms_provisioning", FINALIZE_RESULTS],
     ["fail_studio_sms_provisioning", FAIL_RESULTS],
-  ] as const)("%s", (fn, known) => {
+  ] as const)("%s: SQL and application vocabularies are identical", (fn, known) => {
     // A word the SQL can return but the store does not recognise is mapped to
-    // `invalid_input` and SILENTLY loses its meaning -- which is the same
-    // class of defect as discarding a verdict outright, arriving by a
-    // different route.
-    const sql = sqlResultWords(fn);
-    const app = [...known].sort();
-    expect(sql).toEqual(app);
+    // `invalid_input` and SILENTLY loses its meaning -- the same class of
+    // defect as discarding a verdict, arriving by a different route.
+    const cmd = AUTHORITATIVE_COMMANDS.find((c) => c.fn === fn)!;
+    const { words, violations } = vocabularyOf(cmd);
+    expect(violations).toEqual([]);
+    expect(words).toEqual([...known].sort());
+  });
+
+  it("the boolean command carries no word vocabulary at all", () => {
+    const renew = AUTHORITATIVE_COMMANDS.find((c) => c.returns === "boolean")!;
+    const { words, violations } = vocabularyOf(renew);
+    expect(violations).toEqual([]);
+    // Its answer is yes/no; a text verdict here would mean the fence had grown
+    // a vocabulary nobody is reading.
+    expect(words).toEqual([]);
   });
 });
 
