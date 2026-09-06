@@ -196,22 +196,57 @@ describe("the actionable condition is deduped at STUDIO scope", () => {
   });
 });
 
-describe("the retryable path stays quiet", () => {
-  it("read_failed logs but raises NO durable alert", async () => {
-    // A transient read alerting every 15 minutes is the spam this prevents.
+describe("the retryable path is VISIBLE, and still costs nothing", () => {
+  it("read_failed raises a durable alert — a broken lookup is not silent", async () => {
+    // THE REGRESSION THIS EXISTS TO CATCH. A missing 0192 RPC or a privilege
+    // regression makes every lookup fail, so every send returns read_failed.
+    // With no durable row, SMS stops completely for every studio and the only
+    // trace is stderr. Silent and total is the worst possible shape.
     resolveMock.mockResolvedValue({ ok: false, reason: "read_failed" });
     const a = admin();
 
     const r = await send(a);
 
-    expect(recordOpsAlert).not.toHaveBeenCalled();
+    expect(alertSettled).toBe(true);
+    expect(recordOpsAlert).toHaveBeenCalledTimes(1);
+    const arg = recordOpsAlert.mock.calls[0][0] as Record<string, unknown>;
+    expect(arg.event).toBe("sms_sender_read_failed");
+    // The message must not claim anything about the studio's sender — the
+    // lookup failed, so nothing was learned about it.
+    expect(String(arg.message)).toMatch(/lookup could not be performed/i);
+
+    // ...and none of its runtime semantics changed.
     expect(r).toMatchObject({
       ok: false,
       preProvider: true,
       error: "sms_sender_read_failed",
       retryable: true,
     });
-    expect(errSpy).toHaveBeenCalled();
+    expect(a.rpcCalls).not.toContain("claim_sms_send");
+  });
+
+  it("a sustained read failure is ONE open alert, not one per cron pass", async () => {
+    // This is why log-only was never the right mitigation: the dedupe already
+    // solves the volume the old exemption was protecting against.
+    resolveMock.mockResolvedValue({ ok: false, reason: "read_failed" });
+    await send(admin([{ id: "already-open" }]));
+    expect(recordOpsAlert).not.toHaveBeenCalled();
+  });
+
+  it("a broken lookup is NOT deduped away by an open no-sender alert", async () => {
+    // Different faults, different operator actions, so different events.
+    resolveMock.mockResolvedValue({ ok: false, reason: "read_failed" });
+    const a = admin();
+    await send(a);
+    expect(a.filters.event).toBe("sms_sender_read_failed");
+    expect(a.filters.event).not.toBe("sms_sender_not_active_for_studio");
+  });
+
+  it("an alert failure on the retryable path still does not break booking", async () => {
+    resolveMock.mockResolvedValue({ ok: false, reason: "read_failed" });
+    recordOpsAlert.mockRejectedValueOnce(new Error("ops_alerts down"));
+    const r = await send(admin());
+    expect(r).toMatchObject({ ok: false, preProvider: true, retryable: true });
   });
 });
 

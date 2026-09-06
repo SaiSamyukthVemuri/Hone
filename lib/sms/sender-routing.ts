@@ -166,17 +166,38 @@ export const SENDER_AMBIGUOUS_ERROR = "sms_sender_ambiguous";
 // booking/reschedule are untouched. An operator notification must never be able
 // to take down a booking.
 
-/** Terminal reasons worth an actionable, durable alert. */
-type TerminalRoutingReason = "none_active" | "ambiguous";
+// EVERY routing failure is actionable, including the retryable one.
+//
+// An earlier revision alerted only on the two TERMINAL reasons and left
+// `read_failed` log-only, reasoning that a transient read alerting every fifteen
+// minutes would be spam. That reasoning was obsolete the moment the (studio,
+// reason) dedupe below existed: a sustained read failure now produces ONE
+// unresolved alert, not ~96 a day. The mitigation had outlived its own
+// justification.
+//
+// And the gap it left was the worst-shaped one available. A missing 0192 RPC or
+// a privilege regression makes EVERY lookup fail, so every send returns
+// read_failed — no claim, no Twilio call, no attempted/failed movement, and
+// under the old rule no durable row either. SMS would stop completely for every
+// studio while the only trace was a stderr line. Silent and total is precisely
+// the combination an operator signal exists to prevent.
+//
+// RETRYABLE IS NOT THE SAME AS UNIMPORTANT. `read_failed` keeps every one of its
+// runtime semantics — retryable, pre-provider, zero attempts consumed, no
+// provider contact, excluded from provider metrics. Only its VISIBILITY changes.
+type ActionableRoutingReason = "none_active" | "ambiguous" | "read_failed";
 
-const ROUTING_ALERT_EVENT: Record<TerminalRoutingReason, string> = {
+const ROUTING_ALERT_EVENT: Record<ActionableRoutingReason, string> = {
   none_active: SENDER_NOT_ACTIVE_ERROR,
   ambiguous: SENDER_AMBIGUOUS_ERROR,
+  // Its own event, so a broken lookup is never deduped away by an open
+  // no-sender alert for the same studio — they need different operator actions.
+  read_failed: SENDER_READ_FAILED_ERROR,
 };
 
 export type RoutingAlertOutcome =
   | { alerted: true }
-  | { alerted: false; reason: "deduped" | "not_terminal" | "alert_failed" };
+  | { alerted: false; reason: "deduped" | "alert_failed" };
 
 export async function recordRoutingFailureAlert(
   admin: SupabaseClient,
@@ -187,10 +208,10 @@ export async function recordRoutingFailureAlert(
     smsType: string;
   },
 ): Promise<RoutingAlertOutcome> {
-  // The synchronous operator line is emitted for EVERY routing failure,
-  // including the retryable one. Only the terminal reasons escalate to a
-  // durable alert; a transient read failure that alerted on every cron pass
-  // would be the spam this function exists to prevent.
+  // The synchronous operator line, plus a durable deduped alert, for EVERY
+  // routing failure. `terminal` still distinguishes the two classes in the log,
+  // because it drives whether a retry can help — it no longer decides whether
+  // anyone is told.
   console.error(
     JSON.stringify({
       event: "sms_routing_failed",
@@ -202,8 +223,6 @@ export async function recordRoutingFailureAlert(
       timestamp: new Date().toISOString(),
     }),
   );
-  if (input.reason === "read_failed") return { alerted: false, reason: "not_terminal" };
-
   const event = ROUTING_ALERT_EVENT[input.reason];
   try {
     // Dedupe on the ACTIONABLE CONDITION: one unresolved alert per studio per
@@ -230,7 +249,9 @@ export async function recordRoutingFailureAlert(
       message:
         input.reason === "none_active"
           ? "This studio has no ACTIVE SMS sender, so its messages cannot be routed and are not being sent."
-          : "This studio resolved MORE THAN ONE active SMS sender; sending is refused rather than choosing a number.",
+          : input.reason === "ambiguous"
+            ? "This studio resolved MORE THAN ONE active SMS sender; sending is refused rather than choosing a number."
+            : "The studio SMS sender lookup could not be performed, so messages are not being routed or sent. This is a fault in the lookup itself, not evidence about the studio's sender.",
       studioId: input.studioId,
       appointmentId: input.appointmentId,
       route: "lib/sms/sender-routing:recordRoutingFailureAlert",

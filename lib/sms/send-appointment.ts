@@ -443,10 +443,16 @@ async function sendOne(args: SendOneArgs): Promise<SmsSendResult> {
     // same time, which is the worst combination available.
     //
     // AWAITED, not fire-and-forget. The general failure logger persists its
-    // alert from an unawaited IIFE, which is fine for a transient provider
-    // error that will be retried and re-logged — and wrong for a TERMINAL
-    // routing failure, where a serverless invocation can return and be torn
-    // down before the insert lands, losing the single signal an operator gets.
+    // alert from an unawaited IIFE; a serverless invocation can return and be
+    // torn down before that insert lands, losing the single signal an operator
+    // gets for a condition no retry will clear on its own.
+    //
+    // EVERY routing reason alerts, including the RETRYABLE one. `read_failed`
+    // is retryable, but a missing RPC or a privilege regression makes it
+    // permanent and total — every send for every studio fails the same way,
+    // with no claim, no provider call and no metric movement. Retryable is not
+    // the same as unimportant, and the dedupe below is what keeps a sustained
+    // fault to one open alert rather than one per cron pass.
     //
     // Deduped by (studio, reason), because the actionable condition is the
     // STUDIO: an operator fixes "no active sender" once, and being told per
