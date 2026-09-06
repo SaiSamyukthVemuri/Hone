@@ -5,6 +5,8 @@ import type {
   ClaimRow,
   FailResult,
   FinalizeResult,
+  OwnerAuthority,
+  OwnerAuthorityReader,
   ProvisioningStore,
 } from "./provisioning";
 
@@ -71,10 +73,47 @@ function firstRow(data: unknown): Record<string, unknown> | null {
   return asRecord(data);
 }
 
+/**
+ * Returns BOTH ports from one object: the full store, and the read-only
+ * authority reader the inspect path needs. Callers hand each consumer only the
+ * narrower handle it should have.
+ */
 export function createProvisioningStore(
   admin: SupabaseClient,
-): ProvisioningStore {
+): ProvisioningStore & OwnerAuthorityReader {
   return {
+    /**
+     * READ-ONLY, and deliberately a direct table read rather than an RPC:
+     * 0191 exposes no read-only authority function, and adding one would be a
+     * migration this correction does not need. The predicates mirror
+     * claim_studio_sms_provisioning exactly -- studio_id, user_id, active --
+     * so the two cannot answer differently for the same actor.
+     *
+     * FAILS CLOSED. A transport error or an unreadable row is `unavailable`,
+     * never `not_owner`: "we could not check" and "we checked and the answer is
+     * no" are different facts, and only one of them is safe to retry.
+     */
+    async readOwnerAuthority(input): Promise<OwnerAuthority> {
+      const studio = await admin
+        .from("studios")
+        .select("id")
+        .eq("id", input.studioId)
+        .maybeSingle();
+      if (studio.error) return "unavailable";
+      if (!studio.data) return "studio_not_found";
+
+      const { data, error } = await admin
+        .from("practitioners")
+        .select("role")
+        .eq("studio_id", input.studioId)
+        .eq("user_id", input.actorUserId)
+        .eq("active", true)
+        .maybeSingle();
+      if (error) return "unavailable";
+      if (!data) return "not_a_member";
+      return data.role === "owner" ? "owner" : "not_owner";
+    },
+
     async claim(input): Promise<ClaimRow> {
       const { data, error } = await admin.rpc("claim_studio_sms_provisioning", {
         p_studio_id: input.studioId,

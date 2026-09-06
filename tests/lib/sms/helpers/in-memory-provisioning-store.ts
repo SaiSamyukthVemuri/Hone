@@ -2,6 +2,7 @@ import type {
   ClaimRow,
   FailResult,
   FinalizeResult,
+  OwnerAuthority,
   ProvisioningStore,
 } from "@/lib/sms/provisioning";
 
@@ -125,6 +126,33 @@ export class InMemoryProvisioningStore implements ProvisioningStore {
 
   live(studioId: string): Row | undefined {
     return this.rows.find((r) => r.studioId === studioId && r.status !== "released");
+  }
+
+  /** Authority reads performed, so a test can prove inspect still checked. */
+  authorityCalls = 0;
+
+  /** Model an unreadable authority table: the answer is "we do not know". */
+  authorityUnavailable = false;
+
+  /**
+   * READ-ONLY authority. Mirrors 0191's own derivation and, critically, writes
+   * NOTHING -- no row, no claim, no lease. A test asserting `claimCalls === 0`
+   * after an inspection is asserting exactly that.
+   */
+  async readOwnerAuthority(input: {
+    studioId: string;
+    actorUserId: string;
+  }): Promise<OwnerAuthority> {
+    this.authorityCalls += 1;
+    if (this.authorityUnavailable) return "unavailable";
+    const member = this.members.find(
+      (m) => m.studioId === input.studioId && m.userId === input.actorUserId,
+    );
+    if (!member) {
+      const studioExists = this.members.some((m) => m.studioId === input.studioId);
+      return studioExists ? "not_a_member" : "studio_not_found";
+    }
+    return member.role === "owner" ? "owner" : "not_owner";
   }
 
   async claim(input: {

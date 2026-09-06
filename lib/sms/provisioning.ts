@@ -121,6 +121,43 @@ export type FailResult =
   | "claim_not_found"
   | "invalid_input";
 
+/**
+ * The answer to "may this human act for this studio?", derived server-side.
+ *
+ * `unavailable` is its own answer and never collapses into a refusal: an
+ * unreadable authority table means WE DO NOT KNOW, and a capability must fail
+ * closed on that rather than reporting a confident "not owner".
+ */
+export type OwnerAuthority =
+  | "owner"
+  | "not_owner"
+  | "not_a_member"
+  | "studio_not_found"
+  | "unavailable";
+
+/**
+ * READ-ONLY authority, mirroring exactly what claim_studio_sms_provisioning
+ * derives internally: practitioners WHERE studio_id AND user_id AND active,
+ * then the role.
+ *
+ * WHY IT IS ITS OWN PORT AND NOT A METHOD ON ProvisioningStore. An INSPECTION
+ * must enforce authority without minting durable provisioning state -- using
+ * the claim for that would mean merely LOOKING at provider truth creates
+ * ownership, takes a five-minute lease, and blocks the real mutation that
+ * follows. But a read-only inspection has no business holding a handle that
+ * can claim, finalize or fail, and widening the store would have forced every
+ * existing test double to grow a method it will never call.
+ *
+ * It confers NO mutation authority. `claim` remains the only thing that does,
+ * and the configure path still takes it.
+ */
+export interface OwnerAuthorityReader {
+  readOwnerAuthority(input: {
+    studioId: string;
+    actorUserId: string;
+  }): Promise<OwnerAuthority>;
+}
+
 export interface ProvisioningStore {
   claim(input: {
     studioId: string;

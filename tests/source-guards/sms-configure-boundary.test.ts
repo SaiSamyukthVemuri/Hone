@@ -92,6 +92,42 @@ describe("configuration proves before it writes", () => {
   });
 });
 
+// OWNER DECISION P2-1. The claim is the line between looking and acting, and
+// this proves it in the SOURCE: the inspect function body must contain no
+// claim, no lease renewal, and no park. A behavioural test can only show that
+// today's inspect took no claim; this shows the code cannot.
+describe("inspect is a read — the source cannot claim", () => {
+  const inspectBody = (() => {
+    const start = CONFIGURE.indexOf("async function inspectOnly");
+    const end = CONFIGURE.indexOf("async function configureUnderClaim");
+    expect(start, "inspectOnly not found").toBeGreaterThan(-1);
+    expect(end, "configureUnderClaim not found").toBeGreaterThan(start);
+    return CONFIGURE.slice(start, end);
+  })();
+
+  it("the slice is real, not an empty string that would pass vacuously", () => {
+    expect(inspectBody.length).toBeGreaterThan(200);
+    expect(inspectBody).toContain("readOwnerAuthority");
+  });
+
+  for (const forbidden of ["store.claim", "renewLease", "store.fail", "fenceProviderMutations"]) {
+    it(`inspect never reaches ${forbidden}`, () => {
+      expect(inspectBody, `inspect reached ${forbidden}`).not.toContain(forbidden);
+    });
+  }
+
+  it("inspect performs no configuration write", () => {
+    expect(inspectBody).not.toContain("configureInboundWebhook");
+    expect(inspectBody).not.toContain("configureStatusCallback");
+  });
+
+  it("the configure path DOES claim — the line exists in both directions", () => {
+    const configureBody = CONFIGURE.slice(CONFIGURE.indexOf("async function configureUnderClaim"));
+    expect(configureBody).toContain("store.claim");
+    expect(configureBody).toContain("fenceProviderMutations");
+  });
+});
+
 describe("configuration derives authority from the database", () => {
   it("claims, so membership and owner role are re-derived server-side", () => {
     expect(CONFIGURE).toContain("store.claim");

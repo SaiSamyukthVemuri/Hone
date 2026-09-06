@@ -61,6 +61,7 @@ function configure(
 ) {
   return configureExistingStudioSmsSender({
     store,
+    authority: store,
     provider,
     studioId: STUDIO_A,
     actorUserId: OWNER_A,
@@ -134,11 +135,205 @@ describe("configure existing sender — idempotency", () => {
 
     expect(out).toMatchObject({
       ok: true,
-      result: "configuration_required",
+      result: "inspected",
+      matches: false,
       mismatched: ["inbound_webhook"],
       providerWrites: 0,
     });
     expect(writes()).toBe(0);
+    expectNoForbiddenEffects();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// OWNER DECISION P2-1 — inspect is a READ, and the claim is the line.
+//
+// Looking at provider truth must not mint durable provisioning ownership, take
+// a lease, or block the mutation the operator is about to perform. An earlier
+// version claimed in both modes, so merely opening the page created five
+// minutes of state and answered the follow-up configure with `claim_held`.
+// ---------------------------------------------------------------------------
+describe("inspect creates no durable provisioning state", () => {
+  it("1. inspect takes ZERO claims", async () => {
+    provider.script = owned(STALE_INBOUND, STALE_STATUS);
+
+    const out = await configure({ mode: "inspect" });
+
+    expect(out).toMatchObject({ ok: true, result: "inspected", claimsTaken: 0 });
+    expect(store.claimCalls, "inspect acquired a provisioning claim").toBe(0);
+    // Authority was still enforced — it was READ, not taken.
+    expect(store.authorityCalls).toBe(1);
+  });
+
+  it("2. inspect performs ZERO provider writes", async () => {
+    provider.script = owned(STALE_INBOUND, STALE_STATUS);
+
+    await configure({ mode: "inspect" });
+
+    expect(writes()).toBe(0);
+    expectNoForbiddenEffects();
+  });
+
+  it("3. repeated inspection leaves ZERO durable state behind", async () => {
+    provider.script = owned(STALE_INBOUND, STALE_STATUS);
+
+    await configure({ mode: "inspect" });
+    await configure({ mode: "inspect" });
+    await configure({ mode: "inspect" });
+
+    expect(store.claimCalls).toBe(0);
+    expect(store.rows, "an inspection created an attempt row").toEqual([]);
+    expect(store.fenceCalls, "an inspection touched a lease").toEqual([]);
+    expect(writes()).toBe(0);
+  });
+
+  it("4. an unauthorized inspection is refused, and reads no provider truth", async () => {
+    provider.script = owned(STALE_INBOUND, STALE_STATUS);
+
+    const out = await configure({ mode: "inspect", actorUserId: STAFF_A });
+
+    expect(out).toMatchObject({ ok: false, result: "refused", reason: "not_owner" });
+    expect(provider.calls.ownedLookup, "read the provider before proving authority").toBe(0);
+    expect(store.claimCalls).toBe(0);
+  });
+
+  it("an UNREADABLE authority table fails closed — never 'not owner'", async () => {
+    provider.script = owned(STALE_INBOUND, STALE_STATUS);
+    store.authorityUnavailable = true;
+
+    const out = await configure({ mode: "inspect" });
+
+    expect(out).toMatchObject({
+      ok: false,
+      result: "refused",
+      reason: "authority_unavailable",
+      retryable: true,
+    });
+    expect(provider.calls.ownedLookup).toBe(0);
+    expect(store.claimCalls).toBe(0);
+  });
+
+  it("inspect fails closed on an ambiguous association, taking no claim", async () => {
+    provider.script = {
+      preOwnedNumbers: { [WILLOW_NUMBER]: WILLOW_PN_SID },
+      accountServices: [
+        { sid: WILLOW_MG_SID, numbers: [WILLOW_NUMBER], inboundUrl: STALE_INBOUND, statusUrl: null },
+        { sid: OTHER_MG_SID, numbers: [WILLOW_NUMBER], inboundUrl: null, statusUrl: null },
+      ],
+    };
+
+    const out = await configure({ mode: "inspect" });
+
+    expect(out).toMatchObject({
+      ok: false,
+      result: "refused",
+      reason: "number_association_ambiguous",
+    });
+    expect(store.claimCalls).toBe(0);
+    expect(writes()).toBe(0);
+  });
+
+  it("inspect fails closed on an unavailable census, taking no claim", async () => {
+    provider.script = { ...owned(STALE_INBOUND, STALE_STATUS), failServicePage: 1 };
+
+    const out = await configure({ mode: "inspect" });
+
+    expect(out).toMatchObject({
+      ok: false,
+      result: "refused",
+      reason: "number_association_unavailable",
+      retryable: true,
+    });
+    expect(store.claimCalls).toBe(0);
+    expect(writes()).toBe(0);
+  });
+});
+
+describe("configure never trusts an inspection", () => {
+  it("5. the claim and its fence precede the FIRST provider write", async () => {
+    provider.script = owned(STALE_INBOUND, STALE_STATUS);
+
+    const out = await configure();
+
+    expect(out).toMatchObject({ ok: true, result: "configured" });
+    expect(store.claimCalls, "wrote without claiming").toBe(1);
+    // The fence was consulted before every provider call, writes included.
+    expect(store.fenceCalls.length).toBeGreaterThanOrEqual(writes());
+    expect(store.fenceCalls.every((f) => f.granted)).toBe(true);
+  });
+
+  it("6. configure re-derives everything itself — an inspection is not reused", async () => {
+    provider.script = owned(STALE_INBOUND, STALE_STATUS);
+
+    await configure({ mode: "inspect" });
+    const readsAfterInspect = provider.calls.ownedLookup;
+    const configReadsAfterInspect = provider.calls.serviceConfigRead;
+
+    await configure();
+
+    // Configure performed its OWN ownership and configuration reads rather
+    // than carrying the inspection's answers forward.
+    expect(provider.calls.ownedLookup).toBeGreaterThan(readsAfterInspect);
+    expect(provider.calls.serviceConfigRead).toBeGreaterThan(configReadsAfterInspect);
+  });
+
+  it("7. an association that MOVES after inspection is caught by configure", async () => {
+    provider.script = owned(STALE_INBOUND, STALE_STATUS);
+
+    const seen = await configure({ mode: "inspect" });
+    expect(seen).toMatchObject({ ok: true, result: "inspected", matches: false });
+
+    // Between looking and acting, the number is moved to another service.
+    provider.script = {
+      preOwnedNumbers: { [WILLOW_NUMBER]: WILLOW_PN_SID },
+      accountServices: [
+        { sid: WILLOW_MG_SID, numbers: [], inboundUrl: STALE_INBOUND, statusUrl: STALE_STATUS },
+        { sid: OTHER_MG_SID, numbers: [WILLOW_NUMBER], inboundUrl: null, statusUrl: null },
+      ],
+    };
+
+    const out = await configure();
+
+    expect(out).toMatchObject({
+      ok: false,
+      result: "refused",
+      reason: "number_in_other_service",
+      providerWrites: 0,
+    });
+    expect(writes(), "wrote on the strength of a stale inspection").toBe(0);
+    expectNoForbiddenEffects();
+  });
+
+  it("8. configuration that CHANGES after inspection is recomputed, not replayed", async () => {
+    // Inspection sees BOTH limbs wrong.
+    provider.script = owned(STALE_INBOUND, STALE_STATUS);
+    const seen = await configure({ mode: "inspect" });
+    expect(seen).toMatchObject({ mismatched: ["inbound_webhook", "status_callback"] });
+
+    // Someone fixes the inbound limb in the console before configure runs.
+    provider.script = owned(INBOUND, STALE_STATUS);
+
+    const out = await configure();
+
+    // The minimal mutation is recomputed from fresh truth: ONE write, not two.
+    expect(out).toMatchObject({
+      ok: true,
+      result: "configured",
+      changed: ["status_callback"],
+      providerWrites: 1,
+    });
+    expect(provider.calls.inboundWebhook, "replayed a stale mismatch").toBe(0);
+    expect(provider.calls.statusCallback).toBe(1);
+  });
+
+  it("9. a lost/stale claim performs ZERO provider writes", async () => {
+    provider.script = owned(STALE_INBOUND, STALE_STATUS);
+    store.denyRenew = true;
+
+    const out = await configure();
+
+    expect(out).toMatchObject({ ok: false, result: "lease_lost" });
+    expect(writes(), "a displaced worker wrote").toBe(0);
     expectNoForbiddenEffects();
   });
 });
@@ -409,7 +604,10 @@ describe("configure existing sender — fails closed", () => {
     expect(out.ok, "trusted the acknowledgement instead of re-reading").toBe(false);
     if (!out.ok && (out.result === "refused" || out.result === "failed")) {
       expect(out.reason).toBe("post_write_verification_failed");
-      expect(out.mismatched).toEqual(["inbound_webhook", "status_callback"]);
+      expect("mismatched" in out ? out.mismatched : undefined).toEqual([
+        "inbound_webhook",
+        "status_callback",
+      ]);
     }
     expectNoForbiddenEffects();
   });
