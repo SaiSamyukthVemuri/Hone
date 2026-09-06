@@ -11,6 +11,7 @@ import type {
 import type {
   AttemptErrorCode,
   ClaimResult,
+  FailResult,
   OwnerAuthority,
   OwnerAuthorityReader,
   ProvisioningStore,
@@ -54,6 +55,26 @@ import type {
 // be handed to the mutation path as authority: that is a compile-time fact
 // rather than a rule someone has to remember.
 // ---------------------------------------------------------------------------
+
+/**
+ * THE READ-ONLY PROVIDER CAPABILITY, and it is a TYPE rather than a rule.
+ *
+ * Inspect delegates its provider work to `proveOwnershipAndAssociation`. A
+ * source guard that slices the lexical body of `inspectOnly` cannot see inside
+ * that helper, so the helper could later gain a `configureInboundWebhook` call
+ * and every assertion would stay green -- and the whole-module guard cannot
+ * catch it either, because configure legitimately uses those same two methods.
+ *
+ * So the guarantee stops being textual. The helper accepts ONLY these two
+ * reads. Adding a mutating call inside it does not fail a regex; it fails
+ * `tsc`, because the method is not on the type. Configure passes its full
+ * fenced provider in, which is structurally compatible, so the mutation path
+ * loses nothing.
+ */
+export type InspectionReads = Pick<
+  SmsProvisioningProvider,
+  "lookupOwnedNumber" | "readMessagingServiceConfig"
+>;
 
 /** The only two limbs this capability is permitted to change. */
 export type ConfigurationLimb = "inbound_webhook" | "status_callback";
@@ -148,6 +169,20 @@ export type ConfigureOutcome =
       /** Which limbs still did not match, when verification is what failed. */
       mismatched?: ConfigurationLimb[];
       providerWrites: number;
+      /**
+       * WHETHER THE ATTEMPT ACTUALLY MOVED TO `error`.
+       *
+       * Absent before a claim exists -- there is no attempt to park. Present on
+       * every post-claim refusal, because REPORTING `retryable` WITHOUT IT IS
+       * TRUE AND STILL MISLEADING: the provider problem may well be retryable
+       * while the row is still `provisioning` behind a live lease, so the
+       * operator's immediate retry is turned away as `in_progress`. Both facts
+       * have to travel together, exactly as provisionStudioSmsSender and
+       * adoptExistingStudioSmsSender already do.
+       */
+      parked?: boolean;
+      /** The parking write's own verdict, never discarded. */
+      parkResult?: FailResult;
     };
 
 export type ConfigureInput = {
@@ -217,7 +252,7 @@ type Proof =
   | { ok: false; reason: ConfigureRefusal | AttemptErrorCode; retryable: boolean; discovered?: Discovered };
 
 async function proveOwnershipAndAssociation(
-  provider: SmsProvisioningProvider,
+  provider: InspectionReads,
   phoneNumber: string,
   targetService: string,
 ): Promise<Proof> {
@@ -394,10 +429,15 @@ async function inspectOnly(
   // pre-claim browse unfenced in `fenced.ts`. Nothing here can act on what it
   // reads — the only caller of the write path is the configure branch, which
   // takes its own claim and re-derives everything.
-  const proof = await proveOwnershipAndAssociation(input.provider, phoneNumber, targetService);
+  // NARROWED AT THE BOUNDARY. Everything below reaches the provider through
+  // `reads`, which structurally cannot mutate. `input.provider` is not used
+  // again in this function.
+  const reads: InspectionReads = input.provider;
+
+  const proof = await proveOwnershipAndAssociation(reads, phoneNumber, targetService);
   if (!proof.ok) return refuse(proof.reason, proof.retryable, proof.discovered);
 
-  const current = await input.provider.readMessagingServiceConfig({
+  const current = await reads.readMessagingServiceConfig({
     messagingServiceSid: targetService,
   });
   if (!current.ok) return refuse(current.code, current.retryable);
@@ -513,7 +553,40 @@ async function configureUnderClaim(
       // one, which is the defect fenced reads exist to prevent.
       return { ok: false, result: "lease_lost", senderId };
     }
-    return { ok: false, result: "refused", reason, retryable, providerWrites, ...detail };
+    // AND IT MAY HAVE TOLD US THE OPPOSITE: that this sender is already ACTIVE.
+    // `fail_studio_sms_provisioning` answers `already_active` by reading the
+    // row's status, so this is the DATABASE stating a terminal state -- not an
+    // inference from anything we observed. A sender that went active during the
+    // attempt is one whose webhooks are live traffic, which is precisely what
+    // this capability refuses to touch; reporting our provider story over that
+    // would tell the operator configuration failed while the database says the
+    // sender is provisioned. The newer terminal truth wins, and it reuses the
+    // refusal the claim path already returns for this state.
+    if (parked === "already_active") {
+      return {
+        ok: false,
+        result: "refused",
+        reason: "sender_already_active",
+        retryable: false,
+        providerWrites,
+        parked: false,
+        parkResult: parked,
+      };
+    }
+    return {
+      ok: false,
+      result: "refused",
+      reason,
+      retryable,
+      providerWrites,
+      // Only `failed` means the row moved. `invalid_input`, `not_provisioning`
+      // and `claim_not_found` all mean the attempt was NOT parked -- the row may
+      // still be `provisioning` behind its lease -- and the caller must be able
+      // to see that rather than infer a transition that never happened.
+      parked: parked === "failed",
+      parkResult: parked,
+      ...detail,
+    };
   };
 
   // --- 2. RE-PROVE FROM POST-CLAIM TRUTH -----------------------------------

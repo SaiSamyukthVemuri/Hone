@@ -223,6 +223,10 @@ export class FakeSmsProvisioningProvider implements SmsProvisioningProvider {
     for (const key of Object.keys(this.calls) as Array<keyof typeof this.calls>) {
       this.calls[key] = 0;
     }
+    // The applied-configuration overlay is mutable fake state like any other.
+    // Leaving it behind let a later scenario read a PRIOR test's webhook values
+    // and answer already_configured for a mismatch it was asked to exercise.
+    this.serviceConfig.clear();
   }
 
   private fail(code: ProviderErrorCode) {

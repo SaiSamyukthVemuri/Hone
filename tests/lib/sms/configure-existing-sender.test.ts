@@ -686,3 +686,143 @@ describe("configure existing sender — 12. the forbidden effects, stated once m
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// CODEX P2-1 — the parking verdict is preserved, never assumed.
+//
+// A refusal after a claim exists tries to park the attempt in `error`. If that
+// parking write itself fails, the row may still be `provisioning` behind a live
+// lease -- so an operator acting on a "retryable" provider error is turned away
+// as `in_progress`. Reporting retryability without whether the row actually
+// moved is true and still misleading, so both facts travel together, exactly as
+// provisionStudioSmsSender and adoptExistingStudioSmsSender already do.
+// ---------------------------------------------------------------------------
+describe("the parking verdict travels with the refusal", () => {
+  /** A refusal that happens AFTER the claim, so a park is genuinely attempted. */
+  function postClaimRefusal(): FakeProviderScript {
+    return {
+      preOwnedNumbers: { [WILLOW_NUMBER]: WILLOW_PN_SID },
+      accountServices: [
+        { sid: WILLOW_MG_SID, numbers: [], inboundUrl: STALE_INBOUND, statusUrl: STALE_STATUS },
+      ],
+    };
+  }
+
+  it("1. an acknowledged park reports parked=true", async () => {
+    provider.script = postClaimRefusal();
+
+    const out = await configure();
+
+    expect(out).toMatchObject({
+      ok: false,
+      result: "refused",
+      reason: "number_not_in_named_service",
+      parked: true,
+      parkResult: "failed",
+    });
+    expect(writes()).toBe(0);
+  });
+
+  for (const verdict of ["invalid_input", "not_provisioning", "claim_not_found"] as const) {
+    it(`fail => ${verdict} reports parked=false and retains the exact verdict`, async () => {
+      provider.script = postClaimRefusal();
+      store.failReturns = verdict;
+
+      const out = await configure();
+
+      expect(out.ok).toBe(false);
+      if (!out.ok && out.result === "refused" && "parked" in out) {
+        // The row did NOT move. Saying otherwise would promise a transition
+        // that never happened.
+        expect(out.parked, `${verdict} was reported as parked`).toBe(false);
+        expect(out.parkResult).toBe(verdict);
+        // And the original refusal survives -- the park's failure does not
+        // overwrite why we refused.
+        expect(out.reason).toBe("number_not_in_named_service");
+      }
+      expect(writes()).toBe(0);
+    });
+  }
+
+  it("5. retryability of the PROVIDER problem is not confused with parked", async () => {
+    // A retryable provider fault, and a parking write that did not land.
+    provider.script = { ...owned(STALE_INBOUND, STALE_STATUS), serviceConfigFails: "provider_unavailable" };
+    store.failReturns = "invalid_input";
+
+    const out = await configure();
+
+    expect(out.ok).toBe(false);
+    // `parked` narrows this to the POST-CLAIM refusal. The inspect variant has
+    // no such field, and the compiler refusing the wider access is itself the
+    // guarantee that an inspection can never report a parking verdict.
+    if (!out.ok && out.result === "refused" && "parked" in out) {
+      expect(out.retryable, "the provider fault is retryable").toBe(true);
+      expect(out.parked, "but nothing was parked").toBe(false);
+      expect(out.parkResult).toBe("invalid_input");
+    }
+  });
+
+  it("6. a terminal DATABASE truth outranks our provider story", async () => {
+    provider.script = postClaimRefusal();
+    store.failReturns = "already_active";
+
+    const out = await configure();
+
+    // The database says the sender reached `active` during the attempt. Its
+    // webhooks are live traffic, which is exactly what this capability refuses
+    // to touch, so that answer replaces ours.
+    expect(out).toMatchObject({
+      ok: false,
+      result: "refused",
+      reason: "sender_already_active",
+      parked: false,
+      parkResult: "already_active",
+    });
+    expect(writes()).toBe(0);
+  });
+
+  it("7. INSPECT carries no parking fields — it creates no attempt to park", async () => {
+    provider.script = postClaimRefusal();
+
+    const out = await configure({ mode: "inspect" });
+
+    expect(out.ok).toBe(false);
+    expect("parked" in out, "inspect reported a parking verdict").toBe(false);
+    expect("parkResult" in out).toBe(false);
+    expect(store.claimCalls).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CODEX P2-3 — the fake's configuration overlay is reset with everything else.
+// ---------------------------------------------------------------------------
+describe("the fake provider resets its applied configuration", () => {
+  it("a reset fake does not answer already_configured from a PRIOR test", async () => {
+    provider.script = owned(STALE_INBOUND, STALE_STATUS);
+    const first = await configure();
+    expect(first).toMatchObject({ ok: true, result: "configured", providerWrites: 2 });
+
+    // The overlay now holds Hone's URLs for this service SID.
+    const applied = await provider.readMessagingServiceConfig({ messagingServiceSid: WILLOW_MG_SID });
+    expect(applied.ok && applied.config.inboundRequestUrl).toBe(INBOUND);
+
+    // A new scenario reuses the fake and scripts the SAME service as mismatched.
+    provider.reset(owned(STALE_INBOUND, STALE_STATUS));
+    store = new InMemoryProvisioningStore(MEMBERS);
+
+    const after = await provider.readMessagingServiceConfig({ messagingServiceSid: WILLOW_MG_SID });
+    expect(after.ok && after.config.inboundRequestUrl, "stale overlay survived reset").toBe(
+      STALE_INBOUND,
+    );
+
+    // And the scenario actually exercises the mismatch it asked for, rather
+    // than being answered already_configured by the previous test's writes.
+    const out = await configure();
+    expect(out).toMatchObject({
+      ok: true,
+      result: "configured",
+      changed: ["inbound_webhook", "status_callback"],
+      providerWrites: 2,
+    });
+  });
+});

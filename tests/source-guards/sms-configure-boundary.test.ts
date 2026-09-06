@@ -128,6 +128,49 @@ describe("inspect is a read — the source cannot claim", () => {
   });
 });
 
+// CODEX P2-2. The lexical inspect slice below is defence-in-depth for DIRECT
+// calls. It cannot see inside `proveOwnershipAndAssociation`, which inspect
+// delegates its provider work to -- and the whole-module guard cannot help,
+// because configure legitimately uses the two configuration methods. So the
+// real guarantee is a TYPE: the helper accepts only a narrowed read capability,
+// and a mutating call inside it fails `tsc` rather than a regex.
+describe("inspect's provider capability is narrowed by type, not by regex", () => {
+  it("the read-only capability names ONLY the two approved reads", () => {
+    const pick = CONFIGURE.slice(
+      CONFIGURE.indexOf("export type InspectionReads"),
+      CONFIGURE.indexOf(">;", CONFIGURE.indexOf("export type InspectionReads")) + 2,
+    );
+    expect(pick, "InspectionReads not found").toContain("Pick<");
+    expect(pick).toContain("lookupOwnedNumber");
+    expect(pick).toContain("readMessagingServiceConfig");
+    // Anti-vacuity: the Pick must not have quietly widened to the whole port.
+    for (const mutating of BILLABLE_OR_MUTATING_EFFECTS) {
+      expect(pick, `InspectionReads exposes ${mutating}`).not.toContain(mutating);
+    }
+  });
+
+  it("the shared helper accepts the narrowed capability, not the full provider", () => {
+    const sig = CONFIGURE.slice(
+      CONFIGURE.indexOf("async function proveOwnershipAndAssociation"),
+      CONFIGURE.indexOf("): Promise<Proof>"),
+    );
+    expect(sig).toContain("provider: InspectionReads");
+    expect(sig, "helper still takes the full provider").not.toContain(
+      "provider: SmsProvisioningProvider",
+    );
+  });
+
+  it("inspect reaches the provider ONLY through the narrowed handle", () => {
+    const start = CONFIGURE.indexOf("async function inspectOnly");
+    const end = CONFIGURE.indexOf("async function configureUnderClaim");
+    const body = CONFIGURE.slice(start, end);
+    expect(body).toContain("const reads: InspectionReads = input.provider;");
+    // Exactly one mention: the narrowing itself. Any further `input.provider.`
+    // would be an un-narrowed reach.
+    expect(body.match(/input\.provider/g)?.length ?? 0).toBe(1);
+  });
+});
+
 describe("configuration derives authority from the database", () => {
   it("claims, so membership and owner role are re-derived server-side", () => {
     expect(CONFIGURE).toContain("store.claim");
