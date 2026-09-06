@@ -453,6 +453,24 @@ export async function provisionStudioSmsSender(
     // while the current generation is busy successfully provisioning it.
     if (wrote(parked)) return displaced();
 
+    // AND IT MAY HAVE TOLD US THE OPPOSITE: that this sender is already ACTIVE.
+    //
+    // `fail_studio_sms_provisioning` answers `already_active` by reading the
+    // row's status, so this is the database stating the terminal state has
+    // been reached -- not an inference from provider success, from Hone
+    // holding a SID, or from a stale worker's assumption. The realistic path
+    // is a finalize that COMMITTED while its response was lost or malformed:
+    // the store fails closed to `invalid_input`, we come here to park, and the
+    // park discovers the row is live.
+    //
+    // Reporting a provider or transport error over that would tell the owner
+    // provisioning failed when the database says it succeeded. The newer
+    // terminal truth wins, and it reuses the outcome the claim path already
+    // returns for this exact state rather than inventing a new one.
+    if (parked === "already_active") {
+      return { ok: true, result: "already_active", senderId };
+    }
+
     // THE PARKING WRITE HAS ITS OWN VERDICT, and only `failed` means the row
     // actually moved to `error`. `invalid_input` (an unreachable database, or a
     // shape this store refuses to trust), `not_provisioning` and
@@ -720,7 +738,10 @@ export async function provisionStudioSmsSender(
     finalized !== "conflict",
     true,
   );
-  if (parked.result === "lease_lost") return parked;
+  // Forward ANY non-failure outcome the parking write produced -- displacement
+  // and already-active alike. Naming only `lease_lost` here is what let a
+  // committed activation be reported as a failure.
+  if (parked.result !== "failed") return parked;
 
   // Carry the parking write's own verdict here too. `failWith` already decided
   // whether the row actually moved to `error`; re-asserting "parked" from this

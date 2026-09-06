@@ -408,6 +408,15 @@ describe("the parking write: every result word is handled", () => {
       return;
     }
 
+    if (word === "already_active") {
+      // The database read the row and said it is live. That is terminal
+      // SUCCESS, not a failure dressed in a verdict -- reporting the provider
+      // error over it would tell the owner provisioning failed while the
+      // database says it succeeded.
+      expect(outcome).toMatchObject({ ok: true, result: "already_active" });
+      return;
+    }
+
     expect(outcome).toMatchObject({ ok: false, result: "failed" });
     if (outcome.ok || outcome.result !== "failed") return;
 
@@ -587,6 +596,92 @@ describe("identifiersRecorded reflects DB acknowledgement, never inference", () 
       }
       provider.reset();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The database's newer terminal truth outranks stale local narration
+// ---------------------------------------------------------------------------
+
+describe("a parking write that finds the row ACTIVE reports success", () => {
+  /**
+   * The real shape: `finalize` COMMITS the activation, but its response is
+   * lost or malformed, so the store fails closed to `invalid_input`. The
+   * orchestration then tries to park the attempt -- and the parking write
+   * answers `already_active`, which is the database stating the terminal state
+   * has already been reached.
+   */
+  class LostActivationStore implements ProvisioningStore {
+    constructor(private readonly failVerdict: FailResult = "already_active") {}
+    failCalls = 0;
+    async claim(): Promise<ClaimRow> {
+      return {
+        result: "claimed",
+        senderId: "sender-1",
+        claimKey: CLAIM_KEY,
+        senderStatus: "provisioning",
+        leaseGeneration: GEN,
+      };
+    }
+    async finalize(): Promise<FinalizeResult> {
+      // Committed at the database; the answer never made it back.
+      return "invalid_input";
+    }
+    async fail(): Promise<FailResult> {
+      this.failCalls += 1;
+      return this.failVerdict;
+    }
+    async renewLease(): Promise<boolean> {
+      return true;
+    }
+  }
+
+  it("ALREADY_ACTIVE from the parking write is terminal success, not failure", async () => {
+    const store = new LostActivationStore();
+    const outcome = await run(store);
+
+    // The database has confirmed the sender is live. Telling the owner
+    // provisioning failed would be reporting a transport error over a
+    // committed terminal state.
+    expect(outcome).toMatchObject({ ok: true, result: "already_active" });
+  });
+
+  it("recognising it causes NO second provider effect", async () => {
+    const store = new LostActivationStore();
+    const purchasesBefore = provider.calls.purchase;
+    await run(store);
+    // One purchase for the attempt, and nothing extra because the terminal
+    // state was recognised rather than retried.
+    expect(provider.calls.purchase).toBe(purchasesBefore + 1);
+    expect(provider.ownedNumbers()).toEqual([CHOSEN]);
+    expect(store.failCalls).toBe(1);
+  });
+
+  it("the DB's active verdict wins over the local provider error too", async () => {
+    // Provider failed, and while we were parking, the row turned out active.
+    provider.reset({ purchaseFails: "provider_rejected" });
+    const outcome = await run(new LostActivationStore());
+    expect(outcome).toMatchObject({ ok: true, result: "already_active" });
+    if (outcome.ok) return;
+    expect(outcome).not.toMatchObject({ reason: "provider_rejected" });
+  });
+
+  it.each(["failed", "invalid_input", "not_provisioning", "claim_not_found"] as const)(
+    "parking verdict %s is UNCHANGED — still a failure outcome",
+    async (verdict) => {
+      provider.reset({ purchaseFails: "provider_rejected" });
+      const outcome = await run(new LostActivationStore(verdict));
+      expect(outcome).toMatchObject({ ok: false, result: "failed" });
+      if (outcome.ok || outcome.result !== "failed") return;
+      expect(outcome.parkResult).toBe(verdict);
+      expect(outcome.parked).toBe(verdict === "failed");
+    },
+  );
+
+  it("parking verdict lease_lost is UNCHANGED — still displacement", async () => {
+    provider.reset({ purchaseFails: "provider_rejected" });
+    const outcome = await run(new LostActivationStore("lease_lost"));
+    expect(outcome).toMatchObject({ ok: false, result: "lease_lost" });
   });
 });
 
