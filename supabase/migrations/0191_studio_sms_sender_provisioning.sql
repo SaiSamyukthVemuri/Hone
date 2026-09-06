@@ -118,6 +118,20 @@ create table if not exists public.studio_sms_senders (
   country             text,
   requested_area_code text,
 
+  -- THE NUMBER THIS ATTEMPT IS FOR. Bound at claim time, write-once after.
+  --
+  -- Without it the claim identified an ATTEMPT but never WHAT IT WAS BUYING,
+  -- and that gap reopened the double purchase from the far side: generation G
+  -- clears the fence for number A and stalls; a takeover reuses the same claim
+  -- for number B; both purchases land, because two DIFFERENT numbers never
+  -- contend for one provider resource the way two attempts on one number do.
+  -- The claim key cannot catch it -- both workers legitimately hold that key.
+  --
+  -- Binding the number makes "one claim, one number" a schema invariant rather
+  -- than a convention the caller is trusted to keep. Wanting a different number
+  -- is legitimate; it is simply not this attempt. Release and claim afresh.
+  claimed_phone_number text,
+
   -- What the provider actually gave us. Written ONLY from a provider response,
   -- never from request input. See the source guard in
   -- tests/source-guards/sms-provider-guards.test.ts.
@@ -201,6 +215,35 @@ alter table public.studio_sms_senders
 -- Provider SID shapes are checked at the DATABASE because fail-closed parsing
 -- in one adapter is not a schema guarantee. A browser-supplied or garbled
 -- value cannot be stored even if some future writer forgets to validate.
+-- Declared in the CREATE TABLE above for a fresh chain; added here too so the
+-- migration converges on a local database where an earlier draft of 0191
+-- already created the table. 0191 is UNAPPLIED in production, so this is a
+-- developer-convergence affordance, not a production migration path.
+alter table public.studio_sms_senders
+  add column if not exists claimed_phone_number text;
+
+alter table public.studio_sms_senders
+  drop constraint if exists studio_sms_senders_claimed_phone_number_check;
+alter table public.studio_sms_senders
+  add constraint studio_sms_senders_claimed_phone_number_check
+  check (claimed_phone_number is null or claimed_phone_number ~ '^\+[1-9][0-9]{7,14}$');
+
+-- Any status past `off` is an attempt to buy A SPECIFIC NUMBER.
+alter table public.studio_sms_senders
+  drop constraint if exists studio_sms_senders_claimed_number_required_check;
+alter table public.studio_sms_senders
+  add constraint studio_sms_senders_claimed_number_required_check
+  check (status = 'off' or claimed_phone_number is not null);
+
+-- WHAT WAS BOUGHT IS WHAT WAS CLAIMED. The database refuses to record a
+-- purchase against a claim that selected a different number, whatever any
+-- caller supplies and whichever generation supplies it.
+alter table public.studio_sms_senders
+  drop constraint if exists studio_sms_senders_purchased_matches_claimed_check;
+alter table public.studio_sms_senders
+  add constraint studio_sms_senders_purchased_matches_claimed_check
+  check (phone_number is null or phone_number = claimed_phone_number);
+
 alter table public.studio_sms_senders
   drop constraint if exists studio_sms_senders_phone_number_sid_check;
 alter table public.studio_sms_senders
@@ -421,6 +464,16 @@ begin
       using errcode = 'check_violation';
   end if;
 
+  -- The bound number is write-once. Changing it mid-attempt is exactly how a
+  -- displaced worker and its successor buy two different numbers under one
+  -- claim.
+  if old.claimed_phone_number is not null
+     and new.claimed_phone_number is distinct from old.claimed_phone_number then
+    raise exception
+      'studio_sms_senders: claimed_phone_number is write-once; an attempt is for ONE number, and changing it is how one claim buys two'
+      using errcode = 'check_violation';
+  end if;
+
   -- Provider resource identifiers are write-once too. Overwriting a SID would
   -- orphan the resource it named -- Hone would keep paying for a number it no
   -- longer has any record of.
@@ -500,6 +553,27 @@ create policy "studio_sms_senders_owner_select"
   using (public.is_studio_owner(studio_sms_senders.studio_id));
 
 -- ---------------------------------------------------------------------------
+-- The lease window, defined ONCE
+-- ---------------------------------------------------------------------------
+--
+-- Two commands decide whether a lease is live: the claim ("may I take this
+-- over?") and the fence ("may I still spend?"). Two literals would eventually
+-- disagree, and a fence trusting a LONGER window than the claim enforces would
+-- hand a displaced worker a licence to spend.
+create or replace function public.studio_sms_lease_window()
+returns interval
+language sql
+immutable
+set search_path = pg_catalog, pg_temp
+as $$
+  -- Long enough for a full provisioning round trip (reconcile, availability,
+  -- purchase, service create, three configuration calls, test send -- each
+  -- bounded at 15s by the adapter); short enough that a crash does not wedge a
+  -- studio for an operator-visible age.
+  select interval '5 minutes';
+$$;
+
+-- ---------------------------------------------------------------------------
 -- Command: acquire the provisioning claim
 -- ---------------------------------------------------------------------------
 --
@@ -518,7 +592,8 @@ create or replace function public.claim_studio_sms_provisioning(
   p_studio_id          uuid,
   p_actor_user_id      uuid,
   p_country            text,
-  p_requested_area_code text
+  p_requested_area_code text,
+  p_phone_number       text
 )
 returns table (
   result      text,
@@ -539,11 +614,12 @@ declare
   -- bounded at 15s by the adapter); short enough that a crash does not wedge
   -- the studio for an operator-visible age. Mirrors the 0049 stale-claim
   -- pattern, with a window sized for a slower, billable sequence.
-  c_claim_lease constant interval := interval '5 minutes';
+  c_claim_lease constant interval := public.studio_sms_lease_window();
   v_practitioner_id uuid;
   v_role            text;
   v_country         text := upper(nullif(btrim(coalesce(p_country, '')), ''));
   v_area            text := nullif(btrim(coalesce(p_requested_area_code, '')), '');
+  v_number          text := nullif(btrim(coalesce(p_phone_number, '')), '');
   v_row             public.studio_sms_senders%rowtype;
   v_key             text;
 begin
@@ -553,7 +629,8 @@ begin
   end if;
 
   if v_country is null or v_country !~ '^[A-Z]{2}$'
-     or (v_area is not null and v_area !~ '^[0-9]{2,5}$') then
+     or (v_area is not null and v_area !~ '^[0-9]{2,5}$')
+     or v_number is null or v_number !~ '^\+[1-9][0-9]{7,14}$' then
     return query select 'invalid_input'::text, null::uuid, null::text, null::text, null::integer;
     return;
   end if;
@@ -607,10 +684,12 @@ begin
     v_key := 'hone-sms-' || replace(gen_random_uuid()::text, '-', '');
     insert into public.studio_sms_senders (
       studio_id, provider, status, country, requested_area_code,
+      claimed_phone_number,
       provisioning_claim_key, provisioning_claim_at,
       provisioning_claim_by_practitioner_id
     ) values (
       p_studio_id, 'twilio', 'provisioning', v_country, v_area,
+      v_number,
       v_key, clock_timestamp(), v_practitioner_id
     )
     on conflict do nothing
@@ -635,6 +714,21 @@ begin
       return query select 'not_claimable'::text, null::uuid, null::text, null::text, null::integer;
       return;
     end if;
+  end if;
+
+  -- THE ATTEMPT IS FOR ONE NUMBER, ENFORCED HERE.
+  --
+  -- A retry or a takeover MUST carry the bound number. Permitting a different
+  -- one is the cross-number race: G clears the fence for A and stalls, a
+  -- takeover arrives for B, and both land because two distinct numbers never
+  -- contend. Refusing costs an owner one extra step -- release, then claim
+  -- afresh -- and that step is the honest way to change your mind about a
+  -- purchase.
+  if v_row.claimed_phone_number is not null
+     and v_row.claimed_phone_number <> v_number then
+    return query select 'number_mismatch'::text, v_row.id, null::text,
+                        v_row.status, null::integer;
+    return;
   end if;
 
   if v_row.status = 'active' then
@@ -802,8 +896,16 @@ begin
            last_error_code       = case when p_test_ok is true then null else v_row.last_error_code end,
            last_error_at         = case when p_test_ok is true then null else v_row.last_error_at end
      where id = v_row.id;
-  exception when unique_violation then
-    return 'conflict';
+  exception
+    when unique_violation then
+      -- Another studio already owns one of these provider resources.
+      return 'conflict';
+    when check_violation then
+      -- Most likely the purchase does not match the number this claim was
+      -- bound to. Named rather than raised, for the same reason: a caller
+      -- receiving a bare 23514 would have to parse a Postgres message to tell
+      -- it from any other failure.
+      return 'conflict';
   end;
 
   if p_test_ok is true then
@@ -879,51 +981,75 @@ end;
 $$;
 
 -- ---------------------------------------------------------------------------
--- Command: revalidate the fence, immediately before spending money
+-- Command: renew the fence ATOMICALLY, immediately before spending money
 -- ---------------------------------------------------------------------------
 --
--- THE LAST THING A WORKER DOES BEFORE A BILLABLE CALL.
+-- THE LAST THING A WORKER DOES BEFORE A BILLABLE CALL, and it is a
+-- CHECK-AND-RENEW, not a check.
 --
--- Reusing the claim key across a takeover makes a SEQUENTIAL retry safe: the
--- new worker reconciles against what the old one bought. It does NOT fence a
--- CONCURRENT one. A worker that merely STALLED past its five-minute lease --
--- not crashed, just slow, paused, or wedged on a socket -- resumes believing it
--- still owns the attempt. Both workers then hold the same key, both reconcile
--- while neither purchase is visible yet, and both buy. That is the original
--- catastrophe, reintroduced by the very mechanism that recovers from crashes.
+-- The check-only version asked only "is my generation still current?". That
+-- passes for a worker whose lease EXPIRED MINUTES AGO but whom nobody has yet
+-- displaced -- so it would begin a 15-second provider call on a dead lease,
+-- during which a new claimant is free to take over and start its own. Both
+-- then hold a licence to spend. Same failure, reached from the other side.
 --
--- The lease generation is the fence. It advances on every takeover, so the
--- displaced worker's copy is stale and this returns false, and it aborts
--- WITHOUT spending.
+-- ONE STATEMENT does all of it, so nothing can change between the test and the
+-- renewal. A SELECT-then-UPDATE split would reintroduce exactly the window it
+-- is meant to close:
 --
--- HONEST LIMIT, STATED RATHER THAN IMPLIED: this narrows the window, it does
--- not close it. A takeover landing between this check and the provider call
--- still races, because Twilio's number-purchase API accepts no idempotency key
--- for Hone to bind the effect to. What remains is a few milliseconds rather
--- than the whole provisioning sequence, and the claim-key FriendlyName still
--- makes the aftermath DISCOVERABLE -- lookupResourcesByClaim refuses to choose
--- when it finds two, so the condition surfaces to an operator instead of being
--- silently absorbed.
-create or replace function public.assert_studio_sms_lease(
+--   * the generation is still ours          (not displaced)
+--   * the lease has NOT expired             (live, not merely unclaimed)
+--   * the attempt is still `provisioning`   (not finished, not parked)
+--   * the number matches the CLAIMED one    (this attempt, this number)
+--
+-- ...and on success pushes `provisioning_claim_at` to the WALL CLOCK, so the
+-- five-minute takeover boundary sits OUTSIDE the bounded provider call rather
+-- than somewhere inside it. Crash recovery is untouched: a worker that dies
+-- stops renewing, and its lease ages out exactly as before.
+--
+-- clock_timestamp(), not now(): `now()` is transaction-start, so a renewal
+-- would write an instant already older than the call it is meant to cover.
+--
+-- HONEST LIMIT, UNCHANGED: a takeover landing between this renewal and the
+-- provider call still races, because Twilio's purchase API accepts no
+-- idempotency key to bind the effect to. Renewal shrinks that to one await AND
+-- guarantees the lease is live across the whole call; the claim key and the
+-- bound number make anything that does slip through discoverable afterwards.
+create or replace function public.renew_studio_sms_lease(
   p_studio_id        uuid,
   p_claim_key        text,
-  p_lease_generation integer
+  p_lease_generation integer,
+  p_phone_number     text
 )
 returns boolean
-language sql
-stable
+language plpgsql
+volatile
 security definer
 set search_path = pg_catalog, pg_temp
 as $$
-  select exists (
-    select 1
-      from public.studio_sms_senders s
-     where s.studio_id                     = p_studio_id
-       and s.provisioning_claim_key        = p_claim_key
-       and s.provisioning_lease_generation = p_lease_generation
-       and s.status                        = 'provisioning'
-  );
+declare
+  v_renewed boolean;
+begin
+  update public.studio_sms_senders s
+     set provisioning_claim_at = clock_timestamp()
+   where s.studio_id                     = p_studio_id
+     and s.provisioning_claim_key        = p_claim_key
+     and s.provisioning_lease_generation = p_lease_generation
+     and s.status                        = 'provisioning'
+     and s.claimed_phone_number          = p_phone_number
+     and s.provisioning_claim_at > clock_timestamp() - public.studio_sms_lease_window()
+  returning true into v_renewed;
+
+  -- No row updated means one of the five conditions failed. WHICH one is not
+  -- the caller's business: every answer other than true means DO NOT SPEND.
+  return coalesce(v_renewed, false);
+end;
 $$;
+
+-- The check-only predicate this replaced. 0191 is UNAPPLIED in production, so
+-- this only tidies a local database where an earlier draft of this same
+-- migration created it; nothing in production ever had it.
+drop function if exists public.assert_studio_sms_lease(uuid, text, integer);
 
 -- ---------------------------------------------------------------------------
 -- Command: resolve an inbound provider callback to exactly one studio
@@ -973,10 +1099,10 @@ grant select (
   last_error_code, last_error_at, released_at, created_at, updated_at
 ) on public.studio_sms_senders to authenticated;
 
-revoke execute on function public.claim_studio_sms_provisioning(uuid, uuid, text, text) from public;
-revoke execute on function public.claim_studio_sms_provisioning(uuid, uuid, text, text) from anon;
-revoke execute on function public.claim_studio_sms_provisioning(uuid, uuid, text, text) from authenticated;
-revoke execute on function public.claim_studio_sms_provisioning(uuid, uuid, text, text) from service_role;
+revoke execute on function public.claim_studio_sms_provisioning(uuid, uuid, text, text, text) from public;
+revoke execute on function public.claim_studio_sms_provisioning(uuid, uuid, text, text, text) from anon;
+revoke execute on function public.claim_studio_sms_provisioning(uuid, uuid, text, text, text) from authenticated;
+revoke execute on function public.claim_studio_sms_provisioning(uuid, uuid, text, text, text) from service_role;
 
 revoke execute on function public.finalize_studio_sms_provisioning(uuid, text, integer, text, text, text, boolean) from public;
 revoke execute on function public.finalize_studio_sms_provisioning(uuid, text, integer, text, text, text, boolean) from anon;
@@ -993,16 +1119,21 @@ revoke execute on function public.resolve_studio_by_sms_messaging_service(text) 
 revoke execute on function public.resolve_studio_by_sms_messaging_service(text) from authenticated;
 revoke execute on function public.resolve_studio_by_sms_messaging_service(text) from service_role;
 
-grant execute on function public.claim_studio_sms_provisioning(uuid, uuid, text, text) to service_role;
+grant execute on function public.claim_studio_sms_provisioning(uuid, uuid, text, text, text) to service_role;
 grant execute on function public.finalize_studio_sms_provisioning(uuid, text, integer, text, text, text, boolean) to service_role;
 grant execute on function public.fail_studio_sms_provisioning(uuid, text, integer, text) to service_role;
 grant execute on function public.resolve_studio_by_sms_messaging_service(text) to service_role;
 
-revoke execute on function public.assert_studio_sms_lease(uuid, text, integer) from public;
-revoke execute on function public.assert_studio_sms_lease(uuid, text, integer) from anon;
-revoke execute on function public.assert_studio_sms_lease(uuid, text, integer) from authenticated;
-revoke execute on function public.assert_studio_sms_lease(uuid, text, integer) from service_role;
-grant execute on function public.assert_studio_sms_lease(uuid, text, integer) to service_role;
+revoke execute on function public.renew_studio_sms_lease(uuid, text, integer, text) from public;
+revoke execute on function public.renew_studio_sms_lease(uuid, text, integer, text) from anon;
+revoke execute on function public.renew_studio_sms_lease(uuid, text, integer, text) from authenticated;
+revoke execute on function public.renew_studio_sms_lease(uuid, text, integer, text) from service_role;
+grant execute on function public.renew_studio_sms_lease(uuid, text, integer, text) to service_role;
+
+revoke execute on function public.studio_sms_lease_window() from public;
+revoke execute on function public.studio_sms_lease_window() from anon;
+revoke execute on function public.studio_sms_lease_window() from authenticated;
+revoke execute on function public.studio_sms_lease_window() from service_role;
 
 revoke all privileges on function public.studio_sms_senders_server_timestamps()
   from public, anon, authenticated, service_role;
@@ -1034,8 +1165,8 @@ comment on column public.studio_sms_senders.messaging_service_sid is
 comment on column public.studio_sms_senders.last_error_code is
   'A stable taxonomy slug from the adapter''s error vocabulary -- never a provider message, payload or phone number. The shape CHECK (lowercase slug, 3-64 chars) makes it structurally impossible to park a number or a token here.';
 
-comment on function public.claim_studio_sms_provisioning(uuid, uuid, text, text) is
-  'Acquire the durable provisioning claim. THE COMMIT POINT of an attempt: everything billable happens after this returns, under the key it returns. Re-derives studio membership AND owner role from (studio_id, actor user id); the caller never supplies a role. Takes the studio''s live row FOR UPDATE, so concurrent requests serialize. A live attempt EXCLUDES the second request: it is turned away as `claim_held` with no key and performs no provider effect, which is what makes a double click, a second tab and a network retry produce ONE purchase. Sharing the key instead would let both reconcile (finding nothing, since neither has bought yet) and both purchase. A claim whose 5-minute lease has expired is taken over ON THE SAME KEY, so the taking-over attempt discovers whatever the crashed one bought, and the lease GENERATION advances so the displaced worker is fenced out by assert_studio_sms_lease before it can spend. Expiry is evaluated against clock_timestamp(), not now(): a claim that waited on the row lock would otherwise judge -- and refresh -- the lease against a reading from before the wait. The FIRST-EVER claim for a studio is the one case the row lock cannot serialize -- there is no row to lock -- so the insert carries `on conflict do nothing` and the loser re-reads the winner and is answered `claim_held`; without it the loser received a raw duplicate-key exception instead of a result word. Returns claimed | claim_held | already_active | not_claimable | not_a_member | not_owner | studio_not_found | invalid_input. service_role only.';
+comment on function public.claim_studio_sms_provisioning(uuid, uuid, text, text, text) is
+  'Acquire the durable provisioning claim. THE COMMIT POINT of an attempt: everything billable happens after this returns, under the key it returns. Re-derives studio membership AND owner role from (studio_id, actor user id); the caller never supplies a role. Takes the studio''s live row FOR UPDATE, so concurrent requests serialize. A live attempt EXCLUDES the second request: it is turned away as `claim_held` with no key and performs no provider effect, which is what makes a double click, a second tab and a network retry produce ONE purchase. Sharing the key instead would let both reconcile (finding nothing, since neither has bought yet) and both purchase. A claim whose 5-minute lease has expired is taken over ON THE SAME KEY, so the taking-over attempt discovers whatever the crashed one bought, and the lease GENERATION advances so the displaced worker is fenced out by renew_studio_sms_lease before it can spend. Expiry is evaluated against clock_timestamp(), not now(): a claim that waited on the row lock would otherwise judge -- and refresh -- the lease against a reading from before the wait. The FIRST-EVER claim for a studio is the one case the row lock cannot serialize -- there is no row to lock -- so the insert carries `on conflict do nothing` and the loser re-reads the winner and is answered `claim_held`; without it the loser received a raw duplicate-key exception instead of a result word. The selected NUMBER is bound to the claim here and is write-once: a retry or takeover carrying a different number is refused with `number_mismatch`, which closes the cross-number race (G clears the fence for A, stalls; a takeover buys B; both land, because two distinct numbers never contend). Returns claimed | claim_held | already_active | number_mismatch | not_claimable | not_a_member | not_owner | studio_not_found | invalid_input. service_role only.';
 
 comment on function public.finalize_studio_sms_provisioning(uuid, text, integer, text, text, text, boolean) is
   'Record the provider resources an attempt produced, addressed by (studio_id, claim_key) together. Reaches `active` ONLY with p_test_ok = true; without proof the row keeps its identifiers and stays in `provisioning`, which is precisely the state reconciliation needs. Replaying identical resources is benign (`already_active`); DIFFERENT resources against the same claim return `conflict` and are never silently overwritten. A provider resource already recorded against ANOTHER studio raises a unique violation, which is caught and returned as `conflict` rather than propagating a bare 23505. A worker whose lease was taken over is refused with `lease_lost` rather than allowed to record its resources over the live attempt''s. Returns activated | provisioned_untested | already_active | conflict | lease_lost | claim_not_found | not_provisioning | invalid_input. service_role only.';
@@ -1044,10 +1175,16 @@ comment on function public.fail_studio_sms_provisioning(uuid, text, integer, tex
   'Park a failed attempt in `error` WITHOUT surrendering the claim key, so anything already purchased under it stays discoverable by reconciliation. Coerces any non-conforming error tag to `provider_error_unspecified` rather than storing it. A displaced worker is refused with `lease_lost` and does not get to park the live attempt in `error`. Returns failed | lease_lost | already_active | not_provisioning | claim_not_found | invalid_input. service_role only.';
 
 comment on column public.studio_sms_senders.provisioning_lease_generation is
-  'THE FENCING TOKEN, and the answer to a defect the claim key alone does not close. Reusing the key across a stale-lease takeover makes a SEQUENTIAL retry safe -- the new worker reconciles against what the old one bought -- but it does not fence a CONCURRENT one: a worker that merely STALLED past its lease (not crashed; slow, paused, or wedged on a socket) resumes believing it still owns the attempt, and two workers holding one key both reconcile while neither purchase is visible and both buy. This integer advances on every takeover, so the displaced worker fails assert_studio_sms_lease and aborts BEFORE spending. Monotonic by trigger: rewinding it would re-arm a worker that was already displaced.';
+  'THE FENCING TOKEN, and the answer to a defect the claim key alone does not close. Reusing the key across a stale-lease takeover makes a SEQUENTIAL retry safe -- the new worker reconciles against what the old one bought -- but it does not fence a CONCURRENT one: a worker that merely STALLED past its lease (not crashed; slow, paused, or wedged on a socket) resumes believing it still owns the attempt, and two workers holding one key both reconcile while neither purchase is visible and both buy. This integer advances on every takeover, so the displaced worker fails renew_studio_sms_lease and aborts BEFORE spending. Monotonic by trigger: rewinding it would re-arm a worker that was already displaced.';
 
-comment on function public.assert_studio_sms_lease(uuid, text, integer) is
-  'Revalidate the fence immediately before a billable provider call; false means this worker was displaced and must not spend. Narrows the double-purchase window from the whole provisioning sequence to the gap between this check and the provider call -- it does NOT close it, because Twilio''s number-purchase API accepts no idempotency key to bind the effect to. The claim-key FriendlyName still makes the residue discoverable: lookupResourcesByClaim refuses to choose when it finds two, so the condition reaches an operator rather than being absorbed. service_role only.';
+comment on column public.studio_sms_senders.claimed_phone_number is
+  'THE NUMBER THIS ATTEMPT IS FOR, bound at claim time and write-once after. Without it the claim identified an attempt but never what it was BUYING, which reopened the double purchase from the far side: generation G clears the fence for number A and stalls, a takeover reuses the same claim for number B, and BOTH land -- because two different numbers never contend for one provider resource the way two attempts on one number do, and both workers legitimately hold the same claim key. A companion CHECK requires phone_number = claimed_phone_number, so the database refuses to record a purchase against a claim that selected something else, whatever any caller supplies and whichever generation supplies it. Changing your mind about a number is legitimate; it is simply not this attempt -- release the sender and claim afresh.';
+
+comment on function public.studio_sms_lease_window() is
+  'The provisioning lease window, defined ONCE so the claim (may I take this over?) and the fence (may I still spend?) cannot drift apart. Two literals would eventually disagree, and a fence trusting a longer window than the claim enforces would hand a displaced worker a licence to spend. Executable by nobody: the definer commands call it as owner.';
+
+comment on function public.renew_studio_sms_lease(uuid, text, integer, text) is
+  'ATOMIC check-and-renew, run immediately before every claim-scoped provider operation; false means DO NOT SPEND. One UPDATE verifies the generation, that the lease has NOT expired, that the attempt is still provisioning, and that the number matches the CLAIMED one -- then pushes the lease forward on the wall clock, so the takeover boundary sits outside the bounded provider call. A SELECT-then-UPDATE split would reopen the window it exists to close. The check-only predecessor passed for a worker whose lease had expired but whom nobody had yet displaced, letting it begin a provider call on a dead lease while a new claimant was free to take over. Narrows the double-purchase window from the whole provisioning sequence to the gap between this check and the provider call -- it does NOT close it, because Twilio''s number-purchase API accepts no idempotency key to bind the effect to. The claim-key FriendlyName still makes the residue discoverable: lookupResourcesByClaim refuses to choose when it finds two, so the condition reaches an operator rather than being absorbed. service_role only.';
 
 comment on function public.resolve_studio_by_sms_messaging_service(text) is
   'Resolve an inbound provider callback to exactly one studio via the messaging-service unique index -- a stronger key than any sender-controlled payload field, and no scan over tenant state. Returns null when the SID is not one of ours; the caller must treat that as "not attributable", never as "any studio". service_role only.';

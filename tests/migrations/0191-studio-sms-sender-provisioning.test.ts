@@ -68,7 +68,8 @@ const CLAIM = "claim_studio_sms_provisioning";
 const FINALIZE = "finalize_studio_sms_provisioning";
 const FAIL = "fail_studio_sms_provisioning";
 const RESOLVE = "resolve_studio_by_sms_messaging_service";
-const FENCE = "assert_studio_sms_lease";
+const FENCE = "renew_studio_sms_lease";
+const LEASE_WINDOW = "studio_sms_lease_window";
 const GUARD = "studio_sms_senders_transition_guard";
 const STAMPS = "studio_sms_senders_server_timestamps";
 
@@ -146,7 +147,12 @@ describe("the change is additive", () => {
     // constraints, triggers and policies, which is idempotency, not removal.
     expect(OUTSIDE_FUNCTIONS).not.toMatch(/drop table/i);
     expect(OUTSIDE_FUNCTIONS).not.toMatch(/drop column/i);
-    expect(OUTSIDE_FUNCTIONS).not.toMatch(/drop function/i);
+    // ONE exception, and it is this migration tidying after ITSELF: the
+    // check-only fence that an earlier draft of 0191 created on local
+    // databases. 0191 is unapplied in production, so nothing there ever had
+    // it. Any OTHER drop function is still forbidden.
+    const dropped = [...OUTSIDE_FUNCTIONS.matchAll(/drop function if exists public\.(\w+)/g)].map((m) => m[1]);
+    expect(dropped).toEqual(["assert_studio_sms_lease"]);
     const drops = [...OUTSIDE_FUNCTIONS.matchAll(/drop (trigger|policy) if exists\s+"?([^\s"]+)"?/g)];
     expect(drops.length).toBeGreaterThan(0);
     for (const [, , name] of drops) expect(name).toContain(TABLE);
@@ -386,6 +392,59 @@ describe("a live claim EXCLUDES a second request", () => {
     expect(body(CLAIM)).toContain("for update");
   });
 
+  it("A — the claim OWNS the number, and it is write-once", () => {
+    // Without this the claim identified an attempt but never what it was
+    // BUYING: G clears the fence for A, stalls, a takeover reuses the same key
+    // for B, and both land because two different numbers never contend.
+    expect(CODE).toContain("claimed_phone_number text");
+    expect(CODE).toMatch(/add constraint studio_sms_senders_claimed_number_required_check[\s\S]{0,200}?check \(status = 'off' or claimed_phone_number is not null\)/);
+    // What was bought must equal what was claimed -- enforced by the database,
+    // not by whichever generation happens to be writing.
+    expect(CODE).toMatch(/check \(phone_number is null or phone_number = claimed_phone_number\)/);
+    // Write-once by trigger.
+    const guard = body(GUARD);
+    expect(guard).toMatch(/old\.claimed_phone_number is not null\s*\n\s*and new\.claimed_phone_number is distinct from old\.claimed_phone_number/);
+    expect(guard).toContain("write-once");
+  });
+
+  it("A — a retry or takeover carrying a different number is REFUSED", () => {
+    const claim = body(CLAIM);
+    expect(claim).toMatch(/v_row\.claimed_phone_number <> v_number/);
+    expect(claim).toContain("'number_mismatch'");
+    // The number is bound at insert time.
+    expect(claim).toMatch(/claimed_phone_number,[\s\S]{0,300}?v_number,/);
+  });
+
+  it("B — the fence is an ATOMIC check-and-renew, in ONE statement", () => {
+    const fence = body(FENCE);
+    // One UPDATE ... RETURNING. A SELECT-then-UPDATE split would reopen the
+    // very window this exists to close.
+    expect(fence).toMatch(/update public\.studio_sms_senders/);
+    expect(fence).not.toMatch(/select[\s\S]{0,80}?from public\.studio_sms_senders/);
+    // All four conditions, plus the renewal.
+    expect(fence).toContain("s.provisioning_lease_generation = p_lease_generation");
+    expect(fence).toContain("s.status                        = 'provisioning'");
+    expect(fence).toContain("s.claimed_phone_number          = p_phone_number");
+    expect(fence).toMatch(/s\.provisioning_claim_at > clock_timestamp\(\) - public\.studio_sms_lease_window\(\)/);
+    expect(fence).toMatch(/set provisioning_claim_at = clock_timestamp\(\)/);
+    // Fails closed.
+    expect(fence).toContain("coalesce(v_renewed, false)");
+  });
+
+  it("B — the lease window is defined ONCE, so claim and fence cannot drift", () => {
+    expect(CODE).toContain(`create or replace function public.${LEASE_WINDOW}()`);
+    expect(body(CLAIM)).toContain(`public.${LEASE_WINDOW}()`);
+    expect(body(FENCE)).toContain(`public.${LEASE_WINDOW}()`);
+    // No stray literal window anywhere else.
+    expect(CODE.match(/interval '5 minutes'/g) ?? []).toHaveLength(1);
+  });
+
+  it("the check-only predecessor is gone", () => {
+    expect(CODE).toContain("drop function if exists public.assert_studio_sms_lease");
+    // ...and nothing still calls it.
+    expect(CODE).not.toMatch(/select public\.assert_studio_sms_lease\(/);
+  });
+
   it("the FIRST-EVER claim cannot race, because there is no row to lock", () => {
     // Regression pin. `for update` locks nothing when no row exists, so two
     // simultaneous first submits both reach the INSERT; without `on conflict`
@@ -439,7 +498,12 @@ describe("readiness — active is unreachable without proof", () => {
     // Postgres message would have to parse it to tell that apart from any other
     // failure, so the command catches and names it.
     const finalize = body(FINALIZE);
-    expect(finalize).toMatch(/exception when unique_violation then\s*\n\s*return 'conflict';/);
+    // Both shapes are named: a unique violation (another studio already owns
+    // the resource) and a check violation (the purchase is not the number this
+    // claim was bound to). A caller receiving a bare 23505 or 23514 would have
+    // to parse a Postgres message to tell either from any other failure.
+    expect(finalize).toMatch(/when unique_violation then[\s\S]{0,160}?return 'conflict';/);
+    expect(finalize).toMatch(/when check_violation then[\s\S]{0,260}?return 'conflict';/);
   });
 
   it("finalize is addressed by studio AND claim key together", () => {

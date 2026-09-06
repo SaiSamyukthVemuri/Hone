@@ -24,6 +24,7 @@ const CLAIM_RESULTS: readonly ClaimResult[] = [
   "claimed",
   "claim_held",
   "already_active",
+  "number_mismatch",
   "not_claimable",
   "not_a_member",
   "not_owner",
@@ -80,6 +81,7 @@ export function createProvisioningStore(
         p_actor_user_id: input.actorUserId,
         p_country: input.country,
         p_requested_area_code: input.areaCode,
+        p_phone_number: input.phoneNumber,
       });
 
       const refused: ClaimRow = {
@@ -155,11 +157,12 @@ export function createProvisioningStore(
       return data as FailResult;
     },
 
-    async assertLease(input): Promise<boolean> {
-      const { data, error } = await admin.rpc("assert_studio_sms_lease", {
+    async renewLease(input): Promise<boolean> {
+      const { data, error } = await admin.rpc("renew_studio_sms_lease", {
         p_studio_id: input.studioId,
         p_claim_key: input.claimKey,
         p_lease_generation: input.leaseGeneration,
+        p_phone_number: input.phoneNumber,
       });
       // FAIL CLOSED, and this is the one place it matters most: an error or an
       // unrecognised answer must read as "you do not hold this lease", never as

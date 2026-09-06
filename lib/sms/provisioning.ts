@@ -69,6 +69,8 @@ export type ClaimResult =
   | "claimed"
   | "claim_held"
   | "already_active"
+  /** The claim is bound to a DIFFERENT number; this attempt is not that one. */
+  | "number_mismatch"
   | "not_claimable"
   | "not_a_member"
   | "not_owner"
@@ -124,6 +126,8 @@ export interface ProvisioningStore {
     actorUserId: string;
     country: string;
     areaCode: string | null;
+    /** Bound to the claim, write-once. A retry must carry the same one. */
+    phoneNumber: string;
   }): Promise<ClaimRow>;
 
   finalize(input: {
@@ -144,13 +148,20 @@ export interface ProvisioningStore {
   }): Promise<FailResult>;
 
   /**
-   * Revalidate the fence immediately before a billable call. False means this
-   * worker was displaced by a takeover and must not spend.
+   * ATOMIC check-and-renew, run immediately before every claim-scoped provider
+   * operation. False means DO NOT SPEND -- displaced, expired, finished, or
+   * bound to a different number; which one is not the caller's business.
+   *
+   * Renewing rather than merely checking is what keeps the takeover boundary
+   * OUTSIDE the bounded provider call instead of somewhere inside it: a
+   * check-only predicate passes for a worker whose lease expired minutes ago
+   * but whom nobody has yet displaced.
    */
-  assertLease(input: {
+  renewLease(input: {
     studioId: string;
     claimKey: string;
     leaseGeneration: number;
+    phoneNumber: string;
   }): Promise<boolean>;
 }
 
@@ -287,6 +298,18 @@ export type ProvisionOutcome =
       parked: boolean;
       /** The failure write's own verdict, never discarded. */
       parkResult: FailResult;
+      /**
+       * Whether the provider identifiers were DURABLY RECORDED.
+       *
+       * False means the SIDs exist at the provider and Hone does not have them
+       * written down -- which outranks "the provisioning test failed" as the
+       * thing the operator needs to know. Reporting an ordinary parked test
+       * failure here would describe a recoverable state that is not the one we
+       * are in.
+       */
+      identifiersRecorded: boolean;
+      /** The identifier write's own verdict when one was attempted. */
+      identifierResult: FinalizeResult | null;
     };
 
 export type ProvisionInput = {
@@ -335,11 +358,16 @@ export async function provisionStudioSmsSender(
   input: ProvisionInput,
 ): Promise<ProvisionOutcome> {
   // --- 1-4. Authorization and the durable claim -----------------------------
+  const chosenNumber = input.phoneNumber;
+
   const claim = await input.store.claim({
     studioId: input.studioId,
     actorUserId: input.actorUserId,
     country: input.country.trim().toUpperCase(),
     areaCode: input.areaCode?.trim() || null,
+    // Bound to the claim, write-once. Everything downstream -- including the
+    // fence -- is scoped to THIS number.
+    phoneNumber: chosenNumber,
   });
 
   if (claim.result === "already_active") {
@@ -378,6 +406,8 @@ export async function provisionStudioSmsSender(
       // to park against.
       parked: false,
       parkResult: "invalid_input",
+      identifiersRecorded: true,
+      identifierResult: null,
     };
   }
 
@@ -419,6 +449,10 @@ export async function provisionStudioSmsSender(
       mayOwnUnfinalizedResources: mayOwn,
       parked: parked === "failed",
       parkResult: parked,
+      // failWith is reached from paths that never touched identifiers; the
+      // test-failure path overrides these with what it actually observed.
+      identifiersRecorded: true,
+      identifierResult: null,
     };
   };
 
@@ -437,10 +471,11 @@ export async function provisionStudioSmsSender(
   // unfenced effect. See lib/sms/provider/fenced.ts for why this replaced six
   // hand-written checks.
   const provider = fenceProviderMutations(input.provider, () =>
-    input.store.assertLease({
+    input.store.renewLease({
       studioId: input.studioId,
       claimKey,
       leaseGeneration,
+      phoneNumber: chosenNumber,
     }),
   );
 
@@ -595,7 +630,26 @@ export async function provisionStudioSmsSender(
       testOk: false,
     });
     if (wrote(parkedIdentifiers)) return displaced();
-    return failWith(test.code, test.retryable, true);
+
+    // THE IDENTIFIER WRITE HAS ITS OWN VERDICT, and only these two mean the
+    // SIDs were durably recorded. `conflict`, `invalid_input`,
+    // `not_provisioning` and `claim_not_found` all mean Hone now owns provider
+    // resources it has NOT written down -- which outranks "the test failed" as
+    // the thing an operator needs to know, and which a subsequent successful
+    // parking write would otherwise disguise as an ordinary, recoverable
+    // parked test failure.
+    const identifiersRecorded =
+      parkedIdentifiers === "provisioned_untested" ||
+      parkedIdentifiers === "already_active";
+
+    const parked = await failWith(test.code, test.retryable, true);
+    if (parked.result !== "failed") return parked;
+
+    return {
+      ...parked,
+      identifiersRecorded,
+      identifierResult: parkedIdentifiers,
+    };
   }
 
   // --- 11 + 13. Persist identifiers and activate, together -----------------
@@ -654,5 +708,7 @@ export async function provisionStudioSmsSender(
     mayOwnUnfinalizedResources: true,
     parked: parked.result === "failed" ? parked.parked : false,
     parkResult: parked.result === "failed" ? parked.parkResult : "invalid_input",
+    identifiersRecorded: true,
+    identifierResult: finalized,
   };
 }

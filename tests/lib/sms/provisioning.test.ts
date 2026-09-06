@@ -54,6 +54,8 @@ type Row = {
   provisionedAt: string | null;
   lastTestOkAt: string | null;
   lastErrorCode: string | null;
+  /** The number bound to this claim, write-once. */
+  claimedPhoneNumber: string;
   /** Liveness lease. A live attempt excludes a second one; a stale one is taken over. */
   claimAt: number;
   /** Fencing token. Advances on every takeover, so a displaced worker is refused. */
@@ -63,6 +65,14 @@ type Row = {
 type StoreOptions = {
   /** MUTATION: skip the owner-role check the database performs. */
   skipOwnerCheck?: boolean;
+  /**
+   * MUTATION: let a claim change its number, as the design did before the
+   * number was bound. The two claim-key controls below need this: with binding
+   * in place a same-claim retry for a different number is refused outright, so
+   * the OLD catastrophe they model cannot be reproduced without also removing
+   * the newer invariant that would independently have prevented it.
+   */
+  ignoreNumberBinding?: boolean;
   /**
    * MUTATION: remove the fence ENTIRELY -- the pre-purchase check and the
    * generation checks in finalize/fail -- so a worker displaced by a
@@ -109,6 +119,7 @@ class InMemoryStore implements ProvisioningStore {
     actorUserId: string;
     country: string;
     areaCode: string | null;
+    phoneNumber: string;
   }): Promise<ClaimRow> {
     const refuse = (result: ClaimRow["result"]): ClaimRow => ({
       result,
@@ -146,6 +157,7 @@ class InMemoryStore implements ProvisioningStore {
         provisionedAt: null,
         lastTestOkAt: null,
         lastErrorCode: null,
+        claimedPhoneNumber: input.phoneNumber,
         claimAt: this.now,
         leaseGeneration: 1,
       };
@@ -156,6 +168,20 @@ class InMemoryStore implements ProvisioningStore {
         claimKey: row.claimKey,
         senderStatus: row.status,
         leaseGeneration: row.leaseGeneration,
+      };
+    }
+
+    // The claim owns the number: a retry or takeover MUST carry the bound one.
+    if (
+      !this.options.ignoreNumberBinding &&
+      existing.claimedPhoneNumber !== input.phoneNumber
+    ) {
+      return {
+        result: "number_mismatch",
+        senderId: existing.id,
+        claimKey: null,
+        senderStatus: existing.status,
+        leaseGeneration: null,
       };
     }
 
@@ -316,10 +342,11 @@ class InMemoryStore implements ProvisioningStore {
     return "failed";
   }
 
-  async assertLease(input: {
+  async renewLease(input: {
     studioId: string;
     claimKey: string;
     leaseGeneration: number;
+    phoneNumber: string;
   }): Promise<boolean> {
     // MUTATION: with the fence removed, a displaced worker keeps going and
     // buys alongside the worker that took the attempt over.
@@ -330,11 +357,22 @@ class InMemoryStore implements ProvisioningStore {
         r.claimKey === input.claimKey &&
         r.status !== "released",
     );
-    return (
-      row !== undefined &&
-      row.status === "provisioning" &&
-      row.leaseGeneration === input.leaseGeneration
-    );
+    if (
+      row === undefined ||
+      row.status !== "provisioning" ||
+      row.leaseGeneration !== input.leaseGeneration ||
+      (!this.options.ignoreNumberBinding &&
+        row.claimedPhoneNumber !== input.phoneNumber) ||
+      // EXPIRY, which the check-only predecessor never tested: a worker whose
+      // lease died minutes ago but whom nobody has displaced would otherwise
+      // pass and begin a provider call on a dead lease.
+      this.now - row.claimAt >= this.leaseMs
+    ) {
+      return false;
+    }
+    // RENEW, so the takeover boundary sits outside the bounded provider call.
+    row.claimAt = this.now;
+    return true;
   }
 }
 
@@ -437,6 +475,7 @@ describe("at most one purchase per studio attempt", () => {
       actorUserId: OWNER_A,
       country: "CA",
       areaCode: "416",
+      phoneNumber: CHOSEN,
     };
     const first = await store.claim(claimArgs);
     const second = await store.claim(claimArgs);
@@ -479,6 +518,7 @@ describe("at most one purchase per studio attempt", () => {
       actorUserId: OWNER_A,
       country: "CA",
       areaCode: "416",
+      phoneNumber: CHOSEN,
     });
     provider.reset();
 
@@ -500,6 +540,7 @@ describe("at most one purchase per studio attempt", () => {
       actorUserId: OWNER_A,
       country: "CA",
       areaCode: "416",
+      phoneNumber: CHOSEN,
     });
     // The holder crashes. Time passes beyond the lease.
     store.now += store.leaseMs + 1;
@@ -509,6 +550,7 @@ describe("at most one purchase per studio attempt", () => {
       actorUserId: OWNER_A,
       country: "CA",
       areaCode: "416",
+      phoneNumber: CHOSEN,
     });
 
     expect(second.result).toBe("claimed");
@@ -535,6 +577,7 @@ describe("at most one purchase per studio attempt", () => {
       actorUserId: OWNER_A,
       country: "CA",
       areaCode: "416",
+      phoneNumber: CHOSEN,
     });
     expect(claim.result).toBe("claimed");
     const stalled = claim.leaseGeneration!;
@@ -546,6 +589,7 @@ describe("at most one purchase per studio attempt", () => {
       actorUserId: OWNER_A,
       country: "CA",
       areaCode: "416",
+      phoneNumber: CHOSEN,
     });
     expect(takeover.result).toBe("claimed");
     // Same key -- so the new worker can adopt anything already bought...
@@ -555,10 +599,11 @@ describe("at most one purchase per studio attempt", () => {
 
     // The stalled worker wakes up and tries to continue.
     expect(
-      await store.assertLease({
+      await store.renewLease({
         studioId: STUDIO_A,
         claimKey: claim.claimKey!,
         leaseGeneration: stalled,
+        phoneNumber: CHOSEN,
       }),
     ).toBe(false);
 
@@ -585,10 +630,11 @@ describe("at most one purchase per studio attempt", () => {
 
     // And the current holder is unharmed.
     expect(
-      await store.assertLease({
+      await store.renewLease({
         studioId: STUDIO_A,
         claimKey: takeover.claimKey!,
         leaseGeneration: takeover.leaseGeneration!,
+        phoneNumber: CHOSEN,
       }),
     ).toBe(true);
   });
@@ -601,6 +647,7 @@ describe("at most one purchase per studio attempt", () => {
       actorUserId: OWNER_A,
       country: "CA",
       areaCode: "416",
+      phoneNumber: CHOSEN,
     });
     // Someone else takes the attempt over while this one is still working.
     store.now += store.leaseMs + 1;
@@ -609,6 +656,7 @@ describe("at most one purchase per studio attempt", () => {
       actorUserId: OWNER_A,
       country: "CA",
       areaCode: "416",
+      phoneNumber: CHOSEN,
     });
     provider.reset();
 
@@ -619,7 +667,7 @@ describe("at most one purchase per studio attempt", () => {
         claim: async () => ({ ...claim, result: "claimed" as const }),
         finalize: store.finalize.bind(store),
         fail: store.fail.bind(store),
-        assertLease: store.assertLease.bind(store),
+        renewLease: store.renewLease.bind(store),
       },
       provider,
       studioId: STUDIO_A,
@@ -653,6 +701,7 @@ describe("at most one purchase per studio attempt", () => {
       actorUserId: OWNER_A,
       country: "CA",
       areaCode: "416",
+      phoneNumber: CHOSEN,
     });
     // Its purchase landed at the provider.
     await provider.purchaseNumber({ claimKey: claim.claimKey!, phoneNumber: CHOSEN });
@@ -665,6 +714,7 @@ describe("at most one purchase per studio attempt", () => {
       actorUserId: OWNER_A,
       country: "CA",
       areaCode: "416",
+      phoneNumber: CHOSEN,
     });
 
     // The displaced worker resumes on the ADOPTED path.
@@ -673,7 +723,7 @@ describe("at most one purchase per studio attempt", () => {
         claim: async () => ({ ...claim, result: "claimed" as const }),
         finalize: store.finalize.bind(store),
         fail: store.fail.bind(store),
-        assertLease: store.assertLease.bind(store),
+        renewLease: store.renewLease.bind(store),
       },
       provider,
       studioId: STUDIO_A,
@@ -706,6 +756,7 @@ describe("at most one purchase per studio attempt", () => {
       actorUserId: OWNER_A,
       country: "CA",
       areaCode: "416",
+      phoneNumber: CHOSEN,
     });
     store.now += store.leaseMs + 1;
     await store.claim({
@@ -713,6 +764,7 @@ describe("at most one purchase per studio attempt", () => {
       actorUserId: OWNER_A,
       country: "CA",
       areaCode: "416",
+      phoneNumber: CHOSEN,
     });
 
     // The stale worker's provider call comes back "number gone".
@@ -725,7 +777,7 @@ describe("at most one purchase per studio attempt", () => {
         fail: store.fail.bind(store),
         // Fence check passes so the flow reaches the failure write, which is
         // where the database reveals the takeover.
-        assertLease: async () => true,
+        renewLease: async () => true,
       },
       provider,
       studioId: STUDIO_A,
@@ -757,6 +809,7 @@ describe("at most one purchase per studio attempt", () => {
       actorUserId: OWNER_A,
       country: "CA",
       areaCode: "416",
+      phoneNumber: CHOSEN,
     });
     store.now += store.leaseMs + 1;
     await store.claim({
@@ -764,6 +817,7 @@ describe("at most one purchase per studio attempt", () => {
       actorUserId: OWNER_A,
       country: "CA",
       areaCode: "416",
+      phoneNumber: CHOSEN,
     });
 
     const displaced = await provisionStudioSmsSender({
@@ -771,7 +825,7 @@ describe("at most one purchase per studio attempt", () => {
         claim: async () => ({ ...claim, result: "claimed" as const }),
         finalize: store.finalize.bind(store),
         fail: store.fail.bind(store),
-        assertLease: store.assertLease.bind(store),
+        renewLease: store.renewLease.bind(store),
       },
       provider,
       studioId: STUDIO_A,
@@ -797,7 +851,10 @@ describe("at most one purchase per studio attempt", () => {
     // same key and let it proceed. Both reconcile before either has purchased,
     // both find nothing, and both buy -- different numbers, because a real
     // second tab offers a fresh pick.
-    store = new InMemoryStore(MEMBERS, { liveClaimSharesInsteadOfExcluding: true });
+    store = new InMemoryStore(MEMBERS, {
+      liveClaimSharesInsteadOfExcluding: true,
+      ignoreNumberBinding: true,
+    });
     await Promise.all([
       attempt(),
       attempt({ phoneNumber: "+14165550101" }),
@@ -814,6 +871,7 @@ describe("at most one purchase per studio attempt", () => {
     store = new InMemoryStore(MEMBERS, {
       remintClaimKeyEveryCall: true,
       failNextFinalize: true,
+      ignoreNumberBinding: true,
     });
     await attempt();
     store.options.failNextFinalize = false;
@@ -824,6 +882,218 @@ describe("at most one purchase per studio attempt", () => {
     // Two billable numbers from one studio's provisioning. This is precisely
     // the catastrophe the write-once claim key exists to make impossible.
     expect(provider.ownedNumbers().sort()).toEqual(["+14165550100", "+14165550101"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 2b. THE CLAIM OWNS THE NUMBER
+// ---------------------------------------------------------------------------
+
+describe("one claim, one number", () => {
+  const OTHER = "+14165550101";
+
+  it("CROSS_NUMBER_TAKEOVER: G starts with A, lease expires, G2 asks for B -> B is refused", async () => {
+    // THE RACE THE CLAIM KEY CANNOT CATCH, because both workers legitimately
+    // hold the same key. G clears the fence for A and stalls; a takeover
+    // arrives for B; without binding BOTH purchases land, since two different
+    // numbers never contend for one provider resource.
+    const g1 = await store.claim({
+      studioId: STUDIO_A,
+      actorUserId: OWNER_A,
+      country: "CA",
+      areaCode: "416",
+      phoneNumber: CHOSEN,
+    });
+    expect(g1.result).toBe("claimed");
+
+    // G stalls; the lease ages out.
+    store.now += store.leaseMs + 1;
+
+    // G2 takes over -- but asks for a DIFFERENT number.
+    const g2 = await store.claim({
+      studioId: STUDIO_A,
+      actorUserId: OWNER_A,
+      country: "CA",
+      areaCode: "416",
+      phoneNumber: OTHER,
+    });
+
+    expect(g2.result).toBe("number_mismatch");
+    expect(g2.claimKey).toBeNull();
+    expect(g2.leaseGeneration).toBeNull();
+    // One attempt, still bound to A.
+    expect(store.rows).toHaveLength(1);
+    expect(store.live(STUDIO_A)?.claimedPhoneNumber).toBe(CHOSEN);
+  });
+
+  it("a full attempt for a different number performs NO provider effect", async () => {
+    await store.claim({
+      studioId: STUDIO_A,
+      actorUserId: OWNER_A,
+      country: "CA",
+      areaCode: "416",
+      phoneNumber: CHOSEN,
+    });
+    store.now += store.leaseMs + 1;
+    provider.reset();
+
+    const outcome = await attempt({ phoneNumber: OTHER });
+
+    expect(outcome).toMatchObject({ ok: false, result: "refused", reason: "number_mismatch" });
+    expect(provider.calls.purchase).toBe(0);
+    expect(provider.ownedNumbers()).toEqual([]);
+  });
+
+  it("a takeover carrying the BOUND number is allowed, and adopts", async () => {
+    // The refusal is about the NUMBER, not about takeovers -- recovery from a
+    // crashed worker must still work.
+    const g1 = await store.claim({
+      studioId: STUDIO_A,
+      actorUserId: OWNER_A,
+      country: "CA",
+      areaCode: "416",
+      phoneNumber: CHOSEN,
+    });
+    store.now += store.leaseMs + 1;
+    const g2 = await store.claim({
+      studioId: STUDIO_A,
+      actorUserId: OWNER_A,
+      country: "CA",
+      areaCode: "416",
+      phoneNumber: CHOSEN,
+    });
+    expect(g2.result).toBe("claimed");
+    expect(g2.claimKey).toBe(g1.claimKey);
+    expect(g2.leaseGeneration).toBe(g1.leaseGeneration! + 1);
+  });
+
+  it("MUTATION CONTROL (number binding): without it, one claim buys two numbers", async () => {
+    // THE INTERLEAVING MATTERS, so it is modelled explicitly rather than by
+    // running two attempts back to back. Sequentially, reconciliation would
+    // find G's purchase and the takeover would adopt it -- which is why this
+    // race needs G's purchase to land AFTER G2 has already reconciled.
+    store = new InMemoryStore(MEMBERS, { ignoreNumberBinding: true });
+
+    // 1. G claims, bound (notionally) to CHOSEN, and clears its fence.
+    const g1 = await store.claim({
+      studioId: STUDIO_A,
+      actorUserId: OWNER_A,
+      country: "CA",
+      areaCode: "416",
+      phoneNumber: CHOSEN,
+    });
+    expect(
+      await store.renewLease({
+        studioId: STUDIO_A,
+        claimKey: g1.claimKey!,
+        leaseGeneration: g1.leaseGeneration!,
+        phoneNumber: CHOSEN,
+      }),
+    ).toBe(true);
+
+    // 2. G stalls with its purchase in flight. The lease ages out and G2 takes
+    //    over asking for a DIFFERENT number. It reconciles -- nothing is
+    //    visible yet, because G has not landed -- and buys OTHER.
+    store.now += store.leaseMs + 1;
+    await attempt({ phoneNumber: OTHER });
+
+    // 3. G's in-flight purchase now lands.
+    await provider.purchaseNumber({ claimKey: g1.claimKey!, phoneNumber: CHOSEN });
+
+    // TWO BILLABLE NUMBERS UNDER ONE CLAIM. This is what binding the number
+    // makes unreachable: step 2 is refused outright as `number_mismatch`.
+    expect(provider.ownedNumbers().sort()).toEqual([CHOSEN, OTHER].sort());
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 2c. THE FENCE RENEWS, IT DOES NOT MERELY CHECK
+// ---------------------------------------------------------------------------
+
+describe("atomic check-and-renew", () => {
+  async function freshClaim() {
+    return store.claim({
+      studioId: STUDIO_A,
+      actorUserId: OWNER_A,
+      country: "CA",
+      areaCode: "416",
+      phoneNumber: CHOSEN,
+    });
+  }
+
+  it("EXPIRED_LEASE_BEFORE_CALL: an expired lease is refused even with nobody displacing it", async () => {
+    // THE GAP THE CHECK-ONLY PREDICATE LEFT. Generation still current, status
+    // still provisioning, nobody has taken over -- but the lease died minutes
+    // ago. A check-only fence passes, and the worker begins a 15-second
+    // provider call on a dead lease while a new claimant is free to start.
+    const claim = await freshClaim();
+    store.now += store.leaseMs + 1;
+
+    expect(
+      await store.renewLease({
+        studioId: STUDIO_A,
+        claimKey: claim.claimKey!,
+        leaseGeneration: claim.leaseGeneration!,
+        phoneNumber: CHOSEN,
+      }),
+    ).toBe(false);
+  });
+
+  it("SUCCESSFUL_RENEWAL: a live lease is renewed, pushing the boundary outside the call", async () => {
+    const claim = await freshClaim();
+    const before = store.live(STUDIO_A)!.claimAt;
+
+    store.now += store.leaseMs - 1; // still live, only just
+    expect(
+      await store.renewLease({
+        studioId: STUDIO_A,
+        claimKey: claim.claimKey!,
+        leaseGeneration: claim.leaseGeneration!,
+        phoneNumber: CHOSEN,
+      }),
+    ).toBe(true);
+
+    // The lease MOVED. Checking without renewing would leave the boundary
+    // sitting inside the provider call that follows.
+    expect(store.live(STUDIO_A)!.claimAt).toBeGreaterThan(before);
+  });
+
+  it("DISPLACED_CANNOT_RENEW: a superseded generation is refused", async () => {
+    const g1 = await freshClaim();
+    store.now += store.leaseMs + 1;
+    const g2 = await freshClaim();
+    expect(g2.leaseGeneration).toBe(g1.leaseGeneration! + 1);
+
+    expect(
+      await store.renewLease({
+        studioId: STUDIO_A,
+        claimKey: g1.claimKey!,
+        leaseGeneration: g1.leaseGeneration!,
+        phoneNumber: CHOSEN,
+      }),
+    ).toBe(false);
+
+    // ...and renewing does not resurrect it: the current holder is unaffected.
+    expect(
+      await store.renewLease({
+        studioId: STUDIO_A,
+        claimKey: g2.claimKey!,
+        leaseGeneration: g2.leaseGeneration!,
+        phoneNumber: CHOSEN,
+      }),
+    ).toBe(true);
+  });
+
+  it("refuses a renewal for a number the claim does not own", async () => {
+    const claim = await freshClaim();
+    expect(
+      await store.renewLease({
+        studioId: STUDIO_A,
+        claimKey: claim.claimKey!,
+        leaseGeneration: claim.leaseGeneration!,
+        phoneNumber: "+14165550101",
+      }),
+    ).toBe(false);
   });
 });
 
@@ -842,14 +1112,14 @@ describe("provider succeeded, Hone lost the write", () => {
     expect(provider.ownedNumbers()).toEqual([CHOSEN]);
     expect(store.live(STUDIO_A)?.phoneNumberSid).toBeNull();
 
-    // The retry, with finalize working again. The owner has gone back through
-    // the picker and chosen a DIFFERENT number -- which is what a real retry
-    // looks like, and the case where a weak design quietly buys a second one.
+    // The retry, with finalize working again. It carries the BOUND number --
+    // it has no choice now, because the claim owns it and a different number is
+    // refused outright (pinned separately below).
     store.options.failNextFinalize = false;
-    const second = await attempt({ phoneNumber: "+14165550101" });
+    const second = await attempt();
 
     // THE ASSERTIONS THIS FILE EXISTS FOR: the already-purchased number is
-    // adopted, the newly-chosen one is NOT bought, and the count stays at one.
+    // adopted rather than bought again, and the count stays at one.
     expect(second).toMatchObject({ ok: true, result: "activated", adopted: true });
     expect(provider.calls.purchase).toBe(1);
     expect(provider.ownedNumbers()).toEqual([CHOSEN]);
@@ -1018,6 +1288,7 @@ describe("provider identifiers come from the provider", () => {
       actorUserId: OWNER_A,
       country: "CA",
       areaCode: null,
+      phoneNumber: CHOSEN,
     });
     expect(claim.claimKey).toMatch(/^hone-sms-[0-9a-f]{32}$/);
   });

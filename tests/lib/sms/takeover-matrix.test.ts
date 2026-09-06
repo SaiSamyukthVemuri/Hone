@@ -86,7 +86,7 @@ class TakeoverStore implements ProvisioningStore {
     return result;
   }
 
-  async assertLease(): Promise<boolean> {
+  async renewLease(): Promise<boolean> {
     this.fenceChecks += 1;
     return this.fenceChecks <= this.allowChecks;
   }
@@ -311,6 +311,61 @@ describe("a failure write that did not land is not reported as parked", () => {
     if (outcome.ok || outcome.result !== "failed") return;
     expect(outcome.parked).toBe(true);
     expect(outcome.parkResult).toBe("failed");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The identifier write's verdict on a failed provider test
+// ---------------------------------------------------------------------------
+
+describe("identifier persistence outranks an ordinary test failure", () => {
+  /** Identifier write answers `verdict`; the parking write then succeeds. */
+  class IdentifierVerdictStore extends TakeoverStore {
+    constructor(private readonly verdict: FinalizeResult) {
+      super(Number.MAX_SAFE_INTEGER, LIVE);
+    }
+    async finalize(): Promise<FinalizeResult> {
+      this.writes.push({ call: "finalize", generation: LIVE, result: this.verdict });
+      return this.verdict;
+    }
+  }
+
+  it.each(["conflict", "not_provisioning", "claim_not_found", "invalid_input"] as const)(
+    "identifier finalize -> %s is reported, not disguised as a parked test failure",
+    async (verdict) => {
+      // The SIDs exist at the provider and Hone has NOT written them down.
+      // That outranks "the test failed": one is recoverable by retrying, the
+      // other means we are paying for resources we have no record of.
+      provider.reset({ testSendFails: "provider_rejected" });
+      const store = new IdentifierVerdictStore(verdict);
+      const outcome = await run(store);
+
+      expect(outcome).toMatchObject({ ok: false, result: "failed" });
+      if (outcome.ok || outcome.result !== "failed") return;
+
+      expect(outcome.identifiersRecorded).toBe(false);
+      expect(outcome.identifierResult).toBe(verdict);
+      // A successful parking write must not disguise it.
+      expect(outcome.parked).toBe(true);
+    },
+  );
+
+  it("identifier finalize -> lease_lost is displacement, not a test failure", async () => {
+    provider.reset({ testSendFails: "provider_rejected" });
+    const store = new IdentifierVerdictStore("lease_lost");
+    const outcome = await run(store);
+    expect(outcome).toMatchObject({ ok: false, result: "lease_lost" });
+  });
+
+  it("identifier finalize -> provisioned_untested records them, and the test failure stands", async () => {
+    provider.reset({ testSendFails: "provider_rejected" });
+    const store = new IdentifierVerdictStore("provisioned_untested");
+    const outcome = await run(store);
+
+    expect(outcome).toMatchObject({ ok: false, result: "failed" });
+    if (outcome.ok || outcome.result !== "failed") return;
+    expect(outcome.identifiersRecorded).toBe(true);
+    expect(outcome.reason).toBe("provider_rejected");
   });
 });
 

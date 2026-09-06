@@ -36,16 +36,20 @@ type ClaimRow = {
   lease_generation: number | null;
 };
 
+const NUMBER_A = "+14165550100";
+const NUMBER_B = "+14165550101";
+
 async function claim(
   studioId: string,
   actorUserId: string,
   country = "CA",
   areaCode: string | null = "416",
+  phoneNumber: string = NUMBER_A,
 ): Promise<ClaimRow> {
   const res = await adminQuery(
     `select result, sender_id, claim_key, sender_status, lease_generation
-       from public.claim_studio_sms_provisioning($1, $2, $3, $4)`,
-    [studioId, actorUserId, country, areaCode],
+       from public.claim_studio_sms_provisioning($1, $2, $3, $4, $5)`,
+    [studioId, actorUserId, country, areaCode, phoneNumber],
   );
   return res.rows[0] as ClaimRow;
 }
@@ -77,16 +81,36 @@ async function currentGeneration(studioId: string): Promise<number | null> {
   return (res.rows[0] as { g: number } | undefined)?.g ?? null;
 }
 
-async function assertLease(
+async function renewLease(
   studioId: string,
   claimKey: string,
   generation: number,
+  phoneNumber: string = NUMBER_A,
 ): Promise<boolean> {
   const res = await adminQuery(
-    `select public.assert_studio_sms_lease($1, $2, $3) as ok`,
-    [studioId, claimKey, generation],
+    `select public.renew_studio_sms_lease($1, $2, $3, $4) as ok`,
+    [studioId, claimKey, generation, phoneNumber],
   );
   return (res.rows[0] as { ok: boolean }).ok;
+}
+
+/** Age a lease past its window. The forward-only guard forbids backdating. */
+async function expireLease(studioId: string): Promise<void> {
+  await adminQuery(
+    `alter table public.studio_sms_senders disable trigger studio_sms_senders_transition_guard`,
+  );
+  try {
+    await adminQuery(
+      `update public.studio_sms_senders
+          set provisioning_claim_at = clock_timestamp() - interval '10 minutes'
+        where studio_id = $1 and status <> 'released'`,
+      [studioId],
+    );
+  } finally {
+    await adminQuery(
+      `alter table public.studio_sms_senders enable trigger studio_sms_senders_transition_guard`,
+    );
+  }
 }
 
 async function failAttempt(
@@ -195,9 +219,9 @@ describe("DOUBLE_SUBMIT_ONE_CLAIM", () => {
       adminQuery(
         `insert into public.studio_sms_senders
            (studio_id, status, provisioning_claim_key, provisioning_claim_at,
-            provisioning_claim_by_practitioner_id)
-         values ($1, 'provisioning', $2, now(), $3)`,
-        [a.studioId, `hone-sms-${"c".repeat(32)}`, a.practitionerId],
+            provisioning_claim_by_practitioner_id, claimed_phone_number)
+         values ($1, 'provisioning', $2, now(), $3, $4)`,
+        [a.studioId, `hone-sms-${"c".repeat(32)}`, a.practitionerId, NUMBER_A],
       ),
     ).rejects.toThrow(/one_live_per_studio|duplicate key/i);
   });
@@ -220,8 +244,8 @@ describe("DOUBLE_SUBMIT_ONE_CLAIM", () => {
       const attempt = () =>
         adminTx(async (q) => {
           const res = await q(
-            `select result, claim_key from public.claim_studio_sms_provisioning($1, $2, 'CA', '416')`,
-            [fresh.studioId, fresh.userId],
+            `select result, claim_key from public.claim_studio_sms_provisioning($1, $2, 'CA', '416', $3)`,
+            [fresh.studioId, fresh.userId, NUMBER_A],
           );
           // Hold the transaction open so the other one is genuinely in flight.
           await new Promise((r) => setTimeout(r, 250));
@@ -308,7 +332,7 @@ describe("DOUBLE_SUBMIT_ONE_CLAIM", () => {
       const staleGen = mine.lease_generation as number;
 
       // Still mine, right now.
-      expect(await assertLease(fresh.studioId, mine.claim_key!, staleGen)).toBe(true);
+      expect(await renewLease(fresh.studioId, mine.claim_key!, staleGen)).toBe(true);
 
       // I stall. My lease expires and another worker takes over.
       await adminQuery(
@@ -330,7 +354,7 @@ describe("DOUBLE_SUBMIT_ONE_CLAIM", () => {
       expect(takeover.lease_generation).toBe(staleGen + 1);
 
       // I wake up. THE ASSERTION: the fence refuses me BEFORE any billable call.
-      expect(await assertLease(fresh.studioId, mine.claim_key!, staleGen)).toBe(false);
+      expect(await renewLease(fresh.studioId, mine.claim_key!, staleGen)).toBe(false);
 
       // And I cannot write over the live attempt either.
       expect(
@@ -344,7 +368,7 @@ describe("DOUBLE_SUBMIT_ONE_CLAIM", () => {
 
       // The current holder is unaffected.
       expect(
-        await assertLease(fresh.studioId, takeover.claim_key!, takeover.lease_generation!),
+        await renewLease(fresh.studioId, takeover.claim_key!, takeover.lease_generation!),
       ).toBe(true);
       expect((await row(fresh.studioId))?.status).toBe("provisioning");
     } finally {
@@ -424,6 +448,140 @@ describe("the claim key is write-once", () => {
 });
 
 // ---------------------------------------------------------------------------
+// 3b. ONE CLAIM, ONE NUMBER — proved against PostgreSQL
+// ---------------------------------------------------------------------------
+
+describe("the claim owns the number", () => {
+  it("CROSS_NUMBER_TAKEOVER: G claims A, lease expires, G2 asks for B -> refused", async () => {
+    const fresh = await seedStudio("comms01b-xnum");
+    try {
+      const g1 = await claim(fresh.studioId, fresh.userId, "CA", "416", NUMBER_A);
+      expect(g1.result).toBe("claimed");
+
+      await expireLease(fresh.studioId);
+
+      const g2 = await claim(fresh.studioId, fresh.userId, "CA", "416", NUMBER_B);
+      // THE ASSERTION. Two different numbers never contend for one provider
+      // resource, so without this refusal both purchases would land.
+      expect(g2.result).toBe("number_mismatch");
+      expect(g2.claim_key).toBeNull();
+      expect(g2.lease_generation).toBeNull();
+
+      // The bound number is unchanged, and one attempt exists.
+      expect((await row(fresh.studioId))?.claimed_phone_number).toBe(NUMBER_A);
+    } finally {
+      await adminQuery(`delete from public.studio_sms_senders where studio_id = $1`, [fresh.studioId]);
+    }
+  });
+
+  it("a takeover carrying the BOUND number still works", async () => {
+    const fresh = await seedStudio("comms01b-xnum-ok");
+    try {
+      const g1 = await claim(fresh.studioId, fresh.userId, "CA", "416", NUMBER_A);
+      await expireLease(fresh.studioId);
+      const g2 = await claim(fresh.studioId, fresh.userId, "CA", "416", NUMBER_A);
+      expect(g2.result).toBe("claimed");
+      expect(g2.claim_key).toBe(g1.claim_key);
+      expect(g2.lease_generation).toBe((g1.lease_generation as number) + 1);
+    } finally {
+      await adminQuery(`delete from public.studio_sms_senders where studio_id = $1`, [fresh.studioId]);
+    }
+  });
+
+  it("REFUSES rewriting the bound number, even as table owner", async () => {
+    const fresh = await seedStudio("comms01b-xnum-wo");
+    try {
+      await claim(fresh.studioId, fresh.userId, "CA", "416", NUMBER_A);
+      await expect(
+        adminQuery(
+          `update public.studio_sms_senders set claimed_phone_number = $2 where studio_id = $1`,
+          [fresh.studioId, NUMBER_B],
+        ),
+      ).rejects.toThrow(/write-once/i);
+    } finally {
+      await adminQuery(`delete from public.studio_sms_senders where studio_id = $1`, [fresh.studioId]);
+    }
+  });
+
+  it("REFUSES recording a purchase that is not the claimed number", async () => {
+    // The database, not the caller, decides that what was bought is what was
+    // claimed.
+    const fresh = await seedStudio("comms01b-xnum-buy");
+    try {
+      const c = await claim(fresh.studioId, fresh.userId, "CA", "416", NUMBER_A);
+      expect(
+        await finalize(fresh.studioId, c.claim_key!, NUMBER_B, pn("7"), mg("7"), true),
+      ).toBe("conflict");
+      expect((await row(fresh.studioId))?.phone_number).toBeNull();
+    } finally {
+      await adminQuery(`delete from public.studio_sms_senders where studio_id = $1`, [fresh.studioId]);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 3c. THE FENCE RENEWS — proved against PostgreSQL
+// ---------------------------------------------------------------------------
+
+describe("atomic check-and-renew", () => {
+  it("EXPIRED_LEASE: refused even though nobody has displaced it", async () => {
+    // The gap the check-only predicate left: generation current, status
+    // provisioning, no takeover -- but the lease died minutes ago.
+    const fresh = await seedStudio("comms01b-exp");
+    try {
+      const c = await claim(fresh.studioId, fresh.userId, "CA", "416", NUMBER_A);
+      expect(await renewLease(fresh.studioId, c.claim_key!, c.lease_generation!)).toBe(true);
+
+      await expireLease(fresh.studioId);
+      expect(await renewLease(fresh.studioId, c.claim_key!, c.lease_generation!)).toBe(false);
+    } finally {
+      await adminQuery(`delete from public.studio_sms_senders where studio_id = $1`, [fresh.studioId]);
+    }
+  });
+
+  it("SUCCESSFUL_RENEWAL moves the lease forward", async () => {
+    const fresh = await seedStudio("comms01b-renew");
+    try {
+      const c = await claim(fresh.studioId, fresh.userId, "CA", "416", NUMBER_A);
+      const before = (await row(fresh.studioId))?.provisioning_claim_at as string;
+      expect(await renewLease(fresh.studioId, c.claim_key!, c.lease_generation!)).toBe(true);
+      const after = (await row(fresh.studioId))?.provisioning_claim_at as string;
+      // Renewing, not merely checking, is what puts the takeover boundary
+      // outside the provider call that follows.
+      expect(new Date(after).getTime()).toBeGreaterThan(new Date(before).getTime());
+    } finally {
+      await adminQuery(`delete from public.studio_sms_senders where studio_id = $1`, [fresh.studioId]);
+    }
+  });
+
+  it("DISPLACED_CANNOT_RENEW, and the current holder is unaffected", async () => {
+    const fresh = await seedStudio("comms01b-disp");
+    try {
+      const g1 = await claim(fresh.studioId, fresh.userId, "CA", "416", NUMBER_A);
+      await expireLease(fresh.studioId);
+      const g2 = await claim(fresh.studioId, fresh.userId, "CA", "416", NUMBER_A);
+
+      expect(await renewLease(fresh.studioId, g1.claim_key!, g1.lease_generation!)).toBe(false);
+      expect(await renewLease(fresh.studioId, g2.claim_key!, g2.lease_generation!)).toBe(true);
+    } finally {
+      await adminQuery(`delete from public.studio_sms_senders where studio_id = $1`, [fresh.studioId]);
+    }
+  });
+
+  it("refuses a renewal for a number the claim does not own", async () => {
+    const fresh = await seedStudio("comms01b-renew-num");
+    try {
+      const c = await claim(fresh.studioId, fresh.userId, "CA", "416", NUMBER_A);
+      expect(
+        await renewLease(fresh.studioId, c.claim_key!, c.lease_generation!, NUMBER_B),
+      ).toBe(false);
+    } finally {
+      await adminQuery(`delete from public.studio_sms_senders where studio_id = $1`, [fresh.studioId]);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 4. INCOMPLETE_PROVISIONING cannot become ACTIVE
 // ---------------------------------------------------------------------------
 
@@ -433,7 +591,7 @@ describe("readiness", () => {
     const result = await finalize(
       a.studioId,
       key,
-      "+14165550100",
+      NUMBER_A,
       pn("a"),
       mg("a"),
       false,
@@ -463,7 +621,7 @@ describe("readiness", () => {
     const result = await finalize(
       a.studioId,
       key,
-      "+14165550100",
+      NUMBER_A,
       pn("a"),
       mg("a"),
       true,
@@ -477,7 +635,7 @@ describe("readiness", () => {
   it("replaying the same finalize is benign", async () => {
     const key = (await row(a.studioId))?.provisioning_claim_key as string;
     expect(
-      await finalize(a.studioId, key, "+14165550100", pn("a"), mg("a"), true),
+      await finalize(a.studioId, key, NUMBER_A, pn("a"), mg("a"), true),
     ).toBe("already_active");
   });
 
@@ -493,7 +651,7 @@ describe("readiness", () => {
   it("a claim key from another studio cannot finalize this one", async () => {
     const bKey = (await row(b.studioId))?.provisioning_claim_key as string;
     expect(
-      await finalize(a.studioId, bKey, "+14165550100", pn("a"), mg("a"), true),
+      await finalize(a.studioId, bKey, NUMBER_A, pn("a"), mg("a"), true),
     ).toBe("claim_not_found");
   });
 });
@@ -571,7 +729,7 @@ describe("provider identifiers", () => {
 
   it("two studios cannot record the same messaging service", async () => {
     const fresh = await seedStudio("comms01b-e");
-    const claimed = await claim(fresh.studioId, fresh.userId);
+    const claimed = await claim(fresh.studioId, fresh.userId, "CA", "416", "+14165550777");
     // mg("a") already belongs to studio A. The unique index catches it and the
     // command NAMES it -- an earlier revision let the bare 23505 propagate, so
     // a caller had to parse a Postgres message to tell this apart from any
@@ -621,8 +779,8 @@ describe("privileges", () => {
     async (role) => {
       await denied(
         role,
-        `select * from public.claim_studio_sms_provisioning($1, $2, 'CA', '416')`,
-        [a.studioId, a.userId],
+        `select * from public.claim_studio_sms_provisioning($1, $2, 'CA', '416', $3)`,
+        [a.studioId, a.userId, NUMBER_A],
       );
     },
   );
@@ -644,17 +802,18 @@ describe("privileges", () => {
       await denied(
         role,
         `select public.finalize_studio_sms_provisioning($1, $2, 1, $3, $4, $5, true)`,
-        [a.studioId, `hone-sms-${"0".repeat(32)}`, "+14165550100", pn("a"), mg("a")],
+        [a.studioId, `hone-sms-${"0".repeat(32)}`, NUMBER_A, pn("a"), mg("a")],
       );
     },
   );
 
   it.each(["anon", "authenticated"] as const)(
-    "%s cannot execute assert_studio_sms_lease",
+    "%s cannot execute renew_studio_sms_lease",
     async (role) => {
-      await denied(role, `select public.assert_studio_sms_lease($1, $2, 1)`, [
+      await denied(role, `select public.renew_studio_sms_lease($1, $2, 1, $3)`, [
         a.studioId,
         `hone-sms-${"0".repeat(32)}`,
+        NUMBER_A,
       ]);
     },
   );
