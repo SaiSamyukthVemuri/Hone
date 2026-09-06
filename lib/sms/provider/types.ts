@@ -140,6 +140,47 @@ export type ClaimedResources = {
   messagingServiceSid: string | null;
 };
 
+/**
+ * Where a number actually lives, as a COMPLETE census of the account's
+ * Messaging Services. WILLOW ADOPTION.
+ *
+ * Five states, and the distinction between the last three is the whole point.
+ * A boolean "is it in the expected service" can only say no; it cannot say
+ * whether the number is loose, somewhere else, or simply unknown — and those
+ * demand different answers from an operator. Collapsing them is what would let
+ * "we could not finish the census" read as "the number is free to attach".
+ */
+export type NumberAssociation =
+  | { kind: "in_expected_service"; messagingServiceSid: string }
+  | { kind: "in_other_service"; messagingServiceSid: string }
+  | { kind: "not_associated" }
+  /** More than one service claims the number. Contradictory: fail closed. */
+  | { kind: "ambiguous"; messagingServiceSids: string[] }
+  /** The census could not be COMPLETED. Never a synonym for absence. */
+  | { kind: "unavailable"; reason: string };
+
+/**
+ * What the account already owns for a specific E.164, plus where it lives.
+ *
+ * `phoneNumberSid` is null when this account does not own the number at all.
+ */
+export type OwnedNumberFacts = {
+  phoneNumberSid: string | null;
+  /** Echoed back so the caller can prove the provider answered about the right number. */
+  phoneNumber: string | null;
+  association: NumberAssociation;
+};
+
+/**
+ * The configuration a Messaging Service currently carries. Read, never written,
+ * by the adoption path: an existing studio-owned service is not Hone's to
+ * reconfigure without a human saying so.
+ */
+export type MessagingServiceConfig = {
+  inboundRequestUrl: string | null;
+  statusCallbackUrl: string | null;
+};
+
 // ---------------------------------------------------------------------------
 // The port
 // ---------------------------------------------------------------------------
@@ -216,6 +257,39 @@ export interface SmsProvisioningProvider {
     claimKey: string,
   ): Promise<ProviderResult<{ found: ClaimedResources }>>;
 
+  /**
+   * READ-ONLY. Does this account own `phoneNumber`, and which Messaging Service
+   * — if any — actually holds it?
+   *
+   * WILLOW ADOPTION. `lookupResourcesByClaim` cannot answer this: it searches on
+   * the `hone-sms-claim:<key>` FriendlyName Hone stamps at purchase time, so it
+   * finds only numbers Hone itself bought. A number the studio already owned
+   * carries no such tag.
+   *
+   * The association is a COMPLETE census over the account's services. An
+   * incomplete one must report `unavailable`, never `not_associated` — the
+   * second reading is what would license attaching a number that is quietly
+   * somewhere else.
+   *
+   * Performs NO mutation: it cannot purchase, attach, detach, move or create.
+   */
+  lookupOwnedNumber(input: {
+    phoneNumber: string;
+    expectedMessagingServiceSid: string;
+  }): Promise<ProviderResult<{ facts: OwnedNumberFacts }>>;
+
+  /**
+   * READ-ONLY. The webhook configuration a Messaging Service carries today.
+   *
+   * Adoption COMPARES against this and refuses on a mismatch; it never writes.
+   * Reconfiguring a service the studio already uses could silently break
+   * whatever it serves, so that mutation needs an explicit human decision and
+   * is not part of the adoption path.
+   */
+  readMessagingServiceConfig(input: {
+    messagingServiceSid: string;
+  }): Promise<ProviderResult<{ config: MessagingServiceConfig }>>;
+
   /** Create a messaging service tagged with the claim key. */
   createMessagingService(
     input: Pick<ProvisionInput, "claimKey" | "serviceLabel">,
@@ -256,7 +330,43 @@ export interface SmsProvisioningProvider {
     messagingServiceSid: string;
     to: string;
     body: string;
-  }): Promise<ProviderResult<{ messageSid: string }>>;
+    /**
+     * Send AS this exact sender, rather than letting the service choose.
+     *
+     * Twilio accepts `From` alongside `MessagingServiceSid` when the number is
+     * already in that service's sender pool, and rejects the message when it is
+     * not. So supplying it turns "which sender was used" from something we infer
+     * afterwards into something the provider either accepts or refuses up front.
+     *
+     * OPTIONAL, and the purchase path does not supply it: a service Hone just
+     * created holds exactly one number, so there is nothing to disambiguate and
+     * its existing sender-selection semantics are unchanged.
+     */
+    fromPhoneNumber?: string;
+  }): Promise<ProviderResult<{
+    messageSid: string;
+    /**
+     * The sender the provider reported, when it reported one.
+     *
+     * NOT the primary proof of which sender was used, and deliberately so: with
+     * only a MessagingServiceSid, Twilio may answer before sender selection has
+     * completed, so this can be null for a send that is perfectly fine. Proof
+     * that depends on a field which may not be populated yet is not proof.
+     * `fromPhoneNumber` above is how a caller NAMES its sender; this field is
+     * only useful as a contradiction check.
+     *
+     * A Messaging Service is a POOL. Sending through one proves that SOME
+     * sender in it works, which is the same statement as "this number works"
+     * only when the pool holds exactly one number — true for a sender Hone just
+     * purchased, and not true for an existing service Hone is adopting into.
+     * So the sender is observed rather than assumed.
+     *
+     * Null when the provider did not report one. That is NOT a synonym for
+     * "the number we asked for": a caller that needs exact-sender proof must
+     * fail closed on null.
+     */
+    sentFrom: string | null;
+  }>>;
 }
 
 // ---------------------------------------------------------------------------

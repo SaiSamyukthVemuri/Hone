@@ -1,4 +1,5 @@
 import "server-only";
+import { classifyAssociation } from "./association";
 import {
   asArray,
   asBoolean,
@@ -11,6 +12,8 @@ import {
   providerError,
   type AvailableNumberCandidate,
   type ClaimedResources,
+  type MessagingServiceConfig,
+  type OwnedNumberFacts,
   type ProviderError,
   type ProviderAck,
   type ProviderResult,
@@ -230,6 +233,188 @@ export const twilioProvisioningProvider: SmsProvisioningProvider = {
       return rec !== null && asE164(rec.phone_number) === input.phoneNumber;
     });
     return { ok: true, available };
+  },
+
+  /**
+   * WILLOW ADOPTION -- read-only ownership + a COMPLETE association census.
+   *
+   * GETs only. This function issues no POST, PUT, PATCH or DELETE, so calling
+   * it can never purchase, attach, detach, move or create. That is what makes
+   * it safe to run before an operator has decided anything.
+   *
+   * WHY A CENSUS AND NOT A MEMBERSHIP CHECK. Asking only "is it in the service
+   * you named" can answer no, but cannot say WHERE the number is -- and an
+   * operator told "not in service X" will reasonably assume it is free to
+   * attach. Twilio exposes no reverse index from a number to its Messaging
+   * Service, so completeness costs one request per service. For an
+   * operator-only adoption flow that is the right trade: a wrong answer here
+   * silently moves a number out of a service that is carrying live traffic.
+   *
+   * INCOMPLETE IS NOT ABSENT. Any page that fails, any membership probe that
+   * answers something other than 200/404, and any walk that hits the page bound
+   * yields `unavailable`. `not_associated` is claimed ONLY after every page has
+   * been read and every service probed.
+   */
+  async lookupOwnedNumber(input: {
+    phoneNumber: string;
+    expectedMessagingServiceSid: string;
+  }): Promise<ProviderResult<{ facts: OwnedNumberFacts }>> {
+    const creds = readCredentials();
+    if (!creds) return providerError("provider_not_configured", false);
+
+    // 1. Does THIS account own the number? Filtering by PhoneNumber returns the
+    //    account's own inventory only, so a number belonging to someone else is
+    //    simply absent -- which is the refusal we want, not an error.
+    const url =
+      `${API_BASE}/Accounts/${encodeURIComponent(creds.accountSid)}` +
+      `/IncomingPhoneNumbers.json?PhoneNumber=${encodeURIComponent(input.phoneNumber)}&PageSize=2`;
+    const res = await request(creds, url, { method: "GET" });
+    if (!res.ok) return res;
+    if (res.status !== 200) return httpError(res.status);
+
+    const body = asRecord(res.json);
+    const numbers = body ? asArray(body.incoming_phone_numbers) : null;
+    if (!numbers) return providerError("provider_response_unparseable", false);
+
+    const unowned: OwnedNumberFacts = {
+      phoneNumberSid: null,
+      phoneNumber: null,
+      association: { kind: "unavailable", reason: "number_not_owned" },
+    };
+    if (numbers.length === 0) return { ok: true, facts: unowned };
+    if (numbers.length > 1) {
+      // One E.164 cannot legitimately be two records. Refuse to choose.
+      return providerError("provider_resource_mismatch", false);
+    }
+
+    const rec = asRecord(numbers[0]);
+    const sid = rec ? asPhoneNumberSid(rec.sid) : null;
+    const num = rec ? asE164(rec.phone_number) : null;
+    if (!sid || !num) return providerError("provider_response_unparseable", false);
+    if (num !== input.phoneNumber) return providerError("provider_resource_mismatch", false);
+
+    // 2. THE CENSUS. Every service, every page, then one membership probe each.
+    const services: string[] = [];
+    let nextUrl: string | null = `${MESSAGING_BASE}/Services?PageSize=100`;
+    let pagesFetched = 0;
+
+    while (nextUrl) {
+      if (pagesFetched >= SERVICE_PAGE_LIMIT) {
+        return {
+          ok: true,
+          facts: { phoneNumberSid: sid, phoneNumber: num, association: { kind: "unavailable", reason: "service_page_limit" } },
+        };
+      }
+      pagesFetched += 1;
+
+      const page: ProviderResult<RawResponse> = await request(creds, nextUrl, { method: "GET" });
+        // A PROVIDER FAILURE IS NOT A CENSUS GAP, and the difference is
+        // operationally material: "we could not finish looking" invites a retry,
+        // while 401/403 is a credential problem no retry fixes and an operator
+        // has to see. Transport errors are returned as they came, and a non-2xx
+        // is classified by httpError -- the mapping that already gets this right
+        // -- BEFORE anything here calls the census incomplete.
+        if (!page.ok) return page;
+        if (page.status !== 200) return httpError(page.status);
+      const pageBody = asRecord(page.json);
+      const list = pageBody ? asArray(pageBody.services) : null;
+      if (!list) {
+        return {
+          ok: true,
+          facts: { phoneNumberSid: sid, phoneNumber: num, association: { kind: "unavailable", reason: "service_page_unparseable" } },
+        };
+      }
+      for (const raw of list) {
+        // AN ENTRY WE CANNOT READ MAKES THE CENSUS INCOMPLETE, and this is the
+        // same rule already applied to whole pages -- it simply was not applied
+        // to the entries inside one. Skipping a malformed entry and continuing
+        // would report a COMPLETE census over a list we only partly understood,
+        // and the skipped service could be the one holding the number. The
+        // verdict would then be `not_associated`: exactly the reading that
+        // licenses attaching a number out of a service that already has it.
+        const svc = asRecord(raw);
+        const svcSid = svc ? asMessagingServiceSid(svc.sid) : null;
+        if (!svcSid) {
+          return {
+            ok: true,
+            facts: {
+              phoneNumberSid: sid,
+              phoneNumber: num,
+              association: { kind: "unavailable", reason: "service_page_unparseable" },
+            },
+          };
+        }
+        services.push(svcSid);
+      }
+
+      // Only an EXPLICIT null ends the walk. Absent or non-string metadata means
+      // we cannot know whether more pages exist, so the census is incomplete.
+      const meta = pageBody ? asRecord(pageBody.meta) : null;
+      const cursor = meta ? meta.next_page_url : undefined;
+      if (cursor === null) {
+        nextUrl = null;
+      } else if (typeof cursor === "string" && cursor.startsWith(MESSAGING_BASE)) {
+        nextUrl = cursor;
+      } else {
+        return {
+          ok: true,
+          facts: { phoneNumberSid: sid, phoneNumber: num, association: { kind: "unavailable", reason: "service_pagination_unreadable" } },
+        };
+      }
+    }
+
+    const holders: string[] = [];
+    for (const svcSid of services) {
+      const probe = await request(
+        creds,
+        `${MESSAGING_BASE}/Services/${encodeURIComponent(svcSid)}/PhoneNumbers/${encodeURIComponent(sid)}`,
+        { method: "GET" },
+      );
+        if (!probe.ok) return probe;
+        if (probe.status === 200) {
+          holders.push(svcSid);
+        } else if (probe.status !== 404) {
+          // 404 is the ONE status this endpoint defines as an ANSWER: the number
+          // is not a member of this service. Every other non-2xx is a provider
+          // failure and keeps its own classification -- flattening 401 here was
+          // how a credential problem became a retryable census gap.
+          return httpError(probe.status);
+        }
+    }
+
+    return {
+      ok: true,
+      facts: { phoneNumberSid: sid, phoneNumber: num, association: classifyAssociation(holders, input.expectedMessagingServiceSid) },
+    };
+  },
+
+  /**
+   * WILLOW ADOPTION -- read the service's current webhook configuration.
+   * GET only; adoption compares against this and never writes it.
+   */
+  async readMessagingServiceConfig(input: {
+    messagingServiceSid: string;
+  }): Promise<ProviderResult<{ config: MessagingServiceConfig }>> {
+    const creds = readCredentials();
+    if (!creds) return providerError("provider_not_configured", false);
+
+    const res = await request(
+      creds,
+      `${MESSAGING_BASE}/Services/${encodeURIComponent(input.messagingServiceSid)}`,
+      { method: "GET" },
+    );
+    if (!res.ok) return res;
+    if (res.status !== 200) return httpError(res.status);
+
+    const body = asRecord(res.json);
+    if (!body) return providerError("provider_response_unparseable", false);
+    return {
+      ok: true,
+      config: {
+        inboundRequestUrl: asString(body.inbound_request_url),
+        statusCallbackUrl: asString(body.status_callback),
+      },
+    };
   },
 
   async lookupResourcesByClaim(
@@ -494,7 +679,8 @@ export const twilioProvisioningProvider: SmsProvisioningProvider = {
     messagingServiceSid: string;
     to: string;
     body: string;
-  }): Promise<ProviderResult<{ messageSid: string }>> {
+      fromPhoneNumber?: string;
+  }): Promise<ProviderResult<{ messageSid: string; sentFrom: string | null }>> {
     const creds = readCredentials();
     if (!creds) return providerError("provider_not_configured", false);
 
@@ -502,6 +688,12 @@ export const twilioProvisioningProvider: SmsProvisioningProvider = {
     form.set("MessagingServiceSid", input.messagingServiceSid);
     form.set("To", input.to);
     form.set("Body", input.body);
+      // BOTH, when the caller names its sender. Twilio accepts the pair when
+      // the number is in that service's sender pool and REFUSES the message
+      // when it is not -- so the acknowledgement arrives with the create call
+      // rather than in a `from` field that may not be populated yet. Omitted
+      // entirely by the purchase path, whose service holds one sender.
+      if (input.fromPhoneNumber) form.set("From", input.fromPhoneNumber);
 
     const res = await request(
       creds,
@@ -511,8 +703,13 @@ export const twilioProvisioningProvider: SmsProvisioningProvider = {
     if (!res.ok) return res;
     if (res.status !== 201 && res.status !== 200) return httpError(res.status);
 
-    const sid = asString(asRecord(res.json)?.sid);
+      const rec = asRecord(res.json);
+      const sid = asString(rec?.sid);
     if (!sid) return providerError("provider_response_unparseable", false);
-    return { ok: true, messageSid: sid };
+      // Twilio reports the sender it selected from the service on the Message
+      // resource itself, so exact-sender proof needs no second call and no
+      // second message. Parsed fail-closed: anything that is not E.164 becomes
+      // null, and null is never read as "the number we asked for".
+      return { ok: true, messageSid: sid, sentFrom: asE164(rec?.from) };
   },
 };

@@ -1,10 +1,14 @@
 import "server-only";
 import crypto from "node:crypto";
+import { classifyAssociation } from "./association";
+import { asMessagingServiceSid } from "./types";
 import {
   claimFriendlyName,
   providerError,
   type AvailableNumberCandidate,
   type ClaimedResources,
+  type MessagingServiceConfig,
+  type OwnedNumberFacts,
   type ProviderErrorCode,
   type ProviderAck,
   type ProviderResult,
@@ -75,6 +79,49 @@ export type FakeProviderScript = {
   webhookFails?: ProviderErrorCode;
   statusCallbackFails?: ProviderErrorCode;
   testSendFails?: ProviderErrorCode;
+  /**
+   * WILLOW ADOPTION. Numbers this ACCOUNT already owns, as if bought outside
+   * Hone: E.164 -> its phone number SID. Absent means the account does not own
+   * it.
+   */
+  preOwnedNumbers?: Record<string, string>;
+  /**
+   * The account's Messaging Services, in the order the list endpoint returns
+   * them, each with the numbers it holds. The fake PAGINATES over this exactly
+   * as the real adapter does, so a pagination test exercises real walking.
+   */
+  accountServices?: Array<{
+    /** Null/undefined models a page entry with no SID; a bad string models a malformed one. */
+    sid: string | null | undefined;
+    numbers: string[];
+    inboundUrl?: string | null;
+    statusUrl?: string | null;
+  } | null>;
+  /** Page size for the service list walk. Small values force multiple pages. */
+  servicePageSize?: number;
+  /**
+   * 1-based page index whose REQUEST fails. Mirrors the adapter: an HTTP-level
+   * failure keeps its provider classification and is not a census gap.
+   */
+  failServicePage?: number;
+  /** Provider error code the failing page returns. */
+  failServicePageCode?: ProviderErrorCode;
+  /** 1-based page index that returns 200 with unreadable content -> unavailable. */
+  unparseableServicePage?: number;
+  /** Make one membership probe unreadable. */
+  membershipProbeFails?: boolean;
+  /** Fail the ownership lookup itself. */
+  ownedLookupFails?: ProviderErrorCode;
+  /** Which sender the POOL used for the test send. Defaults to the service's first number. */
+  testSendFrom?: string;
+  /** The provider refuses the explicit From (not in the service's sender pool). */
+  rejectExplicitFrom?: boolean;
+  /** The response names a sender that CONTRADICTS the requested From. */
+  reportContradictorySender?: string;
+  /** The provider reported no sender at all. Must never read as success. */
+  testSendFromMissing?: boolean;
+  /** Fail the service configuration read. */
+  serviceConfigFails?: ProviderErrorCode;
   /** Numbers the fake considers already taken by someone else. */
   unavailableNumbers?: string[];
 };
@@ -113,6 +160,9 @@ export class FakeSmsProvisioningProvider implements SmsProvisioningProvider {
     search: 0,
     availability: 0,
     lookup: 0,
+    ownedLookup: 0,
+    serviceConfigRead: 0,
+    servicePages: 0,
     createService: 0,
     purchase: 0,
     attach: 0,
@@ -128,10 +178,23 @@ export class FakeSmsProvisioningProvider implements SmsProvisioningProvider {
   }
 
   /** Everything the fake believes it owns. Test-facing inspection only. */
+  /**
+   * EVERY number this fake account holds, from either source.
+   *
+   * The union matters because `preOwnedNumbers` models inventory the studio
+   * bought outside Hone -- it carries no claim-key tag, so it is invisible to
+   * the claim-key store. Reading only that store let one number be reported as
+   * already owned by the adoption path AND advertised as available AND
+   * purchased, three answers no real account can give at once. A fake that
+   * permits what the provider cannot is worse than a missing test: it makes
+   * green meaningless exactly where the orchestration relies on it.
+   */
   ownedNumbers(): string[] {
-    return [...this.store.values()].flatMap((r) =>
+    const fromClaims = [...this.store.values()].flatMap((r) =>
       r.numbers.map((n) => n.phoneNumber),
     );
+    const preOwned = Object.keys(this.script.preOwnedNumbers ?? {});
+    return [...new Set([...fromClaims, ...preOwned])];
   }
 
   reset(script: FakeProviderScript = {}): void {
@@ -204,6 +267,109 @@ export class FakeSmsProvisioningProvider implements SmsProvisioningProvider {
     return { ok: true, available: !taken.has(input.phoneNumber) };
   }
 
+  /**
+   * WILLOW ADOPTION. Reports what the account owns and WHERE the number lives.
+   *
+   * Mutates nothing -- in particular it never adds to `store`, so a test cannot
+   * conjure an adopted resource by asking about it. It walks the service list in
+   * pages and probes membership per service, the same shape as the real adapter,
+   * so pagination and partial-census behaviour are genuinely exercised rather
+   * than stubbed.
+   */
+  async lookupOwnedNumber(input: {
+    phoneNumber: string;
+    expectedMessagingServiceSid: string;
+  }): Promise<ProviderResult<{ facts: OwnedNumberFacts }>> {
+    this.calls.ownedLookup += 1;
+    if (this.script.ownedLookupFails) return this.fail(this.script.ownedLookupFails);
+
+    const sid = this.script.preOwnedNumbers?.[input.phoneNumber];
+    if (!sid) {
+      return {
+        ok: true,
+        facts: {
+          phoneNumberSid: null,
+          phoneNumber: null,
+          association: { kind: "unavailable", reason: "number_not_owned" },
+        },
+      };
+    }
+
+    const services = this.script.accountServices ?? [];
+    const pageSize = this.script.servicePageSize ?? 100;
+    const holders: string[] = [];
+    let page = 0;
+
+    for (let i = 0; i < services.length || i === 0; i += pageSize) {
+      page += 1;
+      this.calls.servicePages += 1;
+      if (this.script.failServicePage === page) {
+        // A FAILED PAGE IS NOT AN EMPTY PAGE -- and it is not a census gap
+        // either. It keeps its provider classification.
+        return this.fail(this.script.failServicePageCode ?? "provider_unavailable");
+      }
+      if (this.script.unparseableServicePage === page) {
+        // 200, but the body could not be read. THAT is a census gap.
+        return {
+          ok: true,
+          facts: {
+            phoneNumberSid: sid,
+            phoneNumber: input.phoneNumber,
+            association: { kind: "unavailable", reason: "service_page_unparseable" },
+          },
+        };
+      }
+      for (const svc of services.slice(i, i + pageSize)) {
+        // Mirror the adapter's per-entry parse. Whatever the adapter does with
+        // an entry it cannot read, the fake must do too, or every census test
+        // is a statement about the fake rather than about the adapter.
+        // Mirror the adapter: an unreadable entry fails the census closed.
+        const svcSid = asMessagingServiceSid(svc?.sid ?? null);
+        if (!svcSid) {
+          return {
+            ok: true,
+            facts: {
+              phoneNumberSid: sid,
+              phoneNumber: input.phoneNumber,
+              association: { kind: "unavailable", reason: "service_page_unparseable" },
+            },
+          };
+        }
+        if (this.script.membershipProbeFails) {
+          return this.fail(this.script.failServicePageCode ?? "provider_unavailable");
+        }
+        if (svc!.numbers.includes(input.phoneNumber)) holders.push(svcSid);
+      }
+      if (services.length === 0) break;
+    }
+
+    return {
+      ok: true,
+      facts: {
+        phoneNumberSid: sid,
+        phoneNumber: input.phoneNumber,
+        association: classifyAssociation(holders, input.expectedMessagingServiceSid),
+      },
+    };
+  }
+
+  /** WILLOW ADOPTION. Read-only: the service's current webhook configuration. */
+  async readMessagingServiceConfig(input: {
+    messagingServiceSid: string;
+  }): Promise<ProviderResult<{ config: MessagingServiceConfig }>> {
+    this.calls.serviceConfigRead += 1;
+    if (this.script.serviceConfigFails) return this.fail(this.script.serviceConfigFails);
+    const svc = (this.script.accountServices ?? []).find((x) => x?.sid === input.messagingServiceSid);
+    if (!svc) return this.fail("provider_resource_mismatch");
+    return {
+      ok: true,
+      config: {
+        inboundRequestUrl: svc.inboundUrl ?? null,
+        statusCallbackUrl: svc.statusUrl ?? null,
+      },
+    };
+  }
+
   async lookupResourcesByClaim(
     claimKey: string,
   ): Promise<ProviderResult<{ found: ClaimedResources }>> {
@@ -247,6 +413,19 @@ export class FakeSmsProvisioningProvider implements SmsProvisioningProvider {
     this.calls.purchase += 1;
 
     if (this.script.unavailableNumbers?.includes(input.phoneNumber)) {
+      return this.fail("number_no_longer_available");
+    }
+    // ALREADY OWNED OUTSIDE HONE. Twilio cannot sell an account a number that
+    // account already holds, so neither can the fake -- and the existing "gone"
+    // code is the honest answer rather than a new vocabulary.
+    //
+    // Scoped to `preOwnedNumbers` rather than to all of ownedNumbers(): that is
+    // the narrowest thing that models the defect, and it leaves the claim-key
+    // store's own same-claim repurchase behaviour (return the existing SID
+    // rather than mint a second) exactly as it was. Widening it to ownedNumbers()
+    // was tried against the full suite and changed nothing, so this is a choice
+    // about blast radius, NOT a claim that a test would catch the difference.
+    if (this.script.preOwnedNumbers && input.phoneNumber in this.script.preOwnedNumbers) {
       return this.fail("number_no_longer_available");
     }
     if (this.script.purchaseFails) return this.fail(this.script.purchaseFails);
@@ -300,9 +479,49 @@ export class FakeSmsProvisioningProvider implements SmsProvisioningProvider {
     return { ok: true };
   }
 
-  async sendProvisioningTest(): Promise<ProviderResult<{ messageSid: string }>> {
+  async sendProvisioningTest(input: {
+    messagingServiceSid: string;
+    to: string;
+    body: string;
+    fromPhoneNumber?: string;
+  }): Promise<ProviderResult<{ messageSid: string; sentFrom: string | null }>> {
     this.calls.testSend += 1;
     if (this.script.testSendFails) return this.fail(this.script.testSendFails);
-    return { ok: true, messageSid: `SM${hex32("test")}` };
+
+    const svc = (this.script.accountServices ?? []).find(
+      (x) => x?.sid === input.messagingServiceSid,
+    );
+
+    if (input.fromPhoneNumber) {
+      // EXPLICIT SENDER. Twilio refuses a From that is not in the service's
+      // sender pool, so the fake refuses it too -- otherwise adoption's proof
+      // would be a statement about the fake's leniency.
+      const inPool = svc?.numbers.includes(input.fromPhoneNumber) ?? false;
+      if (this.script.rejectExplicitFrom || (svc && !inPool)) {
+        return this.fail("provider_rejected");
+      }
+      return {
+        ok: true,
+        messageSid: `SM${hex32(`test:${input.fromPhoneNumber}`)}`,
+        // The response may not have caught up; null is normal, not a failure.
+        sentFrom: this.script.testSendFromMissing
+          ? null
+          : (this.script.reportContradictorySender ?? input.fromPhoneNumber),
+      };
+    }
+
+    // NO explicit sender: the service chooses. This is the purchase path, whose
+    // pool holds exactly one number.
+    const fromOwned = svc?.numbers[0] ?? null;
+    const fromClaim =
+      [...this.store.values()].find((r) => r.messagingServiceSid === input.messagingServiceSid)
+        ?.numbers[0]?.phoneNumber ?? null;
+    const sentFrom = this.script.testSendFromMissing
+      ? null
+      : (this.script.testSendFrom ?? fromOwned ?? fromClaim);
+
+    return { ok: true, messageSid: `SM${hex32(`test:${input.messagingServiceSid}`)}`, sentFrom };
   }
+
+
 }
