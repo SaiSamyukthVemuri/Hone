@@ -1,0 +1,106 @@
+// WAIT-03B B2 — recipient proof for a scoped waitlist invitation.
+//
+// THE RULE THIS FILE EXISTS TO ENFORCE: possession of the invitation URL is NOT
+// authorization to book or decline. The link is a bearer token; anyone it is
+// forwarded to holds it. Proof must bind the actor to the STORED intended
+// recipient, and a typed or substituted email is never proof.
+//
+// There is deliberately NO bearer-only path in this module. A caller that has no
+// verifier, or whose verifier declines, cannot reach a mutating operation --
+// the absence is structural, not a flag that could be flipped.
+
+import { createHash } from "node:crypto";
+import { getCurrentPortalSession } from "@/lib/portal/session";
+import { createAdminClient } from "@/lib/supabase/admin-server";
+
+/** Hash of a contact address. The raw address is never compared or logged. */
+export function contactHash(raw: string | null | undefined): string | null {
+  if (typeof raw !== "string") return null;
+  const v = raw.trim().toLowerCase();
+  if (v.length === 0) return null;
+  return createHash("sha256").update(v, "utf8").digest("hex");
+}
+
+/**
+ * A proof is narrow by construction: it names the ONE invitation it was issued
+ * against. It carries no client id, no session, and no clinical scope, so it
+ * cannot be widened by a caller that holds it.
+ */
+export type RecipientProof = {
+  readonly invitationId: string;
+  /** How the binding was established. Recorded for audit, never for authority. */
+  readonly method: "verified_session";
+};
+
+export type ProofContext = {
+  readonly invitationId: string;
+  /** SHA-256 of the STORED invited contact, supplied by the database resolver. */
+  readonly storedContactHash: string;
+  readonly studioId: string;
+};
+
+/**
+ * Injectable so B3 can add a delivered-code verifier without this module or the
+ * authority module changing. Returning null means NOT PROVEN, and every caller
+ * treats that as refusal.
+ */
+export interface RecipientProofVerifier {
+  verify(ctx: ProofContext): Promise<RecipientProof | null>;
+}
+
+/**
+ * The one verifier that needs no durable verification state.
+ *
+ * A portal session is already proof of address control: it was established by a
+ * magic link delivered to the client's own stored address. So if such a session
+ * exists AND that client's STORED email hashes to the invitation's stored
+ * contact hash, the server has bound the actor to the intended recipient
+ * without any typed input.
+ *
+ * WHAT IT DELIBERATELY DOES NOT DO: it never reads an address supplied by the
+ * request, and it never creates or attaches a client record. It can only
+ * recognise a binding that already exists.
+ *
+ * COVERAGE, STATED HONESTLY: this satisfies proof only for a prospect who is
+ * ALREADY a client with portal access. A brand-new prospect -- the ordinary
+ * waitlist case -- has no portal session, so book/decline fails closed with
+ * `proof_required` until a delivered-code verifier exists. That verifier needs
+ * durable challenge state which B1 does not have; the exact missing authority is
+ * recorded in the B2 handoff. Failing closed is the intended behaviour, not a gap
+ * this module papers over.
+ */
+export const verifiedSessionProofVerifier: RecipientProofVerifier = {
+  async verify(ctx: ProofContext): Promise<RecipientProof | null> {
+    const session = await getCurrentPortalSession();
+    if (!session) return null;
+
+    const clientId = (session as { clientId?: string }).clientId;
+    if (!clientId) return null;
+
+    const admin = createAdminClient();
+    const { data, error } = await admin
+      .from("clients")
+      .select("id, email, studio_id")
+      .eq("id", clientId)
+      .maybeSingle();
+    if (error || !data) return null;
+
+    // Same-studio: a session for another studio's client can never satisfy an
+    // invitation here, even if the addresses happened to match.
+    if (data.studio_id !== ctx.studioId) return null;
+
+    const stored = contactHash(data.email as string | null);
+    if (!stored) return null;
+    // Constant-length hex compare; both sides are server-derived.
+    if (stored !== ctx.storedContactHash) return null;
+
+    return { invitationId: ctx.invitationId, method: "verified_session" };
+  },
+};
+
+/** Refuses everything. Used by tests to prove operations fail closed. */
+export const noProofVerifier: RecipientProofVerifier = {
+  async verify() {
+    return null;
+  },
+};

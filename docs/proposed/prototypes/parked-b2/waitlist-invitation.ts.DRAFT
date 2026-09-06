@@ -1,0 +1,327 @@
+// WAIT-03B B2 — server authority for scoped waitlist invitations.
+//
+// SERVER ONLY. Every operation runs through createAdminClient(), so service_role
+// authority never reaches a browser. Studio and actor are derived server-side;
+// no caller-supplied studio id is ever trusted.
+//
+// The database (B1, plus the B2 resolver/decline commands) remains the authority
+// for scope and allowance. This module does not re-derive either: it reads scope
+// from the row and lets the commit boundary re-validate. It NEVER writes scope
+// columns directly, so `issue_scoped_...` stays the single canonical writer --
+// which is what keeps review finding P3-3 (weekday ordering is canonical by
+// command, not by schema) from becoming reachable.
+
+import { createAdminClient } from "@/lib/supabase/admin-server";
+import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import type { RecipientProofVerifier } from "@/lib/booking/waitlist-invitation-proof";
+
+// ---------------------------------------------------------------------------
+// Typed outcomes. B3/B4 consume these; nothing throws across the boundary.
+// ---------------------------------------------------------------------------
+
+export type IssueOutcome =
+  | { kind: "issued"; invitationId: string; rawToken: string }
+  | { kind: "no_round_open" }
+  | { kind: "round_full" }
+  | { kind: "invalid_service" }
+  | { kind: "invalid_scope_dates" }
+  | { kind: "invalid_weekdays" }
+  | { kind: "already_invited" }
+  | { kind: "not_claimed" }
+  | { kind: "not_found" }
+  | { kind: "not_authorized" }
+  | { kind: "error"; reason: string };
+
+export type InvitationScope = {
+  invitationId: string;
+  studioId: string;
+  entryId: string;
+  serviceId: string;
+  startDate: string;
+  endDate: string;
+  allowedWeekdays: number[] | null;
+  expiresAt: string;
+  /** Server-side only. Never returned to a browser by B3/B4. */
+  storedContactHash: string;
+};
+
+export type ResolveOutcome =
+  | { kind: "live"; scope: InvitationScope }
+  | { kind: "invalid_token" }
+  | { kind: "expired" }
+  | { kind: "declined" }
+  | { kind: "released" }
+  | { kind: "already_redeemed" }
+  | { kind: "unscoped" }
+  | { kind: "error"; reason: string };
+
+export type BookOutcome =
+  | { kind: "booked"; appointmentId: string }
+  | { kind: "proof_required" }
+  | { kind: "outside_scope"; detail: "date" | "weekday" | "service" }
+  | { kind: "slot_unavailable" }
+  | { kind: "invitation_not_live" }
+  | { kind: "error"; reason: string };
+
+export type DeclineOutcome =
+  | { kind: "declined"; entryId: string }
+  | { kind: "proof_required" }
+  | { kind: "not_live" }
+  | { kind: "invalid_token" }
+  | { kind: "error"; reason: string };
+
+export type LifecycleOutcome =
+  | { kind: "ok"; result: string }
+  | { kind: "not_authorized" }
+  | { kind: "error"; reason: string };
+
+const RESULT_TO_ISSUE: Record<string, IssueOutcome["kind"]> = {
+  issued: "issued",
+  no_round_open: "no_round_open",
+  round_full: "round_full",
+  invalid_service: "invalid_service",
+  invalid_scope_dates: "invalid_scope_dates",
+  invalid_weekdays: "invalid_weekdays",
+  already_invited: "already_invited",
+  not_claimed: "not_claimed",
+  not_found: "not_found",
+};
+
+// ---------------------------------------------------------------------------
+// 1. ISSUE. Owner/practitioner flow; actor and studio derived server-side.
+// ---------------------------------------------------------------------------
+export async function issueScopedInvitation(input: {
+  entryId: string;
+  serviceId: string;
+  startDate: string;
+  endDate: string;
+  allowedWeekdays?: number[] | null;
+  ttlHours?: number;
+}): Promise<IssueOutcome> {
+  const me = await getCurrentPractitionerWithStudio();
+  // NO caller-supplied studio id. An unauthenticated or non-member caller
+  // cannot reach the command at all.
+  if (!me?.studio?.id || !me?.practitioner?.user_id) return { kind: "not_authorized" };
+
+  const admin = createAdminClient();
+  const { data, error } = await admin.rpc("issue_scoped_new_client_waitlist_invitation", {
+    p_studio_id: me.studio.id,
+    p_entry_id: input.entryId,
+    p_actor_user_id: me.practitioner.user_id,
+    p_service_id: input.serviceId,
+    p_start_date: input.startDate,
+    p_end_date: input.endDate,
+    p_allowed_weekdays: input.allowedWeekdays ?? null,
+    p_ttl_hours: input.ttlHours ?? 72,
+  });
+  if (error) return { kind: "error", reason: error.message };
+
+  const row = Array.isArray(data) ? data[0] : data;
+  const mapped = RESULT_TO_ISSUE[row?.result as string];
+  if (mapped === "issued") {
+    // The raw token exists HERE and nowhere else. It is never persisted; the
+    // row stores only its hash. A failed delivery cannot re-read it.
+    return { kind: "issued", invitationId: row.invitation_id, rawToken: row.raw_token };
+  }
+  return mapped ? ({ kind: mapped } as IssueOutcome) : { kind: "error", reason: String(row?.result) };
+}
+
+// ---------------------------------------------------------------------------
+// 2. RESOLVE. READ-ONLY. Safe to call from a GET, a preview or a reload.
+// ---------------------------------------------------------------------------
+export async function resolveInvitationScope(rawToken: string): Promise<ResolveOutcome> {
+  const admin = createAdminClient();
+  // The STABLE resolver, never redeem_ -- redemption mutates, so calling it
+  // here would let a link preview consume the invitation.
+  const { data, error } = await admin.rpc("resolve_new_client_waitlist_invitation", {
+    p_raw_token: rawToken,
+  });
+  if (error) return { kind: "error", reason: error.message };
+
+  const r = Array.isArray(data) ? data[0] : data;
+  if (!r || r.result !== "live") {
+    const k = (r?.result ?? "invalid_token") as ResolveOutcome["kind"];
+    return { kind: k } as ResolveOutcome;
+  }
+  return {
+    kind: "live",
+    scope: {
+      invitationId: r.invitation_id,
+      studioId: r.studio_id,
+      entryId: r.entry_id,
+      serviceId: r.scope_service_id,
+      startDate: r.scope_start_date,
+      endDate: r.scope_end_date,
+      allowedWeekdays: r.scope_allowed_weekdays ?? null,
+      expiresAt: r.expires_at,
+      storedContactHash: r.recipient_contact_hash,
+    },
+  };
+}
+
+/** Studio-local weekday of an ISO date, 0=Sunday, matching extract(dow). */
+export function weekdayOf(isoDate: string): number {
+  const [y, m, d] = isoDate.split("-").map((n) => Number.parseInt(n, 10));
+  return new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+}
+
+/** Pure, unit-testable scope check. The DB re-validates at commit regardless. */
+export function isWithinInvitationScope(
+  scope: Pick<InvitationScope, "startDate" | "endDate" | "allowedWeekdays" | "serviceId">,
+  candidate: { date: string; serviceId: string },
+): { ok: true } | { ok: false; detail: "date" | "weekday" | "service" } {
+  if (candidate.serviceId !== scope.serviceId) return { ok: false, detail: "service" };
+  if (candidate.date < scope.startDate || candidate.date > scope.endDate) {
+    return { ok: false, detail: "date" };
+  }
+  if (scope.allowedWeekdays && scope.allowedWeekdays.length > 0) {
+    if (!scope.allowedWeekdays.includes(weekdayOf(candidate.date))) {
+      return { ok: false, detail: "weekday" };
+    }
+  }
+  return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// 3. BOOK. Proof-gated. There is no bearer path to this function.
+// ---------------------------------------------------------------------------
+export async function bookFromInvitation(
+  input: {
+    rawToken: string;
+    localDate: string;
+    startsAt: string;
+    serviceId: string;
+    cancellationTokenHash: string;
+  },
+  verifier: RecipientProofVerifier,
+): Promise<BookOutcome> {
+  const resolved = await resolveInvitationScope(input.rawToken);
+  if (resolved.kind !== "live") {
+    return resolved.kind === "error"
+      ? { kind: "error", reason: resolved.reason }
+      : { kind: "invitation_not_live" };
+  }
+  const scope = resolved.scope;
+
+  // PROOF BEFORE ANY MUTATION. Possession of the token got us this far and no
+  // further; without a binding to the stored recipient we stop here.
+  const proof = await verifier.verify({
+    invitationId: scope.invitationId,
+    storedContactHash: scope.storedContactHash,
+    studioId: scope.studioId,
+  });
+  if (!proof || proof.invitationId !== scope.invitationId) return { kind: "proof_required" };
+
+  const within = isWithinInvitationScope(scope, {
+    date: input.localDate,
+    serviceId: input.serviceId,
+  });
+  if (!within.ok) return { kind: "outside_scope", detail: within.detail };
+
+  // The proven actor is, by construction, an existing client with a portal
+  // session -- so B2 attaches NO identity and creates NO client from a typed
+  // address. The client id comes from the proven session, never from input.
+  const admin = createAdminClient();
+  const { data: clientRow } = await admin
+    .from("new_client_waitlist_entries")
+    .select("converted_client_id")
+    .eq("id", scope.entryId)
+    .maybeSingle();
+
+  const { data, error } = await admin.rpc("create_public_appointment", {
+    p_studio_id: scope.studioId,
+    p_client_id: clientRow?.converted_client_id ?? null,
+    p_service_id: scope.serviceId, // from the ROW, not from input
+    p_starts_at: input.startsAt,
+    p_cancellation_token_hash: input.cancellationTokenHash,
+  });
+  if (error) return { kind: "error", reason: error.message };
+
+  const r = Array.isArray(data) ? data[0] : data;
+  if (r?.result === "created") return { kind: "booked", appointmentId: r.appointment_id };
+  // A lost slot must NOT consume the invitation: we never called redeem_, and
+  // the invitation row is untouched on this path.
+  return { kind: "slot_unavailable" };
+}
+
+// ---------------------------------------------------------------------------
+// 4. DECLINE. Proof-gated, token-authorised, never owner-impersonating.
+// ---------------------------------------------------------------------------
+export async function declineInvitation(
+  rawToken: string,
+  verifier: RecipientProofVerifier,
+): Promise<DeclineOutcome> {
+  const resolved = await resolveInvitationScope(rawToken);
+  if (resolved.kind !== "live") {
+    return resolved.kind === "invalid_token"
+      ? { kind: "invalid_token" }
+      : { kind: "not_live" };
+  }
+  const scope = resolved.scope;
+
+  const proof = await verifier.verify({
+    invitationId: scope.invitationId,
+    storedContactHash: scope.storedContactHash,
+    studioId: scope.studioId,
+  });
+  if (!proof || proof.invitationId !== scope.invitationId) return { kind: "proof_required" };
+
+  const admin = createAdminClient();
+  // The token-authorised command. release_ is NOT used: it takes an owner actor
+  // a prospect must never borrow.
+  const { data, error } = await admin.rpc("decline_new_client_waitlist_invitation", {
+    p_raw_token: rawToken,
+  });
+  if (error) return { kind: "error", reason: error.message };
+
+  const r = Array.isArray(data) ? data[0] : data;
+  if (r?.result === "declined") return { kind: "declined", entryId: r.entry_id };
+  if (r?.result === "not_live") return { kind: "not_live" };
+  return { kind: "invalid_token" };
+}
+
+// ---------------------------------------------------------------------------
+// 5. OWNER LIFECYCLE. Revoke / reissue through the ACCEPTED commands only.
+// ---------------------------------------------------------------------------
+async function ownerCommand(fn: string, entryId: string): Promise<LifecycleOutcome> {
+  const me = await getCurrentPractitionerWithStudio();
+  if (!me?.studio?.id || !me?.practitioner?.user_id) return { kind: "not_authorized" };
+  const admin = createAdminClient();
+  const { data, error } = await admin.rpc(fn, {
+    p_studio_id: me.studio.id,
+    p_entry_id: entryId,
+    p_actor_user_id: me.practitioner.user_id,
+  });
+  if (error) return { kind: "error", reason: error.message };
+  return { kind: "ok", result: String(Array.isArray(data) ? data[0] : data) };
+}
+
+/** Owner revocation. Frees the admission permission. */
+export const revokeInvitation = (entryId: string) =>
+  ownerCommand("release_new_client_waitlist_entry", entryId);
+
+/** Returns a released/expired entry to waiting so a later offer is possible. */
+export const requeueEntry = (entryId: string) =>
+  ownerCommand("requeue_new_client_waitlist_entry", entryId);
+
+/**
+ * Controlled replacement. The raw token is unreconstructable from the stored
+ * hash, so a failed delivery cannot be retried -- the old credential is revoked
+ * and a new invitation issued. Never a second admission: the release frees the
+ * permission the reissue then consumes.
+ */
+export async function reissueInvitation(input: {
+  entryId: string;
+  serviceId: string;
+  startDate: string;
+  endDate: string;
+  allowedWeekdays?: number[] | null;
+  ttlHours?: number;
+}): Promise<IssueOutcome> {
+  const released = await revokeInvitation(input.entryId);
+  if (released.kind === "not_authorized") return { kind: "not_authorized" };
+  if (released.kind === "error") return { kind: "error", reason: released.reason };
+  const requeued = await requeueEntry(input.entryId);
+  if (requeued.kind === "error") return { kind: "error", reason: requeued.reason };
+  return issueScopedInvitation(input);
+}
