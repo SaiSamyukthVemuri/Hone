@@ -234,7 +234,9 @@ describe("inspect creates no durable provisioning state", () => {
   });
 
   it("inspect fails closed on an unavailable census, taking no claim", async () => {
-    provider.script = { ...owned(STALE_INBOUND, STALE_STATUS), failServicePage: 1 };
+    // A page that returns 200 with a body we cannot read: the census has a GAP,
+    // and an incomplete census is not absence.
+    provider.script = { ...owned(STALE_INBOUND, STALE_STATUS), unparseableServicePage: 1 };
 
     const out = await configure({ mode: "inspect" });
 
@@ -244,6 +246,22 @@ describe("inspect creates no durable provisioning state", () => {
       reason: "number_association_unavailable",
       retryable: true,
     });
+    expect(store.claimCalls).toBe(0);
+    expect(writes()).toBe(0);
+  });
+
+  it("inspect fails closed when the census call itself FAILS, taking no claim", async () => {
+    // Distinct from the gap above: the request did not succeed at all. #676
+    // keeps the provider's own classification rather than flattening it into a
+    // census verdict, and either way inspect must refuse and claim nothing.
+    provider.script = { ...owned(STALE_INBOUND, STALE_STATUS), failServicePage: 1 };
+
+    const out = await configure({ mode: "inspect" });
+
+    expect(out).toMatchObject({ ok: false, result: "refused", retryable: true });
+    if (!out.ok && out.result === "refused") {
+      expect(out.reason).toBe("provider_unavailable");
+    }
     expect(store.claimCalls).toBe(0);
     expect(writes()).toBe(0);
   });
@@ -472,7 +490,7 @@ describe("configure existing sender — refuses before writing", () => {
   it("6. an UNAVAILABLE census -> ZERO writes, and it is retryable", async () => {
     provider.script = {
       ...owned(STALE_INBOUND, STALE_STATUS),
-      failServicePage: 1,
+      unparseableServicePage: 1,
     };
 
     const out = await configure();
@@ -485,6 +503,16 @@ describe("configure existing sender — refuses before writing", () => {
       providerWrites: 0,
     });
     expect(writes(), "wrote against an incomplete census").toBe(0);
+    expectNoForbiddenEffects();
+  });
+
+  it("6b. a census call that FAILS outright -> ZERO writes, retryable", async () => {
+    provider.script = { ...owned(STALE_INBOUND, STALE_STATUS), failServicePage: 1 };
+
+    const out = await configure();
+
+    expect(out).toMatchObject({ ok: false, result: "refused", retryable: true, providerWrites: 0 });
+    expect(writes(), "wrote without a completed census").toBe(0);
     expectNoForbiddenEffects();
   });
 
@@ -644,6 +672,7 @@ describe("configure existing sender — 12. the forbidden effects, stated once m
       owned(STALE_INBOUND, STALE_STATUS),
       owned(INBOUND, STALE_STATUS),
       { preOwnedNumbers: {}, accountServices: [] },
+      { ...owned(STALE_INBOUND, null), unparseableServicePage: 1 },
       { ...owned(STALE_INBOUND, null), failServicePage: 1 },
       { ...owned(STALE_INBOUND, null), configureSilentlyDrops: true },
     ];
