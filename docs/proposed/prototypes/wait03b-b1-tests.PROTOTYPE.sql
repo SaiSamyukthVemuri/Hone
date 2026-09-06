@@ -29,7 +29,7 @@ begin
   delete from t.fx where true;
 
   insert into auth.users (id, instance_id, aud, role, email, encrypted_password,
-                          confirmed_at, created_at, updated_at)
+                          email_confirmed_at, created_at, updated_at)
     values (gen_random_uuid(),'00000000-0000-0000-0000-000000000000','authenticated','authenticated',
             'b1-syn-'||v_run||'@synthetic.test','x',now(),now(),now()) returning id into v_u;
 
@@ -95,16 +95,34 @@ begin
 end $$;
 
 -- ============ CONSTRAINTS, AGAINST REAL ROWS ============
+-- Each constraint case gets its OWN freshly claimed entry. Previously they all
+-- reused e1, which already held a live invitation, so one_live_per_entry fired
+-- before the scope CHECK was ever reached and the suite stopped being
+-- idempotent. Entries are still created through join_ + claim_.
+do $$
+declare v_s uuid := (select v from t.fx where k='studio');
+        v_u uuid := (select v from t.fx where k='u');
+        v_run text := substr(replace(gen_random_uuid()::text,'-',''),1,8);
+        r record; v_id uuid;
+begin
+  foreach v_id in array array[]::uuid[] loop end loop;
+  for i in 1..4 loop
+    select * into r from public.join_new_client_waitlist(v_s,'C'||i,'c'||i||'-'||v_run||'@syn.test',null);
+    perform public.claim_new_client_waitlist_entry(v_s, r.entry_id, v_u);
+    insert into t.fx values ('c'||i, r.entry_id) on conflict (k) do update set v=excluded.v;
+  end loop;
+end $$;
+
 select t.raises('C1 partial scope is unrepresentable',
   $q$ insert into public.new_client_waitlist_invitations
       (studio_id, entry_id, token_hash, expires_at, issued_by_practitioner_id, scope_start_date)
-      select (select v from t.fx where k='studio'), (select v from t.fx where k='e1'), repeat('a',64),
+      select (select v from t.fx where k='studio'), (select v from t.fx where k='c1'), encode(extensions.digest(gen_random_uuid()::text,'sha256'),'hex'),
              now()+interval '1 day', (select v from t.fx where k='prac'), current_date $q$, 'scope_complete');
 select t.raises('C2 end date before start is unrepresentable',
   $q$ insert into public.new_client_waitlist_invitations
       (studio_id, entry_id, token_hash, expires_at, issued_by_practitioner_id,
        scope_service_id, scope_start_date, scope_end_date)
-      select (select v from t.fx where k='studio'), (select v from t.fx where k='e1'), repeat('b',64),
+      select (select v from t.fx where k='studio'), (select v from t.fx where k='c2'), encode(extensions.digest(gen_random_uuid()::text,'sha256'),'hex'),
              now()+interval '1 day', (select v from t.fx where k='prac'),
              (select v from t.fx where k='svc'), current_date+5, current_date $q$, 'scope_complete');
 select t.raises('C3 weekday outside 0..6 is unrepresentable at the table',
@@ -153,7 +171,7 @@ select t.raises('F2 the SAME declined offer cannot be recorded twice',
   $q$ insert into public.new_client_waitlist_invitations
       (studio_id, entry_id, token_hash, expires_at, issued_by_practitioner_id,
        scope_service_id, scope_start_date, scope_end_date, declined_at)
-      select studio_id, entry_id, repeat('c',64), now()+interval '1 day', issued_by_practitioner_id,
+      select studio_id, entry_id, encode(extensions.digest(gen_random_uuid()::text,'sha256'),'hex'), now()+interval '1 day', issued_by_practitioner_id,
              scope_service_id, scope_start_date, scope_end_date, now()
         from public.new_client_waitlist_invitations where declined_at is not null limit 1 $q$,
   'duplicate key');

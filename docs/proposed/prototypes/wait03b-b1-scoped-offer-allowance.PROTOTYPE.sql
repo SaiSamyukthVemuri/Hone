@@ -47,6 +47,12 @@ revoke all on public.studio_waitlist_admission_rounds from service_role;
 grant select (studio_id, allowance, updated_at)
   on public.studio_waitlist_admission_rounds to authenticated;
 
+-- IDEMPOTENT, like every applied migration in this repo. Without the drop,
+-- re-applying aborts the transaction here and every later statement --
+-- including the scope constraint -- is silently skipped. That is exactly
+-- how the first negative-control restore failed without anyone noticing.
+drop policy if exists "studio_waitlist_admission_rounds_owner_select"
+  on public.studio_waitlist_admission_rounds;
 create policy "studio_waitlist_admission_rounds_owner_select"
   on public.studio_waitlist_admission_rounds for select to authenticated
   using (public.is_studio_owner(studio_id));
