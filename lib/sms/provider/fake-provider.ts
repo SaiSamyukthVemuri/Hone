@@ -99,8 +99,15 @@ export type FakeProviderScript = {
   } | null>;
   /** Page size for the service list walk. Small values force multiple pages. */
   servicePageSize?: number;
-  /** 1-based page index that fails, to prove a partial census is never absence. */
+  /**
+   * 1-based page index whose REQUEST fails. Mirrors the adapter: an HTTP-level
+   * failure keeps its provider classification and is not a census gap.
+   */
   failServicePage?: number;
+  /** Provider error code the failing page returns. */
+  failServicePageCode?: ProviderErrorCode;
+  /** 1-based page index that returns 200 with unreadable content -> unavailable. */
+  unparseableServicePage?: number;
   /** Make one membership probe unreadable. */
   membershipProbeFails?: boolean;
   /** Fail the ownership lookup itself. */
@@ -284,13 +291,18 @@ export class FakeSmsProvisioningProvider implements SmsProvisioningProvider {
       page += 1;
       this.calls.servicePages += 1;
       if (this.script.failServicePage === page) {
-        // A FAILED PAGE IS NOT AN EMPTY PAGE.
+        // A FAILED PAGE IS NOT AN EMPTY PAGE -- and it is not a census gap
+        // either. It keeps its provider classification.
+        return this.fail(this.script.failServicePageCode ?? "provider_unavailable");
+      }
+      if (this.script.unparseableServicePage === page) {
+        // 200, but the body could not be read. THAT is a census gap.
         return {
           ok: true,
           facts: {
             phoneNumberSid: sid,
             phoneNumber: input.phoneNumber,
-            association: { kind: "unavailable", reason: "service_page_unreadable" },
+            association: { kind: "unavailable", reason: "service_page_unparseable" },
           },
         };
       }
@@ -311,14 +323,7 @@ export class FakeSmsProvisioningProvider implements SmsProvisioningProvider {
           };
         }
         if (this.script.membershipProbeFails) {
-          return {
-            ok: true,
-            facts: {
-              phoneNumberSid: sid,
-              phoneNumber: input.phoneNumber,
-              association: { kind: "unavailable", reason: "membership_probe_failed" },
-            },
-          };
+          return this.fail(this.script.failServicePageCode ?? "provider_unavailable");
         }
         if (svc!.numbers.includes(input.phoneNumber)) holders.push(svcSid);
       }

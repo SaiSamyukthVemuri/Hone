@@ -269,24 +269,62 @@ describe("2 + 4. DECISION 2 — the association census is complete and truthful"
       failServicePage: 2,
     });
     const outcome = await adopt();
-    expect(outcome).toMatchObject({
-      reason: "number_association_unavailable",
-      discovered: { association: "unavailable" },
-      // Retryable: a later attempt may read the page this one could not.
-      retryable: true,
-    });
-    // The decisive assertion: it did NOT say not_associated.
+    // SUPERSEDED SHAPE, SAME PROPERTY. This once expected
+    // number_association_unavailable, because the census swallowed HTTP
+    // failures. The page failure now keeps its provider classification, which is
+    // strictly more truthful -- and the decisive property is unchanged: it did
+    // NOT read as absence.
+    expect(outcome).toMatchObject({ ok: false, result: "failed", reason: "provider_unavailable" });
     expect((outcome as { reason: string }).reason).not.toBe("number_not_in_named_service");
     expect(provider.calls.attach).toBe(0);
   });
 
-  it("an unreadable membership probe is UNAVAILABLE too", async () => {
+  it("4b. a 200 page whose CONTENT is unreadable is still a census gap", async () => {
+    // The distinction the fix preserves: an unreadable body is `unavailable`,
+    // an unreadable REQUEST is a provider error.
+    provider = new FakeSmsProvisioningProvider({
+      preOwnedNumbers: { [WILLOW_NUMBER]: WILLOW_PN_SID },
+      accountServices: [
+        { sid: WILLOW_MG_SID, numbers: [] },
+        { sid: OTHER_MG_SID, numbers: [WILLOW_NUMBER] },
+      ],
+      servicePageSize: 1,
+      unparseableServicePage: 2,
+    });
+    const outcome = await adopt();
+    expect(outcome).toMatchObject({
+      reason: "number_association_unavailable",
+      discovered: { association: "unavailable" },
+      retryable: true,
+    });
+  });
+
+  it("4c. a 401 during the census is NON-retryable, not a retryable gap", async () => {
+    // The whole point: a credential problem must not be laundered into
+    // "try again later".
+    provider = new FakeSmsProvisioningProvider({
+      ...ownedAndAssociated(),
+      membershipProbeFails: true,
+      failServicePageCode: "provider_unauthorized",
+    });
+    const outcome = await adopt();
+    expect(outcome).toMatchObject({
+      ok: false,
+      result: "failed",
+      reason: "provider_unauthorized",
+      retryable: false,
+    });
+    expect(store.live(STUDIO_A)!.lastErrorCode).toBe("provider_unauthorized");
+  });
+
+  it("an unreadable membership probe keeps its provider classification", async () => {
+    // SUPERSEDED SHAPE, SAME PROPERTY: still a refusal, still never absence.
     provider = new FakeSmsProvisioningProvider({
       ...ownedAndAssociated(),
       membershipProbeFails: true,
     });
     const outcome = await adopt();
-    expect(outcome).toMatchObject({ reason: "number_association_unavailable" });
+    expect(outcome).toMatchObject({ ok: false, reason: "provider_unavailable" });
     expect(store.live(STUDIO_A)!.status).toBe("error");
   });
 
@@ -983,7 +1021,15 @@ describe("CODEX P2-B — no adoption-only string reaches last_error_code", () =>
         ],
       },
     ],
-    ["number_association_unavailable", { ...ownedAndAssociated(), membershipProbeFails: true }],
+    [
+      "number_association_unavailable",
+      {
+        preOwnedNumbers: { [WILLOW_NUMBER]: WILLOW_PN_SID },
+        accountServices: [{ sid: WILLOW_MG_SID, numbers: [] }, { sid: OTHER_MG_SID, numbers: [] }],
+        servicePageSize: 1,
+        unparseableServicePage: 2,
+      },
+    ],
     [
       "provider_configuration_required",
       {
@@ -1214,5 +1260,108 @@ describe("CODEX P2 — an unacknowledged park stays visible", () => {
     provider = new FakeSmsProvisioningProvider({ preOwnedNumbers: {} });
     const outcome = await adopt();
     expect(outcome).toMatchObject({ reason: "number_not_owned_by_account", parked: true });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// IDENTIFIER-WRITE VERDICT — the asymmetry the candidate had recorded.
+// ---------------------------------------------------------------------------
+//
+// When the provisioning test fails, adoption records the identifiers WITHOUT
+// activating, then parks. Two writes happen, and each has its own verdict. The
+// parking verdict already travelled; the identifier one did not.
+//
+// It matters more for an ADOPTED sender than for a purchased one: the studio
+// already owned these resources, so nothing about them looks new, and an
+// operator told only "the test failed" would go looking for a messaging problem
+// rather than a missing record.
+
+describe("the identifier-write verdict travels too", () => {
+  const failingTest = () =>
+    new FakeSmsProvisioningProvider({ ...ownedAndAssociated(), testSendFails: "provider_timeout" });
+
+  it("1. identifiers recorded, then a provider failure -> verdict retained", async () => {
+    provider = failingTest();
+    const outcome = await adopt();
+    expect(outcome).toMatchObject({
+      ok: false,
+      result: "failed",
+      reason: "provider_timeout",
+      identifiersRecorded: true,
+      identifierResult: "provisioned_untested",
+    });
+    // And the row really does hold them.
+    expect(store.live(STUDIO_A)!.phoneNumberSid).toBe(WILLOW_PN_SID);
+  });
+
+  it("2. identifier recording UNACKNOWLEDGED -> the caller sees that", async () => {
+    provider = failingTest();
+    store.failFinalizeWithoutCommitting = true;
+    const outcome = await adopt();
+    expect(outcome).toMatchObject({
+      ok: false,
+      identifiersRecorded: false,
+      identifierResult: "invalid_input",
+    });
+    // The resources exist at the provider and Hone has no record of them.
+    expect(store.live(STUDIO_A)!.phoneNumberSid).toBeNull();
+  });
+
+  it("3. a materially non-success identifier verdict is preserved", async () => {
+    provider = failingTest();
+    store.failReturnsFinalize = "not_provisioning";
+    const outcome = await adopt();
+    expect(outcome).toMatchObject({
+      identifiersRecorded: false,
+      identifierResult: "not_provisioning",
+    });
+  });
+
+  it("4. already_active still wins as terminal SUCCESS", async () => {
+    provider = failingTest();
+    store.failReturns = "already_active";
+    expect(await adopt()).toMatchObject({ ok: true, result: "already_active" });
+  });
+
+  it("5. lease_lost still wins as lease_lost", async () => {
+    provider = failingTest();
+    store.failReturnsFinalize = "lease_lost";
+    expect(await adopt()).toMatchObject({ ok: false, result: "lease_lost" });
+  });
+
+  it("6. parkResult and identifierResult are BOTH represented, truthfully", async () => {
+    provider = failingTest();
+    store.failFinalizeWithoutCommitting = true;
+    store.failReturns = "invalid_input";
+    const outcome = await adopt();
+    expect(outcome).toMatchObject({
+      parked: false,
+      parkResult: "invalid_input",
+      identifiersRecorded: false,
+      identifierResult: "invalid_input",
+    });
+  });
+
+  it("7. a refusal that never attempted a write reports null, not false-with-a-verdict", async () => {
+    // "Nothing attempted" and "attempted and refused" are different states.
+    provider = new FakeSmsProvisioningProvider({ preOwnedNumbers: {} });
+    const outcome = await adopt();
+    expect(outcome).toMatchObject({
+      reason: "number_not_owned_by_account",
+      identifiersRecorded: false,
+      identifierResult: null,
+    });
+  });
+
+  it("8. the sender-mismatch path carries its identifier verdict too", async () => {
+    provider = new FakeSmsProvisioningProvider({
+      ...ownedAndAssociated(),
+      reportContradictorySender: "+14165550888",
+    });
+    const outcome = await adopt();
+    expect(outcome).toMatchObject({
+      reason: "provider_test_sender_mismatch",
+      identifierResult: "provisioned_untested",
+    });
   });
 });

@@ -386,13 +386,18 @@ describe("lookupOwnedNumber: read-only census", () => {
     expect(r.ok && r.facts.association.kind).toBe("unavailable");
   });
 
-  it("a failed services page is UNAVAILABLE, never absence", async () => {
+  it("a failed services page is a PROVIDER FAILURE, and never absence", async () => {
+    // SUPERSEDED SHAPE, SAME PROPERTY. This once asserted `unavailable`, because
+    // the census swallowed HTTP failures. A 500 is a provider failure and now
+    // keeps that classification -- what must never happen, and still cannot, is
+    // the page failing and the number reading as `not_associated`.
     stubFetch(ownedThen({ status: 500, json: {} }));
     const r = await (await adapter()).lookupOwnedNumber({
       phoneNumber: NUMBER,
       expectedMessagingServiceSid: MG("b"),
     });
-    expect(r.ok && r.facts.association.kind).toBe("unavailable");
+    expect(r.ok).toBe(false);
+    expect(!r.ok && r.code).toBe("provider_unavailable");
   });
 
   it("an unreadable pagination cursor is UNAVAILABLE, never absence", async () => {
@@ -524,5 +529,108 @@ describe("sendProvisioningTest: the reported sender is secondary", () => {
       });
       expect(r.ok && r.sentFrom, String(from)).toBeNull();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CODEX P2 — the census must not launder a provider failure into "unavailable"
+// ---------------------------------------------------------------------------
+//
+// "The census could not be completed" and "the provider refused our credentials"
+// are different facts with different consequences. The first invites a retry;
+// the second is non-retryable and needs an operator. Collapsing 401/403 into an
+// incomplete-census result told adoption to persist provider_unavailable and
+// call it retryable, discarding a classification httpError already made
+// correctly.
+
+describe("lookupOwnedNumber: provider failures keep their classification", () => {
+  const ownedOk = { status: 200, json: { incoming_phone_numbers: [{ sid: PN("a"), phone_number: NUMBER }] } };
+
+  for (const status of [401, 403] as const) {
+    it(`service-list ${status} -> provider_unauthorized, NON-retryable`, async () => {
+      stubFetch([ownedOk, { status, json: {} }]);
+      const r = await (await adapter()).lookupOwnedNumber({
+        phoneNumber: NUMBER,
+        expectedMessagingServiceSid: MG("b"),
+      });
+      expect(r.ok).toBe(false);
+      expect(!r.ok && r.code).toBe("provider_unauthorized");
+      expect(!r.ok && r.retryable).toBe(false);
+    });
+
+    it(`membership-probe ${status} -> provider_unauthorized, NON-retryable`, async () => {
+      stubFetch([
+        ownedOk,
+        { status: 200, json: { services: [{ sid: MG("b") }], meta: { next_page_url: null } } },
+        { status, json: {} },
+      ]);
+      const r = await (await adapter()).lookupOwnedNumber({
+        phoneNumber: NUMBER,
+        expectedMessagingServiceSid: MG("b"),
+      });
+      expect(r.ok).toBe(false);
+      expect(!r.ok && r.code).toBe("provider_unauthorized");
+      expect(!r.ok && r.retryable).toBe(false);
+    });
+  }
+
+  it("service-list 500 keeps its transport classification (retryable)", async () => {
+    stubFetch([ownedOk, { status: 500, json: {} }]);
+    const r = await (await adapter()).lookupOwnedNumber({
+      phoneNumber: NUMBER,
+      expectedMessagingServiceSid: MG("b"),
+    });
+    expect(r.ok).toBe(false);
+    expect(!r.ok && r.code).toBe("provider_unavailable");
+    expect(!r.ok && r.retryable).toBe(true);
+  });
+
+  it("service-list 429 stays rate-limited, not an incomplete census", async () => {
+    stubFetch([ownedOk, { status: 429, json: {} }]);
+    const r = await (await adapter()).lookupOwnedNumber({
+      phoneNumber: NUMBER,
+      expectedMessagingServiceSid: MG("b"),
+    });
+    expect(!r.ok && r.code).toBe("provider_rate_limited");
+  });
+
+  it("a 404 membership probe still means 'not in this service'", async () => {
+    // The one status whose absence-meaning the endpoint genuinely defines.
+    stubFetch([
+      ownedOk,
+      { status: 200, json: { services: [{ sid: MG("b") }], meta: { next_page_url: null } } },
+      { status: 404, json: {} },
+    ]);
+    const r = await (await adapter()).lookupOwnedNumber({
+      phoneNumber: NUMBER,
+      expectedMessagingServiceSid: MG("b"),
+    });
+    expect(r.ok && r.facts.association).toEqual({ kind: "not_associated" });
+  });
+
+  it("a SUCCESSFUL but incomplete census is still unavailable", async () => {
+    // The distinction that must survive: 200 with unreadable pagination is a
+    // genuine census gap, not a provider failure.
+    stubFetch([ownedOk, { status: 200, json: { services: [], meta: { next_page_url: 7 } } }]);
+    const r = await (await adapter()).lookupOwnedNumber({
+      phoneNumber: NUMBER,
+      expectedMessagingServiceSid: MG("b"),
+    });
+    expect(r.ok && r.facts.association).toEqual({
+      kind: "unavailable",
+      reason: "service_pagination_unreadable",
+    });
+  });
+
+  it("a malformed entry on a 200 page is still unavailable, not a provider error", async () => {
+    stubFetch([
+      ownedOk,
+      { status: 200, json: { services: [{ sid: "garbage" }], meta: { next_page_url: null } } },
+    ]);
+    const r = await (await adapter()).lookupOwnedNumber({
+      phoneNumber: NUMBER,
+      expectedMessagingServiceSid: MG("b"),
+    });
+    expect(r.ok && r.facts.association.kind).toBe("unavailable");
   });
 });

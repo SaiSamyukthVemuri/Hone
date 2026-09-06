@@ -308,13 +308,14 @@ export const twilioProvisioningProvider: SmsProvisioningProvider = {
       pagesFetched += 1;
 
       const page: ProviderResult<RawResponse> = await request(creds, nextUrl, { method: "GET" });
-      if (!page.ok || page.status !== 200) {
-        // A FAILED PAGE IS NOT AN EMPTY PAGE.
-        return {
-          ok: true,
-          facts: { phoneNumberSid: sid, phoneNumber: num, association: { kind: "unavailable", reason: "service_page_unreadable" } },
-        };
-      }
+        // A PROVIDER FAILURE IS NOT A CENSUS GAP, and the difference is
+        // operationally material: "we could not finish looking" invites a retry,
+        // while 401/403 is a credential problem no retry fixes and an operator
+        // has to see. Transport errors are returned as they came, and a non-2xx
+        // is classified by httpError -- the mapping that already gets this right
+        // -- BEFORE anything here calls the census incomplete.
+        if (!page.ok) return page;
+        if (page.status !== 200) return httpError(page.status);
       const pageBody = asRecord(page.json);
       const list = pageBody ? asArray(pageBody.services) : null;
       if (!list) {
@@ -369,19 +370,16 @@ export const twilioProvisioningProvider: SmsProvisioningProvider = {
         `${MESSAGING_BASE}/Services/${encodeURIComponent(svcSid)}/PhoneNumbers/${encodeURIComponent(sid)}`,
         { method: "GET" },
       );
-      if (!probe.ok) {
-        return {
-          ok: true,
-          facts: { phoneNumberSid: sid, phoneNumber: num, association: { kind: "unavailable", reason: "membership_probe_failed" } },
-        };
-      }
-      if (probe.status === 200) holders.push(svcSid);
-      else if (probe.status !== 404) {
-        return {
-          ok: true,
-          facts: { phoneNumberSid: sid, phoneNumber: num, association: { kind: "unavailable", reason: "membership_probe_unexpected" } },
-        };
-      }
+        if (!probe.ok) return probe;
+        if (probe.status === 200) {
+          holders.push(svcSid);
+        } else if (probe.status !== 404) {
+          // 404 is the ONE status this endpoint defines as an ANSWER: the number
+          // is not a member of this service. Every other non-2xx is a provider
+          // failure and keeps its own classification -- flattening 401 here was
+          // how a credential problem became a retryable census gap.
+          return httpError(probe.status);
+        }
     }
 
     return {

@@ -70,6 +70,9 @@ export class InMemoryProvisioningStore implements ProvisioningStore {
    */
   failReturns: FailResult | null = null;
 
+  /** Force what the IDENTIFIER write answers, independently of the parking write. */
+  failReturnsFinalize: FinalizeResult | null = null;
+
   constructor(private readonly members: Membership[]) {}
 
   private nextKey(): string {
@@ -249,6 +252,7 @@ export class InMemoryProvisioningStore implements ProvisioningStore {
     messagingServiceSid: string;
     testOk: boolean;
   }): Promise<FinalizeResult> {
+    if (this.failReturnsFinalize !== null) return this.failReturnsFinalize;
     if (this.failFinalizeWithoutCommitting) return "invalid_input";
     const row = this.rows.find(
       (r) => r.studioId === input.studioId && r.claimKey === input.claimKey && r.status !== "released",

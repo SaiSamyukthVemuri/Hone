@@ -162,11 +162,15 @@ describe("both new provider methods are READ-ONLY", () => {
     const body = TWILIO_ADAPTER.slice(start, end);
     // Every early exit from the walk is `unavailable`, never `not_associated`.
     expect(body).not.toContain('kind: "not_associated"');
+    // SUPERSEDED LIST, SAME PROPERTY. `service_page_unreadable` and
+    // `membership_probe_failed` are gone on purpose: they represented HTTP
+    // failures, which now keep their own provider classification instead of
+    // being flattened into a retryable census gap. What remains are the genuine
+    // 200-but-incomplete cases, and those must still fail closed.
     for (const reason of [
       "service_page_limit",
-      "service_page_unreadable",
+      "service_page_unparseable",
       "service_pagination_unreadable",
-      "membership_probe_failed",
     ]) {
       expect(body, `missing fail-closed reason ${reason}`).toContain(reason);
     }
@@ -308,5 +312,65 @@ describe("CODEX P2 — the parking verdict travels with the failure", () => {
     expect(leaseAt).toBeGreaterThan(-1);
     expect(activeAt).toBeGreaterThan(leaseAt);
     expect(failedAt).toBeGreaterThan(activeAt);
+  });
+});
+
+describe("the failure contract matches the purchase path field-for-field", () => {
+  it("adoption carries every verdict field provisionStudioSmsSender does", () => {
+    // Three of adoption's four review findings were a branch the purchase path
+    // already had. This asserts the SHAPES stay aligned, so the next divergence
+    // fails here rather than waiting for a reviewer to notice.
+    const purchase = read("lib/sms/provisioning.ts");
+    for (const field of [
+      "parked: boolean;",
+      "parkResult: FailResult;",
+      "identifiersRecorded: boolean;",
+      "identifierResult: FinalizeResult | null;",
+    ]) {
+      expect(purchase, `purchase lost ${field}`).toContain(field);
+      expect(ADOPTION_RAW, `adoption missing ${field}`).toContain(field);
+    }
+  });
+
+  it("identifiersRecorded is derived from the WRITE's verdict, never asserted", () => {
+    // True is claimed only on a database acknowledgement.
+    expect(ADOPTION).toMatch(/detail\.identifierResult === "activated"/);
+    expect(ADOPTION).not.toMatch(/identifiersRecorded: true\b/);
+  });
+
+  it("every finalize-then-fail path forwards its verdict", () => {
+    // Each finalize whose result is followed by a failure must pass it on.
+    for (const forwarded of [
+      "identifierResult: parked }",
+      "identifierResult: parkedIdentifiers,",
+      "identifierResult: finalized }",
+    ]) {
+      expect(ADOPTION, `unforwarded verdict: ${forwarded}`).toContain(forwarded);
+    }
+  });
+});
+
+describe("census failures keep their provider classification", () => {
+  it("the page walk returns transport errors and classifies non-200 via httpError", () => {
+    expect(TWILIO_ADAPTER).toMatch(/if \(!page\.ok\) return page;/);
+    expect(TWILIO_ADAPTER).toMatch(/if \(page\.status !== 200\) return httpError\(page\.status\);/);
+  });
+
+  it("the membership probe does the same, and 404 keeps its documented meaning", () => {
+    expect(TWILIO_ADAPTER).toMatch(/if \(!probe\.ok\) return probe;/);
+    expect(TWILIO_ADAPTER).toMatch(/probe\.status !== 404/);
+    expect(TWILIO_ADAPTER).toMatch(/return httpError\(probe\.status\);/);
+  });
+
+  it("no HTTP failure is laundered into an unavailable census", () => {
+    // The reasons that remain are all genuine 200-but-incomplete cases.
+    const start = TWILIO_ADAPTER.indexOf("async lookupOwnedNumber(");
+    const body = TWILIO_ADAPTER.slice(start, TWILIO_ADAPTER.indexOf("\n  async ", start + 10));
+    for (const gone of ["service_page_unreadable", "membership_probe_failed", "membership_probe_unexpected"]) {
+      expect(body, `${gone} still launders an HTTP failure`).not.toContain(gone);
+    }
+    for (const kept of ["service_page_limit", "service_page_unparseable", "service_pagination_unreadable"]) {
+      expect(body, `lost genuine census gap ${kept}`).toContain(kept);
+    }
   });
 });

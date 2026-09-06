@@ -4,7 +4,12 @@ import type { SmsProvisioningProvider } from "./provider/types";
 import { canonicalClaimPhoneNumber } from "./claim-phone-number";
 import { safeResourceId } from "./provider/association";
 import type { NumberAssociation } from "./provider/types";
-import type { AttemptErrorCode, FailResult, ProvisioningStore } from "./provisioning";
+import type {
+  AttemptErrorCode,
+  FailResult,
+  FinalizeResult,
+  ProvisioningStore,
+} from "./provisioning";
 
 // ===========================================================================
 // WILLOW ADOPTION — establish the 0191 lifecycle over an ALREADY-OWNED sender
@@ -76,6 +81,22 @@ export type AdoptionOutcome =
       parked: boolean;
       /** The parking write's own verdict, never discarded. */
       parkResult: FailResult;
+      /**
+       * Whether the DATABASE ACKNOWLEDGED persisting the provider identifiers.
+       *
+       * True only on that acknowledgement -- never inferred from the provider
+       * having accepted the send, from the association census having passed, or
+       * from Hone merely holding the SID in memory.
+       *
+       * False with resources in hand means the number and service exist at the
+       * provider and Hone has not written them down. For an ADOPTED sender that
+       * is worse than it sounds: the studio already owned these resources, so
+       * nothing about them looks new, and an operator reading "the test failed"
+       * would go looking for a messaging problem instead of a missing record.
+       */
+      identifiersRecorded: boolean;
+      /** The identifier write's own verdict when one was attempted. */
+      identifierResult: FinalizeResult | null;
       /**
        * What the census actually found, when the refusal is about WHERE the
        * number lives. Redacted to a recognisable-but-unusable form: an operator
@@ -187,6 +208,8 @@ export async function adoptExistingStudioSmsSender(
     detail: {
       discovered?: { association: NumberAssociation["kind"]; safeServiceIds: string[] };
       configurationMismatch?: Array<"inbound_webhook" | "status_callback">;
+      /** The identifier write's verdict, when one was attempted before parking. */
+      identifierResult?: FinalizeResult;
     } = {},
   ): Promise<AdoptionOutcome> => {
     const parked = await input.store.fail({
@@ -229,6 +252,14 @@ export async function adoptExistingStudioSmsSender(
       // not parked, and the caller must be able to see that.
       parked: parked === "failed",
       parkResult: parked,
+      // NOTHING ATTEMPTED IS NOT THE SAME AS ATTEMPTED-AND-FAILED. Most refusals
+      // never reach a finalize at all, and `false` with a null verdict says
+      // exactly that; `true` would assert a persistence nothing established.
+      identifiersRecorded:
+        detail.identifierResult === "activated" ||
+        detail.identifierResult === "already_active" ||
+        detail.identifierResult === "provisioned_untested",
+      identifierResult: detail.identifierResult ?? null,
       ...detail,
     };
   };
@@ -347,7 +378,10 @@ export async function adoptExistingStudioSmsSender(
       testOk: false,
     });
     if (parked === "lease_lost") return { ok: false, result: "lease_lost", senderId };
-    return failWith(test.code, test.retryable);
+      // The identifier write's verdict travels with the failure. Discarding it
+      // would report an ordinary parked test failure over a state where the
+      // resources are real and unrecorded.
+      return failWith(test.code, test.retryable, { identifierResult: parked });
   }
 
   // --- 4b. THE SENDER WAS NAMED, NOT INFERRED -----------------------------
@@ -373,7 +407,9 @@ export async function adoptExistingStudioSmsSender(
       testOk: false,
     });
     if (parkedIdentifiers === "lease_lost") return { ok: false, result: "lease_lost", senderId };
-    return failWith("provider_test_sender_mismatch", false);
+    return failWith("provider_test_sender_mismatch", false, {
+      identifierResult: parkedIdentifiers,
+    });
   }
 
   // --- 5. 0191's finalize, unchanged --------------------------------------
@@ -396,6 +432,7 @@ export async function adoptExistingStudioSmsSender(
   return failWith(
     finalized === "conflict" ? "finalize_conflict" : "finalize_failed",
     finalized !== "conflict",
+    { identifierResult: finalized },
   );
 }
 
