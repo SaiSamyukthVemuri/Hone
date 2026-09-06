@@ -20,7 +20,7 @@ import type {
 // must never happen is treating an unrecognised response as "no claim exists",
 // which is how a caller would talk itself into a second purchase.
 
-const CLAIM_RESULTS: readonly ClaimResult[] = [
+export const CLAIM_RESULTS: readonly ClaimResult[] = [
   "claimed",
   "claim_held",
   "already_active",
@@ -32,7 +32,7 @@ const CLAIM_RESULTS: readonly ClaimResult[] = [
   "invalid_input",
 ];
 
-const FINALIZE_RESULTS: readonly FinalizeResult[] = [
+export const FINALIZE_RESULTS: readonly FinalizeResult[] = [
   "activated",
   "provisioned_untested",
   "already_active",
@@ -43,7 +43,7 @@ const FINALIZE_RESULTS: readonly FinalizeResult[] = [
   "invalid_input",
 ];
 
-const FAIL_RESULTS: readonly FailResult[] = [
+export const FAIL_RESULTS: readonly FailResult[] = [
   "failed",
   "lease_lost",
   "already_active",
