@@ -81,9 +81,17 @@ describe("0188 — identity and position", () => {
     // phrasing makes every FUTURE pre-apply migration head red by construction,
     // which is a fact about the workflow rather than a defect in the diff. The
     // pending set is the limb that carries real information here.
+    //
+    // AND THE SECOND LIMB HAD THE SAME DEFECT. `pending_migrations` being
+    // globally EMPTY is not a fact about 0188 at all -- it goes red the moment
+    // anyone authors any migration above hosted, which is exactly the
+    // pre-apply state the paragraph above defends. 0191 (COMMS-01B) made that
+    // concrete. What this file can durably assert is that 0188 ITSELF is
+    // applied; whether some later migration is awaiting apply is that
+    // migration's business, and the central guard's.
     const state = migrationState();
     expect(Number(state.hosted_migration_max)).toBeGreaterThanOrEqual(188);
-    expect(state.pending_migrations).toEqual([]);
+    expect(state.pending_migrations).not.toContain(VERSION);
   });
 });
 

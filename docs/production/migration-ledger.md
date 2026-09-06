@@ -14,14 +14,14 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-09-04, post-0190 apply)
+## Current state (verified 2026-09-04, post-0190 apply; `0191` authored and PENDING)
 
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0190** (`0190_waitlist_invitation_ttl_anchor.sql`) |
-| **Repo migration max** | **0190** — **repository and hosted are at parity**, with nothing pending. No migration is authored above the hosted head. Next free number is **0191** (available, **not claimed**). |
+| **Repo migration max** | **0191** — the repository sits **one migration ABOVE hosted**. **`0191` is PENDING**: authored for COMMS-01B (per-studio SMS sender provisioning), **not applied to production**, and not authorized for apply. This is the ordinary pre-apply position of a migration-bearing branch, not drift. Next free number is **0192** (available, **not claimed**). |
 | **Remote-only migrations** | **none** — no migration exists on production that the repository lacks |
-| **Total migrations in repo** | **189** (`0001` … `0157`, `0159` … `0190` — **no `0158`**) — derived by `npm run migration:state`, not counted by hand |
+| **Total migrations in repo** | **190** (`0001` … `0157`, `0159` … `0191` — **no `0158`**) — derived by `npm run migration:state`, not counted by hand |
 | **Apply timestamp** | ⚠️ **NO SERVER-GENERATED APPLY TIMESTAMP WAS CAPTURED**, so `hosted_applied_at` is `null`. The **operator-observed client-side window** is `2026-09-04T05:46:48.031Z` – `2026-09-04T05:47:04.197Z`, **16.166 s**, read from the apply host's clock around the CLI invocation. **That window is not a server apply time and is never represented as one.** |
 | **Verified applied** | **2026-09-04** |
 | **Applied from** | the exact reviewed **PR #664** head `86d52da81d9c796e11bbb0eda1586a158d7e8ee0` — **applied BEFORE #664 merged**, so the merge commit did not exist at apply time |
