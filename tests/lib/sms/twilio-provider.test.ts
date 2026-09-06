@@ -253,7 +253,13 @@ describe("credentials", () => {
   });
 
   it("refuses to call anything at all when unconfigured", async () => {
-    vi.unstubAllEnvs();
+    // Stub to EMPTY rather than unstubbing. `vi.unstubAllEnvs()` restores the
+    // ambient environment, and CI's ambient environment HAS Twilio
+    // credentials -- so this test passed locally (no creds) and failed in CI
+    // (creds present, adapter configured, fetch actually called). An assertion
+    // about "unconfigured" must construct that state, not assume it.
+    vi.stubEnv("TWILIO_ACCOUNT_SID", "");
+    vi.stubEnv("TWILIO_AUTH_TOKEN", "");
     stubFetch([{ status: 200, json: {} }]);
     const provider = await adapter();
     expect(

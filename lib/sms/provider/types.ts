@@ -56,6 +56,12 @@ export const PROVIDER_ERROR_CODES = [
   "provider_rejected",
   // Reserved for a failure with no better classification.
   "provider_error_unspecified",
+  // NOT a provider condition: emitted by the fencing wrapper when this worker
+  // has been displaced by a lease takeover and therefore has no authority to
+  // perform the effect it was about to perform. It lives in this union so the
+  // fence can wrap ANY port method without a second result shape, and so the
+  // orchestration handles it in one place rather than at every call site.
+  "lease_lost",
 ] as const;
 
 export type ProviderErrorCode = (typeof PROVIDER_ERROR_CODES)[number];

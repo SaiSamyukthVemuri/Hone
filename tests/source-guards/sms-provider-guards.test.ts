@@ -224,18 +224,27 @@ describe("provider responses are parsed fail-closed", () => {
     expect(src).toMatch(/unavailable \? "number_no_longer_available" : "provider_rejected"/);
   });
 
-  it("every provider MUTATION is fenced, not just the purchase", () => {
-    // Gating only the purchase left the adopted path unfenced: a worker that
-    // stalled AFTER buying skips that branch entirely.
+  it("every provider MUTATION is fenced BY CONSTRUCTION, not by six reminders", () => {
+    // This used to count six hand-written `await stillOurs()` calls. Counting
+    // reminders was the wrong guard for the wrong design: gating only the
+    // purchase had already left the adopted path unfenced, and a seventh
+    // effect would have needed a seventh reminder nobody would remember.
+    //
+    // The fence is now a type. The orchestration wraps the provider once and
+    // never touches the raw one again, so an unfenced effect is not something
+    // to notice in review -- it does not compile. The exhaustive classification
+    // and bypass checks live in tests/source-guards/lease-fencing-family.test.ts.
     const src = code(ORCHESTRATION);
-    const fenceChecks = src.match(/await stillOurs\(\)/g) ?? [];
-    // purchase, service, attach, inbound webhook, status callback, test send.
-    expect(fenceChecks.length).toBeGreaterThanOrEqual(6);
+    expect(src).toMatch(/const provider = fenceProviderMutations\(/);
+    expect(src).not.toMatch(/await stillOurs\(\)/);
   });
 
   it("a displaced worker's provider error never outranks lease_lost", () => {
     const src = code(ORCHESTRATION);
-    expect(src).toMatch(/if \(parked === "lease_lost"\)/);
+    // The store's verdict is inspected through a single named predicate, and
+    // displacement has one constructor.
+    expect(src).toMatch(/const wrote = /);
+    expect(src).toMatch(/const displaced = \(\): ProvisionOutcome/);
   });
 
   it("an unparseable response is a failure, not a partial success", () => {

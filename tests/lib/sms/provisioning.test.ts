@@ -9,7 +9,10 @@ import {
   type FinalizeResult,
   type ProvisioningStore,
 } from "@/lib/sms/provisioning";
-import { FakeSmsProvisioningProvider } from "@/lib/sms/provider/fake-provider";
+import {
+  FakeSmsProvisioningProvider,
+  type FakeProviderScript,
+} from "@/lib/sms/provider/fake-provider";
 import type { ProviderErrorCode } from "@/lib/sms/provider/types";
 
 // COMMS-01B — per-studio SMS sender provisioning.
@@ -1071,4 +1074,388 @@ describe("number search", () => {
       .toMatchObject({ ok: false, reason: "invalid_input" });
     expect(provider.calls.search).toBe(0);
   });
+});
+
+// ---------------------------------------------------------------------------
+// 12. THE STALL-AND-TAKEOVER MATRIX
+// ---------------------------------------------------------------------------
+//
+// Three consecutive reviews found the SAME defect wearing three faces: a stale
+// worker that kept acting after another generation had taken its attempt over.
+// Each was patched at the site where it was spotted. This suite exists so the
+// FAMILY is closed rather than the three instances, by driving a takeover at
+// every point in the sequence instead of the one point a reviewer happened to
+// look at.
+//
+// THE INVARIANT, stated once:
+//
+//   After generation G loses its lease, G has ZERO authority. It performs no
+//   further provider mutation, it writes no authoritative final state, and it
+//   reports `lease_lost` rather than its own stale story -- while the worker
+//   that took over remains able to finish.
+//
+// WHERE A TAKEOVER CAN BE INJECTED, AND WHY IT MATTERS. The orchestration
+// revalidates the fence immediately before every mutating provider call, so the
+// sequence is a chain of windows:
+//
+//   ... fence -> effect N -> [WINDOW] -> fence -> effect N+1 ...
+//
+// A stall in a WINDOW is caught by the next fence, and the strict claim
+// (`0 mutations after takeover`) holds. A stall in the sub-millisecond gap
+// BETWEEN the fence and the call it guards cannot be caught by any fence --
+// that is a property of distributed systems, not of this code -- so it is
+// tested SEPARATELY below, where the claim is the weaker but still decisive
+// one: at most the single in-flight effect, no divergent resource, and a stop
+// immediately afterwards. Writing one suite that blurred the two would have
+// been a test that overclaims.
+
+/** Provider methods that mutate something outside Hone, and cost money. */
+const MUTATING_METHODS = new Set([
+  "purchaseNumber",
+  "createMessagingService",
+  "attachNumberToService",
+  "configureInboundWebhook",
+  "configureStatusCallback",
+  "sendProvisioningTest",
+]);
+
+/** Store methods that write authoritative final state. */
+const AUTHORITATIVE_METHODS = new Set(["finalize", "fail"]);
+
+type Generation = "old" | "new";
+type ProviderCall = { worker: Generation; method: string };
+type StoreCall = { worker: Generation; method: string; result: string };
+
+type TakeoverReport = {
+  oldResult: string;
+  newOutcome: Awaited<ReturnType<typeof provisionStudioSmsSender>>;
+  fired: boolean;
+  oldProviderMutationsAfterTakeover: string[];
+  oldAuthoritativeWritesAfterTakeover: string[];
+  oldWriteAttemptsAfterFirstRefusal: string[];
+  ownedNumbers: string[];
+  purchaseCalls: number;
+  finalRow: ReturnType<InMemoryStore["live"]>;
+};
+
+/**
+ * Authoritative writes this worker attempted AFTER the database had already
+ * told it `lease_lost`.
+ *
+ * WHY THIS IS SEPARATE FROM "writes that took effect". Both are zero in correct
+ * code, but only this one can see the difference between stopping on the
+ * refusal and ploughing on to attempt a second write that is refused for the
+ * same reason. Two negative controls -- deleting the `lease_lost` short-circuit
+ * on the failure path, and deleting it on the finalize path -- left every other
+ * assertion in this file green, because `failWith` converts the SECOND refusal
+ * into `lease_lost` too and the returned outcome is identical. The invariant
+ * the brief actually states is ZERO AUTHORITY, and a worker that keeps issuing
+ * writes it has already been told it may not make is still exercising it.
+ */
+function writeAttemptsAfterFirstRefusal(log: StoreCall[]): string[] {
+  const mine = log.filter((c) => c.worker === "old" && AUTHORITATIVE_METHODS.has(c.method));
+  const firstRefusal = mine.findIndex((c) => c.result === "lease_lost");
+  if (firstRefusal === -1) return [];
+  return mine.slice(firstRefusal + 1).map((c) => `${c.method} -> ${c.result}`);
+}
+
+/**
+ * Run one attempt, stall it at `phase`, let a SECOND worker take the attempt
+ * over completely, then release the first and record what it did afterwards.
+ *
+ * `phase` is `${providerMethod}:before` or `${providerMethod}:after`. The
+ * takeover fires exactly once: the hook disarms itself before the second worker
+ * runs, or it would recurse into itself.
+ */
+async function runTakeoverAt(
+  phase: string,
+  opts: { script?: FakeProviderScript; clearScriptBeforeTakeover?: boolean } = {},
+): Promise<TakeoverReport> {
+  const rawProvider = new FakeSmsProvisioningProvider(opts.script ?? {});
+  const rawStore = new InMemoryStore(MEMBERS);
+
+  let worker: Generation = "old";
+  let fired = false;
+  let takeoverAtProvider = Number.POSITIVE_INFINITY;
+  let takeoverAtStore = Number.POSITIVE_INFINITY;
+  let newOutcome: Awaited<ReturnType<typeof provisionStudioSmsSender>> | null = null;
+
+  const providerLog: ProviderCall[] = [];
+  const storeLog: StoreCall[] = [];
+  let hook: ((p: string) => Promise<void>) | null = null;
+
+  // Wrapping rather than editing the fake keeps the takeover machinery inside
+  // the test: production-shaped code learns nothing about being observed.
+  const provider = new Proxy(rawProvider, {
+    get(target, prop) {
+      const value = Reflect.get(target, prop, target);
+      if (typeof value !== "function") return value;
+      const method = String(prop);
+      return async (...args: unknown[]) => {
+        if (hook) await hook(`${method}:before`);
+        providerLog.push({ worker, method });
+        const out = await (value as (...a: unknown[]) => Promise<unknown>).apply(target, args);
+        if (hook) await hook(`${method}:after`);
+        return out;
+      };
+    },
+  }) as FakeSmsProvisioningProvider;
+
+  const store = new Proxy(rawStore, {
+    get(target, prop) {
+      const value = Reflect.get(target, prop, target);
+      if (typeof value !== "function") return value;
+      const method = String(prop);
+      return async (...args: unknown[]) => {
+        const out = await (value as (...a: unknown[]) => Promise<unknown>).apply(target, args);
+        const result =
+          out !== null && typeof out === "object" && "result" in out
+            ? String((out as { result: unknown }).result)
+            : String(out);
+        storeLog.push({ worker, method, result });
+        return out;
+      };
+    },
+  }) as ProvisioningStore;
+
+  const params = {
+    store,
+    provider,
+    studioId: STUDIO_A,
+    actorUserId: OWNER_A,
+    country: "CA",
+    areaCode: "416",
+    phoneNumber: CHOSEN,
+    inboundWebhookUrl: "https://hone.care/api/twilio/inbound-sms",
+    statusCallbackUrl: "https://hone.care/api/twilio/status",
+    testDestination: "+14165559999",
+    serviceLabel: "Studio A",
+    testBody: "Hone provisioning test.",
+  };
+
+  hook = async (p: string) => {
+    if (p !== phase) return;
+    hook = null; // fire once; the takeover worker uses the same proxy
+    fired = true;
+
+    // The lease expires. This is the ONLY way a second worker may take over --
+    // there is no cancel channel, and there does not need to be.
+    rawStore.now += rawStore.leaseMs + 1;
+
+    // A transient provider fault belongs to the attempt, not to the studio: the
+    // worker that takes over must be able to succeed where the last one failed.
+    if (opts.clearScriptBeforeTakeover) rawProvider.script = {};
+
+    worker = "new";
+    newOutcome = await provisionStudioSmsSender(params);
+    worker = "old";
+
+    takeoverAtProvider = providerLog.length;
+    takeoverAtStore = storeLog.length;
+  };
+
+  const oldOutcome = await provisionStudioSmsSender(params);
+
+  return {
+    oldResult: oldOutcome.result,
+    newOutcome: newOutcome!,
+    fired,
+    oldProviderMutationsAfterTakeover: providerLog
+      .slice(takeoverAtProvider === Number.POSITIVE_INFINITY ? providerLog.length : takeoverAtProvider)
+      .filter((c) => c.worker === "old" && MUTATING_METHODS.has(c.method))
+      .map((c) => c.method),
+    oldAuthoritativeWritesAfterTakeover: storeLog
+      .slice(takeoverAtStore === Number.POSITIVE_INFINITY ? storeLog.length : takeoverAtStore)
+      .filter(
+        (c) =>
+          c.worker === "old" &&
+          AUTHORITATIVE_METHODS.has(c.method) &&
+          // A write the database REFUSED is not a write. `lease_lost` is the
+          // refusal, and receiving it is the correct outcome, not a violation.
+          c.result !== "lease_lost",
+      )
+      .map((c) => `${c.method} -> ${c.result}`),
+    oldWriteAttemptsAfterFirstRefusal: writeAttemptsAfterFirstRefusal(storeLog),
+    ownedNumbers: rawProvider.ownedNumbers(),
+    purchaseCalls: rawProvider.calls.purchase,
+    finalRow: rawStore.live(STUDIO_A),
+  };
+}
+
+describe("a displaced worker has ZERO authority, at every point in the sequence", () => {
+  // Every window between one fence and the next. The names in parentheses are
+  // the phases the closure brief enumerates; several share a window because the
+  // orchestration has no step between them, and saying so is more honest than
+  // inventing two tests that inject at one program point.
+  const WINDOWS: ReadonlyArray<[string, string]> = [
+    ["lookupResourcesByClaim:after", "reconciled, before availability and before purchase"],
+    ["isNumberAvailable:after", "availability checked, before the purchase fence"],
+    ["purchaseNumber:after", "after purchase, before service creation"],
+    ["createMessagingService:after", "after service creation, before attach"],
+    ["attachNumberToService:after", "after attach, before the inbound webhook"],
+    ["configureInboundWebhook:after", "after the inbound webhook, before the status callback"],
+    ["configureStatusCallback:after", "after the status callback, before the test"],
+    ["sendProvisioningTest:after", "after the test, before finalize"],
+  ];
+
+  for (const [phase, description] of WINDOWS) {
+    it(`TAKEOVER @ ${phase} (${description})`, async () => {
+      const r = await runTakeoverAt(phase);
+
+      // The control. Every assertion below is vacuous if the stall never
+      // happened, and a renamed provider method would silently do exactly that.
+      expect(r.fired, `phase ${phase} never fired -- the matrix is vacuous`).toBe(true);
+
+      // OLD_PROVIDER_MUTATIONS_AFTER_TAKEOVER = 0
+      expect(r.oldProviderMutationsAfterTakeover).toEqual([]);
+
+      // OLD_AUTHORITATIVE_WRITES_AFTER_TAKEOVER = 0
+      expect(r.oldAuthoritativeWritesAfterTakeover).toEqual([]);
+
+      // ...and it STOPS on the refusal rather than trying again.
+      expect(r.oldWriteAttemptsAfterFirstRefusal).toEqual([]);
+
+      // OLD_RESULT = lease_lost. Not `failed`, not a provider error code: the
+      // displaced worker must not narrate a story about a row it no longer owns.
+      expect(r.oldResult).toBe("lease_lost");
+
+      // The current worker remains reconcilable -- it finished the job.
+      expect(r.newOutcome).toMatchObject({ ok: true, result: "activated" });
+
+      // And the studio owns exactly ONE number. This is the money assertion:
+      // two workers, one purchase.
+      expect(r.ownedNumbers).toHaveLength(1);
+      expect(r.finalRow?.status).toBe("active");
+    });
+  }
+
+  it("TAKEOVER @ the failure path (during finalize / failure handling)", async () => {
+    // The provisioning test FAILS for the old worker, which sends it down the
+    // park-the-identifiers branch -- a finalize that runs while a newer
+    // generation already owns the row. Reporting `test_failed` from here was
+    // one of the three original defects: it overwrites a live worker's truth
+    // with a stale worker's error.
+    const r = await runTakeoverAt("sendProvisioningTest:after", {
+      script: { testSendFails: "provider_timeout" },
+      clearScriptBeforeTakeover: true,
+    });
+
+    expect(r.fired).toBe(true);
+    expect(r.oldProviderMutationsAfterTakeover).toEqual([]);
+    expect(r.oldAuthoritativeWritesAfterTakeover).toEqual([]);
+
+    // The finalize that parks the identifiers is REFUSED, and the worker stops
+    // there. Falling through to `fail()` would be a second write attempted
+    // after the database had already said no.
+    expect(r.oldWriteAttemptsAfterFirstRefusal).toEqual([]);
+
+    // THE POINT: `lease_lost`, not `failed` with reason `test_failed`.
+    expect(r.oldResult).toBe("lease_lost");
+    expect(r.newOutcome).toMatchObject({ ok: true, result: "activated" });
+    expect(r.ownedNumbers).toHaveLength(1);
+  });
+
+  it("MUTATION CONTROL: with the fence ignored, the displaced worker keeps acting", async () => {
+    // Prove the matrix is not green by accident. Run the same stall against a
+    // store whose fence always answers yes -- which is what the code looked
+    // like before the adopted path was fenced -- and watch the old worker sail
+    // on through mutations it has no authority to perform.
+    const rawProvider = new FakeSmsProvisioningProvider();
+    const rawStore = new InMemoryStore(MEMBERS, { ignoreFence: true });
+    let worker: Generation = "old";
+    const providerLog: ProviderCall[] = [];
+    let takeoverAt = Number.POSITIVE_INFINITY;
+    let hook: ((p: string) => Promise<void>) | null = null;
+
+    const provider = new Proxy(rawProvider, {
+      get(target, prop) {
+        const value = Reflect.get(target, prop, target);
+        if (typeof value !== "function") return value;
+        const method = String(prop);
+        return async (...args: unknown[]) => {
+          if (hook) await hook(`${method}:before`);
+          providerLog.push({ worker, method });
+          const out = await (value as (...a: unknown[]) => Promise<unknown>).apply(target, args);
+          if (hook) await hook(`${method}:after`);
+          return out;
+        };
+      },
+    }) as FakeSmsProvisioningProvider;
+
+    const params = {
+      store: rawStore,
+      provider,
+      studioId: STUDIO_A,
+      actorUserId: OWNER_A,
+      country: "CA",
+      areaCode: "416",
+      phoneNumber: CHOSEN,
+      inboundWebhookUrl: "https://hone.care/api/twilio/inbound-sms",
+      statusCallbackUrl: "https://hone.care/api/twilio/status",
+      testDestination: "+14165559999",
+      serviceLabel: "Studio A",
+      testBody: "Hone provisioning test.",
+    };
+
+    hook = async (p: string) => {
+      if (p !== "purchaseNumber:after") return;
+      hook = null;
+      rawStore.now += rawStore.leaseMs + 1;
+      worker = "new";
+      await provisionStudioSmsSender(params);
+      worker = "old";
+      takeoverAt = providerLog.length;
+    };
+
+    const outcome = await provisionStudioSmsSender(params);
+    const after = providerLog
+      .slice(takeoverAt)
+      .filter((c) => c.worker === "old" && MUTATING_METHODS.has(c.method));
+
+    // The bad behaviour, demonstrated for real. If this ever comes back empty,
+    // the matrix above has stopped proving anything.
+    expect(after.length).toBeGreaterThan(0);
+    expect(outcome.result).not.toBe("lease_lost");
+  });
+});
+
+describe("the in-flight gap: what fencing CANNOT prevent, bounded", () => {
+  // A stall between `stillOurs()` and the call it guards is unreachable by any
+  // fence -- the check has already answered. The guarantee here is therefore
+  // narrower, and stating it precisely is the point: AT MOST the single
+  // in-flight effect, no divergent resource, and a stop at the very next fence.
+  //
+  // This is also why the claim key exists. The in-flight effect lands under the
+  // SAME key as the new worker's, so it is discoverable and adoptable rather
+  // than orphaned -- which is what makes the residual window survivable.
+  const IN_FLIGHT: ReadonlyArray<[string, string]> = [
+    ["purchaseNumber:before", "stalled between the fence and the purchase"],
+    ["createMessagingService:before", "stalled between the fence and service creation"],
+    ["attachNumberToService:before", "stalled between the fence and the attach"],
+    ["sendProvisioningTest:before", "stalled between the fence and the test"],
+  ];
+
+  for (const [phase, description] of IN_FLIGHT) {
+    it(`IN-FLIGHT @ ${phase} (${description})`, async () => {
+      const r = await runTakeoverAt(phase);
+      expect(r.fired, `phase ${phase} never fired`).toBe(true);
+
+      // At most the one call that was already past its fence.
+      expect(r.oldProviderMutationsAfterTakeover.length).toBeLessThanOrEqual(1);
+
+      // Still absolute: no authoritative write, no retry after the refusal,
+      // and no stale story.
+      expect(r.oldAuthoritativeWritesAfterTakeover).toEqual([]);
+      expect(r.oldWriteAttemptsAfterFirstRefusal).toEqual([]);
+      expect(r.oldResult).toBe("lease_lost");
+
+      // No DIVERGENT resource. The in-flight effect lands under the shared
+      // claim key, so it converges with the new worker's rather than becoming
+      // a second number Hone pays for and has no record of.
+      expect(r.ownedNumbers).toHaveLength(1);
+      expect(r.newOutcome).toMatchObject({ ok: true, result: "activated" });
+      expect(r.finalRow?.status).toBe("active");
+      expect(r.finalRow?.phoneNumber).toBe(CHOSEN);
+    });
+  }
 });

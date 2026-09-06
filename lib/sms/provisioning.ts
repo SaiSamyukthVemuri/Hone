@@ -1,4 +1,5 @@
 import "server-only";
+import { fenceProviderMutations } from "./provider/fenced";
 import {
   SEARCH_LIMITS,
   type AvailableNumberCandidate,
@@ -382,9 +383,7 @@ export async function provisionStudioSmsSender(
     // stale error instead would surface a lie to the owner: an availability
     // check that resumed after a takeover would say "that number is gone"
     // while the current generation is busy successfully provisioning it.
-    if (parked === "lease_lost") {
-      return { ok: false, result: "lease_lost", senderId };
-    }
+    if (wrote(parked)) return displaced();
 
     return {
       ok: false,
@@ -395,38 +394,48 @@ export async function provisionStudioSmsSender(
     };
   };
 
-  /**
-   * Revalidate the fence. Called before EVERY provider mutation, not only
-   * before a purchase.
-   *
-   * Gating the purchase alone left the ADOPTED path unfenced: a worker that
-   * stalled AFTER buying skips the purchase branch entirely, so a displaced
-   * one would sail on to create a second messaging service and race the
-   * current worker to attach the same number. One attach takes the
-   * already-in-pool path, the live worker ends up testing an empty service,
-   * and reconciliation then finds two claim-tagged services and fails closed
-   * forever. Every mutation needs the fence, not just the billable one.
-   */
-  const stillOurs = (): Promise<boolean> =>
-    input.store.assertLease({
-      studioId: input.studioId,
-      claimKey,
-      leaseGeneration,
-    });
-
   const displaced = (): ProvisionOutcome => ({
     ok: false,
     result: "lease_lost",
     senderId,
   });
 
+  // THE FENCE IS A TYPE FROM HERE ON, NOT A RULE TO REMEMBER.
+  //
+  // Every externally-mutating call on `provider` proves this generation
+  // immediately before it. The unfenced provider is deliberately NOT used
+  // again below: there is no call site left at which a future edit could
+  // forget the check, because the object it would be calling cannot perform an
+  // unfenced effect. See lib/sms/provider/fenced.ts for why this replaced six
+  // hand-written checks.
+  const provider = fenceProviderMutations(input.provider, () =>
+    input.store.assertLease({
+      studioId: input.studioId,
+      claimKey,
+      leaseGeneration,
+    }),
+  );
+
+  /**
+   * Record an authoritative write's verdict, and let the DATABASE's answer
+   * outrank this worker's.
+   *
+   * The second half of the same invariant: a displaced worker must not perform
+   * an effect, AND must not narrate one. `finalize`/`fail` return `lease_lost`
+   * when the generation has moved, and discarding that -- which three separate
+   * call sites did -- reports a stale worker's story over a newer worker's
+   * truth.
+   */
+  const wrote = (result: string): result is "lease_lost" => result === "lease_lost";
+
   // --- 5a. RECONCILE FIRST. Always, on every attempt. -----------------------
   // Before considering a purchase we ask the provider what already exists
   // under this claim. On a first attempt the answer is nothing; on a retry
   // after a lost finalize it is the number we already own -- and finding it
   // here is the entire reason a second one never gets bought.
-  const existing = await input.provider.lookupResourcesByClaim(claimKey);
+  const existing = await provider.lookupResourcesByClaim(claimKey);
   if (!existing.ok) {
+    if (existing.code === "lease_lost") return displaced();
     // We cannot prove we own nothing, so we must not buy. Refusing to spend
     // under uncertainty is the whole posture.
     return failWith(existing.code, existing.retryable, true);
@@ -441,11 +450,12 @@ export async function provisionStudioSmsSender(
   if (!phoneNumberSid) {
     // 5b. Exact availability re-check. Narrows the window before spending;
     // the purchase below remains the authority (see isNumberAvailable).
-    const availability = await input.provider.isNumberAvailable({
+    const availability = await provider.isNumberAvailable({
       country: input.country.trim().toUpperCase(),
       phoneNumber: input.phoneNumber,
     });
     if (!availability.ok) {
+      if (availability.code === "lease_lost") return displaced();
       return failWith(availability.code, availability.retryable, false);
     }
     if (!availability.available) {
@@ -467,17 +477,12 @@ export async function provisionStudioSmsSender(
     // because Twilio's purchase API takes no idempotency key -- but it shrinks
     // it from the whole provisioning sequence to a few milliseconds, and the
     // claim-key FriendlyName keeps the residue discoverable rather than silent.
-    if (!(await stillOurs())) {
-      // Displaced. Stop WITHOUT spending, and without writing: the row now
-      // belongs to the worker that took over.
-      return displaced();
-    }
-
-    const purchase = await input.provider.purchaseNumber({
+    const purchase = await provider.purchaseNumber({
       claimKey,
       phoneNumber: input.phoneNumber,
     });
     if (!purchase.ok) {
+      if (purchase.code === "lease_lost") return displaced();
       // A timeout here is the ambiguous case: the number may exist. The claim
       // survives, so the retry's reconcile step finds it.
       const ambiguous =
@@ -494,58 +499,65 @@ export async function provisionStudioSmsSender(
   }
 
   // --- 7. Messaging service (adopted if this claim already made one) --------
-  // Fenced even on the adopted path: a worker that stalled AFTER purchasing
-  // never passes through the purchase gate above.
-  if (!(await stillOurs())) return displaced();
-
   if (!messagingServiceSid) {
-    const service = await input.provider.createMessagingService({
+    const service = await provider.createMessagingService({
       claimKey,
       serviceLabel: input.serviceLabel,
     });
     if (!service.ok) {
+      if (service.code === "lease_lost") return displaced();
       return failWith(service.code, service.retryable, true);
     }
     messagingServiceSid = service.messagingServiceSid;
   }
 
   // --- 8. Associate the number with the service ----------------------------
-  if (!(await stillOurs())) return displaced();
-  const attach = await input.provider.attachNumberToService({
+  const attach = await provider.attachNumberToService({
     messagingServiceSid,
     phoneNumberSid,
   });
-  if (!attach.ok) return failWith(attach.code, attach.retryable, true);
+  if (!attach.ok) {
+    if (attach.code === "lease_lost") return displaced();
+    return failWith(attach.code, attach.retryable, true);
+  }
 
   // --- 9. Inbound webhook: this is what makes To-number -> studio work ------
-  if (!(await stillOurs())) return displaced();
-  const inbound = await input.provider.configureInboundWebhook({
+  const inbound = await provider.configureInboundWebhook({
     messagingServiceSid,
     inboundWebhookUrl: input.inboundWebhookUrl,
   });
-  if (!inbound.ok) return failWith(inbound.code, inbound.retryable, true);
+  if (!inbound.ok) {
+    if (inbound.code === "lease_lost") return displaced();
+    return failWith(inbound.code, inbound.retryable, true);
+  }
 
   // --- 10. Delivery status callback ----------------------------------------
-  if (!(await stillOurs())) return displaced();
-  const status = await input.provider.configureStatusCallback({
+  const status = await provider.configureStatusCallback({
     messagingServiceSid,
     statusCallbackUrl: input.statusCallbackUrl,
   });
-  if (!status.ok) return failWith(status.code, status.retryable, true);
+  if (!status.ok) {
+    if (status.code === "lease_lost") return displaced();
+    return failWith(status.code, status.retryable, true);
+  }
 
   // --- 12. Prove it can actually send --------------------------------------
-  if (!(await stillOurs())) return displaced();
-  const test = await input.provider.sendProvisioningTest({
+  const test = await provider.sendProvisioningTest({
     messagingServiceSid,
     to: input.testDestination,
     body: input.testBody,
   });
 
   if (!test.ok) {
+    if (test.code === "lease_lost") return displaced();
     // Record the identifiers WITHOUT activating. The resources are real and
     // must be remembered -- forgetting them is how Hone ends up paying for a
     // number it has no record of -- but an untested sender is not a sender.
-    await input.store.finalize({
+    // The result is INSPECTED, never discarded. If the database says we were
+    // displaced while the test ran, that answer outranks the test failure: the
+    // worker that took over owns the row, and reporting `test_failed` here
+    // would overwrite a newer worker's truth with a stale one.
+    const parkedIdentifiers = await input.store.finalize({
       studioId: input.studioId,
       claimKey,
       leaseGeneration,
@@ -554,6 +566,7 @@ export async function provisionStudioSmsSender(
       messagingServiceSid,
       testOk: false,
     });
+    if (wrote(parkedIdentifiers)) return displaced();
     return failWith(test.code, test.retryable, true);
   }
 
@@ -584,18 +597,23 @@ export async function provisionStudioSmsSender(
   // this call fails too (the database is simply unreachable) the lease expires
   // on its own and a later attempt takes over, which is the slower path to the
   // same place.
-  if (finalized === "lease_lost") {
+  if (wrote(finalized)) {
     // Another worker owns this attempt now. Do NOT park the row in `error`:
     // that would stomp a live attempt. Its resources stay discoverable under
     // the shared claim key.
-    return { ok: false, result: "lease_lost", senderId };
+    return displaced();
   }
 
-  await failWith(
+  // RETURN the parked outcome rather than discarding it. `failWith` already
+  // converts a refused write into `lease_lost`; throwing that away and
+  // reporting `finalize_failed` would tell the owner the stale worker's story
+  // while a newer generation is provisioning successfully.
+  const parked = await failWith(
     finalized === "conflict" ? "finalize_conflict" : "finalize_failed",
     finalized !== "conflict",
     true,
   );
+  if (parked.result === "lease_lost") return parked;
 
   return {
     ok: false,
