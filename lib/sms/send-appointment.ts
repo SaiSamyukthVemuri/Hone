@@ -1,4 +1,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import {
+  resolveActiveStudioSender,
+  SENDER_NOT_ACTIVE_ERROR,
+  SENDER_READ_FAILED_ERROR,
+} from "@/lib/sms/sender-routing";
 import type { Client, Studio, SmsType } from "@/lib/types/database";
 import {
   buildBookingConfirmationSms,
@@ -376,6 +381,31 @@ async function sendOne(args: SendOneArgs): Promise<SmsSendResult> {
     return { ok: false, skipped: true, reason: gate.reason };
   }
 
+  // COMMS-01B2. Route BEFORE claiming, deliberately.
+  //
+  // A missing sender is a configuration fact, not a failed send: it is the same
+  // class as the consent gate above, and it must not consume one of the row's
+  // three attempts. Claiming first would burn the whole budget against a studio
+  // whose number simply is not provisioned yet, and the appointment would then
+  // be permanently unreachable by SMS even after the sender went live.
+  //
+  // A read failure is likewise not a send attempt. Skipping without claiming
+  // leaves the next cron pass free to retry, which is what a transient database
+  // fault deserves.
+  const routed = await resolveActiveStudioSender(args.admin, args.studio.id ?? "");
+  if (!routed.ok) {
+    return {
+      ok: false,
+      error:
+        routed.reason === "read_failed"
+          ? SENDER_READ_FAILED_ERROR
+          : SENDER_NOT_ACTIVE_ERROR,
+      // "I could not read the table" may resolve on its own; "this studio has
+      // no active sender" cannot, and retrying it only repeats the same answer.
+      retryable: routed.reason === "read_failed",
+    };
+  }
+
   const claimed = await claimSmsSend(args.admin, args.appointmentId, args.smsType);
   if (!claimed) {
     return { ok: false, skipped: true, reason: "not_claimed" };
@@ -391,7 +421,13 @@ async function sendOne(args: SendOneArgs): Promise<SmsSendResult> {
   try {
     const body = args.buildBody(gate.normalizedPhone);
     const to = args.to(gate.normalizedPhone);
-    const result = await sendSmsSafely({ to, body });
+    const result = await sendSmsSafely({
+      to,
+      body,
+      // Provider-derived, resolved above from this studio's own ACTIVE row.
+      // Nothing a caller or a browser supplied reaches this field.
+      messagingServiceSid: routed.sender.messagingServiceSid,
+    });
     success = result.ok;
     if (result.ok) {
       outcome = { ok: true, messageSid: result.messageSid };
