@@ -346,3 +346,96 @@ describe("P2-2 precedence is over VALID authorities, not non-blank strings", () 
     expect(studioClientContactEmail.length).toBe(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Round two. Both defects were CLIENT-MAIL TRUTH defects:
+//   * an over-long DNS label passed validation, so a Reply-To that cannot
+//     resolve could still reach the transport -- the same "provider may reject
+//     the whole message" failure the first round set out to close;
+//   * the postcare preview re-implemented "first non-blank" while send-time
+//     resolved "first VALID", so the owner saw a Contact address the client
+//     never received.
+// ---------------------------------------------------------------------------
+
+describe("DNS label bounds — an accepted Reply-To must be resolvable", () => {
+  const label = (n: number) => "x".repeat(n);
+
+  it("accepts a 63-octet label", () => {
+    expect(isSafeReplyToAddress(`a@${label(63)}.test`)).toBe(true);
+  });
+
+  it("rejects a 64-octet label", () => {
+    expect(isSafeReplyToAddress(`a@${label(64)}.test`)).toBe(false);
+    expect(resolveReplyTo(`a@${label(64)}.test`)).toBeNull();
+  });
+
+  it("accepts several ordinary labels", () => {
+    expect(isSafeReplyToAddress("front.desk@mail.studio.co.uk")).toBe(true);
+  });
+
+  it("rejects an empty label from consecutive dots", () => {
+    expect(isSafeReplyToAddress("a@studio..test")).toBe(false);
+    expect(isSafeReplyToAddress("a@.studio.test")).toBe(false);
+  });
+
+  it("keeps the existing leading/trailing hyphen rule", () => {
+    expect(isSafeReplyToAddress("a@-studio.test")).toBe(false);
+    expect(isSafeReplyToAddress("a@studio-.test")).toBe(false);
+    expect(isSafeReplyToAddress("a@stu-dio.test")).toBe(true);
+  });
+
+  it("rejects an over-long domain and an over-long local part", () => {
+    const many = Array.from({ length: 5 }, () => label(60)).join(".");
+    expect(many.length).toBeGreaterThan(253);
+    expect(isSafeReplyToAddress(`a@${many}.test`)).toBe(false);
+    expect(isSafeReplyToAddress(`${label(65)}@studio.test`)).toBe(false);
+  });
+
+  it("bounds the TLD too", () => {
+    expect(isSafeReplyToAddress(`a@studio.${"t".repeat(64)}`)).toBe(false);
+  });
+});
+
+describe("ONE authority — the preview cannot drift from send-time", () => {
+  const PREVIEW = readFileSync(
+    join(process.cwd(), "app/(app)/settings/studio/PostcareEditingHelpers.tsx"),
+    "utf8",
+  );
+
+  it("the preview calls the shared resolver", () => {
+    expect(PREVIEW).toContain(
+      'import { studioClientContactEmail } from "@/lib/email/studio-identity"',
+    );
+    expect(PREVIEW).toContain("studioClientContactEmail({");
+  });
+
+  it("the preview keeps NO hand-rolled precedence of its own", () => {
+    // The defect was a local ternary chain re-deriving postcare -> owner.
+    expect(PREVIEW).not.toMatch(/contactEmail\s*&&\s*contactEmail\.trim\(\)\.length\s*>\s*0/);
+    expect(PREVIEW).not.toMatch(/ownerFallbackEmail\.trim\(\)\.length\s*>\s*0/);
+  });
+
+  it("preview and send-time agree on every precedence case", () => {
+    // The preview passes its two props straight through, so agreement is
+    // established by the helper being the only decider on both paths.
+    const cases: Array<[string | null, string | null, string | null]> = [
+      ["care@studio.test", "owner@studio.test", "care@studio.test"],
+      ["front:desk@studio.test", "owner@studio.test", "owner@studio.test"],
+      ["   ", "owner@studio.test", "owner@studio.test"],
+      ["care@studio.test", "front:desk@studio.test", "care@studio.test"],
+      ["front:desk@studio.test", "front:desk@studio.test", null],
+      [null, null, null],
+    ];
+    for (const [postcare, owner, expected] of cases) {
+      expect(
+        studioClientContactEmail({ postcare_contact_email: postcare, owner_email: owner }),
+      ).toBe(expected);
+    }
+  });
+
+  it("exactly one Reply-To validator exists in lib/", () => {
+    const SRC = readFileSync(join(process.cwd(), "lib/email/studio-identity.ts"), "utf8");
+    expect(SRC.match(/export function isSafeReplyToAddress/g)?.length).toBe(1);
+    expect(SRC.match(/const DOMAIN_DOT_ATOM/g)?.length).toBe(1);
+  });
+});

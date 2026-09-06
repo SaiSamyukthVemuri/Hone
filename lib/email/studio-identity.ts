@@ -84,8 +84,17 @@ const ATEXT = "A-Za-z0-9!#$%&'*+/=?^_`{|}~-";
 /** dot-atom: non-empty atoms joined by SINGLE dots. No leading, trailing or doubled dot. */
 const LOCAL_DOT_ATOM = new RegExp(`^[${ATEXT}]+(?:\\.[${ATEXT}]+)*$`);
 
-/** ASCII domain labels (no leading/trailing hyphen) with a 2+ alpha TLD. */
-const DOMAIN_DOT_ATOM = /^(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+[A-Za-z]{2,}$/;
+/**
+ * ASCII domain labels, no leading or trailing hyphen, each bounded to the DNS
+ * limit of 1..63 octets, with a 2..63 alpha TLD.
+ *
+ * The bound is not pedantry. An over-long label cannot resolve, so a Reply-To
+ * carrying one is undeliverable and the provider may reject the whole message —
+ * the exact failure this validator exists to prevent. `{0,61}` between the two
+ * mandatory edge characters is what makes each label 1..63.
+ */
+const DOMAIN_DOT_ATOM =
+  /^(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}$/;
 
 /**
  * Conservative address validation for Reply-To.
