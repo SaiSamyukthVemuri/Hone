@@ -174,7 +174,10 @@ const PURCHASE_PATH_OPERATIONS = [
  * covered by that path's own takeover proof -- naming it here is a declaration
  * that it is, not an exemption from being tested.
  */
-const ADOPTION_PATH_ONLY_OPERATIONS = ["lookupOwnedNumber"] as const;
+const ADOPTION_PATH_ONLY_OPERATIONS = [
+  "lookupOwnedNumber",
+  "readMessagingServiceConfig",
+] as const;
 
 const POINTS: Array<{ name: string; allow: number; effectsExpected: number }> = [
   { name: "before reconcile", allow: 0, effectsExpected: 0 },

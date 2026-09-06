@@ -75,6 +75,9 @@ export const CLAIM_SCOPED_READS = [
   // owns this number and it is in the right service" forward toward a finalize
   // that belongs to a newer generation.
   "lookupOwnedNumber",
+  // Also adoption-only, also a read: the service configuration Hone COMPARES
+  // against and never writes.
+  "readMessagingServiceConfig",
 ] as const;
 
 /**
@@ -127,6 +130,8 @@ export function fenceProviderMutations(
     lookupResourcesByClaim: (claimKey) =>
       guarded(() => provider.lookupResourcesByClaim(claimKey)),
     lookupOwnedNumber: (input) => guarded(() => provider.lookupOwnedNumber(input)),
+    readMessagingServiceConfig: (input) =>
+      guarded(() => provider.readMessagingServiceConfig(input)),
 
     // --- billable / mutating: fenced, every one ---------------------------
     purchaseNumber: (input) => guarded(() => provider.purchaseNumber(input)),

@@ -1,6 +1,8 @@
 import "server-only";
 import { fenceProviderMutations } from "./provider/fenced";
 import type { SmsProvisioningProvider } from "./provider/types";
+import { safeResourceId } from "./provider/association";
+import type { NumberAssociation } from "./provider/types";
 import type { AttemptErrorCode, ProvisioningStore } from "./provisioning";
 
 // ===========================================================================
@@ -57,13 +59,25 @@ export type AdoptionOutcome =
       result: "failed";
       reason: AttemptErrorCode | AdoptionRefusal;
       retryable: boolean;
+      /**
+       * What the census actually found, when the refusal is about WHERE the
+       * number lives. Redacted to a recognisable-but-unusable form: an operator
+       * can match it in the Twilio console, an ordinary log line cannot leak a
+       * working identifier.
+       */
+      discovered?: { association: NumberAssociation["kind"]; safeServiceIds: string[] };
+      /** Which required configuration did not match. Never the URLs themselves. */
+      configurationMismatch?: Array<"inbound_webhook" | "status_callback">;
     };
 
 /** Refusals unique to adoption. None of them is recoverable by retrying. */
 export type AdoptionRefusal =
   | "number_not_owned_by_account"
   | "number_not_in_named_service"
-  | "service_membership_unknown"
+  | "number_in_other_service"
+  | "number_association_ambiguous"
+  | "number_association_unavailable"
+  | "provider_configuration_required"
   | "provider_number_mismatch";
 
 export type AdoptionInput = {
@@ -76,8 +90,10 @@ export type AdoptionInput = {
   phoneNumber: string;
   /** The Messaging Service the studio ALREADY has. Never created, never changed. */
   messagingServiceSid: string;
-  inboundWebhookUrl: string;
-  statusCallbackUrl: string;
+  /** Hone's REQUIRED inbound URL. Compared against, never written. */
+  requiredInboundWebhookUrl: string;
+  /** Hone's REQUIRED status callback. Compared against, never written. */
+  requiredStatusCallbackUrl: string;
   testDestination: string;
   testBody: string;
 };
@@ -139,6 +155,10 @@ export async function adoptExistingStudioSmsSender(
   const failWith = async (
     reason: AttemptErrorCode | AdoptionRefusal,
     retryable: boolean,
+    detail: {
+      discovered?: { association: NumberAssociation["kind"]; safeServiceIds: string[] };
+      configurationMismatch?: Array<"inbound_webhook" | "status_callback">;
+    } = {},
   ): Promise<AdoptionOutcome> => {
     const parked = await input.store.fail({
       studioId: input.studioId,
@@ -151,20 +171,20 @@ export async function adoptExistingStudioSmsSender(
     if (parked === "lease_lost") {
       return { ok: false, result: "lease_lost", senderId };
     }
-    return { ok: false, result: "failed", reason, retryable };
+    return { ok: false, result: "failed", reason, retryable, ...detail };
   };
 
   // --- 2. PROVE OWNERSHIP AND ASSOCIATION, before touching anything --------
   const facts = await provider.lookupOwnedNumber({
     phoneNumber: input.phoneNumber,
-    messagingServiceSid: input.messagingServiceSid,
+    expectedMessagingServiceSid: input.messagingServiceSid,
   });
   if (!facts.ok) {
     if (facts.code === "lease_lost") return { ok: false, result: "lease_lost", senderId };
     return failWith(facts.code, facts.retryable);
   }
 
-  const { phoneNumberSid, phoneNumber, inNamedService } = facts.facts;
+  const { phoneNumberSid, phoneNumber, association } = facts.facts;
 
   if (!phoneNumberSid) {
     // The account does not own it. Adoption has nothing to adopt, and the one
@@ -174,36 +194,69 @@ export async function adoptExistingStudioSmsSender(
   if (phoneNumber !== input.phoneNumber) {
     return failWith("provider_number_mismatch", false);
   }
-  if (inNamedService === "no") {
-    // Attaching would MOVE the number out of whatever service holds it today.
-    // That is a decision for a human, made deliberately, outside Hone.
-    return failWith("number_not_in_named_service", false);
-  }
-  if (inNamedService !== "yes") {
-    // UNKNOWN is a refusal. Reading it as "not a member" is what would license
-    // the silent move above.
-    return failWith("service_membership_unknown", false);
+
+  // DECISION 2 — the refusal tells the operator WHERE the number actually is.
+  // "Not in the service you named" is true but useless; an operator hearing it
+  // will reasonably assume the number is free, and the next thing they do is
+  // attach it out of a service that may be carrying live traffic.
+  switch (association.kind) {
+    case "in_expected_service":
+      break;
+    case "in_other_service":
+      return failWith("number_in_other_service", false, {
+        discovered: {
+          association: "in_other_service",
+          safeServiceIds: [safeResourceId(association.messagingServiceSid)],
+        },
+      });
+    case "not_associated":
+      return failWith("number_not_in_named_service", false, {
+        discovered: { association: "not_associated", safeServiceIds: [] },
+      });
+    case "ambiguous":
+      // Two services claiming one number is contradictory, not a preference to
+      // resolve. Choosing the expected one would let adoption proceed exactly
+      // when the provider is saying it does not know where the number is.
+      return failWith("number_association_ambiguous", false, {
+        discovered: {
+          association: "ambiguous",
+          safeServiceIds: association.messagingServiceSids.map(safeResourceId),
+        },
+      });
+    case "unavailable":
+      // An incomplete census is not absence. Retryable: a later attempt may read
+      // the pages it could not.
+      return failWith("number_association_unavailable", true, {
+        discovered: { association: "unavailable", safeServiceIds: [] },
+      });
   }
 
-  // --- 3. From here the two paths CONVERGE --------------------------------
-  // Identical to the purchase path's tail: configure the webhooks, prove the
-  // sender can actually send, then finalize. Every call fenced.
-  const inbound = await provider.configureInboundWebhook({
+  // --- 3. DECISION 1 — COMPARE the configuration. Never write it. ----------
+  // An existing studio-owned Messaging Service is not a freshly purchased
+  // Hone-owned one. Pointing its webhooks at Hone could silently break whatever
+  // it serves today, so adoption inspects and refuses; the mutation needs an
+  // explicit human decision and is not part of this path.
+  const current = await provider.readMessagingServiceConfig({
     messagingServiceSid: input.messagingServiceSid,
-    inboundWebhookUrl: input.inboundWebhookUrl,
   });
-  if (!inbound.ok) {
-    if (inbound.code === "lease_lost") return { ok: false, result: "lease_lost", senderId };
-    return failWith(inbound.code, inbound.retryable);
+  if (!current.ok) {
+    if (current.code === "lease_lost") return { ok: false, result: "lease_lost", senderId };
+    return failWith(current.code, current.retryable);
   }
 
-  const status = await provider.configureStatusCallback({
-    messagingServiceSid: input.messagingServiceSid,
-    statusCallbackUrl: input.statusCallbackUrl,
-  });
-  if (!status.ok) {
-    if (status.code === "lease_lost") return { ok: false, result: "lease_lost", senderId };
-    return failWith(status.code, status.retryable);
+  const mismatched: Array<"inbound_webhook" | "status_callback"> = [];
+  if (current.config.inboundRequestUrl !== input.requiredInboundWebhookUrl) {
+    mismatched.push("inbound_webhook");
+  }
+  if (current.config.statusCallbackUrl !== input.requiredStatusCallbackUrl) {
+    mismatched.push("status_callback");
+  }
+  if (mismatched.length > 0) {
+    // NOT a provider-test failure and NOT an activation. A distinct, typed
+    // result an operator can act on.
+    return failWith("provider_configuration_required", false, {
+      configurationMismatch: mismatched,
+    });
   }
 
   // --- 4. A REAL provider test. There is no adoption shortcut. -------------

@@ -1,4 +1,5 @@
 import "server-only";
+import { classifyAssociation } from "./association";
 import {
   asArray,
   asBoolean,
@@ -11,6 +12,7 @@ import {
   providerError,
   type AvailableNumberCandidate,
   type ClaimedResources,
+  type MessagingServiceConfig,
   type OwnedNumberFacts,
   type ProviderError,
   type ProviderAck,
@@ -234,30 +236,35 @@ export const twilioProvisioningProvider: SmsProvisioningProvider = {
   },
 
   /**
-   * WILLOW ADOPTION -- read-only ownership + association evidence.
+   * WILLOW ADOPTION -- read-only ownership + a COMPLETE association census.
    *
-   * TWO GETs, and it cannot be anything else: this function performs no POST,
-   * PUT or DELETE, so calling it can never purchase, attach, move or create.
-   * That is the property that lets an operator run it before deciding anything.
+   * GETs only. This function issues no POST, PUT, PATCH or DELETE, so calling
+   * it can never purchase, attach, detach, move or create. That is what makes
+   * it safe to run before an operator has decided anything.
    *
-   * MEMBERSHIP IS ASKED OF THE NAMED SERVICE DIRECTLY, not derived by scanning
-   * every service. Twilio does not expose a number's Messaging Service on the
-   * IncomingPhoneNumber resource, so the only alternative is walking every
-   * service's PhoneNumbers subresource -- one request per service, and a walk
-   * whose "not found" is only as trustworthy as its pagination. Asking the one
-   * service the operator named is a single deterministic request, and anything
-   * it cannot answer becomes `unknown` rather than `no`.
+   * WHY A CENSUS AND NOT A MEMBERSHIP CHECK. Asking only "is it in the service
+   * you named" can answer no, but cannot say WHERE the number is -- and an
+   * operator told "not in service X" will reasonably assume it is free to
+   * attach. Twilio exposes no reverse index from a number to its Messaging
+   * Service, so completeness costs one request per service. For an
+   * operator-only adoption flow that is the right trade: a wrong answer here
+   * silently moves a number out of a service that is carrying live traffic.
+   *
+   * INCOMPLETE IS NOT ABSENT. Any page that fails, any membership probe that
+   * answers something other than 200/404, and any walk that hits the page bound
+   * yields `unavailable`. `not_associated` is claimed ONLY after every page has
+   * been read and every service probed.
    */
   async lookupOwnedNumber(input: {
     phoneNumber: string;
-    messagingServiceSid: string;
+    expectedMessagingServiceSid: string;
   }): Promise<ProviderResult<{ facts: OwnedNumberFacts }>> {
     const creds = readCredentials();
     if (!creds) return providerError("provider_not_configured", false);
 
     // 1. Does THIS account own the number? Filtering by PhoneNumber returns the
-    //    account's own inventory only, so a number belonging to someone else
-    //    simply is not there -- which is the refusal we want, not an error.
+    //    account's own inventory only, so a number belonging to someone else is
+    //    simply absent -- which is the refusal we want, not an error.
     const url =
       `${API_BASE}/Accounts/${encodeURIComponent(creds.accountSid)}` +
       `/IncomingPhoneNumbers.json?PhoneNumber=${encodeURIComponent(input.phoneNumber)}&PageSize=2`;
@@ -269,9 +276,12 @@ export const twilioProvisioningProvider: SmsProvisioningProvider = {
     const numbers = body ? asArray(body.incoming_phone_numbers) : null;
     if (!numbers) return providerError("provider_response_unparseable", false);
 
-    if (numbers.length === 0) {
-      return { ok: true, facts: { phoneNumberSid: null, phoneNumber: null, inNamedService: "unknown" } };
-    }
+    const unowned: OwnedNumberFacts = {
+      phoneNumberSid: null,
+      phoneNumber: null,
+      association: { kind: "unavailable", reason: "number_not_owned" },
+    };
+    if (numbers.length === 0) return { ok: true, facts: unowned };
     if (numbers.length > 1) {
       // One E.164 cannot legitimately be two records. Refuse to choose.
       return providerError("provider_resource_mismatch", false);
@@ -281,26 +291,115 @@ export const twilioProvisioningProvider: SmsProvisioningProvider = {
     const sid = rec ? asPhoneNumberSid(rec.sid) : null;
     const num = rec ? asE164(rec.phone_number) : null;
     if (!sid || !num) return providerError("provider_response_unparseable", false);
-    if (num !== input.phoneNumber) {
-      // The provider answered about a different number than we asked about.
-      return providerError("provider_resource_mismatch", false);
+    if (num !== input.phoneNumber) return providerError("provider_resource_mismatch", false);
+
+    // 2. THE CENSUS. Every service, every page, then one membership probe each.
+    const services: string[] = [];
+    let nextUrl: string | null = `${MESSAGING_BASE}/Services?PageSize=100`;
+    let pagesFetched = 0;
+
+    while (nextUrl) {
+      if (pagesFetched >= SERVICE_PAGE_LIMIT) {
+        return {
+          ok: true,
+          facts: { phoneNumberSid: sid, phoneNumber: num, association: { kind: "unavailable", reason: "service_page_limit" } },
+        };
+      }
+      pagesFetched += 1;
+
+      const page: ProviderResult<RawResponse> = await request(creds, nextUrl, { method: "GET" });
+      if (!page.ok || page.status !== 200) {
+        // A FAILED PAGE IS NOT AN EMPTY PAGE.
+        return {
+          ok: true,
+          facts: { phoneNumberSid: sid, phoneNumber: num, association: { kind: "unavailable", reason: "service_page_unreadable" } },
+        };
+      }
+      const pageBody = asRecord(page.json);
+      const list = pageBody ? asArray(pageBody.services) : null;
+      if (!list) {
+        return {
+          ok: true,
+          facts: { phoneNumberSid: sid, phoneNumber: num, association: { kind: "unavailable", reason: "service_page_unparseable" } },
+        };
+      }
+      for (const raw of list) {
+        const svc = asRecord(raw);
+        const svcSid = svc ? asString(svc.sid) : null;
+        if (svcSid) services.push(svcSid);
+      }
+
+      // Only an EXPLICIT null ends the walk. Absent or non-string metadata means
+      // we cannot know whether more pages exist, so the census is incomplete.
+      const meta = pageBody ? asRecord(pageBody.meta) : null;
+      const cursor = meta ? meta.next_page_url : undefined;
+      if (cursor === null) {
+        nextUrl = null;
+      } else if (typeof cursor === "string" && cursor.startsWith(MESSAGING_BASE)) {
+        nextUrl = cursor;
+      } else {
+        return {
+          ok: true,
+          facts: { phoneNumberSid: sid, phoneNumber: num, association: { kind: "unavailable", reason: "service_pagination_unreadable" } },
+        };
+      }
     }
 
-    // 2. Is it already a member of the service the operator named? A 404 is a
-    //    definite NO from the service itself; anything else is UNKNOWN, because
-    //    treating an unreadable answer as "not a member" is what would license
-    //    an attach that silently moves the number out of another service.
-    const memberUrl =
-      `${MESSAGING_BASE}/Services/${encodeURIComponent(input.messagingServiceSid)}` +
-      `/PhoneNumbers/${encodeURIComponent(sid)}`;
-    const memberRes = await request(creds, memberUrl, { method: "GET" });
-    if (!memberRes.ok) {
-      return { ok: true, facts: { phoneNumberSid: sid, phoneNumber: num, inNamedService: "unknown" } };
+    const holders: string[] = [];
+    for (const svcSid of services) {
+      const probe = await request(
+        creds,
+        `${MESSAGING_BASE}/Services/${encodeURIComponent(svcSid)}/PhoneNumbers/${encodeURIComponent(sid)}`,
+        { method: "GET" },
+      );
+      if (!probe.ok) {
+        return {
+          ok: true,
+          facts: { phoneNumberSid: sid, phoneNumber: num, association: { kind: "unavailable", reason: "membership_probe_failed" } },
+        };
+      }
+      if (probe.status === 200) holders.push(svcSid);
+      else if (probe.status !== 404) {
+        return {
+          ok: true,
+          facts: { phoneNumberSid: sid, phoneNumber: num, association: { kind: "unavailable", reason: "membership_probe_unexpected" } },
+        };
+      }
     }
-    const inNamedService: OwnedNumberFacts["inNamedService"] =
-      memberRes.status === 200 ? "yes" : memberRes.status === 404 ? "no" : "unknown";
 
-    return { ok: true, facts: { phoneNumberSid: sid, phoneNumber: num, inNamedService } };
+    return {
+      ok: true,
+      facts: { phoneNumberSid: sid, phoneNumber: num, association: classifyAssociation(holders, input.expectedMessagingServiceSid) },
+    };
+  },
+
+  /**
+   * WILLOW ADOPTION -- read the service's current webhook configuration.
+   * GET only; adoption compares against this and never writes it.
+   */
+  async readMessagingServiceConfig(input: {
+    messagingServiceSid: string;
+  }): Promise<ProviderResult<{ config: MessagingServiceConfig }>> {
+    const creds = readCredentials();
+    if (!creds) return providerError("provider_not_configured", false);
+
+    const res = await request(
+      creds,
+      `${MESSAGING_BASE}/Services/${encodeURIComponent(input.messagingServiceSid)}`,
+      { method: "GET" },
+    );
+    if (!res.ok) return res;
+    if (res.status !== 200) return httpError(res.status);
+
+    const body = asRecord(res.json);
+    if (!body) return providerError("provider_response_unparseable", false);
+    return {
+      ok: true,
+      config: {
+        inboundRequestUrl: asString(body.inbound_request_url),
+        statusCallbackUrl: asString(body.status_callback),
+      },
+    };
   },
 
   async lookupResourcesByClaim(

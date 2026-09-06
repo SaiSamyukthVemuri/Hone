@@ -141,26 +141,44 @@ export type ClaimedResources = {
 };
 
 /**
- * What the account already owns for a specific E.164, as the provider reports
- * it. WILLOW ADOPTION.
+ * Where a number actually lives, as a COMPLETE census of the account's
+ * Messaging Services. WILLOW ADOPTION.
  *
- * This is the evidence adoption is allowed to act on, and it is deliberately
- * narrow: whether THIS account owns the number, its SID, and whether it is
- * already a member of the Messaging Service the operator named. Nothing here
- * describes a resource Hone could create.
+ * Five states, and the distinction between the last three is the whole point.
+ * A boolean "is it in the expected service" can only say no; it cannot say
+ * whether the number is loose, somewhere else, or simply unknown — and those
+ * demand different answers from an operator. Collapsing them is what would let
+ * "we could not finish the census" read as "the number is free to attach".
+ */
+export type NumberAssociation =
+  | { kind: "in_expected_service"; messagingServiceSid: string }
+  | { kind: "in_other_service"; messagingServiceSid: string }
+  | { kind: "not_associated" }
+  /** More than one service claims the number. Contradictory: fail closed. */
+  | { kind: "ambiguous"; messagingServiceSids: string[] }
+  /** The census could not be COMPLETED. Never a synonym for absence. */
+  | { kind: "unavailable"; reason: string };
+
+/**
+ * What the account already owns for a specific E.164, plus where it lives.
  *
- * `inNamedService` is a THREE-STATE answer, not a boolean, because "we could
- * not determine membership" must never collapse into "not a member" -- that
- * reading is what would license an attach, and an attach on a number that is
- * already in another service is a silent move.
+ * `phoneNumberSid` is null when this account does not own the number at all.
  */
 export type OwnedNumberFacts = {
-  /** Null when this account does not own the number at all. */
   phoneNumberSid: string | null;
   /** Echoed back so the caller can prove the provider answered about the right number. */
   phoneNumber: string | null;
-  /** Membership in the Messaging Service the operator named. */
-  inNamedService: "yes" | "no" | "unknown";
+  association: NumberAssociation;
+};
+
+/**
+ * The configuration a Messaging Service currently carries. Read, never written,
+ * by the adoption path: an existing studio-owned service is not Hone's to
+ * reconfigure without a human saying so.
+ */
+export type MessagingServiceConfig = {
+  inboundRequestUrl: string | null;
+  statusCallbackUrl: string | null;
 };
 
 // ---------------------------------------------------------------------------
@@ -240,21 +258,37 @@ export interface SmsProvisioningProvider {
   ): Promise<ProviderResult<{ found: ClaimedResources }>>;
 
   /**
-   * READ-ONLY. Does this account already own `phoneNumber`, and is it already a
-   * member of `messagingServiceSid`?
+   * READ-ONLY. Does this account own `phoneNumber`, and which Messaging Service
+   * — if any — actually holds it?
    *
    * WILLOW ADOPTION. `lookupResourcesByClaim` cannot answer this: it searches on
    * the `hone-sms-claim:<key>` FriendlyName Hone stamps at purchase time, so it
    * finds only numbers Hone itself bought. A number the studio already owned
-   * carries no such tag and is invisible to it.
+   * carries no such tag.
    *
-   * Performs NO mutation. It cannot purchase, attach, move or create — which is
-   * what makes it safe to run before the operator has committed to anything.
+   * The association is a COMPLETE census over the account's services. An
+   * incomplete one must report `unavailable`, never `not_associated` — the
+   * second reading is what would license attaching a number that is quietly
+   * somewhere else.
+   *
+   * Performs NO mutation: it cannot purchase, attach, detach, move or create.
    */
   lookupOwnedNumber(input: {
     phoneNumber: string;
-    messagingServiceSid: string;
+    expectedMessagingServiceSid: string;
   }): Promise<ProviderResult<{ facts: OwnedNumberFacts }>>;
+
+  /**
+   * READ-ONLY. The webhook configuration a Messaging Service carries today.
+   *
+   * Adoption COMPARES against this and refuses on a mismatch; it never writes.
+   * Reconfiguring a service the studio already uses could silently break
+   * whatever it serves, so that mutation needs an explicit human decision and
+   * is not part of the adoption path.
+   */
+  readMessagingServiceConfig(input: {
+    messagingServiceSid: string;
+  }): Promise<ProviderResult<{ config: MessagingServiceConfig }>>;
 
   /** Create a messaging service tagged with the claim key. */
   createMessagingService(

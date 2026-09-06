@@ -46,12 +46,20 @@ const MEMBERS: Membership[] = [
 let provider: FakeSmsProvisioningProvider;
 let store: InMemoryProvisioningStore;
 
-/** The account already owns Willow's number, already in Willow's service. */
-function ownedAndAssociated() {
+const INBOUND = "https://hone.care/api/twilio/inbound-sms";
+const STATUS = "https://hone.care/api/twilio/message-status";
+
+/**
+ * The account owns Willow's number, it is in Willow's service, and that service
+ * is ALREADY configured the way Hone requires. This is the only shape adoption
+ * may proceed from.
+ */
+function ownedAndAssociated(): FakeProviderScript {
   return {
-    preOwnedNumbers: {
-      [WILLOW_NUMBER]: { phoneNumberSid: WILLOW_PN_SID, messagingServiceSid: WILLOW_MG_SID },
-    },
+    preOwnedNumbers: { [WILLOW_NUMBER]: WILLOW_PN_SID },
+    accountServices: [
+      { sid: WILLOW_MG_SID, numbers: [WILLOW_NUMBER], inboundUrl: INBOUND, statusUrl: STATUS },
+    ],
   };
 }
 
@@ -64,8 +72,8 @@ function adopt(over: Partial<Parameters<typeof adoptExistingStudioSmsSender>[0]>
     country: "CA",
     phoneNumber: WILLOW_NUMBER,
     messagingServiceSid: WILLOW_MG_SID,
-    inboundWebhookUrl: "https://hone.care/api/twilio/inbound-sms",
-    statusCallbackUrl: "https://hone.care/api/twilio/message-status",
+    requiredInboundWebhookUrl: INBOUND,
+    requiredStatusCallbackUrl: STATUS,
     testDestination: "+14165559999",
     testBody: "Hone adoption test.",
     ...over,
@@ -124,12 +132,23 @@ describe("2. NO PURCHASE — the assertion that protects real money", () => {
       {
         name: "wrong service",
         script: {
-          preOwnedNumbers: {
-            [WILLOW_NUMBER]: { phoneNumberSid: WILLOW_PN_SID, messagingServiceSid: OTHER_MG_SID },
-          },
+          preOwnedNumbers: { [WILLOW_NUMBER]: WILLOW_PN_SID },
+          accountServices: [{ sid: OTHER_MG_SID, numbers: [WILLOW_NUMBER] }],
         },
       },
-      { name: "membership unknown", script: { ...ownedAndAssociated(), membershipUnknown: true } },
+      {
+        name: "census unavailable",
+        script: { ...ownedAndAssociated(), membershipProbeFails: true },
+      },
+      {
+        name: "webhook mismatch",
+        script: {
+          preOwnedNumbers: { [WILLOW_NUMBER]: WILLOW_PN_SID },
+          accountServices: [
+            { sid: WILLOW_MG_SID, numbers: [WILLOW_NUMBER], inboundUrl: "https://someone-else.test/hook", statusUrl: STATUS },
+          ],
+        },
+      },
     ];
     for (const c of cases) {
       provider = new FakeSmsProvisioningProvider(c.script);
@@ -159,9 +178,8 @@ describe("3. wrong account / wrong resource is refused", () => {
     // Guards against a provider (or a mistaken filter) returning a neighbouring
     // record: adopting it would attach Hone to a number nobody chose.
     provider = new FakeSmsProvisioningProvider({
-      preOwnedNumbers: {
-        "+14165550999": { phoneNumberSid: WILLOW_PN_SID, messagingServiceSid: WILLOW_MG_SID },
-      },
+      preOwnedNumbers: { "+14165550999": WILLOW_PN_SID },
+      accountServices: [{ sid: WILLOW_MG_SID, numbers: ["+14165550999"] }],
     });
     const outcome = await adopt();
     expect(outcome).toMatchObject({ ok: false, reason: "number_not_owned_by_account" });
@@ -182,40 +200,191 @@ describe("3. wrong account / wrong resource is refused", () => {
   });
 });
 
-describe("4. an unexpected Messaging Service association is REFUSED, never changed", () => {
-  it("a number sitting in a DIFFERENT service is refused rather than moved", async () => {
-    // Twilio allows one service per number, so "attach" is really "move".
-    // Moving it would silently break whatever the other service serves.
+describe("2 + 4. DECISION 2 — the association census is complete and truthful", () => {
+  it("number in ANOTHER service: refused, and the refusal NAMES it (safely)", async () => {
     provider = new FakeSmsProvisioningProvider({
-      preOwnedNumbers: {
-        [WILLOW_NUMBER]: { phoneNumberSid: WILLOW_PN_SID, messagingServiceSid: OTHER_MG_SID },
-      },
+      preOwnedNumbers: { [WILLOW_NUMBER]: WILLOW_PN_SID },
+      accountServices: [
+        { sid: WILLOW_MG_SID, numbers: [] },
+        { sid: OTHER_MG_SID, numbers: [WILLOW_NUMBER] },
+      ],
     });
     const outcome = await adopt();
-    expect(outcome).toMatchObject({ ok: false, reason: "number_not_in_named_service" });
+    expect(outcome).toMatchObject({
+      ok: false,
+      reason: "number_in_other_service",
+      discovered: { association: "in_other_service" },
+    });
+    // Truthful AND safe: recognisable in the console, not a usable identifier.
+    const ids = (outcome as { discovered: { safeServiceIds: string[] } }).discovered.safeServiceIds;
+    expect(ids).toHaveLength(1);
+    expect(ids[0]).toBe(`MG…${OTHER_MG_SID.slice(-4)}`);
+    expect(ids[0]).not.toBe(OTHER_MG_SID);
+    // NEVER detached or moved.
     expect(provider.calls.attach).toBe(0);
-    expect(provider.calls.createService).toBe(0);
   });
 
-  it("an UNREADABLE membership answer refuses — it never reads as 'not a member'", async () => {
-    // This is the whole reason membership is three-state. Collapsing unknown
-    // into "no" is what would license the move above.
+  it("number in NO service: NOT_ASSOCIATED, still refused, still never attached", async () => {
     provider = new FakeSmsProvisioningProvider({
-      ...ownedAndAssociated(),
-      membershipUnknown: true,
+      preOwnedNumbers: { [WILLOW_NUMBER]: WILLOW_PN_SID },
+      accountServices: [{ sid: WILLOW_MG_SID, numbers: [] }],
     });
     const outcome = await adopt();
-    expect(outcome).toMatchObject({ ok: false, reason: "service_membership_unknown" });
+    expect(outcome).toMatchObject({
+      reason: "number_not_in_named_service",
+      discovered: { association: "not_associated", safeServiceIds: [] },
+    });
     expect(provider.calls.attach).toBe(0);
+  });
+
+  it("PAGINATION IS EXHAUSTED before absence is claimed", async () => {
+    // The number sits in a service on the THIRD page. A first-page-only walk
+    // would report not_associated and invite an attach that moves it.
+    const services = [
+      { sid: "MG" + "1".repeat(32), numbers: [] },
+      { sid: "MG" + "2".repeat(32), numbers: [] },
+      { sid: "MG" + "3".repeat(32), numbers: [] },
+      { sid: "MG" + "4".repeat(32), numbers: [] },
+      { sid: OTHER_MG_SID, numbers: [WILLOW_NUMBER] },
+    ];
+    provider = new FakeSmsProvisioningProvider({
+      preOwnedNumbers: { [WILLOW_NUMBER]: WILLOW_PN_SID },
+      accountServices: services,
+      servicePageSize: 2,
+    });
+    const outcome = await adopt();
+    expect(provider.calls.servicePages).toBeGreaterThanOrEqual(3);
+    expect(outcome).toMatchObject({ reason: "number_in_other_service" });
+  });
+
+  it("a FAILED page is UNAVAILABLE, never false absence", async () => {
+    provider = new FakeSmsProvisioningProvider({
+      preOwnedNumbers: { [WILLOW_NUMBER]: WILLOW_PN_SID },
+      accountServices: [
+        { sid: WILLOW_MG_SID, numbers: [] },
+        { sid: OTHER_MG_SID, numbers: [WILLOW_NUMBER] },
+      ],
+      servicePageSize: 1,
+      failServicePage: 2,
+    });
+    const outcome = await adopt();
+    expect(outcome).toMatchObject({
+      reason: "number_association_unavailable",
+      discovered: { association: "unavailable" },
+      // Retryable: a later attempt may read the page this one could not.
+      retryable: true,
+    });
+    // The decisive assertion: it did NOT say not_associated.
+    expect((outcome as { reason: string }).reason).not.toBe("number_not_in_named_service");
+    expect(provider.calls.attach).toBe(0);
+  });
+
+  it("an unreadable membership probe is UNAVAILABLE too", async () => {
+    provider = new FakeSmsProvisioningProvider({
+      ...ownedAndAssociated(),
+      membershipProbeFails: true,
+    });
+    const outcome = await adopt();
+    expect(outcome).toMatchObject({ reason: "number_association_unavailable" });
     expect(store.live(STUDIO_A)!.status).toBe("error");
   });
 
-  it("nothing is configured before ownership and association are proven", async () => {
-    provider = new FakeSmsProvisioningProvider({ preOwnedNumbers: {} });
+  it("contradictory associations FAIL CLOSED as ambiguous", async () => {
+    // Two services claiming one number. Choosing the expected one would let
+    // adoption proceed exactly when the provider cannot say where it is.
+    provider = new FakeSmsProvisioningProvider({
+      preOwnedNumbers: { [WILLOW_NUMBER]: WILLOW_PN_SID },
+      accountServices: [
+        { sid: WILLOW_MG_SID, numbers: [WILLOW_NUMBER] },
+        { sid: OTHER_MG_SID, numbers: [WILLOW_NUMBER] },
+      ],
+    });
+    const outcome = await adopt();
+    expect(outcome).toMatchObject({
+      reason: "number_association_ambiguous",
+      discovered: { association: "ambiguous" },
+    });
+    const ids = (outcome as { discovered: { safeServiceIds: string[] } }).discovered.safeServiceIds;
+    expect(ids).toHaveLength(2);
+    expect(ids.every((i) => i.includes("…"))).toBe(true);
+    expect(provider.calls.attach).toBe(0);
+    expect(provider.calls.testSend).toBe(0);
+  });
+});
+
+describe("1. DECISION 1 — adoption inspects configuration and NEVER writes it", () => {
+  it("an INCOMPATIBLE webhook yields provider_configuration_required", async () => {
+    provider = new FakeSmsProvisioningProvider({
+      preOwnedNumbers: { [WILLOW_NUMBER]: WILLOW_PN_SID },
+      accountServices: [
+        { sid: WILLOW_MG_SID, numbers: [WILLOW_NUMBER], inboundUrl: "https://someone-else.test/hook", statusUrl: STATUS },
+      ],
+    });
+    const outcome = await adopt();
+    expect(outcome).toMatchObject({
+      ok: false,
+      result: "failed",
+      reason: "provider_configuration_required",
+      retryable: false,
+      configurationMismatch: ["inbound_webhook"],
+    });
+  });
+
+  it("both mismatches are reported, and no URL is echoed back", async () => {
+    provider = new FakeSmsProvisioningProvider({
+      preOwnedNumbers: { [WILLOW_NUMBER]: WILLOW_PN_SID },
+      accountServices: [{ sid: WILLOW_MG_SID, numbers: [WILLOW_NUMBER], inboundUrl: null, statusUrl: null }],
+    });
+    const outcome = await adopt();
+    expect(outcome).toMatchObject({
+      reason: "provider_configuration_required",
+      configurationMismatch: ["inbound_webhook", "status_callback"],
+    });
+    expect(JSON.stringify(outcome)).not.toContain("someone-else.test");
+  });
+
+  it("an incompatible webhook causes ZERO provider writes", async () => {
+    provider = new FakeSmsProvisioningProvider({
+      preOwnedNumbers: { [WILLOW_NUMBER]: WILLOW_PN_SID },
+      accountServices: [{ sid: WILLOW_MG_SID, numbers: [WILLOW_NUMBER], inboundUrl: "https://x.test/h", statusUrl: STATUS }],
+    });
     await adopt();
     expect(provider.calls.inboundWebhook).toBe(0);
     expect(provider.calls.statusCallback).toBe(0);
+    expect(provider.calls.attach).toBe(0);
+    expect(provider.calls.purchase).toBe(0);
+    expect(provider.calls.createService).toBe(0);
+    // A mismatch is NOT a test failure: no message was sent either.
     expect(provider.calls.testSend).toBe(0);
+  });
+
+  it("a mismatch never creates ACTIVE state", async () => {
+    provider = new FakeSmsProvisioningProvider({
+      preOwnedNumbers: { [WILLOW_NUMBER]: WILLOW_PN_SID },
+      accountServices: [{ sid: WILLOW_MG_SID, numbers: [WILLOW_NUMBER], inboundUrl: null, statusUrl: null }],
+    });
+    await adopt();
+    const row = store.live(STUDIO_A)!;
+    expect(row.status).not.toBe("active");
+    expect(row.lastTestOkAt).toBeNull();
+  });
+
+  it("a COMPATIBLE service is adopted WITHOUT any configuration write", async () => {
+    const outcome = await adopt();
+    expect(outcome).toMatchObject({ ok: true, result: "adopted" });
+    expect(provider.calls.inboundWebhook).toBe(0);
+    expect(provider.calls.statusCallback).toBe(0);
+  });
+
+  it("an unreadable configuration refuses rather than assuming compatibility", async () => {
+    provider = new FakeSmsProvisioningProvider({
+      ...ownedAndAssociated(),
+      serviceConfigFails: "provider_unavailable",
+    });
+    const outcome = await adopt();
+    expect(outcome).toMatchObject({ ok: false, result: "failed" });
+    expect(provider.calls.testSend).toBe(0);
+    expect(store.live(STUDIO_A)!.status).not.toBe("active");
   });
 });
 
@@ -357,8 +526,11 @@ describe("6. a competing or stale claim cannot take over", () => {
 
   it("every provider call runs through the fence", async () => {
     await adopt();
-    // ownedLookup + inbound + status + test, each fenced by construction.
-    expect(store.fenceCalls.length).toBeGreaterThanOrEqual(4);
+    // Adoption performs exactly THREE fenced provider operations now that it
+    // configures nothing: the ownership census, the configuration read, and the
+    // provisioning test. Asserting the exact number means a fourth appearing --
+    // a configuration write sneaking back in -- fails here.
+    expect(store.fenceCalls).toHaveLength(3);
     expect(store.fenceCalls.every((c) => c.phoneNumber === WILLOW_NUMBER)).toBe(true);
     expect(store.fenceCalls.every((c) => c.granted)).toBe(true);
   });
@@ -390,16 +562,6 @@ describe("7. a provider-test failure NEVER produces ACTIVE", () => {
     }
   });
 
-  it("a webhook configuration failure also never reaches ACTIVE", async () => {
-    provider = new FakeSmsProvisioningProvider({
-      ...ownedAndAssociated(),
-      webhookFails: "provider_rejected",
-    });
-    const outcome = await adopt();
-    expect(outcome).toMatchObject({ ok: false, result: "failed" });
-    expect(provider.calls.testSend).toBe(0);
-    expect(store.live(STUDIO_A)!.status).not.toBe("active");
-  });
 });
 
 describe("10. ordinary purchase-new behaviour is unchanged", () => {
@@ -412,8 +574,8 @@ describe("10. ordinary purchase-new behaviour is unchanged", () => {
       country: "CA",
       areaCode: "416",
       phoneNumber: "+14165550777",
-      inboundWebhookUrl: "https://hone.care/api/twilio/inbound-sms",
-      statusCallbackUrl: "https://hone.care/api/twilio/message-status",
+      inboundWebhookUrl: INBOUND,
+      statusCallbackUrl: STATUS,
       testDestination: "+14165559999",
       serviceLabel: "Studio A",
       testBody: "Hone provisioning test.",
@@ -433,8 +595,8 @@ describe("10. ordinary purchase-new behaviour is unchanged", () => {
       country: "CA",
       areaCode: "416",
       phoneNumber: "+14165550777",
-      inboundWebhookUrl: "https://hone.care/api/twilio/inbound-sms",
-      statusCallbackUrl: "https://hone.care/api/twilio/message-status",
+      inboundWebhookUrl: INBOUND,
+      statusCallbackUrl: STATUS,
       testDestination: "+14165559999",
       serviceLabel: "Studio A",
       testBody: "Hone provisioning test.",

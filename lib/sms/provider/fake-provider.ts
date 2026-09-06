@@ -1,10 +1,12 @@
 import "server-only";
 import crypto from "node:crypto";
+import { classifyAssociation } from "./association";
 import {
   claimFriendlyName,
   providerError,
   type AvailableNumberCandidate,
   type ClaimedResources,
+  type MessagingServiceConfig,
   type OwnedNumberFacts,
   type ProviderErrorCode,
   type ProviderAck,
@@ -78,14 +80,26 @@ export type FakeProviderScript = {
   testSendFails?: ProviderErrorCode;
   /**
    * WILLOW ADOPTION. Numbers this ACCOUNT already owns, as if bought outside
-   * Hone -- keyed E.164 -> the service it already belongs to (null = owned but
-   * in no service). Absent from this map means the account does not own it.
+   * Hone: E.164 -> its phone number SID. Absent means the account does not own
+   * it.
    */
-  preOwnedNumbers?: Record<string, { phoneNumberSid: string; messagingServiceSid: string | null }>;
-  /** Force the membership answer to be unreadable, to prove UNKNOWN never adopts. */
-  membershipUnknown?: boolean;
+  preOwnedNumbers?: Record<string, string>;
+  /**
+   * The account's Messaging Services, in the order the list endpoint returns
+   * them, each with the numbers it holds. The fake PAGINATES over this exactly
+   * as the real adapter does, so a pagination test exercises real walking.
+   */
+  accountServices?: Array<{ sid: string; numbers: string[]; inboundUrl?: string | null; statusUrl?: string | null }>;
+  /** Page size for the service list walk. Small values force multiple pages. */
+  servicePageSize?: number;
+  /** 1-based page index that fails, to prove a partial census is never absence. */
+  failServicePage?: number;
+  /** Make one membership probe unreadable. */
+  membershipProbeFails?: boolean;
   /** Fail the ownership lookup itself. */
   ownedLookupFails?: ProviderErrorCode;
+  /** Fail the service configuration read. */
+  serviceConfigFails?: ProviderErrorCode;
   /** Numbers the fake considers already taken by someone else. */
   unavailableNumbers?: string[];
 };
@@ -125,6 +139,8 @@ export class FakeSmsProvisioningProvider implements SmsProvisioningProvider {
     availability: 0,
     lookup: 0,
     ownedLookup: 0,
+    serviceConfigRead: 0,
+    servicePages: 0,
     createService: 0,
     purchase: 0,
     attach: 0,
@@ -217,41 +233,91 @@ export class FakeSmsProvisioningProvider implements SmsProvisioningProvider {
   }
 
   /**
-   * WILLOW ADOPTION. Reports what the account already owns. Mutates nothing --
-   * in particular it never adds to `store`, so a test cannot accidentally
-   * conjure an adopted resource by asking about it.
+   * WILLOW ADOPTION. Reports what the account owns and WHERE the number lives.
+   *
+   * Mutates nothing -- in particular it never adds to `store`, so a test cannot
+   * conjure an adopted resource by asking about it. It walks the service list in
+   * pages and probes membership per service, the same shape as the real adapter,
+   * so pagination and partial-census behaviour are genuinely exercised rather
+   * than stubbed.
    */
   async lookupOwnedNumber(input: {
     phoneNumber: string;
-    messagingServiceSid: string;
+    expectedMessagingServiceSid: string;
   }): Promise<ProviderResult<{ facts: OwnedNumberFacts }>> {
     this.calls.ownedLookup += 1;
     if (this.script.ownedLookupFails) return this.fail(this.script.ownedLookupFails);
 
-    const owned = this.script.preOwnedNumbers?.[input.phoneNumber];
-    if (!owned) {
-      return {
-        ok: true,
-        facts: { phoneNumberSid: null, phoneNumber: null, inNamedService: "unknown" },
-      };
-    }
-    if (this.script.membershipUnknown) {
+    const sid = this.script.preOwnedNumbers?.[input.phoneNumber];
+    if (!sid) {
       return {
         ok: true,
         facts: {
-          phoneNumberSid: owned.phoneNumberSid,
-          phoneNumber: input.phoneNumber,
-          inNamedService: "unknown",
+          phoneNumberSid: null,
+          phoneNumber: null,
+          association: { kind: "unavailable", reason: "number_not_owned" },
         },
       };
     }
+
+    const services = this.script.accountServices ?? [];
+    const pageSize = this.script.servicePageSize ?? 100;
+    const holders: string[] = [];
+    let page = 0;
+
+    for (let i = 0; i < services.length || i === 0; i += pageSize) {
+      page += 1;
+      this.calls.servicePages += 1;
+      if (this.script.failServicePage === page) {
+        // A FAILED PAGE IS NOT AN EMPTY PAGE.
+        return {
+          ok: true,
+          facts: {
+            phoneNumberSid: sid,
+            phoneNumber: input.phoneNumber,
+            association: { kind: "unavailable", reason: "service_page_unreadable" },
+          },
+        };
+      }
+      for (const svc of services.slice(i, i + pageSize)) {
+        if (this.script.membershipProbeFails) {
+          return {
+            ok: true,
+            facts: {
+              phoneNumberSid: sid,
+              phoneNumber: input.phoneNumber,
+              association: { kind: "unavailable", reason: "membership_probe_failed" },
+            },
+          };
+        }
+        if (svc.numbers.includes(input.phoneNumber)) holders.push(svc.sid);
+      }
+      if (services.length === 0) break;
+    }
+
     return {
       ok: true,
       facts: {
-        phoneNumberSid: owned.phoneNumberSid,
+        phoneNumberSid: sid,
         phoneNumber: input.phoneNumber,
-        inNamedService:
-          owned.messagingServiceSid === input.messagingServiceSid ? "yes" : "no",
+        association: classifyAssociation(holders, input.expectedMessagingServiceSid),
+      },
+    };
+  }
+
+  /** WILLOW ADOPTION. Read-only: the service's current webhook configuration. */
+  async readMessagingServiceConfig(input: {
+    messagingServiceSid: string;
+  }): Promise<ProviderResult<{ config: MessagingServiceConfig }>> {
+    this.calls.serviceConfigRead += 1;
+    if (this.script.serviceConfigFails) return this.fail(this.script.serviceConfigFails);
+    const svc = (this.script.accountServices ?? []).find((x) => x.sid === input.messagingServiceSid);
+    if (!svc) return this.fail("provider_resource_mismatch");
+    return {
+      ok: true,
+      config: {
+        inboundRequestUrl: svc.inboundUrl ?? null,
+        statusCallbackUrl: svc.statusUrl ?? null,
       },
     };
   }
