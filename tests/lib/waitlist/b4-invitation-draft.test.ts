@@ -213,10 +213,10 @@ describe("the state machine is invisible", () => {
     // Recording the expiry is bookkeeping the database performs. Whether it has
     // happened yet is not a fact a practitioner should be able to observe, and
     // certainly not one they should have to fix with a button.
-    expect(practitionerStatusLabel("invited", { invitationElapsed: true })).toBe(
+    expect(practitionerStatusLabel("invited", { invitationElapsed: true, invitationRedeemed: false })).toBe(
       "Invitation expired",
     );
-    expect(practitionerStatusLabel("invited", { invitationElapsed: false })).toBe(
+    expect(practitionerStatusLabel("invited", { invitationElapsed: false, invitationRedeemed: false })).toBe(
       "Invitation sent",
     );
     // A REDEEMED invitation is not expired even after its window passes: they
@@ -370,6 +370,88 @@ describe("every verdict is the live model's, not a second copy of it", () => {
     expect(live.find((i) => i.action === "cancel_invitation")!.available).toBe(true);
   });
 
+  it("treats PARTIAL invitation facts as unknown, not as a live invitation", () => {
+    // Key count was the wrong question. `{ invitationElapsed: false }` has a
+    // key, so it passed through unchanged, `invitationRedeemed` stayed absent
+    // and read as false, and the row went back to announcing a live, unused
+    // link — a claim about redemption the caller never made. A key whose value
+    // is `undefined` failed the same way, because it still counts as a key.
+    const partial: ReadonlyArray<[string, AdmissionContext]> = [
+      ["elapsed only", { invitationElapsed: false }],
+      ["elapsed only, true", { invitationElapsed: true }],
+      ["a key with no fact", { invitationElapsed: undefined }],
+      // THE CASE THAT DISCRIMINATES `typeof ... === "boolean"` FROM `"x" in c`.
+      // Redemption IS stated here, so the check reaches the elapsed half; only
+      // a real boolean may satisfy it. A presence test would call this complete
+      // and read the absent elapsed value as "not elapsed".
+      [
+        "redemption stated, elapsed present but undefined",
+        { invitationRedeemed: false, invitationElapsed: undefined },
+      ],
+      ["not-redeemed only", { invitationRedeemed: false }],
+      ["facts-unknown explicitly false, nothing else", { invitationFactsUnknown: false }],
+    ];
+    for (const [label, context] of partial) {
+      expect(
+        normalizeInvitationContext("invited", context),
+        `${label} was accepted as complete`,
+      ).toEqual({ invitationFactsUnknown: true });
+
+      const actions = surfaceItems("invited", context);
+      for (const action of ["resend_invitation", "cancel_invitation"] as const) {
+        expect(
+          actions.find((i) => i.action === action)!.available,
+          `${label}: ${action} was offered on incomplete facts`,
+        ).toBe(false);
+      }
+      expect(practitionerStatusDetail("invited", context)).toContain("could not be checked");
+    }
+  });
+
+  it("accepts the three shapes that ARE complete, and keeps their controls", () => {
+    // Or the fix would just be disabling the feature.
+    //
+    // REDEEMED IS COMPLETE ON ITS OWN: it is terminal and settles every ruling
+    // — it has not run out, it cannot be released, cancelled or resent, and the
+    // entry waits on a booking record. Nothing else needs to be known.
+    const complete: ReadonlyArray<[string, AdmissionContext]> = [
+      ["explicitly unreadable", { invitationFactsUnknown: true }],
+      ["redeemed", { invitationRedeemed: true }],
+      ["live and unused", { invitationElapsed: false, invitationRedeemed: false }],
+      ["run out, unused", { invitationElapsed: true, invitationRedeemed: false }],
+    ];
+    for (const [label, context] of complete) {
+      expect(
+        normalizeInvitationContext("invited", context),
+        `${label} was discarded as incomplete`,
+      ).toEqual(context);
+    }
+
+    // And a genuinely live invitation still offers both controls.
+    const live = surfaceItems("invited", {
+      invitationElapsed: false,
+      invitationRedeemed: false,
+    });
+    expect(live.find((i) => i.action === "resend_invitation")!.available).toBe(true);
+    expect(live.find((i) => i.action === "cancel_invitation")!.available).toBe(true);
+    // A run-out one still promotes the return, rather than being frozen unknown.
+    expect(
+      entryActionSurface("invited", { invitationElapsed: true, invitationRedeemed: false })
+        .primary?.action,
+    ).toBe("return_to_waitlist");
+  });
+
+  it("discards the partial fact rather than carrying it beside the unknown flag", () => {
+    // A half-known state produced this defect twice — once as a missing object,
+    // once as a partial one. Keeping the fragment invites a third reading of it.
+    expect(normalizeInvitationContext("invited", { invitationElapsed: true })).toEqual({
+      invitationFactsUnknown: true,
+    });
+    expect(
+      normalizeInvitationContext("invited", { invitationElapsed: true }),
+    ).not.toHaveProperty("invitationElapsed");
+  });
+
   it("does not give a non-invited row invitation semantics", () => {
     // A waiting or released entry has no invitation for facts to be unknown
     // ABOUT, and marking one unknown would withhold controls whose safety does
@@ -407,7 +489,11 @@ describe("every verdict is the live model's, not a second copy of it", () => {
     }
 
     // NEGATIVE CONTROL: a READABLE elapsed invitation still reads as expired.
-    const readable = { invitationFactsUnknown: false, invitationElapsed: true };
+    const readable = {
+      invitationFactsUnknown: false,
+      invitationElapsed: true,
+      invitationRedeemed: false,
+    };
     expect(invitationHasRunOut(readable)).toBe(true);
     expect(practitionerStatusLabel("invited", readable)).toBe("Invitation expired");
   });
@@ -473,7 +559,7 @@ describe("the row's action surface", () => {
   it("leaves a live invitation with no primary action", () => {
     // The studio is not the one deciding — the invitee is. Inventing a primary
     // control here pushes a practitioner to interfere with someone mid-decision.
-    const surface = entryActionSurface("invited", { invitationElapsed: false });
+    const surface = entryActionSurface("invited", { invitationElapsed: false, invitationRedeemed: false });
     expect(surface.primary).toBeNull();
     expect(surface.secondary.map((i) => i.action)).toEqual([
       "resend_invitation",
@@ -483,7 +569,7 @@ describe("the row's action surface", () => {
   });
 
   it("promotes `Return to waitlist` once the invitation has run out", () => {
-    const surface = entryActionSurface("invited", { invitationElapsed: true });
+    const surface = entryActionSurface("invited", { invitationElapsed: true, invitationRedeemed: false });
     expect(surface.primary?.action).toBe("return_to_waitlist");
     // Cancelling an invitation that has already expired is a distinction only
     // the state machine cares about.
@@ -496,7 +582,7 @@ describe("the row's action surface", () => {
     // happened would show as a control appearing or vanishing on its own —
     // which is the state machine leaking through the one seam this design
     // closes. Resend used to sit on one and not the other.
-    const elapsed = entryActionSurface("invited", { invitationElapsed: true });
+    const elapsed = entryActionSurface("invited", { invitationElapsed: true, invitationRedeemed: false });
     const expired = entryActionSurface("expired");
     const shape = (s: ReturnType<typeof entryActionSurface>) => ({
       primary: s.primary?.action ?? null,
@@ -504,7 +590,7 @@ describe("the row's action surface", () => {
     });
     expect(shape(elapsed)).toEqual(shape(expired));
     // And they read the same, so nothing distinguishes them on screen at all.
-    expect(practitionerStatusLabel("invited", { invitationElapsed: true })).toBe(
+    expect(practitionerStatusLabel("invited", { invitationElapsed: true, invitationRedeemed: false })).toBe(
       practitionerStatusLabel("expired"),
     );
   });
@@ -515,6 +601,7 @@ describe("the row's action surface", () => {
     // disagree with what happened.
     const verdict = practitionerActionAvailability("resend_invitation", "invited", {
       invitationElapsed: true,
+      invitationRedeemed: false,
     });
     expect(verdict.available).toBe(false);
     expect(verdict.available === false && verdict.reason).toContain("Return them to the waitlist");
@@ -522,6 +609,7 @@ describe("the row's action surface", () => {
     expect(
       practitionerActionAvailability("resend_invitation", "invited", {
         invitationElapsed: false,
+        invitationRedeemed: false,
       }).available,
     ).toBe(true);
   });
@@ -545,16 +633,16 @@ describe("the row's action surface", () => {
       return item.available === false ? item.reason : null;
     };
 
-    expect(removeReason({ invitationElapsed: false })).toContain("Cancel their invitation");
-    expect(removeReason({ invitationElapsed: true })).toContain("Return them to the waitlist");
+    expect(removeReason({ invitationElapsed: false, invitationRedeemed: false })).toContain("Cancel their invitation");
+    expect(removeReason({ invitationElapsed: true, invitationRedeemed: false })).toContain("Return them to the waitlist");
 
     // The refusal's ACTIONABLE VERB must belong to a control the same row is
     // showing. Comparing whole labels is too strict — the sentence reads
     // "Cancel their invitation" where the button reads "Cancel invitation" —
     // and comparing nothing is the defect itself.
     for (const [context, verb] of [
-      [{ invitationElapsed: false }, "Cancel"],
-      [{ invitationElapsed: true }, "Return"],
+      [{ invitationElapsed: false, invitationRedeemed: false }, "Cancel"],
+      [{ invitationElapsed: true, invitationRedeemed: false }, "Return"],
     ] as const) {
       const reason = removeReason(context)!;
       expect(reason).toContain(verb);
@@ -584,7 +672,7 @@ describe("the row's action surface", () => {
 
     // NEGATIVE CONTROL: with the facts READABLE and elapsed, "Return to
     // waitlist" IS on the row, so naming it is correct there.
-    const readable = { invitationElapsed: true };
+    const readable = { invitationElapsed: true, invitationRedeemed: false };
     expect(surfaceItems("invited", readable).map((i) => i.action)).toContain(
       "return_to_waitlist",
     );
@@ -676,7 +764,7 @@ describe("wiring state is not eligibility", () => {
     // it mints a NEW invitation rather than re-delivering the old one. An
     // adapter reporting `{ canResend: true, enforcesScope: false }` — which the
     // contract permits as an intermediate state — must not light this control.
-    const item = surfaceItems("invited", { invitationElapsed: false }).find(
+    const item = surfaceItems("invited", { invitationElapsed: false, invitationRedeemed: false }).find(
       (i) => i.action === "resend_invitation",
     )!;
     expect(item.available).toBe(true);
@@ -718,7 +806,7 @@ describe("wiring state is not eligibility", () => {
       action: PractitionerAction,
     ) => surfaceItems(status, context).find((i) => i.action === action)!;
 
-    const live = { invitationElapsed: false };
+    const live = { invitationElapsed: false, invitationRedeemed: false };
     const resend = find("invited", live, "resend_invitation");
     const cancel = find("invited", live, "cancel_invitation");
     const invite = find("waiting", {}, "invite_to_book");

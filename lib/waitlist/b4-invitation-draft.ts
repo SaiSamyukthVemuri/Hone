@@ -133,18 +133,30 @@ export function practitionerStatusLabel(
 /**
  * The invitation facts a caller actually supplied, interpreted ONCE.
  *
- * OMISSION IS NOT "NOTHING IS WRONG". `AdmissionContext` documents every absent
- * field as "not known", but an absent OBJECT was reaching the rulings as `{}`,
- * where `invitationFactsUnknown` and `invitationRedeemed` both read as false —
- * so a row that had been told nothing about an invitation claimed the link was
- * live and unused. Once an adapter is bound that would advertise Resend and
- * Cancel on an invitation the database may already have marked redeemed, and
- * both would come back `already_redeemed`.
+ * COMPLETENESS, NOT KEY COUNT. An earlier revision asked whether the context
+ * object had any keys, which closed the missing-object hole and left the
+ * partial one wide open: `{ invitationElapsed: false }` has a key, so it passed
+ * through unchanged, `invitationRedeemed` stayed absent and read as false, and
+ * the row went back to announcing "a live booking link ... not used it yet" —
+ * a claim about redemption that the caller never made. `{ invitationElapsed:
+ * undefined }` failed the same way, because a key whose value is `undefined`
+ * still counts as a key.
  *
- * An empty object is treated identically to a missing one, because they carry
- * exactly the same information: none. A caller that genuinely knows the
- * invitation is live says so — `{ invitationElapsed: false, invitationRedeemed:
- * false }` — and keeps every control it has earned.
+ * So the question is not "did you pass me an object" but "do I have the facts
+ * I am about to assert". Three ways that can be true:
+ *
+ *   * the caller says outright the facts could not be read;
+ *   * the invitation is REDEEMED — terminal, and it settles every ruling on its
+ *     own: it has not run out, it cannot be released, cancelled or resent, and
+ *     the entry waits on a booking record. Nothing else needs to be known;
+ *   * the invitation is NOT redeemed AND we have an explicit boolean for
+ *     whether its window has closed. Both halves, because a row that knows only
+ *     one of them can still describe the other wrongly.
+ *
+ * Anything else is unknown, and the PARTIAL FACTS ARE DISCARDED rather than
+ * carried alongside the unknown flag. A half-known state is the thing that
+ * produced this defect twice; keeping the fragment invites a third reading of
+ * it.
  *
  * ONLY `invited` GAINS INVITATION SEMANTICS. A waiting or released row has no
  * invitation for facts to be unknown ABOUT, and marking one unknown would
@@ -159,10 +171,19 @@ export function normalizeInvitationContext(
   context: AdmissionContext | undefined,
 ): AdmissionContext {
   if (status !== "invited") return context ?? {};
-  if (context === undefined || Object.keys(context).length === 0) {
-    return { invitationFactsUnknown: true };
+  if (context === undefined) return { invitationFactsUnknown: true };
+  // The caller told us outright.
+  if (context.invitationFactsUnknown === true) return context;
+  // Redemption is terminal and answers every ruling by itself.
+  if (context.invitationRedeemed === true) return context;
+  // Otherwise both halves must be stated, as actual booleans.
+  if (
+    context.invitationRedeemed === false &&
+    typeof context.invitationElapsed === "boolean"
+  ) {
+    return context;
   }
-  return context;
+  return { invitationFactsUnknown: true };
 }
 
 /**

@@ -126,8 +126,8 @@ describe("no database word reaches the rendered markup, anywhere", () => {
     for (const status of WAITLIST_ENTRY_STATUSES) {
       for (const invitation of [
         {},
-        { invitationElapsed: true },
-        { invitationElapsed: false },
+        { invitationElapsed: true, invitationRedeemed: false },
+        { invitationElapsed: false, invitationRedeemed: false },
         { invitationRedeemed: true },
         { invitationFactsUnknown: true },
         { invitationFactsUnknown: true, invitationElapsed: true },
@@ -180,7 +180,7 @@ describe("accessible ids are namespaced per entry", () => {
     // that it has an explanation and then has none to give.
     for (const status of WAITLIST_ENTRY_STATUSES) {
       const html = render(
-        AdmissionRow({ entry: { ...ENTRY, status, invitation: { invitationElapsed: false } } }),
+        AdmissionRow({ entry: { ...ENTRY, status, invitation: { invitationElapsed: false, invitationRedeemed: false } } }),
       );
       const described = [...html.matchAll(/aria-describedby="([^"]+)"/g)].map((m) => m[1]);
       for (const target of described) {
@@ -215,7 +215,7 @@ describe("what each state offers", () => {
   it("offers resend and cancel on a live invitation, and no primary", () => {
     const html = render(
       AdmissionRow({
-        entry: { ...ENTRY, status: "invited", invitation: { invitationElapsed: false } },
+        entry: { ...ENTRY, status: "invited", invitation: { invitationElapsed: false, invitationRedeemed: false } },
       }),
     );
     expect(html).toContain("Resend invitation");
@@ -227,7 +227,7 @@ describe("what each state offers", () => {
   it("offers Return to waitlist once the invitation has run out", () => {
     const html = render(
       AdmissionRow({
-        entry: { ...ENTRY, status: "invited", invitation: { invitationElapsed: true } },
+        entry: { ...ENTRY, status: "invited", invitation: { invitationElapsed: true, invitationRedeemed: false } },
       }),
     );
     expect(html).toContain("Return to waitlist");
@@ -239,7 +239,7 @@ describe("what each state offers", () => {
 
   it("renders every rendered control the model put in the surface, and no other", () => {
     for (const status of WAITLIST_ENTRY_STATUSES) {
-      const context = { invitationElapsed: false };
+      const context = { invitationElapsed: false, invitationRedeemed: false };
       const html = render(AdmissionRow({ entry: { ...ENTRY, status, invitation: context } }));
       const surface = entryActionSurface(status, context);
       const expected = new Set(
@@ -296,7 +296,7 @@ describe("nothing is connected, and every control says so in its own words", () 
     // Resend is different and stays gated: it sends immediately, with a scope.
     const invited = render(
       AdmissionRow({
-        entry: { ...ENTRY, status: "invited", invitation: { invitationElapsed: false } },
+        entry: { ...ENTRY, status: "invited", invitation: { invitationElapsed: false, invitationRedeemed: false } },
         capabilities: { ...CONNECTED, enforcesScope: false },
       }),
     );
@@ -348,6 +348,52 @@ describe("nothing is connected, and every control says so in its own words", () 
     );
     expect(controlTag(known, "resend_invitation")).not.toContain('disabled=""');
     expect(controlTag(known, "cancel_invitation")).not.toContain('disabled=""');
+  });
+
+  it("fails closed on PARTIAL invitation facts too, not just missing ones", () => {
+    // `{ invitationElapsed: false }` has a key, so a key-count test let it
+    // through with `invitationRedeemed` absent — read as false — and the row
+    // went back to offering Resend and Cancel on an invitation that may already
+    // have been redeemed.
+    for (const invitation of [
+      { invitationElapsed: false },
+      { invitationElapsed: true },
+      { invitationRedeemed: false },
+      { invitationRedeemed: false, invitationElapsed: undefined },
+    ]) {
+      const html = render(
+        AdmissionRow({
+          entry: { ...ENTRY, status: "invited", invitation },
+          capabilities: CONNECTED,
+        }),
+      );
+      expect(
+        controlTag(html, "resend_invitation"),
+        `${JSON.stringify(invitation)}: Resend was enabled`,
+      ).toContain('disabled=""');
+      expect(
+        controlTag(html, "cancel_invitation"),
+        `${JSON.stringify(invitation)}: Cancel was enabled`,
+      ).toContain('disabled=""');
+      expect(html).toContain("could not be checked");
+      expect(html).not.toContain("live booking link");
+    }
+
+    // NEGATIVE CONTROL: complete facts keep both controls, so the refusals
+    // above are about incompleteness rather than about the row.
+    const complete = render(
+      AdmissionRow({
+        entry: {
+          ...ENTRY,
+          status: "invited",
+          invitation: { invitationElapsed: false, invitationRedeemed: false },
+        },
+        capabilities: CONNECTED,
+      }),
+    );
+    expect(controlTag(complete, "resend_invitation")).not.toContain('disabled=""');
+    expect(controlTag(complete, "cancel_invitation")).not.toContain('disabled=""');
+    expect(complete).toContain("live booking link");
   });
 
   it("does not give a non-invited row invitation semantics when facts are omitted", () => {
@@ -408,7 +454,7 @@ describe("resending tells the truth about the link it replaces", () => {
     // may already be holding the old one.
     const html = render(
       AdmissionRow({
-        entry: { ...ENTRY, status: "invited", invitation: { invitationElapsed: false } },
+        entry: { ...ENTRY, status: "invited", invitation: { invitationElapsed: false, invitationRedeemed: false } },
         capabilities: CONNECTED,
       }),
     );
@@ -421,7 +467,7 @@ describe("resending tells the truth about the link it replaces", () => {
     // old link already does not work, and the warning would be noise.
     const html = render(
       AdmissionRow({
-        entry: { ...ENTRY, status: "invited", invitation: { invitationElapsed: true } },
+        entry: { ...ENTRY, status: "invited", invitation: { invitationElapsed: true, invitationRedeemed: false } },
         capabilities: CONNECTED,
       }),
     );
@@ -448,7 +494,7 @@ describe("destructive actions are confirmed, and say what they cost", () => {
     // silently out of the active queue.
     const html = render(
       AdmissionRow({
-        entry: { ...ENTRY, status: "invited", invitation: { invitationElapsed: false } },
+        entry: { ...ENTRY, status: "invited", invitation: { invitationElapsed: false, invitationRedeemed: false } },
         capabilities: CONNECTED,
       }),
     );
@@ -464,7 +510,7 @@ describe("destructive actions are confirmed, and say what they cost", () => {
     // transition, written in different places. They contradicted each other.
     const confirm = render(
       AdmissionRow({
-        entry: { ...ENTRY, status: "invited", invitation: { invitationElapsed: false } },
+        entry: { ...ENTRY, status: "invited", invitation: { invitationElapsed: false, invitationRedeemed: false } },
         capabilities: CONNECTED,
       }),
     );
@@ -509,7 +555,7 @@ describe("destructive actions are confirmed, and say what they cost", () => {
       for (const caps of [null, CONNECTED]) {
         const html = render(
           AdmissionRow({
-            entry: { ...ENTRY, status, invitation: { invitationElapsed: false } },
+            entry: { ...ENTRY, status, invitation: { invitationElapsed: false, invitationRedeemed: false } },
             capabilities: caps,
           }),
         );
