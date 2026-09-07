@@ -170,10 +170,27 @@ export function normalizeInvitationContext(
   status: WaitlistEntryStatus,
   context: AdmissionContext | undefined,
 ): AdmissionContext {
+  // UNKNOWN DOMINATES STRUCTURALLY, AND DISCARDS ITS COMPANIONS.
+  //
+  // A flag sitting beside `invitationFactsUnknown` came from the SAME read that
+  // failed. `{ invitationFactsUnknown: true, invitationRedeemed: true }` is not
+  // "unreadable, and also redeemed" — it is a claim sourced from the thing that
+  // just said it could not be sourced. Returning the caller's object unchanged
+  // left every consumer free to reach the companion first, and one did: the
+  // removal refusal tested `invitationRedeemed` before `invitationFactsUnknown`
+  // and told the practitioner "they have already used their invitation" one
+  // line under a row saying the state could not be checked.
+  //
+  // Ordering the checks inside each consumer would fix that one site and leave
+  // the next author to rediscover the rule. Discarding the companions here
+  // makes the contradiction unrepresentable instead: a consumer cannot read a
+  // fact that is no longer in the object. Applied at EVERY status, not just
+  // `invited`, so there is one shape of "unknown" in the system.
+  if (context?.invitationFactsUnknown === true) {
+    return { invitationFactsUnknown: true };
+  }
   if (status !== "invited") return context ?? {};
   if (context === undefined) return { invitationFactsUnknown: true };
-  // The caller told us outright.
-  if (context.invitationFactsUnknown === true) return context;
   // Redemption is terminal and answers every ruling by itself.
   if (context.invitationRedeemed === true) return context;
   // Otherwise both halves must be stated, as actual booleans.

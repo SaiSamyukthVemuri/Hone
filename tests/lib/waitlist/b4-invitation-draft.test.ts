@@ -441,6 +441,85 @@ describe("every verdict is the live model's, not a second copy of it", () => {
     ).toBe("return_to_waitlist");
   });
 
+  it("discards every flag that accompanies an unknown invitation", () => {
+    // A flag sitting beside `invitationFactsUnknown` came from the SAME read
+    // that failed, so it is a claim sourced from the thing that just said it
+    // could not be sourced. It had a reachable consequence: the removal refusal
+    // tested `invitationRedeemed` first and announced "they have already used
+    // their invitation" one line under a row saying the state could not be
+    // checked.
+    const CANONICAL = { invitationFactsUnknown: true };
+    const cases: ReadonlyArray<[string, AdmissionContext]> = [
+      ["unknown + redeemed", { invitationFactsUnknown: true, invitationRedeemed: true }],
+      ["unknown + elapsed", { invitationFactsUnknown: true, invitationElapsed: true }],
+      [
+        "unknown + both",
+        {
+          invitationFactsUnknown: true,
+          invitationRedeemed: true,
+          invitationElapsed: true,
+        },
+      ],
+      ["unknown alone", { invitationFactsUnknown: true }],
+    ];
+
+    for (const [label, context] of cases) {
+      expect(
+        normalizeInvitationContext("invited", context),
+        `${label} kept a companion flag`,
+      ).toEqual(CANONICAL);
+
+      const detail = practitionerStatusDetail("invited", context);
+      expect(detail).toContain("could not be checked");
+      expect(detail, `${label}: claimed the invitation was used`).not.toContain("have used");
+      expect(detail, `${label}: claimed the invitation ran out`).not.toContain("ran out");
+      expect(practitionerStatusLabel("invited", context)).not.toBe("Invitation expired");
+
+      for (const item of surfaceItems("invited", context)) {
+        expect(item.available, `${label}: ${item.action} was offered`).toBe(false);
+        const reason = item.available === false ? item.reason : "";
+        expect(reason, `${label}: ${item.action} asserted a fact`).toContain(
+          "could not be checked",
+        );
+      }
+      expect(surfaceItems("invited", context).map((i) => i.action)).not.toContain(
+        "return_to_waitlist",
+      );
+    }
+
+    // Applied at every status, so there is ONE shape of unknown in the system.
+    for (const status of WAITLIST_ENTRY_STATUSES) {
+      expect(
+        normalizeInvitationContext(status, {
+          invitationFactsUnknown: true,
+          invitationRedeemed: true,
+        }),
+      ).toEqual(CANONICAL);
+    }
+  });
+
+  it("preserves a READABLE redeemed or elapsed invitation, unchanged", () => {
+    // The other half of the law: discarding companions must not flatten facts
+    // that were genuinely read. Without this the fix would just be "never
+    // believe anything".
+    const redeemed = { invitationRedeemed: true };
+    expect(normalizeInvitationContext("invited", redeemed)).toEqual(redeemed);
+    expect(practitionerStatusDetail("invited", redeemed)).toContain("have used");
+    const removeOnRedeemed = surfaceItems("invited", redeemed).find(
+      (i) => i.action === "remove_from_waitlist",
+    )!;
+    expect(
+      removeOnRedeemed.available === false ? removeOnRedeemed.reason : "",
+    ).toContain("already used their invitation");
+
+    const elapsed = { invitationElapsed: true, invitationRedeemed: false };
+    expect(normalizeInvitationContext("invited", elapsed)).toEqual(elapsed);
+    expect(practitionerStatusLabel("invited", elapsed)).toBe("Invitation expired");
+    expect(entryActionSurface("invited", elapsed).primary?.action).toBe(
+      "return_to_waitlist",
+    );
+  });
+
   it("discards the partial fact rather than carrying it beside the unknown flag", () => {
     // A half-known state produced this defect twice — once as a missing object,
     // once as a partial one. Keeping the fragment invites a third reading of it.

@@ -350,6 +350,47 @@ describe("nothing is connected, and every control says so in its own words", () 
     expect(controlTag(known, "cancel_invitation")).not.toContain('disabled=""');
   });
 
+  it("asserts nothing about an unreadable invitation, whatever flags came with it", () => {
+    // The rendered form of the same law. `{ factsUnknown, redeemed }` used to
+    // put "They have already used their invitation" on the Remove control one
+    // line under a row saying the state could not be checked.
+    for (const invitation of [
+      { invitationFactsUnknown: true },
+      { invitationFactsUnknown: true, invitationRedeemed: true },
+      { invitationFactsUnknown: true, invitationElapsed: true },
+      { invitationFactsUnknown: true, invitationRedeemed: true, invitationElapsed: true },
+    ]) {
+      const html = render(
+        AdmissionRow({
+          entry: { ...ENTRY, status: "invited", invitation },
+          capabilities: CONNECTED,
+        }),
+      );
+      const what = JSON.stringify(invitation);
+      expect(html, `${what}: claimed the invitation was used`).not.toContain("have used");
+      expect(html, `${what}: claimed it already used`).not.toContain(
+        "already used their invitation",
+      );
+      expect(html, `${what}: claimed it ran out`).not.toContain("ran out");
+      expect(html, `${what}: read as expired`).not.toContain("Invitation expired");
+      expect(html).toContain("could not be checked");
+      expect(controlTag(html, "resend_invitation")).toContain('disabled=""');
+      expect(controlTag(html, "cancel_invitation")).toContain('disabled=""');
+      expect(hasControl(html, "return_to_waitlist")).toBe(false);
+    }
+
+    // NEGATIVE CONTROL: a READABLE redeemed invitation still says so, so the
+    // absences above are about unreadability rather than about the copy.
+    const readable = render(
+      AdmissionRow({
+        entry: { ...ENTRY, status: "invited", invitation: { invitationRedeemed: true } },
+        capabilities: CONNECTED,
+      }),
+    );
+    expect(readable).toContain("have used their invitation");
+    expect(readable).not.toContain("could not be checked");
+  });
+
   it("fails closed on PARTIAL invitation facts too, not just missing ones", () => {
     // `{ invitationElapsed: false }` has a key, so a key-count test let it
     // through with `invitationRedeemed` absent — read as false — and the row
