@@ -57,13 +57,15 @@ const scenario = {
   error: null as { code: string; message: string } | null,
   removeResult: "removed" as string | null,
   removeError: null as { code: string } | null,
-  // The invitation-window read, which decides whether "Record expired" may be
-  // offered at all. Empty by default: no row is `invited` unless a test says so.
-  invitations: [] as Array<Record<string, unknown>>,
+  // The LIVE invitation read — the rows whose three terminal stamps are all
+  // null. At most one per entry, by the 0189 unique index.
+  liveInvitations: [] as Array<Record<string, unknown>>,
+  // The REDEEMED invitation read, asked separately.
+  redeemedInvitations: [] as Array<Record<string, unknown>>,
   invitationsError: null as { code: string } | null,
-  // The UNCAPPED waiting count, read separately from the bounded page. Null
-  // models a failed count.
-  waitingCount: 1 as number | null,
+  // Per-section totals, when a test needs a count LARGER than the rows it
+  // seeded (truncation). Absent means "the count equals what was seeded".
+  sectionTotals: null as Record<string, number> | null,
 };
 
 function reset() {
@@ -79,9 +81,10 @@ function reset() {
     error: null,
     removeResult: "removed",
     removeError: null,
-    invitations: [],
+    liveInvitations: [],
+    redeemedInvitations: [],
     invitationsError: null,
-    waitingCount: 1,
+    sectionTotals: null,
   });
 }
 
@@ -116,26 +119,47 @@ vi.mock("@/lib/supabase/server", () => ({
       // invitation-window read (terminal at `.in`). A builder that resolves
       // only on `.limit` cannot model the second, and every render would throw.
       const settle = () => {
-        // The waiting count is the SAME table as the bounded page read, so it
-        // is told apart by `head: true` — the only query that asks for a count
-        // without rows.
-        if (shape.options.head === true) {
-          return scenario.waitingCount === null
-            ? { data: null, count: null, error: { code: "57014" } }
-            : { data: null, count: scenario.waitingCount, error: null };
-        }
+        const filterVal = (op: string, col: string) =>
+          shape.filters.find((f) => f[0] === op && f[1] === col)?.[2];
+
         if (table === "new_client_waitlist_invitations") {
+          if (scenario.invitationsError) {
+            return { data: null, error: scenario.invitationsError };
+          }
+          // TWO invitation reads now, told apart by their predicates: the LIVE
+          // one asks `is null` on all three terminal stamps; the REDEEMED one
+          // asks `not redeemed_at is null`.
+          const asksRedeemed = shape.filters.some((f) => f[0] === "not");
           return {
-            data: scenario.invitationsError ? null : scenario.invitations,
-            error: scenario.invitationsError,
+            data: asksRedeemed ? scenario.redeemedInvitations : scenario.liveInvitations,
+            error: null,
           };
         }
+
+        // ONE READ PER SECTION. The page asks per status, so the fake must
+        // answer per status — returning every seeded row to every section would
+        // render each person once per section.
+        const status = filterVal("eq", "status");
+        const rows =
+          typeof status === "string"
+            ? scenario.rows.filter((r) => r.status === status)
+            : scenario.rows;
+        // Totals, in precedence order: an explicit per-section total, then the
+        // legacy single `count` (older cases seed only waiting rows), then the
+        // number actually seeded.
+        const total =
+          scenario.sectionTotals && typeof status === "string"
+            ? (scenario.sectionTotals[status] ?? rows.length)
+            : scenario.count !== null && rows.length > 0
+              ? scenario.count
+              : rows.length;
         return {
-          data: scenario.error ? null : scenario.rows,
-          count: scenario.error ? null : scenario.count,
+          data: scenario.error ? null : rows,
+          count: scenario.error ? null : total,
           error: scenario.error,
         };
       };
+
       const builder = {
         select(columns: string, options: Record<string, unknown> = {}) {
           shape.columns = columns;
@@ -148,6 +172,14 @@ vi.mock("@/lib/supabase/server", () => ({
         },
         in(column: string, values: unknown) {
           shape.filters.push(["in", column, values]);
+          return builder;
+        },
+        is(column: string, value: unknown) {
+          shape.filters.push(["is", column, value]);
+          return builder;
+        },
+        not(column: string, op: string, value: unknown) {
+          shape.filters.push(["not", column, `${op}:${String(value)}`]);
           return builder;
         },
         order(column: string, options?: { ascending?: boolean }) {
@@ -250,22 +282,22 @@ describe("the query the page asks", () => {
 
   it("is ONE bounded, studio-scoped, status-scoped, ordered read", async () => {
     await render();
-    // TWO reads of this table now: the bounded page, and an uncapped
-    // `head: true` count of who is still WAITING. The second exists because
-    // "is anyone waiting?" cannot be answered from a capped mixed-status page —
-    // claimed rows can fill it while waiting people sit beyond the limit.
-    const pageReads = queries.filter(
-      (x) => x.table === "new_client_waitlist_entries" && x.options.head !== true,
-    );
-    expect(pageReads).toHaveLength(1);
-    const q = pageReads[0];
+    // ONE BOUNDED READ PER SECTION — five of them — rather than one cap shared
+    // across every state. A shared cap lets a busy section crowd another off
+    // the page entirely, taking that section's only actions with it.
+    const pageReads = queries.filter((x) => x.table === "new_client_waitlist_entries");
+    expect(pageReads).toHaveLength(5);
+    const q = pageReads.find((x) =>
+      x.filters.some((f) => f[0] === "eq" && f[1] === "status" && f[2] === "waiting"),
+    )!;
+    expect(q).toBeTruthy();
     expect(q.table).toBe("new_client_waitlist_entries");
     expect(q.filters).toEqual([
       ["eq", "studio_id", STUDIO_ID],
       // The page now reads every ACTIVE lifecycle state, not waiting alone.
       // `converted` and `removed` are terminal history and stay out, so the
       // bound is spent on rows an operator can still act on.
-      ["in", "status", ["waiting", "claimed", "invited", "expired", "released"]],
+      ["eq", "status", "waiting"],
     ]);
     expect(q.limit).toBeGreaterThan(0);
   });
@@ -730,13 +762,12 @@ describe("action visibility follows the row's lifecycle state", () => {
       scenario.rows = [entry({ id: `e-${status}`, status })];
       scenario.count = 1;
       // A live invitation: expires in the future, so nothing has run out.
-      scenario.invitations =
+      scenario.liveInvitations =
         status === "invited"
           ? [
               {
                 entry_id: `e-${status}`,
                 expires_at: new Date(Date.now() + 86_400_000).toISOString(),
-                redeemed_at: null,
               },
             ]
           : [];
@@ -748,12 +779,8 @@ describe("action visibility follows the row's lifecycle state", () => {
   it("EXPIRE IS NOT CANCELLATION — withheld while the invitation is live", async () => {
     scenario.rows = [entry({ id: "e-live", status: "invited" })];
     scenario.count = 1;
-    scenario.invitations = [
-      {
-        entry_id: "e-live",
-        expires_at: new Date(Date.now() + 3_600_000).toISOString(),
-        redeemed_at: null,
-      },
+    scenario.liveInvitations = [
+      { entry_id: "e-live", expires_at: new Date(Date.now() + 3_600_000).toISOString() },
     ];
     const html = await render();
     expect(actionsFor(html)).not.toContain("expire");
@@ -765,12 +792,8 @@ describe("action visibility follows the row's lifecycle state", () => {
   it("Record expired appears ONLY once the clock has run out", async () => {
     scenario.rows = [entry({ id: "e-done", status: "invited" })];
     scenario.count = 1;
-    scenario.invitations = [
-      {
-        entry_id: "e-done",
-        expires_at: new Date(Date.now() - 3_600_000).toISOString(),
-        redeemed_at: null,
-      },
+    scenario.liveInvitations = [
+      { entry_id: "e-done", expires_at: new Date(Date.now() - 3_600_000).toISOString() },
     ];
     const html = await render();
     expect(actionsFor(html)).toContain("expire");
@@ -782,15 +805,17 @@ describe("action visibility follows the row's lifecycle state", () => {
     // `already_redeemed`, and the page must not offer the control at all.
     scenario.rows = [entry({ id: "e-used", status: "invited" })];
     scenario.count = 1;
-    scenario.invitations = [
-      {
-        entry_id: "e-used",
-        expires_at: new Date(Date.now() - 3_600_000).toISOString(),
-        redeemed_at: new Date(Date.now() - 1_800_000).toISOString(),
-      },
-    ];
+    // A redeemed invitation is TERMINAL, so it has no live row at all — the
+    // 0189 unique index is on the all-null predicate. It appears only in the
+    // redeemed read.
+    scenario.liveInvitations = [];
+    scenario.redeemedInvitations = [{ entry_id: "e-used" }];
     const html = await render();
     expect(actionsFor(html)).not.toContain("expire");
+    // …and Release is withheld too: the command could only answer
+    // `already_redeemed`.
+    expect(actionsFor(html)).not.toContain("release");
+    expect(html).toContain("has been used");
   });
 
   it("a FAILED invitation read withholds the control and SAYS it could not check", async () => {
@@ -800,61 +825,94 @@ describe("action visibility follows the row's lifecycle state", () => {
     scenario.count = 1;
     scenario.invitationsError = { code: "57014" };
     const html = await render();
+    // FAILS CLOSED, both ways. Release used to render here on the assumption
+    // that unknown meant "not redeemed" — but a redeemed invitation can only
+    // answer `already_redeemed`, so the control could not succeed. Neither is
+    // offered, and the copy no longer claims Release "ends it either way".
     expect(actionsFor(html)).not.toContain("expire");
-    expect(html).toContain("Couldn&#x27;t check whether this invitation has run out");
-    // Release still works, and the copy says so.
-    expect(actionsFor(html)).toContain("release");
+    expect(actionsFor(html)).not.toContain("release");
+    expect(html).toContain("could not be");
+    expect(html).not.toContain("either way");
   });
 
   it("the invitation window is read ONLY when some row is invited", async () => {
     scenario.rows = [entry({ status: "waiting" })];
     scenario.count = 1;
     await render();
-    // The bounded page read plus the uncapped waiting count, both on the
-    // entries table. No invitation read, because no row is invited.
-    expect(queries.map((q) => q.table)).toEqual([
-      "new_client_waitlist_entries",
-      "new_client_waitlist_entries",
-    ]);
+    // ONE read per section, and no invitation read at all because no row is
+    // invited.
+    expect(queries.filter((q) => q.table === "new_client_waitlist_invitations")).toHaveLength(0);
+    expect(queries.filter((q) => q.table === "new_client_waitlist_entries")).toHaveLength(5);
   });
 
   it("and IS read when one is", async () => {
     // Non-vacuity for the assertion above.
     scenario.rows = [entry({ id: "e-inv", status: "invited" })];
     scenario.count = 1;
-    scenario.invitations = [];
     await render();
-    expect(queries.map((q) => q.table)).toEqual([
-      "new_client_waitlist_entries",
-      "new_client_waitlist_invitations",
-      "new_client_waitlist_entries",
-    ]);
+    // TWO invitation reads: the live-cycle predicate and the redeemed one.
+    // Identity comes from the 0189 unique index, never from ordering — so
+    // neither read carries an `order`.
+    const inv = queries.filter((q) => q.table === "new_client_waitlist_invitations");
+    expect(inv).toHaveLength(2);
+    for (const q of inv) expect(q.orders).toEqual([]);
   });
 
-  it("Claim next follows the UNCAPPED waiting count, not the visible page", async () => {
-    // THE DEFECT THIS PINS. Deciding from the page slice means that once a
-    // studio claims its oldest entries, those claimed rows fill the capped page
-    // while waiting people sit beyond the limit — so Claim next would disappear
-    // exactly when it is most needed.
-    scenario.rows = [entry({ status: "claimed" })];
-    scenario.count = 1;
-    scenario.waitingCount = 12; // nobody waiting is VISIBLE, but 12 are queued
-    expect(await render()).toContain("Claim next");
+  it("the live invitation is identified STRUCTURALLY, never by chronology", () => {
+    // 0189 exists because `issued_at desc, id desc` picked historical rows and
+    // broke ties on a random UUID. The live row is the one whose three terminal
+    // stamps are all null — a unique index, not a guess.
+    const SRC = readFileSync(
+      path.join(process.cwd(), "app/(app)/settings/waitlist/page.tsx"),
+      "utf8",
+    )
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "");
+    const invRead = SRC.slice(SRC.indexOf('from("new_client_waitlist_invitations")'));
+    expect(invRead).toMatch(/\.is\("redeemed_at", null\)/);
+    expect(invRead).toMatch(/\.is\("expired_at", null\)/);
+    expect(invRead).toMatch(/\.is\("released_at", null\)/);
+    expect(invRead).not.toMatch(/issued_at/);
+  });
+
+  it("Claim next follows the waiting SECTION's own count", async () => {
+    // Each section is read and counted independently, so "is anyone waiting?"
+    // no longer depends on what happens to fit in a page shared with other
+    // states.
+    scenario.rows = [entry({ id: "c1", status: "claimed" })];
+    expect(await render()).not.toContain("Claim next");
 
     reset();
-    scenario.rows = [entry({ status: "claimed" })];
-    scenario.count = 1;
-    scenario.waitingCount = 0;
-    expect(await render()).not.toContain("Claim next");
+    scenario.rows = [
+      entry({ id: "c1", status: "claimed" }),
+      entry({ id: "w1", status: "waiting" }),
+    ];
+    expect(await render()).toContain("Claim next");
   });
 
-  it("a FAILED waiting count keeps Claim next rather than hiding it", async () => {
-    // Claim next is a no-op on an empty queue, so offering it on an unknown
-    // count costs nothing — while hiding it on an unknown count silently
-    // removes the studio's main action.
-    scenario.rows = [entry({ status: "claimed" })];
-    scenario.count = 1;
-    scenario.waitingCount = null;
-    expect(await render()).toContain("Claim next");
+  it("a busy section cannot crowd another off the page", async () => {
+    // THE DEFECT THIS PINS. Under one shared cap, enough old expired/released
+    // rows would push a freshly claimed entry off the page — taking Release,
+    // its only escape action, with it. Per-section bounds make that
+    // unreachable: every section shows its own oldest rows.
+    scenario.rows = [
+      ...Array.from({ length: 3 }, (_, i) =>
+        entry({ id: `x${i}`, status: "expired", joined_at: "2020-01-01T00:00:00.000Z" }),
+      ),
+      entry({ id: "held", status: "claimed", joined_at: "2026-08-30T00:00:00.000Z" }),
+    ];
+    const html = await render();
+    // The claimed row is present WITH its Release control, despite being the
+    // newest row on the page.
+    expect(html).toContain('data-entry-status="claimed"');
+    expect(actionsFor(html)).toContain("release");
+  });
+
+  it("each section reports its OWN total, and truncation is per section", async () => {
+    scenario.rows = [entry({ id: "w1", status: "waiting" })];
+    scenario.sectionTotals = { waiting: 250 };
+    const html = await render();
+    expect(html).toMatch(/Waitlist entries:\s*<[^>]*>250</);
+    expect(html).toContain("may therefore be incomplete");
   });
 });

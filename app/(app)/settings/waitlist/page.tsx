@@ -13,6 +13,7 @@ import {
   ACTION_LABEL,
   STATUS_MEANING,
   actionAvailability,
+  statusMeaning,
   type AdmissionAction,
   type WaitlistEntryStatus,
 } from "@/lib/waitlist/admission-model";
@@ -61,7 +62,7 @@ import {
  * number and told that the list is truncated. Reading `data.length` as the
  * queue size is exactly the lie this split exists to prevent.
  */
-const QUEUE_PAGE_SIZE = 100;
+const SECTION_PAGE_SIZE = 100;
 
 type WaitlistRow = {
   id: string;
@@ -73,14 +74,13 @@ type WaitlistRow = {
 };
 
 /**
- * The states an operator can still act on. `converted` and `removed` are
- * terminal history and are deliberately NOT read here: including them would
- * spend the page's bound on rows nothing can be done to, and push live entries
- * off the end of a list whose whole job is showing what needs attention.
+ * The sections, in the order they appear — most actionable first. This list is
+ * also the set of states READ: one bounded query per entry below.
+ *
+ * `converted` and `removed` are terminal history and are deliberately absent.
+ * Reading them would spend a bound on rows nothing can be done to, and an
+ * operator queue exists to show what still needs attention.
  */
-const ACTIVE_STATUSES = ["waiting", "claimed", "invited", "expired", "released"] as const;
-
-/** The order the sections appear in — most actionable first. */
 const SECTIONS: ReadonlyArray<{ status: WaitlistEntryStatus; heading: string }> = [
   { status: "waiting", heading: "Waiting" },
   { status: "claimed", heading: "Held" },
@@ -136,26 +136,41 @@ export default async function WaitlistSettingsPage() {
   // remembered to filter. The explicit studio filter is defence in depth and
   // the leading column of the queue index.
   //
-  // ONE query, bounded and ordered. No per-row follow-up read exists or could:
-  // every column rendered below comes from this select.
+  // ONE BOUNDED READ PER SECTION, not one global cap across all of them.
+  //
+  // A single `.limit()` over every active state lets one state starve the
+  // others: fill the page with old expired/released rows and a freshly CLAIMED
+  // entry falls off the end, taking its only escape action (Release) with it.
+  // The operator would then have claimed someone they cannot subsequently
+  // reach. Each section therefore carries its own bound and its own exact
+  // count, so no section can be crowded out by another's volume — and the
+  // existing (studio_id, status, joined_at, id) index serves exactly this shape.
   const supabase = await createClient();
-  const { data, count, error } = await supabase
-    .from("new_client_waitlist_entries")
-    .select("id,name,email,phone,joined_at,status", { count: "exact" })
-    .eq("studio_id", studio.id)
-    .in("status", ACTIVE_STATUSES)
-    .order("joined_at", { ascending: true })
-    .order("id", { ascending: true })
-    .limit(QUEUE_PAGE_SIZE);
+  const sectionReads = await Promise.all(
+    SECTIONS.map(async ({ status }) => {
+      const res = await supabase
+        .from("new_client_waitlist_entries")
+        .select("id,name,email,phone,joined_at,status", { count: "exact" })
+        .eq("studio_id", studio.id)
+        .eq("status", status)
+        .order("joined_at", { ascending: true })
+        .order("id", { ascending: true })
+        .limit(SECTION_PAGE_SIZE);
+      return { status, res };
+    }),
+  );
 
-  if (error) {
+  const failed = sectionReads.find(({ res }) => res.error);
+  if (failed) {
     // Say so plainly instead of rendering an empty queue, which would read as
-    // "nobody is waiting" — the one wrong answer this page can give.
+    // "nobody is waiting" — the one wrong answer this page can give. ANY
+    // section failing collapses the whole surface: a partially rendered queue
+    // is indistinguishable from a shorter one.
     console.error(
       JSON.stringify({
         event: "waitlist_queue_load_failed",
         studioId: studio.id,
-        code: error.code ?? "unknown",
+        code: failed.res.error?.code ?? "unknown",
         timestamp: new Date().toISOString(),
       }),
     );
@@ -167,11 +182,24 @@ export default async function WaitlistSettingsPage() {
     );
   }
 
-  const rows = (data ?? []) as WaitlistRow[];
-  // The authoritative total, from the count query — never `rows.length`, which
-  // is capped at QUEUE_PAGE_SIZE.
-  const active = count ?? rows.length;
-  const truncated = rows.length < active;
+  const bySection = new Map<
+    WaitlistEntryStatus,
+    { rows: WaitlistRow[]; total: number }
+  >();
+  for (const { status, res } of sectionReads) {
+    const sectionRows = (res.data ?? []) as WaitlistRow[];
+    // The authoritative total per section, from its own count — never
+    // `rows.length`, which is capped.
+    bySection.set(status, { rows: sectionRows, total: res.count ?? sectionRows.length });
+  }
+  const rows = SECTIONS.flatMap(({ status }) => bySection.get(status)?.rows ?? []);
+  const active = SECTIONS.reduce((n, { status }) => n + (bySection.get(status)?.total ?? 0), 0);
+  const truncated = SECTIONS.some(
+    ({ status }) => (bySection.get(status)?.rows.length ?? 0) < (bySection.get(status)?.total ?? 0),
+  );
+  // Whether anyone is waiting is now the waiting section's OWN exact count, so
+  // it no longer depends on what happens to fit in a shared page.
+  const anyoneWaiting = (bySection.get("waiting")?.total ?? 0) > 0;
   const now = Date.now();
 
   // WHETHER AN INVITATION HAS RUN OUT IS A DATABASE FACT, NOT A GUESS.
@@ -184,82 +212,82 @@ export default async function WaitlistSettingsPage() {
   const invitedIds = rows.filter((r) => r.status === "invited").map((r) => r.id);
   let cycleByEntry: Map<string, { elapsed: boolean; redeemed: boolean }> | null = new Map();
   if (invitedIds.length > 0) {
-    // THE CURRENT CYCLE, NOT WHICHEVER ROW ARRIVES LAST.
+    // THE LIVE INVITATION IS A SCHEMA INVARIANT, NOT A CHRONOLOGY GUESS.
     //
-    // `new_client_waitlist_invitations` is APPEND-ONLY and undeletable, so an
-    // entry that went invite -> expire -> requeue -> invite carries several
-    // rows. Reading them unordered and letting each overwrite the previous
-    // means an old elapsed row can mark a NEWER live invitation as elapsed and
-    // surface "Record expired" prematurely — the exact premature expiry this
-    // surface exists to prevent.
+    // `new_client_waitlist_invitations` is append-only, so an entry that went
+    // invite -> expire -> requeue -> invite carries several rows. An earlier
+    // revision of this page chose the current one by `issued_at desc, id desc`
+    // — which is EXACTLY the heuristic migration 0189 was written to remove.
+    // Its own comment records why: two cycles completed inside ONE transaction
+    // share an identical `issued_at`, so the tie-break fell to a random v4
+    // UUID and "which invitation is current" was decided by coin flip; a
+    // released historical row could win, and the genuine live cycle was left
+    // unstamped.
     //
-    // A new invitation can only be issued once the previous one is terminal, so
-    // the most recently ISSUED row is the current cycle by construction. The
-    // order terminates in `id` because `issued_at` alone is not a total order.
-    const invitations = await supabase
-      .from("new_client_waitlist_invitations")
-      .select("entry_id,expires_at,issued_at,redeemed_at,expired_at,released_at")
-      .eq("studio_id", studio.id)
-      .in("entry_id", invitedIds)
-      .order("issued_at", { ascending: false })
-      .order("id", { ascending: false });
-    if (invitations.error) {
-      // NULL means "we could not check", which is NOT the same as "not elapsed".
-      // The control is withheld either way, but the sentence beside it has to
-      // tell the truth about which of the two it is.
+    // 0189 names the answer instead: `new_client_waitlist_invitations_one_live_
+    // per_entry` is a UNIQUE index on (entry_id) WHERE redeemed_at, expired_at
+    // and released_at are ALL null. At most one invitation per entry can be
+    // live, so the live row IS the current cycle by construction, with no
+    // ordering of any kind. This asks that question directly.
+    //
+    // REDEEMED IS ASKED SEPARATELY. A redeemed entry has no live row, and by
+    // the same migration's lifecycle invariants it cannot acquire a later
+    // cycle — so a redeemed stamp on an `invited` entry describes its current
+    // cycle unambiguously.
+    const [live, redeemed] = await Promise.all([
+      supabase
+        .from("new_client_waitlist_invitations")
+        .select("entry_id,expires_at")
+        .eq("studio_id", studio.id)
+        .in("entry_id", invitedIds)
+        .is("redeemed_at", null)
+        .is("expired_at", null)
+        .is("released_at", null),
+      supabase
+        .from("new_client_waitlist_invitations")
+        .select("entry_id")
+        .eq("studio_id", studio.id)
+        .in("entry_id", invitedIds)
+        .not("redeemed_at", "is", null),
+    ]);
+
+    if (live.error || redeemed.error) {
+      // UNKNOWN — which is NOT "not elapsed" and NOT "not redeemed". Every
+      // control that depends on the invitation is withheld, and the sentence
+      // beside them says which of the two it is.
       console.error(
         JSON.stringify({
           event: "waitlist_invitation_window_read_failed",
           studioId: studio.id,
-          code: invitations.error.code ?? "unknown",
+          code: (live.error ?? redeemed.error)?.code ?? "unknown",
           timestamp: new Date().toISOString(),
         }),
       );
       cycleByEntry = null;
     } else {
-      for (const inv of (invitations.data ?? []) as Array<{
+      const redeemedIds = new Set(
+        ((redeemed.data ?? []) as Array<{ entry_id: string }>).map((r) => r.entry_id),
+      );
+      // Default every invited entry to "no live invitation": an entry with
+      // neither a live nor a redeemed row offers nothing, which is the safe
+      // direction.
+      for (const id of invitedIds) {
+        cycleByEntry.set(id, { elapsed: false, redeemed: redeemedIds.has(id) });
+      }
+      for (const inv of (live.data ?? []) as Array<{
         entry_id: string;
         expires_at: string;
-        redeemed_at: string | null;
-        expired_at: string | null;
-        released_at: string | null;
       }>) {
-        // FIRST row per entry wins, and the read is ordered newest-first, so
-        // this is the current cycle. Later rows for the same entry are history.
-        if (cycleByEntry.has(inv.entry_id)) continue;
         const expiresAt = new Date(inv.expires_at).getTime();
-        // `!= null` deliberately, not `!==`: an absent column must read as
-        // "no terminal stamp", not as terminal. Strict inequality would make a
-        // missing field mark a live invitation dead.
-        const terminal =
-          inv.redeemed_at != null || inv.expired_at != null || inv.released_at != null;
         cycleByEntry.set(inv.entry_id, {
-          // Elapsed means: still live, and the clock has passed. A row already
-          // carrying a terminal stamp is not something to record as expired.
-          elapsed: !terminal && Number.isFinite(expiresAt) && expiresAt <= now,
-          redeemed: inv.redeemed_at != null,
+          // A LIVE row whose clock has passed is the only thing that may be
+          // recorded as expired.
+          elapsed: Number.isFinite(expiresAt) && expiresAt <= now,
+          redeemed: false,
         });
       }
     }
   }
-
-  // WHETHER ANYONE IS STILL WAITING IS A QUEUE FACT, NOT A PAGE FACT.
-  //
-  // The bounded read above is ONE mixed-status page. Once a studio has claimed
-  // its oldest entries, those claimed rows still occupy that page while waiting
-  // people sit beyond the limit — so deciding "is anyone waiting?" from the
-  // slice would hide Claim next exactly when it is most needed. Counted
-  // independently, with `head` so no rows cross the wire.
-  const waitingCountRead = await supabase
-    .from("new_client_waitlist_entries")
-    .select("id", { count: "exact", head: true })
-    .eq("studio_id", studio.id)
-    .eq("status", "waiting");
-  // A failed count must not hide the control: Claim next is a no-op when the
-  // queue is empty, so offering it on an unknown count costs nothing, while
-  // hiding it on an unknown count silently removes the studio's main action.
-  const waitingCount = waitingCountRead.error ? null : (waitingCountRead.count ?? 0);
-  const anyoneWaiting = waitingCount === null || waitingCount > 0;
 
   return (
     <div className="flex flex-col gap-6">
@@ -372,6 +400,25 @@ export default async function WaitlistSettingsPage() {
                             {" · "}
                             <span className="tabular-nums">{ageLabel(days)}</span> waiting
                           </p>
+                          {/* THE ROW SAYS WHAT THE PAGE ACTUALLY KNOWS. The
+                              section sentence is status-only, and for `invited`
+                              that is deliberately neutral — a redeemed entry
+                              stays `invited` until conversion is recorded, so
+                              "has not yet been used" would contradict this
+                              row's own controls. Where the invitation facts are
+                              loaded, the sentence is derived from them. */}
+                          {row.status === "invited" && (
+                            <p
+                              data-testid="row-status-meaning"
+                              className="text-sm text-neutral-500"
+                            >
+                              {statusMeaning("invited", {
+                                invitationElapsed: elapsed,
+                                invitationRedeemed: redeemed,
+                                invitationFactsUnknown: cycleByEntry === null,
+                              })}
+                            </p>
+                          )}
                         </div>
 
                         <div className="flex w-full shrink-0 flex-col gap-2 sm:w-auto">
@@ -380,6 +427,7 @@ export default async function WaitlistSettingsPage() {
                               const verdict = actionAvailability(action, row.status, {
                                 invitationElapsed: elapsed,
                                 invitationRedeemed: redeemed,
+                                invitationFactsUnknown: cycleByEntry === null,
                               });
                               if (!verdict.available) return null;
                               const formAction =
@@ -405,10 +453,15 @@ export default async function WaitlistSettingsPage() {
                           {/* The invitation window could not be read, so whether
                               it has run out is UNKNOWN. Say that, rather than
                               letting the absent control imply "still live". */}
+                          {/* "Release ends it either way" USED TO SIT HERE and
+                              was false: an invitation that has already been
+                              redeemed cannot be released, and this is exactly
+                              the case where we do not know whether it was. */}
                           {row.status === "invited" && cycleByEntry === null && (
                             <span className="text-xs text-neutral-500">
-                              Couldn&apos;t check whether this invitation has run
-                              out. Release ends it either way.
+                              This invitation&apos;s current state could not be
+                              checked, so no action is offered for it. Refresh to
+                              try again.
                             </span>
                           )}
 

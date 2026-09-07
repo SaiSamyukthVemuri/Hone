@@ -18,6 +18,7 @@ import {
   WAITLIST_ENTRY_STATUSES,
   actionAvailability,
   allActionAvailability,
+  statusMeaning,
   emptyDraft,
   reviewSummary,
   validateDraft,
@@ -181,6 +182,28 @@ describe("every action, on every state, is decided AND explained", () => {
     expect((used as { reason: string }).reason).toMatch(/already been used/i);
   });
 
+  it("UNKNOWN invitation facts withhold Release — unknown is not `not redeemed`", () => {
+    // FAILS CLOSED. An unread invitation might be redeemed, and `release` would
+    // then answer `already_redeemed`. Treating unknown as "not redeemed" offers
+    // a control that cannot succeed.
+    const unknown = actionAvailability("release", "invited", {
+      invitationFactsUnknown: true,
+    });
+    expect(unknown.available).toBe(false);
+    expect((unknown as { reason: string }).reason).toMatch(/could not be checked/i);
+
+    // NON-VACUITY: known-not-redeemed still offers it.
+    expect(
+      actionAvailability("release", "invited", { invitationRedeemed: false }).available,
+    ).toBe(true);
+  });
+
+  it("UNKNOWN invitation facts withhold Record expired too", () => {
+    expect(
+      actionAvailability("expire", "invited", { invitationFactsUnknown: true }).available,
+    ).toBe(false);
+  });
+
   it("Remove is withheld where the command would answer release_required", () => {
     // `remove_new_client_waitlist_entry` refuses a held or invited entry and
     // changes nothing, so offering the confirm disclosure there produces an
@@ -238,6 +261,45 @@ describe("every action, on every state, is decided AND explained", () => {
       const menu = allActionAvailability(status);
       expect(menu.map((m) => m.action)).toEqual([...ADMISSION_ACTIONS]);
       for (const item of menu) expect(item.label).toBe(ACTION_LABEL[item.action]);
+    }
+  });
+});
+
+describe("the status sentence never contradicts the row's own controls", () => {
+  it("a REDEEMED invited entry is not described as unused", () => {
+    // `redeem` leaves the entry at `invited` until conversion is recorded, so a
+    // status-only sentence would say "has not yet been used" precisely while
+    // the controls have correctly recognised it as used.
+    const used = statusMeaning("invited", { invitationRedeemed: true });
+    expect(used).toMatch(/has been used/i);
+    expect(used).not.toMatch(/not yet been used/i);
+  });
+
+  it("an ELAPSED invitation says so", () => {
+    expect(statusMeaning("invited", { invitationElapsed: true })).toMatch(/ran out/i);
+  });
+
+  it("UNKNOWN says it could not be checked, and claims nothing else", () => {
+    const unknown = statusMeaning("invited", { invitationFactsUnknown: true });
+    expect(unknown).toMatch(/could not be checked/i);
+    expect(unknown).not.toMatch(/has been used|not yet been used|ran out/i);
+  });
+
+  it("a live invitation keeps the plain sentence", () => {
+    expect(statusMeaning("invited", { invitationRedeemed: false })).toMatch(
+      /has not yet been used/i,
+    );
+  });
+
+  it("the no-context default is NEUTRAL, so it cannot be wrong", () => {
+    // Callers without invitation facts must not assert usage either way.
+    expect(STATUS_MEANING.invited).not.toMatch(/used/i);
+  });
+
+  it("every other status is unchanged by context", () => {
+    for (const s of WAITLIST_ENTRY_STATUSES) {
+      if (s === "invited") continue;
+      expect(statusMeaning(s, { invitationRedeemed: true }), s).toBe(STATUS_MEANING[s]);
     }
   });
 });

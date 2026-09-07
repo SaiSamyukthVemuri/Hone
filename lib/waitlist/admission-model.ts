@@ -94,7 +94,9 @@ export const STATUS_LABEL: Record<WaitlistEntryStatus, string> = {
 export const STATUS_MEANING: Record<WaitlistEntryStatus, string> = {
   waiting: "In the queue. No one has started admitting them.",
   claimed: "Held for this studio. No invitation has been sent yet.",
-  invited: "An invitation is out and has not yet been used.",
+  // For an `invited` entry the page may know MORE than the status does — see
+  // `statusMeaning` below. This sentence is only the no-context default.
+  invited: "An invitation is out.",
   converted: "They booked. This entry is closed.",
   expired: "The invitation ran out before it was used.",
   released: "Returned to the queue and can be admitted again.",
@@ -168,6 +170,16 @@ export type AdmissionContext = {
    * a used one, and every control that a used one forbids has to be told.
    */
   invitationRedeemed?: boolean;
+  /**
+   * True when the invitation facts could NOT be read at all.
+   *
+   * Distinct from `invitationRedeemed: false`, and the distinction is the whole
+   * point: an unread invitation might be redeemed, and `release` would then
+   * answer `already_redeemed`. Treating unknown as "not redeemed" fails OPEN and
+   * offers a control that cannot succeed, so every control that depends on the
+   * invitation is withheld while this is true.
+   */
+  invitationFactsUnknown?: boolean;
 };
 
 export function actionAvailability(
@@ -235,6 +247,15 @@ export function actionAvailability(
       // `redeemed_at is null`, so the control is guaranteed to return
       // `already_redeemed`. Offering a control that cannot succeed is exactly
       // what deriving availability from stored state is meant to prevent.
+      if (status === "invited" && context.invitationFactsUnknown) {
+        // FAIL CLOSED. The invitation could not be read, so whether it has been
+        // used is unknown — and a used one can only answer `already_redeemed`.
+        return {
+          available: false,
+          reason:
+            "This invitation could not be checked just now, so it cannot be released safely. Try again shortly.",
+        };
+      }
       if (status === "invited" && context.invitationRedeemed) {
         return {
           available: false,
@@ -296,6 +317,35 @@ export function actionAvailability(
       }
       return { available: true };
   }
+}
+
+/**
+ * The status sentence, refined by whatever the caller actually knows.
+ *
+ * `redeem_new_client_waitlist_invitation` stamps the invitation and LEAVES the
+ * entry at `invited` until a conversion is recorded, so a status-only sentence
+ * says "an invitation is out and has not yet been used" while the page's own
+ * controls have already recognised it as used. Where the invitation facts are
+ * loaded, the description has to agree with them — a surface that contradicts
+ * its own buttons teaches an operator to distrust both.
+ */
+export function statusMeaning(
+  status: WaitlistEntryStatus,
+  context: AdmissionContext = {},
+): string {
+  if (status === "invited") {
+    if (context.invitationFactsUnknown) {
+      return "An invitation is out. Its current state could not be checked just now.";
+    }
+    if (context.invitationRedeemed) {
+      return "The invitation has been used. This entry stays here until the booking is recorded.";
+    }
+    if (context.invitationElapsed) {
+      return "The invitation ran out and has not been recorded as expired yet.";
+    }
+    return "An invitation is out and has not yet been used.";
+  }
+  return STATUS_MEANING[status];
 }
 
 /** Every action with its verdict, for rendering a menu that shows disabled
