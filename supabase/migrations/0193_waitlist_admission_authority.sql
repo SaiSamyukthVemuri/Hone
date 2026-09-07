@@ -558,8 +558,18 @@ begin
 
   -- Scoped by BOTH id and studio_id, so a guessed entry id from another tenant
   -- resolves to nothing rather than to someone else's prospect.
+  --
+  -- LOCKED, NOT MERELY CHECKED. `select ... for update` on the PREFERENCE row
+  -- below locks NOTHING when that row is absent, so two callers setting an
+  -- entry's FIRST preference both saw no row, both took the insert path, and
+  -- the loser raised a bare unique_violation instead of returning a code --
+  -- which 0185 forbids and 0188's requeue repair is the precedent against.
+  -- Reproduced deterministically before it was fixed. The ENTRY row always
+  -- exists, so locking it is a real mutex, and it serialises this path against
+  -- redeem_waitlist_preference_grant, which writes the same preference table.
   perform 1 from public.new_client_waitlist_entries e
-   where e.id = p_entry_id and e.studio_id = p_studio_id;
+   where e.id = p_entry_id and e.studio_id = p_studio_id
+   for update;
   if not found then return 'entry_not_found'; end if;
 
   v_now := clock_timestamp();
@@ -627,6 +637,10 @@ declare
   v_hash    text;
   v_ttl     integer := coalesce(p_ttl_hours, 168);
   v_expires timestamptz;
+  -- ONE authoritative instant for the whole command: retirement, the liveness
+  -- verdict and the new window are all measured against the same clock, so a
+  -- grant cannot be judged expired by one line and live by the next.
+  v_now     timestamptz;
 begin
   select r.practitioner_id, r.code into v_actor, v_code
     from public.new_client_waitlist_resolve_owner(p_studio_id, p_actor_user_id) r;
@@ -639,16 +653,65 @@ begin
     return;
   end if;
 
+  -- LOCK ORDER: PARENT ENTRY FIRST, ALWAYS, IN EVERY WRITER.
+  --
+  -- The entry row always exists, so this is a real mutex where a lock on the
+  -- grant or preference row is not. Every command that writes a grant or a
+  -- preference takes THIS lock before touching either, which is what makes the
+  -- ordering uniform: nothing acquires a grant lock and then reaches for the
+  -- entry. An earlier draft let redeem_ take grant -> entry while this command
+  -- took entry -> grant, and that inversion is a deadlock waiting for the two
+  -- to meet on the same row.
   perform 1 from public.new_client_waitlist_entries e
-   where e.id = p_entry_id and e.studio_id = p_studio_id;
+   where e.id = p_entry_id and e.studio_id = p_studio_id
+   for update;
   if not found then
     return query select 'entry_not_found'::text, null::text, null::timestamptz;
     return;
   end if;
 
+  v_now := clock_timestamp();
+
+  -- RETIRE AN EXPIRED LINK BEFORE ISSUING A REPLACEMENT.
+  --
+  -- The one-live-grant index keys on redeemed_at/revoked_at ONLY, so an EXPIRED
+  -- grant still occupies the slot while redemption already refuses it. Without
+  -- this, the first expiry made the entry permanently un-issuable: every later
+  -- issue returned `grant_already_live`, and the owner's only exit was a
+  -- separate revoke of a link that was already dead. Reproduced before it was
+  -- fixed; expiry is now self-healing and costs the operator nothing.
+  --
+  -- NO ENTRY LOCK IS TAKEN HERE, DELIBERATELY. Locking the entry would give
+  -- this command an entry -> grant order while redeem_ holds grant -> entry,
+  -- and that inversion is a deadlock. Concurrency is already handled: the
+  -- partial unique index lets exactly one live row exist, and the loser of a
+  -- race is told `grant_already_live`, which is then TRUE.
+  update public.new_client_waitlist_preference_grants g
+     set revoked_at = v_now
+   where g.entry_id    = p_entry_id
+     and g.studio_id   = p_studio_id
+     and g.redeemed_at is null
+     and g.revoked_at  is null
+     and g.expires_at  <= v_now;
+
+  -- NOW ask whether a GENUINELY live link remains. Under the entry lock this is
+  -- decisive rather than advisory, so the caller is told `grant_already_live`
+  -- by a deliberate verdict instead of by catching a constraint. The unique
+  -- index below stays exactly as it was and remains the last word.
+  if exists (
+    select 1 from public.new_client_waitlist_preference_grants g
+     where g.entry_id    = p_entry_id
+       and g.studio_id   = p_studio_id
+       and g.redeemed_at is null
+       and g.revoked_at  is null
+  ) then
+    return query select 'grant_already_live'::text, null::text, null::timestamptz;
+    return;
+  end if;
+
   v_raw     := encode(extensions.gen_random_bytes(32), 'hex');
   v_hash    := encode(extensions.digest(v_raw, 'sha256'), 'hex');
-  v_expires := clock_timestamp() + make_interval(hours => v_ttl);
+  v_expires := v_now + make_interval(hours => v_ttl);
 
   begin
     insert into public.new_client_waitlist_preference_grants
@@ -689,6 +752,13 @@ begin
     from public.new_client_waitlist_resolve_owner(p_studio_id, p_actor_user_id) r;
   if v_code <> 'ok' then return v_code; end if;
 
+  -- The same parent-entry lock every other writer takes. This command touches
+  -- only grants and could not deadlock without it, but a uniform rule is worth
+  -- more than a per-command exemption someone must later re-derive.
+  perform 1 from public.new_client_waitlist_entries e
+   where e.id = p_entry_id and e.studio_id = p_studio_id
+   for update;
+
   update public.new_client_waitlist_preference_grants g
      set revoked_at = clock_timestamp()
    where g.entry_id    = p_entry_id
@@ -728,6 +798,7 @@ set search_path = pg_catalog, pg_temp
 as $$
 declare
   v_grant   record;
+  v_entry   uuid;
   v_now     timestamptz;
   v_current text;
 begin
@@ -738,8 +809,25 @@ begin
 
   v_now := clock_timestamp();
 
-  -- Locked inside this transaction, so a concurrent revoke or a second
-  -- redemption of the same token cannot both win.
+  -- STEP 1: an UNLOCKED read, for one purpose only -- to learn which entry this
+  -- token belongs to. Nothing is decided here. Deciding on this read would be a
+  -- read-then-write window; every predicate is re-checked in step 3 under the
+  -- lock, so a grant revoked, redeemed or expired in between is still refused.
+  select g.entry_id into v_entry
+    from public.new_client_waitlist_preference_grants g
+   where g.token_hash = encode(extensions.digest(p_raw_token, 'sha256'), 'hex');
+  if v_entry is null then return 'refused'; end if;
+
+  -- STEP 2: THE PARENT ENTRY LOCK, taken before the grant, exactly as the
+  -- operator path does. Uniform ENTRY -> GRANT ordering in every writer is what
+  -- makes these two commands safe to run against each other; the reverse order
+  -- here would deadlock against issue_.
+  perform 1 from public.new_client_waitlist_entries e
+   where e.id = v_entry
+   for update;
+
+  -- STEP 3: re-resolve the grant UNDER the lock, with the full validity
+  -- predicate. This is the read that decides.
   select g.id, g.entry_id, g.studio_id
     into v_grant
     from public.new_client_waitlist_preference_grants g

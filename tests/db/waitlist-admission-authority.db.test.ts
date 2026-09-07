@@ -1,5 +1,7 @@
 import { afterAll, describe, expect, it } from "vitest";
-import { adminQuery, closePool, seedMember, seedStudio } from "./helpers/harness";
+import { Client } from "pg";
+import { adminQuery, closePool, resolveLocalDbUrl, seedMember, seedStudio } from "./helpers/harness";
+import { waitUntilBlocked } from "./helpers/waitlist-concurrency";
 
 // 0193 — WAIT-ADMIT-01, proved against a real local PostgreSQL.
 //
@@ -524,5 +526,294 @@ describe("the ordered claim", () => {
       [studio.studioId, member.userId, [crypto.randomUUID()]],
     );
     expect(res.rows[0].result).toBe("not_owner");
+  });
+});
+
+// ===========================================================================
+// CODEX EXACT-HEAD REVIEW, #685 @ 0d74b7ca — two P2 findings, both reproduced
+// ===========================================================================
+//
+// Neither was hypothetical. Both were reproduced deterministically before the
+// repair, and these are the regressions that stop them returning.
+describe("an expired preference link does not strand the entry", () => {
+  async function seedWithGrant(label: string) {
+    const studio = await seedStudio(label);
+    const entry = await adminQuery(
+      `select * from public.create_practitioner_waitlist_entry($1,$2,'P',$3,null,null)`,
+      [studio.studioId, studio.userId, uniqueEmail(label)],
+    );
+    const entryId = entry.rows[0].entry_id as string;
+    const grant = await adminQuery(
+      `select * from public.issue_waitlist_preference_grant($1,$2,$3,24)`,
+      [studio.studioId, entryId, studio.userId],
+    );
+    expect(grant.rows[0].result).toBe("issued");
+    return { studio, entryId, token: grant.rows[0].raw_token as string };
+  }
+
+  /**
+   * Expire a live grant. Both stamps move together because the ttl CHECK is
+   * `expires_at > issued_at` — and this is only possible as the table owner,
+   * which is itself the proof that no application role can manufacture an
+   * expiry.
+   */
+  async function expire(entryId: string): Promise<void> {
+    await adminQuery(
+      `update public.new_client_waitlist_preference_grants
+          set issued_at  = now() - interval '25 hours',
+              expires_at = now() - interval '1 hour'
+        where entry_id = $1 and redeemed_at is null and revoked_at is null`,
+      [entryId],
+    );
+  }
+
+  it("refuses to redeem an expired link", async () => {
+    const { entryId, token } = await seedWithGrant("expired-redeem");
+    await expire(entryId);
+    const res = await adminQuery(`select public.redeem_waitlist_preference_grant($1,'both') as r`, [token]);
+    expect(res.rows[0].r).toBe("refused");
+  });
+
+  // THE REGRESSION. The one-live-grant index keys on redeemed_at/revoked_at
+  // only, so an expired grant still occupied the slot while redemption already
+  // refused it: every later issue returned `grant_already_live` and the entry
+  // became permanently un-issuable. Measured before the repair.
+  it("issues a replacement after expiry, with no separate revoke step", async () => {
+    const { studio, entryId } = await seedWithGrant("expired-reissue");
+    await expire(entryId);
+
+    const again = await adminQuery(
+      `select * from public.issue_waitlist_preference_grant($1,$2,$3,24)`,
+      [studio.studioId, entryId, studio.userId],
+    );
+    expect(again.rows[0].result).toBe("issued");
+    expect(again.rows[0].raw_token).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it("retires the expired grant rather than leaving two unresolved rows", async () => {
+    const { studio, entryId } = await seedWithGrant("expired-retire");
+    await expire(entryId);
+    await adminQuery(`select * from public.issue_waitlist_preference_grant($1,$2,$3,24)`, [
+      studio.studioId, entryId, studio.userId,
+    ]);
+    const rows = await adminQuery(
+      `select count(*) filter (where revoked_at is not null)::int as retired,
+              count(*) filter (where redeemed_at is null and revoked_at is null)::int as live
+         from public.new_client_waitlist_preference_grants where entry_id = $1`,
+      [entryId],
+    );
+    // Exactly one live link at any time stays true; the dead one is retired.
+    expect(rows.rows[0]).toEqual({ retired: 1, live: 1 });
+  });
+
+  it("allows a replacement once the grant has been REDEEMED", async () => {
+    // Redeemed and revoked sit outside the one-live-grant predicate already;
+    // this pins that the retirement step did not narrow it.
+    const { studio, entryId, token } = await seedWithGrant("expired-after-redeem");
+    const used = await adminQuery(`select public.redeem_waitlist_preference_grant($1,'both') as r`, [token]);
+    expect(used.rows[0].r).toBe("accepted");
+    const again = await adminQuery(
+      `select gi.result from public.issue_waitlist_preference_grant($1,$2,$3,24) gi`,
+      [studio.studioId, entryId, studio.userId],
+    );
+    expect(again.rows[0].result).toBe("issued");
+  });
+
+  it("allows a replacement once the grant has been REVOKED", async () => {
+    const { studio, entryId } = await seedWithGrant("expired-after-revoke");
+    await adminQuery(`select public.revoke_waitlist_preference_grant($1,$2,$3) as r`, [
+      studio.studioId, entryId, studio.userId,
+    ]);
+    const again = await adminQuery(
+      `select gi.result from public.issue_waitlist_preference_grant($1,$2,$3,24) gi`,
+      [studio.studioId, entryId, studio.userId],
+    );
+    expect(again.rows[0].result).toBe("issued");
+  });
+
+  it("two concurrent replacement issuers yield at most ONE new live grant", async () => {
+    const { studio, entryId } = await seedWithGrant("expired-concurrent");
+    await expire(entryId);
+
+    // Both race to replace the SAME expired link.
+    const both = await Promise.allSettled([
+      adminQuery(`select gi.result from public.issue_waitlist_preference_grant($1,$2,$3,24) gi`,
+        [studio.studioId, entryId, studio.userId]),
+      adminQuery(`select gi.result from public.issue_waitlist_preference_grant($1,$2,$3,24) gi`,
+        [studio.studioId, entryId, studio.userId]),
+    ]);
+
+    // Neither may raise: a loser must get a closed command result.
+    for (const r of both) {
+      expect(r.status, "a concurrent issuer raised instead of returning a code").toBe("fulfilled");
+    }
+    const results = both
+      .map((r) => (r.status === "fulfilled" ? (r.value.rows[0].result as string) : "RAISED"))
+      .sort();
+    expect(results.filter((r) => r === "issued")).toHaveLength(1);
+    expect(results.filter((r) => r === "grant_already_live")).toHaveLength(1);
+
+    const live = await adminQuery(
+      `select count(*)::int as n from public.new_client_waitlist_preference_grants
+        where entry_id = $1 and redeemed_at is null and revoked_at is null`,
+      [entryId],
+    );
+    expect(live.rows[0].n).toBe(1);
+  });
+
+  it("still refuses a SECOND live link while one is genuinely live", async () => {
+    const { studio, entryId } = await seedWithGrant("expired-still-guarded");
+    const second = await adminQuery(
+      `select gi.result from public.issue_waitlist_preference_grant($1,$2,$3,24) gi`,
+      [studio.studioId, entryId, studio.userId],
+    );
+    expect(second.rows[0].result).toBe("grant_already_live");
+  });
+});
+
+describe("creating the FIRST preference row is serialised", () => {
+  // `select ... for update` locks NOTHING when the row is absent, so both
+  // callers took the insert path and the loser raised a bare unique_violation
+  // instead of returning a code -- which 0185 forbids. The repair locks the
+  // parent ENTRY, which always exists and is therefore a real mutex.
+  //
+  // The second caller is proved BLOCKED via pg_stat_activity rather than given
+  // a sleep to lose: a timing race that happens to serialise proves nothing,
+  // and that is exactly how the first attempt at this repro passed while the
+  // defect was still live.
+  async function seedEntry(label: string) {
+    const studio = await seedStudio(label);
+    const entry = await adminQuery(
+      `select * from public.create_practitioner_waitlist_entry($1,$2,'P',$3,null,null)`,
+      [studio.studioId, studio.userId, uniqueEmail(label)],
+    );
+    return { studio, entryId: entry.rows[0].entry_id as string };
+  }
+
+  async function connect(): Promise<{ client: Client; pid: number }> {
+    const client = new Client({ connectionString: resolveLocalDbUrl() });
+    await client.connect();
+    const pid = (await client.query(`select pg_backend_pid() as pid`)).rows[0].pid as number;
+    return { client, pid };
+  }
+
+  it("two operators cannot both create it: the second BLOCKS, then returns a code", async () => {
+    const { studio, entryId } = await seedEntry("race-op-op");
+    const a = await connect();
+    const b = await connect();
+    try {
+      await a.client.query("begin");
+      await b.client.query("begin");
+
+      const first = await a.client.query(
+        `select public.set_waitlist_entry_availability($1,$2,$3,'weekdays') as r`,
+        [studio.studioId, entryId, studio.userId],
+      );
+      expect(first.rows[0].r).toBe("stated");
+
+      // B enters while A is UNCOMMITTED.
+      const second = b.client
+        .query(`select public.set_waitlist_entry_availability($1,$2,$3,'weekends') as r`, [
+          studio.studioId, entryId, studio.userId,
+        ])
+        .then((r) => ({ ok: true as const, v: r.rows[0].r as string }))
+        .catch((e: { code?: string }) => ({ ok: false as const, code: e.code }));
+
+      // The mutex is real: B is waiting on a lock, not merely slow.
+      const waiting = await waitUntilBlocked(b.pid);
+      expect(waiting, "the second operator must block on the entry lock").not.toBeNull();
+
+      await a.client.query("commit");
+      const result = await second;
+      await b.client.query("commit");
+
+      expect(
+        result.ok,
+        `the loser raised ${"code" in result ? result.code : ""} instead of returning a code`,
+      ).toBe(true);
+      // It saw the committed row: a change, not a duplicate insert.
+      expect(result.ok && result.v).toBe("changed");
+    } finally {
+      await a.client.end();
+      await b.client.end();
+    }
+  });
+
+  it("two prospects redeeming the same link cannot both create it", async () => {
+    // One live grant per entry, so "two prospects" is two holders of the SAME
+    // token — a forwarded link, or a double submit.
+    const { studio, entryId } = await seedEntry("race-prospect-prospect");
+    const grant = await adminQuery(
+      `select * from public.issue_waitlist_preference_grant($1,$2,$3,24)`,
+      [studio.studioId, entryId, studio.userId],
+    );
+    const token = grant.rows[0].raw_token as string;
+
+    const both = await Promise.allSettled([
+      adminQuery(`select public.redeem_waitlist_preference_grant($1,'weekdays') as r`, [token]),
+      adminQuery(`select public.redeem_waitlist_preference_grant($1,'weekends') as r`, [token]),
+    ]);
+    for (const r of both) {
+      expect(r.status, "a concurrent redeemer raised instead of returning a code").toBe("fulfilled");
+    }
+    const results = both
+      .map((r) => (r.status === "fulfilled" ? (r.value.rows[0].r as string) : "RAISED"))
+      .sort();
+    // Exactly one redemption wins; the other is refused, never a duplicate row.
+    expect(results).toEqual(["accepted", "refused"]);
+
+    const rows = await adminQuery(
+      `select count(*)::int as n from public.new_client_waitlist_entry_preferences where entry_id = $1`,
+      [entryId],
+    );
+    expect(rows.rows[0].n).toBe(1);
+  });
+
+  it("an operator and a redeeming prospect cannot both create it", async () => {
+    // The CROSS-PATH race the finding named: the two commands take different
+    // first locks, so the grant lock alone never serialised them.
+    const { studio, entryId } = await seedEntry("race-op-prospect");
+    const grant = await adminQuery(
+      `select * from public.issue_waitlist_preference_grant($1,$2,$3,24)`,
+      [studio.studioId, entryId, studio.userId],
+    );
+    const a = await connect();
+    const b = await connect();
+    try {
+      await a.client.query("begin");
+      await b.client.query("begin");
+      await a.client.query(
+        `select public.set_waitlist_entry_availability($1,$2,$3,'weekdays') as r`,
+        [studio.studioId, entryId, studio.userId],
+      );
+
+      const prospect = b.client
+        .query(`select public.redeem_waitlist_preference_grant($1,'weekends') as r`, [
+          grant.rows[0].raw_token,
+        ])
+        .then((r) => ({ ok: true as const, v: r.rows[0].r as string }))
+        .catch((e: { code?: string }) => ({ ok: false as const, code: e.code }));
+
+      const waiting = await waitUntilBlocked(b.pid);
+      expect(waiting, "the prospect must block on the same entry lock").not.toBeNull();
+
+      await a.client.query("commit");
+      const result = await prospect;
+      await b.client.query("commit");
+
+      expect(result.ok, `the prospect raised ${"code" in result ? result.code : ""}`).toBe(true);
+      expect(result.ok && result.v).toBe("accepted");
+
+      const final = await adminQuery(
+        `select preference, source from public.new_client_waitlist_entry_preferences where entry_id = $1`,
+        [entryId],
+      );
+      // Exactly one row, and the later writer won cleanly.
+      expect(final.rows).toHaveLength(1);
+      expect(final.rows[0]).toEqual({ preference: "weekends", source: "prospect_link" });
+    } finally {
+      await a.client.end();
+      await b.client.end();
+    }
   });
 });
