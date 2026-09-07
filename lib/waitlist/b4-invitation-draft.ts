@@ -473,10 +473,28 @@ export function practitionerActionAvailability(
               "They have already used their invitation. This entry stays here until their booking is recorded.",
           };
         }
-        if (context.invitationElapsed) {
+        // THROUGH THE SHARED PREDICATE, not the raw flag. Reading
+        // `context.invitationElapsed` directly here bypassed the
+        // unknown-over-elapsed precedence established for the label, the detail
+        // and the action surface — so on unreadable facts the row kept the LIVE
+        // shape (no "Return to waitlist" anywhere on it) while this sentence
+        // told the practitioner to use exactly that absent control. Establishing
+        // a precedence rule and then not applying it one function away is the
+        // same defect the rule was written to remove.
+        if (invitationHasRunOut(context)) {
           return {
             available: false,
             reason: "Return them to the waitlist first, then you can remove them.",
+          };
+        }
+        if (context.invitationFactsUnknown) {
+          // Neither remedy can be named honestly: we do not know whether the
+          // invitation is live, used or finished, so we cannot say which
+          // control clears the way.
+          return {
+            available: false,
+            reason:
+              "Their invitation could not be checked just now, so they cannot be removed safely. Try again shortly.",
           };
         }
         return {

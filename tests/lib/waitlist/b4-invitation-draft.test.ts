@@ -504,6 +504,62 @@ describe("the row's action surface", () => {
     }
   });
 
+  it("applies the unknown-over-elapsed precedence to the removal reason too", () => {
+    // The precedence was established for the label, the detail and the action
+    // surface, then bypassed here by a raw `context.invitationElapsed` read. On
+    // unreadable facts the row keeps the LIVE shape — no "Return to waitlist"
+    // anywhere on it — while this sentence told the practitioner to use exactly
+    // that absent control.
+    const unreadable = { invitationFactsUnknown: true, invitationElapsed: true };
+    const shown = surfaceItems("invited", unreadable);
+    expect(shown.map((i) => i.action)).not.toContain("return_to_waitlist");
+
+    const remove = shown.find((i) => i.action === "remove_from_waitlist")!;
+    expect(remove.available).toBe(false);
+    const reason = remove.available === false ? remove.reason : "";
+    expect(reason).not.toContain("Return them to the waitlist");
+    expect(reason).toContain("could not be checked");
+
+    // NEGATIVE CONTROL: with the facts READABLE and elapsed, "Return to
+    // waitlist" IS on the row, so naming it is correct there.
+    const readable = { invitationElapsed: true };
+    expect(surfaceItems("invited", readable).map((i) => i.action)).toContain(
+      "return_to_waitlist",
+    );
+    const removeReadable = surfaceItems("invited", readable).find(
+      (i) => i.action === "remove_from_waitlist",
+    )!;
+    expect(
+      removeReadable.available === false ? removeReadable.reason : "",
+    ).toContain("Return them to the waitlist");
+  });
+
+  it("never names a control the row is not showing, at any status or context", () => {
+    // The general form of the defect class that has now recurred five times.
+    // Every refusal sentence that names an action must name one this row
+    // actually renders.
+    const VERBS: ReadonlyArray<[string, PractitionerAction]> = [
+      ["Cancel their invitation", "cancel_invitation"],
+      ["Return them to the waitlist", "return_to_waitlist"],
+    ];
+    for (const status of WAITLIST_ENTRY_STATUSES) {
+      for (const { name, context } of CONTEXTS) {
+        const shown = surfaceItems(status, context);
+        const actions = new Set(shown.map((i) => i.action));
+        for (const item of shown) {
+          if (item.available) continue;
+          for (const [phrase, action] of VERBS) {
+            if (!item.reason.includes(phrase)) continue;
+            expect(
+              actions.has(action),
+              `${status} (${name}): "${item.label}" points at ${action}, which this row does not show`,
+            ).toBe(true);
+          }
+        }
+      }
+    }
+  });
+
   it("does not send a redeemed entry chasing a control that will refuse it too", () => {
     // The known lifecycle gap: someone who used their invitation and never
     // booked has no operator exit at all. Naming Cancel here would send a

@@ -233,8 +233,12 @@ export type AdapterCapabilities = {
   canResend: boolean;
   /** `cancelInvitation` is implemented. */
   canCancel: boolean;
-  /** `returnToWaitlist` is implemented atomically for BOTH its paths — the
-   *  one-hop requeue and the two-hop expire-then-requeue. */
+  /** `returnToWaitlist` is implemented atomically for ALL THREE of its paths —
+   *  the one-hop requeue from `released`/`expired`, the two-hop
+   *  expire-then-requeue from an elapsed `invited` entry, and the two-hop
+   *  release-then-requeue from a legacy `claimed` one. Reporting `true` while
+   *  implementing only some of them advertises an escape that is guaranteed to
+   *  fail on the rows that have no other way out. */
   canReturnToWaitlist: boolean;
   /** `removeFromWaitlist` is implemented. */
   canRemove: boolean;
@@ -306,13 +310,23 @@ export interface WaitlistInvitationAdapter {
   /**
    * Put someone back in the queue.
    *
-   * TWO PATHS, ONE METHOD. From `released` or `expired` this is a single
+   * THREE PATHS, ONE METHOD. From `released` or `expired` this is a single
    * requeue. From an `invited` entry whose window has already elapsed it is
    * expire-then-requeue, atomically — because `invited -> waiting` is not a
    * legal edge and the dead invitation must be stamped before the entry can
-   * move. The caller does not choose between them; it does not know which
-   * applies, and asking it to would be handing the state machine back to the
-   * practitioner one level down.
+   * move. From a legacy `claimed` entry — held by the older operator surface,
+   * never invited — it is release-then-requeue, also atomically.
+   *
+   * THE `claimed` PATH IS NOT OPTIONAL. The practitioner surface offers
+   * "Return to waitlist" on a `claimed` row precisely so a legacy hold is never
+   * a dead end, and it enables that control on `canReturnToWaitlist` alone. An
+   * adapter that implemented only the one-hop and expire-then-requeue paths
+   * could therefore report `canReturnToWaitlist: true` truthfully and still
+   * guarantee failure on the one row that most needs the escape.
+   *
+   * The caller chooses none of them; it does not know which applies, and asking
+   * it to would be handing the state machine back to the practitioner one level
+   * down.
    *
    * End state: `waiting`.
    */
