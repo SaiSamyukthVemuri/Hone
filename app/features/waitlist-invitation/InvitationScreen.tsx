@@ -6,6 +6,7 @@ import type {
   OfferedDay,
   OfferedSlot,
   OfferPresentation,
+  RecoverableProofFailure,
   UnprovenProofStage,
 } from "@/lib/waitlist/invitation-offer";
 import { CONTROL_MIN_TOUCH, FOCUS_RING } from "@/components/ui/control-base";
@@ -319,7 +320,15 @@ function OfferView({
                         onClick={() => onSelectSlot(slot)}
                         aria-pressed={selected}
                         aria-label={`${day.dateLabel} at ${slot.startLabel}`}
-                        className={`${CONTROL_MIN_TOUCH} ${FOCUS_RING} w-full border border-[#0A0A0A] px-4 text-sm ${
+                        // FROZEN WHILE A BOOKING IS IN FLIGHT. Book and Decline
+                        // were disabled but the times were not, so a recipient
+                        // could pick a different slot after submitting and the
+                        // screen would show B while the running request booked
+                        // A. `onBook` takes no slot argument -- selection is the
+                        // container's -- so the two could not be reconciled
+                        // afterwards.
+                        disabled={pending}
+                        className={`${CONTROL_MIN_TOUCH} ${FOCUS_RING} w-full border border-[#0A0A0A] px-4 text-sm disabled:opacity-60 ${
                           selected ? "bg-[#0A0A0A] text-[#FAFAF7]" : "bg-white text-[#0A0A0A]"
                         }`}
                       >
@@ -362,14 +371,19 @@ function OfferView({
   );
 }
 
-const PROOF_FAILURE_COPY: Record<string, string> = {
+/**
+ * Keyed by the RECOVERABLE subset, so a new one fails the build here.
+ *
+ * `invalid_token` and `not_live` are gone: they are terminal, and their entries
+ * only existed because the reason type was wide enough to reach them. Copy for
+ * a state this view can no longer be handed is copy that hides a type hole.
+ */
+const PROOF_FAILURE_COPY: Record<RecoverableProofFailure, string> = {
   wrong_challenge: "That code didn’t match. Check the email and try again.",
   challenge_expired: "That code has expired. Request a new one.",
   too_many_attempts: "Too many attempts. Request a new code to continue.",
   no_challenge: "Request a code to continue.",
   recipient_changed: "This invitation’s contact details changed. Please contact the studio.",
-  invalid_token: "This link is no longer valid.",
-  not_live: "This invitation is no longer available.",
   invalid_input: "That code doesn’t look right.",
 };
 

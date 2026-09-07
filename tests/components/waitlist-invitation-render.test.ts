@@ -369,3 +369,44 @@ describe("verifying is busy and non-interactive", () => {
     expect(html).toContain("Consultation");
   });
 });
+
+// ---------------------------------------------------------------------------
+// REVIEW P2 — a booking in flight must not have its slot changed underneath it.
+// Book and Decline were disabled while `pending`; the times were not.
+// ---------------------------------------------------------------------------
+describe("slot selection freezes while a booking is pending", () => {
+  const offerState = {
+    kind: "offer" as const,
+    invitation: INVITATION,
+    presentation: PRESENTATION,
+    slots: [SLOT, SLOT2],
+    days: [
+      { date: "2026-09-07", dateLabel: "Mon, Sep 7", slots: [SLOT] },
+      { date: "2026-09-09", dateLabel: "Wed, Sep 9", slots: [SLOT2] },
+    ],
+    windowDescription: WINDOW_DESCRIPTION,
+    empty: false,
+  };
+
+  // MATCH THE ATTRIBUTE, NOT THE CLASS. The button carries
+  // `disabled:opacity-60` in its class list, so a substring check for
+  // "disabled" passes whether or not the control is actually disabled -- the
+  // pending assertion below would have held with `disabled={pending}` removed.
+  const DISABLED_ATTR = /\sdisabled(=|\s|>)/;
+
+  function slotButtons(html: string): string[] {
+    return html.match(/<button[^>]*aria-label="[^"]*at [^"]*"[^>]*>/g) ?? [];
+  }
+
+  it("every slot control is disabled while pending", () => {
+    const buttons = slotButtons(render(offerState, { selectedSlotStart: SLOT.start, pending: true }));
+    expect(buttons.length, "no slot buttons found to check").toBe(2);
+    for (const b of buttons) expect(b, `slot stayed clickable: ${b}`).toMatch(DISABLED_ATTR);
+  });
+
+  it("slots stay clickable when nothing is in flight", () => {
+    const buttons = slotButtons(render(offerState, { selectedSlotStart: SLOT.start, pending: false }));
+    expect(buttons.length).toBe(2);
+    for (const b of buttons) expect(b, `slot disabled with nothing in flight: ${b}`).not.toMatch(DISABLED_ATTR);
+  });
+});

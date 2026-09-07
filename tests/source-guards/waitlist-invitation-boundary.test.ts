@@ -266,6 +266,57 @@ describe("the submitted code cannot push the page sideways", () => {
   });
 });
 
+// NARROW THE TYPE, NOT THE MAPPER. Three rounds running, a producer was fixed
+// while the exported type stayed wide enough to express the broken state.
+describe("the proof-failure reason is the recoverable subset", () => {
+  it("is an Exclude over the outcome union, not the whole of it", () => {
+    expect(STATE).toContain("export type RecoverableProofFailure = Exclude<");
+    expect(STATE).toContain('CompleteProofOutcome["kind"],');
+    for (const terminal of ["verified", "unavailable", "invalid_token", "not_live"]) {
+      expect(STATE, `${terminal} is still expressible as a failure`).toContain(`"${terminal}"`);
+    }
+    // The failed variant must use the subset, never the raw union.
+    const failed = STATE.slice(STATE.indexOf('kind: "failed";'), STATE.indexOf('kind: "unavailable";'));
+    expect(failed).toContain("reason: RecoverableProofFailure;");
+    expect(failed).not.toContain('CompleteProofOutcome["kind"]');
+  });
+
+  it("the copy map is keyed by that subset and carries no terminal entries", () => {
+    expect(SCREEN).toContain("Record<RecoverableProofFailure, string>");
+    const map = SCREEN.slice(SCREEN.indexOf("const PROOF_FAILURE_COPY"), SCREEN.indexOf("};", SCREEN.indexOf("const PROOF_FAILURE_COPY")));
+    expect(map.length).toBeGreaterThan(100);
+    expect(map, "terminal copy survives in a recoverable map").not.toContain("invalid_token:");
+    expect(map, "terminal copy survives in a recoverable map").not.toContain("not_live:");
+  });
+});
+
+describe("the begin-proof mapping is exhaustive", () => {
+  const fn = STATE.slice(
+    STATE.indexOf("export function proofStageFromBegin"),
+    STATE.indexOf("export function proofStageFromComplete"),
+  );
+
+  it("enumerates the terminal outcomes rather than defaulting", () => {
+    expect(fn.length).toBeGreaterThan(100);
+    for (const kind of ["invalid_token", "not_live", "invalid_input"]) {
+      expect(fn, `${kind} is not enumerated`).toContain(`case "${kind}"`);
+    }
+  });
+
+  it("has a never guard, so a new authority outcome must decide its own retryability", () => {
+    expect(fn).toContain("assertNeverBeginOutcome(outcome)");
+    expect(STATE).toContain("function assertNeverBeginOutcome(outcome: never)");
+  });
+});
+
+describe("a booking in flight cannot have its slot changed", () => {
+  it("slot controls are disabled by the same pending flag as book", () => {
+    const grid = SCREEN.slice(SCREEN.indexOf("day.slots.map"), SCREEN.indexOf("</section>", SCREEN.indexOf("day.slots.map")));
+    expect(grid.length).toBeGreaterThan(100);
+    expect(grid, "slots stayed clickable during a booking").toContain("disabled={pending}");
+  });
+});
+
 describe("the recipient learns nothing about anyone else", () => {
   it("no queue, position or other-prospect vocabulary in the source", () => {
     for (const forbidden of [

@@ -69,6 +69,27 @@ export type OfferPresentation = {
   studioTimezone: string;
 };
 
+/**
+ * The proof failures a recipient can actually recover from.
+ *
+ * NARROWING THE TYPE, NOT THE MAPPER. `proofStageFromComplete` already sent
+ * `not_live` and `invalid_token` to a dead end -- but `failed.reason` was typed
+ * as the whole of `CompleteProofOutcome["kind"]`, so a type-correct
+ * `InvitationViewState` could still carry `{ kind: "failed", reason:
+ * "not_live" }` and render the terminal message above live Confirm and Resend.
+ * `verified` and `unavailable` were expressible too, and would have rendered
+ * the form with no explanation at all.
+ *
+ * That is the third time this shape has appeared here: the construction site
+ * was fixed and the exported type left able to express the broken state. A
+ * subset type ends it -- the combinations cannot be built, and the copy map
+ * below cannot omit one.
+ */
+export type RecoverableProofFailure = Exclude<
+  CompleteProofOutcome["kind"],
+  "verified" | "unavailable" | "invalid_token" | "not_live"
+>;
+
 /** Where the recipient is in the proof exchange. B1.5c's shape, not a new one. */
 export type ProofStage =
   | { kind: "required" }
@@ -80,7 +101,12 @@ export type ProofStage =
    * blanking the field mid-verification loses the recipient's place.
    */
   | { kind: "verifying"; maskedContact: string; expiresAt: string; submittedCode: string }
-  | { kind: "failed"; reason: CompleteProofOutcome["kind"]; maskedContact: string; expiresAt: string }
+  | {
+      kind: "failed";
+      reason: RecoverableProofFailure;
+      maskedContact: string;
+      expiresAt: string;
+    }
   | { kind: "unavailable"; retryable: boolean }
   | { kind: "proven" };
 
@@ -330,11 +356,25 @@ export function proofStageFromBegin(outcome: BeginProofOutcome): ProofStage {
       return { kind: "sent", maskedContact: outcome.maskedContact, expiresAt: outcome.expiresAt };
     case "unavailable":
       return { kind: "unavailable", retryable: true };
-    default:
-      // invalid_token, not_live, invalid_input: nothing the recipient can retry
-      // into, and none of them says which.
+    // Enumerated rather than defaulted. A catch-all here would classify the
+    // NEXT authority result -- a throttle, a transport status -- as a terminal
+    // refusal and disable every control, while typechecking perfectly. Each new
+    // outcome must make its own retryability decision.
+    case "invalid_token":
+    case "not_live":
+    case "invalid_input":
+      // Nothing the recipient can retry into, and none of them says which.
       return { kind: "unavailable", retryable: false };
+    default:
+      return assertNeverBeginOutcome(outcome);
   }
+}
+
+/** Compile-time exhaustiveness over B2's begin-proof outcomes. */
+function assertNeverBeginOutcome(outcome: never): ProofStage {
+  void outcome;
+  // Unreachable; fails closed rather than granting anything if it ever is.
+  return { kind: "unavailable", retryable: false };
 }
 
 /** Map B2's complete-proof outcome onto the stage the screen renders. */
