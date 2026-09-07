@@ -14,9 +14,23 @@ relevant claim, at any risk tier. See §7.
 
 ## 1. The rule
 
-> **Higher tiers always win. Observation proposes; current authority disposes.
-> And every claim is bound to the state it actually measured — never to the
-> latest branch head by default.**
+> **A claim is settled by the source able to observe it. Observation proposes;
+> the matching authority disposes. And every claim is bound to the state it
+> actually measured — never to the latest branch head by default.**
+
+**There is no rank among the current-authority sources**, because they do not
+answer the same question. Repository source cannot observe a live deployment; a
+database catalog cannot observe provider configuration; a health probe cannot
+observe what the code says. Asking a source something it structurally cannot see
+does not yield a weaker answer, it yields **no** answer — and a ranking would
+oblige you to prefer that non-answer over the source that can actually see the
+claim. §2 states the matching; §6 applies it to a review finding.
+
+What *is* ordered is **standing**, in three classes: a source that can observe
+the claim may settle it, an observation may only raise it, and history may only
+suggest where to look. Standing says who may speak; matching says about what.
+The two axes are independent, so neither can outrank the other and there is no
+precedence loop to resolve.
 
 Staleness, not error, is the dominant failure mode. A correct answer read
 against a state it did not measure is the most expensive kind of wrong, because
@@ -30,17 +44,26 @@ claim is anchored to is defined in §4.
 
 ---
 
-## 2. Canonical authority order
+## 2. Which source settles which claim
 
-### CURRENT AUTHORITY — may settle a question
+### CURRENT AUTHORITY — may settle a claim it can observe
 
-1. **Repository source at an identified SHA.** What the code is.
-2. **Reviewed migration / schema / catalog evidence.** What the database
-   actually holds — read from the catalog, not inferred from a migration file.
-3. **Exact-head CI / test evidence.** That the selected lanes passed, at one head.
-4. **Hosted deployment / provider evidence.** That something was deployed, served
-   or fired, at a stated time.
-5. **Explicit human production GO.** Permission. Never evidence.
+Each row names the source that can *see* the claim beside it. **The rows are not
+ranked against one another**: a row is authoritative for its own claim and
+silent on every other, so two rows can never contradict each other about the
+same question.
+
+| Claim | Settled by |
+|---|---|
+| **Repository / source state** — what the code is | Repository source, read at an identified SHA |
+| **Database state of a named instance** — what that database actually holds | Reviewed migration / schema / catalog evidence read from **that** instance, not inferred from a migration file |
+| **That the selected lanes passed** | Exact-head CI / test evidence, at one head |
+| **Live hosted / provider state** — what is deployed, serving, configured, or fired | Hosted deployment / provider evidence, at a stated time |
+| **Reachability or health** | A fresh probe, inside its stated validity window |
+
+**Explicit human production GO is permission, never evidence.** It authorizes an
+action. It settles no factual claim in the table above, and no quantity of it
+makes an unobserved state observed.
 
 **Database claims must name their target.** There is no blanket "catalog beats
 source" rule, because a catalog describes *one instance* and cannot speak for a
@@ -73,7 +96,8 @@ neither overrides the other.
 - **Archify** — structural representation at a pinned SHA.
 
 None of these may block a merge on its own authority. Each exists to make a
-human ask a better question of tier 1.
+human ask a better question of **the source that can observe the claim** — which
+for a hosted or provider finding is not repository source.
 
 ### HISTORY — may generate a hypothesis, never support a claim
 
@@ -82,7 +106,7 @@ human ask a better question of tier 1.
 - **Old PR descriptions**
 - **Archived reports**
 
-...and **anything from the tiers above whose `CLAIM_VALIDITY_KEY` has moved**
+...and **anything from the classes above whose `CLAIM_VALIDITY_KEY` has moved**
 (§4). A claim drops to history when the state it measured is superseded — not
 because some unrelated commit advanced a branch.
 
@@ -120,13 +144,13 @@ latest branch head; different claims have different anchors.
 | **Hosted — health / reachability probe** | The probe + `observed_at` | Expiry of its stated freshness window | **Point-in-time, window must be stated** |
 | **Hosted — current deployment identity** | The **resolved deployment ID**, or an alias→deployment mapping observed at a stated instant. **Never an alias alone** | A successful promotion or deployment that changes the resolved target | Current until the resolved target changes |
 | **PR review** | The exact PR head SHA | Any push to that PR, including a docs-only one | Current only at that head |
-| **Source claim — file-local** ("this file states X") | The source SHA + the cited file | Any commit touching that file | Current at that SHA |
-| **Source claim — scan / absence** ("no direct writer exists", "this forbidden symbol never appears") | The source SHA + **every path the scan covered**, stated as the scope it ran over | Any commit touching **any** file in that scope — including one the claim never named, which is exactly how an absence is falsified | Current at that SHA, for that scope |
-| **Source claim — behavioural** ("this route is owner-only") | The source SHA **plus the named set of files the behaviour is assembled from** | Any commit touching **any** file in that set — the cited file is not the whole of it | Current at that SHA, for that set |
+| **Source claim — file-local** ("this file states X") | The **contents of the cited file**. The SHA it was read at is *provenance*, not the key | A change to that file's contents | Current at every SHA where those contents are unchanged |
+| **Source claim — scan / absence** ("no direct writer exists", "this forbidden symbol never appears") | The **contents of every path the scan covered**, and the scope must be stated to be checkable | A change to the contents of **any** path in that scope — including one the claim never named, which is exactly how an absence is falsified | Current at every SHA where that whole scope is unchanged |
+| **Source claim — behavioural** ("this route is owner-only") | The **contents of the named set of files the behaviour is assembled from** | A change to the contents of **any** member of that set — the cited file is not the whole of it | Current at every SHA where that whole set is unchanged |
 
 **Occurrence authority is not current-state authority.** That an event happened
 is settled permanently by the evidence of that event, and no later change makes
-it un-happen. This is *not* the HISTORY tier of §2 — history there means
+it un-happen. This is *not* the HISTORY class of §2 — history there means
 *superseded* evidence, which may not settle a claim. An event fact is neither
 superseded nor current-state evidence; it is authoritative for exactly one
 question, **did X occur**, and for no other. It does not show that X is current,
@@ -151,8 +175,36 @@ only the helper changes the behaviour while leaving the cited file untouched.
 In both cases, keying on the cited file alone would leave the claim reading as
 current after the thing it described had changed — the silent floating of §1,
 reproduced inside the rule meant to prevent it. So each names the scope or set
-it depended on, and drops to history when **any** member of that scope or set
-moves.
+it depended on, and drops to history when the **contents** of any member of that
+scope or set change.
+
+**The SHA is provenance; the contents are the key.** A source observation is
+recorded *at* the SHA it was read at, and that SHA is what makes it reproducible
+later. It is not what invalidates it. **Two SHAs at which every path in a
+claim's relevant set is byte-identical are equivalent for that claim**, so an
+unrelated docs commit — or any commit that does not touch the set — leaves the
+observation **current** rather than dropping it to history. Keying on the head
+SHA instead would invalidate every source claim on every commit, which is
+exactly the "never bound to the latest branch head by default" of §1 broken by
+the rule written to express it.
+
+Naming the set is therefore not optional. A claim that does not say which paths
+it depended on cannot be shown to be unchanged, and what cannot be shown
+unchanged is history. The check is mechanical:
+
+```
+git diff --quiet <recorded-sha> <current-sha> -- <the claim's paths>
+```
+
+Exit 0 means the claim's relevant contents did not move, so the observation
+survives the intervening commits and keeps the recorded SHA as its provenance.
+Any other exit means it is history until re-measured.
+
+This equivalence is **contents-only**, and it does not extend to the claim types
+whose key is an instance, a deployment or an instant. A **PR review** still keys
+on the exact head SHA and is invalidated by any push including a docs-only one:
+a review is a statement about a whole head, not about a path set, so unchanged
+files do not carry it forward.
 
 **`ALIAS_NAME` is not `SERVING_DEPLOYMENT_IDENTITY`.** A promotion retargets a
 stable alias rather than renaming it, so `hone.care` can keep its name while the
@@ -289,9 +341,12 @@ claim* confirms one.
 
 **A review finding is an observation until it is adjudicated** — and it is
 adjudicated by **the current-authority source capable of observing that
-particular claim**, not by tier number. Repository source cannot confirm a live
-deployment identity; a database catalog cannot confirm provider configuration or
-reachability. Matching the claim to its observer is the whole of the rule:
+particular claim**. Repository source cannot confirm a live deployment identity;
+a database catalog cannot confirm provider configuration or reachability.
+
+This is **§2's matching applied to a finding, not a second rule**: the table
+below selects the same observer §2 does, for the same reason. There is no rank
+to fall back on if the match is inconvenient, because §1 does not define one.
 
 | Claim | Settled by |
 |---|---|
@@ -360,6 +415,6 @@ request that changes it; this table states the **standing constraint**.
 | **Native blast-radius analysis** | **Pilot — not authority** | May scope work. May not be cited as evidence of impact or of absence. |
 | **Archify** | **Pilot passed provisionally; adoption contract pending** | Not citable as evidence until its adoption contract lands. A pinned SHA is what makes a diagram checkable. |
 | **Claude-Mem** | **Not adopted** | — |
-| **Existing repository memory** | **Hardening** | History tier, always. §3 applies without exception. |
-| **Codex** | **Adopted — independent reviewer** | Observation tier. Cannot block on its own authority. |
+| **Existing repository memory** | **Hardening** | History class, always. §3 applies without exception. |
+| **Codex** | **Adopted — independent reviewer** | Observation class. Cannot block on its own authority. |
 | **security-guidance** | **Provisional** | Advisory only. It must extend the single existing change classifier rather than become a second one, and its document must stay bound to that classifier by a parity check. |
