@@ -135,14 +135,23 @@ export function InviteComposer({
   /** `null` until an adapter satisfying `WaitlistInvitationAdapter` is bound. */
   capabilities?: AdapterCapabilities | null;
 }) {
-  const validation = validateDraft(draft);
+  // The service list is part of validation, not just of rendering: a
+  // `serviceId` that is no longer in it must invalidate the draft rather than
+  // fall back to "any service" in the summary while the payload keeps the
+  // stale id.
+  const draftContext = { serviceIds: services.map((s) => s.id) };
+  const validation = validateDraft(draft, draftContext);
   const errors = validation.ok ? {} : validation.errors;
-  const send = sendState(draft, capabilities);
+  const send = sendState(draft, capabilities, draftContext);
   const windowPreset = activeWindowPreset(draft.windowDays);
   const daysPreset = activeAllowedDaysPreset(draft.allowedWeekdays);
   const ttlPreset = activeTtlPreset(draft.expiresInHours);
-  const serviceName =
-    services.find((s) => s.id === draft.serviceId)?.name ?? null;
+  const selectedService = services.find((s) => s.id === draft.serviceId) ?? null;
+  const serviceName = selectedService?.name ?? null;
+  // A chosen-but-missing service must not read as "any service" in the summary.
+  // The draft is invalid in that case, so the summary is withheld entirely
+  // rather than describing a scope the send would not carry.
+  const serviceMissing = draft.serviceId !== null && selectedService === null;
 
   return (
     <div className="flex flex-col" data-testid="invite-composer">
@@ -297,10 +306,12 @@ export function InviteComposer({
       </FieldSection>
 
       <div className="flex flex-col gap-3 border-t border-line px-4 py-4">
-        <p data-testid="composer-summary" className="text-sm leading-snug text-fg-muted">
-          {/* States the SCOPE, never that anything has been sent. */}
-          They will be able to book {scopeSummary(draft, serviceName)}.
-        </p>
+        {!serviceMissing && (
+          <p data-testid="composer-summary" className="text-sm leading-snug text-fg-muted">
+            {/* States the SCOPE, never that anything has been sent. */}
+            They will be able to book {scopeSummary(draft, serviceName)}.
+          </p>
+        )}
         {send.reason && (
           <span
             id="composer-send-reason"

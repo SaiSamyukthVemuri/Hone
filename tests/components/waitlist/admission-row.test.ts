@@ -234,15 +234,51 @@ describe("nothing is connected, and every control says so in its own words", () 
     expect(html.toLowerCase()).not.toContain("sending is not available");
   });
 
-  it("enables the controls once an adapter reports the capability", () => {
+  it("enables the controls once an adapter is bound", () => {
     const html = render(AdmissionRow({ entry: ENTRY, capabilities: CONNECTED }));
     expect(controlTag(html, "invite_to_book")).not.toContain('disabled=""');
-    // NEGATIVE CONTROL for the assertion above: with the capability withheld,
-    // the identical expression must find the control disabled again.
-    const partial = render(
+    // NEGATIVE CONTROL for the assertion above: with no adapter at all, the
+    // identical expression must find the control disabled again.
+    expect(controlTag(render(AdmissionRow({ entry: ENTRY })), "invite_to_book")).toContain(
+      'disabled=""',
+    );
+  });
+
+  it("keeps the composer opener reachable in the half-wired state", () => {
+    // "Invite to book" OPENS the composer and carries no scope itself. Gating
+    // it on `enforcesScope` made the composer's own supported state — form
+    // visible, only Send disabled — unreachable, because nobody could get in.
+    const halfWired = render(
       AdmissionRow({ entry: ENTRY, capabilities: { ...CONNECTED, enforcesScope: false } }),
     );
-    expect(controlTag(partial, "invite_to_book")).toContain('disabled=""');
+    expect(controlTag(halfWired, "invite_to_book")).not.toContain('disabled=""');
+    // Resend is different and stays gated: it sends immediately, with a scope.
+    const invited = render(
+      AdmissionRow({
+        entry: { ...ENTRY, status: "invited", invitation: { invitationElapsed: false } },
+        capabilities: { ...CONNECTED, enforcesScope: false },
+      }),
+    );
+    expect(controlTag(invited, "resend_invitation")).toContain('disabled=""');
+  });
+
+  it("keeps the live-invitation shape when the facts could not be read", () => {
+    // An unreadable invitation may already have been redeemed, so a stale
+    // elapsed bit may not be used to claim expiry or hide Cancel.
+    const html = render(
+      AdmissionRow({
+        entry: {
+          ...ENTRY,
+          status: "invited",
+          invitation: { invitationFactsUnknown: true, invitationElapsed: true },
+        },
+      }),
+    );
+    expect(html).toContain("Invitation sent");
+    expect(html).not.toContain("Invitation expired");
+    expect(html).toContain("could not be checked");
+    expect(hasControl(html, "cancel_invitation")).toBe(true);
+    expect(hasControl(html, "return_to_waitlist")).toBe(false);
   });
 
   it("keeps the eligibility reason over the wiring one", () => {
@@ -314,8 +350,9 @@ describe("destructive actions are confirmed, and say what they cost", () => {
       }),
     );
     expect(html).toContain("booking link stops working straight away");
-    expect(html).toContain("come out of the queue");
-    expect(html).toContain("Return them to the waitlist");
+    expect(html).toContain("set aside");
+    expect(html).toContain("will not be active on the waitlist");
+    expect(html).toContain("until you return them to it");
     expect(html).not.toContain("They keep their place");
   });
 
@@ -329,16 +366,63 @@ describe("destructive actions are confirmed, and say what they cost", () => {
       }),
     );
     const landed = render(AdmissionRow({ entry: { ...ENTRY, status: "released" } }));
-    for (const html of [confirm, landed]) {
-      expect(html.toLowerCase()).toContain("out of the queue");
-    }
+    // Both must say the person is not active until returned, in their own words.
+    expect(confirm).toContain("will not be active on the waitlist");
+    expect(landed.toLowerCase()).toContain("out of the queue");
     expect(landed).toContain("Return to waitlist");
   });
 
-  it("does not leave a disabled destructive control looking pressable", () => {
-    // `disabled` does nothing on a <summary>, so an unavailable one must be
-    // made inert rather than merely styled.
+  it("makes an unavailable destructive control inert for EVERY input method", () => {
+    // `pointer-events-none` blocks only the pointer. A native <summary> stays
+    // keyboard-focusable and Enter/Space still opens it, so the previous
+    // revision let keyboard users open and confirm a control the surface had
+    // declared unavailable — with no adapter bound, that was every destructive
+    // control on the page. It also ASSERTED inertness while testing only the
+    // pointer half, which is how it survived.
     const html = render(AdmissionRow({ entry: ENTRY, capabilities: null }));
-    expect(controlTag(html, "remove_from_waitlist")).toContain("pointer-events-none");
+
+    // No disclosure exists at all in the disabled state.
+    expect(html).not.toContain('data-testid="admission-confirm-remove_from_waitlist"');
+    expect(html).not.toContain("<details");
+    expect(html).not.toContain("<summary");
+
+    // What is rendered is a genuinely disabled <button>, which browsers make
+    // unfocusable and unactivatable by pointer AND keyboard.
+    const tag = controlTag(html, "remove_from_waitlist");
+    expect(tag).toMatch(/^<button/);
+    expect(tag).toContain('disabled=""');
+
+    // NEGATIVE CONTROL: with the capability present the disclosure comes back,
+    // or the assertions above would pass on an empty page.
+    const enabled = render(AdmissionRow({ entry: ENTRY, capabilities: CONNECTED }));
+    expect(enabled).toContain('data-testid="admission-confirm-remove_from_waitlist"');
+    expect(enabled).toContain("<summary");
+  });
+
+  it("never renders a summary that claims to be disabled", () => {
+    // `disabled` is not a valid attribute on <summary> and does nothing there.
+    // Wherever a summary IS rendered, it must be genuinely available.
+    for (const status of WAITLIST_ENTRY_STATUSES) {
+      for (const caps of [null, CONNECTED]) {
+        const html = render(
+          AdmissionRow({
+            entry: { ...ENTRY, status, invitation: { invitationElapsed: false } },
+            capabilities: caps,
+          }),
+        );
+        for (const tag of html.match(/<summary[^>]*>/g) ?? []) {
+          // `disabled[=\s>]`, never a bare "disabled": the class string carries
+          // Tailwind's `disabled:cursor-not-allowed` and `disabled:opacity-50`
+          // variants, which match the loose form and would make this assertion
+          // fire on every correctly-rendered summary.
+          expect(tag, `${status}: a summary carries a disabled attribute`).not.toMatch(
+            /\sdisabled[=\s>]/,
+          );
+          expect(tag, `${status}: a summary is only pointer-inert`).not.toContain(
+            "pointer-events-none",
+          );
+        }
+      }
+    }
   });
 });

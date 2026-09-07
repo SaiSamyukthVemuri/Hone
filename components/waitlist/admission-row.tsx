@@ -185,6 +185,16 @@ function ActionControl({
  * waitlist surface already uses for removal. The consequence is stated in the
  * summary's own words — what stops working, and for whom — because "Are you
  * sure?" asks a question the practitioner has no way to answer.
+ *
+ * AN UNAVAILABLE ONE IS NOT A DISCLOSURE AT ALL. `disabled` does nothing on a
+ * `<summary>`, and `pointer-events-none` blocks only the pointer: the element
+ * stays keyboard-focusable and Enter or Space still opens it. A previous
+ * revision styled it inert, asserted it was inert, and left every keyboard user
+ * able to open and confirm a control the surface had declared unavailable —
+ * with no adapter bound, that was every destructive control on the page. So
+ * when the action cannot be taken there is no `<details>` in the markup at all,
+ * only a genuinely disabled `<button>`, which browsers make unfocusable and
+ * unactivatable by every input method.
  */
 function DestructiveDisclosure({
   entryId,
@@ -199,28 +209,52 @@ function DestructiveDisclosure({
 }) {
   const state = controlState(item, capabilities);
   const reasonId = state.reason ? domId(entryId, `reason-${item.action}`) : undefined;
+
+  if (state.disabled) {
+    return (
+      <div className="flex w-full flex-col gap-1 sm:w-auto">
+        <button
+          type="button"
+          disabled
+          data-testid={`admission-action-${item.action}`}
+          aria-describedby={reasonId}
+          className={cx(
+            buttonClasses({ variant: "secondary", size: "sm", fullWidth: true }),
+            "sm:w-auto",
+          )}
+        >
+          {item.label}
+        </button>
+        {state.reason && (
+          <span
+            id={reasonId}
+            data-testid={`admission-reason-${item.action}`}
+            className="text-xs leading-snug text-fg-muted"
+          >
+            {state.reason}
+          </span>
+        )}
+      </div>
+    );
+  }
+
   const consequence =
     item.action === "cancel_invitation"
-      // CANCELLING TAKES THEM OUT OF THE QUEUE. `cancelInvitation` ends at
-      // `released`, and returning them is a SECOND, explicit act — so copy
-      // promising they "keep their place" would leave a practitioner stopping
-      // one step early with the person silently out of the active queue.
-      ? `${entryName}'s booking link stops working straight away, and they come out of the queue. Return them to the waitlist to invite them again.`
+      ? // CANCELLING SETS THEM ASIDE. `cancelInvitation` ends at `released`,
+        // which is not the queue — returning them is a second, explicit act.
+        // Copy promising they "keep their place" read as reassurance and would
+        // leave a practitioner stopping one step early with the person silently
+        // inactive.
+        `Their booking link stops working straight away. ${entryName} will be set aside and will not be active on the waitlist until you return them to it.`
       : `${entryName} is taken off the waitlist and loses their place in the queue. This cannot be undone.`;
 
   return (
     <details className="w-full sm:w-auto" data-testid={`admission-confirm-${item.action}`}>
       <summary
         data-testid={`admission-action-${item.action}`}
-        aria-describedby={reasonId}
         className={cx(
           buttonClasses({ variant: "secondary", size: "sm", fullWidth: true }),
           "sm:w-auto",
-          // A <summary> is not a <button>: the disabled attribute does nothing
-          // on it, so an unavailable destructive action is rendered as plain
-          // muted text with its reason rather than as a control that looks
-          // pressable and is not.
-          state.disabled && "pointer-events-none opacity-50",
         )}
       >
         {item.label}
@@ -229,22 +263,12 @@ function DestructiveDisclosure({
         <p className="text-sm leading-snug text-fg">{consequence}</p>
         <button
           type="button"
-          disabled={state.disabled}
           data-testid={`admission-confirm-submit-${item.action}`}
           className={buttonClasses({ variant: "danger", size: "sm", fullWidth: true })}
         >
           {item.label}
         </button>
       </div>
-      {state.reason && (
-        <span
-          id={reasonId}
-          data-testid={`admission-reason-${item.action}`}
-          className="mt-1 block text-xs leading-snug text-fg-muted"
-        >
-          {state.reason}
-        </span>
-      )}
     </details>
   );
 }

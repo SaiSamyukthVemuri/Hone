@@ -267,6 +267,26 @@ describe("the send control", () => {
     expect(html).toContain("Cancel");
   });
 
+  it("refuses a service that vanished instead of quietly widening the scope", () => {
+    // The composer renders the chosen service by looking it up in `services`.
+    // When the lookup misses — deleted service, or the list refreshed under an
+    // open composer — the summary used to read "any service" while the payload
+    // still carried the stale id, so the practitioner confirmed one scope and
+    // sent another.
+    const html = compose({ serviceId: "svc-deleted" }, CONNECTED);
+    expect(controlTag(html, "composer-send")).toContain('disabled=""');
+    expect(html).toContain('data-testid="composer-error-service"');
+    expect(html).toContain("no longer available");
+    // The summary is withheld rather than describing a scope the send will not
+    // carry — it must not claim "any service".
+    expect(html).not.toContain('data-testid="composer-summary"');
+
+    // NEGATIVE CONTROL: the identical call with the service present sends.
+    const ok = compose({ serviceId: "svc-1" }, CONNECTED);
+    expect(controlTag(ok, "composer-send")).not.toContain('disabled=""');
+    expect(ok).toContain('data-testid="composer-summary"');
+  });
+
   it("summarises the scope without claiming anything has been sent", () => {
     const html = compose({ serviceId: "svc-2", windowDays: 14, allowedWeekdays: [1, 2] });
     expect(html).toContain("Laser — full leg");

@@ -10,6 +10,8 @@ import {
 } from "@/lib/waitlist/admission-model";
 import {
   ALLOWED_DAYS_PRESET_VALUES,
+  invitationHasRunOut,
+  practitionerStatusDetail,
   BOOKING_WINDOW_PRESETS,
   INVITE_TO_BOOK_STATUSES,
   PRACTITIONER_ACTIONS,
@@ -32,8 +34,10 @@ import {
   sendState,
   validateDraft,
   type InviteDraft,
+  type PractitionerAction,
   type PractitionerActionItem,
 } from "@/lib/waitlist/b4-invitation-draft";
+import type { AdapterCapabilities } from "@/lib/waitlist/invite-to-book-contract";
 
 // ===========================================================================
 // WAIT-03 B4 — the practitioner surface, and the rules it must NOT own
@@ -149,20 +153,39 @@ describe("this module is UNREACHABLE from the application", () => {
 });
 
 describe("the state machine is invisible", () => {
-  it("offers no Claim, Claim next or Reinvite, by any spelling", () => {
-    const vocabulary = [
+  it("offers no Claim, Claim next, Reinvite or Record expired — by any spelling", () => {
+    // THE ACTION VOCABULARY is where the state machine would show through. It
+    // must contain none of the database's verbs, `expire` included: recording
+    // an expiry is bookkeeping the database performs, not a button.
+    const actionVocabulary = [
       ...PRACTITIONER_ACTIONS,
       ...Object.values(PRACTITIONER_ACTION_LABEL),
-      ...Object.values(PRACTITIONER_STATUS_LABEL),
     ]
       .join(" ")
       .toLowerCase();
+    for (const forbidden of ["claim", "reinvite", "re-invite", "expire"]) {
+      expect(
+        actionVocabulary,
+        `"${forbidden}" is a database verb, not a practitioner's action`,
+      ).not.toContain(forbidden);
+    }
 
-    for (const forbidden of ["claim", "reinvite", "re-invite"]) {
-      expect(vocabulary, `"${forbidden}" is a database word, not a practitioner's`).not.toContain(
+    // THE STATUS VOCABULARY may say "Invitation expired", because that is the
+    // state a practitioner genuinely observes — it is the ACT of recording it
+    // that must not exist. So the ban here is on the control's name, not on the
+    // adjective.
+    const everythingRendered = [
+      ...Object.values(PRACTITIONER_STATUS_LABEL),
+      ...Object.values(PRACTITIONER_ACTION_LABEL),
+    ]
+      .join(" ")
+      .toLowerCase();
+    for (const forbidden of ["record expired", "claim", "reinvite"]) {
+      expect(everythingRendered, `"${forbidden}" reached the practitioner`).not.toContain(
         forbidden,
       );
     }
+    expect(Object.values(PRACTITIONER_STATUS_LABEL)).toContain("Invitation expired");
   });
 
   it("never names an internal status in anything a practitioner reads", () => {
@@ -254,12 +277,14 @@ describe("every verdict is the live model's, not a second copy of it", () => {
     // same set element and passed. The exception has to be scoped to the exact
     // context it was granted for, or it is not scoped at all.
     const divergences: string[] = [];
+    let inspected = 0;
     for (const status of WAITLIST_ENTRY_STATUSES) {
       for (const { name, context } of CONTEXTS) {
         for (const item of surfaceItems(status, context)) {
           const delegate = delegateFor(item.action, status);
           if (delegate === null) continue;
           const live = actionAvailability(delegate, status, context);
+          inspected += 1;
           if (item.available !== live.available) {
             divergences.push(`${item.action}@${status}@${name}`);
           }
@@ -271,12 +296,22 @@ describe("every verdict is the live model's, not a second copy of it", () => {
     // `expire` folds "not elapsed" and "could not look" into one branch, which
     // is safe where it is offered and unsafe here — so unknown refuses, the way
     // `release` already does one branch above.
-    expect(divergences.sort()).toEqual([
-      "return_to_waitlist@invited@elapsed AND unreadable (incoherent input)",
-    ]);
+    // NOW EMPTY, and that is a stronger statement than the single exception it
+    // replaces. Once unreadable facts take precedence over a stale elapsed
+    // flag, "Return to waitlist" is no longer offered on an unreadable
+    // invitation at all, so the case that used to need an exception cannot
+    // arise from the surface. The model still fails closed for any direct
+    // caller — proved separately below.
+    expect(divergences.sort()).toEqual([]);
+    // NON-VACUITY: the walk must actually be reaching delegated controls, or an
+    // empty result would mean the loop found nothing rather than that nothing
+    // diverged.
+    expect(inspected).toBeGreaterThan(20);
   });
 
   it("fails closed on an unreadable invitation rather than guessing", () => {
+    // Still the model's ruling for any direct caller, even though the surface
+    // no longer routes here — unknown facts now render the live shape.
     const verdict = practitionerActionAvailability("return_to_waitlist", "invited", {
       invitationFactsUnknown: true,
       invitationElapsed: true,
@@ -285,6 +320,34 @@ describe("every verdict is the live model's, not a second copy of it", () => {
     expect(verdict.available === false && verdict.reason).toBe(
       UNKNOWN_INVITATION_FAILS_CLOSED,
     );
+  });
+
+  it("lets unreadable facts beat a stale elapsed flag, everywhere at once", () => {
+    // An unreadable invitation may already have been REDEEMED, and a redeemed
+    // one has not expired. So a `invitationElapsed` bit we could not verify may
+    // not be used to claim expiry, hide the live controls, or contradict the
+    // sentence underneath the pill — which is exactly what happened when the
+    // label, the detail and the surface each read the flags independently.
+    const unreadable = { invitationFactsUnknown: true, invitationElapsed: true };
+
+    expect(invitationHasRunOut(unreadable)).toBe(false);
+    expect(practitionerStatusLabel("invited", unreadable)).toBe("Invitation sent");
+    expect(practitionerStatusDetail("invited", unreadable)).toContain("could not be checked");
+
+    // The row keeps the LIVE shape, where every control refuses with a
+    // could-not-check sentence rather than vanishing.
+    const actions = surfaceItems("invited", unreadable).map((i) => i.action);
+    expect(actions).toContain("cancel_invitation");
+    expect(actions).toContain("resend_invitation");
+    for (const item of surfaceItems("invited", unreadable)) {
+      if (item.action === "remove_from_waitlist") continue;
+      expect(item.available, `${item.action} was offered on unreadable facts`).toBe(false);
+    }
+
+    // NEGATIVE CONTROL: a READABLE elapsed invitation still reads as expired.
+    const readable = { invitationFactsUnknown: false, invitationElapsed: true };
+    expect(invitationHasRunOut(readable)).toBe(true);
+    expect(practitionerStatusLabel("invited", readable)).toBe("Invitation expired");
   });
 
   it("reads a closed entry's refusal from the live model rather than restating it", () => {
@@ -522,6 +585,50 @@ describe("wiring state is not eligibility", () => {
     ).toBe(false);
   });
 
+  it("gates each action on the capabilities it actually needs — the full matrix", () => {
+    const caps = (over: Partial<AdapterCapabilities> = {}): AdapterCapabilities => ({
+      enforcesScope: true,
+      canResend: true,
+      canCancel: true,
+      canReturnToWaitlist: true,
+      canRemove: true,
+      ...over,
+    });
+    const find = (
+      status: WaitlistEntryStatus,
+      context: AdmissionContext,
+      action: PractitionerAction,
+    ) => surfaceItems(status, context).find((i) => i.action === action)!;
+
+    const live = { invitationElapsed: false };
+    const resend = find("invited", live, "resend_invitation");
+    const cancel = find("invited", live, "cancel_invitation");
+    const invite = find("waiting", {}, "invite_to_book");
+    const requeue = find("released", {}, "return_to_waitlist");
+    const remove = find("waiting", {}, "remove_from_waitlist");
+
+    // RESEND NEEDS BOTH. It mints a NEW invitation with a newly supplied scope,
+    // so an adapter that can resend but cannot carry a scope would either drop
+    // what the practitioner chose or silently reuse the old one.
+    expect(controlState(resend, caps({ canResend: true, enforcesScope: false })).disabled).toBe(true);
+    expect(controlState(resend, caps({ canResend: false, enforcesScope: true })).disabled).toBe(true);
+    expect(controlState(resend, caps()).disabled).toBe(false);
+
+    // INVITE TO BOOK OPENS THE COMPOSER and carries no scope itself, so it must
+    // stay reachable in the half-wired state the contract permits — otherwise
+    // the composer's own "form visible, Send disabled" state is unreachable.
+    expect(controlState(invite, caps({ enforcesScope: false })).disabled).toBe(false);
+    expect(controlState(invite, null).disabled).toBe(true);
+
+    // The single-capability actions are gated on theirs, and NOT on scope.
+    expect(controlState(cancel, caps({ canCancel: false })).disabled).toBe(true);
+    expect(controlState(cancel, caps({ enforcesScope: false })).disabled).toBe(false);
+    expect(controlState(requeue, caps({ canReturnToWaitlist: false })).disabled).toBe(true);
+    expect(controlState(requeue, caps({ enforcesScope: false })).disabled).toBe(false);
+    expect(controlState(remove, caps({ canRemove: false })).disabled).toBe(true);
+    expect(controlState(remove, caps({ enforcesScope: false })).disabled).toBe(false);
+  });
+
   it("is not ready to bind, because no adapter exists", () => {
     expect(readyToBind(null)).toBe(false);
     expect(readyToBind({
@@ -583,6 +690,29 @@ describe("the composer's draft", () => {
       scope: { serviceId: null, windowDays: 7, allowedWeekdays: null },
       expiresInHours: 72,
     });
+  });
+
+  it("refuses a service that is no longer selectable instead of widening the scope", () => {
+    // The composer renders the chosen service by looking it up. When the lookup
+    // misses — deleted service, or the list refreshed under an open composer —
+    // the summary read "any service" while the payload still carried the stale
+    // id, so the practitioner confirmed one scope and sent another.
+    const withService = draft({ serviceId: "svc-gone" });
+    // With no service list supplied the draft is unjudged, as before.
+    expect(validateDraft(withService).ok).toBe(true);
+
+    const judged = validateDraft(withService, { serviceIds: ["svc-1", "svc-2"] });
+    expect(judged.ok).toBe(false);
+    expect(judged.ok === false && judged.errors.service).toBeTruthy();
+
+    // And nothing reaches the adapter.
+    expect(draftToInviteInput("e1", withService, { serviceIds: ["svc-1"] })).toBeNull();
+    expect(sendState(withService, null, { serviceIds: ["svc-1"] }).disabled).toBe(true);
+
+    // NEGATIVE CONTROL: a service that IS in the list passes the identical call.
+    expect(validateDraft(withService, { serviceIds: ["svc-gone"] }).ok).toBe(true);
+    // "Any service" is still a real answer and is never judged missing.
+    expect(validateDraft(draft({ serviceId: null }), { serviceIds: [] }).ok).toBe(true);
   });
 
   it("derives the pressed preset from the value, so the two cannot disagree", () => {

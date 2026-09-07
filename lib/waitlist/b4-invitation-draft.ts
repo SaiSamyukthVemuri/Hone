@@ -123,10 +123,32 @@ export function practitionerStatusLabel(
   status: WaitlistEntryStatus,
   context: AdmissionContext = {},
 ): string {
-  if (status === "invited" && !context.invitationRedeemed && context.invitationElapsed) {
+  if (status === "invited" && invitationHasRunOut(context)) {
     return PRACTITIONER_STATUS_LABEL.expired;
   }
   return PRACTITIONER_STATUS_LABEL[status];
+}
+
+/**
+ * Has this invitation's window actually closed, so far as we can tell?
+ *
+ * UNKNOWN FACTS BEAT A STALE ELAPSED FLAG, and that precedence is the whole
+ * point of this helper existing rather than the expression being inlined three
+ * times. An unreadable invitation may already have been REDEEMED, and a
+ * redeemed one has not expired at all — so trusting `invitationElapsed` while
+ * `invitationFactsUnknown` is set would let the row announce "Invitation
+ * expired" and hide the live-invitation controls on the strength of a bit we
+ * just admitted we could not verify.
+ *
+ * An earlier revision read the flags independently in the label, the detail
+ * sentence and the action surface, and the three disagreed: the pill said
+ * "Invitation expired" while the sentence underneath it said the state could
+ * not be checked. One predicate, three call sites, no way to drift.
+ */
+export function invitationHasRunOut(context: AdmissionContext): boolean {
+  if (context.invitationFactsUnknown) return false;
+  if (context.invitationRedeemed) return false;
+  return context.invitationElapsed === true;
 }
 
 /** One line of plain explanation under the name. Never mentions a state name,
@@ -147,7 +169,7 @@ export function practitionerStatusDetail(
       if (context.invitationRedeemed) {
         return "They have used their invitation. This entry stays here until their booking is recorded.";
       }
-      if (context.invitationElapsed) {
+      if (invitationHasRunOut(context)) {
         return "Their invitation ran out before they booked.";
       }
       return "They have a live booking link and have not used it yet.";
@@ -371,7 +393,7 @@ export function practitionerActionAvailability(
       // own history would then be wrong about what happened. The surface above
       // does not offer it there either, and this refusal keeps the model honest
       // for any other caller.
-      if (!context.invitationRedeemed && context.invitationElapsed === true) {
+      if (invitationHasRunOut(context)) {
         return {
           available: false,
           reason:
@@ -554,8 +576,10 @@ export function entryActionSurface(
       // CANCELLED, and the evidence trail would then disagree with what
       // actually happened. Return them to the waitlist and invite them again;
       // that path lets the expiry be recorded as an expiry.
-      const elapsed = !context.invitationRedeemed && context.invitationElapsed === true;
-      if (elapsed) {
+      // Unknown facts fall through to the LIVE shape below, where every control
+      // refuses with "could not be checked". Rendering the expired shape here
+      // would hide Cancel on a row whose invitation may still be live.
+      if (invitationHasRunOut(context)) {
         return {
           primary: make("return_to_waitlist"),
           secondary: [make("remove_from_waitlist")],
@@ -696,8 +720,29 @@ export type DraftValidation =
  * array, and refusing here is what keeps a practitioner from sending a link
  * that opens onto an empty calendar.
  */
-export function validateDraft(draft: InviteDraft): DraftValidation {
+export type DraftContext = {
+  /** The services the studio can actually offer right now. When supplied, a
+   *  `serviceId` that is not among them invalidates the draft. */
+  serviceIds?: ReadonlyArray<string>;
+};
+
+export function validateDraft(
+  draft: InviteDraft,
+  { serviceIds }: DraftContext = {},
+): DraftValidation {
   const errors: Partial<Record<DraftFieldId, string>> = {};
+
+  // A SERVICE THAT VANISHED IS NOT "ANY SERVICE". The composer renders the
+  // chosen service by looking it up in the list; when the lookup misses — the
+  // service was deleted, or the list refreshed under an open composer — the
+  // summary silently read "any service" while `draftToInviteInput` still
+  // forwarded the stale id. The practitioner would then confirm one scope and
+  // send a different one. Refusing is the only honest option, because the two
+  // readings are both wrong: sending the stale id sends something invisible,
+  // and dropping it silently widens the invitation.
+  if (serviceIds !== undefined && draft.serviceId !== null && !serviceIds.includes(draft.serviceId)) {
+    errors.service = "That service is no longer available. Choose another, or choose any service.";
+  }
 
   if (
     !Number.isInteger(draft.windowDays) ||
@@ -747,8 +792,9 @@ export function validateDraft(draft: InviteDraft): DraftValidation {
 export function draftToInviteInput(
   entryId: string,
   draft: InviteDraft,
+  context: DraftContext = {},
 ): InviteToBookInput | null {
-  const validation = validateDraft(draft);
+  const validation = validateDraft(draft, context);
   if (!validation.ok) return null;
   return { entryId, scope: validation.scope, expiresInHours: validation.expiresInHours };
 }
@@ -817,7 +863,14 @@ export const ACTION_CAPABILITIES: Record<
   // `{ canResend: true, enforcesScope: false }` — a combination the contract
   // explicitly permits as an intermediate state — would have advertised a
   // resend it could not honour as written.
-  invite_to_book: ["enforcesScope"],
+  // OPENS THE COMPOSER; IT DOES NOT SEND. It needs an adapter to exist — there
+  // is no point opening a form nothing can submit — but NOT scope enforcement,
+  // because no scope has been written yet. Gating the opener on `enforcesScope`
+  // made the composer's own supported half-wired state unreachable: the form is
+  // meant to stay visible with only Send disabled, and an opener that refuses
+  // first means nobody ever sees it. Scope is gated at `sendState`, which is
+  // the control that actually carries one.
+  invite_to_book: [],
   resend_invitation: ["canResend", "enforcesScope"],
   cancel_invitation: ["canCancel"],
   return_to_waitlist: ["canReturnToWaitlist"],
@@ -917,8 +970,9 @@ export function activeTtlPreset(hours: number): number | "custom" {
 export function sendState(
   draft: InviteDraft,
   capabilities: AdapterCapabilities | null,
+  context: DraftContext = {},
 ): ControlState {
-  const validation = validateDraft(draft);
+  const validation = validateDraft(draft, context);
   if (!validation.ok) {
     return { disabled: true, reason: "Fix the highlighted fields before sending." };
   }
