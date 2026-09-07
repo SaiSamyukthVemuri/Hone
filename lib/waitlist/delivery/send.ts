@@ -11,7 +11,8 @@ import {
   classifyDelivery,
   invitationExpiryLabel,
   invitationIsLive,
-  invitationWithinProviderIdempotencyWindow,
+  invitationSendWindow,
+  retryableRefusal,
   terminalRefusal,
   proofWindowMinutes,
   type DeliveryDisposition,
@@ -154,11 +155,18 @@ export async function sendWaitlistInvitationEmail(args: {
   // produce the second invitation this path exists to prevent. Deduplicating
   // past that point needs a durable local delivery record, which is schema and
   // out of this lane, so the send is refused rather than issued on a hope.
-  if (!invitationWithinProviderIdempotencyWindow(args.issuedAt, now)) {
-    // TERMINAL for the same reason: `now - issuedAt` only grows, so no later
-    // attempt at THIS invitation can fall back inside the window. The remedy is
-    // a new invitation, not another try at this one.
-    const disposition = terminalRefusal("outside_provider_idempotency_window");
+  //
+  // The verdict is TYPED because two very different things once shared one
+  // "false": a genuinely stale invitation, and a database clock a moment ahead
+  // of the application clock. The first can never succeed; the second succeeds
+  // as soon as time advances, and calling it terminal told a caller to discard
+  // a perfectly good invitation.
+  const window = invitationSendWindow(args.issuedAt, now);
+  if (!window.eligible) {
+    const disposition =
+      window.disposition === "terminal"
+        ? terminalRefusal(window.reason)
+        : retryableRefusal(window.reason);
     return {
       disposition,
       log: buildDeliveryLogRecord({

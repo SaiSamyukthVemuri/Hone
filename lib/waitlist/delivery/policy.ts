@@ -126,32 +126,84 @@ export const PROOF_SEND_MAX_DELAY_AFTER_MINT_SECONDS = 60;
  * — a claim/result row keyed by invitation — which is schema, and schema is out
  * of this lane. Until that exists, the honest move is to refuse the send this
  * module cannot make idempotent rather than to issue one and hope. See
- * `invitationWithinProviderIdempotencyWindow`.
+ * `invitationSendWindow`, which distinguishes a genuinely stale invitation
+ * from a clock that is merely a moment out of step.
  */
 export const PROVIDER_IDEMPOTENCY_RETENTION_HOURS = 24;
 
 /**
  * Whether an invitation send can still be deduplicated by the provider.
  *
+ * A TYPED RESULT, not a boolean, because "false" was hiding two outcomes that
+ * deserve opposite treatment:
+ *
+ *   OUTSIDE RETENTION — the invitation was issued longer ago than the provider
+ *   remembers a key for. `now - issuedAt` only grows, so no later attempt at
+ *   THIS invitation falls back inside the window. TERMINAL.
+ *
+ *   CLOCK DISAGREEMENT — `issuedAt` is AHEAD of `now`. The elapsed value is
+ *   negative, which the old boolean also answered "false", so a database clock
+ *   a millisecond ahead of the application clock made a perfectly good
+ *   invitation look permanently undeliverable. That is the opposite of the
+ *   truth: the same input becomes eligible the moment the application clock
+ *   catches up. RETRYABLE.
+ *
+ * NO TOLERANCE WINDOW IS INTRODUCED. A skew allowance would be a second number
+ * to justify, and it would silently accept genuinely-future timestamps up to
+ * its size. Classifying the case is strictly better than tolerating it: the
+ * caller is told what is wrong and that waiting fixes it. The repo's only
+ * existing `*_SKEW_MS` is `DEFAULT_EXPIRY_SKEW_MS` in the Google token cache,
+ * which is a refresh margin before an expiry rather than a clock-disagreement
+ * allowance — reusing it here would borrow a number for a purpose it was not
+ * chosen for.
+ *
  * Measured from ISSUANCE, which is the anchor the idempotency key is built on:
  * the key is one per invitation, so its provider-side lifetime starts when the
- * first send for that invitation was made — and the first send follows issuance
- * in the same flow.
- *
- * A refusal here is not a failure of the invitation. The row persists, the
- * operator can re-issue, and `lib/email/client.ts` already states the house
- * fallback for an undeliverable transactional message. What must not happen is
- * a silent second invitation for one spot, which is the exact duplicate this
- * whole path exists to prevent.
+ * first send for that invitation was made, and that follows issuance.
  */
-export function invitationWithinProviderIdempotencyWindow(
+export type InvitationSendWindow =
+  | { eligible: true }
+  | {
+      eligible: false;
+      /** TERMINAL: no later attempt at this invitation can succeed. */
+      disposition: "terminal";
+      reason: "outside_provider_idempotency_window";
+    }
+  | {
+      eligible: false;
+      /** RETRYABLE: the same input succeeds once time advances. */
+      disposition: "retryable";
+      reason: "clock_disagreement";
+    };
+
+export function invitationSendWindow(
   issuedAt: Date,
   now: Date,
-): boolean {
-  const ms = now.getTime() - issuedAt.getTime();
-  if (!Number.isFinite(ms)) return false;
-  if (ms < 0) return false; // issued in the future: a clock disagreement
-  return ms <= PROVIDER_IDEMPOTENCY_RETENTION_HOURS * 3_600_000;
+): InvitationSendWindow {
+  const elapsed = now.getTime() - issuedAt.getTime();
+  if (!Number.isFinite(elapsed)) {
+    // An unusable timestamp is not a clock that will catch up.
+    return {
+      eligible: false,
+      disposition: "terminal",
+      reason: "outside_provider_idempotency_window",
+    };
+  }
+  if (elapsed < 0) {
+    return {
+      eligible: false,
+      disposition: "retryable",
+      reason: "clock_disagreement",
+    };
+  }
+  if (elapsed > PROVIDER_IDEMPOTENCY_RETENTION_HOURS * 3_600_000) {
+    return {
+      eligible: false,
+      disposition: "terminal",
+      reason: "outside_provider_idempotency_window",
+    };
+  }
+  return { eligible: true };
 }
 
 /** Minimum gap between two proof sends for one invitation. */
@@ -480,6 +532,28 @@ export function terminalRefusal(reason: string): DeliveryDisposition {
     // Nothing was sent, so there is nothing in flight to strand. Whether the
     // challenge should be retired is the caller's decision, not a consequence
     // of this refusal.
+    mayInvalidateChallenge: false,
+    mayMutateLifecycle: false,
+    reason: `rejected_${reason}`,
+  };
+}
+
+/**
+ * A refusal made before any provider call that a LATER attempt may pass.
+ *
+ * The counterpart to `terminalRefusal`, and the distinction is the point: one
+ * says "this can never work", the other says "not yet". Collapsing them tells a
+ * caller to discard a valid invitation over a clock that is a millisecond out.
+ *
+ * Nothing was transmitted, so `delivered` is "no"; nothing is in flight, so
+ * there is nothing to strand; and the invitation must NOT be invalidated —
+ * waiting is the whole remedy.
+ */
+export function retryableRefusal(reason: string): DeliveryDisposition {
+  return {
+    delivered: "no",
+    offerResend: true,
+    terminal: false,
     mayInvalidateChallenge: false,
     mayMutateLifecycle: false,
     reason: `rejected_${reason}`,

@@ -10,7 +10,7 @@ import {
   challengeMailability,
   invitationExpiryLabel,
   invitationIsLive,
-  invitationWithinProviderIdempotencyWindow,
+  invitationSendWindow,
   PROVIDER_IDEMPOTENCY_RETENTION_HOURS,
   PROOF_SEND_MAX_DELAY_AFTER_MINT_SECONDS,
   proofWindowMinutes,
@@ -746,13 +746,15 @@ describe("P2: no send outside the provider's idempotency retention", () => {
     expect(out.disposition.mayMutateLifecycle).toBe(false);
   });
 
-  it("accepts the retention boundary exactly, and rejects a millisecond past it", () => {
+  it("accepts the retention boundary exactly, and refuses a millisecond past it", () => {
     const at = (ms: number) => new Date(INV_ISSUED.getTime() + ms);
-    const window = PROVIDER_IDEMPOTENCY_RETENTION_HOURS * 3_600_000;
-    expect(invitationWithinProviderIdempotencyWindow(INV_ISSUED, at(window))).toBe(true);
-    expect(invitationWithinProviderIdempotencyWindow(INV_ISSUED, at(window + 1))).toBe(false);
-    // Issued in the future is a clock disagreement, not a fresh invitation.
-    expect(invitationWithinProviderIdempotencyWindow(INV_ISSUED, at(-1))).toBe(false);
+    const w = PROVIDER_IDEMPOTENCY_RETENTION_HOURS * 3_600_000;
+    expect(invitationSendWindow(INV_ISSUED, at(w))).toEqual({ eligible: true });
+    expect(invitationSendWindow(INV_ISSUED, at(w + 1))).toEqual({
+      eligible: false,
+      disposition: "terminal",
+      reason: "outside_provider_idempotency_window",
+    });
   });
 
   it("a send inside the window still goes out", async () => {
@@ -769,5 +771,95 @@ describe("P2: no send outside the provider's idempotency retention", () => {
       return r;
     })();
     expect(calls).toHaveLength(1);
+  });
+});
+
+describe("CLOCK DISAGREEMENT is retryable, not terminal", () => {
+  // A database clock a millisecond ahead of the application clock made
+  // `now - issuedAt` negative, which the old boolean answered "false" — the
+  // same answer it gave a genuinely stale invitation. So a perfectly good
+  // invitation was reported permanently undeliverable, and the caller was told
+  // to discard it. REPRODUCED at d53dcd35 before this split.
+  //
+  // No tolerance window is introduced. A skew allowance would be a second
+  // number to justify and would silently accept genuinely-future timestamps up
+  // to its size; classifying the case tells the caller what is wrong and that
+  // waiting fixes it.
+  const at = (ms: number) => new Date(INV_ISSUED.getTime() + ms);
+
+  it("issuedAt == now => eligible", () => {
+    expect(invitationSendWindow(INV_ISSUED, at(0))).toEqual({ eligible: true });
+  });
+
+  it("issuedAt slightly BEFORE now => eligible", () => {
+    expect(invitationSendWindow(INV_ISSUED, at(1))).toEqual({ eligible: true });
+    expect(invitationSendWindow(INV_ISSUED, at(60_000))).toEqual({ eligible: true });
+  });
+
+  it("issuedAt slightly AFTER now => retryable, never terminal", () => {
+    for (const skew of [1, 250, 5_000]) {
+      expect(invitationSendWindow(INV_ISSUED, at(-skew))).toEqual({
+        eligible: false,
+        disposition: "retryable",
+        reason: "clock_disagreement",
+      });
+    }
+  });
+
+  it("advancing now past issuedAt makes the SAME input eligible", () => {
+    // The property that makes it retryable rather than terminal: nothing about
+    // the invitation changed, only the clock.
+    expect(invitationSendWindow(INV_ISSUED, at(-1)).eligible).toBe(false);
+    expect(invitationSendWindow(INV_ISSUED, at(1)).eligible).toBe(true);
+  });
+
+  it("a genuinely old issuedAt is still TERMINAL", () => {
+    const w = PROVIDER_IDEMPOTENCY_RETENTION_HOURS * 3_600_000;
+    expect(invitationSendWindow(INV_ISSUED, at(w + 1))).toMatchObject({
+      disposition: "terminal",
+    });
+  });
+
+  it("a future-issued invitation performs ZERO provider calls and is not terminal", async () => {
+    const { transport, calls } = recordingTransport(ACCEPTED);
+    const now = new Date("2026-09-07T12:00:00.000Z");
+    const out = await sendWaitlistInvitationEmail({
+      studio: STUDIO,
+      invitationId: INVITATION_ID,
+      recipientEmail: RECIPIENT,
+      invitationUrl: URL,
+      issuedAt: new Date(now.getTime() + 1), // DB clock one millisecond ahead
+      expiresAt: new Date(now.getTime() + 3_600_000), // still live
+      now,
+      transport,
+    });
+    expect(calls).toHaveLength(0);
+    expect(out.disposition.reason).toBe("rejected_clock_disagreement");
+    expect(out.disposition.terminal).toBe(false);
+    expect(out.disposition.offerResend).toBe(true);
+    // Waiting is the remedy, so nothing about the invitation may be retired.
+    expect(out.disposition.mayInvalidateChallenge).toBe(false);
+    expect(out.disposition.mayMutateLifecycle).toBe(false);
+  });
+
+  it("an EXPIRED invitation stays terminal even when the clock disagrees", async () => {
+    // Expiry is checked first and independently: a skewed clock must not
+    // upgrade a dead invitation into something worth retrying.
+    const { transport, calls } = recordingTransport(ACCEPTED);
+    const now = new Date("2026-09-07T12:00:00.000Z");
+    const out = await sendWaitlistInvitationEmail({
+      studio: STUDIO,
+      invitationId: INVITATION_ID,
+      recipientEmail: RECIPIENT,
+      invitationUrl: URL,
+      issuedAt: new Date(now.getTime() + 1), // future-issued AND expired
+      expiresAt: new Date(now.getTime() - 1),
+      now,
+      transport,
+    });
+    expect(calls).toHaveLength(0);
+    expect(out.disposition.reason).toBe("rejected_invitation_expired");
+    expect(out.disposition.terminal).toBe(true);
+    expect(out.disposition.offerResend).toBe(false);
   });
 });
