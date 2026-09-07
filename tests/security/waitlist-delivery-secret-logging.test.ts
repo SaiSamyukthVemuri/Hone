@@ -197,7 +197,6 @@ describe("the invitation bearer token never reaches the log", () => {
       invitationUrl: URL,
       issuedAt: new Date("2026-09-07T12:00:00.000Z"),
       expiresAt: new Date("2026-09-10T12:00:00.000Z"),
-      expiryTimezone: "America/Toronto",
       now: new Date("2026-09-07T12:01:00.000Z"),
       transport: {
         emails: {
@@ -233,7 +232,6 @@ describe("no console sink receives a secret", () => {
       invitationUrl: URL,
       issuedAt: new Date("2026-09-07T12:00:00.000Z"),
       expiresAt: new Date("2026-09-10T12:00:00.000Z"),
-      expiryTimezone: "America/Toronto",
       now: new Date("2026-09-07T12:01:00.000Z"),
       transport: transportReturning(ACCEPTED),
     });

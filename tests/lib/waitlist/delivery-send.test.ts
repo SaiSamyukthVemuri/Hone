@@ -9,6 +9,7 @@ import {
   classifyDelivery,
   challengeMailability,
   invitationExpiryLabel,
+  invitationIsLive,
   invitationWithinProviderIdempotencyWindow,
   PROVIDER_IDEMPOTENCY_RETENTION_HOURS,
   PROOF_SEND_MAX_DELAY_AFTER_MINT_SECONDS,
@@ -64,18 +65,16 @@ const URL = "https://hone.care/waitlist/invitation/RAWTOKEN";
 const INV_ISSUED = new Date("2026-09-07T12:00:00.000Z");
 const INV_EXPIRES = new Date(INV_ISSUED.getTime() + 72 * 3_600_000);
 // Frozen with the invitation, never re-read from mutable studio state.
-const INV_TZ = "America/Toronto";
 // Inside the provider's idempotency retention, so the key still deduplicates.
 const INV_NOW = new Date(INV_ISSUED.getTime() + 60_000);
 const INV_BASE = {
   issuedAt: INV_ISSUED,
   expiresAt: INV_EXPIRES,
-  expiryTimezone: INV_TZ,
   now: INV_NOW,
 };
 
 describe("invitation delivery", () => {
-  it("sends studio-branded, with the studio's Reply-To authority", async () => {
+  it("sends as the HONE PLATFORM identity, with no studio-derived header", async () => {
     const { transport, calls } = recordingTransport(ACCEPTED);
     await sendWaitlistInvitationEmail({
       studio: STUDIO,
@@ -87,18 +86,18 @@ describe("invitation delivery", () => {
     });
 
     expect(calls).toHaveLength(1);
-    // COMMS-01A: display name is the studio, envelope stays on the one verified
-    // sender domain, Reply-To resolves to the studio rather than to Hone.
-    expect(calls[0].payload.from).toBe(
-      "Willow Electrolysis via Hone <hello@hone.care>",
-    );
-    expect(calls[0].payload.replyTo).toBe("hello@willow.test");
+    // V1: studio branding is dropped from the EMAIL because every studio field
+    // is mutable and the key carries no payload digest. Hone's existing
+    // platform transactional identity, unchanged and byte-stable.
+    expect(calls[0].payload.from).toBe("Hone <hello@hone.care>");
+    expect(calls[0].payload.replyTo).toBeUndefined();
     expect(calls[0].payload.to).toBe(RECIPIENT);
   });
 
-  it("falls back to owner_email when the postcare address is malformed", async () => {
-    // studioClientContactEmail picks over VALID authorities, not non-blank
-    // strings — a legacy malformed value must not send replies to Hone.
+  it("carries no Reply-To at all in V1", async () => {
+    // Deliberate scope reduction. postcare_contact_email and owner_email are
+    // both mutable, so either in Reply-To reintroduces the same-key /
+    // different-payload trap the platform identity exists to close.
     const { transport, calls } = recordingTransport(ACCEPTED);
     await sendWaitlistInvitationEmail({
       studio: { ...STUDIO, postcare_contact_email: "front:desk@willow.test" },
@@ -108,7 +107,7 @@ describe("invitation delivery", () => {
       ...INV_BASE,
       transport,
     });
-    expect(calls[0].payload.replyTo).toBe("owner@willow.test");
+    expect(calls[0].payload.replyTo).toBeUndefined();
   });
 
   it("scopes the idempotency key to the INVITATION, not just the payload", async () => {
@@ -410,25 +409,17 @@ describe("the CHALLENGE window and the CAPABILITY ceiling are different things",
     expect(challengeMailability(issued, ok, punctual).mailable).toBe(true);
   });
 
-  it("P2-A: the invitation states an ABSOLUTE instant in the studio's clock", () => {
-    // Both duration shapes failed. Remaining time drifted between retries and
-    // moved the payload-derived key. The minted window was stable and then
-    // lied: "expires in 3 days" on a send made a day after issuance. A fixed
-    // point is stable AND stays true however late the message arrives.
+  it("P2-A: the invitation states an ABSOLUTE instant in a FIXED zone", () => {
+    // Every duration shape failed, and so did a studio-zoned instant. Remaining
+    // time drifted between retries; the minted window was stable and lied; a
+    // studio-zoned instant was stable and truthful but read mutable state. A
+    // fixed zone is the only shape that is all three.
     const exp = new Date("2026-09-10T17:00:00.000Z");
-    const label = invitationExpiryLabel(exp, "America/Toronto");
+    const label = invitationExpiryLabel(exp);
     expect(label).toContain("September 10, 2026");
-    expect(label).toContain("1:00");           // 17:00 UTC = 13:00 EDT
-    expect(label).not.toMatch(/\bdays?\b/);    // no duration wording at all
-    // Pure function of the expiry: the same input renders the same string
-    // whenever it is read, which is what keeps the payload stable.
-    expect(invitationExpiryLabel(exp, "America/Toronto")).toBe(label);
-  });
-
-  it("P2-A: an unknown timezone falls back rather than taking the send down", () => {
-    const exp = new Date("2026-09-10T17:00:00.000Z");
-    const label = invitationExpiryLabel(exp, "Not/AZone");
-    expect(label).toContain("September 10, 2026");
+    expect(label).toContain("UTC");
+    expect(label).not.toMatch(/\bdays?\b/); // no duration wording at all
+    expect(invitationExpiryLabel(exp)).toBe(label);
   });
 
   it("rounds the advertised window DOWN", () => {
@@ -587,56 +578,108 @@ describe("P2-A: a delayed retry keeps ONE identity and a TRUTHFUL expiry", () =>
   });
 });
 
-describe("P2: the invitation payload reads no mutable studio state", () => {
-  it("the rendered expiry is identical whatever studio.timezone happens to say", async () => {
-    // REPRODUCED before this parameter existed: re-reading `studio.timezone` at
-    // send time made the payload move while the event-only key stayed put, and
-    // same-key/different-payload is the one case the provider answers with
-    // invalid_idempotent_request rather than a replay — so a retry that still
-    // needed delivering would fail outright.
-    //
-    // The zone is now an explicit input frozen with the invitation. Passing two
-    // studio objects that differ only in a stray `timezone` field must change
-    // nothing, because nothing reads it.
-    const a = recordingTransport(ACCEPTED);
-    const b = recordingTransport(ACCEPTED);
-    const args = {
+describe("V1 STABLE PAYLOAD: no mutable studio field reaches the provider", () => {
+  it("payload and key are BYTE-IDENTICAL across studio name/email/timezone mutation", () => {
+    // The negative control this rule exists for. Every studio field is mutable
+    // operator state; the invitation key carries no payload digest, so any of
+    // them moving the bytes turns a retry into invalid_idempotent_request
+    // instead of a replay.
+    return (async () => {
+      const before = recordingTransport(ACCEPTED);
+      const after = recordingTransport(ACCEPTED);
+      const args = {
+        invitationId: INVITATION_ID,
+        recipientEmail: RECIPIENT,
+        invitationUrl: URL,
+        ...INV_BASE,
+      };
+      await sendWaitlistInvitationEmail({
+        ...args,
+        studio: {
+          id: STUDIO.id,
+          name: "Willow Electrolysis",
+          postcare_contact_email: "hello@willow.test",
+          owner_email: "owner@willow.test",
+          timezone: "America/Toronto",
+        } as typeof STUDIO,
+        transport: before.transport,
+      });
+      await sendWaitlistInvitationEmail({
+        ...args,
+        // Renamed, re-addressed, re-zoned — every mutable field moved at once.
+        studio: {
+          id: STUDIO.id,
+          name: "Willow Electrolysis & Skin",
+          postcare_contact_email: "care@willow-skin.test",
+          owner_email: "newowner@willow-skin.test",
+          timezone: "Asia/Tokyo",
+        } as typeof STUDIO,
+        transport: after.transport,
+      });
+
+      expect(after.calls[0].payload).toEqual(before.calls[0].payload);
+      expect(after.calls[0].idempotencyKey).toBe(before.calls[0].idempotencyKey);
+    })();
+  });
+
+  it("the only tenant-derived value in the key is the immutable studio id", async () => {
+    const { transport, calls } = recordingTransport(ACCEPTED);
+    await sendWaitlistInvitationEmail({
+      studio: STUDIO,
       invitationId: INVITATION_ID,
       recipientEmail: RECIPIENT,
       invitationUrl: URL,
       ...INV_BASE,
-    };
-    await sendWaitlistInvitationEmail({
-      ...args,
-      studio: { ...STUDIO, timezone: "America/Toronto" } as typeof STUDIO,
-      transport: a.transport,
+      transport,
     });
-    await sendWaitlistInvitationEmail({
-      ...args,
-      studio: { ...STUDIO, timezone: "America/Vancouver" } as typeof STUDIO,
-      transport: b.transport,
-    });
-    expect(a.calls[0].idempotencyKey).toBe(b.calls[0].idempotencyKey);
-    expect(a.calls[0].payload.text).toBe(b.calls[0].payload.text);
+    const key = calls[0].idempotencyKey ?? "";
+    expect(key).toContain(STUDIO.id);
+    expect(key).toContain(INVITATION_ID);
+    expect(key).not.toContain("Willow");
   });
 
-  it("the frozen zone is what actually renders", async () => {
-    // The positive half: proving the payload is stable would also pass if the
-    // zone were ignored entirely and everything rendered as UTC.
-    const a = recordingTransport(ACCEPTED);
-    const b = recordingTransport(ACCEPTED);
-    const args = {
+  it("the expiry renders in a FIXED zone, so no timezone input can move it", () => {
+    const exp = new Date("2026-09-10T17:00:00.000Z");
+    const label = invitationExpiryLabel(exp);
+    expect(label).toContain("September 10, 2026");
+    expect(label).toContain("UTC");
+    expect(invitationExpiryLabel(exp)).toBe(label);
+  });
+});
+
+describe("NEVER send an already-expired invitation", () => {
+  const at = (ms: number) => new Date(INV_EXPIRES.getTime() + ms);
+
+  it("expires in the future => eligible", () => {
+    expect(invitationIsLive(INV_EXPIRES, at(-1))).toBe(true);
+  });
+
+  it("expires exactly now => REFUSED", () => {
+    // A boundary that leaks by a millisecond is a boundary nobody can reason
+    // about, so the comparison is strictly greater than.
+    expect(invitationIsLive(INV_EXPIRES, at(0))).toBe(false);
+  });
+
+  it("already expired => REFUSED", () => {
+    expect(invitationIsLive(INV_EXPIRES, at(1))).toBe(false);
+  });
+
+  it("an expired invitation performs ZERO provider calls", async () => {
+    const { transport, calls } = recordingTransport(ACCEPTED);
+    const out = await sendWaitlistInvitationEmail({
       studio: STUDIO,
       invitationId: INVITATION_ID,
       recipientEmail: RECIPIENT,
       invitationUrl: URL,
       issuedAt: INV_ISSUED,
       expiresAt: INV_EXPIRES,
-      now: INV_NOW,
-    };
-    await sendWaitlistInvitationEmail({ ...args, expiryTimezone: "America/Toronto", transport: a.transport });
-    await sendWaitlistInvitationEmail({ ...args, expiryTimezone: "Asia/Tokyo", transport: b.transport });
-    expect(a.calls[0].payload.text).not.toBe(b.calls[0].payload.text);
+      now: at(1),
+      transport,
+    });
+    expect(calls).toHaveLength(0);
+    expect(out.disposition.delivered).toBe("no");
+    expect(out.disposition.reason).toBe("rejected_invitation_expired");
+    expect(out.disposition.mayMutateLifecycle).toBe(false);
   });
 });
 
@@ -656,8 +699,7 @@ describe("P2: no send outside the provider's idempotency retention", () => {
       invitationUrl: URL,
       issuedAt: INV_ISSUED,
       expiresAt: INV_EXPIRES,
-      expiryTimezone: INV_TZ,
-      now: new Date(
+          now: new Date(
         INV_ISSUED.getTime() + (PROVIDER_IDEMPOTENCY_RETENTION_HOURS + 1) * 3_600_000,
       ),
       transport,

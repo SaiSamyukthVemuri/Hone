@@ -24,19 +24,16 @@ const URL = "https://example.test/waitlist/invitation/RAWTOKEN";
 const EXPIRY_LABEL = "Thursday, September 10, 2026 at 1:00 PM EDT";
 
 describe("waitlist invitation email", () => {
-  it("names the studio in the subject and carries no operator prefix", () => {
-    // [HONE WAITLIST] is the STUDIO-facing marker operators build inbox rules
-    // on (templates/new-client-waitlist.ts). It is operational vocabulary and
-    // must not reach a prospect.
-    expect(waitlistInvitationSubject("Willow")).toBe(
-      "Your invitation to book · Willow",
-    );
-    expect(waitlistInvitationSubject("Willow")).not.toContain("[HONE WAITLIST]");
+  it("has a CONSTANT subject — no studio name to move when a studio is renamed", () => {
+    // V1 sends as Hone. A studio name in the subject is mutable operator state
+    // in a payload that must be a pure function of the invitation, because the
+    // key carries no digest.
+    expect(waitlistInvitationSubject()).toBe("Your invitation to book");
+    expect(waitlistInvitationSubject()).not.toContain("[HONE WAITLIST]");
   });
 
   it("carries the invitation URL in both bodies", () => {
     const out = buildWaitlistInvitationEmail({
-      studioName: "Willow",
       invitationUrl: URL,
       expiresAtLabel: EXPIRY_LABEL,
     });
@@ -49,7 +46,6 @@ describe("waitlist invitation email", () => {
     // recipient reasonably assumes clicking through is the whole transaction
     // and the second factor arrives as an unexplained obstacle.
     const out = buildWaitlistInvitationEmail({
-      studioName: "Willow",
       invitationUrl: URL,
       expiresAtLabel: EXPIRY_LABEL,
     });
@@ -62,7 +58,6 @@ describe("waitlist invitation email", () => {
     // p_ttl_hours, default 72, clamped 1..168) and stored on expires_at. This
     // module must never become a second opinion about it.
     const out = buildWaitlistInvitationEmail({
-      studioName: "Willow",
       invitationUrl: URL,
       expiresAtLabel: "Tuesday, September 8, 2026 at 9:00 AM EDT",
     });
@@ -74,20 +69,24 @@ describe("waitlist invitation email", () => {
     expect(out.text).not.toMatch(/expires in \d+/);
   });
 
-  it("falls back rather than rendering a gap when the studio name is blank", () => {
+  it("renders NO studio-derived value anywhere", () => {
+    // The V1 rule, asserted as absence. Every studio field is mutable operator
+    // state; none may reach a payload whose idempotency key carries no digest.
     const out = buildWaitlistInvitationEmail({
-      studioName: "   ",
       invitationUrl: URL,
       expiresAtLabel: EXPIRY_LABEL,
     });
-    expect(out.subject).toBe("Your invitation to book · your studio");
-    expect(out.text).not.toContain("  at ,");
+    for (const rendered of [out.subject, out.text, out.html]) {
+      expect(rendered).not.toContain("Willow");
+      expect(rendered).not.toContain("willow.test");
+    }
+    // It still says Hone, so the recipient knows who sent it.
+    expect(out.text).toContain("Hone");
   });
 
-  it("escapes a studio name that would otherwise inject markup", () => {
+  it("escapes the URL, the one caller-supplied value left", () => {
     const out = buildWaitlistInvitationEmail({
-      studioName: '<script>alert(1)</script>',
-      invitationUrl: URL,
+      invitationUrl: 'https://h/w/T"><script>alert(1)</script>',
       expiresAtLabel: EXPIRY_LABEL,
     });
     expect(out.html).not.toContain("<script>");

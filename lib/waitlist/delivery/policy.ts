@@ -380,64 +380,59 @@ export function classifyDelivery(outcome: SendOutcomeShape): DeliveryDisposition
 // ---------------------------------------------------------------------------
 
 /**
- * The invitation's expiry as an ABSOLUTE moment, in the studio's timezone.
+ * The invitation's expiry as an ABSOLUTE moment, in a FIXED zone.
  *
- * WHY ABSOLUTE AND NOT A DURATION. A duration has to be measured from
- * something, and both choices were wrong:
+ * V1 renders UTC, deliberately, and the reason is idempotency rather than
+ * convenience. Three shapes were tried and only this one holds:
  *
- *   * REMAINING time ("2 days left") is a wall clock. It moved between
- *     retries, moved the payload, moved the payload-derived key, and let the
- *     provider send a second invitation for one spot.
- *   * The MINTED window ("expires in 3 days") is stable, which fixed the key —
- *     and then quietly lied. An invitation issued on the 7th and expiring on
- *     the 10th still claimed "3 days" when first delivered on the 8th, because
- *     nothing measured the gap. The proof path has a staleness guard; a 72-hour
- *     invitation cannot use one, since a delayed send is ordinary rather than
- *     suspicious.
+ *   * REMAINING time drifted between retries, moved the payload, moved the
+ *     payload-derived key, and let the provider send a second invitation.
+ *   * The MINTED window was stable and then lied — "expires in 3 days" on a
+ *     send made a day after issuance.
+ *   * An absolute instant in the STUDIO's timezone was stable and truthful, and
+ *     still wrong: `studios.timezone` is mutable operator state, so correcting
+ *     it moved the bytes under a key that had not moved, which the provider
+ *     answers with `invalid_idempotent_request` rather than a replay.
  *
- * An absolute instant is both. It is a pure function of `expires_at`, so the
- * payload never drifts and the idempotency identity holds across retries; and
- * it stays true however late the message arrives, because it describes a fixed
- * point rather than a distance from an unstated origin.
+ * A fixed zone removes the last mutable input. The payload becomes a pure
+ * function of `expires_at` alone, which is exactly what the event-only key
+ * requires. UTC is labelled explicitly in the output, so a reader is never left
+ * guessing whose clock it is.
  *
- * Formatted with `Intl.DateTimeFormat`, matching `dayLabel` in
- * templates/reminders.ts — a prospect reading "Thursday, September 10, 2026 at
- * 1:00 PM" is reading the studio's clock, which is the one that governs the
- * booking they are being offered.
- *
- * THE ZONE MUST BE FROZEN WITH THE INVITATION, not re-read from `studios` at
- * send time. A studio timezone is mutable operator state; if it is corrected
- * between attempts, the fixed `expires_at` renders to DIFFERENT text while the
- * event-only idempotency key stays the same — and same-key/different-payload is
- * the one thing the provider treats as an error rather than a duplicate, so the
- * retry that still needed delivering fails outright. The caller therefore
- * passes the zone explicitly and owns freezing it.
+ * THE COST, STATED. A prospect reads UTC rather than their studio's local time.
+ * That is the launch-scope reduction this slice accepts: the secure invitation
+ * page can show local time freely, because a page renders fresh on every visit
+ * and has no idempotency key to contradict. Studio-local email copy needs a
+ * delivery snapshot this lane deliberately does not build.
  */
-export function invitationExpiryLabel(expiresAt: Date, timezone: string): string {
-  const tz = timezone && timezone.trim().length > 0 ? timezone.trim() : "UTC";
-  try {
-    return new Intl.DateTimeFormat("en-US", {
-      timeZone: tz,
-      weekday: "long",
-      month: "long",
-      day: "numeric",
-      year: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-      timeZoneName: "short",
-    }).format(expiresAt);
-  } catch {
-    // An unknown timezone string must not take the send down, and must not
-    // silently render the studio's clock as UTC without saying so.
-    return new Intl.DateTimeFormat("en-US", {
-      timeZone: "UTC",
-      weekday: "long",
-      month: "long",
-      day: "numeric",
-      year: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-      timeZoneName: "short",
-    }).format(expiresAt);
-  }
+export const INVITATION_EXPIRY_TIMEZONE = "UTC";
+
+export function invitationExpiryLabel(expiresAt: Date): string {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: INVITATION_EXPIRY_TIMEZONE,
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short",
+  }).format(expiresAt);
+}
+
+/**
+ * Whether an invitation is still live at the authoritative current time.
+ *
+ * Checked BEFORE any render or provider call. An expired invitation must never
+ * be mailed: the recipient follows a link that cannot work, and the send burns
+ * a provider request on a message whose only possible outcome is a dead end.
+ *
+ * Strictly greater than. An expiry exactly equal to now is NOT eligible — the
+ * window is closed at that instant, and a boundary that leaks by a millisecond
+ * is a boundary nobody can reason about.
+ */
+export function invitationIsLive(expiresAt: Date, now: Date): boolean {
+  const ms = expiresAt.getTime() - now.getTime();
+  if (!Number.isFinite(ms)) return false;
+  return ms > 0;
 }

@@ -10,6 +10,7 @@ import {
   challengeMailability,
   classifyDelivery,
   invitationExpiryLabel,
+  invitationIsLive,
   invitationWithinProviderIdempotencyWindow,
   proofWindowMinutes,
   type DeliveryDisposition,
@@ -118,24 +119,34 @@ export async function sendWaitlistInvitationEmail(args: {
    *  the copy is both stable across retries (which the event-only key requires)
    *  and still true when delivery is late. */
   expiresAt: Date;
-  /**
-   * IANA zone for the expiry copy, FROZEN WITH THE INVITATION.
-   *
-   * Deliberately a parameter rather than a read of `studio.timezone`. That
-   * column is mutable operator state, and re-reading it at send time made the
-   * payload move while the event-only key stayed put — same key, different
-   * payload, which the provider answers with `invalid_idempotent_request`
-   * rather than a replay, so a retry that still needed delivering would fail.
-   * Reproduced before this parameter existed. The caller owns the freeze; see
-   * the integration note in the PR body.
-   */
-  expiryTimezone: string;
   /** Injected for determinism in tests; defaults to now. */
   now?: Date;
   /** Test seam. Omitted in production, where the shared client is used. */
   transport?: IdempotentEmailTransport | null;
 }): Promise<DeliveryResult> {
   const now = args.now ?? new Date();
+
+  // AN EXPIRED INVITATION IS NEVER MAILED. Checked before the render and before
+  // any provider call, so a dead invitation costs zero requests. The recipient
+  // would otherwise follow a link that cannot work, and the only possible
+  // outcome of the send is a dead end. The proof path has always refused an
+  // elapsed challenge; the invitation path did not, which was the asymmetry
+  // review caught.
+  if (!invitationIsLive(args.expiresAt, now)) {
+    const disposition = classifyDelivery({
+      status: "rejected",
+      code: "invitation_expired",
+    });
+    return {
+      disposition,
+      log: buildDeliveryLogRecord({
+        kind: "invitation",
+        studioId: args.studio.id,
+        invitationId: args.invitationId,
+        disposition: disposition.reason,
+      }),
+    };
+  }
 
   // BEYOND THE PROVIDER'S RETENTION THE KEY NO LONGER DEDUPLICATES. Presenting
   // it again submits a fresh email instead of replaying, so a late retry would
@@ -159,15 +170,40 @@ export async function sendWaitlistInvitationEmail(args: {
   }
 
   const email = buildWaitlistInvitationEmail({
-    studioName: args.studio.name ?? "",
     invitationUrl: args.invitationUrl,
     // An ABSOLUTE instant, in the studio's timezone. Both previous shapes
     // failed: remaining time drifted between retries and moved the key; the
     // minted window was stable but claimed "3 days" on a send made a day after
     // issuance. A fixed point is stable AND stays true when delivery is late.
-    expiresAtLabel: invitationExpiryLabel(args.expiresAt, args.expiryTimezone),
+    expiresAtLabel: invitationExpiryLabel(args.expiresAt),
   });
 
+  // V1 SENDS AS HONE, NOT AS THE STUDIO — no `studioIdentity` below, which
+  // yields exactly `FROM_ADDRESS` with no Reply-To.
+  //
+  // Passing it would put `studios.name` in the From header and
+  // `postcare_contact_email` / `owner_email` in Reply-To: three mutable
+  // operator fields, in a payload that must be a pure function of the
+  // invitation because the key carries no digest. Renaming a studio or
+  // correcting its contact address would move the bytes under an unchanged key,
+  // and the provider answers that with `invalid_idempotent_request` rather than
+  // a replay. The prospect learns whose offer it is on the invitation page,
+  // which renders fresh every visit and has no key to contradict.
+  //
+  // The send is DECLARED in the client-facing email guard's
+  // PLATFORM_IDENTITY_CLIENT_CALLERS list, because it is unbranded yet writes
+  // to a prospect — a third case that guard did not previously have a word for.
+  //
+  // THE PAYLOAD ALSO CARRIES THE RAW BEARER TOKEN, inside the URL. Two reasons
+  // this send is event-only, either sufficient alone:
+  //
+  //   1. IDEMPOTENCY. `eventScope` only PREFIXES the payload digest; it does
+  //      not replace it. Any drift in the rendered body minted a new key and
+  //      the provider would send a SECOND invitation for one spot.
+  //   2. SECRECY. The digest would otherwise be taken over a body containing
+  //      the token and transmitted in a header the provider retains. The token
+  //      is 256-bit and not enumerable the way a proof code is, but a
+  //      credential belongs in the body and nowhere else.
   const outcome = await sendWaitlistEmailIdempotent({
     namespace: "client",
     studioId: args.studio.id,
@@ -177,22 +213,6 @@ export async function sendWaitlistInvitationEmail(args: {
     subject: email.subject,
     html: email.html,
     text: email.text,
-    // COMMS-01A: a client-facing send carries the studio's identity, so the
-    // From reads "<Studio> via Hone" and Reply-To resolves to the studio's own
-    // contact authority rather than to Hone.
-    studioIdentity: studioEmailIdentity(args.studio),
-    // THE INVITATION PAYLOAD CARRIES THE RAW BEARER TOKEN, inside the URL. Two
-    // reasons this send is event-only, and either alone would be sufficient:
-    //
-    //   1. IDEMPOTENCY. `eventScope` only PREFIXES the payload digest; it does
-    //      not replace it. So any drift in the rendered body minted a new key
-    //      and the provider would happily send a SECOND invitation for one
-    //      spot — the precise duplicate this wrapper exists to prevent.
-    //   2. SECRECY. The digest would otherwise be taken over a body containing
-    //      the token and transmitted in a header the provider retains. The
-    //      token is 256-bit so it is not enumerable the way a proof code is,
-    //      but a credential belongs in the body and nowhere else, and there is
-    //      no reason to keep the weaker case just because it is weaker.
     payloadCarriesSecret: true,
     ...(args.transport !== undefined ? { transport: args.transport } : {}),
   });
@@ -279,6 +299,29 @@ export async function sendWaitlistRecipientProofEmail(args: {
     action: args.action,
   });
 
+  // THE PROOF KEEPS STUDIO BRANDING, AND THE ASYMMETRY IS DELIBERATE.
+  //
+  // The invitation dropped it because the invitation is RETRIED under one key:
+  // a renamed studio moves the bytes while the key stays put, and the provider
+  // calls that `invalid_idempotent_request`. A proof is not retried that way.
+  // Each challenge is sent once, and a resend MINTS A NEW CHALLENGE and
+  // therefore a new id, so two independently-rendered payloads never meet under
+  // one key. The only same-key repeat is the bounded internal retry, which
+  // reuses the SAME payload object it already built. If proof resends ever
+  // start reusing a challenge id, this stops being true and this send has to
+  // drop branding exactly as the invitation did.
+  //
+  // `payloadCarriesSecret` keeps the CODE out of the provider header: without
+  // it the key is SHA-256 over the exact payload, the payload is the email
+  // body, and the transmitted Idempotency-Key becomes an offline verifier for a
+  // small-search-space secret. Demonstrated against this very path before the
+  // flag existed; the control lives in
+  // tests/security/waitlist-delivery-secret-logging.test.ts.
+  //
+  // NOTE ON PLACEMENT: both flags sit immediately below, inside the call's
+  // first lines, because tests/source-guards/client-facing-email-identity.test.ts
+  // looks for `studioIdentity:` within a bounded window after the call marker.
+  // Prose pushed between them once made a branded send read as unbranded.
   const outcome = await sendWaitlistEmailIdempotent({
     namespace: "client",
     studioId: args.studio.id,
@@ -290,12 +333,6 @@ export async function sendWaitlistRecipientProofEmail(args: {
     html: email.html,
     text: email.text,
     studioIdentity: studioEmailIdentity(args.studio),
-    // THE CODE MUST NOT REACH THE PROVIDER HEADER. Without this the key is
-    // SHA-256 over the exact payload, and the payload is the email body — so
-    // the transmitted Idempotency-Key becomes an offline verifier for a
-    // small-search-space secret. Demonstrated against this very path before the
-    // flag existed; the negative control lives in
-    // tests/security/waitlist-delivery-secret-logging.test.ts.
     payloadCarriesSecret: true,
     ...(args.transport !== undefined ? { transport: args.transport } : {}),
   });

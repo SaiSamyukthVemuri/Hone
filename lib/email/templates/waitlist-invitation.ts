@@ -20,14 +20,39 @@
 // message would carry the entire authority with it.
 //
 // ===========================================================================
+// V1: A HONE PLATFORM IDENTITY, NOT A STUDIO-BRANDED ONE
+// ===========================================================================
+//
+// This email carries NO studio name, NO studio Reply-To and NO studio-derived
+// timezone. That is a deliberate launch-scope reduction, and the reason is
+// idempotency rather than taste.
+//
+// The invitation send keys on the invitation alone, with no payload digest,
+// because the body carries a bearer token. Losing the digest means the payload
+// must be a PURE FUNCTION of the invitation — and every studio field is mutable
+// operator state. A renamed studio, a corrected contact address or an adjusted
+// timezone all move the rendered bytes while the key stays put, and
+// same-key/different-payload is the one case the provider answers with
+// `invalid_idempotent_request` rather than a replay. The retry that still
+// needed delivering then fails outright. Freezing the timezone alone was not
+// enough: the name and the Reply-To are exactly as mutable.
+//
+// So V1 sends as Hone. The prospect learns whose offer it is when they open the
+// link — the secure invitation page can show current studio identity freely,
+// because a page is rendered fresh on every visit and has no idempotency key to
+// contradict. Studio branding on the email needs the delivery snapshot this
+// lane deliberately does not build.
+//
+// ===========================================================================
 // WHAT THIS EMAIL DELIBERATELY OMITS
 // ===========================================================================
 //
 //   * THE RECIPIENT'S NAME. Same reasoning as the portal magic link: an email
 //     that is forwarded, quoted or intercepted should leak no identity. The
 //     waitlist entry holds `name`, so naming them would be easy and is
-//     deliberately declined. The studio is named because the recipient must be
-//     able to tell whose offer this is.
+//     deliberately declined.
+//   * THE STUDIO'S NAME. See the V1 note above — it is mutable, and the payload
+//     must not be.
 //   * THE RECIPIENT'S POSITION IN THE QUEUE. 0185 refuses to store a position
 //     or a cached rank at all; inventing one for email copy would manufacture
 //     a fact the database declines to keep.
@@ -45,16 +70,14 @@
 // Pure module: no I/O, no env reads, no server-only import, no provider.
 
 export type WaitlistInvitationEmailInput = {
-  /** Studio display name. Rendered as text only; never used to build a header. */
-  studioName: string;
   /**
    * Absolute invitation URL. RESOLVES the invitation; must not mutate it.
    * Rendered as a link and as paste-through text.
    */
   invitationUrl: string;
   /**
-   * The expiry as an ABSOLUTE moment, already formatted in the studio's
-   * timezone by the caller — e.g. "Thursday, September 10, 2026 at 1:00 PM EDT".
+   * The expiry as an ABSOLUTE moment, already formatted by the caller in a
+   * FIXED zone — e.g. "Thursday, September 10, 2026 at 5:00 PM UTC".
    *
    * NOT a duration. A duration is measured from an origin the email cannot
    * state: "expires in 3 days" is false the moment delivery is delayed, and a
@@ -72,18 +95,21 @@ export type WaitlistInvitationEmail = {
 };
 
 /**
- * Subject.
+ * Subject. A CONSTANT.
  *
- * NO "[HONE WAITLIST]" PREFIX. That marker exists for the STUDIO-facing
- * notification in lib/email/templates/new-client-waitlist.ts, where operators
- * build inbox rules on it. It is operational vocabulary and does not belong in
- * a prospect's inbox.
+ * No studio name, so it cannot move when a studio is renamed. No
+ * "[HONE WAITLIST]" prefix either — that marker exists for the STUDIO-facing
+ * notification in templates/new-client-waitlist.ts, where operators build inbox
+ * rules on it, and it is operational vocabulary that does not belong in a
+ * prospect's inbox.
  *
  * Carries no code, no token, no name and no timestamp — matching the rule the
  * magic-link template states for its own subject.
  */
-export function waitlistInvitationSubject(studio: string): string {
-  return `Your invitation to book · ${studio}`;
+export const WAITLIST_INVITATION_SUBJECT = "Your invitation to book";
+
+export function waitlistInvitationSubject(): string {
+  return WAITLIST_INVITATION_SUBJECT;
 }
 
 function escapeHtml(s: string): string {
@@ -98,25 +124,22 @@ function escapeHtml(s: string): string {
 export function buildWaitlistInvitationEmail(
   input: WaitlistInvitationEmailInput,
 ): WaitlistInvitationEmail {
-  // Same fallback shape the magic-link template uses, so a studio whose name
-  // is blank renders naturally rather than leaving a gap in the sentence.
-  const studio = input.studioName.trim() || "your studio";
   const url = input.invitationUrl;
   const ttl = input.expiresAtLabel.trim() || "the time stated by the studio";
-  const subject = waitlistInvitationSubject(studio);
+  const subject = waitlistInvitationSubject();
 
   const text =
-    `A consultation opening is available at ${studio}, and you can choose a time.\n\n` +
+    `A consultation opening is available, and you can choose a time.\n\n` +
     `${url}\n\n` +
     `This invitation expires ${ttl}.\n\n` +
+    `Opening the link will show you which studio is offering it.\n\n` +
     `For your security, opening the link is not enough on its own: when you ` +
-    `choose to book or decline, ${studio} will email a short confirmation code ` +
-    `to this address to confirm it is really you.\n\n` +
-    `If you no longer want to hear about openings, reply to this email and ` +
-    `${studio} will take you off the list.\n\n` +
-    `${studio} via Hone\n`;
+    `choose to book or decline, a short confirmation code is emailed to this ` +
+    `address to confirm it is really you.\n\n` +
+    `If you no longer want to hear about openings, reply to this email and ask ` +
+    `to be taken off the list.\n\n` +
+    `Hone\n`;
 
-  const studioH = escapeHtml(studio);
   const urlH = escapeHtml(url);
   const ttlH = escapeHtml(ttl);
   const html = `<!doctype html>
@@ -130,7 +153,7 @@ export function buildWaitlistInvitationEmail(
           A spot is available.
         </td></tr>
         <tr><td style="padding-bottom:24px; font-family:-apple-system, system-ui, sans-serif; font-size:16px; line-height:1.6;">
-          A consultation opening is available at <strong>${studioH}</strong>, and you can choose a time that suits you.
+          A consultation opening is available, and you can choose a time that suits you. Opening the link will show you which studio is offering it.
         </td></tr>
         <tr><td style="padding:0 0 20px 0;">
           <a href="${urlH}" style="display:inline-block; padding:14px 24px; background:#0A0A0A; color:#FFFFFF; font-family:-apple-system, system-ui, sans-serif; font-size:14px; font-weight:500; text-decoration:none; border-radius:6px; letter-spacing:0.02em;">
@@ -145,13 +168,13 @@ export function buildWaitlistInvitationEmail(
           This invitation expires ${ttlH}.
         </td></tr>
         <tr><td style="padding:12px 0 24px 0; font-family:-apple-system, system-ui, sans-serif; font-size:13px; line-height:1.65; color:#6B6B6B;">
-          For your security, opening the link is not enough on its own. When you choose to book or decline, ${studioH} will email a short confirmation code to this address so we know it is really you.
+          For your security, opening the link is not enough on its own. When you choose to book or decline, a short confirmation code is emailed to this address so we know it is really you.
         </td></tr>
         <tr><td style="padding:0 0 24px 0; font-family:-apple-system, system-ui, sans-serif; font-size:13px; line-height:1.65; color:#6B6B6B;">
-          If you no longer want to hear about openings, reply to this email and ${studioH} will take you off the list.
+          If you no longer want to hear about openings, reply to this email and ask to be taken off the list.
         </td></tr>
         <tr><td style="padding-top:24px; border-top:1px solid #E5E2DA; font-family:-apple-system, system-ui, sans-serif; font-size:11px; letter-spacing:0.15em; text-transform:uppercase; color:#6B6B6B;">
-          ${studioH} via Hone
+          Hone
         </td></tr>
       </table>
     </td></tr>

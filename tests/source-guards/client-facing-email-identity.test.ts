@@ -50,6 +50,40 @@ const TRANSPORT_DEFINITIONS: Record<string, string> = {
 // Keyed on the RECIPIENT EXPRESSION, not the enclosing function name. The
 // recipient is what makes a send Hone-facing, and a function name is both
 // fragile to read (an inner `const` shadows it) and unrelated to the reason.
+/**
+ * Callers that send UNBRANDED **to a client**, deliberately.
+ *
+ * A third case, and it needs its own name because the two that existed were
+ * "branded, client-facing" and "unbranded, studio-facing". Filing one of these
+ * under HONE_FACING_CALLERS would be a false statement about who reads the
+ * mail, and the allowlist's whole value is that each line is true.
+ *
+ * The bar is higher than for a Hone-facing send: a client SHOULD normally see
+ * the studio, so an entry here has to name the structural reason it cannot.
+ * "We did not get round to it" is not one.
+ */
+const PLATFORM_IDENTITY_CLIENT_CALLERS: ReadonlyArray<{
+  file: string;
+  to: string;
+  why: string;
+}> = [
+  {
+    file: "lib/waitlist/delivery/send.ts",
+    to: "args.recipientEmail",
+    why:
+      "WAIT DELIVERY-01 invitation. Sent to a PROSPECT, deliberately unbranded: " +
+      "the invitation is retried under one idempotency key that carries no " +
+      "payload digest (the body holds a bearer token), so the payload must be a " +
+      "pure function of the invitation. studios.name, postcare_contact_email and " +
+      "owner_email are all mutable, and any of them moving the bytes under an " +
+      "unchanged key makes the provider answer invalid_idempotent_request " +
+      "instead of replaying — so a retry that still needed delivering would " +
+      "fail. The prospect sees studio identity on the invitation page, which " +
+      "renders fresh and has no key to contradict. Branding this email needs a " +
+      "delivery snapshot (schema) that WAIT DELIVERY-01 does not build.",
+  },
+];
+
 const HONE_FACING_CALLERS: ReadonlyArray<{ file: string; to: string; why: string }> = [
   {
     file: "lib/email/send-appointment.ts",
@@ -131,7 +165,11 @@ describe("every caller of the canonical email transport is accounted for", () =>
   it("every UNBRANDED caller is explicitly declared Hone-facing", () => {
     const unbranded = sites.filter((s) => !s.branded);
     const undeclared = unbranded.filter(
-      (s) => !HONE_FACING_CALLERS.some((h) => h.file === s.file && h.to === s.to),
+      (s) =>
+        !HONE_FACING_CALLERS.some((h) => h.file === s.file && h.to === s.to) &&
+        !PLATFORM_IDENTITY_CLIENT_CALLERS.some(
+          (h) => h.file === s.file && h.to === s.to,
+        ),
     );
     expect(
       undeclared.map((s) => `${s.file}:${s.line} -> to: ${s.to}`),
@@ -140,6 +178,25 @@ describe("every caller of the canonical email transport is accounted for", () =>
         "identity. If it writes to the studio or to Hone, add it to " +
         "HONE_FACING_CALLERS with its recipient.",
     ).toEqual([]);
+  });
+
+  it("the platform-identity client allowlist has no stale entries", () => {
+    // Same rule as the Hone-facing list: an entry for a call site that no
+    // longer exists is a claim nobody can check, and it quietly widens the
+    // exemption if that file later gains a different unbranded send.
+    const stale = PLATFORM_IDENTITY_CLIENT_CALLERS.filter(
+      (h) => !sites.some((s) => s.file === h.file && s.to === h.to),
+    ).map((h) => `${h.file} -> ${h.to}`);
+    expect(stale).toEqual([]);
+  });
+
+  it("every platform-identity client caller names a STRUCTURAL reason", () => {
+    // A client would normally see the studio. An entry here has to say what
+    // makes that impossible, not that it was inconvenient.
+    for (const h of PLATFORM_IDENTITY_CLIENT_CALLERS) {
+      expect(h.why.trim().length, `${h.file} -> ${h.to}`).toBeGreaterThan(80);
+      expect(h.why).toMatch(/idempoten|key|digest|snapshot/i);
+    }
   });
 
   it("the Hone-facing allowlist has no stale entries", () => {
