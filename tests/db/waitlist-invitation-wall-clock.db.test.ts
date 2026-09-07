@@ -664,10 +664,19 @@ describe("H — the deployed contract is unchanged apart from the body", () => {
                             'expire_new_client_waitlist_invitation')`,
     );
     expect(r.rows).toHaveLength(2);
+    // SUPERSEDED BY 0192 for `redeem_`. It is the BEARER path — the raw token
+    // alone mutates — so 0192 withdraws its EXECUTE from all four roles and
+    // routes redemption through the proof-gated
+    // `redeem_new_client_waitlist_invitation_verified(text, text)`. 0189's
+    // frozen body is untouched. The property this block guards (no browser role
+    // may execute) still holds, and now holds for service_role too.
     for (const row of r.rows as Array<Record<string, boolean>>) {
       expect(row.anon).toBe(false);
       expect(row.authed).toBe(false);
-      expect(row.svc).toBe(true);
+      expect(row.svc).toBe(
+        (row as unknown as { proname: string }).proname !==
+          "redeem_new_client_waitlist_invitation",
+      );
     }
   });
 
