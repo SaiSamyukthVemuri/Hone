@@ -1629,6 +1629,13 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "Append-only lifecycle provenance for waitlist entries, written by trigger on every status change since migration 0188. Studio-owned operational history - it is the only record of a claim/release cycle that issues no invitation - but it is an event log whose payload and export shape have not been reviewed, so it is tier 2 and decided deliberately rather than dumped.",
   },
+  studio_waitlist_admission_rounds: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    reason:
+      "The per-round manual intake allowance an owner sets for the new-client waitlist, live since migration 0192 (WAIT-03B). PENDING rather than EXCLUDED because the number is the owner's OWN decision about how many people they will admit this round - studio-owned intent, not a machine-derived projection and not platform state - and it is the only record of what the studio chose. Deliberately NOT field-review-required: unlike new_client_waitlist_invitations and studio_sms_senders, the whole row is three columns (studio_id, allowance, updated_at) with no security material, no provider identifier and no operational attribution, so there is no column here that must never be emitted. It is tier 2 only because its export shape has not been reviewed alongside the rest of the waitlist backlog, and it should be decided with new_client_waitlist_entries rather than dumped on its own. No export surface ships in WAIT-03B.",
+  },
   // -------------------------------------------------------------------------
   // STORAGE
   // -------------------------------------------------------------------------
