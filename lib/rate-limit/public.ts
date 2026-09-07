@@ -1,6 +1,7 @@
 import { createHash } from "crypto";
 import { Ratelimit } from "@upstash/ratelimit";
 import { Redis } from "@upstash/redis";
+import { PROOF_REQUEST_LIMITS } from "@/lib/waitlist/delivery/policy";
 
 // Rate limiter for unauthenticated public surfaces. Covers:
 //   * public booking: fetchPublicSlotsAction + publicBookAppointmentAction
@@ -649,12 +650,16 @@ export async function limitPractitionerClientEmail(args: {
 // rule and is visible in the provider console. Fail open, matching every other
 // public limiter in this file.
 //
-// The numbers live in lib/waitlist/delivery/policy.ts so the send path, this
-// limiter and their tests read one source.
-const WAITLIST_PROOF_LIMITS = {
-  invitation: { limit: 3, window: "15 m" },
-  ip: { limit: 10, window: "1 h" },
-} as const;
+// THE NUMBERS ARE IMPORTED, NOT RESTATED. An earlier revision declared them in
+// lib/waitlist/delivery/policy.ts, called that the single source, and then
+// hard-coded a second copy here — so the exported policy was decorative and
+// this limiter was the only thing production actually obeyed. Changing the
+// "policy" would have left the old limits enforced with nothing failing. That
+// is the two-competing-maps failure CLAUDE.md §3 names, and importing removes
+// the possibility rather than documenting the hazard.
+//
+// policy.ts is a PURE module — no I/O, no env, no server-only — so importing it
+// here adds no runtime surface to a file the edge already loads.
 
 const waitlistProofLimiterCache = new Map<string, Ratelimit | null>();
 function waitlistProofLimiter(
@@ -663,7 +668,7 @@ function waitlistProofLimiter(
   const cached = waitlistProofLimiterCache.get(dimension);
   if (cached !== undefined) return cached;
   const redis = getRedis();
-  const cfg = WAITLIST_PROOF_LIMITS[dimension];
+  const cfg = PROOF_REQUEST_LIMITS[dimension];
   const limiter = redis
     ? new Ratelimit({
         redis,

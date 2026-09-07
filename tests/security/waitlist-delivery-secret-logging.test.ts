@@ -1,4 +1,6 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
+import { createHash } from "crypto";
+import { buildWaitlistRecipientProofEmail } from "@/lib/email/templates/waitlist-recipient-proof";
 import {
   buildDeliveryLogRecord,
   DELIVERY_LOG_KEYS,
@@ -107,6 +109,7 @@ describe("the proof code never reaches the log", () => {
       challengeId: CHALLENGE_ID,
       recipientEmail: RECIPIENT,
       code: SECRET_CODE,
+      issuedAt: new Date(),
       expiresAt: new Date(Date.now() + 20 * 60_000),
       action: "book",
       transport: transportReturning(ACCEPTED),
@@ -125,6 +128,7 @@ describe("the proof code never reaches the log", () => {
       challengeId: CHALLENGE_ID,
       recipientEmail: RECIPIENT,
       code: SECRET_CODE,
+      issuedAt: new Date(),
       expiresAt: new Date(Date.now() + 20 * 60_000),
       action: "book",
       transport: transportReturning({
@@ -148,6 +152,7 @@ describe("the proof code never reaches the log", () => {
       challengeId: CHALLENGE_ID,
       recipientEmail: RECIPIENT,
       code: SECRET_CODE,
+      issuedAt: new Date(),
       expiresAt: new Date(Date.now() + 99 * 60_000),
       action: "book",
       transport: transportReturning(ACCEPTED),
@@ -166,6 +171,7 @@ describe("the proof code never reaches the log", () => {
       challengeId: CHALLENGE_ID,
       recipientEmail: RECIPIENT,
       code: SECRET_CODE,
+      issuedAt: new Date(),
       expiresAt: new Date(Date.now() + 20 * 60_000),
       action: "book",
       transport: {
@@ -231,6 +237,7 @@ describe("no console sink receives a secret", () => {
       challengeId: CHALLENGE_ID,
       recipientEmail: RECIPIENT,
       code: SECRET_CODE,
+      issuedAt: new Date(),
       expiresAt: new Date(Date.now() + 20 * 60_000),
       action: "decline",
       transport: transportReturning(ACCEPTED),
@@ -239,5 +246,163 @@ describe("no console sink receives a secret", () => {
     const all = seen.join("\n");
     expect(all).not.toContain(SECRET_CODE);
     expect(all).not.toContain(RAW_TOKEN);
+  });
+});
+
+// ===========================================================================
+// THE PROVIDER IDEMPOTENCY HEADER IS A SINK TOO
+// ===========================================================================
+//
+// Found in review, and reproduced before it was fixed. `sendWaitlistEmailIdempotent`
+// normally keys on SHA-256 of the exact payload — and the payload IS the email
+// body, so the digest was computed over the proof code and then transmitted to
+// the provider in the `Idempotency-Key` header, where it is retained.
+//
+// That digest is not opaque. Every other field (from, to, subject, template
+// copy, the authorised window) is deterministic and knowable, so an attacker
+// holding the header can enumerate a small code space offline — render, hash,
+// compare — until it matches. The original reproduction recovered an
+// eight-character code from the header alone.
+//
+// The fix is `payloadCarriesSecret`, which switches the proof send to a key
+// derived from the challenge id with NO payload digest. These are the negative
+// controls that keep it fixed: the first fails if the code ever re-enters the
+// digest, the second is the actual attack and must find nothing.
+describe("the proof code never reaches the provider idempotency header", () => {
+  const NOW = new Date("2026-09-07T12:00:00.000Z");
+  const EXP = new Date(NOW.getTime() + 20 * 60_000);
+
+  async function keyFor(code: string): Promise<string> {
+    let key = "";
+    await sendWaitlistRecipientProofEmail({
+      studio: STUDIO,
+      invitationId: INVITATION_ID,
+      challengeId: CHALLENGE_ID,
+      recipientEmail: RECIPIENT,
+      code,
+      issuedAt: NOW,
+      expiresAt: EXP,
+      action: "book",
+      now: NOW,
+      transport: {
+        emails: {
+          send: async (_payload, options) => {
+            key = options?.idempotencyKey ?? "";
+            return ACCEPTED;
+          },
+        },
+      },
+    });
+    return key;
+  }
+
+  it("the transmitted key is IDENTICAL for two different codes", async () => {
+    // The direct inversion of the reproduction. Before the fix these differed,
+    // which is precisely what made the header a verifier for the secret.
+    const a = await keyFor("AAAAAAAA");
+    const b = await keyFor("ZZZZ9999");
+    expect(a).toBe(b);
+    expect(a).not.toContain("AAAAAAAA");
+    expect(a).not.toContain("ZZZZ9999");
+  });
+
+  it("the key is the challenge identity, and carries no payload digest", async () => {
+    const key = await keyFor("H4K2QF7P");
+    expect(key).toContain(CHALLENGE_ID);
+    expect(key).toContain(STUDIO.id);
+    // A payload-digest key ends in 64 hex characters. This one must not.
+    expect(key).not.toMatch(/\/[0-9a-f]{64}$/);
+  });
+
+  it("THE ATTACK: a captured key cannot be brute-forced back to the code", async () => {
+    // The reproduction, kept as a standing control. It renders every candidate
+    // exactly as the send path does and hashes it the way the payload-digest
+    // key would. Finding a match would mean the secret is recoverable from a
+    // header the provider stores.
+    const captured = await keyFor("CODE0007");
+    const digest = captured.split("/").pop() ?? "";
+    let recovered = "";
+    for (let i = 0; i < 32; i++) {
+      const guess = `CODE${String(i).padStart(4, "0")}`;
+      const e = buildWaitlistRecipientProofEmail({
+        studioName: STUDIO.name,
+        code: guess,
+        windowMinutes: 20,
+        action: "book",
+      });
+      const fields = [
+        "Willow Electrolysis via Hone <hello@hone.care>",
+        RECIPIENT,
+        e.subject,
+        e.html,
+        e.text,
+        "hello@willow.test",
+      ];
+      const canon = fields.map((f) => `${f.length}:${f}`).join("");
+      if (createHash("sha256").update(canon, "utf8").digest("hex") === digest) {
+        recovered = guess;
+        break;
+      }
+    }
+    expect(recovered).toBe("");
+  });
+
+  it("refuses to send rather than fall back to hashing the secret", async () => {
+    // FAIL CLOSED. A credential-bearing payload with no event scope has nothing
+    // else to key on; silently reverting to the payload digest would reintroduce
+    // the defect at exactly the call site that asked not to.
+    const { sendWaitlistEmailIdempotent } = await import(
+      "@/lib/email/new-client-waitlist-send"
+    );
+    const out = await sendWaitlistEmailIdempotent({
+      namespace: "client",
+      studioId: STUDIO.id,
+      eventScope: null,
+      payloadCarriesSecret: true,
+      to: RECIPIENT,
+      subject: "s",
+      html: `<p>${SECRET_CODE}</p>`,
+      text: SECRET_CODE,
+      transport: transportReturning(ACCEPTED),
+    });
+    expect(out).toEqual({ status: "rejected", code: "missing_event_scope" });
+  });
+});
+
+describe("the existing payload-digest key identity is unchanged", () => {
+  it("a send without the flag still keys on the payload digest", async () => {
+    // The new shape is OPT-IN. Every existing caller — the WAIT-02
+    // notification path included — must keep its exact key, or honest
+    // resubmissions start being refused as invalid_idempotent_request.
+    const { sendWaitlistEmailIdempotent, waitlistIdempotencyKey } = await import(
+      "@/lib/email/new-client-waitlist-send"
+    );
+    let key = "";
+    await sendWaitlistEmailIdempotent({
+      namespace: "studio",
+      studioId: STUDIO.id,
+      to: RECIPIENT,
+      subject: "s",
+      html: "<p>h</p>",
+      text: "t",
+      transport: {
+        emails: {
+          send: async (_p, o) => {
+            key = o?.idempotencyKey ?? "";
+            return ACCEPTED;
+          },
+        },
+      },
+    });
+    expect(key).toBe(
+      waitlistIdempotencyKey("studio", STUDIO.id, {
+        from: "Hone <hello@hone.care>",
+        to: RECIPIENT,
+        subject: "s",
+        html: "<p>h</p>",
+        text: "t",
+      }),
+    );
+    expect(key).toMatch(/\/[0-9a-f]{64}$/);
   });
 });

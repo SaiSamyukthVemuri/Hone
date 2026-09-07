@@ -89,15 +89,21 @@ export function isProofExpiryWithinCeiling(
 }
 
 /**
- * Whole minutes remaining, for the email copy. DERIVED from the stored expiry
- * on every send, so the sentence in the recipient's inbox describes the value
- * the database is actually enforcing rather than the value we asked for.
+ * The challenge's AUTHORISED WINDOW in whole minutes, from database-owned
+ * values. This is what the email advertises.
+ *
+ * NOT THE REMAINING TIME, deliberately. The proof send keys its provider
+ * idempotency on the challenge alone — a payload digest would carry the code to
+ * the provider and turn the header into an offline verifier for it — so the
+ * payload must be a pure function of the challenge. A wall clock in the body
+ * would make two attempts under one key render different bytes, which the
+ * provider answers with `invalid_idempotent_request` rather than a replay.
  *
  * Rounds DOWN. A code advertised as lasting longer than it does is the failure
  * mode that matters; one advertised as shorter merely hurries the recipient.
  */
-export function proofRemainingMinutes(expiresAt: Date, now: Date): number {
-  const ms = expiresAt.getTime() - now.getTime();
+export function proofWindowMinutes(issuedAt: Date, expiresAt: Date): number {
+  const ms = expiresAt.getTime() - issuedAt.getTime();
   if (!Number.isFinite(ms) || ms <= 0) return 0;
   return Math.floor(ms / 60_000);
 }
@@ -117,6 +123,14 @@ export function proofRemainingMinutes(expiresAt: Date, now: Date): number {
 // of the limiter's key derivation entirely, which is strictly better than
 // hashing it, and it is available only *because* the two authorities are split.
 
+/**
+ * CONSUMED BY `limitWaitlistProofRequest` in lib/rate-limit/public.ts, which
+ * imports this object rather than restating it. An earlier revision declared
+ * these numbers here and hard-coded a second copy in the limiter, so the
+ * exported "policy" was decorative and production would have kept enforcing the
+ * old values while this file and its tests agreed on the new ones. That is the
+ * two-competing-maps failure CLAUDE.md §3 names outright.
+ */
 export const PROOF_REQUEST_LIMITS = {
   /** Per invitation. The dominant control: it bounds one recipient's mailbox. */
   invitation: { limit: 3, window: "15 m" },

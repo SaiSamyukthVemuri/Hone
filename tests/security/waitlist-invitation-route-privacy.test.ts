@@ -9,41 +9,67 @@ import { TOKEN_ROUTE_PREFIXES } from "@/lib/security/token-routes";
 //
 // The WAIT invitation URL will be a REPLAYABLE BEARER CREDENTIAL in a dynamic
 // path segment: possession of the URL is possession of the ability to resolve
-// the invitation. That is precisely the property `lib/security/token-routes.ts`
-// exists for, and its registry drives two protections that a route needs BOTH
-// of to be safe — `Referrer-Policy: no-referrer` + `X-Robots-Tag` from
-// next.config.ts, and credential canonicalization in the Sentry scrubber.
+// the invitation. That is the property `lib/security/token-routes.ts` exists
+// for, and its registry drives two protections a route needs BOTH of —
+// `Referrer-Policy: no-referrer` + `X-Robots-Tag` from next.config.ts, and
+// credential canonicalization in the Sentry scrubber.
 //
 // THE ROUTE DOES NOT EXIST YET, AND THIS FILE DOES NOT PRETEND IT DOES.
 // Registering a prefix for a route nobody has written would make a green test
 // that protects nothing, and would leave a permanent decoy in a registry whose
 // entire value is that every entry is real. So no prefix is added here.
 //
-// What is added is the gate that makes the protection ship WITH the route:
+// ===========================================================================
+// WHY THIS ENUMERATES EVERY DYNAMIC ROUTE INSTEAD OF LOOKING FOR A NAME
+// ===========================================================================
 //
-//   FORWARD  — any waitlist/invitation route carrying a dynamic segment MUST
-//              be registered. Vacuous today; load-bearing the moment someone
-//              adds `app/waitlist/invitation/[token]/page.tsx`.
+// The first version of this gate matched directory paths against
+// /invit|waitlist/ and asked whether those were registered. Review found the
+// hole, and it was CONFIRMED by experiment rather than argued: adding
+// `app/opening/[token]/page.tsx` — an unregistered bearer route by any
+// reasonable reading — left the scan empty and every assertion green.
 //
-//   REVERSE  — while no such route exists, the registry must NOT contain a
-//              waitlist/invitation prefix. This is what forbids pre-registering
-//              a decoy to turn the forward assertion green early.
+// A guard whose whole purpose is to fire when a route appears under a name
+// nobody predicted cannot itself depend on predicting the name. So the default
+// is inverted. EVERY public dynamic route is enumerated, and each one must be
+// either:
 //
-// The existing tests/lib/security/token-route-parity.test.ts guards
-// registry <-> CONSUMERS. This file guards ROUTE <-> registry, which is the
-// direction nothing covered: a perfectly consistent registry that simply never
-// heard about a new route passes every parity check while the route leaks.
+//   * REGISTERED in TOKEN_ROUTE_PREFIXES — it carries a bearer credential; or
+//   * explicitly CLASSIFIED NON-BEARER below, with the reason written down.
 //
-// Deliberately keyed on the ROUTE'S EXISTENCE ON DISK rather than on a name we
-// have chosen in advance. We do not yet know whether the path will be
-// /waitlist/invitation, /waitlist/invite or something else, and a test that
-// hard-codes the guess fails to fire when the guess is wrong — which is exactly
-// when a tripwire is supposed to fire.
+// A dynamic route that is neither FAILS. That is the same "unattributable code
+// fails safe to the stricter treatment, never the narrower one" rule CLAUDE.md
+// §3 already applies to browser coverage, and it means a future
+// `/opening/[token]`, `/wait-list/[token]` or anything else lands in the
+// failing branch by default rather than sliding through a name filter.
+//
+// tests/lib/security/token-route-parity.test.ts guards registry <-> CONSUMERS.
+// This file guards ROUTE <-> registry, the direction nothing covered: a
+// perfectly consistent registry that simply never heard about a new route
+// passes every parity check while the route leaks.
 
 const ROOT = process.cwd();
 const APP_DIR = join(ROOT, "app");
 
-/** Next route-group segment: `(app)`, `(auth)` — present on disk, absent from the URL. */
+/**
+ * Dynamic routes whose segment is NOT a bearer credential.
+ *
+ * Each entry is a claim that possession of the URL grants nothing on its own —
+ * either the segment is an opaque row id behind authentication, or it is
+ * deliberately public information. Adding a line here is the reviewed act of
+ * saying so; it is not a way to silence the gate, and a route that genuinely
+ * carries a credential belongs in TOKEN_ROUTE_PREFIXES instead.
+ */
+const CLASSIFIED_NON_BEARER: ReadonlyArray<{ prefix: string; why: string }> = [
+  { prefix: "/admin/studios", why: "platform-operator surface behind isAdmin; the segment is a studio row id, not a credential" },
+  { prefix: "/book", why: "public booking page keyed by the studio's PUBLIC slug — the slug is meant to be shared" },
+  { prefix: "/calendar", why: "authenticated app route; the segment is an appointment row id" },
+  { prefix: "/clients", why: "authenticated app route; the segment is a client row id" },
+  { prefix: "/clients/sessions", why: "authenticated app route; the segment is a session row id" },
+  { prefix: "/e2e-fault", why: "E2E fault-injection harness, not a production surface" },
+];
+
+/** Next route-group segment: `(app)`, `(auth)` — on disk, absent from the URL. */
 function isRouteGroup(segment: string): boolean {
   return segment.startsWith("(") && segment.endsWith(")");
 }
@@ -59,21 +85,20 @@ function isPrivate(segment: string): boolean {
 }
 
 type DiscoveredRoute = {
-  /** Directory path relative to app/, for the failure message. */
+  /** Directory path relative to the repo root, for the failure message. */
   dir: string;
   /** Public URL prefix that PRECEDES the dynamic segment. */
   publicPrefix: string;
 };
 
 /**
- * Walk `app/` and return every directory that has a dynamic segment AND whose
- * path mentions an invitation or the waitlist.
+ * Every public dynamic route under `app/`.
  *
- * The returned `publicPrefix` is the URL path up to but NOT including the
- * dynamic segment, which is exactly the shape TOKEN_ROUTE_PREFIXES holds
- * ("/portal/verify", "/intake", …).
+ * `publicPrefix` is the URL path up to but NOT including the dynamic segment,
+ * which is exactly the shape TOKEN_ROUTE_PREFIXES holds ("/portal/verify",
+ * "/intake", …).
  */
-function discoverWaitlistBearerRoutes(): DiscoveredRoute[] {
+function discoverDynamicRoutes(): DiscoveredRoute[] {
   const found: DiscoveredRoute[] = [];
 
   function walk(absDir: string, urlSegments: string[], relDir: string): void {
@@ -97,22 +122,15 @@ function discoverWaitlistBearerRoutes(): DiscoveredRoute[] {
       const rel = relDir ? `${relDir}/${entry}` : entry;
 
       if (isDynamic(entry)) {
-        // The dynamic segment itself is the credential slot. The prefix is
-        // everything above it.
-        const prefix = `/${urlSegments.join("/")}`;
-        if (/invit|waitlist/i.test(rel)) {
-          found.push({ dir: `app/${rel}`, publicPrefix: prefix });
-        }
-        // Keep walking: a nested dynamic segment is still under this prefix.
+        // The dynamic segment itself is the credential slot, if it is one at
+        // all. The prefix is everything above it.
+        found.push({ dir: `app/${rel}`, publicPrefix: `/${urlSegments.join("/")}` });
+        // Keep walking: a nested dynamic segment sits under the same prefix.
         walk(abs, urlSegments, rel);
         continue;
       }
 
-      // Route groups exist on disk but contribute nothing to the URL.
-      const nextSegments = isRouteGroup(entry)
-        ? urlSegments
-        : [...urlSegments, entry];
-      walk(abs, nextSegments, rel);
+      walk(abs, isRouteGroup(entry) ? urlSegments : [...urlSegments, entry], rel);
     }
   }
 
@@ -120,94 +138,98 @@ function discoverWaitlistBearerRoutes(): DiscoveredRoute[] {
   return found;
 }
 
-describe("WAIT invitation route privacy ships atomically with the route", () => {
-  const discovered = discoverWaitlistBearerRoutes();
+function isRegisteredBearer(prefix: string): boolean {
+  return TOKEN_ROUTE_PREFIXES.some(
+    (p) => prefix === p || prefix.startsWith(`${p}/`),
+  );
+}
 
-  it("FORWARD: every waitlist/invitation bearer route is in the registry", () => {
-    // Reads as a no-op today by design. The assertion is written over whatever
-    // is on disk so that it starts protecting the moment the route lands,
-    // without anyone having to remember this file exists.
-    const unregistered = discovered.filter(
-      (r) =>
-        !TOKEN_ROUTE_PREFIXES.some(
-          (p) => r.publicPrefix === p || r.publicPrefix.startsWith(`${p}/`),
-        ),
+function isClassifiedNonBearer(prefix: string): boolean {
+  return CLASSIFIED_NON_BEARER.some(
+    (e) => prefix === e.prefix || prefix.startsWith(`${e.prefix}/`),
+  );
+}
+
+describe("every dynamic route is classified, so a bearer route cannot arrive unnoticed", () => {
+  const discovered = discoverDynamicRoutes();
+
+  it("finds the dynamic routes that actually exist", () => {
+    // A scan that silently returns nothing looks identical to a scan that is
+    // broken. Anchoring on routes known to exist proves the walker works, which
+    // is what makes every assertion below meaningful.
+    const prefixes = discovered.map((r) => r.publicPrefix);
+    expect(prefixes).toContain("/intake");
+    expect(prefixes).toContain("/portal/verify");
+    expect(prefixes).toContain("/clients");
+    expect(discovered.length).toBeGreaterThanOrEqual(10);
+  });
+
+  it("UNKNOWN dynamic route => FAIL (this is the gate)", () => {
+    const unclassified = discovered.filter(
+      (r) => !isRegisteredBearer(r.publicPrefix) && !isClassifiedNonBearer(r.publicPrefix),
     );
     expect(
-      unregistered,
-      `A waitlist/invitation route carries a bearer credential in its path but ` +
-        `is not registered in lib/security/token-routes.ts, so it is missing ` +
-        `Referrer-Policy: no-referrer, X-Robots-Tag, and Sentry ` +
-        `canonicalization. Add its prefix to TOKEN_ROUTE_PREFIXES in the SAME ` +
-        `change that adds the route, and update the REVERSE assertion in this ` +
-        `file. Offending: ${JSON.stringify(unregistered)}`,
+      unclassified,
+      `A public dynamic route is neither registered in ` +
+        `lib/security/token-routes.ts nor classified non-bearer in this file.\n\n` +
+        `If its segment is a BEARER CREDENTIAL — anyone holding the URL can act ` +
+        `— add its prefix to TOKEN_ROUTE_PREFIXES in the SAME change that adds ` +
+        `the route, or it ships without Referrer-Policy: no-referrer, ` +
+        `X-Robots-Tag and Sentry canonicalization.\n\n` +
+        `If it is an authenticated row id or deliberately public, add it to ` +
+        `CLASSIFIED_NON_BEARER with the reason.\n\n` +
+        `Offending: ${JSON.stringify(unclassified, null, 2)}`,
     ).toEqual([]);
   });
 
-  it("REVERSE: no decoy prefix is registered ahead of a real route", () => {
-    // This is the assertion that keeps the forward one honest. Without it, the
-    // cheapest way to make this file green would be to add
-    // "/waitlist/invitation" to the registry today — protecting nothing, and
-    // putting a prefix in a list whose worth depends on every entry being real.
+  it("no route is BOTH registered and classified non-bearer", () => {
+    // The two lists answer the same question and must not disagree. A prefix in
+    // both means someone recorded a route as harmless while also protecting it,
+    // and the next reader cannot tell which claim is current.
+    const both = discovered
+      .map((r) => r.publicPrefix)
+      .filter((p) => isRegisteredBearer(p) && isClassifiedNonBearer(p));
+    expect(both).toEqual([]);
+  });
+
+  it("every CLASSIFIED_NON_BEARER entry still corresponds to a real route", () => {
+    // Keeps the allowlist from accumulating entries for routes that were
+    // deleted or renamed, which is how an allowlist quietly stops describing
+    // the system it is supposed to describe.
+    const prefixes = new Set(discovered.map((r) => r.publicPrefix));
+    const stale = CLASSIFIED_NON_BEARER.filter(
+      (e) => ![...prefixes].some((p) => p === e.prefix || p.startsWith(`${e.prefix}/`)),
+    ).map((e) => e.prefix);
+    expect(stale).toEqual([]);
+  });
+
+  it("every CLASSIFIED_NON_BEARER entry states a reason", () => {
+    for (const e of CLASSIFIED_NON_BEARER) {
+      expect(e.why.trim().length, `${e.prefix} needs a reason`).toBeGreaterThan(20);
+    }
+  });
+});
+
+describe("no decoy prefix is registered ahead of a real route", () => {
+  it("REVERSE: a waitlist/invitation prefix requires a waitlist/invitation route", () => {
+    // This keeps the gate above honest. Without it, the cheapest way to make a
+    // future waitlist route pass would be to register its prefix early —
+    // protecting nothing, and putting an entry in a registry whose worth
+    // depends on every entry being real.
+    const discovered = discoverDynamicRoutes();
     const waitlistPrefixes = TOKEN_ROUTE_PREFIXES.filter((p) =>
       /invit|waitlist/i.test(p),
     );
-    if (discovered.length === 0) {
+    const waitlistRoutes = discovered.filter((r) => /invit|waitlist/i.test(r.dir));
+    if (waitlistRoutes.length === 0) {
       expect(
         waitlistPrefixes,
         `TOKEN_ROUTE_PREFIXES contains a waitlist/invitation prefix but no such ` +
           `route exists under app/. A prefix for a route nobody has written ` +
-          `protects nothing and makes the registry harder to trust. Remove it, ` +
-          `or land the route in the same change.`,
+          `protects nothing. Remove it, or land the route in the same change.`,
       ).toEqual([]);
     } else {
-      // Once the route is real the decoy question is moot: the forward
-      // assertion above is doing the work.
       expect(waitlistPrefixes.length).toBeGreaterThan(0);
     }
-  });
-
-  it("records the current state, so the guard is never silently vacuous", () => {
-    // A tripwire whose scan found nothing looks identical to a tripwire whose
-    // scan is broken. Pinning the count means a refactor that breaks the walker
-    // — a renamed app/ directory, a changed dynamic-segment convention — fails
-    // here rather than passing quietly forever.
-    //
-    // WHEN THE ROUTE LANDS: change this to the new count in the same commit,
-    // and the FORWARD assertion above becomes the real gate.
-    expect(discovered).toEqual([]);
-  });
-
-  it("the walker actually works — it finds the registered bearer routes", () => {
-    // Proves the scan is capable of finding something, which is what the
-    // vacuity pin above cannot prove on its own. /intake and /portal/verify are
-    // real dynamic bearer routes today; if the walker cannot see them it cannot
-    // see a waitlist route either.
-    const all: string[] = [];
-    function walkAll(absDir: string, urlSegments: string[]): void {
-      let entries: string[];
-      try {
-        entries = readdirSync(absDir);
-      } catch {
-        return;
-      }
-      for (const entry of entries) {
-        const abs = join(absDir, entry);
-        try {
-          if (!statSync(abs).isDirectory()) continue;
-        } catch {
-          continue;
-        }
-        if (isPrivate(entry)) continue;
-        if (isDynamic(entry)) {
-          all.push(`/${urlSegments.join("/")}`);
-          continue;
-        }
-        walkAll(abs, isRouteGroup(entry) ? urlSegments : [...urlSegments, entry]);
-      }
-    }
-    walkAll(APP_DIR, []);
-    expect(all).toContain("/intake");
-    expect(all).toContain("/portal/verify");
   });
 });

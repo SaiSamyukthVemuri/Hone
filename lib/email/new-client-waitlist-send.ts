@@ -171,6 +171,47 @@ export function waitlistIdempotencyKey(
 }
 
 /**
+ * Key identity for a send whose PAYLOAD CONTAINS A CREDENTIAL.
+ *
+ * WHY A SECOND KEY SHAPE EXISTS. `waitlistIdempotencyKey` hashes the exact
+ * payload, and that is right for every caller whose body holds no secret: the
+ * digest makes the key track the bytes automatically, so a changed subject or
+ * destination cannot silently reuse a key. But the header value is transmitted
+ * to the provider and retained there, and when the body contains a
+ * SMALL-SEARCH-SPACE credential the digest stops being opaque: every other
+ * field is deterministic and knowable, so an attacker holding the header can
+ * enumerate candidates offline, render, hash and compare until it matches. The
+ * key becomes a verifier for the secret.
+ *
+ * That is not hypothetical here. A recipient proof code is drawn from a space
+ * small enough to type, which is orders of magnitude below the 256-bit tokens
+ * in lib/portal/tokens.ts, and the attack was demonstrated against this
+ * repository's own send path before this function existed.
+ *
+ * So a credential-bearing send keys on the EVENT ALONE and no payload digest is
+ * computed. `eventScope` is REQUIRED rather than optional, because without it
+ * there is nothing left to make the key unique.
+ *
+ * THE COST, STATED. Losing the payload component means the key no longer tracks
+ * the bytes, so the caller must satisfy the corollary this module already
+ * states for every caller — the payload must be a PURE FUNCTION of the event.
+ * If it is not, two sends under one event render different bytes, and the
+ * provider answers `invalid_idempotent_request` rather than replaying. The
+ * proof path holds up its end by rendering the challenge's AUTHORISED WINDOW
+ * rather than the remaining time, which does not drift between attempts.
+ *
+ * The literal suffix cannot collide with a payload-digest key: that key ends in
+ * 64 hex characters, this one ends in a fixed non-hex word.
+ */
+export function waitlistEventOnlyIdempotencyKey(
+  namespace: WaitlistKeyNamespace,
+  studioId: string,
+  eventScope: string,
+): string {
+  return `${KEY_PREFIX[namespace]}/${studioId}/${eventScope}/no-payload-digest`;
+}
+
+/**
  * Three-way outcome. `ambiguous` is a first-class result, not a flavour of
  * failure: it is the only honest answer when the provider may or may not have
  * taken the request, and it drives distinct user-facing copy.
@@ -277,6 +318,12 @@ export async function sendWaitlistEmailIdempotent(args: {
    * Omitted for studio-facing mail, which stays `Hone <hello@hone.care>`.
    */
   studioIdentity?: StudioEmailIdentity;
+  /**
+   * The payload contains a credential (a proof code), so it must NOT be hashed
+   * into the provider idempotency key. Requires `eventScope`. See
+   * `waitlistEventOnlyIdempotencyKey`.
+   */
+  payloadCarriesSecret?: boolean;
   /** Test seam. Defaults to the shared Resend client. */
   transport?: IdempotentEmailTransport | null;
 }): Promise<WaitlistSendOutcome> {
@@ -294,6 +341,17 @@ export async function sendWaitlistEmailIdempotent(args: {
     // cross-tenant collision this design exists to prevent.
     return { status: "rejected", code: "missing_tenant_scope" };
   }
+  const eventScopeValue =
+    typeof args.eventScope === "string" && args.eventScope.length > 0
+      ? args.eventScope
+      : null;
+  if (args.payloadCarriesSecret && !eventScopeValue) {
+    // FAIL CLOSED. Falling back to the payload digest here would put the
+    // credential into the transmitted key, which is the one thing this flag
+    // exists to prevent — and it would do so silently, at exactly the call
+    // site that asked not to.
+    return { status: "rejected", code: "missing_event_scope" };
+  }
 
   const payload: ProviderPayload = {
     from: args.studioIdentity
@@ -306,13 +364,21 @@ export async function sendWaitlistEmailIdempotent(args: {
     ...(args.studioIdentity?.replyTo ? { replyTo: args.studioIdentity.replyTo } : {}),
   };
   // Derived from THIS object — the one about to be sent — plus the tenant, so
-  // neither component can drift from what is actually transmitted.
-  const idempotencyKey = waitlistIdempotencyKey(
-    args.namespace,
-    args.studioId,
-    payload,
-    args.eventScope,
-  );
+  // neither component can drift from what is actually transmitted. A
+  // credential-bearing payload takes the event-only shape instead, so the
+  // secret never reaches the provider header.
+  const idempotencyKey = args.payloadCarriesSecret
+    ? waitlistEventOnlyIdempotencyKey(
+        args.namespace,
+        args.studioId,
+        eventScopeValue as string,
+      )
+    : waitlistIdempotencyKey(
+        args.namespace,
+        args.studioId,
+        payload,
+        args.eventScope,
+      );
 
   const first = await attempt(transport, payload, idempotencyKey);
   if (first.status !== "ambiguous") return first;

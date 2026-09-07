@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   sendWaitlistInvitationEmail,
   sendWaitlistRecipientProofEmail,
@@ -6,9 +8,10 @@ import {
 import {
   classifyDelivery,
   isProofExpiryWithinCeiling,
-  proofRemainingMinutes,
+  proofWindowMinutes,
   PROOF_TTL_CEILING_MINUTES,
   PROOF_TTL_TARGET_MINUTES,
+  PROOF_REQUEST_LIMITS,
 } from "@/lib/waitlist/delivery/policy";
 import type {
   IdempotentEmailTransport,
@@ -158,6 +161,9 @@ describe("invitation delivery", () => {
 describe("recipient proof delivery", () => {
   const NOW = new Date("2026-09-07T12:00:00.000Z");
   const IN_20 = new Date(NOW.getTime() + 20 * 60_000);
+  // The mint instant. With expiresAt it gives the AUTHORISED WINDOW the email
+  // advertises, which must not drift between attempts under one key.
+  const ISSUED = NOW;
 
   it("scopes the idempotency key to the CHALLENGE", async () => {
     // Two challenges normally differ in their code and therefore in their
@@ -170,6 +176,7 @@ describe("recipient proof delivery", () => {
       invitationId: INVITATION_ID,
       recipientEmail: RECIPIENT,
       code: "H4K2QF7P",
+      issuedAt: ISSUED,
       expiresAt: IN_20,
       action: "book" as const,
       now: NOW,
@@ -197,7 +204,8 @@ describe("recipient proof delivery", () => {
       recipientEmail: RECIPIENT,
       code: "H4K2QF7P",
       // Deliberately NOT the target: the database is the owner and the copy
-      // must describe what it actually stored.
+      // must describe the window it actually granted.
+      issuedAt: ISSUED,
       expiresAt: new Date(NOW.getTime() + 7 * 60_000),
       action: "book",
       now: NOW,
@@ -215,6 +223,7 @@ describe("recipient proof delivery", () => {
       challengeId: CHALLENGE_ID,
       recipientEmail: RECIPIENT,
       code: "H4K2QF7P",
+      issuedAt: ISSUED,
       expiresAt: new Date(NOW.getTime() + 31 * 60_000),
       action: "book",
       now: NOW,
@@ -233,6 +242,7 @@ describe("recipient proof delivery", () => {
       challengeId: CHALLENGE_ID,
       recipientEmail: RECIPIENT,
       code: "H4K2QF7P",
+      issuedAt: ISSUED,
       expiresAt: new Date(NOW.getTime() - 1_000),
       action: "book",
       now: NOW,
@@ -250,6 +260,7 @@ describe("recipient proof delivery", () => {
       challengeId: CHALLENGE_ID,
       recipientEmail: RECIPIENT,
       code: "H4K2QF7P",
+      issuedAt: ISSUED,
       expiresAt: IN_20,
       action: "book",
       now: NOW,
@@ -307,8 +318,46 @@ describe("proof window policy", () => {
   it("rounds the advertised window DOWN", () => {
     // Advertising longer than the truth is the failure that matters: the
     // recipient trusts the sentence and finds a dead code.
-    const now = new Date("2026-09-07T12:00:00.000Z");
-    expect(proofRemainingMinutes(new Date(now.getTime() + 119_000), now)).toBe(1);
-    expect(proofRemainingMinutes(new Date(now.getTime() - 1), now)).toBe(0);
+    const t0 = new Date("2026-09-07T12:00:00.000Z");
+    expect(proofWindowMinutes(t0, new Date(t0.getTime() + 119_000))).toBe(1);
+    expect(proofWindowMinutes(t0, new Date(t0.getTime() - 1))).toBe(0);
+  });
+});
+
+describe("the rate-limit policy has ONE source", () => {
+  // Found in review. An earlier revision exported PROOF_REQUEST_LIMITS here,
+  // called it the single source, and hard-coded a second copy inside the
+  // limiter — so the export was decorative and production obeyed only the
+  // copy. Changing the "policy" would have left the old limits enforced with
+  // nothing failing. CLAUDE.md §3 names this: there is deliberately no second
+  // competing map.
+  //
+  // A source-contract test is the right shape: the property is "no second
+  // declaration exists", which is exactly the architectural-tripwire case
+  // ENGINEERING_STANDARDS describes, and it cannot be proved by calling the
+  // limiter without an Upstash backend.
+  const LIMITER_SRC = readFileSync(
+    join(process.cwd(), "lib/rate-limit/public.ts"),
+    "utf8",
+  );
+
+  it("the limiter imports the shared policy", () => {
+    expect(LIMITER_SRC).toContain("@/lib/waitlist/delivery/policy");
+    expect(LIMITER_SRC).toContain("PROOF_REQUEST_LIMITS");
+  });
+
+  it("the limiter declares no competing copy", () => {
+    // The specific defect: a local const holding the same numbers.
+    expect(LIMITER_SRC).not.toMatch(/const\s+WAITLIST_PROOF_LIMITS\s*=/);
+    // And no second declaration of the shared name either.
+    expect(LIMITER_SRC).not.toMatch(/const\s+PROOF_REQUEST_LIMITS\s*=/);
+  });
+
+  it("the policy numbers are the ones the limiter will use", () => {
+    expect(PROOF_REQUEST_LIMITS.invitation).toEqual({ limit: 3, window: "15 m" });
+    expect(PROOF_REQUEST_LIMITS.ip).toEqual({ limit: 10, window: "1 h" });
+    // Pinned so a change to the policy is a deliberate edit here too, not a
+    // silent drift — and the limiter reads these exact values by import.
+    expect(LIMITER_SRC).toContain("PROOF_REQUEST_LIMITS[dimension]");
   });
 });

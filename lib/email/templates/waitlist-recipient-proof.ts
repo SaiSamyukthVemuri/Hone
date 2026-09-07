@@ -36,9 +36,12 @@
 // uses in lib/portal/tokens.ts. Keeping the alphabet out of this file means the
 // display layer can never become a second opinion about what a valid proof is.
 //
-// `expiresInMinutes` is likewise DERIVED by the caller from the stored expiry,
-// never a constant here. A hard-coded TTL in email copy is how the value drifts
-// from the value the database enforces.
+// `windowMinutes` is likewise DERIVED by the caller from database-owned values
+// (`expires_at - issued_at`), never a constant here. A hard-coded TTL in email
+// copy is how the value drifts from the value the database enforces. It is the
+// AUTHORISED WINDOW rather than the remaining time, which keeps this payload a
+// pure function of the challenge — see the field's own note for why the
+// idempotency key now depends on that.
 //
 // ===========================================================================
 // WHAT THIS EMAIL DELIBERATELY OMITS
@@ -65,10 +68,25 @@ export type WaitlistRecipientProofEmailInput = {
    */
   code: string;
   /**
-   * Remaining validity in whole minutes, DERIVED by the caller from the stored
-   * expiry. Never a constant in this module.
+   * The challenge's AUTHORISED WINDOW in whole minutes — what the database
+   * granted when it minted the proof, not how much of it is left.
+   *
+   * THIS MUST NOT BE THE REMAINING TIME, and the reason is not cosmetic. The
+   * proof send keys its provider idempotency on the challenge alone, because a
+   * payload digest would carry the code to the provider and make the header a
+   * verifier for it. Losing the digest means the key no longer tracks the
+   * bytes, so `new-client-waitlist-send.ts`'s standing corollary becomes
+   * load-bearing here: the payload must be a PURE FUNCTION of the event.
+   * Remaining time is a wall clock, so two attempts under one challenge would
+   * render different bytes under one key and the provider would answer
+   * `invalid_idempotent_request` instead of replaying.
+   *
+   * The authorised window is stable for the life of the challenge and is still
+   * derived from database-owned values (`expires_at - issued_at`), never from a
+   * constant in this module. The email is sent immediately after the mint, so
+   * it is also what the recipient actually has.
    */
-  expiresInMinutes: number;
+  windowMinutes: number;
   /**
    * What the code will authorize, so the email states the consequence rather
    * than a generic "verify". A proof minted for a decline must not read as a
@@ -125,7 +143,7 @@ export function buildWaitlistRecipientProofEmail(
 ): WaitlistRecipientProofEmail {
   const studio = input.studioName.trim() || "your studio";
   const code = input.code.trim();
-  const ttl = minutesPhrase(input.expiresInMinutes);
+  const ttl = minutesPhrase(input.windowMinutes);
   const subject = waitlistRecipientProofSubject(studio);
 
   // The consequence, stated in the recipient's terms. "Confirm" is used for

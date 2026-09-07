@@ -9,7 +9,7 @@ import { buildWaitlistRecipientProofEmail } from "@/lib/email/templates/waitlist
 import {
   classifyDelivery,
   isProofExpiryWithinCeiling,
-  proofRemainingMinutes,
+  proofWindowMinutes,
   type DeliveryDisposition,
 } from "./policy";
 import { buildDeliveryLogRecord, type DeliveryLogRecord } from "./log-safety";
@@ -51,11 +51,26 @@ import { buildDeliveryLogRecord, type DeliveryLogRecord } from "./log-safety";
 //   key would replay the first send's response and the second invitation would
 //   report accepted while nobody received it.
 //
-//   PROOF -> scope is the CHALLENGE id. Two challenges normally differ in their
-//   code and so in their bytes, but relying on that would make correctness an
-//   accident of the alphabet: a short code space makes a repeat genuinely
-//   possible, and a repeat is exactly when a replayed response is most harmful.
-//   Scoping on the challenge makes each mint its own send by construction.
+//   PROOF -> scope is the CHALLENGE id, and it is the WHOLE key: this send sets
+//   `payloadCarriesSecret`, so no payload digest is computed at all.
+//
+//   That is a security fix, not a refinement. The default key is SHA-256 over
+//   the exact payload, the payload is the email body, and the body holds the
+//   code. The digest travels to the provider in the `Idempotency-Key` header
+//   and is retained there. Because every other field is deterministic and
+//   knowable, a captured header lets an attacker enumerate a small code space
+//   offline -- render, hash, compare -- until it matches. It was demonstrated
+//   against this path: an eight-character code was recovered from the header
+//   alone. So the proof key carries no payload component, and the challenge id
+//   is what makes it unique.
+//
+//   THE PRICE, PAID DELIBERATELY. Without a payload digest the key no longer
+//   tracks the bytes, so this payload must be a PURE FUNCTION of the challenge
+//   -- the corollary new-client-waitlist-send.ts already states for every
+//   caller. It is why the email advertises the AUTHORISED WINDOW rather than
+//   the remaining time: a wall clock in the body would make two attempts under
+//   one key render different bytes, and the provider answers that with
+//   `invalid_idempotent_request` rather than a replay.
 //
 // ===========================================================================
 // DELIVERY IS NOT LIFECYCLE
@@ -154,7 +169,10 @@ export async function sendWaitlistRecipientProofEmail(args: {
   recipientEmail: string;
   /** The raw proof code. Rendered into the email and NEVER logged. */
   code: string;
-  /** Stored expiry, owned by the database. */
+  /** Stored mint time, owned by the database. With `expiresAt` it gives the
+   *  AUTHORISED WINDOW the email advertises — a value that does not drift. */
+  issuedAt: Date;
+  /** Stored expiry, owned by the database. Used for the ceiling guard only. */
   expiresAt: Date;
   /** What the code will authorise, so the copy states the consequence. */
   action: "book" | "decline";
@@ -184,9 +202,11 @@ export async function sendWaitlistRecipientProofEmail(args: {
   const email = buildWaitlistRecipientProofEmail({
     studioName: args.studio.name ?? "",
     code: args.code,
-    // Derived from the STORED expiry on every send, so the sentence in the
-    // inbox describes what the database is enforcing.
-    expiresInMinutes: proofRemainingMinutes(args.expiresAt, now),
+    // The AUTHORISED WINDOW, from two database-owned values. Deliberately not
+    // the remaining time: the key below carries no payload digest, so this
+    // payload has to be a pure function of the challenge or two attempts under
+    // one key would render different bytes.
+    windowMinutes: proofWindowMinutes(args.issuedAt, args.expiresAt),
     action: args.action,
   });
 
@@ -201,6 +221,13 @@ export async function sendWaitlistRecipientProofEmail(args: {
     html: email.html,
     text: email.text,
     studioIdentity: studioEmailIdentity(args.studio),
+    // THE CODE MUST NOT REACH THE PROVIDER HEADER. Without this the key is
+    // SHA-256 over the exact payload, and the payload is the email body — so
+    // the transmitted Idempotency-Key becomes an offline verifier for a
+    // small-search-space secret. Demonstrated against this very path before the
+    // flag existed; the negative control lives in
+    // tests/security/waitlist-delivery-secret-logging.test.ts.
+    payloadCarriesSecret: true,
     ...(args.transport !== undefined ? { transport: args.transport } : {}),
   });
 

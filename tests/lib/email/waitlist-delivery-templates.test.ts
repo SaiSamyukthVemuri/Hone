@@ -92,7 +92,7 @@ describe("waitlist recipient proof email", () => {
   const base = {
     studioName: "Willow",
     code: "H4K2QF7P",
-    expiresInMinutes: 20,
+    windowMinutes: 20,
     action: "book" as const,
   };
 
