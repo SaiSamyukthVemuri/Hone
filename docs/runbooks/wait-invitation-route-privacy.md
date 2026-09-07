@@ -45,9 +45,30 @@ that, and the Sentry scrubber builds its regex from the same array. The
 `:token*` catch-all already covers suffix segments, so
 `/waitlist/invitation/<raw>/confirm` is protected by the same entry.
 
-Then update the vacuity pin in
-`tests/security/waitlist-invitation-route-privacy.test.ts` — the test that
-records "zero bearer routes found today" — to the new count, in the same commit.
+### The check that will actually fail
+
+`tests/lib/security/token-route-parity.test.ts` pins the registry to an exact
+six-family list, so that silently DELETING a family fails loudly. Adding a
+seventh trips the same assertion. **Add the new prefix to that expected array in
+the same commit**, or CI is red with no pointer to the edit:
+
+```ts
+expect([...TOKEN_ROUTE_PREFIXES].sort()).toEqual([
+  "/calendar-feed",
+  "/cancel",
+  "/intake",
+  "/manage",
+  "/portal/verify",
+  "/reschedule",
+  "/waitlist/invitation",   // <- the new family, sorted into place
+]);
+```
+
+`tests/security/waitlist-invitation-route-privacy.test.ts` needs **no count
+edit**. It enumerates routes and requires each to be registered or classified,
+so registering the prefix is what satisfies it — there is no snapshot number to
+bump. (An earlier draft of this runbook said otherwise, naming a "zero bearer
+routes" pin that no longer exists.)
 
 ## Why no prefix is registered now
 

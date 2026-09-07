@@ -10,6 +10,7 @@ import {
   challengeMailability,
   classifyDelivery,
   invitationExpiryLabel,
+  invitationWithinProviderIdempotencyWindow,
   proofWindowMinutes,
   type DeliveryDisposition,
 } from "./policy";
@@ -92,9 +93,6 @@ export type DeliveryResult = {
 export type DeliveryStudio = {
   id: string;
   name?: string | null;
-  /** IANA zone from `studios.timezone`. The clock that governs the booking the
-   *  prospect is being offered, so it is the clock the expiry is stated in. */
-  timezone?: string | null;
   postcare_contact_email?: string | null;
   owner_email?: string | null;
 };
@@ -113,13 +111,53 @@ export async function sendWaitlistInvitationEmail(args: {
   recipientEmail: string;
   /** Absolute URL that RESOLVES the invitation. Must not mutate it. */
   invitationUrl: string;
+  /** Stored mint time, owned by the database. Anchors the provider
+   *  idempotency window below. */
+  issuedAt: Date;
   /** Stored expiry, owned by the database. Rendered as an ABSOLUTE instant, so
    *  the copy is both stable across retries (which the event-only key requires)
    *  and still true when delivery is late. */
   expiresAt: Date;
+  /**
+   * IANA zone for the expiry copy, FROZEN WITH THE INVITATION.
+   *
+   * Deliberately a parameter rather than a read of `studio.timezone`. That
+   * column is mutable operator state, and re-reading it at send time made the
+   * payload move while the event-only key stayed put — same key, different
+   * payload, which the provider answers with `invalid_idempotent_request`
+   * rather than a replay, so a retry that still needed delivering would fail.
+   * Reproduced before this parameter existed. The caller owns the freeze; see
+   * the integration note in the PR body.
+   */
+  expiryTimezone: string;
+  /** Injected for determinism in tests; defaults to now. */
+  now?: Date;
   /** Test seam. Omitted in production, where the shared client is used. */
   transport?: IdempotentEmailTransport | null;
 }): Promise<DeliveryResult> {
+  const now = args.now ?? new Date();
+
+  // BEYOND THE PROVIDER'S RETENTION THE KEY NO LONGER DEDUPLICATES. Presenting
+  // it again submits a fresh email instead of replaying, so a late retry would
+  // produce the second invitation this path exists to prevent. Deduplicating
+  // past that point needs a durable local delivery record, which is schema and
+  // out of this lane, so the send is refused rather than issued on a hope.
+  if (!invitationWithinProviderIdempotencyWindow(args.issuedAt, now)) {
+    const disposition = classifyDelivery({
+      status: "rejected",
+      code: "outside_provider_idempotency_window",
+    });
+    return {
+      disposition,
+      log: buildDeliveryLogRecord({
+        kind: "invitation",
+        studioId: args.studio.id,
+        invitationId: args.invitationId,
+        disposition: disposition.reason,
+      }),
+    };
+  }
+
   const email = buildWaitlistInvitationEmail({
     studioName: args.studio.name ?? "",
     invitationUrl: args.invitationUrl,
@@ -127,10 +165,7 @@ export async function sendWaitlistInvitationEmail(args: {
     // failed: remaining time drifted between retries and moved the key; the
     // minted window was stable but claimed "3 days" on a send made a day after
     // issuance. A fixed point is stable AND stays true when delivery is late.
-    expiresAtLabel: invitationExpiryLabel(
-      args.expiresAt,
-      args.studio.timezone ?? "UTC",
-    ),
+    expiresAtLabel: invitationExpiryLabel(args.expiresAt, args.expiryTimezone),
   });
 
   const outcome = await sendWaitlistEmailIdempotent({

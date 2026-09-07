@@ -9,6 +9,8 @@ import {
   classifyDelivery,
   challengeMailability,
   invitationExpiryLabel,
+  invitationWithinProviderIdempotencyWindow,
+  PROVIDER_IDEMPOTENCY_RETENTION_HOURS,
   PROOF_SEND_MAX_DELAY_AFTER_MINT_SECONDS,
   proofWindowMinutes,
   PROOF_CHALLENGE_TTL_TARGET_MINUTES,
@@ -49,7 +51,6 @@ const ACCEPTED = { data: { id: "msg_123" }, error: null };
 const STUDIO = {
   id: "11111111-1111-4111-8111-111111111111",
   name: "Willow Electrolysis",
-  timezone: "America/Toronto",
   postcare_contact_email: "hello@willow.test",
   owner_email: "owner@willow.test",
 };
@@ -62,6 +63,16 @@ const URL = "https://hone.care/waitlist/invitation/RAWTOKEN";
 // what the email advertises, so it cannot drift between retries.
 const INV_ISSUED = new Date("2026-09-07T12:00:00.000Z");
 const INV_EXPIRES = new Date(INV_ISSUED.getTime() + 72 * 3_600_000);
+// Frozen with the invitation, never re-read from mutable studio state.
+const INV_TZ = "America/Toronto";
+// Inside the provider's idempotency retention, so the key still deduplicates.
+const INV_NOW = new Date(INV_ISSUED.getTime() + 60_000);
+const INV_BASE = {
+  issuedAt: INV_ISSUED,
+  expiresAt: INV_EXPIRES,
+  expiryTimezone: INV_TZ,
+  now: INV_NOW,
+};
 
 describe("invitation delivery", () => {
   it("sends studio-branded, with the studio's Reply-To authority", async () => {
@@ -71,7 +82,7 @@ describe("invitation delivery", () => {
       invitationId: INVITATION_ID,
       recipientEmail: RECIPIENT,
       invitationUrl: URL,
-      expiresAt: INV_EXPIRES,
+      ...INV_BASE,
       transport,
     });
 
@@ -94,7 +105,7 @@ describe("invitation delivery", () => {
       invitationId: INVITATION_ID,
       recipientEmail: RECIPIENT,
       invitationUrl: URL,
-      expiresAt: INV_EXPIRES,
+      ...INV_BASE,
       transport,
     });
     expect(calls[0].payload.replyTo).toBe("owner@willow.test");
@@ -112,7 +123,7 @@ describe("invitation delivery", () => {
       invitationId: INVITATION_ID,
       recipientEmail: RECIPIENT,
       invitationUrl: URL,
-      expiresAt: INV_EXPIRES,
+      ...INV_BASE,
       transport: a.transport,
     });
 
@@ -122,7 +133,7 @@ describe("invitation delivery", () => {
       invitationId: "44444444-4444-4444-8444-444444444444",
       recipientEmail: RECIPIENT,
       invitationUrl: URL,
-      expiresAt: INV_EXPIRES,
+      ...INV_BASE,
       transport: b.transport,
     });
 
@@ -140,7 +151,7 @@ describe("invitation delivery", () => {
       invitationId: INVITATION_ID,
       recipientEmail: RECIPIENT,
       invitationUrl: URL,
-      expiresAt: INV_EXPIRES,
+      ...INV_BASE,
     };
     await sendWaitlistInvitationEmail({ ...args, transport: a.transport });
     await sendWaitlistInvitationEmail({ ...args, transport: b.transport });
@@ -157,7 +168,7 @@ describe("invitation delivery", () => {
       invitationId: INVITATION_ID,
       recipientEmail: RECIPIENT,
       invitationUrl: URL,
-      expiresAt: INV_EXPIRES,
+      ...INV_BASE,
       transport: rejected.transport,
     });
     expect(out.disposition.mayMutateLifecycle).toBe(false);
@@ -480,7 +491,7 @@ describe("P2-B: one invitation event, one idempotency key", () => {
       invitationId: INVITATION_ID,
       recipientEmail: RECIPIENT,
       invitationUrl: URL,
-      expiresAt: INV_EXPIRES,
+      ...INV_BASE,
     };
     await sendWaitlistInvitationEmail({ ...args, transport: a.transport });
     await sendWaitlistInvitationEmail({ ...args, transport: b.transport });
@@ -496,7 +507,7 @@ describe("P2-B: one invitation event, one idempotency key", () => {
       invitationId: INVITATION_ID,
       recipientEmail: RECIPIENT,
       invitationUrl: URL,
-      expiresAt: INV_EXPIRES,
+      ...INV_BASE,
       transport,
     });
     const key = calls[0].idempotencyKey ?? "";
@@ -516,7 +527,7 @@ describe("P2-B: one invitation event, one idempotency key", () => {
       studio: STUDIO,
       recipientEmail: RECIPIENT,
       invitationUrl: URL,
-      expiresAt: INV_EXPIRES,
+      ...INV_BASE,
     };
     await sendWaitlistInvitationEmail({ ...base, invitationId: INVITATION_ID, transport: a.transport });
     await sendWaitlistInvitationEmail({
@@ -537,7 +548,7 @@ describe("P2-B: one invitation event, one idempotency key", () => {
       invitationId: INVITATION_ID,
       recipientEmail: RECIPIENT,
       invitationUrl: URL,
-      expiresAt: INV_EXPIRES,
+      ...INV_BASE,
       transport,
     });
     expect(out.disposition.delivered).toBe("unknown");
@@ -558,7 +569,7 @@ describe("P2-A: a delayed retry keeps ONE identity and a TRUTHFUL expiry", () =>
       invitationId: INVITATION_ID,
       recipientEmail: RECIPIENT,
       invitationUrl: URL,
-      expiresAt: INV_EXPIRES,
+      ...INV_BASE,
     };
     // First attempt, then a retry a full day later. Nothing in the call
     // conveys "now", which is precisely why the copy cannot go stale.
@@ -573,5 +584,112 @@ describe("P2-A: a delayed retry keeps ONE identity and a TRUTHFUL expiry", () =>
     expect(a.calls[0].payload.text).toContain("This invitation expires ");
     expect(a.calls[0].payload.text).not.toMatch(/expires in \d+ (day|hour)/);
     expect(a.calls[0].payload.text).toContain("September 10, 2026");
+  });
+});
+
+describe("P2: the invitation payload reads no mutable studio state", () => {
+  it("the rendered expiry is identical whatever studio.timezone happens to say", async () => {
+    // REPRODUCED before this parameter existed: re-reading `studio.timezone` at
+    // send time made the payload move while the event-only key stayed put, and
+    // same-key/different-payload is the one case the provider answers with
+    // invalid_idempotent_request rather than a replay — so a retry that still
+    // needed delivering would fail outright.
+    //
+    // The zone is now an explicit input frozen with the invitation. Passing two
+    // studio objects that differ only in a stray `timezone` field must change
+    // nothing, because nothing reads it.
+    const a = recordingTransport(ACCEPTED);
+    const b = recordingTransport(ACCEPTED);
+    const args = {
+      invitationId: INVITATION_ID,
+      recipientEmail: RECIPIENT,
+      invitationUrl: URL,
+      ...INV_BASE,
+    };
+    await sendWaitlistInvitationEmail({
+      ...args,
+      studio: { ...STUDIO, timezone: "America/Toronto" } as typeof STUDIO,
+      transport: a.transport,
+    });
+    await sendWaitlistInvitationEmail({
+      ...args,
+      studio: { ...STUDIO, timezone: "America/Vancouver" } as typeof STUDIO,
+      transport: b.transport,
+    });
+    expect(a.calls[0].idempotencyKey).toBe(b.calls[0].idempotencyKey);
+    expect(a.calls[0].payload.text).toBe(b.calls[0].payload.text);
+  });
+
+  it("the frozen zone is what actually renders", async () => {
+    // The positive half: proving the payload is stable would also pass if the
+    // zone were ignored entirely and everything rendered as UTC.
+    const a = recordingTransport(ACCEPTED);
+    const b = recordingTransport(ACCEPTED);
+    const args = {
+      studio: STUDIO,
+      invitationId: INVITATION_ID,
+      recipientEmail: RECIPIENT,
+      invitationUrl: URL,
+      issuedAt: INV_ISSUED,
+      expiresAt: INV_EXPIRES,
+      now: INV_NOW,
+    };
+    await sendWaitlistInvitationEmail({ ...args, expiryTimezone: "America/Toronto", transport: a.transport });
+    await sendWaitlistInvitationEmail({ ...args, expiryTimezone: "Asia/Tokyo", transport: b.transport });
+    expect(a.calls[0].payload.text).not.toBe(b.calls[0].payload.text);
+  });
+});
+
+describe("P2: no send outside the provider's idempotency retention", () => {
+  it("refuses a retry the key can no longer deduplicate", async () => {
+    // Past the provider's retention the key is just a header: presenting it
+    // again submits a FRESH email. Reachable in practice — invitations default
+    // to 72 hours, the absolute copy exists so a late retry still reads right,
+    // and every disposition permits a resend. Deduplicating beyond it needs a
+    // durable local delivery record, which is schema and out of this lane, so
+    // the send is refused rather than issued on a hope.
+    const { transport, calls } = recordingTransport(ACCEPTED);
+    const out = await sendWaitlistInvitationEmail({
+      studio: STUDIO,
+      invitationId: INVITATION_ID,
+      recipientEmail: RECIPIENT,
+      invitationUrl: URL,
+      issuedAt: INV_ISSUED,
+      expiresAt: INV_EXPIRES,
+      expiryTimezone: INV_TZ,
+      now: new Date(
+        INV_ISSUED.getTime() + (PROVIDER_IDEMPOTENCY_RETENTION_HOURS + 1) * 3_600_000,
+      ),
+      transport,
+    });
+    expect(calls).toHaveLength(0); // nothing was transmitted
+    expect(out.disposition.delivered).toBe("no");
+    expect(out.disposition.reason).toBe("rejected_outside_provider_idempotency_window");
+    expect(out.disposition.mayMutateLifecycle).toBe(false);
+  });
+
+  it("accepts the retention boundary exactly, and rejects a millisecond past it", () => {
+    const at = (ms: number) => new Date(INV_ISSUED.getTime() + ms);
+    const window = PROVIDER_IDEMPOTENCY_RETENTION_HOURS * 3_600_000;
+    expect(invitationWithinProviderIdempotencyWindow(INV_ISSUED, at(window))).toBe(true);
+    expect(invitationWithinProviderIdempotencyWindow(INV_ISSUED, at(window + 1))).toBe(false);
+    // Issued in the future is a clock disagreement, not a fresh invitation.
+    expect(invitationWithinProviderIdempotencyWindow(INV_ISSUED, at(-1))).toBe(false);
+  });
+
+  it("a send inside the window still goes out", async () => {
+    const { calls } = await (async () => {
+      const r = recordingTransport(ACCEPTED);
+      await sendWaitlistInvitationEmail({
+        studio: STUDIO,
+        invitationId: INVITATION_ID,
+        recipientEmail: RECIPIENT,
+        invitationUrl: URL,
+        ...INV_BASE,
+        transport: r.transport,
+      });
+      return r;
+    })();
+    expect(calls).toHaveLength(1);
   });
 });

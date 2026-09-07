@@ -110,6 +110,50 @@ export const MUTATION_CAPABILITY_TTL_CEILING_MINUTES = 30;
  */
 export const PROOF_SEND_MAX_DELAY_AFTER_MINT_SECONDS = 60;
 
+/**
+ * How long the provider honours an `Idempotency-Key`.
+ *
+ * Resend retains an idempotency record for roughly 24 hours. AFTER THAT THE KEY
+ * IS NOT A DEDUPLICATOR — it is just a header. Presenting it again submits a
+ * fresh email rather than replaying the original response.
+ *
+ * That interval is reachable here and not theoretically: invitations default to
+ * 72 hours (0189), the absolute expiry copy exists precisely so a delayed retry
+ * still reads correctly, and every disposition permits a resend. So the window
+ * has to be a guard rather than a footnote.
+ *
+ * Deduplicating beyond it needs a DURABLE local record of the delivery attempt
+ * — a claim/result row keyed by invitation — which is schema, and schema is out
+ * of this lane. Until that exists, the honest move is to refuse the send this
+ * module cannot make idempotent rather than to issue one and hope. See
+ * `invitationWithinProviderIdempotencyWindow`.
+ */
+export const PROVIDER_IDEMPOTENCY_RETENTION_HOURS = 24;
+
+/**
+ * Whether an invitation send can still be deduplicated by the provider.
+ *
+ * Measured from ISSUANCE, which is the anchor the idempotency key is built on:
+ * the key is one per invitation, so its provider-side lifetime starts when the
+ * first send for that invitation was made — and the first send follows issuance
+ * in the same flow.
+ *
+ * A refusal here is not a failure of the invitation. The row persists, the
+ * operator can re-issue, and `lib/email/client.ts` already states the house
+ * fallback for an undeliverable transactional message. What must not happen is
+ * a silent second invitation for one spot, which is the exact duplicate this
+ * whole path exists to prevent.
+ */
+export function invitationWithinProviderIdempotencyWindow(
+  issuedAt: Date,
+  now: Date,
+): boolean {
+  const ms = now.getTime() - issuedAt.getTime();
+  if (!Number.isFinite(ms)) return false;
+  if (ms < 0) return false; // issued in the future: a clock disagreement
+  return ms <= PROVIDER_IDEMPOTENCY_RETENTION_HOURS * 3_600_000;
+}
+
 /** Minimum gap between two proof sends for one invitation. */
 export const PROOF_RESEND_MIN_INTERVAL_SECONDS = 60;
 
@@ -356,10 +400,18 @@ export function classifyDelivery(outcome: SendOutcomeShape): DeliveryDisposition
  * it stays true however late the message arrives, because it describes a fixed
  * point rather than a distance from an unstated origin.
  *
- * Formatted in the STUDIO's timezone with `Intl.DateTimeFormat`, matching
- * `dayLabel` in templates/reminders.ts — a prospect reading "Thursday,
- * September 10, 2026 at 1:00 PM" is reading the studio's clock, which is the
- * one that governs the booking they are being offered.
+ * Formatted with `Intl.DateTimeFormat`, matching `dayLabel` in
+ * templates/reminders.ts — a prospect reading "Thursday, September 10, 2026 at
+ * 1:00 PM" is reading the studio's clock, which is the one that governs the
+ * booking they are being offered.
+ *
+ * THE ZONE MUST BE FROZEN WITH THE INVITATION, not re-read from `studios` at
+ * send time. A studio timezone is mutable operator state; if it is corrected
+ * between attempts, the fixed `expires_at` renders to DIFFERENT text while the
+ * event-only idempotency key stays the same — and same-key/different-payload is
+ * the one thing the provider treats as an error rather than a duplicate, so the
+ * retry that still needed delivering fails outright. The caller therefore
+ * passes the zone explicitly and owns freezing it.
  */
 export function invitationExpiryLabel(expiresAt: Date, timezone: string): string {
   const tz = timezone && timezone.trim().length > 0 ? timezone.trim() : "UTC";
