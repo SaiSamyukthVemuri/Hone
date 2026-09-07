@@ -65,7 +65,7 @@ const CLASSIFIED_NON_BEARER: ReadonlyArray<{ prefix: string; why: string }> = [
   { prefix: "/book", why: "public booking page keyed by the studio's PUBLIC slug — the slug is meant to be shared" },
   { prefix: "/calendar", why: "authenticated app route; the segment is an appointment row id" },
   { prefix: "/clients", why: "authenticated app route; the segment is a client row id" },
-  { prefix: "/clients/sessions", why: "authenticated app route; the segment is a session row id" },
+  { prefix: "/clients/[id]/sessions", why: "authenticated app route nested under a client; the segment is a session row id and the client id above it is equally not a credential" },
   { prefix: "/e2e-fault", why: "E2E fault-injection harness, not a production surface" },
 ];
 
@@ -125,8 +125,21 @@ function discoverDynamicRoutes(): DiscoveredRoute[] {
         // The dynamic segment itself is the credential slot, if it is one at
         // all. The prefix is everything above it.
         found.push({ dir: `app/${rel}`, publicPrefix: `/${urlSegments.join("/")}` });
-        // Keep walking: a nested dynamic segment sits under the same prefix.
-        walk(abs, urlSegments, rel);
+        // KEEP THE DYNAMIC ANCESTOR IN THE PATH when descending. An earlier
+        // version passed `urlSegments` through unchanged, which was wrong in
+        // both directions and was confirmed by experiment:
+        //
+        //   app/book/[slug]/[token]         collapsed to  /book
+        //     -> inherited /book's non-bearer classification and passed
+        //        silently, though its segment is a bearer credential;
+        //   app/book/[slug]/invite/[token]  became        /book/invite
+        //     -> a path that does not exist, so the gate reported a route
+        //        nobody could find.
+        //
+        // Carrying `[slug]` through yields /book/[slug] and
+        // /book/[slug]/invite: the real patterns, neither of which any
+        // classification covers, so both fail closed.
+        walk(abs, [...urlSegments, entry], rel);
         continue;
       }
 
@@ -178,6 +191,9 @@ describe("every dynamic route is classified, so a bearer route cannot arrive unn
     expect(prefixes).toContain("/intake");
     expect(prefixes).toContain("/portal/verify");
     expect(prefixes).toContain("/clients");
+    // The nested route keeps its dynamic ancestor rather than collapsing.
+    expect(prefixes).toContain("/clients/[id]/sessions");
+    expect(prefixes).not.toContain("/clients/sessions");
     expect(discovered.length).toBeGreaterThanOrEqual(10);
   });
 
@@ -216,6 +232,31 @@ describe("every dynamic route is classified, so a bearer route cannot arrive unn
         `classified themselves. A parent's line must never vouch for a child: ` +
         `classify or register each one. Offending: ${JSON.stringify(blessedByAncestor)}`,
     ).toEqual([]);
+  });
+
+  it("a bearer route under a DYNAMIC ancestor fails closed — the registry cannot express it", () => {
+    // TOKEN_ROUTE_PREFIXES holds literal path prefixes, because next.config.ts
+    // turns each into a `source` pattern and the Sentry scrubber builds a regex
+    // from the same strings. Neither can represent `/book/[slug]`, so a bearer
+    // route sitting under a dynamic ancestor CANNOT be protected by the current
+    // registry at all.
+    //
+    // The honest response is to refuse rather than to pretend. Such a route is
+    // unclassifiable here, so it lands in the failing branch above and the
+    // author has to either restructure the route to a literal prefix or extend
+    // the registry deliberately. This assertion states the constraint so the
+    // failure message is not a mystery.
+    const dynamicAncestor = discovered.filter((r) => r.publicPrefix.includes("["));
+    for (const r of dynamicAncestor) {
+      expect(
+        isRegisteredBearer(r.publicPrefix),
+        `${r.dir} sits under a dynamic ancestor, so its prefix ` +
+          `"${r.publicPrefix}" cannot appear in TOKEN_ROUTE_PREFIXES — those ` +
+          `are literal paths consumed by next.config.ts and the Sentry ` +
+          `scrubber. It must be classified non-bearer with a reason, or the ` +
+          `route restructured so its prefix is literal.`,
+      ).toBe(false);
+    }
   });
 
   it("no route is BOTH registered and classified non-bearer", () => {

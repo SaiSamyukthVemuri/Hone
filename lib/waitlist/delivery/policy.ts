@@ -336,26 +336,56 @@ export function classifyDelivery(outcome: SendOutcomeShape): DeliveryDisposition
 // ---------------------------------------------------------------------------
 
 /**
- * The invitation's MINTED window, phrased for the email.
+ * The invitation's expiry as an ABSOLUTE moment, in the studio's timezone.
  *
- * Derived from `expires_at - issued_at`, never from the remaining time. The
- * invitation send now keys on the event alone — its payload carries the raw
- * bearer token, which must not be hashed into a header the provider retains —
- * so the payload has to be a pure function of the invitation. A remaining-time
- * phrase is a wall clock: it moved from "3 days" to "2 days" between retries,
- * changed the payload, changed the key, and let the provider send a SECOND
- * invitation for one spot. That is the exact duplicate this wrapper exists to
- * prevent, and it was reproduced before this function existed.
+ * WHY ABSOLUTE AND NOT A DURATION. A duration has to be measured from
+ * something, and both choices were wrong:
  *
- * 0189 mints invitations in HOURS (`p_ttl_hours`, default 72, clamped 1..168),
- * so hours and days are the only units this needs.
+ *   * REMAINING time ("2 days left") is a wall clock. It moved between
+ *     retries, moved the payload, moved the payload-derived key, and let the
+ *     provider send a second invitation for one spot.
+ *   * The MINTED window ("expires in 3 days") is stable, which fixed the key —
+ *     and then quietly lied. An invitation issued on the 7th and expiring on
+ *     the 10th still claimed "3 days" when first delivered on the 8th, because
+ *     nothing measured the gap. The proof path has a staleness guard; a 72-hour
+ *     invitation cannot use one, since a delayed send is ordinary rather than
+ *     suspicious.
+ *
+ * An absolute instant is both. It is a pure function of `expires_at`, so the
+ * payload never drifts and the idempotency identity holds across retries; and
+ * it stays true however late the message arrives, because it describes a fixed
+ * point rather than a distance from an unstated origin.
+ *
+ * Formatted in the STUDIO's timezone with `Intl.DateTimeFormat`, matching
+ * `dayLabel` in templates/reminders.ts — a prospect reading "Thursday,
+ * September 10, 2026 at 1:00 PM" is reading the studio's clock, which is the
+ * one that governs the booking they are being offered.
  */
-export function invitationWindowPhrase(issuedAt: Date, expiresAt: Date): string {
-  const ms = expiresAt.getTime() - issuedAt.getTime();
-  if (!Number.isFinite(ms) || ms <= 0) return "a limited time";
-  const hours = Math.floor(ms / 3_600_000);
-  if (hours < 1) return "less than an hour";
-  if (hours < 48) return hours === 1 ? "1 hour" : `${hours} hours`;
-  const days = Math.floor(hours / 24);
-  return days === 1 ? "1 day" : `${days} days`;
+export function invitationExpiryLabel(expiresAt: Date, timezone: string): string {
+  const tz = timezone && timezone.trim().length > 0 ? timezone.trim() : "UTC";
+  try {
+    return new Intl.DateTimeFormat("en-US", {
+      timeZone: tz,
+      weekday: "long",
+      month: "long",
+      day: "numeric",
+      year: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      timeZoneName: "short",
+    }).format(expiresAt);
+  } catch {
+    // An unknown timezone string must not take the send down, and must not
+    // silently render the studio's clock as UTC without saying so.
+    return new Intl.DateTimeFormat("en-US", {
+      timeZone: "UTC",
+      weekday: "long",
+      month: "long",
+      day: "numeric",
+      year: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      timeZoneName: "short",
+    }).format(expiresAt);
+  }
 }

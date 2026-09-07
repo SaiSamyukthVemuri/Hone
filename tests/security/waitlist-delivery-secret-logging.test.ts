@@ -37,6 +37,7 @@ const URL = `https://hone.care/waitlist/invitation/${RAW_TOKEN}`;
 const STUDIO = {
   id: "11111111-1111-4111-8111-111111111111",
   name: "Willow Electrolysis",
+  timezone: "America/Toronto",
   postcare_contact_email: "hello@willow.test",
   owner_email: "owner@willow.test",
 };
@@ -195,7 +196,6 @@ describe("the invitation bearer token never reaches the log", () => {
       invitationId: INVITATION_ID,
       recipientEmail: RECIPIENT,
       invitationUrl: URL,
-      issuedAt: new Date("2026-09-07T12:00:00.000Z"),
       expiresAt: new Date("2026-09-10T12:00:00.000Z"),
       transport: {
         emails: {
@@ -229,7 +229,6 @@ describe("no console sink receives a secret", () => {
       invitationId: INVITATION_ID,
       recipientEmail: RECIPIENT,
       invitationUrl: URL,
-      issuedAt: new Date("2026-09-07T12:00:00.000Z"),
       expiresAt: new Date("2026-09-10T12:00:00.000Z"),
       transport: transportReturning(ACCEPTED),
     });

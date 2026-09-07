@@ -18,6 +18,10 @@ import {
 // Pure templates: no provider, no I/O, no env. Nothing here can send email.
 
 const URL = "https://example.test/waitlist/invitation/RAWTOKEN";
+// An ABSOLUTE instant, already formatted by the caller in the studio's zone.
+// Not a duration: a duration is only true at one moment, and a delayed send
+// makes it false.
+const EXPIRY_LABEL = "Thursday, September 10, 2026 at 1:00 PM EDT";
 
 describe("waitlist invitation email", () => {
   it("names the studio in the subject and carries no operator prefix", () => {
@@ -34,7 +38,7 @@ describe("waitlist invitation email", () => {
     const out = buildWaitlistInvitationEmail({
       studioName: "Willow",
       invitationUrl: URL,
-      expiresInPhrase: "3 days",
+      expiresAtLabel: EXPIRY_LABEL,
     });
     expect(out.text).toContain(URL);
     expect(out.html).toContain(URL);
@@ -47,31 +51,34 @@ describe("waitlist invitation email", () => {
     const out = buildWaitlistInvitationEmail({
       studioName: "Willow",
       invitationUrl: URL,
-      expiresInPhrase: "3 days",
+      expiresAtLabel: EXPIRY_LABEL,
     });
     expect(out.text).toContain("opening the link is not enough on its own");
     expect(out.html).toContain("opening the link is not enough on its own");
   });
 
-  it("renders the caller's expiry phrase and hard-codes no TTL", () => {
+  it("renders the caller's absolute expiry and hard-codes no TTL", () => {
     // The TTL is owned by issue_new_client_waitlist_invitation (0189:
     // p_ttl_hours, default 72, clamped 1..168) and stored on expires_at. This
     // module must never become a second opinion about it.
     const out = buildWaitlistInvitationEmail({
       studioName: "Willow",
       invitationUrl: URL,
-      expiresInPhrase: "6 hours",
+      expiresAtLabel: "Tuesday, September 8, 2026 at 9:00 AM EDT",
     });
-    expect(out.text).toContain("expires in 6 hours");
-    expect(out.html).toContain("expires in 6 hours");
+    expect(out.text).toContain("expires Tuesday, September 8, 2026 at 9:00 AM EDT");
+    expect(out.html).toContain("expires Tuesday, September 8, 2026 at 9:00 AM EDT");
     expect(out.text).not.toContain("72");
+    // No relative wording anywhere: that is the shape that went false on a
+    // delayed send.
+    expect(out.text).not.toMatch(/expires in \d+/);
   });
 
   it("falls back rather than rendering a gap when the studio name is blank", () => {
     const out = buildWaitlistInvitationEmail({
       studioName: "   ",
       invitationUrl: URL,
-      expiresInPhrase: "3 days",
+      expiresAtLabel: EXPIRY_LABEL,
     });
     expect(out.subject).toBe("Your invitation to book · your studio");
     expect(out.text).not.toContain("  at ,");
@@ -81,7 +88,7 @@ describe("waitlist invitation email", () => {
     const out = buildWaitlistInvitationEmail({
       studioName: '<script>alert(1)</script>',
       invitationUrl: URL,
-      expiresInPhrase: "3 days",
+      expiresAtLabel: EXPIRY_LABEL,
     });
     expect(out.html).not.toContain("<script>");
     expect(out.html).toContain("&lt;script&gt;");

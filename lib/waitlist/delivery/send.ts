@@ -9,7 +9,7 @@ import { buildWaitlistRecipientProofEmail } from "@/lib/email/templates/waitlist
 import {
   challengeMailability,
   classifyDelivery,
-  invitationWindowPhrase,
+  invitationExpiryLabel,
   proofWindowMinutes,
   type DeliveryDisposition,
 } from "./policy";
@@ -92,6 +92,9 @@ export type DeliveryResult = {
 export type DeliveryStudio = {
   id: string;
   name?: string | null;
+  /** IANA zone from `studios.timezone`. The clock that governs the booking the
+   *  prospect is being offered, so it is the clock the expiry is stated in. */
+  timezone?: string | null;
   postcare_contact_email?: string | null;
   owner_email?: string | null;
 };
@@ -110,11 +113,9 @@ export async function sendWaitlistInvitationEmail(args: {
   recipientEmail: string;
   /** Absolute URL that RESOLVES the invitation. Must not mutate it. */
   invitationUrl: string;
-  /** Stored mint time, owned by the database. */
-  issuedAt: Date;
-  /** Stored expiry, owned by the database. With `issuedAt` it gives the MINTED
-   *  window the email advertises — a value that does not drift between
-   *  retries, which the event-only key below requires. */
+  /** Stored expiry, owned by the database. Rendered as an ABSOLUTE instant, so
+   *  the copy is both stable across retries (which the event-only key requires)
+   *  and still true when delivery is late. */
   expiresAt: Date;
   /** Test seam. Omitted in production, where the shared client is used. */
   transport?: IdempotentEmailTransport | null;
@@ -122,10 +123,14 @@ export async function sendWaitlistInvitationEmail(args: {
   const email = buildWaitlistInvitationEmail({
     studioName: args.studio.name ?? "",
     invitationUrl: args.invitationUrl,
-    // The MINTED window. A remaining-time phrase moved from "3 days" to
-    // "2 days" between retries, moved the payload-derived key with it, and let
-    // the provider send a second invitation for one spot.
-    expiresInPhrase: invitationWindowPhrase(args.issuedAt, args.expiresAt),
+    // An ABSOLUTE instant, in the studio's timezone. Both previous shapes
+    // failed: remaining time drifted between retries and moved the key; the
+    // minted window was stable but claimed "3 days" on a send made a day after
+    // issuance. A fixed point is stable AND stays true when delivery is late.
+    expiresAtLabel: invitationExpiryLabel(
+      args.expiresAt,
+      args.studio.timezone ?? "UTC",
+    ),
   });
 
   const outcome = await sendWaitlistEmailIdempotent({

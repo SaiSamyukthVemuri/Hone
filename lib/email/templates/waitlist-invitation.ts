@@ -33,6 +33,8 @@
 //     a fact the database declines to keep.
 //   * ANY CLINICAL CONTENT. A waitlist prospect is not a client (0185), so
 //     there is nothing clinical to include and no client record to reference.
+//   * A RELATIVE EXPIRY. The email states an absolute instant, because a
+//     duration is only true at one moment and a delayed send makes it false.
 //   * THE EXPIRY AS A HARD-CODED STRING. The invitation TTL is owned by
 //     `issue_new_client_waitlist_invitation` (0189: `p_ttl_hours`, default 72,
 //     clamped 1..168) and stored on `new_client_waitlist_invitations.expires_at`
@@ -51,11 +53,16 @@ export type WaitlistInvitationEmailInput = {
    */
   invitationUrl: string;
   /**
-   * Human phrase for the remaining window, DERIVED by the caller from the
-   * stored `expires_at` — e.g. "3 days", "48 hours". Never a constant in this
-   * module. See the header note on TTL ownership.
+   * The expiry as an ABSOLUTE moment, already formatted in the studio's
+   * timezone by the caller — e.g. "Thursday, September 10, 2026 at 1:00 PM EDT".
+   *
+   * NOT a duration. A duration is measured from an origin the email cannot
+   * state: "expires in 3 days" is false the moment delivery is delayed, and a
+   * remaining-time duration drifts between retries and moves the idempotency
+   * key with it. An absolute instant is stable AND stays true however late the
+   * message arrives.
    */
-  expiresInPhrase: string;
+  expiresAtLabel: string;
 };
 
 export type WaitlistInvitationEmail = {
@@ -95,13 +102,13 @@ export function buildWaitlistInvitationEmail(
   // is blank renders naturally rather than leaving a gap in the sentence.
   const studio = input.studioName.trim() || "your studio";
   const url = input.invitationUrl;
-  const ttl = input.expiresInPhrase.trim() || "a limited time";
+  const ttl = input.expiresAtLabel.trim() || "the time stated by the studio";
   const subject = waitlistInvitationSubject(studio);
 
   const text =
     `A consultation opening is available at ${studio}, and you can choose a time.\n\n` +
     `${url}\n\n` +
-    `This invitation expires in ${ttl}.\n\n` +
+    `This invitation expires ${ttl}.\n\n` +
     `For your security, opening the link is not enough on its own: when you ` +
     `choose to book or decline, ${studio} will email a short confirmation code ` +
     `to this address to confirm it is really you.\n\n` +
@@ -135,7 +142,7 @@ export function buildWaitlistInvitationEmail(
           <a href="${urlH}" style="color:#6B6B6B; text-decoration:underline;">${urlH}</a>
         </td></tr>
         <tr><td style="padding:20px 0 0 0; border-top:1px solid #E5E2DA; font-family:-apple-system, system-ui, sans-serif; font-size:13px; line-height:1.65; color:#6B6B6B;">
-          This invitation expires in ${ttlH}.
+          This invitation expires ${ttlH}.
         </td></tr>
         <tr><td style="padding:12px 0 24px 0; font-family:-apple-system, system-ui, sans-serif; font-size:13px; line-height:1.65; color:#6B6B6B;">
           For your security, opening the link is not enough on its own. When you choose to book or decline, ${studioH} will email a short confirmation code to this address so we know it is really you.

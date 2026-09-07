@@ -8,7 +8,7 @@ import {
 import {
   classifyDelivery,
   challengeMailability,
-  invitationWindowPhrase,
+  invitationExpiryLabel,
   PROOF_SEND_MAX_DELAY_AFTER_MINT_SECONDS,
   proofWindowMinutes,
   PROOF_CHALLENGE_TTL_TARGET_MINUTES,
@@ -49,6 +49,7 @@ const ACCEPTED = { data: { id: "msg_123" }, error: null };
 const STUDIO = {
   id: "11111111-1111-4111-8111-111111111111",
   name: "Willow Electrolysis",
+  timezone: "America/Toronto",
   postcare_contact_email: "hello@willow.test",
   owner_email: "owner@willow.test",
 };
@@ -70,7 +71,6 @@ describe("invitation delivery", () => {
       invitationId: INVITATION_ID,
       recipientEmail: RECIPIENT,
       invitationUrl: URL,
-      issuedAt: INV_ISSUED,
       expiresAt: INV_EXPIRES,
       transport,
     });
@@ -94,7 +94,6 @@ describe("invitation delivery", () => {
       invitationId: INVITATION_ID,
       recipientEmail: RECIPIENT,
       invitationUrl: URL,
-      issuedAt: INV_ISSUED,
       expiresAt: INV_EXPIRES,
       transport,
     });
@@ -113,7 +112,6 @@ describe("invitation delivery", () => {
       invitationId: INVITATION_ID,
       recipientEmail: RECIPIENT,
       invitationUrl: URL,
-      issuedAt: INV_ISSUED,
       expiresAt: INV_EXPIRES,
       transport: a.transport,
     });
@@ -124,7 +122,6 @@ describe("invitation delivery", () => {
       invitationId: "44444444-4444-4444-8444-444444444444",
       recipientEmail: RECIPIENT,
       invitationUrl: URL,
-      issuedAt: INV_ISSUED,
       expiresAt: INV_EXPIRES,
       transport: b.transport,
     });
@@ -143,7 +140,6 @@ describe("invitation delivery", () => {
       invitationId: INVITATION_ID,
       recipientEmail: RECIPIENT,
       invitationUrl: URL,
-      issuedAt: INV_ISSUED,
       expiresAt: INV_EXPIRES,
     };
     await sendWaitlistInvitationEmail({ ...args, transport: a.transport });
@@ -161,7 +157,6 @@ describe("invitation delivery", () => {
       invitationId: INVITATION_ID,
       recipientEmail: RECIPIENT,
       invitationUrl: URL,
-      issuedAt: INV_ISSUED,
       expiresAt: INV_EXPIRES,
       transport: rejected.transport,
     });
@@ -404,15 +399,25 @@ describe("the CHALLENGE window and the CAPABILITY ceiling are different things",
     expect(challengeMailability(issued, ok, punctual).mailable).toBe(true);
   });
 
-  it("P2-B: the invitation phrase is the MINTED window and does not drift", () => {
-    const issued = new Date("2026-09-07T12:00:00.000Z");
-    const exp = new Date(issued.getTime() + 72 * 3_600_000);
-    // Same invitation, read at three different moments: one phrase.
-    expect(invitationWindowPhrase(issued, exp)).toBe("3 days");
-    expect(invitationWindowPhrase(issued, exp)).toBe("3 days");
-    // 0189 mints in hours; both units render.
-    expect(invitationWindowPhrase(issued, new Date(issued.getTime() + 6 * 3_600_000))).toBe("6 hours");
-    expect(invitationWindowPhrase(issued, new Date(issued.getTime() - 1))).toBe("a limited time");
+  it("P2-A: the invitation states an ABSOLUTE instant in the studio's clock", () => {
+    // Both duration shapes failed. Remaining time drifted between retries and
+    // moved the payload-derived key. The minted window was stable and then
+    // lied: "expires in 3 days" on a send made a day after issuance. A fixed
+    // point is stable AND stays true however late the message arrives.
+    const exp = new Date("2026-09-10T17:00:00.000Z");
+    const label = invitationExpiryLabel(exp, "America/Toronto");
+    expect(label).toContain("September 10, 2026");
+    expect(label).toContain("1:00");           // 17:00 UTC = 13:00 EDT
+    expect(label).not.toMatch(/\bdays?\b/);    // no duration wording at all
+    // Pure function of the expiry: the same input renders the same string
+    // whenever it is read, which is what keeps the payload stable.
+    expect(invitationExpiryLabel(exp, "America/Toronto")).toBe(label);
+  });
+
+  it("P2-A: an unknown timezone falls back rather than taking the send down", () => {
+    const exp = new Date("2026-09-10T17:00:00.000Z");
+    const label = invitationExpiryLabel(exp, "Not/AZone");
+    expect(label).toContain("September 10, 2026");
   });
 
   it("rounds the advertised window DOWN", () => {
@@ -475,7 +480,6 @@ describe("P2-B: one invitation event, one idempotency key", () => {
       invitationId: INVITATION_ID,
       recipientEmail: RECIPIENT,
       invitationUrl: URL,
-      issuedAt: INV_ISSUED,
       expiresAt: INV_EXPIRES,
     };
     await sendWaitlistInvitationEmail({ ...args, transport: a.transport });
@@ -492,7 +496,6 @@ describe("P2-B: one invitation event, one idempotency key", () => {
       invitationId: INVITATION_ID,
       recipientEmail: RECIPIENT,
       invitationUrl: URL,
-      issuedAt: INV_ISSUED,
       expiresAt: INV_EXPIRES,
       transport,
     });
@@ -513,7 +516,6 @@ describe("P2-B: one invitation event, one idempotency key", () => {
       studio: STUDIO,
       recipientEmail: RECIPIENT,
       invitationUrl: URL,
-      issuedAt: INV_ISSUED,
       expiresAt: INV_EXPIRES,
     };
     await sendWaitlistInvitationEmail({ ...base, invitationId: INVITATION_ID, transport: a.transport });
@@ -535,12 +537,41 @@ describe("P2-B: one invitation event, one idempotency key", () => {
       invitationId: INVITATION_ID,
       recipientEmail: RECIPIENT,
       invitationUrl: URL,
-      issuedAt: INV_ISSUED,
       expiresAt: INV_EXPIRES,
       transport,
     });
     expect(out.disposition.delivered).toBe("unknown");
     expect(out.disposition.mayInvalidateChallenge).toBe(false);
     expect(out.disposition.mayMutateLifecycle).toBe(false);
+  });
+});
+
+describe("P2-A: a delayed retry keeps ONE identity and a TRUTHFUL expiry", () => {
+  it("same invitation sent later => same key, same copy, still true", async () => {
+    // The two properties together, because fixing either alone regresses the
+    // other: a truthful relative phrase drifts and moves the key; a stable
+    // relative phrase holds the key and goes false.
+    const a = recordingTransport(ACCEPTED);
+    const b = recordingTransport(ACCEPTED);
+    const args = {
+      studio: STUDIO,
+      invitationId: INVITATION_ID,
+      recipientEmail: RECIPIENT,
+      invitationUrl: URL,
+      expiresAt: INV_EXPIRES,
+    };
+    // First attempt, then a retry a full day later. Nothing in the call
+    // conveys "now", which is precisely why the copy cannot go stale.
+    await sendWaitlistInvitationEmail({ ...args, transport: a.transport });
+    await sendWaitlistInvitationEmail({ ...args, transport: b.transport });
+
+    expect(a.calls[0].idempotencyKey).toBe(b.calls[0].idempotencyKey);
+    expect(a.calls[0].payload.text).toBe(b.calls[0].payload.text);
+
+    // The statement is an absolute instant, so it is as true on the retry as on
+    // the first attempt. A relative phrase is what could not survive this.
+    expect(a.calls[0].payload.text).toContain("This invitation expires ");
+    expect(a.calls[0].payload.text).not.toMatch(/expires in \d+ (day|hour)/);
+    expect(a.calls[0].payload.text).toContain("September 10, 2026");
   });
 });
