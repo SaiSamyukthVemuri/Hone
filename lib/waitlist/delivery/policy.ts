@@ -98,6 +98,18 @@ export const PROOF_CHALLENGE_TTL_TARGET_MINUTES = 20;
  */
 export const MUTATION_CAPABILITY_TTL_CEILING_MINUTES = 30;
 
+/**
+ * How far after the mint this module will still mail a challenge.
+ *
+ * The email advertises the MINTED window, because the idempotency key carries
+ * no payload digest and the payload must therefore be a pure function of the
+ * challenge. That sentence stops being true as the gap grows, so rather than
+ * let the copy drift into a false claim, a stale send is refused and the caller
+ * mints again. In the real flow mint and send happen in one request, so this is
+ * a tripwire rather than a routine path.
+ */
+export const PROOF_SEND_MAX_DELAY_AFTER_MINT_SECONDS = 60;
+
 /** Minimum gap between two proof sends for one invitation. */
 export const PROOF_RESEND_MIN_INTERVAL_SECONDS = 60;
 
@@ -124,11 +136,71 @@ export const PROOF_MAX_SENDS_PER_INVITATION = 5;
  *   `PROOF_CHALLENGE_TTL_TARGET_MINUTES` means the check follows the request
  *   automatically if the target ever moves, and it imports no foreign number.
  */
-export function isChallengeMailable(expiresAt: Date, now: Date): boolean {
-  const ms = expiresAt.getTime() - now.getTime();
-  if (!Number.isFinite(ms)) return false;
-  if (ms <= 0) return false;
-  return ms <= PROOF_CHALLENGE_TTL_TARGET_MINUTES * 60_000;
+export type ChallengeMailability =
+  | { mailable: true }
+  | {
+      mailable: false;
+      reason:
+        | "minted_window_exceeds_request"
+        | "already_elapsed"
+        | "stale_since_mint";
+    };
+
+/**
+ * Whether a minted CHALLENGE is one this module is willing to mail.
+ *
+ * THREE INDEPENDENT CHECKS, and they are independent on purpose. An earlier
+ * revision folded the first two into one comparison against the SEND time,
+ * which is not the contract: the contract is about the duration MINTED. A
+ * 30-minute challenge delivered ten minutes late has twenty minutes left and
+ * passed, even though nothing had ever authorised a thirty-minute mint.
+ *
+ *   MINTED WINDOW > WHAT DELIVERY REQUESTED -> refuse. Measured
+ *   `expiresAt - issuedAt`, never against `now`, so a delayed send can no
+ *   longer make an overlong mint look compliant. This is not a claim about
+ *   B2's bound, which may legitimately be wider; it asks only whether the mint
+ *   honoured the window THIS module asked for.
+ *
+ *   ALREADY ELAPSED -> refuse, separately and with its own reason. Emailing a
+ *   dead code costs the recipient a send from a bounded budget to discover it.
+ *
+ *   SENT LONG AFTER THE MINT -> refuse. This one exists because of the copy.
+ *   The email advertises the MINTED window (it must: the idempotency key
+ *   carries no payload digest, so the payload has to be a pure function of the
+ *   challenge). That sentence is only true while send follows mint closely. In
+ *   the real flow it does — the same request mints and sends — so a large gap
+ *   means something is wrong, and mailing "expires in 20 minutes" to someone
+ *   who has five left is a false statement this module should not make.
+ */
+export function challengeMailability(
+  issuedAt: Date,
+  expiresAt: Date,
+  now: Date,
+): ChallengeMailability {
+  const minted = expiresAt.getTime() - issuedAt.getTime();
+  const remaining = expiresAt.getTime() - now.getTime();
+  const sinceMint = now.getTime() - issuedAt.getTime();
+  if (
+    !Number.isFinite(minted) ||
+    !Number.isFinite(remaining) ||
+    !Number.isFinite(sinceMint)
+  ) {
+    return { mailable: false, reason: "already_elapsed" };
+  }
+  // A non-positive mint means the expiry is at or before issuance, which is
+  // definitionally elapsed rather than overlong — the label has to match the
+  // fault or it sends whoever reads it looking in the wrong place.
+  if (minted <= 0) return { mailable: false, reason: "already_elapsed" };
+  // Order matters for the REASON, not the outcome: an overlong mint is a defect
+  // in the minter and worth naming even if the code has also since expired.
+  if (minted > PROOF_CHALLENGE_TTL_TARGET_MINUTES * 60_000) {
+    return { mailable: false, reason: "minted_window_exceeds_request" };
+  }
+  if (remaining <= 0) return { mailable: false, reason: "already_elapsed" };
+  if (sinceMint > PROOF_SEND_MAX_DELAY_AFTER_MINT_SECONDS * 1_000) {
+    return { mailable: false, reason: "stale_since_mint" };
+  }
+  return { mailable: true };
 }
 
 /**
@@ -257,4 +329,33 @@ export function classifyDelivery(outcome: SendOutcomeShape): DeliveryDisposition
     mayMutateLifecycle: false,
     reason: outcome.code ? `rejected_${outcome.code}` : "rejected",
   };
+}
+
+// ---------------------------------------------------------------------------
+// INVITATION WINDOW
+// ---------------------------------------------------------------------------
+
+/**
+ * The invitation's MINTED window, phrased for the email.
+ *
+ * Derived from `expires_at - issued_at`, never from the remaining time. The
+ * invitation send now keys on the event alone — its payload carries the raw
+ * bearer token, which must not be hashed into a header the provider retains —
+ * so the payload has to be a pure function of the invitation. A remaining-time
+ * phrase is a wall clock: it moved from "3 days" to "2 days" between retries,
+ * changed the payload, changed the key, and let the provider send a SECOND
+ * invitation for one spot. That is the exact duplicate this wrapper exists to
+ * prevent, and it was reproduced before this function existed.
+ *
+ * 0189 mints invitations in HOURS (`p_ttl_hours`, default 72, clamped 1..168),
+ * so hours and days are the only units this needs.
+ */
+export function invitationWindowPhrase(issuedAt: Date, expiresAt: Date): string {
+  const ms = expiresAt.getTime() - issuedAt.getTime();
+  if (!Number.isFinite(ms) || ms <= 0) return "a limited time";
+  const hours = Math.floor(ms / 3_600_000);
+  if (hours < 1) return "less than an hour";
+  if (hours < 48) return hours === 1 ? "1 hour" : `${hours} hours`;
+  const days = Math.floor(hours / 24);
+  return days === 1 ? "1 day" : `${days} days`;
 }

@@ -7,7 +7,9 @@ import {
 } from "@/lib/waitlist/delivery/send";
 import {
   classifyDelivery,
-  isChallengeMailable,
+  challengeMailability,
+  invitationWindowPhrase,
+  PROOF_SEND_MAX_DELAY_AFTER_MINT_SECONDS,
   proofWindowMinutes,
   PROOF_CHALLENGE_TTL_TARGET_MINUTES,
   MUTATION_CAPABILITY_TTL_CEILING_MINUTES,
@@ -55,6 +57,10 @@ const INVITATION_ID = "22222222-2222-4222-8222-222222222222";
 const CHALLENGE_ID = "33333333-3333-4333-8333-333333333333";
 const RECIPIENT = "prospect@example.test";
 const URL = "https://hone.care/waitlist/invitation/RAWTOKEN";
+// 0189 mints invitations in hours (p_ttl_hours default 72). The MINTED window is
+// what the email advertises, so it cannot drift between retries.
+const INV_ISSUED = new Date("2026-09-07T12:00:00.000Z");
+const INV_EXPIRES = new Date(INV_ISSUED.getTime() + 72 * 3_600_000);
 
 describe("invitation delivery", () => {
   it("sends studio-branded, with the studio's Reply-To authority", async () => {
@@ -64,7 +70,8 @@ describe("invitation delivery", () => {
       invitationId: INVITATION_ID,
       recipientEmail: RECIPIENT,
       invitationUrl: URL,
-      expiresInPhrase: "3 days",
+      issuedAt: INV_ISSUED,
+      expiresAt: INV_EXPIRES,
       transport,
     });
 
@@ -87,7 +94,8 @@ describe("invitation delivery", () => {
       invitationId: INVITATION_ID,
       recipientEmail: RECIPIENT,
       invitationUrl: URL,
-      expiresInPhrase: "3 days",
+      issuedAt: INV_ISSUED,
+      expiresAt: INV_EXPIRES,
       transport,
     });
     expect(calls[0].payload.replyTo).toBe("owner@willow.test");
@@ -105,7 +113,8 @@ describe("invitation delivery", () => {
       invitationId: INVITATION_ID,
       recipientEmail: RECIPIENT,
       invitationUrl: URL,
-      expiresInPhrase: "3 days",
+      issuedAt: INV_ISSUED,
+      expiresAt: INV_EXPIRES,
       transport: a.transport,
     });
 
@@ -115,7 +124,8 @@ describe("invitation delivery", () => {
       invitationId: "44444444-4444-4444-8444-444444444444",
       recipientEmail: RECIPIENT,
       invitationUrl: URL,
-      expiresInPhrase: "3 days",
+      issuedAt: INV_ISSUED,
+      expiresAt: INV_EXPIRES,
       transport: b.transport,
     });
 
@@ -133,7 +143,8 @@ describe("invitation delivery", () => {
       invitationId: INVITATION_ID,
       recipientEmail: RECIPIENT,
       invitationUrl: URL,
-      expiresInPhrase: "3 days",
+      issuedAt: INV_ISSUED,
+      expiresAt: INV_EXPIRES,
     };
     await sendWaitlistInvitationEmail({ ...args, transport: a.transport });
     await sendWaitlistInvitationEmail({ ...args, transport: b.transport });
@@ -150,7 +161,8 @@ describe("invitation delivery", () => {
       invitationId: INVITATION_ID,
       recipientEmail: RECIPIENT,
       invitationUrl: URL,
-      expiresInPhrase: "3 days",
+      issuedAt: INV_ISSUED,
+      expiresAt: INV_EXPIRES,
       transport: rejected.transport,
     });
     expect(out.disposition.mayMutateLifecycle).toBe(false);
@@ -231,7 +243,9 @@ describe("recipient proof delivery", () => {
     });
     expect(calls).toHaveLength(0); // nothing was transmitted
     expect(out.disposition.delivered).toBe("no");
-    expect(out.disposition.reason).toBe("rejected_challenge_window_not_mailable");
+    expect(out.disposition.reason).toBe(
+      "rejected_challenge_minted_window_exceeds_request",
+    );
   });
 
   it("REFUSES to send a proof that has already elapsed", async () => {
@@ -242,14 +256,17 @@ describe("recipient proof delivery", () => {
       challengeId: CHALLENGE_ID,
       recipientEmail: RECIPIENT,
       code: "H4K2QF7P",
+      // A LEGITIMATE 20-minute mint, checked after its window ran out. The
+      // earlier fixture had the expiry before the mint, which is a different
+      // fault (a broken minter) and now reports as such.
       issuedAt: ISSUED,
-      expiresAt: new Date(NOW.getTime() - 1_000),
+      expiresAt: new Date(ISSUED.getTime() + 20 * 60_000),
       action: "book",
-      now: NOW,
+      now: new Date(ISSUED.getTime() + 21 * 60_000),
       transport,
     });
     expect(calls).toHaveLength(0);
-    expect(out.disposition.reason).toBe("rejected_challenge_window_not_mailable");
+    expect(out.disposition.reason).toBe("rejected_challenge_already_elapsed");
   });
 
   it("never puts the invitation URL beside the code", async () => {
@@ -318,8 +335,10 @@ describe("the CHALLENGE window and the CAPABILITY ceiling are different things",
     // accepting a 30-minute challenge, the two have been re-conflated.
     const now = new Date("2026-09-07T12:00:00.000Z");
     const at = (m: number) => new Date(now.getTime() + m * 60_000);
-    expect(isChallengeMailable(at(MUTATION_CAPABILITY_TTL_CEILING_MINUTES), now)).toBe(false);
-    expect(isChallengeMailable(at(25), now)).toBe(false);
+    expect(
+      challengeMailability(now, at(MUTATION_CAPABILITY_TTL_CEILING_MINUTES), now).mailable,
+    ).toBe(false);
+    expect(challengeMailability(now, at(25), now).mailable).toBe(false);
   });
 
   it("the capability ceiling is not mechanically established in this repository", () => {
@@ -334,13 +353,66 @@ describe("the CHALLENGE window and the CAPABILITY ceiling are different things",
   });
 
   it("accepts the requested window exactly and rejects a millisecond beyond it", () => {
-    const now = new Date("2026-09-07T12:00:00.000Z");
-    const at = (ms: number) => new Date(now.getTime() + ms);
+    const t0 = new Date("2026-09-07T12:00:00.000Z");
+    const at = (ms: number) => new Date(t0.getTime() + ms);
     const target = PROOF_CHALLENGE_TTL_TARGET_MINUTES * 60_000;
-    expect(isChallengeMailable(at(target), now)).toBe(true);
-    expect(isChallengeMailable(at(target + 1), now)).toBe(false);
-    expect(isChallengeMailable(at(0), now)).toBe(false);
-    expect(isChallengeMailable(at(-1), now)).toBe(false);
+    expect(challengeMailability(t0, at(target), t0).mailable).toBe(true);
+    expect(challengeMailability(t0, at(target + 1), t0).mailable).toBe(false);
+    expect(challengeMailability(t0, at(0), t0).mailable).toBe(false);
+    expect(challengeMailability(t0, at(-1), t0).mailable).toBe(false);
+  });
+
+  it("P2-A: measures the MINTED duration, never the time left at send", () => {
+    // The reproduction, inverted. A 30-minute mint delivered ten minutes late
+    // has twenty minutes remaining and USED TO PASS, because the guard compared
+    // against `now`. The contract is about what was minted.
+    const issued = new Date("2026-09-07T12:00:00.000Z");
+    const sentLate = new Date(issued.getTime() + 10 * 60_000);
+    const expires30 = new Date(issued.getTime() + 30 * 60_000);
+    const verdict = challengeMailability(issued, expires30, sentLate);
+    expect(verdict.mailable).toBe(false);
+    expect(verdict).toMatchObject({ reason: "minted_window_exceeds_request" });
+  });
+
+  it("P2-A: an elapsed challenge is refused SEPARATELY from an overlong one", () => {
+    // Distinct reasons, because the causes and the fixes differ: one is a
+    // defect in the minter, the other is ordinary lateness.
+    const issued = new Date("2026-09-07T12:00:00.000Z");
+    const ok = new Date(issued.getTime() + 20 * 60_000);
+    const after = new Date(issued.getTime() + 21 * 60_000);
+    expect(challengeMailability(issued, ok, after)).toMatchObject({
+      mailable: false,
+      reason: "already_elapsed",
+    });
+  });
+
+  it("P2-A: a stale send is refused so the copy cannot claim a false window", () => {
+    // The email advertises the MINTED window because the key carries no payload
+    // digest. That sentence stops being true as the gap grows, so rather than
+    // let the copy lie, a stale send is refused and the caller mints again.
+    const issued = new Date("2026-09-07T12:00:00.000Z");
+    const ok = new Date(issued.getTime() + 20 * 60_000);
+    const late = new Date(
+      issued.getTime() + (PROOF_SEND_MAX_DELAY_AFTER_MINT_SECONDS + 1) * 1_000,
+    );
+    expect(challengeMailability(issued, ok, late)).toMatchObject({
+      mailable: false,
+      reason: "stale_since_mint",
+    });
+    // Just inside the tolerance still sends.
+    const punctual = new Date(issued.getTime() + 5_000);
+    expect(challengeMailability(issued, ok, punctual).mailable).toBe(true);
+  });
+
+  it("P2-B: the invitation phrase is the MINTED window and does not drift", () => {
+    const issued = new Date("2026-09-07T12:00:00.000Z");
+    const exp = new Date(issued.getTime() + 72 * 3_600_000);
+    // Same invitation, read at three different moments: one phrase.
+    expect(invitationWindowPhrase(issued, exp)).toBe("3 days");
+    expect(invitationWindowPhrase(issued, exp)).toBe("3 days");
+    // 0189 mints in hours; both units render.
+    expect(invitationWindowPhrase(issued, new Date(issued.getTime() + 6 * 3_600_000))).toBe("6 hours");
+    expect(invitationWindowPhrase(issued, new Date(issued.getTime() - 1))).toBe("a limited time");
   });
 
   it("rounds the advertised window DOWN", () => {
@@ -387,5 +459,88 @@ describe("the rate-limit policy has ONE source", () => {
     // Pinned so a change to the policy is a deliberate edit here too, not a
     // silent drift — and the limiter reads these exact values by import.
     expect(LIMITER_SRC).toContain("PROOF_REQUEST_LIMITS[dimension]");
+  });
+});
+
+describe("P2-B: one invitation event, one idempotency key", () => {
+  it("the key does NOT move when the same invitation is retried later", async () => {
+    // The reproduction, inverted. `expiresInPhrase` used to be remaining time,
+    // so a retry a day later rendered "2 days" instead of "3 days", changed the
+    // payload, changed the payload-derived key, and let the provider send a
+    // SECOND invitation for one spot.
+    const a = recordingTransport(ACCEPTED);
+    const b = recordingTransport(ACCEPTED);
+    const args = {
+      studio: STUDIO,
+      invitationId: INVITATION_ID,
+      recipientEmail: RECIPIENT,
+      invitationUrl: URL,
+      issuedAt: INV_ISSUED,
+      expiresAt: INV_EXPIRES,
+    };
+    await sendWaitlistInvitationEmail({ ...args, transport: a.transport });
+    await sendWaitlistInvitationEmail({ ...args, transport: b.transport });
+    expect(a.calls[0].idempotencyKey).toBe(b.calls[0].idempotencyKey);
+    // And the rendered body is identical, which is what makes that true.
+    expect(a.calls[0].payload.text).toBe(b.calls[0].payload.text);
+  });
+
+  it("the key carries NO payload digest, so the bearer token is not in it", async () => {
+    const { transport, calls } = recordingTransport(ACCEPTED);
+    await sendWaitlistInvitationEmail({
+      studio: STUDIO,
+      invitationId: INVITATION_ID,
+      recipientEmail: RECIPIENT,
+      invitationUrl: URL,
+      issuedAt: INV_ISSUED,
+      expiresAt: INV_EXPIRES,
+      transport,
+    });
+    const key = calls[0].idempotencyKey ?? "";
+    expect(key).toContain(INVITATION_ID);
+    // A payload-digest key ends in 64 hex characters. This one must not.
+    expect(key).not.toMatch(/\/[0-9a-f]{64}$/);
+    expect(key).not.toContain("RAWTOKEN");
+  });
+
+  it("a DIFFERENT invitation cycle still gets a different key", async () => {
+    // The property the event scope exists for: an entry can be invited, expire,
+    // be requeued and be invited again, and the second cycle must not replay
+    // the first send's response.
+    const a = recordingTransport(ACCEPTED);
+    const b = recordingTransport(ACCEPTED);
+    const base = {
+      studio: STUDIO,
+      recipientEmail: RECIPIENT,
+      invitationUrl: URL,
+      issuedAt: INV_ISSUED,
+      expiresAt: INV_EXPIRES,
+    };
+    await sendWaitlistInvitationEmail({ ...base, invitationId: INVITATION_ID, transport: a.transport });
+    await sendWaitlistInvitationEmail({
+      ...base,
+      invitationId: "99999999-9999-4999-8999-999999999999",
+      transport: b.transport,
+    });
+    expect(a.calls[0].idempotencyKey).not.toBe(b.calls[0].idempotencyKey);
+  });
+
+  it("an ambiguous provider result stays ambiguous and mutates no lifecycle", async () => {
+    const { transport } = recordingTransport({
+      data: null,
+      error: { name: "concurrent_idempotent_requests" },
+    });
+    const out = await sendWaitlistInvitationEmail({
+      studio: STUDIO,
+      invitationId: INVITATION_ID,
+      recipientEmail: RECIPIENT,
+      invitationUrl: URL,
+      issuedAt: INV_ISSUED,
+      expiresAt: INV_EXPIRES,
+      transport,
+    });
+    expect(out.disposition.delivered).toBe("unknown");
+    expect(out.disposition.mayInvalidateChallenge).toBe(false);
+    expect(out.disposition.mayMutateLifecycle).toBe(false);
   });
 });

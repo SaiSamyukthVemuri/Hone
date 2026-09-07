@@ -144,10 +144,27 @@ function isRegisteredBearer(prefix: string): boolean {
   );
 }
 
+/**
+ * EXACT MATCH ONLY. Deliberately not `startsWith`.
+ *
+ * The permissive direction must be narrow. Review found that a subtree match
+ * blessed unreviewed descendants: classifying `/clients` silently exempted a
+ * future `app/clients/share/[token]`, which is discovered as `/clients/share`
+ * and would have shipped without the privacy headers or Sentry
+ * canonicalization. Confirmed by adding that route and watching the file stay
+ * green.
+ *
+ * So a nested dynamic route gets its own reviewed line or it fails. `/clients`
+ * and `/clients/sessions` are two separate entries below for exactly this
+ * reason — a person looked at each.
+ *
+ * `isRegisteredBearer` keeps its prefix match, and the asymmetry is the point:
+ * there, matching a subtree means MORE protection (the registry's `:token*`
+ * pattern already covers suffix segments), so a broad match errs safe. Here it
+ * would mean less.
+ */
 function isClassifiedNonBearer(prefix: string): boolean {
-  return CLASSIFIED_NON_BEARER.some(
-    (e) => prefix === e.prefix || prefix.startsWith(`${e.prefix}/`),
-  );
+  return CLASSIFIED_NON_BEARER.some((e) => prefix === e.prefix);
 }
 
 describe("every dynamic route is classified, so a bearer route cannot arrive unnoticed", () => {
@@ -182,6 +199,25 @@ describe("every dynamic route is classified, so a bearer route cannot arrive unn
     ).toEqual([]);
   });
 
+  it("a nested dynamic route is NOT blessed by its parent's classification", () => {
+    // The specific defect, pinned as a property rather than a scenario: no
+    // classified entry may be a strict ancestor of another discovered route's
+    // prefix unless that descendant is itself classified or registered.
+    const prefixes = discoverDynamicRoutes().map((r) => r.publicPrefix);
+    const blessedByAncestor = prefixes.filter(
+      (p) =>
+        !isClassifiedNonBearer(p) &&
+        !isRegisteredBearer(p) &&
+        CLASSIFIED_NON_BEARER.some((e) => p.startsWith(`${e.prefix}/`)),
+    );
+    expect(
+      blessedByAncestor,
+      `These routes sit under a non-bearer classification but are not ` +
+        `classified themselves. A parent's line must never vouch for a child: ` +
+        `classify or register each one. Offending: ${JSON.stringify(blessedByAncestor)}`,
+    ).toEqual([]);
+  });
+
   it("no route is BOTH registered and classified non-bearer", () => {
     // The two lists answer the same question and must not disagree. A prefix in
     // both means someone recorded a route as harmless while also protecting it,
@@ -198,7 +234,7 @@ describe("every dynamic route is classified, so a bearer route cannot arrive unn
     // the system it is supposed to describe.
     const prefixes = new Set(discovered.map((r) => r.publicPrefix));
     const stale = CLASSIFIED_NON_BEARER.filter(
-      (e) => ![...prefixes].some((p) => p === e.prefix || p.startsWith(`${e.prefix}/`)),
+      (e) => !prefixes.has(e.prefix),
     ).map((e) => e.prefix);
     expect(stale).toEqual([]);
   });

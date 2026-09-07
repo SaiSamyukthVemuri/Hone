@@ -7,8 +7,9 @@ import { studioEmailIdentity } from "@/lib/email/studio-identity";
 import { buildWaitlistInvitationEmail } from "@/lib/email/templates/waitlist-invitation";
 import { buildWaitlistRecipientProofEmail } from "@/lib/email/templates/waitlist-recipient-proof";
 import {
+  challengeMailability,
   classifyDelivery,
-  isChallengeMailable,
+  invitationWindowPhrase,
   proofWindowMinutes,
   type DeliveryDisposition,
 } from "./policy";
@@ -109,15 +110,22 @@ export async function sendWaitlistInvitationEmail(args: {
   recipientEmail: string;
   /** Absolute URL that RESOLVES the invitation. Must not mutate it. */
   invitationUrl: string;
-  /** Human phrase derived by the caller from the stored `expires_at`. */
-  expiresInPhrase: string;
+  /** Stored mint time, owned by the database. */
+  issuedAt: Date;
+  /** Stored expiry, owned by the database. With `issuedAt` it gives the MINTED
+   *  window the email advertises — a value that does not drift between
+   *  retries, which the event-only key below requires. */
+  expiresAt: Date;
   /** Test seam. Omitted in production, where the shared client is used. */
   transport?: IdempotentEmailTransport | null;
 }): Promise<DeliveryResult> {
   const email = buildWaitlistInvitationEmail({
     studioName: args.studio.name ?? "",
     invitationUrl: args.invitationUrl,
-    expiresInPhrase: args.expiresInPhrase,
+    // The MINTED window. A remaining-time phrase moved from "3 days" to
+    // "2 days" between retries, moved the payload-derived key with it, and let
+    // the provider send a second invitation for one spot.
+    expiresInPhrase: invitationWindowPhrase(args.issuedAt, args.expiresAt),
   });
 
   const outcome = await sendWaitlistEmailIdempotent({
@@ -133,6 +141,19 @@ export async function sendWaitlistInvitationEmail(args: {
     // From reads "<Studio> via Hone" and Reply-To resolves to the studio's own
     // contact authority rather than to Hone.
     studioIdentity: studioEmailIdentity(args.studio),
+    // THE INVITATION PAYLOAD CARRIES THE RAW BEARER TOKEN, inside the URL. Two
+    // reasons this send is event-only, and either alone would be sufficient:
+    //
+    //   1. IDEMPOTENCY. `eventScope` only PREFIXES the payload digest; it does
+    //      not replace it. So any drift in the rendered body minted a new key
+    //      and the provider would happily send a SECOND invitation for one
+    //      spot — the precise duplicate this wrapper exists to prevent.
+    //   2. SECRECY. The digest would otherwise be taken over a body containing
+    //      the token and transmitted in a header the provider retains. The
+    //      token is 256-bit so it is not enumerable the way a proof code is,
+    //      but a credential belongs in the body and nowhere else, and there is
+    //      no reason to keep the weaker case just because it is weaker.
+    payloadCarriesSecret: true,
     ...(args.transport !== undefined ? { transport: args.transport } : {}),
   });
 
@@ -186,10 +207,14 @@ export async function sendWaitlistRecipientProofEmail(args: {
 }): Promise<DeliveryResult> {
   const now = args.now ?? new Date();
 
-  if (!isChallengeMailable(args.expiresAt, now)) {
+  const mailability = challengeMailability(args.issuedAt, args.expiresAt, now);
+  if (!mailability.mailable) {
+    // The reason is carried through rather than collapsed, so an overlong mint
+    // is distinguishable from an expired one and from a stale send. They have
+    // different causes and different fixes.
     const disposition = classifyDelivery({
       status: "rejected",
-      code: "challenge_window_not_mailable",
+      code: `challenge_${mailability.reason}`,
     });
     return {
       disposition,

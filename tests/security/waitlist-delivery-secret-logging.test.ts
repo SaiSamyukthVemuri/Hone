@@ -195,7 +195,8 @@ describe("the invitation bearer token never reaches the log", () => {
       invitationId: INVITATION_ID,
       recipientEmail: RECIPIENT,
       invitationUrl: URL,
-      expiresInPhrase: "3 days",
+      issuedAt: new Date("2026-09-07T12:00:00.000Z"),
+      expiresAt: new Date("2026-09-10T12:00:00.000Z"),
       transport: {
         emails: {
           send: async (payload) => {
@@ -228,7 +229,8 @@ describe("no console sink receives a secret", () => {
       invitationId: INVITATION_ID,
       recipientEmail: RECIPIENT,
       invitationUrl: URL,
-      expiresInPhrase: "3 days",
+      issuedAt: new Date("2026-09-07T12:00:00.000Z"),
+      expiresAt: new Date("2026-09-10T12:00:00.000Z"),
       transport: transportReturning(ACCEPTED),
     });
     await sendWaitlistRecipientProofEmail({
