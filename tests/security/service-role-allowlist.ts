@@ -403,6 +403,24 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "verifyCancellationToken",
   },
   {
+    path: "lib/booking/waitlist-invitation.ts",
+    purpose:
+      "WAIT-03B B2 server authority for scoped new-client waitlist invitations.",
+    why:
+      "The accepted B1/B1.5c commands are granted to service_role ALONE -- anon and " +
+      "authenticated are revoked from every one of them by name -- so there is no " +
+      "RLS path to reach them and service_role is the only way to call them at all. " +
+      "Two distinct guards apply. issue/revoke/expire are practitioner-authorised: " +
+      "studio and actor come from getCurrentPractitionerWithStudio() and are never " +
+      "taken from the caller, so a practitioner cannot act into a studio they are " +
+      "not an active member of. resolve/begin/complete/redeem/decline are PUBLIC and " +
+      "guarded by secrets, not by a session: a 64-hex invitation token plus, for " +
+      "either mutation, a short-lived recipient capability that the database " +
+      "validates INSIDE its own locked transaction. This module never derives " +
+      "tenancy, admission or recipient identity itself.",
+    scopeGuard: "getCurrentPractitionerWithStudio",
+  },
+  {
     path: "lib/billing/manual-fee-eligibility.ts",
     purpose: "Payment / consent ledger helper.",
     why: "Invoked by authenticated actions and the signature-verified webhook; uses service-role for the payment_charge_attempts / consent RPCs and write-throughs. Scoped by the caller-supplied studio_id/client_id/appointment_id.",

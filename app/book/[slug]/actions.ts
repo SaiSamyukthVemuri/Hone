@@ -55,6 +55,11 @@ import {
   NEW_CLIENT_WAITLIST_REFUSAL_CODE,
 } from "@/lib/booking/new-client-waitlist";
 import {
+  authorizeInvitationForBooking,
+  consumeInvitationForBooking,
+  type BookingAuthorization,
+} from "@/lib/booking/waitlist-invitation";
+import {
   buildBookingMarketingConsentRow,
   MARKETING_CONSENT_FIELD,
   parseMarketingConsent,
@@ -363,7 +368,13 @@ export type PublicBookResult =
   | {
       ok: false;
       error: string;
-      code?: "slot_taken" | typeof NEW_CLIENT_WAITLIST_REFUSAL_CODE;
+      code?:
+        | "slot_taken"
+        | typeof NEW_CLIENT_WAITLIST_REFUSAL_CODE
+        // WAIT-03B B2. A scoped invitation was presented and did not authorise
+        // THIS request. Distinct from the plain waitlist refusal so a caller can
+        // tell "you need an invitation" from "your invitation doesn't cover this".
+        | "invitation_refused";
     };
 
 export async function publicBookAppointmentAction(formData: FormData): Promise<PublicBookResult> {
@@ -478,12 +489,50 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // client_type=existing is deliberately NOT intercepted. Returning clients
   // keep their entire booking path: this gate is admission control for NEW
   // intake only, not a studio-wide stop.
+  //
+  // WAIT-03B B2. A scoped invitation is the ONE way past this gate. The offer is
+  // authorised here but NOT consumed here: consumption happens one round trip
+  // before the appointment command below, so a request that fails validation in
+  // between does not burn the recipient's only invitation.
+  //
+  // The capability is deliberately not checked at this point. Checking it here
+  // and acting on it later would rebuild the check-then-act split that B1.5c
+  // retired the `validate_` oracle to eliminate. It is proved inside the locked
+  // redeem instead.
+  const invitationToken = trimmed(formData.get("invitation_token"));
+  const invitationCapability = trimmed(formData.get("invitation_capability"));
+  let invitationAuth: BookingAuthorization | null = null;
+
   if (clientType === "new" && isNewClientWaitlistEnabled(studio.slug)) {
-    return {
-      ok: false,
-      error: NEW_CLIENT_WAITLIST_BOOKING_REFUSAL,
-      code: NEW_CLIENT_WAITLIST_REFUSAL_CODE,
-    };
+    if (invitationToken && invitationCapability) {
+      const requestedStartsAt = new Date(startsAtRaw);
+      if (!Number.isNaN(requestedStartsAt.getTime())) {
+        invitationAuth = await authorizeInvitationForBooking({
+          rawToken: invitationToken,
+          studioId: studio.id,
+          studioTimezone: studio.timezone,
+          requestedServiceId: serviceId,
+          requestedStartsAt,
+          submittedEmail: email,
+        });
+      }
+    }
+
+    if (!invitationAuth || invitationAuth.kind !== "authorized") {
+      // Every refusal reason collapses to ONE message. A visitor probing with a
+      // forwarded link learns only that it did not work here -- never whether the
+      // token exists, whether it belongs to this studio, whether the address
+      // matched, or which half of the scope failed.
+      return {
+        ok: false,
+        error: invitationToken
+          ? "This invitation doesn't cover that booking. Please use the link and time from your invitation email."
+          : NEW_CLIENT_WAITLIST_BOOKING_REFUSAL,
+        code: invitationToken
+          ? "invitation_refused"
+          : NEW_CLIENT_WAITLIST_REFUSAL_CODE,
+      };
+    }
   }
 
   const start = new Date(startsAtRaw);
@@ -858,6 +907,33 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // command re-validates studio/client/service tenancy and the full public
   // availability contract under the studio lock, independently of the slot
   // re-check above.
+  // WAIT-03B B2. CONSUME THE INVITATION HERE, one round trip before the
+  // appointment commits -- not at the gate above.
+  //
+  // Redeem-before-book is deliberate. If the appointment then fails, the
+  // invitation is spent with no booking, which an operator can reissue. The other
+  // order risks TWO appointments from one invitation, which would break the
+  // admission guarantee the waitlist exists to provide. The residual window is
+  // this single round trip and cannot be closed without moving the booking engine
+  // into the database -- that is, without a second booking engine.
+  //
+  // Proof is validated inside this command's own locked transaction, so a bearer
+  // token that somehow reached this line still cannot mutate.
+  if (invitationAuth?.kind === "authorized") {
+    const redeemed = await consumeInvitationForBooking({
+      rawToken: invitationToken,
+      rawCapability: invitationCapability,
+    });
+    if (redeemed.kind !== "redeemed") {
+      return {
+        ok: false,
+        error:
+          "We couldn't confirm your invitation. Please reopen the link from your email and try again.",
+        code: "invitation_refused",
+      };
+    }
+  }
+
   const { data: rpcRows, error: rpcErr } = await admin.rpc(
     "create_public_appointment",
     {
