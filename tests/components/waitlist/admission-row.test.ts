@@ -8,13 +8,19 @@ import {
   type AdmissionEntry,
 } from "@/components/waitlist/admission-row";
 import {
-  ADMISSION_ACTIONS,
   STATUS_LABEL,
   STATUS_MEANING,
   WAITLIST_ENTRY_STATUSES,
   actionAvailability,
   type WaitlistEntryStatus,
 } from "@/lib/waitlist/admission-model";
+// This component renders the FULL menu — the five wired lifecycle actions plus
+// the two sending ones, which no server action carries. Both halves therefore
+// have to be named, and from the module that owns each.
+import {
+  B4_MENU_ACTIONS,
+  invitationActionAvailability,
+} from "@/lib/waitlist/b4-invitation-draft";
 
 // ===========================================================================
 // WAIT-03 B4 — the admission row renders against NON-AUTHORITATIVE fixtures
@@ -110,10 +116,10 @@ describe("the row states WHO is waiting and WHAT state they are in", () => {
 });
 
 describe("every action is shown, and every refusal explains itself", () => {
-  it("all five actions render for every status — none is hidden", () => {
+  it("every action renders for every status — none is hidden", () => {
     for (const status of WAITLIST_ENTRY_STATUSES) {
       const html = render(AdmissionActions({ status }) as ReactElement);
-      for (const action of ADMISSION_ACTIONS) {
+      for (const action of B4_MENU_ACTIONS) {
         expect(html, `${status}/${action}`).toContain(
           `data-testid="admission-action-${action}"`,
         );
@@ -123,7 +129,7 @@ describe("every action is shown, and every refusal explains itself", () => {
 
   it("a lifecycle refusal renders the model's exact reason", () => {
     const html = render(AdmissionActions({ status: "invited" }) as ReactElement);
-    const invite = actionAvailability("invite", "invited");
+    const invite = invitationActionAvailability("invite", "invited");
     expect(invite.available).toBe(false);
     expect(html).toContain((invite as { reason: string }).reason);
     expect(html).toContain('data-testid="admission-reason-invite"');
@@ -198,8 +204,8 @@ describe("mobile and tablet layout", () => {
 
   it("every action control carries the 44px touch floor", () => {
     const html = render(AdmissionActions({ status: "waiting" }) as ReactElement);
-    expect([...html.matchAll(/<button[^>]*>/g)]).toHaveLength(ADMISSION_ACTIONS.length);
-    for (const action of ADMISSION_ACTIONS) {
+    expect([...html.matchAll(/<button[^>]*>/g)]).toHaveLength(B4_MENU_ACTIONS.length);
+    for (const action of B4_MENU_ACTIONS) {
       // From the shared primitive, which ships min-height WITH inline-flex —
       // min-height has no effect on an inline box.
       const tag = buttonTag(html, action);

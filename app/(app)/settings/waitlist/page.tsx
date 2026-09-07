@@ -53,16 +53,39 @@ import {
 // same millisecond still have one stable, repeatable position, so the list
 // does not shuffle between renders — and the index backing it is declared in
 // exactly that column order.
+//
+// EVERY ROW STAYS REACHABLE, AND SO DOES ITS ONLY WAY OUT. Each section shows
+// SECTION_PAGE_SIZE rows at a time and is navigable past that with
+// `?section=<status>&page=<n>`. That is not a display nicety: an entry's escape
+// action lives on its own row, so a row that cannot be displayed is an entry
+// that cannot be released, expired or returned to the queue — and "Claim next
+// N" can push the held section past one page on its own. The default view is
+// unchanged, first page of all five sections; a group with more offers a link
+// to the rest instead of a sentence saying it is incomplete.
 // ===========================================================================
 
 /**
- * One bounded page of the active queue. This is a display bound, NOT the size
- * of the queue: `count` below is a separate authoritative count over the whole
- * filtered set, so a studio with more waiting people than this is told the real
- * number and told that the list is truncated. Reading `data.length` as the
+ * How many rows one section shows at a time.
+ *
+ * A PAGE SIZE, NOT A CAP — and the difference is the whole point. Under a cap,
+ * a section holding more than this stranded every row past it TOGETHER WITH ITS
+ * ONLY ESCAPE ACTION: a claimed entry beyond the hundredth could never be
+ * released, an invited one never expired, an expired one never returned to the
+ * queue. "Claim next N" could itself create such rows, so the surface could
+ * manufacture entries it was then unable to reach. Raising the number would
+ * only move that cliff; every section is therefore NAVIGABLE past it, via
+ * `?section=<status>&page=<n>` below.
+ *
+ * `count` remains a separate authoritative count over the whole filtered set,
+ * so a studio is always told the real number. Reading `data.length` as the
  * queue size is exactly the lie this split exists to prevent.
  */
 const SECTION_PAGE_SIZE = 100;
+
+/** This route. Pagination links are plain hrefs to it: the read is decided
+ *  entirely on the server, so a full navigation is the honest mechanism and
+ *  costs the page no client JavaScript. */
+const QUEUE_PATH = "/settings/waitlist";
 
 type WaitlistRow = {
   id: string;
@@ -75,7 +98,8 @@ type WaitlistRow = {
 
 /**
  * The sections, in the order they appear — most actionable first. This list is
- * also the set of states READ: one bounded query per entry below.
+ * also the set of states READ: one paged query per entry below, and the set a
+ * `?section=` value is validated against.
  *
  * `converted` and `removed` are terminal history and are deliberately absent.
  * Reading them would spend a bound on rows nothing can be done to, and an
@@ -124,39 +148,103 @@ function ageLabel(days: number): string {
   return `${days} day${days === 1 ? "" : "s"}`;
 }
 
-export default async function WaitlistSettingsPage() {
+/** Next hands a repeated query param through as an array. Take the first
+ *  rather than stringifying, which would turn `?page=2&page=3` into "2,3". */
+function firstParam(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+/**
+ * The requested page, 1-based.
+ *
+ * Anything unparseable, zero or negative becomes page one. A bad URL must land
+ * on something real: rendering an empty section instead would read as "nobody
+ * here", which is the one wrong answer this surface can give.
+ */
+function parsePageNumber(raw: string | undefined): number {
+  const n = Number.parseInt(raw ?? "", 10);
+  return Number.isFinite(n) && n >= 1 ? n : 1;
+}
+
+function sectionHref(status: WaitlistEntryStatus, page = 1): string {
+  return page <= 1
+    ? `${QUEUE_PATH}?section=${status}`
+    : `${QUEUE_PATH}?section=${status}&page=${page}`;
+}
+
+const NAV_LINK_CLASS =
+  "inline-flex min-h-[44px] items-center rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900";
+
+export default async function WaitlistSettingsPage({
+  searchParams,
+}: {
+  // Next 15 App Router: searchParams is async, and a repeated param arrives as
+  // an array. Both values are browser-controlled, so the type says so rather
+  // than lying about it — and neither reaches a query except through the
+  // validation immediately below.
+  searchParams?: Promise<{ section?: string | string[]; page?: string | string[] }>;
+}) {
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
 
   if (practitioner.role !== "owner") {
     return <DenialCard>Only studio owners can see the new-client waitlist.</DenialCard>;
   }
 
+  // A SECTION IS HONOURED ONLY WHEN IT NAMES ONE OF THE FIVE READ STATES.
+  // A typo, a terminal status, or an injected value falls back to the
+  // all-sections view rather than rendering an empty page — and because the
+  // value is matched against SECTIONS rather than passed through, nothing
+  // browser-supplied ever reaches the `status` filter.
+  const params = (await searchParams) ?? {};
+  const requestedSection = firstParam(params.section);
+  const focusedStatus =
+    SECTIONS.find(({ status }) => status === requestedSection)?.status ?? null;
+  // `page` is meaningless without a section, so it is only read alongside one.
+  const pageNumber = focusedStatus ? parsePageNumber(firstParam(params.page)) : 1;
+
   // RLS-scoped user client, NOT the service-role client: the read is genuinely
   // gated by `is_studio_owner` at the database rather than by this page having
   // remembered to filter. The explicit studio filter is defence in depth and
   // the leading column of the queue index.
   //
-  // ONE BOUNDED READ PER SECTION, not one global cap across all of them.
+  // ONE PAGED READ PER SECTION, not one global cap across all of them.
   //
-  // A single `.limit()` over every active state lets one state starve the
-  // others: fill the page with old expired/released rows and a freshly CLAIMED
-  // entry falls off the end, taking its only escape action (Release) with it.
-  // The operator would then have claimed someone they cannot subsequently
-  // reach. Each section therefore carries its own bound and its own exact
-  // count, so no section can be crowded out by another's volume — and the
-  // existing (studio_id, status, joined_at, id) index serves exactly this shape.
+  // A single bound over every active state lets one state starve the others:
+  // fill the page with old expired/released rows and a freshly CLAIMED entry
+  // falls off the end, taking its only escape action (Release) with it. The
+  // operator would then have claimed someone they cannot subsequently reach.
+  // Each section therefore carries its own window and its own exact count, so
+  // no section can be crowded out by another's volume — and the existing
+  // (studio_id, status, joined_at, id) index serves exactly this shape.
+  //
+  // ORDERING IS UNTOUCHED BY PAGING. `.range()` windows the SAME
+  // (joined_at, id) total order the index declares, so page 2 is the rows the
+  // database itself puts after page 1. Nothing here re-sorts or re-ranks.
   const supabase = await createClient();
+  const rangeFrom = (pageNumber - 1) * SECTION_PAGE_SIZE;
   const sectionReads = await Promise.all(
     SECTIONS.map(async ({ status }) => {
-      const res = await supabase
+      // IN A FOCUSED VIEW THE OTHER FOUR SECTIONS ARE STILL COUNTED — head-only,
+      // so no rows come back but their exact counts do. Without that, the
+      // headline "Waitlist entries: N" would quietly change meaning from "the
+      // whole queue" to "this group", which is a different claim under the same
+      // words. Five reads either way.
+      const listed = focusedStatus === null || focusedStatus === status;
+      const from = focusedStatus === status ? rangeFrom : 0;
+      const query = supabase
         .from("new_client_waitlist_entries")
-        .select("id,name,email,phone,joined_at,status", { count: "exact" })
+        .select("id,name,email,phone,joined_at,status", {
+          count: "exact",
+          head: !listed,
+        })
         .eq("studio_id", studio.id)
         .eq("status", status)
         .order("joined_at", { ascending: true })
-        .order("id", { ascending: true })
-        .limit(SECTION_PAGE_SIZE);
-      return { status, res };
+        .order("id", { ascending: true });
+      const res = await (listed
+        ? query.range(from, from + SECTION_PAGE_SIZE - 1)
+        : query);
+      return { status, res, from };
     }),
   );
 
@@ -184,22 +272,34 @@ export default async function WaitlistSettingsPage() {
 
   const bySection = new Map<
     WaitlistEntryStatus,
-    { rows: WaitlistRow[]; total: number }
+    { rows: WaitlistRow[]; total: number; from: number }
   >();
-  for (const { status, res } of sectionReads) {
+  for (const { status, res, from } of sectionReads) {
     const sectionRows = (res.data ?? []) as WaitlistRow[];
     // The authoritative total per section, from its own count — never
-    // `rows.length`, which is capped.
-    bySection.set(status, { rows: sectionRows, total: res.count ?? sectionRows.length });
+    // `rows.length`, which is one page of it. `from` travels with the rows
+    // because "Showing 101–150" is a claim about the WINDOW, and only the read
+    // knows which window it asked for.
+    bySection.set(status, {
+      rows: sectionRows,
+      total: res.count ?? sectionRows.length,
+      from,
+    });
   }
+  // Only the sections actually being listed contribute rows; a head-only read
+  // has none by construction.
   const rows = SECTIONS.flatMap(({ status }) => bySection.get(status)?.rows ?? []);
+  // The headline counts the WHOLE queue in both views, because every section is
+  // counted in both views.
   const active = SECTIONS.reduce((n, { status }) => n + (bySection.get(status)?.total ?? 0), 0);
-  const truncated = SECTIONS.some(
-    ({ status }) => (bySection.get(status)?.rows.length ?? 0) < (bySection.get(status)?.total ?? 0),
-  );
-  // Whether anyone is waiting is now the waiting section's OWN exact count, so
-  // it no longer depends on what happens to fit in a shared page.
+  // Whether anyone is waiting is the waiting section's OWN exact count, so it
+  // no longer depends on what happens to fit in a shared page.
   const anyoneWaiting = (bySection.get("waiting")?.total ?? 0) > 0;
+  // The FOCUSED view renders one section; the default renders all five, first
+  // page each — the same read count, and the same rows a reader saw before.
+  const visibleSections = focusedStatus
+    ? SECTIONS.filter(({ status }) => status === focusedStatus)
+    : SECTIONS;
   const now = Date.now();
 
   // WHETHER AN INVITATION HAS RUN OUT IS A DATABASE FACT, NOT A GUESS.
@@ -347,29 +447,90 @@ export default async function WaitlistSettingsPage() {
         </div>
       ) : (
         <>
-          {truncated && (
-            <p className="text-sm text-neutral-500">
-              Showing the {rows.length} longest-waiting of {active}. Some groups
-              below may therefore be incomplete.
+          {focusedStatus && (
+            <p className="text-sm">
+              <a href={QUEUE_PATH} className="underline">
+                Back to all groups
+              </a>
             </p>
           )}
 
-          {SECTIONS.map(({ status, heading }) => {
-            const group = rows.filter((r) => r.status === status);
-            if (group.length === 0) return null;
+          {visibleSections.map(({ status, heading }) => {
+            const group = bySection.get(status);
+            if (!group) return null;
+            const focused = focusedStatus === status;
+            // IN THE ALL-GROUPS VIEW an empty group is simply absent: an
+            // operator queue shows what still needs attention. IN A FOCUSED
+            // VIEW the group was asked for by name, so it must answer even when
+            // the answer is "nobody" — an absent section would read as a broken
+            // link rather than an empty group.
+            if (!focused && group.total === 0) return null;
+            const firstShown = group.from + 1;
+            const lastShown = group.from + group.rows.length;
+            // A PAGE PAST THE END returns no rows against a non-zero count.
+            // Rendering that as an empty section would say "nobody here" about
+            // a group that is not empty, so it says what actually happened and
+            // offers the way back.
+            const pastEnd = focused && group.rows.length === 0 && group.total > 0;
+            const hasPrev = focused && pageNumber > 1;
+            const hasNext = focused && lastShown < group.total;
             return (
               <section key={status} className="flex flex-col gap-3">
                 <h3 className="text-sm font-medium" data-testid={`waitlist-section-${status}`}>
-                  {heading} <span className="tabular-nums">({group.length})</span>
+                  {/* THE GROUP'S OWN EXACT COUNT, not the number on screen.
+                      `rows.length` here would restate the page size and tell a
+                      studio with 150 held entries that it has 100. */}
+                  {heading} <span className="tabular-nums">({group.total})</span>
                 </h3>
                 <p className="text-sm text-neutral-500">{STATUS_MEANING[status]}</p>
+
+                {/* WHAT IS ON SCREEN, AND HOW TO REACH THE REST. The heading
+                    carries the whole group; this line carries the window, and
+                    in the all-groups view it carries the way through. */}
+                {focused ? (
+                  pastEnd ? (
+                    <p className="text-sm text-neutral-500">
+                      That page is past the end of this group, which holds{" "}
+                      {group.total}.{" "}
+                      <a
+                        href={sectionHref(status)}
+                        data-testid="waitlist-page-first"
+                        className="underline"
+                      >
+                        Go to the first page
+                      </a>
+                    </p>
+                  ) : group.total === 0 ? (
+                    <p className="text-sm text-neutral-500">
+                      Nobody is in this group right now.
+                    </p>
+                  ) : (
+                    <p className="text-sm text-neutral-500">
+                      Showing {firstShown}–{lastShown} of {group.total}.
+                    </p>
+                  )
+                ) : (
+                  group.rows.length < group.total && (
+                    <p className="text-sm text-neutral-500">
+                      Showing the {group.rows.length} longest-waiting of{" "}
+                      {group.total}.{" "}
+                      <a
+                        href={sectionHref(status)}
+                        data-testid={`waitlist-section-all-${status}`}
+                        className="underline"
+                      >
+                        Show all {group.total}
+                      </a>
+                    </p>
+                  )
+                )}
 
                 {/* One card per person, stacking naturally on a phone: no
                     horizontal table to scroll at 390px, and every contact detail
                     is selectable text so it can be copied straight into an email
                     or a phone app. */}
                 <ul className="flex flex-col gap-3">
-                  {group.map((row) => {
+                  {group.rows.map((row) => {
                     const days = daysWaiting(row.joined_at, now);
                     // PRESENTATION AVAILABILITY COMES FROM STORED STATE, never
                     // from firing a command and rendering its refusal. The RPC
@@ -507,6 +668,33 @@ export default async function WaitlistSettingsPage() {
                     );
                   })}
                 </ul>
+
+                {/* PREV / NEXT — what turns a page size into a page. Without
+                    it, row 101 of a group and the only action that can move it
+                    are both unreachable. Rendered only where there is somewhere
+                    to go, so a single-page group carries no dead controls. */}
+                {(hasPrev || hasNext) && (
+                  <nav aria-label={`${heading} pages`} className="flex flex-wrap gap-2">
+                    {hasPrev && (
+                      <a
+                        href={sectionHref(status, pageNumber - 1)}
+                        data-testid="waitlist-page-prev"
+                        className={NAV_LINK_CLASS}
+                      >
+                        Previous
+                      </a>
+                    )}
+                    {hasNext && (
+                      <a
+                        href={sectionHref(status, pageNumber + 1)}
+                        data-testid="waitlist-page-next"
+                        className={NAV_LINK_CLASS}
+                      >
+                        Next
+                      </a>
+                    )}
+                  </nav>
+                )}
               </section>
             );
           })}

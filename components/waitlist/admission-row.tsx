@@ -3,9 +3,13 @@ import { cx } from "@/components/ui/control-base";
 import {
   STATUS_LABEL,
   STATUS_MEANING,
-  allActionAvailability,
   type WaitlistEntryStatus,
 } from "@/lib/waitlist/admission-model";
+// The full menu — the five wired lifecycle actions PLUS invite and reinvite,
+// neither of which any server action carries. That is why it is imported from
+// the B4 module rather than the live one: this component is the prototype's
+// surface, and nothing under `app/` renders it.
+import { allActionAvailability } from "@/lib/waitlist/b4-invitation-draft";
 
 // ===========================================================================
 // WAIT-03 B4 — one waitlist entry, its state, and what may be done to it

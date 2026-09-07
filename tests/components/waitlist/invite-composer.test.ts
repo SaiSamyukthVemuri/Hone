@@ -13,7 +13,7 @@ import {
   emptyDraft,
   type DraftStepId,
   type InvitationDraft,
-} from "@/lib/waitlist/admission-model";
+} from "@/lib/waitlist/b4-invitation-draft";
 
 // ===========================================================================
 // WAIT-03 B4 — the composer never promises what the server cannot do

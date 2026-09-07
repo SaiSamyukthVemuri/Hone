@@ -5,35 +5,27 @@ import { join } from "node:path";
 import {
   ACTION_LABEL,
   ADMISSION_ACTIONS,
-  BRIEF_LABEL_MAP,
-  NEXT_N_IS_NOT_SELECTION,
-  PENDING_B2_NOTICE,
   STATUS_LABEL,
   STATUS_MEANING,
-  STEP_BACKING,
-  TTL_HOURS_DEFAULT,
-  TTL_HOURS_MAX,
-  TTL_HOURS_MIN,
-  UNMODELLED_BRIEF_STATES,
   WAITLIST_ENTRY_STATUSES,
   actionAvailability,
-  allActionAvailability,
   statusMeaning,
-  emptyDraft,
-  reviewSummary,
-  validateDraft,
-  validateTtlHours,
   type WaitlistEntryStatus,
 } from "@/lib/waitlist/admission-model";
 
 // ===========================================================================
-// WAIT-03 B4 — the admission UI state model
+// THE WAITLIST LIFECYCLE A STUDIO CAN ACTUALLY DRIVE
 // ===========================================================================
 //
-// This model is fixture-driven and pre-B2, so the ONE thing that can make it
-// dishonest is drifting from the shipped database. The first block therefore
-// derives the lifecycle vocabulary FROM THE MIGRATION rather than comparing two
-// hand-written lists — a list that certifies itself proves nothing.
+// Every action this model decides is wired to a shipped command, so the ONE
+// thing that can make it dishonest is drifting from the shipped database. The
+// first block therefore derives the lifecycle vocabulary FROM THE MIGRATION
+// rather than comparing two hand-written lists — a list that certifies itself
+// proves nothing.
+//
+// Invitation drafting — invite, reinvite, TTL bounds, the draft apparatus and
+// the brief-vocabulary map — is NOT here. It reaches no server action and lives
+// in lib/waitlist/b4-invitation-draft.ts, proved by its own file.
 
 const MIGRATION = readFileSync(
   join(process.cwd(), "supabase/migrations/0188_new_client_waitlist_invitations.sql"),
@@ -66,17 +58,47 @@ describe("the vocabulary is the DATABASE's, derived not copied", () => {
     // system cannot hold.
     expect(MIGRATION.toLowerCase()).not.toMatch(/declin/);
     expect(WAITLIST_ENTRY_STATUSES).not.toContain("declined" as WaitlistEntryStatus);
-    expect(UNMODELLED_BRIEF_STATES).toContain("declined");
   });
 
-  it("the brief's words map onto real states, and `revoked` is not collapsed", () => {
-    for (const shipped of Object.values(BRIEF_LABEL_MAP)) {
-      expect(WAITLIST_ENTRY_STATUSES).toContain(shipped);
-    }
-    // `released` and `removed` are both studio-initiated returns and are NOT
-    // synonyms — one is requeueable, the other terminal.
-    expect(BRIEF_LABEL_MAP.revoked).toBe("released");
+  it("`released` and `removed` stay distinguishable", () => {
+    // Both are studio-initiated returns and they are NOT synonyms — one is
+    // requeueable, the other terminal. A surface that collapsed them would tell
+    // an owner they could bring someone back when they could not.
     expect(STATUS_MEANING.released).not.toBe(STATUS_MEANING.removed);
+    expect(STATUS_LABEL.released).not.toBe(STATUS_LABEL.removed);
+  });
+});
+
+describe("the model offers only actions a studio can actually perform", () => {
+  it("is exactly the five wired lifecycle commands", () => {
+    // THE INVARIANT THE MODULE SPLIT EXISTS TO CREATE. Inviting mints a token
+    // that must reach a real recipient, so it has no server action and cannot
+    // be offered. Keeping it out of this list is what makes that unreachable
+    // rather than merely unrendered.
+    expect([...ADMISSION_ACTIONS]).toEqual([
+      "claim",
+      "expire",
+      "release",
+      "requeue",
+      "remove",
+    ]);
+    for (const unwired of ["invite", "reinvite"]) {
+      expect(ADMISSION_ACTIONS as ReadonlyArray<string>).not.toContain(unwired);
+      expect(Object.keys(ACTION_LABEL)).not.toContain(unwired);
+    }
+  });
+
+  it("this module implements no ranking of its own", () => {
+    // COMMENTS OUT BEFORE SCANNING. This module explains at length why it does
+    // NOT rank, so scanning the raw text finds the word "ranking" in the very
+    // prose that promises the absence — a parser reading documentation as code.
+    const SRC = readFileSync(join(process.cwd(), "lib/waitlist/admission-model.ts"), "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "");
+    // Ordering is the database's existing FIFO. Nothing here re-sorts a queue.
+    expect(SRC).not.toMatch(/\.sort\(|\brank\b|\bscore\b|\bpriority\b/i);
+    // Non-vacuity: the stripped source is still real code, not an empty string.
+    expect(SRC).toMatch(/export function actionAvailability/);
   });
 });
 
@@ -103,33 +125,6 @@ describe("every action, on every state, is decided AND explained", () => {
       ADMISSION_ACTIONS.filter((a) => actionAvailability(a, s).available),
     );
     expect(available.length).toBeGreaterThan(5);
-  });
-
-  it("INVITING REQUIRES `claimed`, and only claimed", () => {
-    // 0190: `if v_status <> 'claimed' then return 'not_claimed'`. A merely
-    // WAITING entry cannot be invited — offering it would be a control that
-    // cannot succeed — and the refusal names the missing step.
-    expect(actionAvailability("invite", "claimed").available).toBe(true);
-    for (const s of ["waiting", "invited", "expired", "released"] as const) {
-      expect(actionAvailability("invite", s).available, s).toBe(false);
-    }
-    expect(
-      (actionAvailability("invite", "waiting") as { reason: string }).reason,
-    ).toMatch(/claim them first/i);
-  });
-
-  it("a live invitation must be RELEASED before another is sent", () => {
-    const invite = actionAvailability("invite", "invited");
-    const reinvite = actionAvailability("reinvite", "invited");
-    expect(invite.available).toBe(false);
-    expect(reinvite.available).toBe(false);
-    // Both name the remedy rather than merely refusing — and the remedy is
-    // RELEASE, which is the command that ends a live invitation early. It is
-    // deliberately not "expire": expiry records that the clock ran out, it does
-    // not cause it, so offering it here would name an action that cannot run.
-    expect((invite as { reason: string }).reason).toMatch(/release/i);
-    expect((reinvite as { reason: string }).reason).toMatch(/release/i);
-    expect((invite as { reason: string }).reason).not.toMatch(/expire/i);
   });
 
   it("EXPIRE IS NOT CANCELLATION — it is withheld until the clock has run out", () => {
@@ -225,21 +220,6 @@ describe("every action, on every state, is decided AND explained", () => {
     }
   });
 
-  it("reinvite carries the SAME prerequisite, and names the path back", () => {
-    // Re-inviting IS `issue` again, so it needs a claimed entry too. An expired
-    // or released one has to travel back: requeue, then claim.
-    expect(actionAvailability("reinvite", "claimed").available).toBe(true);
-    for (const s of ["waiting", "invited", "expired", "released"] as const) {
-      expect(actionAvailability("reinvite", s).available, s).toBe(false);
-    }
-    for (const s of ["expired", "released"] as const) {
-      expect(
-        (actionAvailability("reinvite", s) as { reason: string }).reason,
-        s,
-      ).toMatch(/return them to the queue and claim them first/i);
-    }
-  });
-
   it("release ends a hold or a live invitation, and nothing else", () => {
     expect(actionAvailability("release", "invited").available).toBe(true);
     expect(actionAvailability("release", "claimed").available).toBe(true);
@@ -271,11 +251,9 @@ describe("every action, on every state, is decided AND explained", () => {
     }
   });
 
-  it("the menu lists every action WITH its verdict, hiding none", () => {
-    for (const status of WAITLIST_ENTRY_STATUSES) {
-      const menu = allActionAvailability(status);
-      expect(menu.map((m) => m.action)).toEqual([...ADMISSION_ACTIONS]);
-      for (const item of menu) expect(item.label).toBe(ACTION_LABEL[item.action]);
+  it("every action carries the label the page renders", () => {
+    for (const action of ADMISSION_ACTIONS) {
+      expect(ACTION_LABEL[action], action).toBeTruthy();
     }
   });
 });
@@ -316,145 +294,5 @@ describe("the status sentence never contradicts the row's own controls", () => {
       if (s === "invited") continue;
       expect(statusMeaning(s, { invitationRedeemed: true }), s).toBe(STATUS_MEANING[s]);
     }
-  });
-});
-
-describe("expiry is the one draft field the server actually carries", () => {
-  it("mirrors the command's bounds", () => {
-    // 0188: "1 hour .. 7 days. Out of range is REFUSED, never silently clamped".
-    expect(MIGRATION).toMatch(/1 hour \.\. 7 days/);
-    expect(TTL_HOURS_MIN).toBe(1);
-    expect(TTL_HOURS_MAX).toBe(168);
-    expect(MIGRATION).toMatch(/p_ttl_hours\s+integer\s+default\s+72/);
-    expect(TTL_HOURS_DEFAULT).toBe(72);
-  });
-
-  it("REFUSES out of range rather than clamping", () => {
-    for (const bad of [0, -1, 169, 1000]) {
-      const v = validateTtlHours(bad);
-      expect(v.ok, String(bad)).toBe(false);
-    }
-    // The refusal must not quietly hand back a corrected number.
-    const over = validateTtlHours(1000);
-    expect(over).not.toHaveProperty("hours");
-  });
-
-  it("accepts the boundaries themselves", () => {
-    expect(validateTtlHours(TTL_HOURS_MIN)).toEqual({ ok: true, hours: 1 });
-    expect(validateTtlHours(TTL_HOURS_MAX)).toEqual({ ok: true, hours: 168 });
-  });
-
-  it("rejects non-integers and junk", () => {
-    for (const bad of [1.5, "abc", "", null, undefined, NaN]) {
-      expect(validateTtlHours(bad as unknown).ok, String(bad)).toBe(false);
-    }
-    expect(validateTtlHours(" 48 ")).toEqual({ ok: true, hours: 48 });
-  });
-});
-
-describe("the draft never pretends unbacked intent will be enforced", () => {
-  it("declares which steps reach a server contract", () => {
-    expect(STEP_BACKING.select).toBe("server-backed");
-    expect(STEP_BACKING.expiry).toBe("server-backed");
-    // No shipped command carries any of these.
-    expect(STEP_BACKING.service).toBe("pending-b2");
-    expect(STEP_BACKING.horizon).toBe("pending-b2");
-    expect(STEP_BACKING.days).toBe("pending-b2");
-  });
-
-  it("and the migration agrees — no such parameters exist", () => {
-    const issue = MIGRATION.slice(
-      MIGRATION.indexOf("function public.issue_new_client_waitlist_invitation"),
-      MIGRATION.indexOf("returns table (result text, raw_token text"),
-    );
-    expect(issue.length).toBeGreaterThan(40);
-    expect(issue).toMatch(/p_ttl_hours/);
-    for (const absent of ["p_service", "p_horizon", "p_weekday", "p_date"]) {
-      expect(issue, `${absent} unexpectedly present`).not.toMatch(new RegExp(absent));
-    }
-  });
-
-  it("an unbacked field can never block a send", () => {
-    // Blocking on it would invent a requirement the server does not have.
-    const draft = { ...emptyDraft(), entryIds: ["e1"], serviceId: null, horizonDays: null };
-    expect(validateDraft(draft).ok).toBe(true);
-  });
-
-  it("but a nonsense unbacked value is still refused", () => {
-    const bad = { ...emptyDraft(), entryIds: ["e1"], horizonDays: 0 };
-    const v = validateDraft(bad);
-    expect(v.ok).toBe(false);
-    expect((v as { errors: Record<string, string> }).errors.horizon).toBeTruthy();
-  });
-
-  it("a server-backed field DOES block a send", () => {
-    expect(validateDraft(emptyDraft()).ok).toBe(false);
-    const noTtl = { ...emptyDraft(), entryIds: ["e1"], ttlHours: 9999 };
-    const v = validateDraft(noTtl);
-    expect(v.ok).toBe(false);
-    expect((v as { errors: Record<string, string> }).errors.expiry).toBeTruthy();
-  });
-
-  it("review separates what WILL happen from what is only noted", () => {
-    const draft = {
-      ...emptyDraft(),
-      entryIds: ["e1", "e2"],
-      ttlHours: 48,
-      serviceId: "svc-1",
-      horizonDays: 30,
-      weekdays: [2, 4],
-      dates: ["2026-09-10"],
-    };
-    const { enforced, notEnforced } = reviewSummary(draft);
-    expect(enforced.join(" ")).toMatch(/2 people/);
-    expect(enforced.join(" ")).toMatch(/48 hours/);
-    // Everything unbacked is in the OTHER list, never mixed into `enforced`.
-    expect(notEnforced).toHaveLength(4);
-    for (const line of enforced) {
-      expect(line).not.toMatch(/service|window|days of the week|specific dates/i);
-    }
-  });
-
-  it("the not-enforced notice says so in words", () => {
-    expect(PENDING_B2_NOTICE).toMatch(/not yet enforced/i);
-  });
-
-  it("a draft with only backed fields produces NO not-enforced lines", () => {
-    // Non-vacuity for the split above.
-    const { notEnforced } = reviewSummary({ ...emptyDraft(), entryIds: ["e1"] });
-    expect(notEnforced).toEqual([]);
-  });
-});
-
-describe("invite-next-N is a different operation from multi-select", () => {
-  it("is recorded as such, and the bulk command takes a COUNT", () => {
-    expect(NEXT_N_IS_NOT_SELECTION).toBe(true);
-    // The end marker must be searched FROM the start marker: the same `returns
-    // table` signature appears earlier in the file for `join_new_client_waitlist`,
-    // so a bare indexOf returns a position BEFORE the slice begins and yields "".
-    const from = MIGRATION.indexOf("function public.claim_new_client_waitlist_entries");
-    expect(from).toBeGreaterThan(-1);
-    const bulk = MIGRATION.slice(
-      from,
-      MIGRATION.indexOf("returns table (result text, entry_id uuid)", from),
-    );
-    expect(bulk.length).toBeGreaterThan(40);
-    expect(bulk).toMatch(/p_count\s+integer/);
-    // It does NOT accept a list of ids — so "these five" and "the next five"
-    // cannot be one control without the UI choosing queue order itself.
-    expect(bulk).not.toMatch(/uuid\[\]/);
-  });
-
-  it("this slice implements no ranking of its own", () => {
-    // COMMENTS OUT BEFORE SCANNING. This module explains at length why it does
-    // NOT rank, so scanning the raw text finds the word "ranking" in the very
-    // prose that promises the absence — a parser reading documentation as code.
-    const SRC = readFileSync(join(process.cwd(), "lib/waitlist/admission-model.ts"), "utf8")
-      .replace(/\/\*[\s\S]*?\*\//g, "")
-      .replace(/^\s*\/\/.*$/gm, "");
-    // Ordering is the database's existing FIFO. Nothing here re-sorts a queue.
-    expect(SRC).not.toMatch(/\.sort\(|\brank\b|\bscore\b|\bpriority\b/i);
-    // Non-vacuity: the stripped source is still real code, not an empty string.
-    expect(SRC).toMatch(/export function actionAvailability/);
   });
 });

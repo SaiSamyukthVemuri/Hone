@@ -40,6 +40,10 @@ type QueryShape = {
   filters: Array<[string, string, unknown]>;
   orders: Array<[string, { ascending?: boolean } | undefined]>;
   limit: number | null;
+  /** The window the page asked for, inclusive on both ends — PostgREST's own
+   *  shape. Recorded separately from `limit` so a test can tell "the first
+   *  hundred" apart from "the hundred after the first". */
+  range: [number, number] | null;
 };
 
 type RpcCall = { fn: string; args: Record<string, unknown> };
@@ -66,6 +70,11 @@ const scenario = {
   // Per-section totals, when a test needs a count LARGER than the rows it
   // seeded (truncation). Absent means "the count equals what was seeded".
   sectionTotals: null as Record<string, number> | null,
+  // NEGATIVE CONTROL SWITCH. True makes the fake ignore the window's OFFSET and
+  // answer every page with the top of the section — the read as it behaved
+  // before pagination. Every assertion about reaching a later page must fail
+  // against it, or it was proving nothing.
+  ignoreRange: false,
 };
 
 function reset() {
@@ -85,6 +94,7 @@ function reset() {
     redeemedInvitations: [],
     invitationsError: null,
     sectionTotals: null,
+    ignoreRange: false,
   });
 }
 
@@ -112,6 +122,7 @@ vi.mock("@/lib/supabase/server", () => ({
         filters: [],
         orders: [],
         limit: null,
+        range: null,
       };
       queries.push(shape);
       // THENABLE AT EVERY LINK, not only at `.limit`. The page issues TWO
@@ -140,7 +151,7 @@ vi.mock("@/lib/supabase/server", () => ({
         // answer per status — returning every seeded row to every section would
         // render each person once per section.
         const status = filterVal("eq", "status");
-        const rows =
+        const matching =
           typeof status === "string"
             ? scenario.rows.filter((r) => r.status === status)
             : scenario.rows;
@@ -149,10 +160,34 @@ vi.mock("@/lib/supabase/server", () => ({
         // number actually seeded.
         const total =
           scenario.sectionTotals && typeof status === "string"
-            ? (scenario.sectionTotals[status] ?? rows.length)
-            : scenario.count !== null && rows.length > 0
+            ? (scenario.sectionTotals[status] ?? matching.length)
+            : scenario.count !== null && matching.length > 0
               ? scenario.count
-              : rows.length;
+              : matching.length;
+
+        // HEAD-ONLY: the count, and no rows. A focused view reads the other
+        // four sections this way so the headline keeps its whole-queue meaning.
+        // A fake that returned rows anyway would hide a page that had stopped
+        // windowing them.
+        if (shape.options.head === true) {
+          return {
+            data: null,
+            count: scenario.error ? null : total,
+            error: scenario.error,
+          };
+        }
+
+        // THE WINDOW THE PAGE ASKED FOR. PostgREST's `.range(from, to)` is
+        // inclusive at both ends.
+        const rows = shape.range
+          ? scenario.ignoreRange
+            // THE PRE-FIX READ, REPRODUCED FAITHFULLY: a bounded page from the
+            // TOP of the section, whatever window was asked for — which is
+            // exactly what `.limit(SECTION_PAGE_SIZE)` did. The negative
+            // control drives this to prove the fixed assertions can fail.
+            ? matching.slice(0, shape.range[1] - shape.range[0] + 1)
+            : matching.slice(shape.range[0], shape.range[1] + 1)
+          : matching;
         return {
           data: scenario.error ? null : rows,
           count: scenario.error ? null : total,
@@ -190,6 +225,10 @@ vi.mock("@/lib/supabase/server", () => ({
           shape.limit = n;
           return builder;
         },
+        range(from: number, to: number) {
+          shape.range = [from, to];
+          return builder;
+        },
         then(resolve: (v: unknown) => unknown) {
           return Promise.resolve(settle()).then(resolve);
         },
@@ -219,7 +258,19 @@ const { removeWaitlistEntryAction } = await import(
   "@/app/(app)/settings/waitlist/actions"
 );
 
-const render = async () => renderToStaticMarkup(await WaitlistSettingsPage());
+/**
+ * Render the page for a given query string.
+ *
+ * DEFAULTS TO NO PARAMS, so every existing call site keeps asserting on the
+ * default all-sections view unchanged — the view a studio sees when it simply
+ * opens /settings/waitlist.
+ */
+const render = async (
+  searchParams: { section?: string | string[]; page?: string | string[] } = {},
+) =>
+  renderToStaticMarkup(
+    await WaitlistSettingsPage({ searchParams: Promise.resolve(searchParams) }),
+  );
 
 function entry(overrides: Partial<Record<string, unknown>> = {}) {
   return {
@@ -299,7 +350,11 @@ describe("the query the page asks", () => {
       // bound is spent on rows an operator can still act on.
       ["eq", "status", "waiting"],
     ]);
-    expect(q.limit).toBeGreaterThan(0);
+    // A WINDOW, NOT A CAP. The default view asks for the first page of each
+    // section; `.range` is what makes a later page reachable at all, so the
+    // shape is pinned rather than merely "bounded".
+    expect(q.range).toEqual([0, 99]);
+    expect(q.limit).toBeNull();
   });
 
   it("orders oldest-first with a deterministic id tie-break", async () => {
@@ -312,7 +367,9 @@ describe("the query the page asks", () => {
 
   it("asks for an EXACT count, not an inferred one", async () => {
     await render();
-    expect(queries[0].options).toEqual({ count: "exact" });
+    // `head: false` — this read wants the rows as well as the count. The
+    // head-only form exists too, and is proved where it is used.
+    expect(queries[0].options).toEqual({ count: "exact", head: false });
   });
 
   it("selects only the columns it renders — no `*`", async () => {
@@ -345,6 +402,11 @@ describe("the count is authoritative", () => {
     const html = await render();
     expect(html).toMatch(/Waitlist entries:\s*<[^>]*>140</);
     expect(html).toContain("Showing the 100 longest-waiting of 140.");
+    // AND A WAY THROUGH, not just an admission. The old sentence was truthful
+    // and offered nothing; the other 40 people were unreachable, and so were
+    // their actions.
+    expect(html).toContain('data-testid="waitlist-section-all-waiting"');
+    expect(html).toContain('href="/settings/waitlist?section=waiting"');
   });
 
   it("says nothing about truncation when the page holds everyone", async () => {
@@ -908,11 +970,269 @@ describe("action visibility follows the row's lifecycle state", () => {
     expect(actionsFor(html)).toContain("release");
   });
 
-  it("each section reports its OWN total, and truncation is per section", async () => {
+  it("each section reports its OWN total, and offers its own way through", async () => {
     scenario.rows = [entry({ id: "w1", status: "waiting" })];
     scenario.sectionTotals = { waiting: 250 };
     const html = await render();
     expect(html).toMatch(/Waitlist entries:\s*<[^>]*>250</);
-    expect(html).toContain("may therefore be incomplete");
+    // The HEADING carries the group's exact total, not the number on screen —
+    // one row is rendered, and the heading still says 250.
+    expect(html).toContain(">(250)<");
+    expect(html).not.toContain(">(1)<");
+    expect(html).toContain("Showing the 1 longest-waiting of 250.");
+    expect(html).toContain('href="/settings/waitlist?section=waiting"');
+  });
+});
+
+// ===========================================================================
+// EVERY ENTRY STAYS REACHABLE, AND SO DOES ITS ONLY WAY OUT
+// ===========================================================================
+//
+// THE DEFECT THIS CLOSES. Each section used to read one bounded page and stop.
+// A section holding more than that stranded every row past it — and an entry's
+// escape action lives on its own row, so a claimed entry beyond the hundredth
+// could never be released, an invited one never expired, an expired one never
+// returned to the queue. "Claim next N" walks the database's queue order and
+// can push the held section past a page by itself, so the surface could
+// manufacture entries it was then unable to reach.
+//
+// Raising 100 to a larger number would only move the cliff. These tests pin the
+// mechanism instead: the window has an OFFSET, the offset is reachable from the
+// UI, and the row it reveals arrives with its control.
+//
+// THE POSITIVE ASSERTIONS ARE PAIRED WITH THE SAME ONES RUN AGAINST A FAKE THAT
+// IGNORES THE OFFSET — the read as it behaved before the fix. Without that half,
+// a test that never windows anything passes for the wrong reason.
+
+/** N seeded rows in one section, oldest first, each individually identifiable. */
+function seedSection(status: string, n: number) {
+  return Array.from({ length: n }, (_, i) =>
+    entry({
+      id: `${status}-${i + 1}`,
+      name: `Person ${i + 1}`,
+      email: `p${i + 1}@example.com`,
+      status,
+      // Ascending join times, so "the order the fake returns them" is also the
+      // order the database's (joined_at, id) index would.
+      joined_at: new Date(Date.UTC(2026, 0, 1) + i * 86_400_000).toISOString(),
+    }),
+  );
+}
+
+/** The read the page issued for one section, by its status filter. */
+function readFor(status: string) {
+  return queries.find(
+    (q) =>
+      q.table === "new_client_waitlist_entries" &&
+      q.filters.some((f) => f[0] === "eq" && f[1] === "status" && f[2] === status),
+  )!;
+}
+
+describe("a section past one page is navigable, not truncated", () => {
+  it("the default view shows the first page AND an actionable way to the rest", async () => {
+    scenario.rows = seedSection("claimed", 150);
+    const html = await render();
+
+    // The first hundred are here…
+    expect(html).toContain(">Person 1<");
+    expect(html).toContain(">Person 100<");
+    // …the hundred-and-fiftieth is not…
+    expect(html).not.toContain(">Person 150<");
+    // …and the page says so, with a link rather than an apology.
+    expect(html).toContain("Showing the 100 longest-waiting of 150.");
+    expect(html).toContain('data-testid="waitlist-section-all-claimed"');
+    expect(html).toContain('href="/settings/waitlist?section=claimed"');
+  });
+
+  it("REQ 1-4 — the focused view reaches entry 150 WITH its Release control", async () => {
+    // The entry an operator most needs to reach: claimed, past the first page,
+    // and holding a person whose only exit is the control on that row.
+    scenario.rows = seedSection("claimed", 150);
+    const html = await render({ section: "claimed", page: "2" });
+
+    expect(html).toContain(">Person 150<");
+    expect(html).toContain('data-entry-status="claimed"');
+    expect(actionsFor(html)).toContain("release");
+    // The window asked for is the SECOND page, stated honestly.
+    expect(html).toContain("Showing 101–150 of 150.");
+    expect(readFor("claimed").range).toEqual([100, 199]);
+  });
+
+  it("NEGATIVE CONTROL — those assertions FAIL against a read that ignores the offset", async () => {
+    // The pre-fix read: a bounded page from the top of the section, whatever
+    // window was requested. If the assertions above can pass against this, they
+    // are proving nothing about pagination.
+    scenario.rows = seedSection("claimed", 150);
+    scenario.ignoreRange = true;
+    const html = await render({ section: "claimed", page: "2" });
+
+    expect(html).not.toContain(">Person 150<");
+    expect(html).toContain(">Person 1<");
+    // …and with the row absent, so is the only control that could move it.
+    expect(html).not.toContain('data-entry-id="claimed-150"');
+  });
+
+  it("PROVES THE CONTROL IS ROW-BOUND — reaching the row is what carries the action", async () => {
+    // Non-vacuity for the negative control above: Release is not rendered once
+    // per page regardless of rows, so its presence really does track the row.
+    scenario.rows = [];
+    const html = await render({ section: "claimed", page: "1" });
+    expect(actionsFor(html)).not.toContain("release");
+  });
+
+  it("REQ 4 — Claim next cannot create a row the UI is unable to reach", async () => {
+    // The held section is the one Claim next grows. Whatever size it reaches,
+    // every page of it is addressable and every row arrives with its control.
+    scenario.rows = seedSection("claimed", 250);
+    const lastPage = await render({ section: "claimed", page: "3" });
+    expect(lastPage).toContain(">Person 250<");
+    expect(actionsFor(lastPage)).toContain("release");
+    expect(lastPage).toContain("Showing 201–250 of 250.");
+  });
+
+  it("REQ 2-3 — an expired row past a page keeps its escape too", async () => {
+    scenario.rows = seedSection("expired", 150);
+    const html = await render({ section: "expired", page: "2" });
+    expect(html).toContain(">Person 150<");
+    expect(actionsFor(html)).toContain("requeue");
+  });
+
+  it("REQ 8 — paging windows the DATABASE's order and re-sorts nothing", async () => {
+    scenario.rows = seedSection("claimed", 150);
+    await render({ section: "claimed", page: "2" });
+    expect(readFor("claimed").orders).toEqual([
+      ["joined_at", { ascending: true }],
+      ["id", { ascending: true }],
+    ]);
+  });
+
+  it("REQ 9 — a focused page changes no authority boundary", async () => {
+    // Same RLS-scoped client, same studio filter, same status filter. The admin
+    // mock throws on `from`, so a service-role read would have failed outright.
+    scenario.rows = seedSection("claimed", 150);
+    await render({ section: "claimed", page: "2" });
+    expect(readFor("claimed").filters).toEqual([
+      ["eq", "studio_id", STUDIO_ID],
+      ["eq", "status", "claimed"],
+    ]);
+    expect(readFor("claimed").columns).toBe("id,name,email,phone,joined_at,status");
+  });
+});
+
+describe("the focused view keeps the headline honest", () => {
+  it("counts the WHOLE queue, not the group being viewed", async () => {
+    // THE FAILURE THIS PREVENTS: "Waitlist entries" quietly changing meaning
+    // from the whole queue to this group, under the same words.
+    scenario.rows = [...seedSection("claimed", 150), ...seedSection("waiting", 7)];
+    const html = await render({ section: "claimed", page: "2" });
+    expect(html).toMatch(/Waitlist entries:\s*<[^>]*>157</);
+  });
+
+  it("reads the other sections HEAD-ONLY — their counts, none of their rows", async () => {
+    scenario.rows = [...seedSection("claimed", 150), ...seedSection("waiting", 7)];
+    const html = await render({ section: "claimed", page: "1" });
+
+    // Five reads either way; only the focused one asks for rows.
+    const reads = queries.filter((q) => q.table === "new_client_waitlist_entries");
+    expect(reads).toHaveLength(5);
+    const listed = reads.filter((q) => q.options.head === false);
+    expect(listed).toHaveLength(1);
+    expect(
+      listed[0]!.filters.some((f) => f[0] === "eq" && f[1] === "status" && f[2] === "claimed"),
+    ).toBe(true);
+    for (const q of reads) expect(q.options.count).toBe("exact");
+
+    // And no waiting person is rendered while the held group is in focus.
+    expect(html).not.toContain('data-entry-status="waiting"');
+  });
+
+  it("offers the way back to all groups", async () => {
+    scenario.rows = seedSection("claimed", 150);
+    const html = await render({ section: "claimed" });
+    expect(html).toContain('href="/settings/waitlist"');
+    expect(html).toContain("Back to all groups");
+  });
+
+  it("renders prev/next only where there is somewhere to go", async () => {
+    scenario.rows = seedSection("claimed", 150);
+    const first = await render({ section: "claimed", page: "1" });
+    expect(first).not.toContain('data-testid="waitlist-page-prev"');
+    expect(first).toContain('href="/settings/waitlist?section=claimed&amp;page=2"');
+
+    reset();
+    scenario.rows = seedSection("claimed", 150);
+    const second = await render({ section: "claimed", page: "2" });
+    expect(second).toContain('data-testid="waitlist-page-prev"');
+    expect(second).not.toContain('data-testid="waitlist-page-next"');
+
+    reset();
+    scenario.rows = seedSection("claimed", 40);
+    const only = await render({ section: "claimed", page: "1" });
+    expect(only).not.toContain('data-testid="waitlist-page-prev"');
+    expect(only).not.toContain('data-testid="waitlist-page-next"');
+  });
+});
+
+describe("a browser-supplied section or page can never mislead", () => {
+  it("an unknown section falls back to ALL groups, and never reaches a filter", async () => {
+    scenario.rows = [...seedSection("claimed", 2), ...seedSection("waiting", 2)];
+    const html = await render({ section: "converted' or 1=1--" });
+
+    // Both groups render: this is the default view, not an empty page.
+    expect(html).toContain('data-entry-status="claimed"');
+    expect(html).toContain('data-entry-status="waiting"');
+    // The injected value reached no query. Status filters are the five the page
+    // declares, because `section` is MATCHED against them rather than passed
+    // through.
+    const statuses = queries
+      .filter((q) => q.table === "new_client_waitlist_entries")
+      .map((q) => q.filters.find((f) => f[0] === "eq" && f[1] === "status")?.[2]);
+    expect(statuses).toEqual(["waiting", "claimed", "invited", "expired", "released"]);
+  });
+
+  it("a terminal status is not a section, even though it is a real status", async () => {
+    // `converted` and `removed` are deliberately unread. Naming one must not
+    // produce a focused view of a group this surface does not show.
+    scenario.rows = seedSection("waiting", 2);
+    const html = await render({ section: "removed" });
+    expect(html).not.toContain("Back to all groups");
+    expect(html).toContain('data-entry-status="waiting"');
+  });
+
+  it("a junk, zero or negative page lands on page ONE, never on nothing", async () => {
+    for (const bad of ["0", "-3", "abc", ""]) {
+      reset();
+      scenario.rows = seedSection("claimed", 150);
+      const html = await render({ section: "claimed", page: bad });
+      expect(html, bad).toContain(">Person 1<");
+      expect(html, bad).toContain("Showing 1–100 of 150.");
+    }
+  });
+
+  it("a repeated param takes the first value rather than joining them", async () => {
+    scenario.rows = seedSection("claimed", 150);
+    const html = await render({ section: ["claimed", "waiting"], page: ["2", "9"] });
+    expect(html).toContain("Showing 101–150 of 150.");
+  });
+
+  it("PAST THE END says so, and offers the way back", async () => {
+    // The read returns no rows against a non-zero count. Rendering that as an
+    // empty section would say "nobody here" about a group that is not empty.
+    scenario.rows = seedSection("claimed", 150);
+    const html = await render({ section: "claimed", page: "7" });
+    expect(html).toContain("That page is past the end of this group");
+    expect(html).toContain('data-testid="waitlist-page-first"');
+    expect(html).not.toContain("Nobody is in this group right now.");
+    // The group's real size is still stated in the heading.
+    expect(html).toContain(">(150)<");
+  });
+
+  it("an EMPTY focused group answers, rather than vanishing", async () => {
+    // A section asked for by name must respond even when the answer is nobody;
+    // an absent section would read as a broken link.
+    scenario.rows = seedSection("waiting", 3);
+    const html = await render({ section: "released" });
+    expect(html).toContain("Nobody is in this group right now.");
+    expect(html).not.toContain("That page is past the end");
   });
 });
