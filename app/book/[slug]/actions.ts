@@ -662,6 +662,73 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
     return { ok: false, error: PUBLIC_BOOKING_GENERIC_ERROR };
   }
 
+  // WAIT-03B B2 / P3-A. CONSUME THE INVITATION HERE -- before the client
+  // resolution below, which is the first thing in this action that can WRITE a
+  // clients row.
+  //
+  // It used to sit one round trip before the appointment command, which read
+  // well but meant a refused consume returned after a brand-new client row had
+  // already been inserted: an orphan that existed only because the attempt got
+  // part way. Consuming first removes that case structurally rather than
+  // cleaning up after it -- nothing is deleted, because nothing is created.
+  //
+  // This stays on the UNCONDITIONAL path. Pushing it inside the new-client
+  // branch would look narrower and would be wrong: a booking that took the
+  // existing-client branch would then reach the appointment WITHOUT consuming.
+  //
+  // Order still holds: authorise (gate, above) -> consume -> appointment. The
+  // capability is proved inside this command's own locked transaction, so a
+  // bearer token that somehow reached this line still cannot mutate.
+  //
+  // The window in which the offer is spent but no appointment exists is now the
+  // client resolution plus the appointment command rather than a single round
+  // trip. Every exit inside that window routes through
+  // invitationConsumedWithoutBooking(), so none of them can hand back retryable
+  // copy for an invitation that is already gone.
+  let consumedInvitationId: string | null = null;
+  if (invitationAuth?.kind === "authorized") {
+    const redeemed = await consumeInvitationForBooking(
+      invitationAuth,
+      invitationCapability,
+    );
+    if (redeemed.kind !== "redeemed") {
+      // Nothing has been written yet, so this exit leaves no trace at all.
+      return {
+        ok: false,
+        error:
+          "We couldn't confirm your invitation. Please reopen the link from your email and try again.",
+        code: "invitation_refused",
+      };
+    }
+    consumedInvitationId = invitationAuth.invitation.invitationId;
+  }
+
+  // The single exit for "the offer is spent and no appointment exists". The
+  // invitation ID is recorded so an operator can find the entry and BOOK THE
+  // CLIENT DIRECTLY through the operator surface -- the offer itself cannot be
+  // reissued, because release_new_client_waitlist_entry answers
+  // `already_redeemed` once redeemed. The raw token and the capability are
+  // secrets and are never logged.
+  const invitationConsumedWithoutBooking = (code: string): PublicBookResult => {
+    console.error(
+      JSON.stringify({
+        event: "waitlist_invitation_consumed_without_booking",
+        studioId: studio.id,
+        invitationId: consumedInvitationId,
+        code,
+        source: "public_booking",
+        timestamp: new Date().toISOString(),
+      }),
+    );
+    return {
+      ok: false,
+      error:
+        "Your invitation has been used, but we couldn't finish the booking. " +
+        "Please contact the studio to rebook -- reopening the invitation link won't work.",
+      code: "invitation_consumed",
+    };
+  };
+
   let clientId: string;
   let clientName: string;
   let clientPhone: string | null;
@@ -684,6 +751,8 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // clients still take the INSERT path below; the existing-client
   // path can only succeed when existingClient is truthy.
   if (clientType === "existing" && !existingClient) {
+    // P3-A: the offer is already spent on this path.
+    if (consumedInvitationId) return invitationConsumedWithoutBooking("client_not_resolved");
     return { ok: false, error: EXISTING_CLIENT_NO_MATCH_ERROR };
   }
   if (existingClient) {
@@ -827,6 +896,8 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
             emailFingerprint: hashFingerprint(normalizedEmail),
             archivedClientCollision: true,
           });
+          // P3-A: the offer is already spent on this path.
+          if (consumedInvitationId) return invitationConsumedWithoutBooking("client_identity_collision");
           return {
             ok: false,
             error: archivedClientCollisionError(studio.name),
@@ -848,6 +919,8 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
             emailFingerprint: hashFingerprint(normalizedEmail),
             code: clientErr.code,
           });
+          // P3-A: the offer is already spent on this path.
+          if (consumedInvitationId) return invitationConsumedWithoutBooking("client_not_created");
           return { ok: false, error: PUBLIC_BOOKING_GENERIC_ERROR };
         }
       } else {
@@ -858,6 +931,8 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
           studioId: studio.id,
           emailFingerprint: hashFingerprint(normalizedEmail),
         });
+        // P3-A: the offer is already spent on this path.
+        if (consumedInvitationId) return invitationConsumedWithoutBooking("client_not_created");
         return { ok: false, error: PUBLIC_BOOKING_GENERIC_ERROR };
       }
     } else {
@@ -893,6 +968,8 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
       studioId: studio.id,
       errorClass,
     });
+    // P3-A: the offer is already spent on this path.
+    if (consumedInvitationId) return invitationConsumedWithoutBooking("client_not_resolved");
     return { ok: false, error: PUBLIC_BOOKING_GENERIC_ERROR };
   }
 
@@ -911,42 +988,6 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // command re-validates studio/client/service tenancy and the full public
   // availability contract under the studio lock, independently of the slot
   // re-check above.
-  // WAIT-03B B2. CONSUME THE INVITATION HERE, one round trip before the
-  // appointment commits -- not at the gate above.
-  //
-  // Redeem-before-book is deliberate. If the appointment then fails, the
-  // invitation is spent with no booking -- and it CANNOT be reissued:
-  // release_new_client_waitlist_entry answers `already_redeemed` once any
-  // invitation for the entry is redeemed, so release -> requeue -> reissue is
-  // closed. Recovery is the studio booking the client DIRECTLY through the
-  // operator surface, which this gate never intercepts. The other
-  // order risks TWO appointments from one invitation, which would break the
-  // admission guarantee the waitlist exists to provide. The residual window is
-  // this single round trip and cannot be closed without moving the booking engine
-  // into the database -- that is, without a second booking engine.
-  //
-  // Proof is validated inside this command's own locked transaction, so a bearer
-  // token that somehow reached this line still cannot mutate.
-  let consumedInvitationId: string | null = null;
-  if (invitationAuth?.kind === "authorized") {
-    const redeemed = await consumeInvitationForBooking(
-      invitationAuth,
-      invitationCapability,
-    );
-    if (redeemed.kind === "redeemed") {
-      // From here on the offer is SPENT. Every exit below must account for that.
-      consumedInvitationId = invitationAuth.invitation.invitationId;
-    }
-    if (redeemed.kind !== "redeemed") {
-      return {
-        ok: false,
-        error:
-          "We couldn't confirm your invitation. Please reopen the link from your email and try again.",
-        code: "invitation_refused",
-      };
-    }
-  }
-
   const { data: rpcRows, error: rpcErr } = await admin.rpc(
     "create_public_appointment",
     {
@@ -992,23 +1033,9 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // accepted command is internally inconsistent -- exactly the case worth
   // failing closed on.
   if (consumedInvitationId && (rpcErr || !createdId)) {
-    console.error(
-      JSON.stringify({
-        event: "waitlist_invitation_consumed_without_booking",
-        studioId: studio.id,
-        invitationId: consumedInvitationId,
-        code: commandResult ?? (rpcErr ? "command_error" : "no_result"),
-        source: "public_booking",
-        timestamp: new Date().toISOString(),
-      }),
+    return invitationConsumedWithoutBooking(
+      commandResult ?? (rpcErr ? "command_error" : "no_result"),
     );
-    return {
-      ok: false,
-      error:
-        "Your invitation has been used, but we couldn't finish the booking. " +
-        "Please contact the studio to rebook -- reopening the invitation link won't work.",
-      code: "invitation_consumed",
-    };
   }
 
   // Expected business refusals come back as closed result codes, never as a

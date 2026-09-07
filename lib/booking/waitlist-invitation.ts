@@ -312,13 +312,29 @@ export async function resolveInvitation(rawToken: string): Promise<ResolveOutcom
       const endDate = str(row, "scope_end_date");
       const expiresAt = str(row, "expires_at");
       const recipientContactHash = str(row, "recipient_contact_hash");
+      // P2-A. The canonical allowed-weekday authority is the database's
+      // smallint[] (extract(dow), 0 = Sunday), with SQL NULL meaning "every day
+      // inside the range". Those are the ONLY two readings this layer accepts.
+      //
+      // Anything else is NOT re-interpreted here -- parsing a Postgres array
+      // literal, a comma string or a bare number would be a SECOND weekday
+      // authority competing with the database's, which is exactly what must not
+      // exist. It fails CLOSED instead, alongside every other scope column.
+      //
+      // The previous code coerced any non-array to `null`, so an unreadable
+      // authority silently widened a restricted offer to every day.
       const rawWeekdays = row?.scope_allowed_weekdays;
+      const weekdaysReadable =
+        rawWeekdays === null ||
+        rawWeekdays === undefined ||
+        Array.isArray(rawWeekdays);
       const allowedWeekdays = Array.isArray(rawWeekdays)
         ? rawWeekdays.map((n) => Number(n))
         : null;
       if (
         !invitationId || !studioId || !entryId || !serviceId ||
-        !startDate || !endDate || !expiresAt || !recipientContactHash
+        !startDate || !endDate || !expiresAt || !recipientContactHash ||
+        !weekdaysReadable
       ) {
         return { kind: "unavailable" };
       }
