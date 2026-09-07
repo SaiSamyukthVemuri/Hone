@@ -222,6 +222,134 @@ describe("invitation expiry", () => {
   });
 });
 
+describe("every validation error is wired to the control it explains", () => {
+  /** The opening tag of the element carrying a test id — any element, so a
+   *  role="group" wrapper is found alongside inputs and selects. */
+  function tagFor(html: string, testId: string): string {
+    const tag = [...html.matchAll(/<[a-z]+[^>]*>/g)]
+      .map((m) => m[0])
+      .find((t) => t.includes(`data-testid="${testId}"`));
+    if (!tag) throw new Error(`nothing rendered with test id "${testId}"`);
+    return tag;
+  }
+
+  /** Every id referenced by aria-describedby / aria-errormessage / labelledby. */
+  function references(html: string): string[] {
+    return [
+      ...html.matchAll(/aria-(?:describedby|errormessage|labelledby)="([^"]+)"/g),
+    ].flatMap((m) => m[1].split(/\s+/));
+  }
+
+  it("1 — a service that vanished marks the select invalid and points at its error", () => {
+    const html = compose({ serviceId: "svc-deleted" }, CONNECTED);
+    const select = tagFor(html, "composer-service");
+    expect(select).toContain('aria-invalid="true"');
+    expect(select).toContain('aria-describedby="composer-error-service"');
+    expect(html).toContain('id="composer-error-service"');
+  });
+
+  it("2 — an out-of-range window points the window control at its error", () => {
+    const html = compose({ windowDays: 900 }, CONNECTED);
+    const input = tagFor(html, "composer-window-days");
+    expect(input).toContain('aria-invalid="true"');
+    expect(input).toContain('aria-describedby="composer-error-window"');
+    expect(html).toContain('id="composer-error-window"');
+  });
+
+  it("3 — an empty weekday set points the GROUP at its error, not seven buttons", () => {
+    const html = compose({ allowedWeekdays: [] }, CONNECTED);
+    const group = tagFor(html, "composer-weekday-group");
+    expect(group).toContain('role="group"');
+    expect(group).toContain('aria-describedby="composer-error-days"');
+    // NOT `aria-invalid`: ARIA supports it on widget roles, not on `group`, so
+    // assistive tech ignores it and the repo's a11y lint rejects it. The error
+    // reaches the user through the description, which is what they hear on
+    // entering the group.
+    expect(group).not.toContain("aria-invalid");
+    expect(html).toContain('id="composer-error-days"');
+    // The message belongs to the SET, so it must not be repeated on each
+    // toggle — that announces one error seven times and still names no remedy.
+    expect(html.match(/aria-describedby="composer-error-days"/g)).toHaveLength(1);
+  });
+
+  it("3b — an out-of-range expiry points the expiry control at its error", () => {
+    const html = compose({ expiresInHours: 999 }, CONNECTED);
+    const input = tagFor(html, "composer-expiry-hours");
+    expect(input).toContain('aria-invalid="true"');
+    expect(input).toContain('aria-describedby="composer-error-expiry"');
+    expect(html).toContain('id="composer-error-expiry"');
+  });
+
+  it("4 — a corrected field leaves no stale invalid state and no dangling reference", () => {
+    const html = compose({ serviceId: "svc-1", windowDays: 14, expiresInHours: 48 }, CONNECTED);
+    expect(tagFor(html, "composer-service")).not.toContain("aria-invalid");
+    expect(tagFor(html, "composer-service")).not.toContain("aria-describedby");
+    expect(html).not.toContain('id="composer-error-service"');
+    expect(html).not.toContain("composer-error-window");
+    expect(html).not.toContain("composer-error-expiry");
+    expect(html).not.toContain("composer-error-days");
+    // NEGATIVE CONTROL: the same expressions DO find the association when the
+    // field is invalid, so the absences above are not vacuous.
+    const broken = compose({ serviceId: "svc-deleted" }, CONNECTED);
+    expect(tagFor(broken, "composer-service")).toContain("aria-invalid");
+    expect(broken).toContain('id="composer-error-service"');
+  });
+
+  it("5 — every aria reference resolves inside the same composer instance", () => {
+    // A dangling reference announces that an explanation exists and then has
+    // none to give, which is worse than no association at all.
+    const cases: Array<Partial<InviteDraft>> = [
+      {},
+      { serviceId: "svc-deleted" },
+      { windowDays: 900 },
+      { allowedWeekdays: [] },
+      { expiresInHours: 999 },
+      { serviceId: "svc-deleted", windowDays: 0, allowedWeekdays: [], expiresInHours: 0 },
+      { serviceId: "svc-1", windowDays: 45, allowedWeekdays: [1, 3], expiresInHours: 5 },
+    ];
+    let checked = 0;
+    for (const over of cases) {
+      for (const caps of [null, CONNECTED]) {
+        const html = compose(over, caps);
+        const ids = new Set(
+          [...html.matchAll(/\sid="([^"]+)"/g)].map((m) => m[1]),
+        );
+        for (const ref of references(html)) {
+          checked += 1;
+          expect(ids.has(ref), `aria reference "${ref}" resolves to nothing`).toBe(true);
+        }
+      }
+    }
+    // Non-vacuity: the sweep must actually have found references to check.
+    expect(checked).toBeGreaterThan(10);
+  });
+
+  it("attaches each message ONLY to the field it explains", () => {
+    // Every field invalid at once: each control must reference its own error
+    // and no other.
+    const html = compose(
+      { serviceId: "svc-deleted", windowDays: 0, allowedWeekdays: [], expiresInHours: 0 },
+      CONNECTED,
+    );
+    const pairs: Array<[string, string]> = [
+      ["composer-service", "service"],
+      ["composer-window-days", "window"],
+      ["composer-weekday-group", "days"],
+      ["composer-expiry-hours", "expiry"],
+    ];
+    for (const [testId, field] of pairs) {
+      const tag = tagFor(html, testId);
+      expect(tag).toContain(`composer-error-${field}`);
+      for (const [, other] of pairs) {
+        if (other === field) continue;
+        expect(tag, `${testId} also references the ${other} error`).not.toContain(
+          `composer-error-${other}`,
+        );
+      }
+    }
+  });
+});
+
 describe("the send control", () => {
   it("is disabled and says which control is unconnected", () => {
     const html = compose();

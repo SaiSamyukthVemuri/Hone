@@ -303,6 +303,68 @@ describe("nothing is connected, and every control says so in its own words", () 
     expect(controlTag(invited, "resend_invitation")).toContain('disabled=""');
   });
 
+  it("fails closed when the entry supplies NO invitation facts at all", () => {
+    // `AdmissionEntry.invitation` is optional and documented as "absent means
+    // not known". It was reaching the rulings as `{}`, where the absent flags
+    // read as false, so the row claimed the link was live and unused — and once
+    // an adapter is bound it would advertise Resend and Cancel on an invitation
+    // the database may already have marked redeemed.
+    // Built WITHOUT the key, not with it set to undefined — the point is an
+    // entry a caller never filled in.
+    const withoutFacts: AdmissionEntry = {
+      id: ENTRY.id,
+      name: ENTRY.name,
+      email: ENTRY.email,
+      availabilityLabel: ENTRY.availabilityLabel,
+      waitingDays: ENTRY.waitingDays,
+      status: "invited",
+    };
+    const html = render(AdmissionRow({ entry: withoutFacts, capabilities: CONNECTED }));
+
+    expect(hasControl(html, "resend_invitation")).toBe(true);
+    expect(hasControl(html, "cancel_invitation")).toBe(true);
+    // ...rendered, but REFUSED — hiding them would say the controls do not
+    // exist on a row where they do.
+    expect(controlTag(html, "resend_invitation")).toContain('disabled=""');
+    expect(controlTag(html, "cancel_invitation")).toContain('disabled=""');
+    expect(html).toContain("could not be checked");
+
+    // No action derived from a guessed invitation state.
+    expect(hasControl(html, "return_to_waitlist")).toBe(false);
+    // And no claim that a working link exists.
+    expect(html).not.toContain('data-testid="admission-note-resend_invitation"');
+
+    // NEGATIVE CONTROL: an entry that DOES state the invitation is live keeps
+    // both controls enabled, so the refusals above are not vacuous.
+    const known = render(
+      AdmissionRow({
+        entry: {
+          ...ENTRY,
+          status: "invited",
+          invitation: { invitationElapsed: false, invitationRedeemed: false },
+        },
+        capabilities: CONNECTED,
+      }),
+    );
+    expect(controlTag(known, "resend_invitation")).not.toContain('disabled=""');
+    expect(controlTag(known, "cancel_invitation")).not.toContain('disabled=""');
+  });
+
+  it("does not give a non-invited row invitation semantics when facts are omitted", () => {
+    // A waiting or released entry has no invitation for facts to be unknown
+    // about; withholding its controls would disable a feature for no reason.
+    for (const status of ["waiting", "released", "expired"] as const) {
+      const html = render(
+        AdmissionRow({ entry: { ...ENTRY, status, invitation: undefined }, capabilities: CONNECTED }),
+      );
+      const primary = status === "waiting" ? "invite_to_book" : "return_to_waitlist";
+      expect(controlTag(html, primary), `${status} primary was disabled`).not.toContain(
+        'disabled=""',
+      );
+      expect(html).not.toContain("could not be checked");
+    }
+  });
+
   it("keeps the live-invitation shape when the facts could not be read", () => {
     // An unreadable invitation may already have been redeemed, so a stale
     // elapsed bit may not be used to claim expiry or hide Cancel.

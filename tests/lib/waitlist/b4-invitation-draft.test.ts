@@ -11,6 +11,7 @@ import {
 import {
   ALLOWED_DAYS_PRESET_VALUES,
   invitationHasRunOut,
+  normalizeInvitationContext,
   practitionerStatusDetail,
   BOOKING_WINDOW_PRESETS,
   INVITE_TO_BOOK_STATUSES,
@@ -296,13 +297,24 @@ describe("every verdict is the live model's, not a second copy of it", () => {
     // `expire` folds "not elapsed" and "could not look" into one branch, which
     // is safe where it is offered and unsafe here — so unknown refuses, the way
     // `release` already does one branch above.
-    // NOW EMPTY, and that is a stronger statement than the single exception it
-    // replaces. Once unreadable facts take precedence over a stale elapsed
-    // flag, "Return to waitlist" is no longer offered on an unreadable
-    // invitation at all, so the case that used to need an exception cannot
-    // arise from the surface. The model still fails closed for any direct
-    // caller — proved separately below.
-    expect(divergences.sort()).toEqual([]);
+    // TWO ENTRIES, BOTH IN THE SAFE DIRECTION, BOTH FROM ONE CAUSE.
+    //
+    // The comparison above deliberately uses the RAW context, which is what the
+    // live model sees. On an `invited` entry with NO invitation facts at all,
+    // the live model reads the absent flags as false and answers "available";
+    // this surface normalises that same absence to `invitationFactsUnknown` and
+    // refuses. We are strictly stricter, which is the only divergence direction
+    // permitted — offering a control the database will reject is the failure
+    // this whole delegation exists to prevent, and refusing one it might have
+    // accepted costs a practitioner a retry.
+    //
+    // Scoped to the exact context, so a divergence appearing under any OTHER
+    // context — or on any other action — fails here rather than hiding behind
+    // an already-accepted key.
+    expect(divergences.sort()).toEqual([
+      "cancel_invitation@invited@no invitation facts",
+      "resend_invitation@invited@no invitation facts",
+    ]);
     // NON-VACUITY: the walk must actually be reaching delegated controls, or an
     // empty result would mean the loop found nothing rather than that nothing
     // diverged.
@@ -320,6 +332,56 @@ describe("every verdict is the live model's, not a second copy of it", () => {
     expect(verdict.available === false && verdict.reason).toBe(
       UNKNOWN_INVITATION_FAILS_CLOSED,
     );
+  });
+
+  it("treats a MISSING invitation context as unknown, not as a live invitation", () => {
+    // `AdmissionEntry.invitation` is optional and documented as "absent means
+    // not known", but an absent object was reaching the rulings as `{}`, where
+    // `invitationFactsUnknown` and `invitationRedeemed` both read as false. The
+    // row then claimed the link was live and unused, and once an adapter is
+    // bound it would advertise Resend and Cancel on an invitation the database
+    // may already have marked redeemed — both returning `already_redeemed`.
+    for (const raw of [undefined, {}]) {
+      expect(normalizeInvitationContext("invited", raw)).toEqual({
+        invitationFactsUnknown: true,
+      });
+
+      const actions = surfaceItems("invited", raw as AdmissionContext);
+      const resend = actions.find((i) => i.action === "resend_invitation")!;
+      const cancel = actions.find((i) => i.action === "cancel_invitation")!;
+      expect(resend.available, "Resend offered on unknown facts").toBe(false);
+      expect(cancel.available, "Cancel offered on unknown facts").toBe(false);
+      expect(actions.map((i) => i.action)).not.toContain("return_to_waitlist");
+
+      // And it SAYS so, rather than describing a live link.
+      expect(practitionerStatusDetail("invited", raw as AdmissionContext)).toContain(
+        "could not be checked",
+      );
+      expect(practitionerStatusLabel("invited", raw as AdmissionContext)).toBe(
+        "Invitation sent",
+      );
+    }
+
+    // A caller that genuinely KNOWS the invitation is live keeps its controls —
+    // otherwise the fix would simply disable the feature.
+    const known = { invitationElapsed: false, invitationRedeemed: false };
+    const live = surfaceItems("invited", known);
+    expect(live.find((i) => i.action === "resend_invitation")!.available).toBe(true);
+    expect(live.find((i) => i.action === "cancel_invitation")!.available).toBe(true);
+  });
+
+  it("does not give a non-invited row invitation semantics", () => {
+    // A waiting or released entry has no invitation for facts to be unknown
+    // ABOUT, and marking one unknown would withhold controls whose safety does
+    // not depend on an invitation at all.
+    for (const status of WAITLIST_ENTRY_STATUSES) {
+      if (status === "invited") continue;
+      expect(normalizeInvitationContext(status, undefined)).toEqual({});
+      expect(normalizeInvitationContext(status, {})).toEqual({});
+    }
+    expect(entryActionSurface("waiting").primary?.action).toBe("invite_to_book");
+    expect(entryActionSurface("waiting").primary?.available).toBe(true);
+    expect(entryActionSurface("released").primary?.available).toBe(true);
   });
 
   it("lets unreadable facts beat a stale elapsed flag, everywhere at once", () => {

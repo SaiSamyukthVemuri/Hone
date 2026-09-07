@@ -52,6 +52,14 @@ import type { AdapterCapabilities } from "@/lib/waitlist/invite-to-book-contract
 // adapter contract demands it, and an adapter that cannot carry it refuses the
 // send instead of quietly widening it.
 
+/** The id an error message carries, and the id a control points at. ONE
+ *  function, so a control can never reference an id the message does not use —
+ *  a dangling `aria-describedby` announces that an explanation exists and then
+ *  has none to give, which is worse than no association at all. */
+export function composerErrorId(field: DraftFieldId): string {
+  return `composer-error-${field}`;
+}
+
 function FieldSection({
   id,
   title,
@@ -63,7 +71,7 @@ function FieldSection({
   error?: string;
   children: React.ReactNode;
 }) {
-  const errorId = error ? `composer-error-${id}` : undefined;
+  const errorId = error ? composerErrorId(id) : undefined;
   return (
     <section
       data-testid={`composer-field-${id}`}
@@ -168,6 +176,12 @@ export function InviteComposer({
         <select
           data-testid="composer-service"
           aria-labelledby="composer-label-service"
+          // THE CONTROL CARRIES THE RELATIONSHIP, not just the section. A
+          // screen-reader user lands on the select, not on the paragraph
+          // underneath it, so without this they are told the field is invalid
+          // and never told why Send is blocked.
+          aria-invalid={errors.service ? true : undefined}
+          aria-describedby={errors.service ? composerErrorId("service") : undefined}
           defaultValue={draft.serviceId ?? ""}
           className={fieldControlClass()}
         >
@@ -215,6 +229,7 @@ export function InviteComposer({
               data-testid="composer-window-days"
               defaultValue={draft.windowDays}
               aria-invalid={errors.window ? true : undefined}
+              aria-describedby={errors.window ? composerErrorId("window") : undefined}
               className={fieldControlClass()}
             />
           </label>
@@ -241,6 +256,23 @@ export function InviteComposer({
           // week a studio reads starts on Monday, and the display order travels
           // with the index precisely so selecting "Mon–Fri" by position cannot
           // quietly select Sunday–Thursday.
+          // THE GROUP CARRIES IT, NOT EACH TOGGLE. "Choose at least one day" is
+          // a fact about the SET, not about Monday; repeating it on all seven
+          // buttons would announce the same error seven times and still not say
+          // which control fixes it.
+          // NO `aria-invalid` HERE, AND THAT IS CORRECT. ARIA supports it on
+          // widget roles, not on `group` — assistive tech ignores it and the
+          // repo's own a11y lint rejects it. The invalid state reaches the user
+          // through the description instead, which is the part they actually
+          // hear on entering the group. Marking the seven toggles individually
+          // would be the alternative, and it would be wrong twice over: no
+          // single day is invalid, and it would announce one error seven times.
+          <div
+            role="group"
+            data-testid="composer-weekday-group"
+            aria-labelledby="composer-label-days"
+            aria-describedby={errors.days ? composerErrorId("days") : undefined}
+          >
           <ul className="flex flex-wrap gap-2" data-testid="composer-weekdays">
             {WEEKDAYS_IN_DISPLAY_ORDER.map((day) => (
               <li key={day.index}>
@@ -263,6 +295,7 @@ export function InviteComposer({
               </li>
             ))}
           </ul>
+          </div>
         )}
       </FieldSection>
 
@@ -299,6 +332,7 @@ export function InviteComposer({
               data-testid="composer-expiry-hours"
               defaultValue={draft.expiresInHours}
               aria-invalid={errors.expiry ? true : undefined}
+              aria-describedby={errors.expiry ? composerErrorId("expiry") : undefined}
               className={fieldControlClass()}
             />
           </label>

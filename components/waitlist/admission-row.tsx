@@ -4,6 +4,7 @@ import type { AdmissionContext, WaitlistEntryStatus } from "@/lib/waitlist/admis
 import {
   controlState,
   entryActionSurface,
+  normalizeInvitationContext,
   practitionerStatusDetail,
   practitionerStatusLabel,
   type PractitionerActionItem,
@@ -84,7 +85,7 @@ function StatusPill({
   context,
 }: {
   status: WaitlistEntryStatus;
-  context: AdmissionContext;
+  context: AdmissionContext | undefined;
 }) {
   // Status is carried by TEXT. Colour is reinforcement and never the carrier:
   // the states are not distinguishable by hue for a colour-blind practitioner,
@@ -283,13 +284,13 @@ export function AdmissionActions({
   entryId,
   entryName,
   status,
-  context = {},
+  context,
   capabilities = null,
 }: {
   entryId: string;
   entryName: string;
   status: WaitlistEntryStatus;
-  context?: AdmissionContext;
+  context?: AdmissionContext | undefined;
   /** `null` until an adapter satisfying `WaitlistInvitationAdapter` is bound.
    *  There is no stub adapter in this repository, so this is the only value
    *  that exists today. */
@@ -301,8 +302,12 @@ export function AdmissionActions({
   // A link the invitee can still use right now. Unknown facts count as "maybe",
   // and the warning is shown — telling someone a link might stop working is
   // recoverable; not telling them is not.
+  const facts = normalizeInvitationContext(status, context);
   const liveLinkExists =
-    status === "invited" && !context.invitationRedeemed && context.invitationElapsed !== true;
+    status === "invited" &&
+    !facts.invitationFactsUnknown &&
+    !facts.invitationRedeemed &&
+    facts.invitationElapsed !== true;
 
   return (
     <div className="flex w-full flex-col gap-2" data-testid="admission-actions">
@@ -356,7 +361,13 @@ export function AdmissionRow({
   entry: AdmissionEntry;
   capabilities?: AdapterCapabilities | null;
 }) {
-  const context = entry.invitation ?? {};
+  // PASSED THROUGH UNDEFINED, NOT COERCED TO `{}`. The model owns the single
+  // interpretation of "no invitation facts" — `normalizeInvitationContext` maps
+  // both a missing object and an empty one to the fail-closed unknown state for
+  // an `invited` entry. Coercing here would put a second reading of the same
+  // absence in the component, which is exactly what let an omitted context read
+  // as a live, unused invitation.
+  const context = entry.invitation;
   return (
     <li
       data-testid="admission-row"

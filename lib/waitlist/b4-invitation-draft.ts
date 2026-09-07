@@ -121,12 +121,48 @@ export const PRACTITIONER_STATUS_LABEL: Record<WaitlistEntryStatus, string> = {
  */
 export function practitionerStatusLabel(
   status: WaitlistEntryStatus,
-  context: AdmissionContext = {},
+  rawContext: AdmissionContext = {},
 ): string {
+  const context = normalizeInvitationContext(status, rawContext);
   if (status === "invited" && invitationHasRunOut(context)) {
     return PRACTITIONER_STATUS_LABEL.expired;
   }
   return PRACTITIONER_STATUS_LABEL[status];
+}
+
+/**
+ * The invitation facts a caller actually supplied, interpreted ONCE.
+ *
+ * OMISSION IS NOT "NOTHING IS WRONG". `AdmissionContext` documents every absent
+ * field as "not known", but an absent OBJECT was reaching the rulings as `{}`,
+ * where `invitationFactsUnknown` and `invitationRedeemed` both read as false —
+ * so a row that had been told nothing about an invitation claimed the link was
+ * live and unused. Once an adapter is bound that would advertise Resend and
+ * Cancel on an invitation the database may already have marked redeemed, and
+ * both would come back `already_redeemed`.
+ *
+ * An empty object is treated identically to a missing one, because they carry
+ * exactly the same information: none. A caller that genuinely knows the
+ * invitation is live says so — `{ invitationElapsed: false, invitationRedeemed:
+ * false }` — and keeps every control it has earned.
+ *
+ * ONLY `invited` GAINS INVITATION SEMANTICS. A waiting or released row has no
+ * invitation for facts to be unknown ABOUT, and marking one unknown would
+ * withhold controls whose safety does not depend on an invitation at all.
+ *
+ * This is the single interpretation of "unknown"; `invitationHasRunOut` and
+ * every availability ruling read the normalised value, so there is no second
+ * reading of the same absence anywhere.
+ */
+export function normalizeInvitationContext(
+  status: WaitlistEntryStatus,
+  context: AdmissionContext | undefined,
+): AdmissionContext {
+  if (status !== "invited") return context ?? {};
+  if (context === undefined || Object.keys(context).length === 0) {
+    return { invitationFactsUnknown: true };
+  }
+  return context;
 }
 
 /**
@@ -155,8 +191,9 @@ export function invitationHasRunOut(context: AdmissionContext): boolean {
  *  a command, or a transition. */
 export function practitionerStatusDetail(
   status: WaitlistEntryStatus,
-  context: AdmissionContext = {},
+  rawContext: AdmissionContext = {},
 ): string {
+  const context = normalizeInvitationContext(status, rawContext);
   switch (status) {
     case "waiting":
       return "In the queue, waiting for an invitation.";
@@ -354,8 +391,9 @@ function invitationRefusal(
 export function practitionerActionAvailability(
   action: PractitionerAction,
   status: WaitlistEntryStatus,
-  context: AdmissionContext = {},
+  rawContext: AdmissionContext = {},
 ): ActionAvailability {
+  const context = normalizeInvitationContext(status, rawContext);
   // A CLOSED ENTRY REFUSES EVERYTHING WITH ONE SENTENCE, and the sentence is a
   // fact about the entry rather than about the action. The live model already
   // holds both, so this reads them there instead of keeping a copy that can
@@ -558,8 +596,9 @@ function item(
  */
 export function entryActionSurface(
   status: WaitlistEntryStatus,
-  context: AdmissionContext = {},
+  rawContext: AdmissionContext = {},
 ): EntryActionSurface {
+  const context = normalizeInvitationContext(status, rawContext);
   if (status === "converted" || status === "removed") {
     return { primary: null, secondary: [] };
   }
