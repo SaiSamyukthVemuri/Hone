@@ -24,8 +24,11 @@ import {
 // proves nothing.
 //
 // Invitation drafting — invite, reinvite, TTL bounds, the draft apparatus and
-// the brief-vocabulary map — is NOT here. It reaches no server action and lives
-// in lib/waitlist/b4-invitation-draft.ts, proved by its own file.
+// the brief-vocabulary map — is NOT here, and is not in this repository state
+// at all. It reaches no server action, so it left with the WAIT-03 B4 prototype
+// to `feat/wait03-b4-admission-prototype` (draft PR #683) and is proved there.
+// Nothing below may import it; the assertion that ADMISSION_ACTIONS is exactly
+// the five wired commands is what keeps that from drifting back in silently.
 
 const MIGRATION = readFileSync(
   join(process.cwd(), "supabase/migrations/0188_new_client_waitlist_invitations.sql"),

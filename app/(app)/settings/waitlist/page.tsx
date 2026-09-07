@@ -543,6 +543,24 @@ export default async function WaitlistSettingsPage({
                     return (
                       <li
                         key={row.id}
+                        // WHICH PERSON THIS ROW IS, on the row itself.
+                        //
+                        // A control is only reachable if it is reachable ON THE
+                        // ROW THAT NEEDS IT. Without an identifier here, "this
+                        // page renders a Release" and "entry 150 can be
+                        // released" are the same assertion — and on a page of
+                        // a hundred claimed entries the first is satisfied by
+                        // any of the other ninety-nine. This is what lets a
+                        // test scope the second claim to one person.
+                        //
+                        // IT DISCLOSES NOTHING NEW. The id is already in this
+                        // markup twice, as the hidden `entry_id` of each action
+                        // form below, on a route that is owner-only three times
+                        // over. It sits on the <li> rather than being read off
+                        // those inputs because a row whose state offers no
+                        // action has no form to read it from, and that row
+                        // still has to be identifiable.
+                        data-entry-id={row.id}
                         data-entry-status={row.status}
                         className="flex flex-col gap-3 rounded-lg border border-neutral-200 p-4 dark:border-neutral-800 sm:flex-row sm:items-start sm:justify-between"
                       >

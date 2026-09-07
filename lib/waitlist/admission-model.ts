@@ -13,17 +13,21 @@
 // importer of this module. That is the boundary this file is drawn on: an
 // action a studio cannot yet perform does not belong in it.
 //
-// INVITING IS NOT HERE. `issue_new_client_waitlist_invitation` mints a token
-// that has to reach a real recipient, which is B1/B1.5c + B2 work, so invite,
-// reinvite, the TTL bounds and the whole invitation-draft apparatus live in
-// `b4-invitation-draft.ts` — unreachable from `app/` and reviewable as the
-// prototype it is. Keeping them here made every review round spend itself on
-// staged code while the live surface waited.
+// INVITING IS NOT HERE, AND IS NOT IN THIS REPOSITORY STATE AT ALL.
+// `issue_new_client_waitlist_invitation` mints a token that has to reach a real
+// recipient, which is B1/B1.5c + B2 work. Invite, reinvite, the TTL bounds and
+// the whole invitation-draft apparatus were removed from this module and now
+// live on the WAIT-03 B4 prototype branch (`feat/wait03-b4-admission-prototype`,
+// draft PR #683) as `lib/waitlist/b4-invitation-draft.ts`. Do not look for that
+// file here — it is deliberately absent, so an unwired action cannot be offered
+// by a surface that has no way to name it. Keeping the two halves together made
+// every review round spend itself on staged code while the live surface waited.
 //
 // THE VOCABULARY IS THE DATABASE'S, NOT THE BRIEF'S. The seven states below are
 // copied from migration 0188's own CHECK constraint. Where the brief's words and
-// the database's disagree, the database wins; the mapping between them is a B4
-// design artifact and lives with B4.
+// the database's disagree, the database wins. The map between the two is a
+// prototype design artifact, so it left with the prototype; nothing on this
+// surface consults it, because this surface renders the database's own words.
 //
 // DISCLOSURE, NOT JUST DISABLEMENT. Every unavailable action returns its REASON
 // from the same function that decides availability, so a greyed control can

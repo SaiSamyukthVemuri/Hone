@@ -440,6 +440,23 @@ describe("a failed load is never shown as an empty queue", () => {
 });
 
 describe("rendered rows", () => {
+  it("every row identifies WHICH entry it is", async () => {
+    // The hook the reachability proofs are scoped by. Pinned here as a live
+    // contract of its own: removed, every scoped assertion would fail with a
+    // confusing "no row" rather than naming what actually broke.
+    //
+    // It discloses nothing new — the id is already the hidden `entry_id` of
+    // each action form on this owner-only route — and it sits on the <li>
+    // because a row whose state offers no action has no form to read it from.
+    scenario.rows = [
+      entry({ id: "row-a", name: "Ada" }),
+      entry({ id: "row-b", name: "Bo", status: "claimed" }),
+    ];
+    const html = await render();
+    expect(html).toContain('data-entry-id="row-a"');
+    expect(html).toContain('data-entry-id="row-b"');
+  });
+
   it("shows how long each person has been waiting", async () => {
     scenario.rows = [
       entry({ id: "a", name: "Three Days", joined_at: "2026-08-20T09:00:00.000Z" }),
@@ -964,10 +981,10 @@ describe("action visibility follows the row's lifecycle state", () => {
       entry({ id: "held", status: "claimed", joined_at: "2026-08-30T00:00:00.000Z" }),
     ];
     const html = await render();
-    // The claimed row is present WITH its Release control, despite being the
-    // newest row on the page.
+    // The claimed row is present WITH its OWN Release control, despite being
+    // the newest row on the page.
     expect(html).toContain('data-entry-status="claimed"');
-    expect(actionsFor(html)).toContain("release");
+    expect(rowActions(html, "held")).toContain("release");
   });
 
   it("each section reports its OWN total, and offers its own way through", async () => {
@@ -1019,6 +1036,36 @@ function seedSection(status: string, n: number) {
   );
 }
 
+/**
+ * The markup of ONE row, sliced at its own boundaries.
+ *
+ * WHY THIS EXISTS. `actionsFor(html)` scans the WHOLE page, so on a page of
+ * claimed entries "a Release is rendered" is satisfied by any row — including
+ * one that is not the row under test. That makes "entry 150 can be released"
+ * and "this page has a Release somewhere" the same assertion, and only the
+ * second one is true under the pre-fix read. Scoping to the row is what
+ * separates them.
+ *
+ * The row list has no nested `<li>`, so a row ends where the next one begins,
+ * or where its `</ul>` does. Returns null when the row is not on the page at
+ * all, which is the case the negative control drives.
+ */
+function rowMarkup(html: string, entryId: string): string | null {
+  const attr = html.indexOf(`data-entry-id="${entryId}"`);
+  if (attr === -1) return null;
+  const start = html.lastIndexOf("<li", attr);
+  const nextLi = html.indexOf("<li", attr);
+  const listEnd = html.indexOf("</ul>", attr);
+  const ends = [nextLi, listEnd].filter((i) => i !== -1);
+  return html.slice(start, ends.length > 0 ? Math.min(...ends) : html.length);
+}
+
+/** The lifecycle actions offered ON one entry's own row — never the page's. */
+function rowActions(html: string, entryId: string): string[] {
+  const markup = rowMarkup(html, entryId);
+  return markup === null ? [] : actionsFor(markup);
+}
+
 /** The read the page issued for one section, by its status filter. */
 function readFor(status: string) {
   return queries.find(
@@ -1044,32 +1091,60 @@ describe("a section past one page is navigable, not truncated", () => {
     expect(html).toContain('href="/settings/waitlist?section=claimed"');
   });
 
-  it("REQ 1-4 — the focused view reaches entry 150 WITH its Release control", async () => {
+  it("REQ 1-4 — entry 150 is reached, and RELEASE IS ON ITS OWN ROW", async () => {
     // The entry an operator most needs to reach: claimed, past the first page,
     // and holding a person whose only exit is the control on that row.
     scenario.rows = seedSection("claimed", 150);
     const html = await render({ section: "claimed", page: "2" });
 
-    expect(html).toContain(">Person 150<");
-    expect(html).toContain('data-entry-status="claimed"');
-    expect(actionsFor(html)).toContain("release");
+    const row = rowMarkup(html, "claimed-150");
+    expect(row, "entry 150 is not on the page at all").not.toBeNull();
+    expect(row).toContain(">Person 150<");
+    expect(row).toContain('data-entry-status="claimed"');
+
+    // THE ASSERTION THAT MATTERS: the control is on THIS row, not merely
+    // somewhere on a page full of other claimed people.
+    expect(rowActions(html, "claimed-150")).toContain("release");
+    // …and it is genuinely THIS entry the form would act on.
+    expect(row).toContain('name="entry_id" value="claimed-150"');
+
+    // NON-VACUITY FOR THE SLICE: one row, not the page. If it spanned its
+    // neighbours, "its own Release" would mean nothing.
+    expect(row).not.toContain(">Person 149<");
+    expect(row).not.toContain(">Person 101<");
+
     // The window asked for is the SECOND page, stated honestly.
     expect(html).toContain("Showing 101–150 of 150.");
     expect(readFor("claimed").range).toEqual([100, 199]);
   });
 
-  it("NEGATIVE CONTROL — those assertions FAIL against a read that ignores the offset", async () => {
+  it("NEGATIVE CONTROL — that exact assertion goes RED against the pre-fix read", async () => {
     // The pre-fix read: a bounded page from the top of the section, whatever
-    // window was requested. If the assertions above can pass against this, they
-    // are proving nothing about pagination.
+    // window was requested.
     scenario.rows = seedSection("claimed", 150);
     scenario.ignoreRange = true;
     const html = await render({ section: "claimed", page: "2" });
 
-    expect(html).not.toContain(">Person 150<");
+    // THE EXACT ASSERTION FROM THE TEST ABOVE, SHOWN FAILING — written as the
+    // same expression rather than its negation, so there is no doubt the two
+    // tests are making the same claim about the same thing.
+    expect(() =>
+      expect(rowActions(html, "claimed-150")).toContain("release"),
+    ).toThrow();
+
+    // …and why it fails: entry 150 is absent, so it has no row and therefore
+    // no control of its own.
+    expect(rowMarkup(html, "claimed-150")).toBeNull();
+    expect(rowActions(html, "claimed-150")).toEqual([]);
+
+    // AND HERE IS WHY THE SCOPING WAS NECESSARY. The page-wide form of the
+    // same claim PASSES against this broken read: rows 1-100 are also
+    // `claimed`, so they render Releases of their own. An unscoped assertion
+    // was being satisfied by another person's control, which is exactly the
+    // false green this pairing removes.
+    expect(actionsFor(html)).toContain("release");
     expect(html).toContain(">Person 1<");
-    // …and with the row absent, so is the only control that could move it.
-    expect(html).not.toContain('data-entry-id="claimed-150"');
+    expect(rowActions(html, "claimed-1")).toContain("release");
   });
 
   it("PROVES THE CONTROL IS ROW-BOUND — reaching the row is what carries the action", async () => {
@@ -1080,21 +1155,54 @@ describe("a section past one page is navigable, not truncated", () => {
     expect(actionsFor(html)).not.toContain("release");
   });
 
+  it("THE ROW SLICE ITSELF IS HONEST — it neither spans rows nor invents one", async () => {
+    // Everything above rests on `rowMarkup` returning ONE row. A slice that
+    // quietly returned the page would make every scoped assertion equivalent
+    // to the page-wide one it replaced, and the negative control would stop
+    // discriminating without ever going red.
+    scenario.rows = [
+      entry({ id: "claimed-a", name: "Ada", status: "claimed" }),
+      entry({ id: "claimed-b", name: "Bo", status: "claimed" }),
+    ];
+    const html = await render();
+
+    const a = rowMarkup(html, "claimed-a")!;
+    const b = rowMarkup(html, "claimed-b")!;
+    expect(a).toContain(">Ada<");
+    expect(a).not.toContain(">Bo<");
+    expect(b).toContain(">Bo<");
+    expect(b).not.toContain(">Ada<");
+    // Each carries its OWN entry id into its own action form.
+    expect(a).toContain('name="entry_id" value="claimed-a"');
+    expect(a).not.toContain('value="claimed-b"');
+    // Both really do offer the control, so the exclusions above are not
+    // passing because the slices are empty.
+    expect(rowActions(html, "claimed-a")).toContain("release");
+    expect(rowActions(html, "claimed-b")).toContain("release");
+    // An entry that is not on the page has no slice — not the whole page.
+    expect(rowMarkup(html, "claimed-nobody")).toBeNull();
+  });
+
   it("REQ 4 — Claim next cannot create a row the UI is unable to reach", async () => {
     // The held section is the one Claim next grows. Whatever size it reaches,
     // every page of it is addressable and every row arrives with its control.
     scenario.rows = seedSection("claimed", 250);
     const lastPage = await render({ section: "claimed", page: "3" });
-    expect(lastPage).toContain(">Person 250<");
-    expect(actionsFor(lastPage)).toContain("release");
+    const row = rowMarkup(lastPage, "claimed-250");
+    expect(row, "entry 250 is not on the page at all").not.toBeNull();
+    expect(row).toContain(">Person 250<");
+    expect(rowActions(lastPage, "claimed-250")).toContain("release");
     expect(lastPage).toContain("Showing 201–250 of 250.");
   });
 
   it("REQ 2-3 — an expired row past a page keeps its escape too", async () => {
     scenario.rows = seedSection("expired", 150);
     const html = await render({ section: "expired", page: "2" });
-    expect(html).toContain(">Person 150<");
-    expect(actionsFor(html)).toContain("requeue");
+    const row = rowMarkup(html, "expired-150");
+    expect(row, "expired entry 150 is not on the page at all").not.toBeNull();
+    expect(row).toContain(">Person 150<");
+    // Requeue is this state's only way back, and it must be on THIS row.
+    expect(rowActions(html, "expired-150")).toContain("requeue");
   });
 
   it("REQ 8 — paging windows the DATABASE's order and re-sorts nothing", async () => {
