@@ -94,7 +94,13 @@ function StatusPill({
   return (
     <span
       data-testid="admission-status"
-      data-status={status}
+      // NO `data-status` HERE, DELIBERATELY. It used to carry the raw database
+      // status, which put the word "claimed" into the markup of every held row
+      // — the one word the product ruling says a practitioner never sees. It is
+      // invisible to a reader and unannounced by a screen reader, but nothing
+      // consumed it, so it was a database word in the DOM for no benefit at
+      // all. Assert on this element's TEXT, which is the practitioner label and
+      // the thing actually under test.
       className={cx(
         "inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-xs font-medium",
         emphasised ? "border-accent text-accent" : "border-line-strong text-fg-muted",

@@ -113,6 +113,47 @@ describe("the waiting row a practitioner reads", () => {
   });
 });
 
+describe("no database word reaches the rendered markup, anywhere", () => {
+  it("scans every status, every invitation context, both capability states", () => {
+    // THE MODEL-LEVEL VOCABULARY TEST IS NOT ENOUGH. It walks the label and
+    // action maps, so it cannot see a word that reaches the page some other
+    // way — and one did: `data-status={status}` put "claimed" into the markup
+    // of every held row. Invisible to a reader, unannounced by a screen
+    // reader, consumed by nothing, and still the exact word the product ruling
+    // removes. This scans the OUTPUT instead of the inputs.
+    let markup = "";
+    let rendered = 0;
+    for (const status of WAITLIST_ENTRY_STATUSES) {
+      for (const invitation of [
+        {},
+        { invitationElapsed: true },
+        { invitationElapsed: false },
+        { invitationRedeemed: true },
+        { invitationFactsUnknown: true },
+        { invitationFactsUnknown: true, invitationElapsed: true },
+      ]) {
+        for (const capabilities of [null, CONNECTED]) {
+          markup += render(
+            AdmissionRow({ entry: { ...ENTRY, status, invitation }, capabilities }),
+          );
+          rendered += 1;
+        }
+      }
+    }
+    // Non-vacuity: the sweep must have produced real pages.
+    expect(rendered).toBe(WAITLIST_ENTRY_STATUSES.length * 6 * 2);
+    expect(markup.length).toBeGreaterThan(10_000);
+
+    const lower = markup.toLowerCase();
+    for (const word of ["claim", "reinvite", "re-invite", "record expired", "released", "converted", "requeue"]) {
+      expect(lower, `"${word}" reached the rendered markup`).not.toContain(word);
+    }
+    // Non-vacuity for the scan itself: words that SHOULD be there, are.
+    expect(lower).toContain("invite to book");
+    expect(lower).toContain("invitation expired");
+  });
+});
+
 describe("accessible ids are namespaced per entry", () => {
   it("does not collide across rows", () => {
     // FINDING B. The earlier revision emitted `id="reason-remove"` on every
