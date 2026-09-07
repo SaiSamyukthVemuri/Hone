@@ -120,7 +120,8 @@ latest branch head; different claims have different anchors.
 | **Hosted — health / reachability probe** | The probe + `observed_at` | Expiry of its stated freshness window | **Point-in-time, window must be stated** |
 | **Hosted — current deployment identity** | The **resolved deployment ID**, or an alias→deployment mapping observed at a stated instant. **Never an alias alone** | A successful promotion or deployment that changes the resolved target | Current until the resolved target changes |
 | **PR review** | The exact PR head SHA | Any push to that PR, including a docs-only one | Current only at that head |
-| **Source claim — textual** ("this symbol never appears", "this file states X") | The source SHA | Any commit touching the cited source | Current at that SHA |
+| **Source claim — file-local** ("this file states X") | The source SHA + the cited file | Any commit touching that file | Current at that SHA |
+| **Source claim — scan / absence** ("no direct writer exists", "this forbidden symbol never appears") | The source SHA + **every path the scan covered**, stated as the scope it ran over | Any commit touching **any** file in that scope — including one the claim never named, which is exactly how an absence is falsified | Current at that SHA, for that scope |
 | **Source claim — behavioural** ("this route is owner-only") | The source SHA **plus the named set of files the behaviour is assembled from** | Any commit touching **any** file in that set — the cited file is not the whole of it | Current at that SHA, for that set |
 
 **Occurrence authority is not current-state authority.** That an event happened
@@ -132,16 +133,26 @@ question, **did X occur**, and for no other. It does not show that X is current,
 that X is still serving, or that X is healthy now. Each of those is a separate
 claim with its own row above.
 
-**A behavioural source claim is not bound to one file.** "This route is
-owner-only because it imports an authorization helper" is assembled from the
-route *and* the helper. Editing only the helper changes the behaviour while
-leaving the cited file untouched, so keying such a claim on the cited file alone
-would leave it reading as current after the thing it described had changed —
-the silent floating of §1, reproduced inside the rule meant to prevent it. A
-behavioural claim therefore names the set it depends on and drops to history
-when **any** member of that set moves. A purely textual claim — the grep
-tripwire `ENGINEERING_STANDARDS.md` calls an architectural tripwire — asserts
-nothing about assembled behaviour and keys on its own file.
+**A source claim keys on everything it had to read to be true.** Only a
+file-local assertion keys on one file. Two common claims do not, and both fail
+the same way if they are treated as though they did.
+
+An **absence** claim — the grep tripwire `ENGINEERING_STANDARDS.md` calls an
+architectural tripwire, "no direct writer exists" or "this forbidden symbol
+never appears" — is falsified by *adding* the symbol somewhere the claim never
+mentioned. Its validity key is the **scan scope**, so the scope must be stated;
+a tripwire that does not say what it searched cannot say what would invalidate
+it.
+
+A **behavioural** claim — "this route is owner-only because it imports an
+authorization helper" — is assembled from the route *and* the helper. Editing
+only the helper changes the behaviour while leaving the cited file untouched.
+
+In both cases, keying on the cited file alone would leave the claim reading as
+current after the thing it described had changed — the silent floating of §1,
+reproduced inside the rule meant to prevent it. So each names the scope or set
+it depended on, and drops to history when **any** member of that scope or set
+moves.
 
 **`ALIAS_NAME` is not `SERVING_DEPLOYMENT_IDENTITY`.** A promotion retargets a
 stable alias rather than renaming it, so `hone.care` can keep its name while the
@@ -196,7 +207,7 @@ claim — is what decays.
 | **One production mover** | Only operations that can actually move production state — see below | Claim is exclusive **for those operations only**. Release states branch, exact head, and evidence state. The successor re-fetches and re-verifies the base before acting: it may have moved. |
 | **One migration-number owner** | The next free migration number | Never hard-coded; derived at authoring time. A number is claimed when the file is committed. An applied migration is frozen — a correction is a new migration, never an edit. |
 | **One shared-DB owner** | The shared local database stack | Claimed before any reset, because a reset is destructive to every other worktree. Released explicitly; after release, no further reset without re-authorization. |
-| **One browser destructive-resource owner** | Only the browser/E2E resources that cannot be isolated: destructive operations (a stack reset), reserved **singleton** fixtures, and any suite proven to share a non-isolated mutable resource (today: the fixed-identity admin specs below) | Claimed before *those* operations only, released when they finish. **Ordinary isolated E2E runs concurrently and needs no claim.** |
+| **One owner per browser destructive resource** | Only the browser/E2E resources that cannot be isolated: destructive operations (a stack reset), reserved **singleton** fixtures, and any suite proven to share a non-isolated mutable resource. **The claim is held per contended resource, not as one global lock** — suites contending on *different* resources do not exclude each other (today: two independent fixed admin identities, below) | Claimed before *those* operations only, released when they finish. **Ordinary isolated E2E runs concurrently and needs no claim.** |
 
 ### Ordinary browser runs are not serialized
 
@@ -216,19 +227,30 @@ integer and nothing else". The exceptions are therefore the fixtures that
 addresses, so `e2e@harness.local` and `e2e-operator@harness.local` are **fixed
 identities** that every run must share. `e2e/quick-import.spec.ts` deactivates
 the first address's practitioner rows in **every** studio — the statement
-carries no `studio_id` predicate — before re-adding one, and
+carries no `studio_id` predicate — before re-adding one, while
 `seedOperatorAuthUser()` check-then-creates the second and then asserts it holds
-no practitioner row — so `quick-import`, `new-studio-wizard` and
-`welcome-email-admin` contend on one identity however far apart their ports are.
-That is a demonstration, not a suspicion, and it is what the class below is for.
+no practitioner row. Concurrent runs therefore collide however far apart their
+ports are: that is a demonstration, not a suspicion, and it is what the class
+below is for.
+
+**The two identities are independent, and so are their locks.**
+`quick-import.spec.ts` touches only `e2e@harness.local`; `new-studio-wizard` and
+`welcome-email-admin` touch only `e2e-operator@harness.local` — deliberately, as
+`quick-import.spec.ts` records at its own definition. So `new-studio-wizard` and
+`welcome-email-admin` exclude each other and `quick-import` excludes another
+`quick-import`, but `quick-import` and `new-studio-wizard` may run at the same
+time. Collapsing the two into a single lock because both are "fixed-identity
+specs" would serialize runs that do not contend — the very over-serialization
+this section exists to refuse, re-introduced one level down.
 
 What still needs exclusive coordination is only what isolation cannot cover: a
 destructive reset, a **reserved singleton** fixture that is shared by
 construction, and any suite *demonstrated* to touch a non-isolated mutable
-resource — the three fixed-identity specs above are the currently known members
-of that last class. "Demonstrated" is the bar — a suspicion is not a claim, and
-naming a member here is a statement about those specs as they stand, not a
-standing licence to serialize a suite on suspicion.
+resource — the fixed-identity specs above are the currently known members of that
+last class, under **two** independent identity locks rather than one.
+"Demonstrated" is the bar — a suspicion is not a claim, and naming a member here
+is a statement about those specs as they stand, not a standing licence to
+serialize a suite on suspicion.
 
 ### What counts as moving production
 
