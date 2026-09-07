@@ -826,3 +826,68 @@ describe("the fake provider resets its applied configuration", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// CODEX P2 — an unrecognised mode must never reach the mutation.
+//
+// `mode` is a typed union, but the union is a COMPILE-TIME statement and this
+// function is reachable from unvalidated request bodies and version-skewed
+// callers. The old `if inspect ... else configure` shape made MUTATION the
+// default: an omitted, misspelled or newly-invented value wrote to a live
+// Messaging Service. These cast deliberately, because the runtime is exactly
+// what the type cannot speak for.
+// ---------------------------------------------------------------------------
+describe("an unknown mode is refused, never configured", () => {
+  type AnyMode = Parameters<typeof configureExistingStudioSmsSender>[0]["mode"];
+  const INVALID: Array<[string, unknown]> = [
+    ["undefined", undefined],
+    ["null", null],
+    ["a misspelling", "configre"],
+    ["an arbitrary string", "delete-everything"],
+    ["empty string", ""],
+    ["a number", 1],
+    ["an object", { mode: "configure" }],
+  ];
+
+  it("1. \"inspect\" still inspects, read-only", async () => {
+    provider.script = owned(STALE_INBOUND, STATUS);
+    const out = await configure({ mode: "inspect" });
+    expect(out).toMatchObject({ ok: true, result: "inspected", claimsTaken: 0 });
+    expect(store.claimCalls).toBe(0);
+    expect(writes()).toBe(0);
+  });
+
+  it("2. \"configure\" still takes the claimed, fenced mutation path", async () => {
+    provider.script = owned(STALE_INBOUND, STALE_STATUS);
+    const out = await configure({ mode: "configure" });
+    expect(out).toMatchObject({ ok: true, result: "configured", providerWrites: 2 });
+    expect(store.claimCalls).toBe(1);
+  });
+
+  for (const [label, value] of INVALID) {
+    it(`3-6. ${label} is refused with no claim and no write`, async () => {
+      provider.script = owned(STALE_INBOUND, STALE_STATUS);
+
+      const out = await configure({ mode: value as AnyMode });
+
+      expect(out).toMatchObject({
+        ok: false,
+        result: "refused",
+        reason: "invalid_input",
+        providerWrites: 0,
+        claimsTaken: 0,
+      });
+
+      // 7. Nothing was claimed, leased, parked, finalized or written.
+      expect(store.claimCalls, `${label} reached the claim`).toBe(0);
+      expect(store.fenceCalls, `${label} touched a lease`).toEqual([]);
+      expect(store.finalizeCalls, `${label} reached finalize`).toBe(0);
+      expect(store.rows, `${label} created durable attempt state`).toEqual([]);
+      expect(writes(), `${label} reached a provider write`).toBe(0);
+      // It must not even read the provider: an unknown mode is not a request
+      // we understand well enough to act on at all.
+      expect(provider.calls.ownedLookup, `${label} read the provider`).toBe(0);
+      expectNoForbiddenEffects();
+    });
+  }
+});

@@ -333,13 +333,32 @@ async function proveOwnershipAndAssociation(
  * `active`, and it re-proves ownership, association, configuration and a real
  * provider test from scratch.
  */
+/**
+ * The fail-closed answer for a mode this capability does not implement.
+ *
+ * Deliberately the INSPECT-shaped refusal rather than a new vocabulary: it is
+ * the only refusal that carries `claimsTaken: 0`, which is precisely the fact a
+ * caller needs about an unrecognised mode -- nothing was claimed, nothing was
+ * leased, nothing was written.
+ */
+function unknownMode(): InspectOutcome {
+  return {
+    ok: false,
+    result: "refused",
+    reason: "invalid_input",
+    retryable: false,
+    providerWrites: 0,
+    claimsTaken: 0,
+  };
+}
+
 export async function configureExistingStudioSmsSender(
   input: ConfigureInput,
 ): Promise<ConfigureOutcome> {
   // --- 0. Canonicalise ONCE, at the boundary -------------------------------
   const phoneNumber = canonicalClaimPhoneNumber(input.phoneNumber);
   if (!phoneNumber) {
-    return input.mode === "inspect"
+    return input.mode !== "configure"
       ? {
           ok: false,
           result: "refused",
@@ -362,7 +381,7 @@ export async function configureExistingStudioSmsSender(
   // mode: we cannot know afterwards what, if anything, it touched.
   const targetService = asMessagingServiceSid(input.messagingServiceSid);
   if (!targetService) {
-    return input.mode === "inspect"
+    return input.mode !== "configure"
       ? {
           ok: false,
           result: "refused",
@@ -380,10 +399,23 @@ export async function configureExistingStudioSmsSender(
         };
   }
 
+  // THE MODE BOUNDARY IS EXPLICIT IN BOTH DIRECTIONS, and that is the point.
+  //
+  // `mode` is a typed union, but a union is a COMPILE-TIME statement and this
+  // function is reachable from unvalidated request bodies and version-skewed
+  // callers. An `if inspect ... else configure` shape makes the MUTATION the
+  // default: `undefined`, `null`, `"configre"`, or any value a newer caller
+  // invents all fall through and write to a live Messaging Service. The safe
+  // default for a capability that changes provider configuration is to do
+  // nothing, so the mutating path is entered only on an exact match and
+  // everything else is refused before a claim exists.
   if (input.mode === "inspect") {
     return inspectOnly(input, phoneNumber, targetService);
   }
-  return configureUnderClaim(input, phoneNumber, targetService);
+  if (input.mode === "configure") {
+    return configureUnderClaim(input, phoneNumber, targetService);
+  }
+  return unknownMode();
 }
 
 // ---------------------------------------------------------------------------

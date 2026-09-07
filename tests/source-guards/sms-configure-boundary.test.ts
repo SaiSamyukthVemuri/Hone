@@ -171,6 +171,46 @@ describe("inspect's provider capability is narrowed by type, not by regex", () =
   });
 });
 
+// CODEX P2. The mutating path must be reachable ONLY from an exact
+// `mode === "configure"`. A guard on the dispatch shape, because the type
+// system cannot speak for a runtime value arriving from an unvalidated caller.
+describe("the mutating path is entered only on an exact mode match", () => {
+  const dispatch = CONFIGURE.slice(
+    CONFIGURE.indexOf('if (input.mode === "inspect")'),
+    CONFIGURE.indexOf("async function inspectOnly"),
+  );
+
+  it("the dispatch slice is real, not empty", () => {
+    expect(dispatch.length).toBeGreaterThan(80);
+    expect(dispatch).toContain("configureUnderClaim");
+  });
+
+  it("configureUnderClaim is guarded by an explicit equality on \"configure\"", () => {
+    expect(dispatch).toContain('if (input.mode === "configure")');
+    const guard = dispatch.indexOf('if (input.mode === "configure")');
+    const call = dispatch.indexOf("configureUnderClaim(");
+    expect(guard, "the mutation is not behind an explicit configure check").toBeLessThan(call);
+  });
+
+  it("there is a fail-closed terminal branch, so no value falls through", () => {
+    expect(dispatch).toContain("unknownMode()");
+    // The mutation must NOT be the last unguarded statement any more.
+    const lastCall = dispatch.lastIndexOf("configureUnderClaim(");
+    const fallback = dispatch.lastIndexOf("unknownMode()");
+    expect(fallback, "the fall-through still lands on the mutation").toBeGreaterThan(lastCall);
+  });
+
+  it("the fail-closed answer claims nothing", () => {
+    const fn = CONFIGURE.slice(
+      CONFIGURE.indexOf("function unknownMode()"),
+      CONFIGURE.indexOf("export async function configureExistingStudioSmsSender"),
+    );
+    expect(fn).toContain("claimsTaken: 0");
+    expect(fn).toContain("providerWrites: 0");
+    expect(fn).not.toContain("store.claim");
+  });
+});
+
 describe("configuration derives authority from the database", () => {
   it("claims, so membership and owner role are re-derived server-side", () => {
     expect(CONFIGURE).toContain("store.claim");
