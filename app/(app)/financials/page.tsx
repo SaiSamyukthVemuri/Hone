@@ -1,3 +1,4 @@
+import { BusinessSubnav } from "@/components/business-subnav";
 import {
   isReportingPeriod,
   type ReportingPeriod,
@@ -61,5 +62,13 @@ export default async function FinancialsPage({
     );
   }
 
-  return <FinancialSpine briefing={view.briefing} />;
+  // THE SUBNAV RENDERS ONLY PAST THE OWNER GATE, for the same reason it does
+  // on /dashboard/capacity: the refusal above is the whole page for a
+  // practitioner, and it must not also advertise two sibling owner surfaces.
+  return (
+    <div className="flex flex-col gap-6">
+      <BusinessSubnav />
+      <FinancialSpine briefing={view.briefing} />
+    </div>
+  );
 }

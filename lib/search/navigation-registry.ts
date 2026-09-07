@@ -190,6 +190,67 @@ export const NAV_ENTRIES: readonly NavEntry[] = [
     priority: 90,
   },
   {
+    id: "business",
+    title: "Business",
+    category: "Navigation",
+    href: "/business",
+    description: "Capacity, money and the health of your practice",
+    // The owner domain's front door. Keywords are the WORDS AN OWNER TYPES,
+    // which are rarely the page's own title: "how is my practice doing" is the
+    // question, "business" is the tab they half-remember.
+    keywords: [
+      "business",
+      "how is my practice doing",
+      "practice health",
+      "owner",
+      "reporting",
+      "reports",
+      "analytics",
+      "insights",
+    ],
+    visibility: "owner",
+    priority: 96,
+  },
+  {
+    id: "financials",
+    title: "Financials",
+    category: "Navigation",
+    href: "/financials",
+    // WHAT THIS SURFACE ACTUALLY ASSERTS, and nothing beyond it. The
+    // description is the product's claim, so it says COLLECTED BY CARD
+    // THROUGH HONE — not "revenue", not "earnings", not "income". Cash and
+    // e-transfer are invisible to Hone until a practitioner records them, so
+    // any word implying a complete picture of what the practice earned would
+    // be false on this screen today.
+    description:
+      "Completed work, and what was collected by card through Hone",
+    // SEARCH ALIASES, NOT CLAIMS — the same distinction the capacity entry
+    // above draws. An owner will type "revenue" and "earnings" because that is
+    // how anyone talks about money, and the entry must be FINDABLE by the word
+    // they reach for. Being findable by a word is not the same as asserting
+    // it, and the description above is what the product states.
+    keywords: [
+      "financials",
+      "money",
+      "revenue",
+      "collected",
+      "payments",
+      "business",
+      "earnings",
+      "how much money did i make",
+      "income",
+      "takings",
+      "refunds",
+      "collection rate",
+      "unpaid",
+      "no payment recorded",
+      "service value",
+      "completed work",
+    ],
+    visibility: "owner",
+    priority: 94,
+  },
+  {
     id: "dashboard-capacity",
     title: "Practice capacity",
     category: "Navigation",
@@ -857,11 +918,6 @@ export const NON_SEARCHABLE_ROUTES: ReadonlyArray<{
     route: "/settings/payments/return",
     reason:
       "Payment-provider onboarding callback landing page, not a navigable setting.",
-  },
-  {
-    route: "/financials",
-    reason:
-      "FIN-01A Slice 1 establishes the owner financial truth surface and deliberately answers no money question yet: the disposition chain and the two money bridges say, on screen, that they are not supported in this release. Advertising it would resolve to a destination that names four figures it cannot show. It gains a NAV_ENTRIES row in its own registration slice, once those land.",
   },
   {
     route: "/admin",

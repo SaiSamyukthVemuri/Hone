@@ -153,21 +153,33 @@ export default async function AppLayout({
                   first owner operating surface, not the whole domain,
                   so financials and the rest of the owner business
                   intelligence can land behind this same word without
-                  renaming the tab under owners who learned it. Today
-                  it goes straight to the one surface that exists;
-                  there is deliberately no /business hub standing empty.
+                  renaming the tab under owners who learned it.
+
+                  IT NOW POINTS AT /business. It used to go straight to
+                  /dashboard/capacity, which was right while capacity was
+                  the ONLY owner surface: a hub standing in front of one
+                  destination is a click that buys nothing. Financials
+                  makes it two, so the word has somewhere of its own to
+                  mean, and Demand and Trends can land behind the same
+                  tab without moving it again.
+
+                  FINANCIALS DOES NOT GET A SIXTH TOP-LEVEL TAB. The
+                  primary nav is the working surfaces; reporting is one
+                  owner domain, not two entries competing for the same
+                  header width.
 
                   OWNER-ONLY PRESENTATION, and only that. The role comes
                   from the practitioner this layout ALREADY resolved — no
                   second lookup, no extra query. Hiding the tab protects
-                  nothing: /dashboard/capacity keeps its own server-side
-                  owner check, which is the authority, and a practitioner
-                  typing the route still meets it. This just stops
-                  advertising a surface they cannot use, rather than
-                  offering a disabled item or a permission placeholder. */}
+                  nothing: /business, /dashboard/capacity and /financials
+                  each keep their own server-side owner check, which is
+                  the authority, and a practitioner typing any of the
+                  routes still meets it. This just stops advertising a
+                  surface they cannot use, rather than offering a
+                  disabled item or a permission placeholder. */}
               {practitioner.role === "owner" && (
                 <Link
-                  href="/dashboard/capacity"
+                  href="/business"
                   className="rounded-md px-3 py-2 hover:bg-neutral-100 dark:hover:bg-neutral-900"
                 >
                   Business

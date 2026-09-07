@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { BusinessSubnav } from "@/components/business-subnav";
 import { SectionLabel } from "@/components/ui/section-label";
 import {
   getOwnerCapacityBriefing,
@@ -44,7 +45,15 @@ export default async function PracticeCapacityPage() {
   }
 
   const briefing = await getOwnerCapacityBriefing(studio);
-  return <CapacityBriefing briefing={briefing} />;
+  // THE SUBNAV RENDERS ONLY PAST THE OWNER GATE. A practitioner who types this
+  // route meets the refusal above and is not handed a row of links to the two
+  // other owner surfaces they also cannot open.
+  return (
+    <div className="flex flex-col gap-6">
+      <BusinessSubnav />
+      <CapacityBriefing briefing={briefing} />
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------

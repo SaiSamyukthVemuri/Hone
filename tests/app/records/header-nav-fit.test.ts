@@ -68,17 +68,25 @@ describe("header fit", () => {
     }
   });
 
-  it("Business is an OWNER-ONLY nav entry on both breakpoints, to /dashboard/capacity", () => {
-    // OWNER-CAP follow-up. The browser spec proves what an owner and a
-    // practitioner each actually SEE; this is the cheap source-level pin that
-    // the entry is role-gated at all, on both surfaces, and points at the one
-    // route that exists — there is no /business hub.
+  it("Business is an OWNER-ONLY nav entry on both breakpoints, to /business", () => {
+    // OWNER-CAP follow-up, RETARGETED BY FIN-01A. The destination moved from
+    // /dashboard/capacity to /business: this entry pointed straight at capacity
+    // while capacity was the ONLY owner surface, and a hub in front of one
+    // destination is a click that buys nothing. Financials makes it two, so the
+    // word now has somewhere of its own to mean — and the assertion that no
+    // /business hub existed, which was correct when written, is inverted here
+    // rather than deleted.
+    //
+    // Everything else this test guarded is UNCHANGED and still guarded: the
+    // entry is role-gated on both surfaces, the route is linked exactly once
+    // so an unconditional link cannot slip in, and the role still comes from
+    // the lookup the shell already performed.
     const MOBILE = read("app/(app)/MobileMenu.tsx");
     expect(LAYOUT).toMatch(
-      /\{practitioner\.role === "owner" && \(\s*<Link\s+href="\/dashboard\/capacity"[\s\S]{0,200}>\s*Business\s*<\/Link>/,
+      /\{practitioner\.role === "owner" && \(\s*<Link\s+href="\/business"[\s\S]{0,200}>\s*Business\s*<\/Link>/,
     );
     expect(MOBILE).toMatch(
-      /role === "owner"\s*\?\s*\[\{ href: "\/dashboard\/capacity", label: "Business" \}\]/,
+      /role === "owner"\s*\?\s*\[\{ href: "\/business", label: "Business" \}\]/,
     );
     // UNCONDITIONAL would be the defect, so assert the gate is the ONLY way
     // either file mentions the route: exactly one occurrence each, and both
@@ -88,12 +96,20 @@ describe("header fit", () => {
       ["mobile menu", MOBILE],
     ] as const) {
       expect(
-        src.match(/"\/dashboard\/capacity"/g)?.length,
+        src.match(/"\/business"/g)?.length,
         `${name} must link the owner surface exactly once`,
       ).toBe(1);
     }
-    // No /business hub was invented to hold it.
-    expect(existsSync(join(process.cwd(), "app/(app)/business"))).toBe(false);
+    // The header no longer reaches capacity directly — it is reached THROUGH
+    // Business, by the shared subnav.
+    for (const [name, src] of [
+      ["layout", LAYOUT],
+      ["mobile menu", MOBILE],
+    ] as const) {
+      expect(src.match(/"\/dashboard\/capacity"/g) ?? [], name).toEqual([]);
+    }
+    // The hub now exists, and it is owner-gated in its own right.
+    expect(existsSync(join(process.cwd(), "app/(app)/business"))).toBe(true);
     // ...and the role came from data the shell already had. A second
     // practitioner/role lookup in the layout would be the extra query this
     // change promised not to add.
