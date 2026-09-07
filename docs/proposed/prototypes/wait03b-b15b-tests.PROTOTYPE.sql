@@ -65,10 +65,10 @@ begin
   -- Give A2 and B their OWN live capabilities, so cross-tests hit the HASH
   -- COMPARE branch rather than the trivial "no capability" early return.
   select raw_challenge into ch from public.begin_waitlist_invitation_proof(t.g('tokA2'),15);
-  select * into r from public.complete_waitlist_invitation_proof(t.g('tokA2'),ch,20);
+  select * into r from public.complete_waitlist_invitation_proof(t.g('tokA2'),ch);
   insert into t.fx values ('capA2',r.raw_capability);
   select raw_challenge into ch from public.begin_waitlist_invitation_proof(t.g('tokB'),15);
-  select * into r from public.complete_waitlist_invitation_proof(t.g('tokB'),ch,20);
+  select * into r from public.complete_waitlist_invitation_proof(t.g('tokB'),ch);
   insert into t.fx values ('capB',r.raw_capability);
 end $$;
 
@@ -108,7 +108,7 @@ do $$
 declare r record; ch text;
 begin
   select raw_challenge into ch from public.begin_waitlist_invitation_proof(t.g('tokA'),15);
-  select * into r from public.complete_waitlist_invitation_proof(t.g('tokA'),ch,20);
+  select * into r from public.complete_waitlist_invitation_proof(t.g('tokA'),ch);
   insert into t.fx values ('capA',r.raw_capability) on conflict (k) do update set v=excluded.v;
   select * into r from public.redeem_new_client_waitlist_invitation_verified(t.g('tokA'), t.g('capA'));
   perform t.ok('G2a a VALID capability permits redemption', r.result='redeemed');
@@ -159,24 +159,39 @@ begin
      set proof_challenge_sent_to_hash =
          encode(extensions.digest('someone-else-'||t.g('run')||'@syn.test','sha256'),'hex')
    where id = t.g('invA2')::uuid;
-  select * into r from public.complete_waitlist_invitation_proof(t.g('tokA2'),ch,20);
+  select * into r from public.complete_waitlist_invitation_proof(t.g('tokA2'),ch);
   perform t.ok('G4b a challenge cannot verify once the frozen recipient diverges',
     r.result='recipient_changed');
 end $$;
 
--- ============ G5. P1-3: complete_ bounds its TTL like begin_ ============
+-- ============ G5. P1-1: the capability TTL is OWNED BY THE DATABASE at 30
+-- minutes, and the caller has no say at all ================================
 do $$
-declare r record; ch text;
+declare r record; ch text; raised boolean := false; stored timestamptz;
 begin
+  -- A caller cannot ask for 31 minutes -- or for any TTL. The 3-argument
+  -- signature does not exist, so an over-long capability is UNREPRESENTABLE
+  -- rather than merely refused at runtime.
+  perform t.ok('G5a no signature accepts a caller-supplied capability TTL',
+    to_regprocedure('public.complete_waitlist_invitation_proof(text,text,integer)') is null);
+
   select raw_challenge into ch from public.begin_waitlist_invitation_proof(t.g('tokB'),15);
-  select * into r from public.complete_waitlist_invitation_proof(t.g('tokB'),ch,525600);
-  perform t.ok('G5a an absurd TTL is refused as typed input, not minted',
-    r.result='invalid_input');
-  select * into r from public.complete_waitlist_invitation_proof(t.g('tokB'),ch,null);
-  perform t.ok('G5b a NULL TTL returns invalid_input, not a raw 23514',
-    r.result='invalid_input');
-  select * into r from public.complete_waitlist_invitation_proof(t.g('tokB'),ch,20);
-  perform t.ok('G5c a bounded TTL still verifies', r.result='verified');
+  begin
+    execute 'select public.complete_waitlist_invitation_proof($1,$2,31)' using t.g('tokB'), ch;
+  exception when undefined_function then raised := true;
+  end;
+  perform t.ok('G5b asking for 31 minutes raises undefined_function, not a longer capability',
+    raised);
+
+  select * into r from public.complete_waitlist_invitation_proof(t.g('tokB'),ch);
+  perform t.ok('G5c the surviving two-argument command still mints', r.result='verified');
+  select proof_capability_expires_at into stored
+    from public.new_client_waitlist_invitations where id = t.g('invB')::uuid;
+  perform t.ok('G5d the DB anchors capability expiry at exactly 30 minutes',
+    stored > clock_timestamp() + interval '29 minutes 30 seconds'
+    and stored <= clock_timestamp() + interval '30 minutes');
+  perform t.ok('G5e the returned expiry is the stored one, not a caller echo',
+    r.expires_at = stored);
 end $$;
 
 -- ============ G6. P2-2 fixed: falsifiable, and scoped to what B1.5b owns ===
@@ -186,8 +201,8 @@ end $$;
 -- B1.5b grants nothing to any browser role -- it only revokes -- so the honest
 -- assertion is that no browser role can reach the proof gate or its state.
 select t.ok('G6a no browser role can execute the proof commands',
-  has_function_privilege('anon','public.complete_waitlist_invitation_proof(text,text,integer)','EXECUTE')=false
-  and has_function_privilege('authenticated','public.complete_waitlist_invitation_proof(text,text,integer)','EXECUTE')=false
+  has_function_privilege('anon','public.complete_waitlist_invitation_proof(text,text)','EXECUTE')=false
+  and has_function_privilege('authenticated','public.complete_waitlist_invitation_proof(text,text)','EXECUTE')=false
   and has_function_privilege('anon','public.redeem_new_client_waitlist_invitation_verified(text,text)','EXECUTE')=false
   and has_function_privilege('authenticated','public.redeem_new_client_waitlist_invitation_verified(text,text)','EXECUTE')=false
   and has_function_privilege('anon','public.decline_new_client_waitlist_invitation(text,text)','EXECUTE')=false
@@ -213,23 +228,46 @@ begin
     has_table_privilege('anon','public.sessions','SELECT');
 end $$;
 
--- ============ G7. Capability expiry proven through the bounded proof
--- lifecycle and authoritative DB time -- no expiry column is edited =========
--- Invitation WALL-CLOCK expiry is deliberately NOT tested here: 0188 freezes
--- expires_at (append-only trigger), its CHECK forbids expires_at <= issued_at,
--- and issue takes p_ttl_HOURS -- so no expired invitation can be materialised
--- through public authority inside a test run. Recorded as a proof limitation
--- rather than bypassed.
+-- ============ G7. An EXPIRED capability cannot mutate =====================
+-- The TTL is now database-owned at 30 minutes, so elapsed-time expiry cannot be
+-- reached inside a test run. The honest way to reach the branch is to age the
+-- capability's OWN expiry column: that is B1.5 prototype state, which the 0188
+-- append-only trigger does not enumerate, so no production invariant is
+-- weakened to make this convenient. DB-clock ownership of the anchor is proved
+-- directly and separately by G5d; expiry on real elapsed DB time is proved by
+-- the prior suite's P10 against the challenge clock.
 do $$
 declare r record; ch text; cap text;
 begin
   select raw_challenge into ch from public.begin_waitlist_invitation_proof(t.g('tokC'),15);
-  select * into r from public.complete_waitlist_invitation_proof(t.g('tokC'),ch,1);
-  perform t.ok('G7a a 1-minute capability -- the minimum legal TTL -- mints', r.result='verified');
+  select * into r from public.complete_waitlist_invitation_proof(t.g('tokC'),ch);
+  perform t.ok('G7a a capability mints for a live invitation', r.result='verified');
   cap := r.raw_capability;
-  perform pg_sleep(61);
+
+  update public.new_client_waitlist_invitations
+     set proof_capability_expires_at = clock_timestamp() - interval '1 second'
+   where id = t.g('invC')::uuid;
+
   select * into r from public.redeem_new_client_waitlist_invitation_verified(t.g('tokC'), cap);
-  perform t.ok('G7b an elapsed capability no longer permits the mutation', r.result='proof_expired');
-  perform t.ok('G7c and the invitation is still unredeemed',
-    (select redeemed_at is null from public.new_client_waitlist_invitations where id=t.g('invC')::uuid));
+  perform t.ok('G7b an expired capability cannot redeem', r.result='proof_expired');
+  select * into r from public.decline_new_client_waitlist_invitation(t.g('tokC'), cap);
+  perform t.ok('G7c nor can it decline', r.result='proof_expired');
+  perform t.ok('G7d and the invitation is neither redeemed nor declined',
+    (select redeemed_at is null and declined_at is null
+       from public.new_client_waitlist_invitations where id=t.g('invC')::uuid));
 end $$;
+
+-- ============ G8. The stale validation oracle is RETIRED ==================
+select t.ok('G8a the separate validate_ oracle no longer exists',
+  to_regprocedure('public.validate_waitlist_invitation_proof(text,text)') is null);
+select t.ok('G8b no overload of it survives under any signature',
+  (select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname='public' and p.proname='validate_waitlist_invitation_proof') = 0);
+-- Structural companion to the behavioural G1/NC1 proof: the capability check is
+-- inside each mutating command, behind that command's own row lock -- not in a
+-- separate call a caller could skip.
+select t.ok('G8c the capability check lives INSIDE each mutating command, behind its lock',
+  (select count(*) from pg_proc where proname='redeem_new_client_waitlist_invitation_verified'
+     and prosrc like '%for update%' and prosrc like '%proof_capability_hash%') = 1
+  and (select count(*) from pg_proc where proname='decline_new_client_waitlist_invitation'
+     and prosrc like '%for update%' and prosrc like '%proof_capability_hash%') = 1);

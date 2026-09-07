@@ -5,6 +5,42 @@ create schema if not exists t;
 create or replace function t.ok(label text, cond boolean) returns void language plpgsql as $$
 begin raise notice '% %', case when cond then 'PASS' else '*** FAIL' end, label; end $$;
 create table if not exists t.fx(k text primary key, v text);
+
+-- The public validate_ oracle is RETIRED (the mutation owns validation now).
+-- These lifecycle cases still need a read-only observer, so it lives in the
+-- TEST schema, where it cannot be mistaken for -- or reached as -- authority.
+create or replace function t.cap_state(p_raw_token text, p_raw_capability text)
+returns table (result text, invitation_id uuid, entry_id uuid, studio_id uuid)
+language plpgsql stable as $fn$
+declare r record; v_now timestamptz;
+begin
+  if p_raw_token is null or p_raw_token !~ '^[a-f0-9]{64}$'
+     or p_raw_capability is null or p_raw_capability !~ '^[a-f0-9]{64}$' then
+    return query select 'invalid_input'::text, null::uuid, null::uuid, null::uuid; return;
+  end if;
+  select * into r from public.new_client_waitlist_invitations i
+   where i.token_hash = encode(extensions.digest(p_raw_token,'sha256'),'hex');
+  if r.id is null then
+    return query select 'invalid_token'::text, null::uuid, null::uuid, null::uuid; return;
+  end if;
+  v_now := clock_timestamp();
+  if r.redeemed_at is not null or r.expired_at is not null
+     or r.released_at is not null or r.declined_at is not null
+     or r.expires_at <= v_now then
+    return query select 'invitation_not_live'::text, null::uuid, null::uuid, null::uuid; return;
+  end if;
+  if r.proof_capability_hash is null then
+    return query select 'proof_required'::text, null::uuid, null::uuid, null::uuid; return;
+  end if;
+  if r.proof_capability_expires_at <= v_now then
+    return query select 'proof_expired'::text, null::uuid, null::uuid, null::uuid; return;
+  end if;
+  if r.proof_capability_hash <> encode(extensions.digest(p_raw_capability,'sha256'),'hex') then
+    return query select 'proof_invalid'::text, null::uuid, null::uuid, null::uuid; return;
+  end if;
+  return query select 'proven'::text, r.id, r.entry_id, r.studio_id;
+end $fn$;
+
 create or replace function t.g(k text) returns text language sql stable as $$ select v from t.fx where t.fx.k=$1 $$;
 
 -- ============ FIXTURE via the real lifecycle ============
@@ -77,7 +113,7 @@ select t.ok('P2b only a 64-hex hash is stored',
 do $$
 declare r record;
 begin
-  select * into r from public.complete_waitlist_invitation_proof(t.g('tok1'), repeat('f',64),20);
+  select * into r from public.complete_waitlist_invitation_proof(t.g('tok1'), repeat('f',64));
   perform t.ok('P3 a wrong challenge refuses', r.result='wrong_challenge');
   perform t.ok('P3b the failed attempt is counted',
     (select proof_challenge_attempts from public.new_client_waitlist_invitations where id=t.g('inv1')::uuid) = 1);
@@ -87,7 +123,7 @@ end $$;
 do $$
 declare r record;
 begin
-  select * into r from public.complete_waitlist_invitation_proof(t.g('tok2'), t.g('ch1'),20);
+  select * into r from public.complete_waitlist_invitation_proof(t.g('tok2'), t.g('ch1'));
   perform t.ok('P4 a challenge for invitation A cannot verify invitation B',
     r.result in ('no_challenge','wrong_challenge'));
 end $$;
@@ -96,12 +132,12 @@ end $$;
 do $$
 declare r record;
 begin
-  select * into r from public.complete_waitlist_invitation_proof(t.g('tok1'), t.g('ch1'),20);
+  select * into r from public.complete_waitlist_invitation_proof(t.g('tok1'), t.g('ch1'));
   perform t.ok('P5 the correct challenge verifies and mints a capability',
     r.result='verified' and r.raw_capability ~ '^[a-f0-9]{64}$');
   insert into t.fx values ('cap1',r.raw_capability) on conflict (k) do update set v=excluded.v;
   -- single use: the challenge is consumed
-  select * into r from public.complete_waitlist_invitation_proof(t.g('tok1'), t.g('ch1'),20);
+  select * into r from public.complete_waitlist_invitation_proof(t.g('tok1'), t.g('ch1'));
   perform t.ok('P5b the same challenge cannot be replayed', r.result='no_challenge');
 end $$;
 
@@ -114,14 +150,14 @@ select t.ok('P5c raw capability is NOT stored; only its hash is',
 do $$
 declare r record;
 begin
-  select * into r from public.validate_waitlist_invitation_proof(t.g('tok1'), t.g('cap1'));
+  select * into r from t.cap_state(t.g('tok1'), t.g('cap1'));
   perform t.ok('P6 a valid capability proves the invitation', r.result='proven' and r.invitation_id=t.g('inv1')::uuid);
 
-  select * into r from public.validate_waitlist_invitation_proof(t.g('tok2'), t.g('cap1'));
+  select * into r from t.cap_state(t.g('tok2'), t.g('cap1'));
   perform t.ok('P7 a capability from A cannot authorize B (cross-invitation replay)',
     r.result in ('proof_required','proof_invalid'));
 
-  select * into r from public.validate_waitlist_invitation_proof(t.g('tok2'), repeat('a',64));
+  select * into r from t.cap_state(t.g('tok2'), repeat('a',64));
   perform t.ok('P8 possession of the invitation URL alone does NOT authorize',
     r.result='proof_required');
 end $$;
@@ -133,7 +169,7 @@ begin
   select * into r from public.begin_waitlist_invitation_proof(t.g('tok2'),15);
   old_ch := r.raw_challenge;
   select * into r from public.begin_waitlist_invitation_proof(t.g('tok2'),15);  -- replaces
-  select * into r from public.complete_waitlist_invitation_proof(t.g('tok2'), old_ch,20);
+  select * into r from public.complete_waitlist_invitation_proof(t.g('tok2'), old_ch);
   perform t.ok('P9 an OLD challenge cannot verify after a newer one replaces it',
     r.result='wrong_challenge');
 end $$;
@@ -146,7 +182,7 @@ begin
   update public.new_client_waitlist_invitations
      set proof_challenge_expires_at = clock_timestamp() - interval '1 second'
    where id = t.g('inv2')::uuid;
-  select * into r from public.complete_waitlist_invitation_proof(t.g('tok2'), r.raw_challenge,20);
+  select * into r from public.complete_waitlist_invitation_proof(t.g('tok2'), r.raw_challenge);
   perform t.ok('P10 an expired challenge refuses, on the database clock', r.result='challenge_expired');
 end $$;
 
@@ -157,7 +193,7 @@ begin
   update public.new_client_waitlist_invitations
      set proof_capability_expires_at = clock_timestamp() - interval '1 second'
    where id = t.g('inv1')::uuid;
-  select * into r from public.validate_waitlist_invitation_proof(t.g('tok1'), t.g('cap1'));
+  select * into r from t.cap_state(t.g('tok1'), t.g('cap1'));
   perform t.ok('P11 an expired capability refuses', r.result='proof_expired');
   -- restore for later cases
   update public.new_client_waitlist_invitations
@@ -170,7 +206,7 @@ do $$
 declare r record; v_res text;
 begin
   select public.release_new_client_waitlist_entry(t.g('s')::uuid, t.g('e1')::uuid, t.g('u')::uuid) into v_res;
-  select * into r from public.validate_waitlist_invitation_proof(t.g('tok1'), t.g('cap1'));
+  select * into r from t.cap_state(t.g('tok1'), t.g('cap1'));
   perform t.ok('P12 revoking the invitation invalidates a live capability',
     r.result='invitation_not_live');
 end $$;
@@ -185,7 +221,7 @@ begin
     t.g('s')::uuid, t.g('e1')::uuid, t.g('u')::uuid, t.g('svc')::uuid,
     current_date, current_date+13, null, 72);
   perform t.ok('P13a reissue produced a NEW invitation', r.result='issued' and r.invitation_id <> t.g('inv1')::uuid);
-  select * into r from public.validate_waitlist_invitation_proof(t.g('tok1'), t.g('cap1'));
+  select * into r from t.cap_state(t.g('tok1'), t.g('cap1'));
   perform t.ok('P13b the OLD capability cannot authorize after reissue',
     r.result='invitation_not_live');
 end $$;
@@ -195,7 +231,7 @@ do $$
 declare r record;
 begin
   select * into r from public.begin_waitlist_invitation_proof(t.g('tok2'),15);
-  select * into r from public.validate_waitlist_invitation_proof(t.g('tok2'), t.g('cap1'));
+  select * into r from t.cap_state(t.g('tok2'), t.g('cap1'));
   perform t.ok('P14 a capability never crosses studios or invitations',
     r.result in ('proof_required','proof_invalid'));
 end $$;
@@ -203,20 +239,27 @@ end $$;
 -- ============ P15 authorization posture ============
 select t.ok('P15a anon cannot execute any proof command',
   has_function_privilege('anon','public.begin_waitlist_invitation_proof(text,integer)','EXECUTE')=false
-  and has_function_privilege('anon','public.complete_waitlist_invitation_proof(text,text,integer)','EXECUTE')=false
-  and has_function_privilege('anon','public.validate_waitlist_invitation_proof(text,text)','EXECUTE')=false);
+  and has_function_privilege('anon','public.complete_waitlist_invitation_proof(text,text)','EXECUTE')=false
+);
 select t.ok('P15b authenticated cannot execute any proof command',
   has_function_privilege('authenticated','public.begin_waitlist_invitation_proof(text,integer)','EXECUTE')=false
-  and has_function_privilege('authenticated','public.complete_waitlist_invitation_proof(text,text,integer)','EXECUTE')=false
-  and has_function_privilege('authenticated','public.validate_waitlist_invitation_proof(text,text)','EXECUTE')=false);
-select t.ok('P15c service_role CAN execute all four',
+  and has_function_privilege('authenticated','public.complete_waitlist_invitation_proof(text,text)','EXECUTE')=false
+);
+select t.ok('P15c service_role CAN execute the three surviving proof commands',
   has_function_privilege('service_role','public.begin_waitlist_invitation_proof(text,integer)','EXECUTE')
-  and has_function_privilege('service_role','public.complete_waitlist_invitation_proof(text,text,integer)','EXECUTE')
-  and has_function_privilege('service_role','public.validate_waitlist_invitation_proof(text,text)','EXECUTE')
+  and has_function_privilege('service_role','public.complete_waitlist_invitation_proof(text,text)','EXECUTE')
   and has_function_privilege('service_role','public.invalidate_waitlist_invitation_proof(uuid)','EXECUTE'));
+-- The retired oracle must be ABSENT, not merely ungranted.
+select t.ok('P15c2 the retired validation oracle is gone from the public schema',
+  to_regprocedure('public.validate_waitlist_invitation_proof(text,text)') is null);
 select t.ok('P15d no browser role can write the proof columns directly',
   has_column_privilege('anon','public.new_client_waitlist_invitations','proof_capability_hash','UPDATE')=false
   and has_column_privilege('authenticated','public.new_client_waitlist_invitations','proof_capability_hash','UPDATE')=false
   and has_table_privilege('authenticated','public.new_client_waitlist_invitations','UPDATE')=false);
-select t.ok('P15e proof grants no clinical-record authority (no clients grant added)',
-  has_table_privilege('anon','public.clients','SELECT')=false or true);
+-- P15e was `X or true` -- a tautology that could not fail. B1.5 grants nothing
+-- to any browser role, so assert THAT: falsifiable, and true. (anon does hold
+-- SELECT on clients here, inherited from the applied chain -- see B15b G6d.)
+select t.ok('P15e no browser role can read or write the proof state B1.5 added',
+  has_table_privilege('anon','public.new_client_waitlist_invitations','SELECT')=false
+  and has_table_privilege('authenticated','public.new_client_waitlist_invitations','SELECT')=false
+  and has_column_privilege('anon','public.new_client_waitlist_invitations','proof_capability_hash','UPDATE')=false);

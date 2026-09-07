@@ -133,10 +133,10 @@ $$;
 -- COMMAND 2 — COMPLETE. Verifies the challenge and mints a short-lived
 -- capability bound to THIS invitation.
 -- ---------------------------------------------------------------------
+-- CAPABILITY TTL IS OWNED BY THE DATABASE: 30 minutes, no caller argument.
 create or replace function public.complete_waitlist_invitation_proof(
   p_raw_token     text,
-  p_raw_challenge text,
-  p_ttl_minutes   integer default 20
+  p_raw_challenge text
 )
 returns table (result text, raw_capability text, expires_at timestamptz)
 language plpgsql volatile security definer
@@ -191,57 +191,10 @@ begin
          proof_challenge_expires_at  = null,
          proof_challenge_attempts    = 0,
          proof_capability_hash       = encode(extensions.digest(v_cap,'sha256'),'hex'),
-         proof_capability_expires_at = v_now + make_interval(mins => p_ttl_minutes)
+         proof_capability_expires_at = v_now + interval '30 minutes'
    where id = r.id;
 
-  return query select 'verified'::text, v_cap, v_now + make_interval(mins => p_ttl_minutes);
-end;
-$$;
-
--- ---------------------------------------------------------------------
--- COMMAND 3 — VALIDATE. Called at BOOK/DECLINE execution time, never cached.
--- ---------------------------------------------------------------------
-create or replace function public.validate_waitlist_invitation_proof(
-  p_raw_token      text,
-  p_raw_capability text
-)
-returns table (result text, invitation_id uuid, entry_id uuid, studio_id uuid)
-language plpgsql stable security definer
-set search_path = pg_catalog, pg_temp
-as $$
-declare r record; v_now timestamptz;
-begin
-  if p_raw_token is null or p_raw_token !~ '^[a-f0-9]{64}$'
-     or p_raw_capability is null or p_raw_capability !~ '^[a-f0-9]{64}$' then
-    return query select 'invalid_input'::text, null::uuid, null::uuid, null::uuid; return;
-  end if;
-
-  select * into r from public.new_client_waitlist_invitations i
-   where i.token_hash = encode(extensions.digest(p_raw_token,'sha256'),'hex');
-  if r.id is null then
-    return query select 'invalid_token'::text, null::uuid, null::uuid, null::uuid; return;
-  end if;
-
-  v_now := clock_timestamp();          -- server/database clock is authoritative
-
-  if r.redeemed_at is not null or r.expired_at is not null
-     or r.released_at is not null or r.declined_at is not null
-     or r.expires_at <= v_now then
-    return query select 'invitation_not_live'::text, null::uuid, null::uuid, null::uuid; return;
-  end if;
-  if r.proof_capability_hash is null then
-    return query select 'proof_required'::text, null::uuid, null::uuid, null::uuid; return;
-  end if;
-  if r.proof_capability_expires_at <= v_now then
-    return query select 'proof_expired'::text, null::uuid, null::uuid, null::uuid; return;
-  end if;
-  -- The capability is compared against THIS invitation's row. A capability
-  -- minted for another invitation simply is not here.
-  if r.proof_capability_hash <> encode(extensions.digest(p_raw_capability,'sha256'),'hex') then
-    return query select 'proof_invalid'::text, null::uuid, null::uuid, null::uuid; return;
-  end if;
-
-  return query select 'proven'::text, r.id, r.entry_id, r.studio_id;
+  return query select 'verified'::text, v_cap, v_now + interval '30 minutes';
 end;
 $$;
 
@@ -271,8 +224,7 @@ declare f text;
 begin
   foreach f in array array[
     'public.begin_waitlist_invitation_proof(text, integer)',
-    'public.complete_waitlist_invitation_proof(text, text, integer)',
-    'public.validate_waitlist_invitation_proof(text, text)',
+    'public.complete_waitlist_invitation_proof(text, text)',
     'public.invalidate_waitlist_invitation_proof(uuid)'
   ] loop
     execute format('revoke all privileges on function %s from public', f);

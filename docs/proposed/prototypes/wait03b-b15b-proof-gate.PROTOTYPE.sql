@@ -21,10 +21,15 @@ set local lock_timeout = '5s';
 -- verify the recipient binding it froze (P1-2). Redefined whole so both the
 -- guard and the comparison live in one reviewable body.
 -- ---------------------------------------------------------------------
+-- CAPABILITY TTL IS OWNED BY THE DATABASE at 30 minutes. The caller has no TTL
+-- authority at all -- there is no argument to get wrong -- so a 31-minute
+-- capability is not refused at runtime, it is UNREPRESENTABLE. Any stale
+-- 3-argument signature is dropped, not left beside the new one as a second way in.
+drop function if exists public.complete_waitlist_invitation_proof(text, text, integer);
+
 create or replace function public.complete_waitlist_invitation_proof(
   p_raw_token     text,
-  p_raw_challenge text,
-  p_ttl_minutes   integer default 20
+  p_raw_challenge text
 )
 returns table (result text, raw_capability text, expires_at timestamptz)
 language plpgsql volatile security definer
@@ -39,7 +44,7 @@ begin
   -- typed refusal.
   if p_raw_token is null or p_raw_token !~ '^[a-f0-9]{64}$'
      or p_raw_challenge is null or p_raw_challenge !~ '^[a-f0-9]{64}$'
-     or p_ttl_minutes is null or p_ttl_minutes <= 0 or p_ttl_minutes > 60 then
+     then
     return query select 'invalid_input'::text, null::text, null::timestamptz; return;
   end if;
 
@@ -94,10 +99,10 @@ begin
          proof_challenge_expires_at  = null,
          proof_challenge_attempts    = 0,
          proof_capability_hash       = encode(extensions.digest(v_cap,'sha256'),'hex'),
-         proof_capability_expires_at = v_now + make_interval(mins => p_ttl_minutes)
+         proof_capability_expires_at = v_now + interval '30 minutes'
    where id = r.id;
 
-  return query select 'verified'::text, v_cap, v_now + make_interval(mins => p_ttl_minutes);
+  return query select 'verified'::text, v_cap, v_now + interval '30 minutes';
 end;
 $$;
 
@@ -222,6 +227,12 @@ $$;
 -- not edited -- its EXECUTE is withdrawn. It has zero runtime callers, so
 -- nothing in the application loses a capability it was using.
 -- ---------------------------------------------------------------------
+-- The mutation owns capability validation inside its own locked transaction,
+-- so the separate read-only oracle is no longer a caller path. A surviving
+-- check-then-act API is exactly the surface B2 was told not to build against,
+-- so it is dropped rather than deprecated.
+drop function if exists public.validate_waitlist_invitation_proof(text, text);
+
 revoke all privileges on function public.redeem_new_client_waitlist_invitation(text) from public;
 revoke all privileges on function public.redeem_new_client_waitlist_invitation(text) from anon;
 revoke all privileges on function public.redeem_new_client_waitlist_invitation(text) from authenticated;
@@ -233,7 +244,7 @@ begin
   foreach f in array array[
     'public.redeem_new_client_waitlist_invitation_verified(text, text)',
     'public.decline_new_client_waitlist_invitation(text, text)',
-    'public.complete_waitlist_invitation_proof(text, text, integer)'
+    'public.complete_waitlist_invitation_proof(text, text)'
   ] loop
     execute format('revoke all privileges on function %s from public', f);
     execute format('revoke all privileges on function %s from anon', f);
