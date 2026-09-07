@@ -342,7 +342,11 @@ test.describe("the studio's waitlist queue", () => {
 
     await page.goto("/settings/waitlist");
     await expect(page.getByRole("heading", { name: /^waitlist$/i })).toBeVisible();
-    await expect(page.getByText(/^Waiting:\s*1$/)).toBeVisible();
+    // WAIT-EXPOSE-01 renamed this counter. It now spans every ACTIVE lifecycle
+    // state the page surfaces (waiting, held, invited, expired, released), so
+    // "Waiting: N" would be a false label. The per-section heading below still
+    // carries the waiting-only count.
+    await expect(page.getByText(/^Waitlist entries:\s*1$/)).toBeVisible();
     await expect(page.getByText("Queue Person", { exact: true })).toBeVisible();
     await expect(page.getByText(email, { exact: true })).toBeVisible();
     await expect(page.getByText("555 0142")).toBeVisible();
@@ -425,6 +429,10 @@ test.describe("the studio's waitlist queue", () => {
 
     await expect(page.getByText("Studio B Person", { exact: true })).toBeVisible({ timeout: 20_000 });
     await expect(page.getByText("Studio A Person", { exact: true })).toHaveCount(0);
-    await expect(page.getByText(/^Waiting:\s*1$/)).toBeVisible();
+    // WAIT-EXPOSE-01 renamed this counter. It now spans every ACTIVE lifecycle
+    // state the page surfaces (waiting, held, invited, expired, released), so
+    // "Waiting: N" would be a false label. The per-section heading below still
+    // carries the waiting-only count.
+    await expect(page.getByText(/^Waitlist entries:\s*1$/)).toBeVisible();
   });
 });

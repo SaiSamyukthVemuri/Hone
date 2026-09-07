@@ -1,6 +1,19 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+
+// WALL TIME HERE IS SUITE LOAD, NOT ASSERTION COST.
+//
+// These are TypeScript-compiler tree scans. In isolation the heaviest runs in
+// ~4s; under a full parallel suite it has been measured at ~5.9s and tripped
+// vitest's 5s DEFAULT — a TIMEOUT reported as a failing clinical guard, which
+// reads exactly like a broken diff and is not one. The trigger is adding test
+// files ANYWHERE in the repo, so it recurs for reasons unrelated to this file.
+//
+// Raised here rather than globally: a 12,000-test default should stay tight,
+// and a scan whose cost scales with the tree is the exception that should say
+// so out loud. The number is a ceiling for a slow shared runner, not a target.
+vi.setConfig({ testTimeout: 30_000 });
 import { exportSpec } from "@/lib/export/resource-registry";
 import {
   describeSites,
