@@ -87,8 +87,19 @@ vi.mock("@/lib/booking/queries", () => ({
     timezone: "America/Toronto", default_appointment_duration_minutes: 45, buffer_minutes: 0,
     public_booking_horizon_months: 6, send_confirmation_emails: false,
     show_treatment_time_to_clients: false, notify_practitioner_on_new_booking: false }) }));
+// Offer every instant these tests book, so a refusal can only come from the
+// weekday/scope authority under test and never from slot availability.
+const OFFERED = [
+  "2026-10-04T14:00:00.000Z", // Sunday   (Toronto)
+  "2026-10-05T14:00:00.000Z", // Monday
+  "2026-10-07T14:00:00.000Z", // Wednesday
+];
 vi.mock("@/lib/booking/slots", () => ({
-  getAvailableSlots: async () => [{ start: START_ISO, end: new Date(START.getTime() + 45 * 60_000).toISOString() }],
+  getAvailableSlots: async () =>
+    OFFERED.map((iso) => ({
+      start: iso,
+      end: new Date(new Date(iso).getTime() + 45 * 60_000).toISOString(),
+    })),
   filterFutureSlots: (s: unknown[]) => s }));
 vi.mock("@/lib/booking/readiness", () => ({ isPubliclyBookable: () => true, UNAVAILABLE_PUBLIC_BOOKING_MESSAGE: "u" }));
 vi.mock("@/lib/booking/horizon", () => ({ isWithinPublicBookingHorizon: () => true,
@@ -144,6 +155,59 @@ describe("P2-A — the allowed-weekday authority must fail CLOSED", () => {
     scenario.weekdays = weekdays;
     const out = await publicBookAppointmentAction(form({ invitation_token: TOKEN, invitation_capability: CAP }));
     expect(out.ok, "an unreadable weekday authority must never authorise").toBe(false);
+  });
+});
+
+describe("P3-D — an unreadable weekday ELEMENT must not coerce into a real day", () => {
+  // The container-shape repair (P2-A) is not enough on its own. `Number()` turns
+  // null and "" into 0 (Sunday) and true into 1 (Monday), so a stray element
+  // silently mints a weekday nobody offered. Postgres permits NULL elements in a
+  // smallint[], and both the 0192 CHECK and the issue command test membership
+  // with `<@`, which yields NULL -- not false -- when an element is NULL, so such
+  // an array can be stored through the supported path.
+  //
+  // 2026-10-04 is a Sunday, 2026-10-05 a Monday, in America/Toronto.
+  const SUNDAY = "2026-10-04T14:00:00.000Z";
+  const MONDAY = "2026-10-05T14:00:00.000Z";
+
+  it.each([
+    ["a NULL element", [null], SUNDAY],
+    ["an empty-string element", [""], SUNDAY],
+    ["a boolean element", [true], MONDAY],
+    ["a NULL beside a real day", [1, null], SUNDAY],
+    ["an object element", [{}], SUNDAY],
+  ])("refuses %s rather than coercing it to a weekday", async (_label, weekdays, when) => {
+    scenario.weekdays = weekdays;
+    const out = await publicBookAppointmentAction(
+      form({ invitation_token: TOKEN, invitation_capability: CAP, starts_at: when }),
+    );
+    expect(out.ok, "a weekday that only exists via coercion must never authorise").toBe(false);
+  });
+
+  // Representation is validated here; RANGE stays the scope module's job. These
+  // controls stop the repair from becoming "reject anything unfamiliar".
+  it("still accepts a numeric-string element, which is a legitimate representation", async () => {
+    scenario.weekdays = ["1"];
+    const out = await publicBookAppointmentAction(
+      form({ invitation_token: TOKEN, invitation_capability: CAP, starts_at: MONDAY }),
+    );
+    expect(out.ok).toBe(true);
+  });
+
+  it("still accepts a plain numeric element", async () => {
+    scenario.weekdays = [1];
+    const out = await publicBookAppointmentAction(
+      form({ invitation_token: TOKEN, invitation_capability: CAP, starts_at: MONDAY }),
+    );
+    expect(out.ok).toBe(true);
+  });
+
+  it("still refuses an out-of-range day, which the scope evaluator owns", async () => {
+    scenario.weekdays = [9];
+    const out = await publicBookAppointmentAction(
+      form({ invitation_token: TOKEN, invitation_capability: CAP, starts_at: MONDAY }),
+    );
+    expect(out.ok).toBe(false);
   });
 });
 

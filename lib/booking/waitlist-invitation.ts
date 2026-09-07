@@ -323,11 +323,30 @@ export async function resolveInvitation(rawToken: string): Promise<ResolveOutcom
       //
       // The previous code coerced any non-array to `null`, so an unreadable
       // authority silently widened a restricted offer to every day.
+      //
+      // P3-D. Container shape is not enough. `Number()` turns null and "" into 0
+      // (Sunday) and true into 1 (Monday), so a stray ELEMENT would silently mint
+      // a weekday nobody offered -- and the range check downstream cannot catch
+      // it, because coercion has already produced a legal day. Postgres allows
+      // NULL elements in a smallint[], and both the 0192 CHECK and the issue
+      // command test membership with `<@`, which yields NULL rather than false
+      // when an element is NULL, so such an array can be stored.
+      //
+      // Only two element REPRESENTATIONS are accepted: a number, or a string of
+      // digits (some drivers return smallint[] that way). Everything else fails
+      // closed. This is representation only -- the 0..6 RANGE remains the scope
+      // evaluator's rule, so there is still exactly one weekday authority.
       const rawWeekdays = row?.scope_allowed_weekdays;
       const weekdaysReadable =
-        rawWeekdays === null ||
-        rawWeekdays === undefined ||
-        Array.isArray(rawWeekdays);
+        (rawWeekdays === null ||
+          rawWeekdays === undefined ||
+          Array.isArray(rawWeekdays)) &&
+        (!Array.isArray(rawWeekdays) ||
+          rawWeekdays.every(
+            (n) =>
+              typeof n === "number" ||
+              (typeof n === "string" && /^\s*\d+\s*$/.test(n)),
+          ));
       const allowedWeekdays = Array.isArray(rawWeekdays)
         ? rawWeekdays.map((n) => Number(n))
         : null;
