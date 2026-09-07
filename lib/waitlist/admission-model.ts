@@ -104,9 +104,11 @@ export const STATUS_MEANING: Record<WaitlistEntryStatus, string> = {
 // --- 2. ACTIONS --------------------------------------------------------------
 
 export const ADMISSION_ACTIONS = [
+  "claim",
   "invite",
   "reinvite",
-  "revoke",
+  "expire",
+  "release",
   "requeue",
   "remove",
 ] as const;
@@ -114,9 +116,11 @@ export const ADMISSION_ACTIONS = [
 export type AdmissionAction = (typeof ADMISSION_ACTIONS)[number];
 
 export const ACTION_LABEL: Record<AdmissionAction, string> = {
+  claim: "Claim",
   invite: "Send invitation",
   reinvite: "Send a new invitation",
-  revoke: "Revoke invitation",
+  expire: "Record expired",
+  release: "Release",
   requeue: "Return to queue",
   remove: "Remove from waitlist",
 };
@@ -139,13 +143,28 @@ export type ActionAvailability =
  * `issue_new_client_waitlist_invitation` called again, which the database only
  * permits once the previous invitation is no longer live — i.e. after it expired
  * or the entry was released. So `reinvite` is offered on `expired` and
- * `released`, and refused on `invited` with the remedy named (revoke first).
+ * `released`, and refused on `invited` with the remedy named (release first).
  * Modelling it as its own action, rather than a second "invite" button, is what
  * lets the refusal say something useful.
  */
+/**
+ * Facts beyond the entry's status that an availability ruling needs.
+ *
+ * Only ONE exists, and it is load-bearing: whether a live invitation's window
+ * has already run out. `expire` is NOT a cancel button — see the case below —
+ * so it cannot be decided from `status` alone.
+ */
+export type AdmissionContext = {
+  /** True only when the invitation's `expires_at` is in the past. Unknown or
+   *  absent is treated as NOT elapsed, which withholds the control rather than
+   *  offering one the database would refuse. */
+  invitationElapsed?: boolean;
+};
+
 export function actionAvailability(
   action: AdmissionAction,
   status: WaitlistEntryStatus,
+  context: AdmissionContext = {},
 ): ActionAvailability {
   const label = STATUS_LABEL[status].toLowerCase();
 
@@ -168,7 +187,7 @@ export function actionAvailability(
       if (status === "invited") {
         return {
           available: false,
-          reason: "An invitation is already out. Revoke it before sending another.",
+          reason: "An invitation is already out. Release it before sending another.",
         };
       }
       return {
@@ -181,7 +200,7 @@ export function actionAvailability(
       if (status === "invited") {
         return {
           available: false,
-          reason: "An invitation is already out. Revoke it before sending another.",
+          reason: "An invitation is already out. Release it before sending another.",
         };
       }
       return {
@@ -189,12 +208,41 @@ export function actionAvailability(
         reason: `Nothing has been sent yet. Use “${ACTION_LABEL.invite}”.`,
       };
 
-    case "revoke":
-      if (status === "invited") return { available: true };
+    case "claim":
+      if (status === "waiting") return { available: true };
       return {
         available: false,
-        reason: `There is no live invitation to revoke — this entry is ${label}.`,
+        reason: `Only a waiting entry can be claimed — this one is ${label}.`,
       };
+
+    case "release":
+      // The operator's way to END something early, and the only one. It is
+      // offered on `claimed` (give the hold back) and on `invited` (end a live
+      // invitation before its window runs out).
+      if (status === "claimed" || status === "invited") return { available: true };
+      return {
+        available: false,
+        reason: `There is nothing to release — this entry is ${label}.`,
+      };
+
+    case "expire":
+      // EXPIRE IS NOT CANCELLATION. It records a fact the clock has already
+      // established; it does not cause it. Offering it on a live invitation
+      // would present "end this early" twice under two names, and one of them
+      // would be a lie about what the command does.
+      if (status !== "invited") {
+        return {
+          available: false,
+          reason: "There is no invitation on that entry to record as expired.",
+        };
+      }
+      if (!context.invitationElapsed) {
+        return {
+          available: false,
+          reason: `This invitation has not run out yet. Use “${ACTION_LABEL.release}” to end it early.`,
+        };
+      }
+      return { available: true };
 
     case "requeue":
       if (status === "released" || status === "expired") return { available: true };
@@ -203,7 +251,7 @@ export function actionAvailability(
       }
       return {
         available: false,
-        reason: `Revoke the invitation first, then return them to the queue.`,
+        reason: `Release the invitation first, then return them to the queue.`,
       };
 
     case "remove":
@@ -219,11 +267,12 @@ export function actionAvailability(
  *  them when it will. */
 export function allActionAvailability(
   status: WaitlistEntryStatus,
+  context: AdmissionContext = {},
 ): Array<{ action: AdmissionAction; label: string } & ActionAvailability> {
   return ADMISSION_ACTIONS.map((action) => ({
     action,
     label: ACTION_LABEL[action],
-    ...actionAvailability(action, status),
+    ...actionAvailability(action, status, context),
   }));
 }
 

@@ -111,14 +111,51 @@ describe("every action, on every state, is decided AND explained", () => {
     expect(actionAvailability("invite", "expired").available).toBe(false);
   });
 
-  it("a live invitation must be revoked before another is sent", () => {
+  it("a live invitation must be RELEASED before another is sent", () => {
     const invite = actionAvailability("invite", "invited");
     const reinvite = actionAvailability("reinvite", "invited");
     expect(invite.available).toBe(false);
     expect(reinvite.available).toBe(false);
-    // Both name the remedy rather than merely refusing.
-    expect((invite as { reason: string }).reason).toMatch(/revoke/i);
-    expect((reinvite as { reason: string }).reason).toMatch(/revoke/i);
+    // Both name the remedy rather than merely refusing — and the remedy is
+    // RELEASE, which is the command that ends a live invitation early. It is
+    // deliberately not "expire": expiry records that the clock ran out, it does
+    // not cause it, so offering it here would name an action that cannot run.
+    expect((invite as { reason: string }).reason).toMatch(/release/i);
+    expect((reinvite as { reason: string }).reason).toMatch(/release/i);
+    expect((invite as { reason: string }).reason).not.toMatch(/expire/i);
+  });
+
+  it("EXPIRE IS NOT CANCELLATION — it is withheld until the clock has run out", () => {
+    // The operator's way to end a live invitation early is `release`. `expire`
+    // records a fact the clock already established, so it may only be offered
+    // once `expires_at` has elapsed.
+    const live = actionAvailability("expire", "invited", { invitationElapsed: false });
+    expect(live.available).toBe(false);
+    expect((live as { reason: string }).reason).toMatch(/has not run out yet/i);
+    expect((live as { reason: string }).reason).toMatch(/release/i);
+
+    // Unknown elapsed-ness withholds the control rather than offering one the
+    // database would refuse.
+    expect(actionAvailability("expire", "invited").available).toBe(false);
+
+    expect(
+      actionAvailability("expire", "invited", { invitationElapsed: true }).available,
+    ).toBe(true);
+  });
+
+  it("expire is never offered where there is no invitation at all", () => {
+    for (const s of ["waiting", "claimed", "expired", "released"] as const) {
+      const v = actionAvailability("expire", s, { invitationElapsed: true });
+      expect(v.available, s).toBe(false);
+      expect((v as { reason: string }).reason, s).toMatch(/no invitation/i);
+    }
+  });
+
+  it("claim is offered only on a waiting entry", () => {
+    expect(actionAvailability("claim", "waiting").available).toBe(true);
+    for (const s of ["claimed", "invited", "expired", "released"] as const) {
+      expect(actionAvailability("claim", s).available, s).toBe(false);
+    }
   });
 
   it("reinvite is offered only where a previous invitation is no longer live", () => {
@@ -127,10 +164,11 @@ describe("every action, on every state, is decided AND explained", () => {
     expect(actionAvailability("reinvite", "waiting").available).toBe(false);
   });
 
-  it("revoke requires a live invitation", () => {
-    expect(actionAvailability("revoke", "invited").available).toBe(true);
-    for (const s of ["waiting", "claimed", "expired", "released"] as const) {
-      expect(actionAvailability("revoke", s).available, s).toBe(false);
+  it("release ends a hold or a live invitation, and nothing else", () => {
+    expect(actionAvailability("release", "invited").available).toBe(true);
+    expect(actionAvailability("release", "claimed").available).toBe(true);
+    for (const s of ["waiting", "expired", "released"] as const) {
+      expect(actionAvailability("release", s).available, s).toBe(false);
     }
   });
 

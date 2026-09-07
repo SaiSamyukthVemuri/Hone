@@ -140,7 +140,7 @@ describe("every action is shown, and every refusal explains itself", () => {
     // most used with.
     const html = render(AdmissionActions({ status: "converted" }) as ReactElement);
     expect(html).not.toContain("title=");
-    expect(html).toContain('data-testid="admission-reason-revoke"');
+    expect(html).toContain('data-testid="admission-reason-release"');
   });
 });
 
@@ -172,8 +172,8 @@ describe("pre-B2: available actions still refuse, for a DIFFERENT reason", () =>
     // the `disabled:` Tailwind variants inside the class string, which made an
     // earlier version of this assertion true in both directions.
     expect(buttonTag(html, "invite")).not.toContain('disabled=""');
-    expect(buttonTag(html, "revoke")).toContain('disabled=""');
-    expect(html).toContain((actionAvailability("revoke", "waiting") as { reason: string }).reason);
+    expect(buttonTag(html, "release")).toContain('disabled=""');
+    expect(html).toContain((actionAvailability("release", "waiting") as { reason: string }).reason);
   });
 
   it("NON-VACUITY — the unconnected render really does disable that control", () => {

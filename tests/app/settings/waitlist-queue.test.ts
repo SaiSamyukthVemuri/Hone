@@ -57,6 +57,10 @@ const scenario = {
   error: null as { code: string; message: string } | null,
   removeResult: "removed" as string | null,
   removeError: null as { code: string } | null,
+  // The invitation-window read, which decides whether "Record expired" may be
+  // offered at all. Empty by default: no row is `invited` unless a test says so.
+  invitations: [] as Array<Record<string, unknown>>,
+  invitationsError: null as { code: string } | null,
 };
 
 function reset() {
@@ -101,6 +105,23 @@ vi.mock("@/lib/supabase/server", () => ({
         limit: null,
       };
       queries.push(shape);
+      // THENABLE AT EVERY LINK, not only at `.limit`. The page issues TWO
+      // shapes: the bounded entries read (terminal at `.limit`) and the
+      // invitation-window read (terminal at `.in`). A builder that resolves
+      // only on `.limit` cannot model the second, and every render would throw.
+      const settle = () => {
+        if (table === "new_client_waitlist_invitations") {
+          return {
+            data: scenario.invitationsError ? null : scenario.invitations,
+            error: scenario.invitationsError,
+          };
+        }
+        return {
+          data: scenario.error ? null : scenario.rows,
+          count: scenario.error ? null : scenario.count,
+          error: scenario.error,
+        };
+      };
       const builder = {
         select(columns: string, options: Record<string, unknown> = {}) {
           shape.columns = columns;
@@ -111,17 +132,20 @@ vi.mock("@/lib/supabase/server", () => ({
           shape.filters.push(["eq", column, value]);
           return builder;
         },
+        in(column: string, values: unknown) {
+          shape.filters.push(["in", column, values]);
+          return builder;
+        },
         order(column: string, options?: { ascending?: boolean }) {
           shape.orders.push([column, options]);
           return builder;
         },
         limit(n: number) {
           shape.limit = n;
-          return Promise.resolve({
-            data: scenario.error ? null : scenario.rows,
-            count: scenario.error ? null : scenario.count,
-            error: scenario.error,
-          });
+          return builder;
+        },
+        then(resolve: (v: unknown) => unknown) {
+          return Promise.resolve(settle()).then(resolve);
         },
       };
       return builder;
@@ -158,6 +182,10 @@ function entry(overrides: Partial<Record<string, unknown>> = {}) {
     email: "jo@example.com",
     phone: "555 0100",
     joined_at: "2026-08-20T09:00:00.000Z",
+    // The page groups by lifecycle state, so a row without one belongs to no
+    // section and renders nowhere. Waiting is the default because it is the
+    // state the original waiting-only surface described.
+    status: "waiting",
     ...overrides,
   };
 }
@@ -213,7 +241,10 @@ describe("the query the page asks", () => {
     expect(q.table).toBe("new_client_waitlist_entries");
     expect(q.filters).toEqual([
       ["eq", "studio_id", STUDIO_ID],
-      ["eq", "status", "waiting"],
+      // The page now reads every ACTIVE lifecycle state, not waiting alone.
+      // `converted` and `removed` are terminal history and stay out, so the
+      // bound is spent on rows an operator can still act on.
+      ["in", "status", ["waiting", "claimed", "invited", "expired", "released"]],
     ]);
     expect(q.limit).toBeGreaterThan(0);
   });
@@ -233,7 +264,7 @@ describe("the query the page asks", () => {
 
   it("selects only the columns it renders — no `*`", async () => {
     await render();
-    expect(queries[0].columns).toBe("id,name,email,phone,joined_at");
+    expect(queries[0].columns).toBe("id,name,email,phone,joined_at,status");
     expect(queries[0].columns).not.toContain("*");
   });
 
@@ -259,7 +290,7 @@ describe("the count is authoritative", () => {
     );
     scenario.count = 140;
     const html = await render();
-    expect(html).toMatch(/Waiting:\s*<[^>]*>140</);
+    expect(html).toMatch(/Active entries:\s*<[^>]*>140</);
     expect(html).toContain("Showing the 100 longest-waiting of 140.");
   });
 
@@ -267,7 +298,7 @@ describe("the count is authoritative", () => {
     scenario.rows = [entry()];
     scenario.count = 1;
     const html = await render();
-    expect(html).toMatch(/Waiting:\s*<[^>]*>1</);
+    expect(html).toMatch(/Active entries:\s*<[^>]*>1</);
     expect(html).not.toContain("longest-waiting of");
   });
 
@@ -276,7 +307,7 @@ describe("the count is authoritative", () => {
     scenario.count = 0;
     const html = await render();
     expect(html).toContain("Nobody is waiting right now.");
-    expect(html).toMatch(/Waiting:\s*<[^>]*>0</);
+    expect(html).toMatch(/Active entries:\s*<[^>]*>0</);
   });
 });
 
@@ -286,7 +317,7 @@ describe("a failed load is never shown as an empty queue", () => {
     const html = await render();
     expect(html).toContain("could not be loaded");
     expect(html).not.toContain("Nobody is waiting");
-    expect(html).not.toMatch(/Waiting:\s*<[^>]*>0</);
+    expect(html).not.toMatch(/Active entries:\s*<[^>]*>0</);
     const line = consoleErrors.find((l) => l.includes("waitlist_queue_load_failed"));
     expect(line).toBeDefined();
     expect(JSON.parse(line!)).toMatchObject({ studioId: STUDIO_ID, code: "42501" });
@@ -344,7 +375,18 @@ describe("rendered rows", () => {
       ...[...html.matchAll(/<button[^>]*>(.*?)<\/button>/g)].map((m) => m[1]),
       ...[...html.matchAll(/<summary[^>]*>(.*?)<\/summary>/g)].map((m) => m[1]),
     ];
-    expect(controls.sort()).toEqual(["Confirm removal", "Remove"]);
+    // WAIT-EXPOSE-01 surfaced the lifecycle authority that already shipped, so
+    // the list this test anticipated changing has changed. A WAITING row now
+    // offers Claim; the page offers Claim next once, above the sections. What
+    // is NOT here is the point: no Release, no Record expired, no Send
+    // invitation — none of those is permitted on a waiting entry, and the page
+    // withholds them from stored state rather than firing a command to find out.
+    expect(controls.sort()).toEqual([
+      "Claim",
+      "Claim next",
+      "Confirm removal",
+      "Remove",
+    ]);
 
     // No links: a waiting person has no client record to navigate to, and
     // offering one would imply they are already a client.
@@ -632,5 +674,145 @@ describe("the Settings tab is server-gated", () => {
     } finally {
       for (const [k, v] of originals) set(k, v);
     }
+  });
+});
+
+// ===========================================================================
+// WAIT-EXPOSE-01 — which controls each lifecycle state may offer
+// ===========================================================================
+//
+// PRESENTATION AVAILABILITY COMES FROM STORED STATE. The RPC remains the
+// mutation authority and re-derives everything, but a control the row's own
+// state forbids is never offered and then refused — waiting for an RPC refusal
+// as UX teaches an operator that the button is unreliable rather than that the
+// action is wrong.
+
+/** The action controls rendered for one row, by their test ids. */
+function actionsFor(html: string): string[] {
+  return [...html.matchAll(/data-testid="waitlist-action-([a-z]+)"/g)]
+    .map((m) => m[1]!)
+    .sort();
+}
+
+describe("action visibility follows the row's lifecycle state", () => {
+  const CASES: ReadonlyArray<[string, string[]]> = [
+    ["waiting", ["claim"]],
+    ["claimed", ["release"]],
+    // A LIVE invitation offers Release (end it early) and NOT Record expired.
+    ["invited", ["release"]],
+    ["expired", ["requeue"]],
+    ["released", ["requeue"]],
+  ];
+
+  for (const [status, expected] of CASES) {
+    it(`${status} offers exactly ${expected.join(", ") || "nothing"}`, async () => {
+      scenario.rows = [entry({ id: `e-${status}`, status })];
+      scenario.count = 1;
+      // A live invitation: expires in the future, so nothing has run out.
+      scenario.invitations =
+        status === "invited"
+          ? [
+              {
+                entry_id: `e-${status}`,
+                expires_at: new Date(Date.now() + 86_400_000).toISOString(),
+                redeemed_at: null,
+              },
+            ]
+          : [];
+      const html = await render();
+      expect(actionsFor(html)).toEqual(expected);
+    });
+  }
+
+  it("EXPIRE IS NOT CANCELLATION — withheld while the invitation is live", async () => {
+    scenario.rows = [entry({ id: "e-live", status: "invited" })];
+    scenario.count = 1;
+    scenario.invitations = [
+      {
+        entry_id: "e-live",
+        expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+        redeemed_at: null,
+      },
+    ];
+    const html = await render();
+    expect(actionsFor(html)).not.toContain("expire");
+    expect(html).not.toContain("Record expired");
+    // Release is the operator's way to end it early, and it IS offered.
+    expect(actionsFor(html)).toContain("release");
+  });
+
+  it("Record expired appears ONLY once the clock has run out", async () => {
+    scenario.rows = [entry({ id: "e-done", status: "invited" })];
+    scenario.count = 1;
+    scenario.invitations = [
+      {
+        entry_id: "e-done",
+        expires_at: new Date(Date.now() - 3_600_000).toISOString(),
+        redeemed_at: null,
+      },
+    ];
+    const html = await render();
+    expect(actionsFor(html)).toContain("expire");
+    expect(html).toContain("Record expired");
+  });
+
+  it("a REDEEMED invitation is never offered as expirable", async () => {
+    // Redeeming is terminal for the invitation; the command refuses with
+    // `already_redeemed`, and the page must not offer the control at all.
+    scenario.rows = [entry({ id: "e-used", status: "invited" })];
+    scenario.count = 1;
+    scenario.invitations = [
+      {
+        entry_id: "e-used",
+        expires_at: new Date(Date.now() - 3_600_000).toISOString(),
+        redeemed_at: new Date(Date.now() - 1_800_000).toISOString(),
+      },
+    ];
+    const html = await render();
+    expect(actionsFor(html)).not.toContain("expire");
+  });
+
+  it("a FAILED invitation read withholds the control and SAYS it could not check", async () => {
+    // The wrong answer here is silence that reads as "still live". Unknown is
+    // not the same as not-elapsed, and the sentence has to say which it is.
+    scenario.rows = [entry({ id: "e-unknown", status: "invited" })];
+    scenario.count = 1;
+    scenario.invitationsError = { code: "57014" };
+    const html = await render();
+    expect(actionsFor(html)).not.toContain("expire");
+    expect(html).toContain("Couldn&#x27;t check whether this invitation has run out");
+    // Release still works, and the copy says so.
+    expect(actionsFor(html)).toContain("release");
+  });
+
+  it("the invitation window is read ONLY when some row is invited", async () => {
+    scenario.rows = [entry({ status: "waiting" })];
+    scenario.count = 1;
+    await render();
+    expect(queries.map((q) => q.table)).toEqual(["new_client_waitlist_entries"]);
+  });
+
+  it("and IS read when one is", async () => {
+    // Non-vacuity for the assertion above.
+    scenario.rows = [entry({ id: "e-inv", status: "invited" })];
+    scenario.count = 1;
+    scenario.invitations = [];
+    await render();
+    expect(queries.map((q) => q.table)).toEqual([
+      "new_client_waitlist_entries",
+      "new_client_waitlist_invitations",
+    ]);
+  });
+
+  it("Claim next is offered only when somebody is actually waiting", async () => {
+    scenario.rows = [entry({ status: "claimed" })];
+    scenario.count = 1;
+    const claimedHtml = await render();
+    expect(claimedHtml).not.toContain("Claim next");
+
+    reset();
+    scenario.rows = [entry({ status: "waiting" })];
+    scenario.count = 1;
+    expect(await render()).toContain("Claim next");
   });
 });
