@@ -616,3 +616,105 @@ export async function limitPractitionerClientEmail(args: {
     return { allowed: true }; // fail open
   }
 }
+
+// ---------------------------------------------------------------------------
+// WAIT DELIVERY-01 — recipient-proof requests
+// ---------------------------------------------------------------------------
+//
+// The invitation link resolves without mutating. Requesting a proof is the
+// first step that costs anything: it mints a challenge, retires the previous
+// one, and sends mail to the address stored on the waitlist entry.
+//
+// KEYED ON THE INVITATION ID, NOT THE BEARER TOKEN. `limitTokenRoute` above
+// hashes the raw token because at that point nothing has resolved a row yet and
+// the token is the only identifier available. This flow is different by
+// construction: the link resolves BEFORE any proof is requested, so a
+// server-resolved `new_client_waitlist_invitations.id` is already in hand.
+// Using it keeps the bearer credential out of the key derivation entirely,
+// which is strictly better than hashing it — and it is available only because
+// the two authorities are split. An internal UUID is not personal data, so it
+// is used in the clear exactly as `studioId` is elsewhere in this file.
+//
+// TWO DIMENSIONS, DIFFERENT JOBS. The per-invitation window is the dominant
+// control: it bounds how much mail one recipient's inbox can be made to
+// receive, which is the abuse that actually harms a person. The per-IP window,
+// scoped by studio, bounds one source walking many invitations at once.
+//
+// FAIL OPEN, classified rather than inherited. A limiter outage here means
+// either (a) fail closed and strand a prospect who cannot obtain the proof
+// their booking now requires — the invitation expires and the spot is lost, and
+// there is no other path to the code; or (b) fail open and risk extra
+// transactional email to an address the studio itself recorded. (a) destroys a
+// real appointment; (b) is bounded by the challenge's own single-live-proof
+// rule and is visible in the provider console. Fail open, matching every other
+// public limiter in this file.
+//
+// The numbers live in lib/waitlist/delivery/policy.ts so the send path, this
+// limiter and their tests read one source.
+const WAITLIST_PROOF_LIMITS = {
+  invitation: { limit: 3, window: "15 m" },
+  ip: { limit: 10, window: "1 h" },
+} as const;
+
+const waitlistProofLimiterCache = new Map<string, Ratelimit | null>();
+function waitlistProofLimiter(
+  dimension: "invitation" | "ip",
+): Ratelimit | null {
+  const cached = waitlistProofLimiterCache.get(dimension);
+  if (cached !== undefined) return cached;
+  const redis = getRedis();
+  const cfg = WAITLIST_PROOF_LIMITS[dimension];
+  const limiter = redis
+    ? new Ratelimit({
+        redis,
+        limiter: Ratelimit.slidingWindow(cfg.limit, cfg.window),
+        // Own namespace. Cannot collide with rl:new_client_waitlist_* (joining
+        // the list) or rl:waitlist_* (marketing).
+        prefix: `rl:waitlist_proof_${dimension}`,
+        analytics: false,
+      })
+    : null;
+  waitlistProofLimiterCache.set(dimension, limiter);
+  return limiter;
+}
+
+/**
+ * Rate limit a recipient-proof request.
+ *
+ * `invitationId` and `studioId` MUST both be server-resolved row ids. A
+ * browser-supplied value makes the scoping meaningless, and for `invitationId`
+ * it would also reintroduce the bearer token into the key path.
+ */
+export async function limitWaitlistProofRequest(args: {
+  headers: Headers;
+  studioId: string;
+  invitationId: string;
+}): Promise<RateLimitResult> {
+  const invitationLimiter = waitlistProofLimiter("invitation");
+  const ipLimiter = waitlistProofLimiter("ip");
+  if (!invitationLimiter || !ipLimiter) return { allowed: true }; // disabled
+  const ip = clientIpFromHeaders(args.headers);
+  try {
+    // Per-invitation first: it is the control that protects a person, and
+    // checking it first means a single hammered invitation cannot also burn
+    // through the shared per-IP budget on its way to being refused.
+    const invRes = await invitationLimiter.limit(
+      `${args.invitationId}:${args.studioId}`,
+    );
+    if (!invRes.success) {
+      const retry = retryAfterSeconds(invRes.reset);
+      logRateLimitExceeded("waitlist_proof", retry, "invitation");
+      return { allowed: false, retryAfterSeconds: retry };
+    }
+    const ipRes = await ipLimiter.limit(`${hashId(ip)}:${args.studioId}`);
+    if (!ipRes.success) {
+      const retry = retryAfterSeconds(ipRes.reset);
+      logRateLimitExceeded("waitlist_proof", retry, "ip");
+      return { allowed: false, retryAfterSeconds: retry };
+    }
+    return { allowed: true };
+  } catch (err) {
+    logBackendUnavailable("waitlist_proof", err);
+    return { allowed: true }; // fail open — see the classification above
+  }
+}
