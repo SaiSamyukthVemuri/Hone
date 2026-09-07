@@ -1,3 +1,5 @@
+import type { DeliveryKind } from "./log-safety";
+
 // WAIT DELIVERY-01 — the delivery policy, in one place.
 //
 // Pure data and pure functions: no I/O, no env, no provider, no `server-only`.
@@ -365,6 +367,23 @@ export const PROOF_REQUEST_LIMITS = {
  * a future caller reaching for "mark it failed" finds an explicit `false` and a
  * reason, instead of an absence it can read either way.
  */
+export type DeliveryRecovery =
+  /** Delivered. Nothing to recover. */
+  | "none"
+  /** Proof: mint a NEW challenge under the same, still-valid invitation. */
+  | "mint_new_challenge"
+  /** Invitation: close/release, re-admit atomically, issue a NEW invitation. */
+  | "reissue_invitation";
+
+/**
+ * The recovery a kind uses when a send does not confirm. One place, so the two
+ * cannot drift apart, and so adding a third delivery kind is a compile error
+ * here rather than a silently wrong instruction at a call site.
+ */
+export function recoveryForKind(kind: DeliveryKind): DeliveryRecovery {
+  return kind === "invitation" ? "reissue_invitation" : "mint_new_challenge";
+}
+
 export type DeliveryDisposition = {
   /** Did the provider take custody? */
   delivered: "yes" | "no" | "unknown";
@@ -378,20 +397,35 @@ export type DeliveryDisposition = {
    * supported "send this invitation again later" operation, and Delivery must
    * not imply one.
    *
-   * Product recovery is a REISSUE, which is a lifecycle operation belonging to
-   * a higher layer: close or release the old invitation, re-admit atomically,
-   * and issue a NEW invitation with a new id, a new token and its own delivery
-   * event. `reissueRequired` below is how that is signalled.
+   * Recovery is a lifecycle operation belonging to a higher layer, and it
+   * differs by kind: an INVITATION is reissued (close or release the old one,
+   * re-admit atomically, mint a new id and token), while a PROOF mints a new
+   * challenge under the same still-valid invitation. `recovery` below names
+   * which, so a caller never has to infer it.
    *
    * The type is the enforcement. A boolean would let a future branch set it
    * true and reintroduce same-event retry semantics with nothing to catch it.
    */
   sameEventRetryAllowed: false;
   /**
-   * The delivery did not confirm, so the product should offer a REISSUE — a new
-   * invitation — rather than another attempt at this one.
+   * What the product should do next, IF anything. Named as an action rather
+   * than a boolean because the two delivery kinds recover differently, and a
+   * single flag made the disposition give one of them the wrong instruction:
+   *
+   *   INVITATION -> `reissue_invitation`. The raw token is gone, so the only
+   *   way forward is a new invitation: close or release the old one, re-admit
+   *   atomically, mint a new id and token.
+   *
+   *   PROOF -> `mint_new_challenge`. The INVITATION is untouched and still
+   *   perfectly valid; only this challenge is spent. Recovery mints a new
+   *   challenge under the SAME invitation. Telling a caller to reissue here
+   *   would close and re-admit a live invitation for nothing.
+   *
+   * A caller that followed the old boolean had to either do that unnecessary
+   * damage or ignore the advertised recovery, which is the same as not
+   * advertising one.
    */
-  reissueRequired: boolean;
+  recovery: DeliveryRecovery;
   /**
    * TRUE when the INVITATION ITSELF is finished, not merely this delivery.
    *
@@ -466,12 +500,15 @@ export type SendOutcomeShape =
  * have happened". That distinction is the whole reason this flow uses it rather
  * than `sendEmailSafely`.
  */
-export function classifyDelivery(outcome: SendOutcomeShape): DeliveryDisposition {
+export function classifyDelivery(
+  outcome: SendOutcomeShape,
+  kind: DeliveryKind,
+): DeliveryDisposition {
   if (outcome.status === "accepted") {
     return {
       delivered: "yes",
       sameEventRetryAllowed: false,
-      reissueRequired: false,
+      recovery: "none",
       terminal: false,
       mayInvalidateChallenge: false,
       mayMutateLifecycle: false,
@@ -482,9 +519,9 @@ export function classifyDelivery(outcome: SendOutcomeShape): DeliveryDisposition
     return {
       delivered: "unknown",
       sameEventRetryAllowed: false,
-      // Ambiguous means it MAY have arrived. A reissue is the caller's call,
-      // weighed against sending a second invitation for one spot.
-      reissueRequired: true,
+      // Ambiguous means it MAY have arrived, so the recovery is offered rather
+      // than required: the caller weighs it against a possible duplicate.
+      recovery: recoveryForKind(kind),
       terminal: false,
       // The in-flight request was never cancelled and may still be accepted.
       mayInvalidateChallenge: false,
@@ -500,7 +537,7 @@ export function classifyDelivery(outcome: SendOutcomeShape): DeliveryDisposition
     return {
       delivered: "no",
       sameEventRetryAllowed: false,
-      reissueRequired: true,
+      recovery: recoveryForKind(kind),
       terminal: false,
       mayInvalidateChallenge: true,
       mayMutateLifecycle: false,
@@ -510,7 +547,7 @@ export function classifyDelivery(outcome: SendOutcomeShape): DeliveryDisposition
   return {
     delivered: "no",
     sameEventRetryAllowed: false,
-    reissueRequired: true,
+    recovery: recoveryForKind(kind),
     terminal: false,
     // A definite refusal: nothing was delivered, so retiring the challenge
     // strands nobody.
@@ -598,11 +635,14 @@ export function invitationIsLive(expiresAt: Date, now: Date): boolean {
  * nothing about whether the invitation is still claimed, expired or released in
  * the database.
  */
-export function terminalRefusal(reason: string): DeliveryDisposition {
+export function terminalRefusal(
+  reason: string,
+  kind: DeliveryKind,
+): DeliveryDisposition {
   return {
     delivered: "no",
     sameEventRetryAllowed: false,
-    reissueRequired: true,
+    recovery: recoveryForKind(kind),
     terminal: true,
     // Nothing was sent, so there is nothing in flight to strand. Whether the
     // challenge should be retired is the caller's decision, not a consequence
@@ -626,11 +666,14 @@ export function terminalRefusal(reason: string): DeliveryDisposition {
  * there is nothing to strand; and the invitation must NOT be invalidated —
  * waiting is the whole remedy.
  */
-export function retryableRefusal(reason: string): DeliveryDisposition {
+export function retryableRefusal(
+  reason: string,
+  kind: DeliveryKind,
+): DeliveryDisposition {
   return {
     delivered: "no",
     sameEventRetryAllowed: false,
-    reissueRequired: true,
+    recovery: recoveryForKind(kind),
     // The invitation is fine; only the clock disagreed. A reissue will work,
     // which is why this is not terminal.
     terminal: false,

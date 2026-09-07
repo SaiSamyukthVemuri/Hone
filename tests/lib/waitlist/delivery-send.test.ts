@@ -14,6 +14,7 @@ import {
   PROVIDER_KEY_BOUND_TO_OTHER_BYTES,
   terminalRefusal,
   retryableRefusal,
+  recoveryForKind,
   type SendOutcomeShape,
   PROVIDER_IDEMPOTENCY_RETENTION_HOURS,
   PROOF_SEND_MAX_DELAY_AFTER_MINT_SECONDS,
@@ -303,7 +304,7 @@ describe("provider failure classification", () => {
     // The in-flight request was never cancelled and may still be accepted.
     // Killing the challenge would strand a code the recipient is about to type.
     for (const reason of ["timeout", "concurrent", "no_message_id"] as const) {
-      const d = classifyDelivery({ status: "ambiguous", reason });
+      const d = classifyDelivery({ status: "ambiguous", reason }, "invitation");
       expect(d.delivered).toBe("unknown");
       expect(d.mayInvalidateChallenge).toBe(false);
       expect(d.sameEventRetryAllowed).toBe(false);
@@ -312,14 +313,14 @@ describe("provider failure classification", () => {
   });
 
   it("a definite refusal MAY invalidate the challenge", () => {
-    const d = classifyDelivery({ status: "rejected", code: "validation_error" });
+    const d = classifyDelivery({ status: "rejected", code: "validation_error" }, "invitation");
     expect(d.delivered).toBe("no");
     expect(d.mayInvalidateChallenge).toBe(true);
     expect(d.mayMutateLifecycle).toBe(false);
   });
 
   it("acceptance still may not mutate lifecycle", () => {
-    const d = classifyDelivery({ status: "accepted", messageId: "msg_1" });
+    const d = classifyDelivery({ status: "accepted", messageId: "msg_1" }, "invitation");
     expect(d.delivered).toBe("yes");
     expect(d.mayMutateLifecycle).toBe(false);
   });
@@ -713,7 +714,7 @@ describe("NEVER send an already-expired invitation", () => {
   it("a PROVIDER refusal stays non-terminal — the next attempt may differ", () => {
     // The distinction the flag exists for. A provider said no to one attempt;
     // an expired invitation says no to every attempt there will ever be.
-    const d = classifyDelivery({ status: "rejected", code: "validation_error" });
+    const d = classifyDelivery({ status: "rejected", code: "validation_error" }, "invitation");
     expect(d.terminal).toBe(false);
     expect(d.sameEventRetryAllowed).toBe(false);
   });
@@ -841,7 +842,7 @@ describe("CLOCK DISAGREEMENT is retryable, not terminal", () => {
     expect(out.disposition.reason).toBe("rejected_clock_disagreement");
     expect(out.disposition.terminal).toBe(false);
     expect(out.disposition.sameEventRetryAllowed).toBe(false);
-    expect(out.disposition.reissueRequired).toBe(true);
+    expect(out.disposition.recovery).toBe("reissue_invitation");
     // Waiting is the remedy, so nothing about the invitation may be retired.
     expect(out.disposition.mayInvalidateChallenge).toBe(false);
     expect(out.disposition.mayMutateLifecycle).toBe(false);
@@ -898,7 +899,7 @@ describe("ONE INVITATION ID = ONE DELIVERY EVENT", () => {
     expect(out.disposition.delivered).toBe("unknown");
     expect(out.disposition.sameEventRetryAllowed).toBe(false);
     // Recovery is a reissue, weighed by the caller against a possible duplicate.
-    expect(out.disposition.reissueRequired).toBe(true);
+    expect(out.disposition.recovery).toBe("reissue_invitation");
     expect(out.disposition.mayMutateLifecycle).toBe(false);
   });
 
@@ -916,10 +917,10 @@ describe("ONE INVITATION ID = ONE DELIVERY EVENT", () => {
       { status: "rejected", code: null },
     ];
     for (const o of outcomes) {
-      expect(classifyDelivery(o).sameEventRetryAllowed, JSON.stringify(o)).toBe(false);
+      expect(classifyDelivery(o, "invitation").sameEventRetryAllowed, JSON.stringify(o)).toBe(false);
     }
-    expect(terminalRefusal("x").sameEventRetryAllowed).toBe(false);
-    expect(retryableRefusal("y").sameEventRetryAllowed).toBe(false);
+    expect(terminalRefusal("x", "invitation").sameEventRetryAllowed).toBe(false);
+    expect(retryableRefusal("y", "recipient_proof").sameEventRetryAllowed).toBe(false);
   });
 
   it("CONTROL C: a reissue is a NEW event — new id yields a new key and new bytes", async () => {
@@ -985,9 +986,9 @@ describe("ONE INVITATION ID = ONE DELIVERY EVENT", () => {
     const d = classifyDelivery({
       status: "rejected",
       code: PROVIDER_KEY_BOUND_TO_OTHER_BYTES,
-    });
+    }, "invitation");
     expect(d.sameEventRetryAllowed).toBe(false);
-    expect(d.reissueRequired).toBe(true);
+    expect(d.recovery).toBe("reissue_invitation");
     expect(d.delivered).toBe("no");
     // NOT terminal: the invitation is spent, but a fresh one will deliver.
     expect(d.terminal).toBe(false);
@@ -1050,5 +1051,111 @@ describe("CONTROL A: the one retry INSIDE a single invocation is byte-identical"
     expect(attempts).toHaveLength(2);
     expect(out.disposition.delivered).toBe("unknown");
     expect(out.disposition.sameEventRetryAllowed).toBe(false);
+  });
+});
+
+describe("recovery is DELIVERY-KIND aware", () => {
+  // A single `reissueRequired` boolean gave the proof path the invitation's
+  // instruction. REPRODUCED at 577753e9: a rejected PROOF send asked the caller
+  // to reissue — which would close and re-admit a live, perfectly valid
+  // invitation to recover a spent challenge. The caller's only alternatives
+  // were to do that damage or to ignore the advertised recovery, which is the
+  // same as not advertising one.
+
+  it("a failed PROOF send asks for a new CHALLENGE, never an invitation reissue", async () => {
+    const { transport } = recordingTransport({
+      data: null,
+      error: { name: "validation_error" },
+    });
+    const now = new Date("2026-09-07T12:00:00.000Z");
+    const out = await sendWaitlistRecipientProofEmail({
+      studio: STUDIO,
+      invitationId: INVITATION_ID,
+      challengeId: CHALLENGE_ID,
+      recipientEmail: RECIPIENT,
+      code: "H4K2QF7P",
+      issuedAt: now,
+      expiresAt: new Date(now.getTime() + 20 * 60_000),
+      action: "book",
+      now,
+      transport,
+    });
+    expect(out.disposition.recovery).toBe("mint_new_challenge");
+    expect(out.disposition.recovery).not.toBe("reissue_invitation");
+    expect(out.disposition.sameEventRetryAllowed).toBe(false);
+  });
+
+  it("a failed INVITATION send asks for a reissue", async () => {
+    const { transport } = recordingTransport({
+      data: null,
+      error: { name: "validation_error" },
+    });
+    const out = await sendWaitlistInvitationEmail({
+      studio: STUDIO,
+      invitationId: INVITATION_ID,
+      recipientEmail: RECIPIENT,
+      invitationUrl: URL,
+      ...INV_BASE,
+      transport,
+    });
+    expect(out.disposition.recovery).toBe("reissue_invitation");
+  });
+
+  it("a PRE-SEND refusal on the proof path also stays challenge-scoped", async () => {
+    // The mailability refusals are proof-side too, and they were built through
+    // the same shared constructors — so they carried the same wrong advice.
+    const { transport, calls } = recordingTransport(ACCEPTED);
+    const now = new Date("2026-09-07T12:00:00.000Z");
+    const out = await sendWaitlistRecipientProofEmail({
+      studio: STUDIO,
+      invitationId: INVITATION_ID,
+      challengeId: CHALLENGE_ID,
+      recipientEmail: RECIPIENT,
+      code: "H4K2QF7P",
+      issuedAt: now,
+      expiresAt: new Date(now.getTime() + 99 * 60_000), // over the requested window
+      action: "book",
+      now,
+      transport,
+    });
+    expect(calls).toHaveLength(0);
+    expect(out.disposition.recovery).toBe("mint_new_challenge");
+  });
+
+  it("a DELIVERED send needs no recovery, whichever kind it is", () => {
+    for (const kind of ["invitation", "recipient_proof"] as const) {
+      const d = classifyDelivery({ status: "accepted", messageId: "m" }, kind);
+      expect(d.recovery).toBe("none");
+    }
+  });
+
+  it("recoveryForKind is the single mapping, so the two cannot drift", () => {
+    // One place, so adding a third delivery kind is a compile error here rather
+    // than a silently wrong instruction at some call site.
+    expect(recoveryForKind("invitation")).toBe("reissue_invitation");
+    expect(recoveryForKind("recipient_proof")).toBe("mint_new_challenge");
+  });
+
+  it("EVERY non-delivered outcome advises the recovery of its own kind", () => {
+    // Exhaustive rather than sampled: the mapping must hold for the whole
+    // vocabulary, not just the branch that was reported.
+    const outcomes: SendOutcomeShape[] = [
+      { status: "ambiguous", reason: "timeout" },
+      { status: "ambiguous", reason: "concurrent" },
+      { status: "ambiguous", reason: "no_message_id" },
+      { status: "rejected", code: "validation_error" },
+      { status: "rejected", code: PROVIDER_KEY_BOUND_TO_OTHER_BYTES },
+      { status: "rejected", code: null },
+    ];
+    for (const o of outcomes) {
+      expect(classifyDelivery(o, "invitation").recovery, JSON.stringify(o)).toBe(
+        "reissue_invitation",
+      );
+      expect(classifyDelivery(o, "recipient_proof").recovery, JSON.stringify(o)).toBe(
+        "mint_new_challenge",
+      );
+    }
+    expect(terminalRefusal("r", "recipient_proof").recovery).toBe("mint_new_challenge");
+    expect(retryableRefusal("r", "invitation").recovery).toBe("reissue_invitation");
   });
 });

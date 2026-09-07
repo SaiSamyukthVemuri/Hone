@@ -188,7 +188,7 @@ export async function sendWaitlistInvitationEmail(args: {
     // TERMINAL: time only moves forward, so this invitation can never become
     // live again. offerResend is false — inviting a retry here would loop the
     // caller through an attempt guaranteed to fail.
-    const disposition = terminalRefusal("invitation_expired");
+    const disposition = terminalRefusal("invitation_expired", "invitation");
     return {
       disposition,
       log: buildDeliveryLogRecord({
@@ -215,8 +215,8 @@ export async function sendWaitlistInvitationEmail(args: {
   if (!window.eligible) {
     const disposition =
       window.disposition === "terminal"
-        ? terminalRefusal(window.reason)
-        : retryableRefusal(window.reason);
+        ? terminalRefusal(window.reason, "invitation")
+        : retryableRefusal(window.reason, "invitation");
     return {
       disposition,
       log: buildDeliveryLogRecord({
@@ -276,7 +276,7 @@ export async function sendWaitlistInvitationEmail(args: {
     ...(args.transport !== undefined ? { transport: args.transport } : {}),
   });
 
-  const disposition = classifyDelivery(outcome);
+  const disposition = classifyDelivery(outcome, "invitation");
   return {
     disposition,
     log: buildDeliveryLogRecord({
@@ -334,7 +334,10 @@ export async function sendWaitlistRecipientProofEmail(args: {
     // TERMINAL: every mailability verdict turns on elapsed time or on how the
     // challenge was minted, and neither is changed by trying again. A resend
     // must mint a NEW challenge.
-    const disposition = terminalRefusal(`challenge_${mailability.reason}`);
+    const disposition = terminalRefusal(
+      `challenge_${mailability.reason}`,
+      "recipient_proof",
+    );
     return {
       disposition,
       log: buildDeliveryLogRecord({
@@ -396,7 +399,7 @@ export async function sendWaitlistRecipientProofEmail(args: {
     ...(args.transport !== undefined ? { transport: args.transport } : {}),
   });
 
-  const disposition = classifyDelivery(outcome);
+  const disposition = classifyDelivery(outcome, "recipient_proof");
   return {
     disposition,
     log: buildDeliveryLogRecord({
