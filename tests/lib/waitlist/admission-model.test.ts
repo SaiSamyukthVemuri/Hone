@@ -9,6 +9,7 @@ import {
   STATUS_MEANING,
   WAITLIST_ENTRY_STATUSES,
   actionAvailability,
+  actionLabel,
   statusMeaning,
   type WaitlistEntryStatus,
 } from "@/lib/waitlist/admission-model";
@@ -105,6 +106,80 @@ describe("the model offers only actions a studio can actually perform", () => {
   });
 });
 
+describe("the practitioner's vocabulary is not the implementation's", () => {
+  it("`claimed` is shown as READY TO INVITE, never as a claim or a hold", () => {
+    // "Claim" describes how the queue moves an entry out of general contention.
+    // It is not a job a studio owner sets out to do, and shipping the word made
+    // the surface read like an implementation detail.
+    expect(STATUS_LABEL.claimed).toBe("Ready to invite");
+    expect(STATUS_LABEL.claimed).not.toMatch(/claim(?!$)|held/i);
+    expect(STATUS_MEANING.claimed).not.toMatch(/\bclaim|\bheld\b/i);
+  });
+
+  it("NO rendered state vocabulary leaks an internal transition word", () => {
+    // Every string in these two maps reaches a practitioner. `claimed` is a
+    // database word; none of them may say it.
+    for (const status of WAITLIST_ENTRY_STATUSES) {
+      expect(STATUS_LABEL[status], status).not.toMatch(/\bclaim/i);
+      expect(STATUS_MEANING[status], status).not.toMatch(/\bclaim/i);
+    }
+    // NON-VACUITY: the maps really do hold the strings being scanned.
+    expect(Object.keys(STATUS_LABEL)).toHaveLength(WAITLIST_ENTRY_STATUSES.length);
+    expect(STATUS_LABEL.claimed.length).toBeGreaterThan(3);
+  });
+
+  it("RELEASE READS DIFFERENTLY depending on what it ends", () => {
+    // One command, two materially different acts. On a held entry it gives up a
+    // hold nobody outside the studio ever saw; on an invited one it ends an
+    // invitation that has ALREADY REACHED SOMEONE, and the button has to say so.
+    expect(actionLabel("release", "claimed")).toBe("Return to waitlist");
+    expect(actionLabel("release", "invited")).toBe("Cancel invitation");
+    expect(actionLabel("release", "claimed")).not.toBe(
+      actionLabel("release", "invited"),
+    );
+  });
+
+  it("requeue reads as returning someone to the waitlist", () => {
+    for (const status of ["expired", "released"] as const) {
+      expect(actionLabel("requeue", status)).toBe("Return to waitlist");
+    }
+  });
+
+  it("no label a practitioner can ACTUALLY BE SHOWN says `claim` or `release`", () => {
+    // Scoped to pairs the surface can genuinely render — an action the model
+    // refuses on a status has no button and therefore no label. Asserting over
+    // every pair would instead be testing `ACTION_LABEL`'s fallback, which is
+    // the raw command word on purpose and reaches nobody.
+    const rendered: string[] = [];
+    for (const status of WAITLIST_ENTRY_STATUSES) {
+      for (const action of ADMISSION_ACTIONS) {
+        // Claiming is never rendered regardless of availability — the page does
+        // not ask for it. Proved page-side in the queue suite.
+        if (action === "claim") continue;
+        // `expire` needs the clock to have run out before it is offered at all.
+        const verdict = actionAvailability(action, status, { invitationElapsed: true });
+        if (!verdict.available) continue;
+        const label = actionLabel(action, status);
+        rendered.push(`${action}/${status}=${label}`);
+        expect(label, `${action}/${status}`).not.toMatch(/\bclaim|\brelease\b/i);
+      }
+    }
+    // NON-VACUITY: real, status-dependent labels were produced and scanned —
+    // not an empty loop that satisfies the assertion by never running.
+    expect(rendered.length).toBeGreaterThan(4);
+    expect(rendered).toContain("release/invited=Cancel invitation");
+    expect(rendered).toContain("release/claimed=Return to waitlist");
+  });
+
+  it("THE WIRING IS UNTOUCHED — claim is still a modelled, available action", () => {
+    // This change removed a control, not a capability. If claim ever stops
+    // being modelled, restoring the UI stops being a rendering change.
+    expect(ADMISSION_ACTIONS as ReadonlyArray<string>).toContain("claim");
+    expect(actionAvailability("claim", "waiting").available).toBe(true);
+    expect(ACTION_LABEL.claim).toBe("Claim");
+  });
+});
+
 describe("every action, on every state, is decided AND explained", () => {
   it("an unavailable action always carries an actionable reason", () => {
     for (const status of WAITLIST_ENTRY_STATUSES) {
@@ -137,7 +212,13 @@ describe("every action, on every state, is decided AND explained", () => {
     const live = actionAvailability("expire", "invited", { invitationElapsed: false });
     expect(live.available).toBe(false);
     expect((live as { reason: string }).reason).toMatch(/has not run out yet/i);
-    expect((live as { reason: string }).reason).toMatch(/release/i);
+    // IT NAMES THE CONTROL THE ROW ACTUALLY SHOWS. An `invited` row's release
+    // control reads "Cancel invitation", so the refusal points there — sending
+    // an owner to look for "Release" would name a button that is not on screen.
+    expect((live as { reason: string }).reason).toContain(
+      actionLabel("release", "invited"),
+    );
+    expect((live as { reason: string }).reason).toMatch(/cancel invitation/i);
 
     // Unknown elapsed-ness withholds the control rather than offering one the
     // database would refuse.

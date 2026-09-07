@@ -1,18 +1,21 @@
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { localLongDate } from "@/lib/booking/tz";
+// `claimWaitlistEntryAction` and `claimNextWaitlistEntriesAction` are
+// deliberately NOT imported. Both still exist, are still tested and still reach
+// their commands — this surface simply no longer offers claiming. See the
+// CLAIMING IS INTERNAL note below.
 import {
-  claimNextWaitlistEntriesAction,
-  claimWaitlistEntryAction,
   expireWaitlistInvitationAction,
   releaseWaitlistEntryAction,
   removeWaitlistEntryAction,
   requeueWaitlistEntryAction,
 } from "./actions";
 import {
-  ACTION_LABEL,
+  STATUS_LABEL,
   STATUS_MEANING,
   actionAvailability,
+  actionLabel,
   statusMeaning,
   type AdmissionAction,
   type WaitlistEntryStatus,
@@ -27,12 +30,26 @@ import {
 // email. This page answers exactly those three questions against the durable
 // record and stops there.
 //
-// WHAT IT IS NOT — UPDATED BY WAIT-EXPOSE-01. It now surfaces the practitioner
-// lifecycle that migrations 0188-0190 already shipped: claim (one, or the next
-// N by the database's own queue order), release, record-expired and requeue,
-// alongside the original removal. It still shows NO queue position to anyone,
-// does NO ranking, forecasts no capacity, creates no appointment, edits no
-// contact and takes no notes.
+// WHAT IT IS NOT. It surfaces the practitioner lifecycle that migrations
+// 0188-0190 already shipped: returning someone to the waitlist, cancelling an
+// invitation, recording an expiry, and the original removal. It shows NO queue
+// position to anyone, does NO ranking, forecasts no capacity, creates no
+// appointment, edits no contact and takes no notes.
+//
+// CLAIMING IS INTERNAL, AND IS NOT SHOWN. `claimed` is a real database state and
+// `claim_new_client_waitlist_entry(_ies)` are real, wired, tested commands —
+// nothing about them changed. What changed is that this page stopped putting
+// them in front of a practitioner. "Claim" describes how the queue moves an
+// entry out of general contention; it is not a task a studio owner sets out to
+// perform, and offering it made the surface read like an implementation detail
+// rather than a list of people waiting to hear back.
+//
+// So: no Claim button, no "Claim the next N" form, and the state itself is shown
+// as "Ready to invite" — which is what it MEANS to a practitioner. Entries
+// already sitting in that state from the previous release keep working: they
+// render, they are counted, and they can be returned to the waitlist. Restoring
+// any of this is a rendering change and nothing more, because no command, action
+// or authority was touched to remove it.
 //
 // It still cannot INVITE. `issue`, `redeem` and `record_conversion` are not
 // referenced anywhere on this surface: issuing mints a token that must reach a
@@ -105,25 +122,38 @@ type WaitlistRow = {
  * Reading them would spend a bound on rows nothing can be done to, and an
  * operator queue exists to show what still needs attention.
  */
-const SECTIONS: ReadonlyArray<{ status: WaitlistEntryStatus; heading: string }> = [
-  { status: "waiting", heading: "Waiting" },
-  { status: "claimed", heading: "Held" },
-  { status: "invited", heading: "Invited" },
-  { status: "expired", heading: "Expired" },
-  { status: "released", heading: "Released" },
-];
+const SECTION_STATUSES = [
+  "waiting",
+  "claimed",
+  "invited",
+  "expired",
+  "released",
+] as const satisfies ReadonlyArray<WaitlistEntryStatus>;
 
 /**
- * Which server action performs each lifecycle move.
+ * THE HEADING IS THE STATE'S ONE PRACTITIONER-FACING NAME, read from the model
+ * rather than written again here. A second copy is exactly how a state ends up
+ * called "Held" in a heading and something else on the rows inside it.
+ */
+const SECTIONS: ReadonlyArray<{ status: WaitlistEntryStatus; heading: string }> =
+  SECTION_STATUSES.map((status) => ({ status, heading: STATUS_LABEL[status] }));
+
+/**
+ * Which server action performs each lifecycle move THIS SURFACE OFFERS.
  *
- * `invite` and `remove` are absent on purpose. Inviting is B2 work and is not
- * wired anywhere in this release; removal keeps its own two-step disclosure
- * below because it is terminal and a mis-tap must not perform it.
+ * `claim` is absent because claiming is no longer offered here, not because it
+ * is unwired — `claimWaitlistEntryAction` is unchanged and still tested. Its
+ * absence from this map is what makes the removal total: a `claim` verdict can
+ * still come back available from the model and there is simply no form to
+ * render for it.
+ *
+ * `invite` and `remove` are absent for their own reasons. Inviting is B2 work
+ * and is not wired anywhere in this release; removal keeps its own two-step
+ * disclosure below because it is terminal and a mis-tap must not perform it.
  */
 const ACTION_FORMS: Partial<
   Record<AdmissionAction, (formData: FormData) => Promise<void>>
 > = {
-  claim: claimWaitlistEntryAction,
   release: releaseWaitlistEntryAction,
   requeue: requeueWaitlistEntryAction,
 };
@@ -292,9 +322,6 @@ export default async function WaitlistSettingsPage({
   // The headline counts the WHOLE queue in both views, because every section is
   // counted in both views.
   const active = SECTIONS.reduce((n, { status }) => n + (bySection.get(status)?.total ?? 0), 0);
-  // Whether anyone is waiting is the waiting section's OWN exact count, so it
-  // no longer depends on what happens to fit in a shared page.
-  const anyoneWaiting = (bySection.get("waiting")?.total ?? 0) > 0;
   // The FOCUSED view renders one section; the default renders all five, first
   // page each — the same read count, and the same rows a reader saw before.
   const visibleSections = focusedStatus
@@ -404,41 +431,10 @@ export default async function WaitlistSettingsPage({
         Waitlist entries: <span className="tabular-nums">{active}</span>
       </p>
 
-      {/* CLAIM NEXT N — the database's queue order, not this page's.
-          `claim_new_client_waitlist_entries` takes a COUNT and walks the
-          existing canonical ordering. There is deliberately no "claim these
-          selected people" bulk control: no command accepts an id list, and
-          looping the single-entry command in TypeScript would invent
-          partial-success semantics the database never agreed to. */}
-      {anyoneWaiting && (
-        <form
-          action={claimNextWaitlistEntriesAction}
-          className="flex flex-col gap-2 rounded-lg border border-neutral-200 p-4 dark:border-neutral-800 sm:flex-row sm:items-end"
-        >
-          <label className="flex flex-col gap-1 text-sm">
-            <span className="font-medium">Claim the next</span>
-            <input
-              type="number"
-              name="count"
-              defaultValue={5}
-              min={1}
-              max={25}
-              inputMode="numeric"
-              className="min-h-[44px] w-full rounded-md border border-neutral-300 px-3 text-base dark:border-neutral-700 sm:w-24"
-            />
-          </label>
-          <button
-            type="submit"
-            className="min-h-[44px] rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
-          >
-            Claim next
-          </button>
-          <span className="text-xs text-neutral-500">
-            Takes them in the order they joined. Claiming holds someone for this
-            studio; it does not contact them.
-          </span>
-        </form>
-      )}
+      {/* NO BULK CLAIM CONTROL. "Claim the next N" was removed with the rest of
+          the claiming vocabulary — see the CLAIMING IS INTERNAL note at the top
+          of this file. `claim_new_client_waitlist_entries` and its server action
+          are untouched and still tested; nothing on this page invokes them. */}
 
       {active === 0 ? (
         <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-6 text-sm text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
@@ -601,7 +597,11 @@ export default async function WaitlistSettingsPage({
                         </div>
 
                         <div className="flex w-full shrink-0 flex-col gap-2 sm:w-auto">
-                          {(["claim", "release", "expire", "requeue"] as AdmissionAction[]).map(
+                          {/* CLAIM IS NOT IN THIS LIST. Claiming is an internal
+                              transition, not a practitioner's job — the model
+                              still rules on it and the command is untouched,
+                              but nothing here asks for it. */}
+                          {(["release", "expire", "requeue"] as AdmissionAction[]).map(
                             (action) => {
                               const verdict = actionAvailability(action, row.status, {
                                 invitationElapsed: elapsed,
@@ -622,7 +622,12 @@ export default async function WaitlistSettingsPage({
                                     data-testid={`waitlist-action-${action}`}
                                     className="min-h-[44px] w-full rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900 sm:w-auto"
                                   >
-                                    {ACTION_LABEL[action]}
+                                    {/* THE ROW DECIDES THE VERB. Release reads
+                                        "Return to waitlist" on a held entry and
+                                        "Cancel invitation" on an invited one —
+                                        one command, two materially different
+                                        acts, and the button says which. */}
+                                    {actionLabel(action, row.status)}
                                   </button>
                                 </form>
                               );
