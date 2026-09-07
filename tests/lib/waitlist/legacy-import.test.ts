@@ -135,3 +135,54 @@ describe("the plan is reconcilable against the source", () => {
     expect(summary).not.toContain("@");
   });
 });
+
+describe("a genuinely dateless row, when the operator has looked", () => {
+  const dateless = [{ email: "a@example.com", name: "A Person" }];
+
+  it("stays blocked by default — the first pass sends them back to their records", () => {
+    const result = planLegacyWaitlistImport(dateless, { importedAt: IMPORTED_AT });
+    expect(result.ready).toHaveLength(0);
+    expect(result.needsDecision[0]?.missing).toEqual(["joined_at"]);
+  });
+
+  it("imports with provenance 'unknown' only on an explicit operator decision", () => {
+    const result = planLegacyWaitlistImport(dateless, {
+      importedAt: IMPORTED_AT,
+      allowUnknownJoinedAt: true,
+    });
+    expect(result.needsDecision).toHaveLength(0);
+    expect(result.ready[0]?.value.joinedAtProvenance).toBe("unknown");
+    // The import instant is a QUEUE ANCHOR, not a claim about the wait — the
+    // provenance is the only thing that says so, and it travels with it.
+    expect(result.ready[0]?.value.joinedAt).toEqual(IMPORTED_AT);
+  });
+
+  it("still refuses a missing name — there is no allowUnknownName counterpart", () => {
+    const result = planLegacyWaitlistImport([{ email: "a@example.com" }], {
+      importedAt: IMPORTED_AT,
+      allowUnknownJoinedAt: true,
+    });
+    expect(result.ready).toHaveLength(0);
+    expect(result.needsDecision[0]?.missing).toEqual(["name"]);
+  });
+
+  it("still rejects a bad date rather than downgrading it to 'unknown'", () => {
+    const result = planLegacyWaitlistImport(
+      [{ email: "a@example.com", name: "A", joinedAt: "2027-01-01" }],
+      { importedAt: IMPORTED_AT, allowUnknownJoinedAt: true },
+    );
+    expect(result.ready).toHaveLength(0);
+    expect(result.rejected[0]?.reason).toContain("in the future");
+  });
+
+  it("counts undated rows separately in the summary", () => {
+    const result = planLegacyWaitlistImport(
+      [
+        { email: "a@example.com", name: "A" },
+        { email: "b@example.com", name: "B", joinedAt: "2025-01-01" },
+      ],
+      { importedAt: IMPORTED_AT, allowUnknownJoinedAt: true },
+    );
+    expect(summariseImportPlan(result)).toContain("2 ready (1 with no known join date)");
+  });
+});

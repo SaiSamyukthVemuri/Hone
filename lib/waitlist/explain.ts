@@ -76,7 +76,8 @@ export type CandidateExplanation = {
   readonly entryId: string;
   readonly rank: number;
   readonly score: number;
-  readonly daysWaiting: number;
+  /** null when the join date is only a queue anchor — never rendered as 0. */
+  readonly daysWaiting: number | null;
   readonly factors: readonly ExplainedFactor[];
   /** One-line summary, suitable for a table cell. */
   readonly summary: string;
@@ -123,7 +124,13 @@ function summarise(candidate: ScoredCandidate): string {
     });
 
   if (participating.length === 0) {
-    return `Queue order (waiting ${candidate.daysWaiting}d) — no ranking factor applied`;
+    // "waiting 0d" for someone whose join date nobody has would be a lie in the
+    // one line an operator actually reads. Say what is true instead.
+    const wait =
+      candidate.daysWaiting === null
+        ? "join date unknown"
+        : `waiting ${candidate.daysWaiting}d`;
+    return `Queue order (${wait}) — no ranking factor applied`;
   }
 
   const top = participating

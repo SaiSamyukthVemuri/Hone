@@ -46,6 +46,10 @@
 // Pure: no I/O, no clock, no database. The caller injects `importedAt`.
 // ===========================================================================
 
+// JoinedAtProvenance is NOT re-exported. It has one home — ./provenance — and a
+// second export site is how two modules end up disagreeing about a vocabulary.
+import type { JoinedAtProvenance } from "./provenance";
+
 /** The same shape the public form and the table CHECK both use. */
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -64,20 +68,17 @@ export type LegacyImportRow = {
   readonly joinedAt?: unknown;
 };
 
-/**
- * What the source could actually support about when this person joined.
- *
- * `operator_supplied` is not "verified" — it records that a human asserted the
- * date, which is a different and weaker claim than the form's own timestamp,
- * and the distinction must survive into storage.
- */
-export type JoinedAtProvenance = "operator_supplied" | "unknown";
-
 export type NormalizedImportRow = {
   readonly email: string;
   readonly emailNormalized: string;
   readonly name: string;
   readonly phone: string | null;
+  /**
+   * The wait anchor. For `operator_supplied` this is the date the operator
+   * asserts. For `unknown` it is the IMPORT INSTANT and means nothing about how
+   * long the person has waited — `joinedAtProvenance` is the only thing that
+   * says which, and every reader must consult it before showing a duration.
+   */
   readonly joinedAt: Date;
   readonly joinedAtProvenance: JoinedAtProvenance;
 };
@@ -114,6 +115,28 @@ export type ImportRowOutcome =
       readonly emailNormalized: string;
       readonly firstSeenAtIndex: number;
     };
+
+export type LegacyImportOptions = {
+  readonly importedAt: Date;
+  /**
+   * Permit rows whose join date is genuinely unrecoverable.
+   *
+   * DEFAULT FALSE, deliberately: the first pass should send the operator back
+   * to their records, because a real date recovered is worth far more than a
+   * row admitted without one. Setting it true is the operator saying "I have
+   * looked and the date does not exist", and it is the ONLY way a dateless row
+   * enters — it is never inferred from the row itself.
+   *
+   * Such a row is stored with the import instant in `joined_at` and
+   * `joined_at_provenance = 'unknown'`. That combination is NOT a fabrication
+   * ONLY BECAUSE the provenance travels with it: the ranking engine scores its
+   * waiting-time factor as unknown rather than as one day, and the queue must
+   * not render a duration. If a reader ever ignores the provenance column, the
+   * date will look real — which is precisely why nothing in lib/waitlist reads
+   * `joined_at` without it.
+   */
+  readonly allowUnknownJoinedAt?: boolean;
+};
 
 export type LegacyImportPlan = {
   readonly ready: readonly Extract<ImportRowOutcome, { kind: "ready" }>[];
@@ -169,8 +192,9 @@ function parseJoinedAt(
  */
 export function planLegacyWaitlistImport(
   rows: readonly LegacyImportRow[],
-  options: { readonly importedAt: Date },
+  options: LegacyImportOptions,
 ): LegacyImportPlan {
+  const allowUnknown = options.allowUnknownJoinedAt === true;
   const ready: Extract<ImportRowOutcome, { kind: "ready" }>[] = [];
   const needsDecision: Extract<ImportRowOutcome, { kind: "needs_decision" }>[] = [];
   const rejected: Extract<ImportRowOutcome, { kind: "rejected" }>[] = [];
@@ -227,8 +251,12 @@ export function planLegacyWaitlistImport(
     // passes over the same list; an operator wants to know everything a row
     // needs before they go back to their records.
     const missing: MissingFact[] = [];
+    // NAME IS NEVER WAIVED. There is no `allowUnknownName` counterpart to the
+    // date option, because the column is NOT NULL and the honest alternatives
+    // are all fabrications: the email local part, "Unknown", a placeholder. An
+    // operator supplies a real name or the row does not import.
     if (name.length < IMPORT_NAME_MIN) missing.push("name");
-    if (joined === null) missing.push("joined_at");
+    if (joined === null && !allowUnknown) missing.push("joined_at");
 
     if (missing.length > 0) {
       needsDecision.push({
@@ -255,9 +283,8 @@ export function planLegacyWaitlistImport(
         emailNormalized,
         name,
         phone: phoneRaw.length === 0 ? null : phoneRaw,
-        // Non-null by construction: `missing` would have caught a null joined.
-        joinedAt: (joined as { ok: true; value: Date }).value,
-        joinedAtProvenance: "operator_supplied",
+        joinedAt: joined === null ? options.importedAt : joined.value,
+        joinedAtProvenance: joined === null ? "unknown" : "operator_supplied",
       },
     });
   });
@@ -278,8 +305,9 @@ export function planLegacyWaitlistImport(
  * per-row detail stays in the plan, which the operator reads on screen.
  */
 export function summariseImportPlan(plan: LegacyImportPlan): string {
+  const undated = plan.ready.filter((r) => r.value.joinedAtProvenance === "unknown").length;
   return [
-    `${plan.ready.length} ready`,
+    `${plan.ready.length} ready${undated > 0 ? ` (${undated} with no known join date)` : ""}`,
     `${plan.needsDecision.length} need a decision`,
     `${plan.duplicates.length} duplicate`,
     `${plan.rejected.length} rejected`,

@@ -82,6 +82,21 @@ export type ScoringCandidate = {
   readonly entryId: string;
   /** From storage. The engine never invents or adjusts it. */
   readonly joinedAt: Date;
+  /**
+   * Whether `joinedAt` is a real wait anchor or only a queue position.
+   *
+   * Defaults to true, which is every row today. FALSE for a legacy entry whose
+   * join date nobody has: the row still needs a position in the queue, so
+   * `joinedAt` holds the import instant — but scoring its wait from that would
+   * report a person who has been waiting eight months as having waited a day,
+   * and rank them accordingly. So the waiting-time factor returns UNKNOWN for
+   * these, and the studio's own `unknownPolicy` decides, exactly as it does for
+   * an unanswered availability question. One rule for missing evidence.
+   *
+   * The tie-break still uses `joinedAt`, because a stable total order is needed
+   * whether or not the anchor means anything.
+   */
+  readonly waitIsMeasurable?: boolean;
   readonly availability: CandidateAvailability;
   readonly serviceInterest: ServiceInterest;
 };
@@ -217,7 +232,8 @@ export type ScoredCandidate = {
   readonly score: number;
   /** 1-based position in the returned order. */
   readonly rank: number;
-  readonly daysWaiting: number;
+  /** null when the join date is only a queue anchor. Never rendered as 0. */
+  readonly daysWaiting: number | null;
   /**
    * Carried through from the candidate so the tie-break needs no lookup back
    * into the input. A comparator that searched the cohort per comparison would
@@ -332,7 +348,14 @@ function preferenceAlignmentFactor(
   };
 }
 
-function waitingTimeFactor(days: number, capDays: number): FactorOutcome {
+function waitingTimeFactor(
+  days: number,
+  capDays: number,
+  measurable: boolean,
+): FactorOutcome {
+  if (!measurable) {
+    return { kind: "unknown", detail: "join date unknown — wait cannot be measured" };
+  }
   const value = Math.min(1, days / capDays);
   return {
     kind: "scored",
@@ -435,11 +458,16 @@ export function rankWaitlistCandidates(
 
   for (const candidate of candidates) {
     const days = daysBetween(candidate.joinedAt, context.now);
+    const waitMeasurable = candidate.waitIsMeasurable !== false;
 
     const outcomes: Readonly<Record<ScoringFactor, FactorOutcome>> = {
       availabilityCompatibility: availabilityFactor(candidate, openings),
       preferenceAlignment: preferenceAlignmentFactor(candidate, policy.preferredDayClass),
-      waitingTime: waitingTimeFactor(days, policy.waitingTimeCapDays),
+      waitingTime: waitingTimeFactor(
+        days,
+        policy.waitingTimeCapDays,
+        candidate.waitIsMeasurable !== false,
+      ),
       serviceCompatibility: serviceCompatibilityFactor(candidate, openings),
       capacityFit: capacityFitFactor(candidate, openings, demand),
     };
@@ -504,7 +532,7 @@ export function rankWaitlistCandidates(
       entryId: candidate.entryId,
       score,
       rank: 0,
-      daysWaiting: days,
+      daysWaiting: waitMeasurable ? days : null,
       joinedAt: candidate.joinedAt,
       factors,
     });
