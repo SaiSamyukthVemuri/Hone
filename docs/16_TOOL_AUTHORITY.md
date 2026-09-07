@@ -136,17 +136,44 @@ latest branch head; different claims have different anchors.
 
 | Claim | CLAIM_VALIDITY_KEY | INVALIDATED_BY | FRESHNESS |
 |---|---|---|---|
-| **Runtime behaviour** | The identity of the deployment actually **serving** production | A **successful** deployment or promotion that changes the serving identity | Current while that deployment still serves |
+| **Deployed application artifact** — *which code is serving* | The identity of the deployment actually **serving** production | A **successful** deployment or promotion that changes the serving identity | Current while that deployment still serves |
+| **Runtime behaviour** — *what production actually does* | The serving deployment identity, **plus** the applied-migration identity of the database it reads, **plus** any provider config revision the behaviour depends on | A successful deployment or promotion, **an apply to that database**, or a change to a provider config revision it depends on — **any one alone is enough** | Current only while **every** component of the key still holds |
 | **Schema / migration state** | The observed instance + its applied migration identity | An apply to *that* instance | Current until that instance is applied to |
 | **Mutable data state** — row counts, tenant counts, open-alert counts, current settings | The observed instance + **`observed_at`**, plus any data revision or event that changes with the fact | Ordinary DML, an authorized production write, or any such event | **Point-in-time.** Never current merely because migration max did not move |
 | **Hosted — event fact** ("deployment X occurred") | The event identity | Nothing | **Permanently authoritative for the OCCURRENCE claim** — and it proves nothing about current state. See below |
 | **Hosted — current config observation** | The config revision read | A config change superseding that revision | Current until superseded |
-| **Hosted — health / reachability probe** | The probe + `observed_at` | Expiry of its stated freshness window | **Point-in-time, window must be stated** |
+| **Hosted — health / reachability probe** | The probe + `observed_at` + **the resolved target it actually reached** — deployment ID and/or config revision, never an alias | Expiry of its stated freshness window, **or** any change to that resolved target — whichever comes first | **Point-in-time, window must be stated.** A live window does not survive a promotion |
 | **Hosted — current deployment identity** | The **resolved deployment ID**, or an alias→deployment mapping observed at a stated instant. **Never an alias alone** | A successful promotion or deployment that changes the resolved target | Current until the resolved target changes |
 | **PR review** | The exact PR head SHA | Any push to that PR, including a docs-only one | Current only at that head |
 | **Source claim — file-local** ("this file states X") | The **contents of the cited file**. The SHA it was read at is *provenance*, not the key | A change to that file's contents | Current at every SHA where those contents are unchanged |
 | **Source claim — scan / absence** ("no direct writer exists", "this forbidden symbol never appears") | The **contents of every path the scan covered**, and the scope must be stated to be checkable | A change to the contents of **any** path in that scope — including one the claim never named, which is exactly how an absence is falsified | Current at every SHA where that whole scope is unchanged |
 | **Source claim — behavioural** ("this route is owner-only") | The **contents of the named set of files the behaviour is assembled from** | A change to the contents of **any** member of that set — the cited file is not the whole of it | Current at every SHA where that whole set is unchanged |
+
+**Runtime behaviour is not the deployment alone.** The same serving deployment
+produces different behaviour once a migration changes an RPC, an RLS policy, a
+trigger or a column contract, and `ENGINEERING_STANDARDS.md` models exactly that
+combination — *"old app + new DB"* is one of the four deployment-skew cases it
+requires a DB/app contract change to consider. Keying runtime behaviour on the
+deployment identity alone would leave pre-apply evidence reading as **current**
+after the behaviour it measured had changed, with nothing in the key moving to
+say so.
+
+So the two are separate rows. A claim about **which artifact is serving** keys on
+the deployment and nothing else, and is easy to keep current. A claim about
+**what production does** keys on the deployment *and* the database it reads *and*
+the provider config it depends on, and any one of those moving retires it. State
+which of the two you are making — they are not interchangeable, and the broader
+one decays faster.
+
+**A freshness window does not survive a change of target.** A promotion moments
+after a successful probe leaves that probe inside its stated window while the
+deployment it reached is no longer the one serving, so the window would report
+**current** health for a system nobody probed. A window bounds how long an
+observation of *the same target* stays good; it cannot vouch for a different
+one. This is the `ALIAS_NAME` / `SERVING_DEPLOYMENT_IDENTITY` rule below applied
+to health — the deployment-identity row already keys on the resolved target, and
+a probe keyed only on elapsed time would contradict the row beside it. Whichever
+comes first, window expiry or target change, ends the claim.
 
 **Occurrence authority is not current-state authority.** That an event happened
 is settled permanently by the evidence of that event, and no later change makes
@@ -217,7 +244,11 @@ observed.
 **Merge is not proof that production moved.** A merge may *initiate* a runtime
 transition; only a successful deployment completes one. A merge whose deployment
 fails, or never receives traffic, leaves the previous deployment serving — and
-evidence about that still-serving runtime remains current.
+evidence about that still-serving **artifact** remains current. Evidence about
+runtime **behaviour** carries forward only if the database and provider config it
+also keys on did not move meanwhile; the state list below separates *merged* from
+*DB applied* from *deployed* precisely because a merge that never deployed can
+still sit beside an apply that did.
 `docs/production/current-state.md` already separates these states explicitly
 (*merged · DB applied · deployed · enabled · production exercised · human
 accepted*), and records that a Vercel commit status was "the whole of the
