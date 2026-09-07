@@ -47,6 +47,8 @@ const scenario = {
   scopeEnd: "2026-10-31",
   scopeWeekdays: null as number[] | null,
   redeemResult: "redeemed" as string,
+  bookingResult: "created" as string,
+  bookingError: null as { message: string } | null,
 };
 
 function makeChain(table: string) {
@@ -129,8 +131,15 @@ const admin = {
       };
     }
     if (fn === "create_public_appointment") {
+      if (scenario.bookingError) return { data: null, error: scenario.bookingError };
       return {
-        data: [{ result: "created", appointment_id: APPT_ID, created_at: new Date().toISOString() }],
+        data: [
+          {
+            result: scenario.bookingResult,
+            appointment_id: scenario.bookingResult === "created" ? APPT_ID : null,
+            created_at: new Date().toISOString(),
+          },
+        ],
         error: null,
       };
     }
@@ -226,6 +235,8 @@ beforeEach(() => {
     scopeEnd: "2026-10-31",
     scopeWeekdays: null,
     redeemResult: "redeemed",
+    bookingResult: "created",
+    bookingError: null,
   });
 });
 
@@ -406,5 +417,108 @@ describe("scoped invitation — the gate is not weakened for anyone else", () =>
     expect(out.ok).toBe(true);
     // No invitation was consumed: the gate never applied, so nothing was spent.
     expect(redeemed()).toBe(false);
+  });
+});
+
+// ===========================================================================
+// P2-1 — a CONSUMED invitation plus a failed booking is its own outcome.
+// ===========================================================================
+//
+// The defect this closes: the redeem succeeded, so the offer is spent, but the
+// booking command then refused and the visitor was told "That time is no longer
+// available. Please choose another time." That invites them back to a link that
+// can no longer book anything, and the second attempt fails with a message
+// explaining none of it.
+
+describe("P2-1 — the invitation is spent and the booking did not commit", () => {
+  const RETRYABLE = /choose another time|no longer available/i;
+
+  it("POSITIVE CONTROL: authorise + consume + created still succeeds", async () => {
+    const out = await publicBookAppointmentAction(
+      form({ invitation_token: TOKEN, invitation_capability: CAP }),
+    );
+    expect(out.ok).toBe(true);
+    expect(redeemed()).toBe(true);
+    expect(booked()).toBe(true);
+  });
+
+  it.each([
+    "time_unavailable",
+    "outside_availability",
+    "studio_closed",
+    "invalid_time",
+    "not_a_public_slot",
+    "outside_horizon",
+    "public_booking_unavailable",
+  ])("reports a consumed invitation, not a retryable slot, when booking answers %s", async (code) => {
+    scenario.bookingResult = code;
+    const out = await publicBookAppointmentAction(
+      form({ invitation_token: TOKEN, invitation_capability: CAP }),
+    );
+    expect(out.ok).toBe(false);
+    if (out.ok) throw new Error("unreachable");
+    expect(redeemed()).toBe(true);
+    expect(out.code).toBe("invitation_consumed");
+    // THE LOAD-BEARING ASSERTION: the copy must not imply the invitation can be
+    // used again.
+    expect(out.error).not.toMatch(RETRYABLE);
+    expect(out.code).not.toBe("slot_taken");
+  });
+
+  it("covers a TRANSPORT failure too — spent with no booking either way", async () => {
+    scenario.bookingError = { message: "connection reset" };
+    const out = await publicBookAppointmentAction(
+      form({ invitation_token: TOKEN, invitation_capability: CAP }),
+    );
+    expect(out.ok).toBe(false);
+    if (out.ok) throw new Error("unreachable");
+    expect(redeemed()).toBe(true);
+    expect(out.code).toBe("invitation_consumed");
+    expect(out.error).not.toMatch(RETRYABLE);
+  });
+
+  it("records the consumed invitation id, and never the token or capability", async () => {
+    const logged: string[] = [];
+    const spy = vi.spyOn(console, "error").mockImplementation((...a: unknown[]) => {
+      logged.push(String(a[0]));
+    });
+    scenario.bookingResult = "time_unavailable";
+    await publicBookAppointmentAction(
+      form({ invitation_token: TOKEN, invitation_capability: CAP }),
+    );
+    spy.mockRestore();
+    const line = logged.find((l) => l.includes("waitlist_invitation_consumed_without_booking"));
+    expect(line, "the consumed-without-booking event must be recorded").toBeTruthy();
+    const event = JSON.parse(line as string);
+    expect(event.invitationId).toBe("inv-1");
+    expect(event.code).toBe("time_unavailable");
+    // Secrets must never reach a log line.
+    expect(line).not.toContain(TOKEN);
+    expect(line).not.toContain(CAP);
+  });
+
+  it("does NOT claim a consumed invitation when the redeem never succeeded", async () => {
+    scenario.redeemResult = "proof_expired";
+    scenario.bookingResult = "time_unavailable";
+    const out = await publicBookAppointmentAction(
+      form({ invitation_token: TOKEN, invitation_capability: CAP }),
+    );
+    expect(out.ok).toBe(false);
+    if (out.ok) throw new Error("unreachable");
+    // Refused at the gate, nothing spent -- this is the refused code, not consumed.
+    expect(out.code).toBe("invitation_refused");
+    expect(booked()).toBe(false);
+  });
+
+  it("leaves the ordinary non-invitation booking path untouched", async () => {
+    // An EXISTING client with no invitation still gets the retryable slot copy:
+    // nothing was consumed, so "choose another time" is the correct answer.
+    process.env[NEW_CLIENT_WAITLIST_SLUGS_ENV] = "some-other-studio";
+    scenario.bookingResult = "time_unavailable";
+    const out = await publicBookAppointmentAction(form());
+    expect(out.ok).toBe(false);
+    if (out.ok) throw new Error("unreachable");
+    expect(out.code).toBe("slot_taken");
+    expect(out.error).toMatch(RETRYABLE);
   });
 });

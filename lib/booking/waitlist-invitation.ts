@@ -105,9 +105,25 @@ export type CompleteProofOutcome =
   | { kind: "invalid_input" }
   | Unavailable;
 
+// P2-1. The authorised outcome is BRANDED with a symbol this module does not
+// export. Only `authorizeInvitationForBooking` can produce one, so
+// `consumeInvitationForBooking` cannot be called with a hand-built object or
+// with loose token/capability strings: the compiler enforces AUTHORISE -> THEN
+// CONSUME, rather than a comment asking callers to remember the order.
+declare const AUTHORIZED_BRAND: unique symbol;
+
+/** Proof that authorisation ran. Only this module can mint one. */
+export type AuthorizedBooking = {
+  readonly [AUTHORIZED_BRAND]: true;
+  kind: "authorized";
+  invitation: ResolvedInvitation;
+  /** The token authorisation actually validated -- consume must not be told a different one. */
+  rawToken: string;
+};
+
 /** Non-consuming pre-authorisation, evaluated before any mutation. */
 export type BookingAuthorization =
-  | { kind: "authorized"; invitation: ResolvedInvitation }
+  | AuthorizedBooking
   | { kind: "scope_refused"; reason: ScopeRefusal }
   | { kind: "wrong_studio" }
   | { kind: "recipient_mismatch" }
@@ -461,7 +477,12 @@ export async function authorizeInvitationForBooking(input: {
   });
   if (!decision.ok) return { kind: "scope_refused", reason: decision.reason };
 
-  return { kind: "authorized", invitation: inv };
+  // The brand is a type-level marker only; nothing reads it at runtime.
+  return {
+    kind: "authorized",
+    invitation: inv,
+    rawToken: input.rawToken,
+  } as AuthorizedBooking;
 }
 
 // ---------------------------------------------------------------------------
@@ -480,17 +501,21 @@ export async function authorizeInvitationForBooking(input: {
  * is one RPC round trip and cannot be closed without putting the booking engine
  * inside the database, which would mean a second booking engine.
  */
-export async function consumeInvitationForBooking(input: {
-  rawToken: string;
-  rawCapability: string;
-}): Promise<RedeemOutcome> {
-  if (!RAW_SECRET.test(input.rawToken ?? "")) return { kind: "invalid_token" };
-  if (!RAW_SECRET.test(input.rawCapability ?? "")) return { kind: "proof_invalid" };
+export async function consumeInvitationForBooking(
+  authorization: AuthorizedBooking,
+  rawCapability: string,
+): Promise<RedeemOutcome> {
+  // The token comes from the authorisation, never from a second caller-supplied
+  // value, so consume cannot be pointed at an invitation that was never
+  // authorised for this request.
+  const rawToken = authorization.rawToken;
+  if (!RAW_SECRET.test(rawToken ?? "")) return { kind: "invalid_token" };
+  if (!RAW_SECRET.test(rawCapability ?? "")) return { kind: "proof_invalid" };
   const admin = createAdminClient();
   try {
     const { data, error } = await admin.rpc(
       "redeem_new_client_waitlist_invitation_verified",
-      { p_raw_token: input.rawToken, p_raw_capability: input.rawCapability },
+      { p_raw_token: rawToken, p_raw_capability: rawCapability },
     );
     if (error) return { kind: "unavailable" };
     const row = firstRow(data);

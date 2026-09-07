@@ -374,7 +374,11 @@ export type PublicBookResult =
         // WAIT-03B B2. A scoped invitation was presented and did not authorise
         // THIS request. Distinct from the plain waitlist refusal so a caller can
         // tell "you need an invitation" from "your invitation doesn't cover this".
-        | "invitation_refused";
+        | "invitation_refused"
+        // P2-1. The invitation was CONSUMED and the booking then did not commit.
+        // Distinct from every retryable code, because the one thing this visitor
+        // must not be told is "try another time".
+        | "invitation_consumed";
     };
 
 export async function publicBookAppointmentAction(formData: FormData): Promise<PublicBookResult> {
@@ -919,11 +923,16 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   //
   // Proof is validated inside this command's own locked transaction, so a bearer
   // token that somehow reached this line still cannot mutate.
+  let consumedInvitationId: string | null = null;
   if (invitationAuth?.kind === "authorized") {
-    const redeemed = await consumeInvitationForBooking({
-      rawToken: invitationToken,
-      rawCapability: invitationCapability,
-    });
+    const redeemed = await consumeInvitationForBooking(
+      invitationAuth,
+      invitationCapability,
+    );
+    if (redeemed.kind === "redeemed") {
+      // From here on the offer is SPENT. Every exit below must account for that.
+      consumedInvitationId = invitationAuth.invitation.invitationId;
+    }
     if (redeemed.kind !== "redeemed") {
       return {
         ok: false,
@@ -954,6 +963,40 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
       : null;
   // Authoritative row timestamp, straight from the command's own INSERT.
   const createdAtIso = (commandRow?.created_at as string | undefined) ?? null;
+
+  // -----------------------------------------------------------------------
+  // P2-1. THE INVITATION IS ALREADY SPENT. If the appointment did not commit,
+  // this visitor must NOT be handed retryable copy: "choose another time"
+  // invites them back to a link that can no longer book anything, and the
+  // second attempt then fails with a message explaining none of it.
+  //
+  // This runs BEFORE the slot/horizon/operator branches below precisely so it
+  // wins over them, and it covers a transport error as well as a closed refusal
+  // code -- from the redeem's point of view both mean "spent, no booking".
+  //
+  // Logged with this file's existing public-booking convention. The invitation
+  // ID is recorded so an operator can find and reissue the offer; the raw token
+  // and the capability are secrets and are never logged.
+  // -----------------------------------------------------------------------
+  if (consumedInvitationId && (rpcErr || commandResult !== "created")) {
+    console.error(
+      JSON.stringify({
+        event: "waitlist_invitation_consumed_without_booking",
+        studioId: studio.id,
+        invitationId: consumedInvitationId,
+        code: commandResult ?? (rpcErr ? "command_error" : "no_result"),
+        source: "public_booking",
+        timestamp: new Date().toISOString(),
+      }),
+    );
+    return {
+      ok: false,
+      error:
+        "Your invitation has been used, but we couldn't finish the booking. " +
+        "Please contact the studio to rebook -- reopening the invitation link won't work.",
+      code: "invitation_consumed",
+    };
+  }
 
   // Expected business refusals come back as closed result codes, never as a
   // thrown Postgres error. Each maps to copy the visitor already sees today; a
