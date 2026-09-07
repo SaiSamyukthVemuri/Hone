@@ -43,7 +43,7 @@ import {
   type ProofStage,
 } from "@/lib/waitlist/invitation-offer";
 import { fetchPublicSlotsAction } from "@/app/book/[slug]/actions";
-import { localDateString, localTimeString12h } from "@/lib/booking/tz";
+import { localDateString, localTimeString12h, utcInstantFromLocal } from "@/lib/booking/tz";
 import { limitPublicSlots, RATE_LIMIT_MESSAGE } from "@/lib/rate-limit/public";
 
 // ---------------------------------------------------------------------------
@@ -285,9 +285,23 @@ async function offeredDays(
   const dates: string[] = [];
   let cursor = scope.startDate < today ? today : scope.startDate;
   while (cursor <= scope.endDate) {
-    // Noon in the studio's zone is inside the day whichever way the offset
-    // falls, so this asks "is this DAY offered" without depending on a time.
-    const noon = new Date(`${cursor}T12:00:00Z`);
+    // P2-D. LOCAL noon, resolved through the studio's zone -- not noon UTC.
+    //
+    // This used to build `new Date(cursor + "T12:00:00Z")` and claim it was
+    // "noon in the studio's zone". It is not: for a studio at UTC+13 or +14 --
+    // Auckland in southern daylight time, Chatham, Kiritimati -- noon UTC on one
+    // date is the small hours of the NEXT local date. The filter then tested the
+    // wrong weekday, so a "Mondays only" offer queried Sundays and skipped
+    // Mondays, and the offer rendered empty.
+    //
+    // The direction of that error is what made it dangerous: a wrongly INCLUDED
+    // day is harmless, because the collected slots are narrowed again below. A
+    // wrongly EXCLUDED day is never queried at all, so its availability vanishes
+    // silently -- the exact truncation this loop was rewritten to end.
+    //
+    // `utcInstantFromLocal` is the shared helper the rest of booking uses, and it
+    // already handles a naive instant and its correction straddling a DST change.
+    const noon = utcInstantFromLocal(cursor, "12:00", tz);
     if (slotWithinScope(scope, tz, { start: noon.toISOString(), end: noon.toISOString(), startLabel: "" })) {
       dates.push(cursor);
     }

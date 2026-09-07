@@ -74,6 +74,8 @@ vi.mock("@/lib/rate-limit/public", () => ({
  * and it is exercised explicitly below.
  */
 const entryFixture = { phone: "555 0100" as string | null };
+// P2-D: the studio's zone is what the day filter must resolve against.
+const studioFixture = { timezone: "America/Toronto" };
 
 vi.mock("@/lib/supabase/admin-server", () => ({
   createAdminClient: () => ({
@@ -84,7 +86,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
         select: self, eq: self,
         maybeSingle: async () =>
           table === "studios"
-            ? { data: { slug: "studio-a", name: "Studio A", timezone: "America/Toronto" }, error: null }
+            ? { data: { slug: "studio-a", name: "Studio A", timezone: studioFixture.timezone }, error: null }
             : table === "services"
               ? { data: { name: "Consultation", default_duration_minutes: 45 }, error: null }
               : {
@@ -133,12 +135,14 @@ function allStrings(v: unknown, acc: string[] = []): string[] {
 }
 
 beforeEach(() => {
+  studioFixture.timezone = "America/Toronto";
   cookieJar.clear();
   for (const m of [resolveInvitation, beginRecipientProof, completeRecipientProof,
                    declineInvitation, fetchPublicSlotsAction, publicBookAppointmentAction]) m.mockReset();
   resolveInvitation.mockResolvedValue(liveResolve());
   fetchPublicSlotsAction.mockResolvedValue({ ok: true, slots: [] });
   entryFixture.phone = "555 0100";
+  studioFixture.timezone = "America/Toronto";
 });
 
 // ===========================================================================
@@ -558,5 +562,56 @@ describe("P2-B — the whole authorised window is reachable", () => {
       expect(new Date(`${d.date}T12:00:00Z`).getUTCDay()).toBe(1);
     }
     expect(fetchPublicSlotsAction.mock.calls.length).toBeLessThan(20);
+  });
+});
+
+// P2-D. The day filter used to build noon UTC and call it "noon in the studio's
+// zone". For a studio at UTC+13/+14 that lands on the NEXT local day, so a
+// Mondays-only offer queried Sundays, skipped Mondays, and rendered empty --
+// silent unavailability, in the very loop rewritten to end silent truncation.
+describe("P2-D — the day filter resolves against the studio's zone", () => {
+  beforeEach(() => {
+    cookieJar.set("wl_proof_capability", signedCapability(TOKEN, CAPABILITY));
+    // 01:00Z on a given date is EARLY AFTERNOON the same day in Auckland, so a
+    // slot returned for date D is genuinely on D in the studio's zone.
+    fetchPublicSlotsAction.mockImplementation(async ({ date }: { date: string }) => ({
+      ok: true,
+      slots: [{ start: `${date}T01:00:00.000Z`, end: `${date}T01:45:00.000Z` }],
+    }));
+  });
+
+  it("renders Mondays for a UTC+13 studio", async () => {
+    studioFixture.timezone = "Pacific/Auckland";
+    const r = liveResolve([1]); // Mondays only
+    r.invitation.scope.startDate = "2026-10-01";
+    r.invitation.scope.endDate = "2026-10-31";
+    resolveInvitation.mockResolvedValue(r);
+
+    const out = await loadInvitationAction(TOKEN);
+    if (out.kind !== "offer") throw new Error(`expected offer, got ${out.kind}`);
+    expect(out.days.length, "a Mondays-only Auckland offer must not render empty").toBeGreaterThan(0);
+    // Every rendered day is a Monday IN AUCKLAND.
+    for (const d of out.days) {
+      const noonLocal = new Date(`${d.date}T01:00:00.000Z`);
+      expect(
+        noonLocal.toLocaleDateString("en-CA", { timeZone: "Pacific/Auckland", weekday: "short" }),
+      ).toContain("Mon");
+    }
+  });
+
+  it("still renders Mondays for a UTC-4 studio", async () => {
+    studioFixture.timezone = "America/Toronto";
+    const r = liveResolve([1]);
+    r.invitation.scope.startDate = "2026-10-01";
+    r.invitation.scope.endDate = "2026-10-31";
+    resolveInvitation.mockResolvedValue(r);
+    // Toronto: 14:00Z is mid-morning the same day.
+    fetchPublicSlotsAction.mockImplementation(async ({ date }: { date: string }) => ({
+      ok: true,
+      slots: [{ start: `${date}T14:00:00.000Z`, end: `${date}T14:45:00.000Z` }],
+    }));
+    const out = await loadInvitationAction(TOKEN);
+    if (out.kind !== "offer") throw new Error("unreachable");
+    expect(out.days.length).toBeGreaterThan(0);
   });
 });
