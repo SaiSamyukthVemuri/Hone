@@ -220,6 +220,14 @@ const CLOSED_COPY: Record<InvitationClosedReason, { title: string; body: string 
     title: "This appointment is already booked",
     body: "This invitation has already been used. Check your email for the confirmation, or contact the studio.",
   },
+  consumed_without_booking: {
+    title: "We couldn’t finish booking your appointment",
+    // Deliberately does NOT say an appointment exists, and does NOT send anyone
+    // looking for a confirmation email: in this case none was created and none
+    // will arrive. The studio can see the invitation was used and can book the
+    // time directly, which is the only route that still works.
+    body: "Your invitation was used, but the appointment didn’t go through, so nothing is booked. Please contact the studio and they can book the time for you.",
+  },
   declined: {
     title: "You’ve already declined this offer",
     body: "If you’d still like an appointment, please contact the studio directly.",

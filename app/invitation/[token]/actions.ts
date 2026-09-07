@@ -33,6 +33,7 @@ import {
   type BookingRefusal,
   type ProofNotice,
   filterSlotsToScope,
+  slotWithinScope,
   groupSlotsByDay,
   proofStageFromBegin,
   proofStageFromComplete,
@@ -262,35 +263,60 @@ async function offeredDays(
   const { scope } = resolve.invitation;
   const tz = studio.presentation.studioTimezone;
 
-  // Walk the offer's own window, capped so a long offer cannot fan out into an
-  // unbounded number of slot queries.
-  const MAX_DAYS = 21;
-  const dates: string[] = [];
+  // P2-B. THE WHOLE AUTHORISED WINDOW, not the first three weeks of it.
+  //
+  // This used to stop after 21 days with no pagination and no signal, so an
+  // offer longer than that silently lost its tail: the final authorised days
+  // were unreachable and the recipient was never told. 0192 constrains the scope
+  // window only to `start <= end`, so a 30- or 60-day offer is perfectly legal,
+  // and the cap counted from TODAY, so an offer already part-way through
+  // truncated too.
+  //
+  // The cap is gone. Cost is controlled by asking a better question instead:
+  //   * days the offer does not permit are never queried at all -- a
+  //     "Mondays only" offer over eight weeks is eight reads, not fifty-six;
+  //   * days already past in the studio's timezone are skipped;
+  //   * the remainder run in parallel batches rather than one after another.
+  //
+  // The weekday test is B2's own `slotWithinScope` applied at noon, so this
+  // introduces no second reading of the offer -- if the evaluator says a day is
+  // out, it is out, by exactly the rule the booking command enforces.
   const today = localDateString(new Date(), tz);
+  const dates: string[] = [];
   let cursor = scope.startDate < today ? today : scope.startDate;
-  while (cursor <= scope.endDate && dates.length < MAX_DAYS) {
-    dates.push(cursor);
+  while (cursor <= scope.endDate) {
+    // Noon in the studio's zone is inside the day whichever way the offset
+    // falls, so this asks "is this DAY offered" without depending on a time.
+    const noon = new Date(`${cursor}T12:00:00Z`);
+    if (slotWithinScope(scope, tz, { start: noon.toISOString(), end: noon.toISOString(), startLabel: "" })) {
+      dates.push(cursor);
+    }
     const next = new Date(`${cursor}T12:00:00Z`);
     next.setUTCDate(next.getUTCDate() + 1);
     cursor = next.toISOString().slice(0, 10);
   }
 
   const collected: OfferedSlot[] = [];
-  for (const date of dates) {
-    const res = await fetchPublicSlotsAction({
-      slug: studio.slug,
-      serviceId: scope.serviceId,
-      date,
-    });
-    if (!res.ok) continue;
-    for (const s of res.slots) {
-      collected.push({
-        start: s.start,
-        end: s.end,
-        startLabel: localTimeString12h(new Date(s.start), tz),
-      });
+  const BATCH = 7;
+  for (let i = 0; i < dates.length; i += BATCH) {
+    const batch = await Promise.all(
+      dates.slice(i, i + BATCH).map((date) =>
+        fetchPublicSlotsAction({ slug: studio.slug, serviceId: scope.serviceId, date }),
+      ),
+    );
+    for (const res of batch) {
+      if (!res.ok) continue;
+      for (const s of res.slots) {
+        collected.push({
+          start: s.start,
+          end: s.end,
+          startLabel: localTimeString12h(new Date(s.start), tz),
+        });
+      }
     }
   }
+  // Still narrowed by the same evaluator: the day filter above is an
+  // optimisation, never the authority, and nothing past endDate is collected.
   return groupSlotsByDay(tz, filterSlotsToScope(scope, tz, collected));
 }
 
@@ -516,7 +542,7 @@ export async function bookInvitationSlotAction(
     await clearCapability();
     return {
       kind: "closed",
-      reason: "already_redeemed",
+      reason: "consumed_without_booking",
       presentation: ctx.studio.presentation,
     };
   }
@@ -536,9 +562,39 @@ export async function bookInvitationSlotAction(
       declined: false,
     });
   }
+  // P2-A. `invitation_refused` is AMBIGUOUS by the time it reaches here: the
+  // booking action emits it both when the requested slot is outside the offer
+  // AND when the capability failed the gate. Treating it as one thing told a
+  // recipient whose proof had simply lapsed to "choose one of the times shown",
+  // which is wrong -- the time was fine -- and left the dead cookie in place to
+  // fail identically on the next tap.
+  //
+  // The two are separable here, and WITHOUT a second scope rule: ask B2's own
+  // evaluator whether the slot was in the offer. In scope means the refusal was
+  // about authority, so the capability is dropped and the recipient is returned
+  // to proof. Out of scope means the offer stands and the slot did not.
+  if (!booked.ok && booked.code === "invitation_refused") {
+    const tz = ctx.studio.presentation.studioTimezone;
+    const inScope = slotWithinScope(ctx.resolve.invitation.scope, tz, {
+      start: startsAt,
+      end: startsAt,
+      startLabel: "",
+    });
+    if (inScope) {
+      await clearCapability();
+      return deriveInvitationViewState({
+        resolve: ctx.resolve,
+        presentation: ctx.studio.presentation,
+        proof: { kind: "required" },
+        slots: [],
+        booked: null,
+        declined: false,
+        proofNotice: "proof_lapsed",
+      });
+    }
+  }
+
   // Every other refusal leaves the offer usable, so it is shown WITH the reason.
-  // Previously this returned the offer unchanged and the recipient's tap simply
-  // appeared to do nothing.
   return offerState(ctx.resolve, ctx.studio, { kind: "proven" }, bookingRefusalFor(booked));
 }
 

@@ -180,6 +180,16 @@ export type InvitationClosedReason =
   | "expired"
   | "revoked"
   | "already_redeemed"
+  /**
+   * The redeem committed and the appointment did not.
+   *
+   * DISTINCT FROM `already_redeemed`, which is not a near-synonym here. That one
+   * means an appointment EXISTS and a confirmation was sent, so its copy tells
+   * the recipient to check their email. In this case no appointment was created
+   * and no confirmation will ever arrive -- reusing it asserted a booking that
+   * does not exist and sent the recipient looking for mail that never comes.
+   */
+  | "consumed_without_booking"
   | "declined";
 
 export type InvitationViewState =

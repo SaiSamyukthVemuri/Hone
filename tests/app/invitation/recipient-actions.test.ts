@@ -377,20 +377,17 @@ describe("P2-A — a refused booking says what happened", () => {
     const out = await bookInvitationSlotAction(TOKEN, "2026-10-07T14:00:00.000Z");
     expect(out.kind).toBe("closed");
     if (out.kind !== "closed") throw new Error("unreachable");
-    expect(out.reason).toBe("already_redeemed");
+    expect(out.reason).toBe("consumed_without_booking");
     // The capability authorises nothing now and must not survive.
     expect(cookieJar.has("wl_proof_capability")).toBe(false);
   });
 
-  it.each([
-    ["slot_taken", "slot_taken"],
-    ["invitation_refused", "not_permitted"],
-  ])("a %s refusal keeps the offer AND states the reason", async (code, refusal) => {
-    publicBookAppointmentAction.mockResolvedValue({ ok: false, code, error: "x" });
+  it("a slot_taken refusal keeps the offer AND states the reason", async () => {
+    publicBookAppointmentAction.mockResolvedValue({ ok: false, code: "slot_taken", error: "x" });
     const out = await bookInvitationSlotAction(TOKEN, "2026-10-07T14:00:00.000Z");
     expect(out.kind).toBe("offer");
     if (out.kind !== "offer") throw new Error("unreachable");
-    expect(out.refusal).toBe(refusal);
+    expect(out.refusal).toBe("slot_taken");
     // Still usable: the capability survives so the recipient can pick again.
     expect(cookieJar.has("wl_proof_capability")).toBe(true);
   });
@@ -481,5 +478,85 @@ describe("P3-B — a failed decline says why", () => {
   it("a successful decline is still terminal", async () => {
     declineInvitation.mockResolvedValue({ kind: "declined", entryId: ENTRY });
     expect((await declineInvitationAction(TOKEN)).kind).toBe("declined");
+  });
+});
+
+// P2-A. `invitation_refused` is ambiguous at this layer: the booking action
+// emits it both for an out-of-scope slot and for a capability that failed the
+// gate. Treating them alike told a recipient whose proof had lapsed to "choose
+// one of the times shown" and left the dead cookie in place.
+describe("P2-A — a lapsed capability restarts proof; a bad slot does not", () => {
+  beforeEach(() => { cookieJar.set("wl_proof_capability", signedCapability(TOKEN, CAPABILITY)); });
+
+  it("an IN-SCOPE slot refused means the proof lapsed: clear and re-prove", async () => {
+    resolveInvitation.mockResolvedValue(liveResolve(null)); // every day offered
+    publicBookAppointmentAction.mockResolvedValue({ ok: false, code: "invitation_refused", error: "x" });
+    const out = await bookInvitationSlotAction(TOKEN, "2026-10-07T14:00:00.000Z");
+    expect(out.kind).toBe("proof");
+    if (out.kind !== "proof") throw new Error("unreachable");
+    expect(out.notice).toBe("proof_lapsed");
+    expect(cookieJar.has("wl_proof_capability"), "a dead capability must not survive").toBe(false);
+  });
+
+  it("an OUT-OF-SCOPE slot refused keeps the offer and the capability", async () => {
+    resolveInvitation.mockResolvedValue(liveResolve([1])); // Mondays only
+    publicBookAppointmentAction.mockResolvedValue({ ok: false, code: "invitation_refused", error: "x" });
+    // 2026-10-07 is a Wednesday in Toronto.
+    const out = await bookInvitationSlotAction(TOKEN, "2026-10-07T14:00:00.000Z");
+    expect(out.kind).toBe("offer");
+    if (out.kind !== "offer") throw new Error("unreachable");
+    expect(out.refusal).toBe("not_permitted");
+    expect(cookieJar.has("wl_proof_capability")).toBe(true);
+  });
+});
+
+// P2-B. The day list used to stop after 21 days with no pagination and no
+// signal, so a longer offer silently lost its tail.
+describe("P2-B — the whole authorised window is reachable", () => {
+  beforeEach(() => {
+    cookieJar.set("wl_proof_capability", signedCapability(TOKEN, CAPABILITY));
+    fetchPublicSlotsAction.mockImplementation(async ({ date }: { date: string }) => ({
+      ok: true,
+      slots: [{ start: `${date}T14:00:00.000Z`, end: `${date}T14:45:00.000Z` }],
+    }));
+  });
+
+  function longOffer(weekdays: number[] | null) {
+    const r = liveResolve(weekdays);
+    r.invitation.scope.startDate = "2026-10-01";
+    r.invitation.scope.endDate = "2026-12-15"; // 76 days: well past the old cap
+    resolveInvitation.mockResolvedValue(r);
+  }
+
+  it("renders days far beyond the old 21-day cap", async () => {
+    longOffer(null);
+    const out = await loadInvitationAction(TOKEN);
+    if (out.kind !== "offer") throw new Error(`expected offer, got ${out.kind}`);
+    expect(out.days.length).toBeGreaterThan(21);
+  });
+
+  it("reaches the FINAL authorised day", async () => {
+    longOffer(null);
+    const out = await loadInvitationAction(TOKEN);
+    if (out.kind !== "offer") throw new Error("unreachable");
+    expect(out.days.map((d) => d.date)).toContain("2026-12-15");
+  });
+
+  it("returns nothing after endDate", async () => {
+    longOffer(null);
+    const out = await loadInvitationAction(TOKEN);
+    if (out.kind !== "offer") throw new Error("unreachable");
+    for (const d of out.days) expect(d.date <= "2026-12-15").toBe(true);
+  });
+
+  it("queries only the days the offer permits", async () => {
+    longOffer([1]); // Mondays only
+    const out = await loadInvitationAction(TOKEN);
+    if (out.kind !== "offer") throw new Error("unreachable");
+    // Every rendered day is a Monday, and the reads were not spent on the rest.
+    for (const d of out.days) {
+      expect(new Date(`${d.date}T12:00:00Z`).getUTCDay()).toBe(1);
+    }
+    expect(fetchPublicSlotsAction.mock.calls.length).toBeLessThan(20);
   });
 });
