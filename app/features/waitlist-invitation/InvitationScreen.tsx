@@ -1,11 +1,12 @@
 "use client";
 
 import type {
+  InvitationClosedReason,
   InvitationViewState,
   OfferedDay,
   OfferedSlot,
   OfferPresentation,
-  ProofStage,
+  UnprovenProofStage,
 } from "@/lib/waitlist/invitation-offer";
 import { CONTROL_MIN_TOUCH, FOCUS_RING } from "@/components/ui/control-base";
 
@@ -56,45 +57,70 @@ export function InvitationScreen({
   onSubmitCode,
   pending = false,
 }: Props) {
-  return (
-    <main className="mx-auto w-full max-w-md px-4 py-8">
-      {state.kind === "loading" ? <LoadingView /> : null}
-      {state.kind === "error" ? <ErrorView retryable={state.retryable} onRetry={onRetry} /> : null}
-      {state.kind === "declined" ? <DeclinedView /> : null}
-      {state.kind === "closed" ? <ClosedView reason={state.reason} presentation={state.presentation} /> : null}
-      {state.kind === "booked" ? (
-        <BookedView
-          presentation={state.presentation}
-          startLabel={state.startLabel}
-          dateLabel={state.dateLabel}
-        />
-      ) : null}
-      {state.kind === "proof" ? (
-        <ProofView
-          presentation={state.presentation}
-          windowDescription={state.windowDescription}
-          stage={state.stage}
-          onRequestCode={onRequestCode}
-          onSubmitCode={onSubmitCode}
-          pending={pending}
-        />
-      ) : null}
-      {state.kind === "offer" ? (
-        <OfferView
-          presentation={state.presentation}
-          days={state.days}
-          windowDescription={state.windowDescription}
-          empty={state.empty}
-          selectedSlotStart={selectedSlotStart}
-          onSelectSlot={onSelectSlot}
-          onBook={onBook}
-          onDecline={onDecline}
-          onRetry={onRetry}
-          pending={pending}
-        />
-      ) : null}
-    </main>
-  );
+  return <main className="mx-auto w-full max-w-md px-4 py-8">{renderState()}</main>;
+
+  // EXHAUSTIVE AT THE TOP LEVEL TOO.
+  //
+  // This was seven independent `state.kind === "x" ? … : null` renders. A new
+  // `InvitationViewState` member would have made every one of them evaluate to
+  // null and handed the recipient an empty page, with `tsc` perfectly happy --
+  // the same union-growth failure that put `verifying` on the "start over"
+  // screen one level down. Hardening the inner switch and leaving the outer one
+  // as a ternary chain fixed the instance and not the class.
+  function renderState() {
+    switch (state.kind) {
+      case "loading":
+        return <LoadingView />;
+      case "error":
+        return <ErrorView retryable={state.retryable} onRetry={onRetry} />;
+      case "declined":
+        return <DeclinedView />;
+      case "closed":
+        return <ClosedView reason={state.reason} presentation={state.presentation} />;
+      case "booked":
+        return (
+          <BookedView
+            presentation={state.presentation}
+            startLabel={state.startLabel}
+            dateLabel={state.dateLabel}
+          />
+        );
+      case "proof":
+        return (
+          <ProofView
+            presentation={state.presentation}
+            windowDescription={state.windowDescription}
+            stage={state.stage}
+            onRequestCode={onRequestCode}
+            onSubmitCode={onSubmitCode}
+            pending={pending}
+          />
+        );
+      case "offer":
+        return (
+          <OfferView
+            presentation={state.presentation}
+            days={state.days}
+            windowDescription={state.windowDescription}
+            empty={state.empty}
+            selectedSlotStart={selectedSlotStart}
+            onSelectSlot={onSelectSlot}
+            onBook={onBook}
+            onDecline={onDecline}
+            onRetry={onRetry}
+            pending={pending}
+          />
+        );
+      default:
+        return assertNeverState(state);
+    }
+  }
+}
+
+/** Compile-time exhaustiveness for the screen's own union. */
+function assertNeverState(state: never): null {
+  void state;
+  return null;
 }
 
 function LoadingView() {
@@ -145,7 +171,15 @@ function DeclinedView() {
   );
 }
 
-const CLOSED_COPY: Record<string, { title: string; body: string }> = {
+/**
+ * Keyed by the REASON UNION, so a new terminal reason fails the build here.
+ *
+ * It was `Record<string, …>` with an `?? CLOSED_COPY.expired` fallback, which
+ * meant a future reason would quietly tell a recipient their invitation had
+ * expired when it had not -- a factual claim about their own invitation,
+ * invented by a default.
+ */
+const CLOSED_COPY: Record<InvitationClosedReason, { title: string; body: string }> = {
   expired: {
     title: "This invitation has expired",
     body: "This offer was only held for a short time and has now lapsed. Please contact the studio if you’d still like an appointment.",
@@ -168,10 +202,11 @@ function ClosedView({
   reason,
   presentation,
 }: {
-  reason: string;
+  reason: InvitationClosedReason;
   presentation: OfferPresentation | null;
 }) {
-  const copy = CLOSED_COPY[reason] ?? CLOSED_COPY.expired;
+  // No fallback: the map is exhaustive over the union by type.
+  const copy = CLOSED_COPY[reason];
   return (
     // A DEAD END, and it renders no booking control at all -- not a disabled
     // one. A greyed button invites tapping and explains nothing.
@@ -359,7 +394,7 @@ function ProofView({
 }: {
   presentation: OfferPresentation;
   windowDescription: string;
-  stage: ProofStage;
+  stage: UnprovenProofStage;
   onRequestCode: () => void;
   onSubmitCode: (code: string) => void;
   pending: boolean;
@@ -398,7 +433,7 @@ function ProofView({
  * rather than silently rendering "start over".
  */
 function renderProofStage(
-  stage: ProofStage,
+  stage: UnprovenProofStage,
   onRequestCode: () => void,
   onSubmitCode: (code: string) => void,
   pending: boolean,
@@ -433,8 +468,12 @@ function renderProofStage(
         <section className="flex flex-col gap-3" aria-busy="true" aria-live="polite">
           <p className="text-sm text-[#0A0A0A]">Checking your code…</p>
           <p className="text-sm text-[#6B6B6B]">Sent to {stage.maskedContact}</p>
+          {/* A 64-character hex token has no natural break opportunity, so
+              without this it runs past `max-w-md` and gives the phone a
+              horizontal scrollbar -- breaking the single-column rule this
+              surface is built on. */}
           <output
-            className={`${CONTROL_MIN_TOUCH} w-full border border-[#E7E2D8] bg-[#F5F2EB] px-4 text-base text-[#6B6B6B]`}
+            className={`${CONTROL_MIN_TOUCH} w-full break-all border border-[#E7E2D8] bg-[#F5F2EB] px-4 py-2 text-base text-[#6B6B6B] [overflow-wrap:anywhere]`}
           >
             {stage.submittedCode}
           </output>
@@ -513,12 +552,6 @@ function renderProofStage(
           </button>
         </section>
       );
-
-    case "proven":
-      // Unreachable: `deriveInvitationViewState` returns the offer state once
-      // proof is proven, so this view is never rendered for it. Stated rather
-      // than left to the catch-all that caused the defect.
-      return null;
 
     default:
       return assertNeverStage(stage);

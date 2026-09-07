@@ -84,6 +84,18 @@ export type ProofStage =
   | { kind: "unavailable"; retryable: boolean }
   | { kind: "proven" };
 
+/**
+ * The stages the PROOF VIEW may be asked to render.
+ *
+ * `proven` is excluded by TYPE rather than handled as an unreachable no-op.
+ * `deriveInvitationViewState` returns the offer state once proof lands, so the
+ * combination never arises here today -- but the component is exported, and a
+ * container updating the stage directly could hand it `proven` and get a header
+ * with no times and no controls, with no type error to stop it. "Unreachable by
+ * construction" is a comment; this is a compiler.
+ */
+export type UnprovenProofStage = Exclude<ProofStage, { kind: "proven" }>;
+
 export type InvitationClosedReason =
   | "expired"
   | "revoked"
@@ -96,7 +108,7 @@ export type InvitationViewState =
       kind: "proof";
       presentation: OfferPresentation;
       windowDescription: string;
-      stage: ProofStage;
+      stage: UnprovenProofStage;
     }
   | {
       kind: "offer";
@@ -292,6 +304,7 @@ export function deriveInvitationViewState(ctx: RecipientContext): InvitationView
           kind: "proof",
           presentation: ctx.presentation,
           windowDescription,
+          // Narrowed by the guard above; the type now says so too.
           stage: ctx.proof,
         };
       }

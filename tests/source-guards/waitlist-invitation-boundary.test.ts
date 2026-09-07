@@ -169,18 +169,36 @@ describe("the proof view is exhaustive over ProofStage", () => {
     expect(SCREEN).toContain("function assertNeverStage(stage: never)");
   });
 
-  it("names every stage the union declares", () => {
+  it("names every stage the view can receive, and only those", () => {
     // Derived from the union itself, so a stage added to the type without a
     // case here fails this assertion as well as `tsc`.
     const union = STATE.slice(
       STATE.indexOf("export type ProofStage"),
-      STATE.indexOf("export type InvitationClosedReason"),
+      STATE.indexOf("export type UnprovenProofStage"),
     );
     const declared = [...union.matchAll(/kind:\s*"([a-z_]+)"/g)].map((m) => m[1]);
-    expect(declared.length).toBeGreaterThanOrEqual(6);
+    // ANTI-VACUITY: if the slice or the regex ever matched nothing, the loop
+    // below would pass while asserting nothing at all.
+    expect(declared.length, "the stage list came back empty").toBeGreaterThanOrEqual(6);
+    expect(declared).toContain("verifying");
+
     for (const kind of declared) {
+      if (kind === "proven") {
+        // Excluded from the view's union by type, so it must NOT have a case:
+        // an unreachable no-op is what let `proven` be passable in the first
+        // place.
+        expect(render, "`proven` is handled here instead of excluded by type")
+          .not.toContain('case "proven"');
+        continue;
+      }
       expect(render, `ProofStage "${kind}" has no case`).toContain(`case "${kind}"`);
     }
+  });
+
+  it("the proof view's stage type EXCLUDES proven", () => {
+    expect(STATE).toContain('export type UnprovenProofStage = Exclude<ProofStage, { kind: "proven" }>');
+    expect(STATE).toContain("stage: UnprovenProofStage;");
+    expect(SCREEN).toContain("stage: UnprovenProofStage,");
   });
 
   it("verifying offers no way to restart the exchange", () => {
@@ -190,6 +208,61 @@ describe("the proof view is exhaustive over ProofStage", () => {
     expect(branch).not.toContain("<button");
     expect(branch).toContain('aria-busy="true"');
     expect(branch).toContain("submittedCode");
+  });
+});
+
+// The same union-growth failure, one level up. The screen dispatched with seven
+// independent ternaries, so a new InvitationViewState member would have
+// rendered an empty page while `tsc` passed.
+describe("the top-level view dispatch is exhaustive too", () => {
+  it("switches on state.kind with a never-typed default", () => {
+    expect(SCREEN).toContain("switch (state.kind)");
+    expect(SCREEN).toContain("assertNeverState(state)");
+    expect(SCREEN).toContain("function assertNeverState(state: never)");
+  });
+
+  it("has no ternary chain left to fall through", () => {
+    expect(SCREEN).not.toMatch(/state\.kind === "[a-z_]+" \? /);
+  });
+
+  it("names every InvitationViewState member", () => {
+    const union = STATE.slice(
+      STATE.indexOf("export type InvitationViewState"),
+      STATE.indexOf("export function slotWithinScope"),
+    );
+    const declared = [...union.matchAll(/kind:\s*"([a-z_]+)"/g)].map((m) => m[1]);
+    expect(declared.length, "the state list came back empty").toBeGreaterThanOrEqual(6);
+    for (const kind of declared) {
+      expect(SCREEN, `InvitationViewState "${kind}" has no case`).toContain(`case "${kind}"`);
+    }
+  });
+});
+
+describe("terminal copy is exhaustive over the reason union", () => {
+  it("is keyed by the union, not by string, and has no fallback", () => {
+    expect(SCREEN).toContain("Record<InvitationClosedReason, { title: string; body: string }>");
+    // The fallback silently told a future reason that the invitation expired.
+    expect(SCREEN).not.toContain("?? CLOSED_COPY.expired");
+  });
+
+  it("carries an entry for every declared reason", () => {
+    const union = STATE.slice(
+      STATE.indexOf("export type InvitationClosedReason"),
+      STATE.indexOf("export type InvitationViewState"),
+    );
+    const declared = [...union.matchAll(/"([a-z_]+)"/g)].map((m) => m[1]);
+    expect(declared.length, "the reason list came back empty").toBeGreaterThanOrEqual(4);
+    for (const reason of declared) {
+      expect(SCREEN, `no closed copy for "${reason}"`).toContain(`${reason}: {`);
+    }
+  });
+});
+
+describe("the submitted code cannot push the page sideways", () => {
+  it("wraps a 64-character token rather than overflowing", () => {
+    const branch = SCREEN.slice(SCREEN.indexOf('case "verifying"'), SCREEN.indexOf('case "sent"'));
+    expect(branch).toContain("break-all");
+    expect(branch).toContain("[overflow-wrap:anywhere]");
   });
 });
 
