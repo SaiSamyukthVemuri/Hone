@@ -70,7 +70,11 @@
 
 ## Resend
 
-- Transactional email provider. The from-address pattern is `<Studio name> via Hone <hello@hone.care>` for client mail. Required env var: `RESEND_API_KEY`.
+- Transactional email provider. Required env var: `RESEND_API_KEY`. **One verified sender domain and one address, `hello@hone.care`; a studio never supplies a From address and no per-studio DNS is required.**
+  - **Client-facing mail** sends as `<Studio name> via Hone <hello@hone.care>`, with `Reply-To` set to the studio's contact address when one is usable. The studio name is **display text only**, sanitised so it cannot inject a mail header; an absent or unusable name falls back to exactly `Hone <hello@hone.care>`.
+  - **Reply-To is derived server-side** from `studios.postcare_contact_email`, else `studios.owner_email` (`studioClientContactEmail`). If neither is usable the header is **omitted** — never fabricated, and never the client's own address.
+  - **Hone-facing mail** (ops alerts, team invitations) deliberately keeps `Hone <hello@hone.care>` with no `Reply-To`: Hone is speaking as Hone.
+  - **Hone learns only that Resend ACCEPTED a message.** There is no delivery webhook, no bounce or complaint tracking and no suppression list (COMMS-01D).
 
 ## Twilio
 

@@ -6,6 +6,10 @@ import {
   normalizePhoneForMatch,
   validateTwilioFormRequest,
 } from "@/lib/sms/twilio";
+import {
+  HONE_SUPPRESSION_SCOPE,
+  selectHoneSuppressionTargets,
+} from "@/lib/sms/suppression";
 
 // Twilio inbound SMS webhook (PR Twilio v1).
 //
@@ -200,7 +204,7 @@ export async function POST(req: Request): Promise<Response> {
   // will on the 500 path below when a partial opt-out failure
   // occurred), the second attempt only touches rows that were missed,
   // never re-stamping or double-auditing already-opted-out clients.
-  const matchedClients: Array<{ id: string; studio_id: string }> = [];
+  let matchedClients: Array<{ id: string; studio_id: string }> = [];
   let alreadyOptedOutCount = 0;
   try {
     const { data: candidates, error: scanErr } = await admin
@@ -208,16 +212,17 @@ export async function POST(req: Request): Promise<Response> {
       .select("id, studio_id, phone, sms_opted_out_at")
       .not("phone", "is", null);
     if (scanErr) throw scanErr;
-    for (const row of candidates ?? []) {
-      const digits = normalizePhoneForMatch(row.phone);
-      if (digits.length > 0 && digits === fromDigits) {
-        if (row.sms_opted_out_at) {
-          alreadyOptedOutCount += 1;
-          continue;
-        }
-        matchedClients.push({ id: row.id, studio_id: row.studio_id });
-      }
-    }
+    // COMMS-01B: the phone-wide rule is now a NAMED, TESTED concept in
+    // lib/sms/suppression.ts rather than a loop here. Behaviour is unchanged;
+    // what changed is that per-studio senders cannot quietly narrow it. Note
+    // that `to` is NOT passed: the number a STOP arrived on must never scope
+    // who gets opted out. See tests/lib/sms/suppression.test.ts.
+    const selection = selectHoneSuppressionTargets({
+      candidates: candidates ?? [],
+      fromPhone: from,
+    });
+    matchedClients = selection.targets;
+    alreadyOptedOutCount = selection.alreadyOptedOutCount;
   } catch (err) {
     logError("twilio_inbound_client_scan_failed", {
       error: err instanceof Error ? err.message : String(err),
@@ -303,6 +308,9 @@ export async function POST(req: Request): Promise<Response> {
       entity_id: m.id,
       metadata: {
         source: "twilio_stop",
+        // The opt-out is phone-wide across studios, not scoped to the sender
+        // the message arrived on. Recorded so the record says which rule ran.
+        suppression_scope: HONE_SUPPRESSION_SCOPE,
         twilio_message_sid: messageSid,
         from: maskedPhone(from),
         to: maskedPhone(to),

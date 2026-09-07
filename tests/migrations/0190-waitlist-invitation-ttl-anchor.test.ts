@@ -107,11 +107,16 @@ describe("0190 — identity and position", () => {
     expect(FILE).toBe("0190_waitlist_invitation_ttl_anchor.sql");
   });
 
-  it("is the current repository maximum", () => {
-    // Per CLAUDE.md only the CURRENT max asserts this, so that a future
-    // migration does not turn this file red. Whoever adds 0191 moves it.
-    expect(isRepoMax(VERSION)).toBe(true);
-    expect(versionsAbove(VERSION)).toEqual([]);
+  it("is no longer the repository maximum — 0191 took that role", () => {
+    // THE HAND-OFF THIS FILE ASKED FOR. The previous wording asserted
+    // isRepoMax and said "whoever adds 0191 moves it"; 0191 (per-studio SMS
+    // sender provisioning, COMMS-01B) exists, so the tripwire moved to
+    // tests/migrations/0191-studio-sms-sender-provisioning.test.ts. Per
+    // CLAUDE.md only the CURRENT max may assert isRepoMax — an older
+    // per-migration test asserting it turns red on every subsequent migration,
+    // which is the sweep that rule exists to prevent.
+    expect(isRepoMax(VERSION)).toBe(false);
+    expect(versionsAbove(VERSION)).toContain("0191");
   });
 
   it("IS APPLIED to production, and is the CURRENT hosted head", () => {
@@ -121,12 +126,19 @@ describe("0190 — identity and position", () => {
     // from 0189 to 0190 — restoring parity.
     //
     // 0190 now owns the CURRENT-head claim that 0189's file used to hold;
-    // 0189's file keeps only its own durable facts. Whoever applies 0191 moves
+    // 0189's file keeps only its own durable facts. Whoever APPLIES 0191 moves
     // this block again.
+    //
+    // THE 0191 HANDOFF HAPPENED. This block asserted
+    // `hosted_migration_max === '0190'`, which was true only while 0190 was the
+    // hosted head. 0191 is applied now and owns that claim, so this file keeps a
+    // FLOOR -- "hosted is at least me" -- which is the durable fact about 0190
+    // and stays true for every migration that follows. Asserting equality here
+    // again would make this file red the moment 0192 applies, which is exactly
+    // the mechanical sweep CLAUDE.md forbids.
     const state = migrationState();
-    expect(state.repo_migration_max).toBe(VERSION);
-    expect(state.hosted_migration_max).toBe(VERSION);
-    expect(state.pending_migrations).toEqual([]);
+    expect(Number(state.hosted_migration_max)).toBeGreaterThanOrEqual(190);
+    expect(state.pending_migrations).not.toContain(VERSION);
   });
 });
 

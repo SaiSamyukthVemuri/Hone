@@ -5,6 +5,10 @@ import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { limitPractitionerClientEmail } from "@/lib/rate-limit/public";
 import { sendEmailSafely } from "@/lib/email/send-appointment";
+import {
+  resolveReplyTo,
+  studioClientContactEmail,
+} from "@/lib/email/studio-identity";
 import { buildPortalMessageNotificationEmail } from "@/lib/email/templates/portal-message-notification";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 
@@ -176,6 +180,10 @@ export async function createPortalMessageAction(
       portalLoginUrl,
     });
     const sendResult = await sendEmailSafely({
+      studioIdentity: {
+        displayName: studio.name,
+        replyTo: resolveReplyTo(studioClientContactEmail(studio)),
+      },
       to: client.email,
       subject: tmpl.subject,
       html: tmpl.html,

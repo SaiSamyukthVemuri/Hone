@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import { markdownLiteToHtml } from "@/lib/email/markdown-lite";
+import { studioClientContactEmail } from "@/lib/email/studio-identity";
 
 // Toolbar helpers and preview modal for the postcare editor. Both are
 // co-located here so PostcareSettingsForm.tsx stays focused on field
@@ -271,14 +272,15 @@ function PostcarePreviewModal({
   reviewPromptText,
   onClose,
 }: PostcarePreviewInputs & { onClose: () => void }) {
-  // Resolve the Contact address the same way send-time logic does:
-  // postcare_contact_email -> owner_email -> null.
-  const resolvedContact =
-    contactEmail && contactEmail.trim().length > 0
-      ? contactEmail.trim()
-      : ownerFallbackEmail.trim().length > 0
-        ? ownerFallbackEmail.trim()
-        : null;
+  // ONE authority, not a second copy. This previously re-implemented
+  // "first non-blank" while send-time resolved "first VALID", so a studio whose
+  // postcare address was malformed saw a Contact address here that its clients
+  // never received. The preview calls the same helper the transport calls, so
+  // the two cannot drift again.
+  const resolvedContact = studioClientContactEmail({
+    postcare_contact_email: contactEmail,
+    owner_email: ownerFallbackEmail,
+  });
 
   const aftercareHtml = markdownLiteToHtml(aftercareText);
   const warningHtml = markdownLiteToHtml(warningSignsText);
