@@ -1,242 +1,636 @@
 // ===========================================================================
-// WAIT-03 B4 — INVITATION DRAFTING: THE UNWIRED HALF OF THE ADMISSION MODEL
+// WAIT-03 B4 — THE PRACTITIONER'S WAITLIST, WITH THE STATE MACHINE HIDDEN
 // ===========================================================================
 //
 // PURE, AND NOT REACHED BY THE APPLICATION. Nothing under `app/` imports this
-// module. It exists so that the B4 prototype — the admission row's full action
-// menu and the invitation composer — has somewhere to live that a reviewer can
-// tell apart from the surface a studio actually uses today.
+// module, and `tests/lib/waitlist/b4-invitation-draft.test.ts` walks the
+// application to prove it. It exists so the B4 prototype has somewhere to live
+// that a reviewer can tell apart from the surface a studio uses today.
 //
-// WHY THIS IS A SEPARATE MODULE FROM `admission-model`. The live operator queue
-// at /settings/waitlist offers exactly five lifecycle actions: claim, expire,
-// release, requeue, remove. Every one of them is wired to a shipped command.
-// Inviting is not: `issue_new_client_waitlist_invitation` mints a token that has
-// to reach a real recipient, which is B1/B1.5c + B2 work. While invite and
-// reinvite sat in the same module as the five live actions, every review round
-// spent itself on staged-but-unreachable code and the live release could not
-// ship. The split makes "what a studio can do today" a fact about the import
-// graph rather than a claim in a comment.
+// THE PRODUCT RULING THIS FILE IMPLEMENTS
+// ---------------------------------------
+// A practitioner does not know, and must never be asked, what a waitlist entry
+// "is". There is ONE action on a person who is waiting:
 //
-// WHAT LIVES HERE, AND WHY EACH PIECE IS HERE RATHER THAN THERE:
+//     Invite to book
 //
-//   * invite / reinvite availability — no server action carries either.
-//   * the brief-vocabulary map — a B4 design artifact. It records where the
-//     product brief's words and the shipped database's words disagree. The live
-//     page never consults it; it renders the database's own vocabulary.
-//   * TTL bounds and the invitation draft — inputs to a send that cannot happen
-//     yet. Two of the draft's six steps reach a server contract; the other four
-//     are collected as intent, and the model refuses to let the review step
-//     imply otherwise.
+// There is no Claim, no Claim next, and no Reinvite. Those were the database's
+// words on a practitioner's screen. An earlier revision of this prototype
+// rendered all seven internal actions as a menu, disabled the ones the entry's
+// status forbade, and explained each refusal — a faithful rendering of the
+// state machine, and exactly the thing the ruling removes. A person who has
+// been invited before and is eligible again gets "Invite to book", the same as
+// anyone else; whether the server calls that an invitation or a re-invitation
+// is not a question this screen asks.
 //
-// THE SAME DISCLOSURE RULE APPLIES. An unavailable action returns its REASON
-// from the function that decides availability, so a greyed control can never
-// hide its own prerequisite.
+// WHERE THE RULES ACTUALLY LIVE, AND WHY THIS IS NOT A SECOND ENGINE
+// ------------------------------------------------------------------
+// `lib/waitlist/admission-model.ts` is the live authority on what may be done
+// to an entry. It ships, it is imported by /settings/waitlist, and it encodes
+// the shipped commands' preconditions — including the two fail-closed rulings
+// that are easy to get wrong (a redeemed invitation cannot be released; an
+// invitation whose facts could not be READ is treated as unreleasable rather
+// than as unredeemed).
+//
+// This module does not restate any of that. For every action it offers, the
+// VERDICT — available or not — is delegated to `actionAvailability`, and
+// `entryActionSurface` is a projection of the live model, not a parallel copy
+// of it. The test file pins this: for every action, at every status, under
+// every invitation context, our boolean must equal the live model's boolean.
+// A rule that changed here and not there turns that test red.
+//
+// WHAT IS GENUINELY OURS, AND IT IS ONLY THIS:
+//
+//   1. WHICH actions appear, and which is primary. A projection, not a rule.
+//   2. The SENTENCE beside a refused action, where the live model's own
+//      sentence names a control this surface does not have. The live copy says
+//      «Use "Release" to end it early»; there is no Release button here, so
+//      repeating it would send a practitioner looking for a control that does
+//      not exist. The verdict is still the live model's; only the wording is
+//      re-translated, and `RETRANSLATED_REFUSALS` names every case.
+//   3. Two compound actions the live model does not model, because no single
+//      shipped command performs them — see the contract module. Their verdicts
+//      are still derived from the live verdict of their FIRST hop.
+//
+// ONE EXTRA RULE, STATED RATHER THAN SMUGGLED. `expire` in the live model
+// treats "the window has not elapsed" and "we could not read the window" the
+// same way, because `expire` alone is never offered on an unread invitation.
+// This surface's "Return to waitlist" runs THROUGH expire on a live invitation,
+// so it has to tell those apart, and it fails closed on unknown — the same
+// ruling `release` already applies one line above it. See
+// `UNKNOWN_INVITATION_FAILS_CLOSED`.
 // ===========================================================================
 
 import {
-  ACTION_LABEL,
-  ADMISSION_ACTIONS,
-  STATUS_LABEL,
   actionAvailability,
   type ActionAvailability,
   type AdmissionAction,
   type AdmissionContext,
   type WaitlistEntryStatus,
 } from "@/lib/waitlist/admission-model";
+import {
+  SCOPE_UNSUPPORTED_REASON,
+  adapterMissingReason,
+  type AdapterCapabilities,
+  type BookingScope,
+  type InviteToBookInput,
+} from "@/lib/waitlist/invite-to-book-contract";
 
-// --- 1. THE BRIEF'S VOCABULARY, AND WHERE IT DISAGREES ----------------------
+// --- 1. WHAT A PRACTITIONER SEES A STATE CALLED -----------------------------
 
 /**
- * How the brief's words map onto the shipped states.
+ * The seven shipped states, in practitioner language.
  *
- * TWO GENUINE GAPS, both recorded rather than invented around:
+ * The database's vocabulary — `claimed`, `released`, `converted` — describes
+ * what the row did. These describe what the studio should understand. Neither
+ * `claimed` nor `released` survives as a word on screen.
  *
- *   * `booked` is the brief's word for the shipped `converted`.
- *   * `revoked` is the brief's word for a studio-initiated return. The database
- *     has TWO such transitions — `released` (back to the studio's hands, and
- *     requeueable) and `removed` (terminal). They are NOT synonyms and the UI
- *     must not collapse them.
- *   * `declined` HAS NO SHIPPED STATE. Migration 0188 contains no `declin*`
- *     token anywhere: a prospect cannot decline, and nothing records that they
- *     did. It is therefore absent from this model. Rendering a "Declined"
- *     column would be inventing a fact the system cannot hold.
+ * `claimed` IS STILL REACHABLE, so it still needs a label. Under this design no
+ * practitioner action produces it — "Invite to book" claims and issues as one
+ * operation — but entries held by the older surface exist, and a row with no
+ * label is worse than a row with an internal one. It reads "Ready to invite",
+ * which is what it is, and its primary action is the ordinary one.
+ *
+ * `released` reads "Ready to return" rather than "Invitation canceled".
+ * Cancelling a live invitation is the common way to reach it, but not the only
+ * one: a `claimed` entry released without ever being invited lands here too,
+ * and a row that announces a cancelled invitation where none was ever sent is a
+ * false statement about a person. The forward-looking half of the product
+ * ruling's own wording is true in both cases.
  */
-export const BRIEF_LABEL_MAP = {
-  waiting: "waiting",
-  invited: "invited",
-  booked: "converted",
-  expired: "expired",
-  revoked: "released",
-} as const satisfies Record<string, WaitlistEntryStatus>;
-
-/** The brief word with no shipped state behind it. Exported so a test can pin
- *  that the model never grows a status for it by accident. */
-export const UNMODELLED_BRIEF_STATES = ["declined"] as const;
-
-// --- 2. THE TWO ACTIONS THAT SEND SOMETHING ---------------------------------
-
-export const B4_INVITATION_ACTIONS = ["invite", "reinvite"] as const;
-
-export type B4InvitationAction = (typeof B4_INVITATION_ACTIONS)[number];
-
-export const B4_ACTION_LABEL: Record<B4InvitationAction, string> = {
-  invite: "Send invitation",
-  reinvite: "Send a new invitation",
+export const PRACTITIONER_STATUS_LABEL: Record<WaitlistEntryStatus, string> = {
+  waiting: "Waiting",
+  claimed: "Ready to invite",
+  invited: "Invitation sent",
+  converted: "Booked",
+  expired: "Invitation expired",
+  released: "Ready to return",
+  removed: "Removed",
 };
 
 /**
- * The transition table, derived from what the shipped commands actually accept.
+ * The label, refined by what the caller actually knows about the invitation.
  *
- * INVITING REQUIRES `claimed`, AND ONLY `claimed`.
- * `issue_new_client_waitlist_invitation` answers `not_claimed` for every other
- * status (0190: `if v_status <> 'claimed' then return 'not_claimed'`). So an
- * entry that is merely WAITING cannot be invited — it must be claimed first —
- * and an `expired` or `released` entry needs the full path back: return it to
- * the queue, claim it, then invite.
- *
- * `reinvite` is not a separate command; it is `issue` called again on a claimed
- * entry whose previous invitation is no longer live. It stays a separate ACTION
- * so its refusal can name the path rather than repeating "invite".
- *
- * NO `context` PARAMETER, DELIBERATELY. Whether either action may be offered is
- * decided by status alone today. The one thing that would need more — telling
- * an INITIAL invitation apart from a re-invitation on a `claimed` entry —
- * requires invitation HISTORY, which no caller carries. That is open B4 work,
- * and accepting an unused context argument now would imply it had been
- * considered and answered.
+ * AN ELAPSED INVITATION READS "Invitation expired" EVEN THOUGH THE ENTRY IS
+ * STILL `invited`. Recording the expiry is a bookkeeping transition the
+ * database performs; whether it has happened yet is not a fact a practitioner
+ * should be able to observe, let alone one they should have to fix with a
+ * "Record expired" button. The live model's own status sentence says the quiet
+ * part out loud — "has not been recorded as expired yet" — which is precisely
+ * the leak this surface exists to close.
  */
-export function invitationActionAvailability(
-  action: B4InvitationAction,
+export function practitionerStatusLabel(
   status: WaitlistEntryStatus,
-): ActionAvailability {
-  const label = STATUS_LABEL[status].toLowerCase();
+  context: AdmissionContext = {},
+): string {
+  if (status === "invited" && !context.invitationRedeemed && context.invitationElapsed) {
+    return PRACTITIONER_STATUS_LABEL.expired;
+  }
+  return PRACTITIONER_STATUS_LABEL[status];
+}
 
-  // A CLOSED ENTRY REFUSES EVERY ACTION WITH THE SAME SENTENCE, whichever
-  // action is asked — the refusal is a fact about the ENTRY, not about the
-  // action. So the live model already holds that answer and this module reads
-  // it there rather than keeping a second copy that can drift. `claim` is
-  // merely the probe: every live action returns the identical verdict, which
-  // the accompanying test proves rather than assumes.
+/** One line of plain explanation under the name. Never mentions a state name,
+ *  a command, or a transition. */
+export function practitionerStatusDetail(
+  status: WaitlistEntryStatus,
+  context: AdmissionContext = {},
+): string {
+  switch (status) {
+    case "waiting":
+      return "In the queue, waiting for an invitation.";
+    case "claimed":
+      return "Held for this studio. Nothing has been sent yet.";
+    case "invited":
+      if (context.invitationFactsUnknown) {
+        return "An invitation is out. Its current state could not be checked just now.";
+      }
+      if (context.invitationRedeemed) {
+        return "They have used their invitation. This entry stays here until their booking is recorded.";
+      }
+      if (context.invitationElapsed) {
+        return "Their invitation ran out before they booked.";
+      }
+      return "They have a live booking link and have not used it yet.";
+    case "converted":
+      return "They booked. Nothing further is needed here.";
+    case "expired":
+      return "Their invitation ran out before they booked.";
+    case "released":
+      return "They are out of the queue. Return them to it to invite them again.";
+    case "removed":
+      return "Taken off the waitlist by the studio.";
+  }
+}
+
+// --- 2. THE ACTIONS A PRACTITIONER HAS ---------------------------------------
+
+export const PRACTITIONER_ACTIONS = [
+  "invite_to_book",
+  "resend_invitation",
+  "cancel_invitation",
+  "return_to_waitlist",
+  "remove_from_waitlist",
+] as const;
+
+export type PractitionerAction = (typeof PRACTITIONER_ACTIONS)[number];
+
+export const PRACTITIONER_ACTION_LABEL: Record<PractitionerAction, string> = {
+  invite_to_book: "Invite to book",
+  resend_invitation: "Resend invitation",
+  cancel_invitation: "Cancel invitation",
+  return_to_waitlist: "Return to waitlist",
+  remove_from_waitlist: "Remove from waitlist",
+};
+
+/** Actions that undo something a person may already be acting on, or that end
+ *  their place in the queue. The surface confirms these before performing them;
+ *  the component owns the confirmation, this is the fact it keys off. */
+export const DESTRUCTIVE_ACTIONS: ReadonlyArray<PractitionerAction> = [
+  "cancel_invitation",
+  "remove_from_waitlist",
+];
+
+/**
+ * The live action whose verdict governs a practitioner action AT A GIVEN
+ * STATUS — the delegation, written as code so a test can execute it rather
+ * than take the prose above on trust.
+ *
+ * IT DEPENDS ON THE STATUS, which is the whole reason this is a function and
+ * not a map. "Return to waitlist" is `requeue` from `expired` and `released`;
+ * from `invited` it runs through `expire` first, and from `claimed` through
+ * `release` — three different first hops behind one label, because the
+ * practitioner is not the one who should be choosing between them.
+ *
+ * `null` means no single live action decides it. `invite_to_book` is the only
+ * such case: from `waiting` it is claim-then-issue and from `claimed` it is
+ * issue alone, and `issue` has no live-model action at all because no server
+ * action carries it. Its domain is stated as `INVITE_TO_BOOK_STATUSES` and
+ * proved against migration 0188's own transition table instead.
+ *
+ * `tests/lib/waitlist/b4-invitation-draft.test.ts` walks every action this
+ * surface renders, at every status, under every invitation context, and asserts
+ * our verdict against the delegate's. The only permitted divergence is
+ * REFUSING where the live model permits — never the reverse, which would offer
+ * a control the database is guaranteed to reject.
+ */
+export function delegateFor(
+  action: PractitionerAction,
+  status: WaitlistEntryStatus,
+): AdmissionAction | null {
+  switch (action) {
+    case "invite_to_book":
+      return null;
+    // Resending replaces a live invitation, and its first hop is the release of
+    // the one that is out. Everything release refuses — a redeemed invitation,
+    // an unreadable one — resending refuses identically and for the same
+    // reason.
+    case "resend_invitation":
+    case "cancel_invitation":
+      return "release";
+    case "return_to_waitlist":
+      if (status === "invited") return "expire";
+      if (status === "claimed") return "release";
+      return "requeue";
+    case "remove_from_waitlist":
+      return "remove";
+  }
+}
+
+/**
+ * The statuses "Invite to book" accepts.
+ *
+ * DERIVED FROM THE SHIPPED TRANSITION TABLE, not chosen. `issue` requires
+ * `claimed`; `claimed` is reachable in one hop from `waiting` and from nowhere
+ * else that the studio drives. So the compound command's domain is exactly
+ * {waiting, claimed}, and the test recomputes that from 0188's own edge list.
+ *
+ * `expired` and `released` are deliberately NOT here even though a path exists
+ * (requeue, claim, issue). The product ruling gives those rows one action —
+ * "Return to waitlist" — because a person who is out of the queue rejoins it
+ * before they are invited from it, and collapsing three hops into an invite
+ * button would silently re-order the queue on the studio's behalf.
+ */
+export const INVITE_TO_BOOK_STATUSES: ReadonlyArray<WaitlistEntryStatus> = [
+  "waiting",
+  "claimed",
+];
+
+/**
+ * WHERE THIS SURFACE WRITES ITS OWN REFUSAL, AND WHY IT HAS TO.
+ *
+ * The live model's sentences are written for the live screen, and several of
+ * them name controls that do not exist here: «Use "Release" to end it early»,
+ * «Release it first, then it can be removed», «It can no longer be released».
+ * Repeating those verbatim would send a practitioner hunting for a Release
+ * button on a screen whose whole premise is that there isn't one.
+ *
+ * So a handful of refusals below are re-worded. NONE of them changes a verdict
+ * — the availability still comes from `actionAvailability`, and the test file
+ * executes that claim against every action at every status.
+ *
+ * There is deliberately no hand-maintained list of which sentences are ours.
+ * That list existed, and it was already stale by the time the first test ran:
+ * two delegated refusals leaked "released" through paths the list did not
+ * name. The guard is mechanical instead — the test walks every label and every
+ * refusal this surface can produce and fails on any database word in any of
+ * them, which catches the case nobody thought to add.
+ */
+
+/**
+ * Why an unreadable invitation withholds "Return to waitlist".
+ *
+ * `actionAvailability("expire", …)` folds "not elapsed" and "could not be read"
+ * into one branch, which is safe there because `expire` is only ever offered
+ * beside a readable invitation. Here the same call decides a compound that a
+ * practitioner reaches from a row whose facts may have failed to load, and
+ * "we do not know" must not be answered as "not yet". Unknown fails closed, the
+ * way `release` already does one branch above.
+ */
+export const UNKNOWN_INVITATION_FAILS_CLOSED =
+  "This invitation could not be checked just now, so they cannot be returned to the waitlist safely. Try again shortly.";
+
+/**
+ * The verdict `release` gives on a live invitation, in this surface's words.
+ *
+ * Both resending and cancelling begin by releasing the invitation that is out,
+ * so both inherit exactly what release refuses. Only the SENTENCE differs, and
+ * only because the live one says "released" — a state name, and the name of a
+ * control this screen does not have.
+ */
+function invitationRefusal(
+  action: "resend_invitation" | "cancel_invitation",
+  context: AdmissionContext,
+): ActionAvailability {
+  const live = actionAvailability("release", "invited", context);
+  if (live.available) return live;
+
+  // FAIL CLOSED, and say which of the two things went wrong. An unreadable
+  // invitation might already be used, and the command would answer
+  // `already_redeemed`; withholding the control is the live model's ruling and
+  // this only re-words it.
+  if (context.invitationFactsUnknown) {
+    return {
+      available: false,
+      reason:
+        action === "resend_invitation"
+          ? "Their invitation could not be checked just now, so it cannot be replaced safely. Try again shortly."
+          : "Their invitation could not be checked just now, so it cannot be canceled safely. Try again shortly.",
+    };
+  }
+  if (context.invitationRedeemed) {
+    return {
+      available: false,
+      reason:
+        action === "resend_invitation"
+          ? "They have already used their invitation, so there is nothing left to resend."
+          : "They have already used their invitation, so it can no longer be canceled.",
+    };
+  }
+  return live;
+}
+
+export function practitionerActionAvailability(
+  action: PractitionerAction,
+  status: WaitlistEntryStatus,
+  context: AdmissionContext = {},
+): ActionAvailability {
+  // A CLOSED ENTRY REFUSES EVERYTHING WITH ONE SENTENCE, and the sentence is a
+  // fact about the entry rather than about the action. The live model already
+  // holds both, so this reads them there instead of keeping a copy that can
+  // drift; `claim` is merely the probe, and the test proves the premise — that
+  // every live action refuses a closed entry identically.
   if (status === "converted" || status === "removed") {
     return actionAvailability("claim", status);
   }
 
   switch (action) {
-    case "invite":
-      // ONLY `claimed`. The command answers `not_claimed` for every other
-      // status, so offering it on a merely WAITING entry would be a control
-      // that cannot succeed.
-      if (status === "claimed") return { available: true };
-      if (status === "waiting") {
-        return {
-          available: false,
-          reason: `Claim them first — use “${ACTION_LABEL.claim}” — then send the invitation.`,
-        };
-      }
+    case "invite_to_book": {
+      if (INVITE_TO_BOOK_STATUSES.includes(status)) return { available: true };
       if (status === "invited") {
         return {
           available: false,
-          reason: "An invitation is already out. Release it before sending another.",
+          reason: "They already have an invitation. Resend it or cancel it first.",
         };
       }
+      // expired | released
       return {
         available: false,
-        reason: `This entry is ${label}. Return them to the queue and claim them first.`,
+        reason: "Return them to the waitlist first, then you can invite them.",
+      };
+    }
+
+    case "resend_invitation": {
+      if (status !== "invited") {
+        return {
+          available: false,
+          reason: "Nothing has been sent to them yet, so there is nothing to resend.",
+        };
+      }
+      // The first hop IS release, so its verdict is this action's verdict: a
+      // used invitation cannot be replaced, and an unreadable one must not be.
+      return invitationRefusal("resend_invitation", context);
+    }
+
+    case "cancel_invitation": {
+      if (status !== "invited") {
+        return {
+          available: false,
+          reason: "There is no invitation out, so there is nothing to cancel.",
+        };
+      }
+      return invitationRefusal("cancel_invitation", context);
+    }
+
+    case "return_to_waitlist": {
+      if (status === "invited") {
+        // FAIL CLOSED FIRST. See UNKNOWN_INVITATION_FAILS_CLOSED: the delegate
+        // below cannot tell "not yet" from "we could not look".
+        if (context.invitationFactsUnknown) {
+          return { available: false, reason: UNKNOWN_INVITATION_FAILS_CLOSED };
+        }
+        const viaExpire = actionAvailability("expire", status, context);
+        if (viaExpire.available) return { available: true };
+        // RETRANSLATED. The live sentence for a still-live invitation names
+        // "Release", which is not a control on this screen.
+        if (context.invitationRedeemed) {
+          return {
+            available: false,
+            reason:
+              "They have already used their invitation. This entry stays here until their booking is recorded.",
+          };
+        }
+        return {
+          available: false,
+          reason: "Their invitation is still live. Cancel it first, then return them to the waitlist.",
+        };
+      }
+      if (status === "claimed") {
+        // Held but never invited: release, then requeue. The release hop
+        // governs, and on `claimed` it is unconditionally available.
+        return actionAvailability("release", status, context);
+      }
+      return actionAvailability("requeue", status, context);
+    }
+
+    case "remove_from_waitlist": {
+      const live = actionAvailability("remove", status, context);
+      if (live.available) return live;
+      // RETRANSLATED. The live sentence says the entry is "held" or "invited"
+      // and to "Release it first" — three words this surface does not use.
+      if (status === "claimed") {
+        return {
+          available: false,
+          reason: "Return them to the waitlist first, then you can remove them.",
+        };
+      }
+      if (status === "invited") {
+        // NAME THE EXIT THIS ROW ACTUALLY OFFERS. A refusal that says "cancel
+        // it first" on a row whose invitation has already expired points at a
+        // control that is not there — the same defect as explaining a disabled
+        // Remove button with a sentence about sending, one layer down.
+        if (context.invitationRedeemed) {
+          // The known lifecycle gap: a person who used their invitation and
+          // never booked has no operator exit at all until the booking is
+          // recorded. Saying so is better than naming a control that will
+          // refuse them too.
+          return {
+            available: false,
+            reason:
+              "They have already used their invitation. This entry stays here until their booking is recorded.",
+          };
+        }
+        if (context.invitationElapsed) {
+          return {
+            available: false,
+            reason: "Return them to the waitlist first, then you can remove them.",
+          };
+        }
+        return {
+          available: false,
+          reason: "Cancel their invitation first, then you can remove them.",
+        };
+      }
+      return live;
+    }
+  }
+}
+
+// --- 3. WHICH ACTIONS A ROW ACTUALLY SHOWS ----------------------------------
+
+export type PractitionerActionItem = {
+  action: PractitionerAction;
+  label: string;
+  destructive: boolean;
+} & ActionAvailability;
+
+export type EntryActionSurface = {
+  /** The one thing this row is FOR, rendered as a full-width primary control.
+   *  `null` where the row needs nothing done to it — a live invitation is
+   *  waiting on the invitee, not on the studio, and inventing a primary action
+   *  for it would push a practitioner to interfere with a person who is
+   *  already deciding. */
+  primary: PractitionerActionItem | null;
+  secondary: ReadonlyArray<PractitionerActionItem>;
+};
+
+function item(
+  action: PractitionerAction,
+  status: WaitlistEntryStatus,
+  context: AdmissionContext,
+): PractitionerActionItem {
+  return {
+    action,
+    label: PRACTITIONER_ACTION_LABEL[action],
+    destructive: DESTRUCTIVE_ACTIONS.includes(action),
+    ...practitionerActionAvailability(action, status, context),
+  };
+}
+
+/**
+ * The row's whole action surface.
+ *
+ * A PROJECTION, NOT A RULE SET. Which actions appear is a layout decision; each
+ * one's availability came from the live model above. The two shapes worth
+ * stating explicitly:
+ *
+ * TERMINAL ROWS SHOW NOTHING. `converted` and `removed` return an empty
+ * surface. The prototype's earlier rule — always render every action, disabled,
+ * with its reason, because hiding one teaches a practitioner it does not exist
+ * — is right for an action that will become available later. On a closed entry
+ * nothing ever will, so five greyed buttons under a person who has already
+ * booked teach nothing and bury the one row that does need attention.
+ *
+ * A REFUSED ACTION IS STILL RENDERED where it can come back. An invitation
+ * whose facts failed to load disables Cancel and says why; hiding it would tell
+ * a practitioner the control does not exist on a row where it does.
+ */
+export function entryActionSurface(
+  status: WaitlistEntryStatus,
+  context: AdmissionContext = {},
+): EntryActionSurface {
+  if (status === "converted" || status === "removed") {
+    return { primary: null, secondary: [] };
+  }
+
+  const make = (action: PractitionerAction) => item(action, status, context);
+
+  switch (status) {
+    case "waiting":
+      return { primary: make("invite_to_book"), secondary: [make("remove_from_waitlist")] };
+
+    case "claimed":
+      // Reachable only from the older surface. It gets the ordinary primary
+      // action plus a way back out, so a legacy hold is never a dead end.
+      return {
+        primary: make("invite_to_book"),
+        secondary: [make("return_to_waitlist"), make("remove_from_waitlist")],
       };
 
-    case "reinvite":
-      // Same prerequisite: re-inviting IS `issue` again, so it also needs a
-      // claimed entry. An expired or released one has to travel back —
-      // requeue, then claim — and the refusal names that path rather than
-      // implying a shortcut the database does not have.
-      if (status === "claimed") return { available: true };
-      if (status === "invited") {
+    case "invited": {
+      // An elapsed invitation has one obvious next step and it is not resending
+      // into a window that has closed: put them back in the queue. Cancel drops
+      // off entirely here — cancelling an invitation that has already run out
+      // is a distinction only the state machine cares about.
+      const elapsed = !context.invitationRedeemed && context.invitationElapsed === true;
+      if (elapsed) {
         return {
-          available: false,
-          reason: "An invitation is already out. Release it before sending another.",
-        };
-      }
-      if (status === "expired" || status === "released") {
-        return {
-          available: false,
-          reason: `Return them to the queue and claim them first, then send a new invitation.`,
+          primary: make("return_to_waitlist"),
+          secondary: [make("resend_invitation"), make("remove_from_waitlist")],
         };
       }
       return {
-        available: false,
-        reason: `Nothing has been sent yet. Claim them, then use “${B4_ACTION_LABEL.invite}”.`,
+        primary: null,
+        secondary: [
+          make("resend_invitation"),
+          make("cancel_invitation"),
+          make("remove_from_waitlist"),
+        ],
+      };
+    }
+
+    case "expired":
+    case "released":
+      return {
+        primary: make("return_to_waitlist"),
+        secondary: [make("remove_from_waitlist")],
       };
   }
 }
 
-// --- 3. THE WHOLE MENU: LIVE ACTIONS PLUS THE TWO THAT SEND -----------------
+// --- 4. THE COMPOSER'S DRAFT -------------------------------------------------
+//
+// Every field below is a REQUIREMENT on B2, not decorative intent. See
+// `lib/waitlist/invite-to-book-contract.ts`: the composer collects a scope, the
+// adapter interface demands the invitation carry it, and an adapter that cannot
+// refuses the send rather than widening it silently.
 
-export type B4MenuAction = AdmissionAction | B4InvitationAction;
-
-/**
- * Every action B4 renders, in the order a practitioner reads them.
- *
- * DERIVED FROM THE LIVE LIST, not hand-copied beside it: a sixth live action
- * would join this menu automatically instead of being silently absent from the
- * prototype. Only the POSITION of the two invitation actions is stated here —
- * they belong immediately after claiming, which is their prerequisite.
- */
-export const B4_MENU_ACTIONS: ReadonlyArray<B4MenuAction> = [
-  "claim",
-  ...B4_INVITATION_ACTIONS,
-  ...ADMISSION_ACTIONS.filter((a) => a !== "claim"),
+/** Booking-window presets, in the product's words. `null` days marks the
+ *  custom option, which is bounded by the same validator. */
+export const BOOKING_WINDOW_PRESETS: ReadonlyArray<{
+  days: number;
+  label: string;
+}> = [
+  { days: 7, label: "Next 7 days" },
+  { days: 14, label: "Next 2 weeks" },
+  { days: 30, label: "Next 30 days" },
 ];
 
-export const B4_MENU_LABEL: Record<B4MenuAction, string> = {
-  ...ACTION_LABEL,
-  ...B4_ACTION_LABEL,
-};
+export const WINDOW_DAYS_MIN = 1;
+export const WINDOW_DAYS_MAX = 365;
 
-function isInvitationAction(action: B4MenuAction): action is B4InvitationAction {
-  return (B4_INVITATION_ACTIONS as ReadonlyArray<string>).includes(action);
-}
+export type AllowedDaysPreset = "every" | "weekdays" | "weekends" | "custom";
 
 /**
- * Every action with its verdict, for rendering a menu that shows disabled
- * entries WITH their reason rather than hiding them. Hiding an action teaches a
- * practitioner that it does not exist; disabling it with a reason teaches them
- * when it will.
+ * The weekday sets behind the three fixed presets. `null` is every day.
  *
- * `context` reaches the LIVE actions only, because they are the only ones whose
- * availability depends on anything beyond the entry's status — see
- * `invitationActionAvailability`.
+ * 0 = Sunday .. 6 = Saturday, matching both the contract's `allowedWeekdays`
+ * and JavaScript's own `Date#getDay`, so no call site has to re-base an index.
  */
-export function allActionAvailability(
-  status: WaitlistEntryStatus,
-  context: AdmissionContext = {},
-): Array<{ action: B4MenuAction; label: string } & ActionAvailability> {
-  return B4_MENU_ACTIONS.map((action) => ({
-    action,
-    label: B4_MENU_LABEL[action],
-    ...(isInvitationAction(action)
-      ? invitationActionAvailability(action, status)
-      : actionAvailability(action, status, context)),
-  }));
-}
+export const ALLOWED_DAYS_PRESET_VALUES: Record<
+  Exclude<AllowedDaysPreset, "custom">,
+  ReadonlyArray<number> | null
+> = {
+  every: null,
+  weekdays: [1, 2, 3, 4, 5],
+  weekends: [0, 6],
+};
 
-// --- 4. EXPIRY (the ONE draft input with a server contract) ------------------
-//
-// `issue_new_client_waitlist_invitation(p_studio_id, p_entry_id,
-// p_actor_user_id, p_ttl_hours default 72)`.
-//
-// The bounds and the REFUSAL are copied from the command, whose comment reads:
-// "1 hour .. 7 days. Out of range is REFUSED, never silently clamped: a clamped
-// TTL is a window the caller did not ask for and cannot see." This model refuses
-// identically, so the UI never sends a value the server will reject and never
-// shows a value the server would have changed underneath it.
+export const ALLOWED_DAYS_PRESET_LABEL: Record<AllowedDaysPreset, string> = {
+  every: "Every day",
+  weekdays: "Weekdays",
+  weekends: "Weekends",
+  custom: "Custom weekdays",
+};
 
+/**
+ * The weekday toggles in READING order, which is not index order.
+ *
+ * A studio's week starts on Monday; the array index starts on Sunday. Rendering
+ * the buttons in index order would put Sunday first, and a practitioner
+ * selecting "Mon–Fri" by position would silently pick Sunday to Thursday. The
+ * display order and the value travel together for exactly that reason.
+ */
+export const WEEKDAYS_IN_DISPLAY_ORDER: ReadonlyArray<{
+  index: number;
+  label: string;
+}> = [
+  { index: 1, label: "Mon" },
+  { index: 2, label: "Tue" },
+  { index: 3, label: "Wed" },
+  { index: 4, label: "Thu" },
+  { index: 5, label: "Fri" },
+  { index: 6, label: "Sat" },
+  { index: 0, label: "Sun" },
+];
+
+// The expiry bound is the shipped command's own: 1 hour .. 7 days, and out of
+// range is REFUSED rather than clamped, because a clamped window is one the
+// caller did not ask for and cannot see. This model refuses identically, so the
+// composer never offers a value the server would have changed underneath it.
 export const TTL_HOURS_MIN = 1;
-export const TTL_HOURS_MAX = 168; // 7 days
+export const TTL_HOURS_MAX = 168;
 export const TTL_HOURS_DEFAULT = 72;
 
-/** Presets, chosen to cover the real operational span without a free-text box
- *  as the primary control. The custom field remains available and is validated
- *  by exactly the same rule. */
 export const TTL_PRESETS: ReadonlyArray<{ hours: number; label: string }> = [
   { hours: 24, label: "24 hours" },
   { hours: 48, label: "2 days" },
@@ -244,167 +638,255 @@ export const TTL_PRESETS: ReadonlyArray<{ hours: number; label: string }> = [
   { hours: 168, label: "7 days" },
 ];
 
-export type TtlValidation =
-  | { ok: true; hours: number }
-  | { ok: false; error: string };
+export type InviteDraft = {
+  serviceId: string | null;
+  windowDays: number;
+  allowedWeekdays: ReadonlyArray<number> | null;
+  expiresInHours: number;
+};
 
-export function validateTtlHours(raw: unknown): TtlValidation {
-  const hours =
-    typeof raw === "number" ? raw : typeof raw === "string" ? Number(raw.trim()) : NaN;
-  if (!Number.isFinite(hours) || !Number.isInteger(hours)) {
-    return { ok: false, error: "Enter a whole number of hours." };
-  }
-  if (hours < TTL_HOURS_MIN) {
-    return { ok: false, error: `An invitation must last at least ${TTL_HOURS_MIN} hour.` };
-  }
-  if (hours > TTL_HOURS_MAX) {
-    return { ok: false, error: "An invitation cannot last longer than 7 days." };
-  }
-  return { ok: true, hours };
+export function emptyDraft(): InviteDraft {
+  return {
+    serviceId: null,
+    windowDays: BOOKING_WINDOW_PRESETS[0].days,
+    allowedWeekdays: null,
+    expiresInHours: TTL_HOURS_DEFAULT,
+  };
 }
 
-// --- 5. THE INVITATION DRAFT, AND WHICH PARTS ARE REAL -----------------------
-//
-// THE HONESTY PROBLEM THIS SOLVES. The brief's workflow has seven steps. As of
-// migration 0188 exactly TWO of them reach a server contract: choosing who, and
-// choosing how long. There is no service parameter, no horizon parameter, no
-// weekday parameter and no date parameter on any shipped command.
-//
-// Collecting that intent is still useful — B2 may well add it, and a studio
-// wants to express it — but the model must never let the review step imply that
-// an unbacked constraint will be enforced. So every step carries its backing.
+export type DraftFieldId = "service" | "window" | "days" | "expiry";
 
-export type DraftStepId =
-  | "select"
-  | "service"
-  | "horizon"
-  | "days"
-  | "expiry"
-  | "review";
+export type DraftValidation =
+  | { ok: true; scope: BookingScope; expiresInHours: number }
+  | { ok: false; errors: Partial<Record<DraftFieldId, string>> };
 
 /**
- * Whether a step's value can actually reach the database today.
+ * Validate a draft for submission.
  *
- * `server-backed`  a shipped command parameter carries it.
- * `pending-b2`     no shipped parameter exists. Collected as INTENT only, and
- *                  the review step must say so in words.
+ * NO SERVICE MEANS ANY SERVICE, and that is a legitimate choice rather than a
+ * missing answer — a studio that does not care which service the invitee books
+ * should not have to pick one to get past this screen.
+ *
+ * AN EMPTY WEEKDAY SET IS NOT. `null` means every day; `[]` means no day is
+ * permitted, which is an invitation that cannot be redeemed. The distinction is
+ * the reason `allowedWeekdays` is nullable rather than defaulting to a full
+ * array, and refusing here is what keeps a practitioner from sending a link
+ * that opens onto an empty calendar.
  */
-export type StepBacking = "server-backed" | "pending-b2";
+export function validateDraft(draft: InviteDraft): DraftValidation {
+  const errors: Partial<Record<DraftFieldId, string>> = {};
 
-export const STEP_BACKING: Record<Exclude<DraftStepId, "review">, StepBacking> = {
-  // claim_new_client_waitlist_entry(_ies) + issue_...(p_entry_id)
-  select: "server-backed",
-  // No p_service_id on any shipped command.
-  service: "pending-b2",
-  // No horizon parameter on any shipped command.
-  horizon: "pending-b2",
-  // No weekday or date parameter on any shipped command.
-  days: "pending-b2",
-  // issue_...(p_ttl_hours)
-  expiry: "server-backed",
-};
+  if (
+    !Number.isInteger(draft.windowDays) ||
+    draft.windowDays < WINDOW_DAYS_MIN ||
+    draft.windowDays > WINDOW_DAYS_MAX
+  ) {
+    errors.window = `Choose a booking window between ${WINDOW_DAYS_MIN} and ${WINDOW_DAYS_MAX} days.`;
+  }
 
-/** The sentence the review step shows for anything not yet carried by a
- *  command. Deliberately blunt: the alternative is a studio believing it has
- *  constrained an invitation when it has not. */
-export const PENDING_B2_NOTICE =
-  "Recorded as a note for the studio only — this is not yet enforced when the invitation is sent.";
+  if (draft.allowedWeekdays !== null) {
+    if (draft.allowedWeekdays.length === 0) {
+      errors.days = "Choose at least one day they can book on.";
+    } else if (
+      draft.allowedWeekdays.some((d) => !Number.isInteger(d) || d < 0 || d > 6)
+    ) {
+      errors.days = "Unrecognised day.";
+    }
+  }
 
-export type InvitationDraft = {
-  /** Entry ids chosen by the operator. Selection is by identity here; the
-   *  bulk claim command takes a COUNT instead, which is a different act and is
-   *  modelled separately (see `NEXT_N_IS_NOT_SELECTION`). */
-  entryIds: ReadonlyArray<string>;
-  /** pending-b2 */
-  serviceId: string | null;
-  /** pending-b2 — days from today the invitee may book within. */
-  horizonDays: number | null;
-  /** pending-b2 — 0=Sunday..6=Saturday. Empty means "no restriction stated". */
-  weekdays: ReadonlyArray<number>;
-  /** pending-b2 — explicit ISO dates, where the studio prefers exact days. */
-  dates: ReadonlyArray<string>;
-  /** server-backed */
-  ttlHours: number;
-};
+  if (
+    !Number.isInteger(draft.expiresInHours) ||
+    draft.expiresInHours < TTL_HOURS_MIN ||
+    draft.expiresInHours > TTL_HOURS_MAX
+  ) {
+    errors.expiry = "An invitation must last between 1 hour and 7 days.";
+  }
 
-export function emptyDraft(): InvitationDraft {
+  if (Object.keys(errors).length > 0) return { ok: false, errors };
   return {
-    entryIds: [],
-    serviceId: null,
-    horizonDays: null,
-    weekdays: [],
-    dates: [],
-    ttlHours: TTL_HOURS_DEFAULT,
+    ok: true,
+    scope: {
+      serviceId: draft.serviceId,
+      windowDays: draft.windowDays,
+      allowedWeekdays: draft.allowedWeekdays,
+    },
+    expiresInHours: draft.expiresInHours,
   };
 }
 
 /**
- * "Invite next N" is NOT multi-select, and the difference is load-bearing.
+ * The exact payload `WaitlistInvitationAdapter.inviteToBook` receives.
  *
- * `claim_new_client_waitlist_entries(p_studio_id, p_actor_user_id, p_count)`
- * takes a COUNT and claims the next N in queue order. It does not accept a list
- * of ids. So "invite the next 5" and "invite these 5 people" are two different
- * operations against two different commands, and a UI that renders them as one
- * control would be choosing the queue order on the studio's behalf.
- *
- * B4 designs FOR the next-N surface and does not implement its ranking: the
- * ordering is the database's existing FIFO, and nothing here re-sorts it.
+ * Returns `null` for an invalid draft rather than throwing or coercing: the
+ * composer has already rendered the field errors, and a partially-repaired
+ * payload is the one thing worse than no payload.
  */
-export const NEXT_N_IS_NOT_SELECTION = true;
-
-export type DraftValidation =
-  | { ok: true; draft: InvitationDraft }
-  | { ok: false; errors: Partial<Record<DraftStepId, string>> };
-
-/**
- * Validate a draft for SUBMISSION READINESS.
- *
- * Only server-backed fields can make a draft invalid. An unbacked field cannot
- * block a send, because the send does not carry it — blocking on it would
- * invent a requirement the server does not have.
- */
-export function validateDraft(draft: InvitationDraft): DraftValidation {
-  const errors: Partial<Record<DraftStepId, string>> = {};
-
-  if (draft.entryIds.length === 0) {
-    errors.select = "Choose at least one person to invite.";
-  }
-  const ttl = validateTtlHours(draft.ttlHours);
-  if (!ttl.ok) errors.expiry = ttl.error;
-
-  // Bounds on the INTENT fields are still enforced, because a nonsense value
-  // helps nobody even when nothing enforces it downstream.
-  if (draft.horizonDays !== null && (draft.horizonDays < 1 || draft.horizonDays > 365)) {
-    errors.horizon = "Choose a window between 1 and 365 days.";
-  }
-  if (draft.weekdays.some((d) => !Number.isInteger(d) || d < 0 || d > 6)) {
-    errors.days = "Unrecognised day.";
-  }
-
-  return Object.keys(errors).length > 0 ? { ok: false, errors } : { ok: true, draft };
+export function draftToInviteInput(
+  entryId: string,
+  draft: InviteDraft,
+): InviteToBookInput | null {
+  const validation = validateDraft(draft);
+  if (!validation.ok) return null;
+  return { entryId, scope: validation.scope, expiresInHours: validation.expiresInHours };
 }
 
-/** The review step's summary of one draft: what will actually happen, and what
- *  is only being noted. Separated so the review screen cannot present the two
- *  in the same voice. */
-export function reviewSummary(draft: InvitationDraft): {
-  enforced: string[];
-  notEnforced: string[];
-} {
-  const enforced: string[] = [];
-  const notEnforced: string[] = [];
+/** Plain-language summary of what the invitation will permit. Used by the
+ *  composer's confirm line; it describes the SCOPE only and never claims the
+ *  send has happened. */
+export function scopeSummary(
+  draft: InviteDraft,
+  serviceName: string | null,
+): string {
+  const service = serviceName ? serviceName : "any service";
+  const window =
+    BOOKING_WINDOW_PRESETS.find((p) => p.days === draft.windowDays)?.label ??
+    `next ${draft.windowDays} days`;
+  const days =
+    draft.allowedWeekdays === null
+      ? "any day"
+      : WEEKDAYS_IN_DISPLAY_ORDER.filter((d) =>
+          draft.allowedWeekdays?.includes(d.index),
+        )
+          .map((d) => d.label)
+          .join(", ");
+  return `${service}, ${window.toLowerCase()}, ${days}`;
+}
 
-  enforced.push(
-    draft.entryIds.length === 1
-      ? "1 person will be invited."
-      : `${draft.entryIds.length} people will be invited.`,
-  );
-  enforced.push(`The invitation expires after ${draft.ttlHours} hours.`);
+// --- 5. WIRING STATE, WHICH IS NOT THE SAME AS ELIGIBILITY ------------------
+//
+// TWO INDEPENDENT REASONS A CONTROL IS OFF, AND THEY MUST NOT BE MERGED.
+//
+//   "You cannot cancel an invitation that has already been used"   — eligibility
+//   "Cancelling is not connected yet"                              — wiring
+//
+// The earlier prototype applied ONE sentence — "Sending is not available in
+// this release yet." — to every unwired control, including Claim, Release,
+// Requeue and Remove, none of which send anything. A waiting row explained its
+// disabled Remove button with a sentence about sending. That is the same
+// conflation this project rejected when a failed read was reported as a
+// question nobody asked: a control disabled for a reason describing some other
+// control teaches a practitioner to stop reading the reasons.
+//
+// So wiring copy NAMES THE ACTION IT IS ATTACHED TO — `adapterMissingReason`
+// takes the label — and eligibility copy is never overwritten by it. An action
+// the entry's own state forbids keeps its own explanation whether an adapter is
+// bound or not; wiring only ever downgrades an action that WOULD have been
+// available.
 
-  if (draft.serviceId) notEnforced.push("Service preference");
-  if (draft.horizonDays !== null) notEnforced.push(`Booking window of ${draft.horizonDays} days`);
-  if (draft.weekdays.length > 0) notEnforced.push("Preferred days of the week");
-  if (draft.dates.length > 0) notEnforced.push("Specific dates");
+/**
+ * The adapter capability each action depends on.
+ *
+ * `invite_to_book` maps to `enforcesScope` because this composer always sends a
+ * scope. An adapter that can issue an invitation but cannot carry the service
+ * and booking window the practitioner just chose would produce an invitation
+ * that ignores both, which the invitee then books outside of. There is no
+ * "send it unscoped" fallback on purpose.
+ */
+export const ACTION_CAPABILITY: Record<
+  PractitionerAction,
+  keyof AdapterCapabilities
+> = {
+  invite_to_book: "enforcesScope",
+  resend_invitation: "canResend",
+  cancel_invitation: "canCancel",
+  return_to_waitlist: "canReturnToWaitlist",
+  remove_from_waitlist: "canRemove",
+};
 
-  return { enforced, notEnforced };
+export type ControlState = {
+  disabled: boolean;
+  /** The one sentence rendered beside the control, or `null` when it is
+   *  available and connected. Eligibility wins over wiring: a control the
+   *  entry's state forbids keeps its own reason. */
+  reason: string | null;
+};
+
+/**
+ * Whether a control may be pressed, and what to say when it may not.
+ *
+ * `capabilities` is `null` while no adapter is bound, which is the state this
+ * whole prototype renders in today — there is no stub adapter anywhere in the
+ * repository, so there is nothing to accidentally wire to.
+ */
+export function controlState(
+  item: PractitionerActionItem,
+  capabilities: AdapterCapabilities | null,
+): ControlState {
+  // ELIGIBILITY FIRST. "They have already booked" stays true whether or not the
+  // invitation service exists, and it is the more useful sentence of the two.
+  if (!item.available) return { disabled: true, reason: item.reason };
+  if (capabilities === null || !capabilities[ACTION_CAPABILITY[item.action]]) {
+    return { disabled: true, reason: adapterMissingReason(item.label) };
+  }
+  return { disabled: false, reason: null };
+}
+
+/** True once an adapter can carry everything this surface sends. The composer
+ *  keys its send control off this, and the test file asserts it is false for
+ *  the only value that exists today. */
+export function readyToBind(capabilities: AdapterCapabilities | null): boolean {
+  return capabilities !== null && capabilities.enforcesScope;
+}
+
+// --- 6. WHICH PRESET IS SELECTED — DERIVED, NEVER STORED --------------------
+//
+// The composer holds ONE value per question, and which preset button reads as
+// pressed is computed from it. A stored "selected preset" field beside a stored
+// value is two facts that can disagree, and the disagreement is invisible until
+// a practitioner sees "Weekdays" highlighted above a set that is not the
+// weekdays. Deriving costs a comparison and removes the failure entirely.
+
+export type BookingWindowSelection = number | "custom";
+
+export function activeWindowPreset(windowDays: number): BookingWindowSelection {
+  return BOOKING_WINDOW_PRESETS.some((p) => p.days === windowDays) ? windowDays : "custom";
+}
+
+function sameDaySet(a: ReadonlyArray<number>, b: ReadonlyArray<number>): boolean {
+  if (a.length !== b.length) return false;
+  const left = new Set(a);
+  return b.every((d) => left.has(d)) && left.size === b.length;
+}
+
+export function activeAllowedDaysPreset(
+  weekdays: ReadonlyArray<number> | null,
+): AllowedDaysPreset {
+  if (weekdays === null) return "every";
+  if (sameDaySet(weekdays, ALLOWED_DAYS_PRESET_VALUES.weekdays!)) return "weekdays";
+  if (sameDaySet(weekdays, ALLOWED_DAYS_PRESET_VALUES.weekends!)) return "weekends";
+  return "custom";
+}
+
+export function activeTtlPreset(hours: number): number | "custom" {
+  return TTL_PRESETS.some((p) => p.hours === hours) ? hours : "custom";
+}
+
+// --- 7. WHETHER THE COMPOSER MAY SEND ---------------------------------------
+
+/**
+ * The send control's state, decided here rather than in the component.
+ *
+ * THREE DISTINCT REASONS, IN THE ORDER A PRACTITIONER CAN ACT ON THEM. A field
+ * they can fix comes first; a capability the studio's service lacks comes
+ * second; "not built yet" comes last. Reporting the unbuildable one over a
+ * typo'd number would leave a fixable draft looking permanently broken.
+ */
+export function sendState(
+  draft: InviteDraft,
+  capabilities: AdapterCapabilities | null,
+): ControlState {
+  const validation = validateDraft(draft);
+  if (!validation.ok) {
+    return { disabled: true, reason: "Fix the highlighted fields before sending." };
+  }
+  if (capabilities === null) {
+    return {
+      disabled: true,
+      reason: adapterMissingReason(PRACTITIONER_ACTION_LABEL.invite_to_book),
+    };
+  }
+  if (!capabilities.enforcesScope) {
+    return { disabled: true, reason: SCOPE_UNSUPPORTED_REASON };
+  }
+  return { disabled: false, reason: null };
 }

@@ -1,279 +1,336 @@
 import { buttonClasses } from "@/components/ui/button";
 import { cx } from "@/components/ui/control-base";
+import { fieldControlClass } from "@/components/ui/field";
+import { SectionLabel } from "@/components/ui/section-label";
 import {
-  PENDING_B2_NOTICE,
-  STEP_BACKING,
+  ALLOWED_DAYS_PRESET_LABEL,
+  BOOKING_WINDOW_PRESETS,
   TTL_PRESETS,
-  reviewSummary,
+  WEEKDAYS_IN_DISPLAY_ORDER,
+  activeAllowedDaysPreset,
+  activeTtlPreset,
+  activeWindowPreset,
+  scopeSummary,
+  sendState,
   validateDraft,
-  type DraftStepId,
-  type InvitationDraft,
+  type AllowedDaysPreset,
+  type DraftFieldId,
+  type InviteDraft,
 } from "@/lib/waitlist/b4-invitation-draft";
+import type { AdapterCapabilities } from "@/lib/waitlist/invite-to-book-contract";
 
 // ===========================================================================
 // WAIT-03 B4 — the invitation composer
 // ===========================================================================
 //
-// The brief's workflow, in order: choose people, service, booking horizon,
-// allowed days, expiry, review, send.
+// ONE SCREEN, FOUR QUESTIONS, ONE SEND. Not a wizard.
 //
-// FOUR OF THOSE SEVEN STEPS HAVE NO SERVER CONTRACT. As of migration 0188 the
-// only shipped command is
-// `issue_new_client_waitlist_invitation(p_studio_id, p_entry_id,
-// p_actor_user_id, p_ttl_hours)`. There is no service, horizon, weekday or date
-// parameter anywhere. This component therefore renders those steps as what they
-// are — intent the studio is recording for itself — and the review step states
-// that in words rather than letting a filled-in field imply enforcement.
+// The earlier revision was a six-step rail — who, service, horizon, days,
+// expiry, review — with a numbered progress strip across the top. Every step
+// but one held a single control, so the rail was five screens of navigation
+// wrapped around four decisions, and the practitioner could not see what they
+// had chosen without walking back through it. Inviting one person to book is
+// not a workflow; it is a short form with sensible defaults, and every field
+// below already has one.
 //
-// That is the whole reason the composer exists before B2 rather than after: the
-// shape of the collected intent is exactly the input B2 needs in order to decide
-// which of it deserves a parameter. Building it as though the parameters already
-// existed would hand B2 a design that quietly assumes its own conclusion.
+// WHO is not a step here either. The composer opens FROM a row, so the person
+// is already chosen and is named in the heading. Choosing people inside the
+// composer is what made "invite these five" and "invite the next five" look
+// like one control, when they are two different commands against two different
+// server contracts — and only one of them accepts a list of people at all.
 //
-// STATE IS A PROP. `step` and `draft` are supplied by the caller, so this
-// component holds none and needs no client boundary — the same rule the Button
-// primitive follows with `pending`.
+// STATE IS A PROP. `draft` and `serviceName` are supplied by the caller, so
+// this component holds none and needs no client boundary — the same rule the
+// Button primitive follows with `pending`. WHICH PRESET READS AS PRESSED IS
+// DERIVED from the draft's value rather than passed alongside it; see the note
+// on `activeWindowPreset`.
+//
+// EVERY FIELD IS A REQUIREMENT ON B2, NOT A NOTE TO SELF. The earlier revision
+// badged service, window and days "Not enforced yet" and let the send proceed
+// anyway, which is a form that asks a question it intends to discard. The
+// ruling is now the other way round: the scope is part of the invitation, the
+// adapter contract demands it, and an adapter that cannot carry it refuses the
+// send instead of quietly widening it.
 
-const STEP_ORDER: ReadonlyArray<DraftStepId> = [
-  "select",
-  "service",
-  "horizon",
-  "days",
-  "expiry",
-  "review",
-];
-
-const STEP_TITLE: Record<DraftStepId, string> = {
-  select: "Who to invite",
-  service: "Service",
-  horizon: "How far ahead they may book",
-  days: "Days that suit the studio",
-  expiry: "How long the invitation lasts",
-  review: "Review",
-};
-
-const WEEKDAY_LABEL = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-
-/** Marks a step whose value cannot reach the database yet. Rendered as a plain
- *  words-first badge, never a colour-only cue. */
-function NotEnforcedBadge() {
-  return (
-    <span
-      data-testid="step-not-enforced"
-      className="inline-flex shrink-0 items-center rounded-full border border-line-strong px-2 py-0.5 text-xs font-medium text-fg-muted"
-    >
-      Not enforced yet
-    </span>
-  );
-}
-
-export function InviteComposerStep({
-  step,
-  draft,
+function FieldSection({
+  id,
+  title,
+  error,
+  children,
 }: {
-  step: DraftStepId;
-  draft: InvitationDraft;
+  id: DraftFieldId;
+  title: string;
+  error?: string;
+  children: React.ReactNode;
 }) {
-  const pending = step !== "review" && STEP_BACKING[step] === "pending-b2";
-
+  const errorId = error ? `composer-error-${id}` : undefined;
   return (
     <section
-      data-testid={`composer-step-${step}`}
-      data-backing={step === "review" ? "review" : STEP_BACKING[step]}
-      className="flex flex-col gap-3 px-4 py-5"
+      data-testid={`composer-field-${id}`}
+      // ONE COLUMN AT EVERY WIDTH. The composer is used on a phone between
+      // clients; a two-column form would put the presets beside their label and
+      // halve the touch targets to do it.
+      className="flex flex-col gap-2 border-b border-line px-4 py-4 last:border-b-0"
     >
-      <div className="flex flex-wrap items-center gap-2">
-        <h2 className="text-base font-medium text-fg">{STEP_TITLE[step]}</h2>
-        {pending && <NotEnforcedBadge />}
-      </div>
-
-      {pending && (
-        <p data-testid="step-pending-notice" className="text-sm leading-snug text-fg-muted">
-          {PENDING_B2_NOTICE}
-        </p>
+      {/* The id lives on a wrapper rather than on `SectionLabel`, which is a
+          shipped primitive with no `id` prop. Widening a live primitive to suit
+          an unwired prototype is exactly the wrong direction of dependency. */}
+      <span id={`composer-label-${id}`}>
+        <SectionLabel size="caption">{title}</SectionLabel>
+      </span>
+      {children}
+      {error && (
+        <span
+          id={errorId}
+          data-testid={`composer-error-${id}`}
+          className="text-xs leading-snug text-danger"
+        >
+          {error}
+        </span>
       )}
-
-      {step === "select" && (
-        <p className="text-sm text-fg-muted">
-          {draft.entryIds.length === 0
-            ? "No one chosen yet."
-            : draft.entryIds.length === 1
-              ? "1 person chosen."
-              : `${draft.entryIds.length} people chosen.`}
-        </p>
-      )}
-
-      {step === "expiry" && (
-        <ul className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
-          {TTL_PRESETS.map((preset) => (
-            <li key={preset.hours} className="w-full sm:w-auto">
-              <button
-                type="button"
-                data-testid={`ttl-preset-${preset.hours}`}
-                aria-pressed={draft.ttlHours === preset.hours}
-                className={cx(
-                  buttonClasses({ variant: "secondary", size: "sm", fullWidth: true }),
-                  "sm:w-auto",
-                  // Selected state is a BORDER plus aria-pressed, not colour
-                  // alone — the presets are otherwise identical boxes.
-                  draft.ttlHours === preset.hours && "border-accent text-accent",
-                )}
-              >
-                {preset.label}
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-
-      {step === "days" && (
-        <ul className="flex flex-wrap gap-2">
-          {WEEKDAY_LABEL.map((label, index) => (
-            <li key={label}>
-              <button
-                type="button"
-                data-testid={`weekday-${index}`}
-                aria-pressed={draft.weekdays.includes(index)}
-                className={cx(
-                  buttonClasses({ variant: "secondary", size: "sm" }),
-                  draft.weekdays.includes(index) && "border-accent text-accent",
-                )}
-              >
-                {label}
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-
-      {step === "review" && <ReviewPanel draft={draft} />}
     </section>
   );
 }
 
-/**
- * The review step, which is the one place a false promise would actually reach
- * the practitioner. Its whole job is keeping two lists apart: what the send will
- * DO, and what is only being written down.
- */
-export function ReviewPanel({ draft }: { draft: InvitationDraft }) {
-  const { enforced, notEnforced } = reviewSummary(draft);
-  const validation = validateDraft(draft);
-
+/** A preset button. `aria-pressed` carries the selection to assistive tech and
+ *  a border carries it visually — never colour alone, because the presets are
+ *  otherwise identical boxes and several studios' staff are colour-blind. */
+function PresetButton({
+  testId,
+  pressed,
+  children,
+}: {
+  testId: string;
+  pressed: boolean;
+  children: React.ReactNode;
+}) {
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-col gap-2">
-        <h3 className="text-sm font-medium text-fg">What sending will do</h3>
-        <ul data-testid="review-enforced" className="flex flex-col gap-1">
-          {enforced.map((line) => (
-            <li key={line} className="text-sm text-fg">
-              {line}
-            </li>
-          ))}
-        </ul>
-      </div>
-
-      {notEnforced.length > 0 && (
-        <div className="flex flex-col gap-2">
-          <h3 className="text-sm font-medium text-fg">
-            Recorded, but not part of the invitation
-          </h3>
-          <ul data-testid="review-not-enforced" className="flex flex-col gap-1">
-            {notEnforced.map((line) => (
-              <li key={line} className="text-sm text-fg-muted">
-                {line}
-              </li>
-            ))}
-          </ul>
-          <p className="text-xs leading-snug text-fg-muted">{PENDING_B2_NOTICE}</p>
-        </div>
+    <button
+      type="button"
+      data-testid={testId}
+      aria-pressed={pressed}
+      className={cx(
+        buttonClasses({ variant: "secondary", size: "sm", fullWidth: true }),
+        "sm:w-auto",
+        pressed && "border-accent text-accent",
       )}
-
-      {!validation.ok && (
-        <ul data-testid="review-errors" className="flex flex-col gap-1">
-          {Object.entries(validation.errors).map(([stepId, message]) => (
-            <li key={stepId} className="text-sm text-danger">
-              {message}
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
+    >
+      {children}
+    </button>
   );
 }
 
 export function InviteComposer({
-  step,
+  entryName,
   draft,
-  connected = false,
+  services,
+  capabilities = null,
 }: {
-  step: DraftStepId;
-  draft: InvitationDraft;
-  /** True only once B2's interface is frozen and wired. */
-  connected?: boolean;
+  /** The person this invitation is for. Already chosen — the composer opens
+   *  from their row, and choosing again here is how a single invitation and a
+   *  bulk claim end up looking like one control. */
+  entryName: string;
+  draft: InviteDraft;
+  services: ReadonlyArray<{ id: string; name: string }>;
+  /** `null` until an adapter satisfying `WaitlistInvitationAdapter` is bound. */
+  capabilities?: AdapterCapabilities | null;
 }) {
   const validation = validateDraft(draft);
-  const onReview = step === "review";
-  const sendBlocked = !connected || !validation.ok;
-  const sendReason = !connected
-    ? "Sending is not available in this release yet."
-    : !validation.ok
-      ? "Fix the highlighted steps before sending."
-      : null;
+  const errors = validation.ok ? {} : validation.errors;
+  const send = sendState(draft, capabilities);
+  const windowPreset = activeWindowPreset(draft.windowDays);
+  const daysPreset = activeAllowedDaysPreset(draft.allowedWeekdays);
+  const ttlPreset = activeTtlPreset(draft.expiresInHours);
+  const serviceName =
+    services.find((s) => s.id === draft.serviceId)?.name ?? null;
 
   return (
     <div className="flex flex-col" data-testid="invite-composer">
-      {/* The step rail wraps on a phone rather than scrolling sideways: a
-          horizontally scrolled rail hides steps off-screen with no affordance,
-          and this workflow's whole point is that the operator can see what they
-          have and have not decided. */}
-      <ol className="flex flex-wrap gap-2 border-b border-line px-4 py-3">
-        {STEP_ORDER.map((id, index) => (
-          <li key={id}>
-            <span
-              data-testid={`composer-rail-${id}`}
-              aria-current={id === step ? "step" : undefined}
-              className={cx(
-                "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs",
-                id === step
-                  ? "border-accent text-accent"
-                  : "border-line-strong text-fg-muted",
-              )}
+      <header className="px-4 py-4">
+        <h2 className="text-base font-medium text-fg">
+          Invite {entryName} to book
+        </h2>
+      </header>
+
+      <FieldSection id="service" title="Service" error={errors.service}>
+        {/* The visible section heading IS this control's label, referenced
+            rather than repeated: an `sr-only` copy of the same word made a
+            screen reader announce "Service" twice. */}
+        <select
+          data-testid="composer-service"
+          aria-labelledby="composer-label-service"
+          defaultValue={draft.serviceId ?? ""}
+          className={fieldControlClass()}
+        >
+            {/* "Any service" is a real answer, not an empty one. A studio that
+                does not mind which service the invitee books should not have to
+                pick one to get past this field. */}
+          <option value="">Any service</option>
+          {services.map((service) => (
+            <option key={service.id} value={service.id}>
+              {service.name}
+            </option>
+          ))}
+        </select>
+      </FieldSection>
+
+      <FieldSection id="window" title="Booking window" error={errors.window}>
+        <ul className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+          {BOOKING_WINDOW_PRESETS.map((preset) => (
+            <li key={preset.days} className="w-full sm:w-auto">
+              <PresetButton
+                testId={`composer-window-${preset.days}`}
+                pressed={windowPreset === preset.days}
+              >
+                {preset.label}
+              </PresetButton>
+            </li>
+          ))}
+          <li className="w-full sm:w-auto">
+            <PresetButton
+              testId="composer-window-custom"
+              pressed={windowPreset === "custom"}
             >
-              <span aria-hidden="true">{index + 1}</span>
-              {STEP_TITLE[id]}
-            </span>
+              Custom
+            </PresetButton>
           </li>
-        ))}
-      </ol>
+        </ul>
+        {windowPreset === "custom" && (
+          <label className="flex flex-col gap-1.5">
+            <span className="text-xs text-fg-muted">Days from today</span>
+            <input
+              type="number"
+              inputMode="numeric"
+              min={1}
+              max={365}
+              data-testid="composer-window-days"
+              defaultValue={draft.windowDays}
+              aria-invalid={errors.window ? true : undefined}
+              className={fieldControlClass()}
+            />
+          </label>
+        )}
+      </FieldSection>
 
-      <InviteComposerStep step={step} draft={draft} />
+      <FieldSection id="days" title="Allowed days" error={errors.days}>
+        <ul className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+          {(
+            ["every", "weekdays", "weekends", "custom"] as ReadonlyArray<AllowedDaysPreset>
+          ).map((preset) => (
+            <li key={preset} className="w-full sm:w-auto">
+              <PresetButton
+                testId={`composer-days-${preset}`}
+                pressed={daysPreset === preset}
+              >
+                {ALLOWED_DAYS_PRESET_LABEL[preset]}
+              </PresetButton>
+            </li>
+          ))}
+        </ul>
+        {daysPreset === "custom" && (
+          // MONDAY FIRST, WHICH IS NOT INDEX ORDER. The value is 0=Sunday, the
+          // week a studio reads starts on Monday, and the display order travels
+          // with the index precisely so selecting "Mon–Fri" by position cannot
+          // quietly select Sunday–Thursday.
+          <ul className="flex flex-wrap gap-2" data-testid="composer-weekdays">
+            {WEEKDAYS_IN_DISPLAY_ORDER.map((day) => (
+              <li key={day.index}>
+                <button
+                  type="button"
+                  data-testid={`composer-weekday-${day.index}`}
+                  aria-pressed={draft.allowedWeekdays?.includes(day.index) ?? false}
+                  className={cx(
+                    buttonClasses({ variant: "secondary", size: "sm" }),
+                    // A 44px floor with three-letter labels needs a width floor
+                    // too, or the box is taller than it is wide and reads as a
+                    // mis-render rather than a target.
+                    "min-w-[3.25rem]",
+                    draft.allowedWeekdays?.includes(day.index) &&
+                      "border-accent text-accent",
+                  )}
+                >
+                  {day.label}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </FieldSection>
 
-      {onReview && (
-        <div className="flex flex-col gap-2 border-t border-line px-4 py-4 sm:flex-row sm:items-center sm:justify-end">
-          {sendReason && (
-            <span
-              id="composer-send-reason"
-              data-testid="composer-send-reason"
-              className="text-xs leading-snug text-fg-muted"
-            >
-              {sendReason}
-            </span>
-          )}
-          <button
-            type="button"
-            disabled={sendBlocked}
-            data-testid="composer-send"
-            aria-describedby={sendReason ? "composer-send-reason" : undefined}
-            className={cx(
-              buttonClasses({ variant: "primary", size: "md", fullWidth: true }),
-              "sm:w-auto",
-            )}
+      <FieldSection id="expiry" title="Invitation expires" error={errors.expiry}>
+        <ul className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+          {TTL_PRESETS.map((preset) => (
+            <li key={preset.hours} className="w-full sm:w-auto">
+              <PresetButton
+                testId={`composer-expiry-${preset.hours}`}
+                pressed={ttlPreset === preset.hours}
+              >
+                {preset.label}
+              </PresetButton>
+            </li>
+          ))}
+          <li className="w-full sm:w-auto">
+            <PresetButton testId="composer-expiry-custom" pressed={ttlPreset === "custom"}>
+              Custom
+            </PresetButton>
+          </li>
+        </ul>
+        {ttlPreset === "custom" && (
+          <label className="flex flex-col gap-1.5">
+            {/* The bound is the shipped command's own and is stated rather than
+                enforced silently: it REFUSES an out-of-range window instead of
+                clamping it, so a practitioner who types 200 needs to know why
+                nothing happened. */}
+            <span className="text-xs text-fg-muted">Hours, from 1 hour to 7 days</span>
+            <input
+              type="number"
+              inputMode="numeric"
+              min={1}
+              max={168}
+              data-testid="composer-expiry-hours"
+              defaultValue={draft.expiresInHours}
+              aria-invalid={errors.expiry ? true : undefined}
+              className={fieldControlClass()}
+            />
+          </label>
+        )}
+      </FieldSection>
+
+      <div className="flex flex-col gap-3 border-t border-line px-4 py-4">
+        <p data-testid="composer-summary" className="text-sm leading-snug text-fg-muted">
+          {/* States the SCOPE, never that anything has been sent. */}
+          They will be able to book {scopeSummary(draft, serviceName)}.
+        </p>
+        {send.reason && (
+          <span
+            id="composer-send-reason"
+            data-testid="composer-send-reason"
+            className="text-xs leading-snug text-fg-muted"
           >
-            Send invitation
-          </button>
-        </div>
-      )}
+            {send.reason}
+          </span>
+        )}
+        {/* PRIMARY IS FULL WIDTH AND FIRST IN THE DOM. On a phone the send
+            control is the one a thumb reaches for; putting Cancel first in
+            source order to get it visually left on a desktop would put it under
+            the thumb on every phone. */}
+        <button
+          type="button"
+          disabled={send.disabled}
+          data-testid="composer-send"
+          aria-describedby={send.reason ? "composer-send-reason" : undefined}
+          className={buttonClasses({ variant: "primary", size: "md", fullWidth: true })}
+        >
+          Send invitation
+        </button>
+        <button
+          type="button"
+          data-testid="composer-cancel"
+          className={buttonClasses({ variant: "quiet", size: "md", fullWidth: true })}
+        >
+          Cancel
+        </button>
+      </div>
     </div>
   );
 }
