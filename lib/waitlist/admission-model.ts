@@ -155,10 +155,19 @@ export type ActionAvailability =
  * so it cannot be decided from `status` alone.
  */
 export type AdmissionContext = {
-  /** True only when the invitation's `expires_at` is in the past. Unknown or
-   *  absent is treated as NOT elapsed, which withholds the control rather than
-   *  offering one the database would refuse. */
+  /** True only when the CURRENT invitation's `expires_at` is in the past and it
+   *  carries no terminal stamp. Unknown or absent is treated as NOT elapsed,
+   *  which withholds the control rather than offering one the DB would refuse. */
   invitationElapsed?: boolean;
+  /**
+   * True when the current invitation has been REDEEMED.
+   *
+   * Redemption does not move the entry: `redeem_new_client_waitlist_invitation`
+   * stamps `redeemed_at` and leaves the entry at `invited` until a conversion is
+   * recorded. So `status === "invited"` alone cannot tell a live invitation from
+   * a used one, and every control that a used one forbids has to be told.
+   */
+  invitationRedeemed?: boolean;
 };
 
 export function actionAvailability(
@@ -219,6 +228,19 @@ export function actionAvailability(
       // The operator's way to END something early, and the only one. It is
       // offered on `claimed` (give the hold back) and on `invited` (end a live
       // invitation before its window runs out).
+      //
+      // NOT ON A REDEEMED ONE. Redemption leaves the entry at `invited` until a
+      // conversion is recorded, so status alone would keep offering Release for
+      // that whole interval — and `release_new_client_waitlist_entry` guards on
+      // `redeemed_at is null`, so the control is guaranteed to return
+      // `already_redeemed`. Offering a control that cannot succeed is exactly
+      // what deriving availability from stored state is meant to prevent.
+      if (status === "invited" && context.invitationRedeemed) {
+        return {
+          available: false,
+          reason: "That invitation has already been used. It can no longer be released.",
+        };
+      }
       if (status === "claimed" || status === "invited") return { available: true };
       return {
         available: false,
@@ -234,6 +256,13 @@ export function actionAvailability(
         return {
           available: false,
           reason: "There is no invitation on that entry to record as expired.",
+        };
+      }
+      if (context.invitationRedeemed) {
+        // A used invitation is terminal; the command answers `already_redeemed`.
+        return {
+          available: false,
+          reason: "That invitation has already been used, so it cannot expire.",
         };
       }
       if (!context.invitationElapsed) {
@@ -255,8 +284,16 @@ export function actionAvailability(
       };
 
     case "remove":
-      // Deliberately broad: a studio may always take someone off its own
-      // waitlist, except where the entry is already closed (handled above).
+      // NOT while the entry is held or invited. `remove_new_client_waitlist_entry`
+      // answers `release_required` for both, changing nothing — so an owner who
+      // opened the confirm disclosure and pressed it would get an avoidable
+      // error. The remedy is named instead.
+      if (status === "claimed" || status === "invited") {
+        return {
+          available: false,
+          reason: `This entry is ${label}. Release it first, then it can be removed.`,
+        };
+      }
       return { available: true };
   }
 }

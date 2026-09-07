@@ -158,6 +158,44 @@ describe("every action, on every state, is decided AND explained", () => {
     }
   });
 
+  it("REDEEMED withholds Release, even though the entry is still `invited`", () => {
+    // Redemption stamps the invitation and leaves the entry at `invited` until
+    // a conversion is recorded, so status alone would keep offering Release for
+    // that whole interval — and `release_new_client_waitlist_entry` guards on
+    // `redeemed_at is null`, so the control could only ever return
+    // `already_redeemed`.
+    const live = actionAvailability("release", "invited", { invitationRedeemed: false });
+    expect(live.available).toBe(true);
+
+    const used = actionAvailability("release", "invited", { invitationRedeemed: true });
+    expect(used.available).toBe(false);
+    expect((used as { reason: string }).reason).toMatch(/already been used/i);
+  });
+
+  it("REDEEMED also withholds Record expired", () => {
+    const used = actionAvailability("expire", "invited", {
+      invitationElapsed: true,
+      invitationRedeemed: true,
+    });
+    expect(used.available).toBe(false);
+    expect((used as { reason: string }).reason).toMatch(/already been used/i);
+  });
+
+  it("Remove is withheld where the command would answer release_required", () => {
+    // `remove_new_client_waitlist_entry` refuses a held or invited entry and
+    // changes nothing, so offering the confirm disclosure there produces an
+    // avoidable error rather than an outcome.
+    for (const s of ["claimed", "invited"] as const) {
+      const v = actionAvailability("remove", s);
+      expect(v.available, s).toBe(false);
+      expect((v as { reason: string }).reason, s).toMatch(/release it first/i);
+    }
+    // …and IS offered everywhere the command accepts it.
+    for (const s of ["waiting", "expired", "released"] as const) {
+      expect(actionAvailability("remove", s).available, s).toBe(true);
+    }
+  });
+
   it("reinvite is offered only where a previous invitation is no longer live", () => {
     expect(actionAvailability("reinvite", "expired").available).toBe(true);
     expect(actionAvailability("reinvite", "released").available).toBe(true);

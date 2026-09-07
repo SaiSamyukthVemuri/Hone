@@ -61,6 +61,9 @@ const scenario = {
   // offered at all. Empty by default: no row is `invited` unless a test says so.
   invitations: [] as Array<Record<string, unknown>>,
   invitationsError: null as { code: string } | null,
+  // The UNCAPPED waiting count, read separately from the bounded page. Null
+  // models a failed count.
+  waitingCount: 1 as number | null,
 };
 
 function reset() {
@@ -76,6 +79,9 @@ function reset() {
     error: null,
     removeResult: "removed",
     removeError: null,
+    invitations: [],
+    invitationsError: null,
+    waitingCount: 1,
   });
 }
 
@@ -110,6 +116,14 @@ vi.mock("@/lib/supabase/server", () => ({
       // invitation-window read (terminal at `.in`). A builder that resolves
       // only on `.limit` cannot model the second, and every render would throw.
       const settle = () => {
+        // The waiting count is the SAME table as the bounded page read, so it
+        // is told apart by `head: true` — the only query that asks for a count
+        // without rows.
+        if (shape.options.head === true) {
+          return scenario.waitingCount === null
+            ? { data: null, count: null, error: { code: "57014" } }
+            : { data: null, count: scenario.waitingCount, error: null };
+        }
         if (table === "new_client_waitlist_invitations") {
           return {
             data: scenario.invitationsError ? null : scenario.invitations,
@@ -236,8 +250,15 @@ describe("the query the page asks", () => {
 
   it("is ONE bounded, studio-scoped, status-scoped, ordered read", async () => {
     await render();
-    expect(queries).toHaveLength(1);
-    const q = queries[0];
+    // TWO reads of this table now: the bounded page, and an uncapped
+    // `head: true` count of who is still WAITING. The second exists because
+    // "is anyone waiting?" cannot be answered from a capped mixed-status page —
+    // claimed rows can fill it while waiting people sit beyond the limit.
+    const pageReads = queries.filter(
+      (x) => x.table === "new_client_waitlist_entries" && x.options.head !== true,
+    );
+    expect(pageReads).toHaveLength(1);
+    const q = pageReads[0];
     expect(q.table).toBe("new_client_waitlist_entries");
     expect(q.filters).toEqual([
       ["eq", "studio_id", STUDIO_ID],
@@ -290,7 +311,7 @@ describe("the count is authoritative", () => {
     );
     scenario.count = 140;
     const html = await render();
-    expect(html).toMatch(/Active entries:\s*<[^>]*>140</);
+    expect(html).toMatch(/Waitlist entries:\s*<[^>]*>140</);
     expect(html).toContain("Showing the 100 longest-waiting of 140.");
   });
 
@@ -298,7 +319,7 @@ describe("the count is authoritative", () => {
     scenario.rows = [entry()];
     scenario.count = 1;
     const html = await render();
-    expect(html).toMatch(/Active entries:\s*<[^>]*>1</);
+    expect(html).toMatch(/Waitlist entries:\s*<[^>]*>1</);
     expect(html).not.toContain("longest-waiting of");
   });
 
@@ -307,7 +328,7 @@ describe("the count is authoritative", () => {
     scenario.count = 0;
     const html = await render();
     expect(html).toContain("Nobody is waiting right now.");
-    expect(html).toMatch(/Active entries:\s*<[^>]*>0</);
+    expect(html).toMatch(/Waitlist entries:\s*<[^>]*>0</);
   });
 });
 
@@ -317,7 +338,7 @@ describe("a failed load is never shown as an empty queue", () => {
     const html = await render();
     expect(html).toContain("could not be loaded");
     expect(html).not.toContain("Nobody is waiting");
-    expect(html).not.toMatch(/Active entries:\s*<[^>]*>0</);
+    expect(html).not.toMatch(/Waitlist entries:\s*<[^>]*>0</);
     const line = consoleErrors.find((l) => l.includes("waitlist_queue_load_failed"));
     expect(line).toBeDefined();
     expect(JSON.parse(line!)).toMatchObject({ studioId: STUDIO_ID, code: "42501" });
@@ -789,7 +810,12 @@ describe("action visibility follows the row's lifecycle state", () => {
     scenario.rows = [entry({ status: "waiting" })];
     scenario.count = 1;
     await render();
-    expect(queries.map((q) => q.table)).toEqual(["new_client_waitlist_entries"]);
+    // The bounded page read plus the uncapped waiting count, both on the
+    // entries table. No invitation read, because no row is invited.
+    expect(queries.map((q) => q.table)).toEqual([
+      "new_client_waitlist_entries",
+      "new_client_waitlist_entries",
+    ]);
   });
 
   it("and IS read when one is", async () => {
@@ -801,18 +827,34 @@ describe("action visibility follows the row's lifecycle state", () => {
     expect(queries.map((q) => q.table)).toEqual([
       "new_client_waitlist_entries",
       "new_client_waitlist_invitations",
+      "new_client_waitlist_entries",
     ]);
   });
 
-  it("Claim next is offered only when somebody is actually waiting", async () => {
+  it("Claim next follows the UNCAPPED waiting count, not the visible page", async () => {
+    // THE DEFECT THIS PINS. Deciding from the page slice means that once a
+    // studio claims its oldest entries, those claimed rows fill the capped page
+    // while waiting people sit beyond the limit — so Claim next would disappear
+    // exactly when it is most needed.
     scenario.rows = [entry({ status: "claimed" })];
     scenario.count = 1;
-    const claimedHtml = await render();
-    expect(claimedHtml).not.toContain("Claim next");
+    scenario.waitingCount = 12; // nobody waiting is VISIBLE, but 12 are queued
+    expect(await render()).toContain("Claim next");
 
     reset();
-    scenario.rows = [entry({ status: "waiting" })];
+    scenario.rows = [entry({ status: "claimed" })];
     scenario.count = 1;
+    scenario.waitingCount = 0;
+    expect(await render()).not.toContain("Claim next");
+  });
+
+  it("a FAILED waiting count keeps Claim next rather than hiding it", async () => {
+    // Claim next is a no-op on an empty queue, so offering it on an unknown
+    // count costs nothing — while hiding it on an unknown count silently
+    // removes the studio's main action.
+    scenario.rows = [entry({ status: "claimed" })];
+    scenario.count = 1;
+    scenario.waitingCount = null;
     expect(await render()).toContain("Claim next");
   });
 });

@@ -26,11 +26,17 @@ import {
 // email. This page answers exactly those three questions against the durable
 // record and stops there.
 //
-// WHAT IT IS NOT. No invite, no "next N", no queue position shown to anyone,
-// no ranking, no capacity forecast, no appointment creation, no contact
-// editing, no notes. Those are WAIT-03 / ADMIT-01..03 and none of them are
-// reachable from here — the database refuses every transition except
-// waiting -> removed, so this surface could not grow one by accident.
+// WHAT IT IS NOT — UPDATED BY WAIT-EXPOSE-01. It now surfaces the practitioner
+// lifecycle that migrations 0188-0190 already shipped: claim (one, or the next
+// N by the database's own queue order), release, record-expired and requeue,
+// alongside the original removal. It still shows NO queue position to anyone,
+// does NO ranking, forecasts no capacity, creates no appointment, edits no
+// contact and takes no notes.
+//
+// It still cannot INVITE. `issue`, `redeem` and `record_conversion` are not
+// referenced anywhere on this surface: issuing mints a token that must reach a
+// real recipient, and redeem/conversion create a booking. Those wait on
+// B1/B1.5c + B2.
 //
 // PEOPLE HERE ARE NOT CLIENTS. Nothing on this page links into a client
 // record, because no client record exists: joining a waitlist creates none.
@@ -176,13 +182,27 @@ export default async function WaitlistSettingsPage() {
   // fact is read rather than assumed, and only for the entries that could use
   // it.
   const invitedIds = rows.filter((r) => r.status === "invited").map((r) => r.id);
-  let elapsedByEntry: Map<string, boolean> | null = new Map();
+  let cycleByEntry: Map<string, { elapsed: boolean; redeemed: boolean }> | null = new Map();
   if (invitedIds.length > 0) {
+    // THE CURRENT CYCLE, NOT WHICHEVER ROW ARRIVES LAST.
+    //
+    // `new_client_waitlist_invitations` is APPEND-ONLY and undeletable, so an
+    // entry that went invite -> expire -> requeue -> invite carries several
+    // rows. Reading them unordered and letting each overwrite the previous
+    // means an old elapsed row can mark a NEWER live invitation as elapsed and
+    // surface "Record expired" prematurely — the exact premature expiry this
+    // surface exists to prevent.
+    //
+    // A new invitation can only be issued once the previous one is terminal, so
+    // the most recently ISSUED row is the current cycle by construction. The
+    // order terminates in `id` because `issued_at` alone is not a total order.
     const invitations = await supabase
       .from("new_client_waitlist_invitations")
-      .select("entry_id,expires_at,redeemed_at")
+      .select("entry_id,expires_at,issued_at,redeemed_at,expired_at,released_at")
       .eq("studio_id", studio.id)
-      .in("entry_id", invitedIds);
+      .in("entry_id", invitedIds)
+      .order("issued_at", { ascending: false })
+      .order("id", { ascending: false });
     if (invitations.error) {
       // NULL means "we could not check", which is NOT the same as "not elapsed".
       // The control is withheld either way, but the sentence beside it has to
@@ -195,21 +215,51 @@ export default async function WaitlistSettingsPage() {
           timestamp: new Date().toISOString(),
         }),
       );
-      elapsedByEntry = null;
+      cycleByEntry = null;
     } else {
       for (const inv of (invitations.data ?? []) as Array<{
         entry_id: string;
         expires_at: string;
         redeemed_at: string | null;
+        expired_at: string | null;
+        released_at: string | null;
       }>) {
+        // FIRST row per entry wins, and the read is ordered newest-first, so
+        // this is the current cycle. Later rows for the same entry are history.
+        if (cycleByEntry.has(inv.entry_id)) continue;
         const expiresAt = new Date(inv.expires_at).getTime();
-        elapsedByEntry.set(
-          inv.entry_id,
-          Number.isFinite(expiresAt) && expiresAt <= now && inv.redeemed_at === null,
-        );
+        // `!= null` deliberately, not `!==`: an absent column must read as
+        // "no terminal stamp", not as terminal. Strict inequality would make a
+        // missing field mark a live invitation dead.
+        const terminal =
+          inv.redeemed_at != null || inv.expired_at != null || inv.released_at != null;
+        cycleByEntry.set(inv.entry_id, {
+          // Elapsed means: still live, and the clock has passed. A row already
+          // carrying a terminal stamp is not something to record as expired.
+          elapsed: !terminal && Number.isFinite(expiresAt) && expiresAt <= now,
+          redeemed: inv.redeemed_at != null,
+        });
       }
     }
   }
+
+  // WHETHER ANYONE IS STILL WAITING IS A QUEUE FACT, NOT A PAGE FACT.
+  //
+  // The bounded read above is ONE mixed-status page. Once a studio has claimed
+  // its oldest entries, those claimed rows still occupy that page while waiting
+  // people sit beyond the limit — so deciding "is anyone waiting?" from the
+  // slice would hide Claim next exactly when it is most needed. Counted
+  // independently, with `head` so no rows cross the wire.
+  const waitingCountRead = await supabase
+    .from("new_client_waitlist_entries")
+    .select("id", { count: "exact", head: true })
+    .eq("studio_id", studio.id)
+    .eq("status", "waiting");
+  // A failed count must not hide the control: Claim next is a no-op when the
+  // queue is empty, so offering it on an unknown count costs nothing, while
+  // hiding it on an unknown count silently removes the studio's main action.
+  const waitingCount = waitingCountRead.error ? null : (waitingCountRead.count ?? 0);
+  const anyoneWaiting = waitingCount === null || waitingCount > 0;
 
   return (
     <div className="flex flex-col gap-6">
@@ -223,7 +273,7 @@ export default async function WaitlistSettingsPage() {
       </section>
 
       <p className="text-sm font-medium" aria-live="polite">
-        Active entries: <span className="tabular-nums">{active}</span>
+        Waitlist entries: <span className="tabular-nums">{active}</span>
       </p>
 
       {/* CLAIM NEXT N — the database's queue order, not this page's.
@@ -232,7 +282,7 @@ export default async function WaitlistSettingsPage() {
           selected people" bulk control: no command accepts an id list, and
           looping the single-entry command in TypeScript would invent
           partial-success semantics the database never agreed to. */}
-      {rows.some((r) => r.status === "waiting") && (
+      {anyoneWaiting && (
         <form
           action={claimNextWaitlistEntriesAction}
           className="flex flex-col gap-2 rounded-lg border border-neutral-200 p-4 dark:border-neutral-800 sm:flex-row sm:items-end"
@@ -297,8 +347,10 @@ export default async function WaitlistSettingsPage() {
                     // from firing a command and rendering its refusal. The RPC
                     // is still the authority — it re-derives everything — but a
                     // control the row's own state forbids is not offered.
-                    const elapsed =
-                      elapsedByEntry === null ? undefined : elapsedByEntry.get(row.id) === true;
+                    const cycle = cycleByEntry === null ? null : cycleByEntry.get(row.id);
+                    const elapsed = cycleByEntry === null ? undefined : cycle?.elapsed === true;
+                    const redeemed =
+                      cycleByEntry === null ? undefined : cycle?.redeemed === true;
                     return (
                       <li
                         key={row.id}
@@ -327,6 +379,7 @@ export default async function WaitlistSettingsPage() {
                             (action) => {
                               const verdict = actionAvailability(action, row.status, {
                                 invitationElapsed: elapsed,
+                                invitationRedeemed: redeemed,
                               });
                               if (!verdict.available) return null;
                               const formAction =
@@ -352,19 +405,26 @@ export default async function WaitlistSettingsPage() {
                           {/* The invitation window could not be read, so whether
                               it has run out is UNKNOWN. Say that, rather than
                               letting the absent control imply "still live". */}
-                          {row.status === "invited" && elapsedByEntry === null && (
+                          {row.status === "invited" && cycleByEntry === null && (
                             <span className="text-xs text-neutral-500">
                               Couldn&apos;t check whether this invitation has run
                               out. Release ends it either way.
                             </span>
                           )}
 
-                          {/* Two-step removal with no client JavaScript: the
+                          {/* REMOVE IS NOT OFFERED WHERE IT ALWAYS REFUSES.
+                              `remove_new_client_waitlist_entry` answers
+                              `release_required` for a held or invited entry and
+                              changes nothing, so an owner who opened this and
+                              pressed Confirm would get an avoidable error. The
+                              same availability authority decides it. */}
+                          {actionAvailability("remove", row.status).available && (
+                          /* Two-step removal with no client JavaScript: the
                               confirm button does not exist in the DOM until the
                               disclosure is opened, so a mis-tap on a phone
                               cannot remove someone. Removal is terminal — the
                               row keeps its history, but it does not come back to
-                              this queue. */}
+                              this queue. */
                           <details>
                             <summary className="min-h-[44px] cursor-pointer list-none rounded-md border border-neutral-300 px-3 py-2 text-sm text-neutral-700 select-none hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900">
                               Remove
@@ -386,6 +446,7 @@ export default async function WaitlistSettingsPage() {
                               </button>
                             </form>
                           </details>
+                          )}
                         </div>
                       </li>
                     );
