@@ -43,6 +43,24 @@ export type OfferedSlot = {
   startLabel: string;
 };
 
+/**
+ * Slots for ONE studio-local day, with that day named.
+ *
+ * WHY THE GROUPING EXISTS. An offer may span several days -- "Mondays and
+ * Wednesdays" is the ordinary shape -- and a bare list of times renders Monday
+ * 9:00 and Wednesday 9:00 as two identical buttons. The recipient cannot tell
+ * them apart and can book the wrong day. The window description gives the
+ * RANGE; it cannot disambiguate an individual button, so the day travels with
+ * the slots rather than being left to the header.
+ */
+export type OfferedDay = {
+  /** YYYY-MM-DD in the studio's timezone. */
+  date: string;
+  /** "Mon, Sep 7" -- the shared formatter, not a local one. */
+  dateLabel: string;
+  slots: readonly OfferedSlot[];
+};
+
 /** Everything the screen needs that is not the invitation itself. */
 export type OfferPresentation = {
   studioName: string;
@@ -79,7 +97,10 @@ export type InvitationViewState =
       kind: "offer";
       invitation: ResolvedInvitation;
       presentation: OfferPresentation;
+      /** Flat, still narrowed, for callers that want the raw list. */
       slots: readonly OfferedSlot[];
+      /** The same slots, grouped under their studio-local day. */
+      days: readonly OfferedDay[];
       windowDescription: string;
       empty: boolean;
     }
@@ -121,6 +142,49 @@ export function filterSlotsToScope(
   slots: readonly OfferedSlot[],
 ): OfferedSlot[] {
   return slots.filter((s) => slotWithinScope(scope, studioTimezone, s));
+}
+
+/**
+ * Group narrowed slots under their studio-local day, in chronological order.
+ *
+ * The date comes from `localDateString` and the label from
+ * `formatLocalDateLabel` -- the same shared helpers the rest of booking uses.
+ * A slot whose instant cannot be read is dropped rather than filed under a
+ * guessed day; it would already have failed the scope check.
+ */
+export function groupSlotsByDay(
+  studioTimezone: string,
+  slots: readonly OfferedSlot[],
+): OfferedDay[] {
+  const byDate = new Map<string, OfferedSlot[]>();
+  for (const slot of slots) {
+    const at = new Date(slot.start);
+    if (Number.isNaN(at.getTime())) continue;
+    const date = localDateString(at, studioTimezone);
+    const bucket = byDate.get(date);
+    if (bucket) bucket.push(slot);
+    else byDate.set(date, [slot]);
+  }
+  return [...byDate.entries()]
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([date, daySlots]) => ({
+      date,
+      dateLabel: formatSlotDayLabel(date),
+      slots: [...daySlots].sort((x, y) => (x.start < y.start ? -1 : x.start > y.start ? 1 : 0)),
+    }));
+}
+
+/** "Mon, Sep 7" -- short enough for a phone, unambiguous across a week. */
+function formatSlotDayLabel(ymd: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd);
+  if (!m) return ymd;
+  const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+  return new Intl.DateTimeFormat("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  }).format(d);
 }
 
 /** `extract(dow)` order, as B1 stores it. Index is the stored value, not a choice. */
@@ -233,6 +297,7 @@ export function deriveInvitationViewState(ctx: RecipientContext): InvitationView
         invitation: resolve.invitation,
         presentation: ctx.presentation,
         slots,
+        days: groupSlotsByDay(ctx.presentation.studioTimezone, slots),
         windowDescription,
         empty: slots.length === 0,
       };
@@ -261,6 +326,17 @@ export function proofStageFromComplete(
 ): ProofStage {
   if (outcome.kind === "verified") return { kind: "proven" };
   if (outcome.kind === "unavailable") return { kind: "unavailable", retryable: true };
+
+  // TERMINAL OUTCOMES ARE TERMINAL. If the invitation expired, was released or
+  // was redeemed between the code being issued and submitted, B2 answers
+  // `not_live` -- and `invalid_token` is likewise a dead end. A catch-all
+  // `failed` sent both to the code form, which then said "no longer available"
+  // above a live Confirm and a live Resend. That is the same defect the resolve
+  // union was made exhaustive to prevent, left in the proof mapping.
+  if (outcome.kind === "not_live" || outcome.kind === "invalid_token") {
+    return { kind: "unavailable", retryable: false };
+  }
+
   return { kind: "failed", reason: outcome.kind, ...previous };
 }
 

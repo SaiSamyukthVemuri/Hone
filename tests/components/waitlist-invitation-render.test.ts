@@ -41,6 +41,12 @@ const INVITATION: ResolvedInvitation = {
 
 const WINDOW_DESCRIPTION = "Mondays, Wednesdays, Sep 7, 2026 – Sep 11, 2026";
 
+const SLOT2: OfferedSlot = {
+  start: "2026-09-09T13:00:00.000Z",
+  end: "2026-09-09T13:30:00.000Z",
+  startLabel: "9:00 AM",
+};
+
 const SLOT: OfferedSlot = {
   start: "2026-09-07T13:00:00.000Z",
   end: "2026-09-07T13:30:00.000Z",
@@ -66,7 +72,7 @@ function render(state: Parameters<typeof InvitationScreen>[0]["state"], over = {
 }
 
 describe("the offer screen", () => {
-  const html = render({ kind: "offer", invitation: INVITATION, presentation: PRESENTATION, slots: [SLOT], windowDescription: WINDOW_DESCRIPTION, empty: false });
+  const html = render({ kind: "offer", invitation: INVITATION, presentation: PRESENTATION, slots: [SLOT], days: [{ date: "2026-09-07", dateLabel: "Mon, Sep 7", slots: [SLOT] }], windowDescription: WINDOW_DESCRIPTION, empty: false });
 
   it("states the offered horizon in words, as the state layer resolved it", () => {
     expect(html).toContain("Times held for you");
@@ -99,7 +105,7 @@ describe("the offer screen", () => {
 
   it("enables book once a slot is selected", () => {
     const chosen = render(
-      { kind: "offer", invitation: INVITATION, presentation: PRESENTATION, slots: [SLOT], windowDescription: WINDOW_DESCRIPTION, empty: false },
+      { kind: "offer", invitation: INVITATION, presentation: PRESENTATION, slots: [SLOT], days: [{ date: "2026-09-07", dateLabel: "Mon, Sep 7", slots: [SLOT] }], windowDescription: WINDOW_DESCRIPTION, empty: false },
       { selectedSlotStart: SLOT.start },
     );
     expect(chosen).toContain('aria-pressed="true"');
@@ -118,7 +124,7 @@ describe("the offer screen", () => {
 });
 
 describe("an empty window is not a dead end", () => {
-  const html = render({ kind: "offer", invitation: INVITATION, presentation: PRESENTATION, slots: [], windowDescription: WINDOW_DESCRIPTION, empty: true });
+  const html = render({ kind: "offer", invitation: INVITATION, presentation: PRESENTATION, slots: [], days: [], windowDescription: WINDOW_DESCRIPTION, empty: true });
 
   it("explains, and offers a retry rather than a booking control", () => {
     expect(html).toContain("Nothing is open");
@@ -171,9 +177,9 @@ describe("loading, error and declined", () => {
     expect(render({ kind: "error", retryable: true })).toContain('role="alert"');
   });
 
-  it("declining keeps the recipient on the list, with no queue detail", () => {
+  it("declining says what happened, with no queue detail", () => {
     const html = render({ kind: "declined" });
-    expect(html).toContain("still on the studio’s list");
+    expect(html).toContain("declined this appointment");
     expect(html.toLowerCase()).not.toContain("position");
   });
 });
@@ -239,5 +245,82 @@ describe("possession shows the offer and no times", () => {
     const buttons = html.match(/<button[^>]*>/g) ?? [];
     expect(buttons.length).toBeGreaterThan(0);
     for (const b of buttons) expect(b).toContain("min-h-[44px]");
+  });
+});
+
+describe("a multi-day offer is unambiguous", () => {
+  const html = render({
+    kind: "offer",
+    invitation: INVITATION,
+    presentation: PRESENTATION,
+    slots: [SLOT, SLOT2],
+    days: [
+      { date: "2026-09-07", dateLabel: "Mon, Sep 7", slots: [SLOT] },
+      { date: "2026-09-09", dateLabel: "Wed, Sep 9", slots: [SLOT2] },
+    ],
+    windowDescription: WINDOW_DESCRIPTION,
+    empty: false,
+  });
+
+  it("names each day as a heading", () => {
+    expect(html).toContain("Mon, Sep 7");
+    expect(html).toContain("Wed, Sep 9");
+  });
+
+  it("two 9:00 AM buttons are distinguishable to a screen reader too", () => {
+    // Same visible label on both days; the accessible name carries the day.
+    expect(html).toContain('aria-label="Mon, Sep 7 at 9:00 AM"');
+    expect(html).toContain('aria-label="Wed, Sep 9 at 9:00 AM"');
+  });
+});
+
+describe("the proof code field accepts the credential B1.5c mints", () => {
+  const html = render({
+    kind: "proof",
+    presentation: PRESENTATION,
+    windowDescription: WINDOW_DESCRIPTION,
+    stage: {
+      kind: "sent",
+      maskedContact: "s\u2022\u2022\u2022@example.com",
+      expiresAt: "2026-09-07T13:00:00.000Z",
+    },
+  });
+
+  it("does NOT ask for a digits-only keyboard", () => {
+    // The challenge is ^[a-f0-9]{64}$ -- nearly every one contains a-f.
+    expect(html).not.toContain('inputMode="numeric"');
+    expect(html).toContain('inputMode="text"');
+  });
+
+  it("does not fight the recipient with autocorrect or capitalisation", () => {
+    expect(html).toContain('autoCapitalize="none"');
+    expect(html).toContain('autoCorrect="off"');
+  });
+});
+
+describe("a terminal proof outcome renders no live controls", () => {
+  const html = render({
+    kind: "proof",
+    presentation: PRESENTATION,
+    windowDescription: WINDOW_DESCRIPTION,
+    stage: { kind: "unavailable", retryable: false },
+  });
+
+  it("says so and offers nothing to press", () => {
+    expect(html).toContain("no longer available");
+    expect(html).not.toContain("Confirm it\u2019s you");
+    expect(html).not.toContain("Send a new code");
+    expect(html).not.toContain("Try again");
+  });
+});
+
+describe("declining promises only what decline does", () => {
+  it("does not claim continued list membership or future contact", () => {
+    const html = render({ kind: "declined" });
+    // Decline releases the entry; only a practitioner-authorised requeue puts
+    // it back. Promising automatic follow-up would be untrue.
+    expect(html.toLowerCase()).not.toContain("still on the studio");
+    expect(html.toLowerCase()).not.toContain("be in touch");
+    expect(html).toContain("contact them directly");
   });
 });

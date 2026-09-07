@@ -5,6 +5,7 @@ import {
   filterSlotsToScope,
   isProofLapse,
   proofStageFromBegin,
+  groupSlotsByDay,
   proofStageFromComplete,
   slotWithinScope,
   type OfferedSlot,
@@ -287,5 +288,75 @@ describe("a lapsed proof is recoverable, not a dead end", () => {
     expect(isProofLapse({ kind: "not_live" })).toBe(false);
     expect(isProofLapse({ kind: "invalid_token" })).toBe(false);
     expect(isProofLapse({ kind: "redeemed", studioId: "s", entryId: "e" })).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// REVIEW P1 — a multi-day offer must not render indistinguishable buttons.
+//
+// "Mondays and Wednesdays" is the ordinary shape, and both days can offer 9:00
+// AM. A flat list renders that as two identical controls and the recipient
+// books the wrong day. The window description gives the RANGE and cannot
+// disambiguate an individual button, so the day travels with the slots.
+// ---------------------------------------------------------------------------
+describe("slots carry their studio-local day", () => {
+  it("groups by day, chronologically, and names each one", () => {
+    const days = groupSlotsByDay(TZ, [slot("2026-09-09"), slot("2026-09-07")]);
+    expect(days.map((d) => d.date)).toEqual(["2026-09-07", "2026-09-09"]);
+    expect(days[0].dateLabel).toContain("Sep 7");
+    expect(days[0].dateLabel).toContain("Mon");
+    expect(days[1].dateLabel).toContain("Wed");
+  });
+
+  it("keeps times ordered inside a day", () => {
+    const early = { start: "2026-09-07T13:00:00.000Z", end: "x", startLabel: "9:00 AM" };
+    const late = { start: "2026-09-07T18:00:00.000Z", end: "x", startLabel: "2:00 PM" };
+    const days = groupSlotsByDay(TZ, [late, early]);
+    expect(days[0].slots.map((s) => s.startLabel)).toEqual(["9:00 AM", "2:00 PM"]);
+  });
+
+  it("the day is STUDIO-local, not UTC", () => {
+    // 01:00Z Tuesday is Monday evening in Toronto and must file under Monday.
+    const lateMonday = { start: "2026-09-08T01:00:00.000Z", end: "x", startLabel: "9:00 PM" };
+    expect(groupSlotsByDay(TZ, [lateMonday])[0].date).toBe("2026-09-07");
+  });
+
+  it("drops an unreadable instant rather than filing it under a guessed day", () => {
+    expect(groupSlotsByDay(TZ, [{ start: "nope", end: "x", startLabel: "?" }])).toEqual([]);
+  });
+
+  it("the offer state exposes the grouped days", () => {
+    const state = deriveInvitationViewState(
+      ctx({ slots: [slot("2026-09-07"), slot("2026-09-09")] }),
+    );
+    expect(state.kind).toBe("offer");
+    if (state.kind === "offer") {
+      expect(state.days).toHaveLength(2);
+      expect(state.days.flatMap((d) => d.slots)).toHaveLength(2);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// REVIEW P2 — a proof outcome that is terminal must not be rendered as
+// recoverable. The catch-all sent `not_live` and `invalid_token` to the code
+// form, which then said "no longer available" above a live Confirm and Resend.
+// ---------------------------------------------------------------------------
+describe("terminal proof outcomes are terminal", () => {
+  const prior = { maskedContact: "s\u2022\u2022\u2022@example.com", expiresAt: "2026-09-07T13:00:00.000Z" };
+
+  for (const kind of ["not_live", "invalid_token"] as const) {
+    it(`${kind} is a dead end, not a retry`, () => {
+      expect(proofStageFromComplete({ kind }, prior)).toEqual({
+        kind: "unavailable",
+        retryable: false,
+      });
+    });
+  }
+
+  it("genuinely recoverable failures still return to the code form", () => {
+    for (const kind of ["wrong_challenge", "challenge_expired", "too_many_attempts"] as const) {
+      expect(proofStageFromComplete({ kind }, prior).kind).toBe("failed");
+    }
   });
 });

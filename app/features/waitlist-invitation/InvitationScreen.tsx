@@ -2,6 +2,7 @@
 
 import type {
   InvitationViewState,
+  OfferedDay,
   OfferedSlot,
   OfferPresentation,
   ProofStage,
@@ -81,7 +82,7 @@ export function InvitationScreen({
       {state.kind === "offer" ? (
         <OfferView
           presentation={state.presentation}
-          slots={state.slots}
+          days={state.days}
           windowDescription={state.windowDescription}
           empty={state.empty}
           selectedSlotStart={selectedSlotStart}
@@ -132,10 +133,13 @@ function DeclinedView() {
   return (
     <div className="flex flex-col gap-4">
       <h1 className="text-xl text-[#0A0A0A]">Thanks for letting us know</h1>
-      {/* No queue position, and no promise about a next offer we cannot keep. */}
+      {/* NO PROMISE THE SYSTEM DOES NOT KEEP. Declining releases the entry;
+          only a practitioner-authorised requeue returns it to the waiting list,
+          so "you're still on the list and they'll be in touch" claimed an
+          automatic future contact that does not happen. */}
       <p className="text-sm text-[#6B6B6B]">
-        You’ve declined this appointment. You’re still on the studio’s list, and they’ll be in
-        touch if something else opens up.
+        You’ve declined this appointment and the studio has been told. If you’d still like to be
+        seen, please contact them directly.
       </p>
     </div>
   );
@@ -156,7 +160,7 @@ const CLOSED_COPY: Record<string, { title: string; body: string }> = {
   },
   declined: {
     title: "You’ve already declined this offer",
-    body: "You’re still on the studio’s list, and they’ll be in touch if something else opens up.",
+    body: "If you’d still like an appointment, please contact the studio directly.",
   },
 };
 
@@ -207,7 +211,7 @@ function BookedView({
 
 function OfferView({
   presentation,
-  slots,
+  days,
   windowDescription,
   empty,
   selectedSlotStart,
@@ -218,7 +222,7 @@ function OfferView({
   pending,
 }: {
   presentation: OfferPresentation;
-  slots: readonly OfferedSlot[];
+  days: readonly OfferedDay[];
   windowDescription: string;
   empty: boolean;
   selectedSlotStart: string | null;
@@ -260,27 +264,38 @@ function OfferView({
           </button>
         </section>
       ) : (
-        <section className="flex flex-col gap-3">
+        <section className="flex flex-col gap-5">
           <h2 className="text-sm text-[#0A0A0A]">Choose a time</h2>
-          <ul className="flex flex-col gap-2">
-            {slots.map((slot) => {
-              const selected = selectedSlotStart === slot.start;
-              return (
-                <li key={slot.start}>
-                  <button
-                    type="button"
-                    onClick={() => onSelectSlot(slot)}
-                    aria-pressed={selected}
-                    className={`${CONTROL_MIN_TOUCH} ${FOCUS_RING} w-full border border-[#0A0A0A] px-4 text-sm ${
-                      selected ? "bg-[#0A0A0A] text-[#FAFAF7]" : "bg-white text-[#0A0A0A]"
-                    }`}
-                  >
-                    {slot.startLabel}
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
+          {/* GROUPED BY DAY, because an offer spanning Mondays AND Wednesdays
+              renders "9:00 AM" twice otherwise and the recipient cannot tell
+              which day they are booking. The heading names the day visually and
+              `aria-label` repeats it on the control itself, so the distinction
+              survives for a screen reader reading buttons out of context. */}
+          {days.map((day) => (
+            <div key={day.date} className="flex flex-col gap-2">
+              <h3 className="text-sm text-[#6B6B6B]">{day.dateLabel}</h3>
+              <ul className="flex flex-col gap-2">
+                {day.slots.map((slot) => {
+                  const selected = selectedSlotStart === slot.start;
+                  return (
+                    <li key={slot.start}>
+                      <button
+                        type="button"
+                        onClick={() => onSelectSlot(slot)}
+                        aria-pressed={selected}
+                        aria-label={`${day.dateLabel} at ${slot.startLabel}`}
+                        className={`${CONTROL_MIN_TOUCH} ${FOCUS_RING} w-full border border-[#0A0A0A] px-4 text-sm ${
+                          selected ? "bg-[#0A0A0A] text-[#FAFAF7]" : "bg-white text-[#0A0A0A]"
+                        }`}
+                      >
+                        {slot.startLabel}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ))}
         </section>
       )}
 
@@ -394,12 +409,18 @@ function ProofView({
           <label className="flex flex-col gap-1 text-sm text-[#0A0A0A]" htmlFor="proof-code">
             Enter the code we sent to {"maskedContact" in stage ? stage.maskedContact : ""}
           </label>
+          {/* B1.5c mints `^[a-f0-9]{64}$`, so nearly every code contains a-f.
+              A numeric keypad made the credential literally unenterable on the
+              surface this slice exists to serve. */}
           <input
             id="proof-code"
             name="code"
             type="text"
-            inputMode="numeric"
+            inputMode="text"
             autoComplete="one-time-code"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
             required
             className={`${CONTROL_MIN_TOUCH} ${FOCUS_RING} w-full border border-[#0A0A0A] px-4 text-base`}
           />

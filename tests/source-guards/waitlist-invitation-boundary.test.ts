@@ -84,9 +84,12 @@ describe("there is no second availability engine", () => {
     // NOTHING here builds a Date. The window walk uses tz.addDays and the
     // weekday comes from B2's contract, so there is no local date construction
     // left to drift.
-    // The one Date is the slot instant handed to B2's evaluator; no window
-    // arithmetic is done here.
-    expect((STATE.match(/new Date\(/g) ?? []).length).toBe(1);
+    // Dates are constructed only to PARSE -- a slot instant for B2's evaluator,
+    // and a YMD for its day label. What must not exist is window arithmetic:
+    // no adding days, no comparing against the scope bounds by hand.
+    expect(STATE).not.toContain("addDays");
+    expect(STATE).not.toContain("setUTCDate");
+    expect(STATE).not.toContain("getTime() +");
   });
 });
 
