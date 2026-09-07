@@ -268,25 +268,46 @@ describe("the submitted code cannot push the page sideways", () => {
 
 // NARROW THE TYPE, NOT THE MAPPER. Three rounds running, a producer was fixed
 // while the exported type stayed wide enough to express the broken state.
-describe("the proof-failure reason is the recoverable subset", () => {
-  it("is an Exclude over the outcome union, not the whole of it", () => {
-    expect(STATE).toContain("export type RecoverableProofFailure = Exclude<");
-    expect(STATE).toContain('CompleteProofOutcome["kind"],');
+describe("proof-failure recovery is an explicit closed list", () => {
+  it("is enumerated, never derived by Exclude", () => {
+    // `Exclude` got the DEFAULT wrong: a new terminal outcome would have been
+    // recoverable by omission and rendered above live Confirm and Resend.
+    expect(STATE).toContain("export type RecoverableProofFailure =");
+    expect(STATE, "recovery is still derived by subtraction").not.toContain(
+      "RecoverableProofFailure = Exclude<",
+    );
+    const decl = STATE.slice(
+      STATE.indexOf("export type RecoverableProofFailure ="),
+      STATE.indexOf(";", STATE.indexOf("export type RecoverableProofFailure =")),
+    );
     for (const terminal of ["verified", "unavailable", "invalid_token", "not_live"]) {
-      expect(STATE, `${terminal} is still expressible as a failure`).toContain(`"${terminal}"`);
+      expect(decl, `${terminal} is recoverable`).not.toContain(`"${terminal}"`);
     }
-    // The failed variant must use the subset, never the raw union.
-    const failed = STATE.slice(STATE.indexOf('kind: "failed";'), STATE.indexOf('kind: "unavailable";'));
-    expect(failed).toContain("reason: RecoverableProofFailure;");
-    expect(failed).not.toContain('CompleteProofOutcome["kind"]');
+    expect(decl).toContain('"wrong_challenge"');
   });
 
-  it("the copy map is keyed by that subset and carries no terminal entries", () => {
+  it("the complete-proof mapper is exhaustive with a never guard", () => {
+    const fn = STATE.slice(
+      STATE.indexOf("export function proofStageFromComplete"),
+      STATE.indexOf("function assertNeverCompleteOutcome"),
+    );
+    expect(fn.length).toBeGreaterThan(200);
+    expect(fn, "a catch-all still classifies unknown outcomes").not.toMatch(
+      /default:\s*\n\s*return \{ kind: "failed"/,
+    );
+    expect(fn).toContain("assertNeverCompleteOutcome(outcome)");
+    expect(STATE).toContain("function assertNeverCompleteOutcome(outcome: never)");
+  });
+
+  it("the copy map is keyed by that list and carries no terminal entries", () => {
     expect(SCREEN).toContain("Record<RecoverableProofFailure, string>");
-    const map = SCREEN.slice(SCREEN.indexOf("const PROOF_FAILURE_COPY"), SCREEN.indexOf("};", SCREEN.indexOf("const PROOF_FAILURE_COPY")));
+    const map = SCREEN.slice(
+      SCREEN.indexOf("const PROOF_FAILURE_COPY"),
+      SCREEN.indexOf("};", SCREEN.indexOf("const PROOF_FAILURE_COPY")),
+    );
     expect(map.length).toBeGreaterThan(100);
-    expect(map, "terminal copy survives in a recoverable map").not.toContain("invalid_token:");
-    expect(map, "terminal copy survives in a recoverable map").not.toContain("not_live:");
+    expect(map).not.toContain("invalid_token:");
+    expect(map).not.toContain("not_live:");
   });
 });
 
@@ -314,6 +335,53 @@ describe("a booking in flight cannot have its slot changed", () => {
     const grid = SCREEN.slice(SCREEN.indexOf("day.slots.map"), SCREEN.indexOf("</section>", SCREEN.indexOf("day.slots.map")));
     expect(grid.length).toBeGreaterThan(100);
     expect(grid, "slots stayed clickable during a booking").toContain("disabled={pending}");
+  });
+});
+
+// THE CLIENT BOUNDARY. The offer state carried B2's whole `ResolvedInvitation`
+// into a `"use client"` component that never read it.
+describe("internal authority fields do not cross to the client", () => {
+  it("the view state carries a projection, not ResolvedInvitation", () => {
+    expect(STATE).toContain("export type SafeInvitationRef");
+    expect(STATE).toContain("invitation: SafeInvitationRef;");
+    const offer = STATE.slice(STATE.indexOf('kind: "offer";'), STATE.indexOf('kind: "closed";'));
+    expect(offer.length).toBeGreaterThan(100);
+    expect(offer, "the resolved invitation still crosses whole").not.toContain(
+      "invitation: ResolvedInvitation;",
+    );
+  });
+
+  it("the safe shape names only the two permitted fields", () => {
+    const decl = STATE.slice(
+      STATE.indexOf("export type SafeInvitationRef"),
+      STATE.indexOf("};", STATE.indexOf("export type SafeInvitationRef")),
+    );
+    expect(decl.length).toBeGreaterThan(40);
+    expect(decl).toContain("invitationId");
+    expect(decl).toContain("expiresAt");
+    for (const forbidden of ["recipientContactHash", "entryId", "studioId", "scope"]) {
+      expect(decl, `${forbidden} crosses the client boundary`).not.toContain(forbidden);
+    }
+  });
+
+  it("the screen never reads a field the projection excludes", () => {
+    for (const forbidden of ["recipientContactHash", "entryId", "studioId"]) {
+      expect(SCREEN, `screen reads ${forbidden}`).not.toContain(forbidden);
+    }
+  });
+});
+
+describe("offer emptiness is structural, not a flag beside the collection", () => {
+  it("the offer state carries no `empty` and no second slot list", () => {
+    const offer = STATE.slice(STATE.indexOf('kind: "offer";'), STATE.indexOf('kind: "closed";'));
+    expect(offer.length).toBeGreaterThan(100);
+    expect(offer, "a contradictable flag survives").not.toMatch(/^\s*empty: boolean;/m);
+    expect(offer, "a second collection survives").not.toMatch(/^\s*slots: readonly OfferedSlot\[\];/m);
+    expect(offer).toContain("days: readonly OfferedDay[];");
+  });
+
+  it("the view derives emptiness from what it renders", () => {
+    expect(SCREEN).toContain("const empty = days.length === 0;");
   });
 });
 

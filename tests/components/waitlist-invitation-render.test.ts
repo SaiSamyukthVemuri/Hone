@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createElement } from "react";
 import type { OfferedSlot, OfferPresentation } from "@/lib/waitlist/invitation-offer";
-import type { ResolvedInvitation } from "@/lib/booking/waitlist-invitation";
 
 // WAIT-03 B3 — what the recipient's screen actually RENDERS.
 //
@@ -25,21 +24,16 @@ const PRESENTATION: OfferPresentation = {
   studioTimezone: "America/Toronto",
 };
 
-const INVITATION: ResolvedInvitation = {
+// The PRESENTATION-SAFE projection. Deliberately not B2's ResolvedInvitation:
+// `recipientContactHash`, `entryId`, `studioId` and `scope` must not reach a
+// "use client" component, and the guard suite asserts they cannot.
+const SAFE_REF = {
   invitationId: "inv-1",
-  studioId: "studio-1",
-  entryId: "entry-1",
-  scope: {
-    serviceId: "svc-1",
-    startDate: "2026-09-07",
-    endDate: "2026-09-11",
-    allowedWeekdays: [1, 3],
-  },
   expiresAt: "2026-09-08T12:00:00.000Z",
-  recipientContactHash: "hash",
 };
 
 const WINDOW_DESCRIPTION = "Mondays, Wednesdays, Sep 7, 2026 – Sep 11, 2026";
+
 
 const SLOT2: OfferedSlot = {
   start: "2026-09-09T13:00:00.000Z",
@@ -53,7 +47,37 @@ const SLOT: OfferedSlot = {
   startLabel: "9:00 AM",
 };
 
+const OFFER_STATE = {
+  kind: "offer" as const,
+  invitation: SAFE_REF,
+  presentation: PRESENTATION,
+  days: [{ date: "2026-09-07", dateLabel: "Mon, Sep 7", slots: [SLOT] }],
+  windowDescription: WINDOW_DESCRIPTION,
+};
+
 const noop = () => {};
+
+/**
+ * MATCH THE ATTRIBUTE, NOT THE CLASS.
+ *
+ * Every control here carries `disabled:opacity-60` in its class list, so
+ * `toContain("disabled")` passes whether or not the control is actually
+ * disabled. One assertion in this file was written that way and would have held
+ * with its `disabled={…}` prop removed; rather than fix that one, the matcher
+ * is shared so the next one cannot be written loosely either.
+ */
+const DISABLED_ATTR = /\sdisabled(=|\s|>)/;
+
+/** The rendered tag for a button whose visible label matches. */
+function buttonWithLabel(html: string, label: string): string {
+  const tags = html.match(/<button[^>]*>/g) ?? [];
+  const idx = html.indexOf(label);
+  const found = tags.filter((t) => {
+    const at = html.indexOf(t);
+    return at < idx && html.indexOf("</button>", at) > idx;
+  });
+  return found[found.length - 1] ?? "";
+}
 
 function render(state: Parameters<typeof InvitationScreen>[0]["state"], over = {}) {
   return renderToStaticMarkup(
@@ -72,7 +96,7 @@ function render(state: Parameters<typeof InvitationScreen>[0]["state"], over = {
 }
 
 describe("the offer screen", () => {
-  const html = render({ kind: "offer", invitation: INVITATION, presentation: PRESENTATION, slots: [SLOT], days: [{ date: "2026-09-07", dateLabel: "Mon, Sep 7", slots: [SLOT] }], windowDescription: WINDOW_DESCRIPTION, empty: false });
+  const html = render({ kind: "offer", invitation: SAFE_REF, presentation: PRESENTATION, days: [{ date: "2026-09-07", dateLabel: "Mon, Sep 7", slots: [SLOT] }], windowDescription: WINDOW_DESCRIPTION });
 
   it("states the offered horizon in words, as the state layer resolved it", () => {
     expect(html).toContain("Times held for you");
@@ -98,16 +122,18 @@ describe("the offer screen", () => {
     for (const b of buttons) expect(b, `control below the touch floor: ${b}`).toContain("min-h-[44px]");
   });
 
-  it("book is disabled until a time is chosen", () => {
-    expect(html).toMatch(/Book this time/);
-    expect(html).toContain("disabled");
+  it("book is DISABLED until a time is chosen", () => {
+    const tag = buttonWithLabel(html, "Book this time");
+    expect(tag, "no Book button found to check").not.toBe("");
+    expect(tag, `Book was enabled with no slot chosen: ${tag}`).toMatch(DISABLED_ATTR);
   });
 
-  it("enables book once a slot is selected", () => {
-    const chosen = render(
-      { kind: "offer", invitation: INVITATION, presentation: PRESENTATION, slots: [SLOT], days: [{ date: "2026-09-07", dateLabel: "Mon, Sep 7", slots: [SLOT] }], windowDescription: WINDOW_DESCRIPTION, empty: false },
-      { selectedSlotStart: SLOT.start },
-    );
+  it("book becomes ENABLED once a slot is selected", () => {
+    // The pair is the point: neither state alone proves the button changes.
+    const chosen = render(OFFER_STATE, { selectedSlotStart: SLOT.start });
+    const tag = buttonWithLabel(chosen, "Book this time");
+    expect(tag).not.toBe("");
+    expect(tag, `Book stayed disabled with a slot chosen: ${tag}`).not.toMatch(DISABLED_ATTR);
     expect(chosen).toContain('aria-pressed="true"');
   });
 
@@ -124,7 +150,7 @@ describe("the offer screen", () => {
 });
 
 describe("an empty window is not a dead end", () => {
-  const html = render({ kind: "offer", invitation: INVITATION, presentation: PRESENTATION, slots: [], days: [], windowDescription: WINDOW_DESCRIPTION, empty: true });
+  const html = render({ kind: "offer", invitation: SAFE_REF, presentation: PRESENTATION, days: [], windowDescription: WINDOW_DESCRIPTION });
 
   it("explains, and offers a retry rather than a booking control", () => {
     expect(html).toContain("Nothing is open");
@@ -251,15 +277,13 @@ describe("possession shows the offer and no times", () => {
 describe("a multi-day offer is unambiguous", () => {
   const html = render({
     kind: "offer",
-    invitation: INVITATION,
+    invitation: SAFE_REF,
     presentation: PRESENTATION,
-    slots: [SLOT, SLOT2],
     days: [
       { date: "2026-09-07", dateLabel: "Mon, Sep 7", slots: [SLOT] },
       { date: "2026-09-09", dateLabel: "Wed, Sep 9", slots: [SLOT2] },
     ],
     windowDescription: WINDOW_DESCRIPTION,
-    empty: false,
   });
 
   it("names each day as a heading", () => {
@@ -377,15 +401,13 @@ describe("verifying is busy and non-interactive", () => {
 describe("slot selection freezes while a booking is pending", () => {
   const offerState = {
     kind: "offer" as const,
-    invitation: INVITATION,
+    invitation: SAFE_REF,
     presentation: PRESENTATION,
-    slots: [SLOT, SLOT2],
     days: [
       { date: "2026-09-07", dateLabel: "Mon, Sep 7", slots: [SLOT] },
       { date: "2026-09-09", dateLabel: "Wed, Sep 9", slots: [SLOT2] },
     ],
     windowDescription: WINDOW_DESCRIPTION,
-    empty: false,
   };
 
   // MATCH THE ATTRIBUTE, NOT THE CLASS. The button carries

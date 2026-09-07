@@ -61,6 +61,20 @@ export type OfferedDay = {
   slots: readonly OfferedSlot[];
 };
 
+/**
+ * The only invitation facts allowed across the client boundary.
+ *
+ * Deliberately NOT `entryId`, `studioId`, `scope` or `recipientContactHash`.
+ * The scope is consumed server-side to narrow the slots; nothing downstream of
+ * that needs it, and a hash of the recipient's contact must never be in a
+ * payload the browser receives.
+ */
+export type SafeInvitationRef = {
+  invitationId: string;
+  /** When the offer lapses -- a fact the recipient may legitimately be shown. */
+  expiresAt: string;
+};
+
 /** Everything the screen needs that is not the invitation itself. */
 export type OfferPresentation = {
   studioName: string;
@@ -71,6 +85,14 @@ export type OfferPresentation = {
 
 /**
  * The proof failures a recipient can actually recover from.
+ *
+ * AN EXPLICIT CLOSED LIST, NOT AN `Exclude`. The subset was derived by removing
+ * the terminal kinds -- which meant a NEW terminal outcome (a revocation, say)
+ * would have been recoverable BY DEFAULT and rendered above live Confirm and
+ * Resend, recreating the exact failure the subset was introduced to prevent.
+ * Excluding gets the default wrong; enumerating makes every future authority
+ * result state its own case, and the exhaustive mapper below forces that
+ * decision at compile time.
  *
  * NARROWING THE TYPE, NOT THE MAPPER. `proofStageFromComplete` already sent
  * `not_live` and `invalid_token` to a dead end -- but `failed.reason` was typed
@@ -85,10 +107,13 @@ export type OfferPresentation = {
  * subset type ends it -- the combinations cannot be built, and the copy map
  * below cannot omit one.
  */
-export type RecoverableProofFailure = Exclude<
-  CompleteProofOutcome["kind"],
-  "verified" | "unavailable" | "invalid_token" | "not_live"
->;
+export type RecoverableProofFailure =
+  | "wrong_challenge"
+  | "no_challenge"
+  | "challenge_expired"
+  | "too_many_attempts"
+  | "recipient_changed"
+  | "invalid_input";
 
 /** Where the recipient is in the proof exchange. B1.5c's shape, not a new one. */
 export type ProofStage =
@@ -138,14 +163,31 @@ export type InvitationViewState =
     }
   | {
       kind: "offer";
-      invitation: ResolvedInvitation;
+      /**
+       * A PRESENTATION-SAFE projection, not B2's `ResolvedInvitation`.
+       *
+       * This carried the resolved invitation whole into a `"use client"`
+       * component that never read it -- shipping `recipientContactHash` (a hash
+       * of the recipient's email, susceptible to offline guessing and
+       * documented by the authority layer as server-side), plus `entryId` and
+       * `studioId`, to the browser for nothing. Only what a client could
+       * legitimately need crosses now.
+       */
+      invitation: SafeInvitationRef;
       presentation: OfferPresentation;
-      /** Flat, still narrowed, for callers that want the raw list. */
-      slots: readonly OfferedSlot[];
-      /** The same slots, grouped under their studio-local day. */
+      /**
+       * The narrowed slots, grouped under their studio-local day.
+       *
+       * THE ONLY COLLECTION, AND THE ONLY SOURCE OF EMPTINESS. This carried a
+       * flat `slots` list and a separate `empty` boolean beside it, so the type
+       * admitted `empty: true` with populated days -- hiding real availability
+       * -- and `empty: false` with none, an empty "Choose a time" with no retry
+       * path. The view branched on the flag and rendered from the collection,
+       * so the two could disagree. Emptiness is now `days.length === 0`: a fact
+       * about what is rendered, not a claim travelling beside it.
+       */
       days: readonly OfferedDay[];
       windowDescription: string;
-      empty: boolean;
     }
   | { kind: "closed"; reason: InvitationClosedReason; presentation: OfferPresentation | null }
   | { kind: "booked"; presentation: OfferPresentation; startLabel: string; dateLabel: string }
@@ -338,12 +380,14 @@ export function deriveInvitationViewState(ctx: RecipientContext): InvitationView
       const slots = filterSlotsToScope(scope, ctx.presentation.studioTimezone, ctx.slots);
       return {
         kind: "offer",
-        invitation: resolve.invitation,
+        // Projected here, so the internal fields never leave this function.
+        invitation: {
+          invitationId: resolve.invitation.invitationId,
+          expiresAt: resolve.invitation.expiresAt,
+        },
         presentation: ctx.presentation,
-        slots,
         days: groupSlotsByDay(ctx.presentation.studioTimezone, slots),
         windowDescription,
-        empty: slots.length === 0,
       };
     }
   }
@@ -382,20 +426,40 @@ export function proofStageFromComplete(
   outcome: CompleteProofOutcome,
   previous: { maskedContact: string; expiresAt: string },
 ): ProofStage {
-  if (outcome.kind === "verified") return { kind: "proven" };
-  if (outcome.kind === "unavailable") return { kind: "unavailable", retryable: true };
+  switch (outcome.kind) {
+    case "verified":
+      return { kind: "proven" };
+    case "unavailable":
+      return { kind: "unavailable", retryable: true };
 
-  // TERMINAL OUTCOMES ARE TERMINAL. If the invitation expired, was released or
-  // was redeemed between the code being issued and submitted, B2 answers
-  // `not_live` -- and `invalid_token` is likewise a dead end. A catch-all
-  // `failed` sent both to the code form, which then said "no longer available"
-  // above a live Confirm and a live Resend. That is the same defect the resolve
-  // union was made exhaustive to prevent, left in the proof mapping.
-  if (outcome.kind === "not_live" || outcome.kind === "invalid_token") {
-    return { kind: "unavailable", retryable: false };
+    // TERMINAL. If the invitation expired, was released or was redeemed between
+    // the code being issued and submitted, B2 answers `not_live`; an
+    // `invalid_token` is likewise a dead end. Rendering either on the code form
+    // showed "no longer available" above a live Confirm and a live Resend.
+    case "not_live":
+    case "invalid_token":
+      return { kind: "unavailable", retryable: false };
+
+    // RECOVERABLE. Each one names itself, so a new authority result cannot join
+    // this set by omission.
+    case "wrong_challenge":
+    case "no_challenge":
+    case "challenge_expired":
+    case "too_many_attempts":
+    case "recipient_changed":
+    case "invalid_input":
+      return { kind: "failed", reason: outcome.kind, ...previous };
+
+    default:
+      return assertNeverCompleteOutcome(outcome);
   }
+}
 
-  return { kind: "failed", reason: outcome.kind, ...previous };
+/** Compile-time exhaustiveness over B2's complete-proof outcomes. */
+function assertNeverCompleteOutcome(outcome: never): ProofStage {
+  void outcome;
+  // Unreachable; fails closed rather than offering a retry it cannot justify.
+  return { kind: "unavailable", retryable: false };
 }
 
 /**

@@ -103,7 +103,6 @@ export function InvitationScreen({
             presentation={state.presentation}
             days={state.days}
             windowDescription={state.windowDescription}
-            empty={state.empty}
             selectedSlotStart={selectedSlotStart}
             onSelectSlot={onSelectSlot}
             onBook={onBook}
@@ -249,7 +248,6 @@ function OfferView({
   presentation,
   days,
   windowDescription,
-  empty,
   selectedSlotStart,
   onSelectSlot,
   onBook,
@@ -260,7 +258,6 @@ function OfferView({
   presentation: OfferPresentation;
   days: readonly OfferedDay[];
   windowDescription: string;
-  empty: boolean;
   selectedSlotStart: string | null;
   onSelectSlot: (slot: OfferedSlot) => void;
   onBook: () => void;
@@ -268,6 +265,9 @@ function OfferView({
   onRetry: () => void;
   pending: boolean;
 }) {
+  // DERIVED, never carried. A separate `empty` flag could contradict the
+  // collection it described; this cannot.
+  const empty = days.length === 0;
   return (
     <div className="flex flex-col gap-6">
       <header className="flex flex-col gap-1">

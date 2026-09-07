@@ -168,15 +168,16 @@ describe("the view state maps B2's outcomes", () => {
     );
     expect(state.kind).toBe("offer");
     if (state.kind === "offer") {
-      expect(state.slots).toHaveLength(1);
-      expect(state.empty).toBe(false);
+      expect(state.days).toHaveLength(1);
+      expect(state.days[0].slots).toHaveLength(1);
     }
   });
 
   it("a live invitation with nothing bookable is EMPTY, not closed", () => {
     const state = deriveInvitationViewState(ctx({ slots: [] }));
     expect(state.kind).toBe("offer");
-    if (state.kind === "offer") expect(state.empty).toBe(true);
+    // Emptiness is now structural: no days IS empty, with no flag to contradict.
+    if (state.kind === "offer") expect(state.days).toEqual([]);
   });
 
   for (const [wire, shown] of [
@@ -358,5 +359,63 @@ describe("terminal proof outcomes are terminal", () => {
     for (const kind of ["wrong_challenge", "challenge_expired", "too_many_attempts"] as const) {
       expect(proofStageFromComplete({ kind }, prior).kind).toBe("failed");
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// REVIEW P2 — the client boundary. The offer state carried B2's whole
+// `ResolvedInvitation` into a `"use client"` component that never read it,
+// shipping a hash of the recipient's email to the browser for nothing.
+// ---------------------------------------------------------------------------
+describe("only presentation-safe invitation facts cross to the client", () => {
+  it("projects to invitationId and expiresAt, and nothing else", () => {
+    const state = deriveInvitationViewState(ctx({ slots: [slot("2026-09-07")] }));
+    expect(state.kind).toBe("offer");
+    if (state.kind !== "offer") return;
+    expect(Object.keys(state.invitation).sort()).toEqual(["expiresAt", "invitationId"]);
+  });
+
+  it("carries no recipient hash, entry id, studio id or scope", () => {
+    const state = deriveInvitationViewState(ctx({ slots: [slot("2026-09-07")] }));
+    // Serialised, because that is exactly what crosses the boundary.
+    const wire = JSON.stringify(state);
+    expect(wire, "recipient contact hash reached the client").not.toContain("hash");
+    expect(wire, "entry id reached the client").not.toContain("entry-1");
+    expect(wire, "studio id reached the client").not.toContain("studio-1");
+    expect(wire, "scope reached the client").not.toContain("allowedWeekdays");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// REVIEW P2 — recovery is an explicit allowlist, so a future terminal outcome
+// cannot become recoverable by omission.
+// ---------------------------------------------------------------------------
+describe("proof-failure recovery is opt-in", () => {
+  const prior = { maskedContact: "s\u2022\u2022\u2022@example.com", expiresAt: "2026-09-07T13:00:00.000Z" };
+
+  it("classifies every CompleteProofOutcome kind explicitly", () => {
+    const terminal = ["not_live", "invalid_token"] as const;
+    const recoverable = [
+      "wrong_challenge",
+      "no_challenge",
+      "challenge_expired",
+      "too_many_attempts",
+      "recipient_changed",
+      "invalid_input",
+    ] as const;
+
+    for (const kind of terminal) {
+      expect(proofStageFromComplete({ kind }, prior)).toEqual({
+        kind: "unavailable",
+        retryable: false,
+      });
+    }
+    for (const kind of recoverable) {
+      expect(proofStageFromComplete({ kind }, prior).kind).toBe("failed");
+    }
+    expect(proofStageFromComplete({ kind: "unavailable" }, prior)).toEqual({
+      kind: "unavailable",
+      retryable: true,
+    });
   });
 });
