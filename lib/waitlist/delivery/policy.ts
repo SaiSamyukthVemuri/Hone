@@ -10,11 +10,36 @@
 //
 // It does not own the proof's expiry. The database does — it mints the
 // challenge, stores only its hash, and stamps `expires_at` from a server-owned
-// trigger, exactly as 0188 does for `new_client_waitlist_invitations`. The
-// constants below are the APPLICATION-SIDE contract: the window the product
-// asks for, and the ceiling the database must never exceed. They are inputs to
-// a request and an assertion about a returned value, never a second source of
-// truth for a live expiry.
+// trigger, exactly as 0188 does for `new_client_waitlist_invitations`.
+//
+// ===========================================================================
+// THREE DIFFERENT TTLs. THEY ARE NOT THE SAME NUMBER AND NOT THE SAME OBJECT.
+// ===========================================================================
+//
+// An earlier revision of this file collapsed them, and asserted a 30-minute
+// ceiling over the CHALLENGE. That was wrong twice: 30 minutes is not the
+// challenge's bound, and the challenge is not the object that bound governs.
+//
+//   1. PROOF CHALLENGE — minted by `beginRecipientProof`, delivered by this
+//      module as a code in an email. Its bound is B2's and is set
+//      independently. Delivery REQUESTS 20 minutes; that is a product target,
+//      not a law, and this module enforces only that the mint honoured the
+//      request it made (below).
+//
+//   2. MUTATION CAPABILITY — minted by `completeRecipientProof` AFTER a
+//      challenge is answered. THIS is what the B1/B1.5c "<= 30 minutes" hard
+//      law governs. **This module never mints, delivers, sees or guards a
+//      capability.** It is recorded here only so the two are not re-conflated.
+//
+//   3. INVITATION — `issue_new_client_waitlist_invitation`, `p_ttl_hours`
+//      default 72 clamped 1..168 (0189). Hours, not minutes. Unrelated to both.
+//
+// NOT REPO-VERIFIABLE TODAY, and said plainly rather than implied: no proof
+// challenge or capability TTL exists anywhere in `supabase/migrations/**` at
+// this SHA — B2 and B1.5c are not in the repository. Items 1 and 2 above are
+// therefore recorded from the operator's statement of the in-flight design, and
+// must be re-read from the migration that lands them before being relied on.
+// Item 3 is mechanically established in 0189 and is the only one that is.
 //
 // The distinction is load-bearing. `app/portal/login/actions.ts` owns
 // MAGIC_LINK_TTL_MS *because* the application inserts `expires_at` itself
@@ -27,9 +52,12 @@
 // ---------------------------------------------------------------------------
 
 /**
- * What the product asks for: 20 minutes.
+ * What Delivery REQUESTS for a proof CHALLENGE: 20 minutes.
  *
- * WHY NOT 30, WHICH IS THE CEILING. Hone has already paid for a too-short
+ * A product target, not a database law. B2 bounds the challenge independently;
+ * this number is what this feature asks for and what it will mail.
+ *
+ * WHY SO SHORT, GIVEN HONE'S OWN HISTORY. Hone has already paid for a too-short
  * emailed credential once. PR #166 raised the portal magic link from 30 minutes
  * to 60 after a real bug report ("secure link stopped working under 30 mins"),
  * because Resend's floor is 3-15 seconds, receiving MTAs queue new senders for
@@ -52,14 +80,23 @@
  * PR #166 fixed. `PROOF_RESEND_MIN_INTERVAL_SECONDS` below exists because of
  * this, not as an afterthought.
  */
-export const PROOF_TTL_TARGET_MINUTES = 20;
+export const PROOF_CHALLENGE_TTL_TARGET_MINUTES = 20;
 
 /**
- * The hard ceiling. A proof whose stored expiry is further out than this is a
- * defect in whatever minted it, and the send path refuses rather than delivers
- * a code that outlives its mandate.
+ * The B1/B1.5c hard law on the MUTATION CAPABILITY — the object
+ * `completeRecipientProof` mints once a challenge is answered.
+ *
+ * DOCUMENTATION ONLY. It is exported so the distinction is greppable and so a
+ * future reader who finds "30 minutes" in a design note can see which object it
+ * governs. Nothing in this module compares anything against it, because
+ * Delivery never handles a capability: it delivers the challenge that precedes
+ * one. Guarding it here would be a second owner of someone else's law, which is
+ * the same defect as the rate-limit copy this file's own review caught.
+ *
+ * Re-read it from the migration that lands B1.5c before relying on it; it is
+ * not established anywhere in `supabase/migrations/**` at this SHA.
  */
-export const PROOF_TTL_CEILING_MINUTES = 30;
+export const MUTATION_CAPABILITY_TTL_CEILING_MINUTES = 30;
 
 /** Minimum gap between two proof sends for one invitation. */
 export const PROOF_RESEND_MIN_INTERVAL_SECONDS = 60;
@@ -71,21 +108,27 @@ export const PROOF_RESEND_MIN_INTERVAL_SECONDS = 60;
 export const PROOF_MAX_SENDS_PER_INVITATION = 5;
 
 /**
- * Whether a stored expiry is inside the mandate.
+ * Whether a minted CHALLENGE is one this module is willing to mail.
  *
- * Deliberately checks BOTH ends. An expiry in the past is not merely useless,
- * it is evidence that the mint and the send disagree about the clock, and
- * emailing a dead code is worse than refusing: the recipient burns their resend
- * budget discovering it.
+ * Checks two things, and both are Delivery's own business rather than a claim
+ * about anyone else's bound:
+ *
+ *   ALREADY ELAPSED -> refuse. Emailing a dead code is worse than refusing: the
+ *   recipient spends a resend from a bounded budget to discover it, and an
+ *   expiry already in the past means the mint and the send disagree about the
+ *   clock, which is worth surfacing rather than papering over.
+ *
+ *   LONGER THAN DELIVERY ASKED FOR -> refuse. This is NOT an assertion about
+ *   B2's bound, which is B2's to set and may legitimately be wider. It asks
+ *   only whether the mint honoured the window THIS module requested. Keying on
+ *   `PROOF_CHALLENGE_TTL_TARGET_MINUTES` means the check follows the request
+ *   automatically if the target ever moves, and it imports no foreign number.
  */
-export function isProofExpiryWithinCeiling(
-  expiresAt: Date,
-  now: Date,
-): boolean {
+export function isChallengeMailable(expiresAt: Date, now: Date): boolean {
   const ms = expiresAt.getTime() - now.getTime();
   if (!Number.isFinite(ms)) return false;
   if (ms <= 0) return false;
-  return ms <= PROOF_TTL_CEILING_MINUTES * 60_000;
+  return ms <= PROOF_CHALLENGE_TTL_TARGET_MINUTES * 60_000;
 }
 
 /**

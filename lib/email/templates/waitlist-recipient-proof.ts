@@ -85,6 +85,10 @@ export type WaitlistRecipientProofEmailInput = {
    * derived from database-owned values (`expires_at - issued_at`), never from a
    * constant in this module. The email is sent immediately after the mint, so
    * it is also what the recipient actually has.
+   *
+   * This is the CHALLENGE window. It is not the mutation-capability ceiling
+   * that B1/B1.5c caps at 30 minutes — a different object, minted later by
+   * `completeRecipientProof`, which this template never describes.
    */
   windowMinutes: number;
   /**

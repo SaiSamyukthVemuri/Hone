@@ -8,7 +8,7 @@ import { buildWaitlistInvitationEmail } from "@/lib/email/templates/waitlist-inv
 import { buildWaitlistRecipientProofEmail } from "@/lib/email/templates/waitlist-recipient-proof";
 import {
   classifyDelivery,
-  isProofExpiryWithinCeiling,
+  isChallengeMailable,
   proofWindowMinutes,
   type DeliveryDisposition,
 } from "./policy";
@@ -153,13 +153,17 @@ export async function sendWaitlistInvitationEmail(args: {
 /**
  * Send the recipient-proof email.
  *
- * REFUSES BEFORE IT SENDS if the stored expiry is outside the mandate. A proof
- * that outlives `PROOF_TTL_CEILING_MINUTES`, or one that has already elapsed,
- * indicates the mint and this path disagree; delivering it either extends the
- * window past what was authorised or burns the recipient's resend budget on a
- * dead code. The refusal is classified as an ordinary rejection so the caller's
- * existing branch handles it, and it is recorded with its own reason so the
+ * REFUSES BEFORE IT SENDS if the minted CHALLENGE is not one this module is
+ * willing to mail — already elapsed, or a longer window than Delivery asked
+ * for. Both are Delivery's own business; neither is a claim about B2's bound,
+ * which is B2's to set. The refusal is classified as an ordinary rejection so
+ * the caller's existing branch handles it, and carries its own reason so the
  * cause is not mistaken for a provider fault.
+ *
+ * NOTE WHICH TTL THIS IS. The object here is the proof CHALLENGE. The
+ * B1/B1.5c "<= 30 minutes" hard law governs the MUTATION CAPABILITY that
+ * `completeRecipientProof` mints after a challenge is answered — a different
+ * object this module never handles. See policy.ts for the three-way split.
  */
 export async function sendWaitlistRecipientProofEmail(args: {
   studio: DeliveryStudio;
@@ -182,10 +186,10 @@ export async function sendWaitlistRecipientProofEmail(args: {
 }): Promise<DeliveryResult> {
   const now = args.now ?? new Date();
 
-  if (!isProofExpiryWithinCeiling(args.expiresAt, now)) {
+  if (!isChallengeMailable(args.expiresAt, now)) {
     const disposition = classifyDelivery({
       status: "rejected",
-      code: "proof_expiry_outside_mandate",
+      code: "challenge_window_not_mailable",
     });
     return {
       disposition,

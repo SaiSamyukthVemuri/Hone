@@ -7,10 +7,10 @@ import {
 } from "@/lib/waitlist/delivery/send";
 import {
   classifyDelivery,
-  isProofExpiryWithinCeiling,
+  isChallengeMailable,
   proofWindowMinutes,
-  PROOF_TTL_CEILING_MINUTES,
-  PROOF_TTL_TARGET_MINUTES,
+  PROOF_CHALLENGE_TTL_TARGET_MINUTES,
+  MUTATION_CAPABILITY_TTL_CEILING_MINUTES,
   PROOF_REQUEST_LIMITS,
 } from "@/lib/waitlist/delivery/policy";
 import type {
@@ -215,7 +215,7 @@ describe("recipient proof delivery", () => {
     expect(calls[0].payload.text).not.toContain("20 minutes");
   });
 
-  it("REFUSES to send a proof whose expiry exceeds the ceiling", async () => {
+  it("REFUSES a challenge window longer than Delivery asked for", async () => {
     const { transport, calls } = recordingTransport(ACCEPTED);
     const out = await sendWaitlistRecipientProofEmail({
       studio: STUDIO,
@@ -224,14 +224,14 @@ describe("recipient proof delivery", () => {
       recipientEmail: RECIPIENT,
       code: "H4K2QF7P",
       issuedAt: ISSUED,
-      expiresAt: new Date(NOW.getTime() + 31 * 60_000),
+      expiresAt: new Date(NOW.getTime() + 21 * 60_000),
       action: "book",
       now: NOW,
       transport,
     });
     expect(calls).toHaveLength(0); // nothing was transmitted
     expect(out.disposition.delivered).toBe("no");
-    expect(out.disposition.reason).toBe("rejected_proof_expiry_outside_mandate");
+    expect(out.disposition.reason).toBe("rejected_challenge_window_not_mailable");
   });
 
   it("REFUSES to send a proof that has already elapsed", async () => {
@@ -249,7 +249,7 @@ describe("recipient proof delivery", () => {
       transport,
     });
     expect(calls).toHaveLength(0);
-    expect(out.disposition.reason).toBe("rejected_proof_expiry_outside_mandate");
+    expect(out.disposition.reason).toBe("rejected_challenge_window_not_mailable");
   });
 
   it("never puts the invitation URL beside the code", async () => {
@@ -299,20 +299,48 @@ describe("provider failure classification", () => {
   });
 });
 
-describe("proof window policy", () => {
-  it("targets 20 minutes under a 30-minute ceiling", () => {
-    expect(PROOF_TTL_TARGET_MINUTES).toBe(20);
-    expect(PROOF_TTL_CEILING_MINUTES).toBe(30);
-    expect(PROOF_TTL_TARGET_MINUTES).toBeLessThan(PROOF_TTL_CEILING_MINUTES);
+describe("the CHALLENGE window and the CAPABILITY ceiling are different things", () => {
+  // An earlier revision collapsed these and enforced "<= 30 minutes" over the
+  // challenge. That was wrong twice over: 30 is not the challenge's bound, and
+  // the challenge is not the object that bound governs. These assertions exist
+  // to keep them apart, because the numbers are close enough to re-merge by
+  // accident and nothing else in the stack would notice.
+
+  it("Delivery REQUESTS a 20-minute challenge — a product target, not a law", () => {
+    expect(PROOF_CHALLENGE_TTL_TARGET_MINUTES).toBe(20);
   });
 
-  it("accepts the ceiling exactly and rejects a millisecond beyond it", () => {
+  it("the 30-minute figure belongs to the mutation CAPABILITY, and is never enforced here", () => {
+    expect(MUTATION_CAPABILITY_TTL_CEILING_MINUTES).toBe(30);
+    // The load-bearing half. `completeRecipientProof` mints the capability;
+    // this module delivers the challenge that precedes one and must not compare
+    // anything against a bound it does not own. If the guard ever starts
+    // accepting a 30-minute challenge, the two have been re-conflated.
+    const now = new Date("2026-09-07T12:00:00.000Z");
+    const at = (m: number) => new Date(now.getTime() + m * 60_000);
+    expect(isChallengeMailable(at(MUTATION_CAPABILITY_TTL_CEILING_MINUTES), now)).toBe(false);
+    expect(isChallengeMailable(at(25), now)).toBe(false);
+  });
+
+  it("the capability ceiling is not mechanically established in this repository", () => {
+    // Recorded from the operator's statement of in-flight B1.5c work, not from
+    // source. Stated as a fact about EVIDENCE so a later reader does not treat
+    // the constant as repo-verified: no proof-challenge or capability TTL
+    // exists under supabase/migrations/** at this SHA. Re-read it from the
+    // migration that lands B1.5c before relying on it.
+    expect(MUTATION_CAPABILITY_TTL_CEILING_MINUTES).toBeGreaterThan(
+      PROOF_CHALLENGE_TTL_TARGET_MINUTES,
+    );
+  });
+
+  it("accepts the requested window exactly and rejects a millisecond beyond it", () => {
     const now = new Date("2026-09-07T12:00:00.000Z");
     const at = (ms: number) => new Date(now.getTime() + ms);
-    expect(isProofExpiryWithinCeiling(at(30 * 60_000), now)).toBe(true);
-    expect(isProofExpiryWithinCeiling(at(30 * 60_000 + 1), now)).toBe(false);
-    expect(isProofExpiryWithinCeiling(at(0), now)).toBe(false);
-    expect(isProofExpiryWithinCeiling(at(-1), now)).toBe(false);
+    const target = PROOF_CHALLENGE_TTL_TARGET_MINUTES * 60_000;
+    expect(isChallengeMailable(at(target), now)).toBe(true);
+    expect(isChallengeMailable(at(target + 1), now)).toBe(false);
+    expect(isChallengeMailable(at(0), now)).toBe(false);
+    expect(isChallengeMailable(at(-1), now)).toBe(false);
   });
 
   it("rounds the advertised window DOWN", () => {
