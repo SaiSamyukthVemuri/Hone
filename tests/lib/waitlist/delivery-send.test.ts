@@ -11,6 +11,10 @@ import {
   invitationExpiryLabel,
   invitationIsLive,
   invitationSendWindow,
+  PROVIDER_KEY_BOUND_TO_OTHER_BYTES,
+  terminalRefusal,
+  retryableRefusal,
+  type SendOutcomeShape,
   PROVIDER_IDEMPOTENCY_RETENTION_HOURS,
   PROOF_SEND_MAX_DELAY_AFTER_MINT_SECONDS,
   proofWindowMinutes,
@@ -302,7 +306,7 @@ describe("provider failure classification", () => {
       const d = classifyDelivery({ status: "ambiguous", reason });
       expect(d.delivered).toBe("unknown");
       expect(d.mayInvalidateChallenge).toBe(false);
-      expect(d.offerResend).toBe(true);
+      expect(d.sameEventRetryAllowed).toBe(false);
       expect(d.mayMutateLifecycle).toBe(false);
     }
   });
@@ -694,7 +698,7 @@ describe("NEVER send an already-expired invitation", () => {
     expect(out.disposition.delivered).toBe("no");
     expect(out.disposition.reason).toBe("rejected_invitation_expired");
     expect(out.disposition.terminal).toBe(true);
-    expect(out.disposition.offerResend).toBe(false);
+    expect(out.disposition.sameEventRetryAllowed).toBe(false);
     expect(out.disposition.mayMutateLifecycle).toBe(false);
   });
 
@@ -703,7 +707,7 @@ describe("NEVER send an already-expired invitation", () => {
     expect(calls).toHaveLength(0);
     expect(out.disposition.reason).toBe("rejected_invitation_expired");
     expect(out.disposition.terminal).toBe(true);
-    expect(out.disposition.offerResend).toBe(false);
+    expect(out.disposition.sameEventRetryAllowed).toBe(false);
   });
 
   it("a PROVIDER refusal stays non-terminal — the next attempt may differ", () => {
@@ -711,7 +715,7 @@ describe("NEVER send an already-expired invitation", () => {
     // an expired invitation says no to every attempt there will ever be.
     const d = classifyDelivery({ status: "rejected", code: "validation_error" });
     expect(d.terminal).toBe(false);
-    expect(d.offerResend).toBe(true);
+    expect(d.sameEventRetryAllowed).toBe(false);
   });
 });
 
@@ -742,7 +746,7 @@ describe("P2: no send outside the provider's idempotency retention", () => {
     // Terminal for the same reason as expiry: `now - issuedAt` only grows, so
     // no later attempt at THIS invitation falls back inside the window.
     expect(out.disposition.terminal).toBe(true);
-    expect(out.disposition.offerResend).toBe(false);
+    expect(out.disposition.sameEventRetryAllowed).toBe(false);
     expect(out.disposition.mayMutateLifecycle).toBe(false);
   });
 
@@ -836,7 +840,8 @@ describe("CLOCK DISAGREEMENT is retryable, not terminal", () => {
     expect(calls).toHaveLength(0);
     expect(out.disposition.reason).toBe("rejected_clock_disagreement");
     expect(out.disposition.terminal).toBe(false);
-    expect(out.disposition.offerResend).toBe(true);
+    expect(out.disposition.sameEventRetryAllowed).toBe(false);
+    expect(out.disposition.reissueRequired).toBe(true);
     // Waiting is the remedy, so nothing about the invitation may be retired.
     expect(out.disposition.mayInvalidateChallenge).toBe(false);
     expect(out.disposition.mayMutateLifecycle).toBe(false);
@@ -860,6 +865,190 @@ describe("CLOCK DISAGREEMENT is retryable, not terminal", () => {
     expect(calls).toHaveLength(0);
     expect(out.disposition.reason).toBe("rejected_invitation_expired");
     expect(out.disposition.terminal).toBe(true);
-    expect(out.disposition.offerResend).toBe(false);
+    expect(out.disposition.sameEventRetryAllowed).toBe(false);
+  });
+});
+
+describe("ONE INVITATION ID = ONE DELIVERY EVENT", () => {
+  // The product law, made mechanical. 0193 mints the invitation id and the raw
+  // token exactly once and hands the token straight to Delivery in the same
+  // request. The token is never persisted, so once the send returns nothing can
+  // reconstruct the email — there is no supported "send this invitation again
+  // later" operation. A later operator "Resend" is a REISSUE: new invitation,
+  // new token, new key, new delivery event.
+  //
+  // This closes the payload-bytes finding at the contract rather than with a
+  // persisted email ledger. A deploy that changes the template can only produce
+  // same-key/different-bytes if a SECOND invocation possesses the OLD raw
+  // token, and no such invocation exists.
+
+  it("CONTROL B: an ambiguous delivery never authorizes retrying this event", async () => {
+    const { transport } = recordingTransport({
+      data: null,
+      error: { name: "concurrent_idempotent_requests" },
+    });
+    const out = await sendWaitlistInvitationEmail({
+      studio: STUDIO,
+      invitationId: INVITATION_ID,
+      recipientEmail: RECIPIENT,
+      invitationUrl: URL,
+      ...INV_BASE,
+      transport,
+    });
+    expect(out.disposition.delivered).toBe("unknown");
+    expect(out.disposition.sameEventRetryAllowed).toBe(false);
+    // Recovery is a reissue, weighed by the caller against a possible duplicate.
+    expect(out.disposition.reissueRequired).toBe(true);
+    expect(out.disposition.mayMutateLifecycle).toBe(false);
+  });
+
+  it("NO disposition, from any outcome, authorizes a same-event retry", () => {
+    // Exhaustive over the vocabulary rather than a sample: the law holds for
+    // every branch, and the literal `false` type means no future branch can
+    // opt out without a compile error.
+    const outcomes: SendOutcomeShape[] = [
+      { status: "accepted", messageId: "m" },
+      { status: "ambiguous", reason: "timeout" },
+      { status: "ambiguous", reason: "concurrent" },
+      { status: "ambiguous", reason: "no_message_id" },
+      { status: "rejected", code: "validation_error" },
+      { status: "rejected", code: PROVIDER_KEY_BOUND_TO_OTHER_BYTES },
+      { status: "rejected", code: null },
+    ];
+    for (const o of outcomes) {
+      expect(classifyDelivery(o).sameEventRetryAllowed, JSON.stringify(o)).toBe(false);
+    }
+    expect(terminalRefusal("x").sameEventRetryAllowed).toBe(false);
+    expect(retryableRefusal("y").sameEventRetryAllowed).toBe(false);
+  });
+
+  it("CONTROL C: a reissue is a NEW event — new id yields a new key and new bytes", async () => {
+    // What an operator's "Resend" must become. The delivery layer cannot mint
+    // the new invitation, but it can prove that a new id is a genuinely
+    // different send rather than a replay of the old one.
+    const first = recordingTransport(ACCEPTED);
+    const second = recordingTransport(ACCEPTED);
+    const base = {
+      studio: STUDIO,
+      recipientEmail: RECIPIENT,
+      ...INV_BASE,
+    };
+    await sendWaitlistInvitationEmail({
+      ...base,
+      invitationId: INVITATION_ID,
+      invitationUrl: "https://hone.care/waitlist/invitation/TOKEN-ONE",
+      transport: first.transport,
+    });
+    await sendWaitlistInvitationEmail({
+      ...base,
+      invitationId: "77777777-7777-4777-8777-777777777777",
+      invitationUrl: "https://hone.care/waitlist/invitation/TOKEN-TWO",
+      transport: second.transport,
+    });
+    expect(second.calls[0].idempotencyKey).not.toBe(first.calls[0].idempotencyKey);
+    expect(second.calls[0].payload.text).not.toBe(first.calls[0].payload.text);
+    expect(first.calls[0].payload.text).toContain("TOKEN-ONE");
+    expect(second.calls[0].payload.text).toContain("TOKEN-TWO");
+  });
+
+  it("CONTROL E: Delivery cannot reconstruct an invitation URL — it must be given one", () => {
+    // The structural half of the deploy-mid-window argument, provable here.
+    // sendWaitlistInvitationEmail takes `invitationUrl` as a required input and
+    // derives nothing from a token hash or a lookup, so it cannot rebuild a
+    // past invitation's email even if some caller wanted it to. The other half
+    // — that no caller HOLDS an old raw token — lives in the call graph and is
+    // carried to the integration PR.
+    const raw = readFileSync(
+      join(process.cwd(), "lib/waitlist/delivery/send.ts"),
+      "utf8",
+    );
+    // COMMENTS ARE STRIPPED FIRST. The claim is about what the module DOES, and
+    // this file's own header discusses token_hash precisely to say it is never
+    // read — a guard that could not tell code from prose would forbid
+    // documenting its own invariant, which is the wrong incentive.
+    const code = raw
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "");
+    expect(code).not.toMatch(/token_hash/);
+    expect(code).not.toMatch(/new_client_waitlist_invitations/);
+    expect(code).not.toMatch(/createClient|supabase/i);
+    // And the URL is a required input rather than something derived.
+    expect(code).toMatch(/invitationUrl:\s*string/);
+  });
+
+  it("a key already bound to other bytes asks for a REISSUE, not a retry", () => {
+    // Should be unreachable under the law above, since it needs a second
+    // invocation holding the old raw token. Classified anyway, because the
+    // invariant lives in a call graph this module cannot see — and if it is
+    // ever reached the answer is a reissue, arriving at the call site rather
+    // than as an unexpected provider error.
+    const d = classifyDelivery({
+      status: "rejected",
+      code: PROVIDER_KEY_BOUND_TO_OTHER_BYTES,
+    });
+    expect(d.sameEventRetryAllowed).toBe(false);
+    expect(d.reissueRequired).toBe(true);
+    expect(d.delivered).toBe("no");
+    // NOT terminal: the invitation is spent, but a fresh one will deliver.
+    expect(d.terminal).toBe(false);
+  });
+});
+
+describe("CONTROL A: the one retry INSIDE a single invocation is byte-identical", () => {
+  it("an ambiguous first attempt retries with the same key and the same bytes", async () => {
+    // The one retry the law permits, because it never leaves the invocation:
+    // the payload object is built once and reused, so the second attempt cannot
+    // differ even if the template changed on disk in between. This is what
+    // makes the provider replay rather than refuse.
+    const attempts: { payload: ProviderPayload; key?: string }[] = [];
+    const transport: IdempotentEmailTransport = {
+      emails: {
+        send: async (payload, options) => {
+          attempts.push({ payload, key: options?.idempotencyKey });
+          // First attempt ambiguous, second accepted.
+          return attempts.length === 1
+            ? { data: null, error: { name: "concurrent_idempotent_requests" } }
+            : ACCEPTED;
+        },
+      },
+    };
+
+    const out = await sendWaitlistInvitationEmail({
+      studio: STUDIO,
+      invitationId: INVITATION_ID,
+      recipientEmail: RECIPIENT,
+      invitationUrl: URL,
+      ...INV_BASE,
+      transport,
+    });
+
+    expect(attempts).toHaveLength(2);
+    expect(attempts[1].key).toBe(attempts[0].key);
+    // Byte-identical, and the SAME object — the payload is built once.
+    expect(attempts[1].payload).toBe(attempts[0].payload);
+    expect(out.disposition.delivered).toBe("yes");
+  });
+
+  it("bounded at ONE retry — there is deliberately no loop", async () => {
+    const attempts: unknown[] = [];
+    const transport: IdempotentEmailTransport = {
+      emails: {
+        send: async (p) => {
+          attempts.push(p);
+          return { data: null, error: { name: "concurrent_idempotent_requests" } };
+        },
+      },
+    };
+    const out = await sendWaitlistInvitationEmail({
+      studio: STUDIO,
+      invitationId: INVITATION_ID,
+      recipientEmail: RECIPIENT,
+      invitationUrl: URL,
+      ...INV_BASE,
+      transport,
+    });
+    expect(attempts).toHaveLength(2);
+    expect(out.disposition.delivered).toBe("unknown");
+    expect(out.disposition.sameEventRetryAllowed).toBe(false);
   });
 });

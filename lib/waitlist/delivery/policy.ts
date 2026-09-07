@@ -368,22 +368,39 @@ export const PROOF_REQUEST_LIMITS = {
 export type DeliveryDisposition = {
   /** Did the provider take custody? */
   delivered: "yes" | "no" | "unknown";
-  /** May the caller offer another send immediately? */
-  offerResend: boolean;
   /**
-   * TRUE when no future attempt with this same input can succeed.
+   * ALWAYS `false`, and a LITERAL TYPE so no branch can set it otherwise.
    *
-   * A provider outcome is never terminal — a timeout, a refusal or an ambiguous
-   * result may all go the other way on the next try. A PRE-SEND refusal is
-   * different in kind: it is a statement about the invitation or challenge
-   * itself, and every one of them turns on elapsed time, which only moves in
-   * one direction. An expired invitation does not become live again.
+   * ONE INVITATION ID = ONE DELIVERY EVENT. 0193 mints the invitation id and
+   * the raw token exactly once and hands the token straight to Delivery in that
+   * same request. The token is never persisted, so once this function returns
+   * nothing in the system can reconstruct the email that was sent — there is no
+   * supported "send this invitation again later" operation, and Delivery must
+   * not imply one.
    *
-   * The field exists because `offerResend: true` on such a refusal is a lie
-   * told to the caller: it invites a retry that is guaranteed to fail, and the
-   * UI built on it would loop a person through a button that can never work.
-   * The remedy for a terminal refusal is a NEW invitation or challenge, not
-   * another attempt at this one.
+   * Product recovery is a REISSUE, which is a lifecycle operation belonging to
+   * a higher layer: close or release the old invitation, re-admit atomically,
+   * and issue a NEW invitation with a new id, a new token and its own delivery
+   * event. `reissueRequired` below is how that is signalled.
+   *
+   * The type is the enforcement. A boolean would let a future branch set it
+   * true and reintroduce same-event retry semantics with nothing to catch it.
+   */
+  sameEventRetryAllowed: false;
+  /**
+   * The delivery did not confirm, so the product should offer a REISSUE — a new
+   * invitation — rather than another attempt at this one.
+   */
+  reissueRequired: boolean;
+  /**
+   * TRUE when the INVITATION ITSELF is finished, not merely this delivery.
+   *
+   * Under the one-shot law no delivery is ever retried, so this no longer
+   * distinguishes retryable from non-retryable. It distinguishes something
+   * still useful: whether a REISSUE is even possible. An expired invitation is
+   * terminal — reissuing means admitting a new one, not re-sending this. A
+   * clock disagreement is not: the invitation is perfectly good and the next
+   * issue-and-send will work.
    */
   terminal: boolean;
   /**
@@ -398,6 +415,43 @@ export type DeliveryDisposition = {
   /** Stable, non-sensitive reason for logs and tests. */
   reason: string;
 };
+
+/**
+ * The provider's answer when a key is presented with a payload different from
+ * the one it was first bound to.
+ *
+ * WHY THIS CAN HAPPEN AT ALL, given the payload is a pure function of the
+ * invitation. It is pure per BUILD, not across builds. The bytes are rendered
+ * by `buildWaitlistInvitationEmail` from `FROM_ADDRESS` and the template copy,
+ * and a deployment may change any of those. So:
+ *
+ *   attempt 1 -> ambiguous (timeout, or the bounded internal retry also
+ *                ambiguous), nothing confirmed;
+ *   deploy    -> template wording, sender, or URL construction changes;
+ *   attempt 2 -> same invitation, same key, DIFFERENT bytes.
+ *
+ * The provider then refuses rather than replaying, and the invitation is stuck
+ * for the remainder of the retention window while the caller is told to keep
+ * trying.
+ *
+ * WHY IT SHOULD BE UNREACHABLE, AND IS KEPT ANYWAY. The sequence above needs a
+ * SECOND invocation carrying the same invitation id and the same raw token. The
+ * product law forbids exactly that: 0193 mints the id and the token once and
+ * hands the token straight to Delivery in the same request, the token is never
+ * persisted, and no operation reconstructs an existing invitation's email. A
+ * later "Resend" is a REISSUE — new invitation, new token, new key — so it
+ * cannot collide with an old one.
+ *
+ * It is classified rather than assumed away because the invariant lives in a
+ * call graph this module cannot see. If a caller ever does reach here, the
+ * answer is a reissue, not a retry, and saying so in the disposition is how
+ * that arrives at the call site rather than as a provider error nobody expects.
+ *
+ * Persisting the original serialized payload — the other way to close it —
+ * would need a delivery record keyed by invitation, which is schema, and would
+ * build a same-invitation retry API the product does not want.
+ */
+export const PROVIDER_KEY_BOUND_TO_OTHER_BYTES = "invalid_idempotent_request";
 
 export type SendOutcomeShape =
   | { status: "accepted"; messageId: string }
@@ -416,7 +470,8 @@ export function classifyDelivery(outcome: SendOutcomeShape): DeliveryDisposition
   if (outcome.status === "accepted") {
     return {
       delivered: "yes",
-      offerResend: true,
+      sameEventRetryAllowed: false,
+      reissueRequired: false,
       terminal: false,
       mayInvalidateChallenge: false,
       mayMutateLifecycle: false,
@@ -426,7 +481,10 @@ export function classifyDelivery(outcome: SendOutcomeShape): DeliveryDisposition
   if (outcome.status === "ambiguous") {
     return {
       delivered: "unknown",
-      offerResend: true,
+      sameEventRetryAllowed: false,
+      // Ambiguous means it MAY have arrived. A reissue is the caller's call,
+      // weighed against sending a second invitation for one spot.
+      reissueRequired: true,
       terminal: false,
       // The in-flight request was never cancelled and may still be accepted.
       mayInvalidateChallenge: false,
@@ -434,10 +492,25 @@ export function classifyDelivery(outcome: SendOutcomeShape): DeliveryDisposition
       reason: `ambiguous_${outcome.reason}`,
     };
   }
+  if (outcome.code === PROVIDER_KEY_BOUND_TO_OTHER_BYTES) {
+    // THE PROVIDER IS TELLING US OUR KEY IS ALREADY BOUND TO DIFFERENT BYTES.
+    // Retrying with the same inputs cannot succeed, because the bytes will not
+    // revert — so this is TERMINAL for this send event even though it came
+    // from the provider rather than from a pre-send check.
+    return {
+      delivered: "no",
+      sameEventRetryAllowed: false,
+      reissueRequired: true,
+      terminal: false,
+      mayInvalidateChallenge: true,
+      mayMutateLifecycle: false,
+      reason: `rejected_${PROVIDER_KEY_BOUND_TO_OTHER_BYTES}`,
+    };
+  }
   return {
     delivered: "no",
-    offerResend: true,
-    // A provider said no to THIS attempt; the next may fare differently.
+    sameEventRetryAllowed: false,
+    reissueRequired: true,
     terminal: false,
     // A definite refusal: nothing was delivered, so retiring the challenge
     // strands nobody.
@@ -515,8 +588,9 @@ export function invitationIsLive(expiresAt: Date, now: Date): boolean {
  * Every current caller turns on elapsed time — an expired invitation, an
  * elapsed challenge, a mint older than the provider's idempotency retention, a
  * send too long after its mint. Time moves one way, so none of them can become
- * true later, and `offerResend` is therefore FALSE: telling a caller to try
- * again would send a person around a loop that cannot terminate.
+ * true later. Under the one-shot law no delivery is retried in any case, so the
+ * distinction these carry is whether a REISSUE can help: for these it cannot,
+ * because the invitation itself is spent.
  *
  * `delivered` is "no" rather than "unknown" because nothing was transmitted at
  * all, and `mayMutateLifecycle` stays false for the same reason it is false
@@ -527,7 +601,8 @@ export function invitationIsLive(expiresAt: Date, now: Date): boolean {
 export function terminalRefusal(reason: string): DeliveryDisposition {
   return {
     delivered: "no",
-    offerResend: false,
+    sameEventRetryAllowed: false,
+    reissueRequired: true,
     terminal: true,
     // Nothing was sent, so there is nothing in flight to strand. Whether the
     // challenge should be retired is the caller's decision, not a consequence
@@ -542,8 +617,10 @@ export function terminalRefusal(reason: string): DeliveryDisposition {
  * A refusal made before any provider call that a LATER attempt may pass.
  *
  * The counterpart to `terminalRefusal`, and the distinction is the point: one
- * says "this can never work", the other says "not yet". Collapsing them tells a
- * caller to discard a valid invitation over a clock that is a millisecond out.
+ * Neither authorizes a retry of this send — the one-shot law forbids that — but
+ * they say different things about the INVITATION: one is spent, the other is
+ * perfectly good and will deliver on the next issue-and-send. Collapsing them
+ * would discard a valid invitation over a clock a millisecond out.
  *
  * Nothing was transmitted, so `delivered` is "no"; nothing is in flight, so
  * there is nothing to strand; and the invitation must NOT be invalidated —
@@ -552,7 +629,10 @@ export function terminalRefusal(reason: string): DeliveryDisposition {
 export function retryableRefusal(reason: string): DeliveryDisposition {
   return {
     delivered: "no",
-    offerResend: true,
+    sameEventRetryAllowed: false,
+    reissueRequired: true,
+    // The invitation is fine; only the clock disagreed. A reissue will work,
+    // which is why this is not terminal.
     terminal: false,
     mayInvalidateChallenge: false,
     mayMutateLifecycle: false,

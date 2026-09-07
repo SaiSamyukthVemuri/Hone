@@ -86,6 +86,56 @@ import { buildDeliveryLogRecord, type DeliveryLogRecord } from "./log-safety";
 // and is returned to the caller so the rule is visible at the call site rather
 // than implied by this module's silence.
 
+// ===========================================================================
+// ONE INVITATION ID = ONE DELIVERY EVENT
+// ===========================================================================
+//
+// 0193 mints the invitation id and the raw token exactly once and the initial
+// server action hands that freshly returned token straight to this module in
+// the same request. The token is never persisted, so once this function
+// returns, nothing in the system can reconstruct the email that was sent.
+//
+// There is therefore NO supported "send this invitation again later" operation,
+// and no disposition returned here authorizes one — `sameEventRetryAllowed` is
+// typed as the literal `false`, so a future branch cannot opt out without a
+// compile error. The one retry that IS permitted never leaves a single
+// invocation: same id, same in-memory payload object, same key, byte-identical
+// attempts, which is what makes the provider replay rather than refuse.
+//
+// An operator pressing "Resend invitation" is a REISSUE, not a retry: close or
+// release the old invitation, re-admit atomically, issue a NEW invitation with
+// a new id and a new token, and deliver that as its own event. That lifecycle
+// operation belongs to #683, not here.
+//
+// WHY THIS CLOSES THE PAYLOAD-BYTES QUESTION WITHOUT A PERSISTED EMAIL LEDGER.
+// The payload is a pure function of the invitation per BUILD, not across
+// builds: a deployment can change the template, FROM_ADDRESS or URL
+// construction. Same-key/different-bytes would need a SECOND invocation holding
+// the OLD raw token — which the law above forbids. Persisting the serialized
+// payload would close it too, and would build exactly the same-invitation retry
+// API the product does not want.
+//
+// ---------------------------------------------------------------------------
+// WHAT THIS LAYER CANNOT PROVE, CARRIED TO THE INTEGRATION PR
+// ---------------------------------------------------------------------------
+//
+// This module has NO callers yet, so a call-graph guard written here would be
+// vacuously green — worse than absent, because it would look like coverage.
+// These belong with the code that first calls it:
+//
+//   1. The only path into `sendWaitlistInvitationEmail` is
+//      admit_new_client_waitlist_entry -> fresh issued result carrying the raw
+//      token -> initial delivery. There must be NO
+//      "resolve an existing invitation -> send it again" path.
+//   2. No call site reconstructs an invitation email from `token_hash` or from
+//      an invitation lookup.
+//   3. "Resend invitation" resolves to a reissue that produces a new
+//      invitation id and a new raw token before any delivery.
+//
+// What IS proven here: this module takes `invitationUrl` as a required input,
+// touches no Supabase client and mentions no `token_hash`, so it cannot rebuild
+// a past invitation's email even if asked to.
+
 export type DeliveryResult = {
   disposition: DeliveryDisposition;
   /** The only log record this feature emits. Safe by construction. */
