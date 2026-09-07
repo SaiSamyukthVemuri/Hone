@@ -99,9 +99,13 @@ describe("the disproved privilege model is not reintroduced", () => {
     expect(CODE).toContain("create table if not exists public.studio_waitlist_admission_policy");
   });
 
-  it("does not create WAIT-03B/B1's admission-rounds table", () => {
-    // That object belongs to another lane. Creating it here would collide.
-    expect(CODE).not.toContain("studio_waitlist_admission_rounds");
+  it("does not create 0192's admission-rounds table, though it does use it", () => {
+    // That object belongs to 0192. Creating it here would collide; LOCKING it
+    // is required, because the admission command must take the canonical
+    // studios -> rounds -> entry order before it claims anything.
+    expect(CODE).not.toMatch(/create table[^;]*studio_waitlist_admission_rounds/i);
+    expect(CODE).toContain("from public.studio_waitlist_admission_rounds r");
+    expect(CODE).toContain("for update");
   });
 });
 

@@ -932,6 +932,187 @@ begin
 end;
 $$;
 
+-- ---------------------------------------------------------------------------
+-- COMMAND 9 — "INVITE TO BOOK": the practitioner-facing admission operation
+-- ---------------------------------------------------------------------------
+--
+-- THE PRODUCT LAW THIS ENFORCES. A practitioner sees a waiting person, chooses
+-- a service, a booking window and an expiry, and presses one button. CLAIM IS
+-- NOT A WORKFLOW STEP. It remains an internal lifecycle state that this command
+-- establishes on the practitioner's behalf, inside the same transaction, and
+-- never surfaces as a second thing a human must remember to do.
+--
+-- WHY IT IS NOT "CALL claim_ THEN CALL issue_". Two commands is two round
+-- trips, and the window between them is not theoretical: allowance can be
+-- consumed by another operator, the round can close, the service can be
+-- deleted, the scope can be rejected. Every one of those leaves the entry
+-- CLAIMED with no invitation — a prospect frozen out of the queue by a
+-- half-finished action nobody can see. That is the state this command exists to
+-- make unreachable.
+--
+-- ---------------------------------------------------------------------------
+-- HOW "NO PARTIAL CLAIM" IS ACTUALLY GUARANTEED
+-- ---------------------------------------------------------------------------
+--
+-- A plpgsql `return` DOES NOT UNDO WORK ALREADY DONE. Claiming the entry and
+-- then returning 'round_full' would COMMIT the claim — the precise stray state
+-- negative control A exists to catch. So the mutating half runs inside a
+-- BEGIN/EXCEPTION block, which PostgreSQL implements as a SUBTRANSACTION: any
+-- exception raised inside it rolls back everything it did.
+--
+-- Failure therefore RAISES a sentinel carrying the code, the subtransaction
+-- unwinds the claim, and the handler returns that code as an ordinary value.
+-- The caller still gets a CODE and never an error — 0185's rule, and 0188's
+-- requeue precedent — while the database gets a true all-or-nothing.
+--
+-- LOCK ORDER IS THE CANONICAL ONE, AND IT IS TAKEN HERE FIRST:
+--
+--     studios -> studio_waitlist_admission_rounds -> entry -> invitation
+--
+-- issue_scoped_new_client_waitlist_invitation takes studios then the round;
+-- claim_new_client_waitlist_entry takes the entry. Calling claim_ first would
+-- give studios -> entry -> round and invert the order against a bare
+-- issue_scoped running concurrently, which is a deadlock. Taking the studio and
+-- round locks up front makes the nested calls re-acquire locks this transaction
+-- already holds, which is free.
+--
+-- ALLOWANCE IS NOT RE-IMPLEMENTED HERE. The round, the consumed count and the
+-- round_full verdict all belong to 0192 and are enforced inside issue_scoped_
+-- under the same lock this function already holds. A second copy of that
+-- arithmetic is a second thing to drift.
+--
+-- AN ALREADY-CLAIMED ENTRY IS ADMITTED, NOT REFUSED. Rows left `claimed` by the
+-- previous two-step workflow are legitimate, and making an operator perform a
+-- release/requeue round trip to reach the new button would be a migration cost
+-- paid by the person least able to understand it. Such an entry skips the claim
+-- and goes straight to issue.
+--
+-- NO EMAIL IS SENT HERE. The raw token is returned exactly once, to a caller
+-- that delivers AFTER commit. A provider failure then means "the invitation
+-- exists and delivery must be retried", never a rollback decided by an
+-- uncertain provider answer.
+create or replace function public.admit_new_client_waitlist_entry(
+  p_studio_id        uuid,
+  p_actor_user_id    uuid,
+  p_entry_id         uuid,
+  p_service_id       uuid,
+  p_start_date       date,
+  p_end_date         date,
+  p_allowed_weekdays smallint[] default null,
+  p_ttl_hours        integer default 72
+)
+returns table (
+  result         text,
+  invitation_id  uuid,
+  raw_token      text,
+  expires_at     timestamptz,
+  delivery_email text,
+  delivery_name  text
+)
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog, pg_temp
+as $$
+declare
+  v_actor    uuid;
+  v_code     text;
+  v_status   text;
+  v_needs_claim boolean;
+  v_claim    text;
+  v_issue    record;
+  v_expires  timestamptz;
+  v_email    text;
+  v_name     text;
+begin
+  -- 1. AUTHORITY. Membership and owner role are re-derived in the database from
+  -- (studio_id, auth user id). No browser-supplied studio or actor becomes
+  -- authority: the caller passes ids, the database decides what they mean.
+  select r.practitioner_id, r.code into v_actor, v_code
+    from public.new_client_waitlist_resolve_owner(p_studio_id, p_actor_user_id) r;
+  if v_code <> 'ok' then
+    return query select v_code, null::uuid, null::text, null::timestamptz, null::text, null::text;
+    return;
+  end if;
+
+  -- 2. LOCK ORDER STEP 1 and 2, before any entry is touched.
+  perform 1 from public.studios s where s.id = p_studio_id for update;
+  if not found then
+    return query select 'unknown_studio'::text, null::uuid, null::text, null::timestamptz, null::text, null::text;
+    return;
+  end if;
+  perform 1 from public.studio_waitlist_admission_rounds r
+   where r.studio_id = p_studio_id for update;
+
+  -- 3. LOCK ORDER STEP 3. Read the entry's admissibility under its own lock, so
+  -- the status this decision rests on cannot move underneath it.
+  select e.status, e.email, e.name into v_status, v_email, v_name
+    from public.new_client_waitlist_entries e
+   where e.id = p_entry_id and e.studio_id = p_studio_id
+   for update;
+
+  -- Scoped by BOTH id and studio_id, so an entry belonging to another tenant is
+  -- indistinguishable from one that does not exist.
+  if v_status is null then
+    return query select 'not_found'::text, null::uuid, null::text, null::timestamptz, null::text, null::text;
+    return;
+  end if;
+
+  if v_status = 'waiting' then
+    v_needs_claim := true;
+  elsif v_status = 'claimed' then
+    -- Left by the previous workflow, or by an internal path. Legitimate.
+    v_needs_claim := false;
+  else
+    -- invited / converted / expired / released / removed. Each has its own
+    -- lifecycle exit; none of them is admissible by pressing this button.
+    return query select 'not_admissible'::text, null::uuid, null::text, null::timestamptz, null::text, null::text;
+    return;
+  end if;
+
+  -- 4-9. THE MUTATING HALF, in a subtransaction. Everything from here either
+  -- commits together or leaves no trace.
+  begin
+    if v_needs_claim then
+      v_claim := public.claim_new_client_waitlist_entry(p_studio_id, p_entry_id, p_actor_user_id);
+      if v_claim <> 'claimed' then
+        raise exception '%', v_claim using errcode = 'WA001';
+      end if;
+    end if;
+
+    -- 0192 owns service validation, scope validation, weekday canonicalisation,
+    -- the no-repeat-declined rule, the allowance verdict and the token. This
+    -- command owns only the ORDER and the atomicity.
+    select * into v_issue
+      from public.issue_scoped_new_client_waitlist_invitation(
+             p_studio_id, p_entry_id, p_actor_user_id, p_service_id,
+             p_start_date, p_end_date, p_allowed_weekdays, p_ttl_hours);
+
+    if v_issue.result <> 'issued' then
+      -- Carries 0192's own vocabulary out unchanged: no_round_open, round_full,
+      -- invalid_service, invalid_scope_dates, invalid_weekdays,
+      -- already_declined_offer, already_invited, invalid_ttl...
+      raise exception '%', v_issue.result using errcode = 'WA001';
+    end if;
+
+    select i.expires_at into v_expires
+      from public.new_client_waitlist_invitations i
+     where i.id = v_issue.invitation_id;
+
+    return query select 'admitted'::text, v_issue.invitation_id, v_issue.raw_token,
+                        v_expires, v_email, v_name;
+    return;
+
+  exception
+    when sqlstate 'WA001' then
+      -- The subtransaction has already rolled back the claim, if one was taken.
+      -- SQLERRM carries the refusal code the inner command produced.
+      return query select SQLERRM::text, null::uuid, null::text, null::timestamptz, null::text, null::text;
+      return;
+  end;
+end;
+$$;
+
 -- ===========================================================================
 -- PRIVILEGES — EXPLICIT FOR EVERY NEW OBJECT
 -- ===========================================================================
@@ -991,6 +1172,11 @@ grant select (
 -- grantees are revoked BY NAME first -- ALTER DEFAULT PRIVILEGES arms anon,
 -- authenticated AND service_role at function-create time, missed for anon in
 -- 0129 and for service_role in 0164.
+revoke execute on function public.admit_new_client_waitlist_entry(uuid, uuid, uuid, uuid, date, date, smallint[], integer) from public;
+revoke execute on function public.admit_new_client_waitlist_entry(uuid, uuid, uuid, uuid, date, date, smallint[], integer) from anon;
+revoke execute on function public.admit_new_client_waitlist_entry(uuid, uuid, uuid, uuid, date, date, smallint[], integer) from authenticated;
+revoke execute on function public.admit_new_client_waitlist_entry(uuid, uuid, uuid, uuid, date, date, smallint[], integer) from service_role;
+
 revoke execute on function public.create_practitioner_waitlist_entry(uuid, uuid, text, text, text, text) from public;
 revoke execute on function public.create_practitioner_waitlist_entry(uuid, uuid, text, text, text, text) from anon;
 revoke execute on function public.create_practitioner_waitlist_entry(uuid, uuid, text, text, text, text) from authenticated;
@@ -1031,6 +1217,7 @@ revoke execute on function public.claim_new_client_waitlist_entries_ordered(uuid
 revoke execute on function public.claim_new_client_waitlist_entries_ordered(uuid, uuid, uuid[]) from authenticated;
 revoke execute on function public.claim_new_client_waitlist_entries_ordered(uuid, uuid, uuid[]) from service_role;
 
+grant execute on function public.admit_new_client_waitlist_entry(uuid, uuid, uuid, uuid, date, date, smallint[], integer) to service_role;
 grant execute on function public.create_practitioner_waitlist_entry(uuid, uuid, text, text, text, text) to service_role;
 grant execute on function public.import_legacy_waitlist_entry(uuid, uuid, text, text, timestamptz, text, text) to service_role;
 grant execute on function public.set_waitlist_entry_availability(uuid, uuid, uuid, text) to service_role;
