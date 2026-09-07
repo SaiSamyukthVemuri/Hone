@@ -200,56 +200,100 @@ describe("booking authorisation — the bindings B2 owns", () => {
   });
 });
 
-describe("redeem — bearer possession alone cannot reach the mutation", () => {
-  it("refuses a missing capability without calling the database", async () => {
-    expect(
-      (await consumeInvitationForBooking({ rawToken: TOKEN, rawCapability: "" })).kind,
-    ).toBe("proof_invalid");
+// P2-1. Consume can no longer be called with loose strings: it requires the
+// BRANDED authorisation that only authorizeInvitationForBooking can mint, so the
+// compiler enforces AUTHORISE -> THEN CONSUME. This fixture is therefore the only
+// way to reach it, which is the point.
+async function authorized() {
+  rpc.mockResolvedValueOnce({ data: liveRow(), error: null });
+  const out = await authorizeInvitationForBooking(AUTHORIZE_INPUT);
+  if (out.kind !== "authorized") throw new Error("fixture: authorisation failed");
+  return out;
+}
+
+describe("redeem — reachable only through authorisation", () => {
+  it("carries the token AUTHORISATION validated, not a second caller-supplied one", async () => {
+    const auth = await authorized();
+    rpc.mockResolvedValue({
+      data: [{ result: "redeemed", studio_id: "studio-1", entry_id: "entry-1" }],
+      error: null,
+    });
+    await consumeInvitationForBooking(auth, CAP);
+    const redeemCall = rpc.mock.calls.find(
+      (c) => c[0] === "redeem_new_client_waitlist_invitation_verified",
+    );
+    expect(redeemCall?.[1]).toEqual({ p_raw_token: TOKEN, p_raw_capability: CAP });
+  });
+
+  it("refuses a missing capability without calling the redeem command", async () => {
+    const auth = await authorized();
+    rpc.mockClear();
+    expect((await consumeInvitationForBooking(auth, "")).kind).toBe("proof_invalid");
     expect(rpc).not.toHaveBeenCalled();
   });
 
-  it("refuses a malformed capability without calling the database", async () => {
-    expect(
-      (await consumeInvitationForBooking({ rawToken: TOKEN, rawCapability: "short" })).kind,
-    ).toBe("proof_invalid");
+  it("refuses a malformed capability without calling the redeem command", async () => {
+    const auth = await authorized();
+    rpc.mockClear();
+    expect((await consumeInvitationForBooking(auth, "short")).kind).toBe("proof_invalid");
     expect(rpc).not.toHaveBeenCalled();
   });
 
   it.each(["proof_required", "proof_expired", "proof_invalid", "not_live", "invalid_token"])(
     "passes the database's %s through unchanged",
     async (code) => {
+      const auth = await authorized();
       rpc.mockResolvedValue({ data: [{ result: code }], error: null });
-      expect(
-        (await consumeInvitationForBooking({ rawToken: TOKEN, rawCapability: CAP })).kind,
-      ).toBe(code);
+      expect((await consumeInvitationForBooking(auth, CAP)).kind).toBe(code);
     },
   );
 
   it("maps a successful redemption", async () => {
+    const auth = await authorized();
     rpc.mockResolvedValue({
       data: [{ result: "redeemed", studio_id: "studio-1", entry_id: "entry-1" }],
       error: null,
     });
-    expect(await consumeInvitationForBooking({ rawToken: TOKEN, rawCapability: CAP })).toEqual({
+    expect(await consumeInvitationForBooking(auth, CAP)).toEqual({
       kind: "redeemed",
       studioId: "studio-1",
       entryId: "entry-1",
     });
   });
 
-  // FAIL CLOSED: an unknown code must never be treated as a redemption.
   it("never reports a redemption for an unrecognised code", async () => {
+    const auth = await authorized();
     rpc.mockResolvedValue({ data: [{ result: "surprise" }], error: null });
-    expect(
-      (await consumeInvitationForBooking({ rawToken: TOKEN, rawCapability: CAP })).kind,
-    ).toBe("unavailable");
+    expect((await consumeInvitationForBooking(auth, CAP)).kind).toBe("unavailable");
   });
 
   it("never reports a redemption when the row is missing its identifiers", async () => {
+    const auth = await authorized();
     rpc.mockResolvedValue({ data: [{ result: "redeemed" }], error: null });
-    expect(
-      (await consumeInvitationForBooking({ rawToken: TOKEN, rawCapability: CAP })).kind,
-    ).toBe("unavailable");
+    expect((await consumeInvitationForBooking(auth, CAP)).kind).toBe("unavailable");
+  });
+});
+
+describe("redeem — the ordering is enforced by the COMPILER, not by convention", () => {
+  // These are type-level assertions. `npm run typecheck` covers tests, so if
+  // consume ever accepts loose inputs again -- the exact shape P2-1 flagged --
+  // the @ts-expect-error directives below become unused and TYPECHECK FAILS.
+  // That makes this a real guard rather than a comment.
+  it("rejects loose token/capability inputs at compile time", async () => {
+    const auth = await authorized();
+    rpc.mockResolvedValue({ data: [{ result: "not_live" }], error: null });
+
+    // @ts-expect-error consume must not accept the old loose-object shape
+    await consumeInvitationForBooking({ rawToken: TOKEN, rawCapability: CAP });
+
+    // @ts-expect-error consume must not accept a hand-built "authorized" object
+    await consumeInvitationForBooking({ kind: "authorized", invitation: null, rawToken: TOKEN }, CAP);
+
+    // @ts-expect-error the capability is required, not optional
+    await consumeInvitationForBooking(auth);
+
+    // The branded value is the ONLY accepted first argument.
+    expect((await consumeInvitationForBooking(auth, CAP)).kind).toBe("not_live");
   });
 });
 
