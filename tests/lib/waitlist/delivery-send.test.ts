@@ -648,38 +648,70 @@ describe("V1 STABLE PAYLOAD: no mutable studio field reaches the provider", () =
 });
 
 describe("NEVER send an already-expired invitation", () => {
-  const at = (ms: number) => new Date(INV_EXPIRES.getTime() + ms);
+  // A SHORT-LIVED invitation, deliberately. The default 72-hour fixture puts
+  // every instant near its expiry far outside the provider's 24-hour
+  // idempotency retention, so the window guard would fire first and the expiry
+  // boundary would never be reached. 0189 clamps p_ttl_hours to 1..168, so a
+  // one-hour invitation is a legal mint and isolates the boundary under test.
+  const SHORT_ISSUED = new Date("2026-09-07T12:00:00.000Z");
+  const SHORT_EXPIRES = new Date(SHORT_ISSUED.getTime() + 3_600_000);
+  const at = (ms: number) => new Date(SHORT_EXPIRES.getTime() + ms);
 
-  it("expires in the future => eligible", () => {
-    expect(invitationIsLive(INV_EXPIRES, at(-1))).toBe(true);
+  it("invitationIsLive: future => true, exactly now => false, past => false", () => {
+    // The pure boundary, keyed on the same expiry the send path uses. Strictly
+    // greater than: a boundary that leaks by a millisecond is one nobody can
+    // reason about.
+    expect(invitationIsLive(SHORT_EXPIRES, at(-1))).toBe(true);
+    expect(invitationIsLive(SHORT_EXPIRES, at(0))).toBe(false);
+    expect(invitationIsLive(SHORT_EXPIRES, at(1))).toBe(false);
   });
 
-  it("expires exactly now => REFUSED", () => {
-    // A boundary that leaks by a millisecond is a boundary nobody can reason
-    // about, so the comparison is strictly greater than.
-    expect(invitationIsLive(INV_EXPIRES, at(0))).toBe(false);
-  });
-
-  it("already expired => REFUSED", () => {
-    expect(invitationIsLive(INV_EXPIRES, at(1))).toBe(false);
-  });
-
-  it("an expired invitation performs ZERO provider calls", async () => {
-    const { transport, calls } = recordingTransport(ACCEPTED);
+  async function attemptAt(now: Date) {
+    const r = recordingTransport(ACCEPTED);
     const out = await sendWaitlistInvitationEmail({
       studio: STUDIO,
       invitationId: INVITATION_ID,
       recipientEmail: RECIPIENT,
       invitationUrl: URL,
-      issuedAt: INV_ISSUED,
-      expiresAt: INV_EXPIRES,
-      now: at(1),
-      transport,
+      issuedAt: SHORT_ISSUED,
+      expiresAt: SHORT_EXPIRES,
+      now,
+      transport: r.transport,
     });
+    return { out, calls: r.calls };
+  }
+
+  it("BOUNDARY future => eligible, and the send goes out", async () => {
+    const { out, calls } = await attemptAt(at(-1));
+    expect(calls).toHaveLength(1);
+    expect(out.disposition.delivered).toBe("yes");
+    expect(out.disposition.terminal).toBe(false);
+  });
+
+  it("BOUNDARY exactly now => TERMINAL refusal, no resend, zero provider calls", async () => {
+    const { out, calls } = await attemptAt(at(0));
     expect(calls).toHaveLength(0);
     expect(out.disposition.delivered).toBe("no");
     expect(out.disposition.reason).toBe("rejected_invitation_expired");
+    expect(out.disposition.terminal).toBe(true);
+    expect(out.disposition.offerResend).toBe(false);
     expect(out.disposition.mayMutateLifecycle).toBe(false);
+  });
+
+  it("BOUNDARY past => TERMINAL refusal, no resend, zero provider calls", async () => {
+    const { out, calls } = await attemptAt(at(1));
+    expect(calls).toHaveLength(0);
+    expect(out.disposition.reason).toBe("rejected_invitation_expired");
+    expect(out.disposition.terminal).toBe(true);
+    expect(out.disposition.offerResend).toBe(false);
+  });
+
+  it("a PROVIDER refusal stays non-terminal — the next attempt may differ", () => {
+    // The distinction the flag exists for. A provider said no to one attempt;
+    // an expired invitation says no to every attempt there will ever be.
+    const d = classifyDelivery({ status: "rejected", code: "validation_error" });
+    expect(d.terminal).toBe(false);
+    expect(d.offerResend).toBe(true);
   });
 });
 
@@ -707,6 +739,10 @@ describe("P2: no send outside the provider's idempotency retention", () => {
     expect(calls).toHaveLength(0); // nothing was transmitted
     expect(out.disposition.delivered).toBe("no");
     expect(out.disposition.reason).toBe("rejected_outside_provider_idempotency_window");
+    // Terminal for the same reason as expiry: `now - issuedAt` only grows, so
+    // no later attempt at THIS invitation falls back inside the window.
+    expect(out.disposition.terminal).toBe(true);
+    expect(out.disposition.offerResend).toBe(false);
     expect(out.disposition.mayMutateLifecycle).toBe(false);
   });
 

@@ -319,6 +319,22 @@ export type DeliveryDisposition = {
   /** May the caller offer another send immediately? */
   offerResend: boolean;
   /**
+   * TRUE when no future attempt with this same input can succeed.
+   *
+   * A provider outcome is never terminal — a timeout, a refusal or an ambiguous
+   * result may all go the other way on the next try. A PRE-SEND refusal is
+   * different in kind: it is a statement about the invitation or challenge
+   * itself, and every one of them turns on elapsed time, which only moves in
+   * one direction. An expired invitation does not become live again.
+   *
+   * The field exists because `offerResend: true` on such a refusal is a lie
+   * told to the caller: it invites a retry that is guaranteed to fail, and the
+   * UI built on it would loop a person through a button that can never work.
+   * The remedy for a terminal refusal is a NEW invitation or challenge, not
+   * another attempt at this one.
+   */
+  terminal: boolean;
+  /**
    * May the caller invalidate the challenge it just tried to deliver?
    * Only when the provider definitively refused — an ambiguous send may
    * already be in the recipient's inbox, and killing it would strand a code
@@ -349,6 +365,7 @@ export function classifyDelivery(outcome: SendOutcomeShape): DeliveryDisposition
     return {
       delivered: "yes",
       offerResend: true,
+      terminal: false,
       mayInvalidateChallenge: false,
       mayMutateLifecycle: false,
       reason: "accepted",
@@ -358,6 +375,7 @@ export function classifyDelivery(outcome: SendOutcomeShape): DeliveryDisposition
     return {
       delivered: "unknown",
       offerResend: true,
+      terminal: false,
       // The in-flight request was never cancelled and may still be accepted.
       mayInvalidateChallenge: false,
       mayMutateLifecycle: false,
@@ -367,6 +385,8 @@ export function classifyDelivery(outcome: SendOutcomeShape): DeliveryDisposition
   return {
     delivered: "no",
     offerResend: true,
+    // A provider said no to THIS attempt; the next may fare differently.
+    terminal: false,
     // A definite refusal: nothing was delivered, so retiring the challenge
     // strands nobody.
     mayInvalidateChallenge: true,
@@ -435,4 +455,33 @@ export function invitationIsLive(expiresAt: Date, now: Date): boolean {
   const ms = expiresAt.getTime() - now.getTime();
   if (!Number.isFinite(ms)) return false;
   return ms > 0;
+}
+
+/**
+ * A refusal made BEFORE any provider call, which no retry can change.
+ *
+ * Every current caller turns on elapsed time — an expired invitation, an
+ * elapsed challenge, a mint older than the provider's idempotency retention, a
+ * send too long after its mint. Time moves one way, so none of them can become
+ * true later, and `offerResend` is therefore FALSE: telling a caller to try
+ * again would send a person around a loop that cannot terminate.
+ *
+ * `delivered` is "no" rather than "unknown" because nothing was transmitted at
+ * all, and `mayMutateLifecycle` stays false for the same reason it is false
+ * everywhere else — delivery is not lifecycle, and a refusal to send says
+ * nothing about whether the invitation is still claimed, expired or released in
+ * the database.
+ */
+export function terminalRefusal(reason: string): DeliveryDisposition {
+  return {
+    delivered: "no",
+    offerResend: false,
+    terminal: true,
+    // Nothing was sent, so there is nothing in flight to strand. Whether the
+    // challenge should be retired is the caller's decision, not a consequence
+    // of this refusal.
+    mayInvalidateChallenge: false,
+    mayMutateLifecycle: false,
+    reason: `rejected_${reason}`,
+  };
 }

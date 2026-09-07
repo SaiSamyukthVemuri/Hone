@@ -65,11 +65,23 @@ const TRANSPORT_DEFINITIONS: Record<string, string> = {
 const PLATFORM_IDENTITY_CLIENT_CALLERS: ReadonlyArray<{
   file: string;
   to: string;
+  /**
+   * The event scope of the exempted call, which is what makes this exception
+   * SITE-SPECIFIC rather than file-wide.
+   *
+   * Without it the key was file + recipient, and lib/waitlist/delivery/send.ts
+   * has two sends that share both: the invitation and the proof each write to
+   * `args.recipientEmail`. The exemption written for the unbranded invitation
+   * therefore covered the branded proof as well — proved by stripping the
+   * proof's identity and watching this guard stay green.
+   */
+  eventScope: string;
   why: string;
 }> = [
   {
     file: "lib/waitlist/delivery/send.ts",
     to: "args.recipientEmail",
+    eventScope: "args.invitationId",
     why:
       "WAIT DELIVERY-01 invitation. Sent to a PROSPECT, deliberately unbranded: " +
       "the invitation is retried under one idempotency key that carries no " +
@@ -117,6 +129,8 @@ type CallSite = {
   file: string;
   line: number;
   to: string;
+  /** Distinguishes two sends sharing a file and a recipient expression. */
+  eventScope: string;
   branded: boolean;
 };
 
@@ -139,11 +153,18 @@ function discoverCallSites(): CallSite[] {
         // is generous enough to contain it.
         const window = lines.slice(i, i + 14).join("\n");
         const to = window.match(/\bto:\s*([^,\n]+)/);
+        // The EVENT SCOPE distinguishes two sends that share a file and a
+        // recipient expression. lib/waitlist/delivery/send.ts has exactly that
+        // shape: the invitation and the proof both write to
+        // `args.recipientEmail`, so a file+recipient key cannot tell them
+        // apart — and an exemption meant for one silently covered the other.
+        const scope = window.match(/\beventScope:\s*([^,\n]+)/);
         sites.push({
           transport,
           file: rel,
           line: i + 1,
           to: (to?.[1] ?? "(unknown)").trim(),
+          eventScope: (scope?.[1] ?? "(none)").trim(),
           branded: /studioIdentity\s*:/.test(window),
         });
       });
@@ -168,7 +189,13 @@ describe("every caller of the canonical email transport is accounted for", () =>
       (s) =>
         !HONE_FACING_CALLERS.some((h) => h.file === s.file && h.to === s.to) &&
         !PLATFORM_IDENTITY_CLIENT_CALLERS.some(
-          (h) => h.file === s.file && h.to === s.to,
+          (h) =>
+            h.file === s.file &&
+            h.to === s.to &&
+            // Site-specific: the proof send in this same file, with the same
+            // recipient expression, must NOT inherit the invitation's
+            // exemption.
+            h.eventScope === s.eventScope,
         ),
     );
     expect(
@@ -185,9 +212,23 @@ describe("every caller of the canonical email transport is accounted for", () =>
     // longer exists is a claim nobody can check, and it quietly widens the
     // exemption if that file later gains a different unbranded send.
     const stale = PLATFORM_IDENTITY_CLIENT_CALLERS.filter(
-      (h) => !sites.some((s) => s.file === h.file && s.to === h.to),
-    ).map((h) => `${h.file} -> ${h.to}`);
+      (h) =>
+        !sites.some(
+          (s) =>
+            s.file === h.file && s.to === h.to && s.eventScope === h.eventScope,
+        ),
+    ).map((h) => `${h.file} -> ${h.to} (${h.eventScope})`);
     expect(stale).toEqual([]);
+  });
+
+  it("the platform exception names an event scope, so it cannot go file-wide", () => {
+    // The exemption must identify ONE call, not a file. A blank or wildcard
+    // scope would restore the defect this key was added to close.
+    for (const h of PLATFORM_IDENTITY_CLIENT_CALLERS) {
+      expect(h.eventScope.trim().length, `${h.file} -> ${h.to}`).toBeGreaterThan(0);
+      expect(h.eventScope).not.toBe("(none)");
+      expect(h.eventScope).not.toBe("*");
+    }
   });
 
   it("every platform-identity client caller names a STRUCTURAL reason", () => {

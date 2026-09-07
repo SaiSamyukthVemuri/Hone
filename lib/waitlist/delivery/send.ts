@@ -12,6 +12,7 @@ import {
   invitationExpiryLabel,
   invitationIsLive,
   invitationWithinProviderIdempotencyWindow,
+  terminalRefusal,
   proofWindowMinutes,
   type DeliveryDisposition,
 } from "./policy";
@@ -133,10 +134,10 @@ export async function sendWaitlistInvitationEmail(args: {
   // elapsed challenge; the invitation path did not, which was the asymmetry
   // review caught.
   if (!invitationIsLive(args.expiresAt, now)) {
-    const disposition = classifyDelivery({
-      status: "rejected",
-      code: "invitation_expired",
-    });
+    // TERMINAL: time only moves forward, so this invitation can never become
+    // live again. offerResend is false — inviting a retry here would loop the
+    // caller through an attempt guaranteed to fail.
+    const disposition = terminalRefusal("invitation_expired");
     return {
       disposition,
       log: buildDeliveryLogRecord({
@@ -154,10 +155,10 @@ export async function sendWaitlistInvitationEmail(args: {
   // past that point needs a durable local delivery record, which is schema and
   // out of this lane, so the send is refused rather than issued on a hope.
   if (!invitationWithinProviderIdempotencyWindow(args.issuedAt, now)) {
-    const disposition = classifyDelivery({
-      status: "rejected",
-      code: "outside_provider_idempotency_window",
-    });
+    // TERMINAL for the same reason: `now - issuedAt` only grows, so no later
+    // attempt at THIS invitation can fall back inside the window. The remedy is
+    // a new invitation, not another try at this one.
+    const disposition = terminalRefusal("outside_provider_idempotency_window");
     return {
       disposition,
       log: buildDeliveryLogRecord({
@@ -272,10 +273,10 @@ export async function sendWaitlistRecipientProofEmail(args: {
     // The reason is carried through rather than collapsed, so an overlong mint
     // is distinguishable from an expired one and from a stale send. They have
     // different causes and different fixes.
-    const disposition = classifyDelivery({
-      status: "rejected",
-      code: `challenge_${mailability.reason}`,
-    });
+    // TERMINAL: every mailability verdict turns on elapsed time or on how the
+    // challenge was minted, and neither is changed by trying again. A resend
+    // must mint a NEW challenge.
+    const disposition = terminalRefusal(`challenge_${mailability.reason}`);
     return {
       disposition,
       log: buildDeliveryLogRecord({
