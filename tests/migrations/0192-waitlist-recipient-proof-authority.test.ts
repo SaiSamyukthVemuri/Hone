@@ -1,11 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import {
-  fileForVersion,
-  isRepoMax,
-  versionsAbove,
-} from "./helpers/migration-state";
+// isRepoMax / versionsAbove are deliberately NOT imported any more: the
+// repo-max assertion moved to 0193 (see below), and leaving unused imports
+// behind would fail lint.
+import { fileForVersion } from "./helpers/migration-state";
 import { EXPORT_RESOURCE_REGISTRY } from "@/lib/export/resource-registry";
 
 // 0192 — WAIT-03B recipient-proof authority (B1 … B1.5c).
@@ -50,12 +49,13 @@ describe("0192 — identity and position", () => {
     expect(FILE).toBe("0192_waitlist_recipient_proof_authority.sql");
   });
 
-  it("is the current repository maximum", () => {
-    // Per CLAUDE.md only the CURRENT max asserts this, so a future migration
-    // does not turn this file red. Whoever adds 0193 moves it.
-    expect(isRepoMax(VERSION)).toBe(true);
-    expect(versionsAbove(VERSION)).toEqual([]);
-  });
+  // THE REPO-MAX ASSERTION HAS MOVED TO 0193, which is the handoff this file's
+  // previous comment asked for ("whoever adds 0193 moves it") and the rule
+  // CLAUDE.md states: only the CURRENT maximum migration's own test may assert
+  // isRepoMax, because otherwise every landing migration reds an older file and
+  // the sweep gets missed. tests/migrations/0193-waitlist-admission-authority.test.ts
+  // now carries it. Nothing else in this file changed: every behavioural and
+  // security assertion 0192 makes about itself is untouched.
 
   it("opens its own transaction and bounds the lock", () => {
     // `supabase db push` does not wrap a file in a transaction, so a bare
