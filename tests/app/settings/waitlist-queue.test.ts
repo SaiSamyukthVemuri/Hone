@@ -1443,17 +1443,27 @@ describe("what each state and control is CALLED", () => {
     expect(visibleText(html)).not.toMatch(/\bheld\b/i);
   });
 
-  it("a claimed row's release control reads RETURN TO WAITLIST", async () => {
+  it("a claimed row's release control reads SET ASIDE, not a false promise", async () => {
+    // THE P1 THIS PINS. Release does NOT return anyone to the waitlist: it
+    // lands the entry in `released`, where a SECOND control — requeue, which
+    // genuinely is "Return to waitlist" — is what reaches `waiting`. Labelling
+    // this one "Return to waitlist" let an owner drop someone out of the queue
+    // believing they had put them back in it.
     scenario.rows = [entry({ id: "c1", status: "claimed" })];
     const html = await render();
 
     // The control is present and wired…
     expect(rowActions(html, "c1")).toContain("release");
-    // …and it says what it does to THIS row.
+    // …and it promises only what the command delivers.
     const row = rowMarkup(html, "c1")!;
-    expect(row).toContain("Return to waitlist");
+    expect(row).toContain("Set aside");
+    expect(row).not.toContain("Return to waitlist");
     expect(row).not.toMatch(/>Release</);
     expect(row).not.toContain("Cancel invitation");
+
+    // The consequence the verb cannot carry sits beside the control.
+    expect(row).toContain('data-testid="waitlist-action-help-release"');
+    expect(row).toContain("You can return them to the waitlist later.");
   });
 
   it("an invited row's release control reads CANCEL INVITATION", async () => {
@@ -1470,20 +1480,32 @@ describe("what each state and control is CALLED", () => {
     expect(row).not.toMatch(/>Release</);
   });
 
-  it("THE TWO READ DIFFERENTLY ON THE SAME PAGE", async () => {
-    // Non-vacuity for the pair above: rendered together, one command produces
-    // two different verbs, so neither test is passing on an absent row.
+  it("ALL THREE READ DIFFERENTLY ON THE SAME PAGE", async () => {
+    // Non-vacuity for the trio: rendered together, so no assertion is passing
+    // on an absent row. And the whole point of the P1 — the two controls that
+    // perform DIFFERENT transitions must not read alike, while the one that
+    // genuinely returns someone to the waitlist keeps that phrase to itself.
     scenario.rows = [
       entry({ id: "c1", status: "claimed" }),
       entry({ id: "i1", status: "invited" }),
+      entry({ id: "r1", status: "released" }),
     ];
     scenario.liveInvitations = liveInvitationFor("i1");
     const html = await render();
 
-    expect(rowMarkup(html, "c1")).toContain("Return to waitlist");
+    expect(rowMarkup(html, "c1")).toContain("Set aside");
     expect(rowMarkup(html, "i1")).toContain("Cancel invitation");
-    expect(rowMarkup(html, "c1")).not.toContain("Cancel invitation");
+    expect(rowMarkup(html, "r1")).toContain("Return to waitlist");
+
+    // THE BUTTON LABEL "Return to waitlist" BELONGS TO REQUEUE ALONE — this is
+    // the assertion that would have caught the defect. Matched case-sensitively
+    // against the label itself: the help sentence beside Set aside says
+    // "return THEM to the waitlist later", which is a different string and a
+    // true one, so it is not what is being excluded here.
+    expect(rowMarkup(html, "c1")).not.toContain("Return to waitlist");
     expect(rowMarkup(html, "i1")).not.toContain("Return to waitlist");
+    expect(rowMarkup(html, "c1")).not.toContain("Cancel invitation");
+    expect(rowMarkup(html, "r1")).not.toContain("Set aside");
   });
 
   it("requeue reads RETURN TO WAITLIST on expired and released rows", async () => {

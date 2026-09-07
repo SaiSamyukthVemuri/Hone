@@ -137,20 +137,67 @@ export const ACTION_LABEL: Record<AdmissionAction, string> = {
 };
 
 /**
+ * WHAT EACH COMMAND DOES TO THE ENTRY'S STATUS.
+ *
+ * Copied from the shipped SQL, and load-bearing rather than documentary: a label
+ * may only promise the outcome named here, and two controls may share a label
+ * ONLY when they land the entry in the same state. A test derives both facts
+ * from the migrations so this table cannot drift away from them.
+ *
+ * `release` is the one that has already misled once. It does NOT return anyone
+ * to the waitlist — `0189` sets `status = 'released'`, and reaching `waiting`
+ * needs the separate `requeue` transition (`0188`, `set status = 'waiting'`).
+ */
+export const ACTION_RESULT_STATUS: Record<AdmissionAction, WaitlistEntryStatus> = {
+  claim: "claimed",
+  expire: "expired",
+  release: "released",
+  requeue: "waiting",
+  remove: "removed",
+};
+
+/**
  * ONE COMMAND, TWO MEANINGS — and the label has to say which.
  *
  * `release_new_client_waitlist_entry` is a single command, but what it ends
  * depends entirely on what the entry was doing. On a `claimed` entry it gives up
- * a hold nobody outside the studio ever saw, so the person simply goes back on
- * the waitlist. On an `invited` entry it ends an invitation that has ALREADY
- * REACHED SOMEONE — a materially different act, and one an owner deserves to be
- * warned about by the button itself. Labelling both "Release" made the more
- * consequential of the two look like filing.
+ * a hold nobody outside the studio ever saw. On an `invited` entry it ends an
+ * invitation that has ALREADY REACHED SOMEONE — a materially different act, and
+ * one an owner deserves to be warned about by the button itself. Labelling both
+ * "Release" made the more consequential of the two look like filing.
+ *
+ * NEITHER OF THEM RETURNS ANYONE TO THE WAITLIST, and an earlier revision of
+ * this file said one of them did. "Return to waitlist" on a `claimed` row was a
+ * promise the command cannot keep: release lands the entry in `released`, where
+ * a SECOND control — requeue, which genuinely is "Return to waitlist" — is what
+ * reaches `waiting`. An owner could press it, watch the person leave this
+ * section, and reasonably conclude they were back in the queue while they had in
+ * fact been dropped out of it. "Set aside" says only what release actually does.
  */
 const RELEASE_LABEL: Partial<Record<WaitlistEntryStatus, string>> = {
-  claimed: "Return to waitlist",
+  claimed: "Set aside",
   invited: "Cancel invitation",
 };
+
+/**
+ * A sentence beside a control whose consequence is not obvious from its verb.
+ *
+ * "Set aside" is honest but terse, and the round trip back to the waitlist is
+ * two steps rather than one. Saying so beside the button is the difference
+ * between a short label and a misleading one.
+ */
+const ACTION_HELP: Partial<Record<string, string>> = {
+  "release:claimed":
+    "Move this person out of Ready to invite. You can return them to the waitlist later.",
+};
+
+/** Help text for a control, or null where the verb speaks for itself. */
+export function actionHelp(
+  action: AdmissionAction,
+  status: WaitlistEntryStatus,
+): string | null {
+  return ACTION_HELP[`${action}:${status}`] ?? null;
+}
 
 /**
  * What the control SAYS, given the row it sits on.

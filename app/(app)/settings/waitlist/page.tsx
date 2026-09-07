@@ -15,6 +15,7 @@ import {
   STATUS_LABEL,
   STATUS_MEANING,
   actionAvailability,
+  actionHelp,
   actionLabel,
   statusMeaning,
   type AdmissionAction,
@@ -31,10 +32,18 @@ import {
 // record and stops there.
 //
 // WHAT IT IS NOT. It surfaces the practitioner lifecycle that migrations
-// 0188-0190 already shipped: returning someone to the waitlist, cancelling an
-// invitation, recording an expiry, and the original removal. It shows NO queue
-// position to anyone, does NO ranking, forecasts no capacity, creates no
-// appointment, edits no contact and takes no notes.
+// 0188-0190 already shipped: setting someone aside, cancelling an invitation,
+// recording an expiry, returning someone to the waitlist, and the original
+// removal. It shows NO queue position to anyone, does NO ranking, forecasts no
+// capacity, creates no appointment, edits no contact and takes no notes.
+//
+// A LABEL MAY ONLY PROMISE WHAT ITS COMMAND DELIVERS. `release` and `requeue`
+// are two different transitions and must never read as one: release lands the
+// entry in `released` (0189), and only requeue reaches `waiting` (0188). So
+// "Return to waitlist" belongs to requeue alone, and release reads "Set aside"
+// or "Cancel invitation" depending on what it is ending. `ACTION_RESULT_STATUS`
+// in the model records each command's outcome, and a test refuses to let two
+// controls with different outcomes share a label.
 //
 // CLAIMING IS INTERNAL, AND IS NOT SHOWN. `claimed` is a real database state and
 // `claim_new_client_waitlist_entry(_ies)` are real, wired, tested commands —
@@ -47,7 +56,8 @@ import {
 // So: no Claim button, no "Claim the next N" form, and the state itself is shown
 // as "Ready to invite" — which is what it MEANS to a practitioner. Entries
 // already sitting in that state from the previous release keep working: they
-// render, they are counted, and they can be returned to the waitlist. Restoring
+// render, they are counted, and they can be set aside — which lands them in
+// Released, where "Return to waitlist" then puts them back in line. Restoring
 // any of this is a rendering change and nothing more, because no command, action
 // or authority was touched to remove it.
 //
@@ -614,6 +624,7 @@ export default async function WaitlistSettingsPage({
                                   ? expireWaitlistInvitationAction
                                   : ACTION_FORMS[action];
                               if (!formAction) return null;
+                              const help = actionHelp(action, row.status);
                               return (
                                 <form key={action} action={formAction}>
                                   <input type="hidden" name="entry_id" value={row.id} />
@@ -622,13 +633,27 @@ export default async function WaitlistSettingsPage({
                                     data-testid={`waitlist-action-${action}`}
                                     className="min-h-[44px] w-full rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900 sm:w-auto"
                                   >
-                                    {/* THE ROW DECIDES THE VERB. Release reads
-                                        "Return to waitlist" on a held entry and
-                                        "Cancel invitation" on an invited one —
-                                        one command, two materially different
-                                        acts, and the button says which. */}
+                                    {/* THE ROW DECIDES THE VERB, AND IT MAY ONLY
+                                        PROMISE WHAT THE COMMAND DELIVERS.
+                                        Release reads "Set aside" on a ready-to-
+                                        invite entry and "Cancel invitation" on
+                                        an invited one — neither says "Return to
+                                        waitlist", because release lands the
+                                        entry in Released and only requeue
+                                        reaches Waiting. */}
                                     {actionLabel(action, row.status)}
                                   </button>
+                                  {/* The consequence, where the verb alone does
+                                      not carry it. Beside the control, not in a
+                                      tooltip: a tooltip is unreachable by touch. */}
+                                  {help && (
+                                    <span
+                                      data-testid={`waitlist-action-help-${action}`}
+                                      className="mt-1 block text-xs leading-snug text-neutral-500"
+                                    >
+                                      {help}
+                                    </span>
+                                  )}
                                 </form>
                               );
                             },

@@ -4,13 +4,16 @@ import { join } from "node:path";
 
 import {
   ACTION_LABEL,
+  ACTION_RESULT_STATUS,
   ADMISSION_ACTIONS,
   STATUS_LABEL,
   STATUS_MEANING,
   WAITLIST_ENTRY_STATUSES,
   actionAvailability,
+  actionHelp,
   actionLabel,
   statusMeaning,
+  type AdmissionAction,
   type WaitlistEntryStatus,
 } from "@/lib/waitlist/admission-model";
 
@@ -106,6 +109,33 @@ describe("the model offers only actions a studio can actually perform", () => {
   });
 });
 
+/**
+ * Every label a practitioner can actually be shown, grouped by the state the
+ * underlying command leaves the entry in.
+ *
+ * Only OFFERABLE pairs count: an action the model refuses on a status has no
+ * button and therefore no label. `claim` is skipped because the page never
+ * renders it at all, which the queue suite proves separately.
+ */
+function labelOutcomes(
+  label: (a: AdmissionAction, s: WaitlistEntryStatus) => string,
+): Map<string, Set<WaitlistEntryStatus>> {
+  const byLabel = new Map<string, Set<WaitlistEntryStatus>>();
+  for (const status of WAITLIST_ENTRY_STATUSES) {
+    for (const action of ADMISSION_ACTIONS) {
+      if (action === "claim") continue;
+      // `expire` is only offered once the clock has actually run out.
+      if (!actionAvailability(action, status, { invitationElapsed: true }).available) {
+        continue;
+      }
+      const key = label(action, status);
+      if (!byLabel.has(key)) byLabel.set(key, new Set());
+      byLabel.get(key)!.add(ACTION_RESULT_STATUS[action]);
+    }
+  }
+  return byLabel;
+}
+
 describe("the practitioner's vocabulary is not the implementation's", () => {
   it("`claimed` is shown as READY TO INVITE, never as a claim or a hold", () => {
     // "Claim" describes how the queue moves an entry out of general contention.
@@ -129,20 +159,98 @@ describe("the practitioner's vocabulary is not the implementation's", () => {
   });
 
   it("RELEASE READS DIFFERENTLY depending on what it ends", () => {
-    // One command, two materially different acts. On a held entry it gives up a
-    // hold nobody outside the studio ever saw; on an invited one it ends an
-    // invitation that has ALREADY REACHED SOMEONE, and the button has to say so.
-    expect(actionLabel("release", "claimed")).toBe("Return to waitlist");
+    // One command, two materially different acts. On a ready-to-invite entry it
+    // gives up a hold nobody outside the studio ever saw; on an invited one it
+    // ends an invitation that has ALREADY REACHED SOMEONE.
+    expect(actionLabel("release", "claimed")).toBe("Set aside");
     expect(actionLabel("release", "invited")).toBe("Cancel invitation");
     expect(actionLabel("release", "claimed")).not.toBe(
       actionLabel("release", "invited"),
     );
   });
 
+  it("RELEASE NEVER CLAIMS TO RETURN ANYONE TO THE WAITLIST", () => {
+    // THE DEFECT THIS PINS, and it shipped in a review round. Release does not
+    // reach `waiting` — it lands the entry in `released`, and only requeue goes
+    // the rest of the way. A release control labelled "Return to waitlist" let
+    // an owner press it, watch the person leave the section, and reasonably
+    // conclude they were back in the queue while they had been dropped out of
+    // it — with a SECOND button of the same name waiting in Released.
+    expect(ACTION_RESULT_STATUS.release).toBe("released");
+    expect(ACTION_RESULT_STATUS.requeue).toBe("waiting");
+    for (const status of WAITLIST_ENTRY_STATUSES) {
+      expect(actionLabel("release", status), status).not.toMatch(/return to waitlist/i);
+    }
+    // The phrase belongs to the transition that earns it, and only that one.
+    expect(actionLabel("requeue", "released")).toBe("Return to waitlist");
+  });
+
+  it("the outcome table AGREES WITH THE SHIPPED SQL, derived not asserted", () => {
+    // A hand-written table that certifies itself proves nothing, and this one is
+    // load-bearing: every label check below trusts it.
+    const m0189 = readFileSync(
+      join(process.cwd(), "supabase/migrations/0189_waitlist_invitation_wall_clock_expiry.sql"),
+      "utf8",
+    );
+    const release = m0189.slice(
+      m0189.indexOf("function public.release_new_client_waitlist_entry"),
+    );
+    expect(release.length).toBeGreaterThan(200);
+    expect(release).toMatch(/set status = 'released'/);
+    expect(release).not.toMatch(/set status = 'waiting'/);
+
+    const requeue = MIGRATION.slice(
+      MIGRATION.indexOf("function public.requeue_new_client_waitlist_entry"),
+    );
+    expect(requeue.length).toBeGreaterThan(200);
+    expect(requeue).toMatch(/set status\s+= 'waiting'/);
+  });
+
+  it("TWO CONTROLS THAT DO DIFFERENT THINGS CAN NEVER SHARE A LABEL", () => {
+    // The general rule the P1 was one instance of. Group every label a
+    // practitioner can be shown by the state it actually produces; a label used
+    // by two different outcomes is a lie to at least one of them.
+    const outcomesByLabel = labelOutcomes((a, s) => actionLabel(a, s));
+    for (const [label, outcomes] of outcomesByLabel) {
+      expect(
+        [...outcomes],
+        `"${label}" is shown on controls that leave the entry in different states`,
+      ).toHaveLength(1);
+    }
+    // NON-VACUITY: real labels were grouped, not an empty map.
+    expect(outcomesByLabel.size).toBeGreaterThan(2);
+    expect([...outcomesByLabel.keys()]).toContain("Return to waitlist");
+  });
+
+  it("NEGATIVE CONTROL — the OLD labelling is caught by that rule", () => {
+    // Re-runs the identical check against the copy this PR replaced, where
+    // release-on-claimed also read "Return to waitlist". If the rule cannot fail
+    // here it is not enforcing anything.
+    const oldLabel = (a: AdmissionAction, s: WaitlistEntryStatus) =>
+      a === "release" && s === "claimed" ? "Return to waitlist" : actionLabel(a, s);
+
+    const outcomesByLabel = labelOutcomes(oldLabel);
+    const shared = outcomesByLabel.get("Return to waitlist")!;
+    expect(shared, "the old copy must collide, or this control proves nothing").toBeDefined();
+    // `released` (from release) and `waiting` (from requeue) under one label.
+    expect([...shared].sort()).toEqual(["released", "waiting"]);
+  });
+
   it("requeue reads as returning someone to the waitlist", () => {
     for (const status of ["expired", "released"] as const) {
       expect(actionLabel("requeue", status)).toBe("Return to waitlist");
     }
+  });
+
+  it("SET ASIDE carries the consequence its verb does not", () => {
+    // The round trip back is two steps, and a terse label cannot say so alone.
+    const help = actionHelp("release", "claimed");
+    expect(help).toBeTruthy();
+    expect(help).toMatch(/ready to invite/i);
+    expect(help).toMatch(/return them to the waitlist later/i);
+    // Only where the verb genuinely needs it — not decoration on every control.
+    expect(actionHelp("requeue", "released")).toBeNull();
+    expect(actionHelp("release", "invited")).toBeNull();
   });
 
   it("no label a practitioner can ACTUALLY BE SHOWN says `claim` or `release`", () => {
@@ -168,7 +276,7 @@ describe("the practitioner's vocabulary is not the implementation's", () => {
     // not an empty loop that satisfies the assertion by never running.
     expect(rendered.length).toBeGreaterThan(4);
     expect(rendered).toContain("release/invited=Cancel invitation");
-    expect(rendered).toContain("release/claimed=Return to waitlist");
+    expect(rendered).toContain("release/claimed=Set aside");
   });
 
   it("THE WIRING IS UNTOUCHED — claim is still a modelled, available action", () => {
