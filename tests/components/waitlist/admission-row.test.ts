@@ -146,9 +146,10 @@ describe("every action is shown, and every refusal explains itself", () => {
 
 describe("pre-B2: available actions still refuse, for a DIFFERENT reason", () => {
   it("an available action is disabled while nothing is connected", () => {
-    // `waiting` can legitimately be invited, so this is the case that separates
-    // "not yet wired" from "not permitted in this state".
-    expect(actionAvailability("invite", "waiting").available).toBe(true);
+    // `waiting` legitimately permits CLAIM, so this is the case that separates
+    // "not yet wired" from "not permitted in this state". (It does NOT permit
+    // invite: 0190 answers `not_claimed` for anything but `claimed`.)
+    expect(actionAvailability("claim", "waiting").available).toBe(true);
     const html = render(AdmissionActions({ status: "waiting" }) as ReactElement);
     expect(html).toContain("Sending is not available in this release yet.");
   });
@@ -167,11 +168,11 @@ describe("pre-B2: available actions still refuse, for a DIFFERENT reason", () =>
     const html = render(
       AdmissionActions({ status: "waiting", connected: true }) as ReactElement,
     );
-    // The invite control loses `disabled`; revoke keeps it and keeps its reason.
+    // The claim control loses `disabled`; release keeps it and keeps its reason.
     // `disabled=""` — the ATTRIBUTE. A bare "disabled" substring also matches
     // the `disabled:` Tailwind variants inside the class string, which made an
     // earlier version of this assertion true in both directions.
-    expect(buttonTag(html, "invite")).not.toContain('disabled=""');
+    expect(buttonTag(html, "claim")).not.toContain('disabled=""');
     expect(buttonTag(html, "release")).toContain('disabled=""');
     expect(html).toContain((actionAvailability("release", "waiting") as { reason: string }).reason);
   });
@@ -180,7 +181,7 @@ describe("pre-B2: available actions still refuse, for a DIFFERENT reason", () =>
     // Without this pair the assertion above passes for a control that was
     // never disabled in either state.
     const html = render(AdmissionActions({ status: "waiting" }) as ReactElement);
-    expect(buttonTag(html, "invite")).toContain('disabled=""');
+    expect(buttonTag(html, "claim")).toContain('disabled=""');
   });
 });
 

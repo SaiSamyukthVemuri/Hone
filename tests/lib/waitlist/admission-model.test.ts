@@ -105,11 +105,17 @@ describe("every action, on every state, is decided AND explained", () => {
     expect(available.length).toBeGreaterThan(5);
   });
 
-  it("invite is offered exactly where an entry can receive a first invitation", () => {
-    expect(actionAvailability("invite", "waiting").available).toBe(true);
+  it("INVITING REQUIRES `claimed`, and only claimed", () => {
+    // 0190: `if v_status <> 'claimed' then return 'not_claimed'`. A merely
+    // WAITING entry cannot be invited — offering it would be a control that
+    // cannot succeed — and the refusal names the missing step.
     expect(actionAvailability("invite", "claimed").available).toBe(true);
-    expect(actionAvailability("invite", "invited").available).toBe(false);
-    expect(actionAvailability("invite", "expired").available).toBe(false);
+    for (const s of ["waiting", "invited", "expired", "released"] as const) {
+      expect(actionAvailability("invite", s).available, s).toBe(false);
+    }
+    expect(
+      (actionAvailability("invite", "waiting") as { reason: string }).reason,
+    ).toMatch(/claim them first/i);
   });
 
   it("a live invitation must be RELEASED before another is sent", () => {
@@ -219,10 +225,19 @@ describe("every action, on every state, is decided AND explained", () => {
     }
   });
 
-  it("reinvite is offered only where a previous invitation is no longer live", () => {
-    expect(actionAvailability("reinvite", "expired").available).toBe(true);
-    expect(actionAvailability("reinvite", "released").available).toBe(true);
-    expect(actionAvailability("reinvite", "waiting").available).toBe(false);
+  it("reinvite carries the SAME prerequisite, and names the path back", () => {
+    // Re-inviting IS `issue` again, so it needs a claimed entry too. An expired
+    // or released one has to travel back: requeue, then claim.
+    expect(actionAvailability("reinvite", "claimed").available).toBe(true);
+    for (const s of ["waiting", "invited", "expired", "released"] as const) {
+      expect(actionAvailability("reinvite", s).available, s).toBe(false);
+    }
+    for (const s of ["expired", "released"] as const) {
+      expect(
+        (actionAvailability("reinvite", s) as { reason: string }).reason,
+        s,
+      ).toMatch(/return them to the queue and claim them first/i);
+    }
   });
 
   it("release ends a hold or a live invitation, and nothing else", () => {

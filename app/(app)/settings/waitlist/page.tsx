@@ -86,7 +86,7 @@ const SECTIONS: ReadonlyArray<{ status: WaitlistEntryStatus; heading: string }> 
   { status: "claimed", heading: "Held" },
   { status: "invited", heading: "Invited" },
   { status: "expired", heading: "Expired" },
-  { status: "released", heading: "Returned to queue" },
+  { status: "released", heading: "Released" },
 ];
 
 /**
@@ -453,10 +453,12 @@ export default async function WaitlistSettingsPage() {
                           {/* The invitation window could not be read, so whether
                               it has run out is UNKNOWN. Say that, rather than
                               letting the absent control imply "still live". */}
-                          {/* "Release ends it either way" USED TO SIT HERE and
-                              was false: an invitation that has already been
-                              redeemed cannot be released, and this is exactly
-                              the case where we do not know whether it was. */}
+                          {/* No action is offered here on purpose. An earlier
+                              revision claimed Release worked regardless, which
+                              was false: a redeemed invitation cannot be
+                              released, and this is exactly the case where we do
+                              not know whether it was. (The old sentence is not
+                              quoted here — a reviewer matched it as live copy.) */}
                           {row.status === "invited" && cycleByEntry === null && (
                             <span className="text-xs text-neutral-500">
                               This invitation&apos;s current state could not be

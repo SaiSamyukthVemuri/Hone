@@ -84,13 +84,13 @@ export const STATUS_LABEL: Record<WaitlistEntryStatus, string> = {
   invited: "Invited",
   converted: "Booked",
   expired: "Expired",
-  released: "Returned to queue",
+  released: "Released",
   removed: "Removed",
 };
 
 /** One line explaining what the state MEANS operationally. Shown beside the
  *  status so a practitioner never has to infer the difference between `Held`
- *  and `Invited`, or between `Returned to queue` and `Removed`. */
+ *  and `Invited`, or between `Released` and `Removed`. */
 export const STATUS_MEANING: Record<WaitlistEntryStatus, string> = {
   waiting: "In the queue. No one has started admitting them.",
   claimed: "Held for this studio. No invitation has been sent yet.",
@@ -99,7 +99,7 @@ export const STATUS_MEANING: Record<WaitlistEntryStatus, string> = {
   invited: "An invitation is out.",
   converted: "They booked. This entry is closed.",
   expired: "The invitation ran out before it was used.",
-  released: "Returned to the queue and can be admitted again.",
+  released: "Out of the queue. Return them to it before they can be claimed again.",
   removed: "Taken off the waitlist by the studio. Terminal.",
 };
 
@@ -141,13 +141,16 @@ export type ActionAvailability =
 /**
  * The transition table, derived from what the shipped commands actually accept.
  *
- * NOTE ON `reinvite`. There is no reinvite command. Re-inviting is
- * `issue_new_client_waitlist_invitation` called again, which the database only
- * permits once the previous invitation is no longer live — i.e. after it expired
- * or the entry was released. So `reinvite` is offered on `expired` and
- * `released`, and refused on `invited` with the remedy named (release first).
- * Modelling it as its own action, rather than a second "invite" button, is what
- * lets the refusal say something useful.
+ * INVITING REQUIRES `claimed`, AND ONLY `claimed`.
+ * `issue_new_client_waitlist_invitation` answers `not_claimed` for every other
+ * status (0190: `if v_status <> 'claimed' then return 'not_claimed'`). So an
+ * entry that is merely WAITING cannot be invited — it must be claimed first —
+ * and an `expired` or `released` entry needs the full path back: return it to
+ * the queue, claim it, then invite.
+ *
+ * `reinvite` is not a separate command; it is `issue` called again on a claimed
+ * entry whose previous invitation is no longer live. It stays a separate ACTION
+ * so its refusal can name the path rather than repeating "invite".
  */
 /**
  * Facts beyond the entry's status that an availability ruling needs.
@@ -204,7 +207,16 @@ export function actionAvailability(
 
   switch (action) {
     case "invite":
-      if (status === "waiting" || status === "claimed") return { available: true };
+      // ONLY `claimed`. The command answers `not_claimed` for every other
+      // status, so offering it on a merely WAITING entry would be a control
+      // that cannot succeed.
+      if (status === "claimed") return { available: true };
+      if (status === "waiting") {
+        return {
+          available: false,
+          reason: `Claim them first — use “${ACTION_LABEL.claim}” — then send the invitation.`,
+        };
+      }
       if (status === "invited") {
         return {
           available: false,
@@ -213,20 +225,30 @@ export function actionAvailability(
       }
       return {
         available: false,
-        reason: `This entry is ${label}. Use “${ACTION_LABEL.reinvite}” instead.`,
+        reason: `This entry is ${label}. Return them to the queue and claim them first.`,
       };
 
     case "reinvite":
-      if (status === "expired" || status === "released") return { available: true };
+      // Same prerequisite: re-inviting IS `issue` again, so it also needs a
+      // claimed entry. An expired or released one has to travel back —
+      // requeue, then claim — and the refusal names that path rather than
+      // implying a shortcut the database does not have.
+      if (status === "claimed") return { available: true };
       if (status === "invited") {
         return {
           available: false,
           reason: "An invitation is already out. Release it before sending another.",
         };
       }
+      if (status === "expired" || status === "released") {
+        return {
+          available: false,
+          reason: `Return them to the queue and claim them first, then send a new invitation.`,
+        };
+      }
       return {
         available: false,
-        reason: `Nothing has been sent yet. Use “${ACTION_LABEL.invite}”.`,
+        reason: `Nothing has been sent yet. Claim them, then use “${ACTION_LABEL.invite}”.`,
       };
 
     case "claim":
