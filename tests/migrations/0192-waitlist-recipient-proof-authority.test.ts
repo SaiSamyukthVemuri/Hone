@@ -172,6 +172,10 @@ describe("0192 — NO PLAINTEXT PROOF IS EVER PERSISTED", () => {
       "proof_challenge_attempts",
       "proof_challenge_expires_at",
       "proof_challenge_hash",
+      // A non-secret handle for one challenge event. It is a uuid, not a
+      // credential, and it is listed here so adding a SEVENTH proof column
+      // stays a deliberate act.
+      "proof_challenge_id",
       "proof_challenge_sent_to_hash",
     ]);
   });
@@ -435,7 +439,9 @@ describe("0192 — privileges are enumerated by name, and nothing reaches the br
 
   it("every function pins search_path and the definer ones are marked", () => {
     const defs = CODE.match(/create or replace function public\.[\s\S]*?\$\$;/g) ?? [];
-    expect(defs.length).toBe(8);
+    // EIGHT new commands plus the forward REDEFINITION of the delegated issuer,
+    // which the P1 declined-rows repair required. 0190's file stays frozen.
+    expect(defs.length).toBe(9);
     for (const d of defs) {
       expect(d).toMatch(/set search_path = pg_catalog, pg_temp/);
     }
@@ -497,5 +503,99 @@ describe("0192 — every table it creates has an EXPORT DISPOSITION on the recor
     // columns, no security material, no provider identifier, no attribution.
     // If a later slice adds such a column here, this must be revisited.
     expect(d.fieldReviewRequired ?? false).toBe(false);
+  });
+});
+
+describe("0192 — exact-head review repairs (9c25e0fb)", () => {
+  it("P1: the LEGACY unscoped issuer loses EXECUTE from all four roles", () => {
+    for (const role of ["public", "anon", "authenticated", "service_role"]) {
+      expect(CODE).toContain(
+        `revoke all privileges on function public.issue_new_client_waitlist_invitation(uuid, uuid, uuid, integer) from ${role};`,
+      );
+    }
+    // ...and is never re-granted.
+    expect(CODE).not.toMatch(
+      /grant execute on function public\.issue_new_client_waitlist_invitation\(uuid, uuid, uuid, integer\)/,
+    );
+  });
+
+  it("P1: the issuer is REDEFINED so a declined invitation is closed", () => {
+    // 0190's file is frozen; this is a forward create-or-replace, the same
+    // mechanism 0189 and 0190 each used on this function.
+    const start = CODE.indexOf(
+      "create or replace function public.issue_new_client_waitlist_invitation(",
+    );
+    expect(start).toBeGreaterThan(-1);
+    const body = CODE.slice(start, CODE.indexOf("$$;", start));
+    expect(body).toMatch(
+      /i\.redeemed_at is null and i\.expired_at is null and i\.released_at is null\s*\n\s*and i\.declined_at is null/,
+    );
+    // The TTL anchor 0190 exists to fix must survive the redefinition.
+    expect(body).toMatch(/v_decision_at := clock_timestamp\(\)/);
+    expect(body).toMatch(/v_expires := v_decision_at \+ make_interval\(hours => v_ttl\)/);
+    expect(body).not.toMatch(/now\(\) \+ make_interval/);
+  });
+
+  it("P1: the no-repeat-SAME-declined-offer rule is enforced at ISSUE, with a code", () => {
+    // The partial index only fires on a SECOND declined row, so after the
+    // repair the identical offer could be re-issued and the second decline
+    // died on a bare 23505. A command here returns a code, never raises.
+    expect(CODE).toContain("already_declined_offer");
+    expect(CODE).toMatch(/i\.scope_allowed_weekdays is not distinct from p_allowed_weekdays/);
+    // ...and it is still keyed on the FULL offer, so a different offer passes.
+    for (const col of [
+      "scope_service_id",
+      "scope_start_date",
+      "scope_end_date",
+      "scope_allowed_weekdays",
+    ]) {
+      expect(CODE).toMatch(new RegExp(`i\\.${col}\\s+is not distinct from`));
+    }
+  });
+
+  it("P2: decline takes the ENTRY lock before the invitation lock", () => {
+    const start = CODE.indexOf(
+      "create or replace function public.decline_new_client_waitlist_invitation(",
+    );
+    const body = CODE.slice(start, CODE.indexOf("$$;", start));
+    const entryLock = body.indexOf("from public.new_client_waitlist_entries e");
+    const invLock = body.indexOf("where i.id = v_inv");
+    expect(entryLock).toBeGreaterThan(-1);
+    expect(invLock).toBeGreaterThan(entryLock);
+    // Proof validation still happens AFTER both locks, in the same transaction.
+    expect(body.indexOf("proof_required")).toBeGreaterThan(invLock);
+  });
+});
+
+describe("0192 — the challenge event id is a handle, not a credential", () => {
+  it("adds proof_challenge_id and binds it into the pairing rule", () => {
+    expect(CODE).toMatch(/add column if not exists proof_challenge_id\s+uuid/);
+    expect(CODE).toMatch(
+      /\(proof_challenge_hash is null\) = \(proof_challenge_id is null\)/,
+    );
+  });
+
+  it("begin_ mints it independently of the secret and RETURNS it", () => {
+    expect(CODE).toMatch(/v_cid := gen_random_uuid\(\)/);
+    expect(CODE).toMatch(/challenge_id uuid\)/);
+    // NOT derived from the raw challenge — that is the #680 defect class.
+    expect(CODE).not.toMatch(/v_cid\s*:=[^;]*v_raw/);
+    expect(CODE).not.toMatch(/proof_challenge_id\s*=\s*encode\(/);
+  });
+
+  it("is cleared when the challenge is consumed and by invalidate_", () => {
+    const complete = CODE.slice(
+      CODE.indexOf("create or replace function public.complete_waitlist_invitation_proof("),
+    );
+    expect(complete).toMatch(/proof_challenge_id\s+= null/);
+    const inval = CODE.slice(
+      CODE.indexOf("create or replace function public.invalidate_waitlist_invitation_proof("),
+    );
+    expect(inval).toMatch(/proof_challenge_id = null/);
+  });
+
+  it("is never granted to a browser role", () => {
+    // 0188's grant is a positive list; this column must not be added to it.
+    expect(CODE).not.toMatch(/grant select[^;]*proof_challenge_id/);
   });
 });

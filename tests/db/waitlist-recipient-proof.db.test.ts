@@ -89,7 +89,7 @@ async function seedOffer(label: string, allowance = 10): Promise<Offer> {
 
 async function beginProof(token: string, ttlMinutes = 15) {
   const r = await adminQuery(
-    `select result, raw_challenge, delivery_contact, expires_at
+    `select result, raw_challenge, delivery_contact, expires_at, challenge_id
        from public.begin_waitlist_invitation_proof($1, $2)`,
     [token, ttlMinutes],
   );
@@ -135,6 +135,7 @@ async function decline(token: string, capability: string) {
 async function invitationRow(invitationId: string) {
   const r = await adminQuery(
     `select redeemed_at, declined_at, released_at, expired_at,
+            proof_challenge_id,
             proof_challenge_hash, proof_capability_hash, proof_capability_expires_at,
             proof_challenge_attempts, proof_challenge_sent_to_hash,
             scope_service_id, scope_start_date, scope_end_date, scope_allowed_weekdays
@@ -943,5 +944,337 @@ describe("0192 — privileges, proved against the database rather than the file"
     const ids = rows.rows.map((x: { studio_id: string }) => x.studio_id);
     expect(ids).toContain(a.studio.studioId);
     expect(ids).not.toContain(b.studio.studioId);
+  });
+});
+
+// ===========================================================================
+// EXACT-HEAD REVIEW REPAIRS (9c25e0fb). Three findings, three controls.
+// Each one FAILED before its repair and is kept here so it cannot regress.
+// ===========================================================================
+describe("0192 — the unscoped issuer is not a bypass (P1 repair)", () => {
+  it("the LEGACY four-argument issuer is unreachable by every application role", async () => {
+    // It answers neither of the wrapper's invariants — no open round, no
+    // allowance check — so a server path calling it directly could mint an
+    // invitation with every scope column NULL, outside the round entirely.
+    for (const role of ["anon", "authenticated", "service_role"]) {
+      const r = await adminQuery(
+        `select has_function_privilege($1,'public.issue_new_client_waitlist_invitation(uuid,uuid,uuid,integer)','EXECUTE') as ok`,
+        [role],
+      );
+      expect(r.rows[0].ok, `${role} must not execute the unscoped issuer`).toBe(false);
+    }
+  });
+
+  it("...and the SCOPED wrapper still issues, so the revoke disabled nothing real", async () => {
+    // THE NON-REGRESSION HALF. The wrapper delegates to the function just
+    // revoked; it works because it is SECURITY DEFINER owned by postgres, which
+    // owns that function too. Without this assertion the revoke above could
+    // pass while having broken the only supported issuance path.
+    const offer = await seedOffer("revoked-issuer-still-issues");
+    expect(offer.token).toMatch(HEX64);
+    const row = await invitationRow(offer.invitationId);
+    expect(row.scope_service_id).toBe(offer.serviceId);
+  });
+
+  it("the scoped wrapper remains service_role-reachable", async () => {
+    const r = await adminQuery(
+      `select has_function_privilege('service_role','public.issue_scoped_new_client_waitlist_invitation(uuid,uuid,uuid,uuid,date,date,smallint[],integer)','EXECUTE') as ok`,
+    );
+    expect(r.rows[0].ok).toBe(true);
+  });
+});
+
+describe("0192 — a declined entry can be offered again (P1 repair)", () => {
+  it("decline -> requeue -> claim -> a DIFFERENT offer ISSUES", async () => {
+    // The defect: the delegated issuer's already_invited predicate tested only
+    // redeemed/expired/released, so the historical declined row still matched
+    // and this returned `already_invited` forever. The no-repeat-declined index
+    // was built to permit exactly this flow.
+    const offer = await verifiedOffer("reoffer");
+    const second = await seedService(offer.studio.studioId, "reoffer-2");
+
+    expect((await decline(offer.token, offer.capability)).result).toBe("declined");
+
+    const rq = await adminQuery(
+      `select public.requeue_new_client_waitlist_entry($1,$2,$3) as result`,
+      [offer.studio.studioId, offer.entryId, offer.studio.userId],
+    );
+    expect(rq.rows[0].result).toBe("requeued");
+    await adminQuery(`select public.claim_new_client_waitlist_entry($1,$2,$3)`, [
+      offer.studio.studioId,
+      offer.entryId,
+      offer.studio.userId,
+    ]);
+
+    const again = await adminQuery(
+      `select result, invitation_id from public.issue_scoped_new_client_waitlist_invitation(
+                $1,$2,$3,$4, current_date, current_date + 7, null, 72)`,
+      [offer.studio.studioId, offer.entryId, offer.studio.userId, second],
+    );
+    expect(again.rows[0].result).toBe("issued");
+    expect(again.rows[0].invitation_id).not.toBe(offer.invitationId);
+  });
+
+  it("the SAME declined offer is still refused — the no-repeat rule survives the repair", async () => {
+    // The repair must not turn "a different offer is possible" into "the
+    // identical declined offer can be re-issued", which the partial unique
+    // index exists to forbid.
+    const offer = await verifiedOffer("reoffer-same");
+    expect((await decline(offer.token, offer.capability)).result).toBe("declined");
+    await adminQuery(`select public.requeue_new_client_waitlist_entry($1,$2,$3)`, [
+      offer.studio.studioId,
+      offer.entryId,
+      offer.studio.userId,
+    ]);
+    await adminQuery(`select public.claim_new_client_waitlist_entry($1,$2,$3)`, [
+      offer.studio.studioId,
+      offer.entryId,
+      offer.studio.userId,
+    ]);
+    // seedOffer issues current_date .. current_date + 13, so THAT window is the
+    // identical offer. A different end date is a DIFFERENT offer and must still
+    // be allowed — asserting both is what makes this discriminating rather than
+    // a blanket refusal.
+    const identical = await adminQuery(
+      `select result from public.issue_scoped_new_client_waitlist_invitation(
+                $1,$2,$3,$4, current_date, current_date + 13, null, 72)`,
+      [offer.studio.studioId, offer.entryId, offer.studio.userId, offer.serviceId],
+    );
+    // A CODE, NEVER A RAISE. Before this moved to issue time, the identical
+    // offer was ISSUED and the second decline died on a bare 23505 out of the
+    // partial index — the failure mode 0185 forbids.
+    expect(identical.rows[0].result).toBe("already_declined_offer");
+
+    const different = await adminQuery(
+      `select result from public.issue_scoped_new_client_waitlist_invitation(
+                $1,$2,$3,$4, current_date, current_date + 7, null, 72)`,
+      [offer.studio.studioId, offer.entryId, offer.studio.userId, offer.serviceId],
+    );
+    expect(
+      different.rows[0].result,
+      "a DIFFERENT window is a different offer and must still issue",
+    ).toBe("issued");
+  });
+
+  it("a second identical decline is therefore UNREACHABLE, so no 23505 can escape", async () => {
+    const offer = await verifiedOffer("no-23505");
+    expect((await decline(offer.token, offer.capability)).result).toBe("declined");
+    await adminQuery(`select public.requeue_new_client_waitlist_entry($1,$2,$3)`, [
+      offer.studio.studioId, offer.entryId, offer.studio.userId,
+    ]);
+    await adminQuery(`select public.claim_new_client_waitlist_entry($1,$2,$3)`, [
+      offer.studio.studioId, offer.entryId, offer.studio.userId,
+    ]);
+    // The only route to a duplicate declined row is a second identical issue.
+    const blocked = await adminQuery(
+      `select result from public.issue_scoped_new_client_waitlist_invitation(
+                $1,$2,$3,$4, current_date, current_date + 13, null, 72)`,
+      [offer.studio.studioId, offer.entryId, offer.studio.userId, offer.serviceId],
+    );
+    expect(blocked.rows[0].result).toBe("already_declined_offer");
+    // ...and exactly one declined row stands for this entry.
+    const n = await adminQuery(
+      `select count(*)::int as n from public.new_client_waitlist_invitations
+        where entry_id = $1 and declined_at is not null`,
+      [offer.entryId],
+    );
+    expect(n.rows[0].n).toBe(1);
+  });
+});
+
+describe("0192 — decline takes the ENTRY lock first, so it cannot deadlock (P2 repair)", () => {
+  it("racing decline against release yields ONE outcome and never a deadlock", async () => {
+    // release_ and expire_ both lock the entry then the invitation. decline_
+    // previously did the reverse, which is a genuine cycle: PostgreSQL aborts
+    // one otherwise-valid command with 40P01 instead of returning a closed
+    // lifecycle result. Run repeatedly, because a race that fires sometimes is
+    // still a defect.
+    const TRIALS = 8;
+    let deadlocks = 0;
+    for (let i = 0; i < TRIALS; i++) {
+      const offer = await verifiedOffer(`race-${i}`);
+      const results = await Promise.allSettled([
+        decline(offer.token, offer.capability),
+        adminQuery(`select public.release_new_client_waitlist_entry($1,$2,$3) as result`, [
+          offer.studio.studioId,
+          offer.entryId,
+          offer.studio.userId,
+        ]),
+      ]);
+      for (const r of results) {
+        if (r.status === "rejected" && (r.reason as { code?: string })?.code === "40P01") {
+          deadlocks += 1;
+        }
+      }
+      // Whoever won, the invitation carries EXACTLY ONE terminal outcome.
+      const row = await invitationRow(offer.invitationId);
+      const outcomes = [
+        row.redeemed_at,
+        row.declined_at,
+        row.released_at,
+        row.expired_at,
+      ].filter((v) => v !== null);
+      expect(outcomes.length, "exactly one terminal outcome per invitation").toBe(1);
+    }
+    expect(deadlocks, `${deadlocks}/${TRIALS} trials deadlocked (40P01)`).toBe(0);
+  });
+
+  it("every command over this pair takes the ENTRY mutex before the invitation", async () => {
+    // Structural, and it is the property that makes the race above safe rather
+    // than merely lucky. Read from the BUILT functions, not the migration text.
+    for (const fn of [
+      "decline_new_client_waitlist_invitation",
+      "release_new_client_waitlist_entry",
+      "expire_new_client_waitlist_invitation",
+      "issue_new_client_waitlist_invitation",
+    ]) {
+      const r = await adminQuery(
+        `select pg_get_functiondef(p.oid) as def
+           from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+          where n.nspname='public' and p.proname=$1`,
+        [fn],
+      );
+      const def: string = r.rows[0].def;
+      // Strip comments: a comment quoting old code reads as live code.
+      const code = def
+        .split("\n")
+        .filter((l) => !/^\s*--/.test(l))
+        .join("\n");
+      const firstLock = code.indexOf("for update");
+      expect(firstLock, `${fn} must take a row lock`).toBeGreaterThan(-1);
+      const before = code.slice(0, firstLock);
+      const lastEntries = before.lastIndexOf("new_client_waitlist_entries");
+      const lastInvites = before.lastIndexOf("new_client_waitlist_invitations");
+      expect(
+        lastEntries,
+        `${fn}: the FIRST 'for update' must target new_client_waitlist_entries`,
+      ).toBeGreaterThan(lastInvites);
+    }
+  });
+});
+
+describe("0192 — the challenge carries a NON-SECRET event identity", () => {
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+  it("begin_ returns a challenge_id, and it is stored with that challenge", async () => {
+    const offer = await seedOffer("cid");
+    const begun = await beginProof(offer.token);
+    expect(begun.result).toBe("challenge_issued");
+    expect(begun.challenge_id).toMatch(UUID);
+    const row = await invitationRow(offer.invitationId);
+    expect(row.proof_challenge_id).toBe(begun.challenge_id);
+  });
+
+  it("is NOT derived from the raw challenge — the whole point of it", async () => {
+    // #680's defect: a proof-send idempotency key was derived from a payload
+    // containing the code, so the transmitted header became an offline verifier
+    // for it. A handle that is a function of the secret is not a safe handle.
+    const offer = await seedOffer("cid-independent");
+    const begun = await beginProof(offer.token);
+    const raw: string = begun.raw_challenge;
+    const cid: string = begun.challenge_id;
+    const bare = cid.replace(/-/g, "");
+    expect(raw).not.toContain(bare);
+    expect(bare).not.toContain(raw);
+    // sha256 of the challenge must not be the id either.
+    const d = await adminQuery(
+      `select encode(extensions.digest($1,'sha256'),'hex') as h`,
+      [raw],
+    );
+    expect(d.rows[0].h).not.toContain(bare);
+  });
+
+  it("a NEW challenge REPLACES the id, so a stale handle names nothing live", async () => {
+    const offer = await seedOffer("cid-replace");
+    const first = await beginProof(offer.token);
+    const second = await beginProof(offer.token);
+    expect(second.challenge_id).not.toBe(first.challenge_id);
+    const row = await invitationRow(offer.invitationId);
+    expect(row.proof_challenge_id).toBe(second.challenge_id);
+  });
+
+  it("is CLEARED when the challenge is consumed", async () => {
+    const offer = await seedOffer("cid-consumed");
+    const begun = await beginProof(offer.token);
+    expect((await completeProof(offer.token, begun.raw_challenge)).result).toBe("verified");
+    const row = await invitationRow(offer.invitationId);
+    expect(row.proof_challenge_id).toBeNull();
+  });
+
+  it("is CLEARED by invalidate_", async () => {
+    const offer = await seedOffer("cid-invalidated");
+    await beginProof(offer.token);
+    await adminQuery(`select public.invalidate_waitlist_invitation_proof($1)`, [
+      offer.invitationId,
+    ]);
+    expect((await invitationRow(offer.invitationId)).proof_challenge_id).toBeNull();
+  });
+
+  it("id, verifier and expiry are ONE state — no two-of-three is representable", async () => {
+    const offer = await seedOffer("cid-pairing");
+    await beginProof(offer.token);
+    // Strip the id but keep the challenge: the pairing CHECK must refuse.
+    let code = "NO_ERROR";
+    try {
+      await adminQuery(
+        `update public.new_client_waitlist_invitations
+            set proof_challenge_id = null where id = $1`,
+        [offer.invitationId],
+      );
+    } catch (e) {
+      code = (e as { code?: string }).code ?? "UNKNOWN";
+    }
+    expect(code).toBe("23514"); // check_violation
+  });
+
+  it("is never readable by the browser, and grants nothing", async () => {
+    const r = await adminQuery(
+      `select has_column_privilege('authenticated','public.new_client_waitlist_invitations','proof_challenge_id','SELECT') as ok`,
+    );
+    expect(r.rows[0].ok).toBe(false);
+    // NOT AUTHORITY: holding the id cannot redeem or decline.
+    const offer = await verifiedOffer("cid-not-authority");
+    const begun = await beginProof(offer.token); // fresh challenge, kills capability
+    const asCapability = String(begun.challenge_id).replace(/-/g, "") + "0".repeat(32);
+    const r2 = await redeem(offer.token, asCapability.slice(0, 64));
+    expect(r2.result).toBe("proof_required");
+  });
+});
+
+describe("0192 — decline vs expire keeps the same lock order (P2)", () => {
+  it("racing decline against expire yields ONE outcome and never a deadlock", async () => {
+    const TRIALS = 8;
+    let deadlocks = 0;
+    for (let i = 0; i < TRIALS; i++) {
+      const offer = await verifiedOffer(`race-exp-${i}`);
+      const results = await Promise.allSettled([
+        decline(offer.token, offer.capability),
+        adminQuery(`select public.expire_new_client_waitlist_invitation($1,$2,$3) as result`, [
+          offer.studio.studioId,
+          offer.entryId,
+          offer.studio.userId,
+        ]),
+      ]);
+      for (const r of results) {
+        if (r.status === "rejected" && (r.reason as { code?: string })?.code === "40P01") {
+          deadlocks += 1;
+        }
+      }
+      const row = await invitationRow(offer.invitationId);
+      const outcomes = [
+        row.redeemed_at,
+        row.declined_at,
+        row.released_at,
+        row.expired_at,
+      ].filter((v) => v !== null);
+      // Expiry only RECORDS an elapsed clock, so on a live invitation it
+      // refuses; either way at most one terminal outcome may be written, and
+      // the loser must come back with a lifecycle result rather than an abort.
+      expect(outcomes.length).toBeLessThanOrEqual(1);
+      for (const r of results) {
+        expect(r.status, "neither command may be aborted").toBe("fulfilled");
+      }
+    }
+    expect(deadlocks, `${deadlocks}/${TRIALS} trials deadlocked (40P01)`).toBe(0);
   });
 });

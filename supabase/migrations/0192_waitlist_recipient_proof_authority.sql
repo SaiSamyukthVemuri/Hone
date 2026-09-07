@@ -265,6 +265,117 @@ comment on function public.waitlist_admission_consumed(uuid) is
   'recycled when an appointment is later cancelled.';
 
 -- ---------------------------------------------------------------------
+-- 4b. THE DELEGATED ISSUER LEARNS THAT A DECLINED INVITATION IS CLOSED.
+--
+-- REVIEW FINDING (P1). 0192 adds `declined_at` and redefines
+-- `..._one_live_per_entry` so a declined invitation stops blocking its entry —
+-- that index is what makes decision 5, "a later manual offer remains
+-- possible", representable at all. But the issuance authority this slice
+-- DELEGATES to still carried 0190's liveness test:
+--
+--     i.redeemed_at is null and i.expired_at is null and i.released_at is null
+--
+-- `declined_at` is absent, so the historical declined row still matched and
+-- issuance answered `already_invited`. REPRODUCED end to end before repair:
+-- issue -> decline -> requeue -> claim -> issue a GENUINELY DIFFERENT offer
+-- returned `already_invited`, so a declined entry could never receive another
+-- offer of any kind. The index permitted the flow the command refused.
+--
+-- 0190's FILE IS FROZEN AND IS NOT EDITED. This is a forward redefinition, the
+-- same mechanism 0189 and 0190 each used on this function. The body below is
+-- 0190's, byte for byte, with ONE predicate extended — the TTL anchor 0190
+-- exists to fix (`v_decision_at`, read after the entry mutex, used for
+-- issued_at, expires_at and invited_at alike) is carried through unchanged.
+-- ---------------------------------------------------------------------
+create or replace function public.issue_new_client_waitlist_invitation(
+  p_studio_id     uuid,
+  p_entry_id      uuid,
+  p_actor_user_id uuid,
+  p_ttl_hours     integer default 72
+)
+returns table (result text, raw_token text, expires_at timestamptz)
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog, pg_temp
+as $$
+declare
+  v_decision_at timestamptz;
+  v_actor   uuid;
+  v_code    text;
+  v_status  text;
+  v_raw     text;
+  v_hash    text;
+  v_ttl     integer := coalesce(p_ttl_hours, 72);
+  v_expires timestamptz;
+begin
+  select r.practitioner_id, r.code into v_actor, v_code
+    from public.new_client_waitlist_resolve_owner(p_studio_id, p_actor_user_id) r;
+  if v_code <> 'ok' then
+    return query select v_code, null::text, null::timestamptz; return;
+  end if;
+  if p_entry_id is null then
+    return query select 'invalid_input'::text, null::text, null::timestamptz; return;
+  end if;
+  -- 1 hour .. 7 days. Out of range is REFUSED, never silently clamped: a
+  -- clamped TTL is a window the caller did not ask for and cannot see.
+  if v_ttl < 1 or v_ttl > 168 then
+    return query select 'invalid_ttl'::text, null::text, null::timestamptz; return;
+  end if;
+
+  -- LOCK ORDER: the ENTRY first. Every command in this lifecycle takes the
+  -- entry mutex before touching invitations; 0192 keeps that order everywhere.
+  select e.status into v_status
+    from public.new_client_waitlist_entries e
+   where e.id = p_entry_id and e.studio_id = p_studio_id
+   for update;
+
+  -- THE CANONICAL ISSUANCE INSTANT, READ AFTER THE MUTEX. This single value is
+  -- the authority for the invitation's issued_at, the window it opens, and the
+  -- entry's invited_at. Nothing on this path reads a clock again: two reads
+  -- microseconds apart would put the row's own stamps out of step, which is the
+  -- defect class 0189 removed one layer up.
+  v_decision_at := clock_timestamp();
+
+  if v_status is null then
+    return query select 'not_found'::text, null::text, null::timestamptz; return;
+  end if;
+  if v_status <> 'claimed' then
+    return query select 'not_claimed'::text, null::text, null::timestamptz; return;
+  end if;
+
+  if exists (
+    select 1 from public.new_client_waitlist_invitations i
+     where i.entry_id = p_entry_id
+       and i.redeemed_at is null and i.expired_at is null and i.released_at is null
+       -- THE ONE CHANGED LINE. A declined invitation is CLOSED, exactly as
+       -- `..._one_live_per_entry` already treats it.
+       and i.declined_at is null
+  ) then
+    return query select 'already_invited'::text, null::text, null::timestamptz; return;
+  end if;
+
+  v_raw     := encode(extensions.gen_random_bytes(32), 'hex');
+  v_hash    := encode(extensions.digest(v_raw, 'sha256'), 'hex');
+  -- The window starts when the invitation is ISSUED, not when this transaction
+  -- happened to begin. Previously `now() + ttl`, which handed back a window
+  -- already shortened by the transaction's age.
+  v_expires := v_decision_at + make_interval(hours => v_ttl);
+
+  insert into public.new_client_waitlist_invitations
+    (studio_id, entry_id, token_hash, issued_at, expires_at, issued_by_practitioner_id)
+  values
+    (p_studio_id, p_entry_id, v_hash, v_decision_at, v_expires, v_actor);
+
+  update public.new_client_waitlist_entries
+     set status = 'invited', invited_at = v_decision_at
+   where id = p_entry_id and studio_id = p_studio_id and status = 'claimed';
+
+  return query select 'invited'::text, v_raw, v_expires;
+end;
+$$;
+
+-- ---------------------------------------------------------------------
 -- 5. SCOPED ISSUE COMMAND.
 --    Wraps the applied issue_ command rather than duplicating token minting.
 --    Lock order is studios -> round -> entry -> invitation, matching the
@@ -328,6 +439,50 @@ begin
     -- removed, since the CHECK above cannot express distinctness.
     select array_agg(d order by d) into p_allowed_weekdays
       from (select distinct unnest(p_allowed_weekdays) as d) q;
+  end if;
+
+  -- THE NO-REPEAT-DECLINED RULE, ENFORCED WHERE IT IS ACTUALLY DECIDED.
+  --
+  -- SECOND-ORDER FINDING, surfaced by the P1 repair above and reproduced before
+  -- this was written. `..._no_repeat_declined_offer` is a partial unique index
+  -- over rows WHERE declined_at IS NOT NULL, so it does not fire when an
+  -- invitation is ISSUED (declined_at is null then) — only when a SECOND one is
+  -- declined. Until the repair, that never happened: the issuer's over-broad
+  -- `already_invited` predicate blocked every re-issue after a decline, so the
+  -- index was enforced by accident. Teaching the issuer that declined is closed
+  -- removed that accident and exposed the real shape:
+  --
+  --     issue -> decline -> requeue -> claim -> issue the IDENTICAL offer
+  --       -> issued, and the second decline then raised a bare 23505
+  --
+  -- A command in this lifecycle must return a CODE, never raise — 0185 says so
+  -- explicitly and the requeue/23505 repair in 0188 is the precedent. So the
+  -- rule moves to the point where it is actually a decision: the identical
+  -- offer is refused at ISSUE, which is also what B1's own comment always
+  -- claimed ("the identical offer cannot be re-issued to the same entry while
+  -- that declined record stands"). A DIFFERENT offer is unaffected.
+  --
+  -- PRE-CHECK IS SOUND HERE, and that is not the general rule. 0188's requeue
+  -- lesson is "handle, never pre-check", because a SELECT before an UPDATE
+  -- reopens a read-then-write window. There is no window here: this runs under
+  -- the STUDIO row lock taken at the top of this function, so two issues for
+  -- one studio are serialised, and `..._one_live_per_entry` already forbids a
+  -- second LIVE invitation for the entry.
+  --
+  -- NULLS NOT DISTINCT is mirrored with `is not distinct from`, so a NULL
+  -- weekday set compares equal to a NULL weekday set exactly as the index does.
+  -- The comparison runs AFTER canonicalisation, so [4,2,2,4] and [2,4] are the
+  -- same offer here just as they are there.
+  if exists (
+    select 1 from public.new_client_waitlist_invitations i
+     where i.entry_id    = p_entry_id
+       and i.declined_at is not null
+       and i.scope_service_id       is not distinct from p_service_id
+       and i.scope_start_date       is not distinct from p_start_date
+       and i.scope_end_date         is not distinct from p_end_date
+       and i.scope_allowed_weekdays is not distinct from p_allowed_weekdays
+  ) then
+    return query select 'already_declined_offer'::text, null::text, null::uuid; return;
   end if;
 
   -- ALLOWANCE CHECKED UNDER THE STUDIO LOCK, not before it.
@@ -436,6 +591,7 @@ $$;
 -- 7. RECIPIENT-PROOF STATE, held on the invitation row.
 -- ---------------------------------------------------------------------
 alter table public.new_client_waitlist_invitations
+  add column if not exists proof_challenge_id          uuid,
   add column if not exists proof_challenge_hash        text,
   add column if not exists proof_challenge_expires_at  timestamptz,
   add column if not exists proof_challenge_sent_to_hash text,
@@ -463,10 +619,26 @@ alter table public.new_client_waitlist_invitations
 alter table public.new_client_waitlist_invitations
   add constraint new_client_waitlist_invitations_proof_pairing_check
   check (
+    -- ONE COHERENT CHALLENGE STATE. The id, the verifier and the expiry are a
+    -- single fact about a single challenge, so any two-of-three combination is
+    -- unrepresentable rather than merely unlikely: an id with no live challenge
+    -- would be an idempotency handle for an event that cannot be completed, and
+    -- a challenge with no id would be undeliverable without inventing one.
     (proof_challenge_hash is null) = (proof_challenge_expires_at is null)
+    and (proof_challenge_hash is null) = (proof_challenge_id is null)
     and (proof_capability_hash is null) = (proof_capability_expires_at is null)
     and proof_challenge_attempts >= 0
   );
+
+comment on column public.new_client_waitlist_invitations.proof_challenge_id is
+  'WAIT-03B: a stable NON-SECRET identity for ONE challenge event, minted fresh '
+  'by begin_waitlist_invitation_proof. It exists so a server-side sender can key '
+  'provider idempotency on the EVENT rather than on anything derived from the '
+  'credential — the defect #680 hit when a proof-send key was derived from a '
+  'payload containing the code, making the transmitted header an offline '
+  'verifier for it. This column is NOT authority: it proves nothing, verifies '
+  'nothing, and grants nothing. It is never granted to a browser role, it is '
+  'not derived from the raw challenge, and it dies with the challenge it names.';
 
 comment on column public.new_client_waitlist_invitations.proof_challenge_sent_to_hash is
   'WAIT-03B B1.5: hash of the STORED invited contact, frozen when the challenge '
@@ -479,20 +651,25 @@ comment on column public.new_client_waitlist_invitations.proof_challenge_sent_to
 --    PIN). Returns the raw challenge and the STORED delivery contact to the
 --    SERVER only.
 -- ---------------------------------------------------------------------
+-- The return type gains `challenge_id`, and PostgreSQL cannot change a return
+-- type in place, so the prior signature is dropped first. On a fresh chain this
+-- is a no-op; on re-apply it is what makes this file idempotent.
+drop function if exists public.begin_waitlist_invitation_proof(text, integer);
+
 create or replace function public.begin_waitlist_invitation_proof(
   p_raw_token   text,
   p_ttl_minutes integer default 15
 )
-returns table (result text, raw_challenge text, delivery_contact text, expires_at timestamptz)
+returns table (result text, raw_challenge text, delivery_contact text, expires_at timestamptz, challenge_id uuid)
 language plpgsql volatile security definer
 set search_path = pg_catalog, pg_temp
 as $$
 declare v_inv uuid; v_entry uuid; v_studio uuid; v_now timestamptz;
-        v_raw text; v_email text;
+        v_raw text; v_email text; v_cid uuid;
 begin
   if p_raw_token is null or p_raw_token !~ '^[a-f0-9]{64}$'
      or p_ttl_minutes is null or p_ttl_minutes <= 0 or p_ttl_minutes > 60 then
-    return query select 'invalid_input'::text, null::text, null::text, null::timestamptz; return;
+    return query select 'invalid_input'::text, null::text, null::text, null::timestamptz, null::uuid; return;
   end if;
 
   select i.id, i.entry_id, i.studio_id into v_inv, v_entry, v_studio
@@ -500,7 +677,7 @@ begin
    where i.token_hash = encode(extensions.digest(p_raw_token,'sha256'),'hex')
    for update;
   if v_inv is null then
-    return query select 'invalid_token'::text, null::text, null::text, null::timestamptz; return;
+    return query select 'invalid_token'::text, null::text, null::text, null::timestamptz, null::uuid; return;
   end if;
 
   v_now := clock_timestamp();          -- POST-LOCK clock, as 0189 established
@@ -511,7 +688,7 @@ begin
      where i.id = v_inv and i.redeemed_at is null and i.expired_at is null
        and i.released_at is null and i.declined_at is null and i.expires_at > v_now
   ) then
-    return query select 'not_live'::text, null::text, null::text, null::timestamptz; return;
+    return query select 'not_live'::text, null::text, null::text, null::timestamptz, null::uuid; return;
   end if;
 
   select e.email into v_email
@@ -519,13 +696,18 @@ begin
    where e.id = v_entry and e.studio_id = v_studio;
 
   v_raw := encode(extensions.gen_random_bytes(32), 'hex');
+  -- INDEPENDENT OF THE SECRET, deliberately. Deriving this from v_raw would
+  -- make the handle a function of the credential, which is exactly the class of
+  -- mistake that turned a provider idempotency header into an offline verifier.
+  v_cid := gen_random_uuid();
 
   -- A NEW challenge REPLACES the old one in place. That is invariant 1: the
   -- previous hash is gone, so an older challenge can never verify afterwards.
   -- Any capability already minted is cleared too — requesting proof again must
   -- not leave an older capability alive.
   update public.new_client_waitlist_invitations
-     set proof_challenge_hash         = encode(extensions.digest(v_raw,'sha256'),'hex'),
+     set proof_challenge_id           = v_cid,
+         proof_challenge_hash         = encode(extensions.digest(v_raw,'sha256'),'hex'),
          proof_challenge_expires_at   = v_now + make_interval(mins => p_ttl_minutes),
          proof_challenge_sent_to_hash = encode(extensions.digest(lower(btrim(v_email)),'sha256'),'hex'),
          proof_challenge_attempts     = 0,
@@ -534,7 +716,7 @@ begin
    where id = v_inv;
 
   return query select 'challenge_issued'::text, v_raw, v_email,
-                      v_now + make_interval(mins => p_ttl_minutes);
+                      v_now + make_interval(mins => p_ttl_minutes), v_cid;
 end;
 $$;
 
@@ -617,7 +799,8 @@ begin
   -- Single use: the challenge is consumed as the capability is minted, so a
   -- successful verification cannot be replayed — here or at another invitation.
   update public.new_client_waitlist_invitations
-     set proof_challenge_hash        = null,
+     set proof_challenge_id          = null,
+         proof_challenge_hash        = null,
          proof_challenge_expires_at  = null,
          proof_challenge_attempts    = 0,
          proof_capability_hash       = encode(extensions.digest(v_cap,'sha256'),'hex'),
@@ -642,7 +825,8 @@ language sql volatile security definer
 set search_path = pg_catalog, pg_temp
 as $$
   update public.new_client_waitlist_invitations
-     set proof_challenge_hash = null, proof_challenge_expires_at = null,
+     set proof_challenge_id = null,
+         proof_challenge_hash = null, proof_challenge_expires_at = null,
          proof_challenge_sent_to_hash = null, proof_challenge_attempts = 0,
          proof_capability_hash = null, proof_capability_expires_at = null
    where id = p_invitation_id;
@@ -724,15 +908,41 @@ returns table (result text, entry_id uuid)
 language plpgsql volatile security definer
 set search_path = pg_catalog, pg_temp
 as $$
-declare r record; v_now timestamptz;
+declare r record; v_now timestamptz; v_inv uuid; v_entry uuid; v_studio uuid;
 begin
   if p_raw_token is null or p_raw_token !~ '^[a-f0-9]{64}$'
      or p_raw_capability is null or p_raw_capability !~ '^[a-f0-9]{64}$' then
     return query select 'invalid_input'::text, null::uuid; return;
   end if;
 
+  -- LOCK ORDER: ENTRY FIRST, THEN INVITATION.
+  --
+  -- REVIEW FINDING (P2). This command previously took the invitation lock here
+  -- and updated the entry at the end, while `release_new_client_waitlist_entry`
+  -- and `expire_new_client_waitlist_invitation` both take the ENTRY mutex first
+  -- and reach for the invitation second. Two orders over the same pair is a
+  -- deadlock cycle: a recipient declining while an operator releases or expires
+  -- the same entry could be aborted with 40P01 instead of receiving a closed
+  -- lifecycle result. A deadlock is not a refusal — it destroys an otherwise
+  -- valid command and tells the caller nothing about the lifecycle.
+  --
+  -- The entry id is read WITHOUT a lock first, which is sound precisely because
+  -- 0188's append-only trigger freezes `entry_id`: it cannot change under us,
+  -- so it is safe to use as the lock target before the invitation is pinned.
+  -- Everything the decision depends on is re-read AFTER both locks are held.
+  select i.id, i.entry_id, i.studio_id into v_inv, v_entry, v_studio
+    from public.new_client_waitlist_invitations i
+   where i.token_hash = encode(extensions.digest(p_raw_token,'sha256'),'hex');
+  if v_inv is null then
+    return query select 'invalid_token'::text, null::uuid; return;
+  end if;
+
+  perform 1 from public.new_client_waitlist_entries e
+   where e.id = v_entry and e.studio_id = v_studio
+   for update;
+
   select * into r from public.new_client_waitlist_invitations i
-   where i.token_hash = encode(extensions.digest(p_raw_token,'sha256'),'hex')
+   where i.id = v_inv
    for update;
   if r.id is null then
     return query select 'invalid_token'::text, null::uuid; return;
@@ -787,6 +997,27 @@ revoke all privileges on function public.redeem_new_client_waitlist_invitation(t
 revoke all privileges on function public.redeem_new_client_waitlist_invitation(text) from anon;
 revoke all privileges on function public.redeem_new_client_waitlist_invitation(text) from authenticated;
 revoke all privileges on function public.redeem_new_client_waitlist_invitation(text) from service_role;
+
+-- REVIEW FINDING (P1). THE UNSCOPED ISSUER IS A BYPASS, and withdrawing the
+-- ungated redeem while leaving it reachable was an inconsistency, not a
+-- decision. `issue_scoped_…` exists to hold two invariants: no invitation
+-- without an OPEN ROUND, and outstanding permission never above the ALLOWANCE.
+-- Both live in the wrapper. The four-argument issuer it delegates to answers
+-- neither, and it was still granted to `service_role` — so any server path
+-- could call it directly, with no round open or the allowance exhausted, and
+-- mint an invitation whose scope columns are all NULL. That is precisely the
+-- "stored invitation expressing a permission its owner did not grant" this
+-- slice exists to make unrepresentable.
+--
+-- Withdrawn from all four roles BY NAME. The wrapper is unaffected: it is
+-- SECURITY DEFINER owned by `postgres`, which owns this function too, so the
+-- delegated call is authorised by ownership rather than by a role grant. The
+-- accompanying test proves the wrapper still issues AFTER this revoke, so the
+-- revoke cannot silently disable the only supported issuance path.
+revoke all privileges on function public.issue_new_client_waitlist_invitation(uuid, uuid, uuid, integer) from public;
+revoke all privileges on function public.issue_new_client_waitlist_invitation(uuid, uuid, uuid, integer) from anon;
+revoke all privileges on function public.issue_new_client_waitlist_invitation(uuid, uuid, uuid, integer) from authenticated;
+revoke all privileges on function public.issue_new_client_waitlist_invitation(uuid, uuid, uuid, integer) from service_role;
 
 -- ---------------------------------------------------------------------
 -- 14. PRIVILEGES. service_role ONLY, revoked from all four BY NAME first.
