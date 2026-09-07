@@ -567,11 +567,16 @@ begin
   -- Reproduced deterministically before it was fixed. The ENTRY row always
   -- exists, so locking it is a real mutex, and it serialises this path against
   -- redeem_waitlist_preference_grant, which writes the same preference table.
+  perform 1 from public.studios s where s.id = p_studio_id for update;
+
   perform 1 from public.new_client_waitlist_entries e
    where e.id = p_entry_id and e.studio_id = p_studio_id
    for update;
   if not found then return 'entry_not_found'; end if;
 
+  -- Read after the locks, for the same reason redeem_ does: this transaction
+  -- can wait on the entry lock, and every timestamp it writes must describe
+  -- when it actually acted.
   v_now := clock_timestamp();
 
   select p.preference into v_current
@@ -653,15 +658,31 @@ begin
     return;
   end if;
 
-  -- LOCK ORDER: PARENT ENTRY FIRST, ALWAYS, IN EVERY WRITER.
+  -- CANONICAL LOCK ORDER: STUDIO -> ENTRY -> GRANT. Every writer, no exceptions.
   --
-  -- The entry row always exists, so this is a real mutex where a lock on the
-  -- grant or preference row is not. Every command that writes a grant or a
-  -- preference takes THIS lock before touching either, which is what makes the
-  -- ordering uniform: nothing acquires a grant lock and then reaches for the
-  -- entry. An earlier draft let redeem_ take grant -> entry while this command
-  -- took entry -> grant, and that inversion is a deadlock waiting for the two
-  -- to meet on the same row.
+  -- THE STUDIO LOCK IS NOT DECORATION HERE. Inserting a grant takes an implicit
+  -- FK key-share lock on `studios`, because the row carries a studio_id
+  -- reference. Taking only the entry lock therefore gave this command a real
+  -- order of ENTRY -> STUDIO, while admit_new_client_waitlist_entry explicitly
+  -- takes STUDIO -> ENTRY. Two of those meeting is a genuine deadlock:
+  --
+  --     admit_:  holds studios, waits for the entry
+  --     issue_:  holds the entry, waits for studios (via the FK)
+  --
+  -- An implicit lock is still a lock, and the one taken last by a statement is
+  -- the easiest kind to forget. Taking studios explicitly and FIRST makes the
+  -- later FK check free -- this transaction already holds something stronger --
+  -- and puts every command on one order.
+  --
+  -- The ENTRY lock below is what serialises the grant lifecycle itself: the
+  -- entry row always exists, so it is a real mutex where a lock on an absent
+  -- grant or preference row is not.
+  perform 1 from public.studios s where s.id = p_studio_id for update;
+  if not found then
+    return query select 'entry_not_found'::text, null::text, null::timestamptz;
+    return;
+  end if;
+
   perform 1 from public.new_client_waitlist_entries e
    where e.id = p_entry_id and e.studio_id = p_studio_id
    for update;
@@ -752,9 +773,12 @@ begin
     from public.new_client_waitlist_resolve_owner(p_studio_id, p_actor_user_id) r;
   if v_code <> 'ok' then return v_code; end if;
 
-  -- The same parent-entry lock every other writer takes. This command touches
-  -- only grants and could not deadlock without it, but a uniform rule is worth
-  -- more than a per-command exemption someone must later re-derive.
+  -- The same STUDIO -> ENTRY order every other writer takes. This command only
+  -- stamps revoked_at and could not deadlock on its own, but a uniform rule is
+  -- worth more than a per-command exemption someone must later re-derive --
+  -- which is exactly how the entry -> studio inversion got in.
+  perform 1 from public.studios s where s.id = p_studio_id for update;
+
   perform 1 from public.new_client_waitlist_entries e
    where e.id = p_entry_id and e.studio_id = p_studio_id
    for update;
@@ -799,6 +823,7 @@ as $$
 declare
   v_grant   record;
   v_entry   uuid;
+  v_studio  uuid;
   v_now     timestamptz;
   v_current text;
 begin
@@ -807,27 +832,39 @@ begin
     return 'refused';
   end if;
 
-  v_now := clock_timestamp();
-
-  -- STEP 1: an UNLOCKED read, for one purpose only -- to learn which entry this
-  -- token belongs to. Nothing is decided here. Deciding on this read would be a
-  -- read-then-write window; every predicate is re-checked in step 3 under the
-  -- lock, so a grant revoked, redeemed or expired in between is still refused.
-  select g.entry_id into v_entry
+  -- STEP 1: an UNLOCKED read, for one purpose only -- to learn WHICH studio and
+  -- entry this token belongs to, so the canonical locks can be taken in order.
+  -- NOTHING IS DECIDED HERE, and no clock is read yet: every predicate is
+  -- re-checked in step 4 under the locks, against a clock read after them.
+  select g.entry_id, g.studio_id into v_entry, v_studio
     from public.new_client_waitlist_preference_grants g
    where g.token_hash = encode(extensions.digest(p_raw_token, 'sha256'), 'hex');
   if v_entry is null then return 'refused'; end if;
 
-  -- STEP 2: THE PARENT ENTRY LOCK, taken before the grant, exactly as the
-  -- operator path does. Uniform ENTRY -> GRANT ordering in every writer is what
-  -- makes these two commands safe to run against each other; the reverse order
-  -- here would deadlock against issue_.
+  -- STEP 2: CANONICAL LOCK ORDER, STUDIO -> ENTRY, the same order
+  -- admit_new_client_waitlist_entry and issue_ take. Taking the entry alone
+  -- would leave this command free to reach for studios afterwards through an
+  -- FK and invert against admission.
+  perform 1 from public.studios s where s.id = v_studio for update;
+
   perform 1 from public.new_client_waitlist_entries e
    where e.id = v_entry
    for update;
 
-  -- STEP 3: re-resolve the grant UNDER the lock, with the full validity
-  -- predicate. This is the read that decides.
+  -- STEP 3: READ THE CLOCK ONLY NOW, AFTER THE LOCKS.
+  --
+  -- Capturing it before the lock was a real defect, not a tidiness point. This
+  -- transaction can WAIT on the entry lock for an unbounded time -- behind an
+  -- operator recording a preference, or another redemption -- and a grant that
+  -- was live when the wait began can expire during it. A pre-lock timestamp
+  -- makes the expiry re-check pass on evidence that is already stale, and the
+  -- redemption is then stamped as though it happened before expiry. The whole
+  -- point of re-resolving under the lock is to decide on CURRENT truth, and a
+  -- stale clock quietly re-introduces the window the lock was taken to close.
+  v_now := clock_timestamp();
+
+  -- STEP 4: re-resolve the grant UNDER the locks, with the full validity
+  -- predicate and the post-lock clock. This is the read that decides.
   select g.id, g.entry_id, g.studio_id
     into v_grant
     from public.new_client_waitlist_preference_grants g

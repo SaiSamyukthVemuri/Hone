@@ -817,3 +817,254 @@ describe("creating the FIRST preference row is serialised", () => {
     }
   });
 });
+
+// ===========================================================================
+// CODEX EXACT-HEAD REVIEW, #685 @ 920fbdfa — two further P2s, both from the
+// PREVIOUS repair. Fixing the first-preference race introduced them.
+// ===========================================================================
+
+describe("the redemption clock is read AFTER the locks", () => {
+  async function seedGranted(label: string) {
+    const studio = await seedStudio(label);
+    const entry = await adminQuery(
+      `select * from public.create_practitioner_waitlist_entry($1,$2,'P',$3,null,null)`,
+      [studio.studioId, studio.userId, uniqueEmail(label)],
+    );
+    const entryId = entry.rows[0].entry_id as string;
+    const grant = await adminQuery(
+      `select * from public.issue_waitlist_preference_grant($1,$2,$3,24)`,
+      [studio.studioId, entryId, studio.userId],
+    );
+    return { studio, entryId, token: grant.rows[0].raw_token as string };
+  }
+
+  async function connect(): Promise<{ client: Client; pid: number }> {
+    const client = new Client({ connectionString: resolveLocalDbUrl() });
+    await client.connect();
+    const pid = (await client.query(`select pg_backend_pid() as pid`)).rows[0].pid as number;
+    return { client, pid };
+  }
+
+  // THE DEFECT: v_now was captured BEFORE the entry lock. A redemption can wait
+  // on that lock for an unbounded time, so a grant that was live when the wait
+  // began could expire during it — and the pre-lock timestamp made the expiry
+  // re-check pass on evidence that was already stale, stamping the redemption
+  // as though it happened before expiry.
+  it("refuses a grant that expires WHILE the redemption waits for the lock", async () => {
+    const { studio, entryId, token } = await seedGranted("clock-expire-wait");
+    const holder = await connect();
+    const redeemer = await connect();
+    try {
+      // Hold the entry lock so the redemption must queue behind it.
+      await holder.client.query("begin");
+      await holder.client.query(
+        `select 1 from public.new_client_waitlist_entries where id = $1 for update`,
+        [entryId],
+      );
+
+      const pending = redeemer.client
+        .query(`select public.redeem_waitlist_preference_grant($1,'weekends') as r`, [token])
+        .then((r) => ({ ok: true as const, v: r.rows[0].r as string }))
+        .catch((e: { code?: string }) => ({ ok: false as const, code: e.code }));
+
+      const waiting = await waitUntilBlocked(redeemer.pid);
+      expect(waiting, "the redemption must be blocked on the entry lock").not.toBeNull();
+
+      // THE DWELL IS LOad-BEARING, AND ITS ABSENCE MADE AN EARLIER VERSION OF
+      // THIS TEST VACUOUS. The expiry must land strictly BETWEEN the pre-lock
+      // clock and the post-lock one. Without the dwell the whole wait was well
+      // under a second, so `now() - 1 second` was already behind the pre-lock
+      // capture too and even the stale check refused -- the test passed against
+      // the defect it exists to catch. Caught by its own negative control.
+      await new Promise((r) => setTimeout(r, 2_500));
+
+      // The grant dies DURING the wait, at an instant AFTER the redemption
+      // started. Both stamps move together, as the ttl CHECK requires.
+      await adminQuery(
+        `update public.new_client_waitlist_preference_grants
+            set issued_at  = now() - interval '25 hours',
+                expires_at = now() - interval '1 second'
+          where entry_id = $1 and redeemed_at is null and revoked_at is null`,
+        [entryId],
+      );
+      await holder.client.query("commit");
+
+      const result = await pending;
+      expect(result.ok).toBe(true);
+      // A pre-lock clock would have accepted this.
+      expect(result.ok && result.v).toBe("refused");
+
+      const rows = await adminQuery(
+        `select count(*)::int as n from public.new_client_waitlist_entry_preferences where entry_id = $1`,
+        [entryId],
+      );
+      expect(rows.rows[0].n, "an expired redemption must write no preference").toBe(0);
+
+      const stamped = await adminQuery(
+        `select count(*)::int as n from public.new_client_waitlist_preference_grants
+          where entry_id = $1 and redeemed_at is not null`,
+        [entryId],
+      );
+      expect(stamped.rows[0].n, "an expired grant must not be stamped redeemed").toBe(0);
+      void studio;
+    } finally {
+      await holder.client.end();
+      await redeemer.client.end();
+    }
+  });
+
+  it("still redeems a grant that is STILL live once the lock is acquired", async () => {
+    // The control: the same wait, without the expiry. Without it the test above
+    // would pass against a command that refuses everything.
+    const { entryId, token } = await seedGranted("clock-still-live");
+    const holder = await connect();
+    const redeemer = await connect();
+    try {
+      await holder.client.query("begin");
+      await holder.client.query(
+        `select 1 from public.new_client_waitlist_entries where id = $1 for update`,
+        [entryId],
+      );
+      const pending = redeemer.client
+        .query(`select public.redeem_waitlist_preference_grant($1,'weekends') as r`, [token])
+        .then((r) => r.rows[0].r as string);
+      expect(await waitUntilBlocked(redeemer.pid)).not.toBeNull();
+      await holder.client.query("commit");
+      expect(await pending).toBe("accepted");
+    } finally {
+      await holder.client.end();
+      await redeemer.client.end();
+    }
+  });
+});
+
+describe("issuing a grant cannot deadlock against admission", () => {
+  // THE DEFECT: inserting a grant takes an implicit FK key-share lock on
+  // `studios`, so locking only the entry gave issue_ a real order of
+  // ENTRY -> STUDIO while admit_ takes STUDIO -> ENTRY. Two of those meeting
+  // deadlock. The repair takes studios explicitly and first, everywhere.
+  async function connect(): Promise<{ client: Client; pid: number }> {
+    const client = new Client({ connectionString: resolveLocalDbUrl() });
+    await client.connect();
+    const pid = (await client.query(`select pg_backend_pid() as pid`)).rows[0].pid as number;
+    return { client, pid };
+  }
+
+  // DETERMINISTIC HAZARD REPRODUCTION.
+  //
+  // A real admit_ cannot be paused mid-function, so the cycle cannot be forced
+  // by calling it: whichever command reaches the entry first simply blocks the
+  // other and they serialise. An earlier version of this test did exactly that
+  // and PASSED against the defect -- caught by its own negative control.
+  //
+  // So the hazard is staged with explicit statements that model admit_'s order
+  // exactly (studios, then the entry), while issue_ runs for real:
+  //
+  //   A: hold studios
+  //   B: run issue_  -- sabotaged, this takes the ENTRY and then needs studios
+  //   A: reach for the entry
+  //
+  // With the entry -> studio order that is a cycle and PostgreSQL raises 40P01.
+  // With studio -> entry, B blocks on studios holding NOTHING, A takes the
+  // entry freely, and the two serialise.
+  it("does not deadlock when admission's lock order meets a concurrent issue", async () => {
+    const studio = await seedStudio("deadlock-staged");
+    const entry = await adminQuery(
+      `select * from public.create_practitioner_waitlist_entry($1,$2,'P',$3,null,null)`,
+      [studio.studioId, studio.userId, uniqueEmail("deadlock")],
+    );
+    const entryId = entry.rows[0].entry_id as string;
+
+    const a = await connect();
+    const b = await connect();
+    try {
+      // A takes studios, exactly as admit_ does first.
+      await a.client.query("begin");
+      await a.client.query(`select 1 from public.studios where id = $1 for update`, [
+        studio.studioId,
+      ]);
+
+      const issuing = b.client
+        .query(`select gi.result from public.issue_waitlist_preference_grant($1,$2,$3,24) gi`, [
+          studio.studioId, entryId, studio.userId,
+        ])
+        .then((r) => ({ ok: true as const, v: r.rows[0].result as string }))
+        .catch((e: { code?: string }) => ({ ok: false as const, code: e.code }));
+
+      expect(await waitUntilBlocked(b.pid), "the issuer must block").not.toBeNull();
+
+      // A now reaches for the entry, as admit_ does second. If the issuer is
+      // holding it while waiting on studios, this closes the cycle.
+      const advancing = a.client
+        .query(`select 1 from public.new_client_waitlist_entries where id = $1 for update`, [entryId])
+        .then(() => ({ ok: true as const }))
+        .catch((e: { code?: string }) => ({ ok: false as const, code: e.code }));
+
+      const advanced = await advancing;
+      expect(
+        advanced.ok,
+        `admission's entry lock failed with ${"code" in advanced ? advanced.code : ""} (40P01 = deadlock)`,
+      ).toBe(true);
+
+      await a.client.query("commit");
+      const result = await issuing;
+      expect(
+        result.ok,
+        `issuing failed with ${"code" in result ? result.code : ""} (40P01 = deadlock)`,
+      ).toBe(true);
+      expect(result.ok && result.v).toBe("issued");
+    } finally {
+      await a.client.query("rollback").catch(() => undefined);
+      await a.client.end();
+      await b.client.end();
+    }
+  });
+
+  it("the reverse arrival order is equally safe", async () => {
+    // Same two commands, opposite order. A single ordering that only works one
+    // way round is not an ordering.
+    const studio = await seedStudio("deadlock-issue-admit");
+    await adminQuery(
+      `insert into public.studio_waitlist_admission_rounds (studio_id, allowance) values ($1,5)`,
+      [studio.studioId],
+    );
+    const service = await adminQuery(
+      `insert into public.services (studio_id, name, default_duration_minutes)
+       values ($1,'Svc',30) returning id`,
+      [studio.studioId],
+    );
+    const entry = await adminQuery(
+      `select * from public.create_practitioner_waitlist_entry($1,$2,'P',$3,null,null)`,
+      [studio.studioId, studio.userId, uniqueEmail("deadlock2")],
+    );
+    const entryId = entry.rows[0].entry_id as string;
+
+    const a = await connect();
+    const b = await connect();
+    try {
+      await a.client.query("begin");
+      const issued = await a.client.query(
+        `select gi.result from public.issue_waitlist_preference_grant($1,$2,$3,24) gi`,
+        [studio.studioId, entryId, studio.userId],
+      );
+      expect(issued.rows[0].result).toBe("issued");
+
+      const admitting = b.client
+        .query(`select * from public.admit_new_client_waitlist_entry($1,$2,$3,$4,$5,$6,null,72)`, [
+          studio.studioId, studio.userId, entryId, service.rows[0].id, "2026-10-01", "2026-10-31",
+        ])
+        .then((r) => ({ ok: true as const, v: r.rows[0].result as string }))
+        .catch((e: { code?: string }) => ({ ok: false as const, code: e.code }));
+
+      expect(await waitUntilBlocked(b.pid), "admission must queue behind the issuer").not.toBeNull();
+      await a.client.query("commit");
+      const result = await admitting;
+
+      expect(result.ok, `admission failed with ${"code" in result ? result.code : ""}`).toBe(true);
+      expect(result.ok && result.v).toBe("admitted");
+    } finally {
+      await a.client.end();
+      await b.client.end();
+    }
+  });
+});
