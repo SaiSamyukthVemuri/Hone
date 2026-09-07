@@ -301,7 +301,12 @@ describe("destructive actions are confirmed, and say what they cost", () => {
     expect(html).toContain("Sarah Jones is taken off the waitlist");
   });
 
-  it("tells the truth about cancelling: the link dies, the place does not", () => {
+  it("tells the truth about cancelling: the link dies AND they leave the queue", () => {
+    // This assertion previously pinned the opposite claim — "They keep their
+    // place" — which read as reassurance and was wrong: `cancelInvitation` ends
+    // at `released`, and returning them is a second, explicit act. A
+    // practitioner who stopped after cancelling would have left the person
+    // silently out of the active queue.
     const html = render(
       AdmissionRow({
         entry: { ...ENTRY, status: "invited", invitation: { invitationElapsed: false } },
@@ -309,7 +314,25 @@ describe("destructive actions are confirmed, and say what they cost", () => {
       }),
     );
     expect(html).toContain("booking link stops working straight away");
-    expect(html).toContain("They keep their place");
+    expect(html).toContain("come out of the queue");
+    expect(html).toContain("Return them to the waitlist");
+    expect(html).not.toContain("They keep their place");
+  });
+
+  it("agrees with the row the person lands on after cancelling", () => {
+    // The confirmation and the resulting row are two statements about the same
+    // transition, written in different places. They contradicted each other.
+    const confirm = render(
+      AdmissionRow({
+        entry: { ...ENTRY, status: "invited", invitation: { invitationElapsed: false } },
+        capabilities: CONNECTED,
+      }),
+    );
+    const landed = render(AdmissionRow({ entry: { ...ENTRY, status: "released" } }));
+    for (const html of [confirm, landed]) {
+      expect(html.toLowerCase()).toContain("out of the queue");
+    }
+    expect(landed).toContain("Return to waitlist");
   });
 
   it("does not leave a disabled destructive control looking pressable", () => {

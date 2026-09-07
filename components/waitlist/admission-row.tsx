@@ -201,7 +201,11 @@ function DestructiveDisclosure({
   const reasonId = state.reason ? domId(entryId, `reason-${item.action}`) : undefined;
   const consequence =
     item.action === "cancel_invitation"
-      ? `${entryName}'s booking link stops working straight away. They keep their place and can be invited again.`
+      // CANCELLING TAKES THEM OUT OF THE QUEUE. `cancelInvitation` ends at
+      // `released`, and returning them is a SECOND, explicit act — so copy
+      // promising they "keep their place" would leave a practitioner stopping
+      // one step early with the person silently out of the active queue.
+      ? `${entryName}'s booking link stops working straight away, and they come out of the queue. Return them to the waitlist to invite them again.`
       : `${entryName} is taken off the waitlist and loses their place in the queue. This cannot be undone.`;
 
   return (

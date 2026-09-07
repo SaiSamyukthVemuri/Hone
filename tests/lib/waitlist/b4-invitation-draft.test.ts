@@ -246,24 +246,34 @@ describe("every verdict is the live model's, not a second copy of it", () => {
   });
 
   it("diverges from the live verdict ONLY where it fails closed, and only there", () => {
+    // THE KEY CARRIES THE CONTEXT, and that is load-bearing. An earlier
+    // revision keyed on `action@status` alone and compared Sets, so the
+    // unreadable case already contributed `return_to_waitlist@invited` and a
+    // NEW divergence at the same action and status — one that stranded an
+    // ordinary readable, elapsed invitation — would have collapsed into the
+    // same set element and passed. The exception has to be scoped to the exact
+    // context it was granted for, or it is not scoped at all.
     const divergences: string[] = [];
     for (const status of WAITLIST_ENTRY_STATUSES) {
-      for (const { context } of CONTEXTS) {
+      for (const { name, context } of CONTEXTS) {
         for (const item of surfaceItems(status, context)) {
           const delegate = delegateFor(item.action, status);
           if (delegate === null) continue;
           const live = actionAvailability(delegate, status, context);
           if (item.available !== live.available) {
-            divergences.push(`${item.action}@${status}`);
+            divergences.push(`${item.action}@${status}@${name}`);
           }
         }
       }
     }
     // The single documented case: "Return to waitlist" on an `invited` entry
-    // whose invitation could not be READ. `expire` folds "not elapsed" and
-    // "could not look" into one branch, which is safe where it is offered and
-    // unsafe here — so unknown refuses, the way `release` already does.
-    expect(new Set(divergences)).toEqual(new Set(["return_to_waitlist@invited"]));
+    // whose window is reported elapsed on facts that could not be READ.
+    // `expire` folds "not elapsed" and "could not look" into one branch, which
+    // is safe where it is offered and unsafe here — so unknown refuses, the way
+    // `release` already does one branch above.
+    expect(divergences.sort()).toEqual([
+      "return_to_waitlist@invited@elapsed AND unreadable (incoherent input)",
+    ]);
   });
 
   it("fails closed on an unreadable invitation rather than guessing", () => {
@@ -355,6 +365,42 @@ describe("the row's action surface", () => {
     expect(surface.secondary.map((i) => i.action)).not.toContain("cancel_invitation");
   });
 
+  it("renders an elapsed invitation EXACTLY as the expired entry it becomes", () => {
+    // The `invited` -> `expired` bookkeeping transition is invisible to a
+    // practitioner. If the two rows offered different actions, the moment it
+    // happened would show as a control appearing or vanishing on its own —
+    // which is the state machine leaking through the one seam this design
+    // closes. Resend used to sit on one and not the other.
+    const elapsed = entryActionSurface("invited", { invitationElapsed: true });
+    const expired = entryActionSurface("expired");
+    const shape = (s: ReturnType<typeof entryActionSurface>) => ({
+      primary: s.primary?.action ?? null,
+      secondary: s.secondary.map((i) => i.action),
+    });
+    expect(shape(elapsed)).toEqual(shape(expired));
+    // And they read the same, so nothing distinguishes them on screen at all.
+    expect(practitionerStatusLabel("invited", { invitationElapsed: true })).toBe(
+      practitionerStatusLabel("expired"),
+    );
+  });
+
+  it("refuses to resend into a window that has already closed", () => {
+    // Resending starts with `release`, so it would stamp an invitation that RAN
+    // OUT as one the studio CANCELLED, and the entry's own history would then
+    // disagree with what happened.
+    const verdict = practitionerActionAvailability("resend_invitation", "invited", {
+      invitationElapsed: true,
+    });
+    expect(verdict.available).toBe(false);
+    expect(verdict.available === false && verdict.reason).toContain("Return them to the waitlist");
+    // Still offered on a live invitation, or the refusal above proves nothing.
+    expect(
+      practitionerActionAvailability("resend_invitation", "invited", {
+        invitationElapsed: false,
+      }).available,
+    ).toBe(true);
+  });
+
   it("never leaves a legacy held entry without a way out", () => {
     // `claimed` is unreachable by any action on this surface but exists in the
     // data, put there by the older screen. Both exits stay open.
@@ -442,6 +488,38 @@ describe("wiring state is not eligibility", () => {
     expect(controlState(item, null).reason).toBe(
       item.available === false ? item.reason : null,
     );
+  });
+
+  it("withholds resend from an adapter that cannot carry the scope it sends", () => {
+    // `resendInvitation` takes a scope for the same reason `inviteToBook` does:
+    // it mints a NEW invitation rather than re-delivering the old one. An
+    // adapter reporting `{ canResend: true, enforcesScope: false }` — which the
+    // contract permits as an intermediate state — must not light this control.
+    const item = surfaceItems("invited", { invitationElapsed: false }).find(
+      (i) => i.action === "resend_invitation",
+    )!;
+    expect(item.available).toBe(true);
+
+    const halfWired = controlState(item, {
+      enforcesScope: false,
+      canResend: true,
+      canCancel: true,
+      canReturnToWaitlist: true,
+      canRemove: true,
+    });
+    expect(halfWired.disabled).toBe(true);
+    expect(halfWired.reason).toContain("booking window");
+
+    // NEGATIVE CONTROL: with scope enforcement the identical control enables.
+    expect(
+      controlState(item, {
+        enforcesScope: true,
+        canResend: true,
+        canCancel: true,
+        canReturnToWaitlist: true,
+        canRemove: true,
+      }).disabled,
+    ).toBe(false);
   });
 
   it("is not ready to bind, because no adapter exists", () => {

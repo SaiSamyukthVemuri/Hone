@@ -366,6 +366,18 @@ export function practitionerActionAvailability(
           reason: "Nothing has been sent to them yet, so there is nothing to resend.",
         };
       }
+      // NOT ON AN INVITATION THAT HAS ALREADY RUN OUT. Resending begins with
+      // `release`, which would record an expiry as a cancellation; the entry's
+      // own history would then be wrong about what happened. The surface above
+      // does not offer it there either, and this refusal keeps the model honest
+      // for any other caller.
+      if (!context.invitationRedeemed && context.invitationElapsed === true) {
+        return {
+          available: false,
+          reason:
+            "Their invitation has run out. Return them to the waitlist, then invite them again.",
+        };
+      }
       // The first hop IS release, so its verdict is this action's verdict: a
       // used invitation cannot be replaced, and an unreadable one must not be.
       return invitationRefusal("resend_invitation", context);
@@ -527,15 +539,26 @@ export function entryActionSurface(
       };
 
     case "invited": {
-      // An elapsed invitation has one obvious next step and it is not resending
-      // into a window that has closed: put them back in the queue. Cancel drops
-      // off entirely here — cancelling an invitation that has already run out
-      // is a distinction only the state machine cares about.
+      // An elapsed invitation has one next step: put them back in the queue.
+      //
+      // THIS SURFACE MUST MATCH `expired` EXACTLY. The bookkeeping transition
+      // from `invited` to `expired` is invisible to a practitioner, so if the
+      // two rows offered different actions, the moment that transition happened
+      // would show as a control appearing or vanishing on its own — which is
+      // the state machine leaking through the one seam this design closes.
+      // An earlier revision left Resend here and not there, and said in this
+      // very comment that resending into a closed window was wrong.
+      //
+      // It is also wrong for a second reason. Resending starts with `release`,
+      // so it would stamp an invitation that RAN OUT as one the studio
+      // CANCELLED, and the evidence trail would then disagree with what
+      // actually happened. Return them to the waitlist and invite them again;
+      // that path lets the expiry be recorded as an expiry.
       const elapsed = !context.invitationRedeemed && context.invitationElapsed === true;
       if (elapsed) {
         return {
           primary: make("return_to_waitlist"),
-          secondary: [make("resend_invitation"), make("remove_from_waitlist")],
+          secondary: [make("remove_from_waitlist")],
         };
       }
       return {
@@ -782,15 +805,23 @@ export function scopeSummary(
  * that ignores both, which the invitee then books outside of. There is no
  * "send it unscoped" fallback on purpose.
  */
-export const ACTION_CAPABILITY: Record<
+export const ACTION_CAPABILITIES: Record<
   PractitionerAction,
-  keyof AdapterCapabilities
+  ReadonlyArray<keyof AdapterCapabilities>
 > = {
-  invite_to_book: "enforcesScope",
-  resend_invitation: "canResend",
-  cancel_invitation: "canCancel",
-  return_to_waitlist: "canReturnToWaitlist",
-  remove_from_waitlist: "canRemove",
+  // Both sending actions carry a scope, so both need an adapter that enforces
+  // one. `resendInvitation` takes a scope for the same reason `inviteToBook`
+  // does — it mints a NEW invitation rather than re-delivering the old one, and
+  // the contract forbids silently dropping what the practitioner chose. An
+  // earlier revision gated resend on `canResend` alone, so an adapter reporting
+  // `{ canResend: true, enforcesScope: false }` — a combination the contract
+  // explicitly permits as an intermediate state — would have advertised a
+  // resend it could not honour as written.
+  invite_to_book: ["enforcesScope"],
+  resend_invitation: ["canResend", "enforcesScope"],
+  cancel_invitation: ["canCancel"],
+  return_to_waitlist: ["canReturnToWaitlist"],
+  remove_from_waitlist: ["canRemove"],
 };
 
 export type ControlState = {
@@ -815,8 +846,20 @@ export function controlState(
   // ELIGIBILITY FIRST. "They have already booked" stays true whether or not the
   // invitation service exists, and it is the more useful sentence of the two.
   if (!item.available) return { disabled: true, reason: item.reason };
-  if (capabilities === null || !capabilities[ACTION_CAPABILITY[item.action]]) {
+  if (capabilities === null) {
     return { disabled: true, reason: adapterMissingReason(item.label) };
+  }
+  const missing = ACTION_CAPABILITIES[item.action].filter((c) => !capabilities[c]);
+  if (missing.length > 0) {
+    // NAME THE ACTUAL GAP. An adapter that exists but cannot carry a service or
+    // booking window is a different problem from no adapter at all, and the
+    // practitioner can do something about only one of them.
+    return {
+      disabled: true,
+      reason: missing.includes("enforcesScope")
+        ? SCOPE_UNSUPPORTED_REASON
+        : adapterMissingReason(item.label),
+    };
   }
   return { disabled: false, reason: null };
 }
