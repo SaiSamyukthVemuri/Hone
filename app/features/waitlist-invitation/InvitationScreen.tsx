@@ -364,9 +364,6 @@ function ProofView({
   onSubmitCode: (code: string) => void;
   pending: boolean;
 }) {
-  const awaitingCode = stage.kind === "sent" || stage.kind === "failed";
-  const failure = stage.kind === "failed" ? PROOF_FAILURE_COPY[stage.reason] : null;
-
   return (
     <div className="flex flex-col gap-6">
       <header className="flex flex-col gap-1">
@@ -380,7 +377,35 @@ function ProofView({
         <p className="text-sm text-[#6B6B6B]">{windowDescription}</p>
       </section>
 
-      {stage.kind === "unavailable" ? (
+      {renderProofStage(stage, onRequestCode, onSubmitCode, pending)}
+    </div>
+  );
+}
+
+/**
+ * EXHAUSTIVE OVER `ProofStage`, and that is the point.
+ *
+ * The previous shape was `unavailable ? … : awaitingCode ? … : <start over>`,
+ * so `verifying` -- added to the union without a home here -- fell through to
+ * the initial branch. A recipient who had just submitted a code saw "Email me a
+ * code" again, enabled, and pressing it minted a fresh challenge that destroyed
+ * the verification in flight, because `begin_` overwrites the challenge hash in
+ * place.
+ *
+ * The bug was not the missing branch. It was that a catch-all `else` let the
+ * union grow while the view stood still. A switch with a `never` exhaustiveness
+ * check cannot do that: the next stage added to `ProofStage` fails `tsc` here
+ * rather than silently rendering "start over".
+ */
+function renderProofStage(
+  stage: ProofStage,
+  onRequestCode: () => void,
+  onSubmitCode: (code: string) => void,
+  pending: boolean,
+) {
+  switch (stage.kind) {
+    case "unavailable":
+      return (
         <div className="flex flex-col gap-3" role="alert">
           <p className="text-sm text-[#6B6B6B]">
             {stage.retryable
@@ -397,7 +422,29 @@ function ProofView({
             </button>
           ) : null}
         </div>
-      ) : awaitingCode ? (
+      );
+
+    case "verifying":
+      // BUSY AND NON-INTERACTIVE FOR THE WHOLE PERIOD. The submitted code stays
+      // on screen, read-only, so the recipient keeps their place; and there is
+      // no way to request a new one, because doing so would invalidate the
+      // check currently running.
+      return (
+        <section className="flex flex-col gap-3" aria-busy="true" aria-live="polite">
+          <p className="text-sm text-[#0A0A0A]">Checking your code…</p>
+          <p className="text-sm text-[#6B6B6B]">Sent to {stage.maskedContact}</p>
+          <output
+            className={`${CONTROL_MIN_TOUCH} w-full border border-[#E7E2D8] bg-[#F5F2EB] px-4 text-base text-[#6B6B6B]`}
+          >
+            {stage.submittedCode}
+          </output>
+        </section>
+      );
+
+    case "sent":
+    case "failed": {
+      const failure = stage.kind === "failed" ? PROOF_FAILURE_COPY[stage.reason] : null;
+      return (
         <form
           className="flex flex-col gap-3"
           onSubmit={(e) => {
@@ -407,7 +454,7 @@ function ProofView({
           }}
         >
           <label className="flex flex-col gap-1 text-sm text-[#0A0A0A]" htmlFor="proof-code">
-            Enter the code we sent to {"maskedContact" in stage ? stage.maskedContact : ""}
+            Enter the code we sent to {stage.maskedContact}
           </label>
           {/* B1.5c mints `^[a-f0-9]{64}$`, so nearly every code contains a-f.
               A numeric keypad made the credential literally unenterable on the
@@ -445,7 +492,12 @@ function ProofView({
             Send a new code
           </button>
         </form>
-      ) : (
+      );
+    }
+
+    case "required":
+    case "requesting":
+      return (
         <section className="flex flex-col gap-3">
           <p className="text-sm text-[#6B6B6B]">
             To see the available times, confirm it’s you. We’ll email a code to the address the
@@ -460,7 +512,21 @@ function ProofView({
             {stage.kind === "requesting" || pending ? "Sending…" : "Email me a code"}
           </button>
         </section>
-      )}
-    </div>
-  );
+      );
+
+    case "proven":
+      // Unreachable: `deriveInvitationViewState` returns the offer state once
+      // proof is proven, so this view is never rendered for it. Stated rather
+      // than left to the catch-all that caused the defect.
+      return null;
+
+    default:
+      return assertNeverStage(stage);
+  }
+}
+
+/** Compile-time exhaustiveness. A new ProofStage breaks the build here. */
+function assertNeverStage(stage: never): null {
+  void stage;
+  return null;
 }

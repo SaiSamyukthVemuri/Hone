@@ -74,7 +74,12 @@ export type ProofStage =
   | { kind: "required" }
   | { kind: "requesting" }
   | { kind: "sent"; maskedContact: string; expiresAt: string }
-  | { kind: "verifying" }
+  /**
+   * A submitted code is being checked. Carries the same context as `sent` so
+   * the screen can keep showing WHAT was submitted and to which address --
+   * blanking the field mid-verification loses the recipient's place.
+   */
+  | { kind: "verifying"; maskedContact: string; expiresAt: string; submittedCode: string }
   | { kind: "failed"; reason: CompleteProofOutcome["kind"]; maskedContact: string; expiresAt: string }
   | { kind: "unavailable"; retryable: boolean }
   | { kind: "proven" };

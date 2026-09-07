@@ -150,6 +150,49 @@ describe("possession is not authority", () => {
   });
 });
 
+// REVIEW P2, STRUCTURALLY. The bug was not a missing branch -- it was a
+// catch-all `else` that let `ProofStage` grow while the view stood still. These
+// pin the shape that makes the next such addition impossible.
+describe("the proof view is exhaustive over ProofStage", () => {
+  const render = SCREEN.slice(SCREEN.indexOf("function renderProofStage"));
+
+  it("branches with a switch, not a chain of ternaries", () => {
+    expect(render).toContain("switch (stage.kind)");
+    // The old shape: `x ? … : y ? … : <start over>`. A catch-all tail is what
+    // let `verifying` land on "Email me a code".
+    expect(render).not.toContain("awaitingCode ?");
+  });
+
+  it("has a never-typed default, so a new stage fails the build", () => {
+    expect(render).toContain("default:");
+    expect(render).toContain("assertNeverStage(stage)");
+    expect(SCREEN).toContain("function assertNeverStage(stage: never)");
+  });
+
+  it("names every stage the union declares", () => {
+    // Derived from the union itself, so a stage added to the type without a
+    // case here fails this assertion as well as `tsc`.
+    const union = STATE.slice(
+      STATE.indexOf("export type ProofStage"),
+      STATE.indexOf("export type InvitationClosedReason"),
+    );
+    const declared = [...union.matchAll(/kind:\s*"([a-z_]+)"/g)].map((m) => m[1]);
+    expect(declared.length).toBeGreaterThanOrEqual(6);
+    for (const kind of declared) {
+      expect(render, `ProofStage "${kind}" has no case`).toContain(`case "${kind}"`);
+    }
+  });
+
+  it("verifying offers no way to restart the exchange", () => {
+    const branch = render.slice(render.indexOf('case "verifying"'), render.indexOf('case "sent"'));
+    expect(branch.length).toBeGreaterThan(80);
+    expect(branch).not.toContain("onRequestCode");
+    expect(branch).not.toContain("<button");
+    expect(branch).toContain('aria-busy="true"');
+    expect(branch).toContain("submittedCode");
+  });
+});
+
 describe("the recipient learns nothing about anyone else", () => {
   it("no queue, position or other-prospect vocabulary in the source", () => {
     for (const forbidden of [

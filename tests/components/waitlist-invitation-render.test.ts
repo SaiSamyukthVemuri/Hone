@@ -324,3 +324,48 @@ describe("declining promises only what decline does", () => {
     expect(html).toContain("contact them directly");
   });
 });
+
+// ---------------------------------------------------------------------------
+// REVIEW P2 — `verifying` had no branch, so it fell through to "start over".
+// A recipient who had just submitted saw "Email me a code" again, enabled, and
+// pressing it minted a fresh challenge that destroyed the verification in
+// flight (`begin_` overwrites the challenge hash in place).
+// ---------------------------------------------------------------------------
+describe("verifying is busy and non-interactive", () => {
+  const html = render({
+    kind: "proof",
+    presentation: PRESENTATION,
+    windowDescription: WINDOW_DESCRIPTION,
+    stage: {
+      kind: "verifying",
+      maskedContact: "s\u2022\u2022\u2022@example.com",
+      expiresAt: "2026-09-07T13:00:00.000Z",
+      submittedCode: "a1b2c3d4",
+    },
+  });
+
+  it("says what is happening and announces it", () => {
+    expect(html).toContain("Checking your code");
+    expect(html).toContain('aria-busy="true"');
+  });
+
+  it("keeps the submitted code visible", () => {
+    expect(html).toContain("a1b2c3d4");
+  });
+
+  it("offers NO way to request a new code while a check is running", () => {
+    // The defect: a new challenge here invalidates the verification in flight.
+    expect(html).not.toContain("Email me a code");
+    expect(html).not.toContain("Send a new code");
+  });
+
+  it("renders no interactive control at all", () => {
+    expect(html).not.toContain("<button");
+    expect(html).not.toContain("<input");
+  });
+
+  it("still shows what was offered", () => {
+    expect(html).toContain("Times held for you");
+    expect(html).toContain("Consultation");
+  });
+});
