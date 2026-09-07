@@ -421,3 +421,53 @@ describe("slot selection freezes while a booking is pending", () => {
     for (const b of buttons) expect(b, `slot disabled with nothing in flight: ${b}`).not.toMatch(DISABLED_ATTR);
   });
 });
+
+// ===========================================================================
+// THE PHONE FIELD — shown only where the studio has no number
+// ===========================================================================
+//
+// Joining a waitlist makes a phone optional; booking requires one. Without this
+// field an entry that joined without a number reached a Book button that could
+// only ever answer "Please enter a phone number", with nowhere to enter it.
+
+describe("the phone the booking engine requires", () => {
+  const needsPhone = { ...OFFER_STATE, phoneRequired: true as const };
+
+  it("is asked for BEFORE the attempt, not after a refusal", () => {
+    const html = render(needsPhone);
+    expect(html).toContain("Your phone number");
+    expect(html).toContain("The studio needs a number to confirm this appointment.");
+    expect(html).toContain('type="tel"');
+  });
+
+  it("is NOT asked for when the studio already holds one", () => {
+    // The rule that keeps this from becoming a form: a stored number is the
+    // invited person's own datum and must never be re-requested.
+    const html = render(OFFER_STATE);
+    expect(html).not.toContain("Your phone number");
+    expect(html).not.toContain('type="tel"');
+  });
+
+  it("GATES the Book control until a number is typed", () => {
+    // An enabled button that cannot succeed is the defect being removed.
+    const empty = render(needsPhone, { selectedSlotStart: SLOT.start, typedPhone: "" });
+    expect(buttonWithLabel(empty, "Book this time")).toMatch(DISABLED_ATTR);
+
+    const blank = render(needsPhone, { selectedSlotStart: SLOT.start, typedPhone: "   " });
+    expect(buttonWithLabel(blank, "Book this time")).toMatch(DISABLED_ATTR);
+  });
+
+  it("RELEASES the Book control once one is", () => {
+    // Non-vacuity for the gate: it is the phone doing this, not the slot.
+    const typed = render(needsPhone, {
+      selectedSlotStart: SLOT.start,
+      typedPhone: "416 555 0000",
+    });
+    expect(buttonWithLabel(typed, "Book this time")).not.toMatch(DISABLED_ATTR);
+  });
+
+  it("does not gate an entry that HAS a stored number", () => {
+    const html = render(OFFER_STATE, { selectedSlotStart: SLOT.start, typedPhone: "" });
+    expect(buttonWithLabel(html, "Book this time")).not.toMatch(DISABLED_ATTR);
+  });
+});

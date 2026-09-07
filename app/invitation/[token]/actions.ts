@@ -156,17 +156,26 @@ type StudioContext = {
 async function invitedIdentity(
   entryId: string,
   studioId: string,
-): Promise<{ name: string; email: string } | null> {
+): Promise<{ name: string; email: string; phone: string | null } | null> {
   const admin = createAdminClient();
   const { data } = await admin
     .from("new_client_waitlist_entries")
-    .select("name, email")
+    .select("name, email, phone")
     .eq("id", entryId)
     .eq("studio_id", studioId)
     .maybeSingle();
   const name = typeof data?.name === "string" ? data.name : null;
   const email = typeof data?.email === "string" ? data.email : null;
-  return name && email ? { name, email } : null;
+  // OPTIONAL BY CONSTRUCTION. The public join form says "Phone (optional)" and
+  // `0185` stores the column nullable, so `null` here is an ordinary, expected
+  // entry — not a broken row. It is returned as its own value rather than
+  // folded into the truthiness check below, because a missing phone must NOT
+  // make the identity unusable: it changes what the recipient is asked for, not
+  // whether they may book.
+  const rawPhone = typeof data?.phone === "string" ? data.phone.trim() : "";
+  return name && email
+    ? { name, email, phone: rawPhone.length > 0 ? rawPhone : null }
+    : null;
 }
 
 /**
@@ -291,10 +300,19 @@ async function offerState(
   proof: ProofStage,
   bookingRefusal?: BookingRefusal,
 ): Promise<InvitationViewState> {
-  const slots =
-    proof.kind === "proven"
-      ? (await offeredDays(resolve, studio)).flatMap((d) => d.slots)
-      : [];
+  // BOTH READS ARE GATED ON PROOF, and for the same reason. Until a capability
+  // exists there are no times to show and nothing to book, so an unproven
+  // render must not pay for either — and must not disclose, to mere possession
+  // of the link, whether the studio holds a phone number for this person.
+  const proven = proof.kind === "proven";
+  const [slots, identity] = await Promise.all([
+    proven
+      ? offeredDays(resolve, studio).then((days) => days.flatMap((d) => d.slots))
+      : Promise.resolve([]),
+    proven
+      ? invitedIdentity(resolve.invitation.entryId, resolve.invitation.studioId)
+      : Promise.resolve(null),
+  ]);
   return deriveInvitationViewState({
     resolve,
     presentation: studio.presentation,
@@ -303,6 +321,10 @@ async function offerState(
     booked: null,
     declined: false,
     bookingRefusal,
+    // An unreadable identity is NOT treated as "no phone": that would ask a
+    // recipient to supply one the studio may already hold. It stays false, the
+    // Book attempt then fails closed, and the booking path reports it.
+    phoneNeeded: identity !== null && identity.phone === null,
   });
 }
 
@@ -426,6 +448,7 @@ export async function declineInvitationAction(
 export async function bookInvitationSlotAction(
   rawToken: string,
   startsAt: string,
+  typedPhone?: string,
 ): Promise<InvitationViewState> {
   const capability = await readCapability(rawToken);
   const ctx = await loadContext(rawToken);
@@ -450,6 +473,29 @@ export async function bookInvitationSlotAction(
   if (!invited) return { kind: "error", retryable: true };
   fd.set("email", invited.email);
   fd.set("name", invited.name);
+
+  // THE PHONE, WHICH THIS OMITTED ENTIRELY AND SO COULD NEVER BOOK.
+  //
+  // `publicBookAppointmentAction` rejects a new-client submission with no phone
+  // at an unconditional gate, BEFORE it reaches invitation authorization or
+  // redemption. Sending name and email alone meant every recipient booking
+  // stopped at "Please enter a phone number" — the offer, the proof and the
+  // scope were all correct and the journey still could not complete.
+  //
+  // THE STORED NUMBER WINS. It is the invited person's own datum, already held
+  // by the studio; preferring a typed one would let whoever holds the link
+  // overwrite it on the client record this booking creates. A typed number is
+  // read ONLY where the entry has none, which is an ordinary case because the
+  // join form makes phone optional.
+  const phone = invited.phone ?? (typeof typedPhone === "string" ? typedPhone.trim() : "");
+  if (!phone) {
+    // Fail BEFORE the booking action, so the recipient is asked for the number
+    // on the offer they are already looking at rather than being handed the
+    // public form's error for a field this surface never showed them.
+    return offerState(ctx.resolve, ctx.studio, { kind: "proven" });
+  }
+  fd.set("phone", phone);
+
   fd.set("invitation_token", rawToken);
   fd.set("invitation_capability", capability);
 

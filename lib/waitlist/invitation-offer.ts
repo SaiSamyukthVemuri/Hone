@@ -238,6 +238,20 @@ export type InvitationViewState =
        * saw their tap do nothing.
        */
       refusal?: BookingRefusal;
+      /**
+       * Set when this entry has NO STORED PHONE and the recipient must supply
+       * one to book.
+       *
+       * Phone is optional when joining a waitlist — the public form says
+       * "Phone (optional)" and `0185` stores the column nullable — but
+       * `publicBookAppointmentAction` requires one for every new-client
+       * booking, at an unconditional gate BEFORE invitation authorization.
+       * Without this flag those entries reach a Book button that can only ever
+       * answer "Please enter a phone number", with nowhere to enter it. The
+       * offer therefore has to say that a phone is needed before the attempt,
+       * not after.
+       */
+      phoneRequired?: boolean;
     }
   | { kind: "closed"; reason: InvitationClosedReason; presentation: OfferPresentation | null }
   | { kind: "booked"; presentation: OfferPresentation; startLabel: string; dateLabel: string }
@@ -382,6 +396,13 @@ export type RecipientContext = {
   bookingRefusal?: BookingRefusal;
   /** Set when a decline failed and the recipient must prove again. */
   proofNotice?: ProofNotice;
+  /**
+   * True when the waitlist entry carries no phone and the recipient must type
+   * one before a booking can be accepted. Read from the entry, never guessed:
+   * an entry that HAS a phone must never be asked for it, because the stored
+   * one is the invited person's own datum.
+   */
+  phoneNeeded?: boolean;
 };
 
 /**
@@ -452,6 +473,10 @@ export function deriveInvitationViewState(ctx: RecipientContext): InvitationView
         // the recipient can still act on: a spent invitation resolves as
         // `already_redeemed` above and never reaches this branch.
         ...(ctx.bookingRefusal ? { refusal: ctx.bookingRefusal } : {}),
+        // Only ever set for an entry with no stored phone. Asking someone for a
+        // number the studio already holds would be a worse surface than the
+        // silent failure this replaces.
+        ...(ctx.phoneNeeded ? { phoneRequired: true } : {}),
       };
     }
   }

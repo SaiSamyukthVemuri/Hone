@@ -32,6 +32,13 @@ export function InvitationContainer({
 }) {
   const [state, setState] = useState<InvitationViewState>(initial);
   const [selectedSlotStart, setSelectedSlotStart] = useState<string | null>(null);
+  /**
+   * Only ever read when the offer says the entry has no stored phone. Held here
+   * rather than in the screen so a re-render carrying a refusal does not wipe
+   * what the recipient typed — losing it would make a failed Book cost them the
+   * number as well as the attempt.
+   */
+  const [typedPhone, setTypedPhone] = useState("");
   const [pending, startTransition] = useTransition();
 
   /** Every action funnels through here so `pending` can never be left stuck on. */
@@ -64,6 +71,8 @@ export function InvitationContainer({
     <InvitationScreen
       state={state}
       selectedSlotStart={selectedSlotStart}
+      typedPhone={typedPhone}
+      onTypedPhoneChange={setTypedPhone}
       pending={pending}
       onSelectSlot={(slot) => setSelectedSlotStart(slot.start)}
       onRetry={() => run(() => loadInvitationAction(token))}
@@ -73,7 +82,11 @@ export function InvitationContainer({
       }
       onBook={() => {
         if (!selectedSlotStart) return;
-        run(() => bookInvitationSlotAction(token, selectedSlotStart));
+        // The typed number is sent unconditionally and IGNORED by the action
+        // wherever the entry already has one. The server decides which value
+        // reaches the booking, so a crafted client cannot substitute a phone
+        // onto an entry whose own number the studio already holds.
+        run(() => bookInvitationSlotAction(token, selectedSlotStart, typedPhone));
       }}
       onDecline={() => run(() => declineInvitationAction(token))}
     />

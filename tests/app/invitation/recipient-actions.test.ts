@@ -65,6 +65,16 @@ vi.mock("@/lib/rate-limit/public", () => ({
   RATE_LIMIT_MESSAGE: "rate limited",
 }));
 
+/**
+ * The invited entry's stored phone.
+ *
+ * A STRING BY DEFAULT, because that is the ordinary case and every pre-existing
+ * test in this file assumes a booking can complete. `null` is the case the
+ * public join form makes reachable — it labels the field "Phone (optional)" —
+ * and it is exercised explicitly below.
+ */
+const entryFixture = { phone: "555 0100" as string | null };
+
 vi.mock("@/lib/supabase/admin-server", () => ({
   createAdminClient: () => ({
     from: (table: string) => {
@@ -77,7 +87,14 @@ vi.mock("@/lib/supabase/admin-server", () => ({
             ? { data: { slug: "studio-a", name: "Studio A", timezone: "America/Toronto" }, error: null }
             : table === "services"
               ? { data: { name: "Consultation", default_duration_minutes: 45 }, error: null }
-              : { data: { name: "Chloe", email: "chloe@example.test" }, error: null },
+              : {
+                  data: {
+                    name: "Chloe",
+                    email: "chloe@example.test",
+                    phone: entryFixture.phone,
+                  },
+                  error: null,
+                },
       });
       return chain;
     },
@@ -121,6 +138,104 @@ beforeEach(() => {
                    declineInvitation, fetchPublicSlotsAction, publicBookAppointmentAction]) m.mockReset();
   resolveInvitation.mockResolvedValue(liveResolve());
   fetchPublicSlotsAction.mockResolvedValue({ ok: true, slots: [] });
+  entryFixture.phone = "555 0100";
+});
+
+// ===========================================================================
+// THE PHONE — the field that made every booking impossible
+// ===========================================================================
+//
+// `publicBookAppointmentAction` rejects a new-client submission with no phone
+// at an UNCONDITIONAL gate, before invitation authorization or redemption. This
+// action sent name and email and nothing else, so every recipient booking
+// stopped at "Please enter a phone number" — with no field anywhere on the
+// invitation surface to enter one. The offer, the proof and the scope were all
+// correct and the journey still could not complete.
+
+describe("the booking carries a phone, because the engine requires one", () => {
+  it("sends the entry's STORED phone", async () => {
+    cookieJar.set("wl_proof_capability", signedCapability(TOKEN, CAPABILITY));
+    publicBookAppointmentAction.mockResolvedValue({
+      ok: true, appointmentId: "a1", manageUrl: "https://x/m", confirmationEmailStatus: "sent",
+    });
+
+    await bookInvitationSlotAction(TOKEN, "2026-10-07T14:00:00.000Z");
+
+    expect(publicBookAppointmentAction).toHaveBeenCalledTimes(1);
+    const fd = publicBookAppointmentAction.mock.calls[0][0] as FormData;
+    expect(fd.get("phone")).toBe("555 0100");
+    // NON-VACUITY: the engine's own gate is what this satisfies.
+    expect(fd.get("client_type")).toBe("new");
+  });
+
+  it("PREFERS THE STORED NUMBER over anything the client sends", async () => {
+    // Whoever holds the link must not be able to write a phone onto the client
+    // record this booking creates when the studio already holds the real one.
+    cookieJar.set("wl_proof_capability", signedCapability(TOKEN, CAPABILITY));
+    publicBookAppointmentAction.mockResolvedValue({
+      ok: true, appointmentId: "a1", manageUrl: "https://x/m", confirmationEmailStatus: "sent",
+    });
+
+    await bookInvitationSlotAction(TOKEN, "2026-10-07T14:00:00.000Z", "999 9999");
+
+    const fd = publicBookAppointmentAction.mock.calls[0][0] as FormData;
+    expect(fd.get("phone")).toBe("555 0100");
+    expect(fd.get("phone")).not.toBe("999 9999");
+  });
+
+  it("uses a TYPED number only where the entry has none", async () => {
+    // Joining a waitlist makes the phone optional, so this is an ordinary
+    // entry rather than a broken one.
+    entryFixture.phone = null;
+    cookieJar.set("wl_proof_capability", signedCapability(TOKEN, CAPABILITY));
+    publicBookAppointmentAction.mockResolvedValue({
+      ok: true, appointmentId: "a1", manageUrl: "https://x/m", confirmationEmailStatus: "sent",
+    });
+
+    await bookInvitationSlotAction(TOKEN, "2026-10-07T14:00:00.000Z", "  416 555 0000  ");
+
+    const fd = publicBookAppointmentAction.mock.calls[0][0] as FormData;
+    expect(fd.get("phone")).toBe("416 555 0000");
+  });
+
+  it("NEVER REACHES THE ENGINE with no phone at all", async () => {
+    // The old behaviour: the attempt went through and came back with the public
+    // form's error for a field this surface never showed. Failing before the
+    // call keeps the recipient on the offer they are looking at.
+    entryFixture.phone = null;
+    cookieJar.set("wl_proof_capability", signedCapability(TOKEN, CAPABILITY));
+
+    const out = await bookInvitationSlotAction(TOKEN, "2026-10-07T14:00:00.000Z");
+
+    expect(publicBookAppointmentAction).not.toHaveBeenCalled();
+    expect(out.kind).toBe("offer");
+  });
+
+  it("a whitespace-only typed number is not a number", async () => {
+    entryFixture.phone = null;
+    cookieJar.set("wl_proof_capability", signedCapability(TOKEN, CAPABILITY));
+
+    const out = await bookInvitationSlotAction(TOKEN, "2026-10-07T14:00:00.000Z", "   ");
+
+    expect(publicBookAppointmentAction).not.toHaveBeenCalled();
+    expect(out.kind).toBe("offer");
+  });
+
+  it("THE OFFER ASKS FOR IT — phoneRequired is set only where none is stored", async () => {
+    cookieJar.set("wl_proof_capability", signedCapability(TOKEN, CAPABILITY));
+
+    entryFixture.phone = null;
+    const needs = await loadInvitationAction(TOKEN);
+    expect(needs.kind).toBe("offer");
+    expect((needs as { phoneRequired?: boolean }).phoneRequired).toBe(true);
+
+    // NON-VACUITY, and the rule that matters: an entry that HAS a phone is
+    // never asked for one.
+    entryFixture.phone = "555 0100";
+    const hasIt = await loadInvitationAction(TOKEN);
+    expect(hasIt.kind).toBe("offer");
+    expect((hasIt as { phoneRequired?: boolean }).phoneRequired).toBeUndefined();
+  });
 });
 
 describe("the link alone is not authorisation", () => {

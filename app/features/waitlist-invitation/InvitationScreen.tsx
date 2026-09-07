@@ -45,6 +45,10 @@ type Props = {
   /** B1.5c proof exchange, both supplied by the container. */
   onRequestCode: () => void;
   onSubmitCode: (code: string) => void;
+  /** Owned by the container, and read ONLY where the offer says the entry has
+   *  no stored phone. This component holds no state of its own. */
+  typedPhone?: string;
+  onTypedPhoneChange?: (value: string) => void;
   /** True while a book/decline the container initiated is in flight. */
   pending?: boolean;
 };
@@ -58,6 +62,8 @@ export function InvitationScreen({
   onRetry,
   onRequestCode,
   onSubmitCode,
+  typedPhone = "",
+  onTypedPhoneChange,
   pending = false,
 }: Props) {
   return <main className="mx-auto w-full max-w-md px-4 py-8">{renderState()}</main>;
@@ -107,6 +113,9 @@ export function InvitationScreen({
             days={state.days}
             windowDescription={state.windowDescription}
             refusal={state.refusal}
+            phoneRequired={state.phoneRequired === true}
+            typedPhone={typedPhone}
+            onTypedPhoneChange={onTypedPhoneChange}
             selectedSlotStart={selectedSlotStart}
             onSelectSlot={onSelectSlot}
             onBook={onBook}
@@ -268,6 +277,9 @@ function OfferView({
   days,
   windowDescription,
   refusal,
+  phoneRequired,
+  typedPhone,
+  onTypedPhoneChange,
   selectedSlotStart,
   onSelectSlot,
   onBook,
@@ -279,6 +291,9 @@ function OfferView({
   days: readonly OfferedDay[];
   windowDescription: string;
   refusal?: BookingRefusal;
+  phoneRequired: boolean;
+  typedPhone: string;
+  onTypedPhoneChange?: (value: string) => void;
   selectedSlotStart: string | null;
   onSelectSlot: (slot: OfferedSlot) => void;
   onBook: () => void;
@@ -376,11 +391,48 @@ function OfferView({
         </section>
       )}
 
+      {/* ASKED FOR ONLY WHERE THE STUDIO HAS NONE. Joining a waitlist makes a
+          phone optional, but booking requires one, so an entry that joined
+          without a number would otherwise reach a Book button that can never
+          succeed. The field appears above the action rather than after a
+          failure, because a requirement discovered by being refused is not a
+          requirement the person was ever told about. */}
+      {!empty && phoneRequired ? (
+        <div className="flex flex-col gap-1">
+          <label htmlFor="invitation-phone" className="text-sm text-[#0A0A0A]">
+            Your phone number
+          </label>
+          <p className="text-sm text-[#6B6B6B]">
+            The studio needs a number to confirm this appointment.
+          </p>
+          <input
+            id="invitation-phone"
+            name="phone"
+            type="tel"
+            inputMode="tel"
+            autoComplete="tel"
+            maxLength={40}
+            value={typedPhone}
+            onChange={(e) => onTypedPhoneChange?.(e.target.value)}
+            disabled={pending}
+            className={`${CONTROL_MIN_TOUCH} ${FOCUS_RING} w-full border border-[#0A0A0A] px-4 text-sm disabled:opacity-60`}
+          />
+        </div>
+      ) : null}
+
       {!empty ? (
         <button
           type="button"
           onClick={onBook}
-          disabled={pending || selectedSlotStart === null}
+          // A REQUIRED PHONE GATES THE ACTION rather than being validated after
+          // it. The server re-decides regardless — it is the authority on which
+          // number reaches the booking — but offering an enabled button that
+          // cannot succeed is the defect this whole change exists to remove.
+          disabled={
+            pending ||
+            selectedSlotStart === null ||
+            (phoneRequired && typedPhone.trim().length === 0)
+          }
           className={`${CONTROL_MIN_TOUCH} ${FOCUS_RING} w-full bg-[#0A0A0A] px-4 text-sm text-[#FAFAF7] disabled:opacity-60`}
         >
           {pending ? "Booking…" : "Book this time"}
