@@ -89,6 +89,15 @@ export class InMemoryProvisioningStore implements ProvisioningStore {
   finalizeCalls = 0;
 
   /**
+   * Finalize calls that asked to ACTIVATE (testOk = true).
+   *
+   * The configure capability may reserve identifiers with testOk = false; it may
+   * never activate. Counting the two separately is what lets that be asserted as
+   * a number instead of a promise.
+   */
+  activationCalls = 0;
+
+  /**
    * Force the fence to refuse, modelling a worker displaced by a takeover
    * between claiming and acting.
    */
@@ -170,6 +179,23 @@ export class InMemoryProvisioningStore implements ProvisioningStore {
   bindResources(studioId: string, phoneNumberSid: string, messagingServiceSid: string): void {
     this.resourceBindings.set(phoneNumberSid, studioId);
     this.resourceBindings.set(messagingServiceSid, studioId);
+  }
+
+  /**
+   * A resource recorded against another studio -- including one bound by a lane
+   * this store never saw as a row, which is how a concurrent adoption running
+   * in another process appears from here.
+   */
+  private resourceBoundElsewhere(input: {
+    studioId: string;
+    phoneNumberSid: string;
+    messagingServiceSid: string;
+  }): boolean {
+    for (const sid of [input.phoneNumberSid, input.messagingServiceSid]) {
+      const owner = this.resourceBindings.get(sid);
+      if (owner !== undefined && owner !== input.studioId) return true;
+    }
+    return false;
   }
 
   async readProviderResourceBindings(input: {
@@ -363,6 +389,7 @@ export class InMemoryProvisioningStore implements ProvisioningStore {
     testOk: boolean;
   }): Promise<FinalizeResult> {
     this.finalizeCalls += 1;
+    if (input.testOk) this.activationCalls += 1;
     if (this.failReturnsFinalize !== null) return this.failReturnsFinalize;
     if (this.failFinalizeWithoutCommitting) return "invalid_input";
     const row = this.rows.find(
@@ -387,6 +414,22 @@ export class InMemoryProvisioningStore implements ProvisioningStore {
     ) {
       return "conflict";
     }
+
+    // THE UNIQUE INDEXES, modelled. 0191 carries partial unique indexes on
+    // phone_number_sid and on messaging_service_sid, so one provider resource
+    // belongs to exactly one studio whatever a caller supplies, and the
+    // violation is caught and returned as `conflict` rather than raised. That is
+    // the ATOMIC half of the reservation -- without modelling it here, a
+    // concurrency test would be a statement about the fake.
+    const takenByAnother = this.rows.some(
+      (r) =>
+        r !== row &&
+        r.status !== "released" &&
+        ((r.phoneNumberSid !== null && r.phoneNumberSid === input.phoneNumberSid) ||
+          (r.messagingServiceSid !== null &&
+            r.messagingServiceSid === input.messagingServiceSid)),
+    );
+    if (takenByAnother || this.resourceBoundElsewhere(input)) return "conflict";
 
     row.phoneNumber ??= input.phoneNumber;
     row.phoneNumberSid ??= input.phoneNumberSid;

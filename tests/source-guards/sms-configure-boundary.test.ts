@@ -53,13 +53,42 @@ describe("configuration may change ONLY the two webhook limbs", () => {
   });
 });
 
-describe("configuration never activates a sender", () => {
-  it("does not call finalize — activation belongs to adoption alone", () => {
-    expect(CONFIGURE, "configuration reached finalize").not.toContain(".finalize(");
+// THE CONTRACT CHANGED, AND IT GOT STRONGER.
+//
+// "configuration never calls finalize" held until the reviewed race forced the
+// reservation: closing it needs 0191's finalize as the ATOMIC binding
+// primitive, because no number of reads can cover the gap between the last read
+// and the write. So configuration may call finalize exactly ONCE, and only ever
+// with testOk: false -- which records identifiers, leaves the row
+// `provisioning`, and asserts no provider test. It may never activate.
+describe("configuration reserves, and never activates", () => {
+  it("calls finalize exactly once", () => {
+    const calls = CONFIGURE.match(/store\.finalize\(/g) ?? [];
+    expect(calls.length, "more than one finalize in the source").toBe(1);
   });
 
-  it("never asks for testOk, the flag that turns a row active", () => {
-    expect(CONFIGURE).not.toContain("testOk");
+  it("passes testOk: false, and never true", () => {
+    expect(CONFIGURE).toContain("testOk: false");
+    expect(CONFIGURE, "an activation slipped in").not.toContain("testOk: true");
+    // Anti-vacuity: a renamed or computed flag would evade the literal above.
+    expect(CONFIGURE.match(/testOk:/g)?.length ?? 0).toBe(1);
+  });
+
+  it("the reservation precedes the configuration read and every write", () => {
+    const reserve = CONFIGURE.indexOf("store.finalize(");
+    const read = CONFIGURE.indexOf("readMessagingServiceConfig", reserve);
+    const write = CONFIGURE.indexOf("configureInboundWebhook");
+    expect(reserve).toBeGreaterThan(-1);
+    expect(reserve, "read another studio's configuration before winning it").toBeLessThan(read);
+    expect(reserve, "wrote before reserving").toBeLessThan(write);
+  });
+
+  it("no non-success finalizer verdict becomes permission to configure", () => {
+    // Every branch of the adjudication must terminate rather than fall through.
+    for (const verdict of ["already_active", "lease_lost", "conflict"]) {
+      expect(CONFIGURE, `${verdict} is not adjudicated`).toContain(`case "${verdict}"`);
+    }
+    expect(CONFIGURE).toContain('case "provisioned_untested"');
   });
 });
 

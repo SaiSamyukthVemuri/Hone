@@ -87,7 +87,21 @@ function expectNoForbiddenEffects() {
   expect(provider.calls.testSend, "sent a provisioning SMS").toBe(0);
   expect(provider.calls.search, "searched purchasable numbers").toBe(0);
   expect(provider.calls.availability, "checked purchasable availability").toBe(0);
-  expect(store.finalizeCalls, "finalized / activated a sender").toBe(0);
+  // THE INVARIANT CHANGED, AND IT GOT STRONGER.
+  //
+  // "configure performs zero finalize calls" was true until the reviewed race
+  // forced the reservation: closing it requires 0191's finalize as the ATOMIC
+  // binding primitive. So configure may now perform exactly ONE finalize, and
+  // only ever with testOk = false -- which records identifiers, leaves the row
+  // `provisioning`, and asserts no provider test. It may NEVER activate.
+  expect(store.activationCalls, "ACTIVATED a sender").toBe(0);
+  // At most ONE reservation per claimed attempt. Expressed against the claim
+  // count rather than a literal, so it still holds for a test that invokes
+  // configure more than once.
+  expect(
+    store.finalizeCalls,
+    "more than one reservation per claimed attempt",
+  ).toBeLessThanOrEqual(store.claimCalls);
 }
 
 /** Total provider CONFIGURATION writes actually issued. */
@@ -943,14 +957,18 @@ describe("provider resources bound to another studio are refused", () => {
 
     const out = await asStudioA();
 
+    // Refused by the ATOMIC reservation now, not by a read. 0191 cannot say
+    // WHICH conflict it is, so the test does not claim either.
     expect(out).toMatchObject({
       ok: false,
       result: "refused",
-      reason: "resource_bound_to_other_studio",
+      reason: "reservation_conflict",
       providerWrites: 0,
     });
     expect(writes(), "rewrote another studio's webhooks").toBe(0);
-    expect(store.finalizeCalls, "activated across a tenant boundary").toBe(0);
+    // The reservation ATTEMPT is one finalize, and it correctly conflicted.
+    // What must be zero is ACTIVATION.
+    expect(store.activationCalls, "activated across a tenant boundary").toBe(0);
     expectNoForbiddenEffects();
   });
 
@@ -977,7 +995,7 @@ describe("provider resources bound to another studio are refused", () => {
 
     const out = await asStudioA();
 
-    expect(out).toMatchObject({ ok: false, reason: "resource_bound_to_other_studio", providerWrites: 0 });
+    expect(out).toMatchObject({ ok: false, reason: "reservation_conflict", providerWrites: 0 });
     expect(writes()).toBe(0);
   });
 
@@ -987,23 +1005,27 @@ describe("provider resources bound to another studio are refused", () => {
 
     const out = await asStudioA();
 
-    expect(out).toMatchObject({ ok: false, reason: "resource_bound_to_other_studio", providerWrites: 0 });
+    expect(out).toMatchObject({ ok: false, reason: "reservation_conflict", providerWrites: 0 });
     expect(writes()).toBe(0);
   });
 
-  it("an UNREADABLE binding authority fails closed — never treated as unbound", async () => {
+  it("an UNREADABLE binding authority fails INSPECT closed — never treated as unbound", async () => {
+    // Only inspect consults the read authority; configure's tenancy comes from
+    // the atomic reservation, which cannot be unavailable.
     provider.script = bResources();
     store.bindingUnavailable = "phone";
 
-    const out = await asStudioA();
+    const out = await asStudioA({ mode: "inspect" });
 
     expect(out).toMatchObject({
       ok: false,
       reason: "binding_unavailable",
       retryable: true,
       providerWrites: 0,
+      claimsTaken: 0,
     });
-    expect(writes(), "wrote without knowing the tenant").toBe(0);
+    expect(store.claimCalls).toBe(0);
+    expect(writes(), "read another tenant without knowing whose it was").toBe(0);
   });
 
   it("resources bound to THIS studio proceed normally", async () => {
@@ -1103,5 +1125,158 @@ describe("association is re-proved immediately before the first write", () => {
       changed: ["status_callback"],
       providerWrites: 1,
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE RESERVATION RACE — the finding no amount of re-reading could close.
+//
+// Reproduced before the fix: Studio A read the resources as unbound, Studio B's
+// in-flight adoption bound the same PN/MG a moment later, and A -- holding a
+// perfectly valid lease for its OWN studio -- rewrote B's newly-bound service.
+// `configured`, two writes. The window sits between A's last read and A's
+// write, where there is no interposition point at all; that is what makes it a
+// TOCTOU rather than a missing check.
+//
+// Closed with 0191's OWN atomic primitive: finalize(testOk: false) records the
+// identifiers under the partial unique indexes, inside the same locked,
+// lease-fenced transaction, and returns `conflict` rather than overwriting.
+// No new table, no new migration.
+// ---------------------------------------------------------------------------
+describe("provider identifiers are reserved atomically, not merely read", () => {
+  const STUDIO_B = "studio-b";
+  const OWNER_B = "user-owner-b";
+  const PN = "PN" + "f".repeat(32);
+  const MG = "MG" + "f".repeat(32);
+  const NUM = "+14165550177";
+  const MEMBERS_AB: Membership[] = [...MEMBERS, { userId: OWNER_B, studioId: STUDIO_B, role: "owner" }];
+
+  function shared(): FakeProviderScript {
+    return {
+      preOwnedNumbers: { [NUM]: PN },
+      accountServices: [
+        { sid: MG, numbers: [NUM], inboundUrl: "https://legacy.example/in", statusUrl: "https://legacy.example/st" },
+      ],
+    };
+  }
+  function asA(over: Record<string, unknown> = {}) {
+    return configure({ studioId: STUDIO_A, actorUserId: OWNER_A, phoneNumber: NUM, messagingServiceSid: MG, ...over });
+  }
+
+  beforeEach(() => {
+    store = new InMemoryProvisioningStore(MEMBERS_AB);
+    provider = new FakeSmsProvisioningProvider();
+    provider.script = shared();
+  });
+
+  it("CASE A — B binds after A's proof: A's reservation conflicts, ZERO writes", async () => {
+    // B commits in the window A cannot read its way out of.
+    const realLookup = provider.lookupOwnedNumber.bind(provider);
+    let seen = 0;
+    provider.lookupOwnedNumber = async (i) => {
+      const out = await realLookup(i);
+      seen += 1;
+      if (seen === 1) store.bindResources(STUDIO_B, PN, MG);
+      return out;
+    };
+
+    const out = await asA();
+
+    expect(out).toMatchObject({
+      ok: false,
+      result: "refused",
+      reason: "reservation_conflict",
+      providerWrites: 0,
+    });
+    expect(writes(), "rewrote a service B had just won").toBe(0);
+    expect(store.activationCalls).toBe(0);
+    expectNoForbiddenEffects();
+  });
+
+  it("CASE B — A reserves first: B's later finalize on the same resources conflicts", async () => {
+    const out = await asA();
+    expect(out).toMatchObject({ ok: true, result: "configured" });
+
+    // B now tries to bind the same identifiers through the ordinary lifecycle.
+    const bClaim = await store.claim({
+      studioId: STUDIO_B, actorUserId: OWNER_B, country: "CA", areaCode: null, phoneNumber: NUM,
+    });
+    expect(bClaim.result).toBe("claimed");
+    const bFinalize = await store.finalize({
+      studioId: STUDIO_B,
+      claimKey: bClaim.claimKey!,
+      leaseGeneration: bClaim.leaseGeneration!,
+      phoneNumber: NUM,
+      phoneNumberSid: PN,
+      messagingServiceSid: MG,
+      testOk: false,
+    });
+    expect(bFinalize, "B stole resources A had reserved").toBe("conflict");
+  });
+
+  it("CASE C — association moves AFTER reservation: final re-proof refuses, ZERO writes", async () => {
+    const realRead = provider.readMessagingServiceConfig.bind(provider);
+    let moved = false;
+    provider.readMessagingServiceConfig = async (i) => {
+      const out = await realRead(i);
+      if (!moved) {
+        moved = true;
+        provider.script = {
+          preOwnedNumbers: { [NUM]: PN },
+          accountServices: [
+            { sid: MG, numbers: [], inboundUrl: "https://legacy.example/in", statusUrl: "https://legacy.example/st" },
+            { sid: OTHER_MG_SID, numbers: [NUM], inboundUrl: null, statusUrl: null },
+          ],
+        };
+      }
+      return out;
+    };
+
+    const out = await asA();
+
+    expect(out).toMatchObject({ ok: false, result: "refused", reason: "number_in_other_service", providerWrites: 0 });
+    expect(writes()).toBe(0);
+  });
+
+  it("CASE D — a failed provider write leaves the reservation durably A's", async () => {
+    provider.script = { ...shared(), webhookFails: "provider_timeout" };
+
+    const failed = await asA();
+    expect(failed.ok).toBe(false);
+
+    // The identifiers stay recorded against A, so B still cannot take them
+    // merely because A's webhook write failed.
+    const row = store.rows.find((r) => r.studioId === STUDIO_A);
+    expect(row?.phoneNumberSid).toBe(PN);
+    expect(row?.messagingServiceSid).toBe(MG);
+    expect(row?.status, "a failed write must not activate").not.toBe("active");
+
+    const bClaim = await store.claim({
+      studioId: STUDIO_B, actorUserId: OWNER_B, country: "CA", areaCode: null, phoneNumber: NUM,
+    });
+    const stolen = await store.finalize({
+      studioId: STUDIO_B,
+      claimKey: bClaim.claimKey!,
+      leaseGeneration: bClaim.leaseGeneration!,
+      phoneNumber: NUM, phoneNumberSid: PN, messagingServiceSid: MG, testOk: false,
+    });
+    expect(stolen, "B took resources A had reserved, after A's write failed").toBe("conflict");
+  });
+
+  it("CASE E — retry against the SAME reserved resources binds nothing new", async () => {
+    const first = await asA();
+    expect(first).toMatchObject({ ok: true, result: "configured", providerWrites: 2 });
+
+    const boundAfterFirst = store.rows.filter((r) => r.phoneNumberSid !== null).length;
+
+    store.now += 10 * 60_000; // the lease lapses; the operator presses again
+    const second = await asA();
+
+    expect(second).toMatchObject({ ok: true, result: "already_configured", providerWrites: 0 });
+    expect(
+      store.rows.filter((r) => r.phoneNumberSid !== null).length,
+      "a retry created a second resource binding",
+    ).toBe(boundAfterFirst);
+    expect(store.activationCalls).toBe(0);
   });
 });

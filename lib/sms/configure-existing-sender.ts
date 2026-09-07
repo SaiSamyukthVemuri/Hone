@@ -96,6 +96,7 @@ export type ConfigureRefusal =
   | "provider_number_mismatch"
   | "sender_already_active"
   | "resource_bound_to_other_studio"
+  | "reservation_conflict"
   | "binding_unavailable"
   | "resource_changed_before_write"
   | "post_write_verification_failed";
@@ -232,6 +233,7 @@ const CONFIGURE_REFUSALS: ReadonlySet<string> = new Set<ConfigureRefusal>([
   "provider_number_mismatch",
   "sender_already_active",
   "resource_bound_to_other_studio",
+  "reservation_conflict",
   "binding_unavailable",
   "resource_changed_before_write",
   "post_write_verification_failed",
@@ -712,17 +714,68 @@ async function configureUnderClaim(
     return failWith(proof.reason, proof.retryable, { discovered: proof.discovered });
   }
 
-  const tenancy = await proveResourceTenancy(
-    input.bindings,
-    input.studioId,
-    proof.phoneNumberSid,
-    targetService,
-  );
-  if (!tenancy.ok) {
-    return failWith(tenancy.reason, tenancy.retryable, { discovered: tenancy.discovered });
+  // --- 3. RESERVE THE PROVIDER IDENTIFIERS, ATOMICALLY --------------------
+  //
+  // A READ cannot close this. The reviewed race: A reads the resources as
+  // unbound, B's in-flight adoption finalizes and binds the same PN/MG a
+  // moment later, and A -- still holding a perfectly valid lease for its OWN
+  // studio -- rewrites B's newly-bound service. Re-reading only narrows the
+  // window; the gap between the last read and the write cannot be read away.
+  // Reproduced exactly that way before this call existed: `configured`, two
+  // writes, against another studio's service.
+  //
+  // 0191 already owns the atomic primitive, so no new table and no new
+  // migration. `finalize(..., p_test_ok => false)` records the identifiers
+  // under the partial unique indexes on `phone_number_sid` and
+  // `messaging_service_sid`, inside the same locked, lease-fenced transaction,
+  // and returns `conflict` rather than overwriting another studio. It leaves
+  // the row `provisioning`, sets no `last_test_ok_at`, and asserts no provider
+  // test -- so this reserves without activating anything.
+  //
+  // It happens BEFORE the configuration read on purpose: once we hold provider
+  // identifiers, we should not even look at that service's configuration until
+  // we have atomically won the right to.
+  const reservation = await input.store.finalize({
+    studioId: input.studioId,
+    claimKey,
+    leaseGeneration,
+    phoneNumber,
+    phoneNumberSid: proof.phoneNumberSid,
+    messagingServiceSid: targetService,
+    // NEVER true here. Activation belongs to adoption, after a real send.
+    testOk: false,
+  });
+
+  switch (reservation) {
+    case "provisioned_untested":
+      // Reserved, or replayed onto the identical reservation this studio
+      // already held -- 0191 coalesces, so a retry binds nothing new.
+      break;
+    case "already_active":
+      // The DATABASE says this sender is live. Terminal truth outranks ours,
+      // and a live sender's webhooks are exactly what we refuse to touch.
+      return {
+        ok: false,
+        result: "refused",
+        reason: "sender_already_active",
+        retryable: false,
+        providerWrites: 0,
+      };
+    case "lease_lost":
+      return { ok: false, result: "lease_lost", senderId };
+    case "conflict":
+      // 0191 CANNOT distinguish "another studio holds this resource" from
+      // "these identifiers disagree with the ones already on my row", so this
+      // does not claim which. Either way it is a refusal, and the database's
+      // verdict is preserved rather than reinterpreted.
+      return failWith("reservation_conflict", false);
+    default:
+      // claim_not_found, not_provisioning, invalid_input -- none of them is
+      // permission to configure.
+      return failWith("finalize_failed", false);
   }
 
-  // --- 3. RE-READ THE CONFIGURATION, and diff from THAT --------------------
+  // --- 4. RE-READ THE CONFIGURATION, and diff from THAT --------------------
   // The minimal mutation is computed here and only here. A limb an inspection
   // reported as wrong may already be correct by now, in which case it is not
   // written.
@@ -740,12 +793,12 @@ async function configureUnderClaim(
     input.requiredStatusCallbackUrl,
   );
 
-  // --- 4. IDEMPOTENCY, decided by reading and not by remembering -----------
+  // --- 5. IDEMPOTENCY, decided by reading and not by remembering -----------
   if (mismatched.length === 0) {
     return { ok: true, result: "already_configured", senderId, providerWrites: 0 };
   }
 
-  // --- 5. FINAL REVALIDATION, and nothing between it and the write ---------
+  // --- 6. FINAL REVALIDATION, and nothing between it and the write ---------
   //
   // The lease fence proves we still hold the CLAIM. It cannot prove anything
   // about Twilio. Between the proof above and here sits the configuration read,
@@ -765,17 +818,7 @@ async function configureUnderClaim(
     return failWith("resource_changed_before_write", false);
   }
 
-  const retenancy = await proveResourceTenancy(
-    input.bindings,
-    input.studioId,
-    reproof.phoneNumberSid,
-    targetService,
-  );
-  if (!retenancy.ok) {
-    return failWith(retenancy.reason, retenancy.retryable, { discovered: retenancy.discovered });
-  }
-
-  // --- 6. Write ONLY the limbs that differ ---------------------------------
+  // --- 7. Write ONLY the limbs that differ ---------------------------------
   if (mismatched.includes("inbound_webhook")) {
     const ack = await provider.configureInboundWebhook({
       messagingServiceSid: targetService,
@@ -803,7 +846,7 @@ async function configureUnderClaim(
     }
   }
 
-  // --- 7. VERIFY BY RE-READING, never by trusting the acknowledgement ------
+  // --- 8. VERIFY BY RE-READING, never by trusting the acknowledgement ------
   // A 2xx says the request was accepted, not that the resource now holds the
   // value. The authority on provider state is the provider, read back.
   const after = await provider.readMessagingServiceConfig({
@@ -825,6 +868,6 @@ async function configureUnderClaim(
     return failWith("post_write_verification_failed", false, { mismatched: stillWrong });
   }
 
-  // --- 8. Stop here. Configuration is not activation. ----------------------
+  // --- 9. Stop here. Configuration is not activation. ----------------------
   return { ok: true, result: "configured", senderId, changed: mismatched, providerWrites };
 }
