@@ -87,7 +87,23 @@ export type ResolveOutcome =
   | Unavailable;
 
 export type BeginProofOutcome =
-  | { kind: "challenge_issued"; expiresAt: string; deliveryContact: string; maskedContact: string }
+  | {
+      kind: "challenge_issued";
+      /**
+       * THE PROOF CODE. Returned exactly once, by the call that minted it: the
+       * database stores only its SHA-256, so it cannot be read back afterwards
+       * by anyone, this server included. The delivery layer must hand it
+       * straight to the message body and keep it out of everything else -- no
+       * log line, no idempotency key, no rate-limit key, no error string, and
+       * nothing DERIVED from it either. The code space is small, so a stable
+       * hash or a prefix is an offline verifier, not a redaction.
+       */
+      rawChallenge: string;
+      /** DB-owned. Never recomputed here; the stored value is the only truth. */
+      expiresAt: string;
+      deliveryContact: string;
+      maskedContact: string;
+    }
   | { kind: "invalid_token" }
   | { kind: "not_live" }
   | { kind: "invalid_input" }
@@ -358,9 +374,16 @@ export async function beginRecipientProof(
     if (result === "challenge_issued") {
       const deliveryContact = str(row, "delivery_contact");
       const expiresAt = str(row, "expires_at");
-      if (!deliveryContact || !expiresAt) return { kind: "unavailable" };
+      // The accepted SQL has always returned this; the wrapper simply stopped
+      // discarding it, which is what left the delivery layer with a challenge
+      // it could not send. No SQL, contract or lifecycle rule changes here.
+      const rawChallenge = str(row, "raw_challenge");
+      if (!deliveryContact || !expiresAt || !rawChallenge) {
+        return { kind: "unavailable" };
+      }
       return {
         kind: "challenge_issued",
+        rawChallenge,
         expiresAt,
         deliveryContact,
         maskedContact: maskContact(deliveryContact),
@@ -495,7 +518,12 @@ export async function authorizeInvitationForBooking(input: {
  *
  * ORDERING, STATED HONESTLY: this is called immediately before the appointment
  * command, not after it. Redeeming first means a failed appointment leaves a
- * CONSUMED invitation and no booking, which an operator can reissue. Booking
+ * CONSUMED invitation and no booking. That invitation CANNOT be reissued:
+ * release_new_client_waitlist_entry answers `already_redeemed` once any
+ * invitation for the entry has been redeemed, so release -> requeue -> claim ->
+ * issue_scoped_ is closed. Recovery is the studio booking the client DIRECTLY
+ * through the operator surface, which the new-client gate never intercepts.
+ * Booking
  * first would risk two appointments from one invitation, breaking the admission
  * guarantee that is the entire point of the waitlist. The window between the two
  * is one RPC round trip and cannot be closed without putting the booking engine

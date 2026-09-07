@@ -18,6 +18,7 @@ vi.mock("@/lib/supabase/queries", () => ({
 
 const {
   authorizeInvitationForBooking,
+  beginRecipientProof,
   completeRecipientProof,
   consumeInvitationForBooking,
   contactHash,
@@ -312,6 +313,76 @@ describe("decline — the same gate as redeem", () => {
       p_raw_token: TOKEN,
       p_raw_capability: CAP,
     });
+  });
+});
+
+describe("begin proof — the code the delivery layer has to send", () => {
+  // The accepted SQL has always returned raw_challenge; this wrapper used to
+  // discard it, which left the delivery layer with a challenge it could not
+  // send. Surfacing it is a TypeScript change only.
+  function challengeRow(over: Record<string, unknown> = {}) {
+    return [
+      {
+        result: "challenge_issued",
+        raw_challenge: CHALLENGE,
+        delivery_contact: EMAIL,
+        expires_at: "2026-09-10T12:20:00Z",
+        ...over,
+      },
+    ];
+  }
+
+  it("surfaces the raw challenge to the caller", async () => {
+    rpc.mockResolvedValue({ data: challengeRow(), error: null });
+    const out = await beginRecipientProof(TOKEN);
+    expect(out.kind).toBe("challenge_issued");
+    if (out.kind !== "challenge_issued") throw new Error("unreachable");
+    expect(out.rawChallenge).toBe(CHALLENGE);
+  });
+
+  it("carries the DB-owned expiry through untouched, never a recomputed one", async () => {
+    rpc.mockResolvedValue({ data: challengeRow(), error: null });
+    const out = await beginRecipientProof(TOKEN);
+    if (out.kind !== "challenge_issued") throw new Error("unreachable");
+    expect(out.expiresAt).toBe("2026-09-10T12:20:00Z");
+  });
+
+  it("returns the code EXACTLY ONCE — it is not copied into another field", async () => {
+    rpc.mockResolvedValue({ data: challengeRow(), error: null });
+    const out = await beginRecipientProof(TOKEN);
+    if (out.kind !== "challenge_issued") throw new Error("unreachable");
+    const occurrences = Object.entries(out).filter(([, v]) => v === CHALLENGE);
+    expect(occurrences.map(([k]) => k)).toEqual(["rawChallenge"]);
+    // And it must not have leaked into the masked contact shown to a browser.
+    expect(out.maskedContact).not.toContain(CHALLENGE);
+  });
+
+  it("never writes the code, or anything derived from it, to a log", async () => {
+    const lines: string[] = [];
+    const spies = (["log", "info", "warn", "error", "debug"] as const).map((lvl) =>
+      vi.spyOn(console, lvl).mockImplementation((...a: unknown[]) => {
+        lines.push(a.map(String).join(" "));
+      }),
+    );
+    rpc.mockResolvedValue({ data: challengeRow(), error: null });
+    await beginRecipientProof(TOKEN);
+    for (const sp of spies) sp.mockRestore();
+    const joined = lines.join("\n");
+    expect(joined).not.toContain(CHALLENGE);
+    // The code space is small, so a hash or a prefix is an offline verifier,
+    // not a redaction. Neither may appear either.
+    expect(joined).not.toContain(createHash("sha256").update(CHALLENGE).digest("hex"));
+    expect(joined).not.toContain(CHALLENGE.slice(0, 8));
+  });
+
+  it("is unavailable rather than half-issued when the row carries no code", async () => {
+    rpc.mockResolvedValue({ data: challengeRow({ raw_challenge: null }), error: null });
+    expect((await beginRecipientProof(TOKEN)).kind).toBe("unavailable");
+  });
+
+  it("is unavailable when the row carries no DB expiry", async () => {
+    rpc.mockResolvedValue({ data: challengeRow({ expires_at: null }), error: null });
+    expect((await beginRecipientProof(TOKEN)).kind).toBe("unavailable");
   });
 });
 

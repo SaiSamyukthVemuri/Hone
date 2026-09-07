@@ -49,6 +49,7 @@ const scenario = {
   redeemResult: "redeemed" as string,
   bookingResult: "created" as string,
   bookingError: null as { message: string } | null,
+  suppressAppointmentId: false,
 };
 
 function makeChain(table: string) {
@@ -136,7 +137,10 @@ const admin = {
         data: [
           {
             result: scenario.bookingResult,
-            appointment_id: scenario.bookingResult === "created" ? APPT_ID : null,
+            appointment_id:
+              scenario.bookingResult === "created" && !scenario.suppressAppointmentId
+                ? APPT_ID
+                : null,
             created_at: new Date().toISOString(),
           },
         ],
@@ -237,6 +241,7 @@ beforeEach(() => {
     redeemResult: "redeemed",
     bookingResult: "created",
     bookingError: null,
+    suppressAppointmentId: false,
   });
 });
 
@@ -520,5 +525,69 @@ describe("P2-1 — the invitation is spent and the booking did not commit", () =
     if (out.ok) throw new Error("unreachable");
     expect(out.code).toBe("slot_taken");
     expect(out.error).toMatch(RETRYABLE);
+  });
+});
+
+// P3-A. `created` with no appointment_id must not slip past the consumed guard.
+describe("P3-A — an internally inconsistent booking command still fails closed", () => {
+  it("reports the consumed invitation when created carries no appointment id", async () => {
+    scenario.suppressAppointmentId = true;
+    const out = await publicBookAppointmentAction(
+      form({ invitation_token: TOKEN, invitation_capability: CAP }),
+    );
+    expect(out.ok).toBe(false);
+    if (out.ok) throw new Error("unreachable");
+    expect(redeemed()).toBe(true);
+    // Before the fix this fell through to the GENERIC error: spent invitation,
+    // no invitation_consumed code, and no consumed-without-booking event.
+    expect(out.code).toBe("invitation_consumed");
+    expect(out.error).not.toMatch(/choose another time|no longer available/i);
+  });
+
+  it("still records the consumed-without-booking event in that case", async () => {
+    const logged: string[] = [];
+    const spy = vi.spyOn(console, "error").mockImplementation((...a: unknown[]) => {
+      logged.push(String(a[0]));
+    });
+    scenario.suppressAppointmentId = true;
+    await publicBookAppointmentAction(
+      form({ invitation_token: TOKEN, invitation_capability: CAP }),
+    );
+    spy.mockRestore();
+    const line = logged.find((l) => l.includes("waitlist_invitation_consumed_without_booking"));
+    expect(line, "the event must fire for created-without-id too").toBeTruthy();
+    expect(JSON.parse(line as string).invitationId).toBe("inv-1");
+  });
+});
+
+// P2-A. The in-code recovery guidance must not claim a reissue that the accepted
+// contract cannot perform: release_new_client_waitlist_entry answers
+// `already_redeemed` once redeemed, so the only real recovery is direct operator
+// booking. This is a source guard because the defect WAS a false comment.
+describe("P2-A — the documented recovery path is the one that exists", () => {
+  const SOURCES = [
+    "app/book/[slug]/actions.ts",
+    "lib/booking/waitlist-invitation.ts",
+  ];
+
+  it("never claims a consumed invitation can be reissued", async () => {
+    const { readFileSync } = await import("node:fs");
+    for (const path of SOURCES) {
+      const src = readFileSync(path, "utf8");
+      // The false claims that were actually present, in both their phrasings.
+      expect(src, `${path} must not claim reissue`).not.toMatch(
+        /which an operator can reissue/i,
+      );
+      expect(src, `${path} must not claim reissue`).not.toMatch(
+        /find and reissue the offer/i,
+      );
+    }
+  });
+
+  it("names the real recovery path where the consumed case is documented", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync("app/book/[slug]/actions.ts", "utf8");
+    expect(src).toMatch(/already_redeemed/);
+    expect(src).toMatch(/operator surface/i);
   });
 });

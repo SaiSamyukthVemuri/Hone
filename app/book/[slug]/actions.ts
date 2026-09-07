@@ -915,7 +915,11 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // appointment commits -- not at the gate above.
   //
   // Redeem-before-book is deliberate. If the appointment then fails, the
-  // invitation is spent with no booking, which an operator can reissue. The other
+  // invitation is spent with no booking -- and it CANNOT be reissued:
+  // release_new_client_waitlist_entry answers `already_redeemed` once any
+  // invitation for the entry is redeemed, so release -> requeue -> reissue is
+  // closed. Recovery is the studio booking the client DIRECTLY through the
+  // operator surface, which this gate never intercepts. The other
   // order risks TWO appointments from one invitation, which would break the
   // admission guarantee the waitlist exists to provide. The residual window is
   // this single round trip and cannot be closed without moving the booking engine
@@ -975,10 +979,19 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // code -- from the redeem's point of view both mean "spent, no booking".
   //
   // Logged with this file's existing public-booking convention. The invitation
-  // ID is recorded so an operator can find and reissue the offer; the raw token
-  // and the capability are secrets and are never logged.
+  // ID is recorded so an operator can find the entry and BOOK THE CLIENT
+  // DIRECTLY through the operator surface -- the offer itself cannot be
+  // reissued, because release_new_client_waitlist_entry answers
+  // `already_redeemed` once redeemed. The raw token and the capability are
+  // secrets and are never logged.
   // -----------------------------------------------------------------------
-  if (consumedInvitationId && (rpcErr || commandResult !== "created")) {
+  // P3-A. Keyed on `!createdId`, NOT on `commandResult !== "created"`. If the
+  // command ever answered `created` without an appointment_id, the old guard
+  // let it through to the generic-error branch below: invitation spent, generic
+  // copy, no `invitation_consumed` code and no event. Reachable only if the
+  // accepted command is internally inconsistent -- exactly the case worth
+  // failing closed on.
+  if (consumedInvitationId && (rpcErr || !createdId)) {
     console.error(
       JSON.stringify({
         event: "waitlist_invitation_consumed_without_booking",
