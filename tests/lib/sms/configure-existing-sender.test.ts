@@ -62,6 +62,7 @@ function configure(
   return configureExistingStudioSmsSender({
     store,
     authority: store,
+    bindings: store,
     provider,
     studioId: STUDIO_A,
     actorUserId: OWNER_A,
@@ -890,4 +891,217 @@ describe("an unknown mode is refused, never configured", () => {
       expectNoForbiddenEffects();
     });
   }
+});
+
+// ---------------------------------------------------------------------------
+// CODEX P1 — one Twilio account serves every studio, so account ownership is
+// not tenancy. Reproduced before the fix: Studio A named Studio B's live number
+// and service, claimed under A, and rewrote B's webhooks -- `configured`, two
+// writes. The uniqueness indexes never fire, because this path records no
+// provider identifiers.
+// ---------------------------------------------------------------------------
+describe("provider resources bound to another studio are refused", () => {
+  const STUDIO_B = "studio-b";
+  const OWNER_B = "user-owner-b";
+  const B_PN = "PN" + "d".repeat(32);
+  const B_MG = "MG" + "d".repeat(32);
+  const B_NUMBER = "+14165550199";
+
+  const MEMBERS_AB: Membership[] = [
+    ...MEMBERS,
+    { userId: OWNER_B, studioId: STUDIO_B, role: "owner" },
+  ];
+
+  /** The account owns B's number and it sits in B's service -- both true. */
+  function bResources(): FakeProviderScript {
+    return {
+      preOwnedNumbers: { [B_NUMBER]: B_PN },
+      accountServices: [
+        { sid: B_MG, numbers: [B_NUMBER], inboundUrl: "https://b.example/in", statusUrl: "https://b.example/st" },
+      ],
+    };
+  }
+
+  function asStudioA(over: Record<string, unknown> = {}) {
+    return configure({
+      studioId: STUDIO_A,
+      actorUserId: OWNER_A,
+      phoneNumber: B_NUMBER,
+      messagingServiceSid: B_MG,
+      ...over,
+    });
+  }
+
+  beforeEach(() => {
+    store = new InMemoryProvisioningStore(MEMBERS_AB);
+    provider = new FakeSmsProvisioningProvider();
+  });
+
+  it("Studio A cannot CONFIGURE Studio B's bound resources", async () => {
+    provider.script = bResources();
+    store.bindResources(STUDIO_B, B_PN, B_MG);
+
+    const out = await asStudioA();
+
+    expect(out).toMatchObject({
+      ok: false,
+      result: "refused",
+      reason: "resource_bound_to_other_studio",
+      providerWrites: 0,
+    });
+    expect(writes(), "rewrote another studio's webhooks").toBe(0);
+    expect(store.finalizeCalls, "activated across a tenant boundary").toBe(0);
+    expectNoForbiddenEffects();
+  });
+
+  it("Studio A cannot INSPECT Studio B's bound resources", async () => {
+    provider.script = bResources();
+    store.bindResources(STUDIO_B, B_PN, B_MG);
+
+    const out = await asStudioA({ mode: "inspect" });
+
+    expect(out).toMatchObject({
+      ok: false,
+      result: "refused",
+      reason: "resource_bound_to_other_studio",
+      providerWrites: 0,
+      claimsTaken: 0,
+    });
+    expect(store.claimCalls).toBe(0);
+    expect(writes()).toBe(0);
+  });
+
+  it("a PHONE SID bound elsewhere refuses even when the service looks fine", async () => {
+    provider.script = bResources();
+    store.resourceBindings.set(B_PN, STUDIO_B); // service left unbound
+
+    const out = await asStudioA();
+
+    expect(out).toMatchObject({ ok: false, reason: "resource_bound_to_other_studio", providerWrites: 0 });
+    expect(writes()).toBe(0);
+  });
+
+  it("a SERVICE SID bound elsewhere refuses even when the number looks fine", async () => {
+    provider.script = bResources();
+    store.resourceBindings.set(B_MG, STUDIO_B); // phone left unbound
+
+    const out = await asStudioA();
+
+    expect(out).toMatchObject({ ok: false, reason: "resource_bound_to_other_studio", providerWrites: 0 });
+    expect(writes()).toBe(0);
+  });
+
+  it("an UNREADABLE binding authority fails closed — never treated as unbound", async () => {
+    provider.script = bResources();
+    store.bindingUnavailable = "phone";
+
+    const out = await asStudioA();
+
+    expect(out).toMatchObject({
+      ok: false,
+      reason: "binding_unavailable",
+      retryable: true,
+      providerWrites: 0,
+    });
+    expect(writes(), "wrote without knowing the tenant").toBe(0);
+  });
+
+  it("resources bound to THIS studio proceed normally", async () => {
+    provider.script = bResources();
+    store.bindResources(STUDIO_A, B_PN, B_MG);
+
+    const out = await asStudioA();
+
+    expect(out).toMatchObject({ ok: true, result: "configured", providerWrites: 2 });
+  });
+
+  it("genuinely UNBOUND resources continue through the explicit path", async () => {
+    provider.script = bResources();
+    // Nothing bound anywhere: the ordinary adoption case.
+    const out = await asStudioA();
+
+    expect(out).toMatchObject({ ok: true, result: "configured", providerWrites: 2 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CODEX P2 — the lease fence proves we hold the CLAIM, never anything about
+// Twilio. The configuration read sits between the proof and the write, and a
+// number moved during that await would leave this rewiring a service that no
+// longer carries the studio's number.
+// ---------------------------------------------------------------------------
+describe("association is re-proved immediately before the first write", () => {
+  it("a number MOVED between the proof and the write refuses, with zero writes", async () => {
+    provider.script = owned(STALE_INBOUND, STALE_STATUS);
+
+    // The configuration read is the await during which the world may change.
+    const realRead = provider.readMessagingServiceConfig.bind(provider);
+    let moved = false;
+    provider.readMessagingServiceConfig = async (input) => {
+      const out = await realRead(input);
+      if (!moved) {
+        moved = true;
+        provider.script = {
+          preOwnedNumbers: { [WILLOW_NUMBER]: WILLOW_PN_SID },
+          accountServices: [
+            { sid: WILLOW_MG_SID, numbers: [], inboundUrl: STALE_INBOUND, statusUrl: STALE_STATUS },
+            { sid: OTHER_MG_SID, numbers: [WILLOW_NUMBER], inboundUrl: null, statusUrl: null },
+          ],
+        };
+      }
+      return out;
+    };
+
+    const out = await configure();
+
+    expect(out).toMatchObject({
+      ok: false,
+      result: "refused",
+      reason: "number_in_other_service",
+      providerWrites: 0,
+    });
+    expect(writes(), "wrote to a service the number had left").toBe(0);
+    expectNoForbiddenEffects();
+  });
+
+  it("a CHANGED phone-number SID refuses — same E.164, different resource", async () => {
+    provider.script = owned(STALE_INBOUND, STALE_STATUS);
+
+    const realRead = provider.readMessagingServiceConfig.bind(provider);
+    let swapped = false;
+    provider.readMessagingServiceConfig = async (input) => {
+      const out = await realRead(input);
+      if (!swapped) {
+        swapped = true;
+        provider.script = {
+          ...owned(STALE_INBOUND, STALE_STATUS),
+          preOwnedNumbers: { [WILLOW_NUMBER]: "PN" + "e".repeat(32) },
+        };
+      }
+      return out;
+    };
+
+    const out = await configure();
+
+    expect(out).toMatchObject({
+      ok: false,
+      result: "refused",
+      reason: "resource_changed_before_write",
+      providerWrites: 0,
+    });
+    expect(writes()).toBe(0);
+  });
+
+  it("a stable association still performs the minimal intended write", async () => {
+    provider.script = owned(INBOUND, STALE_STATUS);
+
+    const out = await configure();
+
+    expect(out).toMatchObject({
+      ok: true,
+      result: "configured",
+      changed: ["status_callback"],
+      providerWrites: 1,
+    });
+  });
 });

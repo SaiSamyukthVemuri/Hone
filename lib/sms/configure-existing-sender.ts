@@ -15,6 +15,7 @@ import type {
   OwnerAuthority,
   OwnerAuthorityReader,
   ProvisioningStore,
+  SenderBindingReader,
 } from "./provisioning";
 
 // COMMS — CONFIGURE AN EXISTING STUDIO-OWNED SENDER.
@@ -94,6 +95,9 @@ export type ConfigureRefusal =
   | "number_association_unavailable"
   | "provider_number_mismatch"
   | "sender_already_active"
+  | "resource_bound_to_other_studio"
+  | "binding_unavailable"
+  | "resource_changed_before_write"
   | "post_write_verification_failed";
 
 type Discovered = {
@@ -193,6 +197,11 @@ export type ConfigureInput = {
    * only this handle is what makes that structural rather than disciplined.
    */
   authority: OwnerAuthorityReader;
+  /**
+   * Read-only tenancy authority for the provider resources. Separate from the
+   * store so the inspect path cannot claim, finalize or fail.
+   */
+  bindings: SenderBindingReader;
   /** UNFENCED. The configure path fences it; inspect has no lease to fence to. */
   provider: SmsProvisioningProvider;
   studioId: string;
@@ -222,6 +231,9 @@ const CONFIGURE_REFUSALS: ReadonlySet<string> = new Set<ConfigureRefusal>([
   "number_association_unavailable",
   "provider_number_mismatch",
   "sender_already_active",
+  "resource_bound_to_other_studio",
+  "binding_unavailable",
+  "resource_changed_before_write",
   "post_write_verification_failed",
 ]);
 
@@ -250,6 +262,63 @@ function diffConfiguration(
 type Proof =
   | { ok: true; phoneNumberSid: string }
   | { ok: false; reason: ConfigureRefusal | AttemptErrorCode; retryable: boolean; discovered?: Discovered };
+
+/**
+ * Prove the provider resources are not already another studio's.
+ *
+ * ONE TWILIO ACCOUNT SERVES EVERY STUDIO, so "the account owns this number and
+ * it is in this service" is a statement about the ACCOUNT, not about the
+ * tenant. Without this, an owner of a studio with no sender could name another
+ * studio's live number and service, claim under their own studio, and rewrite
+ * someone else's webhooks. The uniqueness indexes never fire, because this path
+ * records no provider identifiers.
+ *
+ * FAILS CLOSED ON `unavailable`. Not knowing whether a resource belongs to
+ * another tenant is precisely the case where proceeding is the cross-tenant
+ * write.
+ */
+async function proveResourceTenancy(
+  bindings: SenderBindingReader,
+  studioId: string,
+  phoneNumberSid: string,
+  messagingServiceSid: string,
+): Promise<
+  | { ok: true }
+  | { ok: false; reason: ConfigureRefusal; retryable: boolean; discovered?: Discovered }
+> {
+  const seen = await bindings.readProviderResourceBindings({
+    phoneNumberSid,
+    messagingServiceSid,
+  });
+
+  for (const [label, binding] of [
+    ["phone_number", seen.phoneNumberSid],
+    ["messaging_service", seen.messagingServiceSid],
+  ] as const) {
+    if (binding.kind === "unavailable") {
+      return {
+        ok: false,
+        reason: "binding_unavailable",
+        // Retryable: the authority may answer later. Never a write meanwhile.
+        retryable: true,
+        discovered: { association: "unavailable", safeServiceIds: [label] },
+      };
+    }
+    // EITHER resource being someone else's is disqualifying on its own. A valid
+    // -looking service does not license writing to another studio's number, and
+    // a valid-looking number does not license writing to another studio's
+    // service.
+    if (binding.kind === "bound" && binding.studioId !== studioId) {
+      return {
+        ok: false,
+        reason: "resource_bound_to_other_studio",
+        retryable: false,
+        discovered: { association: "in_other_service", safeServiceIds: [label] },
+      };
+    }
+  }
+  return { ok: true };
+}
 
 async function proveOwnershipAndAssociation(
   provider: InspectionReads,
@@ -469,6 +538,18 @@ async function inspectOnly(
   const proof = await proveOwnershipAndAssociation(reads, phoneNumber, targetService);
   if (!proof.ok) return refuse(proof.reason, proof.retryable, proof.discovered);
 
+  // TENANCY BEFORE DISCLOSURE. Inspection returns which limbs of a service are
+  // misconfigured; for a service belonging to another studio that is a readout
+  // of someone else's provider state, so the same refusal applies to looking as
+  // to writing.
+  const tenancy = await proveResourceTenancy(
+    input.bindings,
+    input.studioId,
+    proof.phoneNumberSid,
+    targetService,
+  );
+  if (!tenancy.ok) return refuse(tenancy.reason, tenancy.retryable, tenancy.discovered);
+
   const current = await reads.readMessagingServiceConfig({
     messagingServiceSid: targetService,
   });
@@ -631,6 +712,16 @@ async function configureUnderClaim(
     return failWith(proof.reason, proof.retryable, { discovered: proof.discovered });
   }
 
+  const tenancy = await proveResourceTenancy(
+    input.bindings,
+    input.studioId,
+    proof.phoneNumberSid,
+    targetService,
+  );
+  if (!tenancy.ok) {
+    return failWith(tenancy.reason, tenancy.retryable, { discovered: tenancy.discovered });
+  }
+
   // --- 3. RE-READ THE CONFIGURATION, and diff from THAT --------------------
   // The minimal mutation is computed here and only here. A limb an inspection
   // reported as wrong may already be correct by now, in which case it is not
@@ -654,7 +745,37 @@ async function configureUnderClaim(
     return { ok: true, result: "already_configured", senderId, providerWrites: 0 };
   }
 
-  // --- 5. Write ONLY the limbs that differ ---------------------------------
+  // --- 5. FINAL REVALIDATION, and nothing between it and the write ---------
+  //
+  // The lease fence proves we still hold the CLAIM. It cannot prove anything
+  // about Twilio. Between the proof above and here sits the configuration read,
+  // and a number moved out of the named service during that await would leave
+  // this rewiring a service that no longer carries the studio's number. So
+  // ownership, association and tenancy are all re-established immediately
+  // before the first mutation, and the identifiers must be the SAME ones.
+  //
+  // Nothing unrelated may be awaited after this point.
+  const reproof = await proveOwnershipAndAssociation(provider, phoneNumber, targetService);
+  if (!reproof.ok) {
+    if (reproof.reason === "lease_lost") return { ok: false, result: "lease_lost", senderId };
+    return failWith(reproof.reason, reproof.retryable, { discovered: reproof.discovered });
+  }
+  if (reproof.phoneNumberSid !== proof.phoneNumberSid) {
+    // Same E.164, different provider resource. That is not the number we proved.
+    return failWith("resource_changed_before_write", false);
+  }
+
+  const retenancy = await proveResourceTenancy(
+    input.bindings,
+    input.studioId,
+    reproof.phoneNumberSid,
+    targetService,
+  );
+  if (!retenancy.ok) {
+    return failWith(retenancy.reason, retenancy.retryable, { discovered: retenancy.discovered });
+  }
+
+  // --- 6. Write ONLY the limbs that differ ---------------------------------
   if (mismatched.includes("inbound_webhook")) {
     const ack = await provider.configureInboundWebhook({
       messagingServiceSid: targetService,
@@ -682,7 +803,7 @@ async function configureUnderClaim(
     }
   }
 
-  // --- 6. VERIFY BY RE-READING, never by trusting the acknowledgement ------
+  // --- 7. VERIFY BY RE-READING, never by trusting the acknowledgement ------
   // A 2xx says the request was accepted, not that the resource now holds the
   // value. The authority on provider state is the provider, read back.
   const after = await provider.readMessagingServiceConfig({
@@ -704,6 +825,6 @@ async function configureUnderClaim(
     return failWith("post_write_verification_failed", false, { mismatched: stillWrong });
   }
 
-  // --- 7. Stop here. Configuration is not activation. ----------------------
+  // --- 8. Stop here. Configuration is not activation. ----------------------
   return { ok: true, result: "configured", senderId, changed: mismatched, providerWrites };
 }

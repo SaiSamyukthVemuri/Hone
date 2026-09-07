@@ -7,6 +7,8 @@ import type {
   FinalizeResult,
   OwnerAuthority,
   OwnerAuthorityReader,
+  ProviderResourceBinding,
+  SenderBindingReader,
   ProvisioningStore,
 } from "./provisioning";
 
@@ -80,7 +82,7 @@ function firstRow(data: unknown): Record<string, unknown> | null {
  */
 export function createProvisioningStore(
   admin: SupabaseClient,
-): ProvisioningStore & OwnerAuthorityReader {
+): ProvisioningStore & OwnerAuthorityReader & SenderBindingReader {
   return {
     /**
      * READ-ONLY, and deliberately a direct table read rather than an RPC:
@@ -112,6 +114,49 @@ export function createProvisioningStore(
       if (error) return "unavailable";
       if (!data) return "not_a_member";
       return data.role === "owner" ? "owner" : "not_owner";
+    },
+
+    /**
+     * READ-ONLY tenancy authority for provider resources.
+     *
+     * The Messaging Service half uses 0191's own resolver, which is the
+     * attribution key that migration already established -- the same function
+     * that turns an inbound callback into exactly one studio.
+     *
+     * THE PHONE-NUMBER HALF HAS NO AUTHORITY YET, and it FAILS CLOSED rather
+     * than being reported as unbound. 0191 revokes every table privilege on
+     * `studio_sms_senders` from `service_role` by name, so there is no direct
+     * read, and it exposes no resolver keyed by `phone_number_sid` -- only a
+     * unique index. Answering `unbound` here would be a guess, and the guess
+     * that is wrong is a cross-tenant write.
+     *
+     * The smallest thing that closes it is a numbered migration adding
+     * `resolve_studio_by_sms_phone_number(text)` alongside the existing
+     * resolver. That is deliberately NOT done here: this pass assigns no
+     * migration number, and nothing is blocked today because this capability
+     * has no product callers.
+     */
+    async readProviderResourceBindings(input): Promise<{
+      phoneNumberSid: ProviderResourceBinding;
+      messagingServiceSid: ProviderResourceBinding;
+    }> {
+      const service = await admin.rpc("resolve_studio_by_sms_messaging_service", {
+        p_messaging_service_sid: input.messagingServiceSid,
+      });
+
+      const messagingServiceSid: ProviderResourceBinding = service.error
+        ? { kind: "unavailable", reason: "resolver_failed" }
+        : typeof service.data === "string" && service.data.length > 0
+          ? { kind: "bound", studioId: service.data }
+          : { kind: "unbound" };
+
+      return {
+        phoneNumberSid: {
+          kind: "unavailable",
+          reason: "no_phone_number_sid_resolver",
+        },
+        messagingServiceSid,
+      };
     },
 
     async claim(input): Promise<ClaimRow> {

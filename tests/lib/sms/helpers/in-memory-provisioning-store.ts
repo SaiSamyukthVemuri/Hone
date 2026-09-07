@@ -3,6 +3,7 @@ import type {
   FailResult,
   FinalizeResult,
   OwnerAuthority,
+  ProviderResourceBinding,
   ProvisioningStore,
 } from "@/lib/sms/provisioning";
 
@@ -153,6 +154,42 @@ export class InMemoryProvisioningStore implements ProvisioningStore {
       return studioExists ? "not_a_member" : "studio_not_found";
     }
     return member.role === "owner" ? "owner" : "not_owner";
+  }
+
+  /**
+   * Which studio each provider resource is bound to, keyed by SID. Empty means
+   * genuinely unbound, which is the ordinary case for a studio adopting a
+   * number Hone has never recorded.
+   */
+  readonly resourceBindings = new Map<string, string>();
+
+  /** Model an authority that cannot answer, so the fail-closed path is testable. */
+  bindingUnavailable: "phone" | "service" | "both" | null = null;
+
+  /** Bind both provider identifiers of a sender to a studio, as finalize would. */
+  bindResources(studioId: string, phoneNumberSid: string, messagingServiceSid: string): void {
+    this.resourceBindings.set(phoneNumberSid, studioId);
+    this.resourceBindings.set(messagingServiceSid, studioId);
+  }
+
+  async readProviderResourceBindings(input: {
+    phoneNumberSid: string;
+    messagingServiceSid: string;
+  }): Promise<{
+    phoneNumberSid: ProviderResourceBinding;
+    messagingServiceSid: ProviderResourceBinding;
+  }> {
+    const look = (sid: string, which: "phone" | "service"): ProviderResourceBinding => {
+      if (this.bindingUnavailable === which || this.bindingUnavailable === "both") {
+        return { kind: "unavailable", reason: "forced" };
+      }
+      const owner = this.resourceBindings.get(sid);
+      return owner ? { kind: "bound", studioId: owner } : { kind: "unbound" };
+    };
+    return {
+      phoneNumberSid: look(input.phoneNumberSid, "phone"),
+      messagingServiceSid: look(input.messagingServiceSid, "service"),
+    };
   }
 
   async claim(input: {

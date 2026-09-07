@@ -158,6 +158,43 @@ export interface OwnerAuthorityReader {
   }): Promise<OwnerAuthority>;
 }
 
+/**
+ * Which Hone studio, if any, a PROVIDER resource is already bound to.
+ *
+ * `unavailable` is its own answer and never collapses into `unbound`: not
+ * knowing whether a number belongs to another tenant is the one case where
+ * guessing is a cross-tenant write.
+ */
+export type ProviderResourceBinding =
+  | { kind: "unbound" }
+  | { kind: "bound"; studioId: string }
+  | { kind: "unavailable"; reason: string };
+
+/**
+ * READ-ONLY tenancy authority for provider resources.
+ *
+ * WHY IT EXISTS. Proving that the Twilio ACCOUNT owns a number, and that the
+ * number sits in the named Messaging Service, says nothing about WHICH HONE
+ * STUDIO those resources belong to. One account serves every studio, so an
+ * owner of a studio with no sender could name another studio's live resources,
+ * claim under their own, and rewrite someone else's webhooks. The uniqueness
+ * indexes do not help, because a configuration pass never finalizes provider
+ * identifiers and so never trips them.
+ *
+ * Separate from ProvisioningStore for the same reason OwnerAuthorityReader is:
+ * the read-only inspect path needs this answer and must not be handed a handle
+ * that can claim, finalize or fail.
+ */
+export interface SenderBindingReader {
+  readProviderResourceBindings(input: {
+    phoneNumberSid: string;
+    messagingServiceSid: string;
+  }): Promise<{
+    phoneNumberSid: ProviderResourceBinding;
+    messagingServiceSid: ProviderResourceBinding;
+  }>;
+}
+
 export interface ProvisioningStore {
   claim(input: {
     studioId: string;
