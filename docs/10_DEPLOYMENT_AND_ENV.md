@@ -79,7 +79,7 @@
 ## Twilio
 
 - Off by default per `studios.send_*_sms`. Per-client gated by `sms_consent_at` / `sms_opted_out_at`. STOP webhook at `/api/twilio/inbound-sms` signature-verifies via Twilio's standard validator.
-- **The outbound sender is resolved from the DATABASE, not from the environment.** A studio's messages leave from that studio's own number: `studio_id` → its **ACTIVE** `studio_sms_senders` row → `messaging_service_sid` → Twilio. A studio with no ACTIVE sender **fails closed** — it does not fall back to a deployment-global number, because that would put one studio's client message on a number belonging to another. Provisioning that row is COMMS-01C; migration `0192` supplies the server-side lookup.
+- **The outbound sender is resolved from the DATABASE, not from the environment.** A studio's messages leave from that studio's own number: `studio_id` → its **ACTIVE** `studio_sms_senders` row → `messaging_service_sid` → Twilio. A studio with no ACTIVE sender **fails closed** — it does not fall back to a deployment-global number, because that would put one studio's client message on a number belonging to another. Provisioning that row is COMMS-01C; migration `0194` supplies the server-side lookup.
 - `TWILIO_ACCOUNT_SID` and `TWILIO_AUTH_TOKEN` are still required: they are the **deployment-global credentials** every per-studio provider resource is inert without. Per-studio senders hold identifiers, never credentials.
 - `TWILIO_WEBHOOK_BASE_URL` should be the public origin Twilio POSTs to (`https://hone.care` in production).
 

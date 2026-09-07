@@ -25,7 +25,7 @@ import { sendSmsSafely } from "@/lib/sms/twilio";
 const A_SID = "MG00000000000000000000000000000a";
 const B_SID = "MG00000000000000000000000000000b";
 
-/** Minimal admin double over the 0192 RPC. Records what it was asked. */
+/** Minimal admin double over the 0194 RPC. Records what it was asked. */
 function adminRpc(
   rows: Array<{ messaging_service_sid: string | null }> | null,
   error: { message: string } | null = null,
@@ -58,7 +58,7 @@ afterEach(() => {
   delete process.env.TWILIO_FROM_NUMBER;
 });
 
-describe("resolution goes through the 0192 definer lookup, not the table", () => {
+describe("resolution goes through the 0194 definer lookup, not the table", () => {
   it("calls resolve_active_studio_sms_sender with the studio id", async () => {
     const { client, calls } = adminRpc([{ messaging_service_sid: A_SID }]);
     const r = await resolveActiveStudioSender(client, "studio-a");

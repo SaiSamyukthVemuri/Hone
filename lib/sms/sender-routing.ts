@@ -39,7 +39,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 // layer -- and, worse, failed in a way this module would have reported as
 // `read_failed`, i.e. as a transient fault to retry forever.
 //
-// 0192 adds the one capability that was missing rather than the grant that
+// 0194 adds the one capability that was missing rather than the grant that
 // would have dissolved the boundary: a SECURITY DEFINER lookup that answers
 // which messaging service this studio sends from, and returns nothing else.
 // service_role still cannot read the table.
@@ -175,7 +175,7 @@ export const SENDER_AMBIGUOUS_ERROR = "sms_sender_ambiguous";
 // unresolved alert, not ~96 a day. The mitigation had outlived its own
 // justification.
 //
-// And the gap it left was the worst-shaped one available. A missing 0192 RPC or
+// And the gap it left was the worst-shaped one available. A missing 0194 RPC or
 // a privilege regression makes EVERY lookup fail, so every send returns
 // read_failed — no claim, no Twilio call, no attempted/failed movement, and
 // under the old rule no durable row either. SMS would stop completely for every
@@ -234,7 +234,7 @@ export async function recordRoutingFailureAlert(
     // an operator relies on ("tell me once") did not hold under exactly the
     // conditions that produce repeats.
     //
-    // 0192 adds a partial unique index over UNRESOLVED rows for these three
+    // 0194 adds a partial unique index over UNRESOLVED rows for these three
     // events only. The insert is now simply attempted, and a 23505 means the
     // condition is ALREADY REPORTED -- a dedupe, decided atomically by
     // PostgreSQL rather than guessed by a prior SELECT. No second in-process

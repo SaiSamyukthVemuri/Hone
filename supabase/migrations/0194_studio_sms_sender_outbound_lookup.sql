@@ -1,5 +1,5 @@
 -- ---------------------------------------------------------------------------
--- 0192 — OUTBOUND SENDER LOOKUP (COMMS-01B2)
+-- 0194 — OUTBOUND SENDER LOOKUP (COMMS-01B2)
 -- ---------------------------------------------------------------------------
 --
 -- 0191 gave every studio a sender row and then deliberately made its provider

@@ -144,7 +144,7 @@ describe("the terminal alert is DURABLE — awaited, not fire-and-forget", () =>
 
 describe("dedupe is decided atomically by the database, not by this process", () => {
   it("a UNIQUE conflict is reported as DEDUPED, never as an alert failure", async () => {
-    // 0192's partial unique index over unresolved rows makes the loser of a
+    // 0194's partial unique index over unresolved rows makes the loser of a
     // concurrent insert get 23505. That is "already reported", not a fault.
     resolveMock.mockResolvedValue({ ok: false, reason: "none_active" });
     nextOutcome = { recorded: false, reason: "deduped" };
@@ -194,7 +194,7 @@ describe("dedupe is decided atomically by the database, not by this process", ()
 
 describe("the retryable path is VISIBLE, and still costs nothing", () => {
   it("read_failed raises a durable alert — a broken lookup is not silent", async () => {
-    // THE REGRESSION THIS EXISTS TO CATCH. A missing 0192 RPC or a privilege
+    // THE REGRESSION THIS EXISTS TO CATCH. A missing 0194 RPC or a privilege
     // regression makes every lookup fail, so every send returns read_failed.
     // With no durable row, SMS stops completely for every studio and the only
     // trace is stderr. Silent and total is the worst possible shape.

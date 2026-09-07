@@ -85,9 +85,9 @@ describe("0191 — identity and position", () => {
   });
 
   it("is no longer the repository maximum, and does not claim to be", () => {
-    // MOVED BY 0192, exactly as the instruction in this block used to say.
+    // MOVED BY 0194, exactly as the instruction in this block used to say.
     // Per CLAUDE.md only the CURRENT max asserts isRepoMax; an older migration
-    // keeping that claim is what turned this file red the moment 0192 landed.
+    // keeping that claim is what turned this file red the moment 0194 landed.
     // The "nothing above me" tripwire is served centrally, not restated here.
     expect(isRepoMax(VERSION)).toBe(false);
     expect(versionsAbove(VERSION).length).toBeGreaterThan(0);
@@ -102,7 +102,7 @@ describe("0191 — identity and position", () => {
     // This block asserted the PRE-apply position (`hosted < 191`, and 0191
     // present in `pending_migrations`). Both were true only until the apply and
     // both are false now. 0191 takes over the CURRENT-head claim 0190's file
-    // used to hold; whoever APPLIES 0192 moves this block again and narrows it
+    // used to hold; whoever APPLIES 0194 moves this block again and narrows it
     // to a floor, the way 0190's just was.
     const state = migrationState();
     expect(state.hosted_migration_max).toBe(VERSION);

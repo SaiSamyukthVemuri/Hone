@@ -7,7 +7,7 @@ import {
   versionsAbove,
 } from "./helpers/migration-state";
 
-// 0192 — COMMS-01B2: the outbound sender lookup.
+// 0194 — COMMS-01B2: the outbound sender lookup.
 //
 // SOURCE CONTRACT. This file proves what the migration SAYS. The behavioural
 // half — that anon and authenticated are actually refused EXECUTE, that
@@ -28,7 +28,7 @@ import {
 //     phone_number_sid;
 //   * forgetting to revoke from any one role by name.
 
-const VERSION = "0192";
+const VERSION = "0194";
 const FILE = fileForVersion(VERSION);
 const SQL = readFileSync(
   path.resolve(__dirname, "../../supabase/migrations", FILE),
@@ -36,14 +36,14 @@ const SQL = readFileSync(
 );
 const FN = "resolve_active_studio_sms_sender";
 
-describe("0192 — identity and position", () => {
+describe("0194 — identity and position", () => {
   it("is named for what it adds", () => {
-    expect(FILE).toBe("0192_studio_sms_sender_outbound_lookup.sql");
+    expect(FILE).toBe("0194_studio_sms_sender_outbound_lookup.sql");
   });
 
   it("is the current repository maximum", () => {
     // Per CLAUDE.md only the CURRENT max asserts this, so a future migration
-    // does not turn this file red. Whoever adds 0193 moves it.
+    // does not turn this file red. Whoever adds 0195 moves it.
     expect(isRepoMax(VERSION)).toBe(true);
     expect(versionsAbove(VERSION)).toEqual([]);
   });
@@ -57,7 +57,7 @@ describe("0192 — identity and position", () => {
   });
 });
 
-describe("0192 — the lookup returns the minimum authority, and no more", () => {
+describe("0194 — the lookup returns the minimum authority, and no more", () => {
   it("returns a SET, not a scalar — no pick-first by row order", () => {
     // A scalar return would answer with whichever row PostgreSQL reached
     // first if one-live-per-studio were ever violated.
@@ -98,7 +98,7 @@ describe("0192 — the lookup returns the minimum authority, and no more", () =>
   });
 });
 
-describe("0192 — the routing-alert dedupe index is NARROW", () => {
+describe("0194 — the routing-alert dedupe index is NARROW", () => {
   it("is a partial unique index over UNRESOLVED rows only", () => {
     // Partial on resolved_at is null is what makes resolution RE-ARM the alert:
     // a resolved row no longer collides, so a recurrence is reported again.
@@ -135,7 +135,7 @@ describe("0192 — the routing-alert dedupe index is NARROW", () => {
   });
 });
 
-describe("0192 — hardening follows the repository idiom", () => {
+describe("0194 — hardening follows the repository idiom", () => {
   it("is SECURITY DEFINER with a fixed search_path", () => {
     expect(SQL).toMatch(/security definer/);
     expect(SQL).toMatch(/set search_path = pg_catalog, pg_temp/);
@@ -150,7 +150,7 @@ describe("0192 — hardening follows the repository idiom", () => {
   });
 });
 
-describe("0192 — privileges are enumerated by name", () => {
+describe("0194 — privileges are enumerated by name", () => {
   // Supabase's ALTER DEFAULT PRIVILEGES grants EXECUTE to anon, authenticated
   // AND service_role at create time. A denylist that forgets one leaves it
   // granted — missed for `anon` in 0129 and for `service_role` in 0164.

@@ -7,9 +7,9 @@ import {
   type SeededStudio,
 } from "./helpers/harness";
 
-// COMMS-01B2 — the BEHAVIOURAL half of migration 0192.
+// COMMS-01B2 — the BEHAVIOURAL half of migration 0194.
 //
-// tests/migrations/0192-*.test.ts proves what the migration SAYS. This file
+// tests/migrations/0194-*.test.ts proves what the migration SAYS. This file
 // proves what PostgreSQL DOES, and only the database can show the difference:
 // that a revoke line actually denies EXECUTE, that service_role still cannot
 // read the table it is resolving through, and that a non-active row genuinely
@@ -17,7 +17,7 @@ import {
 //
 // THE BOUNDARY UNDER TEST. 0191 revokes ALL on studio_sms_senders from every
 // application role and re-grants a column-level select to `authenticated` that
-// omits the provider identifiers. 0192 must add exactly one capability across
+// omits the provider identifiers. 0194 must add exactly one capability across
 // that boundary and no more: a definer lookup returning one studio's messaging
 // service. If it ever became possible to read the table directly, or to call
 // the lookup as anon or authenticated, the boundary would be gone and these
@@ -258,7 +258,7 @@ describe("the routing-alert dedupe is enforced by PostgreSQL, under concurrency"
 
 describe("ambiguity is unrepresentable, so the lookup can never pick a winner", () => {
   it("a SECOND live sender for one studio is refused by the database", async () => {
-    // 0192's resolver returns a SET rather than a scalar precisely so a violated
+    // 0194's resolver returns a SET rather than a scalar precisely so a violated
     // invariant surfaces as ambiguity instead of a silently chosen first row.
     // This proves the invariant it leans on is real: one_live_per_studio is
     // UNIQUE (studio_id) WHERE status <> 'released', so the second row cannot
@@ -303,7 +303,7 @@ describe("only the narrow function crosses 0191's boundary", () => {
   });
 
   it("service_role STILL cannot read studio_sms_senders directly", async () => {
-    // This is the assertion that proves 0192 did not widen 0191. If someone
+    // This is the assertion that proves 0194 did not widen 0191. If someone
     // "fixes" the dispatcher by granting SELECT instead, this turns red.
     await expect(
       asRole("service_role", (q) =>
