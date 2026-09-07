@@ -79,7 +79,23 @@ export function statedAvailability(
 /** The one way to represent "we never asked, and we will not guess". */
 export const UNSTATED_AVAILABILITY: CandidateAvailability = { stated: false };
 
-/** JS `Date#getDay()` semantics: 0 = Sunday, 6 = Saturday. */
+/**
+ * Classify a weekday number.
+ *
+ * NUMBERING IS 0 = SUNDAY .. 6 = SATURDAY, which is both JS `Date#getDay()` and
+ * PostgreSQL `extract(dow)`. That is not a coincidence to be re-derived here:
+ * WAIT-03B's scoped-invitation work pins the same convention in its
+ * `scope_allowed_weekdays` CHECK (`<@ array[0..6]`, 0 = Sunday) and in its
+ * `Weekday` type. Two waitlist features disagreeing about which integer means
+ * Sunday would produce a mismatch no test in either lane would catch, because
+ * each would be self-consistent.
+ *
+ * IT TAKES A NUMBER, NOT A DATE, ON PURPOSE. Which weekday an instant falls on
+ * depends on the STUDIO'S timezone — an instant late on a Sunday evening UTC is
+ * still Sunday in Toronto and already Monday in Berlin. Projecting an instant
+ * into studio-local time is the caller's job, and accepting a `Date` here would
+ * quietly answer that question in UTC.
+ */
 export function dayClassOfWeekday(dayOfWeek: number): DayClass | null {
   if (!Number.isInteger(dayOfWeek) || dayOfWeek < 0 || dayOfWeek > 6) return null;
   return dayOfWeek === 0 || dayOfWeek === 6 ? "weekend" : "weekday";
