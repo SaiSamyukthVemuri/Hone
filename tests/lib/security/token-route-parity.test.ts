@@ -48,13 +48,20 @@ describe("the registry is the single source for both consumers", () => {
     }
   });
 
-  it("the six expected families are present — a removal must be deliberate", () => {
+  it("the seven expected families are present — a removal must be deliberate", () => {
     // Pinned explicitly so silently DELETING a family from the registry (which
     // would drop both protections at once) fails loudly.
+    //
+    // `/invitation` joined in WAIT-03 B3: the recipient's link carries a
+    // replayable bearer token as a path segment. Possession reaches the offer
+    // and can request a proof code; it cannot book or decline, which need the
+    // second secret. The URL is credential material either way, so it takes the
+    // same no-referrer / no-index headers and the same telemetry scrubbing.
     expect([...TOKEN_ROUTE_PREFIXES].sort()).toEqual([
       "/calendar-feed",
       "/cancel",
       "/intake",
+      "/invitation",
       "/manage",
       "/portal/verify",
       "/reschedule",

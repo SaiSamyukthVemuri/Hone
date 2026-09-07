@@ -403,6 +403,25 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "verifyCancellationToken",
   },
   {
+    path: "app/invitation/[token]/actions.ts",
+    purpose:
+      "WAIT-03 B3 recipient invitation experience: server actions behind the public invitation link.",
+    why:
+      "PUBLIC and unauthenticated by design -- the caller is a prospective client " +
+      "holding an emailed link, so there is no session to scope by and RLS has no " +
+      "identity to work with. Every service-role read here happens only AFTER " +
+      "resolveInvitation() has returned a LIVE invitation, and each one is keyed by " +
+      "ids taken from THAT row (studio_id, scope_service_id, entry_id) rather than " +
+      "from anything the caller supplied, so the blast radius is the single " +
+      "invitation the token already proves possession of. The reads are three " +
+      "presentation lookups: the studio's slug/name/timezone, the offered " +
+      "service's name/duration, and the invited person's stored name/email. " +
+      "Nothing here mutates: booking and declining are delegated to the B2 " +
+      "authority and the shared public booking action, both of which re-validate " +
+      "recipient proof inside their own locked transactions.",
+    scopeGuard: "resolveInvitation",
+  },
+  {
     path: "lib/booking/waitlist-invitation.ts",
     purpose:
       "WAIT-03B B2 server authority for scoped new-client waitlist invitations.",
