@@ -1,0 +1,528 @@
+import { afterAll, describe, expect, it } from "vitest";
+import { adminQuery, closePool, seedMember, seedStudio } from "./helpers/harness";
+
+// 0193 — WAIT-ADMIT-01, proved against a real local PostgreSQL.
+//
+// The static contract (what the migration SAYS) is pinned in
+// tests/migrations/0193-waitlist-admission-authority.test.ts. This file proves
+// the BEHAVIOUR that file cannot see: that a member is genuinely refused, that
+// an imported join date genuinely survives the trigger, and that a prospect
+// holding a valid token genuinely cannot move their own position in the queue.
+//
+// Fixtures are isolated by run-unique identity (seedStudio mints random UUIDs),
+// never by cleanup, so this suite is safe to re-run against the same database.
+
+afterAll(async () => {
+  await closePool();
+});
+
+const TABLES = [
+  "public.new_client_waitlist_entry_preferences",
+  "public.new_client_waitlist_preference_grants",
+  "public.studio_waitlist_admission_policy",
+] as const;
+
+const COMMANDS = [
+  "public.create_practitioner_waitlist_entry(uuid,uuid,text,text,text,text)",
+  "public.import_legacy_waitlist_entry(uuid,uuid,text,text,timestamptz,text,text)",
+  "public.set_waitlist_entry_availability(uuid,uuid,uuid,text)",
+  "public.issue_waitlist_preference_grant(uuid,uuid,uuid,integer)",
+  "public.revoke_waitlist_preference_grant(uuid,uuid,uuid)",
+  "public.redeem_waitlist_preference_grant(text,text)",
+  "public.set_studio_waitlist_admission_policy(uuid,uuid,jsonb,integer,integer)",
+  "public.claim_new_client_waitlist_entries_ordered(uuid,uuid,uuid[])",
+] as const;
+
+let n = 0;
+const uniqueEmail = (label: string) => `${label}-${Date.now()}-${n++}@harness.local`;
+
+describe("privileges are what the migration wrote, not what Supabase defaults gave", () => {
+  it.each(TABLES)("anon holds nothing at all on %s", async (table) => {
+    const res = await adminQuery(
+      `select has_table_privilege('anon',$1,'select') as sel,
+              has_table_privilege('anon',$1,'insert') as ins,
+              has_table_privilege('anon',$1,'update') as upd,
+              has_table_privilege('anon',$1,'delete') as del`,
+      [table],
+    );
+    expect(res.rows[0]).toEqual({ sel: false, ins: false, upd: false, del: false });
+  });
+
+  // WHOLE-TABLE SELECT MUST BE FALSE AND COLUMN SELECT TRUE. That pair is the
+  // proof the grant is column-scoped: has_table_privilege(...,'select') answers
+  // "may this role read EVERY column", so a whole-table grant would flip it to
+  // true and token_hash would be readable. Asserting only the column form would
+  // pass either way.
+  it.each(TABLES)("authenticated may read %s by column, never whole-table, never write", async (table) => {
+    const res = await adminQuery(
+      `select has_table_privilege('authenticated',$1,'select') as whole,
+              has_any_column_privilege('authenticated',$1,'select') as cols,
+              has_table_privilege('authenticated',$1,'insert') as ins,
+              has_table_privilege('authenticated',$1,'update') as upd,
+              has_table_privilege('authenticated',$1,'delete') as del`,
+      [table],
+    );
+    expect(res.rows[0]).toEqual({
+      whole: false,
+      cols: true,
+      ins: false,
+      upd: false,
+      del: false,
+    });
+  });
+
+  it.each(TABLES)("service_role holds NO privilege on %s — only on the commands", async (table) => {
+    for (const priv of ["select", "insert", "update", "delete"]) {
+      const res = await adminQuery(`select has_table_privilege('service_role',$1,$2) as ok`, [
+        table,
+        priv,
+      ]);
+      expect(res.rows[0].ok, `service_role must not hold ${priv} on ${table}`).toBe(false);
+    }
+  });
+
+  it("hides token_hash from authenticated while leaving the rest readable", async () => {
+    const res = await adminQuery(
+      `select has_column_privilege('authenticated','public.new_client_waitlist_preference_grants','token_hash','select') as hash,
+              has_column_privilege('authenticated','public.new_client_waitlist_preference_grants','expires_at','select') as expires`,
+    );
+    // RLS scopes ROWS, not COLUMNS, so a whole-table grant would have exposed a
+    // live verifier to any owner who can see the row.
+    expect(res.rows[0]).toEqual({ hash: false, expires: true });
+  });
+
+  it.each(COMMANDS)("no browser role may execute %s", async (fn) => {
+    const res = await adminQuery(
+      `select has_function_privilege('anon',$1,'execute') as anon,
+              has_function_privilege('authenticated',$1,'execute') as auth,
+              has_function_privilege('service_role',$1,'execute') as svc`,
+      [fn],
+    );
+    expect(res.rows[0]).toEqual({ anon: false, auth: false, svc: true });
+  });
+});
+
+describe("admission policy is owner-only", () => {
+  it("refuses an ordinary member and writes nothing", async () => {
+    const studio = await seedStudio("admit-member");
+    const member = await seedMember(studio, "admit-plain");
+
+    const res = await adminQuery(
+      `select public.set_studio_waitlist_admission_policy($1,$2,$3::jsonb,$4,$5) as r`,
+      [studio.studioId, member.userId, JSON.stringify({ weights: {} }), 3, 10],
+    );
+    expect(res.rows[0].r).toBe("not_owner");
+
+    const rows = await adminQuery(
+      `select count(*)::int as n from public.studio_waitlist_admission_policy where studio_id = $1`,
+      [studio.studioId],
+    );
+    expect(rows.rows[0].n).toBe(0);
+  });
+
+  it("refuses an owner of a DIFFERENT studio", async () => {
+    const a = await seedStudio("admit-a");
+    const b = await seedStudio("admit-b");
+    const res = await adminQuery(
+      `select public.set_studio_waitlist_admission_policy($1,$2,$3::jsonb,$4,$5) as r`,
+      [a.studioId, b.userId, JSON.stringify({ weights: {} }), 1, 2],
+    );
+    expect(res.rows[0].r).toBe("not_a_member");
+  });
+
+  it("accepts the studio's own owner", async () => {
+    const studio = await seedStudio("admit-owner");
+    const res = await adminQuery(
+      `select public.set_studio_waitlist_admission_policy($1,$2,$3::jsonb,$4,$5) as r`,
+      [studio.studioId, studio.userId, JSON.stringify({ weights: { waitingTime: 1 } }), 3, 5],
+    );
+    expect(res.rows[0].r).toBe("set");
+  });
+});
+
+describe("entry origin and provenance", () => {
+  it("records a practitioner-created entry with its creator", async () => {
+    const studio = await seedStudio("admit-manual");
+    const res = await adminQuery(
+      `select * from public.create_practitioner_waitlist_entry($1,$2,$3,$4,$5,$6)`,
+      [studio.studioId, studio.userId, "Walk In", uniqueEmail("walkin"), "555", "weekdays"],
+    );
+    expect(res.rows[0].result).toBe("created");
+
+    const row = await adminQuery(
+      `select e.source, e.joined_at_provenance,
+              e.created_by_practitioner_id is not null as has_creator,
+              p.preference, p.source as pref_source
+         from public.new_client_waitlist_entries e
+         left join public.new_client_waitlist_entry_preferences p on p.entry_id = e.id
+        where e.id = $1`,
+      [res.rows[0].entry_id],
+    );
+    expect(row.rows[0]).toEqual({
+      source: "practitioner",
+      joined_at_provenance: "operator_supplied",
+      has_creator: true,
+      preference: "weekdays",
+      pref_source: "practitioner",
+    });
+  });
+
+  // THE REGRESSION THIS TEST EXISTS FOR. 0185's BEFORE INSERT trigger stamped
+  // joined_at := now() unconditionally. Left alone it would have discarded every
+  // imported date silently — no error, no clue, and a person who has waited
+  // eight months recorded as having joined today.
+  it("preserves an imported join date instead of stamping today", async () => {
+    const studio = await seedStudio("admit-legacy");
+    const past = new Date(Date.now() - 240 * 86_400_000);
+    const res = await adminQuery(
+      `select * from public.import_legacy_waitlist_entry($1,$2,$3,$4,$5,$6,null)`,
+      [studio.studioId, studio.userId, "Legacy Person", uniqueEmail("legacy"), past, "operator_supplied"],
+    );
+    expect(res.rows[0].result).toBe("imported");
+
+    const row = await adminQuery(
+      `select joined_at, joined_at_provenance from public.new_client_waitlist_entries where id = $1`,
+      [res.rows[0].entry_id],
+    );
+    expect(new Date(row.rows[0].joined_at).toISOString()).toBe(past.toISOString());
+    expect(row.rows[0].joined_at_provenance).toBe("operator_supplied");
+  });
+
+  it("still forces joined_at for the public path", async () => {
+    const studio = await seedStudio("admit-public");
+    const email = uniqueEmail("public");
+    // The trigger's condition keys off the row's own source, so the public path
+    // is unchanged: an anonymous submitter cannot forge an earlier position.
+    await adminQuery(
+      `insert into public.new_client_waitlist_entries (studio_id, name, email, source, joined_at)
+       values ($1,'Public Person',$2,'public_booking', now() - interval '300 days')`,
+      [studio.studioId, email],
+    );
+    const row = await adminQuery(
+      `select joined_at > now() - interval '1 minute' as fresh
+         from public.new_client_waitlist_entries where email = $1`,
+      [email],
+    );
+    expect(row.rows[0].fresh).toBe(true);
+  });
+
+  it.each([
+    ["form", "invalid_provenance"],
+    [null, "invalid_provenance"],
+  ])("refuses an import claiming provenance %s", async (prov, expected) => {
+    const studio = await seedStudio("admit-prov");
+    const res = await adminQuery(
+      `select ri.result from public.import_legacy_waitlist_entry($1,$2,$3,$4,$5,$6,null) ri`,
+      [studio.studioId, studio.userId, "X", uniqueEmail("prov"), new Date(Date.now() - 86_400_000), prov],
+    );
+    expect(res.rows[0].result).toBe(expected);
+  });
+
+  it("has no defaulting path for a missing or future join date", async () => {
+    const studio = await seedStudio("admit-date");
+    const missing = await adminQuery(
+      `select ri.result from public.import_legacy_waitlist_entry($1,$2,$3,$4,null,'operator_supplied',null) ri`,
+      [studio.studioId, studio.userId, "X", uniqueEmail("nodate")],
+    );
+    expect(missing.rows[0].result).toBe("joined_at_required");
+
+    const future = await adminQuery(
+      `select ri.result from public.import_legacy_waitlist_entry($1,$2,$3,$4,now() + interval '2 days','operator_supplied',null) ri`,
+      [studio.studioId, studio.userId, "X", uniqueEmail("future")],
+    );
+    expect(future.rows[0].result).toBe("joined_at_in_future");
+  });
+
+  it("still refuses a nameless legacy row — name stays required", async () => {
+    const studio = await seedStudio("admit-noname");
+    const res = await adminQuery(
+      `select ri.result from public.import_legacy_waitlist_entry($1,$2,'   ',$3,$4,'operator_supplied',null) ri`,
+      [studio.studioId, studio.userId, uniqueEmail("noname"), new Date(Date.now() - 86_400_000)],
+    );
+    expect(res.rows[0].result).toBe("invalid_input");
+  });
+});
+
+describe("the database refuses an incoherent row regardless of which command wrote it", () => {
+  async function codeOf(sql: string, params: unknown[]): Promise<string> {
+    try {
+      await adminQuery(sql, params);
+      return "NO_ERROR";
+    } catch (e) {
+      return (e as { code?: string }).code ?? "UNKNOWN";
+    }
+  }
+
+  it("rejects an operator-originated entry with no creator", async () => {
+    const studio = await seedStudio("admit-chk1");
+    expect(
+      await codeOf(
+        `insert into public.new_client_waitlist_entries (studio_id,name,email,source,joined_at_provenance)
+         values ($1,'N',$2,'practitioner','operator_supplied')`,
+        [studio.studioId, uniqueEmail("chk1")],
+      ),
+    ).toBe("23514");
+  });
+
+  it("rejects a confirmation that predates the value it confirms", async () => {
+    const studio = await seedStudio("admit-chk2");
+    const entry = await adminQuery(
+      `select * from public.create_practitioner_waitlist_entry($1,$2,'N',$3,null,null)`,
+      [studio.studioId, studio.userId, uniqueEmail("chk2")],
+    );
+    expect(
+      await codeOf(
+        `insert into public.new_client_waitlist_entry_preferences
+           (entry_id,studio_id,preference,stated_at,confirmed_at,source)
+         values ($1,$2,'both', now(), now() - interval '1 day','public_form')`,
+        [entry.rows[0].entry_id, studio.studioId],
+      ),
+    ).toBe("23514");
+  });
+
+  it("rejects a token-authenticated answer attributed to a practitioner", async () => {
+    const studio = await seedStudio("admit-chk3");
+    const entry = await adminQuery(
+      `select * from public.create_practitioner_waitlist_entry($1,$2,'N',$3,null,null)`,
+      [studio.studioId, studio.userId, uniqueEmail("chk3")],
+    );
+    expect(
+      await codeOf(
+        `insert into public.new_client_waitlist_entry_preferences
+           (entry_id,studio_id,preference,stated_at,confirmed_at,source,recorded_by_practitioner_id)
+         values ($1,$2,'both', now(), now(),'prospect_link',$3)`,
+        [entry.rows[0].entry_id, studio.studioId, studio.practitionerId],
+      ),
+    ).toBe("23514");
+  });
+});
+
+describe("the prospect's token moves their preference and nothing else", () => {
+  async function seedEntry(label: string) {
+    const studio = await seedStudio(label);
+    const entry = await adminQuery(
+      `select * from public.create_practitioner_waitlist_entry($1,$2,'P',$3,null,'weekdays')`,
+      [studio.studioId, studio.userId, uniqueEmail(label)],
+    );
+    return { studio, entryId: entry.rows[0].entry_id as string };
+  }
+
+  it("permits only one live grant per entry", async () => {
+    const { studio, entryId } = await seedEntry("admit-tok1");
+    const first = await adminQuery(
+      `select * from public.issue_waitlist_preference_grant($1,$2,$3,24)`,
+      [studio.studioId, entryId, studio.userId],
+    );
+    expect(first.rows[0].result).toBe("issued");
+    expect(first.rows[0].raw_token).toMatch(/^[a-f0-9]{64}$/);
+
+    const second = await adminQuery(
+      `select gi.result from public.issue_waitlist_preference_grant($1,$2,$3,24) gi`,
+      [studio.studioId, entryId, studio.userId],
+    );
+    expect(second.rows[0].result).toBe("grant_already_live");
+  });
+
+  it("records the answer without touching lifecycle state", async () => {
+    const { studio, entryId } = await seedEntry("admit-tok2");
+    const grant = await adminQuery(
+      `select * from public.issue_waitlist_preference_grant($1,$2,$3,24)`,
+      [studio.studioId, entryId, studio.userId],
+    );
+    const before = await adminQuery(
+      `select status, claimed_at, claimed_by_practitioner_id, invited_at, joined_at
+         from public.new_client_waitlist_entries where id = $1`,
+      [entryId],
+    );
+
+    const redeemed = await adminQuery(`select public.redeem_waitlist_preference_grant($1,$2) as r`, [
+      grant.rows[0].raw_token,
+      "weekends",
+    ]);
+    expect(redeemed.rows[0].r).toBe("accepted");
+
+    const pref = await adminQuery(
+      `select preference, source, recorded_by_practitioner_id
+         from public.new_client_waitlist_entry_preferences where entry_id = $1`,
+      [entryId],
+    );
+    expect(pref.rows[0]).toEqual({
+      preference: "weekends",
+      source: "prospect_link",
+      recorded_by_practitioner_id: null,
+    });
+
+    // The whole lifecycle row is byte-identical: a prospect with a valid token
+    // cannot advance, claim or reposition themselves.
+    const after = await adminQuery(
+      `select status, claimed_at, claimed_by_practitioner_id, invited_at, joined_at
+         from public.new_client_waitlist_entries where id = $1`,
+      [entryId],
+    );
+    expect(after.rows[0]).toEqual(before.rows[0]);
+  });
+
+  it("answers every failure mode with the identical refusal", async () => {
+    const { studio, entryId } = await seedEntry("admit-tok3");
+    const grant = await adminQuery(
+      `select * from public.issue_waitlist_preference_grant($1,$2,$3,24)`,
+      [studio.studioId, entryId, studio.userId],
+    );
+    const token = grant.rows[0].raw_token as string;
+    await adminQuery(`select public.redeem_waitlist_preference_grant($1,'both') as r`, [token]);
+
+    // Replay, unknown-but-well-formed, and malformed must be indistinguishable:
+    // a distinguishable answer turns this into a membership oracle.
+    for (const candidate of [token, "a".repeat(64), "not-a-token"]) {
+      const res = await adminQuery(`select public.redeem_waitlist_preference_grant($1,'both') as r`, [
+        candidate,
+      ]);
+      expect(res.rows[0].r).toBe("refused");
+    }
+  });
+
+  it("stops honouring a revoked link", async () => {
+    const { studio, entryId } = await seedEntry("admit-tok4");
+    const grant = await adminQuery(
+      `select * from public.issue_waitlist_preference_grant($1,$2,$3,24)`,
+      [studio.studioId, entryId, studio.userId],
+    );
+    const revoked = await adminQuery(
+      `select public.revoke_waitlist_preference_grant($1,$2,$3) as r`,
+      [studio.studioId, entryId, studio.userId],
+    );
+    expect(revoked.rows[0].r).toBe("revoked");
+
+    const res = await adminQuery(`select public.redeem_waitlist_preference_grant($1,'both') as r`, [
+      grant.rows[0].raw_token,
+    ]);
+    expect(res.rows[0].r).toBe("refused");
+  });
+});
+
+describe("the confirmation rule keeps two timestamps meaningful", () => {
+  it("moves only confirmed_at when the answer is unchanged, and both when it changes", async () => {
+    const studio = await seedStudio("admit-conf");
+    const entry = await adminQuery(
+      `select * from public.create_practitioner_waitlist_entry($1,$2,'C',$3,null,'weekdays')`,
+      [studio.studioId, studio.userId, uniqueEmail("conf")],
+    );
+    const entryId = entry.rows[0].entry_id;
+    const seeded = await adminQuery(
+      `select stated_at from public.new_client_waitlist_entry_preferences where entry_id = $1`,
+      [entryId],
+    );
+
+    const same = await adminQuery(
+      `select public.set_waitlist_entry_availability($1,$2,$3,'weekdays') as r`,
+      [studio.studioId, entryId, studio.userId],
+    );
+    expect(same.rows[0].r).toBe("confirmed");
+    const held = await adminQuery(
+      `select stated_at, confirmed_at > stated_at as refreshed
+         from public.new_client_waitlist_entry_preferences where entry_id = $1`,
+      [entryId],
+    );
+    // The value's history survives: re-confirming does not rewrite stated_at.
+    expect(new Date(held.rows[0].stated_at).toISOString()).toBe(
+      new Date(seeded.rows[0].stated_at).toISOString(),
+    );
+    expect(held.rows[0].refreshed).toBe(true);
+
+    const changed = await adminQuery(
+      `select public.set_waitlist_entry_availability($1,$2,$3,'both') as r`,
+      [studio.studioId, entryId, studio.userId],
+    );
+    expect(changed.rows[0].r).toBe("changed");
+    const reseeded = await adminQuery(
+      `select stated_at = confirmed_at as reseeded
+         from public.new_client_waitlist_entry_preferences where entry_id = $1`,
+      [entryId],
+    );
+    expect(reseeded.rows[0].reseeded).toBe(true);
+  });
+
+  it("refuses a member recording availability", async () => {
+    const studio = await seedStudio("admit-conf-mem");
+    const member = await seedMember(studio, "conf-plain");
+    const entry = await adminQuery(
+      `select * from public.create_practitioner_waitlist_entry($1,$2,'C',$3,null,null)`,
+      [studio.studioId, studio.userId, uniqueEmail("confmem")],
+    );
+    const res = await adminQuery(
+      `select public.set_waitlist_entry_availability($1,$2,$3,'weekdays') as r`,
+      [studio.studioId, entry.rows[0].entry_id, member.userId],
+    );
+    expect(res.rows[0].r).toBe("not_owner");
+  });
+});
+
+describe("the ordered claim", () => {
+  it("claims in the order the caller supplied", async () => {
+    const studio = await seedStudio("admit-claim");
+    const ids: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const e = await adminQuery(
+        `select * from public.create_practitioner_waitlist_entry($1,$2,$3,$4,null,null)`,
+        [studio.studioId, studio.userId, `Person ${i}`, uniqueEmail(`claim${i}`)],
+      );
+      ids.push(e.rows[0].entry_id);
+    }
+    const order = [ids[2], ids[0]];
+    const res = await adminQuery(
+      `select oc.entry_id from public.claim_new_client_waitlist_entries_ordered($1,$2,$3::uuid[]) oc`,
+      [studio.studioId, studio.userId, order],
+    );
+    expect(res.rows.map((r: { entry_id: string }) => r.entry_id)).toEqual(order);
+
+    const untouched = await adminQuery(
+      `select status from public.new_client_waitlist_entries where id = $1`,
+      [ids[1]],
+    );
+    expect(untouched.rows[0].status).toBe("waiting");
+  });
+
+  it("shares ONE decision instant across every row it wins", async () => {
+    const studio = await seedStudio("admit-instant");
+    const ids: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const e = await adminQuery(
+        `select * from public.create_practitioner_waitlist_entry($1,$2,$3,$4,null,null)`,
+        [studio.studioId, studio.userId, `P${i}`, uniqueEmail(`inst${i}`)],
+      );
+      ids.push(e.rows[0].entry_id);
+    }
+    await adminQuery(
+      `select 1 from public.claim_new_client_waitlist_entries_ordered($1,$2,$3::uuid[])`,
+      [studio.studioId, studio.userId, ids],
+    );
+    const stamps = await adminQuery(
+      `select count(distinct claimed_at)::int as n from public.new_client_waitlist_entries where id = any($1::uuid[])`,
+      [ids],
+    );
+    expect(stamps.rows[0].n).toBe(1);
+  });
+
+  it("lets a configured ceiling only tighten the bound", async () => {
+    const studio = await seedStudio("admit-cap");
+    await adminQuery(
+      `select public.set_studio_waitlist_admission_policy($1,$2,$3::jsonb,1,2)`,
+      [studio.studioId, studio.userId, JSON.stringify({ weights: {} })],
+    );
+    const res = await adminQuery(
+      `select oc.result from public.claim_new_client_waitlist_entries_ordered($1,$2,$3::uuid[]) oc`,
+      [studio.studioId, studio.userId, [crypto.randomUUID(), crypto.randomUUID(), crypto.randomUUID()]],
+    );
+    expect(res.rows[0].result).toBe("exceeds_batch_max");
+  });
+
+  it("refuses a member", async () => {
+    const studio = await seedStudio("admit-claim-mem");
+    const member = await seedMember(studio, "claim-plain");
+    const res = await adminQuery(
+      `select oc.result from public.claim_new_client_waitlist_entries_ordered($1,$2,$3::uuid[]) oc`,
+      [studio.studioId, member.userId, [crypto.randomUUID()]],
+    );
+    expect(res.rows[0].result).toBe("not_owner");
+  });
+});
