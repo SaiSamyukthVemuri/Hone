@@ -24,14 +24,6 @@ const PRESENTATION: OfferPresentation = {
   studioTimezone: "America/Toronto",
 };
 
-// The PRESENTATION-SAFE projection. Deliberately not B2's ResolvedInvitation:
-// `recipientContactHash`, `entryId`, `studioId` and `scope` must not reach a
-// "use client" component, and the guard suite asserts they cannot.
-const SAFE_REF = {
-  invitationId: "inv-1",
-  expiresAt: "2026-09-08T12:00:00.000Z",
-};
-
 const WINDOW_DESCRIPTION = "Mondays, Wednesdays, Sep 7, 2026 – Sep 11, 2026";
 
 
@@ -49,9 +41,8 @@ const SLOT: OfferedSlot = {
 
 const OFFER_STATE = {
   kind: "offer" as const,
-  invitation: SAFE_REF,
   presentation: PRESENTATION,
-  days: [{ date: "2026-09-07", dateLabel: "Mon, Sep 7", slots: [SLOT] }],
+  days: [{ date: "2026-09-07", dateLabel: "Mon, Sep 7", slots: [SLOT] as const }],
   windowDescription: WINDOW_DESCRIPTION,
 };
 
@@ -96,7 +87,7 @@ function render(state: Parameters<typeof InvitationScreen>[0]["state"], over = {
 }
 
 describe("the offer screen", () => {
-  const html = render({ kind: "offer", invitation: SAFE_REF, presentation: PRESENTATION, days: [{ date: "2026-09-07", dateLabel: "Mon, Sep 7", slots: [SLOT] }], windowDescription: WINDOW_DESCRIPTION });
+  const html = render({ kind: "offer", presentation: PRESENTATION, days: [{ date: "2026-09-07", dateLabel: "Mon, Sep 7", slots: [SLOT] as const }], windowDescription: WINDOW_DESCRIPTION });
 
   it("states the offered horizon in words, as the state layer resolved it", () => {
     expect(html).toContain("Times held for you");
@@ -150,7 +141,7 @@ describe("the offer screen", () => {
 });
 
 describe("an empty window is not a dead end", () => {
-  const html = render({ kind: "offer", invitation: SAFE_REF, presentation: PRESENTATION, days: [], windowDescription: WINDOW_DESCRIPTION });
+  const html = render({ kind: "offer", presentation: PRESENTATION, days: [], windowDescription: WINDOW_DESCRIPTION });
 
   it("explains, and offers a retry rather than a booking control", () => {
     expect(html).toContain("Nothing is open");
@@ -277,11 +268,10 @@ describe("possession shows the offer and no times", () => {
 describe("a multi-day offer is unambiguous", () => {
   const html = render({
     kind: "offer",
-    invitation: SAFE_REF,
     presentation: PRESENTATION,
     days: [
-      { date: "2026-09-07", dateLabel: "Mon, Sep 7", slots: [SLOT] },
-      { date: "2026-09-09", dateLabel: "Wed, Sep 9", slots: [SLOT2] },
+      { date: "2026-09-07", dateLabel: "Mon, Sep 7", slots: [SLOT] as const },
+      { date: "2026-09-09", dateLabel: "Wed, Sep 9", slots: [SLOT2] as const },
     ],
     windowDescription: WINDOW_DESCRIPTION,
   });
@@ -401,11 +391,10 @@ describe("verifying is busy and non-interactive", () => {
 describe("slot selection freezes while a booking is pending", () => {
   const offerState = {
     kind: "offer" as const,
-    invitation: SAFE_REF,
     presentation: PRESENTATION,
     days: [
-      { date: "2026-09-07", dateLabel: "Mon, Sep 7", slots: [SLOT] },
-      { date: "2026-09-09", dateLabel: "Wed, Sep 9", slots: [SLOT2] },
+      { date: "2026-09-07", dateLabel: "Mon, Sep 7", slots: [SLOT] as const },
+      { date: "2026-09-09", dateLabel: "Wed, Sep 9", slots: [SLOT2] as const },
     ],
     windowDescription: WINDOW_DESCRIPTION,
   };

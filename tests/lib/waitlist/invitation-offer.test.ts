@@ -367,22 +367,23 @@ describe("terminal proof outcomes are terminal", () => {
 // `ResolvedInvitation` into a `"use client"` component that never read it,
 // shipping a hash of the recipient's email to the browser for nothing.
 // ---------------------------------------------------------------------------
-describe("only presentation-safe invitation facts cross to the client", () => {
-  it("projects to invitationId and expiresAt, and nothing else", () => {
+describe("no invitation authority crosses to the client", () => {
+  it("the offer state carries no invitation field at all", () => {
     const state = deriveInvitationViewState(ctx({ slots: [slot("2026-09-07")] }));
     expect(state.kind).toBe("offer");
     if (state.kind !== "offer") return;
-    expect(Object.keys(state.invitation).sort()).toEqual(["expiresAt", "invitationId"]);
+    // A narrower TYPE was not a boundary: structural assignability lets a
+    // caller pass a whole ResolvedInvitation into a narrower slot, and React
+    // serialises every key. A property that does not exist cannot leak.
+    expect(Object.keys(state)).not.toContain("invitation");
   });
 
-  it("carries no recipient hash, entry id, studio id or scope", () => {
+  it("nothing internal appears in the SERIALISED state", () => {
     const state = deriveInvitationViewState(ctx({ slots: [slot("2026-09-07")] }));
-    // Serialised, because that is exactly what crosses the boundary.
     const wire = JSON.stringify(state);
-    expect(wire, "recipient contact hash reached the client").not.toContain("hash");
-    expect(wire, "entry id reached the client").not.toContain("entry-1");
-    expect(wire, "studio id reached the client").not.toContain("studio-1");
-    expect(wire, "scope reached the client").not.toContain("allowedWeekdays");
+    for (const secret of ["hash", "entry-1", "studio-1", "allowedWeekdays", "inv-1"]) {
+      expect(wire, `${secret} reached the client`).not.toContain(secret);
+    }
   });
 });
 
@@ -417,5 +418,26 @@ describe("proof-failure recovery is opt-in", () => {
       kind: "unavailable",
       retryable: true,
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// REVIEW P2 — an empty day is now unrepresentable, so `days.length === 0`
+// genuinely means nothing is bookable.
+// ---------------------------------------------------------------------------
+describe("a day always carries at least one slot", () => {
+  it("grouping never emits a day with no slots", () => {
+    const days = groupSlotsByDay(TZ, [slot("2026-09-07"), slot("2026-09-09")]);
+    expect(days.length).toBeGreaterThan(0);
+    for (const day of days) expect(day.slots.length).toBeGreaterThan(0);
+  });
+
+  it("no slots at all yields no days, rather than an empty day", () => {
+    expect(groupSlotsByDay(TZ, [])).toEqual([]);
+  });
+
+  it("an unreadable instant cannot create an empty day", () => {
+    const days = groupSlotsByDay(TZ, [{ start: "nope", end: "x", startLabel: "?" }]);
+    expect(days).toEqual([]);
   });
 });

@@ -340,33 +340,29 @@ describe("a booking in flight cannot have its slot changed", () => {
 
 // THE CLIENT BOUNDARY. The offer state carried B2's whole `ResolvedInvitation`
 // into a `"use client"` component that never read it.
-describe("internal authority fields do not cross to the client", () => {
-  it("the view state carries a projection, not ResolvedInvitation", () => {
-    expect(STATE).toContain("export type SafeInvitationRef");
-    expect(STATE).toContain("invitation: SafeInvitationRef;");
+describe("no invitation authority can cross to the client", () => {
+  it("the offer state has no invitation property to assign into", () => {
+    // A NARROWER TYPE WAS NOT A BOUNDARY. TypeScript's structural
+    // assignability lets a caller pass a whole `ResolvedInvitation` into a
+    // narrower slot -- excess-property checking applies only to object
+    // literals -- and React serialises the runtime object with every key. The
+    // property is gone instead.
     const offer = STATE.slice(STATE.indexOf('kind: "offer";'), STATE.indexOf('kind: "closed";'));
     expect(offer.length).toBeGreaterThan(100);
-    expect(offer, "the resolved invitation still crosses whole").not.toContain(
-      "invitation: ResolvedInvitation;",
+    expect(offer, "an invitation field is assignable again").not.toMatch(/^\s*invitation:/m);
+  });
+
+  it("the projection type is gone with it", () => {
+    // Leaving an unused shape invites a caller to reuse something that never
+    // enforced anything.
+    expect(STATE, "SafeInvitationRef survives as a reusable non-boundary").not.toContain(
+      "SafeInvitationRef",
     );
   });
 
-  it("the safe shape names only the two permitted fields", () => {
-    const decl = STATE.slice(
-      STATE.indexOf("export type SafeInvitationRef"),
-      STATE.indexOf("};", STATE.indexOf("export type SafeInvitationRef")),
-    );
-    expect(decl.length).toBeGreaterThan(40);
-    expect(decl).toContain("invitationId");
-    expect(decl).toContain("expiresAt");
-    for (const forbidden of ["recipientContactHash", "entryId", "studioId", "scope"]) {
-      expect(decl, `${forbidden} crosses the client boundary`).not.toContain(forbidden);
-    }
-  });
-
-  it("the screen never reads a field the projection excludes", () => {
-    for (const forbidden of ["recipientContactHash", "entryId", "studioId"]) {
-      expect(SCREEN, `screen reads ${forbidden}`).not.toContain(forbidden);
+  it("the screen reads no authority field", () => {
+    for (const forbidden of ["recipientContactHash", "entryId", "studioId", "invitation"]) {
+      expect(SCREEN, `screen reads ${forbidden}`).not.toContain(`state.${forbidden}`);
     }
   });
 });
@@ -382,6 +378,17 @@ describe("offer emptiness is structural, not a flag beside the collection", () =
 
   it("the view derives emptiness from what it renders", () => {
     expect(SCREEN).toContain("const empty = days.length === 0;");
+  });
+
+  it("a day with no slots is UNREPRESENTABLE, so days.length is trustworthy", () => {
+    // Collapsing the old `empty` flag into `days.length` only relocated the
+    // contradiction: `days: [{ slots: [] }]` typechecked and rendered "Choose a
+    // time" with nothing under it and no retry path.
+    expect(STATE).toContain("export type NonEmptySlots = readonly [OfferedSlot, ...OfferedSlot[]]");
+    const day = STATE.slice(STATE.indexOf("export type OfferedDay"), STATE.indexOf("};", STATE.indexOf("export type OfferedDay")));
+    expect(day.length).toBeGreaterThan(40);
+    expect(day).toContain("slots: NonEmptySlots;");
+    expect(day, "a day can still be empty").not.toContain("slots: readonly OfferedSlot[]");
   });
 });
 

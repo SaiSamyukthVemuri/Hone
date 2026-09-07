@@ -9,7 +9,6 @@ import type {
   DeclineOutcome,
   RedeemOutcome,
   ResolveOutcome,
-  ResolvedInvitation,
 } from "@/lib/booking/waitlist-invitation";
 
 // WAIT-03 B3 — the RECIPIENT's view of an invitation, bound to B2's authority.
@@ -53,26 +52,24 @@ export type OfferedSlot = {
  * RANGE; it cannot disambiguate an individual button, so the day travels with
  * the slots rather than being left to the header.
  */
+/**
+ * At least one slot. A day with none is not a day worth rendering.
+ *
+ * `readonly OfferedSlot[]` let `days: [{ slots: [] }]` typecheck, which made
+ * `days.length` nonzero while nothing was bookable -- so the view showed
+ * "Choose a time" with nothing under it, a Book control, and no "Check again"
+ * recovery path. Collapsing the old `empty` flag into `days.length` did not
+ * remove that contradiction, it relocated it one level down. A non-empty tuple
+ * removes it: the illegal state cannot be written.
+ */
+export type NonEmptySlots = readonly [OfferedSlot, ...OfferedSlot[]];
+
 export type OfferedDay = {
   /** YYYY-MM-DD in the studio's timezone. */
   date: string;
   /** "Mon, Sep 7" -- the shared formatter, not a local one. */
   dateLabel: string;
-  slots: readonly OfferedSlot[];
-};
-
-/**
- * The only invitation facts allowed across the client boundary.
- *
- * Deliberately NOT `entryId`, `studioId`, `scope` or `recipientContactHash`.
- * The scope is consumed server-side to narrow the slots; nothing downstream of
- * that needs it, and a hash of the recipient's contact must never be in a
- * payload the browser receives.
- */
-export type SafeInvitationRef = {
-  invitationId: string;
-  /** When the offer lapses -- a fact the recipient may legitimately be shown. */
-  expiresAt: string;
+  slots: NonEmptySlots;
 };
 
 /** Everything the screen needs that is not the invitation itself. */
@@ -163,17 +160,24 @@ export type InvitationViewState =
     }
   | {
       kind: "offer";
-      /**
-       * A PRESENTATION-SAFE projection, not B2's `ResolvedInvitation`.
+      /*
+       * NO INVITATION FIELD AT ALL, and that is the fix rather than a narrower
+       * type.
        *
-       * This carried the resolved invitation whole into a `"use client"`
-       * component that never read it -- shipping `recipientContactHash` (a hash
-       * of the recipient's email, susceptible to offline guessing and
-       * documented by the authority layer as server-side), plus `entryId` and
-       * `studioId`, to the browser for nothing. Only what a client could
-       * legitimately need crosses now.
+       * This first carried B2's whole `ResolvedInvitation` into a `"use client"`
+       * component -- shipping `recipientContactHash` (a hash of the recipient's
+       * email, susceptible to offline guessing and documented by the authority
+       * layer as server-side), plus `entryId` and `studioId`, to the browser.
+       * Narrowing the property to a projection did NOT close that: TypeScript's
+       * structural assignability lets a caller assign a `ResolvedInvitation`
+       * variable straight into a narrower slot -- excess-property checking only
+       * applies to object literals -- and React then serialises the runtime
+       * object with every key intact. The type looked like a boundary and was
+       * not one.
+       *
+       * The screen reads no invitation field. A property that does not exist
+       * cannot leak, whatever a caller assigns.
        */
-      invitation: SafeInvitationRef;
       presentation: OfferPresentation;
       /**
        * The narrowed slots, grouped under their studio-local day.
@@ -252,11 +256,17 @@ export function groupSlotsByDay(
   }
   return [...byDate.entries()]
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-    .map(([date, daySlots]) => ({
-      date,
-      dateLabel: formatSlotDayLabel(date),
-      slots: [...daySlots].sort((x, y) => (x.start < y.start ? -1 : x.start > y.start ? 1 : 0)),
-    }));
+    .flatMap(([date, daySlots]) => {
+      const sorted = [...daySlots].sort((x, y) =>
+        x.start < y.start ? -1 : x.start > y.start ? 1 : 0,
+      );
+      const [first, ...rest] = sorted;
+      // A bucket only exists because a slot created it, so this cannot happen.
+      // Dropping rather than asserting keeps the non-empty guarantee true by
+      // construction instead of by claim.
+      if (!first) return [];
+      return [{ date, dateLabel: formatSlotDayLabel(date), slots: [first, ...rest] as NonEmptySlots }];
+    });
 }
 
 /** "Mon, Sep 7" -- short enough for a phone, unambiguous across a week. */
@@ -380,11 +390,6 @@ export function deriveInvitationViewState(ctx: RecipientContext): InvitationView
       const slots = filterSlotsToScope(scope, ctx.presentation.studioTimezone, ctx.slots);
       return {
         kind: "offer",
-        // Projected here, so the internal fields never leave this function.
-        invitation: {
-          invitationId: resolve.invitation.invitationId,
-          expiresAt: resolve.invitation.expiresAt,
-        },
         presentation: ctx.presentation,
         days: groupSlotsByDay(ctx.presentation.studioTimezone, slots),
         windowDescription,
