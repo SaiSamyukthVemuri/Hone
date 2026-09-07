@@ -1,6 +1,7 @@
 "use client";
 
 import type {
+  BookingRefusal,
   InvitationClosedReason,
   InvitationViewState,
   OfferedDay,
@@ -103,6 +104,7 @@ export function InvitationScreen({
             presentation={state.presentation}
             days={state.days}
             windowDescription={state.windowDescription}
+            refusal={state.refusal}
             selectedSlotStart={selectedSlotStart}
             onSelectSlot={onSelectSlot}
             onBook={onBook}
@@ -116,6 +118,16 @@ export function InvitationScreen({
     }
   }
 }
+
+/**
+ * One line per refusal, and a Record so adding a `BookingRefusal` without copy
+ * is a compile error rather than a blank alert.
+ */
+const BOOKING_REFUSAL_COPY: Record<BookingRefusal, string> = {
+  slot_taken: "That time was taken while you were choosing. Please pick another.",
+  not_permitted: "Your invitation doesn't cover that time. Please choose one of the times shown.",
+  unavailable: "We couldn't complete that booking. Please try again in a moment.",
+};
 
 /** Compile-time exhaustiveness for the screen's own union. */
 function assertNeverState(state: never): null {
@@ -248,6 +260,7 @@ function OfferView({
   presentation,
   days,
   windowDescription,
+  refusal,
   selectedSlotStart,
   onSelectSlot,
   onBook,
@@ -258,6 +271,7 @@ function OfferView({
   presentation: OfferPresentation;
   days: readonly OfferedDay[];
   windowDescription: string;
+  refusal?: BookingRefusal;
   selectedSlotStart: string | null;
   onSelectSlot: (slot: OfferedSlot) => void;
   onBook: () => void;
@@ -275,6 +289,18 @@ function OfferView({
         <h1 className="text-xl text-[#0A0A0A]">{presentation.serviceName}</h1>
         <p className="text-sm text-[#6B6B6B]">{presentation.serviceDurationMinutes} minutes</p>
       </header>
+
+      {/* A refused Book, said out loud. Before this the screen re-rendered
+          unchanged and the recipient's tap appeared to do nothing. `role=alert`
+          so a screen reader announces it without the focus moving. */}
+      {refusal ? (
+        <p
+          role="alert"
+          className="rounded-md bg-[#FDF2F2] px-3 py-2 text-sm text-[#8A2A2A]"
+        >
+          {BOOKING_REFUSAL_COPY[refusal]}
+        </p>
+      ) : null}
 
       {/* THE OFFERED HORIZON, STATED. The recipient should never have to infer
           what they were offered from which buttons happen to exist. */}

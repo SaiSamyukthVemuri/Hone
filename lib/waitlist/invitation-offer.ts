@@ -144,6 +144,24 @@ export type ProofStage =
  */
 export type UnprovenProofStage = Exclude<ProofStage, { kind: "proven" }>;
 
+/**
+ * Why a Book attempt did not commit, when the offer is still usable afterwards.
+ *
+ * A CLOSED LIST, and deliberately NOT the booking command's own code union. Two
+ * of its codes must never appear here: `invitation_consumed` means the offer is
+ * SPENT, which is terminal and maps to `closed` instead, and
+ * `new_client_waitlist` cannot arise for a request that carried an invitation.
+ * Typing this as the command's codes would let a caller build an `offer` state
+ * that says "your invitation has been used" above live, selectable times.
+ */
+export type BookingRefusal =
+  /** The instant went while the recipient was choosing. Pick another. */
+  | "slot_taken"
+  /** The offer does not cover that request -- wrong service, day or date. */
+  | "not_permitted"
+  /** In doubt: the attempt may or may not have reached the studio. */
+  | "unavailable";
+
 export type InvitationClosedReason =
   | "expired"
   | "revoked"
@@ -192,6 +210,14 @@ export type InvitationViewState =
        */
       days: readonly OfferedDay[];
       windowDescription: string;
+      /**
+       * Set when a Book attempt just failed and the offer survives it.
+       *
+       * Without this the container had nowhere to put a refusal, so every
+       * failure re-rendered the same screen with no message and the recipient
+       * saw their tap do nothing.
+       */
+      refusal?: BookingRefusal;
     }
   | { kind: "closed"; reason: InvitationClosedReason; presentation: OfferPresentation | null }
   | { kind: "booked"; presentation: OfferPresentation; startLabel: string; dateLabel: string }
@@ -328,6 +354,12 @@ export type RecipientContext = {
   booked: { startLabel: string; dateLabel: string } | null;
   /** Set once a decline has succeeded. */
   declined: boolean;
+  /**
+   * Set when the LAST Book attempt was refused and the offer survives it. A
+   * spent invitation is NOT represented here: it is terminal, and reaches the
+   * recipient as a `closed` state instead.
+   */
+  bookingRefusal?: BookingRefusal;
 };
 
 /**
@@ -393,6 +425,10 @@ export function deriveInvitationViewState(ctx: RecipientContext): InvitationView
         presentation: ctx.presentation,
         days: groupSlotsByDay(ctx.presentation.studioTimezone, slots),
         windowDescription,
+        // Carried straight through. A refusal is only ever attached to an offer
+        // the recipient can still act on: a spent invitation resolves as
+        // `already_redeemed` above and never reaches this branch.
+        ...(ctx.bookingRefusal ? { refusal: ctx.bookingRefusal } : {}),
       };
     }
   }

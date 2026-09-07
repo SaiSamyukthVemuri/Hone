@@ -233,3 +233,51 @@ describe("terminal states are explicit", () => {
     expect((await loadInvitationAction(TOKEN)).kind).toBe("error");
   });
 });
+
+// P2-A. Every booking failure used to re-render the offer with no message and
+// leave the capability in place, so a spent invitation showed live selectable
+// times and an ordinary retry looked like the tap had done nothing.
+describe("P2-A — a refused booking says what happened", () => {
+  beforeEach(() => { cookieJar.set("wl_proof_capability", CAPABILITY); });
+
+  it("a CONSUMED invitation becomes terminal, not a live offer", async () => {
+    publicBookAppointmentAction.mockResolvedValue({
+      ok: false, code: "invitation_consumed",
+      error: "Your invitation has been used, but we couldn't finish the booking.",
+    });
+    const out = await bookInvitationSlotAction(TOKEN, "2026-10-07T14:00:00.000Z");
+    expect(out.kind).toBe("closed");
+    if (out.kind !== "closed") throw new Error("unreachable");
+    expect(out.reason).toBe("already_redeemed");
+    // The capability authorises nothing now and must not survive.
+    expect(cookieJar.has("wl_proof_capability")).toBe(false);
+  });
+
+  it.each([
+    ["slot_taken", "slot_taken"],
+    ["invitation_refused", "not_permitted"],
+  ])("a %s refusal keeps the offer AND states the reason", async (code, refusal) => {
+    publicBookAppointmentAction.mockResolvedValue({ ok: false, code, error: "x" });
+    const out = await bookInvitationSlotAction(TOKEN, "2026-10-07T14:00:00.000Z");
+    expect(out.kind).toBe("offer");
+    if (out.kind !== "offer") throw new Error("unreachable");
+    expect(out.refusal).toBe(refusal);
+    // Still usable: the capability survives so the recipient can pick again.
+    expect(cookieJar.has("wl_proof_capability")).toBe(true);
+  });
+
+  it("an unrecognised refusal is IN DOUBT, never a confident slot_taken", async () => {
+    publicBookAppointmentAction.mockResolvedValue({ ok: false, error: "boom" });
+    const out = await bookInvitationSlotAction(TOKEN, "2026-10-07T14:00:00.000Z");
+    if (out.kind !== "offer") throw new Error("unreachable");
+    expect(out.refusal).toBe("unavailable");
+  });
+
+  it("a SUCCESSFUL booking carries no refusal", async () => {
+    publicBookAppointmentAction.mockResolvedValue({
+      ok: true, appointmentId: "a1", manageUrl: "https://x/m", confirmationEmailStatus: "sent",
+    });
+    const out = await bookInvitationSlotAction(TOKEN, "2026-10-07T14:00:00.000Z");
+    expect(out.kind).toBe("booked");
+  });
+});

@@ -29,6 +29,7 @@ import {
 } from "@/lib/booking/waitlist-invitation";
 import {
   deriveInvitationViewState,
+  type BookingRefusal,
   filterSlotsToScope,
   groupSlotsByDay,
   proofStageFromBegin,
@@ -246,6 +247,7 @@ async function offerState(
   resolve: Extract<ResolveOutcome, { kind: "live" }>,
   studio: StudioContext,
   proof: ProofStage,
+  bookingRefusal?: BookingRefusal,
 ): Promise<InvitationViewState> {
   const slots =
     proof.kind === "proven"
@@ -258,6 +260,7 @@ async function offerState(
     slots,
     booked: null,
     declined: false,
+    bookingRefusal,
   });
 }
 
@@ -387,6 +390,26 @@ export async function bookInvitationSlotAction(
   fd.set("invitation_capability", capability);
 
   const booked = await publicBookAppointmentAction(fd);
+  if (!booked.ok && booked.code === "invitation_consumed") {
+    // P2-A. THE OFFER IS SPENT. The redeem committed and the appointment did
+    // not, so re-rendering the offer would show live, selectable times for an
+    // invitation that can never book again -- and every retry would fail the
+    // same silent way.
+    //
+    // `ctx.resolve` was read BEFORE the attempt and still says `live`, so the
+    // terminal state is stated here rather than derived from a stale read. The
+    // capability is dropped with it: it authorises nothing now.
+    //
+    // B2 records the consumed-without-booking event with the invitation id, and
+    // its own copy tells the recipient to contact the studio; `already_redeemed`
+    // is the view state that matches, and it is the only honest one available.
+    await clearCapability();
+    return {
+      kind: "closed",
+      reason: "already_redeemed",
+      presentation: ctx.studio.presentation,
+    };
+  }
   if (booked.ok) {
     await clearCapability();
     const tz = ctx.studio.presentation.studioTimezone;
@@ -403,7 +426,30 @@ export async function bookInvitationSlotAction(
       declined: false,
     });
   }
-  return offerState(ctx.resolve, ctx.studio, { kind: "proven" });
+  // Every other refusal leaves the offer usable, so it is shown WITH the reason.
+  // Previously this returned the offer unchanged and the recipient's tap simply
+  // appeared to do nothing.
+  return offerState(ctx.resolve, ctx.studio, { kind: "proven" }, bookingRefusalFor(booked));
+}
+
+/**
+ * Map the booking command's refusal onto the closed set the screen renders.
+ *
+ * `invitation_consumed` is deliberately absent: it is handled above as a
+ * terminal state, and returning it here would put "your invitation has been
+ * used" above live, selectable times.
+ */
+function bookingRefusalFor(result: { ok: false; code?: string }): BookingRefusal {
+  switch (result.code) {
+    case "slot_taken":
+      return "slot_taken";
+    case "invitation_refused":
+      return "not_permitted";
+    default:
+      // No code, or one this layer does not recognise: IN DOUBT, never a
+      // confident "that time is taken".
+      return "unavailable";
+  }
 }
 
 /** Placeholder presentation for the pre-resolve rate-limit path. */
