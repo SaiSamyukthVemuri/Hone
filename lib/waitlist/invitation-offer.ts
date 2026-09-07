@@ -162,6 +162,20 @@ export type BookingRefusal =
   /** In doubt: the attempt may or may not have reached the studio. */
   | "unavailable";
 
+/**
+ * Why the recipient is being asked to prove again, when they did not ask to be.
+ *
+ * A CLOSED LIST for the same reason `BookingRefusal` is one: a failed decline
+ * must not render an arbitrary authority code atop the proof screen. Terminal
+ * outcomes are NOT here -- a decline against a dead invitation resolves to
+ * `closed` instead.
+ */
+export type ProofNotice =
+  /** The capability lapsed or did not match. Request a fresh code. */
+  | "proof_lapsed"
+  /** In doubt: the decline may or may not have reached the studio. */
+  | "decline_unavailable";
+
 export type InvitationClosedReason =
   | "expired"
   | "revoked"
@@ -175,6 +189,12 @@ export type InvitationViewState =
       presentation: OfferPresentation;
       windowDescription: string;
       stage: UnprovenProofStage;
+      /**
+       * Set when the recipient was returned to this screen by a FAILED action
+       * rather than by arriving. Without it a failed decline dropped them back to
+       * "request a code" with no explanation of why their tap did nothing.
+       */
+      notice?: ProofNotice;
     }
   | {
       kind: "offer";
@@ -360,6 +380,8 @@ export type RecipientContext = {
    * recipient as a `closed` state instead.
    */
   bookingRefusal?: BookingRefusal;
+  /** Set when a decline failed and the recipient must prove again. */
+  proofNotice?: ProofNotice;
 };
 
 /**
@@ -416,6 +438,7 @@ export function deriveInvitationViewState(ctx: RecipientContext): InvitationView
           windowDescription,
           // Narrowed by the guard above; the type now says so too.
           stage: ctx.proof,
+          ...(ctx.proofNotice ? { notice: ctx.proofNotice } : {}),
         };
       }
 

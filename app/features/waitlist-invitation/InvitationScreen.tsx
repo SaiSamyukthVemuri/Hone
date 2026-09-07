@@ -2,6 +2,7 @@
 
 import type {
   BookingRefusal,
+  ProofNotice,
   InvitationClosedReason,
   InvitationViewState,
   OfferedDay,
@@ -93,6 +94,7 @@ export function InvitationScreen({
             presentation={state.presentation}
             windowDescription={state.windowDescription}
             stage={state.stage}
+            notice={state.notice}
             onRequestCode={onRequestCode}
             onSubmitCode={onSubmitCode}
             pending={pending}
@@ -123,6 +125,11 @@ export function InvitationScreen({
  * One line per refusal, and a Record so adding a `BookingRefusal` without copy
  * is a compile error rather than a blank alert.
  */
+const PROOF_NOTICE_COPY: Record<ProofNotice, string> = {
+  proof_lapsed: "We couldn’t confirm it was you. Request a new code and try again.",
+  decline_unavailable: "We couldn’t complete that just now. Please try again in a moment.",
+};
+
 const BOOKING_REFUSAL_COPY: Record<BookingRefusal, string> = {
   slot_taken: "That time was taken while you were choosing. Please pick another.",
   not_permitted: "Your invitation doesn't cover that time. Please choose one of the times shown.",
@@ -428,6 +435,7 @@ function ProofView({
   presentation,
   windowDescription,
   stage,
+  notice,
   onRequestCode,
   onSubmitCode,
   pending,
@@ -435,6 +443,7 @@ function ProofView({
   presentation: OfferPresentation;
   windowDescription: string;
   stage: UnprovenProofStage;
+  notice?: ProofNotice;
   onRequestCode: () => void;
   onSubmitCode: (code: string) => void;
   pending: boolean;
@@ -451,6 +460,17 @@ function ProofView({
         <h2 className="text-sm text-[#0A0A0A]">Times held for you</h2>
         <p className="text-sm text-[#6B6B6B]">{windowDescription}</p>
       </section>
+
+      {/* Why they are back here. A failed decline used to return them to
+          "request a code" silently, so their tap looked like it did nothing. */}
+      {notice ? (
+        <p
+          role="alert"
+          className="rounded-md bg-[#FDF2F2] px-3 py-2 text-sm text-[#8A2A2A]"
+        >
+          {PROOF_NOTICE_COPY[notice]}
+        </p>
+      ) : null}
 
       {renderProofStage(stage, onRequestCode, onSubmitCode, pending)}
     </div>

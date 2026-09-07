@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createHash, createHmac } from "node:crypto";
 
 // WAIT-03 B3 — the recipient's server actions.
 //
@@ -16,7 +17,19 @@ const STUDIO = "22222222-2222-4222-8222-222222222222";
 const SERVICE = "55555555-5555-4555-8555-555555555555";
 const ENTRY = "44444444-4444-4444-8444-444444444444";
 
+process.env.APPOINTMENT_SIGNING_SECRET =
+  process.env.APPOINTMENT_SIGNING_SECRET ?? "test-signing-secret-at-least-32-bytes-long";
+
 const cookieJar = new Map<string, string>();
+
+/** The cookie value the action itself would write: capability + its binding. */
+function signedCapability(token: string, capability: string): string {
+  const bound = `${createHash("sha256").update(token, "utf8").digest("hex")}.${capability}`;
+  const sig = createHmac("sha256", process.env.APPOINTMENT_SIGNING_SECRET as string)
+    .update(bound)
+    .digest("hex");
+  return `${capability}.${sig}`;
+}
 vi.mock("next/headers", () => ({
   cookies: async () => ({
     get: (k: string) => (cookieJar.has(k) ? { value: cookieJar.get(k) } : undefined),
@@ -124,7 +137,7 @@ describe("the link alone is not authorisation", () => {
   });
 
   it("books once a capability exists, through the SHARED booking engine", async () => {
-    cookieJar.set("wl_proof_capability", CAPABILITY);
+    cookieJar.set("wl_proof_capability", signedCapability(TOKEN, CAPABILITY));
     publicBookAppointmentAction.mockResolvedValue({
       ok: true, appointmentId: "a1", manageUrl: "https://x/m", confirmationEmailStatus: "sent",
     });
@@ -140,7 +153,7 @@ describe("the link alone is not authorisation", () => {
   });
 
   it("clears the capability once it has been spent", async () => {
-    cookieJar.set("wl_proof_capability", CAPABILITY);
+    cookieJar.set("wl_proof_capability", signedCapability(TOKEN, CAPABILITY));
     publicBookAppointmentAction.mockResolvedValue({
       ok: true, appointmentId: "a1", manageUrl: "https://x/m", confirmationEmailStatus: "sent",
     });
@@ -159,8 +172,9 @@ describe("secrets never cross the action boundary", () => {
     expect(strings).not.toContain(CAPABILITY);
     expect(strings).not.toContain(CODE);
     expect(strings).not.toContain(CHALLENGE_ID);
-    // The capability went to an httpOnly cookie instead.
-    expect(cookieJar.get("wl_proof_capability")).toBe(CAPABILITY);
+    // The capability went to an httpOnly cookie instead -- signed and bound to
+    // this invitation, so the stored value is not the bare credential either.
+    expect(cookieJar.get("wl_proof_capability")).toBe(signedCapability(TOKEN, CAPABILITY));
   });
 
   it("a requested code returns neither the code nor its challenge id", async () => {
@@ -186,7 +200,7 @@ describe("secrets never cross the action boundary", () => {
 
 describe("out-of-scope slots are never serialised", () => {
   beforeEach(() => {
-    cookieJar.set("wl_proof_capability", CAPABILITY);
+    cookieJar.set("wl_proof_capability", signedCapability(TOKEN, CAPABILITY));
     // Two candidate instants: a Wednesday and a Sunday, in Toronto.
     fetchPublicSlotsAction.mockResolvedValue({
       ok: true,
@@ -238,7 +252,7 @@ describe("terminal states are explicit", () => {
 // leave the capability in place, so a spent invitation showed live selectable
 // times and an ordinary retry looked like the tap had done nothing.
 describe("P2-A — a refused booking says what happened", () => {
-  beforeEach(() => { cookieJar.set("wl_proof_capability", CAPABILITY); });
+  beforeEach(() => { cookieJar.set("wl_proof_capability", signedCapability(TOKEN, CAPABILITY)); });
 
   it("a CONSUMED invitation becomes terminal, not a live offer", async () => {
     publicBookAppointmentAction.mockResolvedValue({
@@ -279,5 +293,78 @@ describe("P2-A — a refused booking says what happened", () => {
     });
     const out = await bookInvitationSlotAction(TOKEN, "2026-10-07T14:00:00.000Z");
     expect(out.kind).toBe("booked");
+  });
+});
+
+// P3-A. The first render used to treat the PRESENCE of any 64-hex cookie as
+// proof, so a hand-set value rendered the slot list without proving. The cookie
+// is now signed and bound to one invitation, and verified before anything
+// renders.
+describe("P3-A — the render gate is the authority gate", () => {
+  it("an unsigned bare capability does not unlock the times", async () => {
+    cookieJar.set("wl_proof_capability", CAPABILITY);
+    const out = await loadInvitationAction(TOKEN);
+    expect(out.kind, "a bare value must not read as proven").toBe("proof");
+  });
+
+  it("a forged signature does not unlock the times", async () => {
+    cookieJar.set("wl_proof_capability", `${CAPABILITY}.${"f".repeat(64)}`);
+    expect((await loadInvitationAction(TOKEN)).kind).toBe("proof");
+  });
+
+  it("a capability signed for a DIFFERENT invitation does not unlock this one", async () => {
+    cookieJar.set("wl_proof_capability", signedCapability("z".repeat(64), CAPABILITY));
+    expect((await loadInvitationAction(TOKEN)).kind).toBe("proof");
+  });
+
+  it("the properly signed cookie this action writes does unlock them", async () => {
+    cookieJar.set("wl_proof_capability", signedCapability(TOKEN, CAPABILITY));
+    expect((await loadInvitationAction(TOKEN)).kind).toBe("offer");
+  });
+
+  it("a forged cookie cannot book either", async () => {
+    cookieJar.set("wl_proof_capability", CAPABILITY);
+    const out = await bookInvitationSlotAction(TOKEN, "2026-10-07T14:00:00.000Z");
+    expect(publicBookAppointmentAction).not.toHaveBeenCalled();
+    expect(out.kind).toBe("proof");
+  });
+});
+
+// P3-B. A failed decline used to return the proof screen with no explanation.
+describe("P3-B — a failed decline says why", () => {
+  beforeEach(() => { cookieJar.set("wl_proof_capability", signedCapability(TOKEN, CAPABILITY)); });
+
+  it.each(["proof_expired", "proof_invalid", "proof_required"])(
+    "a %s decline explains the lapse and drops the dead capability",
+    async (kind) => {
+      declineInvitation.mockResolvedValue({ kind });
+      const out = await declineInvitationAction(TOKEN);
+      expect(out.kind).toBe("proof");
+      if (out.kind !== "proof") throw new Error("unreachable");
+      expect(out.notice).toBe("proof_lapsed");
+      expect(cookieJar.has("wl_proof_capability")).toBe(false);
+    },
+  );
+
+  it("an in-doubt decline says so, and KEEPS the capability", async () => {
+    declineInvitation.mockResolvedValue({ kind: "unavailable" });
+    const out = await declineInvitationAction(TOKEN);
+    if (out.kind !== "proof") throw new Error("unreachable");
+    expect(out.notice).toBe("decline_unavailable");
+    // The request may still have landed; discarding the credential would strand
+    // a recipient who is about to retry.
+    expect(cookieJar.has("wl_proof_capability")).toBe(true);
+  });
+
+  it("a decline against a DEAD invitation shows the terminal state, not a notice", async () => {
+    declineInvitation.mockResolvedValue({ kind: "not_live" });
+    resolveInvitation.mockResolvedValue({ kind: "already_redeemed" });
+    const out = await declineInvitationAction(TOKEN);
+    expect(out.kind).toBe("closed");
+  });
+
+  it("a successful decline is still terminal", async () => {
+    declineInvitation.mockResolvedValue({ kind: "declined", entryId: ENTRY });
+    expect((await declineInvitationAction(TOKEN)).kind).toBe("declined");
   });
 });

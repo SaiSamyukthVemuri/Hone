@@ -18,6 +18,7 @@
 //                         with no business in browser state)
 
 import { cookies, headers } from "next/headers";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import {
@@ -30,6 +31,7 @@ import {
 import {
   deriveInvitationViewState,
   type BookingRefusal,
+  type ProofNotice,
   filterSlotsToScope,
   groupSlotsByDay,
   proofStageFromBegin,
@@ -62,15 +64,55 @@ const CAPABILITY_COOKIE = "wl_proof_capability";
 /** The database owns the capability's 30 minutes; this only bounds the cookie. */
 const CAPABILITY_COOKIE_MAX_AGE_SECONDS = 30 * 60;
 
-async function readCapability(): Promise<string | null> {
-  const jar = await cookies();
-  const v = jar.get(CAPABILITY_COOKIE)?.value;
-  return typeof v === "string" && /^[a-f0-9]{64}$/.test(v) ? v : null;
+// P3-A. The cookie is SIGNED and BOUND to one invitation.
+//
+// It used to hold the bare capability, and the first render treated the mere
+// presence of any 64-hex value as proof -- so a hand-set cookie (devtools; page
+// script cannot, it is httpOnly) rendered the slot list without proving. Nothing
+// leaked, because those times are already public at /book/[slug], and booking
+// still failed at the database. But the RENDER gate and the AUTHORITY gate were
+// different things, and only one of them was checked.
+//
+// The value is now `<capability>.<hmac(sha256(token) + capability)>`, signed with
+// the same APPOINTMENT_SIGNING_SECRET and verified with the same timing-safe
+// compare the cancellation tokens use. A forged value fails the signature, and a
+// capability minted for a DIFFERENT invitation fails the binding -- before
+// anything renders, rather than at the database afterwards.
+
+function proofSecret(): string | null {
+  const secret = process.env.APPOINTMENT_SIGNING_SECRET;
+  return typeof secret === "string" && secret.length > 0 ? secret : null;
 }
 
-async function writeCapability(capability: string): Promise<void> {
+function bindingFor(rawToken: string, capability: string, secret: string): string {
+  const bound = `${createHash("sha256").update(rawToken, "utf8").digest("hex")}.${capability}`;
+  return createHmac("sha256", secret).update(bound).digest("hex");
+}
+
+async function readCapability(rawToken: string): Promise<string | null> {
+  const secret = proofSecret();
+  // No secret configured is a FAIL-CLOSED condition, not a bypass: without it
+  // nothing can be verified, so nothing is treated as proven.
+  if (!secret) return null;
   const jar = await cookies();
-  jar.set(CAPABILITY_COOKIE, capability, {
+  const v = jar.get(CAPABILITY_COOKIE)?.value;
+  if (typeof v !== "string") return null;
+  const [capability, signature] = v.split(".");
+  if (!capability || !signature) return null;
+  if (!/^[a-f0-9]{64}$/.test(capability)) return null;
+  const expected = bindingFor(rawToken, capability, secret);
+  if (signature.length !== expected.length) return null;
+  if (!timingSafeEqual(Buffer.from(signature, "utf8"), Buffer.from(expected, "utf8"))) {
+    return null;
+  }
+  return capability;
+}
+
+async function writeCapability(rawToken: string, capability: string): Promise<void> {
+  const secret = proofSecret();
+  if (!secret) return;
+  const jar = await cookies();
+  jar.set(CAPABILITY_COOKIE, `${capability}.${bindingFor(rawToken, capability, secret)}`, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
@@ -277,7 +319,7 @@ export async function loadInvitationAction(
   // A capability already in the jar means this browser proved recently. The
   // database still re-checks it at the mutation, so trusting it for RENDERING
   // only cannot authorise anything.
-  const proven = (await readCapability()) !== null;
+  const proven = (await readCapability(rawToken)) !== null;
   return offerState(ctx.resolve, ctx.studio, proven ? { kind: "proven" } : { kind: "required" });
 }
 
@@ -325,7 +367,7 @@ export async function submitInvitationProofAction(
 
   const completed = await completeRecipientProof(rawToken, code.trim().toLowerCase());
   if (completed.kind === "verified") {
-    await writeCapability(completed.rawCapability);
+    await writeCapability(rawToken, completed.rawCapability);
     return offerState(ctx.resolve, ctx.studio, { kind: "proven" });
   }
   return offerState(ctx.resolve, ctx.studio, proofStageFromComplete(completed, previous));
@@ -335,7 +377,7 @@ export async function submitInvitationProofAction(
 export async function declineInvitationAction(
   rawToken: string,
 ): Promise<InvitationViewState> {
-  const capability = await readCapability();
+  const capability = await readCapability(rawToken);
   if (!capability) {
     const ctx = await loadContext(rawToken);
     if (!ctx.ok) return ctx.state;
@@ -346,9 +388,31 @@ export async function declineInvitationAction(
     await clearCapability();
     return { kind: "declined" };
   }
+
+  // P3-B. A failed decline used to return the proof screen with no explanation,
+  // so the recipient's tap appeared to do nothing and they had no idea whether
+  // the studio had been told.
+  //
+  // Re-resolve first: if the invitation died underneath them (revoked, expired,
+  // already redeemed) that terminal state is the truth and outranks any notice.
   const ctx = await loadContext(rawToken);
   if (!ctx.ok) return ctx.state;
-  return offerState(ctx.resolve, ctx.studio, { kind: "required" });
+
+  // The capability did not satisfy the gate, so it is worthless -- drop it
+  // rather than leaving a dead credential to fail again on the next tap.
+  const notice: ProofNotice =
+    out.kind === "unavailable" ? "decline_unavailable" : "proof_lapsed";
+  if (notice === "proof_lapsed") await clearCapability();
+
+  return deriveInvitationViewState({
+    resolve: ctx.resolve,
+    presentation: ctx.studio.presentation,
+    proof: { kind: "required" },
+    slots: [],
+    booked: null,
+    declined: false,
+    proofNotice: notice,
+  });
 }
 
 /**
@@ -363,7 +427,7 @@ export async function bookInvitationSlotAction(
   rawToken: string,
   startsAt: string,
 ): Promise<InvitationViewState> {
-  const capability = await readCapability();
+  const capability = await readCapability(rawToken);
   const ctx = await loadContext(rawToken);
   if (!ctx.ok) return ctx.state;
   if (!capability) {
