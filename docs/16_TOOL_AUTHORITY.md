@@ -137,12 +137,12 @@ latest branch head; different claims have different anchors.
 | Claim | CLAIM_VALIDITY_KEY | INVALIDATED_BY | FRESHNESS |
 |---|---|---|---|
 | **Deployed application artifact** — *which code is serving* | The identity of the deployment actually **serving** production | A **successful** deployment or promotion that changes the serving identity | Current while that deployment still serves |
-| **Runtime behaviour** — *what production actually does* | The serving deployment identity, **plus** the applied-migration identity of the database it reads, **plus** any provider config revision the behaviour depends on | A successful deployment or promotion, **an apply to that database**, or a change to a provider config revision it depends on — **any one alone is enough** | Current only while **every** component of the key still holds |
+| **Runtime behaviour** — *what production actually does* | **Every input the measured behaviour depends on**, named by the claim: at minimum the serving deployment identity, plus the applied-migration identity of each database it reads, any provider config revision, and **any mutable data that gates the behaviour** — a studio flag, a setting, a row that selects a branch | A change to **any** named input: a deployment or promotion, an apply, a config change, or ordinary DML on gating data. **Any one alone is enough** | Current only while **every** named input still holds |
 | **Schema / migration state** | The observed instance + its applied migration identity | An apply to *that* instance | Current until that instance is applied to |
 | **Mutable data state** — row counts, tenant counts, open-alert counts, current settings | The observed instance + **`observed_at`**, plus any data revision or event that changes with the fact | Ordinary DML, an authorized production write, or any such event | **Point-in-time.** Never current merely because migration max did not move |
 | **Hosted — event fact** ("deployment X occurred") | The event identity | Nothing | **Permanently authoritative for the OCCURRENCE claim** — and it proves nothing about current state. See below |
 | **Hosted — current config observation** | The config revision read | A config change superseding that revision | Current until superseded |
-| **Hosted — health / reachability probe** | The probe + `observed_at` + **the resolved target it actually reached** — deployment ID and/or config revision, never an alias | Expiry of its stated freshness window, **or** any change to that resolved target — whichever comes first | **Point-in-time, window must be stated.** A live window does not survive a promotion |
+| **Hosted — health / reachability probe** | The probe + `observed_at` + **the resolved target it actually reached** — deployment ID and/or config revision, never an alias — **plus the applied-migration identity of any database surface the probe exercises** | Expiry of its stated freshness window, a change to that resolved target, **or** an apply to a database surface it exercised — whichever comes first | **Point-in-time, window must be stated.** A live window survives neither a promotion nor an apply |
 | **Hosted — current deployment identity** | The **resolved deployment ID**, or an alias→deployment mapping observed at a stated instant. **Never an alias alone** | A successful promotion or deployment that changes the resolved target | Current until the resolved target changes |
 | **PR review** | The exact PR head SHA | Any push to that PR, including a docs-only one | Current only at that head |
 | **Source claim — file-local** ("this file states X") | The **contents of the cited file**. The SHA it was read at is *provenance*, not the key | A change to that file's contents | Current at every SHA where those contents are unchanged |
@@ -158,12 +158,21 @@ deployment identity alone would leave pre-apply evidence reading as **current**
 after the behaviour it measured had changed, with nothing in the key moving to
 say so.
 
+Nor is it the deployment plus the schema. Behaviour is routinely gated by
+**mutable data** that no deployment or migration touches:
+`app/(app)/calendar/actions.ts` branches the booking target on
+`studios.practitioner_capacity_enabled`, so an authorized toggle of that single
+column changes booking behaviour with no deploy, no apply and no provider
+change. The `Mutable data state` row below already governs such a column as a
+claim in its own right; a runtime-behaviour claim that *depends* on it inherits
+that volatility.
+
 So the two are separate rows. A claim about **which artifact is serving** keys on
 the deployment and nothing else, and is easy to keep current. A claim about
-**what production does** keys on the deployment *and* the database it reads *and*
-the provider config it depends on, and any one of those moving retires it. State
-which of the two you are making — they are not interchangeable, and the broader
-one decays faster.
+**what production does** keys on every input it actually depends on — the
+deployment, the schema of each database it reads, the provider config, and the
+gating data — and any one of those moving retires it. State which of the two you
+are making: they are not interchangeable, and the broader one decays faster.
 
 **A freshness window does not survive a change of target.** A promotion moments
 after a successful probe leaves that probe inside its stated window while the
@@ -172,8 +181,37 @@ deployment it reached is no longer the one serving, so the window would report
 observation of *the same target* stays good; it cannot vouch for a different
 one. This is the `ALIAS_NAME` / `SERVING_DEPLOYMENT_IDENTITY` rule below applied
 to health — the deployment-identity row already keys on the resolved target, and
-a probe keyed only on elapsed time would contradict the row beside it. Whichever
-comes first, window expiry or target change, ends the claim.
+a probe keyed only on elapsed time would contradict the row beside it.
+
+A probe that exercises a **database-backed** surface takes the schema as an
+input too, for the same reason the runtime row above does: an apply can change
+or break that surface while the resolved deployment and the window both hold
+steady. Hone runs exactly such probes — the post-deploy check in
+`docs/runbooks/0155-probe-inventory-linkage-rollout.md` loads a charting session
+and the Sterile Items page to confirm the migrated surfaces render. Whichever
+comes first — window expiry, target change, or an apply to a surface the probe
+exercised — ends the claim.
+
+**A validity key names inputs, and the list above is a checklist, not a closed
+set.** These rows enumerate the components that have actually caught this
+repository out — the serving deployment, applied-migration identity, provider
+config revision, gating data — because each was omitted once and each omission
+bought a confidently wrong answer. That history is not a proof of completeness,
+and treating the list as exhaustive would reproduce the failure one component
+further out.
+
+The rule is the one the source rows already use: **name what you depended on.**
+A claim whose stated inputs do not cover what it measured is not made current by
+the fact that this table did not happen to list the missing one. When an input
+is discovered late, the claim that omitted it was already history — it just did
+not say so.
+
+Which is the argument for the **narrow** claim. "Deployment `X` is serving" has
+one input and stays current for days. "Booking behaves like `Y`" has the
+deployment, the schema of every database it reads, the provider config and every
+flag on the path, and is stale the moment an operator toggles one of them.
+Prefer the claim you can actually keep, and widen only when the question genuinely
+requires it.
 
 **Occurrence authority is not current-state authority.** That an event happened
 is settled permanently by the evidence of that event, and no later change makes
