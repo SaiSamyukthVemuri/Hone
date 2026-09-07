@@ -32,6 +32,7 @@ const {
 const TOKEN = "a".repeat(64);
 const CAP = "b".repeat(64);
 const CHALLENGE = "c".repeat(64);
+const CHALLENGE_ID = "9f1c2d3e-4a5b-4c6d-8e7f-0a1b2c3d4e5f";
 const EMAIL = "chloe@example.test";
 // Computed independently of the module under test, the way the accepted
 // resolve_ command computes it: sha256(lower(btrim(email))).
@@ -325,6 +326,7 @@ describe("begin proof — the code the delivery layer has to send", () => {
       {
         result: "challenge_issued",
         raw_challenge: CHALLENGE,
+        challenge_id: CHALLENGE_ID,
         delivery_contact: EMAIL,
         expires_at: "2026-09-10T12:20:00Z",
         ...over,
@@ -373,6 +375,45 @@ describe("begin proof — the code the delivery layer has to send", () => {
     // not a redaction. Neither may appear either.
     expect(joined).not.toContain(createHash("sha256").update(CHALLENGE).digest("hex"));
     expect(joined).not.toContain(CHALLENGE.slice(0, 8));
+  });
+
+  // 0192 mints the challenge its own non-secret id. Delivery keys its proof-send
+  // idempotency on THIS, so that nothing is ever derived from the code.
+  it("surfaces the challenge's own non-secret id", async () => {
+    rpc.mockResolvedValue({ data: challengeRow(), error: null });
+    const out = await beginRecipientProof(TOKEN);
+    if (out.kind !== "challenge_issued") throw new Error("unreachable");
+    expect(out.proofChallengeId).toBe(CHALLENGE_ID);
+  });
+
+  it("keeps the id and the code as independent values", async () => {
+    rpc.mockResolvedValue({ data: challengeRow(), error: null });
+    const out = await beginRecipientProof(TOKEN);
+    if (out.kind !== "challenge_issued") throw new Error("unreachable");
+    // The identity must not BE the code, nor anything derived from it: a digest
+    // over a small code space is an offline verifier, and a prefix is a head
+    // start. This pins that the id is independent, not a transform.
+    expect(out.proofChallengeId).not.toBe(out.rawChallenge);
+    expect(out.proofChallengeId).not.toContain(out.rawChallenge.slice(0, 8));
+    const digest = createHash("sha256").update(out.rawChallenge).digest("hex");
+    expect(out.proofChallengeId).not.toBe(digest);
+    expect(digest).not.toContain(out.proofChallengeId);
+  });
+
+  it("never leaks the id into the browser-facing projection", async () => {
+    rpc.mockResolvedValue({ data: challengeRow(), error: null });
+    const out = await beginRecipientProof(TOKEN);
+    if (out.kind !== "challenge_issued") throw new Error("unreachable");
+    // maskedContact is the ONLY field of this variant B3 renders.
+    expect(out.maskedContact).not.toContain(out.proofChallengeId);
+    expect(out.maskedContact).not.toContain(out.rawChallenge);
+  });
+
+  it("is unavailable when the row carries no challenge id", async () => {
+    // Sending a challenge that cannot be keyed would leave the send
+    // un-idempotent, so a row without an id is IN DOUBT, not half-issued.
+    rpc.mockResolvedValue({ data: challengeRow({ challenge_id: null }), error: null });
+    expect((await beginRecipientProof(TOKEN)).kind).toBe("unavailable");
   });
 
   it("is unavailable rather than half-issued when the row carries no code", async () => {

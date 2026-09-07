@@ -90,6 +90,23 @@ export type BeginProofOutcome =
   | {
       kind: "challenge_issued";
       /**
+       * The challenge's own durable, NON-SECRET identity, minted by the database.
+       *
+       * This is what the delivery layer keys its proof-send idempotency on. It
+       * exists precisely so that nothing has to be derived from the code: a
+       * digest of the code would be an offline verifier over a small code space,
+       * and keying on the invitation id would collapse successive challenges for
+       * one invitation into a single key -- which is exactly when a replayed
+       * provider response does the most harm.
+       *
+       * SERVER-SIDE ONLY, though for a different reason than the two fields
+       * below. It is not a secret and leaking it would not let anyone prove
+       * anything; it simply has no business in browser state, where it would
+       * become a correlatable per-challenge handle for no benefit. B3 renders
+       * `maskedContact` and nothing else from this variant.
+       */
+      proofChallengeId: string;
+      /**
        * THE PROOF CODE. Returned exactly once, by the call that minted it: the
        * database stores only its SHA-256, so it cannot be read back afterwards
        * by anyone, this server included. The delivery layer must hand it
@@ -97,6 +114,9 @@ export type BeginProofOutcome =
        * log line, no idempotency key, no rate-limit key, no error string, and
        * nothing DERIVED from it either. The code space is small, so a stable
        * hash or a prefix is an offline verifier, not a redaction.
+       *
+       * Idempotency identity comes from `proofChallengeId` above. It must never
+       * come from this value, in whole, hashed, or truncated.
        */
       rawChallenge: string;
       /** DB-owned. Never recomputed here; the stored value is the only truth. */
@@ -413,11 +433,18 @@ export async function beginRecipientProof(
       // discarding it, which is what left the delivery layer with a challenge
       // it could not send. No SQL, contract or lifecycle rule changes here.
       const rawChallenge = str(row, "raw_challenge");
-      if (!deliveryContact || !expiresAt || !rawChallenge) {
+      // 0192 returns the challenge's own id as `challenge_id`. B2 surfaces it as
+      // `proofChallengeId` so the delivery layer has a non-secret event identity
+      // and never has to reach for the code. A row missing it is IN DOUBT rather
+      // than half-issued: sending a challenge that cannot be keyed would leave
+      // the send un-idempotent.
+      const proofChallengeId = str(row, "challenge_id");
+      if (!deliveryContact || !expiresAt || !rawChallenge || !proofChallengeId) {
         return { kind: "unavailable" };
       }
       return {
         kind: "challenge_issued",
+        proofChallengeId,
         rawChallenge,
         expiresAt,
         deliveryContact,
