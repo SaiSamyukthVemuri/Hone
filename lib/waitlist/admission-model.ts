@@ -13,6 +13,15 @@
 // importer of this module. That is the boundary this file is drawn on: an
 // action a studio cannot yet perform does not belong in it.
 //
+// WIRED IS NOT THE SAME AS OFFERED. `claim` is still wired, still tested and
+// still reachable through its server action — but it is NOT rendered on the
+// practitioner surface any more. Claiming is an internal transition that moves
+// an entry out of general contention; it is not a job a studio owner sets out to
+// do, and putting it on screen described the mechanism rather than the work.
+// This module therefore keeps deciding claim's availability, and the page simply
+// does not ask for it. Nothing was removed from the database, the commands or
+// the actions, so restoring the control is a rendering change and nothing more.
+//
 // INVITING IS NOT HERE, AND IS NOT IN THIS REPOSITORY STATE AT ALL.
 // `issue_new_client_waitlist_invitation` mints a token that has to reach a real
 // recipient, which is B1/B1.5c + B2 work. Invite, reinvite, the TTL bounds and
@@ -57,12 +66,23 @@ export const WAITLIST_ENTRY_STATUSES = [
 
 export type WaitlistEntryStatus = (typeof WAITLIST_ENTRY_STATUSES)[number];
 
-/** Operator-facing label for each shipped state. `claimed` is the state the
- *  brief does not name: the entry is held for this studio but no invitation has
- *  been issued yet, which is a real and visible waiting room of its own. */
+/**
+ * What a PRACTITIONER calls each shipped state.
+ *
+ * THE DATABASE'S WORD IS NOT ALWAYS THE PRACTITIONER'S. `claimed` is an
+ * internal transition — it records that an entry has been taken out of general
+ * contention and is ready for an invitation. The word "claimed" describes the
+ * mechanism, not anything a studio owner is trying to do, and shipping it made
+ * the queue read like an implementation detail. The state keeps its database
+ * name everywhere in code; only what is SHOWN changes.
+ *
+ * These labels are the single source of the practitioner's vocabulary — the
+ * section headings on /settings/waitlist read from here, so a state cannot be
+ * called one thing in a heading and another on a row.
+ */
 export const STATUS_LABEL: Record<WaitlistEntryStatus, string> = {
   waiting: "Waiting",
-  claimed: "Held",
+  claimed: "Ready to invite",
   invited: "Invited",
   converted: "Booked",
   expired: "Expired",
@@ -71,17 +91,21 @@ export const STATUS_LABEL: Record<WaitlistEntryStatus, string> = {
 };
 
 /** One line explaining what the state MEANS operationally. Shown beside the
- *  status so a practitioner never has to infer the difference between `Held`
- *  and `Invited`, or between `Released` and `Removed`. */
+ *  status so a practitioner never has to infer the difference between
+ *  `Ready to invite` and `Invited`, or between `Released` and `Removed`.
+ *
+ *  NO INTERNAL VOCABULARY HERE. These sentences are read by a practitioner, so
+ *  they describe where the person stands, never which transition put them
+ *  there. */
 export const STATUS_MEANING: Record<WaitlistEntryStatus, string> = {
-  waiting: "In the queue. No one has started admitting them.",
-  claimed: "Held for this studio. No invitation has been sent yet.",
+  waiting: "On the waitlist, in the order they joined.",
+  claimed: "Ready for an invitation. Nothing has been sent to them yet.",
   // For an `invited` entry the page may know MORE than the status does — see
   // `statusMeaning` below. This sentence is only the no-context default.
   invited: "An invitation is out.",
   converted: "They booked. This entry is closed.",
   expired: "The invitation ran out before it was used.",
-  released: "Out of the queue. Return them to it before they can be claimed again.",
+  released: "Off the waitlist for now. Return them to it to put them back in line.",
   removed: "Taken off the waitlist by the studio. Terminal.",
 };
 
@@ -97,13 +121,98 @@ export const ADMISSION_ACTIONS = [
 
 export type AdmissionAction = (typeof ADMISSION_ACTIONS)[number];
 
+/**
+ * The DEFAULT label for each action, by the command's own name.
+ *
+ * `claim` and `release` are internal words. The surface must not render either
+ * of these entries directly — it calls `actionLabel` below, which knows what the
+ * practitioner is actually being offered.
+ */
 export const ACTION_LABEL: Record<AdmissionAction, string> = {
   claim: "Claim",
   expire: "Record expired",
   release: "Release",
-  requeue: "Return to queue",
+  requeue: "Return to waitlist",
   remove: "Remove from waitlist",
 };
+
+/**
+ * WHAT EACH COMMAND DOES TO THE ENTRY'S STATUS.
+ *
+ * Copied from the shipped SQL, and load-bearing rather than documentary: a label
+ * may only promise the outcome named here, and two controls may share a label
+ * ONLY when they land the entry in the same state. A test derives both facts
+ * from the migrations so this table cannot drift away from them.
+ *
+ * `release` is the one that has already misled once. It does NOT return anyone
+ * to the waitlist — `0189` sets `status = 'released'`, and reaching `waiting`
+ * needs the separate `requeue` transition (`0188`, `set status = 'waiting'`).
+ */
+export const ACTION_RESULT_STATUS: Record<AdmissionAction, WaitlistEntryStatus> = {
+  claim: "claimed",
+  expire: "expired",
+  release: "released",
+  requeue: "waiting",
+  remove: "removed",
+};
+
+/**
+ * ONE COMMAND, TWO MEANINGS — and the label has to say which.
+ *
+ * `release_new_client_waitlist_entry` is a single command, but what it ends
+ * depends entirely on what the entry was doing. On a `claimed` entry it gives up
+ * a hold nobody outside the studio ever saw. On an `invited` entry it ends an
+ * invitation that has ALREADY REACHED SOMEONE — a materially different act, and
+ * one an owner deserves to be warned about by the button itself. Labelling both
+ * "Release" made the more consequential of the two look like filing.
+ *
+ * NEITHER OF THEM RETURNS ANYONE TO THE WAITLIST, and an earlier revision of
+ * this file said one of them did. "Return to waitlist" on a `claimed` row was a
+ * promise the command cannot keep: release lands the entry in `released`, where
+ * a SECOND control — requeue, which genuinely is "Return to waitlist" — is what
+ * reaches `waiting`. An owner could press it, watch the person leave this
+ * section, and reasonably conclude they were back in the queue while they had in
+ * fact been dropped out of it. "Set aside" says only what release actually does.
+ */
+const RELEASE_LABEL: Partial<Record<WaitlistEntryStatus, string>> = {
+  claimed: "Set aside",
+  invited: "Cancel invitation",
+};
+
+/**
+ * A sentence beside a control whose consequence is not obvious from its verb.
+ *
+ * "Set aside" is honest but terse, and the round trip back to the waitlist is
+ * two steps rather than one. Saying so beside the button is the difference
+ * between a short label and a misleading one.
+ */
+const ACTION_HELP: Partial<Record<string, string>> = {
+  "release:claimed":
+    "Move this person out of Ready to invite. You can return them to the waitlist later.",
+};
+
+/** Help text for a control, or null where the verb speaks for itself. */
+export function actionHelp(
+  action: AdmissionAction,
+  status: WaitlistEntryStatus,
+): string | null {
+  return ACTION_HELP[`${action}:${status}`] ?? null;
+}
+
+/**
+ * What the control SAYS, given the row it sits on.
+ *
+ * Every rendered action label must come from here rather than from
+ * `ACTION_LABEL`, so a status-dependent verb cannot be rendered by its
+ * status-independent default.
+ */
+export function actionLabel(
+  action: AdmissionAction,
+  status: WaitlistEntryStatus,
+): string {
+  if (action === "release") return RELEASE_LABEL[status] ?? ACTION_LABEL.release;
+  return ACTION_LABEL[action];
+}
 
 /**
  * Whether an action may be offered, and if not, WHY — from one function, so the
@@ -230,7 +339,10 @@ export function actionAvailability(
       if (!context.invitationElapsed) {
         return {
           available: false,
-          reason: `This invitation has not run out yet. Use “${ACTION_LABEL.release}” to end it early.`,
+          // Names the control by what it SAYS on this row — an `invited` row
+          // offers "Cancel invitation", so pointing at "Release" would send an
+          // owner looking for a button that is not there.
+          reason: `This invitation has not run out yet. Use “${actionLabel("release", status)}” to end it early.`,
         };
       }
       return { available: true };

@@ -507,18 +507,15 @@ describe("rendered rows", () => {
       ...[...html.matchAll(/<button[^>]*>(.*?)<\/button>/g)].map((m) => m[1]),
       ...[...html.matchAll(/<summary[^>]*>(.*?)<\/summary>/g)].map((m) => m[1]),
     ];
-    // WAIT-EXPOSE-01 surfaced the lifecycle authority that already shipped, so
-    // the list this test anticipated changing has changed. A WAITING row now
-    // offers Claim; the page offers Claim next once, above the sections. What
-    // is NOT here is the point: no Release, no Record expired, no Send
-    // invitation — none of those is permitted on a waiting entry, and the page
-    // withholds them from stored state rather than firing a command to find out.
-    expect(controls.sort()).toEqual([
-      "Claim",
-      "Claim next",
-      "Confirm removal",
-      "Remove",
-    ]);
+    // CLAIMING IS INTERNAL AND IS NOT OFFERED. A waiting row's only control is
+    // removal, behind its confirmation step. What is NOT here is the point: no
+    // Claim, no "Claim next", no Release, no Record expired, no Send invitation
+    // — none of those is either permitted on a waiting entry or a job a
+    // practitioner is being asked to do.
+    expect(controls.sort()).toEqual(["Confirm removal", "Remove"]);
+    // Stated as its own claim so a future control named something else cannot
+    // reintroduce claiming past the equality above.
+    expect(html).not.toMatch(/\bclaim/i);
 
     // No links: a waiting person has no client record to navigate to, and
     // offering one would imply they are already a client.
@@ -827,10 +824,16 @@ function actionsFor(html: string): string[] {
 }
 
 describe("action visibility follows the row's lifecycle state", () => {
+  // The test ids stay the COMMAND's name — `waitlist-action-release` — because
+  // renaming them would churn every selector for a copy change. What the button
+  // SAYS is asserted separately, below.
   const CASES: ReadonlyArray<[string, string[]]> = [
-    ["waiting", ["claim"]],
+    // A waiting row offers no lifecycle control at all now: claiming is
+    // internal, and nothing else is permitted on a waiting entry. Removal is
+    // its own disclosure and carries no action test id.
+    ["waiting", []],
     ["claimed", ["release"]],
-    // A LIVE invitation offers Release (end it early) and NOT Record expired.
+    // A LIVE invitation offers release (end it early) and NOT Record expired.
     ["invited", ["release"]],
     ["expired", ["requeue"]],
     ["released", ["requeue"]],
@@ -954,19 +957,33 @@ describe("action visibility follows the row's lifecycle state", () => {
     expect(invRead).not.toMatch(/issued_at/);
   });
 
-  it("Claim next follows the waiting SECTION's own count", async () => {
-    // Each section is read and counted independently, so "is anyone waiting?"
-    // no longer depends on what happens to fit in a page shared with other
-    // states.
-    scenario.rows = [entry({ id: "c1", status: "claimed" })];
-    expect(await render()).not.toContain("Claim next");
+  it("CLAIM NEXT IS GONE — it is offered in no queue shape at all", async () => {
+    // It used to render above the sections whenever anyone was waiting. Bulk
+    // claiming is an internal transition, so the control is removed rather than
+    // merely hidden: no queue composition brings it back.
+    for (const rows of [
+      [entry({ id: "c1", status: "claimed" })],
+      [entry({ id: "w1", status: "waiting" })],
+      [entry({ id: "c1", status: "claimed" }), entry({ id: "w1", status: "waiting" })],
+      Array.from({ length: 30 }, (_, i) => entry({ id: `w${i}`, status: "waiting" })),
+    ]) {
+      reset();
+      scenario.rows = rows;
+      const html = await render();
+      expect(html).not.toContain("Claim next");
+      expect(html).not.toContain("Claim the next");
+      // The count input the form carried is gone with it.
+      expect(html).not.toContain('name="count"');
+    }
+  });
 
-    reset();
-    scenario.rows = [
-      entry({ id: "c1", status: "claimed" }),
-      entry({ id: "w1", status: "waiting" }),
-    ];
-    expect(await render()).toContain("Claim next");
+  it("NON-VACUITY — the queue still renders while Claim next does not", async () => {
+    // Without this, the assertions above would pass against a page that failed
+    // to render anything at all.
+    scenario.rows = [entry({ id: "w1", status: "waiting", name: "Still Here" })];
+    const html = await render();
+    expect(html).toContain(">Still Here<");
+    expect(html).toMatch(/Waitlist entries:\s*<[^>]*>1</);
   });
 
   it("a busy section cannot crowd another off the page", async () => {
@@ -1342,5 +1359,225 @@ describe("a browser-supplied section or page can never mislead", () => {
     const html = await render({ section: "released" });
     expect(html).toContain("Nobody is in this group right now.");
     expect(html).not.toContain("That page is past the end");
+  });
+});
+
+// ===========================================================================
+// THE PRACTITIONER'S VOCABULARY, NOT THE IMPLEMENTATION'S
+// ===========================================================================
+//
+// "Claim" describes how the queue moves an entry out of general contention. It
+// is not a job a studio owner sets out to do, and putting it on screen made the
+// waitlist read like an implementation detail rather than a list of people
+// waiting to hear back. The state, the commands and the server actions are all
+// unchanged — only what is RENDERED moved.
+
+/** A live invitation for one entry: not redeemed, not yet elapsed. */
+function liveInvitationFor(entryId: string) {
+  return [{ entry_id: entryId, expires_at: new Date(Date.now() + 86_400_000).toISOString() }];
+}
+
+/**
+ * What a practitioner can actually READ.
+ *
+ * Scripts and then tags are stripped, so `data-testid="waitlist-section-claimed"`
+ * and `data-entry-status="claimed"` are excluded by construction. Those keep the
+ * DATABASE's word deliberately: they are selectors and internal state, renaming
+ * them would churn every test and every query, and no practitioner sees them.
+ * The rule being enforced is about COPY, so the check is about copy.
+ */
+function visibleText(html: string): string {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/g, " ")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/\s+/g, " ");
+}
+
+describe("claiming is internal and never reaches the screen", () => {
+  it("a WAITING row offers no Claim, and the word appears nowhere", async () => {
+    scenario.rows = [entry({ id: "w1", status: "waiting", name: "Ada Waiting" })];
+    const html = await render();
+
+    // The row is genuinely rendered — the absence below is not an empty page.
+    expect(html).toContain(">Ada Waiting<");
+    expect(rowActions(html, "w1")).toEqual([]);
+    expect(visibleText(html)).not.toMatch(/\bclaim/i);
+  });
+
+  it("NO section, in any state, renders the word", async () => {
+    // Every state at once: if any heading, meaning line or control still says
+    // it, this catches it regardless of which section it came from.
+    scenario.rows = [
+      entry({ id: "w1", status: "waiting" }),
+      entry({ id: "c1", status: "claimed" }),
+      entry({ id: "i1", status: "invited" }),
+      entry({ id: "x1", status: "expired" }),
+      entry({ id: "r1", status: "released" }),
+    ];
+    scenario.liveInvitations = liveInvitationFor("i1");
+    const html = await render();
+
+    // NON-VACUITY: all five sections really did render.
+    for (const s of ["waiting", "claimed", "invited", "expired", "released"]) {
+      expect(html, s).toContain(`data-testid="waitlist-section-${s}"`);
+    }
+    const text = visibleText(html);
+    expect(text).not.toMatch(/\bclaim/i);
+    expect(text).not.toMatch(/\bheld\b/i);
+    // NON-VACUITY for the stripper: it kept the copy it was meant to scan.
+    expect(text).toContain("Ready to invite");
+    expect(text).toContain("Waitlist entries");
+  });
+});
+
+describe("what each state and control is CALLED", () => {
+  it("a claimed row is shown as READY TO INVITE", async () => {
+    scenario.rows = [entry({ id: "c1", status: "claimed", name: "Bo Ready" })];
+    const html = await render();
+
+    expect(html).toContain("Ready to invite");
+    expect(html).toContain(">Bo Ready<");
+    // The section is genuinely the claimed one — the heading is not coming from
+    // somewhere else — and the state's old name reaches no copy.
+    expect(html).toContain('data-testid="waitlist-section-claimed"');
+    expect(visibleText(html)).not.toMatch(/\bheld\b/i);
+  });
+
+  it("a claimed row's release control reads SET ASIDE, not a false promise", async () => {
+    // THE P1 THIS PINS. Release does NOT return anyone to the waitlist: it
+    // lands the entry in `released`, where a SECOND control — requeue, which
+    // genuinely is "Return to waitlist" — is what reaches `waiting`. Labelling
+    // this one "Return to waitlist" let an owner drop someone out of the queue
+    // believing they had put them back in it.
+    scenario.rows = [entry({ id: "c1", status: "claimed" })];
+    const html = await render();
+
+    // The control is present and wired…
+    expect(rowActions(html, "c1")).toContain("release");
+    // …and it promises only what the command delivers.
+    const row = rowMarkup(html, "c1")!;
+    expect(row).toContain("Set aside");
+    expect(row).not.toContain("Return to waitlist");
+    expect(row).not.toMatch(/>Release</);
+    expect(row).not.toContain("Cancel invitation");
+
+    // The consequence the verb cannot carry sits beside the control.
+    expect(row).toContain('data-testid="waitlist-action-help-release"');
+    expect(row).toContain("You can return them to the waitlist later.");
+  });
+
+  it("an invited row's release control reads CANCEL INVITATION", async () => {
+    // The same command, but it ends something that has ALREADY REACHED SOMEONE.
+    // Labelling both "Release" made the more consequential one look like filing.
+    scenario.rows = [entry({ id: "i1", status: "invited" })];
+    scenario.liveInvitations = liveInvitationFor("i1");
+    const html = await render();
+
+    expect(rowActions(html, "i1")).toContain("release");
+    const row = rowMarkup(html, "i1")!;
+    expect(row).toContain("Cancel invitation");
+    expect(row).not.toContain("Return to waitlist");
+    expect(row).not.toMatch(/>Release</);
+  });
+
+  it("ALL THREE READ DIFFERENTLY ON THE SAME PAGE", async () => {
+    // Non-vacuity for the trio: rendered together, so no assertion is passing
+    // on an absent row. And the whole point of the P1 — the two controls that
+    // perform DIFFERENT transitions must not read alike, while the one that
+    // genuinely returns someone to the waitlist keeps that phrase to itself.
+    scenario.rows = [
+      entry({ id: "c1", status: "claimed" }),
+      entry({ id: "i1", status: "invited" }),
+      entry({ id: "r1", status: "released" }),
+    ];
+    scenario.liveInvitations = liveInvitationFor("i1");
+    const html = await render();
+
+    expect(rowMarkup(html, "c1")).toContain("Set aside");
+    expect(rowMarkup(html, "i1")).toContain("Cancel invitation");
+    expect(rowMarkup(html, "r1")).toContain("Return to waitlist");
+
+    // THE BUTTON LABEL "Return to waitlist" BELONGS TO REQUEUE ALONE — this is
+    // the assertion that would have caught the defect. Matched case-sensitively
+    // against the label itself: the help sentence beside Set aside says
+    // "return THEM to the waitlist later", which is a different string and a
+    // true one, so it is not what is being excluded here.
+    expect(rowMarkup(html, "c1")).not.toContain("Return to waitlist");
+    expect(rowMarkup(html, "i1")).not.toContain("Return to waitlist");
+    expect(rowMarkup(html, "c1")).not.toContain("Cancel invitation");
+    expect(rowMarkup(html, "r1")).not.toContain("Set aside");
+  });
+
+  it("requeue reads RETURN TO WAITLIST on expired and released rows", async () => {
+    scenario.rows = [
+      entry({ id: "x1", status: "expired" }),
+      entry({ id: "r1", status: "released" }),
+    ];
+    const html = await render();
+
+    for (const id of ["x1", "r1"]) {
+      expect(rowActions(html, id), id).toContain("requeue");
+      expect(rowMarkup(html, id), id).toContain("Return to waitlist");
+      expect(rowMarkup(html, id), id).not.toContain("Return to queue");
+    }
+  });
+});
+
+describe("the wiring underneath is untouched", () => {
+  it("both claim server actions still exist and are still exported", async () => {
+    // This change removed a control, not a capability. If the actions were
+    // deleted, restoring the UI would stop being a rendering change.
+    const actions = await import("@/app/(app)/settings/waitlist/actions");
+    expect(typeof actions.claimWaitlistEntryAction).toBe("function");
+    expect(typeof actions.claimNextWaitlistEntriesAction).toBe("function");
+  });
+
+  it("every lifecycle command is still reached by the action layer", async () => {
+    // The RPC census, over BOTH shapes: four actions pass the command name
+    // through the shared runner as `rpc: "..."`, two call `.rpc("...")`.
+    const src = readFileSync(
+      path.resolve(__dirname, "../../../app/(app)/settings/waitlist/actions.ts"),
+      "utf8",
+    );
+    for (const command of [
+      "claim_new_client_waitlist_entry",
+      "claim_new_client_waitlist_entries",
+      "release_new_client_waitlist_entry",
+      "expire_new_client_waitlist_invitation",
+      "requeue_new_client_waitlist_entry",
+      "remove_new_client_waitlist_entry",
+    ]) {
+      expect(src, command).toContain(command);
+    }
+    // And the deferred three are still INVOKED nowhere. Comments are stripped
+    // first: this file names all three in a comment saying it deliberately does
+    // not wire them, and a scan of raw text would read that promise as a
+    // breach of itself.
+    const code = src
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "");
+    for (const deferred of [
+      "issue_new_client_waitlist_invitation",
+      "redeem_new_client_waitlist_invitation",
+      "record_new_client_waitlist_conversion",
+    ]) {
+      expect(code, deferred).not.toContain(deferred);
+    }
+    // NON-VACUITY: the stripped source is still real code, not an empty string.
+    expect(code).toContain("createAdminClient");
+  });
+
+  it("the PAGE no longer invokes either claim action", async () => {
+    // The removal is total: not merely an unrendered branch, but no import.
+    const src = readFileSync(
+      path.resolve(__dirname, "../../../app/(app)/settings/waitlist/page.tsx"),
+      "utf8",
+    ).replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+    expect(src).not.toContain("claimWaitlistEntryAction");
+    expect(src).not.toContain("claimNextWaitlistEntriesAction");
+    // NON-VACUITY: the stripped source is still real code with the actions it
+    // DOES use.
+    expect(src).toContain("releaseWaitlistEntryAction");
+    expect(src).toContain("requeueWaitlistEntryAction");
   });
 });
