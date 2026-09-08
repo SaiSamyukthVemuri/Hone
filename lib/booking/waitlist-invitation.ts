@@ -80,6 +80,7 @@ export type IssueOutcome =
   | { kind: "invalid_ttl" }
   | { kind: "not_claimed" }
   | { kind: "not_found" }
+  | { kind: "invalid_input" }
   | { kind: "not_authorized" }
   | Unavailable;
 
@@ -384,7 +385,18 @@ export async function issueScopedInvitation(input: {
       case "issued": {
         const rawToken = str(row, "raw_token");
         const invitationId = str(row, "invitation_id");
-        if (!rawToken || !invitationId) return { kind: "unavailable" };
+        // A SUCCESS that cannot carry the secret is not a success. `issued` was
+        // returned for any non-empty string, so a truncated, upper-cased or
+        // otherwise malformed token would have been handed on as a working
+        // invitation URL -- one the database could never match back, since it
+        // stores only the SHA-256 of the real one. Held to the same RAW_SECRET
+        // contract every other caller here already uses.
+        //
+        // Nothing is mutated. The row exists either way; this is the RESPONSE
+        // boundary refusing to describe it as usable.
+        if (!invitationId || !rawToken || !RAW_SECRET.test(rawToken)) {
+          return { kind: "unavailable" };
+        }
         return { kind: "issued", invitationId, rawToken };
       }
       case "no_round_open":
@@ -400,6 +412,10 @@ export async function issueScopedInvitation(input: {
       case "invalid_ttl":
       case "not_claimed":
       case "not_found":
+      // The sixth member of 0192's passthrough list, reported last round rather
+      // than swept in with the other five. Same defect class: a definitive
+      // refusal must not read as in-doubt.
+      case "invalid_input":
         return { kind: result };
       default:
         // An unrecognised code is IN DOUBT, never a silent success.
@@ -556,6 +572,10 @@ export async function beginRecipientProof(
       // The accepted SQL has always returned this; the wrapper simply stopped
       // discarding it, which is what left the delivery layer with a challenge
       // it could not send. No SQL, contract or lifecycle rule changes here.
+      // The proof code holds the SAME secret contract completeRecipientProof
+      // enforces on the way back in, so a malformed one could never verify.
+      // Accepting it would hand the delivery layer a code guaranteed to fail,
+      // and tell the recipient to type it.
       const rawChallenge = str(row, "raw_challenge");
       // 0192 returns the challenge's own id as `challenge_id`. B2 surfaces it as
       // `proofChallengeId` so the delivery layer has a non-secret event identity
@@ -573,6 +593,7 @@ export async function beginRecipientProof(
           !deliveryContact ||
           !expiresAt ||
           !rawChallenge ||
+        !RAW_SECRET.test(rawChallenge) ||
           !proofChallengeId ||
           !issuedAt
         ) {

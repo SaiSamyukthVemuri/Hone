@@ -648,6 +648,34 @@ describe("begin proof — the code the delivery layer has to send", () => {
     expect((await beginRecipientProof(TOKEN)).kind).toBe("unavailable");
   });
 
+  // The proof code holds the SAME secret contract completeRecipientProof
+  // enforces on the way back in, so a malformed one could never verify.
+  // Accepting it would hand Delivery a code guaranteed to fail.
+  it.each([
+    ["too short", "c".repeat(63)],
+    ["too long", "c".repeat(65)],
+    ["uppercase", "C".repeat(64)],
+    ["mixed case", "cD".repeat(32)],
+    ["non-hex", "z".repeat(64)],
+    ["empty", ""],
+  ])("refuses a challenge_issued row whose raw_challenge is %s", async (_l, bad) => {
+    rpc.mockResolvedValue({ data: challengeRow({ raw_challenge: bad }), error: null });
+    expect((await beginRecipientProof(TOKEN)).kind).toBe("unavailable");
+  });
+
+  it("a VALID 64-char lowercase hex challenge is issued unchanged", async () => {
+    rpc.mockResolvedValue({ data: challengeRow(), error: null });
+    const out = await beginRecipientProof(TOKEN);
+    if (out.kind !== "challenge_issued") throw new Error("unreachable");
+    expect(out.rawChallenge).toBe(CHALLENGE);
+    // The neighbouring validations are untouched.
+    expect(out.proofChallengeId).toBe(CHALLENGE_ID);
+    expect(out.issuedAt).toBe(ISSUED_AT);
+    expect(out.expiresAt).toBe("2026-09-10T12:20:00Z");
+    expect(out.deliveryContact).toBe(EMAIL);
+    expect(out.maskedContact).not.toContain(CHALLENGE);
+  });
+
   it("is unavailable rather than half-issued when the row carries no code", async () => {
     rpc.mockResolvedValue({ data: challengeRow({ raw_challenge: null }), error: null });
     expect((await beginRecipientProof(TOKEN)).kind).toBe("unavailable");
@@ -748,6 +776,64 @@ describe("issue / revoke / expire — studio and actor come from the session", (
     });
     expect(out.kind).toBe(code);
     expect(out.kind, `${code} must not be reported as in-doubt`).not.toBe("unavailable");
+  });
+
+  it("preserves the documented refusal invalid_input as its own kind", async () => {
+    getCurrentPractitionerWithStudio.mockResolvedValue(session);
+    rpc.mockResolvedValue({ data: [{ result: "invalid_input" }], error: null });
+    const out = await issueScopedInvitation({
+      entryId: "entry-1", serviceId: "svc-1",
+      startDate: "2026-10-01", endDate: "2026-10-31",
+    });
+    expect(out.kind).toBe("invalid_input");
+    expect(out.kind).not.toBe("unavailable");
+  });
+
+  // A SUCCESS that cannot carry the secret is not a success: `issued` was
+  // returned for any non-empty raw_token, so a malformed one would have been
+  // handed on as a working invitation URL the database can never match back.
+  it.each([
+    ["too short", "a".repeat(63)],
+    ["too long", "a".repeat(65)],
+    ["uppercase", "A".repeat(64)],
+    ["mixed case", "aB".repeat(32)],
+    ["non-hex", "z".repeat(64)],
+    ["hex with a space", " " + "a".repeat(63)],
+    ["empty", ""],
+  ])("refuses an issued row whose raw_token is %s", async (_l, bad) => {
+    getCurrentPractitionerWithStudio.mockResolvedValue(session);
+    rpc.mockResolvedValue({
+      data: [{ result: "issued", raw_token: bad, invitation_id: "inv-1" }],
+      error: null,
+    });
+    const out = await issueScopedInvitation({
+      entryId: "entry-1", serviceId: "svc-1",
+      startDate: "2026-10-01", endDate: "2026-10-31",
+    });
+    expect(out.kind, "a malformed secret must never be reported as issued").toBe("unavailable");
+  });
+
+  it("refuses an issued row with no raw_token at all", async () => {
+    getCurrentPractitionerWithStudio.mockResolvedValue(session);
+    rpc.mockResolvedValue({ data: [{ result: "issued", invitation_id: "inv-1" }], error: null });
+    const out = await issueScopedInvitation({
+      entryId: "entry-1", serviceId: "svc-1",
+      startDate: "2026-10-01", endDate: "2026-10-31",
+    });
+    expect(out.kind).toBe("unavailable");
+  });
+
+  it("a VALID 64-char lowercase hex token still issues unchanged", async () => {
+    getCurrentPractitionerWithStudio.mockResolvedValue(session);
+    rpc.mockResolvedValue({
+      data: [{ result: "issued", raw_token: TOKEN, invitation_id: "inv-1" }],
+      error: null,
+    });
+    const out = await issueScopedInvitation({
+      entryId: "entry-1", serviceId: "svc-1",
+      startDate: "2026-10-01", endDate: "2026-10-31",
+    });
+    expect(out).toEqual({ kind: "issued", invitationId: "inv-1", rawToken: TOKEN });
   });
 
   it("an UNRECOGNISED result is still unavailable", async () => {
