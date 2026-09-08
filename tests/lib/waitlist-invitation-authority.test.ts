@@ -484,6 +484,13 @@ describe("begin proof — the code the delivery layer has to send", () => {
       "2026-09-10T12:05:00+00:00",
       "2026-09-10T08:05:00-04:00",
       "2026-09-10T12:05:00Z",
+      // The whole fraction range PostgreSQL can emit: none, and 1 through 6.
+      "2026-09-10T12:05:00.1+00:00",
+      "2026-09-10T12:05:00.12+00:00",
+      "2026-09-10T12:05:00.123+00:00",
+      "2026-09-10T12:05:00.1234+00:00",
+      "2026-09-10T12:05:00.12345+00:00",
+      "2026-09-10T12:05:00.123456+00:00",
     ]) {
       rpc.mockResolvedValue({ data: challengeRow({ issued_at: raw }), error: null });
       const out = await beginRecipientProof(TOKEN);
@@ -519,6 +526,13 @@ describe("begin proof — the code the delivery layer has to send", () => {
     ["space separator instead of T", "2026-09-10 12:05:00+00:00"],
     ["bare +00 offset, not +00:00", "2026-09-10T12:05:00+00"],
     ["two-digit year", "26-09-10T12:05:00+00:00"],
+    // Codex P2 #3: an unbounded fraction let this through, because Date.parse
+    // TRUNCATES excess precision instead of refusing it. PostgreSQL stores
+    // microseconds, so seven digits is not a value this contract can carry.
+    ["7 fractional digits", "2026-09-08T17:28:32.1234567+00:00"],
+    ["9 fractional digits", "2026-09-08T17:28:32.123456789+00:00"],
+    ["7 fractional digits with Z", "2026-09-08T17:28:32.1234567Z"],
+    ["a trailing dot with no digits", "2026-09-08T17:28:32.+00:00"],
   ])("refuses a malformed issued_at (%s) as unavailable", async (_label, bad) => {
     rpc.mockResolvedValue({ data: challengeRow({ issued_at: bad }), error: null });
     expect((await beginRecipientProof(TOKEN)).kind).toBe("unavailable");

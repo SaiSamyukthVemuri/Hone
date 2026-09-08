@@ -253,7 +253,11 @@ function str(row: Record<string, unknown> | null, k: string): string | null {
  *     2026-09-10T12:05:00+00:00            (no fraction when it is zero)
  *
  * always `T`-separated, always seconds, always an explicit offset, never `Z`
- * from this server. `Z` is accepted anyway because it is an explicit timezone
+ * from this server. The fraction is bounded at ONE TO SIX digits, PostgreSQL's
+ * own microsecond precision: an unbounded `\d+` admitted
+ * "...32.1234567+00:00", which this serializer cannot emit, and `Date.parse`
+ * silently TRUNCATED the excess rather than refusing it -- the same
+ * normalise-instead-of-reject behaviour the calendar check exists to defeat. `Z` is accepted anyway because it is an explicit timezone
  * and a different serialiser may use it; nothing looser is.
  *
  * WHY A SHAPE IS NOT ENOUGH ON ITS OWN. `Date.parse` NORMALISES rather than
@@ -267,7 +271,7 @@ function str(row: Record<string, unknown> | null, k: string): string | null {
  * on how an instant is spelled, when the database is the only one.
  */
 const DB_TIMESTAMPTZ =
-  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/;
 
 function instant(row: Record<string, unknown> | null, k: string): string | null {
   const v = str(row, k);
