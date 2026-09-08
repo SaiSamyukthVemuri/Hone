@@ -334,10 +334,13 @@ export async function sendWaitlistRecipientProofEmail(args: {
     // TERMINAL: every mailability verdict turns on elapsed time or on how the
     // challenge was minted, and neither is changed by trying again. A resend
     // must mint a NEW challenge.
-    const disposition = terminalRefusal(
-      `challenge_${mailability.reason}`,
-      "recipient_proof",
-    );
+    // A clock disagreement spends nothing and reached no provider, so it takes
+    // the retryable shape the invitation path already uses. Every other
+    // mailability verdict finishes the CHALLENGE — never the invitation.
+    const disposition =
+      mailability.reason === "clock_disagreement"
+        ? retryableRefusal(`challenge_${mailability.reason}`)
+        : terminalRefusal(`challenge_${mailability.reason}`, "recipient_proof");
     return {
       disposition,
       log: buildDeliveryLogRecord({

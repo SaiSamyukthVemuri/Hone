@@ -242,7 +242,8 @@ export type ChallengeMailability =
       reason:
         | "minted_window_exceeds_request"
         | "already_elapsed"
-        | "stale_since_mint";
+        | "stale_since_mint"
+        | "clock_disagreement";
     };
 
 /**
@@ -296,6 +297,15 @@ export function challengeMailability(
     return { mailable: false, reason: "minted_window_exceeds_request" };
   }
   if (remaining <= 0) return { mailable: false, reason: "already_elapsed" };
+  if (sinceMint < 0) {
+    // ISSUED IN THE FUTURE. The staleness check above is an upper bound only,
+    // so a negative gap sailed through it and the challenge was SENT — and,
+    // under the one-shot law, spent — before the application clock had even
+    // reached its mint time. The invitation path already waits for the clock to
+    // catch up; the proof path must too, or a database a few seconds ahead
+    // silently burns a challenge.
+    return { mailable: false, reason: "clock_disagreement" };
+  }
   if (sinceMint > PROOF_SEND_MAX_DELAY_AFTER_MINT_SECONDS * 1_000) {
     return { mailable: false, reason: "stale_since_mint" };
   }
@@ -496,9 +506,18 @@ export type DeliveryDisposition = {
    * perfectly live invitation. **A proof delivery can never terminate an
    * invitation**, and the type now says so rather than relying on the reader.
    *
-   * Biconditional with `recovery`, pinned by test: "challenge" pairs with
-   * `mint_new_challenge`, "invitation" with `reissue_invitation`, and "none"
-   * with `none` or `retry_same_event_after_clock_catchup`.
+   * ONE-DIRECTIONAL with `recovery`, pinned by test — and deliberately not
+   * biconditional, which was too strong and produced a defect. When something
+   * IS known finished the recovery must match it: "challenge" pairs with
+   * `mint_new_challenge`, "invitation" with `reissue_invitation`.
+   *
+   * "none" is the interesting case, because it carries two situations:
+   *   - nothing happened and nothing is needed (`none`), or the clock
+   *     disagreed (`retry_same_event_after_clock_catchup`);
+   *   - the send was AMBIGUOUS. The recovery then names a replacement, but the
+   *     scope stays "none" because the message may have arrived. That pairing —
+   *     replacement recovery, scope "none" — is exactly how a caller can tell
+   *     an ADVISORY recovery from a required one.
    */
   terminalScope: TerminalScope;
   /**
@@ -582,10 +601,15 @@ export function classifyDelivery(
   if (outcome.status === "ambiguous") {
     return {
       delivered: "unknown",
-      // Ambiguous means it MAY have arrived, so the recovery is offered rather
-      // than required: the caller weighs it against a possible duplicate.
+      // Ambiguous means it MAY have arrived, so the recovery is ADVISORY: the
+      // caller weighs it against sending a second message for one spot.
       recovery: recoveryForKind(kind),
-      terminalScope: terminalScopeForKind(kind),
+      // NOTHING IS KNOWN FINISHED. The provider may still accept the request —
+      // which is why `mayInvalidateChallenge` is false directly below — so a
+      // scope of "invitation" or "challenge" would let a caller retire a live
+      // invitation, or replace a code that is already in the recipient's inbox
+      // and about to be typed. The two fields said opposite things.
+      terminalScope: "none",
       sameEventRetryAllowed: false,
       // The in-flight request was never cancelled and may still be accepted.
       mayInvalidateChallenge: false,

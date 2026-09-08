@@ -1239,15 +1239,15 @@ describe("terminality is SCOPED TO THE SUBJECT of the send", () => {
     expect(out.disposition.recovery).toBe("reissue_invitation");
   });
 
-  it("terminalScope is BICONDITIONAL with recovery, over the whole vocabulary", () => {
-    // The invariant that stops the two fields ever contradicting — which is
-    // exactly how a proof send came to say "the invitation is finished" while
-    // its recovery said "mint a new challenge".
-    const EXPECTED: Record<string, string> = {
-      none: "none",
-      retry_same_event_after_clock_catchup: "none",
-      mint_new_challenge: "challenge",
-      reissue_invitation: "invitation",
+  it("terminalScope and recovery agree, and AMBIGUOUS finishes nothing", () => {
+    // One-directional, not biconditional — the stronger rule was wrong and
+    // caused a defect. When something IS known finished the recovery must match
+    // it. When nothing is, the recovery may still name a replacement: that is
+    // an ADVISORY one, and the pairing (replacement + scope "none") is how a
+    // caller tells the two apart.
+    const REQUIRED: Record<string, string> = {
+      challenge: "mint_new_challenge",
+      invitation: "reissue_invitation",
     };
     const cases = [
       terminalRefusal("x", "invitation"),
@@ -1257,21 +1257,41 @@ describe("terminality is SCOPED TO THE SUBJECT of the send", () => {
       classifyDelivery({ status: "accepted", messageId: "m" }, "recipient_proof"),
       classifyDelivery({ status: "ambiguous", reason: "timeout" }, "recipient_proof"),
       classifyDelivery({ status: "ambiguous", reason: "concurrent" }, "invitation"),
+      classifyDelivery({ status: "ambiguous", reason: "no_message_id" }, "invitation"),
       classifyDelivery({ status: "rejected", code: "validation_error" }, "invitation"),
       classifyDelivery({ status: "rejected", code: null }, "recipient_proof"),
     ];
     for (const d of cases) {
-      expect(d.terminalScope, `${d.reason} -> ${d.recovery}`).toBe(
-        EXPECTED[d.recovery],
-      );
+      if (d.terminalScope !== "none") {
+        expect(d.recovery, `${d.reason}`).toBe(REQUIRED[d.terminalScope]);
+      }
       // A proof outcome may NEVER terminate the invitation.
       if (d.recovery === "mint_new_challenge") {
         expect(d.terminalScope).not.toBe("invitation");
       }
-      // And the retry flag agrees with the recovery about whether a retry is on.
       expect(d.sameEventRetryAllowed, d.reason).toBe(
         d.recovery === "retry_same_event_after_clock_catchup",
       );
+    }
+  });
+
+  it("an AMBIGUOUS outcome finishes NOTHING, whichever kind it is", () => {
+    // REPRODUCED at 3797397a: the ambiguous branch declared the subject
+    // finished while `mayInvalidateChallenge` stayed false — the two said
+    // opposite things, and a caller following the scope would retire a live
+    // invitation or replace a code already in the recipient's inbox.
+    for (const kind of ["invitation", "recipient_proof"] as const) {
+      for (const reason of ["timeout", "concurrent", "no_message_id"] as const) {
+        const d = classifyDelivery({ status: "ambiguous", reason }, kind);
+        expect(d.terminalScope, `${kind}/${reason}`).toBe("none");
+        expect(d.delivered).toBe("unknown");
+        // Still advisory, so the caller can act — just not told it must.
+        expect(d.recovery).toBe(
+          kind === "invitation" ? "reissue_invitation" : "mint_new_challenge",
+        );
+        // The property the scope has to agree with.
+        expect(d.mayInvalidateChallenge).toBe(false);
+      }
     }
   });
 });
@@ -1308,5 +1328,69 @@ describe("the recovery mapping is EXHAUSTIVE over DeliveryKind", () => {
     expect(src).toMatch(/satisfies Record<DeliveryKind, DeliveryRecovery>/);
     expect(src).toMatch(/satisfies Record<DeliveryKind, TerminalScope>/);
     expect(src).not.toMatch(/kind === "invitation" \?/);
+  });
+});
+
+describe("a FUTURE-ISSUED proof challenge is refused before any send", () => {
+  // REPRODUCED at 3797397a: challengeMailability checked only the UPPER bound
+  // on the gap since mint, so a negative gap sailed through and the challenge
+  // was sent — and, under the one-shot law, spent — before the application
+  // clock had reached its own mint time. The invitation path already waited for
+  // the clock; the proof path did not.
+  const NOW = new Date("2026-09-08T12:00:00.000Z");
+
+  async function proofIssuedAt(issuedAt: Date) {
+    const r = recordingTransport(ACCEPTED);
+    const out = await sendWaitlistRecipientProofEmail({
+      studio: STUDIO,
+      invitationId: INVITATION_ID,
+      challengeId: CHALLENGE_ID,
+      recipientEmail: RECIPIENT,
+      code: "H4K2QF7P",
+      issuedAt,
+      expiresAt: new Date(issuedAt.getTime() + 20 * 60_000),
+      action: "book",
+      now: NOW,
+      transport: r.transport,
+    });
+    return { out, calls: r.calls };
+  }
+
+  it("performs ZERO provider calls and spends nothing", async () => {
+    const { out, calls } = await proofIssuedAt(new Date(NOW.getTime() + 5_000));
+    expect(calls).toHaveLength(0);
+    expect(out.disposition.reason).toBe("rejected_challenge_clock_disagreement");
+    expect(out.disposition.terminalScope).toBe("none");
+    expect(out.disposition.recovery).toBe("retry_same_event_after_clock_catchup");
+    expect(out.disposition.sameEventRetryAllowed).toBe(true);
+    expect(out.disposition.mayMutateLifecycle).toBe(false);
+  });
+
+  it("matches the invitation path — the same skew, the same answer", async () => {
+    // The asymmetry was the defect: one path waited, the other burned a
+    // challenge. Both now return the same shape.
+    const proof = await proofIssuedAt(new Date(NOW.getTime() + 1));
+    const inv = recordingTransport(ACCEPTED);
+    const invOut = await sendWaitlistInvitationEmail({
+      studio: STUDIO,
+      invitationId: INVITATION_ID,
+      recipientEmail: RECIPIENT,
+      invitationUrl: URL,
+      issuedAt: new Date(NOW.getTime() + 1),
+      expiresAt: new Date(NOW.getTime() + 3_600_000),
+      now: NOW,
+      transport: inv.transport,
+    });
+    expect(inv.calls).toHaveLength(0);
+    expect(proof.out.disposition.recovery).toBe(invOut.disposition.recovery);
+    expect(proof.out.disposition.terminalScope).toBe(invOut.disposition.terminalScope);
+    expect(proof.out.disposition.sameEventRetryAllowed).toBe(
+      invOut.disposition.sameEventRetryAllowed,
+    );
+  });
+
+  it("issuedAt == now still sends — only a FUTURE mint is refused", async () => {
+    const { calls } = await proofIssuedAt(NOW);
+    expect(calls).toHaveLength(1);
   });
 });
