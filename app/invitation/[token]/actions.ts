@@ -535,11 +535,13 @@ export async function requestInvitationProofAction(
   // carried it must go with it.
   //
   // `begin_waitlist_invitation_proof` clears the database capability when it
-  // mints a replacement. The signed cookie is independent of that: its HMAC
-  // binds a capability to a token and its expiry is the COOKIE's, not the
-  // database's — so leaving it in place meant a later reload verified the
-  // signature, saw a still-future expiry, and rendered `proven` against a
-  // capability the database would already reject.
+  // mints a replacement. The cookie DOES carry the database's own expiry, signed
+  // alongside the capability — but that timestamp only says when the capability
+  // would have lapsed ON ITS OWN. It cannot describe one invalidated EARLY by a
+  // replacement, and nothing in the cookie is revisited when that happens. So
+  // leaving it in place meant a later reload verified the signature, saw an
+  // expiry that had not yet passed, and rendered `proven` against a capability
+  // the database would already reject.
   //
   // It is reachable without anything exotic: a second tab still showing the
   // proof form, or the `decline_unavailable` path that returns the proof screen
