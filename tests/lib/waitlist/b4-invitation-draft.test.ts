@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import ts from "typescript";
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
 
 import {
   WAITLIST_ENTRY_STATUSES,
@@ -192,6 +192,15 @@ function importSpecifiers(file: string, text: string): string[] {
       const isDynamicImport = callee.kind === ts.SyntaxKind.ImportKeyword;
       const isRequire = ts.isIdentifier(callee) && callee.text === "require";
       if (isDynamicImport || isRequire) literal(node.arguments[0]);
+    } else if (ts.isImportTypeNode(node)) {
+      // `type E = import("@/x").Thing` — the TYPE position. It is an
+      // ImportTypeNode, NOT a CallExpression, so the dynamic-import branch
+      // above never sees it. Missing this contradicted the policy stated two
+      // paragraphs up: type-only coupling counts, and this is the syntax that
+      // expresses it most directly.
+      literal(node.argument.kind === ts.SyntaxKind.LiteralType
+        ? (node.argument as ts.LiteralTypeNode).literal
+        : undefined);
     }
     ts.forEachChild(node, visit);
   };
@@ -199,26 +208,80 @@ function importSpecifiers(file: string, text: string): string[] {
   return specs;
 }
 
-/** Resolve one specifier to a repo-relative file, or null for a package. */
+/**
+ * The repository's OWN compiler options, read from `tsconfig.json`.
+ *
+ * Resolution is not reimplemented below, for the same reason the extractor
+ * above is not a regex: every hand-rolled approximation of the compiler has so
+ * far been wrong in a way that made this guard quietly permissive.
+ */
+const COMPILER_OPTIONS: ts.CompilerOptions = (() => {
+  const raw = ts.readConfigFile(join(ROOT, "tsconfig.json"), ts.sys.readFile);
+  return ts.parseJsonConfigFileContent(raw.config ?? {}, ts.sys, ROOT).options;
+})();
+
+// Resolution is quadratic-ish across a large graph without this.
+const RESOLUTION_CACHE = ts.createModuleResolutionCache(
+  ROOT,
+  (x) => x,
+  COMPILER_OPTIONS,
+);
+
+/**
+ * Resolve one specifier to a repo-relative file, or null for a package.
+ *
+ * ASKS THE COMPILER. The previous version probed a hand-written candidate list
+ * — `base`, `base.ts`, `base.tsx`, `base/index.*` — which reproduced only
+ * extensionless resolution. This repository is on `moduleResolution: "bundler"`,
+ * where TypeScript SUBSTITUTES a `.js` suffix and resolves the `.tsx` source,
+ * so `"@/components/waitlist/admission-row.js"` is a working import that the
+ * candidate list turned into `.js`, `.js.ts`, `.js.tsx` and `.js/index.ts` —
+ * none of which exist. It returned null, produced no edge, and the guard stayed
+ * green while the component was application-reachable. The repository already
+ * pins that `.js` behaviour elsewhere, in
+ * tests/app/finance/financials-truth.test.ts.
+ *
+ * `ts.resolveModuleName` handles suffix substitution, `paths`, `baseUrl`,
+ * extension order and index files in one call, from the repo's own config.
+ */
+const RESOLUTION_MEMO = new Map<string, string | null>();
+
 function resolveSpecifier(fromFile: string, spec: string): string | null {
-  let base: string;
-  if (spec.startsWith("@/")) base = spec.slice(2);
-  else if (spec.startsWith(".")) base = join(dirname(fromFile), spec);
-  else return null; // node_modules — not our graph
-  for (const candidate of [
-    base,
-    `${base}.ts`,
-    `${base}.tsx`,
-    join(base, "index.ts"),
-    join(base, "index.tsx"),
-  ]) {
-    try {
-      if (statSync(join(ROOT, candidate)).isFile()) return candidate;
-    } catch {
-      // keep probing
-    }
-  }
-  return null;
+  // ONLY `@/…` AND RELATIVE SPECIFIERS CAN REACH A REPO FILE, and that is a
+  // provable property of this tsconfig rather than an assumption: `paths` maps
+  // `@/*` alone and `baseUrl` is unset, so a bare specifier resolves into
+  // node_modules or nowhere. Skipping them is what keeps this walk fast enough
+  // to stay well inside its timeout — every app file imports `react` and
+  // `next/*`, and resolving those is the dominant cost. The premise is pinned
+  // by "the fast path rests on a tsconfig property" below, so adding a
+  // `baseUrl` turns that test red instead of quietly opening a hole here.
+  if (!spec.startsWith("@/") && !spec.startsWith(".")) return null;
+
+  // Resolution depends on the containing DIRECTORY, not the exact file, so the
+  // same specifier from a hundred siblings is one lookup.
+  const key = `${dirname(fromFile)}\u0000${spec}`;
+  const memo = RESOLUTION_MEMO.get(key);
+  if (memo !== undefined) return memo;
+
+  const resolved = ts.resolveModuleName(
+    spec,
+    join(ROOT, fromFile),
+    COMPILER_OPTIONS,
+    ts.sys,
+    RESOLUTION_CACHE,
+  );
+  const target = resolved.resolvedModule;
+  const rel =
+    !target || target.isExternalLibraryImport
+      ? null
+      : relative(ROOT, target.resolvedFileName);
+  // Outside the repo, or inside node_modules by another route: not our graph.
+  const answer =
+    rel === null || rel.startsWith("..") || rel.split(sep).includes("node_modules")
+      ? null
+      : rel;
+  RESOLUTION_MEMO.set(key, answer);
+  return answer;
 }
 
 /**
@@ -253,7 +316,12 @@ function reachableFromApp(): Map<string, string[]> {
 }
 
 describe("this module is UNREACHABLE from the application", () => {
-  it("no prototype entry point is reachable from app/, at ANY depth", () => {
+  // TIMEOUT STATED, AND WELL ABOVE THE MEASURED COST. This walk resolves every
+  // specifier in the application graph with the real compiler; it ran at ~6.7s
+  // against vitest's 5s default and so passed alone and failed under
+  // full-suite CPU contention. A ceiling that equals its target is not a
+  // ceiling — the same lesson the CI budgets in CLAUDE.md record three times.
+  it("no prototype entry point is reachable from app/, at ANY depth", { timeout: 30_000 }, () => {
     const reached = reachableFromApp();
 
     // NON-VACUITY, THREE WAYS. A traversal that silently resolved nothing would
@@ -300,6 +368,11 @@ describe("this module is UNREACHABLE from the application", () => {
       // the prototype, and this boundary errs toward reachable.
       ["type-only", 'import type { A } from "@/x/a";', "@/x/a"],
       ["single quotes", "import { A } from '@/x/a';", "@/x/a"],
+      // THE TYPE POSITION. An ImportTypeNode, not a CallExpression — the
+      // dynamic-import branch never sees it, which contradicted the stated
+      // policy that type-only coupling counts.
+      ["import-type node", 'type E = import("@/x/a").Thing;', "@/x/a"],
+      ["import-type, nested in a generic", 'type E = Array<import("@/x/a").Thing>;', "@/x/a"],
     ];
     for (const [label, source, expected] of cases) {
       expect(importSpecifiers("probe.ts", source), `${label} produced no edge`).toContain(
@@ -321,6 +394,64 @@ describe("this module is UNREACHABLE from the application", () => {
       '/* import { A } from "@/x/fake"; */',
     ].join("\n");
     expect(importSpecifiers("probe.ts", notImports)).not.toContain("@/x/fake");
+  });
+
+  it("the fast path rests on a tsconfig property, not on a guess", () => {
+    // `resolveSpecifier` short-circuits bare specifiers as packages. That is
+    // only sound while `paths` maps `@/*` alone and `baseUrl` is unset — add a
+    // `baseUrl` and `import "lib/waitlist/b4-invitation-draft"` would resolve
+    // into the repo while the walk skipped it. This fails first if that
+    // changes.
+    expect(COMPILER_OPTIONS.baseUrl).toBeUndefined();
+    expect(Object.keys(COMPILER_OPTIONS.paths ?? {})).toEqual(["@/*"]);
+    // And the property itself, checked rather than reasoned about.
+    for (const bare of ["lib/waitlist/b4-invitation-draft", "components/waitlist/admission-row"]) {
+      const resolved = ts.resolveModuleName(
+        bare,
+        join(ROOT, "app/probe.ts"),
+        COMPILER_OPTIONS,
+        ts.sys,
+      );
+      expect(resolved.resolvedModule?.resolvedFileName, `${bare} reached a repo file`).toBeUndefined();
+    }
+  });
+
+  it("resolves specifiers with the compiler, not a candidate list", () => {
+    // The previous resolver probed `base`, `base.ts`, `base.tsx`,
+    // `base/index.*`. This repository is on `moduleResolution: "bundler"`,
+    // where TypeScript SUBSTITUTES a `.js` suffix and resolves the `.tsx`
+    // source — so a working import turned into `.js`, `.js.ts`, `.js.tsx` and
+    // `.js/index.ts`, none of which exist. Null, no edge, guard green.
+    const from = "app/(app)/settings/waitlist/page.tsx";
+
+    // The case that was blind, and its extensionless twin.
+    expect(resolveSpecifier(from, "@/components/waitlist/admission-row.js")).toBe(
+      "components/waitlist/admission-row.tsx",
+    );
+    expect(resolveSpecifier(from, "@/components/waitlist/admission-row")).toBe(
+      "components/waitlist/admission-row.tsx",
+    );
+    // `.ts` sources, and the alias itself.
+    expect(resolveSpecifier(from, "@/lib/waitlist/admission-model")).toBe(
+      "lib/waitlist/admission-model.ts",
+    );
+    expect(resolveSpecifier(from, "@/lib/waitlist/admission-model.js")).toBe(
+      "lib/waitlist/admission-model.ts",
+    );
+    // Relative specifiers resolve from the importing file, not from the root.
+    expect(
+      resolveSpecifier(
+        "components/waitlist/admission-row.tsx",
+        "@/lib/waitlist/b4-invitation-draft",
+      ),
+    ).toBe("lib/waitlist/b4-invitation-draft.ts");
+
+    // NOT OUR GRAPH: packages resolve, and must still be excluded, or the walk
+    // would wander into node_modules and take forever.
+    expect(resolveSpecifier(from, "react")).toBeNull();
+    expect(resolveSpecifier(from, "next/link")).toBeNull();
+    // And a specifier that resolves to nothing is simply not an edge.
+    expect(resolveSpecifier(from, "@/does/not/exist")).toBeNull();
   });
 
   it("guards the COMPONENTS, not only the modules they import", () => {
