@@ -107,6 +107,22 @@ export type BeginProofOutcome =
        */
       proofChallengeId: string;
       /**
+       * When the database MINTED this challenge — 0192's `issued_at`, which is
+       * the post-lock `clock_timestamp()` it also computed `expires_at` from.
+       *
+       * TAKEN FROM THE RPC, never reconstructed. Deriving it as
+       * `expires_at - ttl` would put the caller's arithmetic back into a value
+       * the database owns, and reading a local clock would be a second clock:
+       * neither can be trusted to agree with the row. Because both come from
+       * the same instant, `expiresAt - issuedAt` is exactly the accepted TTL by
+       * construction.
+       *
+       * SERVER-SIDE ONLY, like `deliveryContact` and `proofChallengeId`. The
+       * delivery layer needs it to say when a code was issued; a browser has no
+       * use for it, and it is not part of any view state.
+       */
+      issuedAt: string;
+      /**
        * THE PROOF CODE. Returned exactly once, by the call that minted it: the
        * database stores only its SHA-256, so it cannot be read back afterwards
        * by anyone, this server included. The delivery layer must hand it
@@ -439,12 +455,23 @@ export async function beginRecipientProof(
       // than half-issued: sending a challenge that cannot be keyed would leave
       // the send un-idempotent.
       const proofChallengeId = str(row, "challenge_id");
-      if (!deliveryContact || !expiresAt || !rawChallenge || !proofChallengeId) {
+      // 0192's authoritative mint instant. A row that cannot state WHEN it minted
+      // the challenge is IN DOUBT, not half-issued: the delivery layer would
+      // otherwise have to invent the time it reports to the recipient.
+      const issuedAt = str(row, "issued_at");
+      if (
+          !deliveryContact ||
+          !expiresAt ||
+          !rawChallenge ||
+          !proofChallengeId ||
+          !issuedAt
+        ) {
         return { kind: "unavailable" };
       }
       return {
         kind: "challenge_issued",
         proofChallengeId,
+        issuedAt,
         rawChallenge,
         expiresAt,
         deliveryContact,

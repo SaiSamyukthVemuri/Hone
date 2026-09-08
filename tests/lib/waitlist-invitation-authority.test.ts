@@ -33,6 +33,7 @@ const TOKEN = "a".repeat(64);
 const CAP = "b".repeat(64);
 const CHALLENGE = "c".repeat(64);
 const CHALLENGE_ID = "9f1c2d3e-4a5b-4c6d-8e7f-0a1b2c3d4e5f";
+const ISSUED_AT = "2026-09-10T12:05:00Z";
 const EMAIL = "chloe@example.test";
 // Computed independently of the module under test, the way the accepted
 // resolve_ command computes it: sha256(lower(btrim(email))).
@@ -327,6 +328,7 @@ describe("begin proof — the code the delivery layer has to send", () => {
         result: "challenge_issued",
         raw_challenge: CHALLENGE,
         challenge_id: CHALLENGE_ID,
+        issued_at: ISSUED_AT,
         delivery_contact: EMAIL,
         expires_at: "2026-09-10T12:20:00Z",
         ...over,
@@ -407,6 +409,65 @@ describe("begin proof — the code the delivery layer has to send", () => {
     // maskedContact is the ONLY field of this variant B3 renders.
     expect(out.maskedContact).not.toContain(out.proofChallengeId);
     expect(out.maskedContact).not.toContain(out.rawChallenge);
+  });
+
+  // 0192 now returns the instant it minted the challenge. B2 CONSUMES that value;
+  // it must never reconstruct one.
+  it("maps the database's issued_at onto issuedAt", async () => {
+    rpc.mockResolvedValue({ data: challengeRow(), error: null });
+    const out = await beginRecipientProof(TOKEN);
+    if (out.kind !== "challenge_issued") throw new Error("unreachable");
+    expect(out.issuedAt).toBe(ISSUED_AT);
+  });
+
+  it("takes it from the ROW, never derived from expiresAt", async () => {
+    // A row whose issued_at is deliberately NOT expiresAt-minus-any-TTL. If the
+    // wrapper were reconstructing the instant, it could not produce this value.
+    rpc.mockResolvedValue({
+      data: challengeRow({ issued_at: "2020-01-01T00:00:00Z" }),
+      error: null,
+    });
+    const out = await beginRecipientProof(TOKEN);
+    if (out.kind !== "challenge_issued") throw new Error("unreachable");
+    expect(out.issuedAt).toBe("2020-01-01T00:00:00Z");
+    expect(out.expiresAt).toBe("2026-09-10T12:20:00Z");
+  });
+
+  it("uses no application clock — a frozen system time changes nothing", async () => {
+    const realNow = Date.now;
+    Date.now = () => 0;
+    try {
+      rpc.mockResolvedValue({ data: challengeRow(), error: null });
+      const out = await beginRecipientProof(TOKEN);
+      if (out.kind !== "challenge_issued") throw new Error("unreachable");
+      expect(out.issuedAt).toBe(ISSUED_AT);
+    } finally {
+      Date.now = realNow;
+    }
+  });
+
+  it.each([null, undefined, 12345])(
+    "is unavailable when issued_at is %s — never half-issued",
+    async (bad) => {
+      rpc.mockResolvedValue({
+        data: challengeRow({ issued_at: bad }),
+        error: null,
+      });
+      expect((await beginRecipientProof(TOKEN)).kind).toBe("unavailable");
+    },
+  );
+
+  it("the new field is server-only: it is not the code and not the id", async () => {
+    rpc.mockResolvedValue({ data: challengeRow(), error: null });
+    const out = await beginRecipientProof(TOKEN);
+    if (out.kind !== "challenge_issued") throw new Error("unreachable");
+    // maskedContact is the ONLY field of this variant a browser is shown.
+    expect(out.maskedContact).not.toContain(out.issuedAt);
+    expect(out.maskedContact).not.toContain(out.rawChallenge);
+    expect(out.maskedContact).not.toContain(out.proofChallengeId);
+    // And the additions did not disturb the secrets' own separation.
+    expect(out.rawChallenge).not.toBe(out.proofChallengeId);
+    expect(out.issuedAt).not.toBe(out.rawChallenge);
   });
 
   it("is unavailable when the row carries no challenge id", async () => {
