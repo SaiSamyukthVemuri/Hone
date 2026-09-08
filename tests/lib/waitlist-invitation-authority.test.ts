@@ -727,6 +727,62 @@ describe("issue / revoke / expire — studio and actor come from the session", (
     expect(args.p_allowed_weekdays).toEqual([1, 3]);
   });
 
+  // Codex P2-B. These are DOCUMENTED lifecycle refusals that `issue_scoped_`
+  // passes through from the applied issue command (0192's `elsif v_issue.result
+  // in (...)` branch), plus its own `already_declined_offer`. They were falling
+  // through the default arm as `unavailable`, which means TRANSPORT FAILED / IN
+  // DOUBT — the opposite of what happened. The database answered definitively,
+  // and the answer is actionable.
+  it.each([
+    "already_declined_offer",
+    "already_invited",
+    "invalid_ttl",
+    "not_claimed",
+    "not_found",
+  ])("preserves the documented refusal %s as its own kind", async (code) => {
+    getCurrentPractitionerWithStudio.mockResolvedValue(session);
+    rpc.mockResolvedValue({ data: [{ result: code }], error: null });
+    const out = await issueScopedInvitation({
+      entryId: "entry-1", serviceId: "svc-1",
+      startDate: "2026-10-01", endDate: "2026-10-31",
+    });
+    expect(out.kind).toBe(code);
+    expect(out.kind, `${code} must not be reported as in-doubt`).not.toBe("unavailable");
+  });
+
+  it("an UNRECOGNISED result is still unavailable", async () => {
+    getCurrentPractitionerWithStudio.mockResolvedValue(session);
+    rpc.mockResolvedValue({ data: [{ result: "something_new_entirely" }], error: null });
+    const out = await issueScopedInvitation({
+      entryId: "entry-1", serviceId: "svc-1",
+      startDate: "2026-10-01", endDate: "2026-10-31",
+    });
+    expect(out.kind).toBe("unavailable");
+  });
+
+  it("a transport error is still unavailable", async () => {
+    getCurrentPractitionerWithStudio.mockResolvedValue(session);
+    rpc.mockResolvedValue({ data: null, error: { message: "boom" } });
+    const out = await issueScopedInvitation({
+      entryId: "entry-1", serviceId: "svc-1",
+      startDate: "2026-10-01", endDate: "2026-10-31",
+    });
+    expect(out.kind).toBe("unavailable");
+  });
+
+  it("a successful issuance is unchanged", async () => {
+    getCurrentPractitionerWithStudio.mockResolvedValue(session);
+    rpc.mockResolvedValue({
+      data: [{ result: "issued", raw_token: TOKEN, invitation_id: "inv-1" }],
+      error: null,
+    });
+    const out = await issueScopedInvitation({
+      entryId: "entry-1", serviceId: "svc-1",
+      startDate: "2026-10-01", endDate: "2026-10-31",
+    });
+    expect(out).toEqual({ kind: "issued", invitationId: "inv-1", rawToken: TOKEN });
+  });
+
   it.each(["no_round_open", "round_full", "invalid_service", "invalid_weekdays", "invalid_scope_dates"])(
     "maps the issue refusal %s",
     async (code) => {

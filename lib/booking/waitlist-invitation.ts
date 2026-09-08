@@ -64,6 +64,22 @@ export type IssueOutcome =
   | { kind: "invalid_service" }
   | { kind: "invalid_scope_dates" }
   | { kind: "invalid_weekdays" }
+  /**
+   * Documented lifecycle refusals, passed through by `issue_scoped_` from the
+   * applied issue command it delegates to (0192, the `elsif v_issue.result in
+   * (...)` branch) plus its own `already_declined_offer`.
+   *
+   * These were falling through the default arm as `unavailable`, which says
+   * TRANSPORT FAILED / IN DOUBT. They are the opposite: the database answered,
+   * definitively, and the answer is actionable. Collapsing them lost the
+   * distinction between "we do not know what happened" and "the entry has
+   * already been invited".
+   */
+  | { kind: "already_declined_offer" }
+  | { kind: "already_invited" }
+  | { kind: "invalid_ttl" }
+  | { kind: "not_claimed" }
+  | { kind: "not_found" }
   | { kind: "not_authorized" }
   | Unavailable;
 
@@ -377,6 +393,13 @@ export async function issueScopedInvitation(input: {
       case "invalid_service":
       case "invalid_scope_dates":
       case "invalid_weekdays":
+      // Documented refusals the command passes through. A recognised closed
+      // result keeps its own kind; only an UNRECOGNISED one becomes unavailable.
+      case "already_declined_offer":
+      case "already_invited":
+      case "invalid_ttl":
+      case "not_claimed":
+      case "not_found":
         return { kind: result };
       default:
         // An unrecognised code is IN DOUBT, never a silent success.

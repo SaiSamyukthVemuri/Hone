@@ -271,3 +271,52 @@ describe("scope dates must be real calendar dates, not merely YYYY-MM-DD shaped"
     }
   });
 });
+
+// Codex P2-A. The calendar rules rejected impossible month/day combinations but
+// still accepted year 0000 — a year that has never existed, since the Gregorian
+// calendar runs 1 BC -> AD 1 and PostgreSQL's date type refuses it. Because
+// every comparison here is lexical, "0000-01-01" sorted BEFORE every real date,
+// so an impossible lower bound authorised everything after it.
+describe("scope bounds must name a year that exists", () => {
+  const MID_2026 = "2026-06-15T14:00:00Z";
+
+  it("a year-zero START makes the scope unreadable", () => {
+    expect(
+      evaluate({ scope: { startDate: "0000-01-01", endDate: "2026-12-31" }, startsAt: MID_2026 }),
+    ).toEqual({ ok: false, reason: "unreadable_scope" });
+  });
+
+  it("a year-zero END makes the scope unreadable", () => {
+    expect(
+      evaluate({ scope: { startDate: "0000-01-01", endDate: "0000-12-31" }, startsAt: MID_2026 }),
+    ).toEqual({ ok: false, reason: "unreadable_scope" });
+  });
+
+  it("a year-zero START cannot authorise an ordinary requested slot", () => {
+    expect(
+      evaluate({ scope: { startDate: "0000-01-01", endDate: "2026-12-31" }, startsAt: MID_2026 }).ok,
+    ).toBe(false);
+  });
+
+  it("a year-zero END cannot authorise an ordinary requested slot", () => {
+    expect(
+      evaluate({ scope: { startDate: "2026-01-01", endDate: "0000-12-31" }, startsAt: MID_2026 }).ok,
+    ).toBe(false);
+  });
+
+  it("year 0001 is a real year: the window is READABLE, and refuses on range", () => {
+    // "Readable" is the claim under test — the calendar validator accepts year 1
+    // — so the refusal must be a RANGE refusal, never `unreadable_scope`.
+    const out = evaluate({
+      scope: { startDate: "0001-01-01", endDate: "0001-12-31" },
+      startsAt: MID_2026,
+    });
+    expect(out).toEqual({ ok: false, reason: "date_after_scope" });
+
+    // Deliberately NOT asserting that a year-1 INSTANT authorises. The shared
+    // `localDateString` helper renders year 1 unpadded ("1-06-15"), so lexical
+    // comparison against "0001-01-01" does not line up. That is a property of a
+    // shared formatter at a year no invitation will ever carry, and it is not
+    // what this fix is about — papering over it here would hide it.
+  });
+});

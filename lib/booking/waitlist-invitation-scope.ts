@@ -67,6 +67,13 @@ function isRealCalendarDate(value: string | null | undefined): boolean {
   const year = Number(m[1]);
   const month = Number(m[2]);
   const day = Number(m[3]);
+  // THERE IS NO YEAR ZERO. The Gregorian calendar this contract uses runs
+  // 1 BC -> AD 1, and PostgreSQL's date type refuses 0000 for the same reason.
+  // "0000-01-01" passed the month and day rules while naming a date that has
+  // never existed -- and because every comparison in this module is lexical, it
+  // sorted BEFORE any real date, so an impossible lower bound authorised
+  // everything after it.
+  if (year < 1) return false;
   if (month < 1 || month > 12) return false;
   if (day < 1) return false;
   return day <= daysInMonth(year, month);
