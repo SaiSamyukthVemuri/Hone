@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileForVersion, isRepoMax, versionsAbove } from "./helpers/migration-state";
 
@@ -367,6 +367,121 @@ describe("every command that reaches `studios` locks it first", () => {
     "studio_waitlist_admission_rounds",
   ] as const;
 
+  // ---------------------------------------------------------------------
+  // REACHABILITY, NOT LITERAL DML.
+  //
+  // The first version of this audit derived a command's writes from the
+  // insert/update statements in its OWN body, and that exempted the one command
+  // it most needed to cover. admit_new_client_waitlist_entry writes nothing
+  // directly: it delegates to claim_new_client_waitlist_entry and to 0192's
+  // issue_scoped_new_client_waitlist_invitation. Its write set came out EMPTY,
+  // the rule did not apply, and removing its studio pre-lock left this audit
+  // fully green while restoring the entry-before-studio deadlock. Measured, and
+  // it is now the acceptance test at the bottom of this block.
+  //
+  // A command therefore reaches a table through three routes, and all three are
+  // followed to a fixed point:
+  //
+  //   1. its own DML;
+  //   2. any public.<fn>() it CALLS -- including commands defined in other
+  //      migrations, which is why the whole migration set is parsed, not 0193;
+  //   3. any TRIGGER on a table it writes -- the route that made this subtle in
+  //      the first place, since writing new_client_waitlist_entries fires 0185's
+  //      record_event trigger, which inserts into new_client_waitlist_entry_events.
+  //
+  // Function definitions are collected in migration order, last definition
+  // winning, so a later `create or replace` is what the analysis sees -- exactly
+  // as PostgreSQL would.
+  // ---------------------------------------------------------------------
+
+  type Analysis = {
+    bodies: Map<string, string>;
+    triggersOn: Map<string, string[]>;
+  };
+
+  function analyseMigrations(): Analysis {
+    const dir = path.join(ROOT, "supabase/migrations");
+    const files = readdirSync(dir).filter((f) => f.endsWith(".sql")).sort();
+    const bodies = new Map<string, string>();
+    const triggersOn = new Map<string, string[]>();
+
+    for (const file of files) {
+      const raw = readFileSync(path.join(dir, file), "utf8");
+      const text = raw
+        .split("\n")
+        .filter((l) => !/^\s*--/.test(l))
+        .join("\n");
+
+      const fnRe = /create\s+or\s+replace\s+function\s+(?:public\.)?(\w+)\s*\(/gi;
+      let m: RegExpExecArray | null;
+      while ((m = fnRe.exec(text)) !== null) {
+        const end = text.indexOf("$$;", m.index);
+        if (end === -1) continue;
+        bodies.set(m[1], text.slice(m.index, end)); // last definition wins
+      }
+
+      const trgRe =
+        /create\s+trigger\s+\w+[\s\S]{0,120}?on\s+(?:public\.)?(\w+)[\s\S]{0,80}?execute\s+function\s+(?:public\.)?(\w+)/gi;
+      while ((m = trgRe.exec(text)) !== null) {
+        const list = triggersOn.get(m[1]) ?? [];
+        if (!list.includes(m[2])) list.push(m[2]);
+        triggersOn.set(m[1], list);
+      }
+    }
+    return { bodies, triggersOn };
+  }
+
+  const ANALYSIS = analyseMigrations();
+
+  /** Literal insert/update/delete targets in one body. */
+  function literalWrites(body: string): string[] {
+    const out = new Set<string>();
+    const re = /(?:insert\s+into|update|delete\s+from)\s+(?:public\.)?(\w+)/gi;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(body)) !== null) out.add(m[1]);
+    return [...out];
+  }
+
+  /** public.<fn>( invocations in one body, excluding the definition itself. */
+  function calls(body: string): string[] {
+    const out = new Set<string>();
+    const re = /public\.(\w+)\s*\(/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(body)) !== null) out.add(m[1]);
+    return [...out];
+  }
+
+  /** Everything a command can write, through DML, calls and triggers alike. */
+  function reachableWrites(name: string): Set<string> {
+    const tables = new Set<string>();
+    const seenFns = new Set<string>();
+    const fnQueue = [name];
+
+    while (fnQueue.length > 0 || true) {
+      while (fnQueue.length > 0) {
+        const fn = fnQueue.pop() as string;
+        if (seenFns.has(fn)) continue;
+        seenFns.add(fn);
+        const body = ANALYSIS.bodies.get(fn);
+        if (!body) continue;
+        for (const t of literalWrites(body)) tables.add(t);
+        for (const c of calls(body)) if (!seenFns.has(c)) fnQueue.push(c);
+      }
+      // Trigger hop: writing a table runs its triggers, which may write more.
+      let grew = false;
+      for (const t of [...tables]) {
+        for (const trg of ANALYSIS.triggersOn.get(t) ?? []) {
+          if (!seenFns.has(trg)) {
+            fnQueue.push(trg);
+            grew = true;
+          }
+        }
+      }
+      if (!grew && fnQueue.length === 0) break;
+    }
+    return tables;
+  }
+
   type Command = { name: string; body: string; writes: string[]; locksStudio: boolean };
 
   function commands(): Command[] {
@@ -378,17 +493,37 @@ describe("every command that reaches `studios` locks it first", () => {
       // Trigger functions run inside their caller's transaction and take no
       // locks of their own; the CALLER is what this rule governs.
       if (/returns trigger/.test(body)) continue;
+      const bare = m[1].replace(/^public\./, "");
+      const reachable = reachableWrites(bare);
       found.push({
         name: m[1],
         body,
-        writes: STUDIO_FK_TABLES.filter((t) =>
-          new RegExp(`(insert\\s+into|update)\\s+public\\.${t}\\b`).test(body),
-        ),
+        writes: STUDIO_FK_TABLES.filter((t) => reachable.has(t)),
         locksStudio: /from public\.studios[^;]*for no key update/.test(body),
       });
     }
     return found;
   }
+
+  it("resolves nested calls, so a delegating command is not exempt", () => {
+    // The specific hole: admit_ writes nothing itself.
+    const admit = commands().find((c) => c.name === "public.admit_new_client_waitlist_entry");
+    expect(admit, "admit_ must be analysed").toBeDefined();
+    expect(
+      admit!.writes.length,
+      "admit_ delegates its writes; the audit must follow the call",
+    ).toBeGreaterThan(0);
+    expect(admit!.writes).toContain("new_client_waitlist_entries");
+  });
+
+  it("follows the trigger hop from entries to the event table", () => {
+    const claim = commands().find(
+      (c) => c.name === "public.claim_new_client_waitlist_entries_ordered",
+    );
+    expect(claim).toBeDefined();
+    // record_event fires on entries and inserts into entry_events.
+    expect(claim!.writes).toContain("new_client_waitlist_entry_events");
+  });
 
   it("finds the commands at all, so an empty sweep cannot pass vacuously", () => {
     const all = commands();
@@ -397,12 +532,19 @@ describe("every command that reaches `studios` locks it first", () => {
     expect(all.map((c) => c.name)).toContain(
       "public.claim_new_client_waitlist_entries_ordered",
     );
+    // The analysis must have actually parsed other migrations, or the nested
+    // resolution above is accidental.
+    expect(ANALYSIS.bodies.has("claim_new_client_waitlist_entry")).toBe(true);
+    expect(ANALYSIS.bodies.has("issue_scoped_new_client_waitlist_invitation")).toBe(true);
+    expect(ANALYSIS.triggersOn.get("new_client_waitlist_entries") ?? []).toContain(
+      "new_client_waitlist_entries_record_event",
+    );
   });
 
-  it("every writer of a studios-FK table takes the studio lock", () => {
+  it("every command that can reach a studios-FK table takes the studio lock", () => {
     const offenders = commands()
       .filter((c) => c.writes.length > 0 && !c.locksStudio)
-      .map((c) => `${c.name} writes ${c.writes.join(", ")} without locking studios`);
+      .map((c) => `${c.name} reaches ${c.writes.join(", ")} without locking studios`);
     expect(offenders, "a new command must take `studios ... for no key update` first").toEqual([]);
   });
 
@@ -412,19 +554,11 @@ describe("every command that reaches `studios` locks it first", () => {
   });
 
   it("the studio lock precedes every entry lock, in every command that takes both", () => {
-    // Order, not just presence. A studio lock taken after the entry is the
-    // inversion itself.
     for (const c of commands()) {
       const studio = c.body.search(/from public\.studios[^;]*for no key update/);
       const entry = c.body.search(/from public\.new_client_waitlist_entries[^;]*for update/);
       if (studio === -1 || entry === -1) continue;
       expect(studio, `${c.name} locks the entry before the studio`).toBeLessThan(entry);
     }
-  });
-
-  it("names the transitive path, so the next reader does not have to rediscover it", () => {
-    // The trigger hop is why writing `entries` counts as reaching `studios`.
-    expect(SQL).toContain("record_event");
-    expect(SQL).toContain("new_client_waitlist_entry_events");
   });
 });
