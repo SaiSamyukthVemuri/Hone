@@ -475,13 +475,15 @@ describe("begin proof — the code the delivery layer has to send", () => {
   // outcome -- a fail-closed contract handing the delivery layer a mint time it
   // could not use.
   it("returns a valid instant EXACTLY as the database spelled it", async () => {
-    // Not re-serialised: an offset-bearing form must survive byte for byte,
-    // because this module is not an authority on how an instant is written.
+    // These are the forms OBSERVED from the local stack: to_json(timestamptz)
+    // is what PostgREST emits, and it is always T-separated with seconds and an
+    // explicit offset, with a microsecond fraction only when non-zero. Each must
+    // survive byte for byte -- this module does not re-spell an instant.
     for (const raw of [
-      "2026-09-10T12:05:00Z",
-      "2026-09-10T12:05:00.123Z",
+      "2026-09-08T17:28:32.375192+00:00",
+      "2026-09-10T12:05:00+00:00",
       "2026-09-10T08:05:00-04:00",
-      "2026-09-10 12:05:00+00",
+      "2026-09-10T12:05:00Z",
     ]) {
       rpc.mockResolvedValue({ data: challengeRow({ issued_at: raw }), error: null });
       const out = await beginRecipientProof(TOKEN);
@@ -491,17 +493,45 @@ describe("begin proof — the code the delivery layer has to send", () => {
   });
 
   it.each([
-    ["the reported case", "not-a-date"],
+    ["the first reported case", "not-a-date"],
     ["empty string", ""],
     ["whitespace only", "   "],
-    ["month 13", "2026-13-45T99:99:99Z"],
     ["a bare word", "yesterday"],
     ["a lone number as text", "0"],
-    ["ISO-shaped but unparseable", "2026-09-10T99:99:99Z"],
     ["truncated", "2026-09-"],
+    // Codex P2 #2: Date.parse NORMALISES these rather than refusing them.
+    ["Feb 30 — a date that does not exist", "2026-02-30T12:00:00Z"],
+    ["Feb 30 with a real offset", "2026-02-30T12:00:00+00:00"],
+    ["Nov 31", "2026-11-31T12:00:00+00:00"],
+    ["Feb 29 in a non-leap year", "2026-02-29T12:00:00+00:00"],
+    ["month 13", "2026-13-01T12:00:00+00:00"],
+    ["month 00", "2026-00-10T12:00:00+00:00"],
+    ["day 00", "2026-09-00T12:00:00+00:00"],
+    ["hour 99", "2026-09-10T99:05:00+00:00"],
+    ["hour 24", "2026-09-10T24:00:00+00:00"],
+    ["minute 60", "2026-09-10T12:60:00+00:00"],
+    ["second 60", "2026-09-10T12:05:60+00:00"],
+    // Incomplete serialisations a timestamptz never produces.
+    ["no seconds", "2026-09-10T12:05"],
+    ["no seconds, with offset", "2026-09-10T12:05+00:00"],
+    ["no timezone", "2026-09-10T12:05:00"],
+    ["date only", "2026-09-10"],
+    ["space separator instead of T", "2026-09-10 12:05:00+00:00"],
+    ["bare +00 offset, not +00:00", "2026-09-10T12:05:00+00"],
+    ["two-digit year", "26-09-10T12:05:00+00:00"],
   ])("refuses a malformed issued_at (%s) as unavailable", async (_label, bad) => {
     rpc.mockResolvedValue({ data: challengeRow({ issued_at: bad }), error: null });
     expect((await beginRecipientProof(TOKEN)).kind).toBe("unavailable");
+  });
+
+  it("ACCEPTS Feb 29 in a real leap year — the calendar check is not a blanket ban", async () => {
+    rpc.mockResolvedValue({
+      data: challengeRow({ issued_at: "2028-02-29T12:00:00+00:00" }),
+      error: null,
+    });
+    const out = await beginRecipientProof(TOKEN);
+    if (out.kind !== "challenge_issued") throw new Error("a real leap day was rejected");
+    expect(out.issuedAt).toBe("2028-02-29T12:00:00+00:00");
   });
 
   it("refuses a missing or non-string issued_at", async () => {

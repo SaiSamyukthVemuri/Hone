@@ -245,26 +245,62 @@ function str(row: Record<string, unknown> | null, k: string): string | null {
 /**
  * A column that must be a REAL INSTANT, returned unchanged when it is one.
  *
- * `str()` only proves the value is a string, so `"not-a-date"` sailed through it
- * and became `issuedAt: "not-a-date"` on a `challenge_issued` outcome — a
- * fail-closed contract handing the delivery layer an unusable mint time.
+ * SCOPED TO THE SERIALISATION THIS RPC ACTUALLY RECEIVES, not to dates in
+ * general. Observed directly from the local stack -- `to_json(timestamptz)` is
+ * what PostgREST emits -- the forms are:
  *
- * It VALIDATES without transforming: the caller gets the database's own text
- * back, byte for byte, never a re-serialised version. Normalising here would
- * quietly make this module a second authority on how an instant is spelled,
- * when the database is the only one.
+ *     2026-09-08T17:28:32.375192+00:00     (microsecond fraction)
+ *     2026-09-10T12:05:00+00:00            (no fraction when it is zero)
+ *
+ * always `T`-separated, always seconds, always an explicit offset, never `Z`
+ * from this server. `Z` is accepted anyway because it is an explicit timezone
+ * and a different serialiser may use it; nothing looser is.
+ *
+ * WHY A SHAPE IS NOT ENOUGH ON ITS OWN. `Date.parse` NORMALISES rather than
+ * refuses: it reads "2026-02-30T12:00:00Z" as March 2 and "0" as the year 2000,
+ * so a nonexistent date would have arrived at the delivery layer as a real
+ * instant. The calendar fields are therefore round-tripped through `Date.UTC`
+ * and compared back; a value that moved is a value that never existed.
+ *
+ * It VALIDATES WITHOUT TRANSFORMING: the caller gets the database's own text
+ * back, byte for byte. Re-serialising would make this module a second authority
+ * on how an instant is spelled, when the database is the only one.
  */
+const DB_TIMESTAMPTZ =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+
 function instant(row: Record<string, unknown> | null, k: string): string | null {
   const v = str(row, k);
   if (v === null) return null;
-  // SHAPE FIRST, because `Date.parse` is far more permissive than a timestamp
-  // column ever is: it reads "0" as the year 2000 and "2026-09-" as a September
-  // date, so parsing alone would let a nonsense value through as a "real"
-  // instant. This admits both forms a timestamptz actually arrives in -- the
-  // JSON ISO form and PostgreSQL's own space-separated text -- and nothing else.
-  if (!/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(v)) return null;
-  // Then the parse, which rejects shapes that look right but are not real dates
-  // (month 13, hour 99). NaN is not finite.
+  const m = DB_TIMESTAMPTZ.exec(v);
+  if (!m) return null;
+
+  const year = Number(m[1]);
+  const month = Number(m[2]);
+  const day = Number(m[3]);
+  const hour = Number(m[4]);
+  const minute = Number(m[5]);
+  const second = Number(m[6]);
+
+  // Clock fields have no calendar to catch them: Date.UTC would happily roll
+  // hour 24 into the next day, so they are bounded here.
+  if (hour > 23 || minute > 59 || second > 59) return null;
+
+  // The calendar round-trip, which carries the whole date check on its own:
+  // Feb 30 becomes March 2, month 13 rolls into the next year, day 00 falls back
+  // into the previous month. Any field coming back different is proof the date
+  // does not exist. An explicit month/day range test above it was redundant --
+  // removing it left every rejected class still red under negative control.
+  const probe = new Date(Date.UTC(year, month - 1, day));
+  if (
+    probe.getUTCFullYear() !== year ||
+    probe.getUTCMonth() !== month - 1 ||
+    probe.getUTCDate() !== day
+  ) {
+    return null;
+  }
+
+  // Belt and braces: a shape and calendar that pass must still parse.
   return Number.isFinite(Date.parse(v)) ? v : null;
 }
 
