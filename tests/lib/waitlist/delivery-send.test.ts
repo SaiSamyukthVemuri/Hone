@@ -27,12 +27,15 @@ import {
 } from "@/lib/waitlist/delivery/policy";
 import {
   LOCAL_REFUSAL_CODES,
+  PROVIDER_REFUSAL_CODES,
   isLocalRefusalCode,
   localRefusal,
+  normalizeProviderRefusalCode,
 } from "@/lib/email/send-refusals";
 import type {
   IdempotentEmailTransport,
   ProviderPayload,
+  WaitlistSendOutcome,
 } from "@/lib/email/new-client-waitlist-send";
 
 // WAIT DELIVERY-01. Every send below goes through an INJECTED transport that
@@ -1674,9 +1677,41 @@ describe("the refusal taxonomy is BINDING, not advisory", () => {
     expect(() => localRefusal("some_future_local_code")).not.toThrow();
   });
 
-  it("the transport constructs every pre-send refusal through it", () => {
-    // The type stops an UNKNOWN code; this stops the constructor being
-    // bypassed with a bare literal, which is the other half.
+  it("STRUCTURAL: a bare local rejection cannot be constructed at all", () => {
+    // The previous guard grepped for a literal with `status` immediately
+    // before `code`. Review found the hole: reorder the properties, or assign
+    // the object to a variable first, and it typechecked and slipped past —
+    // after which classifyDelivery treated it as a provider-attempted refusal
+    // and could authorize challenge invalidation.
+    //
+    // Grepping was the wrong tool. `WaitlistSendOutcome.code` is now a CLOSED
+    // union, so an arbitrary code is a compile error regardless of property
+    // order, formatting, or how many variables it passes through. The
+    // assertions below are compile-time; they run as a formality.
+
+    // @ts-expect-error an unknown code is not a RefusalCode — property order
+    // is irrelevant, this is the type, not a pattern.
+    const reordered: WaitlistSendOutcome = { code: "brand_new_code", status: "rejected" };
+    // @ts-expect-error nor does assigning it first help
+    const indirect: WaitlistSendOutcome = { status: "rejected", code: "also_new" };
+    // @ts-expect-error nor does the constructor accept one
+    localRefusal("brand_new_code");
+
+    // Every legitimate code still constructs, in either order.
+    for (const code of LOCAL_REFUSAL_CODES) {
+      const a: WaitlistSendOutcome = { status: "rejected", code };
+      const b: WaitlistSendOutcome = { code, status: "rejected" };
+      expect(a.code).toBe(code);
+      expect(b.code).toBe(code);
+    }
+    void reordered;
+    void indirect;
+  });
+
+  it("the transport still routes its pre-send refusals through the constructor", () => {
+    // Secondary now rather than load-bearing — the type is what enforces it.
+    // Kept because going through `localRefusal` is also what keeps the four
+    // call sites greppable when someone is auditing them.
     const raw = readFileSync(
       join(process.cwd(), "lib/email/new-client-waitlist-send.ts"),
       "utf8",
@@ -1684,16 +1719,55 @@ describe("the refusal taxonomy is BINDING, not advisory", () => {
     const code = raw
       .replace(/\/\*[\s\S]*?\*\//g, "")
       .replace(/^\s*\/\/.*$/gm, "");
-    const bareLiterals = [
-      ...code.matchAll(/status:\s*"rejected"\s*,\s*code:\s*"[a-z_]+"/g),
-    ].map((m) => m[0]);
-    expect(
-      bareLiterals,
-      "A pre-send refusal is written as a bare object literal instead of " +
-        "localRefusal(). Bare literals bypass the taxonomy, so the code would " +
-        "be classified as a PROVIDER rejection.",
-    ).toEqual([]);
-    expect(code).toMatch(/localRefusal\(/);
+    expect([...code.matchAll(/localRefusal\("/g)]).toHaveLength(
+      LOCAL_REFUSAL_CODES.length,
+    );
+  });
+
+  it("an untrusted provider name never reaches a refusal code", () => {
+    // The other half of the closed union. `error.name` is chosen by the
+    // provider, and the disposition built from it is copied verbatim into
+    // DeliveryLogRecord.disposition — a field whose justification is that it is
+    // a BOUNDED vocabulary. It was not bounded.
+    for (const raw of [
+      "failed for prospect@example.test via https://x.test/tok/SECRET",
+      "Bearer sk_live_abcdef",
+      "",
+      null,
+      undefined,
+    ]) {
+      const norm = normalizeProviderRefusalCode(raw);
+      expect(norm, String(raw)).toBe("unrecognized_provider_error");
+      expect(PROVIDER_REFUSAL_CODES).toContain(norm);
+    }
+    // Known names survive, so the collapse is not indiscriminate.
+    for (const known of PROVIDER_REFUSAL_CODES) {
+      expect(normalizeProviderRefusalCode(known)).toBe(known);
+    }
+  });
+
+  it("a leaky provider name cannot reach the delivery log", async () => {
+    // End to end, because that is the property that matters: the log is what
+    // ships somewhere the ops redactor does not run.
+    const leaky = "failed for prospect@example.test via https://x.test/tok/SECRET";
+    const now = new Date("2026-09-08T12:00:00.000Z");
+    const out = await sendWaitlistRecipientProofEmail({
+      studio: STUDIO,
+      invitationId: INVITATION_ID,
+      challengeId: CHALLENGE_ID,
+      recipientEmail: RECIPIENT,
+      code: "H4K2QF7P",
+      issuedAt: now,
+      expiresAt: new Date(now.getTime() + 20 * 60_000),
+      action: "book",
+      now,
+      transport: { emails: { send: async () => ({ data: null, error: { name: leaky } }) } },
+    });
+    expect(out.log.disposition).toBe("rejected_unrecognized_provider_error");
+    const serialized = JSON.stringify(out.log);
+    expect(serialized).not.toContain("prospect@example.test");
+    expect(serialized).not.toContain("SECRET");
+    expect(serialized).not.toContain("https://");
   });
 
   it("isLocalRefusalCode is what the policy uses — no second membership test", () => {

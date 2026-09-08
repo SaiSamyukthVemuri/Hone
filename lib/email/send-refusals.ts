@@ -80,3 +80,59 @@ export function isLocalRefusalCode(
     (LOCAL_REFUSAL_CODES as readonly string[]).includes(code)
   );
 }
+
+// ---------------------------------------------------------------------------
+// PROVIDER REFUSALS
+// ---------------------------------------------------------------------------
+
+/**
+ * Provider refusal names this codebase is willing to REPEAT.
+ *
+ * `error.name` is a string chosen by the provider, and the disposition built
+ * from it is copied verbatim into `DeliveryLogRecord.disposition` — a field
+ * whose whole justification is that it is a BOUNDED vocabulary, never provider
+ * free text. It was not bounded. A response whose name carried a recipient
+ * address, a URL, a credential or a verbose diagnostic went straight into the
+ * log, outside the ops redactor. Demonstrated with a name containing both an
+ * email address and a token URL.
+ *
+ * So the set is closed. Names are drawn from the SDK contract this module
+ * already documents (resend 6.12.3) plus the classifier in send-appointment.ts;
+ * anything else collapses to `unrecognized_provider_error`, which says exactly
+ * what is known without repeating what was said.
+ *
+ * The cost is deliberate: an unfamiliar provider name is not preserved. That is
+ * the right trade for a field that reaches logs — the provider console still
+ * holds the original, keyed by the message id the accepted path records.
+ */
+export const PROVIDER_REFUSAL_CODES = [
+  "invalid_idempotency_key",
+  "invalid_idempotent_request",
+  "concurrent_idempotent_requests",
+  "validation_error",
+  "invalid_to_address",
+  "missing_required_field",
+  "rate_limit_exceeded",
+  "unrecognized_provider_error",
+] as const;
+
+export type ProviderRefusalCode = (typeof PROVIDER_REFUSAL_CODES)[number];
+
+/** Every code a refusal may carry. Closed, so nothing arbitrary can be one. */
+export type RefusalCode = LocalRefusalCode | ProviderRefusalCode;
+
+/**
+ * Collapse a provider-supplied name to the closed set.
+ *
+ * The ONLY place an untrusted string becomes a refusal code. Everything
+ * downstream — the disposition, the log — sees a `RefusalCode`, which is why
+ * the log's bounded-vocabulary claim is now true rather than asserted.
+ */
+export function normalizeProviderRefusalCode(
+  raw: string | null | undefined,
+): ProviderRefusalCode {
+  return typeof raw === "string" &&
+    (PROVIDER_REFUSAL_CODES as readonly string[]).includes(raw)
+    ? (raw as ProviderRefusalCode)
+    : "unrecognized_provider_error";
+}

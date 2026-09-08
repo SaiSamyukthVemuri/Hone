@@ -277,7 +277,15 @@ describe("privacy policy — prospective client / waitlist coverage", () => {
     expect(sender).toMatch(/return localRefusal\("not_configured"\);/);
     // "rejected" is neither "ambiguous" nor "accepted", so it lands in the
     // definite branch above — the same treatment as a refusal.
-    expect(sender).toMatch(/\| \{ status: "rejected"; code: string \| null \}/);
+    //
+    // Pinned on the VARIANT, not on the code's type. This assertion has now
+    // broken twice on refactors that left the property untouched — first when
+    // the refusal moved to a constructor, then when `code` narrowed from
+    // `string | null` to a closed union to stop untrusted provider names
+    // reaching the delivery log. What the privacy policy depends on is that a
+    // local non-send yields `rejected`; the code's type is not part of that,
+    // and pinning it only manufactured false failures.
+    expect(sender).toMatch(/\| \{ status: "rejected";/);
     // Sibling local rejections share that status, so the category holds for
     // them too rather than needing another clause each.
     expect(sender).toMatch(/return localRefusal\("invalid_recipient"\);/);

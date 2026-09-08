@@ -5,12 +5,19 @@ import { FROM_ADDRESS, resend } from "./client";
 // without pulling this file — and therefore ./client and its module-scope
 // Resend initialization — into their import graph. Re-exported here so the
 // transport still names its own refusal codes.
-import { localRefusal } from "./send-refusals";
+import {
+  localRefusal,
+  normalizeProviderRefusalCode,
+  type RefusalCode,
+} from "./send-refusals";
 export {
   LOCAL_REFUSAL_CODES,
+  PROVIDER_REFUSAL_CODES,
   isLocalRefusalCode,
   localRefusal,
+  normalizeProviderRefusalCode,
 } from "./send-refusals";
+export type { LocalRefusalCode, ProviderRefusalCode, RefusalCode } from "./send-refusals";
 import {
   buildFromHeader,
   type StudioEmailIdentity,
@@ -228,7 +235,10 @@ export function waitlistEventOnlyIdempotencyKey(
  */
 export type WaitlistSendOutcome =
   | { status: "accepted"; messageId: string }
-  | { status: "rejected"; code: string | null }
+  // CLOSED, and that is what makes the bare literal impossible: a code
+  // outside the union does not typecheck whatever order its properties are
+  // written in, or however many variables it is assigned through first.
+  | { status: "rejected"; code: RefusalCode | null }
   | { status: "ambiguous"; reason: "timeout" | "concurrent" | "no_message_id" };
 
 
@@ -273,7 +283,8 @@ async function attempt(
     const result = raced as ProviderResult;
     if (!result) return { status: "ambiguous", reason: "no_message_id" };
     if (result.error) {
-      const name = result.error.name ?? null;
+      // THE ONE PLACE an untrusted provider string becomes a refusal code.
+      const name = normalizeProviderRefusalCode(result.error.name);
       if (name === CONCURRENT_ERROR) {
         // A prior attempt under this exact key is still being processed and may
         // yet succeed: ambiguous, never a clean refusal.
