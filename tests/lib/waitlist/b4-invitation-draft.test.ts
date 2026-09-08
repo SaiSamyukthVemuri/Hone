@@ -349,6 +349,109 @@ function reachableFromApp(): Map<string, string[]> {
   return reached;
 }
 
+const CONTRACT_MODULE = "lib/waitlist/invite-to-book-contract.ts";
+
+/**
+ * Every reason one source file looks like an invitation adapter.
+ *
+ * SEPARATE FROM THE REPO SCAN ON PURPOSE. Run only over a clean tree, a
+ * detector reports nothing and cannot be told apart from one that is broken —
+ * so this is exercised directly against synthetic sources below, including the
+ * bare object literal that defeated the previous nominal check.
+ *
+ * Two signals, both from the syntax tree:
+ *
+ *   SHAPE       an object literal or class declaring every member the
+ *               interface requires IS an adapter, whatever it says about
+ *               itself. TypeScript is structurally typed; the previous check
+ *               matched `implements`, a keyword nobody has to write.
+ *   ANNOTATION  a value declared as, or asserted to satisfy, the type.
+ */
+function adapterSignals(
+  rel: string,
+  text: string,
+  members: ReadonlyArray<string>,
+): string[] {
+  // Cheap prefilter that cannot miss: a complete structural implementation must
+  // contain every member name, so it must contain this one.
+  if (!text.includes(members[0]) && !text.includes("WaitlistInvitationAdapter")) {
+    return [];
+  }
+  const source = ts.createSourceFile(
+    rel,
+    text,
+    ts.ScriptTarget.Latest,
+    false,
+    rel.endsWith(".tsx") || rel.endsWith(".jsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+  );
+  const found: string[] = [];
+  const names = (
+    list: ReadonlyArray<{ name?: ts.PropertyName | ts.BindingName }>,
+  ): string[] =>
+    list
+      .map((m) =>
+        m.name && (ts.isIdentifier(m.name) || ts.isStringLiteral(m.name))
+          ? m.name.text
+          : null,
+      )
+      .filter((n): n is string => n !== null);
+  const mentionsType = (node: ts.Node | undefined): boolean =>
+    node !== undefined && /\bWaitlistInvitationAdapter\b/.test(node.getText(source));
+
+  const visit = (node: ts.Node): void => {
+    if (ts.isObjectLiteralExpression(node)) {
+      const declared = names(node.properties);
+      if (members.every((m) => declared.includes(m))) found.push(`${rel} (shape)`);
+    } else if (ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
+      const declared = names(node.members);
+      if (members.every((m) => declared.includes(m))) found.push(`${rel} (shape)`);
+      for (const heritage of node.heritageClauses ?? []) {
+        // Read from the tree, so `implements` inside a comment or a string is
+        // not one.
+        if (heritage.token === ts.SyntaxKind.ImplementsKeyword && mentionsType(heritage)) {
+          found.push(`${rel} (implements)`);
+        }
+      }
+    } else if (ts.isVariableDeclaration(node) && mentionsType(node.type)) {
+      found.push(`${rel} (annotation)`);
+    } else if (ts.isSatisfiesExpression(node) && mentionsType(node.type)) {
+      found.push(`${rel} (satisfies)`);
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(source, visit);
+  return found;
+}
+
+
+/** The member names `WaitlistInvitationAdapter` requires, read from the
+ *  interface declaration itself so a sixth method tightens the structural check
+ *  automatically rather than being silently optional. */
+function adapterMemberNames(): string[] {
+  const source = ts.createSourceFile(
+    CONTRACT_MODULE,
+    readFileSync(join(ROOT, CONTRACT_MODULE), "utf8"),
+    ts.ScriptTarget.Latest,
+    false,
+    ts.ScriptKind.TS,
+  );
+  let names: string[] = [];
+  ts.forEachChild(source, (node) => {
+    if (
+      ts.isInterfaceDeclaration(node) &&
+      node.name.text === "WaitlistInvitationAdapter"
+    ) {
+      names = node.members
+        .map((m) => (m.name && ts.isIdentifier(m.name) ? m.name.text : null))
+        .filter((n): n is string => n !== null);
+    }
+  });
+  if (names.length === 0) {
+    throw new Error("WaitlistInvitationAdapter has no readable members");
+  }
+  return names;
+}
+
 describe("this module is UNREACHABLE from the application", () => {
   // TIMEOUT STATED, AND WELL ABOVE THE MEASURED COST. This walk resolves every
   // specifier in the application graph with the real compiler; it ran at ~6.7s
@@ -516,14 +619,107 @@ describe("this module is UNREACHABLE from the application", () => {
   });
 
   it("no adapter implementation exists anywhere in the repository", () => {
-    // "Do not fake a working Send invitation" is only enforceable if there is
-    // nothing to fake with. A stub that can be called is a stub that can be
-    // wired by accident, so the contract ships a null sentinel and no class.
+    // TYPESCRIPT IS STRUCTURALLY TYPED, AND THIS TEST WAS NOT.
+    //
+    // It matched `/implements\s+WaitlistInvitationAdapter/`, which only sees a
+    // NOMINAL clause. A plain object literal carrying the five methods
+    // satisfies the interface, typechecks as a real adapter, and left this
+    // assertion green — proved by writing one. That matters more than an
+    // ordinary gap: "there is nothing to fake a send with" is the claim that
+    // makes an unwired prototype safe to keep on a branch, and it was enforced
+    // by a regex over a keyword nobody has to write.
+    //
+    // Two signals now, both from the syntax tree.
+    const members = adapterMemberNames();
+    // Derived from the interface, not copied beside it: a sixth method on the
+    // contract tightens this automatically instead of being silently optional.
+    expect(members).toContain("inviteToBook");
+    expect(members.length).toBeGreaterThan(4);
+
     const sources = [...walk("app"), ...walk("lib"), ...walk("components")];
-    const implementors = sources.filter((rel) =>
-      /implements\s+WaitlistInvitationAdapter/.test(readFileSync(join(ROOT, rel), "utf8")),
+    expect(sources.length).toBeGreaterThan(50);
+
+    const offenders = sources.flatMap((rel) =>
+      rel === CONTRACT_MODULE
+        ? []
+        : adapterSignals(rel, readFileSync(join(ROOT, rel), "utf8"), members),
     );
-    expect(implementors).toEqual([]);
+
+    expect(
+      [...new Set(offenders)].sort(),
+      "something in this repository is an invitation adapter",
+    ).toEqual([]);
+  });
+});
+
+describe("the adapter detector, exercised on sources that ARE adapters", () => {
+  const M = adapterMemberNames();
+  const CAPS =
+    "capabilities: { enforcesScope: true, canResend: true, canCancel: true, canReturnToWaitlist: true, canRemove: true },";
+  const LITERAL_BODY = [CAPS, ...M.filter((m) => m !== "capabilities").map((m) => `async ${m}() { return null as never; },`)].join("\n");
+  const CLASS_BODY = [
+    "capabilities = { enforcesScope: true, canResend: true, canCancel: true, canReturnToWaitlist: true, canRemove: true };",
+    ...M.filter((m) => m !== "capabilities").map((m) => `async ${m}() { return null as never; }`),
+  ].join("\n");
+
+  it("catches every shape a real adapter can take", () => {
+    // The bare object literal is the one that defeated the previous nominal
+    // check — it typechecks as a real adapter and says nothing about itself.
+    const adapters: ReadonlyArray<[string, string]> = [
+      ["bare object literal", `export const a = {\n${LITERAL_BODY}\n};`],
+      [
+        "annotated const",
+        `export const a: WaitlistInvitationAdapter = {\n${LITERAL_BODY}\n};`,
+      ],
+      [
+        "satisfies expression",
+        `export const a = {\n${LITERAL_BODY}\n} satisfies WaitlistInvitationAdapter;`,
+      ],
+      ["class with implements", `export class A implements WaitlistInvitationAdapter {\n${CLASS_BODY}\n}`],
+      ["class WITHOUT implements", `export class A {\n${CLASS_BODY}\n}`],
+      ["returned from a factory", `export function make() {\n  return {\n${LITERAL_BODY}\n  };\n}`],
+      ["assigned inside a function", `function f() {\n  const a = {\n${LITERAL_BODY}\n  };\n  return a;\n}`],
+    ];
+    for (const [label, source] of adapters) {
+      expect(
+        adapterSignals("probe.ts", source, M),
+        `${label} was not detected as an adapter`,
+      ).not.toEqual([]);
+    }
+  });
+
+  it("does not cry wolf, or the guard gets loosened", () => {
+    const innocent: ReadonlyArray<[string, string]> = [
+      [
+        "partial shape, one member missing",
+        `export const a = {\n${CAPS}\n  async ${M[1] ?? "inviteToBook"}() { return null as never; },\n};`,
+      ],
+      [
+        "type-only re-export of the name",
+        'export type { WaitlistInvitationAdapter } from "@/lib/waitlist/invite-to-book-contract";',
+      ],
+      [
+        "the name in a comment",
+        "// a WaitlistInvitationAdapter would go here one day\nexport const a = 1;",
+      ],
+      [
+        "the name in a string",
+        'export const doc = "implements WaitlistInvitationAdapter";',
+      ],
+      ["an unrelated object", 'export const a = { inviteToBook: 1 };'],
+    ];
+    for (const [label, source] of innocent) {
+      expect(adapterSignals("probe.ts", source, M), `${label} was falsely flagged`).toEqual([]);
+    }
+  });
+
+  it("tightens automatically when the contract grows a method", () => {
+    // The member list is DERIVED from the interface, so a source that satisfies
+    // today's contract stops counting the moment a sixth method is required.
+    const withExtra = [...M, "cancelEverything"];
+    const todaysAdapter = `export const a = {\n${LITERAL_BODY}\n};`;
+    expect(adapterSignals("probe.ts", todaysAdapter, M)).not.toEqual([]);
+    expect(adapterSignals("probe.ts", todaysAdapter, withExtra)).toEqual([]);
   });
 });
 
