@@ -1,4 +1,5 @@
 import type { DeliveryKind } from "./log-safety";
+export type { DeliveryKind };
 
 // WAIT DELIVERY-01 — the delivery policy, in one place.
 //
@@ -367,28 +368,81 @@ export const PROOF_REQUEST_LIMITS = {
  * a future caller reaching for "mark it failed" finds an explicit `false` and a
  * reason, instead of an absence it can read either way.
  */
+export type TerminalScope = "none" | "challenge" | "invitation";
+
 export type DeliveryRecovery =
   /** Delivered. Nothing to recover. */
   | "none"
+  /**
+   * NO PROVIDER CALL OCCURRED, so nothing is spent and the SAME event may be
+   * attempted again once `now >= issuedAt`. The only current cause is a clock
+   * disagreement between the database and the application.
+   *
+   * This is where the one-shot rule stops applying. That rule exists because a
+   * provider attempt consumes the raw token and may leave provider truth
+   * ambiguous — neither is true here. Forcing a reissue for harmless pre-send
+   * skew would discard a live invitation, and a freshly issued row would meet
+   * the same skew, so it is not even a remedy.
+   */
+  | "retry_same_event_after_clock_catchup"
   /** Proof: mint a NEW challenge under the same, still-valid invitation. */
   | "mint_new_challenge"
   /** Invitation: close/release, re-admit atomically, issue a NEW invitation. */
   | "reissue_invitation";
 
 /**
- * The recovery a kind uses when a send does not confirm. One place, so the two
- * cannot drift apart, and so adding a third delivery kind is a compile error
- * here rather than a silently wrong instruction at a call site.
+ * The recovery each kind uses when a send does not confirm.
+ *
+ * A LOOKUP TABLE WITH `satisfies`, not a conditional. The previous version was
+ * a ternary that claimed to make a third delivery kind a compile error and did
+ * not: an unrecognised kind fell to the else branch and was silently handed
+ * `mint_new_challenge` — a wrong, and potentially destructive, instruction that
+ * neither TypeScript nor a two-kind test would catch. `satisfies` requires every
+ * member of `DeliveryKind` to have an entry, so adding one without deciding its
+ * recovery fails to compile, which is what the claim was supposed to mean.
  */
+const RECOVERY_BY_KIND = {
+  invitation: "reissue_invitation",
+  recipient_proof: "mint_new_challenge",
+} as const satisfies Record<DeliveryKind, DeliveryRecovery>;
+
 export function recoveryForKind(kind: DeliveryKind): DeliveryRecovery {
-  return kind === "invitation" ? "reissue_invitation" : "mint_new_challenge";
+  return RECOVERY_BY_KIND[kind];
+}
+
+/**
+ * What a failed send of each kind terminates. Same `satisfies` discipline as
+ * the recovery table, and for the same reason: a third delivery kind must make
+ * TypeScript red here until someone decides what it ends — the alternative is a
+ * new kind silently inheriting "invitation" and retiring live rows.
+ *
+ * Note the asymmetry that is the whole point: a PROOF send terminates only the
+ * challenge. It can never return "invitation".
+ */
+const TERMINAL_SCOPE_BY_KIND = {
+  invitation: "invitation",
+  recipient_proof: "challenge",
+} as const satisfies Record<DeliveryKind, TerminalScope>;
+
+export function terminalScopeForKind(kind: DeliveryKind): TerminalScope {
+  return TERMINAL_SCOPE_BY_KIND[kind];
 }
 
 export type DeliveryDisposition = {
   /** Did the provider take custody? */
   delivered: "yes" | "no" | "unknown";
   /**
-   * ALWAYS `false`, and a LITERAL TYPE so no branch can set it otherwise.
+   * Whether the SAME delivery event may be attempted again.
+   *
+   * FALSE once a provider call has been made — that is the one-shot law, and it
+   * is why it exists: an attempt consumes the raw token and may leave provider
+   * truth ambiguous, so a later attempt could neither reproduce the email nor
+   * know whether the first arrived.
+   *
+   * TRUE only when NO provider call occurred and nothing is spent — today, a
+   * pre-send clock disagreement. Blocking a retry there would discard a live
+   * invitation over a millisecond of skew, and the rule was never aimed at
+   * that case.
    *
    * ONE INVITATION ID = ONE DELIVERY EVENT. 0193 mints the invitation id and
    * the raw token exactly once and hands the token straight to Delivery in that
@@ -403,10 +457,11 @@ export type DeliveryDisposition = {
    * challenge under the same still-valid invitation. `recovery` below names
    * which, so a caller never has to infer it.
    *
-   * The type is the enforcement. A boolean would let a future branch set it
-   * true and reintroduce same-event retry semantics with nothing to catch it.
+   * Biconditional with `recovery === "retry_same_event_after_clock_catchup"`,
+   * pinned by test, so the two cannot drift into disagreeing about whether a
+   * retry is permitted.
    */
-  sameEventRetryAllowed: false;
+  sameEventRetryAllowed: boolean;
   /**
    * What the product should do next, IF anything. Named as an action rather
    * than a boolean because the two delivery kinds recover differently, and a
@@ -427,16 +482,25 @@ export type DeliveryDisposition = {
    */
   recovery: DeliveryRecovery;
   /**
-   * TRUE when the INVITATION ITSELF is finished, not merely this delivery.
+   * WHAT, IF ANYTHING, THIS OUTCOME ENDS — named explicitly rather than left to
+   * a boolean a caller has to interpret.
    *
-   * Under the one-shot law no delivery is ever retried, so this no longer
-   * distinguishes retryable from non-retryable. It distinguishes something
-   * still useful: whether a REISSUE is even possible. An expired invitation is
-   * terminal — reissuing means admitting a new one, not re-sending this. A
-   * clock disagreement is not: the invitation is perfectly good and the next
-   * issue-and-send will work.
+   *   "none"        nothing is finished; nothing needs replacing
+   *   "challenge"   THIS proof challenge is finished; the INVITATION IS STILL
+   *                 LIVE and must not be retired
+   *   "invitation"  the invitation is finished
+   *
+   * A boolean could not express the middle case, and that was the defect: a
+   * proof send refusing an expired or overlong CHALLENGE set a flag documented
+   * as "the invitation is finished", so a caller following it would retire a
+   * perfectly live invitation. **A proof delivery can never terminate an
+   * invitation**, and the type now says so rather than relying on the reader.
+   *
+   * Biconditional with `recovery`, pinned by test: "challenge" pairs with
+   * `mint_new_challenge`, "invitation" with `reissue_invitation`, and "none"
+   * with `none` or `retry_same_event_after_clock_catchup`.
    */
-  terminal: boolean;
+  terminalScope: TerminalScope;
   /**
    * May the caller invalidate the challenge it just tried to deliver?
    * Only when the provider definitively refused — an ambiguous send may
@@ -507,9 +571,9 @@ export function classifyDelivery(
   if (outcome.status === "accepted") {
     return {
       delivered: "yes",
-      sameEventRetryAllowed: false,
       recovery: "none",
-      terminal: false,
+      terminalScope: "none",
+      sameEventRetryAllowed: false,
       mayInvalidateChallenge: false,
       mayMutateLifecycle: false,
       reason: "accepted",
@@ -518,11 +582,11 @@ export function classifyDelivery(
   if (outcome.status === "ambiguous") {
     return {
       delivered: "unknown",
-      sameEventRetryAllowed: false,
       // Ambiguous means it MAY have arrived, so the recovery is offered rather
       // than required: the caller weighs it against a possible duplicate.
       recovery: recoveryForKind(kind),
-      terminal: false,
+      terminalScope: terminalScopeForKind(kind),
+      sameEventRetryAllowed: false,
       // The in-flight request was never cancelled and may still be accepted.
       mayInvalidateChallenge: false,
       mayMutateLifecycle: false,
@@ -536,9 +600,9 @@ export function classifyDelivery(
     // from the provider rather than from a pre-send check.
     return {
       delivered: "no",
-      sameEventRetryAllowed: false,
       recovery: recoveryForKind(kind),
-      terminal: false,
+      terminalScope: terminalScopeForKind(kind),
+      sameEventRetryAllowed: false,
       mayInvalidateChallenge: true,
       mayMutateLifecycle: false,
       reason: `rejected_${PROVIDER_KEY_BOUND_TO_OTHER_BYTES}`,
@@ -546,9 +610,9 @@ export function classifyDelivery(
   }
   return {
     delivered: "no",
-    sameEventRetryAllowed: false,
     recovery: recoveryForKind(kind),
-    terminal: false,
+    terminalScope: terminalScopeForKind(kind),
+    sameEventRetryAllowed: false,
     // A definite refusal: nothing was delivered, so retiring the challenge
     // strands nobody.
     mayInvalidateChallenge: true,
@@ -641,9 +705,9 @@ export function terminalRefusal(
 ): DeliveryDisposition {
   return {
     delivered: "no",
-    sameEventRetryAllowed: false,
     recovery: recoveryForKind(kind),
-    terminal: true,
+    terminalScope: terminalScopeForKind(kind),
+    sameEventRetryAllowed: false,
     // Nothing was sent, so there is nothing in flight to strand. Whether the
     // challenge should be retired is the caller's decision, not a consequence
     // of this refusal.
@@ -654,29 +718,30 @@ export function terminalRefusal(
 }
 
 /**
- * A refusal made before any provider call that a LATER attempt may pass.
+ * A refusal made before any provider call, where NOTHING is spent.
  *
- * The counterpart to `terminalRefusal`, and the distinction is the point: one
- * Neither authorizes a retry of this send — the one-shot law forbids that — but
- * they say different things about the INVITATION: one is spent, the other is
- * perfectly good and will deliver on the next issue-and-send. Collapsing them
- * would discard a valid invitation over a clock a millisecond out.
+ * The counterpart to `terminalRefusal`. That one says the subject is finished
+ * and names what to make instead; this one says no send was attempted at all,
+ * so there is nothing to replace.
  *
- * Nothing was transmitted, so `delivered` is "no"; nothing is in flight, so
- * there is nothing to strand; and the invitation must NOT be invalidated —
- * waiting is the whole remedy.
+ * KIND-INDEPENDENT, deliberately. The recovery here is not about the object —
+ * neither the invitation nor the challenge was consumed — so it does not vary
+ * by kind and takes no kind argument. An earlier version routed this through
+ * `recoveryForKind` and told the caller to REISSUE after a clock disagreement:
+ * that discards a perfectly valid invitation over a millisecond of skew, and a
+ * freshly issued row would meet the same skew, so it was not even a remedy.
+ * With `sameEventRetryAllowed` false and reissue prescribed, the caller was
+ * left with no usable action at all.
  */
-export function retryableRefusal(
-  reason: string,
-  kind: DeliveryKind,
-): DeliveryDisposition {
+export function retryableRefusal(reason: string): DeliveryDisposition {
   return {
     delivered: "no",
-    sameEventRetryAllowed: false,
-    recovery: recoveryForKind(kind),
-    // The invitation is fine; only the clock disagreed. A reissue will work,
-    // which is why this is not terminal.
-    terminal: false,
+    // NO provider call occurred, so the one-shot rule does not apply: the same
+    // event may be attempted again once now >= issuedAt.
+    sameEventRetryAllowed: true,
+    recovery: "retry_same_event_after_clock_catchup",
+    // Nothing is finished — not the invitation, not a challenge.
+    terminalScope: "none",
     mayInvalidateChallenge: false,
     mayMutateLifecycle: false,
     reason: `rejected_${reason}`,

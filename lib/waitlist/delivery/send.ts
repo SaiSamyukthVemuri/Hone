@@ -216,7 +216,7 @@ export async function sendWaitlistInvitationEmail(args: {
     const disposition =
       window.disposition === "terminal"
         ? terminalRefusal(window.reason, "invitation")
-        : retryableRefusal(window.reason, "invitation");
+        : retryableRefusal(window.reason);
     return {
       disposition,
       log: buildDeliveryLogRecord({

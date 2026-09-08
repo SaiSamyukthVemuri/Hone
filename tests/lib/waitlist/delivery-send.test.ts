@@ -15,6 +15,8 @@ import {
   terminalRefusal,
   retryableRefusal,
   recoveryForKind,
+  terminalScopeForKind,
+  type DeliveryKind,
   type SendOutcomeShape,
   PROVIDER_IDEMPOTENCY_RETENTION_HOURS,
   PROOF_SEND_MAX_DELAY_AFTER_MINT_SECONDS,
@@ -690,7 +692,7 @@ describe("NEVER send an already-expired invitation", () => {
     const { out, calls } = await attemptAt(at(-1));
     expect(calls).toHaveLength(1);
     expect(out.disposition.delivered).toBe("yes");
-    expect(out.disposition.terminal).toBe(false);
+    expect(out.disposition.terminalScope).toBe("none");
   });
 
   it("BOUNDARY exactly now => TERMINAL refusal, no resend, zero provider calls", async () => {
@@ -698,7 +700,7 @@ describe("NEVER send an already-expired invitation", () => {
     expect(calls).toHaveLength(0);
     expect(out.disposition.delivered).toBe("no");
     expect(out.disposition.reason).toBe("rejected_invitation_expired");
-    expect(out.disposition.terminal).toBe(true);
+    expect(out.disposition.terminalScope).toBe("invitation");
     expect(out.disposition.sameEventRetryAllowed).toBe(false);
     expect(out.disposition.mayMutateLifecycle).toBe(false);
   });
@@ -707,15 +709,18 @@ describe("NEVER send an already-expired invitation", () => {
     const { out, calls } = await attemptAt(at(1));
     expect(calls).toHaveLength(0);
     expect(out.disposition.reason).toBe("rejected_invitation_expired");
-    expect(out.disposition.terminal).toBe(true);
+    expect(out.disposition.terminalScope).toBe("invitation");
     expect(out.disposition.sameEventRetryAllowed).toBe(false);
   });
 
-  it("a PROVIDER refusal stays non-terminal — the next attempt may differ", () => {
-    // The distinction the flag exists for. A provider said no to one attempt;
-    // an expired invitation says no to every attempt there will ever be.
+  it("a PROVIDER refusal spends the subject too — the token is gone either way", () => {
+    // Under the one-shot law a provider attempt consumes the raw token whatever
+    // the answer, so the invitation cannot be sent again and the recovery is a
+    // reissue. What distinguishes it from an expiry is the REASON, not the
+    // remedy.
     const d = classifyDelivery({ status: "rejected", code: "validation_error" }, "invitation");
-    expect(d.terminal).toBe(false);
+    expect(d.terminalScope).toBe("invitation");
+    expect(d.recovery).toBe("reissue_invitation");
     expect(d.sameEventRetryAllowed).toBe(false);
   });
 });
@@ -746,7 +751,7 @@ describe("P2: no send outside the provider's idempotency retention", () => {
     expect(out.disposition.reason).toBe("rejected_outside_provider_idempotency_window");
     // Terminal for the same reason as expiry: `now - issuedAt` only grows, so
     // no later attempt at THIS invitation falls back inside the window.
-    expect(out.disposition.terminal).toBe(true);
+    expect(out.disposition.terminalScope).toBe("invitation");
     expect(out.disposition.sameEventRetryAllowed).toBe(false);
     expect(out.disposition.mayMutateLifecycle).toBe(false);
   });
@@ -840,9 +845,16 @@ describe("CLOCK DISAGREEMENT is retryable, not terminal", () => {
     });
     expect(calls).toHaveLength(0);
     expect(out.disposition.reason).toBe("rejected_clock_disagreement");
-    expect(out.disposition.terminal).toBe(false);
-    expect(out.disposition.sameEventRetryAllowed).toBe(false);
-    expect(out.disposition.recovery).toBe("reissue_invitation");
+    // NOTHING is spent — not the invitation, not a challenge — and the recovery
+    // needs no new object: the request has not ended and the caller still holds
+    // the token. Prescribing a reissue here would discard a valid invitation
+    // over a millisecond of skew, and a fresh row would meet the same skew.
+    expect(out.disposition.terminalScope).toBe("none");
+    expect(out.disposition.recovery).toBe("retry_same_event_after_clock_catchup");
+    expect(out.disposition.recovery).not.toBe("reissue_invitation");
+    // NO provider call occurred, so the one-shot rule does not apply here and
+    // the SAME event may be attempted again once now >= issuedAt.
+    expect(out.disposition.sameEventRetryAllowed).toBe(true);
     // Waiting is the remedy, so nothing about the invitation may be retired.
     expect(out.disposition.mayInvalidateChallenge).toBe(false);
     expect(out.disposition.mayMutateLifecycle).toBe(false);
@@ -865,7 +877,7 @@ describe("CLOCK DISAGREEMENT is retryable, not terminal", () => {
     });
     expect(calls).toHaveLength(0);
     expect(out.disposition.reason).toBe("rejected_invitation_expired");
-    expect(out.disposition.terminal).toBe(true);
+    expect(out.disposition.terminalScope).toBe("invitation");
     expect(out.disposition.sameEventRetryAllowed).toBe(false);
   });
 });
@@ -903,10 +915,12 @@ describe("ONE INVITATION ID = ONE DELIVERY EVENT", () => {
     expect(out.disposition.mayMutateLifecycle).toBe(false);
   });
 
-  it("NO disposition, from any outcome, authorizes a same-event retry", () => {
-    // Exhaustive over the vocabulary rather than a sample: the law holds for
-    // every branch, and the literal `false` type means no future branch can
-    // opt out without a compile error.
+  it("NO outcome that reached the provider authorizes a same-event retry", () => {
+    // The one-shot law, stated where it actually applies: once a provider call
+    // has been made the raw token is consumed and provider truth may be
+    // ambiguous, so the event cannot be repeated. The single exception is a
+    // PRE-SEND clock disagreement, where no call occurred and nothing is spent
+    // — asserted separately below.
     const outcomes: SendOutcomeShape[] = [
       { status: "accepted", messageId: "m" },
       { status: "ambiguous", reason: "timeout" },
@@ -920,7 +934,9 @@ describe("ONE INVITATION ID = ONE DELIVERY EVENT", () => {
       expect(classifyDelivery(o, "invitation").sameEventRetryAllowed, JSON.stringify(o)).toBe(false);
     }
     expect(terminalRefusal("x", "invitation").sameEventRetryAllowed).toBe(false);
-    expect(retryableRefusal("y", "recipient_proof").sameEventRetryAllowed).toBe(false);
+    // The one exception, and the only one: no provider call, nothing spent.
+    expect(retryableRefusal("y").sameEventRetryAllowed).toBe(true);
+    expect(retryableRefusal("y").terminalScope).toBe("none");
   });
 
   it("CONTROL C: a reissue is a NEW event — new id yields a new key and new bytes", async () => {
@@ -990,8 +1006,9 @@ describe("ONE INVITATION ID = ONE DELIVERY EVENT", () => {
     expect(d.sameEventRetryAllowed).toBe(false);
     expect(d.recovery).toBe("reissue_invitation");
     expect(d.delivered).toBe("no");
-    // NOT terminal: the invitation is spent, but a fresh one will deliver.
-    expect(d.terminal).toBe(false);
+    // The subject is spent — a provider attempt was made and the token is gone
+    // — and a fresh invitation is what delivers.
+    expect(d.terminalScope).toBe("invitation");
   });
 });
 
@@ -1134,6 +1151,10 @@ describe("recovery is DELIVERY-KIND aware", () => {
     // than a silently wrong instruction at some call site.
     expect(recoveryForKind("invitation")).toBe("reissue_invitation");
     expect(recoveryForKind("recipient_proof")).toBe("mint_new_challenge");
+    // The scope table carries the same discipline, and the asymmetry that is
+    // the whole point: a PROOF send terminates only the challenge.
+    expect(terminalScopeForKind("invitation")).toBe("invitation");
+    expect(terminalScopeForKind("recipient_proof")).toBe("challenge");
   });
 
   it("EVERY non-delivered outcome advises the recovery of its own kind", () => {
@@ -1156,6 +1177,136 @@ describe("recovery is DELIVERY-KIND aware", () => {
       );
     }
     expect(terminalRefusal("r", "recipient_proof").recovery).toBe("mint_new_challenge");
-    expect(retryableRefusal("r", "invitation").recovery).toBe("reissue_invitation");
+    expect(retryableRefusal("r").recovery).toBe("retry_same_event_after_clock_catchup");
+  });
+});
+
+describe("terminality is SCOPED TO THE SUBJECT of the send", () => {
+  // The field was documented as "the invitation is finished" while a PROOF send
+  // set it for an expired or overlong CHALLENGE. Recovery said
+  // mint_new_challenge and terminality said the invitation was done, so the two
+  // contradicted each other and a caller following the second would retire a
+  // live invitation. REPRODUCED at 8e3dfcf6.
+  const NOW = new Date("2026-09-08T12:00:00.000Z");
+
+  async function proofRefusedFor(expiresAt: Date) {
+    const r = recordingTransport(ACCEPTED);
+    const out = await sendWaitlistRecipientProofEmail({
+      studio: STUDIO,
+      invitationId: INVITATION_ID,
+      challengeId: CHALLENGE_ID,
+      recipientEmail: RECIPIENT,
+      code: "H4K2QF7P",
+      issuedAt: NOW,
+      expiresAt,
+      action: "book",
+      now: NOW,
+      transport: r.transport,
+    });
+    return { out, calls: r.calls };
+  }
+
+  it("an OVERLONG challenge spends the challenge, and says so about the challenge", async () => {
+    const { out, calls } = await proofRefusedFor(new Date(NOW.getTime() + 99 * 60_000));
+    expect(calls).toHaveLength(0);
+    expect(out.disposition.terminalScope).toBe("challenge");
+    expect(out.disposition.recovery).toBe("mint_new_challenge");
+    // The two now agree: make a new challenge, under the same invitation.
+    expect(out.disposition.recovery).not.toBe("reissue_invitation");
+  });
+
+  it("an EXPIRED challenge is the same shape — challenge, never invitation", async () => {
+    const { out } = await proofRefusedFor(new Date(NOW.getTime() - 1));
+    expect(out.disposition.terminalScope).toBe("challenge");
+    expect(out.disposition.recovery).toBe("mint_new_challenge");
+  });
+
+  it("an EXPIRED INVITATION spends the invitation", async () => {
+    // The other subject, to prove the field tracks the kind rather than
+    // always meaning one of them.
+    const { transport } = recordingTransport(ACCEPTED);
+    const out = await sendWaitlistInvitationEmail({
+      studio: STUDIO,
+      invitationId: INVITATION_ID,
+      recipientEmail: RECIPIENT,
+      invitationUrl: URL,
+      issuedAt: INV_ISSUED,
+      expiresAt: new Date(INV_ISSUED.getTime() + 1_000),
+      now: new Date(INV_ISSUED.getTime() + 2_000),
+      transport,
+    });
+    expect(out.disposition.terminalScope).toBe("invitation");
+    expect(out.disposition.recovery).toBe("reissue_invitation");
+  });
+
+  it("terminalScope is BICONDITIONAL with recovery, over the whole vocabulary", () => {
+    // The invariant that stops the two fields ever contradicting — which is
+    // exactly how a proof send came to say "the invitation is finished" while
+    // its recovery said "mint a new challenge".
+    const EXPECTED: Record<string, string> = {
+      none: "none",
+      retry_same_event_after_clock_catchup: "none",
+      mint_new_challenge: "challenge",
+      reissue_invitation: "invitation",
+    };
+    const cases = [
+      terminalRefusal("x", "invitation"),
+      terminalRefusal("x", "recipient_proof"),
+      retryableRefusal("x"),
+      classifyDelivery({ status: "accepted", messageId: "m" }, "invitation"),
+      classifyDelivery({ status: "accepted", messageId: "m" }, "recipient_proof"),
+      classifyDelivery({ status: "ambiguous", reason: "timeout" }, "recipient_proof"),
+      classifyDelivery({ status: "ambiguous", reason: "concurrent" }, "invitation"),
+      classifyDelivery({ status: "rejected", code: "validation_error" }, "invitation"),
+      classifyDelivery({ status: "rejected", code: null }, "recipient_proof"),
+    ];
+    for (const d of cases) {
+      expect(d.terminalScope, `${d.reason} -> ${d.recovery}`).toBe(
+        EXPECTED[d.recovery],
+      );
+      // A proof outcome may NEVER terminate the invitation.
+      if (d.recovery === "mint_new_challenge") {
+        expect(d.terminalScope).not.toBe("invitation");
+      }
+      // And the retry flag agrees with the recovery about whether a retry is on.
+      expect(d.sameEventRetryAllowed, d.reason).toBe(
+        d.recovery === "retry_same_event_after_clock_catchup",
+      );
+    }
+  });
+});
+
+describe("the recovery mapping is EXHAUSTIVE over DeliveryKind", () => {
+  it("every kind has an entry, and the table is the only source", () => {
+    // The previous helper was a ternary that claimed to make a third kind a
+    // compile error and did not — an unrecognised kind fell to the else branch
+    // and was silently handed mint_new_challenge, which neither TypeScript nor
+    // a two-kind test would catch. REPRODUCED at 8e3dfcf6 by passing a
+    // non-member. It is now a `satisfies Record<DeliveryKind, DeliveryRecovery>`
+    // lookup, so omitting a kind fails to compile.
+    const kinds: DeliveryKind[] = ["invitation", "recipient_proof"];
+    for (const k of kinds) {
+      expect(["mint_new_challenge", "reissue_invitation"]).toContain(recoveryForKind(k));
+    }
+    expect(recoveryForKind("invitation")).toBe("reissue_invitation");
+    expect(recoveryForKind("recipient_proof")).toBe("mint_new_challenge");
+    // The scope table carries the same discipline, and the asymmetry that is
+    // the whole point: a PROOF send terminates only the challenge.
+    expect(terminalScopeForKind("invitation")).toBe("invitation");
+    expect(terminalScopeForKind("recipient_proof")).toBe("challenge");
+  });
+
+  it("the source uses a satisfies-checked table, not a conditional", () => {
+    // The compile-time half cannot be asserted from inside a passing test — a
+    // missing entry stops the file compiling rather than failing an assertion.
+    // So the shape that provides it is pinned directly, and the negative
+    // control for it is a typecheck run, recorded in the commit.
+    const src = readFileSync(
+      join(process.cwd(), "lib/waitlist/delivery/policy.ts"),
+      "utf8",
+    );
+    expect(src).toMatch(/satisfies Record<DeliveryKind, DeliveryRecovery>/);
+    expect(src).toMatch(/satisfies Record<DeliveryKind, TerminalScope>/);
+    expect(src).not.toMatch(/kind === "invitation" \?/);
   });
 });
