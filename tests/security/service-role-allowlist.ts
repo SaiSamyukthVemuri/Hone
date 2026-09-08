@@ -476,6 +476,22 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: '.eq("studio_id"',
   },
   {
+    path: "lib/booking/public-slot-range.ts",
+    purpose: "Public availability read across a DATE RANGE, resolved once.",
+    why:
+      "Identical authority to the single-date public slot read it factors out of " +
+      "app/book/[slug]/actions.ts: a session-less public caller cannot satisfy member " +
+      "RLS, so the studio row, its readiness, the service duration and the per-day " +
+      "availability are read with service-role. It ADDS no authority -- same tables, " +
+      "same tenant scoping, same past-time filter, and the studio's own public booking " +
+      "horizon still bounds which dates are queried. It exists because the per-date " +
+      "action rate-limits itself, so covering a whole invitation window with it drained " +
+      "the caller's own quota and silently dropped the remaining days; the throttle now " +
+      "wraps the operation once, in the caller, and this helper deliberately applies " +
+      "none of its own -- every caller must hold that gate.",
+    scopeGuard: '.eq("studio_id"',
+  },
+  {
     path: "lib/booking/queries.ts",
     purpose: "Public booking / portal / token-scoped read.",
     why: "Session-less or portal-session path that cannot satisfy member RLS; the query is explicitly studio/client scoped (see scopeGuard). Service-role reads the tenant-scoped rows.",

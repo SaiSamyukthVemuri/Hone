@@ -71,6 +71,34 @@ vi.mock("@/app/book/[slug]/actions", () => ({
   publicBookAppointmentAction: (...a: unknown[]) => publicBookAppointmentAction(...a),
 }));
 
+/**
+ * The RANGE helper, which is what the offer walk calls now.
+ *
+ * It replaced per-date `fetchPublicSlotsAction` calls precisely because that
+ * action rate-limits itself: a window wider than the allowance drained its own
+ * quota and the remaining days came back refused and were silently skipped.
+ *
+ * The shim keeps every existing per-date expectation working — tests still set
+ * `fetchPublicSlotsAction` per date and still read its calls to see WHICH dates
+ * were asked for — while the code under test exercises the real one-throttle
+ * path. `dates` is what the walk decided to ask about, which is the thing those
+ * assertions actually care about.
+ */
+const fetchPublicSlotsForDates = vi.fn(
+  async ({ dates }: { dates: readonly string[] }) => {
+    const slots: Array<{ start: string; end: string }> = [];
+    for (const date of dates) {
+      const res = await fetchPublicSlotsAction({ date });
+      if (res?.ok) slots.push(...res.slots);
+    }
+    return { ok: true as const, slots, scanned: [...dates], skippedOutsideHorizon: [] };
+  },
+);
+vi.mock("@/lib/booking/public-slot-range", () => ({
+  fetchPublicSlotsForDates: (...a: unknown[]) =>
+    (fetchPublicSlotsForDates as (...x: unknown[]) => unknown)(...a),
+}));
+
 vi.mock("@/lib/rate-limit/public", () => ({
   limitPublicSlots: async () => ({ allowed: true }),
   RATE_LIMIT_MESSAGE: "rate limited",
@@ -150,6 +178,10 @@ beforeEach(() => {
   cookieJar.clear();
   for (const m of [resolveInvitation, beginRecipientProof, completeRecipientProof,
                    declineInvitation, fetchPublicSlotsAction, publicBookAppointmentAction]) m.mockReset();
+  // Calls only — `mockReset` would discard the shim's implementation, and a
+  // test reading `mock.calls[0]` must see THIS test's first call, not a
+  // previous one's.
+  fetchPublicSlotsForDates.mockClear();
   resolveInvitation.mockResolvedValue(liveResolve());
   fetchPublicSlotsAction.mockResolvedValue({ ok: true, slots: [] });
   entryFixture.phone = "555 0100";
@@ -321,6 +353,47 @@ describe("secrets never cross the action boundary", () => {
     expect(strings).not.toContain(CODE);
     expect(strings).not.toContain(CHALLENGE_ID);
     expect(strings).not.toContain("chloe@example.test");
+  });
+
+  it("REQUESTING A NEW CODE DROPS THE OLD COOKIE", async () => {
+    // `begin_waitlist_invitation_proof` clears the database capability when it
+    // mints a replacement, but the signed cookie is independent of that: its
+    // HMAC binds a capability to a token and its expiry is the COOKIE's, not
+    // the database's. Leaving it meant a later reload verified the signature,
+    // saw a still-future expiry, and rendered `proven` against a capability the
+    // database would already reject.
+    //
+    // Reachable without anything exotic: a second tab still on the proof form,
+    // or the `decline_unavailable` path that returns the proof screen without
+    // clearing its cookie. Asking for a fresh code is the ordinary move from
+    // either.
+    cookieJar.set(
+      "wl_proof_capability",
+      signedCapability(TOKEN, CAPABILITY, "2026-10-07T12:30:00Z"),
+    );
+    beginRecipientProof.mockResolvedValue({
+      kind: "challenge_issued", proofChallengeId: CHALLENGE_ID, rawChallenge: CODE,
+      expiresAt: "2026-10-07T12:20:00Z", deliveryContact: "chloe@example.test",
+      maskedContact: "c•••@example.test",
+    });
+
+    await requestInvitationProofAction(TOKEN);
+
+    expect(cookieJar.has("wl_proof_capability")).toBe(false);
+  });
+
+  it("NON-VACUITY — a failed begin leaves the cookie alone", async () => {
+    // Only a REPLACEMENT invalidates the old capability. Clearing on every
+    // outcome would log out a recipient whose request merely failed to send.
+    cookieJar.set(
+      "wl_proof_capability",
+      signedCapability(TOKEN, CAPABILITY, "2026-10-07T12:30:00Z"),
+    );
+    beginRecipientProof.mockResolvedValue({ kind: "unavailable" });
+
+    await requestInvitationProofAction(TOKEN);
+
+    expect(cookieJar.has("wl_proof_capability")).toBe(true);
   });
 
   it("the first paint carries no invitation identifiers at all", async () => {
@@ -553,11 +626,73 @@ describe("P2-B — the whole authorised window is reachable", () => {
     expect(out.days.length).toBeGreaterThan(21);
   });
 
-  it("reaches the FINAL authorised day", async () => {
+  it("reaches the final day the studio can actually be BOOKED on", async () => {
+    // NOT blindly `scope.endDate`. The scan is intersected with the studio's
+    // own public booking horizon, because `fetchPublicSlotsAction` refuses a
+    // date beyond it — so a scope reaching past the horizon names dates that
+    // are unbookable by ANY route, and walking them would spend the whole
+    // budget discovering that one refusal at a time.
+    //
+    // The fixture studio has no configured horizon, so it takes the default.
+    // With a scope ending 2026-12-15 the walk therefore stops at the horizon,
+    // and what matters is that it goes FAR past the old 21-day cap and stops
+    // for an authoritative reason rather than an arbitrary constant.
     longOffer(null);
     const out = await loadInvitationAction(TOKEN);
     if (out.kind !== "offer") throw new Error("unreachable");
-    expect(out.days.map((d) => d.date)).toContain("2026-12-15");
+
+    const dates = out.days.map((d) => d.date);
+    expect(dates.length).toBeGreaterThan(60);
+    // Well beyond the old cap, and contiguous to the end of what it scanned.
+    expect(dates).toContain("2026-11-30");
+    // The last day scanned is the horizon's, not day 21 and not a magic number.
+    const last = dates[dates.length - 1]!;
+    expect(last > "2026-11-30").toBe(true);
+    expect(last <= "2026-12-15").toBe(true);
+  });
+
+  it("STOPS AT THE HORIZON, and does not query past it", async () => {
+    // The bound that makes a mistyped `9999-12-31` finite. Without it the walk
+    // allocated every date in the range before the first fetch.
+    longOffer(null);
+    await loadInvitationAction(TOKEN);
+
+    const asked = (fetchPublicSlotsForDates.mock.calls[0]![0] as { dates: string[] }).dates;
+    expect(asked.length).toBeGreaterThan(60);
+    // Bounded, and bounded by something far below the 76-day scope.
+    expect(asked.length).toBeLessThan(76);
+    for (const d of asked) expect(d <= "2026-12-15", d).toBe(true);
+  });
+
+  it("A THROTTLED READ IS AN ERROR, never an empty diary", async () => {
+    // The rate limiter used to be applied PER DATE inside the action, so a wide
+    // window drained its own quota and the refused days were silently skipped —
+    // truncation again, this time environment-dependent and invisible to any
+    // test without a configured limiter. The surface now gates once, and a
+    // refusal is reported rather than rendered as "nothing is open".
+    fetchPublicSlotsForDates.mockResolvedValueOnce({
+      ok: false as const,
+      error: "rate limited",
+    } as never);
+    longOffer(null);
+
+    const out = await loadInvitationAction(TOKEN);
+    expect(out.kind).not.toBe("offer");
+  });
+
+  it("a FAR-FUTURE endDate cannot explode the scan", async () => {
+    // `0192` constrains the scope only to `start <= end`, so this is a legal
+    // invitation. It used to allocate tens of thousands of dates before the
+    // first fetch; `9999-12-31` could exhaust the invocation outright.
+    const r = liveResolve(null);
+    r.invitation.scope.startDate = "2026-10-01";
+    r.invitation.scope.endDate = "9999-12-31";
+    resolveInvitation.mockResolvedValue(r);
+
+    const out = await loadInvitationAction(TOKEN);
+    expect(out.kind).toBe("offer");
+    const asked = (fetchPublicSlotsForDates.mock.calls[0]![0] as { dates: string[] }).dates;
+    expect(asked.length).toBeLessThan(400);
   });
 
   it("returns nothing after endDate", async () => {

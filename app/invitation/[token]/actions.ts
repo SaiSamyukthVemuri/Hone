@@ -42,7 +42,11 @@ import {
   type OfferPresentation,
   type ProofStage,
 } from "@/lib/waitlist/invitation-offer";
-import { fetchPublicSlotsAction } from "@/app/book/[slug]/actions";
+// NOT `fetchPublicSlotsAction`: it rate-limits itself per call, so covering a
+// window with it exhausts the caller's own quota and silently drops the tail.
+// The range helper is throttled ONCE by this surface instead.
+import { fetchPublicSlotsForDates } from "@/lib/booking/public-slot-range";
+import { horizonRangeInStudioTz } from "@/lib/booking/horizon";
 import { localDateString, localTimeString12h, utcInstantFromLocal } from "@/lib/booking/tz";
 import { limitPublicSlots, RATE_LIMIT_MESSAGE } from "@/lib/rate-limit/public";
 
@@ -185,6 +189,9 @@ async function clearCapability(): Promise<void> {
 
 type StudioContext = {
   slug: string;
+  /** The studio's configured public booking horizon, or null for the default.
+   *  Carried because the offered-day scan is bounded by it. */
+  horizonMonths: number | null;
   presentation: OfferPresentation;
 };
 
@@ -237,8 +244,12 @@ async function loadStudioContext(
   const admin = createAdminClient();
   const [{ data: studio }, { data: service }] = await Promise.all([
     admin
+      // The horizon comes along because the offered-day scan is bounded by it.
+      // Reading it here costs nothing — this row is already being fetched — and
+      // avoids the scan having to assume the default for a studio that
+      // configured something else.
       .from("studios")
-      .select("slug, name, timezone")
+      .select("slug, name, timezone, public_booking_horizon_months")
       .eq("id", studioId)
       .maybeSingle(),
     admin
@@ -252,6 +263,7 @@ async function loadStudioContext(
   if (!service?.name) return null;
   return {
     slug: studio.slug as string,
+    horizonMonths: (studio.public_booking_horizon_months as number | null) ?? null,
     presentation: {
       studioName: studio.name as string,
       serviceName: service.name as string,
@@ -334,9 +346,30 @@ async function offeredDays(
   // introduces no second reading of the offer -- if the evaluator says a day is
   // out, it is out, by exactly the rule the booking command enforces.
   const today = localDateString(new Date(), tz);
+
+  // THE SCAN IS BOUNDED BY THE STUDIO'S OWN BOOKING HORIZON, not by the scope
+  // alone.
+  //
+  // `0192` constrains the scope only to `start <= end`, and the issuer takes
+  // whatever dates the practitioner types. A slip — `2099-12-31`, or a mistyped
+  // `9999-12-31` — used to be walked in full BEFORE the first fetch: tens of
+  // thousands of date strings allocated, and in the pathological case the
+  // invocation exhausted outright. The per-day horizon check could not protect
+  // this loop, because it runs later, inside each fetch.
+  //
+  // The horizon is the authority on how far forward anyone may book at all, so
+  // intersecting with it costs no real coverage — a date past it is not
+  // bookable by any route — while making the walk finite by construction rather
+  // than by a constant someone has to maintain.
+  // The studio's OWN configured horizon, not the default: a studio on a
+  // six-month horizon must not have its offer scanned as though it were on
+  // three. `horizonRangeInStudioTz` normalises a null to the default itself.
+  const horizon = horizonRangeInStudioTz(tz, studio.horizonMonths);
+  const scanEnd = scope.endDate < horizon.maxDateStr ? scope.endDate : horizon.maxDateStr;
+
   const dates: string[] = [];
   let cursor = scope.startDate < today ? today : scope.startDate;
-  while (cursor <= scope.endDate) {
+  while (cursor <= scanEnd) {
     // P2-D. LOCAL noon, resolved through the studio's zone -- not noon UTC.
     //
     // This used to build `new Date(cursor + "T12:00:00Z")` and claim it was
@@ -368,34 +401,48 @@ async function offeredDays(
     cursor = next.toISOString().slice(0, 10);
   }
 
-  const collected: OfferedSlot[] = [];
-  const BATCH = 7;
-  for (let i = 0; i < dates.length; i += BATCH) {
-    const batch = await Promise.all(
-      dates
-        .slice(i, i + BATCH)
-        .map((date) =>
-          fetchPublicSlotsAction({
-            slug: studio.slug,
-            serviceId: scope.serviceId,
-            date,
-          }),
-        ),
-    );
-    for (const res of batch) {
-      if (!res.ok) continue;
-      for (const s of res.slots) {
-        collected.push({
-          start: s.start,
-          end: s.end,
-          startLabel: localTimeString12h(new Date(s.start), tz),
-        });
-      }
-    }
-  }
+  // ONE THROTTLE FOR THE WHOLE OPERATION, not one per day.
+  //
+  // This used to call `fetchPublicSlotsAction` per date, and that action
+  // rate-limits itself: `limitPublicSlots` allows a bounded number of requests
+  // per (IP, slug) per minute. A window wider than that allowance therefore
+  // EXHAUSTED ITS OWN QUOTA — the remaining days came back `ok: false` and were
+  // skipped by the `continue` below, so a long offer silently lost its tail
+  // again, in production only, invisible to any test that does not configure a
+  // limiter. A reload could spend an already-drained quota and show even less.
+  //
+  // Removing the day cap moved the truncation from an explicit constant to an
+  // implicit, environment-dependent one. That is worse, not better: a constant
+  // can be reasoned about and tested.
+  //
+  // So the surface gates ONCE, here, and then asks a non-action helper that
+  // resolves the studio, its readiness and the service duration a single time.
+  // A refusal is now the operation's refusal, and it is reported rather than
+  // silently swallowed per day.
+  const gate = await limitPublicSlots({ headers: await headers(), slug: studio.slug });
+  if (!gate.allowed) return { days: [], unreadable: true };
+
+  const range = await fetchPublicSlotsForDates({
+    slug: studio.slug,
+    serviceId: scope.serviceId,
+    dates,
+  });
+  // ANY failure to read is UNREADABLE, not empty. Throttled, studio not found,
+  // service withdrawn — none of them means "no times are open", and rendering
+  // an empty offer would state that as a fact about the studio's diary.
+  if (!range.ok) return { days: [], unreadable: true };
+
+  const collected: OfferedSlot[] = range.slots.map((s) => ({
+    start: s.start,
+    end: s.end,
+    startLabel: localTimeString12h(new Date(s.start), tz),
+  }));
   // Still narrowed by the same evaluator: the day filter above is an
   // optimisation, never the authority, and nothing past endDate is collected.
-  return groupSlotsByDay(tz, filterSlotsToScope(scope, tz, collected));
+  return {
+    days: groupSlotsByDay(tz, filterSlotsToScope(scope, tz, collected)),
+    unreadable: false,
+  };
 }
 
 async function offerState(
@@ -409,16 +456,21 @@ async function offerState(
   // render must not pay for either — and must not disclose, to mere possession
   // of the link, whether the studio holds a phone number for this person.
   const proven = proof.kind === "proven";
-  const [slots, identity] = await Promise.all([
+  const [offered, identity] = await Promise.all([
     proven
-      ? offeredDays(resolve, studio).then((days) =>
-          days.flatMap((d) => d.slots),
-        )
-      : Promise.resolve([]),
+      ? offeredDays(resolve, studio)
+      : Promise.resolve({ days: [], unreadable: false }),
     proven
       ? invitedIdentity(resolve.invitation.entryId, resolve.invitation.studioId)
       : Promise.resolve(null),
   ]);
+  // A THROTTLED READ IS NOT AN EMPTY DIARY. Rendering the offer with no days
+  // would say "nothing is open in the times held for you" about dates nobody
+  // looked at — the same false statement the day cap used to make, arriving by
+  // a different route. It is a retryable failure, and the screen already has
+  // the words and the button for that.
+  if (offered.unreadable) return { kind: "error", retryable: true };
+  const slots = offered.days.flatMap((d) => d.slots);
   return deriveInvitationViewState({
     resolve,
     presentation: studio.presentation,
@@ -478,6 +530,22 @@ export async function requestInvitationProofAction(
   if (!ctx.ok) return ctx.state;
 
   const begun = await beginRecipientProof(rawToken);
+
+  // ISSUING A NEW CHALLENGE INVALIDATES THE OLD CAPABILITY, so the cookie that
+  // carried it must go with it.
+  //
+  // `begin_waitlist_invitation_proof` clears the database capability when it
+  // mints a replacement. The signed cookie is independent of that: its HMAC
+  // binds a capability to a token and its expiry is the COOKIE's, not the
+  // database's — so leaving it in place meant a later reload verified the
+  // signature, saw a still-future expiry, and rendered `proven` against a
+  // capability the database would already reject.
+  //
+  // It is reachable without anything exotic: a second tab still showing the
+  // proof form, or the `decline_unavailable` path that returns the proof screen
+  // without clearing its cookie. Requesting a fresh code is the ordinary thing
+  // to do from either.
+  if (begun.kind === "challenge_issued") await clearCapability();
 
   // DELIVERY IS NOT WIRED ON THIS BRANCH. The code is minted and stored, and
   // `begun.rawChallenge` / `begun.proofChallengeId` are the two values the

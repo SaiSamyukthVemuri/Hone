@@ -45,11 +45,30 @@ export function InvitationContainer({
   const run = useCallback((op: () => Promise<InvitationViewState>) => {
     startTransition(async () => {
       try {
-        setState(await op());
+        const next = await op();
+        setState(next);
+        // A SELECTION MUST NOT OUTLIVE THE SLOT IT POINTS AT.
+        //
+        // Every refreshed offer is a new availability read. When the chosen
+        // instant was taken while the recipient was deciding, it is simply
+        // absent from the new day list — but `selectedSlotStart` survived the
+        // state swap, so nothing appeared selected while Book stayed enabled,
+        // and pressing it resubmitted the vanished slot for the same refusal,
+        // forever. Clearing it here rather than in the Book handler covers the
+        // retry and reload paths too, which refresh availability just as much.
+        setSelectedSlotStart((current) => {
+          if (current === null) return null;
+          if (next.kind !== "offer") return null;
+          const stillOffered = next.days.some((d) =>
+            d.slots.some((s) => s.start === current),
+          );
+          return stillOffered ? current : null;
+        });
       } catch {
         // A thrown action is a transport failure, not a refusal. Say so, and
         // leave a retry path rather than a dead screen.
         setState({ kind: "error", retryable: true });
+        setSelectedSlotStart(null);
       }
     });
   }, []);
