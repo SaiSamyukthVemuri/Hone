@@ -67,6 +67,46 @@
 --
 -- Re-runnable: create-if-not-exists / drop-if-exists throughout.
 
+-- ---------------------------------------------------------------------------
+-- LOCK DISCIPLINE FOR ANYONE ADDING A COMMAND HERE
+-- ---------------------------------------------------------------------------
+--
+--   Take `studios ... for no key update` FIRST -- before any write, any row
+--   lock, and any call to a command that writes.
+--
+-- WHY AT ALL. Writing any table with a `studios` foreign key takes an FK KEY
+-- SHARE lock on studios whether you ask for one or not. Without an explicit
+-- lock the order is decided by whichever statement runs last, and a command
+-- that holds an entry and then reaches for the studio deadlocks against 0192's
+-- issuer, which holds the studio and waits for the entry.
+--
+-- THE TRAP: A COMMAND CAN REACH `studios` WITHOUT NAMING IT.
+--   * writing new_client_waitlist_entries fires 0185's record_event trigger,
+--     which inserts into new_client_waitlist_entry_events -- its own studios FK;
+--   * a command that only DELEGATES still reaches everything its callees do.
+--     admit_ writes nothing directly and needs the lock all the same.
+--
+-- WHY `no key update` AND NOT `for update`. FOR UPDATE conflicts with KEY
+-- SHARE, so a studio-first FOR UPDATE moves the cycle rather than closing it:
+-- the 0185/0188 lifecycle writers hold an entry and then request KEY SHARE
+-- through that same trigger. Measured against this database:
+--
+--     held FOR UPDATE        + requested KEY SHARE      -> BLOCKS
+--     held FOR NO KEY UPDATE + requested KEY SHARE      -> compatible
+--     held FOR NO KEY UPDATE + requested NO KEY UPDATE  -> BLOCKS
+--
+-- so NO KEY UPDATE still serialises cooperating writers here while letting an
+-- FK check through.
+--
+-- HOW IT IS ENFORCED, AND HOW IT IS NOT. A static audit of this rule was built
+-- twice and abandoned: review found eleven holes in it, because deciding what a
+-- PL/pgSQL body can write is unbounded once dynamic SQL exists. The rule is
+-- proved instead by the deadlock and serialisation races in
+-- tests/db/waitlist-admission-authority.db.test.ts, which no syntax can evade.
+-- One static assertion remains, for the one spelling that silently reopens the
+-- cycle: no `for update` on studios.
+-- ---------------------------------------------------------------------------
+
 begin;
 set local lock_timeout = '5s';
 

@@ -1123,17 +1123,35 @@ describe("the studio lock mode is compatible with FK key-share", () => {
     expect(await conflicts("for no key update", "for no key update")).toBe(true);
   });
 
-  it("every 0193 studio lock is NO KEY UPDATE, and 0192 is left alone", async () => {
+  // THE ONLY STATIC ASSERTION LEFT, AND DELIBERATELY THE SMALLEST ONE THAT PAYS.
+  //
+  // A full static audit of this rule was attempted twice -- first parsing the
+  // migration text, then deriving from pg_constraint/pg_proc/pg_trigger -- and
+  // review found ELEVEN holes in it across three rounds: delegating commands,
+  // a hard-coded FK frontier, MERGE INTO, collapsed overloads, an ordering
+  // check that skipped rather than failed, dynamic SQL, dollar-quoted literals,
+  // rewrite rules, schema-qualified callees. Every one was a real hole, and the
+  // count went UP each round. Writing a PostgreSQL static analyser inside a test
+  // file is unbounded -- dynamic SQL alone is undecidable -- and it was
+  // generating more findings than the migration it policed.
+  //
+  // So the property is proved where it actually lives: at RUNTIME, by the
+  // deadlock and serialisation races in this file. Those cannot be fooled by
+  // syntax -- a MERGE, an EXECUTE or a rewrite rule would still deadlock and
+  // still fail them.
+  //
+  // What remains static is one unambiguous regex with no reachability analysis
+  // behind it: the wrong lock MODE must never appear. FOR UPDATE conflicts with
+  // the FK's KEY SHARE, and it is the single spelling that reopens the cycle.
+  // A missing lock is caught by the races; a wrong mode is caught here.
+  it("no 0193 command takes the incompatible FOR UPDATE mode on studios", async () => {
     const { readFileSync } = await import("node:fs");
     const sql = readFileSync("supabase/migrations/0193_waitlist_admission_authority.sql", "utf8");
     const code = sql.split("\n").filter((l) => !/^\s*--/.test(l)).join("\n");
-    // No FOR UPDATE anywhere, and at least one NO KEY UPDATE per command that
-    // writes a studios-FK table. The exact count is NOT pinned: it moved from 5
-    // to 9 when the audit found four more commands that needed one, and a
-    // hard-coded number would have had to be edited rather than simply holding.
     expect(code).not.toMatch(/from public\.studios[^;]*for update\b/i);
-    const locks = (code.match(/from public\.studios[^;]*for no key update/gi) ?? []).length;
-    expect(locks).toBeGreaterThanOrEqual(9);
+    // And the compatible mode is genuinely in use, so the assertion above is
+    // not passing merely because no studio lock exists at all.
+    expect(code).toMatch(/from public\.studios[^;]*for no key update/i);
   });
 });
 
@@ -1369,64 +1387,73 @@ describe("the ranked claim does not deadlock against 0192's issuer", () => {
     return { client, pid };
   }
 
-  it("settles with no 40P01 when a claim races a scoped invitation issue", async () => {
+  // STAGED, BECAUSE THE OBVIOUS VERSION IS VACUOUS.
+  //
+  // Racing the two commands on DIFFERENT entries proves nothing: the issuer
+  // never wants the entry the claim holds, so they merely queue. Measured --
+  // removing the ordered claim's studio lock left that version GREEN, which is
+  // how a real defect survived a test written for it.
+  //
+  // The cycle needs ONE entry and this order:
+  //
+  //   A: hold studios                    (what issue_scoped_ takes first)
+  //   B: ordered claim on E -> locks E, then its record_event trigger asks for
+  //      studios KEY SHARE, which A's FOR UPDATE blocks
+  //   A: reach for E                     (what issue_scoped_ takes second)
+  //                                      => B waits studios, A waits E = 40P01
+  //
+  // With the studio lock in place B blocks on studios holding NOTHING, A takes
+  // the entry freely, and they serialise.
+  it("does not deadlock when a ranked claim meets the issuer's lock order", async () => {
     const studio = await seedStudio("ordered-vs-0192");
-    await adminQuery(
-      `insert into public.studio_waitlist_admission_rounds (studio_id, allowance) values ($1,5)`,
-      [studio.studioId],
-    );
-    const service = await adminQuery(
-      `insert into public.services (studio_id, name, default_duration_minutes)
-       values ($1,'Svc',30) returning id`,
-      [studio.studioId],
-    );
     const entry = await adminQuery(
       `select * from public.create_practitioner_waitlist_entry($1,$2,'P',$3,null,null)`,
       [studio.studioId, studio.userId, uniqueEmail("ordered")],
     );
     const entryId = entry.rows[0].entry_id as string;
-    // issue_scoped_ requires a claimed entry, so give it one to work on.
-    await adminQuery(`select public.claim_new_client_waitlist_entry($1,$2,$3)`, [
-      studio.studioId, entryId, studio.userId,
-    ]);
-    const second = await adminQuery(
-      `select * from public.create_practitioner_waitlist_entry($1,$2,'Q',$3,null,null)`,
-      [studio.studioId, studio.userId, uniqueEmail("ordered2")],
-    );
-    const otherId = second.rows[0].entry_id as string;
 
     const a = await connect();
     const b = await connect();
     try {
-      // A: 0192's issuer takes studios FOR UPDATE, then works on its entry.
+      // A takes studios, exactly as issue_scoped_ does first.
       await a.client.query("begin");
-      const issued = await a.client.query(
-        `select ir.result from public.issue_scoped_new_client_waitlist_invitation(
-           $1,$2,$3,$4,$5,$6,null,72) ir`,
-        [studio.studioId, entryId, studio.userId, service.rows[0].id, "2026-10-01", "2026-10-31"],
-      );
-      expect(issued.rows[0].result).toBe("issued");
+      await a.client.query(`select 1 from public.studios where id = $1 for update`, [
+        studio.studioId,
+      ]);
 
-      // B: the ranked claim on a DIFFERENT waiting entry in the same studio.
       const claiming = b.client
         .query(
           `select oc.result from public.claim_new_client_waitlist_entries_ordered($1,$2,$3::uuid[]) oc`,
-          [studio.studioId, studio.userId, [otherId]],
+          [studio.studioId, studio.userId, [entryId]],
         )
         .then((r) => ({ ok: true as const, v: r.rows[0].result as string }))
         .catch((e: { code?: string }) => ({ ok: false as const, code: e.code }));
 
-      await waitUntilBlocked(b.pid);
+      expect(await waitUntilBlocked(b.pid), "the ranked claim must block").not.toBeNull();
+
+      // A now reaches for the entry, as issue_scoped_ does second. If the claim
+      // is holding it while waiting on studios, this closes the cycle.
+      const advancing = await a.client
+        .query(`select 1 from public.new_client_waitlist_entries where id = $1 for update`, [
+          entryId,
+        ])
+        .then(() => ({ ok: true as const }))
+        .catch((e: { code?: string }) => ({ ok: false as const, code: e.code }));
+
+      expect(
+        advancing.ok,
+        `the issuer's entry lock failed with ${"code" in advancing ? advancing.code : ""} (40P01 = deadlock)`,
+      ).toBe(true);
+
       await a.client.query("commit");
       const result = await claiming;
-      await b.client.query("commit").catch(() => undefined);
-
       expect(
         result.ok,
         `the ranked claim failed with ${"code" in result ? result.code : ""} (40P01 = deadlock)`,
       ).toBe(true);
       expect(result.ok && result.v).toBe("claimed");
     } finally {
+      await a.client.query("rollback").catch(() => undefined);
       await a.client.end();
       await b.client.end();
     }
