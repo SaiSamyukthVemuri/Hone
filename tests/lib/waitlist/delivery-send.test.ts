@@ -1394,3 +1394,124 @@ describe("a FUTURE-ISSUED proof challenge is refused before any send", () => {
     expect(calls).toHaveLength(1);
   });
 });
+
+describe("an ambiguous first attempt is never erased by its retry", () => {
+  // REPRODUCED at ff39df55: attempt 1 timed out (never cancelled, may still be
+  // accepted), attempt 2 was refused, and the refusal was returned verbatim —
+  // reporting a definitive "no" for a message that may already have arrived.
+  //
+  // Downstream that was not merely imprecise: a rejected outcome sets
+  // mayInvalidateChallenge, so a caller could retire a proof code that the
+  // FIRST request then delivered, and the recipient would type a code the
+  // database had just invalidated.
+
+  function twoAttempts(
+    second: Awaited<ReturnType<IdempotentEmailTransport["emails"]["send"]>>,
+  ) {
+    let n = 0;
+    const calls: unknown[] = [];
+    const transport: IdempotentEmailTransport = {
+      emails: {
+        send: async (p) => {
+          n += 1;
+          calls.push(p);
+          // First attempt is timeout-shaped: undefined is the "no usable
+          // result" the transport reads as ambiguous.
+          return n === 1 ? undefined : second;
+        },
+      },
+    };
+    return { transport, calls };
+  }
+
+  const NOW = new Date("2026-09-08T12:00:00.000Z");
+  async function proofWith(
+    second: Awaited<ReturnType<IdempotentEmailTransport["emails"]["send"]>>,
+  ) {
+    const { transport, calls } = twoAttempts(second);
+    const out = await sendWaitlistRecipientProofEmail({
+      studio: STUDIO,
+      invitationId: INVITATION_ID,
+      challengeId: CHALLENGE_ID,
+      recipientEmail: RECIPIENT,
+      code: "H4K2QF7P",
+      issuedAt: NOW,
+      expiresAt: new Date(NOW.getTime() + 20 * 60_000),
+      action: "book",
+      now: NOW,
+      transport,
+    });
+    return { out, calls };
+  }
+
+  it("a REJECTED retry leaves the send ambiguous, and the challenge intact", async () => {
+    const { out, calls } = await proofWith({
+      data: null,
+      error: { name: "validation_error" },
+    });
+    expect(calls).toHaveLength(2);
+    expect(out.disposition.delivered).toBe("unknown");
+    // The load-bearing consequence: the code may be in the inbox, so it must
+    // not be retired.
+    expect(out.disposition.mayInvalidateChallenge).toBe(false);
+    expect(out.disposition.terminalScope).toBe("none");
+    expect(out.disposition.reason).toMatch(/^ambiguous_/);
+  });
+
+  it("an ACCEPTED retry DOES resolve it — the provider replayed the original", async () => {
+    // Under one idempotency key an acceptance on the retry is a confirmation
+    // about the first request too, so this is the one answer that settles it.
+    const { out, calls } = await proofWith({ data: { id: "msg_1" }, error: null });
+    expect(calls).toHaveLength(2);
+    expect(out.disposition.delivered).toBe("yes");
+    expect(out.disposition.recovery).toBe("none");
+  });
+
+  it("a second AMBIGUOUS attempt stays ambiguous too", async () => {
+    const { out } = await proofWith(undefined);
+    expect(out.disposition.delivered).toBe("unknown");
+    expect(out.disposition.mayInvalidateChallenge).toBe(false);
+  });
+
+  it("a FIRST-attempt rejection is still definitive — nothing was in flight", async () => {
+    // The narrowness matters: only an ambiguous FIRST attempt creates doubt. A
+    // clean refusal on the first call means the provider never took custody.
+    const { transport, calls } = recordingTransport({
+      data: null,
+      error: { name: "validation_error" },
+    });
+    const out = await sendWaitlistRecipientProofEmail({
+      studio: STUDIO,
+      invitationId: INVITATION_ID,
+      challengeId: CHALLENGE_ID,
+      recipientEmail: RECIPIENT,
+      code: "H4K2QF7P",
+      issuedAt: NOW,
+      expiresAt: new Date(NOW.getTime() + 20 * 60_000),
+      action: "book",
+      now: NOW,
+      transport,
+    });
+    expect(calls).toHaveLength(1); // no retry on a definite answer
+    expect(out.disposition.delivered).toBe("no");
+    expect(out.disposition.mayInvalidateChallenge).toBe(true);
+  });
+
+  it("the invitation path behaves identically", async () => {
+    const { transport, calls } = twoAttempts({
+      data: null,
+      error: { name: "validation_error" },
+    });
+    const out = await sendWaitlistInvitationEmail({
+      studio: STUDIO,
+      invitationId: INVITATION_ID,
+      recipientEmail: RECIPIENT,
+      invitationUrl: URL,
+      ...INV_BASE,
+      transport,
+    });
+    expect(calls).toHaveLength(2);
+    expect(out.disposition.delivered).toBe("unknown");
+    expect(out.disposition.terminalScope).toBe("none");
+  });
+});

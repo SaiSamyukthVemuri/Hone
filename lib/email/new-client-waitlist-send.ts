@@ -296,6 +296,12 @@ async function attempt(
  * replays the original response instead of sending twice. Bounded at one retry;
  * there is deliberately no loop.
  *
+ * AMBIGUITY IS NOT ERASED BY THE RETRY. Once the first attempt is ambiguous,
+ * only an ACCEPTANCE resolves it — a rejection on the retry is a fact about the
+ * retry, while the first request was never cancelled and may still have been
+ * delivered. The outcome therefore stays ambiguous, carrying the first
+ * attempt's reason.
+ *
  * A `rejected` first attempt is NOT retried: the provider gave a definite
  * answer and repeating it would only burn quota.
  */
@@ -384,5 +390,28 @@ export async function sendWaitlistEmailIdempotent(args: {
   if (first.status !== "ambiguous") return first;
 
   // ONE bounded retry, SAME key AND same payload object.
-  return attempt(transport, payload, idempotencyKey);
+  const second = await attempt(transport, payload, idempotencyKey);
+
+  // ONCE THE FIRST ATTEMPT IS AMBIGUOUS, ONLY AN ACCEPTANCE RESOLVES IT.
+  //
+  // The retry's answer is about the RETRY. The first request was never
+  // cancelled — that is what "ambiguous" means here — so a provider rejecting
+  // the second attempt says nothing about whether the first was accepted and
+  // delivered. Returning that rejection verbatim reported a definitive refusal
+  // for a message that may already be in the recipient's inbox.
+  //
+  // Downstream that was not merely imprecise. A "rejected" outcome sets
+  // `mayInvalidateChallenge`, so a caller could retire a proof code that the
+  // first request then delivered, and the recipient would type a code the
+  // database had just invalidated.
+  //
+  // An acceptance DOES resolve it: under one idempotency key the provider
+  // replays the original response, so a confirmed acceptance on the retry is a
+  // confirmation about the first request too.
+  if (second.status === "accepted") return second;
+
+  // Otherwise the uncertainty stands, and it keeps the FIRST attempt's reason:
+  // that is where the doubt came from, and the retry's own failure mode is not
+  // what a caller needs to reason about.
+  return { status: "ambiguous", reason: first.reason };
 }
