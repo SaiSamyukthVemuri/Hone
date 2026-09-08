@@ -34,7 +34,43 @@ export type ScopeDecision =
   | { ok: true; localDate: string; weekday: number }
   | { ok: false; reason: ScopeRefusal };
 
-const YMD = /^\d{4}-\d{2}-\d{2}$/;
+const YMD = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/** Gregorian leap rule, in full: every 4, except every 100, except every 400. */
+function isLeapYear(year: number): boolean {
+  return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+}
+
+function daysInMonth(year: number, month: number): number {
+  if (month === 2) return isLeapYear(year) ? 29 : 28;
+  return month === 4 || month === 6 || month === 9 || month === 11 ? 30 : 31;
+}
+
+/**
+ * A REAL calendar date in `YYYY-MM-DD`, not merely a string shaped like one.
+ *
+ * The shape alone was a FAIL-OPEN in the one authority that decides whether a
+ * requested slot is inside the offer. "2026-00-01" passed it, and every later
+ * comparison here is LEXICAL -- "2026-06-15" > "2026-00-01" is true -- so an
+ * unreadable scope silently authorised an ordinary 2026 request. An offer whose
+ * own window cannot be read must authorise nothing.
+ *
+ * Deliberately arithmetic, not `Date.parse`: that normalises Feb 30 into March 2
+ * and would call the impossible date real. This module is pure by contract -- no
+ * clock, no I/O, every input passed in -- so the calendar is checked with a
+ * month table and the Gregorian leap rule rather than by constructing a Date.
+ */
+function isRealCalendarDate(value: string | null | undefined): boolean {
+  if (typeof value !== "string") return false;
+  const m = YMD.exec(value);
+  if (!m) return false;
+  const year = Number(m[1]);
+  const month = Number(m[2]);
+  const day = Number(m[3]);
+  if (month < 1 || month > 12) return false;
+  if (day < 1) return false;
+  return day <= daysInMonth(year, month);
+}
 
 /**
  * Decide whether a requested (service, instant) falls inside an invitation's
@@ -63,8 +99,8 @@ export function evaluateInvitationScope(args: {
   if (
     typeof scope.serviceId !== "string" ||
     scope.serviceId.length === 0 ||
-    !YMD.test(scope.startDate ?? "") ||
-    !YMD.test(scope.endDate ?? "") ||
+    !isRealCalendarDate(scope.startDate) ||
+    !isRealCalendarDate(scope.endDate) ||
     scope.startDate > scope.endDate ||
     !(requestedStartsAt instanceof Date) ||
     Number.isNaN(requestedStartsAt.getTime()) ||

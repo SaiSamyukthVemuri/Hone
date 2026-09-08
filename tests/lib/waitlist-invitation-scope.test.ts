@@ -178,3 +178,96 @@ describe("scoped invitation — an unreadable offer never defaults to permissive
     });
   });
 });
+
+// Codex P2. The window was validated by SHAPE only, so "2026-00-01" passed --
+// and every comparison here is LEXICAL, so "2026-06-15" > "2026-00-01" held and
+// an unreadable scope authorised an ordinary 2026 request. A fail-open in the
+// one authority that decides whether a requested slot is inside the offer.
+describe("scope dates must be real calendar dates, not merely YYYY-MM-DD shaped", () => {
+  const MID_2026 = "2026-06-15T14:00:00Z";
+
+  it.each([
+    ["month 00", "2026-00-01"],
+    ["month 13", "2026-13-01"],
+    ["Feb 30", "2026-02-30"],
+    ["Feb 29 in a common year", "2026-02-29"],
+    ["April 31", "2026-04-31"],
+    ["June 31", "2026-06-31"],
+    ["Nov 31", "2026-11-31"],
+    ["day 00", "2026-09-00"],
+    ["day 32", "2026-01-32"],
+  ])("an impossible START (%s) makes the scope unreadable", (_l, bad) => {
+    expect(
+      evaluate({ scope: { startDate: bad, endDate: "2026-12-31" }, startsAt: MID_2026 }),
+    ).toEqual({ ok: false, reason: "unreadable_scope" });
+  });
+
+  it.each([
+    ["month 00", "2026-00-31"],
+    ["month 13", "2026-13-31"],
+    ["Feb 30", "2026-02-30"],
+    ["April 31", "2026-04-31"],
+    ["day 32", "2026-01-32"],
+  ])("an impossible END (%s) makes the scope unreadable", (_l, bad) => {
+    expect(
+      evaluate({ scope: { startDate: "2026-01-01", endDate: bad }, startsAt: MID_2026 }),
+    ).toEqual({ ok: false, reason: "unreadable_scope" });
+  });
+
+  // The defect stated as the property it violated, in both directions.
+  it("an impossible START cannot authorise a request that lexically sits after it", () => {
+    const d = evaluate({
+      scope: { startDate: "2026-00-01", endDate: "2026-12-31" },
+      startsAt: MID_2026,
+    });
+    expect(d.ok, "an unreadable window must authorise nothing").toBe(false);
+  });
+
+  it("an impossible END cannot authorise a request that lexically sits before it", () => {
+    const d = evaluate({
+      scope: { startDate: "2026-01-01", endDate: "2026-13-31" },
+      startsAt: MID_2026,
+    });
+    expect(d.ok).toBe(false);
+  });
+
+  it("a REAL leap day is still a valid window bound", () => {
+    // 2028 is a leap year; Feb 29 exists and must be usable at either end.
+    expect(
+      evaluate({
+        scope: { startDate: "2028-02-29", endDate: "2028-03-31" },
+        startsAt: "2028-03-01T14:00:00Z",
+      }).ok,
+    ).toBe(true);
+    expect(
+      evaluate({
+        scope: { startDate: "2028-02-01", endDate: "2028-02-29" },
+        startsAt: "2028-02-15T14:00:00Z",
+      }).ok,
+    ).toBe(true);
+  });
+
+  it("the century leap rule is the full Gregorian one", () => {
+    // 2000 is a leap year (divisible by 400); 1900 was not (divisible by 100).
+    expect(
+      evaluate({
+        scope: { startDate: "2000-02-29", endDate: "2000-03-31" },
+        startsAt: "2000-03-01T14:00:00Z",
+      }).ok,
+    ).toBe(true);
+    expect(
+      evaluate({
+        scope: { startDate: "1900-02-29", endDate: "1900-03-31" },
+        startsAt: "1900-03-01T14:00:00Z",
+      }),
+    ).toEqual({ ok: false, reason: "unreadable_scope" });
+  });
+
+  it("ordinary month lengths are respected at both ends", () => {
+    for (const [d, ok] of [["2026-01-31", true], ["2026-04-30", true], ["2026-02-28", true]] as const) {
+      expect(
+        evaluate({ scope: { startDate: "2026-01-01", endDate: d }, startsAt: "2026-01-15T14:00:00Z" }).ok,
+      ).toBe(ok);
+    }
+  });
+});
