@@ -235,6 +235,9 @@ describe("the proof exchange maps B1.5c's outcomes", () => {
         // into the view state -- that is exactly what this mapping asserts.
         proofChallengeId: "9f1c2d3e-4a5b-4c6d-8e7f-0a1b2c3d4e5f",
         rawChallenge: "c".repeat(64),
+        // `issuedAt` joined the server-only set when 0192 began returning its
+        // authoritative mint instant. It is for the delivery layer, never a browser.
+        issuedAt: "2026-09-07T12:45:00.000Z",
         expiresAt: "2026-09-07T13:00:00.000Z",
         deliveryContact: "someone@example.com",
         maskedContact: "s•••••@example.com",
