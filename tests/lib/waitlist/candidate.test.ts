@@ -5,7 +5,11 @@ import {
   readServiceInterest,
   type WaitlistEntryRow,
 } from "@/lib/waitlist/candidate";
-import { NEVER_STALE, type StalenessPolicy } from "@/lib/waitlist/confirmation";
+import {
+  classifyPreferenceFreshness,
+  NEVER_STALE,
+  type StalenessPolicy,
+} from "@/lib/waitlist/confirmation";
 import { FIFO_POLICY, rankWaitlistCandidates } from "@/lib/waitlist/scoring";
 
 // WAIT-ADMIT-01 — the adapter must be correct against TODAY'S schema (the
@@ -307,6 +311,55 @@ describe("staleness and the clock", () => {
       /* expected */
     }
     expect(result).toBe("untouched");
+  });
+
+  // THE CLOCK MUST BE USABLE, NOT MERELY PRESENT.
+  //
+  // `new Date("bad")` satisfies the type and the presence check, then makes the
+  // elapsed calculation NaN. ageInDays returned 0 for any non-finite result,
+  // and 0 <= maxAgeDays reads as FRESH -- so a broken clock reported a
+  // years-old preference as current. Not a wrong number: a confident one.
+  it.each([
+    ["an Invalid Date", new Date("bad")],
+    ["a NaN-valued Date", new Date(Number.NaN)],
+  ])("REFUSES a finite policy measured against %s", (_label, badClock) => {
+    expect(() =>
+      projectCandidates([ROW], { now: badClock, staleness: { maxAgeDays: 90 } }),
+    ).toThrow(/not a valid instant/);
+  });
+
+  it("refuses an invalid clock for a dynamically loaded policy too", () => {
+    expect(() =>
+      projectCandidates([ROW], { now: new Date("bad"), staleness: loadPolicy(90) }),
+    ).toThrow(/not a valid instant/);
+  });
+
+  it("an invalid clock yields NO result, never a fresh one", () => {
+    // The failure mode was silent confidence, so nothing may come back.
+    let result: unknown = "untouched";
+    try {
+      result = projectCandidates([ROW], { now: new Date("bad"), staleness: { maxAgeDays: 90 } });
+    } catch {
+      /* expected */
+    }
+    expect(result).toBe("untouched");
+  });
+
+  it("classifyPreferenceFreshness itself rejects an invalid clock", () => {
+    // Defence for a direct caller that never goes through projectCandidates.
+    const verdict = classifyPreferenceFreshness(
+      {
+        preference: "weekdays",
+        statedAt: new Date("2025-01-01T00:00:00.000Z"),
+        confirmedAt: new Date("2025-01-01T00:00:00.000Z"),
+        source: "public_form",
+      },
+      new Date("bad"),
+      { maxAgeDays: 90 },
+    );
+    expect(verdict.kind).toBe("inconsistent");
+    // Emphatically not fresh.
+    expect(verdict.kind).not.toBe("fresh");
   });
 
   it("requires no clock when staleness is disabled or absent", () => {

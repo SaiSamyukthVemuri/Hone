@@ -76,7 +76,12 @@ export const NEVER_STALE: { readonly maxAgeDays: null } = { maxAgeDays: null };
 /** Whole days between two instants, floored, never negative. */
 function ageInDays(from: Date, to: Date): number {
   const ms = to.getTime() - from.getTime();
-  if (!Number.isFinite(ms)) return 0;
+  // Both operands are validated by every caller before reaching here, so a
+  // non-finite result is a programming error rather than data to interpret.
+  // It used to return 0, which is how an invalid clock became "fresh".
+  if (!Number.isFinite(ms)) {
+    throw new Error("ageInDays: non-finite interval; the clock or the stamp is invalid");
+  }
   return Math.max(0, Math.floor(ms / 86_400_000));
 }
 
@@ -90,6 +95,16 @@ export function classifyPreferenceFreshness(
 
   if (!Number.isFinite(statedMs) || !Number.isFinite(confirmedMs)) {
     return { kind: "inconsistent", detail: "statedAt or confirmedAt is not a valid instant" };
+  }
+  // THE CLOCK IS EVIDENCE TOO, AND IT WAS THE ONE INPUT NOT CHECKED.
+  //
+  // An Invalid Date makes the elapsed calculation NaN, ageInDays returned 0 for
+  // any non-finite result, and 0 <= maxAgeDays reads as FRESH -- so a broken
+  // clock made a years-old preference look current. That is the age-zero
+  // failure in its most damaging form: not a wrong number, a confident one.
+  // An unusable clock cannot establish freshness, so it establishes nothing.
+  if (!Number.isFinite(now.getTime())) {
+    return { kind: "inconsistent", detail: "now is not a valid instant" };
   }
   if (confirmedMs < statedMs) {
     return {

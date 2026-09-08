@@ -223,11 +223,25 @@ export function projectCandidates(
   // no clock, and the old code answered that by quietly reporting everything
   // fresh. Refusing is the only honest answer: the caller asked for staleness
   // and would otherwise have received none.
-  if (staleness.maxAgeDays !== null && options.now === undefined) {
-    throw new Error(
-      "projectCandidates: staleness.maxAgeDays is set but `now` was not supplied; " +
-        "a finite staleness policy cannot be evaluated without a clock",
-    );
+  if (staleness.maxAgeDays !== null) {
+    if (options.now === undefined) {
+      throw new Error(
+        "projectCandidates: staleness.maxAgeDays is set but `now` was not supplied; " +
+          "a finite staleness policy cannot be evaluated without a clock",
+      );
+    }
+    // A PRESENT CLOCK IS NOT NECESSARILY A USABLE ONE. `new Date("bad")`
+    // satisfies the type and the presence check, then makes the elapsed
+    // calculation NaN -- which used to collapse to age 0 and report years-old
+    // preferences as fresh. An unusable clock is refused for the same reason a
+    // missing one is: the policy cannot be evaluated, and saying "fresh"
+    // is a confident wrong answer rather than an absent one.
+    if (!Number.isFinite(options.now.getTime())) {
+      throw new Error(
+        "projectCandidates: `now` is not a valid instant; " +
+          "a finite staleness policy cannot be evaluated against an invalid clock",
+      );
+    }
   }
   const candidates: ScoringCandidate[] = [];
   const provenance: CandidateProvenance[] = [];
