@@ -35,6 +35,7 @@ import {
   readyToBind,
   sendState,
   validateDraft,
+  waitlistDomId,
   type InviteDraft,
   type PractitionerAction,
   type PractitionerActionItem,
@@ -183,6 +184,16 @@ function importSpecifiers(file: string, text: string): string[] {
       : ts.ScriptKind.TS,
   );
   const specs: string[] = [];
+  // TRIPLE-SLASH REFERENCES ARE NOT AST NODES. `/// <reference path="…" />`
+  // lands in `SourceFile.referencedFiles`, and TypeScript pulls the target into
+  // the program — but `forEachChild` never visits it, so the walk below cannot
+  // see it. A reference to a prototype entry point therefore left this guard
+  // green. Reference paths are FILE paths rather than module specifiers, so a
+  // bare-looking one like `components/x.tsx` still means "relative to me"; the
+  // `./` prefix makes that explicit for the resolver.
+  for (const ref of source.referencedFiles) {
+    specs.push(ref.fileName.startsWith(".") ? ref.fileName : `./${ref.fileName}`);
+  }
   const literal = (node: ts.Node | undefined): void => {
     if (node && ts.isStringLiteralLike(node)) specs.push(node.text);
   };
@@ -282,10 +293,22 @@ function resolveSpecifier(fromFile: string, spec: string): string | null {
     RESOLUTION_CACHE,
   );
   const target = resolved.resolvedModule;
-  const rel =
+  let rel =
     !target || target.isExternalLibraryImport
       ? null
       : relative(ROOT, target.resolvedFileName);
+  if (rel === null && spec.startsWith(".")) {
+    // A LITERAL PATH THAT EXISTS. Module resolution will not accept a specifier
+    // ending in `.tsx`, but a reference directive is a file path and legitimately
+    // does. Probing the exact path is not a second resolution algorithm — it is
+    // the only thing a reference directive means.
+    const literal = join(dirname(fromFile), spec);
+    try {
+      if (statSync(join(ROOT, literal)).isFile()) rel = literal;
+    } catch {
+      // not a file; leave unresolved
+    }
+  }
   // Outside the repo, or inside node_modules by another route: not our graph.
   const answer =
     rel === null || rel.startsWith("..") || rel.split(sep).includes("node_modules")
@@ -384,6 +407,14 @@ describe("this module is UNREACHABLE from the application", () => {
       // policy that type-only coupling counts.
       ["import-type node", 'type E = import("@/x/a").Thing;', "@/x/a"],
       ["import-type, nested in a generic", 'type E = Array<import("@/x/a").Thing>;', "@/x/a"],
+      // NOT AN AST NODE AT ALL. `referencedFiles`, which `forEachChild` never
+      // visits, while TypeScript still pulls the target into the program.
+      ["triple-slash reference", '/// <reference path="./a.tsx" />\nexport const v = 1;', "./a.tsx"],
+      [
+        "reference without a ./ prefix",
+        '/// <reference path="sub/a.tsx" />\nexport const v = 1;',
+        "./sub/a.tsx",
+      ],
     ];
     for (const [label, source, expected] of cases) {
       expect(importSpecifiers("probe.ts", source), `${label} produced no edge`).toContain(
@@ -493,6 +524,44 @@ describe("this module is UNREACHABLE from the application", () => {
       /implements\s+WaitlistInvitationAdapter/.test(readFileSync(join(ROOT, rel), "utf8")),
     );
     expect(implementors).toEqual([]);
+  });
+});
+
+describe("DOM ids are unique per entry, injectively", () => {
+  it("never maps two distinct entries onto one namespace", () => {
+    // The first version replaced every unsafe character with `-`, so `a/b` and
+    // `a:b` both became `wl-a-b-…` and two rows rendered together collided —
+    // the exact defect the shared factory was introduced to remove, one level
+    // deeper. Centralising a derivation does not make it correct.
+    const entries = [
+      "a/b", "a:b", "a-b", "a_b", "a.b", "a b", "a#b", "a@b",
+      // The escape alphabet fed back in: an input that LOOKS like an encoded
+      // form must not collide with the thing it looks like.
+      "a_2f_b", "a_5f_b", "wl-a-b",
+      "", "a", "A", "0",
+      "\u00e9", "\u4e2d\u6587", '"q"', "<script>",
+    ];
+    const seen = new Map<string, string>();
+    for (const entry of entries) {
+      const id = waitlistDomId(entry, "reason-remove");
+      const previous = seen.get(id);
+      expect(
+        previous,
+        `${JSON.stringify(entry)} and ${JSON.stringify(previous)} share the id ${id}`,
+      ).toBeUndefined();
+      seen.set(id, entry);
+      // Still a usable HTML id for every input, including empty and non-ASCII.
+      expect(id, `${JSON.stringify(entry)} produced an unusable id`).toMatch(
+        /^[A-Za-z][A-Za-z0-9_-]*$/,
+      );
+    }
+    expect(seen.size).toBe(entries.length);
+  });
+
+  it("keeps the entry and the suffix from bleeding into each other", () => {
+    // Without escaping `-` in the entry, entry `a` with suffix `b-c` and entry
+    // `a-b` with suffix `c` both produce `wl-a-b-c`.
+    expect(waitlistDomId("a", "b-c")).not.toBe(waitlistDomId("a-b", "c"));
   });
 });
 

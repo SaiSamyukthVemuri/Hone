@@ -8,6 +8,7 @@ import {
   TTL_PRESETS,
   WEEKDAYS_IN_DISPLAY_ORDER,
   emptyDraft,
+  waitlistDomId,
   type InviteDraft,
 } from "@/lib/waitlist/b4-invitation-draft";
 import type { AdapterCapabilities } from "@/lib/waitlist/invite-to-book-contract";
@@ -34,6 +35,13 @@ const CONNECTED: AdapterCapabilities = {
 
 const render = (el: ReactElement) => renderToStaticMarkup(el);
 
+/** Expected ids are DERIVED, not spelled out: the encoding is the factory's
+ *  business, and hard-coding it here made every fixture stale the moment the
+ *  escaping changed to become injective. */
+const ENTRY_ID = "entry-1";
+const errId = (field: string) => waitlistDomId(ENTRY_ID, `composer-error-${field}`);
+const labelId = (field: string) => waitlistDomId(ENTRY_ID, `composer-label-${field}`);
+
 const draft = (over: Partial<InviteDraft> = {}): InviteDraft => ({
   ...emptyDraft(),
   ...over,
@@ -42,7 +50,7 @@ const draft = (over: Partial<InviteDraft> = {}): InviteDraft => ({
 const compose = (over: Partial<InviteDraft> = {}, capabilities: AdapterCapabilities | null = null) =>
   render(
     InviteComposer({
-      entryId: "entry-1",
+      entryId: ENTRY_ID,
       entryName: "Sarah",
       draft: draft(over),
       services: SERVICES,
@@ -112,13 +120,13 @@ describe("the service selector", () => {
     // An `sr-only` copy of the section title made a screen reader announce
     // "Service" twice for one control.
     expect(controlTag(html, "composer-service")).toContain(
-      'aria-labelledby="wl-entry-1-composer-label-service"',
+      `aria-labelledby="${labelId("service")}"`,
     );
-    expect(html).toContain('id="wl-entry-1-composer-label-service"');
+    expect(html).toContain(`id="${labelId("service")}"`);
     expect(html).not.toContain('<span class="sr-only">Service</span>');
     // Exactly one element carries that id, or `aria-labelledby` resolves to
     // whichever came first.
-    expect(html.match(/id="wl-entry-1-composer-label-service"/g)).toHaveLength(1);
+    expect(html.split(`id="${labelId("service")}"`).length - 1).toBe(1);
   });
 
   it("uses the field primitive, so iOS cannot zoom the viewport on focus", () => {
@@ -312,55 +320,55 @@ describe("every validation error is wired to the control it explains", () => {
     const html = compose({ serviceId: "svc-deleted" }, CONNECTED);
     const select = tagFor(html, "composer-service");
     expect(select).toContain('aria-invalid="true"');
-    expect(select).toContain('aria-describedby="wl-entry-1-composer-error-service"');
-    expect(html).toContain('id="wl-entry-1-composer-error-service"');
+    expect(select).toContain(`aria-describedby="${errId("service")}"`);
+    expect(html).toContain(`id="${errId("service")}"`);
   });
 
   it("2 — an out-of-range window points the window control at its error", () => {
     const html = compose({ windowDays: 900 }, CONNECTED);
     const input = tagFor(html, "composer-window-days");
     expect(input).toContain('aria-invalid="true"');
-    expect(input).toContain('aria-describedby="wl-entry-1-composer-error-window"');
-    expect(html).toContain('id="wl-entry-1-composer-error-window"');
+    expect(input).toContain(`aria-describedby="${errId("window")}"`);
+    expect(html).toContain(`id="${errId("window")}"`);
   });
 
   it("3 — an empty weekday set points the GROUP at its error, not seven buttons", () => {
     const html = compose({ allowedWeekdays: [] }, CONNECTED);
     const group = tagFor(html, "composer-weekday-group");
     expect(group).toContain('role="group"');
-    expect(group).toContain('aria-describedby="wl-entry-1-composer-error-days"');
+    expect(group).toContain(`aria-describedby="${errId("days")}"`);
     // NOT `aria-invalid`: ARIA supports it on widget roles, not on `group`, so
     // assistive tech ignores it and the repo's a11y lint rejects it. The error
     // reaches the user through the description, which is what they hear on
     // entering the group.
     expect(group).not.toContain("aria-invalid");
-    expect(html).toContain('id="wl-entry-1-composer-error-days"');
+    expect(html).toContain(`id="${errId("days")}"`);
     // The message belongs to the SET, so it must not be repeated on each
     // toggle — that announces one error seven times and still names no remedy.
-    expect(html.match(/aria-describedby="wl-entry-1-composer-error-days"/g)).toHaveLength(1);
+    expect(html.split(`aria-describedby="${errId("days")}"`).length - 1).toBe(1);
   });
 
   it("3b — an out-of-range expiry points the expiry control at its error", () => {
     const html = compose({ expiresInHours: 999 }, CONNECTED);
     const input = tagFor(html, "composer-expiry-hours");
     expect(input).toContain('aria-invalid="true"');
-    expect(input).toContain('aria-describedby="wl-entry-1-composer-error-expiry"');
-    expect(html).toContain('id="wl-entry-1-composer-error-expiry"');
+    expect(input).toContain(`aria-describedby="${errId("expiry")}"`);
+    expect(html).toContain(`id="${errId("expiry")}"`);
   });
 
   it("4 — a corrected field leaves no stale invalid state and no dangling reference", () => {
     const html = compose({ serviceId: "svc-1", windowDays: 14, expiresInHours: 48 }, CONNECTED);
     expect(tagFor(html, "composer-service")).not.toContain("aria-invalid");
     expect(tagFor(html, "composer-service")).not.toContain("aria-describedby");
-    expect(html).not.toContain('id="wl-entry-1-composer-error-service"');
-    expect(html).not.toContain("wl-entry-1-composer-error-window");
-    expect(html).not.toContain("wl-entry-1-composer-error-expiry");
-    expect(html).not.toContain("wl-entry-1-composer-error-days");
+    expect(html).not.toContain(`id="${errId("service")}"`);
+    expect(html).not.toContain(errId("window"));
+    expect(html).not.toContain(errId("expiry"));
+    expect(html).not.toContain(errId("days"));
     // NEGATIVE CONTROL: the same expressions DO find the association when the
     // field is invalid, so the absences above are not vacuous.
     const broken = compose({ serviceId: "svc-deleted" }, CONNECTED);
     expect(tagFor(broken, "composer-service")).toContain("aria-invalid");
-    expect(broken).toContain('id="wl-entry-1-composer-error-service"');
+    expect(broken).toContain(`id="${errId("service")}"`);
   });
 
   it("5 — every aria reference resolves inside the same composer instance", () => {
@@ -407,11 +415,11 @@ describe("every validation error is wired to the control it explains", () => {
     ];
     for (const [testId, field] of pairs) {
       const tag = tagFor(html, testId);
-      expect(tag).toContain(`wl-entry-1-composer-error-${field}`);
+      expect(tag).toContain(errId(field));
       for (const [, other] of pairs) {
         if (other === field) continue;
         expect(tag, `${testId} also references the ${other} error`).not.toContain(
-          `wl-entry-1-composer-error-${other}`,
+          errId(other),
         );
       }
     }

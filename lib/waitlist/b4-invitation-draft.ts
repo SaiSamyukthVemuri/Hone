@@ -263,17 +263,38 @@ export function practitionerStatusDetail(
  * A DOM id that is unique per waitlist entry, and valid whatever the caller
  * passes.
  *
+ * INJECTIVE, WHICH IS THE WHOLE POINT AND WAS THE PART I GOT WRONG. The first
+ * version of this rule replaced every unsafe character with `-`, so `a/b` and
+ * `a:b` both became `wl-a-b-…` and two entries rendered together collided
+ * again — the exact defect the factory was introduced to remove, one level
+ * deeper. Centralising a derivation does not make it correct; a lossy
+ * derivation is a collision with a single home.
+ *
+ * So unsafe characters are ESCAPED rather than replaced: each becomes
+ * `_<hex>_`. `-` and `_` are escaped too, which is what makes the result
+ * unambiguous —
+ *
+ *   * every `_` in the output opens or closes an escape, because a literal
+ *     `_` in the input became `_5f_`;
+ *   * every `-` in the output is a delimiter this function added, because a
+ *     literal `-` in the input became `_2d_`.
+ *
+ * That second one also separates the entry from the suffix: without it,
+ * entry `a` with suffix `b-c` and entry `a-b` with suffix `c` would both
+ * produce `wl-a-b-c`.
+ *
  * SHARED ON PURPOSE. The row grew this after ids collided across rows; the
  * composer was then written with global constants and collided across
- * instances — the same defect, one component over, in the same change. One
- * factory means an id cannot be per-instance in one place and global in
- * another, because there is nowhere else to make one.
- *
- * Entry ids are reduced to id-safe characters and prefixed, so the result is a
- * valid, letter-initial identifier for any input.
+ * instances. One factory means an id cannot be per-instance in one place and
+ * global in another, because there is nowhere else to make one.
  */
 export function waitlistDomId(entryId: string, suffix: string): string {
-  return `wl-${entryId.replace(/[^A-Za-z0-9_-]/g, "-")}-${suffix}`;
+  const encoded = entryId.replace(
+    /[^A-Za-z0-9]/g,
+    (ch) => `_${ch.codePointAt(0)!.toString(16)}_`,
+  );
+  // `wl-` keeps the result letter-initial for any input, including empty.
+  return `wl-${encoded}-${suffix}`;
 }
 
 // --- 2. THE ACTIONS A PRACTITIONER HAS ---------------------------------------

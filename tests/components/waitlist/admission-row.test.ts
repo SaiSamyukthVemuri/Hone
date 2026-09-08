@@ -175,6 +175,42 @@ describe("accessible ids are namespaced per entry", () => {
     }
   });
 
+  it("keeps two rows apart when their ids differ only in unsafe characters", () => {
+    // THE PAIR THAT USED TO COLLIDE. `a/b` and `a:b` both sanitised to
+    // `wl-a-b-…`, so rendering them together recreated the very duplication the
+    // per-entry namespace was introduced to remove — the collision simply moved
+    // from "every row shares one id" to "these two rows share one id".
+    const pairs = [
+      ["a/b", "a:b"],
+      ["x y", "x-y"],
+      ["caf\u00e9", "cafe"],
+      ["e#1", "e@1"],
+    ];
+    for (const [left, right] of pairs) {
+      const a = render(AdmissionRow({ entry: { ...ENTRY, id: left }, capabilities: null }));
+      const b = render(AdmissionRow({ entry: { ...ENTRY, id: right }, capabilities: null }));
+      const ids = (html: string) => [...html.matchAll(/\sid="([^"]+)"/g)].map((m) => m[1]);
+      const idsA = ids(a);
+      const idsB = ids(b);
+      expect(idsA.length, `${left} emitted no ids`).toBeGreaterThan(0);
+      for (const id of idsA) {
+        expect(idsB, `"${left}" and "${right}" share the id ${id}`).not.toContain(id);
+      }
+      // And every reference still resolves inside its OWN row.
+      for (const [html, own] of [
+        [a, new Set(idsA)],
+        [b, new Set(idsB)],
+      ] as const) {
+        const refs = [...html.matchAll(/aria-describedby="([^"]+)"/g)].flatMap((m) =>
+          m[1].split(/\s+/).filter(Boolean),
+        );
+        for (const ref of refs) {
+          expect(own.has(ref), `reference "${ref}" escapes its own row`).toBe(true);
+        }
+      }
+    }
+  });
+
   it("points every describedby at an id that exists on the same row", () => {
     // A dangling `aria-describedby` is worse than none: the control announces
     // that it has an explanation and then has none to give.
