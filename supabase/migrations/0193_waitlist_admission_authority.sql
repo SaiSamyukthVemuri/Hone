@@ -567,7 +567,7 @@ begin
   -- Reproduced deterministically before it was fixed. The ENTRY row always
   -- exists, so locking it is a real mutex, and it serialises this path against
   -- redeem_waitlist_preference_grant, which writes the same preference table.
-  perform 1 from public.studios s where s.id = p_studio_id for update;
+  perform 1 from public.studios s where s.id = p_studio_id for no key update;
 
   perform 1 from public.new_client_waitlist_entries e
    where e.id = p_entry_id and e.studio_id = p_studio_id
@@ -660,24 +660,39 @@ begin
 
   -- CANONICAL LOCK ORDER: STUDIO -> ENTRY -> GRANT. Every writer, no exceptions.
   --
-  -- THE STUDIO LOCK IS NOT DECORATION HERE. Inserting a grant takes an implicit
-  -- FK key-share lock on `studios`, because the row carries a studio_id
-  -- reference. Taking only the entry lock therefore gave this command a real
-  -- order of ENTRY -> STUDIO, while admit_new_client_waitlist_entry explicitly
-  -- takes STUDIO -> ENTRY. Two of those meeting is a genuine deadlock:
+  -- THE STUDIO LOCK IS NOT DECORATION. Inserting a grant takes an implicit FK
+  -- KEY SHARE lock on `studios`, because the row carries a studio_id reference.
+  -- Locking only the entry therefore gave this command a real order of
+  -- ENTRY -> STUDIO against admission's STUDIO -> ENTRY, which deadlocks.
   --
-  --     admit_:  holds studios, waits for the entry
-  --     issue_:  holds the entry, waits for studios (via the FK)
+  -- AND THE LOCK *MODE* IS THE SECOND HALF OF THAT, LEARNED THE HARD WAY.
+  -- `for update` conflicts with KEY SHARE, so a studio-first FOR UPDATE simply
+  -- moved the cycle rather than closing it: the pre-existing lifecycle writers
+  -- (claim_/release_/requeue_/remove_, 0185/0188) hold the ENTRY and then their
+  -- status-event trigger inserts into new_client_waitlist_entry_events, whose
+  -- own studio_id FK requests KEY SHARE on studios. That request is blocked by
+  -- a FOR UPDATE held here, while this command waits on the entry they hold:
   --
-  -- An implicit lock is still a lock, and the one taken last by a statement is
-  -- the easiest kind to forget. Taking studios explicitly and FIRST makes the
-  -- later FK check free -- this transaction already holds something stronger --
-  -- and puts every command on one order.
+  --     0193 writer:      holds studios FOR UPDATE, waits for the entry
+  --     lifecycle writer: holds the entry, waits for studios KEY SHARE
+  --
+  -- `for no key update` is the narrow, compatible strategy. Measured against
+  -- this database rather than assumed:
+  --
+  --     held FOR UPDATE        + requested KEY SHARE       -> BLOCKS
+  --     held FOR NO KEY UPDATE + requested KEY SHARE       -> compatible
+  --     held FOR NO KEY UPDATE + requested NO KEY UPDATE   -> BLOCKS
+  --
+  -- So it still serialises cooperating 0193 writers against each other -- the
+  -- property the studio lock exists for -- while letting an FK check through.
+  -- Nothing here mutates the studio row or its key, so NO KEY UPDATE is also
+  -- the honest description of what this command does to it. No FK is weakened
+  -- and no historical lifecycle writer had to be edited.
   --
   -- The ENTRY lock below is what serialises the grant lifecycle itself: the
   -- entry row always exists, so it is a real mutex where a lock on an absent
   -- grant or preference row is not.
-  perform 1 from public.studios s where s.id = p_studio_id for update;
+  perform 1 from public.studios s where s.id = p_studio_id for no key update;
   if not found then
     return query select 'entry_not_found'::text, null::text, null::timestamptz;
     return;
@@ -777,7 +792,7 @@ begin
   -- stamps revoked_at and could not deadlock on its own, but a uniform rule is
   -- worth more than a per-command exemption someone must later re-derive --
   -- which is exactly how the entry -> studio inversion got in.
-  perform 1 from public.studios s where s.id = p_studio_id for update;
+  perform 1 from public.studios s where s.id = p_studio_id for no key update;
 
   perform 1 from public.new_client_waitlist_entries e
    where e.id = p_entry_id and e.studio_id = p_studio_id
@@ -845,7 +860,7 @@ begin
   -- admit_new_client_waitlist_entry and issue_ take. Taking the entry alone
   -- would leave this command free to reach for studios afterwards through an
   -- FK and invert against admission.
-  perform 1 from public.studios s where s.id = v_studio for update;
+  perform 1 from public.studios s where s.id = v_studio for no key update;
 
   perform 1 from public.new_client_waitlist_entries e
    where e.id = v_entry
@@ -1161,7 +1176,20 @@ begin
   end if;
 
   -- 2. LOCK ORDER STEP 1 and 2, before any entry is touched.
-  perform 1 from public.studios s where s.id = p_studio_id for update;
+  --
+  -- NO KEY UPDATE, not FOR UPDATE, for the reason spelled out in the issue
+  -- command: FOR UPDATE blocks the KEY SHARE that the lifecycle writers' event
+  -- trigger requests through its studio_id FK, and this command waits on the
+  -- entry those writers hold. Two NO KEY UPDATE holders still exclude each
+  -- other, so the allowance seat stays serialised.
+  --
+  -- 0192's issue_scoped_new_client_waitlist_invitation takes `studios FOR
+  -- UPDATE` of its own, and that migration is not this lane's to change. It is
+  -- reached only AFTER this transaction already holds the entry, so a lifecycle
+  -- writer on ANOTHER entry may hold KEY SHARE and delay the upgrade, but it
+  -- needs nothing this transaction holds and no cycle forms. Proved by test
+  -- rather than argued: see "admission vs each lifecycle writer".
+  perform 1 from public.studios s where s.id = p_studio_id for no key update;
   if not found then
     return query select 'unknown_studio'::text, null::uuid, null::text, null::timestamptz, null::text, null::text;
     return;

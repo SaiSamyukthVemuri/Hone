@@ -1068,3 +1068,284 @@ describe("issuing a grant cannot deadlock against admission", () => {
     }
   });
 });
+
+// ===========================================================================
+// CODEX EXACT-HEAD REVIEW, #685 @ 943c5bdf — the lock MODE, not just the order
+// ===========================================================================
+//
+// Studio-first FOR UPDATE closed one cycle and opened another. The pre-existing
+// lifecycle writers (claim_/release_/requeue_/remove_, 0185/0188) hold the ENTRY
+// and then their status-event trigger inserts into
+// new_client_waitlist_entry_events, whose studio_id FK requests KEY SHARE on
+// studios -- which FOR UPDATE blocks, while the 0193 writer waits on the entry
+// they hold. FOR NO KEY UPDATE is compatible with KEY SHARE and still excludes
+// another NO KEY UPDATE, so cooperating writers serialise and FK checks pass.
+//
+// None of the historical lifecycle writers were edited.
+
+describe("the studio lock mode is compatible with FK key-share", () => {
+  async function connect(): Promise<{ client: Client; pid: number }> {
+    const client = new Client({ connectionString: resolveLocalDbUrl() });
+    await client.connect();
+    const pid = (await client.query(`select pg_backend_pid() as pid`)).rows[0].pid as number;
+    return { client, pid };
+  }
+
+  // The property the whole strategy rests on, asserted against THIS database
+  // rather than taken from the documentation.
+  it("NO KEY UPDATE admits a KEY SHARE request; FOR UPDATE does not", async () => {
+    const studio = await seedStudio("lockmode-matrix");
+    async function conflicts(held: string, requested: string): Promise<boolean> {
+      const a = await connect();
+      const b = await connect();
+      try {
+        await a.client.query("begin");
+        await a.client.query(`select 1 from public.studios where id = $1 ${held}`, [studio.studioId]);
+        await b.client.query("begin");
+        const pending = b.client
+          .query(`select 1 from public.studios where id = $1 ${requested}`, [studio.studioId])
+          .then(() => undefined, () => undefined);
+        const blocked = (await waitUntilBlocked(b.pid)) !== null;
+        await a.client.query("rollback");
+        await pending;
+        await b.client.query("rollback");
+        return blocked;
+      } finally {
+        await a.client.end();
+        await b.client.end();
+      }
+    }
+    // The defect: FOR UPDATE blocks the FK's lock.
+    expect(await conflicts("for update", "for key share")).toBe(true);
+    // The repair: NO KEY UPDATE does not.
+    expect(await conflicts("for no key update", "for key share")).toBe(false);
+    // And it still serialises cooperating 0193 writers.
+    expect(await conflicts("for no key update", "for no key update")).toBe(true);
+  });
+
+  it("every 0193 studio lock is NO KEY UPDATE, and 0192 is left alone", async () => {
+    const { readFileSync } = await import("node:fs");
+    const sql = readFileSync("supabase/migrations/0193_waitlist_admission_authority.sql", "utf8");
+    const code = sql.split("\n").filter((l) => !/^\s*--/.test(l)).join("\n");
+    expect(code).not.toMatch(/from public\.studios[^;]*for update/i);
+    expect((code.match(/from public\.studios[^;]*for no key update/gi) ?? []).length).toBe(5);
+  });
+});
+
+describe("0193 writers do not deadlock the historical lifecycle writers", () => {
+  async function connect(): Promise<{ client: Client; pid: number }> {
+    const client = new Client({ connectionString: resolveLocalDbUrl() });
+    await client.connect();
+    const pid = (await client.query(`select pg_backend_pid() as pid`)).rows[0].pid as number;
+    return { client, pid };
+  }
+
+  async function scenario(label: string) {
+    const studio = await seedStudio(label);
+    await adminQuery(
+      `insert into public.studio_waitlist_admission_rounds (studio_id, allowance) values ($1,5)
+       on conflict (studio_id) do update set allowance = 5`,
+      [studio.studioId],
+    );
+    const service = await adminQuery(
+      `insert into public.services (studio_id, name, default_duration_minutes)
+       values ($1,'Svc',30) returning id`,
+      [studio.studioId],
+    );
+    const mk = async (tag: string) => {
+      const e = await adminQuery(
+        `select * from public.create_practitioner_waitlist_entry($1,$2,'P',$3,null,null)`,
+        [studio.studioId, studio.userId, uniqueEmail(`${label}-${tag}`)],
+      );
+      return e.rows[0].entry_id as string;
+    };
+    return { studio, serviceId: service.rows[0].id as string, mk };
+  }
+
+  /**
+   * Stage the REAL cycle. An earlier version of this helper raced the two
+   * commands on DIFFERENT entries and passed against the defect: the lifecycle
+   * writer had already taken everything it needed before the 0193 writer
+   * started, so the 0193 writer simply queued and no cycle could form. Caught
+   * by its own negative control.
+   *
+   * The cycle needs the SAME entry, and the lifecycle writer holding it BEFORE
+   * it asks for the studio:
+   *
+   *   A: hold entry E                       (explicit lock, no trigger yet)
+   *   B: 0193 writer on E -> takes studios, then WAITS for E
+   *   A: run the lifecycle command on E -> its event trigger now asks for
+   *      studios KEY SHARE, which a FOR UPDATE held by B blocks
+   *                                        => B waits E, A waits studios = 40P01
+   *
+   * Under NO KEY UPDATE the KEY SHARE request is admitted, A completes, and B
+   * proceeds when A commits.
+   */
+  async function race(
+    entryId: string,
+    lifecycleSql: string,
+    lifecycleArgs: unknown[],
+    otherSql: string,
+    otherArgs: unknown[],
+  ): Promise<{ lifecycle: string; other: string }> {
+    const a = await connect();
+    const b = await connect();
+    try {
+      await a.client.query("begin");
+      // A holds the entry, but has NOT yet taken any studio lock.
+      await a.client.query(
+        `select 1 from public.new_client_waitlist_entries where id = $1 for update`,
+        [entryId],
+      );
+
+      // B takes the studio lock, then blocks waiting for A's entry.
+      const second = b.client
+        .query(otherSql, otherArgs)
+        .then((r) => ({ ok: true as const, row: r.rows[0] }))
+        .catch((e: { code?: string }) => ({ ok: false as const, code: e.code ?? "?" }));
+      await waitUntilBlocked(b.pid);
+
+      // A now runs the real lifecycle command. Its trigger asks for studios.
+      const first = await a.client
+        .query(lifecycleSql, lifecycleArgs)
+        .then((r) => ({ ok: true as const, row: r.rows[0] }))
+        .catch((e: { code?: string }) => ({ ok: false as const, code: e.code ?? "?" }));
+
+      await a.client.query("commit").catch(() => undefined);
+      const other = await second;
+      await b.client.query("commit").catch(() => undefined);
+
+      return {
+        lifecycle: first.ok ? String(Object.values(first.row)[0]) : `SQLSTATE ${first.code}`,
+        other: other.ok ? String(Object.values(other.row)[0]) : `SQLSTATE ${other.code}`,
+      };
+    } finally {
+      await a.client.end();
+      await b.client.end();
+    }
+  }
+
+  const ISSUE = `select gi.result from public.issue_waitlist_preference_grant($1,$2,$3,24) gi`;
+  const ADMIT = `select ar.result from public.admit_new_client_waitlist_entry($1,$2,$3,$4,$5,$6,null,72) ar`;
+
+  it("claim vs grant issue settles with no 40P01", async () => {
+    const { studio, mk } = await scenario("lc-claim-issue");
+    const entryId = await mk("shared");
+    const r = await race(
+      entryId,
+      `select public.claim_new_client_waitlist_entry($1,$2,$3) as r`,
+      [studio.studioId, entryId, studio.userId],
+      ISSUE,
+      [studio.studioId, entryId, studio.userId],
+    );
+    expect(r.lifecycle).toBe("claimed");
+    expect(r.other).toBe("issued");
+  });
+
+  it("release vs grant issue settles with no 40P01", async () => {
+    const { studio, mk } = await scenario("lc-release-issue");
+    const entryId = await mk("shared");
+    await adminQuery(`select public.claim_new_client_waitlist_entry($1,$2,$3)`, [
+      studio.studioId, entryId, studio.userId,
+    ]);
+    const r = await race(
+      entryId,
+      `select public.release_new_client_waitlist_entry($1,$2,$3) as r`,
+      [studio.studioId, entryId, studio.userId],
+      ISSUE,
+      [studio.studioId, entryId, studio.userId],
+    );
+    expect(r.other).toBe("issued");
+    expect(r.lifecycle).not.toMatch(/^SQLSTATE/);
+  });
+
+  it("requeue vs grant issue settles with no 40P01", async () => {
+    const { studio, mk } = await scenario("lc-requeue-issue");
+    const entryId = await mk("shared");
+    await adminQuery(`select public.claim_new_client_waitlist_entry($1,$2,$3)`, [
+      studio.studioId, entryId, studio.userId,
+    ]);
+    await adminQuery(`select public.release_new_client_waitlist_entry($1,$2,$3)`, [
+      studio.studioId, entryId, studio.userId,
+    ]);
+    const r = await race(
+      entryId,
+      `select public.requeue_new_client_waitlist_entry($1,$2,$3) as r`,
+      [studio.studioId, entryId, studio.userId],
+      ISSUE,
+      [studio.studioId, entryId, studio.userId],
+    );
+    expect(r.other).toBe("issued");
+    expect(r.lifecycle).not.toMatch(/^SQLSTATE/);
+  });
+
+  it("remove vs grant issue settles with no 40P01", async () => {
+    const { studio, mk } = await scenario("lc-remove-issue");
+    const entryId = await mk("shared");
+    const r = await race(
+      entryId,
+      `select public.remove_new_client_waitlist_entry($1,$2,$3) as r`,
+      [studio.studioId, entryId, studio.userId],
+      ISSUE,
+      [studio.studioId, entryId, studio.userId],
+    );
+    expect(r.other).toBe("issued");
+    expect(r.lifecycle).not.toMatch(/^SQLSTATE/);
+  });
+
+  // Admission against each lifecycle writer. What matters is that neither dies
+  // of 40P01 and that admission returns a LEGAL outcome -- which is not always
+  // "admitted": a release or a remove genuinely moves the entry out of an
+  // admissible state, and refusing is then the correct answer, not a failure.
+  it.each([
+    ["claim", `select public.claim_new_client_waitlist_entry($1,$2,$3) as r`, false, "admitted"],
+    ["release", `select public.release_new_client_waitlist_entry($1,$2,$3) as r`, true, "not_admissible"],
+    ["remove", `select public.remove_new_client_waitlist_entry($1,$2,$3) as r`, false, "not_admissible"],
+  ])("admission vs %s settles with no deadlock and a legal outcome", async (_name, sql, needsClaim, expected) => {
+    const { studio, serviceId, mk } = await scenario(`lc-admit-${_name}`);
+    const entryId = await mk("shared");
+    if (needsClaim) {
+      await adminQuery(`select public.claim_new_client_waitlist_entry($1,$2,$3)`, [
+        studio.studioId, entryId, studio.userId,
+      ]);
+    }
+    const r = await race(
+      entryId,
+      sql,
+      [studio.studioId, entryId, studio.userId],
+      ADMIT,
+      [studio.studioId, studio.userId, entryId, serviceId, "2026-10-01", "2026-10-31"],
+    );
+    // 40P01 is the thing under test. Neither side may die of it.
+    expect(r.lifecycle, "the lifecycle writer deadlocked").not.toMatch(/^SQLSTATE/);
+    expect(r.other, "admission deadlocked").not.toMatch(/^SQLSTATE/);
+    // claim -> the entry is claimed, which admission accepts (already-claimed
+    // support). release / remove -> the entry has left the admissible states.
+    expect(r.other).toBe(expected);
+  });
+
+  it("two concurrent 0193 writers still serialise on the studio", async () => {
+    // NO KEY UPDATE must not have loosened what the studio lock exists for.
+    const { studio, mk } = await scenario("lc-serialise");
+    const one = await mk("one");
+    const a = await connect();
+    const b = await connect();
+    try {
+      const two = await mk("two");
+      await a.client.query("begin");
+      await a.client.query(ISSUE, [studio.studioId, one, studio.userId]);
+      const pending = b.client
+        .query(ISSUE, [studio.studioId, two, studio.userId])
+        .then((r) => r.rows[0].result as string);
+      expect(
+        await waitUntilBlocked(b.pid),
+        "a second 0193 writer must still queue on the studio",
+      ).not.toBeNull();
+      await a.client.query("commit");
+      expect(await pending).toBe("issued");
+    } finally {
+      await a.client.end();
+      await b.client.end();
+    }
+  });
+});
