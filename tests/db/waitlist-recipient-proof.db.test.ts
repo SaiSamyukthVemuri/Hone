@@ -1,5 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { adminQuery, asRole, closePool, seedStudio, type SeededStudio } from "./helpers/harness";
+import {
+  expectPostgresSameInstant,
+  expectPostgresTemporalRelation,
+} from "./helpers/waitlist-concurrency";
 
 // 0192 — WAIT-03B recipient-proof authority, proved against a real PostgreSQL.
 //
@@ -90,6 +94,34 @@ async function seedOffer(label: string, allowance = 10): Promise<Offer> {
 async function beginProof(token: string, ttlMinutes = 15) {
   const r = await adminQuery(
     `select result, raw_challenge, delivery_contact, expires_at, challenge_id, issued_at
+       from public.begin_waitlist_invitation_proof($1, $2)`,
+    [token, ttlMinutes],
+  );
+  return r.rows[0];
+}
+
+/**
+ * The same mint, with its two instants rendered to MICROSECOND TEXT by the very
+ * statement that mints them.
+ *
+ * WHY NOT `beginProof`. node-postgres turns a `timestamptz` into a JS `Date`
+ * before any assertion can see it, and `Date` keeps MILLISECONDS while
+ * PostgreSQL keeps microseconds. Two mints a few hundred microseconds apart
+ * therefore arrive already identical, so a chronology check written on them is
+ * not strict — it is decided by how fast the runner happened to be, and it
+ * passes locally on a multi-millisecond gap while failing on CI when both
+ * commands land inside one millisecond. That is not hypothetical here: the
+ * capability-clock test below carries the same scar.
+ *
+ * Rendered to text inside PostgreSQL the value never becomes a `Date`, so it
+ * can be handed back as a `timestamptz` parameter and compared at the precision
+ * the database actually stored. Format matches `readStoredInstant`.
+ */
+async function beginProofPrecise(token: string, ttlMinutes = 15) {
+  const r = await adminQuery(
+    `select result, challenge_id,
+            to_char(issued_at,  'YYYY-MM-DD"T"HH24:MI:SS.USOF') as issued_at_us,
+            to_char(expires_at, 'YYYY-MM-DD"T"HH24:MI:SS.USOF') as expires_at_us
        from public.begin_waitlist_invitation_proof($1, $2)`,
     [token, ttlMinutes],
   );
@@ -1332,14 +1364,72 @@ describe("0192 — begin_ returns the authoritative mint instant", () => {
     }
   });
 
-  it("a REPLACEMENT challenge returns a new challenge_id AND a new issued_at", async () => {
+  it("a REPLACEMENT challenge returns a new challenge_id AND a later, authoritative issued_at", async () => {
+    const TTL = 15;
+    // A DETERMINISTIC gap between the two mints, slept by POSTGRESQL. Strict
+    // chronology then rests on the database's own clock having demonstrably
+    // advanced, rather than on two round trips happening to straddle a tick.
+    const GAP_SECONDS = 0.005;
+
     const inv = await seedOffer("issat5");
-    const first = await beginProof(inv.token, 15);
-    const second = await beginProof(inv.token, 15);
+    const first = await beginProofPrecise(inv.token, TTL);
+    expect(first.result).toBe("challenge_issued");
+
+    await adminQuery(`select pg_sleep($1::float8)`, [GAP_SECONDS]);
+
+    const second = await beginProofPrecise(inv.token, TTL);
     expect(second.result).toBe("challenge_issued");
+
+    // IDENTITY is challenge_id's job and only challenge_id's. The instants
+    // below are asked about CHRONOLOGY; they are never used to tell the two
+    // challenges apart, so this proof does not quietly depend on timestamps
+    // being unique.
     expect(second.challenge_id).not.toBe(first.challenge_id);
-    expect(new Date(second.issued_at as string).getTime()).toBeGreaterThan(
-      new Date(first.issued_at as string).getTime(),
+
+    // The assertion that used to run on truncated `Date`s, now decided by
+    // PostgreSQL over the values it actually stored.
+    await expectPostgresTemporalRelation(
+      {
+        sql: `select $1::timestamptz, $2::timestamptz`,
+        params: [second.issued_at_us, first.issued_at_us],
+        relation: "gt",
+      },
+      "the replacement mint must be strictly later than the mint it replaced",
+    );
+
+    // And later BY THE GAP WE MADE — so the second value is a fresh reading of
+    // the clock, not the first one served again.
+    await expectPostgresTemporalRelation(
+      {
+        sql: `select $1::timestamptz, $2::timestamptz + make_interval(secs => $3::float8)`,
+        params: [second.issued_at_us, first.issued_at_us, GAP_SECONDS],
+        relation: "gte",
+      },
+      `the replacement mint must clear the ${GAP_SECONDS}s database sleep between the two`,
+    );
+
+    // The replacement's OWN window is still exactly the TTL it was asked for.
+    await expectPostgresSameInstant(
+      {
+        sql: `select $1::timestamptz, $2::timestamptz + make_interval(mins => $3::int)`,
+        params: [second.expires_at_us, second.issued_at_us, TTL],
+      },
+      `the replacement's expires_at minus issued_at must be exactly the requested ${TTL}m TTL`,
+    );
+
+    // And the instant it RETURNED is the one the ROW was written from. That is
+    // what makes it the database's decision instant rather than a second
+    // reading that merely looks close — the claim this describe block exists
+    // for, held to microsecond equality on the replacement path too.
+    await expectPostgresSameInstant(
+      {
+        sql: `select i.proof_challenge_expires_at,
+                     $2::timestamptz + make_interval(mins => $3::int)
+                from public.new_client_waitlist_invitations i
+               where i.id = $1`,
+        params: [inv.invitationId, second.issued_at_us, TTL],
+      },
+      "the replacement's issued_at must be the same v_now the row's challenge expiry was written from",
     );
   });
 
