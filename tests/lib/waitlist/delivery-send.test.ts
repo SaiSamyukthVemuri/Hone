@@ -25,6 +25,7 @@ import {
   MUTATION_CAPABILITY_TTL_CEILING_MINUTES,
   PROOF_REQUEST_LIMITS,
 } from "@/lib/waitlist/delivery/policy";
+import { LOCAL_REFUSAL_CODES } from "@/lib/email/new-client-waitlist-send";
 import type {
   IdempotentEmailTransport,
   ProviderPayload,
@@ -1558,5 +1559,84 @@ describe("mayInvalidateChallenge is CHALLENGE-scoped", () => {
     expect(terminalRefusal("x", "invitation").mayInvalidateChallenge).toBe(false);
     expect(terminalRefusal("x", "recipient_proof").mayInvalidateChallenge).toBe(false);
     expect(retryableRefusal("x").mayInvalidateChallenge).toBe(false);
+  });
+});
+
+describe("a LOCAL refusal is not a provider refusal", () => {
+  // REPRODUCED at 3934cdf5: sendWaitlistEmailIdempotent refuses locally for an
+  // unconfigured transport, an unusable recipient, or a missing tenant/event
+  // scope — and returns the SAME `rejected` shape a provider refusal uses. The
+  // disposition layer read that generically, so "we never called anyone"
+  // terminated the challenge and authorized invalidating it, discarding
+  // something that would deliver fine once the local condition was corrected.
+
+  it("nothing is spent and nothing may be invalidated", () => {
+    for (const code of LOCAL_REFUSAL_CODES) {
+      const d = classifyDelivery({ status: "rejected", code }, "recipient_proof");
+      expect(d.delivered, code).toBe("no");
+      expect(d.terminalScope, code).toBe("none");
+      expect(d.mayInvalidateChallenge, code).toBe(false);
+      expect(d.recovery, code).toBe("retry_same_event_after_local_fix");
+      // No provider call was made, so the one-shot rule does not apply.
+      expect(d.sameEventRetryAllowed, code).toBe(true);
+      expect(d.mayMutateLifecycle, code).toBe(false);
+    }
+  });
+
+  it("holds for the invitation kind too", () => {
+    for (const code of LOCAL_REFUSAL_CODES) {
+      const d = classifyDelivery({ status: "rejected", code }, "invitation");
+      expect(d.terminalScope, code).toBe("none");
+      expect(d.mayInvalidateChallenge, code).toBe(false);
+    }
+  });
+
+  it("a genuine PROVIDER refusal is still definitive", () => {
+    // The narrowness is the point: only the transport's own codes are local.
+    for (const code of ["validation_error", "invalid_to_address", "rate_limit_exceeded"]) {
+      expect(LOCAL_REFUSAL_CODES.has(code), code).toBe(false);
+      const d = classifyDelivery({ status: "rejected", code }, "recipient_proof");
+      expect(d.terminalScope, code).toBe("challenge");
+      expect(d.mayInvalidateChallenge, code).toBe(true);
+      expect(d.sameEventRetryAllowed, code).toBe(false);
+    }
+  });
+
+  it("the end-to-end path: an unusable recipient reaches no provider", async () => {
+    let called = false;
+    const now = new Date("2026-09-08T12:00:00.000Z");
+    const out = await sendWaitlistRecipientProofEmail({
+      studio: STUDIO,
+      invitationId: INVITATION_ID,
+      challengeId: CHALLENGE_ID,
+      recipientEmail: "not-an-email",
+      code: "H4K2QF7P",
+      issuedAt: now,
+      expiresAt: new Date(now.getTime() + 20 * 60_000),
+      action: "book",
+      now,
+      transport: {
+        emails: {
+          send: async () => {
+            called = true;
+            return ACCEPTED;
+          },
+        },
+      },
+    });
+    expect(called).toBe(false);
+    expect(out.disposition.reason).toBe("rejected_invalid_recipient");
+    expect(out.disposition.mayInvalidateChallenge).toBe(false);
+    expect(out.disposition.terminalScope).toBe("none");
+  });
+
+  it("the code list has ONE owner — the transport that produces them", () => {
+    // A second copy would drift the first time a code was added, and silently.
+    const src = readFileSync(
+      join(process.cwd(), "lib/waitlist/delivery/policy.ts"),
+      "utf8",
+    );
+    expect(src).toMatch(/LOCAL_REFUSAL_CODES.*from "@\/lib\/email\/new-client-waitlist-send"/s);
+    expect(src).not.toMatch(/const LOCAL_REFUSAL_CODES\s*=/);
   });
 });

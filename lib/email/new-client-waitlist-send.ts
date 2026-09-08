@@ -221,6 +221,26 @@ export type WaitlistSendOutcome =
   | { status: "rejected"; code: string | null }
   | { status: "ambiguous"; reason: "timeout" | "concurrent" | "no_message_id" };
 
+/**
+ * Refusals this module produces ITSELF, before any request is made.
+ *
+ * They share the `rejected` shape with a provider refusal — the outcome type
+ * has no room to distinguish them — and a consumer reading that shape
+ * generically will treat "we never called anyone" as "the provider said no".
+ * Those deserve opposite handling: nothing was transmitted, nothing was
+ * consumed, and correcting the local condition makes the very same send work.
+ *
+ * Exported so the disposition layer classifies from THIS list rather than
+ * restating it. A second copy of these strings would drift the first time a
+ * code is added here, and the drift would be silent.
+ */
+export const LOCAL_REFUSAL_CODES: ReadonlySet<string> = new Set([
+  "not_configured",
+  "invalid_recipient",
+  "missing_tenant_scope",
+  "missing_event_scope",
+]);
+
 const SEND_TIMEOUT_MS = 15_000;
 
 /** Provider error name meaning "a request under this key is still in flight". */

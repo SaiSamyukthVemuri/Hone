@@ -156,6 +156,26 @@ function containsDynamicSegment(absDir: string): boolean {
   return false;
 }
 
+/**
+ * Whether an intercepting-route directory is one the gate must report.
+ *
+ * THE PREDICATE THE WALKER ACTUALLY CALLS, extracted so it can be tested
+ * directly. An earlier test asserted an inline copy of this logic and therefore
+ * passed while the walker itself was wrong — a control that cannot fail is not
+ * a control.
+ *
+ * Two ways an interceptor can carry a credential, and only the second was
+ * checked at first:
+ *   - a dynamic DESCENDANT, e.g. `(.)opening/[token]`;
+ *   - the marker WRAPPING the dynamic segment itself, e.g. `(.)[token]`, where
+ *     the credential slot is the directory name and there is no descendant to
+ *     find.
+ */
+function interceptorCarriesDynamicSegment(entry: string, absDir: string): boolean {
+  const afterMarker = entry.replace(/^\(\.{1,3}\)/, "");
+  return isDynamic(afterMarker) || containsDynamicSegment(absDir);
+}
+
 /** A dynamic route whose public URL this walker cannot compute. */
 type UnmappableRoute = { dir: string; why: string };
 
@@ -202,7 +222,7 @@ function discoverDynamicRoutes(): DiscoveredRoute[] {
         // `app/feed/(.)photo/page.tsx` — no dynamic segment, no credential,
         // nothing this file has any stake in. A guard that blocks work it has
         // no interest in gets worked around, and then it protects nothing.
-        if (containsDynamicSegment(abs)) {
+        if (interceptorCarriesDynamicSegment(entry, abs)) {
           unmappable.push({
             dir: `app/${rel}`,
             why: "intercepting route containing a dynamic segment — it renders at the intercepted path, which this scan cannot resolve",
@@ -475,6 +495,25 @@ describe("segment classification — which directories reach the URL", () => {
     expect(containsDynamicSegment(join(APP_DIR, "demo"))).toBe(false);
     // A path that does not exist is not a reason to throw mid-scan.
     expect(containsDynamicSegment(join(APP_DIR, "no-such-directory"))).toBe(false);
+  });
+
+  it("an interceptor may WRAP the dynamic segment — (.)[token]", () => {
+    // Exercises the predicate the WALKER calls, not a copy of it. The first
+    // version of this test asserted an inline reimplementation and passed even
+    // with the walker reverted — a control that cannot fail is not a control.
+    //
+    // `app/demo` is a real static directory, so the descendant scan is false
+    // and the result turns purely on the directory NAME.
+    const staticDir = join(APP_DIR, "demo");
+    expect(interceptorCarriesDynamicSegment("(.)[token]", staticDir)).toBe(true);
+    expect(interceptorCarriesDynamicSegment("(..)[...slug]", staticDir)).toBe(true);
+    expect(interceptorCarriesDynamicSegment("(...)[[...slug]]", staticDir)).toBe(true);
+    // A static interceptor over a static subtree carries nothing.
+    expect(interceptorCarriesDynamicSegment("(.)photo", staticDir)).toBe(false);
+    // And the descendant route is still caught: app/(app)/clients holds [id].
+    expect(
+      interceptorCarriesDynamicSegment("(.)clients", join(APP_DIR, "(app)", "clients")),
+    ).toBe(true);
   });
 
   it("a dynamic segment is none of the above", () => {

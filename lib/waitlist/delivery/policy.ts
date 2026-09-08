@@ -1,3 +1,4 @@
+import { LOCAL_REFUSAL_CODES } from "@/lib/email/new-client-waitlist-send";
 import type { DeliveryKind } from "./log-safety";
 export type { DeliveryKind };
 
@@ -395,6 +396,13 @@ export type DeliveryRecovery =
    * the same skew, so it is not even a remedy.
    */
   | "retry_same_event_after_clock_catchup"
+  /**
+   * NO PROVIDER CALL OCCURRED because this module refused locally — transport
+   * unconfigured, an unusable recipient, a missing tenant or event scope.
+   * Nothing was transmitted and nothing is spent, so correcting the local
+   * condition makes the very same send work.
+   */
+  | "retry_same_event_after_local_fix"
   /** Proof: mint a NEW challenge under the same, still-valid invitation. */
   | "mint_new_challenge"
   /** Invitation: close/release, re-admit atomically, issue a NEW invitation. */
@@ -622,6 +630,26 @@ export function classifyDelivery(
       mayInvalidateChallenge: false,
       mayMutateLifecycle: false,
       reason: `ambiguous_${outcome.reason}`,
+    };
+  }
+  if (outcome.code && LOCAL_REFUSAL_CODES.has(outcome.code)) {
+    // REFUSED BEFORE ANY REQUEST, and the outcome shape cannot say so on its
+    // own — a local refusal and a provider refusal are both `rejected`.
+    // Treating them alike let "we never called anyone" terminate a challenge
+    // and authorize invalidating it, discarding something that would deliver
+    // fine once the transport, recipient or scope was corrected.
+    //
+    // Classified from the transport's OWN exported list, not a copy: a second
+    // copy of those strings would drift the first time a code was added.
+    return {
+      delivered: "no",
+      sameEventRetryAllowed: true,
+      recovery: "retry_same_event_after_local_fix",
+      terminalScope: "none",
+      // Nothing was sent, so there is nothing in flight and nothing to retire.
+      mayInvalidateChallenge: false,
+      mayMutateLifecycle: false,
+      reason: `rejected_${outcome.code}`,
     };
   }
   if (outcome.code === PROVIDER_KEY_BOUND_TO_OTHER_BYTES) {
