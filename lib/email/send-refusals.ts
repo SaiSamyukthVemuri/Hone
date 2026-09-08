@@ -34,11 +34,49 @@
  * has no room to distinguish them — and a consumer reading that shape
  * generically will treat "we never called anyone" as "the provider said no".
  * Those deserve opposite handling: nothing was transmitted, nothing was
- * consumed, and correcting the local condition makes the very same send work.
+ * consumed, and a definitive provider refusal is a different fact entirely.
+ *
+ * A LITERAL UNION, NOT A HAND-KEPT SET. The previous version listed these
+ * strings here while the transport wrote the SAME strings again at each return
+ * site, with nothing binding the two. Adding a local refusal there without
+ * updating here would have been silent, and the consequence was not cosmetic:
+ * `classifyDelivery` would read a zero-provider-call result as a definitive
+ * provider rejection, terminate a proof challenge and authorize invalidating
+ * it. The union plus `localRefusal` below closes that — a code the union does
+ * not contain cannot be constructed.
  */
-export const LOCAL_REFUSAL_CODES: ReadonlySet<string> = new Set([
+export const LOCAL_REFUSAL_CODES = [
   "not_configured",
   "invalid_recipient",
   "missing_tenant_scope",
   "missing_event_scope",
-]);
+] as const;
+
+export type LocalRefusalCode = (typeof LOCAL_REFUSAL_CODES)[number];
+
+/** The refusal shape, matching the transport's outcome type structurally. */
+export type LocalRefusal = { status: "rejected"; code: LocalRefusalCode };
+
+/**
+ * The ONLY way the transport may refuse locally.
+ *
+ * Going through a constructor is what makes the taxonomy binding rather than
+ * advisory: `localRefusal("something_new")` does not compile until the union
+ * gains that member, so a new pre-send refusal cannot reach a consumer
+ * disguised as a provider rejection. A source guard additionally forbids the
+ * bare object literal at those return sites, so the constructor cannot simply
+ * be bypassed.
+ */
+export function localRefusal(code: LocalRefusalCode): LocalRefusal {
+  return { status: "rejected", code };
+}
+
+/** Whether a refusal code came from this module's taxonomy. */
+export function isLocalRefusalCode(
+  code: string | null | undefined,
+): code is LocalRefusalCode {
+  return (
+    typeof code === "string" &&
+    (LOCAL_REFUSAL_CODES as readonly string[]).includes(code)
+  );
+}

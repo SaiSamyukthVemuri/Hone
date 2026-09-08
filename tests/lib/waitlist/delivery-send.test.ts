@@ -25,7 +25,11 @@ import {
   MUTATION_CAPABILITY_TTL_CEILING_MINUTES,
   PROOF_REQUEST_LIMITS,
 } from "@/lib/waitlist/delivery/policy";
-import { LOCAL_REFUSAL_CODES } from "@/lib/email/send-refusals";
+import {
+  LOCAL_REFUSAL_CODES,
+  isLocalRefusalCode,
+  localRefusal,
+} from "@/lib/email/send-refusals";
 import type {
   IdempotentEmailTransport,
   ProviderPayload,
@@ -1563,43 +1567,73 @@ describe("mayInvalidateChallenge is CHALLENGE-scoped", () => {
 });
 
 describe("a LOCAL refusal is not a provider refusal", () => {
-  // REPRODUCED at 3934cdf5: sendWaitlistEmailIdempotent refuses locally for an
-  // unconfigured transport, an unusable recipient, or a missing tenant/event
-  // scope — and returns the SAME `rejected` shape a provider refusal uses. The
-  // disposition layer read that generically, so "we never called anyone"
-  // terminated the challenge and authorized invalidating it, discarding
-  // something that would deliver fine once the local condition was corrected.
+  // Two defects, one branch. First (3934cdf5): local and provider refusals
+  // share the `rejected` shape, so "we never called anyone" was read as "the
+  // provider said no" — terminating the challenge and authorizing invalidation.
+  // Then (4832aec0): the recovery it advised, retrying the same event, was
+  // impossible — every local cause needs an EXTERNAL fix, and by the time one
+  // lands the call has returned and the raw token or proof code is gone.
 
-  it("nothing is spent and nothing may be invalidated", () => {
+  it("no provider was attempted, and nothing may be invalidated", () => {
     for (const code of LOCAL_REFUSAL_CODES) {
       const d = classifyDelivery({ status: "rejected", code }, "recipient_proof");
       expect(d.delivered, code).toBe("no");
-      expect(d.terminalScope, code).toBe("none");
+      expect(d.providerAttempted, code).toBe(false);
       expect(d.mayInvalidateChallenge, code).toBe(false);
-      expect(d.recovery, code).toBe("retry_same_event_after_local_fix");
-      // No provider call was made, so the one-shot rule does not apply.
-      expect(d.sameEventRetryAllowed, code).toBe(true);
       expect(d.mayMutateLifecycle, code).toBe(false);
     }
   });
 
-  it("holds for the invitation kind too", () => {
+  it("recovery is a NEW credential, not a retry of a spent one", () => {
+    // The credential is gone by the time the local condition is fixed, so the
+    // only followable advice is a replacement.
     for (const code of LOCAL_REFUSAL_CODES) {
-      const d = classifyDelivery({ status: "rejected", code }, "invitation");
-      expect(d.terminalScope, code).toBe("none");
-      expect(d.mayInvalidateChallenge, code).toBe(false);
+      expect(classifyDelivery({ status: "rejected", code }, "invitation").recovery, code)
+        .toBe("reissue_invitation");
+      expect(classifyDelivery({ status: "rejected", code }, "recipient_proof").recovery, code)
+        .toBe("mint_new_challenge");
+      expect(
+        classifyDelivery({ status: "rejected", code }, "invitation").sameEventRetryAllowed,
+        code,
+      ).toBe(false);
     }
   });
 
-  it("a genuine PROVIDER refusal is still definitive", () => {
-    // The narrowness is the point: only the transport's own codes are local.
+  it("a CLOCK disagreement still permits the same-event retry", () => {
+    // The distinction: that one resolves in milliseconds, inside the same
+    // request, with the credential still in hand. Asserted beside the local
+    // case so the two cannot be collapsed again.
+    const d = retryableRefusal("clock_disagreement");
+    expect(d.providerAttempted).toBe(false);
+    expect(d.sameEventRetryAllowed).toBe(true);
+    expect(d.recovery).toBe("retry_same_event_after_clock_catchup");
+    expect(d.terminalScope).toBe("none");
+  });
+
+  it("a genuine PROVIDER refusal did reach the provider", () => {
     for (const code of ["validation_error", "invalid_to_address", "rate_limit_exceeded"]) {
-      expect(LOCAL_REFUSAL_CODES.has(code), code).toBe(false);
+      expect(isLocalRefusalCode(code), code).toBe(false);
       const d = classifyDelivery({ status: "rejected", code }, "recipient_proof");
+      expect(d.providerAttempted, code).toBe(true);
       expect(d.terminalScope, code).toBe("challenge");
       expect(d.mayInvalidateChallenge, code).toBe(true);
-      expect(d.sameEventRetryAllowed, code).toBe(false);
     }
+  });
+
+  it("providerAttempted is false for EVERY pre-send refusal", () => {
+    // The field exists because this distinction kept being lost. Asserted over
+    // all of them, not sampled.
+    expect(terminalRefusal("x", "invitation").providerAttempted).toBe(false);
+    expect(terminalRefusal("x", "recipient_proof").providerAttempted).toBe(false);
+    expect(retryableRefusal("x").providerAttempted).toBe(false);
+    for (const code of LOCAL_REFUSAL_CODES) {
+      expect(classifyDelivery({ status: "rejected", code }, "invitation").providerAttempted)
+        .toBe(false);
+    }
+    // ...and true for everything that did reach the provider.
+    expect(classifyDelivery({ status: "accepted", messageId: "m" }, "invitation").providerAttempted).toBe(true);
+    expect(classifyDelivery({ status: "ambiguous", reason: "timeout" }, "invitation").providerAttempted).toBe(true);
+    expect(classifyDelivery({ status: "rejected", code: "validation_error" }, "invitation").providerAttempted).toBe(true);
   });
 
   it("the end-to-end path: an unusable recipient reaches no provider", async () => {
@@ -1615,21 +1649,62 @@ describe("a LOCAL refusal is not a provider refusal", () => {
       expiresAt: new Date(now.getTime() + 20 * 60_000),
       action: "book",
       now,
-      transport: {
-        emails: {
-          send: async () => {
-            called = true;
-            return ACCEPTED;
-          },
-        },
-      },
+      transport: { emails: { send: async () => { called = true; return ACCEPTED; } } },
     });
     expect(called).toBe(false);
     expect(out.disposition.reason).toBe("rejected_invalid_recipient");
+    expect(out.disposition.providerAttempted).toBe(false);
     expect(out.disposition.mayInvalidateChallenge).toBe(false);
-    expect(out.disposition.terminalScope).toBe("none");
+    expect(out.disposition.recovery).toBe("mint_new_challenge");
+  });
+});
+
+describe("the refusal taxonomy is BINDING, not advisory", () => {
+  // The set was a second hand-kept list: the transport wrote the same strings
+  // again at each return site with nothing tying them together, so a new local
+  // refusal added there would have been classified as a PROVIDER rejection —
+  // silently terminating a challenge and authorizing invalidation.
+
+  it("localRefusal is the only constructor, and it types its code", () => {
+    for (const code of LOCAL_REFUSAL_CODES) {
+      expect(localRefusal(code)).toEqual({ status: "rejected", code });
+      expect(isLocalRefusalCode(code)).toBe(true);
+    }
+    // @ts-expect-error a code outside the union cannot be constructed
+    expect(() => localRefusal("some_future_local_code")).not.toThrow();
   });
 
+  it("the transport constructs every pre-send refusal through it", () => {
+    // The type stops an UNKNOWN code; this stops the constructor being
+    // bypassed with a bare literal, which is the other half.
+    const raw = readFileSync(
+      join(process.cwd(), "lib/email/new-client-waitlist-send.ts"),
+      "utf8",
+    );
+    const code = raw
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "");
+    const bareLiterals = [
+      ...code.matchAll(/status:\s*"rejected"\s*,\s*code:\s*"[a-z_]+"/g),
+    ].map((m) => m[0]);
+    expect(
+      bareLiterals,
+      "A pre-send refusal is written as a bare object literal instead of " +
+        "localRefusal(). Bare literals bypass the taxonomy, so the code would " +
+        "be classified as a PROVIDER rejection.",
+    ).toEqual([]);
+    expect(code).toMatch(/localRefusal\(/);
+  });
+
+  it("isLocalRefusalCode is what the policy uses — no second membership test", () => {
+    const policy = readFileSync(
+      join(process.cwd(), "lib/waitlist/delivery/policy.ts"),
+      "utf8",
+    );
+    expect(policy).toMatch(/isLocalRefusalCode/);
+    expect(policy).not.toMatch(/LOCAL_REFUSAL_CODES\.(has|includes)/);
+    expect(policy).not.toMatch(/const LOCAL_REFUSAL_CODES\s*[:=]/);
+  });
 });
 
 describe("the policy module stays free of transport side effects", () => {

@@ -1,4 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
+import {
+  LOCAL_REFUSAL_CODES,
+  localRefusal,
+} from "@/lib/email/send-refusals";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { createElement } from "react";
@@ -267,16 +271,28 @@ describe("privacy policy — prospective client / waitlist coverage", () => {
     // with no provider refusal and a perfectly good studio address. An
     // enumeration of "refusal or no recipient" missed exactly this.
     const sender = read("lib/email/new-client-waitlist-send.ts");
-    expect(sender).toMatch(
-      /if \(!transport\) return \{ status: "rejected", code: "not_configured" \};/,
-    );
+    // The locally-known non-send is constructed through the shared taxonomy
+    // (WAIT DELIVERY-01), which is what stops a new local refusal being
+    // classified as a provider rejection.
+    expect(sender).toMatch(/return localRefusal\("not_configured"\);/);
     // "rejected" is neither "ambiguous" nor "accepted", so it lands in the
     // definite branch above — the same treatment as a refusal.
     expect(sender).toMatch(/\| \{ status: "rejected"; code: string \| null \}/);
     // Sibling local rejections share that status, so the category holds for
     // them too rather than needing another clause each.
-    expect(sender).toMatch(/status: "rejected", code: "invalid_recipient"/);
-    expect(sender).toMatch(/status: "rejected", code: "missing_tenant_scope"/);
+    expect(sender).toMatch(/return localRefusal\("invalid_recipient"\);/);
+    expect(sender).toMatch(/return localRefusal\("missing_tenant_scope"\);/);
+    // BEHAVIOURAL, not syntactic. The three assertions above pin how the
+    // refusal is written and would break on any future refactor of the
+    // construction, as this one did; what the privacy policy actually depends
+    // on is the STATUS those calls produce. Asserted directly so a rename
+    // cannot make this guard fail while the property still holds — nor pass
+    // while it does not.
+    for (const code of LOCAL_REFUSAL_CODES) {
+      expect(localRefusal(code).status, code).toBe("rejected");
+      expect(localRefusal(code).status, code).not.toBe("ambiguous");
+      expect(localRefusal(code).status, code).not.toBe("accepted");
+    }
     // And the two visitor-facing strings really are different messages: one
     // says we could not RECORD it, the other that we could not CONFIRM it.
     const failed = lib.match(/NEW_CLIENT_WAITLIST_SUBMIT_FAILED =\s*\n\s*"([^"]+)"/)?.[1];

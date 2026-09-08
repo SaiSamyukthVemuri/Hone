@@ -5,8 +5,12 @@ import { FROM_ADDRESS, resend } from "./client";
 // without pulling this file — and therefore ./client and its module-scope
 // Resend initialization — into their import graph. Re-exported here so the
 // transport still names its own refusal codes.
-import { LOCAL_REFUSAL_CODES } from "./send-refusals";
-export { LOCAL_REFUSAL_CODES };
+import { localRefusal } from "./send-refusals";
+export {
+  LOCAL_REFUSAL_CODES,
+  isLocalRefusalCode,
+  localRefusal,
+} from "./send-refusals";
 import {
   buildFromHeader,
   type StudioEmailIdentity,
@@ -345,14 +349,14 @@ export async function sendWaitlistEmailIdempotent(args: {
       ? args.transport
       : (resend as unknown as IdempotentEmailTransport | null);
 
-  if (!transport) return { status: "rejected", code: "not_configured" };
+  if (!transport) return localRefusal("not_configured");
   if (!args.to || !args.to.includes("@")) {
-    return { status: "rejected", code: "invalid_recipient" };
+    return localRefusal("invalid_recipient");
   }
   if (!args.studioId) {
     // Refuse rather than mint an unscoped key: an unscoped key is exactly the
     // cross-tenant collision this design exists to prevent.
-    return { status: "rejected", code: "missing_tenant_scope" };
+    return localRefusal("missing_tenant_scope");
   }
   const eventScopeValue =
     typeof args.eventScope === "string" && args.eventScope.length > 0
@@ -363,7 +367,7 @@ export async function sendWaitlistEmailIdempotent(args: {
     // credential into the transmitted key, which is the one thing this flag
     // exists to prevent — and it would do so silently, at exactly the call
     // site that asked not to.
-    return { status: "rejected", code: "missing_event_scope" };
+    return localRefusal("missing_event_scope");
   }
 
   const payload: ProviderPayload = {

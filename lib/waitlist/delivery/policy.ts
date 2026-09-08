@@ -1,4 +1,4 @@
-import { LOCAL_REFUSAL_CODES } from "@/lib/email/send-refusals";
+import { isLocalRefusalCode } from "@/lib/email/send-refusals";
 import type { DeliveryKind } from "./log-safety";
 export type { DeliveryKind };
 
@@ -396,13 +396,7 @@ export type DeliveryRecovery =
    * the same skew, so it is not even a remedy.
    */
   | "retry_same_event_after_clock_catchup"
-  /**
-   * NO PROVIDER CALL OCCURRED because this module refused locally — transport
-   * unconfigured, an unusable recipient, a missing tenant or event scope.
-   * Nothing was transmitted and nothing is spent, so correcting the local
-   * condition makes the very same send work.
-   */
-  | "retry_same_event_after_local_fix"
+
   /** Proof: mint a NEW challenge under the same, still-valid invitation. */
   | "mint_new_challenge"
   /** Invitation: close/release, re-admit atomically, issue a NEW invitation. */
@@ -499,6 +493,21 @@ export type DeliveryDisposition = {
    * advertising one.
    */
   recovery: DeliveryRecovery;
+  /**
+   * Did a request actually reach the provider?
+   *
+   * FALSE for every refusal this module makes before sending — a local
+   * transport refusal, an expired invitation, an elapsed or overlong
+   * challenge, a stale mint, a clock disagreement. TRUE for an acceptance, an
+   * ambiguous result, or a refusal the provider itself returned.
+   *
+   * Carried explicitly because it is the distinction that kept being lost.
+   * `delivered: "no"` says nothing arrived; it does not say whether anyone was
+   * called, and several defects came from consumers having to infer that. It
+   * is also what makes `mayInvalidateChallenge` legible: nothing can be in
+   * flight when no request was made.
+   */
+  providerAttempted: boolean;
   /**
    * WHAT, IF ANYTHING, THIS OUTCOME ENDS — named explicitly rather than left to
    * a boolean a caller has to interpret.
@@ -605,6 +614,7 @@ export function classifyDelivery(
   if (outcome.status === "accepted") {
     return {
       delivered: "yes",
+      providerAttempted: true,
       recovery: "none",
       terminalScope: "none",
       sameEventRetryAllowed: false,
@@ -616,6 +626,7 @@ export function classifyDelivery(
   if (outcome.status === "ambiguous") {
     return {
       delivered: "unknown",
+      providerAttempted: true,
       // Ambiguous means it MAY have arrived, so the recovery is ADVISORY: the
       // caller weighs it against sending a second message for one spot.
       recovery: recoveryForKind(kind),
@@ -632,7 +643,7 @@ export function classifyDelivery(
       reason: `ambiguous_${outcome.reason}`,
     };
   }
-  if (outcome.code && LOCAL_REFUSAL_CODES.has(outcome.code)) {
+  if (isLocalRefusalCode(outcome.code)) {
     // REFUSED BEFORE ANY REQUEST, and the outcome shape cannot say so on its
     // own — a local refusal and a provider refusal are both `rejected`.
     // Treating them alike let "we never called anyone" terminate a challenge
@@ -643,10 +654,24 @@ export function classifyDelivery(
     // copy of those strings would drift the first time a code was added.
     return {
       delivered: "no",
-      sameEventRetryAllowed: true,
-      recovery: "retry_same_event_after_local_fix",
-      terminalScope: "none",
-      // Nothing was sent, so there is nothing in flight and nothing to retire.
+      providerAttempted: false,
+      // THE SAME EVENT CANNOT BE RETRIED, even though nothing was sent. Every
+      // local cause needs an EXTERNAL fix — restoring RESEND_API_KEY needs a
+      // redeploy, correcting a stored recipient needs another request, a
+      // missing scope needs a code change — and by the time any of those
+      // lands this call has returned and the raw token or proof code is gone.
+      // Advising a retry of an event whose credential no longer exists is
+      // advice nobody can follow.
+      //
+      // This is where a local refusal differs from a clock disagreement: that
+      // one resolves in milliseconds, inside the same request, with the
+      // credential still in hand.
+      sameEventRetryAllowed: false,
+      recovery: recoveryForKind(kind),
+      terminalScope: terminalScopeForKind(kind),
+      // Still false: no request was made, so nothing is in flight, and
+      // retiring the old challenge is a lifecycle decision rather than a
+      // consequence of this refusal.
       mayInvalidateChallenge: false,
       mayMutateLifecycle: false,
       reason: `rejected_${outcome.code}`,
@@ -659,6 +684,7 @@ export function classifyDelivery(
     // from the provider rather than from a pre-send check.
     return {
       delivered: "no",
+      providerAttempted: true,
       recovery: recoveryForKind(kind),
       terminalScope: terminalScopeForKind(kind),
       sameEventRetryAllowed: false,
@@ -670,6 +696,7 @@ export function classifyDelivery(
   }
   return {
     delivered: "no",
+    providerAttempted: true,
     recovery: recoveryForKind(kind),
     terminalScope: terminalScopeForKind(kind),
     sameEventRetryAllowed: false,
@@ -766,6 +793,7 @@ export function terminalRefusal(
 ): DeliveryDisposition {
   return {
     delivered: "no",
+    providerAttempted: false,
     recovery: recoveryForKind(kind),
     terminalScope: terminalScopeForKind(kind),
     sameEventRetryAllowed: false,
@@ -797,6 +825,7 @@ export function terminalRefusal(
 export function retryableRefusal(reason: string): DeliveryDisposition {
   return {
     delivered: "no",
+    providerAttempted: false,
     // NO provider call occurred, so the one-shot rule does not apply: the same
     // event may be attempted again once now >= issuedAt.
     sameEventRetryAllowed: true,
