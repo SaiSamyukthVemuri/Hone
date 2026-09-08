@@ -121,11 +121,32 @@ export type CandidateProjection = {
   readonly skipped: readonly { readonly entryId: string; readonly reason: string }[];
 };
 
-export type ProjectionOptions = {
-  /** Injected; required only when a staleness policy is in force. */
-  readonly now?: Date;
-  readonly staleness?: StalenessPolicy;
-};
+/**
+ * Staleness and the clock travel TOGETHER, enforced by the type where the
+ * caller writes a literal.
+ *
+ * The previous shape made both optional independently, so
+ * `{ staleness: { maxAgeDays: 90 } }` with no `now` type-checked, and the
+ * runtime silently treated every preference as fresh -- a configured policy
+ * doing nothing, with no error anywhere. A studio that had decided its answers
+ * go stale after 90 days would have got no staleness at all.
+ *
+ * The union makes a finite cap without a clock a COMPILE error at a literal
+ * call site. It cannot catch a policy assembled at runtime, so
+ * `projectCandidates` also refuses that combination rather than defaulting --
+ * absent is a decision, incomplete is an error.
+ */
+export type ProjectionOptions =
+  | {
+      /** No staleness, so no clock is needed and none is required. */
+      readonly now?: Date;
+      readonly staleness?: { readonly maxAgeDays: null };
+    }
+  | {
+      /** A finite cap: the clock it is measured against is mandatory. */
+      readonly now: Date;
+      readonly staleness: { readonly maxAgeDays: number };
+    };
 
 function readInstant(value: string | Date | null | undefined): Date | null {
   if (value instanceof Date) return Number.isFinite(value.getTime()) ? value : null;
@@ -180,7 +201,19 @@ export function projectCandidates(
   rows: readonly WaitlistEntryRow[],
   options: ProjectionOptions = {},
 ): CandidateProjection {
-  const staleness = options.staleness ?? NEVER_STALE;
+  const staleness: StalenessPolicy = options.staleness ?? NEVER_STALE;
+
+  // FAIL CLOSED ON AN INCOMPLETE POLICY. The type above stops this at a literal
+  // call site; a policy built at runtime can still arrive with a finite cap and
+  // no clock, and the old code answered that by quietly reporting everything
+  // fresh. Refusing is the only honest answer: the caller asked for staleness
+  // and would otherwise have received none.
+  if (staleness.maxAgeDays !== null && options.now === undefined) {
+    throw new Error(
+      "projectCandidates: staleness.maxAgeDays is set but `now` was not supplied; " +
+        "a finite staleness policy cannot be evaluated without a clock",
+    );
+  }
   const candidates: ScoringCandidate[] = [];
   const provenance: CandidateProvenance[] = [];
   const skipped: { entryId: string; reason: string }[] = [];
@@ -211,11 +244,13 @@ export function projectCandidates(
         availability = UNSTATED_AVAILABILITY;
         freshness = { kind: "inconsistent", detail: "preference stored without a timestamp" };
       } else {
-        const now = options.now ?? null;
-        if (staleness.maxAgeDays === null || now === null) {
+        if (staleness.maxAgeDays === null) {
           // Nothing can go stale, so no clock is needed and none is invented.
           freshness = { kind: "fresh", ageDays: 0 };
         } else {
+          // Non-null by the refusal above: a finite cap without a clock never
+          // reaches here.
+          const now = options.now as Date;
           freshness = classifyPreferenceFreshness(
             {
               preference: stored.preference,

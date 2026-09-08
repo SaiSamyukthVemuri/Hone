@@ -235,6 +235,81 @@ describe("entry origin and provenance", () => {
     expect(future.rows[0].result).toBe("joined_at_in_future");
   });
 
+  // MEASURED BEFORE THE REPAIR: an entry imported as "nobody knows when they
+  // joined", carrying a caller-supplied date five years back, was stored with
+  // that date and sorted AHEAD of a genuine form joiner. Queue-position forgery
+  // by the one command written to stop date fabrication.
+  it("stamps an UNKNOWN-provenance import with the server clock, not the caller's date", async () => {
+    const studio = await seedStudio("unknown-clock");
+    const ancient = new Date(Date.now() - 5 * 365 * 86_400_000);
+    const res = await adminQuery(
+      `select * from public.import_legacy_waitlist_entry($1,$2,'Forged',$3,$4,'unknown',null)`,
+      [studio.studioId, studio.userId, uniqueEmail("forged"), ancient],
+    );
+    expect(res.rows[0].result).toBe("imported");
+
+    const row = await adminQuery(
+      `select joined_at, joined_at_provenance,
+              joined_at > now() - interval '5 minutes' as stamped_now
+         from public.new_client_waitlist_entries where id = $1`,
+      [res.rows[0].entry_id],
+    );
+    // The caller's instant is discarded entirely.
+    expect(new Date(row.rows[0].joined_at).getTime()).not.toBe(ancient.getTime());
+    expect(row.rows[0].stamped_now, "unknown imports anchor at import time").toBe(true);
+    // And the provenance stays truthful: this is still not a known join date.
+    expect(row.rows[0].joined_at_provenance).toBe("unknown");
+  });
+
+  it("an unknown import cannot jump a genuinely older waiting entry", async () => {
+    const studio = await seedStudio("unknown-noqueue");
+    const real = await adminQuery(
+      `select * from public.import_legacy_waitlist_entry($1,$2,'Real',$3,$4,'operator_supplied',null)`,
+      [studio.studioId, studio.userId, uniqueEmail("real"), new Date(Date.now() - 86_400_000)],
+    );
+    expect(real.rows[0].result).toBe("imported");
+
+    await adminQuery(
+      `select * from public.import_legacy_waitlist_entry($1,$2,'Forged',$3,$4,'unknown',null)`,
+      [studio.studioId, studio.userId, uniqueEmail("forged2"), new Date(Date.now() - 5 * 365 * 86_400_000)],
+    );
+
+    const order = await adminQuery(
+      `select name from public.new_client_waitlist_entries
+        where studio_id = $1 and status = 'waiting' order by joined_at, id`,
+      [studio.studioId],
+    );
+    expect(order.rows.map((r: { name: string }) => r.name)).toEqual(["Real", "Forged"]);
+  });
+
+  it("keeps operator_supplied dates authoritative and still validated", async () => {
+    // The other half must not have moved: an asserted date is preserved, and a
+    // missing or future one is still refused.
+    const studio = await seedStudio("operator-unchanged");
+    const asserted = new Date(Date.now() - 200 * 86_400_000);
+    const ok = await adminQuery(
+      `select * from public.import_legacy_waitlist_entry($1,$2,'Known',$3,$4,'operator_supplied',null)`,
+      [studio.studioId, studio.userId, uniqueEmail("known"), asserted],
+    );
+    const kept = await adminQuery(
+      `select joined_at from public.new_client_waitlist_entries where id = $1`,
+      [ok.rows[0].entry_id],
+    );
+    expect(new Date(kept.rows[0].joined_at).toISOString()).toBe(asserted.toISOString());
+
+    const missing = await adminQuery(
+      `select ri.result from public.import_legacy_waitlist_entry($1,$2,'X',$3,null,'operator_supplied',null) ri`,
+      [studio.studioId, studio.userId, uniqueEmail("missing")],
+    );
+    expect(missing.rows[0].result).toBe("joined_at_required");
+
+    const future = await adminQuery(
+      `select ri.result from public.import_legacy_waitlist_entry($1,$2,'X',$3,now() + interval '2 days','operator_supplied',null) ri`,
+      [studio.studioId, studio.userId, uniqueEmail("future")],
+    );
+    expect(future.rows[0].result).toBe("joined_at_in_future");
+  });
+
   it("still refuses a nameless legacy row — name stays required", async () => {
     const studio = await seedStudio("admit-noname");
     const res = await adminQuery(
@@ -1124,6 +1199,33 @@ describe("the studio lock mode is compatible with FK key-share", () => {
   });
 
   // =========================================================================
+  // ACCEPTED LIMITATION -- THIS GUARD IS NOT RELEASE-AUTHORITATIVE
+  // =========================================================================
+  //
+  // Exact-head review found that the scanner below mis-lexes PostgreSQL
+  // ESCAPE-STRING literals (E'...'), which use backslash escapes rather than
+  // the doubled quote this scanner understands. THE FINDING IS VALID AND IS NOT
+  // FIXED. It is the third same-family hole in the same approach -- after
+  // block comments and dollar-quoted bodies -- and patching a fourth branch
+  // would repeat a cycle that has already produced fifteen findings without
+  // reaching a lexer that survives review.
+  //
+  // SO THE CLAIM IS NARROWED INSTEAD OF THE CODE BEING WIDENED:
+  //
+  //   This guard is a BOUNDED REGRESSION AID. It catches a lock that is
+  //   deleted, wrong-moded, or added without an assertion, in the spellings it
+  //   understands. It is NOT proof of universal lock correctness and MUST NOT
+  //   be cited as such in a release decision.
+  //
+  //   The load-bearing evidence is the RUNTIME concurrency suite in this file:
+  //   the deadlock and serialisation races, which no syntax can evade because
+  //   they execute the commands and observe PostgreSQL's own behaviour.
+  //
+  // A body written with E'...' around the lock would pass this guard. Nothing
+  // in 0193 uses that form today, and the races would still catch the resulting
+  // deadlock -- but the gap is recorded here rather than left for someone to
+  // rediscover as a surprise.
+  //
   // BOUNDED LOCK-PRESENCE GUARD -- ONE NAMED ASSERTION PER COMMAND
   // =========================================================================
   //

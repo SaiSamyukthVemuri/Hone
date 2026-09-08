@@ -231,3 +231,54 @@ describe("stale preferences reach the engine as ordinary unstated ones", () => {
     expect(provenance[0]?.freshness?.kind).toBe("inconsistent");
   });
 });
+
+describe("a finite staleness policy cannot run without a clock", () => {
+  const ROW = {
+    id: "e1",
+    joined_at: "2026-01-01T00:00:00.000Z",
+    availability_preference: "weekdays",
+    availability_stated_at: "2025-01-01T00:00:00.000Z",
+    availability_confirmed_at: "2025-01-01T00:00:00.000Z",
+    availability_source: "public_form",
+  };
+
+  // THE DEFECT: staleness and the clock were independently optional, so a
+  // finite cap with no `now` type-checked AND ran -- silently reporting every
+  // preference fresh. A studio that had decided its answers expire after 90
+  // days would have got no staleness at all, with no error anywhere.
+  it("REFUSES a finite cap with no clock, rather than reporting everything fresh", () => {
+    expect(() =>
+      // @ts-expect-error the union makes this a compile error too; the runtime
+      // refusal is what protects a policy assembled dynamically.
+      projectCandidates([ROW], { staleness: { maxAgeDays: 90 } }),
+    ).toThrow(/cannot be evaluated without a clock/);
+  });
+
+  it("evaluates age correctly once the clock is supplied", () => {
+    const now = new Date("2026-09-08T00:00:00.000Z");
+    const { candidates, provenance } = projectCandidates([ROW], {
+      now,
+      staleness: { maxAgeDays: 90 },
+    });
+    // Confirmed 2025-01-01, far past a 90-day cap.
+    expect(provenance[0]?.freshness?.kind).toBe("stale");
+    expect(candidates[0]?.availability.stated).toBe(false);
+  });
+
+  it("still keeps a recently confirmed preference fresh under the same cap", () => {
+    const now = new Date("2026-09-08T00:00:00.000Z");
+    const { candidates } = projectCandidates(
+      [{ ...ROW, availability_confirmed_at: "2026-09-01T00:00:00.000Z" }],
+      { now, staleness: { maxAgeDays: 90 } },
+    );
+    expect(candidates[0]?.availability.stated).toBe(true);
+  });
+
+  it("requires no clock when staleness is disabled", () => {
+    // The default path must stay free of a clock requirement: nothing can go
+    // stale, so nothing needs measuring.
+    expect(() => projectCandidates([ROW])).not.toThrow();
+    expect(() => projectCandidates([ROW], { staleness: { maxAgeDays: null } })).not.toThrow();
+    expect(projectCandidates([ROW]).candidates[0]?.availability.stated).toBe(true);
+  });
+});

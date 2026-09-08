@@ -541,15 +541,33 @@ begin
     return query select 'invalid_provenance'::text, null::uuid;
     return;
   end if;
-  if p_joined_at is null then
-    return query select 'joined_at_required'::text, null::uuid;
-    return;
-  end if;
-  -- A future join date is not a plausible historical fact and is far more
-  -- likely a mis-parsed day/month order than a real one.
-  if p_joined_at > clock_timestamp() then
-    return query select 'joined_at_in_future'::text, null::uuid;
-    return;
+  -- 'unknown' MEANS THE CALLER'S DATE IS NOT EVIDENCE, SO IT IS NOT USED.
+  --
+  -- This command's whole purpose is that a join date is never fabricated, and
+  -- it had the inverse hole wide open: with provenance 'unknown' it accepted
+  -- whatever instant the caller passed and only refused FUTURE ones. Measured
+  -- before the repair -- an entry imported as "nobody knows when they joined",
+  -- carrying a caller-supplied date five years back, sorted AHEAD of a genuine
+  -- form joiner in the (joined_at, id) queue. That is queue-position forgery by
+  -- the one command written to prevent date fabrication.
+  --
+  -- Under 'unknown' the row still needs a position, so joined_at is stamped
+  -- from the SERVER clock at import and means only "entered the queue here".
+  -- joined_at_provenance stays 'unknown', so no reader may render it as a wait,
+  -- and nothing the caller sends can move a queue position.
+  if p_provenance = 'operator_supplied' then
+    -- The operator is ASSERTING a real historical date, so it is required and
+    -- validated. This half is unchanged.
+    if p_joined_at is null then
+      return query select 'joined_at_required'::text, null::uuid;
+      return;
+    end if;
+    -- A future join date is not a plausible historical fact and is far more
+    -- likely a mis-parsed day/month order than a real one.
+    if p_joined_at > clock_timestamp() then
+      return query select 'joined_at_in_future'::text, null::uuid;
+      return;
+    end if;
   end if;
 
   -- CANONICAL LOCK ORDER, STUDIO FIRST. This command writes a table carrying a
@@ -567,7 +585,10 @@ begin
        joined_at_provenance, created_by_practitioner_id)
     values
       (p_studio_id, btrim(p_name), btrim(p_email), nullif(btrim(coalesce(p_phone, '')), ''),
-       'legacy_import', p_joined_at, p_provenance, v_actor)
+       'legacy_import',
+       -- The server clock for 'unknown'; the operator's asserted date otherwise.
+       case when p_provenance = 'unknown' then clock_timestamp() else p_joined_at end,
+       p_provenance, v_actor)
     returning id into v_id;
   exception
     when unique_violation then
