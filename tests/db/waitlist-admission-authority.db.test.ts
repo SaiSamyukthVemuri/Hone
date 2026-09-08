@@ -1123,35 +1123,118 @@ describe("the studio lock mode is compatible with FK key-share", () => {
     expect(await conflicts("for no key update", "for no key update")).toBe(true);
   });
 
-  // THE ONLY STATIC ASSERTION LEFT, AND DELIBERATELY THE SMALLEST ONE THAT PAYS.
+  // =========================================================================
+  // BOUNDED LOCK-PRESENCE GUARD -- ONE NAMED ASSERTION PER COMMAND
+  // =========================================================================
   //
-  // A full static audit of this rule was attempted twice -- first parsing the
-  // migration text, then deriving from pg_constraint/pg_proc/pg_trigger -- and
-  // review found ELEVEN holes in it across three rounds: delegating commands,
-  // a hard-coded FK frontier, MERGE INTO, collapsed overloads, an ordering
-  // check that skipped rather than failed, dynamic SQL, dollar-quoted literals,
-  // rewrite rules, schema-qualified callees. Every one was a real hole, and the
-  // count went UP each round. Writing a PostgreSQL static analyser inside a test
-  // file is unbounded -- dynamic SQL alone is undecidable -- and it was
-  // generating more findings than the migration it policed.
+  // WHAT THIS REPLACED, AND WHY IT IS SMALL ON PURPOSE. A general static audit
+  // of this rule was built twice -- parsing the migration, then deriving from
+  // pg_constraint/pg_proc/pg_trigger -- and review found eleven holes across
+  // three rounds, because deciding what a PL/pgSQL body can WRITE is unbounded
+  // once dynamic SQL exists. Both attempts are gone.
   //
-  // So the property is proved where it actually lives: at RUNTIME, by the
-  // deadlock and serialisation races in this file. Those cannot be fooled by
-  // syntax -- a MERGE, an EXECUTE or a rewrite rule would still deadlock and
-  // still fail them.
+  // This guard asks a different, decidable question. It does NOT ask what a
+  // command writes, or what it can reach, or whether it needs a lock. It asks
+  // only: does this NAMED command, at this EXACT signature, contain the studio
+  // lock? There is no call graph, no FK frontier and no trigger map, so there
+  // is nothing to walk around.
   //
-  // What remains static is one unambiguous regex with no reachability analysis
-  // behind it: the wrong lock MODE must never appear. FOR UPDATE conflicts with
-  // the FK's KEY SHARE, and it is the single spelling that reopens the cycle.
-  // A missing lock is caught by the races; a wrong mode is caught here.
-  it("no 0193 command takes the incompatible FOR UPDATE mode on studios", async () => {
+  // WHY IT WAS NEEDED. Removing the general audit was measured, not assumed,
+  // and the measurement was bad: with only the runtime races in place, SEVEN OF
+  // NINE commands could lose their studio lock and the whole suite stayed green
+  // -- admit_new_client_waitlist_entry among them. The races cover the pairs
+  // they enumerate; they do not cover a lock nothing races against.
+  //
+  // IT OVER-APPROXIMATES, DELIBERATELY. Every listed command must carry the
+  // lock whether or not this file can prove it needs one. A future command that
+  // genuinely does not need it must still take it, or be removed from this list
+  // by someone who says why. That is the cost of not doing reachability.
+  //
+  // THE LIST IS EXPLICIT AND BOUNDED. A TENTH COMMAND ADDED TO 0193 IS NOT
+  // COVERED UNTIL SOMEONE ADDS IT HERE. That is a real limitation and it is
+  // stated rather than hidden -- the alternative is the reachability analysis
+  // that failed three times.
+  //
+  // Read from pg_proc, so it checks the definition the tested chain ACTUALLY
+  // applied, not the text of a file that may not be what ran.
+  const LOCK_BEARING_COMMANDS: ReadonlyArray<readonly [string, string]> = [
+    ["create_practitioner_waitlist_entry",
+     "p_studio_id uuid, p_actor_user_id uuid, p_name text, p_email text, p_phone text, p_preference text"],
+    ["import_legacy_waitlist_entry",
+     "p_studio_id uuid, p_actor_user_id uuid, p_name text, p_email text, p_joined_at timestamp with time zone, p_provenance text, p_phone text"],
+    ["set_waitlist_entry_availability",
+     "p_studio_id uuid, p_entry_id uuid, p_actor_user_id uuid, p_preference text"],
+    ["issue_waitlist_preference_grant",
+     "p_studio_id uuid, p_entry_id uuid, p_actor_user_id uuid, p_ttl_hours integer"],
+    ["revoke_waitlist_preference_grant",
+     "p_studio_id uuid, p_entry_id uuid, p_actor_user_id uuid"],
+    ["redeem_waitlist_preference_grant", "p_raw_token text, p_preference text"],
+    ["set_studio_waitlist_admission_policy",
+     "p_studio_id uuid, p_actor_user_id uuid, p_ranking_policy jsonb, p_invite_batch_default integer, p_invite_batch_max integer"],
+    ["claim_new_client_waitlist_entries_ordered",
+     "p_studio_id uuid, p_actor_user_id uuid, p_entry_ids uuid[]"],
+    // The primary product seam. Its OUTER lock is the one the runtime races
+    // could not see at all: removing it left the suite fully green.
+    ["admit_new_client_waitlist_entry",
+     "p_studio_id uuid, p_actor_user_id uuid, p_entry_id uuid, p_service_id uuid, p_start_date date, p_end_date date, p_allowed_weekdays smallint[], p_ttl_hours integer"],
+  ];
+
+  async function definitionOf(name: string, args: string): Promise<string | null> {
+    const res = await adminQuery(
+      `select prosrc
+         from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+        where n.nspname = 'public'
+          and p.proname = $1
+          and pg_get_function_identity_arguments(p.oid) = $2`,
+      [name, args],
+    );
+    return res.rows.length === 1 ? (res.rows[0].prosrc as string) : null;
+  }
+
+  it.each(LOCK_BEARING_COMMANDS)(
+    "%s takes the studio lock in the applied definition",
+    async (name, args) => {
+      const src = await definitionOf(name, args);
+      // A MISSING command or a CHANGED signature FAILS. It must never skip:
+      // silently passing because the function was renamed is the failure this
+      // assertion exists to make impossible.
+      expect(src, `${name}(${args}) is not in the applied chain at this signature`).not.toBeNull();
+      const body = (src as string)
+        .replace(/--[^\n]*/g, (m) => " ".repeat(m.length))
+        .replace(/'(?:[^']|'')*'/g, (m) => " ".repeat(m.length));
+      expect(
+        /from\s+public\.studios[^;]*for\s+no\s+key\s+update/i.test(body),
+        `${name} must take \`studios ... for no key update\``,
+      ).toBe(true);
+      // The mode matters as much as the presence: FOR UPDATE conflicts with the
+      // FK's KEY SHARE and reopens the very cycle the lock closes.
+      expect(
+        /from\s+public\.studios[^;]*for\s+update\b/i.test(body),
+        `${name} must not use the incompatible FOR UPDATE mode`,
+      ).toBe(false);
+    },
+  );
+
+  it("covers every command 0193 defines, or names the gap", async () => {
+    // The bound is explicit, so drift between the migration and this list is
+    // surfaced rather than left to be discovered by a deadlock in production.
     const { readFileSync } = await import("node:fs");
     const sql = readFileSync("supabase/migrations/0193_waitlist_admission_authority.sql", "utf8");
     const code = sql.split("\n").filter((l) => !/^\s*--/.test(l)).join("\n");
-    expect(code).not.toMatch(/from public\.studios[^;]*for update\b/i);
-    // And the compatible mode is genuinely in use, so the assertion above is
-    // not passing merely because no studio lock exists at all.
-    expect(code).toMatch(/from public\.studios[^;]*for no key update/i);
+    const defined = new Set<string>();
+    const re = /create or replace function public\.(\w+)\s*\(/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(code)) !== null) {
+      const body = code.slice(m.index, code.indexOf("$$;", m.index));
+      if (/returns trigger/.test(body)) continue; // triggers take no locks of their own
+      defined.add(m[1]);
+    }
+    const listed = new Set(LOCK_BEARING_COMMANDS.map(([n]) => n));
+    const unlisted = [...defined].filter((d) => !listed.has(d));
+    expect(
+      unlisted,
+      "a command was added to 0193 without a lock-presence assertion; add it to LOCK_BEARING_COMMANDS or say why it is exempt",
+    ).toEqual([]);
   });
 });
 
