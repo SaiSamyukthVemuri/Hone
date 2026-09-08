@@ -259,6 +259,23 @@ export function practitionerStatusDetail(
   }
 }
 
+/**
+ * A DOM id that is unique per waitlist entry, and valid whatever the caller
+ * passes.
+ *
+ * SHARED ON PURPOSE. The row grew this after ids collided across rows; the
+ * composer was then written with global constants and collided across
+ * instances — the same defect, one component over, in the same change. One
+ * factory means an id cannot be per-instance in one place and global in
+ * another, because there is nowhere else to make one.
+ *
+ * Entry ids are reduced to id-safe characters and prefixed, so the result is a
+ * valid, letter-initial identifier for any input.
+ */
+export function waitlistDomId(entryId: string, suffix: string): string {
+  return `wl-${entryId.replace(/[^A-Za-z0-9_-]/g, "-")}-${suffix}`;
+}
+
 // --- 2. THE ACTIONS A PRACTITIONER HAS ---------------------------------------
 
 export const PRACTITIONER_ACTIONS = [
@@ -329,6 +346,13 @@ export function delegateFor(
       if (status === "claimed") return "release";
       return "requeue";
     case "remove_from_waitlist":
+      // ON `invited` THE FIRST HOP IS `expire`, NOT `remove`. Removal from an
+      // entry whose window has closed is expire-then-remove, so the hop whose
+      // verdict governs is the expiry — exactly as it is for "Return to
+      // waitlist" one case up. Delegating to `remove` here said "refused" for
+      // every `invited` row, which is what made an elapsed row differ from the
+      // `expired` row it silently becomes.
+      if (status === "invited") return "expire";
       return "remove";
   }
 }
@@ -558,10 +582,21 @@ export function practitionerActionAvailability(
         // a precedence rule and then not applying it one function away is the
         // same defect the rule was written to remove.
         if (invitationHasRunOut(context)) {
-          return {
-            available: false,
-            reason: "Return them to the waitlist first, then you can remove them.",
-          };
+          // AVAILABLE, AND IT HAS TO BE. An entry whose window has closed is
+          // still stored as `invited` until the bookkeeping runs, and the live
+          // `remove` command answers `release_required` for that status — so
+          // this row rendered Remove DISABLED while the `expired` row it
+          // becomes rendered the identical control ENABLED. The background
+          // transition changed a practitioner's controls, which is the exact
+          // leak the identical-presentation rule exists to close, and the test
+          // guarding it compared which actions APPEARED rather than whether
+          // they worked.
+          //
+          // The remedy is the one already applied to "Return to waitlist": the
+          // server owns the compound. `invited -> expired -> removed` is two
+          // legal hops, and `removeFromWaitlist` must perform them atomically —
+          // see the contract, which now names this path.
+          return { available: true };
         }
         if (context.invitationFactsUnknown) {
           // Neither remedy can be named honestly: we do not know whether the

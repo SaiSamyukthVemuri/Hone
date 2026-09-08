@@ -7,6 +7,7 @@ import {
   normalizeInvitationContext,
   practitionerStatusDetail,
   practitionerStatusLabel,
+  waitlistDomId,
   type PractitionerActionItem,
 } from "@/lib/waitlist/b4-invitation-draft";
 import {
@@ -45,17 +46,11 @@ import {
 // disabled Remove button explained itself with a sentence about sending was one
 // of the three findings this redesign closes.
 
-/** Ids must be unique per ENTRY, not per action.
- *
- *  A page renders many rows and the earlier revision emitted `id="reason-remove"`
- *  on all of them, so `aria-describedby` resolved to the FIRST match in the
- *  document and a screen reader announced another person's prerequisite on this
- *  person's control. Every id here is namespaced by the entry, and the entry id
- *  is reduced to id-safe characters and prefixed so the result is a valid,
- *  letter-initial identifier whatever the caller passes. */
-function domId(entryId: string, suffix: string): string {
-  return `wl-${entryId.replace(/[^A-Za-z0-9_-]/g, "-")}-${suffix}`;
-}
+// Ids are unique per ENTRY, not per action, and the factory is SHARED with the
+// composer — see `waitlistDomId`. A page renders many rows and an earlier
+// revision emitted `id="reason-remove"` on all of them, so `aria-describedby`
+// resolved to the FIRST match in the document and a screen reader announced
+// another person's prerequisite on this person's control.
 
 export type AdmissionEntry = {
   id: string;
@@ -137,8 +132,8 @@ function ActionControl({
   note?: string;
 }) {
   const state = controlState(item, capabilities);
-  const reasonId = state.reason ? domId(entryId, `reason-${item.action}`) : undefined;
-  const noteId = note ? domId(entryId, `note-${item.action}`) : undefined;
+  const reasonId = state.reason ? waitlistDomId(entryId, `reason-${item.action}`) : undefined;
+  const noteId = note ? waitlistDomId(entryId, `note-${item.action}`) : undefined;
   // BOTH, WHEN BOTH EXIST. `aria-describedby` takes a space-separated list, and
   // the note is the case that was silently unreachable: it renders only when
   // the control is ENABLED, which is exactly when `state.reason` is null — so
@@ -225,7 +220,7 @@ function DestructiveDisclosure({
   capabilities: AdapterCapabilities | null;
 }) {
   const state = controlState(item, capabilities);
-  const reasonId = state.reason ? domId(entryId, `reason-${item.action}`) : undefined;
+  const reasonId = state.reason ? waitlistDomId(entryId, `reason-${item.action}`) : undefined;
 
   if (state.disabled) {
     return (

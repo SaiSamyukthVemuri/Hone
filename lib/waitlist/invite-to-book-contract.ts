@@ -240,7 +240,11 @@ export type AdapterCapabilities = {
    *  implementing only some of them advertises an escape that is guaranteed to
    *  fail on the rows that have no other way out. */
   canReturnToWaitlist: boolean;
-  /** `removeFromWaitlist` is implemented. */
+  /** `removeFromWaitlist` is implemented atomically for BOTH its paths — the
+   *  single-command removal, and the expire-then-remove compound needed by an
+   *  `invited` entry whose window has already closed. Reporting `true` while
+   *  implementing only the first makes removal fail on exactly the rows a
+   *  practitioner reaches after an invitation lapses. */
   canRemove: boolean;
 };
 
@@ -335,8 +339,17 @@ export interface WaitlistInvitationAdapter {
   /**
    * Take someone off the waitlist permanently.
    *
-   * Terminal, and refused while the entry is held or invited —
-   * `remove_new_client_waitlist_entry` answers `release_required` for both.
+   * TWO PATHS. From `waiting`, `expired` or `released` this is the single
+   * `remove_new_client_waitlist_entry`. From an `invited` entry whose window
+   * has already elapsed it is expire-then-remove, atomically — because the
+   * command answers `release_required` for `invited`, and refusing there would
+   * mean the row rendered Remove disabled until a background transition
+   * silently enabled it. The practitioner cannot see the difference between
+   * those two rows and must not be given different controls on them.
+   *
+   * Still refused while the entry is held, or invited with a LIVE invitation —
+   * `remove_new_client_waitlist_entry` answers `release_required` for both, and
+   * there the surface says so in its own words.
    * Not a delete: the row transitions to `removed` with its actor and timestamp
    * recorded. Physically purging waitlist history belongs to a retention
    * policy, not to a button.

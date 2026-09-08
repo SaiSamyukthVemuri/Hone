@@ -79,7 +79,12 @@ function walk(dir: string): string[] {
     if (statSync(join(ROOT, rel)).isDirectory()) {
       if (name === "node_modules" || name === ".next") continue;
       out.push(...walk(rel));
-    } else if (/\.(ts|tsx)$/.test(name)) {
+    } else if (/\.(ts|tsx|js|jsx|mjs|cjs)$/.test(name)) {
+      // JAVASCRIPT COUNTS. Next accepts `.js`/`.jsx` routes, and enumerating
+      // only TypeScript meant a `.jsx` route could import a prototype entry
+      // point while this assertion stayed green. There are none under `app/`
+      // today — and the guard exists to fail on the change that introduces
+      // reachability, not to describe the tree as it stands.
       out.push(rel);
     }
   }
@@ -173,7 +178,9 @@ function importSpecifiers(file: string, text: string): string[] {
     /* setParentNodes */ false,
     // The script kind is load-bearing: parsing a .tsx file as .ts misreads JSX
     // as type assertions and silently loses the imports below it.
-    file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+    file.endsWith(".tsx") || file.endsWith(".jsx")
+      ? ts.ScriptKind.TSX
+      : ts.ScriptKind.TS,
   );
   const specs: string[] = [];
   const literal = (node: ts.Node | undefined): void => {
@@ -217,7 +224,11 @@ function importSpecifiers(file: string, text: string): string[] {
  */
 const COMPILER_OPTIONS: ts.CompilerOptions = (() => {
   const raw = ts.readConfigFile(join(ROOT, "tsconfig.json"), ts.sys.readFile);
-  return ts.parseJsonConfigFileContent(raw.config ?? {}, ts.sys, ROOT).options;
+  const options = ts.parseJsonConfigFileContent(raw.config ?? {}, ts.sys, ROOT).options;
+  // `allowJs` only WIDENS what resolves, which is the safe direction for a
+  // guard: without it a `.js` intermediary between an app route and the
+  // prototype would resolve to nothing and break the chain.
+  return { ...options, allowJs: true };
 })();
 
 // Resolution is quadratic-ish across a large graph without this.
@@ -645,6 +656,11 @@ describe("every verdict is the live model's, not a second copy of it", () => {
     // an already-accepted key.
     expect(divergences.sort()).toEqual([
       "cancel_invitation@invited@no invitation facts",
+      // Same cause, third control: the raw context claims an elapsed window on
+      // facts that could not be read, the live model believes the flag, and
+      // this surface discards it as incoherent and refuses. Strictly stricter,
+      // which is the only direction allowed.
+      "remove_from_waitlist@invited@elapsed AND unreadable (incoherent input)",
       "resend_invitation@invited@no invitation facts",
     ]);
     // NON-VACUITY: the walk must actually be reaching delegated controls, or an
@@ -995,11 +1011,32 @@ describe("the row's action surface", () => {
     // closes. Resend used to sit on one and not the other.
     const elapsed = entryActionSurface("invited", { invitationElapsed: true, invitationRedeemed: false });
     const expired = entryActionSurface("expired");
+    // COMPARE WHETHER THEY WORK, NOT MERELY WHETHER THEY APPEAR. This
+    // assertion used to map to `.action` alone, so both rows listed
+    // `remove_from_waitlist` and it passed — while Remove was DISABLED on the
+    // elapsed row and ENABLED on the expired one, and the invisible
+    // bookkeeping transition flipped it. An anti-leak test with a hole shaped
+    // exactly like the leak.
     const shape = (s: ReturnType<typeof entryActionSurface>) => ({
-      primary: s.primary?.action ?? null,
-      secondary: s.secondary.map((i) => i.action),
+      primary: s.primary
+        ? { action: s.primary.action, label: s.primary.label, available: s.primary.available }
+        : null,
+      secondary: s.secondary.map((i) => ({
+        action: i.action,
+        label: i.label,
+        available: i.available,
+        destructive: i.destructive,
+      })),
     });
     expect(shape(elapsed)).toEqual(shape(expired));
+    // And the refusal SENTENCES agree too, where there are any — a row that
+    // explains itself differently is as visible a difference as a greyed
+    // button.
+    const reasons = (s: ReturnType<typeof entryActionSurface>) =>
+      [...(s.primary ? [s.primary] : []), ...s.secondary]
+        .map((i) => (i.available ? null : i.reason))
+        .filter(Boolean);
+    expect(reasons(elapsed)).toEqual(reasons(expired));
     // And they read the same, so nothing distinguishes them on screen at all.
     expect(practitionerStatusLabel("invited", { invitationElapsed: true, invitationRedeemed: false })).toBe(
       practitionerStatusLabel("expired"),
@@ -1044,8 +1081,13 @@ describe("the row's action surface", () => {
       return item.available === false ? item.reason : null;
     };
 
-    expect(removeReason({ invitationElapsed: false, invitationRedeemed: false })).toContain("Cancel their invitation");
-    expect(removeReason({ invitationElapsed: true, invitationRedeemed: false })).toContain("Return them to the waitlist");
+    expect(removeReason({ invitationElapsed: false, invitationRedeemed: false })).toContain(
+      "Cancel their invitation",
+    );
+    // An ELAPSED invitation no longer blocks removal at all — the server owns
+    // the expire-then-remove compound, so this row matches the `expired` row it
+    // silently becomes. There is no refusal left to name.
+    expect(removeReason({ invitationElapsed: true, invitationRedeemed: false })).toBeNull();
 
     // The refusal's ACTIONABLE VERB must belong to a control the same row is
     // showing. Comparing whole labels is too strict — the sentence reads
@@ -1053,7 +1095,6 @@ describe("the row's action surface", () => {
     // and comparing nothing is the defect itself.
     for (const [context, verb] of [
       [{ invitationElapsed: false, invitationRedeemed: false }, "Cancel"],
-      [{ invitationElapsed: true, invitationRedeemed: false }, "Return"],
     ] as const) {
       const reason = removeReason(context)!;
       expect(reason).toContain(verb);
@@ -1081,18 +1122,15 @@ describe("the row's action surface", () => {
     expect(reason).not.toContain("Return them to the waitlist");
     expect(reason).toContain("could not be checked");
 
-    // NEGATIVE CONTROL: with the facts READABLE and elapsed, "Return to
-    // waitlist" IS on the row, so naming it is correct there.
+    // NEGATIVE CONTROL: with the facts READABLE and elapsed, the row offers
+    // both controls outright — no refusal at all. Unknown is therefore doing
+    // real work here rather than matching what elapsed would have done anyway.
     const readable = { invitationElapsed: true, invitationRedeemed: false };
-    expect(surfaceItems("invited", readable).map((i) => i.action)).toContain(
-      "return_to_waitlist",
-    );
-    const removeReadable = surfaceItems("invited", readable).find(
-      (i) => i.action === "remove_from_waitlist",
-    )!;
+    const readableActions = surfaceItems("invited", readable);
+    expect(readableActions.map((i) => i.action)).toContain("return_to_waitlist");
     expect(
-      removeReadable.available === false ? removeReadable.reason : "",
-    ).toContain("Return them to the waitlist");
+      readableActions.find((i) => i.action === "remove_from_waitlist")!.available,
+    ).toBe(true);
   });
 
   it("never names a control the row is not showing, at any status or context", () => {

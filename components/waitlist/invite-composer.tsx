@@ -16,6 +16,7 @@ import {
   type AllowedDaysPreset,
   type DraftFieldId,
   type InviteDraft,
+  waitlistDomId,
 } from "@/lib/waitlist/b4-invitation-draft";
 import type { AdapterCapabilities } from "@/lib/waitlist/invite-to-book-contract";
 
@@ -55,23 +56,37 @@ import type { AdapterCapabilities } from "@/lib/waitlist/invite-to-book-contract
 /** The id an error message carries, and the id a control points at. ONE
  *  function, so a control can never reference an id the message does not use —
  *  a dangling `aria-describedby` announces that an explanation exists and then
- *  has none to give, which is worse than no association at all. */
-export function composerErrorId(field: DraftFieldId): string {
-  return `composer-error-${field}`;
+ *  has none to give, which is worse than no association at all.
+ *
+ *  NAMESPACED PER ENTRY, through the same factory the row uses. These were
+ *  global constants — `composer-error-service`, `composer-label-days`,
+ *  `composer-send-reason` — so two mounted composers emitted identical ids and
+ *  the second one's `aria-labelledby`/`aria-describedby` resolved to the FIRST
+ *  one's content: a screen reader announcing another person's validation error.
+ *  That is the row's own id-collision defect, repeated one component over in
+ *  the same change, which is why the factory now lives in one place. */
+export function composerErrorId(entryId: string, field: DraftFieldId): string {
+  return waitlistDomId(entryId, `composer-error-${field}`);
+}
+
+function composerLabelId(entryId: string, field: DraftFieldId): string {
+  return waitlistDomId(entryId, `composer-label-${field}`);
 }
 
 function FieldSection({
+  entryId,
   id,
   title,
   error,
   children,
 }: {
+  entryId: string;
   id: DraftFieldId;
   title: string;
   error?: string;
   children: React.ReactNode;
 }) {
-  const errorId = error ? composerErrorId(id) : undefined;
+  const errorId = error ? composerErrorId(entryId, id) : undefined;
   return (
     <section
       data-testid={`composer-field-${id}`}
@@ -83,7 +98,7 @@ function FieldSection({
       {/* The id lives on a wrapper rather than on `SectionLabel`, which is a
           shipped primitive with no `id` prop. Widening a live primitive to suit
           an unwired prototype is exactly the wrong direction of dependency. */}
-      <span id={`composer-label-${id}`}>
+      <span id={composerLabelId(entryId, id)}>
         <SectionLabel size="caption">{title}</SectionLabel>
       </span>
       {children}
@@ -129,11 +144,15 @@ function PresetButton({
 }
 
 export function InviteComposer({
+  entryId,
   entryName,
   draft,
   services,
   capabilities = null,
 }: {
+  /** Namespaces every id this composer emits, so two mounted composers cannot
+   *  cross-reference each other's labels and errors. */
+  entryId: string;
   /** The person this invitation is for. Already chosen — the composer opens
    *  from their row, and choosing again here is how a single invitation and a
    *  bulk claim end up looking like one control. */
@@ -169,19 +188,19 @@ export function InviteComposer({
         </h2>
       </header>
 
-      <FieldSection id="service" title="Service" error={errors.service}>
+      <FieldSection entryId={entryId} id="service" title="Service" error={errors.service}>
         {/* The visible section heading IS this control's label, referenced
             rather than repeated: an `sr-only` copy of the same word made a
             screen reader announce "Service" twice. */}
         <select
           data-testid="composer-service"
-          aria-labelledby="composer-label-service"
+          aria-labelledby={composerLabelId(entryId, "service")}
           // THE CONTROL CARRIES THE RELATIONSHIP, not just the section. A
           // screen-reader user lands on the select, not on the paragraph
           // underneath it, so without this they are told the field is invalid
           // and never told why Send is blocked.
           aria-invalid={errors.service ? true : undefined}
-          aria-describedby={errors.service ? composerErrorId("service") : undefined}
+          aria-describedby={errors.service ? composerErrorId(entryId, "service") : undefined}
           defaultValue={draft.serviceId ?? ""}
           className={fieldControlClass()}
         >
@@ -197,7 +216,7 @@ export function InviteComposer({
         </select>
       </FieldSection>
 
-      <FieldSection id="window" title="Booking window" error={errors.window}>
+      <FieldSection entryId={entryId} id="window" title="Booking window" error={errors.window}>
         <ul className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
           {BOOKING_WINDOW_PRESETS.map((preset) => (
             <li key={preset.days} className="w-full sm:w-auto">
@@ -229,14 +248,14 @@ export function InviteComposer({
               data-testid="composer-window-days"
               defaultValue={draft.windowDays}
               aria-invalid={errors.window ? true : undefined}
-              aria-describedby={errors.window ? composerErrorId("window") : undefined}
+              aria-describedby={errors.window ? composerErrorId(entryId, "window") : undefined}
               className={fieldControlClass()}
             />
           </label>
         )}
       </FieldSection>
 
-      <FieldSection id="days" title="Allowed days" error={errors.days}>
+      <FieldSection entryId={entryId} id="days" title="Allowed days" error={errors.days}>
         <ul className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
           {(
             ["every", "weekdays", "weekends", "custom"] as ReadonlyArray<AllowedDaysPreset>
@@ -270,8 +289,8 @@ export function InviteComposer({
           <div
             role="group"
             data-testid="composer-weekday-group"
-            aria-labelledby="composer-label-days"
-            aria-describedby={errors.days ? composerErrorId("days") : undefined}
+            aria-labelledby={composerLabelId(entryId, "days")}
+            aria-describedby={errors.days ? composerErrorId(entryId, "days") : undefined}
           >
           <ul className="flex flex-wrap gap-2" data-testid="composer-weekdays">
             {WEEKDAYS_IN_DISPLAY_ORDER.map((day) => (
@@ -299,7 +318,7 @@ export function InviteComposer({
         )}
       </FieldSection>
 
-      <FieldSection id="expiry" title="Invitation expires" error={errors.expiry}>
+      <FieldSection entryId={entryId} id="expiry" title="Invitation expires" error={errors.expiry}>
         <ul className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
           {TTL_PRESETS.map((preset) => (
             <li key={preset.hours} className="w-full sm:w-auto">
@@ -332,7 +351,7 @@ export function InviteComposer({
               data-testid="composer-expiry-hours"
               defaultValue={draft.expiresInHours}
               aria-invalid={errors.expiry ? true : undefined}
-              aria-describedby={errors.expiry ? composerErrorId("expiry") : undefined}
+              aria-describedby={errors.expiry ? composerErrorId(entryId, "expiry") : undefined}
               className={fieldControlClass()}
             />
           </label>
@@ -348,7 +367,7 @@ export function InviteComposer({
         )}
         {send.reason && (
           <span
-            id="composer-send-reason"
+            id={waitlistDomId(entryId, "composer-send-reason")}
             data-testid="composer-send-reason"
             className="text-xs leading-snug text-fg-muted"
           >
@@ -363,7 +382,7 @@ export function InviteComposer({
           type="button"
           disabled={send.disabled}
           data-testid="composer-send"
-          aria-describedby={send.reason ? "composer-send-reason" : undefined}
+          aria-describedby={send.reason ? waitlistDomId(entryId, "composer-send-reason") : undefined}
           className={buttonClasses({ variant: "primary", size: "md", fullWidth: true })}
         >
           Send invitation
