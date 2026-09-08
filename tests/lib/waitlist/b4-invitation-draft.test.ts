@@ -385,6 +385,58 @@ function adapterSignals(
     rel.endsWith(".tsx") || rel.endsWith(".jsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
   );
   const found: string[] = [];
+
+  // SPREADS CARRY MEMBERS, AND SPLITTING A LITERAL IN TWO USED TO EVADE THIS.
+  // Neither half declares the full set and the merged literal declares no named
+  // property at all, so the shape signal saw nothing while the merge typechecks
+  // as a real adapter. Same-file object literals are therefore indexed by the
+  // name they are bound to, and a spread of one contributes its members.
+  //
+  // KNOWN BOUND, stated rather than implied: a spread whose source is imported
+  // from another module, or returned by a call, is not resolved. Following the
+  // import graph for that would be a second program; the seam is recorded here
+  // and in the test named "the bound this detector does not cross".
+  const literalsByName = new Map<string, ts.ObjectLiteralExpression>();
+  const index = (node: ts.Node): void => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.initializer &&
+      ts.isObjectLiteralExpression(node.initializer)
+    ) {
+      literalsByName.set(node.name.text, node.initializer);
+    }
+    ts.forEachChild(node, index);
+  };
+  ts.forEachChild(source, index);
+
+  /** Member names a literal contributes, following same-file spreads. `seen`
+   *  breaks the cycle in `const a = {...b}; const b = {...a};`. */
+  const literalMembers = (
+    literal: ts.ObjectLiteralExpression,
+    seen: Set<ts.Node>,
+  ): string[] => {
+    if (seen.has(literal)) return [];
+    seen.add(literal);
+    const out: string[] = [];
+    for (const prop of literal.properties) {
+      if (ts.isSpreadAssignment(prop)) {
+        const from = ts.isIdentifier(prop.expression)
+          ? literalsByName.get(prop.expression.text)
+          : ts.isObjectLiteralExpression(prop.expression)
+            ? prop.expression
+            : undefined;
+        if (from) out.push(...literalMembers(from, seen));
+      } else if (
+        prop.name &&
+        (ts.isIdentifier(prop.name) || ts.isStringLiteral(prop.name))
+      ) {
+        out.push(prop.name.text);
+      }
+    }
+    return out;
+  };
+
   const names = (
     list: ReadonlyArray<{ name?: ts.PropertyName | ts.BindingName }>,
   ): string[] =>
@@ -400,7 +452,7 @@ function adapterSignals(
 
   const visit = (node: ts.Node): void => {
     if (ts.isObjectLiteralExpression(node)) {
-      const declared = names(node.properties);
+      const declared = literalMembers(node, new Set());
       if (members.every((m) => declared.includes(m))) found.push(`${rel} (shape)`);
     } else if (ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
       const declared = names(node.members);
@@ -657,6 +709,11 @@ describe("the adapter detector, exercised on sources that ARE adapters", () => {
   const CAPS =
     "capabilities: { enforcesScope: true, canResend: true, canCancel: true, canReturnToWaitlist: true, canRemove: true },";
   const LITERAL_BODY = [CAPS, ...M.filter((m) => m !== "capabilities").map((m) => `async ${m}() { return null as never; },`)].join("\n");
+  const MID = Math.ceil(M.length / 2);
+  const memberLine = (m: string) =>
+    m === "capabilities" ? CAPS : `async ${m}() { return null as never; },`;
+  const HALF_A = M.slice(0, MID).map(memberLine).join("\n");
+  const HALF_B = M.slice(MID).map(memberLine).join("\n");
   const CLASS_BODY = [
     "capabilities = { enforcesScope: true, canResend: true, canCancel: true, canReturnToWaitlist: true, canRemove: true };",
     ...M.filter((m) => m !== "capabilities").map((m) => `async ${m}() { return null as never; }`),
@@ -679,6 +736,25 @@ describe("the adapter detector, exercised on sources that ARE adapters", () => {
       ["class WITHOUT implements", `export class A {\n${CLASS_BODY}\n}`],
       ["returned from a factory", `export function make() {\n  return {\n${LITERAL_BODY}\n  };\n}`],
       ["assigned inside a function", `function f() {\n  const a = {\n${LITERAL_BODY}\n  };\n  return a;\n}`],
+      // SPREAD SHAPES. Neither half declares the full set, and the merged
+      // literal declares no named property at all — it evaded the shape signal
+      // entirely while typechecking as a real adapter.
+      [
+        "split across two literals",
+        `const half = {\n${HALF_A}\n};\nconst rest = {\n${HALF_B}\n};\nexport const a = { ...half, ...rest };`,
+      ],
+      [
+        "re-wrapped whole literal",
+        `const base = {\n${LITERAL_BODY}\n};\nexport const a = { ...base };`,
+      ],
+      [
+        "spread chained through a third",
+        `const c = {\n${HALF_B}\n};\nconst b = { ...c };\nconst d = {\n${HALF_A}\n};\nexport const a = { ...d, ...b };`,
+      ],
+      [
+        "inline nested spread",
+        `export const a = { ...{\n${HALF_A}\n}, ...{\n${HALF_B}\n} };`,
+      ],
     ];
     for (const [label, source] of adapters) {
       expect(
@@ -711,6 +787,30 @@ describe("the adapter detector, exercised on sources that ARE adapters", () => {
     for (const [label, source] of innocent) {
       expect(adapterSignals("probe.ts", source, M), `${label} was falsely flagged`).toEqual([]);
     }
+  });
+
+  it("does not hang on a spread cycle", () => {
+    // `const a = { ...b }; const b = { ...a };` parses fine and would recurse
+    // for ever without the seen-set.
+    //
+    // THE MEMBER NAME IS LOAD-BEARING. Without it the cheap prefilter returns
+    // before the walk begins, the recursion never runs, and this asserts
+    // nothing — which is exactly what the first version of this test did:
+    // it passed with the cycle guard deleted.
+    const cyclic = `const a = { ...b, ${CAPS} };\nconst b = { ...a };\nexport const c = a;`;
+    expect(cyclic).toContain(M[0]);
+    expect(adapterSignals("probe.ts", cyclic, M)).toEqual([]);
+  });
+
+  it("the bound this detector does not cross", () => {
+    // STATED, NOT IMPLIED. A spread whose source is imported from another
+    // module is not resolved — following the import graph for it would be a
+    // second program. Recording the seam is the honest alternative to a test
+    // list that reads as exhaustive and is not, which is exactly how the spread
+    // case was missed: considered, set aside, then described as covered.
+    const crossModule =
+      'import { base } from "./elsewhere";\nexport const a = { ...base };';
+    expect(adapterSignals("probe.ts", crossModule, M)).toEqual([]);
   });
 
   it("tightens automatically when the contract grows a method", () => {
