@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import ts from "typescript";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 
@@ -133,16 +134,69 @@ const PROTOTYPE_ENTRY_POINTS = [
   "components/waitlist/invite-composer.tsx",
 ] as const;
 
-/** Every import specifier in a source file: static, side-effect, dynamic and
- *  `require`. Comments are not stripped, which can only ever ADD edges — a
- *  guard that errs toward reachable is the safe direction here. */
-function importSpecifiers(text: string): string[] {
-  return [
-    ...[...text.matchAll(/\bfrom\s+["']([^"']+)["']/g)].map((m) => m[1]),
-    ...[...text.matchAll(/\bimport\s+["']([^"']+)["']/g)].map((m) => m[1]),
-    ...[...text.matchAll(/\bimport\s*\(\s*["']([^"']+)["']/g)].map((m) => m[1]),
-    ...[...text.matchAll(/\brequire\s*\(\s*["']([^"']+)["']/g)].map((m) => m[1]),
-  ];
+/**
+ * Every import specifier in a source file, READ FROM THE SYNTAX TREE.
+ *
+ * NOT A REGEX, AND THE REASON IS A DEFECT THIS GUARD ALREADY SHIPPED. The first
+ * version searched `app/` for the two module NAMES, and missed anything reached
+ * through a component. The second searched for import STATEMENTS — still a text
+ * search — and `\s+` between `from` and the module string means whitespace, so
+ *
+ *     import { AdmissionRow } from /* prototype *\/ "@/components/waitlist/admission-row"
+ *
+ * parses with zero diagnostics, compiles, makes the prototype application-
+ * reachable, and produced NO edge. The guard stayed green.
+ *
+ * Comments are legal wherever whitespace is; so are line continuations, unusual
+ * quoting and escapes. No refinement of a pattern survives contact with that,
+ * so this asks the compiler instead. `ts.createSourceFile` is the same parser
+ * `tsc` uses, and it is already a dependency of this repository.
+ *
+ * FIVE EDGE KINDS, because any of them makes a module reachable:
+ *   import x from "y"          static, including type-only (see below)
+ *   import "y"                 side-effect
+ *   export … from "y"          re-export — a real edge, and easy to forget
+ *   import("y")                dynamic
+ *   require("y") / import x =  CommonJS forms
+ *
+ * TYPE-ONLY IMPORTS COUNT. `import type` is erased, so it cannot make code run
+ * — but this guard's question is whether an application surface has coupled
+ * itself to the prototype, and erring toward "reachable" is the safe direction
+ * for an isolation boundary. A guard that under-reports is the failure mode
+ * being fixed here twice over.
+ */
+function importSpecifiers(file: string, text: string): string[] {
+  const source = ts.createSourceFile(
+    file,
+    text,
+    ts.ScriptTarget.Latest,
+    /* setParentNodes */ false,
+    // The script kind is load-bearing: parsing a .tsx file as .ts misreads JSX
+    // as type assertions and silently loses the imports below it.
+    file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+  );
+  const specs: string[] = [];
+  const literal = (node: ts.Node | undefined): void => {
+    if (node && ts.isStringLiteralLike(node)) specs.push(node.text);
+  };
+  const visit = (node: ts.Node): void => {
+    if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
+      literal(node.moduleSpecifier);
+    } else if (
+      ts.isImportEqualsDeclaration(node) &&
+      ts.isExternalModuleReference(node.moduleReference)
+    ) {
+      literal(node.moduleReference.expression);
+    } else if (ts.isCallExpression(node)) {
+      const callee = node.expression;
+      const isDynamicImport = callee.kind === ts.SyntaxKind.ImportKeyword;
+      const isRequire = ts.isIdentifier(callee) && callee.text === "require";
+      if (isDynamicImport || isRequire) literal(node.arguments[0]);
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(source, visit);
+  return specs;
 }
 
 /** Resolve one specifier to a repo-relative file, or null for a package. */
@@ -188,7 +242,7 @@ function reachableFromApp(): Map<string, string[]> {
     } catch {
       continue;
     }
-    for (const spec of importSpecifiers(text)) {
+    for (const spec of importSpecifiers(current, text)) {
       const target = resolveSpecifier(current, spec);
       if (target === null || reached.has(target)) continue;
       reached.set(target, [...path, target]);
@@ -223,6 +277,52 @@ describe("this module is UNREACHABLE from the application", () => {
     }
   });
 
+  it("reads imports from the syntax tree, not from a pattern", () => {
+    // THE EXTRACTOR IS THE GUARD. Two earlier versions were text searches and
+    // both had holes: the first missed anything reached through a component,
+    // the second missed a comment between `from` and the module string —
+    // legal, compiles, zero parse diagnostics, no edge produced.
+    //
+    // These cases are pinned here so the extractor cannot quietly regress to
+    // pattern-matching. Each is a form a bundler follows and a regex tends not
+    // to.
+    const cases: ReadonlyArray<[string, string, string]> = [
+      ["plain static", 'import { A } from "@/x/a";', "@/x/a"],
+      ["comment before specifier", 'import { A } from /* why */ "@/x/a";', "@/x/a"],
+      ["comment and newline", 'import { A } from\n  // note\n  "@/x/a";', "@/x/a"],
+      ["side-effect", 'import "@/x/a";', "@/x/a"],
+      ["re-export", 'export { A } from "@/x/a";', "@/x/a"],
+      ["export star", 'export * from "@/x/a";', "@/x/a"],
+      ["dynamic", 'const f = () => import("@/x/a");', "@/x/a"],
+      ["require", 'const a = require("@/x/a");', "@/x/a"],
+      ["import equals", 'import a = require("@/x/a");', "@/x/a"],
+      // Erased at compile time, but it still couples an application surface to
+      // the prototype, and this boundary errs toward reachable.
+      ["type-only", 'import type { A } from "@/x/a";', "@/x/a"],
+      ["single quotes", "import { A } from '@/x/a';", "@/x/a"],
+    ];
+    for (const [label, source, expected] of cases) {
+      expect(importSpecifiers("probe.ts", source), `${label} produced no edge`).toContain(
+        expected,
+      );
+    }
+
+    // A .tsx file must be parsed as TSX, or JSX reads as type assertions and
+    // every import below it is silently lost.
+    const tsx = 'import { A } from "@/x/a";\nexport const V = () => <div a={1 as number} />;';
+    expect(importSpecifiers("probe.tsx", tsx)).toContain("@/x/a");
+
+    // NO FALSE EDGES: a module name inside a string or a comment is not an
+    // import, and treating it as one would make the guard cry wolf until
+    // somebody loosened it.
+    const notImports = [
+      'const s = "import { A } from \'@/x/fake\'";',
+      "// import { A } from \"@/x/fake\";",
+      '/* import { A } from "@/x/fake"; */',
+    ].join("\n");
+    expect(importSpecifiers("probe.ts", notImports)).not.toContain("@/x/fake");
+  });
+
   it("guards the COMPONENTS, not only the modules they import", () => {
     // The premise the entry-point list rests on: each component really does
     // pull the prototype in, so a component becoming reachable would make the
@@ -233,7 +333,7 @@ describe("this module is UNREACHABLE from the application", () => {
       "components/waitlist/invite-composer.tsx",
     ]) {
       const text = readFileSync(join(ROOT, component), "utf8");
-      const specs = importSpecifiers(text);
+      const specs = importSpecifiers(component, text);
       expect(
         specs.some((s) => s.includes("b4-invitation-draft")),
         `${component} no longer imports the prototype model`,
