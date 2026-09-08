@@ -25,7 +25,7 @@ import {
   MUTATION_CAPABILITY_TTL_CEILING_MINUTES,
   PROOF_REQUEST_LIMITS,
 } from "@/lib/waitlist/delivery/policy";
-import { LOCAL_REFUSAL_CODES } from "@/lib/email/new-client-waitlist-send";
+import { LOCAL_REFUSAL_CODES } from "@/lib/email/send-refusals";
 import type {
   IdempotentEmailTransport,
   ProviderPayload,
@@ -1630,13 +1630,88 @@ describe("a LOCAL refusal is not a provider refusal", () => {
     expect(out.disposition.terminalScope).toBe("none");
   });
 
-  it("the code list has ONE owner — the transport that produces them", () => {
-    // A second copy would drift the first time a code was added, and silently.
+});
+
+describe("the policy module stays free of transport side effects", () => {
+  // REPRODUCED at 2beb64a6. Importing LOCAL_REFUSAL_CODES from the transport
+  // created this chain:
+  //
+  //   lib/rate-limit/public.ts -> policy.ts -> new-client-waitlist-send.ts
+  //                            -> lib/email/client.ts
+  //
+  // and client.ts does real work at module scope: the fake-transport
+  // deployment assertion, constructing the Resend client when configured, and
+  // warning when it is not. So merely LOADING a rate-limited action — public
+  // booking, portal login, intake, consent, portal links — evaluated email
+  // initialization for routes that send no email at all. It also broke the
+  // "pure, no I/O, no env" contract policy.ts states in its own header.
+  //
+  // I introduced that chain fixing a different defect: the refusal codes need
+  // ONE owner, and I got the ownership right by putting it in the wrong place.
+  // The taxonomy now lives in a pure module both sides import.
+
+  // The RUNTIME half of this lives in
+  // tests/lib/waitlist/rate-limit-no-email-init.test.ts, in its own file on
+  // purpose: this one imports the transport at the top, so the module-scope
+  // warning fires before any spy could attach and the assertion would pass no
+  // matter what. A control that cannot fail is not a control.
+
+  it("policy.ts reaches neither the transport nor the email client", () => {
     const src = readFileSync(
       join(process.cwd(), "lib/waitlist/delivery/policy.ts"),
       "utf8",
     );
-    expect(src).toMatch(/LOCAL_REFUSAL_CODES.*from "@\/lib\/email\/new-client-waitlist-send"/s);
-    expect(src).not.toMatch(/const LOCAL_REFUSAL_CODES\s*=/);
+    const imports = [...src.matchAll(/^import[^;]*?from\s+"([^"]+)"/gm)].map((m) => m[1]);
+    expect(imports).not.toContain("@/lib/email/new-client-waitlist-send");
+    expect(imports).not.toContain("@/lib/email/client");
+    // It may reach the pure taxonomy, which is the whole point.
+    expect(imports).toContain("@/lib/email/send-refusals");
+  });
+
+  it("the taxonomy module imports NOTHING, so it can never carry a side effect", () => {
+    const raw = readFileSync(
+      join(process.cwd(), "lib/email/send-refusals.ts"),
+      "utf8",
+    );
+    // COMMENTS STRIPPED FIRST. That file's header explains the coupling it
+    // exists to avoid, and naming `server-only` or an import path in prose is
+    // how it explains it. A guard that could not tell code from prose would
+    // forbid documenting its own invariant — the same trap the token_hash
+    // guard hit earlier in this branch.
+    const code = raw
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "");
+    expect(code).not.toMatch(/^\s*import\s/m);
+    expect(code).not.toMatch(/require\(/);
+    expect(code).not.toMatch(/process\.env/);
+    expect(code).not.toMatch(/server-only/);
+  });
+
+  it("the codes still have ONE owner — no second copy anywhere", () => {
+    // The defect the shared list exists to prevent. A copy would drift the
+    // first time a code was added, and silently.
+    const taxonomy = readFileSync(
+      join(process.cwd(), "lib/email/send-refusals.ts"),
+      "utf8",
+    );
+    const policy = readFileSync(
+      join(process.cwd(), "lib/waitlist/delivery/policy.ts"),
+      "utf8",
+    );
+    const transport = readFileSync(
+      join(process.cwd(), "lib/email/new-client-waitlist-send.ts"),
+      "utf8",
+    );
+    expect(taxonomy).toMatch(/export const LOCAL_REFUSAL_CODES/);
+    for (const src of [policy, transport]) {
+      expect(src).not.toMatch(/const LOCAL_REFUSAL_CODES\s*[:=]/);
+    }
+    // And the set still holds exactly the transport's four local codes.
+    expect([...LOCAL_REFUSAL_CODES].sort()).toEqual([
+      "invalid_recipient",
+      "missing_event_scope",
+      "missing_tenant_scope",
+      "not_configured",
+    ]);
   });
 });

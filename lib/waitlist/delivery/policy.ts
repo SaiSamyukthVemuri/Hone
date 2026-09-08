@@ -1,4 +1,4 @@
-import { LOCAL_REFUSAL_CODES } from "@/lib/email/new-client-waitlist-send";
+import { LOCAL_REFUSAL_CODES } from "@/lib/email/send-refusals";
 import type { DeliveryKind } from "./log-safety";
 export type { DeliveryKind };
 
