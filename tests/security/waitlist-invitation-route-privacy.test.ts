@@ -107,8 +107,29 @@ function isParallelSlot(segment: string): boolean {
  * must be tested before `isRouteGroup`, or `(.)x` would be silently swallowed
  * as a group and vanish from the URL entirely.
  */
+const INTERCEPT_MARKER = /^(?:\(\.\)|\(\.\.\.\)|(?:\(\.\.\))+)/;
+
 function isInterceptingRoute(segment: string): boolean {
-  return /^\(\.{1,3}\)/.test(segment);
+  return INTERCEPT_MARKER.test(segment);
+}
+
+/**
+ * The segment with its intercept marker removed.
+ *
+ * ONE DEFINITION, used both to RECOGNISE a marker and to STRIP it. They were
+ * two separate regexes and they disagreed: recognition matched `(..)` at the
+ * head of `(..)(..)[token]` — Next's TWO-LEVEL-UP marker, written as a repeated
+ * group rather than four dots — while stripping removed only that first half
+ * and left `(..)[token]`, which is not dynamic. The route was recognised as an
+ * interceptor, judged to carry no credential, and skipped entirely while the
+ * gate stayed green.
+ *
+ * Next's full set: `(.)` same level, `(..)` one up, `(..)(..)` two up, `(...)`
+ * root. The repetition is allowed to continue past two, so a deeper marker
+ * cannot reopen this the way the second level just did.
+ */
+function stripInterceptMarker(segment: string): string {
+  return segment.replace(INTERCEPT_MARKER, "");
 }
 
 /** Dynamic segment: `[token]`, `[...slug]`, `[[...slug]]`. */
@@ -172,8 +193,7 @@ function containsDynamicSegment(absDir: string): boolean {
  *     find.
  */
 function interceptorCarriesDynamicSegment(entry: string, absDir: string): boolean {
-  const afterMarker = entry.replace(/^\(\.{1,3}\)/, "");
-  return isDynamic(afterMarker) || containsDynamicSegment(absDir);
+  return isDynamic(stripInterceptMarker(entry)) || containsDynamicSegment(absDir);
 }
 
 /** A dynamic route whose public URL this walker cannot compute. */
@@ -497,23 +517,61 @@ describe("segment classification — which directories reach the URL", () => {
     expect(containsDynamicSegment(join(APP_DIR, "no-such-directory"))).toBe(false);
   });
 
-  it("an interceptor may WRAP the dynamic segment — (.)[token]", () => {
-    // Exercises the predicate the WALKER calls, not a copy of it. The first
-    // version of this test asserted an inline reimplementation and passed even
-    // with the walker reverted — a control that cannot fail is not a control.
+  it("an interceptor may WRAP the dynamic segment, at EVERY marker depth", () => {
+    // Exercises the predicate the WALKER calls, not a copy of it. An earlier
+    // version of this test asserted an inline reimplementation and passed with
+    // the walker reverted — a control that cannot fail is not a control.
     //
     // `app/demo` is a real static directory, so the descendant scan is false
     // and the result turns purely on the directory NAME.
     const staticDir = join(APP_DIR, "demo");
-    expect(interceptorCarriesDynamicSegment("(.)[token]", staticDir)).toBe(true);
-    expect(interceptorCarriesDynamicSegment("(..)[...slug]", staticDir)).toBe(true);
-    expect(interceptorCarriesDynamicSegment("(...)[[...slug]]", staticDir)).toBe(true);
-    // A static interceptor over a static subtree carries nothing.
-    expect(interceptorCarriesDynamicSegment("(.)photo", staticDir)).toBe(false);
+    const carries = (seg: string) => interceptorCarriesDynamicSegment(seg, staticDir);
+
+    // Next's full marker set. `(..)(..)` is TWO LEVELS UP written as a repeated
+    // group, not four dots — stripping only its first half left `(..)[token]`,
+    // which is not dynamic, and the route was skipped while the gate stayed
+    // green.
+    expect(carries("(.)[token]")).toBe(true);
+    expect(carries("(..)[token]")).toBe(true);
+    expect(carries("(..)(..)[token]")).toBe(true);
+    expect(carries("(...)[token]")).toBe(true);
+    // Deeper repetition cannot reopen this the way the second level did.
+    expect(carries("(..)(..)(..)[token]")).toBe(true);
+    // Other dynamic shapes behind the same markers.
+    expect(carries("(..)(..)[...slug]")).toBe(true);
+    expect(carries("(...)[[...slug]]")).toBe(true);
+
+    // A static interceptor over a static subtree still carries nothing, at
+    // every depth — the narrowing that keeps this gate out of unrelated work.
+    expect(carries("(.)photo")).toBe(false);
+    expect(carries("(..)(..)photo")).toBe(false);
+
     // And the descendant route is still caught: app/(app)/clients holds [id].
     expect(
       interceptorCarriesDynamicSegment("(.)clients", join(APP_DIR, "(app)", "clients")),
     ).toBe(true);
+  });
+
+  it("recognising a marker and stripping it use ONE definition", () => {
+    // They were two regexes and they disagreed, which is exactly how
+    // `(..)(..)[token]` was recognised as an interceptor and then judged to
+    // carry no credential. Anything recognised must strip to something shorter.
+    for (const seg of [
+      "(.)[token]",
+      "(..)[token]",
+      "(..)(..)[token]",
+      "(..)(..)(..)[token]",
+      "(...)[token]",
+      "(.)photo",
+    ]) {
+      expect(isInterceptingRoute(seg), seg).toBe(true);
+      expect(stripInterceptMarker(seg).length, seg).toBeLessThan(seg.length);
+    }
+    // A non-interceptor is left exactly as it is.
+    for (const seg of ["[token]", "(app)", "clients", "@modal"]) {
+      expect(isInterceptingRoute(seg), seg).toBe(false);
+      expect(stripInterceptMarker(seg), seg).toBe(seg);
+    }
   });
 
   it("a dynamic segment is none of the above", () => {
