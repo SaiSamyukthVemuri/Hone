@@ -74,6 +74,43 @@ function isRouteGroup(segment: string): boolean {
   return segment.startsWith("(") && segment.endsWith(")");
 }
 
+/**
+ * Next PARALLEL-ROUTE slot: `@modal`, `@sidebar`. On disk, absent from the URL,
+ * exactly like a route group.
+ *
+ * Treating it as a normal segment produced a FICTIONAL prefix — a bearer route
+ * at `app/@modal/opening/[token]` was reported as `/@modal/opening` when the
+ * real URL is `/opening`. The gate did fail, but the remediation it named was
+ * the trap: registering `/@modal/opening` turns this file green while the
+ * actual `/opening/<token>` receives neither the privacy headers nor Sentry
+ * canonicalization. A guard that names the wrong fix is worse than one that
+ * stays silent, because someone will follow it.
+ */
+function isParallelSlot(segment: string): boolean {
+  return segment.startsWith("@");
+}
+
+/**
+ * Next INTERCEPTING-ROUTE marker: `(.)photo`, `(..)photo`, `(...)photo`.
+ *
+ * Same class of problem, found while fixing the slot case. These render at the
+ * INTERCEPTED path, which is not where the directory sits, so this walker
+ * cannot compute their public URL at all — `(.)opening` under `app/feed/`
+ * produced `/feed/(.)opening`, another path that does not exist.
+ *
+ * Rather than guess, the scan REFUSES: an intercepting route carrying a dynamic
+ * segment fails the gate with a message saying the mapping is unavailable. That
+ * is the file's standing rule — unattributable gets the stricter treatment,
+ * never the convenient one — applied to a segment type nobody had considered.
+ *
+ * Note the ordering dependency: a route GROUP also starts with "(", so this
+ * must be tested before `isRouteGroup`, or `(.)x` would be silently swallowed
+ * as a group and vanish from the URL entirely.
+ */
+function isInterceptingRoute(segment: string): boolean {
+  return /^\(\.{1,3}\)/.test(segment);
+}
+
 /** Dynamic segment: `[token]`, `[...slug]`, `[[...slug]]`. */
 function isDynamic(segment: string): boolean {
   return segment.startsWith("[") && segment.endsWith("]");
@@ -90,6 +127,11 @@ type DiscoveredRoute = {
   /** Public URL prefix that PRECEDES the dynamic segment. */
   publicPrefix: string;
 };
+
+/** A dynamic route whose public URL this walker cannot compute. */
+type UnmappableRoute = { dir: string; why: string };
+
+const unmappable: UnmappableRoute[] = [];
 
 /**
  * Every public dynamic route under `app/`.
@@ -121,6 +163,17 @@ function discoverDynamicRoutes(): DiscoveredRoute[] {
 
       const rel = relDir ? `${relDir}/${entry}` : entry;
 
+      if (isInterceptingRoute(entry)) {
+        // Renders at the INTERCEPTED path, which is not this directory. Record
+        // it as unmappable and do not descend: any prefix built from here would
+        // be fiction.
+        unmappable.push({
+          dir: `app/${rel}`,
+          why: "intercepting route — it renders at the intercepted path, which this scan cannot resolve",
+        });
+        continue;
+      }
+
       if (isDynamic(entry)) {
         // The dynamic segment itself is the credential slot, if it is one at
         // all. The prefix is everything above it.
@@ -143,10 +196,14 @@ function discoverDynamicRoutes(): DiscoveredRoute[] {
         continue;
       }
 
-      walk(abs, isRouteGroup(entry) ? urlSegments : [...urlSegments, entry], rel);
+      // Route groups and parallel slots exist on disk and contribute NOTHING
+      // to the URL.
+      const contributesToUrl = !isRouteGroup(entry) && !isParallelSlot(entry);
+      walk(abs, contributesToUrl ? [...urlSegments, entry] : urlSegments, rel);
     }
   }
 
+  unmappable.length = 0;
   walk(APP_DIR, [], "");
   return found;
 }
@@ -195,6 +252,22 @@ describe("every dynamic route is classified, so a bearer route cannot arrive unn
     expect(prefixes).toContain("/clients/[id]/sessions");
     expect(prefixes).not.toContain("/clients/sessions");
     expect(discovered.length).toBeGreaterThanOrEqual(10);
+  });
+
+  it("a route whose public URL cannot be computed FAILS rather than guessing", () => {
+    // An intercepting route renders at the intercepted path, so no prefix built
+    // from its directory is real. Emitting one would name a fictional route and
+    // invite someone to register it — protecting nothing while turning this
+    // file green. Refusing is the stricter treatment, which is this file's
+    // standing rule for anything unattributable.
+    discoverDynamicRoutes();
+    expect(
+      unmappable,
+      `A dynamic route sits under a segment whose public URL this scan cannot ` +
+        `resolve, so it can be neither registered nor classified honestly. ` +
+        `Either move it to a literal path, or extend this walker to map it ` +
+        `deliberately. Offending: ${JSON.stringify(unmappable, null, 2)}`,
+    ).toEqual([]);
   });
 
   it("UNKNOWN dynamic route => FAIL (this is the gate)", () => {
@@ -307,6 +380,57 @@ describe("no decoy prefix is registered ahead of a real route", () => {
       ).toEqual([]);
     } else {
       expect(waitlistPrefixes.length).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe("segment classification — which directories reach the URL", () => {
+  // The walker's correctness rests entirely on these. Two segment types were
+  // missed in turn, and both produced a FICTIONAL prefix rather than an obvious
+  // failure — a bearer route at app/@modal/opening/[token] was reported as
+  // /@modal/opening when the real URL is /opening, so following the gate's own
+  // remediation would have registered a path that does not exist and left
+  // /opening/<token> unprotected. They are pinned directly here rather than
+  // only through on-disk fixtures.
+
+  it("route groups and parallel slots contribute NOTHING to the URL", () => {
+    expect(isRouteGroup("(app)")).toBe(true);
+    expect(isRouteGroup("(auth)")).toBe(true);
+    expect(isParallelSlot("@modal")).toBe(true);
+    expect(isParallelSlot("@sidebar")).toBe(true);
+  });
+
+  it("an ordinary directory contributes to the URL", () => {
+    expect(isRouteGroup("clients")).toBe(false);
+    expect(isParallelSlot("clients")).toBe(false);
+    expect(isInterceptingRoute("clients")).toBe(false);
+  });
+
+  it("intercepting markers are recognised at all three depths", () => {
+    expect(isInterceptingRoute("(.)photo")).toBe(true);
+    expect(isInterceptingRoute("(..)photo")).toBe(true);
+    expect(isInterceptingRoute("(...)photo")).toBe(true);
+  });
+
+  it("ORDER MATTERS: an interceptor must not be read as a route group", () => {
+    // A route group also starts with "(" — but `(.)photo` does not END with
+    // ")", so isRouteGroup happens to reject it. That is a coincidence of the
+    // current implementation, not a guarantee, so the walker tests for an
+    // interceptor FIRST. If it did not, `(.)photo` would be swallowed as a
+    // group and vanish from the URL entirely — a fiction in the other
+    // direction.
+    expect(isInterceptingRoute("(.)photo")).toBe(true);
+    expect(isRouteGroup("(.)photo")).toBe(false);
+    // And a real group is not an interceptor.
+    expect(isInterceptingRoute("(app)")).toBe(false);
+  });
+
+  it("a dynamic segment is none of the above", () => {
+    for (const seg of ["[token]", "[...slug]", "[[...slug]]"]) {
+      expect(isDynamic(seg)).toBe(true);
+      expect(isRouteGroup(seg)).toBe(false);
+      expect(isParallelSlot(seg)).toBe(false);
+      expect(isInterceptingRoute(seg)).toBe(false);
     }
   });
 });
