@@ -470,6 +470,65 @@ describe("begin proof — the code the delivery layer has to send", () => {
     expect(out.issuedAt).not.toBe(out.rawChallenge);
   });
 
+  // Codex P2. `str()` only proved the value was a STRING, so "not-a-date" passed
+  // straight through and became `issuedAt: "not-a-date"` on a challenge_issued
+  // outcome -- a fail-closed contract handing the delivery layer a mint time it
+  // could not use.
+  it("returns a valid instant EXACTLY as the database spelled it", async () => {
+    // Not re-serialised: an offset-bearing form must survive byte for byte,
+    // because this module is not an authority on how an instant is written.
+    for (const raw of [
+      "2026-09-10T12:05:00Z",
+      "2026-09-10T12:05:00.123Z",
+      "2026-09-10T08:05:00-04:00",
+      "2026-09-10 12:05:00+00",
+    ]) {
+      rpc.mockResolvedValue({ data: challengeRow({ issued_at: raw }), error: null });
+      const out = await beginRecipientProof(TOKEN);
+      if (out.kind !== "challenge_issued") throw new Error(`rejected a valid instant: ${raw}`);
+      expect(out.issuedAt).toBe(raw);
+    }
+  });
+
+  it.each([
+    ["the reported case", "not-a-date"],
+    ["empty string", ""],
+    ["whitespace only", "   "],
+    ["month 13", "2026-13-45T99:99:99Z"],
+    ["a bare word", "yesterday"],
+    ["a lone number as text", "0"],
+    ["ISO-shaped but unparseable", "2026-09-10T99:99:99Z"],
+    ["truncated", "2026-09-"],
+  ])("refuses a malformed issued_at (%s) as unavailable", async (_label, bad) => {
+    rpc.mockResolvedValue({ data: challengeRow({ issued_at: bad }), error: null });
+    expect((await beginRecipientProof(TOKEN)).kind).toBe("unavailable");
+  });
+
+  it("refuses a missing or non-string issued_at", async () => {
+    for (const bad of [null, undefined, 12345, {}, []]) {
+      rpc.mockResolvedValue({ data: challengeRow({ issued_at: bad }), error: null });
+      expect((await beginRecipientProof(TOKEN)).kind).toBe("unavailable");
+    }
+  });
+
+  it("does NOT substitute a clock when the value is malformed", async () => {
+    // The refusal must be a refusal, not a silent repair.
+    rpc.mockResolvedValue({ data: challengeRow({ issued_at: "not-a-date" }), error: null });
+    const out = await beginRecipientProof(TOKEN);
+    expect(out.kind).toBe("unavailable");
+    expect(JSON.stringify(out)).not.toContain("20");
+  });
+
+  it("the validation left rawChallenge and proofChallengeId untouched", async () => {
+    rpc.mockResolvedValue({ data: challengeRow(), error: null });
+    const out = await beginRecipientProof(TOKEN);
+    if (out.kind !== "challenge_issued") throw new Error("unreachable");
+    expect(out.rawChallenge).toBe(CHALLENGE);
+    expect(out.proofChallengeId).toBe(CHALLENGE_ID);
+    // And a valid instant is still server-only.
+    expect(out.maskedContact).not.toContain(out.issuedAt);
+  });
+
   it("is unavailable when the row carries no challenge id", async () => {
     // Sending a challenge that cannot be keyed would leave the send
     // un-idempotent, so a row without an id is IN DOUBT, not half-issued.

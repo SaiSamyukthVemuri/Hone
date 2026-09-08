@@ -243,6 +243,32 @@ function str(row: Record<string, unknown> | null, k: string): string | null {
 }
 
 /**
+ * A column that must be a REAL INSTANT, returned unchanged when it is one.
+ *
+ * `str()` only proves the value is a string, so `"not-a-date"` sailed through it
+ * and became `issuedAt: "not-a-date"` on a `challenge_issued` outcome — a
+ * fail-closed contract handing the delivery layer an unusable mint time.
+ *
+ * It VALIDATES without transforming: the caller gets the database's own text
+ * back, byte for byte, never a re-serialised version. Normalising here would
+ * quietly make this module a second authority on how an instant is spelled,
+ * when the database is the only one.
+ */
+function instant(row: Record<string, unknown> | null, k: string): string | null {
+  const v = str(row, k);
+  if (v === null) return null;
+  // SHAPE FIRST, because `Date.parse` is far more permissive than a timestamp
+  // column ever is: it reads "0" as the year 2000 and "2026-09-" as a September
+  // date, so parsing alone would let a nonsense value through as a "real"
+  // instant. This admits both forms a timestamptz actually arrives in -- the
+  // JSON ISO form and PostgreSQL's own space-separated text -- and nothing else.
+  if (!/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(v)) return null;
+  // Then the parse, which rejects shapes that look right but are not real dates
+  // (month 13, hour 99). NaN is not finite.
+  return Number.isFinite(Date.parse(v)) ? v : null;
+}
+
+/**
  * Mask a contact for display. B3 must be able to say WHERE the code went without
  * the browser learning the address it does not already have.
  */
@@ -458,7 +484,9 @@ export async function beginRecipientProof(
       // 0192's authoritative mint instant. A row that cannot state WHEN it minted
       // the challenge is IN DOUBT, not half-issued: the delivery layer would
       // otherwise have to invent the time it reports to the recipient.
-      const issuedAt = str(row, "issued_at");
+      // Validated as a REAL INSTANT, not merely as a string: a malformed value
+      // would otherwise reach the delivery layer as an unusable mint time.
+      const issuedAt = instant(row, "issued_at");
       if (
           !deliveryContact ||
           !expiresAt ||
