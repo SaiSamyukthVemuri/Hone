@@ -438,11 +438,30 @@ export async function resolveInvitation(rawToken: string): Promise<ResolveOutcom
       // digits (some drivers return smallint[] that way). Everything else fails
       // closed. This is representation only -- the 0..6 RANGE remains the scope
       // evaluator's rule, so there is still exactly one weekday authority.
+      // PRESENCE IS NOT THE SAME AS NULL, and conflating them is a scope widening.
+      // An explicit SQL NULL means "every day inside the range" and arrives as a key
+      // holding null. A field that is ABSENT means the row never stated a weekday
+      // authority at all -- a contract drift, a renamed column, a projection that
+      // forgot it. Treating that absence as NULL turned a Mondays-only offer into an
+      // any-day one, silently, exactly when the response was least trustworthy.
+      //
+      // So the key must BE there. Then it is either NULL, or an array whose elements
+      // are representations a smallint[] can actually arrive in.
+      // PRESENCE IS NOT THE SAME AS NULL, and conflating them is a scope widening.
+      // An explicit SQL NULL means "every day inside the range"; a field that is
+      // ABSENT means the row never stated a weekday authority at all -- a contract
+      // drift, a renamed column, a projection that forgot it. `undefined` used to sit
+      // in this accepted set beside `null`, so that absence turned a Mondays-only
+      // offer into an any-day one, silently, exactly when the response was least
+      // trustworthy.
+      //
+      // Only two readings are accepted now: SQL NULL, or an array whose elements are
+      // representations a smallint[] can actually arrive in. A missing key reads as
+      // `undefined` and is neither, so it fails closed with no separate presence
+      // test -- one was written here and negative control proved it changed nothing.
       const rawWeekdays = row?.scope_allowed_weekdays;
       const weekdaysReadable =
-        (rawWeekdays === null ||
-          rawWeekdays === undefined ||
-          Array.isArray(rawWeekdays)) &&
+        (rawWeekdays === null || Array.isArray(rawWeekdays)) &&
         (!Array.isArray(rawWeekdays) ||
           rawWeekdays.every(
             (n) =>

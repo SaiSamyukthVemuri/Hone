@@ -129,6 +129,74 @@ describe("resolve — closed codes map, everything else is IN DOUBT", () => {
   });
 });
 
+// Codex P2. `undefined` was accepted alongside SQL NULL and normalised to
+// `allowedWeekdays: null`, which means UNRESTRICTED. A row that never stated a
+// weekday authority — a contract drift, a renamed column, a projection that
+// forgot the field — therefore widened a restricted offer to every day, silently
+// and precisely when the response was least trustworthy.
+describe("resolve — a missing weekday authority is not an absent restriction", () => {
+  it("explicit SQL NULL is accepted, and still means unrestricted", async () => {
+    rpc.mockResolvedValue({ data: liveRow({ scope_allowed_weekdays: null }), error: null });
+    const out = await resolveInvitation(TOKEN);
+    if (out.kind !== "live") throw new Error(`expected live, got ${out.kind}`);
+    expect(out.invitation.scope.allowedWeekdays).toBeNull();
+  });
+
+  it("a valid weekday array is accepted exactly", async () => {
+    rpc.mockResolvedValue({ data: liveRow({ scope_allowed_weekdays: [1, 3] }), error: null });
+    const out = await resolveInvitation(TOKEN);
+    if (out.kind !== "live") throw new Error("unreachable");
+    expect(out.invitation.scope.allowedWeekdays).toEqual([1, 3]);
+  });
+
+  it("an OMITTED scope_allowed_weekdays is unavailable, not unrestricted", async () => {
+    const row = liveRow()[0] as Record<string, unknown>;
+    delete row.scope_allowed_weekdays;
+    expect("scope_allowed_weekdays" in row).toBe(false);
+    rpc.mockResolvedValue({ data: [row], error: null });
+    expect((await resolveInvitation(TOKEN)).kind).toBe("unavailable");
+  });
+
+  it("an explicit undefined is unavailable — absence is not SQL NULL", async () => {
+    rpc.mockResolvedValue({
+      data: liveRow({ scope_allowed_weekdays: undefined }),
+      error: null,
+    });
+    expect((await resolveInvitation(TOKEN)).kind).toBe("unavailable");
+  });
+
+  it.each([
+    ["a Postgres array literal string", "{1,3}"],
+    ["a comma string", "1,3"],
+    ["a bare number", 1],
+    ["an object", { 0: 1 }],
+    ["an array with a NULL element", [1, null]],
+    ["an array with a boolean", [true]],
+  ])("a malformed weekday authority (%s) is unavailable", async (_l, bad) => {
+    rpc.mockResolvedValue({ data: liveRow({ scope_allowed_weekdays: bad }), error: null });
+    expect((await resolveInvitation(TOKEN)).kind).toBe("unavailable");
+  });
+
+  // The defect stated as the property it violated.
+  it("a RESTRICTED invitation cannot become unrestricted because the field vanished", async () => {
+    // First: the restriction is real and is carried.
+    rpc.mockResolvedValue({ data: liveRow({ scope_allowed_weekdays: [1] }), error: null });
+    const restricted = await resolveInvitation(TOKEN);
+    if (restricted.kind !== "live") throw new Error("unreachable");
+    expect(restricted.invitation.scope.allowedWeekdays).toEqual([1]);
+
+    // Now the same invitation, with the authority missing from the response.
+    const row = liveRow()[0] as Record<string, unknown>;
+    delete row.scope_allowed_weekdays;
+    rpc.mockResolvedValue({ data: [row], error: null });
+    const drifted = await resolveInvitation(TOKEN);
+
+    // It must NOT come back live-and-unrestricted. Anything else is a widening.
+    expect(drifted.kind).not.toBe("live");
+    expect(JSON.stringify(drifted)).not.toContain("allowedWeekdays");
+  });
+});
+
 describe("booking authorisation — the bindings B2 owns", () => {
   it("authorises an in-scope request from the invited recipient", async () => {
     rpc.mockResolvedValue({ data: liveRow(), error: null });
