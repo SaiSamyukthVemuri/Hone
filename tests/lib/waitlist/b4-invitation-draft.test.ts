@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import {
   WAITLIST_ENTRY_STATUSES,
@@ -116,29 +116,130 @@ function surfaceItems(
 
 // ---------------------------------------------------------------------------
 
-describe("this module is UNREACHABLE from the application", () => {
-  it("no file under app/ imports the prototype or its contract", () => {
-    const files = walk("app");
-    // Non-vacuity: the walk must actually be finding the application.
-    expect(files.length).toBeGreaterThan(20);
+/**
+ * EVERY PROTOTYPE ENTRY POINT, not just the two leaf modules.
+ *
+ * The earlier guard grepped `app/` for the two MODULE names. But both
+ * components import those modules, so a route doing
+ * `import { AdmissionRow } from "@/components/waitlist/admission-row"` would
+ * have made the whole prototype live while the route's own text mentioned
+ * neither name — and the test would have stayed green. The hole was exactly
+ * the size of the two files the guard exists to protect.
+ */
+const PROTOTYPE_ENTRY_POINTS = [
+  "lib/waitlist/b4-invitation-draft.ts",
+  "lib/waitlist/invite-to-book-contract.ts",
+  "components/waitlist/admission-row.tsx",
+  "components/waitlist/invite-composer.tsx",
+] as const;
 
-    const sources = files.map((rel) => ({
-      rel,
-      text: readFileSync(join(ROOT, rel), "utf8"),
-    }));
+/** Every import specifier in a source file: static, side-effect, dynamic and
+ *  `require`. Comments are not stripped, which can only ever ADD edges — a
+ *  guard that errs toward reachable is the safe direction here. */
+function importSpecifiers(text: string): string[] {
+  return [
+    ...[...text.matchAll(/\bfrom\s+["']([^"']+)["']/g)].map((m) => m[1]),
+    ...[...text.matchAll(/\bimport\s+["']([^"']+)["']/g)].map((m) => m[1]),
+    ...[...text.matchAll(/\bimport\s*\(\s*["']([^"']+)["']/g)].map((m) => m[1]),
+    ...[...text.matchAll(/\brequire\s*\(\s*["']([^"']+)["']/g)].map((m) => m[1]),
+  ];
+}
 
-    for (const moduleName of ["b4-invitation-draft", "invite-to-book-contract"]) {
-      expect(
-        sources.filter((f) => f.text.includes(moduleName)).map((f) => f.rel),
-        `an app/ surface now reaches ${moduleName}, which no server action carries`,
-      ).toEqual([]);
+/** Resolve one specifier to a repo-relative file, or null for a package. */
+function resolveSpecifier(fromFile: string, spec: string): string | null {
+  let base: string;
+  if (spec.startsWith("@/")) base = spec.slice(2);
+  else if (spec.startsWith(".")) base = join(dirname(fromFile), spec);
+  else return null; // node_modules — not our graph
+  for (const candidate of [
+    base,
+    `${base}.ts`,
+    `${base}.tsx`,
+    join(base, "index.ts"),
+    join(base, "index.tsx"),
+  ]) {
+    try {
+      if (statSync(join(ROOT, candidate)).isFile()) return candidate;
+    } catch {
+      // keep probing
     }
+  }
+  return null;
+}
 
-    // NON-VACUITY for the search itself: the LIVE model IS imported by app/, so
-    // a scan that found nothing anywhere would be broken rather than reassuring.
-    expect(
-      sources.filter((f) => f.text.includes("waitlist/admission-model")).length,
-    ).toBeGreaterThan(0);
+/**
+ * Every module transitively reachable from `app/`, with the path that got
+ * there — a boolean answer to "is this live?" is far less useful in a failure
+ * than the chain that made it live.
+ */
+function reachableFromApp(): Map<string, string[]> {
+  const reached = new Map<string, string[]>();
+  const queue: string[] = [];
+  for (const entry of walk("app")) {
+    reached.set(entry, [entry]);
+    queue.push(entry);
+  }
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    const path = reached.get(current)!;
+    let text: string;
+    try {
+      text = readFileSync(join(ROOT, current), "utf8");
+    } catch {
+      continue;
+    }
+    for (const spec of importSpecifiers(text)) {
+      const target = resolveSpecifier(current, spec);
+      if (target === null || reached.has(target)) continue;
+      reached.set(target, [...path, target]);
+      queue.push(target);
+    }
+  }
+  return reached;
+}
+
+describe("this module is UNREACHABLE from the application", () => {
+  it("no prototype entry point is reachable from app/, at ANY depth", () => {
+    const reached = reachableFromApp();
+
+    // NON-VACUITY, THREE WAYS. A traversal that silently resolved nothing would
+    // report every prototype file unreachable and read as reassurance.
+    expect(reached.size, "the import graph walk found almost nothing").toBeGreaterThan(200);
+    // It genuinely follows edges: the LIVE model is reachable, and not because
+    // it sits under app/ — it is pulled in through an import.
+    const liveModel = reached.get("lib/waitlist/admission-model.ts");
+    expect(liveModel, "the live model is no longer reachable from app/").toBeDefined();
+    expect(liveModel!.length).toBeGreaterThan(1);
+    // And it follows them TRANSITIVELY, not just one hop out of app/.
+    const deepest = Math.max(...[...reached.values()].map((p) => p.length));
+    expect(deepest, "the walk never went beyond a single hop").toBeGreaterThan(3);
+
+    for (const entry of PROTOTYPE_ENTRY_POINTS) {
+      const path = reached.get(entry);
+      expect(
+        path === undefined ? null : path.join("\n  -> "),
+        `an app/ surface now reaches ${entry}, which no server action carries`,
+      ).toBeNull();
+    }
+  });
+
+  it("guards the COMPONENTS, not only the modules they import", () => {
+    // The premise the entry-point list rests on: each component really does
+    // pull the prototype in, so a component becoming reachable would make the
+    // unwired half live. If that stopped being true the list would be guarding
+    // files that no longer matter, and this says so.
+    for (const component of [
+      "components/waitlist/admission-row.tsx",
+      "components/waitlist/invite-composer.tsx",
+    ]) {
+      const text = readFileSync(join(ROOT, component), "utf8");
+      const specs = importSpecifiers(text);
+      expect(
+        specs.some((s) => s.includes("b4-invitation-draft")),
+        `${component} no longer imports the prototype model`,
+      ).toBe(true);
+      expect(PROTOTYPE_ENTRY_POINTS as ReadonlyArray<string>).toContain(component);
+    }
   });
 
   it("no adapter implementation exists anywhere in the repository", () => {

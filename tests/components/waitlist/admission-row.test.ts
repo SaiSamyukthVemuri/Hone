@@ -182,7 +182,13 @@ describe("accessible ids are namespaced per entry", () => {
       const html = render(
         AdmissionRow({ entry: { ...ENTRY, status, invitation: { invitationElapsed: false, invitationRedeemed: false } } }),
       );
-      const described = [...html.matchAll(/aria-describedby="([^"]+)"/g)].map((m) => m[1]);
+      // SPLIT ON WHITESPACE. `aria-describedby` is a LIST of ids, and this
+      // assertion previously treated the whole attribute value as one id — so
+      // the moment a control was described by both its refusal and its warning,
+      // it looked for an element whose id was the two ids joined by a space.
+      const described = [...html.matchAll(/aria-describedby="([^"]+)"/g)].flatMap((m) =>
+        m[1].split(/\s+/).filter(Boolean),
+      );
       for (const target of described) {
         expect(html, `${status}: nothing carries id="${target}"`).toContain(`id="${target}"`);
       }
@@ -501,6 +507,86 @@ describe("resending tells the truth about the link it replaces", () => {
     );
     expect(html).toContain('data-testid="admission-note-resend_invitation"');
     expect(html).toContain("stops working");
+  });
+
+  it("names the warning in the button's own description", () => {
+    // The note renders only when Resend is ENABLED, which is exactly when
+    // `state.reason` is null — so the one situation carrying a material
+    // consequence was the one where the button had no description at all. A
+    // screen-reader user could activate it, invalidating a link the invitee may
+    // be holding, without ever hearing that.
+    const html = render(
+      AdmissionRow({
+        entry: {
+          ...ENTRY,
+          status: "invited",
+          invitation: { invitationElapsed: false, invitationRedeemed: false },
+        },
+        capabilities: CONNECTED,
+      }),
+    );
+    const tag = controlTag(html, "resend_invitation");
+    const described = /aria-describedby="([^"]+)"/.exec(tag)?.[1];
+    expect(described, "the enabled Resend button has no description").toBeTruthy();
+
+    // The reference resolves, and resolves to the WARNING specifically.
+    const noteId = /<span id="([^"]+)"[^>]*data-testid="admission-note-resend_invitation"/.exec(
+      html,
+    )?.[1];
+    expect(noteId, "the warning carries no id").toBeTruthy();
+    expect(described!.split(/\s+/)).toContain(noteId);
+    expect(html).toContain(`id="${noteId}"`);
+  });
+
+  it("describes a control by BOTH its refusal and its warning when both apply", () => {
+    // `aria-describedby` takes a list; a control that has something to explain
+    // and something to warn about must not drop one of them.
+    const html = render(
+      AdmissionRow({
+        entry: {
+          ...ENTRY,
+          status: "invited",
+          invitation: { invitationElapsed: false, invitationRedeemed: false },
+        },
+        capabilities: { ...CONNECTED, canResend: false },
+      }),
+    );
+    const tag = controlTag(html, "resend_invitation");
+    const ids = (/aria-describedby="([^"]+)"/.exec(tag)?.[1] ?? "").split(/\s+/).filter(Boolean);
+    expect(ids.length, "expected both a refusal and a warning id").toBeGreaterThan(1);
+    for (const id of ids) expect(html).toContain(`id="${id}"`);
+  });
+
+  it("every aria-describedby on a row resolves within that row", () => {
+    // The general form, so the next control that grows adjacent prose cannot
+    // repeat this. Third recurrence of the class: composer errors, this
+    // warning, and the namespaced reason ids before them.
+    let checked = 0;
+    for (const status of WAITLIST_ENTRY_STATUSES) {
+      for (const invitation of [
+        undefined,
+        { invitationElapsed: false, invitationRedeemed: false },
+        { invitationElapsed: true, invitationRedeemed: false },
+        { invitationRedeemed: true },
+        { invitationFactsUnknown: true },
+      ]) {
+        for (const capabilities of [null, CONNECTED]) {
+          const html = render(
+            AdmissionRow({ entry: { ...ENTRY, status, invitation }, capabilities }),
+          );
+          const ids = new Set([...html.matchAll(/\sid="([^"]+)"/g)].map((m) => m[1]));
+          for (const ref of [...html.matchAll(/aria-describedby="([^"]+)"/g)].flatMap((m) =>
+            m[1].split(/\s+/),
+          )) {
+            checked += 1;
+            expect(ids.has(ref), `${status}: aria-describedby "${ref}" resolves to nothing`).toBe(
+              true,
+            );
+          }
+        }
+      }
+    }
+    expect(checked, "the sweep found no descriptions to check").toBeGreaterThan(20);
   });
 
   it("stays quiet once there is nothing left to break", () => {

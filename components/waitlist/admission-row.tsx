@@ -138,6 +138,15 @@ function ActionControl({
 }) {
   const state = controlState(item, capabilities);
   const reasonId = state.reason ? domId(entryId, `reason-${item.action}`) : undefined;
+  const noteId = note ? domId(entryId, `note-${item.action}`) : undefined;
+  // BOTH, WHEN BOTH EXIST. `aria-describedby` takes a space-separated list, and
+  // the note is the case that was silently unreachable: it renders only when
+  // the control is ENABLED, which is exactly when `state.reason` is null — so
+  // the one situation carrying a material consequence was the one situation
+  // where the button had no description at all. A screen-reader user could
+  // activate Resend, invalidating a link the invitee may be holding, without
+  // ever hearing that.
+  const describedBy = [reasonId, noteId].filter(Boolean).join(" ") || undefined;
 
   return (
     <div className="flex w-full flex-col gap-1">
@@ -145,7 +154,7 @@ function ActionControl({
         type="button"
         disabled={state.disabled}
         data-testid={`admission-action-${item.action}`}
-        aria-describedby={reasonId}
+        aria-describedby={describedBy}
         className={cx(
           buttonClasses({
             variant,
@@ -174,6 +183,7 @@ function ActionControl({
       )}
       {note && (
         <span
+          id={noteId}
           data-testid={`admission-note-${item.action}`}
           className="text-xs leading-snug text-fg-muted"
         >
