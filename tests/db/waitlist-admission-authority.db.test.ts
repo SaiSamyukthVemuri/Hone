@@ -1179,6 +1179,81 @@ describe("the studio lock mode is compatible with FK key-share", () => {
      "p_studio_id uuid, p_actor_user_id uuid, p_entry_id uuid, p_service_id uuid, p_start_date date, p_end_date date, p_allowed_weekdays smallint[], p_ttl_hours integer"],
   ];
 
+  /**
+   * Blank everything PostgreSQL would not EXECUTE, so the presence check cannot
+   * be satisfied by inert text. Length is preserved, so any reported offset
+   * still points at the right place in the original body.
+   *
+   * A LOCK THAT IS ONLY TEXT IS NOT A LOCK. Commenting one out with a block
+   * comment left this guard green while the statement no longer ran -- measured.
+   * The earlier version blanked line comments and single-quoted literals with
+   * layered regexes and missed block comments entirely.
+   *
+   * ONE LEFT-TO-RIGHT SCAN, NOT LAYERED REGEXES, because the constructs nest
+   * inside each other and layering gets the precedence wrong:
+   *   * PostgreSQL block comments NEST -- an inner open/close pair inside an
+   *     outer one is still ONE comment, and a non-greedy regex would stop at
+   *     the first close and treat the rest as code;
+   *   * a `--` inside a string is not a comment, and a quote inside a comment
+   *     is not a string;
+   *   * dollar-quoted bodies (`$tag$ ... $tag$`) swallow both.
+   * Whichever construct opens first wins, which is exactly what the lexer does.
+   */
+  function executableSql(src: string): string {
+    const out = src.split("");
+    const blank = (from: number, to: number) => {
+      for (let k = from; k < to && k < out.length; k++) if (out[k] !== "\n") out[k] = " ";
+    };
+    let i = 0;
+    while (i < src.length) {
+      // line comment
+      if (src.startsWith("--", i)) {
+        const end = src.indexOf("\n", i);
+        const stop = end === -1 ? src.length : end;
+        blank(i, stop);
+        i = stop;
+        continue;
+      }
+      // block comment, nesting
+      if (src.startsWith("/*", i)) {
+        let depth = 0;
+        let j = i;
+        while (j < src.length) {
+          if (src.startsWith("/*", j)) { depth++; j += 2; continue; }
+          if (src.startsWith("*/", j)) { depth--; j += 2; if (depth === 0) break; continue; }
+          j++;
+        }
+        blank(i, j);
+        i = j;
+        continue;
+      }
+      // dollar-quoted string
+      const dollar = /^\$([A-Za-z_]\w*)?\$/.exec(src.slice(i));
+      if (dollar) {
+        const tag = dollar[0];
+        const end = src.indexOf(tag, i + tag.length);
+        const stop = end === -1 ? src.length : end + tag.length;
+        blank(i, stop);
+        i = stop;
+        continue;
+      }
+      // single-quoted literal, '' escape
+      if (src[i] === "'") {
+        let j = i + 1;
+        while (j < src.length) {
+          if (src[j] === "'" && src[j + 1] === "'") { j += 2; continue; }
+          if (src[j] === "'") { j++; break; }
+          j++;
+        }
+        blank(i, j);
+        i = j;
+        continue;
+      }
+      i++;
+    }
+    return out.join("");
+  }
+
   async function definitionOf(name: string, args: string): Promise<string | null> {
     const res = await adminQuery(
       `select prosrc
@@ -1199,12 +1274,10 @@ describe("the studio lock mode is compatible with FK key-share", () => {
       // silently passing because the function was renamed is the failure this
       // assertion exists to make impossible.
       expect(src, `${name}(${args}) is not in the applied chain at this signature`).not.toBeNull();
-      const body = (src as string)
-        .replace(/--[^\n]*/g, (m) => " ".repeat(m.length))
-        .replace(/'(?:[^']|'')*'/g, (m) => " ".repeat(m.length));
+      const body = executableSql(src as string);
       expect(
         /from\s+public\.studios[^;]*for\s+no\s+key\s+update/i.test(body),
-        `${name} must take \`studios ... for no key update\``,
+        `${name} must take: studios ... for no key update`,
       ).toBe(true);
       // The mode matters as much as the presence: FOR UPDATE conflicts with the
       // FK's KEY SHARE and reopens the very cycle the lock closes.
@@ -1215,25 +1288,44 @@ describe("the studio lock mode is compatible with FK key-share", () => {
     },
   );
 
-  it("covers every command 0193 defines, or names the gap", async () => {
-    // The bound is explicit, so drift between the migration and this list is
-    // surfaced rather than left to be discovered by a deadlock in production.
+  it("covers every command 0193 defines, at every signature", async () => {
+    // KEYED ON (name, signature), NOT NAME. An OVERLOAD of a listed command --
+    // same name, new argument list, no studio lock -- was in both sets under a
+    // name-only comparison, so it drifted in unnoticed while the per-command
+    // assertion checked only the listed signature. Measured: 75/75 green with
+    // an unguarded writer present.
+    //
+    // Signatures come from pg_proc rather than from parsing the file's argument
+    // lists: the applied definition is what runs, and hand-parsing SQL argument
+    // syntax is the kind of text analysis this guard exists to avoid.
     const { readFileSync } = await import("node:fs");
     const sql = readFileSync("supabase/migrations/0193_waitlist_admission_authority.sql", "utf8");
     const code = sql.split("\n").filter((l) => !/^\s*--/.test(l)).join("\n");
-    const defined = new Set<string>();
+    const definedNames = new Set<string>();
     const re = /create or replace function public\.(\w+)\s*\(/g;
     let m: RegExpExecArray | null;
     while ((m = re.exec(code)) !== null) {
       const body = code.slice(m.index, code.indexOf("$$;", m.index));
       if (/returns trigger/.test(body)) continue; // triggers take no locks of their own
-      defined.add(m[1]);
+      definedNames.add(m[1]);
     }
-    const listed = new Set(LOCK_BEARING_COMMANDS.map(([n]) => n));
-    const unlisted = [...defined].filter((d) => !listed.has(d));
+    expect(definedNames.size, "no commands parsed out of 0193").toBeGreaterThanOrEqual(9);
+
+    const live = await adminQuery(
+      `select p.proname as name, pg_get_function_identity_arguments(p.oid) as args
+         from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+        where n.nspname = 'public'
+          and p.proname = any($1::text[])
+          and pg_get_function_result(p.oid) <> 'trigger'`,
+      [[...definedNames]],
+    );
+    const listed = new Set(LOCK_BEARING_COMMANDS.map(([n, a]) => `${n}(${a})`));
+    const unlisted = (live.rows as { name: string; args: string }[])
+      .map((r) => `${r.name}(${r.args})`)
+      .filter((k) => !listed.has(k));
     expect(
       unlisted,
-      "a command was added to 0193 without a lock-presence assertion; add it to LOCK_BEARING_COMMANDS or say why it is exempt",
+      "a command or OVERLOAD exists without a lock-presence assertion; add it to LOCK_BEARING_COMMANDS or say why it is exempt",
     ).toEqual([]);
   });
 });
