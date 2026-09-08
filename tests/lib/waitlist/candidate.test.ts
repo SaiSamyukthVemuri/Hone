@@ -5,6 +5,7 @@ import {
   readServiceInterest,
   type WaitlistEntryRow,
 } from "@/lib/waitlist/candidate";
+import { NEVER_STALE, type StalenessPolicy } from "@/lib/waitlist/confirmation";
 import { FIFO_POLICY, rankWaitlistCandidates } from "@/lib/waitlist/scoring";
 
 // WAIT-ADMIT-01 — the adapter must be correct against TODAY'S schema (the
@@ -232,7 +233,7 @@ describe("stale preferences reach the engine as ordinary unstated ones", () => {
   });
 });
 
-describe("a finite staleness policy cannot run without a clock", () => {
+describe("staleness and the clock", () => {
   const ROW = {
     id: "e1",
     joined_at: "2026-01-01T00:00:00.000Z",
@@ -241,44 +242,77 @@ describe("a finite staleness policy cannot run without a clock", () => {
     availability_confirmed_at: "2025-01-01T00:00:00.000Z",
     availability_source: "public_form",
   };
+  const NOW = new Date("2026-09-08T00:00:00.000Z");
 
-  // THE DEFECT: staleness and the clock were independently optional, so a
-  // finite cap with no `now` type-checked AND ran -- silently reporting every
-  // preference fresh. A studio that had decided its answers expire after 90
-  // days would have got no staleness at all, with no error anywhere.
-  it("REFUSES a finite cap with no clock, rather than reporting everything fresh", () => {
-    expect(() =>
-      // @ts-expect-error the union makes this a compile error too; the runtime
-      // refusal is what protects a policy assembled dynamically.
-      projectCandidates([ROW], { staleness: { maxAgeDays: 90 } }),
-    ).toThrow(/cannot be evaluated without a clock/);
+  /** A policy the compiler only knows as `number | null`, as a real caller has. */
+  function loadPolicy(maxAgeDays: number | null): StalenessPolicy {
+    return { maxAgeDays };
+  }
+
+  // THE OVERCORRECTION THIS PROVES FIXED. Requiring a LITERAL maxAgeDays
+  // rejected an ordinary caller holding a runtime-loaded policy, even though it
+  // supplied the clock. Refusing a correct caller is its own defect.
+  it("accepts a dynamically typed StalenessPolicy when a clock is present", () => {
+    const policy = loadPolicy(90);
+    expect(() => projectCandidates([ROW], { now: NOW, staleness: policy })).not.toThrow();
   });
 
-  it("evaluates age correctly once the clock is supplied", () => {
-    const now = new Date("2026-09-08T00:00:00.000Z");
-    const { candidates, provenance } = projectCandidates([ROW], {
-      now,
-      staleness: { maxAgeDays: 90 },
-    });
+  it("evaluates a dynamic finite policy against that clock", () => {
+    const policy = loadPolicy(90);
+    const { candidates, provenance } = projectCandidates([ROW], { now: NOW, staleness: policy });
     // Confirmed 2025-01-01, far past a 90-day cap.
     expect(provenance[0]?.freshness?.kind).toBe("stale");
     expect(candidates[0]?.availability.stated).toBe(false);
   });
 
-  it("still keeps a recently confirmed preference fresh under the same cap", () => {
-    const now = new Date("2026-09-08T00:00:00.000Z");
+  it("accepts a dynamic DISABLED policy with a clock", () => {
+    const policy = loadPolicy(null);
+    const { candidates } = projectCandidates([ROW], { now: NOW, staleness: policy });
+    expect(candidates[0]?.availability.stated).toBe(true);
+  });
+
+  it("keeps a recently confirmed preference fresh under the same finite cap", () => {
     const { candidates } = projectCandidates(
       [{ ...ROW, availability_confirmed_at: "2026-09-01T00:00:00.000Z" }],
-      { now, staleness: { maxAgeDays: 90 } },
+      { now: NOW, staleness: loadPolicy(90) },
     );
     expect(candidates[0]?.availability.stated).toBe(true);
   });
 
-  it("requires no clock when staleness is disabled", () => {
-    // The default path must stay free of a clock requirement: nothing can go
-    // stale, so nothing needs measuring.
+  // THE ORIGINAL DEFECT: finite cap, no clock, silently age 0 -- every
+  // preference fresh, a configured policy doing nothing, no error anywhere.
+  it("REFUSES a finite cap with no clock, at compile time and at runtime", () => {
+    expect(() =>
+      // @ts-expect-error a finite cap without `now` must not type-check.
+      projectCandidates([ROW], { staleness: { maxAgeDays: 90 } }),
+    ).toThrow(/cannot be evaluated without a clock/);
+  });
+
+  it("REFUSES a dynamic policy with no clock, because finite cannot be ruled out", () => {
+    const policy = loadPolicy(90);
+    expect(() =>
+      // @ts-expect-error `number | null` is inadmissible without a clock.
+      projectCandidates([ROW], { staleness: policy }),
+    ).toThrow(/cannot be evaluated without a clock/);
+  });
+
+  it("the age-zero fallback cannot return: a refused call yields no result", () => {
+    // The bug was not just a wrong answer, it was a CONFIDENT one. Nothing may
+    // come back from an unevaluable policy.
+    let result: unknown = "untouched";
+    try {
+      // @ts-expect-error finite cap, no clock.
+      result = projectCandidates([ROW], { staleness: { maxAgeDays: 1 } });
+    } catch {
+      /* expected */
+    }
+    expect(result).toBe("untouched");
+  });
+
+  it("requires no clock when staleness is disabled or absent", () => {
     expect(() => projectCandidates([ROW])).not.toThrow();
     expect(() => projectCandidates([ROW], { staleness: { maxAgeDays: null } })).not.toThrow();
+    expect(() => projectCandidates([ROW], { staleness: NEVER_STALE })).not.toThrow();
     expect(projectCandidates([ROW]).candidates[0]?.availability.stated).toBe(true);
   });
 });

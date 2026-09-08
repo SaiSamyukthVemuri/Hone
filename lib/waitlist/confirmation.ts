@@ -66,7 +66,12 @@ export type PreferenceFreshness =
  */
 export type StalenessPolicy = { readonly maxAgeDays: number | null };
 
-export const NEVER_STALE: StalenessPolicy = { maxAgeDays: null };
+/**
+ * Declared with the LITERAL null rather than as StalenessPolicy so it stays
+ * usable where no clock is supplied: a `number | null` cannot be admitted
+ * there, because the compiler cannot rule out the finite case.
+ */
+export const NEVER_STALE: { readonly maxAgeDays: null } = { maxAgeDays: null };
 
 /** Whole days between two instants, floored, never negative. */
 function ageInDays(from: Date, to: Date): number {

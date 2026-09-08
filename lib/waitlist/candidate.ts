@@ -122,30 +122,45 @@ export type CandidateProjection = {
 };
 
 /**
- * Staleness and the clock travel TOGETHER, enforced by the type where the
- * caller writes a literal.
+ * Staleness and the clock travel together — expressed by which BRANCH a caller
+ * lands in, not by narrowing the policy type.
  *
- * The previous shape made both optional independently, so
- * `{ staleness: { maxAgeDays: 90 } }` with no `now` type-checked, and the
- * runtime silently treated every preference as fresh -- a configured policy
- * doing nothing, with no error anywhere. A studio that had decided its answers
- * go stale after 90 days would have got no staleness at all.
+ * THE FIRST SHAPE MADE BOTH INDEPENDENTLY OPTIONAL, so
+ * `{ staleness: { maxAgeDays: 90 } }` with no `now` type-checked AND ran,
+ * quietly reporting every preference fresh. A studio that had decided its
+ * answers expire after 90 days would have got no staleness at all.
  *
- * The union makes a finite cap without a clock a COMPILE error at a literal
- * call site. It cannot catch a policy assembled at runtime, so
- * `projectCandidates` also refuses that combination rather than defaulting --
- * absent is a decision, incomplete is an error.
+ * THE SECOND SHAPE OVERCORRECTED: it demanded a literal `maxAgeDays`, so an
+ * ordinary caller holding a runtime-loaded policy —
+ *
+ *     const policy: StalenessPolicy = loadPolicy();
+ *     projectCandidates(rows, { now, staleness: policy });
+ *
+ * — was rejected even though it supplies the clock. Refusing a correct caller
+ * is its own defect; the clock is what the rule is actually about.
+ *
+ * So the discriminator is the CLOCK:
+ *
+ *   now present  -> ANY StalenessPolicy, dynamic or literal. There is a clock
+ *                   to measure against, so `number | null` is fine.
+ *   now absent   -> only staleness that is STATICALLY known to be disabled.
+ *                   A `number | null` cannot be admitted here: the compiler
+ *                   cannot rule out the finite case, which is the one that
+ *                   silently did nothing.
+ *
+ * The runtime refusal in projectCandidates stays regardless, for a policy the
+ * types never saw — absent is a decision, incomplete is an error.
  */
 export type ProjectionOptions =
   | {
-      /** No staleness, so no clock is needed and none is required. */
-      readonly now?: Date;
-      readonly staleness?: { readonly maxAgeDays: null };
+      /** A clock is supplied, so any policy shape is evaluable. */
+      readonly now: Date;
+      readonly staleness?: StalenessPolicy;
     }
   | {
-      /** A finite cap: the clock it is measured against is mandatory. */
-      readonly now: Date;
-      readonly staleness: { readonly maxAgeDays: number };
+      /** No clock: only staleness the compiler can see is disabled. */
+      readonly now?: undefined;
+      readonly staleness?: { readonly maxAgeDays: null };
     };
 
 function readInstant(value: string | Date | null | undefined): Date | null {
