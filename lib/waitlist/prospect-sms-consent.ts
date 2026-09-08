@@ -82,6 +82,7 @@
 // ===========================================================================
 
 import type { SuppressionCandidate } from "@/lib/sms/suppression";
+import type { WaitlistCommitPoint } from "@/lib/waitlist/join-profile";
 
 /** Form field name. Named for what it grants, never "sms" or "phone" alone. */
 export const SMS_OPERATIONAL_CONSENT_FIELD = "sms_operational_consent";
@@ -241,8 +242,23 @@ export function buildProspectSmsConsentRecord(input: {
   consented: boolean;
   source: SmsConsentSource;
   consentedAt: string;
+  /**
+   * THE DURABLE BACKSTOP. Consent lives on the waitlist entry, and an entry
+   * only exists on the WAIT-02 durable path — the WAIT-01 notification path
+   * emails the studio and writes nothing at all. A consent record built for a
+   * submission that produces no row has nowhere to go, so this refuses to build
+   * one rather than hand back columns nobody will store.
+   *
+   * The real protection is that the WAIT-04A join experience is not offered on
+   * that path (`profileJoinIsSupported`); this is the second line, here because
+   * the failure it prevents is silent. A caller that reached this function on
+   * the notification path has a bug, and the safe answer to "may we text them"
+   * when the evidence cannot be stored is no.
+   */
+  commitPoint: WaitlistCommitPoint;
 }): ProspectSmsConsentRecord {
   if (!input.consented) return { ...NO_SMS_CONSENT };
+  if (input.commitPoint !== "durable_record") return { ...NO_SMS_CONSENT };
   return {
     sms_consent_at: input.consentedAt,
     sms_consent_source: input.source,

@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { selectHoneSuppressionTargets } from "@/lib/sms/suppression";
 import {
+  commitPointFromDurableFlag,
+  profileJoinIsSupported,
+} from "@/lib/waitlist/join-profile";
+import {
   NO_SMS_CONSENT,
   NO_SMS_STATE,
   SMS_CONSENT_SOURCES,
@@ -85,6 +89,7 @@ describe("what a decline stores", () => {
       consented: false,
       source: "public_form",
       consentedAt: "2026-09-08T10:00:00.000Z",
+      commitPoint: "durable_record",
     });
     expect(declined).toEqual(NO_SMS_CONSENT);
     // The instant is NOT carried over into the column that authorises sending:
@@ -98,6 +103,7 @@ describe("what a decline stores", () => {
       consented: false,
       source: "practitioner",
       consentedAt: "2026-09-08T10:00:00.000Z",
+      commitPoint: "durable_record",
     });
     expect(declined.sms_consent_source).toBeNull();
     expect(declined.sms_consent_text_version).toBeNull();
@@ -110,6 +116,7 @@ describe("what an agreement stores", () => {
       consented: true,
       source: "public_form",
       consentedAt: "2026-09-08T10:00:00.000Z",
+      commitPoint: "durable_record",
     });
     expect(agreed).toEqual({
       sms_consent_at: "2026-09-08T10:00:00.000Z",
@@ -123,6 +130,7 @@ describe("what an agreement stores", () => {
       consented: true,
       source: "public_form",
       consentedAt: "2020-01-01T00:00:00.000Z",
+      commitPoint: "durable_record",
     });
     // A module-captured or browser-supplied time would be evidence of nothing.
     expect(a.sms_consent_at).toBe("2020-01-01T00:00:00.000Z");
@@ -249,5 +257,62 @@ describe("the label promises STOP, so the model must be able to honour it", () =
       fromPhone: "6475551234",
     });
     expect(selection.targets).toEqual([]);
+  });
+});
+
+describe("THE DURABLE CLARIFICATION — consent needs an entry to live on", () => {
+  // Consent lives on the waitlist entry. An entry only exists on the WAIT-02
+  // durable path; the WAIT-01 notification path emails the studio and writes
+  // nothing at all. So a consent record built for a submission that produces no
+  // row has nowhere to go.
+
+  it("refuses to build a consent record on the notification path", () => {
+    const onNotificationPath = buildProspectSmsConsentRecord({
+      consented: true, // they DID tick the box...
+      source: "public_form",
+      consentedAt: "2026-09-08T10:00:00.000Z",
+      commitPoint: "studio_notification", // ...but nothing will be stored
+    });
+    expect(onNotificationPath).toEqual(NO_SMS_CONSENT);
+    expect(prospectMayReceiveSms({ ...onNotificationPath, sms_opted_out_at: null })).toBe(
+      false,
+    );
+  });
+
+  it("NON-VACUITY — the identical input on the durable path DOES record", () => {
+    const onDurablePath = buildProspectSmsConsentRecord({
+      consented: true,
+      source: "public_form",
+      consentedAt: "2026-09-08T10:00:00.000Z",
+      commitPoint: "durable_record",
+    });
+    expect(onDurablePath.sms_consent_at).toBe("2026-09-08T10:00:00.000Z");
+    expect(prospectMayReceiveSms({ ...onDurablePath, sms_opted_out_at: null })).toBe(true);
+  });
+
+  it("the join experience is only offered where a record exists", () => {
+    expect(profileJoinIsSupported("durable_record")).toBe(true);
+    expect(profileJoinIsSupported("studio_notification")).toBe(false);
+  });
+
+  it("the commit point is a READING of the shipped flag, not a new one", () => {
+    // isNewClientWaitlistDurableEnabled(studio.slug) already answers this; the
+    // helper only gives its boolean a name. No second flag system.
+    expect(commitPointFromDurableFlag(true)).toBe("durable_record");
+    expect(commitPointFromDurableFlag(false)).toBe("studio_notification");
+  });
+
+  it("refusing to store is FAIL-CLOSED, not a silent partial record", () => {
+    // All five limbs null together: no half-written evidence of an agreement
+    // that was never stored.
+    const refused = buildProspectSmsConsentRecord({
+      consented: true,
+      source: "prospect_link",
+      consentedAt: "2026-09-08T10:00:00.000Z",
+      commitPoint: "studio_notification",
+    });
+    expect(refused.sms_consent_at).toBeNull();
+    expect(refused.sms_consent_source).toBeNull();
+    expect(refused.sms_consent_text_version).toBeNull();
   });
 });

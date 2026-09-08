@@ -605,3 +605,62 @@ export function validateJoinProfileDraft(
     smsOperationalConsent: draft.smsOperationalConsent,
   });
 }
+
+// --- 10. WHERE THIS PROFILE CAN EXIST AT ALL --------------------------------
+//
+// THE DURABLE CLARIFICATION. Consent — and every other WAIT-04A answer — lives
+// on the waitlist ENTRY. There are two commit points behind one gate
+// (app/book/[slug]/waitlist-actions.ts), chosen per studio by a server-only
+// allowlist:
+//
+//   WAIT-02, DURABLE     `join_new_client_waitlist` writes one row. An entry
+//                        exists. Fields have somewhere to live.
+//   WAIT-01, NOTIFICATION  the studio is emailed and NOTHING is written. There
+//                        is no entry, and there is no row on our side at all.
+//
+// Verified against the shipped action, not assumed: its durable branch makes
+// exactly one `.rpc("join_new_client_waitlist", ...)` call, and its
+// notification branch makes no database write of any kind.
+//
+// SO THIS PROFILE IS NOT COLLECTABLE ON THE NOTIFICATION PATH. Asking someone
+// for their treatment areas, their availability and their permission to text
+// them, and then storing none of it, is the same defect as splitting a legacy
+// name: it converts "we never asked" into "they told us" while the answer goes
+// nowhere. The SMS consent is the sharpest case — its label promises "Reply
+// STOP at any time to opt out" against a record that will not exist.
+//
+// HOW THE CHOICE IS MADE WITHOUT LEAKING A SERVER FACT. The existing form
+// states the rule this must not break: it "deliberately does not learn which
+// path applies — that would put a server-only activation fact into the browser
+// bundle for a caption." So the commit point is NEVER a prop on a client
+// component and never gates a control inside one. The SERVER picks which form
+// to render, exactly as it already picks between the booking flow and the
+// waitlist form. A studio on WAIT-01 keeps the shipped name/email/optional-phone
+// form, byte for byte.
+
+/** Which commit point a studio is on. A READING of the existing allowlist. */
+export type WaitlistCommitPoint = "durable_record" | "studio_notification";
+
+/**
+ * Derive the commit point from the shipped allowlist check.
+ *
+ * NOT A SECOND FLAG SYSTEM — the module that owns the question is explicit that
+ * none should be added, and this adds none. It takes the boolean
+ * `isNewClientWaitlistDurableEnabled(studio.slug)` already returns and gives it
+ * a name, so call sites read as a fact about the studio rather than as an
+ * anonymous boolean threaded through three layers.
+ */
+export function commitPointFromDurableFlag(durable: boolean): WaitlistCommitPoint {
+  return durable ? "durable_record" : "studio_notification";
+}
+
+/**
+ * May the WAIT-04A join experience be offered to this studio's visitors?
+ *
+ * SERVER-SIDE ONLY. The answer decides which component the server renders; it is
+ * never handed to a client component, because the commit point is a server-only
+ * activation fact.
+ */
+export function profileJoinIsSupported(commitPoint: WaitlistCommitPoint): boolean {
+  return commitPoint === "durable_record";
+}
