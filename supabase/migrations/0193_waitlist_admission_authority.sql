@@ -721,6 +721,7 @@ declare
   v_hash    text;
   v_ttl     integer := coalesce(p_ttl_hours, 168);
   v_expires timestamptz;
+  v_status  text;
   -- ONE authoritative instant for the whole command: retirement, the liveness
   -- verdict and the new window are all measured against the same clock, so a
   -- grant cannot be judged expired by one line and live by the next.
@@ -777,11 +778,43 @@ begin
     return;
   end if;
 
-  perform 1 from public.new_client_waitlist_entries e
+  -- THE ENTRY'S STATUS IS READ UNDER ITS OWN LOCK, not merely alongside it, so
+  -- the lifecycle this decision rests on cannot move underneath it. Same shape
+  -- as admit_'s step 3.
+  select e.status into v_status
+    from public.new_client_waitlist_entries e
    where e.id = p_entry_id and e.studio_id = p_studio_id
    for update;
-  if not found then
+  if v_status is null then
     return query select 'entry_not_found'::text, null::text, null::timestamptz;
+    return;
+  end if;
+
+  -- A TERMINAL ENTRY GETS NO LINK, FOR THE SAME REASON REDEMPTION REFUSES ONE.
+  --
+  -- redeem_ now requires `status not in ('removed','converted')`, so a token
+  -- minted for a terminal entry is unusable from the instant it is created.
+  -- Issuing one anyway is worse than useless: the raw token is returned exactly
+  -- once and the row takes the ONE-LIVE-GRANT slot, so the operator is handed a
+  -- dead credential AND the entry's only grant seat is occupied by it. The two
+  -- commands must share one rule or the pair is incoherent.
+  --
+  -- Same derivation as redemption: 0188's transition guard gives `removed` and
+  -- `converted` no outgoing edge, while waiting / claimed / invited / expired /
+  -- released can all still move, so those prospects stay on the list and a link
+  -- to them is still worth issuing. NO NEW LIFECYCLE STATE, and no column.
+  --
+  -- `entry_closed` rather than a borrowed word: `entry_not_found` would be a
+  -- lie to an owner looking straight at the entry, and admit_'s
+  -- `not_admissible` names a DIFFERENT set -- it also excludes invited, expired
+  -- and released, which are perfectly issuable here. One word for two sets is
+  -- how a vocabulary stops meaning anything. This is a result code, not a
+  -- status: the lifecycle vocabulary is untouched.
+  --
+  -- Returned BEFORE any mutation, so a refusal retires nothing, writes no row
+  -- and consumes no slot.
+  if v_status in ('removed', 'converted') then
+    return query select 'entry_closed'::text, null::text, null::timestamptz;
     return;
   end if;
 

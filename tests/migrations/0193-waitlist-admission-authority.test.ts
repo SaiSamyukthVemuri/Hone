@@ -318,6 +318,27 @@ describe("the prospect link is bound to a live entry and to one mint instant", (
     expect(CODE).toContain("for update of g;");
   });
 
+  it("refuses to ISSUE for a terminal entry, on the same derivation", () => {
+    // The pair must share one rule: redemption refuses `removed`/`converted`,
+    // so minting a token for one hands back a dead credential AND parks it in
+    // the one-live-grant slot. `entry_closed` is a RESULT code, not a lifecycle
+    // state — `entry_not_found` would be a lie to an owner looking at the
+    // entry, and admit_'s `not_admissible` names a different set (it also
+    // excludes invited, expired and released, which stay issuable here).
+    expect(CODE).toContain("select e.status into v_status");
+    expect(CODE).toContain("if v_status in ('removed', 'converted') then");
+    expect(CODE).toContain("return query select 'entry_closed'::text, null::text, null::timestamptz;");
+  });
+
+  it("decides the lifecycle BEFORE reading the clock, so a refusal mutates nothing", () => {
+    // The refusal returns ahead of the expired-grant retirement and the insert.
+    const issuer = CODE.slice(CODE.indexOf("create or replace function public.issue_waitlist_preference_grant("));
+    const body = issuer.slice(0, issuer.indexOf("\n$$;"));
+    expect(body.indexOf("'entry_closed'")).toBeGreaterThan(-1);
+    expect(body.indexOf("'entry_closed'")).toBeLessThan(body.indexOf("v_now := clock_timestamp();"));
+    expect(body.indexOf("'entry_closed'")).toBeLessThan(body.indexOf("insert into public.new_client_waitlist_preference_grants"));
+  });
+
   it("writes issued_at from the post-lock mint rather than the column default", () => {
     // `default now()` is transaction start; expires_at comes from the post-lock
     // clock_timestamp() in v_now. Defaulting the column makes

@@ -1213,6 +1213,264 @@ describe("a terminal entry kills its outstanding preference link", () => {
   });
 });
 
+describe("a terminal entry is never issued a preference link either", () => {
+  // The pair must share ONE rule. redeem_ refuses `removed`/`converted`, so a
+  // token minted for a terminal entry is unusable from the instant it exists —
+  // and issuing it anyway hands the operator a dead credential AND parks it in
+  // the one-live-grant slot.
+  async function seedEntry(label: string) {
+    const studio = await seedStudio(label);
+    const entry = await adminQuery(
+      `select * from public.create_practitioner_waitlist_entry($1,$2,'P',$3,null,null)`,
+      [studio.studioId, studio.userId, uniqueEmail(label)],
+    );
+    return { studio, entryId: entry.rows[0].entry_id as string };
+  }
+
+  async function advance(
+    studio: { studioId: string; userId: string },
+    entryId: string,
+    status: "claimed" | "invited" | "expired" | "released" | "converted",
+  ) {
+    // Every state is reached through the legal chain: 0188's transition guard
+    // and the cycle-evidence CHECK both refuse a shortcut, which is what makes
+    // these fixtures genuine rather than manufactured.
+    await adminQuery(
+      `update public.new_client_waitlist_entries
+          set status = 'claimed', claimed_at = now(),
+              claimed_by_practitioner_id = (select id from public.practitioners
+                                             where studio_id = $2 and user_id = $3 limit 1)
+        where id = $1`,
+      [entryId, studio.studioId, studio.userId],
+    );
+    if (status === "claimed") return;
+    if (status === "released") {
+      await adminQuery(
+        `update public.new_client_waitlist_entries
+            set status = 'released', released_at = now() where id = $1`,
+        [entryId],
+      );
+      return;
+    }
+    await adminQuery(
+      `update public.new_client_waitlist_entries
+          set status = 'invited', invited_at = now() where id = $1`,
+      [entryId],
+    );
+    if (status === "invited") return;
+    if (status === "expired") {
+      await adminQuery(
+        `update public.new_client_waitlist_entries
+            set status = 'expired', expired_at = now() where id = $1`,
+        [entryId],
+      );
+      return;
+    }
+    const client = await adminQuery(
+      `insert into public.clients (studio_id, name) values ($1,'Converted prospect') returning id`,
+      [studio.studioId],
+    );
+    await adminQuery(
+      `update public.new_client_waitlist_entries
+          set status = 'converted', converted_at = now(), converted_client_id = $2
+        where id = $1`,
+      [entryId, client.rows[0].id],
+    );
+  }
+
+  it("still issues for a WAITING entry", async () => {
+    const { studio, entryId } = await seedEntry("issue-waiting");
+    const res = await adminQuery(
+      `select * from public.issue_waitlist_preference_grant($1,$2,$3,24)`,
+      [studio.studioId, entryId, studio.userId],
+    );
+    expect(res.rows[0].result).toBe("issued");
+    expect(res.rows[0].raw_token).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it("still issues for CLAIMED, INVITED, EXPIRED and RELEASED", async () => {
+    // The control, and the reason the rule is terminal-only: each of these can
+    // still move under 0188's transition table, so the prospect is still on the
+    // list and a link to them is still worth issuing. Without this the refusals
+    // below would pass against a command that only ever issues for `waiting`.
+    for (const status of ["claimed", "invited", "expired", "released"] as const) {
+      const { studio, entryId } = await seedEntry(`issue-${status}`);
+      await advance(studio, entryId, status);
+      const reached = await adminQuery(
+        `select status from public.new_client_waitlist_entries where id = $1`,
+        [entryId],
+      );
+      expect(reached.rows[0].status, `the fixture must genuinely be ${status}`).toBe(status);
+
+      const res = await adminQuery(
+        `select * from public.issue_waitlist_preference_grant($1,$2,$3,24)`,
+        [studio.studioId, entryId, studio.userId],
+      );
+      expect(res.rows[0].result, `${status} is still on the list`).toBe("issued");
+      expect(res.rows[0].raw_token).toMatch(/^[a-f0-9]{64}$/);
+    }
+  });
+
+  it("refuses REMOVED and CONVERTED with no row and no token", async () => {
+    for (const status of ["removed", "converted"] as const) {
+      const { studio, entryId } = await seedEntry(`issue-terminal-${status}`);
+      if (status === "removed") {
+        const r = await adminQuery(
+          `select public.remove_new_client_waitlist_entry($1,$2,$3) as r`,
+          [studio.studioId, entryId, studio.userId],
+        );
+        expect(r.rows[0].r).toBe("removed");
+      } else {
+        await advance(studio, entryId, "converted");
+      }
+
+      const res = await adminQuery(
+        `select * from public.issue_waitlist_preference_grant($1,$2,$3,24)`,
+        [studio.studioId, entryId, studio.userId],
+      );
+      expect(res.rows[0].result, `${status} must not be issued a link`).toBe("entry_closed");
+      expect(res.rows[0].raw_token, "no raw token may be returned").toBeNull();
+      expect(res.rows[0].expires_at, "no window may be returned").toBeNull();
+
+      const rows = await adminQuery(
+        `select count(*)::int as n from public.new_client_waitlist_preference_grants
+          where entry_id = $1`,
+        [entryId],
+      );
+      expect(rows.rows[0].n, "a refusal must write no grant row at all").toBe(0);
+    }
+  });
+
+  it("a refusal consumes no part of the one-live-grant slot", async () => {
+    // Refuse repeatedly, then prove the seat was never taken: the entry still
+    // has zero grants, and the refusal is the SAME code every time rather than
+    // degrading into `grant_already_live` off a row a previous call left behind.
+    const { studio, entryId } = await seedEntry("issue-slot-intact");
+    await adminQuery(`select public.remove_new_client_waitlist_entry($1,$2,$3) as r`, [
+      studio.studioId,
+      entryId,
+      studio.userId,
+    ]);
+    for (let i = 0; i < 3; i++) {
+      const res = await adminQuery(
+        `select * from public.issue_waitlist_preference_grant($1,$2,$3,24)`,
+        [studio.studioId, entryId, studio.userId],
+      );
+      expect(res.rows[0].result).toBe("entry_closed");
+    }
+    const rows = await adminQuery(
+      `select count(*)::int as n from public.new_client_waitlist_preference_grants
+        where entry_id = $1`,
+      [entryId],
+    );
+    expect(rows.rows[0].n).toBe(0);
+  });
+
+  it("the lifecycle is decided BEFORE grant liveness, so a dead seat is not the reason", async () => {
+    // An entry that already holds a live grant and is THEN removed must be
+    // refused for being closed, not for the seat — otherwise the operator is
+    // told to revoke a link on a prospect who is gone.
+    const { studio, entryId } = await seedEntry("issue-closed-before-slot");
+    const first = await adminQuery(
+      `select * from public.issue_waitlist_preference_grant($1,$2,$3,24)`,
+      [studio.studioId, entryId, studio.userId],
+    );
+    expect(first.rows[0].result).toBe("issued");
+    await adminQuery(`select public.remove_new_client_waitlist_entry($1,$2,$3) as r`, [
+      studio.studioId,
+      entryId,
+      studio.userId,
+    ]);
+
+    const res = await adminQuery(
+      `select * from public.issue_waitlist_preference_grant($1,$2,$3,24)`,
+      [studio.studioId, entryId, studio.userId],
+    );
+    expect(res.rows[0].result).toBe("entry_closed");
+
+    // And the grant that already existed is still unusable, by the redemption
+    // rule this issuer now matches.
+    const redeemed = await adminQuery(
+      `select public.redeem_waitlist_preference_grant($1,'both') as r`,
+      [first.rows[0].raw_token],
+    );
+    expect(redeemed.rows[0].r).toBe("refused");
+  });
+
+  it("removal racing issuance yields ONE legal outcome, never a usable link", async () => {
+    // THE DECISION MUST BE MADE UNDER THE LOCK. A status read before the entry
+    // lock — or no read at all — hands back `issued` for an entry that is
+    // already removed by the time the row lands.
+    const { studio, entryId } = await seedEntry("issue-race-remove");
+    const remover = new Client({ connectionString: resolveLocalDbUrl() });
+    const issuer = new Client({ connectionString: resolveLocalDbUrl() });
+    await remover.connect();
+    await issuer.connect();
+    try {
+      const issuerPid = (await issuer.query(`select pg_backend_pid() as pid`)).rows[0].pid as number;
+
+      // The removal takes the entry lock and HOLDS it, uncommitted.
+      await remover.query("begin");
+      const removed = await remover.query(
+        `select public.remove_new_client_waitlist_entry($1,$2,$3) as r`,
+        [studio.studioId, entryId, studio.userId],
+      );
+      expect(removed.rows[0].r).toBe("removed");
+
+      const pending = issuer
+        .query(`select * from public.issue_waitlist_preference_grant($1,$2,$3,24)`, [
+          studio.studioId,
+          entryId,
+          studio.userId,
+        ])
+        .then((r) => ({ ok: true as const, row: r.rows[0] }))
+        .catch((e: { code?: string }) => ({ ok: false as const, code: e.code }));
+
+      const waiting = await waitUntilBlocked(issuerPid);
+      expect(waiting, "the issuer must be blocked on the entry lock").not.toBeNull();
+
+      await remover.query("commit");
+
+      const result = await pending;
+      expect(result.ok).toBe(true);
+      expect(result.ok && result.row.result, "the post-lock read must see the committed removal")
+        .toBe("entry_closed");
+      expect(result.ok && result.row.raw_token).toBeNull();
+
+      const rows = await adminQuery(
+        `select count(*)::int as n from public.new_client_waitlist_preference_grants
+          where entry_id = $1`,
+        [entryId],
+      );
+      expect(rows.rows[0].n, "the race must leave no grant behind").toBe(0);
+    } finally {
+      await remover.end();
+      await issuer.end();
+    }
+  });
+
+  it("the OTHER order also ends with no usable link", async () => {
+    // Issuance wins the race: the grant row legitimately exists, and removal
+    // then lands. The pair still holds because redemption refuses it — which is
+    // why the issuer check is a coherence repair, not the only defence.
+    const { studio, entryId } = await seedEntry("issue-race-other-order");
+    const issued = await adminQuery(
+      `select * from public.issue_waitlist_preference_grant($1,$2,$3,24)`,
+      [studio.studioId, entryId, studio.userId],
+    );
+    expect(issued.rows[0].result).toBe("issued");
+    await adminQuery(`select public.remove_new_client_waitlist_entry($1,$2,$3) as r`, [
+      studio.studioId,
+      entryId,
+      studio.userId,
+    ]);
+    const res = await adminQuery(`select public.redeem_waitlist_preference_grant($1,'both') as r`, [
+      issued.rows[0].raw_token,
+    ]);
+    expect(res.rows[0].r).toBe("refused");
+  });
+});
+
 describe("the grant's issuance instant is the post-lock mint, not transaction start", () => {
   // THE DEFECT: `issued_at` carries `default now()`, and now() is TRANSACTION
   // START, while expires_at is derived from the post-lock clock_timestamp() in
@@ -1879,7 +2137,18 @@ describe("0193 writers do not deadlock the historical lifecycle writers", () => 
       ISSUE,
       [studio.studioId, entryId, studio.userId],
     );
-    expect(r.other).toBe("issued");
+    // BOTH OUTCOMES ARE LEGAL, AND WHICH ONE LANDS IS THE POINT OF THE RACE.
+    // The issuer refuses a terminal entry under the entry lock, so if the
+    // removal commits first the correct answer is `entry_closed`; if issuance
+    // gets there first it is `issued`, and the link is then dead on redemption
+    // instead. This assertion pinned `issued` when refusing was not yet
+    // possible. What it exists to catch is unchanged and is asserted more
+    // tightly than before: neither side may die of 40P01, and NEITHER may come
+    // back as an error string. The deterministic version of this race — removal
+    // committing first, every time — is proved in "removal racing issuance
+    // yields ONE legal outcome, never a usable link".
+    expect(["issued", "entry_closed"]).toContain(r.other);
+    expect(r.other).not.toMatch(/^SQLSTATE/);
     expect(r.lifecycle).not.toMatch(/^SQLSTATE/);
   });
 
