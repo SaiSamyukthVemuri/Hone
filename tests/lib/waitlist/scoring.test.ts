@@ -4,6 +4,7 @@ import {
   UNSTATED_AVAILABILITY,
 } from "@/lib/waitlist/preferences";
 import {
+  daysBetween,
   FIFO_POLICY,
   rankWaitlistCandidates,
   recommendNextInvites,
@@ -327,6 +328,65 @@ describe("policy validation", () => {
   it("rejects a non-finite weight and a non-positive cap", () => {
     expect(validateScoringPolicy(policy({ weights: { waitingTime: Number.NaN } })).ok).toBe(false);
     expect(validateScoringPolicy(policy({ waitingTimeCapDays: 0 })).ok).toBe(false);
+  });
+});
+
+describe("an invalid ranking clock fails closed", () => {
+  // THE DEFECT: with an unusable `context.now` every elapsed wait came out
+  // non-finite, daysBetween flattened that to 0, and a waiting-time factor the
+  // studio had deliberately weighted contributed an identical zero for the
+  // WHOLE cohort — silently collapsing that part of the ranking to FIFO while
+  // still reporting the factor as scored. A uniform wrong answer is invisible.
+  const INVALID = new Date("bad");
+  const weighted = policy({ weights: { waitingTime: 1 } });
+
+  it("refuses rather than reporting every candidate as waiting zero days", () => {
+    expect(() =>
+      rankWaitlistCandidates(
+        [candidate("a", 400), candidate("b", 10)],
+        { now: INVALID, openings: NO_OPENINGS },
+        weighted,
+      ),
+    ).toThrow(/Invalid ranking clock/);
+  });
+
+  it("refuses even when the cohort is empty", () => {
+    // The per-candidate loop never runs here, so ONLY the boundary check can
+    // catch this. Without it an unusable clock would be accepted in silence.
+    expect(() =>
+      rankWaitlistCandidates([], { now: INVALID, openings: NO_OPENINGS }, weighted),
+    ).toThrow(/Invalid ranking clock/);
+  });
+
+  it("refuses whatever the waiting-time weight, because the clock is required", () => {
+    expect(() =>
+      rankWaitlistCandidates([candidate("a", 5)], { now: INVALID, openings: NO_OPENINGS }, FIFO_POLICY),
+    ).toThrow(/Invalid ranking clock/);
+  });
+
+  // THE SECOND LIMB, PINNED SEPARATELY. The boundary check above would keep
+  // passing if the zero-day fallback were restored inside daysBetween, so
+  // asserting only through rankWaitlistCandidates would make the negative
+  // control vacuous. This is the assertion that goes red when `return 0` comes
+  // back.
+  it("daysBetween refuses a non-finite interval instead of returning zero", () => {
+    expect(() => daysBetween(day(30), new Date("bad"))).toThrow(/non-finite interval/);
+    expect(() => daysBetween(new Date("bad"), NOW)).toThrow(/non-finite interval/);
+  });
+
+  it("a VALID clock still ranks exactly as before", () => {
+    // The control: without it the tests above would pass against a function
+    // that refuses everything.
+    const result = rankWaitlistCandidates(
+      [candidate("recent", 10), candidate("old", 400)],
+      { now: NOW, openings: NO_OPENINGS },
+      policy({ waitingTimeCapDays: 180, weights: { waitingTime: 1 } }),
+    );
+    expect(result.ranked[0]?.entryId).toBe("old");
+    expect(result.ranked[0]?.score).toBe(1);
+    expect(result.ranked[0]?.daysWaiting).toBe(400);
+    expect(result.ranked[1]?.daysWaiting).toBe(10);
+    expect(daysBetween(day(30), NOW)).toBe(30);
   });
 });
 

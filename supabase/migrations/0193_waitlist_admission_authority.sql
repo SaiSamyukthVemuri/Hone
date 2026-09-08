@@ -828,10 +828,28 @@ begin
   v_hash    := encode(extensions.digest(v_raw, 'sha256'), 'hex');
   v_expires := v_now + make_interval(hours => v_ttl);
 
+  -- ISSUED_AT IS WRITTEN, NOT DEFAULTED, AND IT IS THE SAME v_now THE EXPIRY
+  -- WAS COMPUTED FROM.
+  --
+  -- The column carries `default now()`, and `now()` is TRANSACTION START. Every
+  -- other instant in this command comes from the post-lock `clock_timestamp()`
+  -- held in v_now. Letting the default fill the column therefore stamps the
+  -- audit time from a clock that can be arbitrarily older than the mint: inside
+  -- a transaction that began earlier -- a server action doing other work first,
+  -- or a caller that waited on the entry lock -- `expires_at - issued_at` comes
+  -- out LONGER than the TTL that was actually granted, and the row says the
+  -- link was minted at an instant when it did not yet exist.
+  --
+  -- Same ruling as 0192's challenge mint: the issuance instant is a decision
+  -- this command makes, so it is written from the decision, never inferred from
+  -- when the surrounding transaction happened to open. Both stamps now describe
+  -- one issuance, and `expires_at - issued_at` is exactly the requested TTL by
+  -- construction rather than by two clocks agreeing.
   begin
     insert into public.new_client_waitlist_preference_grants
-      (studio_id, entry_id, token_hash, expires_at, issued_by_practitioner_id)
-    values (p_studio_id, p_entry_id, v_hash, v_expires, v_actor);
+      (studio_id, entry_id, token_hash, issued_at, expires_at,
+       issued_by_practitioner_id)
+    values (p_studio_id, p_entry_id, v_hash, v_now, v_expires, v_actor);
   exception
     when unique_violation then
       -- The one-live-grant-per-entry partial index. Two outstanding links mean
@@ -959,14 +977,41 @@ begin
 
   -- STEP 4: re-resolve the grant UNDER the locks, with the full validity
   -- predicate and the post-lock clock. This is the read that decides.
+  --
+  -- THE ENTRY'S LIFECYCLE IS PART OF THAT PREDICATE, AND IT WAS THE MISSING
+  -- LIMB. Removal moves the entry to `removed`; it does not delete the row and
+  -- it does not touch the grant, whose own columns stay perfectly valid. With
+  -- only the grant's columns checked here, a link issued while the prospect was
+  -- waiting stayed redeemable after the owner had removed them -- writing a
+  -- preference for someone who is no longer on the list, and stamping the grant
+  -- redeemed. The refusal above already CLAIMED to cover
+  -- "belonging-to-a-removed-entry"; this is the predicate that makes the claim
+  -- true.
+  --
+  -- TERMINAL IS DERIVED FROM THE EXISTING LIFECYCLE, NOT INVENTED. 0188's
+  -- transition guard enumerates every legal move, and exactly two states have
+  -- no outgoing transition: `removed` and `converted`. Every other state --
+  -- waiting, claimed, invited, expired, released -- can still move, so the
+  -- prospect is still on the list and their availability still means something.
+  -- No new state, no new column and no new refusal word: a terminal entry
+  -- simply fails the validity predicate, and STEP 4's existing single refusal
+  -- answers it exactly as it answers an unknown, expired or revoked token.
+  --
+  -- `for update of g` locks the GRANT only. The entry is already held FOR
+  -- UPDATE from step 2 in the canonical studio -> entry order, and re-locking
+  -- it through this join would add nothing while making the lock order of this
+  -- statement harder to read.
   select g.id, g.entry_id, g.studio_id
     into v_grant
     from public.new_client_waitlist_preference_grants g
+    join public.new_client_waitlist_entries e
+      on e.id = g.entry_id and e.studio_id = g.studio_id
    where g.token_hash  = encode(extensions.digest(p_raw_token, 'sha256'), 'hex')
      and g.redeemed_at is null
      and g.revoked_at  is null
      and g.expires_at  > v_now
-   for update;
+     and e.status not in ('removed', 'converted')
+   for update of g;
 
   if not found then return 'refused'; end if;
 

@@ -256,10 +256,20 @@ export type RankingResult = {
   readonly decidedBy: readonly ScoringFactor[];
 };
 
-/** Whole days between two instants, floored, never negative. */
+/**
+ * Whole days between two instants, floored, never negative.
+ *
+ * A non-finite interval is REFUSED rather than flattened to 0. Returning zero
+ * was the age-zero failure in its ranking form: an unusable instant produced a
+ * confident "waited no days", which is a real measurement, not an absence of
+ * one. Same doctrine as `ageInDays` in ./confirmation — a clock you cannot
+ * trust must not be allowed to answer.
+ */
 export function daysBetween(from: Date, to: Date): number {
   const ms = to.getTime() - from.getTime();
-  if (!Number.isFinite(ms)) return 0;
+  if (!Number.isFinite(ms)) {
+    throw new Error("daysBetween: non-finite interval; the clock or the join date is invalid");
+  }
   return Math.max(0, Math.floor(ms / 86_400_000));
 }
 
@@ -437,9 +447,10 @@ function capacityFitFactor(
  * `entryId`, so the order never depends on input order or on Array#sort's
  * stability guarantees.
  *
- * Throws only on an invalid policy — a caller that hands this a negative weight
- * has a configuration bug, and silently ranking under a policy nobody wrote
- * would be worse than failing.
+ * Throws on an invalid policy or an invalid clock — a caller that hands this a
+ * negative weight or an unusable `now` has a configuration bug, and silently
+ * ranking under a policy nobody wrote, or a clock nobody can read, would be
+ * worse than failing.
  */
 export function rankWaitlistCandidates(
   candidates: readonly ScoringCandidate[],
@@ -448,6 +459,21 @@ export function rankWaitlistCandidates(
 ): RankingResult {
   const validated = validateScoringPolicy(policy);
   if (!validated.ok) throw new Error(`Invalid scoring policy: ${validated.error}`);
+
+  // THE RANKING CLOCK IS CONFIGURATION TOO, AND IT WAS THE ONE INPUT NOT
+  // CHECKED. With an Invalid Date every candidate's elapsed wait came out
+  // non-finite, the old zero fallback turned that into "waited 0 days", and a
+  // waiting-time factor the studio had deliberately weighted then contributed
+  // an identical zero across the whole cohort — collapsing that part of the
+  // ranking to FIFO while reporting it as scored. Nothing surfaced, because a
+  // uniform wrong answer looks exactly like a uniform right one.
+  //
+  // Refused here rather than only inside daysBetween so the error names the
+  // ranking clock, and so an EMPTY cohort — where the per-candidate loop never
+  // runs — cannot quietly accept an unusable clock either.
+  if (!Number.isFinite(context.now.getTime())) {
+    throw new Error("Invalid ranking clock: context.now is not a valid instant");
+  }
 
   const openings = usableOpenings(context.openings);
   const demand = demandByDayClass(candidates);

@@ -1013,6 +1013,296 @@ describe("the redemption clock is read AFTER the locks", () => {
   });
 });
 
+describe("a terminal entry kills its outstanding preference link", () => {
+  async function seedGranted(label: string) {
+    const studio = await seedStudio(label);
+    const entry = await adminQuery(
+      `select * from public.create_practitioner_waitlist_entry($1,$2,'P',$3,null,null)`,
+      [studio.studioId, studio.userId, uniqueEmail(label)],
+    );
+    const entryId = entry.rows[0].entry_id as string;
+    const grant = await adminQuery(
+      `select * from public.issue_waitlist_preference_grant($1,$2,$3,24)`,
+      [studio.studioId, entryId, studio.userId],
+    );
+    expect(grant.rows[0].result).toBe("issued");
+    return { studio, entryId, token: grant.rows[0].raw_token as string };
+  }
+
+  // THE DEFECT: removal moves the entry to `removed`. It does NOT delete the
+  // row and it does NOT touch the grant, whose own columns stay perfectly
+  // valid — unredeemed, unrevoked, unexpired. The locked re-resolution checked
+  // only those columns, so a link issued while the prospect was waiting stayed
+  // redeemable after the owner had taken them off the list: a preference
+  // written for someone who is no longer on it, and a grant stamped redeemed.
+  it("refuses a link issued BEFORE the entry was removed", async () => {
+    const { studio, entryId, token } = await seedGranted("admit-removed-1");
+
+    const removed = await adminQuery(
+      `select public.remove_new_client_waitlist_entry($1,$2,$3) as r`,
+      [studio.studioId, entryId, studio.userId],
+    );
+    expect(removed.rows[0].r).toBe("removed");
+
+    // The grant itself is still perfectly valid on its own columns — which is
+    // exactly why the entry's lifecycle had to join the predicate.
+    const live = await adminQuery(
+      `select count(*)::int as n from public.new_client_waitlist_preference_grants
+        where entry_id = $1 and redeemed_at is null and revoked_at is null
+          and expires_at > now()`,
+      [entryId],
+    );
+    expect(live.rows[0].n, "the grant is still live by its own columns").toBe(1);
+
+    const res = await adminQuery(`select public.redeem_waitlist_preference_grant($1,'weekends') as r`, [
+      token,
+    ]);
+    expect(res.rows[0].r).toBe("refused");
+
+    const pref = await adminQuery(
+      `select count(*)::int as n from public.new_client_waitlist_entry_preferences where entry_id = $1`,
+      [entryId],
+    );
+    expect(pref.rows[0].n, "a removed prospect must gain no preference").toBe(0);
+
+    const stamped = await adminQuery(
+      `select count(*)::int as n from public.new_client_waitlist_preference_grants
+        where entry_id = $1 and redeemed_at is not null`,
+      [entryId],
+    );
+    expect(stamped.rows[0].n, "a refused redemption must not stamp the grant").toBe(0);
+  });
+
+  it("cannot OVERWRITE an existing preference after removal either", async () => {
+    // The insert path and the update path are separate branches. Proving only
+    // the insert would leave the more damaging one — rewriting an answer that
+    // is already on file — unproved.
+    const { studio, entryId, token } = await seedGranted("admit-removed-2");
+    await adminQuery(
+      `select public.set_waitlist_entry_availability($1,$2,$3,'weekdays') as r`,
+      [studio.studioId, entryId, studio.userId],
+    );
+    const before = await adminQuery(
+      `select preference, stated_at, confirmed_at, source
+         from public.new_client_waitlist_entry_preferences where entry_id = $1`,
+      [entryId],
+    );
+    expect(before.rows[0].preference).toBe("weekdays");
+
+    await adminQuery(`select public.remove_new_client_waitlist_entry($1,$2,$3) as r`, [
+      studio.studioId,
+      entryId,
+      studio.userId,
+    ]);
+
+    const res = await adminQuery(`select public.redeem_waitlist_preference_grant($1,'weekends') as r`, [
+      token,
+    ]);
+    expect(res.rows[0].r).toBe("refused");
+
+    const after = await adminQuery(
+      `select preference, stated_at, confirmed_at, source
+         from public.new_client_waitlist_entry_preferences where entry_id = $1`,
+      [entryId],
+    );
+    expect(after.rows[0], "the stored answer must be byte-identical").toEqual(before.rows[0]);
+  });
+
+  it("refuses a CONVERTED entry too — the other state with no way out", async () => {
+    // `removed` and `converted` are the only two statuses 0188's transition
+    // guard gives no outgoing edge. The rule is derived from that table, so it
+    // must hold for both rather than naming one and hoping.
+    const { studio, entryId, token } = await seedGranted("admit-converted");
+    // Reach `converted` the way the lifecycle itself does — waiting -> claimed
+    // -> invited -> converted — because the cycle-evidence CHECK demands the
+    // whole trail, including a REAL converted_client_id. No shortcut exists,
+    // which is the point: the state is genuine, not manufactured.
+    const client = await adminQuery(
+      `insert into public.clients (studio_id, name) values ($1,'Converted prospect') returning id`,
+      [studio.studioId],
+    );
+    await adminQuery(
+      `update public.new_client_waitlist_entries
+          set status = 'claimed', claimed_at = now(),
+              claimed_by_practitioner_id = (select id from public.practitioners
+                                             where studio_id = $2 and user_id = $3 limit 1)
+        where id = $1`,
+      [entryId, studio.studioId, studio.userId],
+    );
+    await adminQuery(
+      `update public.new_client_waitlist_entries
+          set status = 'invited', invited_at = now() where id = $1`,
+      [entryId],
+    );
+    await adminQuery(
+      `update public.new_client_waitlist_entries
+          set status = 'converted', converted_at = now(), converted_client_id = $2
+        where id = $1`,
+      [entryId, client.rows[0].id],
+    );
+    const reached = await adminQuery(
+      `select status from public.new_client_waitlist_entries where id = $1`,
+      [entryId],
+    );
+    expect(reached.rows[0].status, "the fixture must genuinely be converted").toBe("converted");
+
+    const res = await adminQuery(`select public.redeem_waitlist_preference_grant($1,'weekends') as r`, [
+      token,
+    ]);
+    expect(res.rows[0].r).toBe("refused");
+
+    const pref = await adminQuery(
+      `select count(*)::int as n from public.new_client_waitlist_entry_preferences where entry_id = $1`,
+      [entryId],
+    );
+    expect(pref.rows[0].n).toBe(0);
+  });
+
+  it("still accepts a link on an entry that is merely CLAIMED or INVITED", async () => {
+    // The control, and the whole reason the rule is terminal-only. A claimed or
+    // invited prospect is still on the list and can still be released back to
+    // it, so their availability still means something. Without this the tests
+    // above would pass against a command that refuses every non-waiting entry.
+    for (const [label, status] of [
+      ["admit-claimed", "claimed"],
+      ["admit-invited", "invited"],
+    ] as const) {
+      const { studio, entryId, token } = await seedGranted(label);
+      // waiting -> claimed is the only legal first move; `invited` is reached
+      // through it, never directly.
+      await adminQuery(
+        `update public.new_client_waitlist_entries
+            set status = 'claimed', claimed_at = now(),
+                claimed_by_practitioner_id = (select id from public.practitioners
+                                               where studio_id = $2 and user_id = $3 limit 1)
+          where id = $1`,
+        [entryId, studio.studioId, studio.userId],
+      );
+      if (status === "invited") {
+        await adminQuery(
+          `update public.new_client_waitlist_entries
+              set status = 'invited', invited_at = now() where id = $1`,
+          [entryId],
+        );
+      }
+      const reached = await adminQuery(
+        `select status from public.new_client_waitlist_entries where id = $1`,
+        [entryId],
+      );
+      expect(reached.rows[0].status, `the fixture must genuinely be ${status}`).toBe(status);
+
+      const res = await adminQuery(
+        `select public.redeem_waitlist_preference_grant($1,'weekends') as r`,
+        [token],
+      );
+      expect(res.rows[0].r, `a ${status} entry is still on the list`).toBe("accepted");
+    }
+  });
+
+  it("still accepts the ordinary WAITING redemption", async () => {
+    const { entryId, token } = await seedGranted("admit-eligible");
+    const res = await adminQuery(`select public.redeem_waitlist_preference_grant($1,'both') as r`, [
+      token,
+    ]);
+    expect(res.rows[0].r).toBe("accepted");
+    const pref = await adminQuery(
+      `select preference, source from public.new_client_waitlist_entry_preferences where entry_id = $1`,
+      [entryId],
+    );
+    expect(pref.rows[0]).toEqual({ preference: "both", source: "prospect_link" });
+  });
+});
+
+describe("the grant's issuance instant is the post-lock mint, not transaction start", () => {
+  // THE DEFECT: `issued_at` carries `default now()`, and now() is TRANSACTION
+  // START, while expires_at is derived from the post-lock clock_timestamp() in
+  // v_now. Letting the default fill the column stamps an audit time that can
+  // predate the actual mint, and makes expires_at - issued_at LONGER than the
+  // TTL the caller asked for.
+  it("does not leak the transaction-start clock into issuance", async () => {
+    const studio = await seedStudio("grant-issued-at");
+    const entry = await adminQuery(
+      `select * from public.create_practitioner_waitlist_entry($1,$2,'P',$3,null,null)`,
+      [studio.studioId, studio.userId, uniqueEmail("grant-issued-at")],
+    );
+    const entryId = entry.rows[0].entry_id as string;
+
+    const client = new Client({ connectionString: resolveLocalDbUrl() });
+    await client.connect();
+    try {
+      // A DELIBERATELY OLDER TRANSACTION. now() freezes here; clock_timestamp()
+      // does not. The dwell is load-bearing: without a measurable gap between
+      // the two clocks the defect and the repair are indistinguishable.
+      await client.query("begin");
+      const started = await client.query(`select now() as tx_start`);
+      const txStart = started.rows[0].tx_start as Date;
+      await new Promise((r) => setTimeout(r, 2_000));
+
+      const issued = await client.query(
+        `select * from public.issue_waitlist_preference_grant($1,$2,$3,24)`,
+        [studio.studioId, entryId, studio.userId],
+      );
+      expect(issued.rows[0].result).toBe("issued");
+
+      // COMPARED IN SECONDS, NOT AS AN INTERVAL. PostgreSQL normalises
+      // `interval '24 hours'` to `1 day`, so an object comparison would be
+      // asserting the driver's formatting rather than the arithmetic.
+      const row = await client.query(
+        `select issued_at,
+                extract(epoch from (expires_at - issued_at))    as ttl_seconds,
+                extract(epoch from (issued_at - $2::timestamptz)) as after_tx_start
+           from public.new_client_waitlist_preference_grants
+          where entry_id = $1`,
+        [entryId, txStart],
+      );
+      await client.query("commit");
+
+      // Exactly the requested TTL — not "about" it. Both stamps now come from
+      // the same v_now, so this holds by construction rather than by two
+      // clocks agreeing.
+      expect(Number(row.rows[0].ttl_seconds), "expires_at - issued_at must be the requested TTL")
+        .toBe(24 * 3_600);
+
+      // And the mint is strictly AFTER transaction start, by more than the
+      // dwell — which is precisely what the column default could not say.
+      expect(
+        Number(row.rows[0].after_tx_start),
+        "issued_at must be the post-lock mint, not transaction start",
+      ).toBeGreaterThan(1.5);
+      expect(row.rows[0].issued_at.getTime()).toBeGreaterThan(txStart.getTime());
+    } finally {
+      await client.end();
+    }
+  });
+
+  it("leaves the TTL bounds themselves unchanged", async () => {
+    // The clamp is a separate rule from the clock it is measured with, and it
+    // must not have moved.
+    const studio = await seedStudio("grant-ttl-bounds");
+    const mk = async (label: string) => {
+      const e = await adminQuery(
+        `select * from public.create_practitioner_waitlist_entry($1,$2,'P',$3,null,null)`,
+        [studio.studioId, studio.userId, uniqueEmail(label)],
+      );
+      return e.rows[0].entry_id as string;
+    };
+    for (const [label, ttl] of [["ttl-1", 1], ["ttl-168", 168]] as const) {
+      const entryId = await mk(label);
+      const issued = await adminQuery(
+        `select * from public.issue_waitlist_preference_grant($1,$2,$3,$4)`,
+        [studio.studioId, entryId, studio.userId, ttl],
+      );
+      expect(issued.rows[0].result).toBe("issued");
+      const row = await adminQuery(
+        `select extract(epoch from (expires_at - issued_at)) as ttl_seconds
+           from public.new_client_waitlist_preference_grants where entry_id = $1`,
+        [entryId],
+      );
+      expect(Number(row.rows[0].ttl_seconds)).toBe(ttl * 3_600);
+    }
+  });
+});
+
 describe("issuing a grant cannot deadlock against admission", () => {
   // THE DEFECT: inserting a grant takes an implicit FK key-share lock on
   // `studios`, so locking only the entry gave issue_ a real order of

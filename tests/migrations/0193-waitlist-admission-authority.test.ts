@@ -299,6 +299,35 @@ describe("the ordered claim keeps what the FIFO claim owns", () => {
   });
 });
 
+describe("the prospect link is bound to a live entry and to one mint instant", () => {
+  // Static companions to the runtime proofs in
+  // tests/db/waitlist-admission-authority.db.test.ts. They pin the SHAPE of two
+  // repairs whose absence is invisible in ordinary use: the behaviour is proved
+  // there, the text is pinned here so a future edit cannot quietly drop either.
+
+  it("re-resolves the grant against the entry's lifecycle, not the grant alone", () => {
+    // Removal leaves the grant's own columns valid, so a predicate reading only
+    // those columns kept honouring a link on a prospect who had been taken off
+    // the list. `removed` and `converted` are the only statuses 0188's
+    // transition guard gives no outgoing edge.
+    expect(CODE).toContain("join public.new_client_waitlist_entries e");
+    expect(CODE).toContain("and e.status not in ('removed', 'converted')");
+  });
+
+  it("locks the grant row only, leaving the entry lock to the canonical order", () => {
+    expect(CODE).toContain("for update of g;");
+  });
+
+  it("writes issued_at from the post-lock mint rather than the column default", () => {
+    // `default now()` is transaction start; expires_at comes from the post-lock
+    // clock_timestamp() in v_now. Defaulting the column makes
+    // expires_at - issued_at longer than the TTL that was actually granted.
+    expect(CODE).toContain("(studio_id, entry_id, token_hash, issued_at, expires_at,");
+    expect(CODE).toContain("       issued_by_practitioner_id)");
+    expect(CODE).toContain("values (p_studio_id, p_entry_id, v_hash, v_now, v_expires, v_actor);");
+  });
+});
+
 describe("every command re-derives owner authority in the database", () => {
   it.each(COMMANDS.filter(([fn]) => !fn.includes("redeem")))(
     "%s resolves the actor through new_client_waitlist_resolve_owner",
