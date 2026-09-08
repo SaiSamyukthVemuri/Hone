@@ -174,7 +174,14 @@ export type ProofNotice =
   /** The capability lapsed or did not match. Request a fresh code. */
   | "proof_lapsed"
   /** In doubt: the decline may or may not have reached the studio. */
-  | "decline_unavailable";
+  | "decline_unavailable"
+  /**
+   * Proof succeeded but this server could not keep it, so the recipient has to
+   * start the exchange again. Distinct from `decline_unavailable` because it is
+   * not about declining, and distinct from the `unavailable` STAGE because that
+   * one says "we couldn't send your code" -- here the code arrived and worked.
+   */
+  | "proof_not_retained";
 
 export type InvitationClosedReason =
   | "expired"

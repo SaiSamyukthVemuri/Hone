@@ -43,7 +43,11 @@ import {
   type ProofStage,
 } from "@/lib/waitlist/invitation-offer";
 import { fetchPublicSlotsAction } from "@/app/book/[slug]/actions";
-import { localDateString, localTimeString12h, utcInstantFromLocal } from "@/lib/booking/tz";
+import {
+  localDateString,
+  localTimeString12h,
+  utcInstantFromLocal,
+} from "@/lib/booking/tz";
 import { limitPublicSlots, RATE_LIMIT_MESSAGE } from "@/lib/rate-limit/public";
 
 // ---------------------------------------------------------------------------
@@ -85,8 +89,29 @@ function proofSecret(): string | null {
   return typeof secret === "string" && secret.length > 0 ? secret : null;
 }
 
-function bindingFor(rawToken: string, capability: string, secret: string): string {
-  const bound = `${createHash("sha256").update(rawToken, "utf8").digest("hex")}.${capability}`;
+// P3-A. The DATABASE's own expiry travels in the signed value.
+//
+// A valid signature proves only that we minted this cookie for this invitation.
+// It says nothing about whether the capability is still live, so a reload inside
+// the cookie's 30-minute max-age rendered the slot list as proven after the
+// capability had already lapsed at the database. The recipient then picked a
+// time and was bounced.
+//
+// `complete_waitlist_invitation_proof` returns the authoritative `expires_at`,
+// so that value is carried and signed alongside the capability rather than a
+// lifetime being re-invented here. It is covered by the same HMAC, so it cannot
+// be edited to buy more time.
+function bindingFor(
+  rawToken: string,
+  capability: string,
+  expiresAtMs: string,
+  secret: string,
+): string {
+  const bound = [
+    createHash("sha256").update(rawToken, "utf8").digest("hex"),
+    capability,
+    expiresAtMs,
+  ].join(".");
   return createHmac("sha256", secret).update(bound).digest("hex");
 }
 
@@ -98,28 +123,58 @@ async function readCapability(rawToken: string): Promise<string | null> {
   const jar = await cookies();
   const v = jar.get(CAPABILITY_COOKIE)?.value;
   if (typeof v !== "string") return null;
-  const [capability, signature] = v.split(".");
-  if (!capability || !signature) return null;
+  // Three dot-separated fields. The expiry is EPOCH MILLISECONDS, not an ISO
+  // string: an ISO timestamp carries its own dot before the milliseconds, so it
+  // would split into four parts and never parse.
+  const [capability, expiresAtMs, signature] = v.split(".");
+  if (!capability || !expiresAtMs || !signature) return null;
   if (!/^[a-f0-9]{64}$/.test(capability)) return null;
-  const expected = bindingFor(rawToken, capability, secret);
+  if (!/^\d+$/.test(expiresAtMs)) return null;
+  const expected = bindingFor(rawToken, capability, expiresAtMs, secret);
   if (signature.length !== expected.length) return null;
-  if (!timingSafeEqual(Buffer.from(signature, "utf8"), Buffer.from(expected, "utf8"))) {
+  if (
+    !timingSafeEqual(
+      Buffer.from(signature, "utf8"),
+      Buffer.from(expected, "utf8"),
+    )
+  ) {
     return null;
   }
+  // Signed, bound -- and still live. An unreadable timestamp is treated as
+  // lapsed rather than as permission.
+  const expiry = Number(expiresAtMs);
+  if (!Number.isFinite(expiry) || expiry <= Date.now()) return null;
   return capability;
 }
 
-async function writeCapability(rawToken: string, capability: string): Promise<void> {
+async function writeCapability(
+  rawToken: string,
+  capability: string,
+  expiresAt: string,
+): Promise<boolean> {
   const secret = proofSecret();
-  if (!secret) return;
+  // P3-B. Report the failure instead of swallowing it. Returning silently left
+  // the caller free to say "proven" while no cookie existed, which looped the
+  // recipient between a slot list and "we need proof" forever.
+  if (!secret) return false;
+  // The database's own expiry, as epoch millis so it survives the dot-separated
+  // encoding. An expiry we cannot read is not written at all.
+  const expiryMs = Date.parse(expiresAt);
+  if (!Number.isFinite(expiryMs)) return false;
+  const expiresAtMs = String(expiryMs);
   const jar = await cookies();
-  jar.set(CAPABILITY_COOKIE, `${capability}.${bindingFor(rawToken, capability, secret)}`, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    path: "/invitation",
-    maxAge: CAPABILITY_COOKIE_MAX_AGE_SECONDS,
-  });
+  jar.set(
+    CAPABILITY_COOKIE,
+    `${capability}.${expiresAtMs}.${bindingFor(rawToken, capability, expiresAtMs, secret)}`,
+    {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      path: "/invitation",
+      maxAge: CAPABILITY_COOKIE_MAX_AGE_SECONDS,
+    },
+  );
+  return true;
 }
 
 async function clearCapability(): Promise<void> {
@@ -216,8 +271,14 @@ async function loadStudioContext(
 }
 
 /** Resolve plus presentation, or a view state describing why we cannot. */
-async function loadContext(rawToken: string): Promise<
-  | { ok: true; resolve: Extract<ResolveOutcome, { kind: "live" }>; studio: StudioContext }
+async function loadContext(
+  rawToken: string,
+): Promise<
+  | {
+      ok: true;
+      resolve: Extract<ResolveOutcome, { kind: "live" }>;
+      studio: StudioContext;
+    }
   | { ok: false; state: InvitationViewState }
 > {
   const resolved = await resolveInvitation(rawToken);
@@ -302,7 +363,13 @@ async function offeredDays(
     // `utcInstantFromLocal` is the shared helper the rest of booking uses, and it
     // already handles a naive instant and its correction straddling a DST change.
     const noon = utcInstantFromLocal(cursor, "12:00", tz);
-    if (slotWithinScope(scope, tz, { start: noon.toISOString(), end: noon.toISOString(), startLabel: "" })) {
+    if (
+      slotWithinScope(scope, tz, {
+        start: noon.toISOString(),
+        end: noon.toISOString(),
+        startLabel: "",
+      })
+    ) {
       dates.push(cursor);
     }
     const next = new Date(`${cursor}T12:00:00Z`);
@@ -314,9 +381,15 @@ async function offeredDays(
   const BATCH = 7;
   for (let i = 0; i < dates.length; i += BATCH) {
     const batch = await Promise.all(
-      dates.slice(i, i + BATCH).map((date) =>
-        fetchPublicSlotsAction({ slug: studio.slug, serviceId: scope.serviceId, date }),
-      ),
+      dates
+        .slice(i, i + BATCH)
+        .map((date) =>
+          fetchPublicSlotsAction({
+            slug: studio.slug,
+            serviceId: scope.serviceId,
+            date,
+          }),
+        ),
     );
     for (const res of batch) {
       if (!res.ok) continue;
@@ -347,7 +420,9 @@ async function offerState(
   const proven = proof.kind === "proven";
   const [slots, identity] = await Promise.all([
     proven
-      ? offeredDays(resolve, studio).then((days) => days.flatMap((d) => d.slots))
+      ? offeredDays(resolve, studio).then((days) =>
+          days.flatMap((d) => d.slots),
+        )
       : Promise.resolve([]),
     proven
       ? invitedIdentity(resolve.invitation.entryId, resolve.invitation.studioId)
@@ -382,7 +457,11 @@ export async function loadInvitationAction(
   // database still re-checks it at the mutation, so trusting it for RENDERING
   // only cannot authorise anything.
   const proven = (await readCapability(rawToken)) !== null;
-  return offerState(ctx.resolve, ctx.studio, proven ? { kind: "proven" } : { kind: "required" });
+  return offerState(
+    ctx.resolve,
+    ctx.studio,
+    proven ? { kind: "proven" } : { kind: "required" },
+  );
 }
 
 /**
@@ -392,9 +471,17 @@ export async function loadInvitationAction(
 export async function requestInvitationProofAction(
   rawToken: string,
 ): Promise<InvitationViewState> {
-  const gate = await limitPublicSlots({ headers: await headers(), slug: "invitation-proof" });
+  const gate = await limitPublicSlots({
+    headers: await headers(),
+    slug: "invitation-proof",
+  });
   if (!gate.allowed) {
-    return { kind: "proof", presentation: PLACEHOLDER, windowDescription: RATE_LIMIT_MESSAGE, stage: { kind: "unavailable", retryable: true } };
+    return {
+      kind: "proof",
+      presentation: PLACEHOLDER,
+      windowDescription: RATE_LIMIT_MESSAGE,
+      stage: { kind: "unavailable", retryable: true },
+    };
   }
   const ctx = await loadContext(rawToken);
   if (!ctx.ok) return ctx.state;
@@ -427,12 +514,38 @@ export async function submitInvitationProofAction(
   const ctx = await loadContext(rawToken);
   if (!ctx.ok) return ctx.state;
 
-  const completed = await completeRecipientProof(rawToken, code.trim().toLowerCase());
+  const completed = await completeRecipientProof(
+    rawToken,
+    code.trim().toLowerCase(),
+  );
   if (completed.kind === "verified") {
-    await writeCapability(rawToken, completed.rawCapability);
+    // P3-B. Only claim `proven` if the capability was actually retained. It used
+    // to be claimed unconditionally, so a server with no signing secret painted
+    // the slot list, then refused every Book for want of a cookie it had never
+    // written -- an unexplained loop with no way out.
+    const kept = await writeCapability(
+      rawToken,
+      completed.rawCapability,
+      completed.expiresAt,
+    );
+    if (!kept) {
+      return deriveInvitationViewState({
+        resolve: ctx.resolve,
+        presentation: ctx.studio.presentation,
+        proof: { kind: "required" },
+        slots: [],
+        booked: null,
+        declined: false,
+        proofNotice: "proof_not_retained",
+      });
+    }
     return offerState(ctx.resolve, ctx.studio, { kind: "proven" });
   }
-  return offerState(ctx.resolve, ctx.studio, proofStageFromComplete(completed, previous));
+  return offerState(
+    ctx.resolve,
+    ctx.studio,
+    proofStageFromComplete(completed, previous),
+  );
 }
 
 /** Decline. Requires the capability; the link alone cannot reach it. */
@@ -497,7 +610,8 @@ export async function bookInvitationSlotAction(
     return offerState(ctx.resolve, ctx.studio, { kind: "required" });
   }
 
-  const { publicBookAppointmentAction } = await import("@/app/book/[slug]/actions");
+  const { publicBookAppointmentAction } =
+    await import("@/app/book/[slug]/actions");
   const fd = new FormData();
   fd.set("slug", ctx.studio.slug);
   fd.set("service_id", ctx.resolve.invitation.scope.serviceId);
@@ -527,7 +641,8 @@ export async function bookInvitationSlotAction(
   // overwrite it on the client record this booking creates. A typed number is
   // read ONLY where the entry has none, which is an ordinary case because the
   // join form makes phone optional.
-  const phone = invited.phone ?? (typeof typedPhone === "string" ? typedPhone.trim() : "");
+  const phone =
+    invited.phone ?? (typeof typedPhone === "string" ? typedPhone.trim() : "");
   if (!phone) {
     // Fail BEFORE the booking action, so the recipient is asked for the number
     // on the offer they are already looking at rather than being handed the
@@ -609,7 +724,12 @@ export async function bookInvitationSlotAction(
   }
 
   // Every other refusal leaves the offer usable, so it is shown WITH the reason.
-  return offerState(ctx.resolve, ctx.studio, { kind: "proven" }, bookingRefusalFor(booked));
+  return offerState(
+    ctx.resolve,
+    ctx.studio,
+    { kind: "proven" },
+    bookingRefusalFor(booked),
+  );
 }
 
 /**
@@ -619,7 +739,10 @@ export async function bookInvitationSlotAction(
  * terminal state, and returning it here would put "your invitation has been
  * used" above live, selectable times.
  */
-function bookingRefusalFor(result: { ok: false; code?: string }): BookingRefusal {
+function bookingRefusalFor(result: {
+  ok: false;
+  code?: string;
+}): BookingRefusal {
   switch (result.code) {
     case "slot_taken":
       return "slot_taken";

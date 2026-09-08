@@ -137,6 +137,8 @@ export function InvitationScreen({
 const PROOF_NOTICE_COPY: Record<ProofNotice, string> = {
   proof_lapsed: "We couldn’t confirm it was you. Request a new code and try again.",
   decline_unavailable: "We couldn’t complete that just now. Please try again in a moment.",
+  proof_not_retained:
+    "Your code was correct, but we couldn’t keep you signed in. Please request a new code.",
 };
 
 const BOOKING_REFUSAL_COPY: Record<BookingRefusal, string> = {

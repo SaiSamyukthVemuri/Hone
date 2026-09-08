@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHash, createHmac } from "node:crypto";
 
 // WAIT-03 B3 — the recipient's server actions.
@@ -23,12 +23,23 @@ process.env.APPOINTMENT_SIGNING_SECRET =
 const cookieJar = new Map<string, string>();
 
 /** The cookie value the action itself would write: capability + its binding. */
-function signedCapability(token: string, capability: string): string {
-  const bound = `${createHash("sha256").update(token, "utf8").digest("hex")}.${capability}`;
+function signedCapability(
+  token: string,
+  capability: string,
+  // Default well inside the database's 30 minutes; tests that care pass their own.
+  expiresAt: string = new Date(Date.now() + 20 * 60_000).toISOString(),
+): string {
+  // Epoch millis, matching the action: an ISO string carries its own dot.
+  const ms = String(Date.parse(expiresAt));
+  const bound = [
+    createHash("sha256").update(token, "utf8").digest("hex"),
+    capability,
+    ms,
+  ].join(".");
   const sig = createHmac("sha256", process.env.APPOINTMENT_SIGNING_SECRET as string)
     .update(bound)
     .digest("hex");
-  return `${capability}.${sig}`;
+  return `${capability}.${ms}.${sig}`;
 }
 vi.mock("next/headers", () => ({
   cookies: async () => ({
@@ -293,7 +304,10 @@ describe("secrets never cross the action boundary", () => {
     expect(strings).not.toContain(CHALLENGE_ID);
     // The capability went to an httpOnly cookie instead -- signed and bound to
     // this invitation, so the stored value is not the bare credential either.
-    expect(cookieJar.get("wl_proof_capability")).toBe(signedCapability(TOKEN, CAPABILITY));
+    expect(cookieJar.get("wl_proof_capability")).toBe(
+      // Signed over the DATABASE's expiry, which is what the command returned.
+      signedCapability(TOKEN, CAPABILITY, "2026-10-07T12:30:00Z"),
+    );
   });
 
   it("a requested code returns neither the code nor its challenge id", async () => {
@@ -613,5 +627,86 @@ describe("P2-D — the day filter resolves against the studio's zone", () => {
     const out = await loadInvitationAction(TOKEN);
     if (out.kind !== "offer") throw new Error("unreachable");
     expect(out.days.length).toBeGreaterThan(0);
+  });
+});
+
+// P3-A. A valid signature proves only that WE minted the cookie for THIS
+// invitation. It said nothing about whether the capability was still live, so a
+// reload inside the cookie's max-age rendered the slot list as proven after the
+// capability had lapsed at the database.
+describe("P3-A — a lapsed capability stops reading as proven", () => {
+  it("an EXPIRED capability does not unlock the times", async () => {
+    const past = new Date(Date.now() - 60_000).toISOString();
+    cookieJar.set("wl_proof_capability", signedCapability(TOKEN, CAPABILITY, past));
+    expect((await loadInvitationAction(TOKEN)).kind).toBe("proof");
+  });
+
+  it("an expired capability cannot book either", async () => {
+    const past = new Date(Date.now() - 60_000).toISOString();
+    cookieJar.set("wl_proof_capability", signedCapability(TOKEN, CAPABILITY, past));
+    const out = await bookInvitationSlotAction(TOKEN, "2026-10-07T14:00:00.000Z");
+    expect(publicBookAppointmentAction).not.toHaveBeenCalled();
+    expect(out.kind).toBe("proof");
+  });
+
+  it("a live capability still works", async () => {
+    cookieJar.set("wl_proof_capability", signedCapability(TOKEN, CAPABILITY));
+    expect((await loadInvitationAction(TOKEN)).kind).toBe("offer");
+  });
+
+  it("the expiry is covered by the signature — editing it buys no time", async () => {
+    const live = new Date(Date.now() + 20 * 60_000).toISOString();
+    const future = new Date(Date.now() + 9_000_000).toISOString();
+    const [cap, , sig] = signedCapability(TOKEN, CAPABILITY, live).split(".");
+    // Same capability, same signature, a later expiry pasted in.
+    cookieJar.set("wl_proof_capability", `${cap}.${future}.${sig}`);
+    expect((await loadInvitationAction(TOKEN)).kind).toBe("proof");
+  });
+
+  it("an unreadable expiry is treated as lapsed, not as permission", async () => {
+    // A signature over an unparseable expiry, assembled by hand.
+    const badMs = "not-a-date";
+    const bound = [createHash("sha256").update(TOKEN, "utf8").digest("hex"), CAPABILITY, badMs].join(".");
+    const sig = createHmac("sha256", process.env.APPOINTMENT_SIGNING_SECRET as string).update(bound).digest("hex");
+    cookieJar.set("wl_proof_capability", `${CAPABILITY}.${badMs}.${sig}`);
+    expect((await loadInvitationAction(TOKEN)).kind).toBe("proof");
+  });
+
+  it("stores the database's own expiry, not one invented here", async () => {
+    const dbExpiry = "2099-01-01T00:00:00.000Z";
+    completeRecipientProof.mockResolvedValue({
+      kind: "verified", rawCapability: CAPABILITY, expiresAt: dbExpiry,
+    });
+    await submitInvitationProofAction(TOKEN, CODE, { maskedContact: "c•••@e.test", expiresAt: "x" });
+    // Stored as epoch millis, but it is the DATABASE's instant, not a local one.
+    expect(cookieJar.get("wl_proof_capability")).toContain(String(Date.parse(dbExpiry)));
+  });
+});
+
+// P3-B. Proof succeeded but the capability could not be kept; the action used to
+// claim `proven` anyway and then refuse every Book for want of a cookie it had
+// never written.
+describe("P3-B — proof is not claimed when it cannot be retained", () => {
+  const REAL = process.env.APPOINTMENT_SIGNING_SECRET;
+  afterEach(() => { process.env.APPOINTMENT_SIGNING_SECRET = REAL; });
+
+  it("says so instead of painting an unusable slot list", async () => {
+    delete process.env.APPOINTMENT_SIGNING_SECRET;
+    completeRecipientProof.mockResolvedValue({
+      kind: "verified", rawCapability: CAPABILITY, expiresAt: new Date(Date.now() + 600_000).toISOString(),
+    });
+    const out = await submitInvitationProofAction(TOKEN, CODE, { maskedContact: "c•••@e.test", expiresAt: "x" });
+    expect(out.kind, "an unusable offer must not be rendered as proven").toBe("proof");
+    if (out.kind !== "proof") throw new Error("unreachable");
+    expect(out.notice).toBe("proof_not_retained");
+    expect(cookieJar.has("wl_proof_capability")).toBe(false);
+  });
+
+  it("with the secret present, proof still lands normally", async () => {
+    completeRecipientProof.mockResolvedValue({
+      kind: "verified", rawCapability: CAPABILITY, expiresAt: new Date(Date.now() + 600_000).toISOString(),
+    });
+    const out = await submitInvitationProofAction(TOKEN, CODE, { maskedContact: "c•••@e.test", expiresAt: "x" });
+    expect(out.kind).toBe("offer");
   });
 });
