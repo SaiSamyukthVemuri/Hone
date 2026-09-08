@@ -43,11 +43,7 @@ import {
   type ProofStage,
 } from "@/lib/waitlist/invitation-offer";
 import { fetchPublicSlotsAction } from "@/app/book/[slug]/actions";
-import {
-  localDateString,
-  localTimeString12h,
-  utcInstantFromLocal,
-} from "@/lib/booking/tz";
+import { localDateString, localTimeString12h, utcInstantFromLocal } from "@/lib/booking/tz";
 import { limitPublicSlots, RATE_LIMIT_MESSAGE } from "@/lib/rate-limit/public";
 
 // ---------------------------------------------------------------------------
@@ -132,12 +128,7 @@ async function readCapability(rawToken: string): Promise<string | null> {
   if (!/^\d+$/.test(expiresAtMs)) return null;
   const expected = bindingFor(rawToken, capability, expiresAtMs, secret);
   if (signature.length !== expected.length) return null;
-  if (
-    !timingSafeEqual(
-      Buffer.from(signature, "utf8"),
-      Buffer.from(expected, "utf8"),
-    )
-  ) {
+  if (!timingSafeEqual(Buffer.from(signature, "utf8"), Buffer.from(expected, "utf8"))) {
     return null;
   }
   // Signed, bound -- and still live. An unreadable timestamp is treated as
@@ -529,6 +520,12 @@ export async function submitInvitationProofAction(
       completed.expiresAt,
     );
     if (!kept) {
+      // P3-C. Drop any cookie already in the jar before telling the recipient to
+      // start again. `complete_` has just overwritten the invitation's capability
+      // hash, so an older cookie is dead at the database -- but its signature is
+      // still valid and its expiry may not have passed, so a reload would render
+      // it as proven and contradict the message they were just given.
+      await clearCapability();
       return deriveInvitationViewState({
         resolve: ctx.resolve,
         presentation: ctx.studio.presentation,
@@ -610,8 +607,7 @@ export async function bookInvitationSlotAction(
     return offerState(ctx.resolve, ctx.studio, { kind: "required" });
   }
 
-  const { publicBookAppointmentAction } =
-    await import("@/app/book/[slug]/actions");
+  const { publicBookAppointmentAction } = await import("@/app/book/[slug]/actions");
   const fd = new FormData();
   fd.set("slug", ctx.studio.slug);
   fd.set("service_id", ctx.resolve.invitation.scope.serviceId);
@@ -641,8 +637,7 @@ export async function bookInvitationSlotAction(
   // overwrite it on the client record this booking creates. A typed number is
   // read ONLY where the entry has none, which is an ordinary case because the
   // join form makes phone optional.
-  const phone =
-    invited.phone ?? (typeof typedPhone === "string" ? typedPhone.trim() : "");
+  const phone = invited.phone ?? (typeof typedPhone === "string" ? typedPhone.trim() : "");
   if (!phone) {
     // Fail BEFORE the booking action, so the recipient is asked for the number
     // on the offer they are already looking at rather than being handed the

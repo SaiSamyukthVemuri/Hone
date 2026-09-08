@@ -702,6 +702,22 @@ describe("P3-B — proof is not claimed when it cannot be retained", () => {
     expect(cookieJar.has("wl_proof_capability")).toBe(false);
   });
 
+  // P3-C. A cookie already in the jar must not survive the failure: `complete_`
+  // has just overwritten the invitation's capability hash, so the old one is
+  // dead at the database -- but its signature is still valid and its expiry has
+  // not passed, so a reload would render it as proven and contradict the message
+  // the recipient was just given.
+  it("clears a cookie already in the jar rather than leaving a live-looking one", async () => {
+    cookieJar.set("wl_proof_capability", signedCapability(TOKEN, CAPABILITY));
+    delete process.env.APPOINTMENT_SIGNING_SECRET;
+    completeRecipientProof.mockResolvedValue({
+      kind: "verified", rawCapability: CAPABILITY, expiresAt: new Date(Date.now() + 600_000).toISOString(),
+    });
+    const out = await submitInvitationProofAction(TOKEN, CODE, { maskedContact: "c•••@e.test", expiresAt: "x" });
+    expect(out.kind).toBe("proof");
+    expect(cookieJar.has("wl_proof_capability"), "a stale cookie must not survive").toBe(false);
+  });
+
   it("with the secret present, proof still lands normally", async () => {
     completeRecipientProof.mockResolvedValue({
       kind: "verified", rawCapability: CAPABILITY, expiresAt: new Date(Date.now() + 600_000).toISOString(),
