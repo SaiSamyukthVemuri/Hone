@@ -89,7 +89,7 @@ async function seedOffer(label: string, allowance = 10): Promise<Offer> {
 
 async function beginProof(token: string, ttlMinutes = 15) {
   const r = await adminQuery(
-    `select result, raw_challenge, delivery_contact, expires_at, challenge_id
+    `select result, raw_challenge, delivery_contact, expires_at, challenge_id, issued_at
        from public.begin_waitlist_invitation_proof($1, $2)`,
     [token, ttlMinutes],
   );
@@ -1276,5 +1276,91 @@ describe("0192 — decline vs expire keeps the same lock order (P2)", () => {
       }
     }
     expect(deadlocks, `${deadlocks}/${TRIALS} trials deadlocked (40P01)`).toBe(0);
+  });
+});
+
+// WAIT DELIVERY-01 contract delta. The delivery layer has to state when the code
+// was issued, and only the database knows: it is the post-lock instant this
+// command already decided on. These prove the returned value IS that instant
+// rather than a second reading that merely looks close.
+describe("0192 — begin_ returns the authoritative mint instant", () => {
+  it("issued_at comes back on a successful mint", async () => {
+    const inv = await seedOffer("issat1");
+    const r = await beginProof(inv.token, 15);
+    expect(r.result).toBe("challenge_issued");
+    expect(r.issued_at).not.toBeNull();
+  });
+
+  it("expires_at MINUS issued_at is exactly the accepted TTL", async () => {
+    for (const ttl of [1, 15, 30, 60]) {
+      // A fresh offer per TTL: seedOffer keys its studio and email off the label.
+      const inv = await seedOffer(`issat2-${ttl}`);
+      const r = await beginProof(inv.token, ttl);
+      const delta =
+        (new Date(r.expires_at as string).getTime() -
+          new Date(r.issued_at as string).getTime()) / 60000;
+      // EXACT, not approximate. Both come from the same v_now, so any drift
+      // would mean the command read the clock twice.
+      expect(delta, `ttl ${ttl}`).toBe(ttl);
+    }
+  });
+
+  it("issued_at agrees with the expiry the ROW recorded, so it is the post-lock clock", async () => {
+    const inv = await seedOffer("issat3");
+    const r = await beginProof(inv.token, 15);
+    const row = await adminQuery(
+      "select proof_challenge_expires_at from public.new_client_waitlist_invitations where id = $1",
+      [inv.invitationId],
+    );
+    const stored = new Date(row.rows[0].proof_challenge_expires_at as string).getTime();
+    const derived = new Date(r.issued_at as string).getTime() + 15 * 60000;
+    expect(derived).toBe(stored);
+  });
+
+  it("is NULL on every refusal — it is not a field a caller can mine", async () => {
+    const inv = await seedOffer("issat4");
+    for (const [token, ttl] of [
+      ["nope", 15],
+      ["a".repeat(64), 15],
+      [inv.token, 0],
+      [inv.token, 61],
+    ] as Array<[string, number]>) {
+      const r = await beginProof(token, ttl);
+      expect(r.result).not.toBe("challenge_issued");
+      expect(r.issued_at, `${r.result} must carry no instant`).toBeNull();
+      expect(r.challenge_id).toBeNull();
+    }
+  });
+
+  it("a REPLACEMENT challenge returns a new challenge_id AND a new issued_at", async () => {
+    const inv = await seedOffer("issat5");
+    const first = await beginProof(inv.token, 15);
+    const second = await beginProof(inv.token, 15);
+    expect(second.result).toBe("challenge_issued");
+    expect(second.challenge_id).not.toBe(first.challenge_id);
+    expect(new Date(second.issued_at as string).getTime()).toBeGreaterThan(
+      new Date(first.issued_at as string).getTime(),
+    );
+  });
+
+  it("the CAPABILITY clock is untouched — still database-owned 30m, not this TTL", async () => {
+    const inv = await seedOffer("issat6");
+    const begun = await beginProof(inv.token, 15);
+    const done = await completeProof(inv.token, begun.raw_challenge as string);
+    expect(done.result).toBe("verified");
+    const row = await adminQuery(
+      "select proof_capability_expires_at from public.new_client_waitlist_invitations where id = $1",
+      [inv.invitationId],
+    );
+    const minutesFromChallengeMint =
+      (new Date(row.rows[0].proof_capability_expires_at as string).getTime() -
+        new Date(begun.issued_at as string).getTime()) / 60000;
+    // The capability lives 30 minutes from ITS OWN mint, which is strictly later
+    // than the challenge's -- so measured from the challenge instant the gap is
+    // 30 plus the few milliseconds between the two commands. Strictly greater
+    // than 30, and nowhere near the challenge's 15: the two clocks are neither
+    // the same number nor confused with one another.
+    expect(minutesFromChallengeMint).toBeGreaterThan(30);
+    expect(minutesFromChallengeMint).toBeLessThan(31);
   });
 });

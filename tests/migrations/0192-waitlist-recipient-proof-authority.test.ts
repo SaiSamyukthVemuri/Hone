@@ -577,7 +577,9 @@ describe("0192 — the challenge event id is a handle, not a credential", () => 
 
   it("begin_ mints it independently of the secret and RETURNS it", () => {
     expect(CODE).toMatch(/v_cid := gen_random_uuid\(\)/);
-    expect(CODE).toMatch(/challenge_id uuid\)/);
+    // Declared in the return table. The closing paren is no longer adjacent:
+    // the shape gained `issued_at` for the delivery contract.
+    expect(CODE).toMatch(/challenge_id\s+uuid/);
     // NOT derived from the raw challenge — that is the #680 defect class.
     expect(CODE).not.toMatch(/v_cid\s*:=[^;]*v_raw/);
     expect(CODE).not.toMatch(/proof_challenge_id\s*=\s*encode\(/);
@@ -597,5 +599,83 @@ describe("0192 — the challenge event id is a handle, not a credential", () => 
   it("is never granted to a browser role", () => {
     // 0188's grant is a positive list; this column must not be added to it.
     expect(CODE).not.toMatch(/grant select[^;]*proof_challenge_id/);
+  });
+});
+
+// WAIT DELIVERY-01 contract delta — the SOURCE half.
+//
+// A behavioural test can show that `issued_at` looks like the mint instant. Only
+// the text can show it IS the one the expiry was computed from, rather than a
+// second `clock_timestamp()` that would agree on a fast machine and diverge on a
+// slow one. That distinction is exactly what this file exists for.
+describe("0192 — begin_ returns the authoritative mint instant", () => {
+  const BEGIN = CODE.slice(
+    CODE.indexOf("create or replace function public.begin_waitlist_invitation_proof("),
+    CODE.indexOf("create or replace function public.complete_waitlist_invitation_proof("),
+  );
+
+  it("declares issued_at in the return table", () => {
+    expect(BEGIN).toMatch(/issued_at\s+timestamptz/);
+  });
+
+  it("takes NO new argument — the instant is the database's, not the caller's", () => {
+    const args = BEGIN.slice(0, BEGIN.indexOf("returns table"));
+    expect(args).toContain("p_raw_token");
+    expect(args).toContain("p_ttl_minutes");
+    // Nothing resembling a caller-supplied clock.
+    expect(args).not.toMatch(/issued|now|timestamp|clock/i);
+  });
+
+  it("returns the SAME v_now the expiry is computed from, not a second reading", () => {
+    // One assignment only. A second `clock_timestamp()` inside this command
+    // would be a different instant, and `expires_at - issued_at` would stop
+    // being exactly the TTL.
+    const assignments = BEGIN.match(/v_now\s*:=\s*clock_timestamp\(\)/g) ?? [];
+    expect(assignments.length).toBe(1);
+    expect(BEGIN).toMatch(/return query select 'challenge_issued'[\s\S]*?v_cid,\s*v_now;/);
+  });
+
+  it("reads that clock AFTER the row lock", () => {
+    const lockAt = BEGIN.indexOf("for update");
+    const clockAt = BEGIN.indexOf("v_now := clock_timestamp()");
+    expect(lockAt).toBeGreaterThan(-1);
+    expect(clockAt).toBeGreaterThan(lockAt);
+  });
+
+  it("hands the instant back ONLY on challenge_issued", () => {
+    for (const code of ["invalid_input", "invalid_token", "not_live"]) {
+      const line = BEGIN.split("\n").find((l) => l.includes(`'${code}'::text`));
+      expect(line, `${code} must exist`).toBeTruthy();
+      // Six columns, and the last one null: the refusal carries no instant.
+      expect(line as string).toMatch(/null::uuid,\s*null::timestamptz/);
+    }
+  });
+
+  it("stores no new column for it — the instant is returned, not remembered", () => {
+    // The delta must not have added a column to carry this.
+    expect(CODE).not.toMatch(/add column if not exists\s+proof_challenge_issued_at/);
+    expect(CODE).not.toMatch(/proof_challenge_issued_at/);
+  });
+
+  it("leaves the challenge TTL bound and the capability TTL alone", () => {
+    // Challenge: caller-chosen within 1..60. Capability: database-owned 30.
+    expect(BEGIN).toMatch(/p_ttl_minutes\s*<=\s*0\s*or\s*p_ttl_minutes\s*>\s*60/);
+    const COMPLETE = CODE.slice(
+      CODE.indexOf("create or replace function public.complete_waitlist_invitation_proof("),
+    );
+    expect(COMPLETE).toContain("interval '30 minutes'");
+    expect(COMPLETE).not.toContain("p_ttl_minutes");
+  });
+
+  it("still drops the prior signature, because a return shape cannot change in place", () => {
+    expect(CODE).toContain(
+      "drop function if exists public.begin_waitlist_invitation_proof(text, integer);",
+    );
+  });
+
+  it("still persists only the HASH of the challenge, never the raw secret", () => {
+    expect(BEGIN).toMatch(/proof_challenge_hash\s+= encode\(extensions\.digest\(v_raw/);
+    // v_raw is returned to the caller and written nowhere in plaintext.
+    expect(BEGIN).not.toMatch(/set[\s\S]*?=\s*v_raw\b/);
   });
 });

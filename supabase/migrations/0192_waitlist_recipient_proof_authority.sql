@@ -651,16 +651,30 @@ comment on column public.new_client_waitlist_invitations.proof_challenge_sent_to
 --    PIN). Returns the raw challenge and the STORED delivery contact to the
 --    SERVER only.
 -- ---------------------------------------------------------------------
--- The return type gains `challenge_id`, and PostgreSQL cannot change a return
--- type in place, so the prior signature is dropped first. On a fresh chain this
--- is a no-op; on re-apply it is what makes this file idempotent.
+-- The return type gains `challenge_id` and `issued_at`, and PostgreSQL cannot
+-- change a return type in place, so the prior signature is dropped first. On a
+-- fresh chain this is a no-op; on re-apply it is what makes this file idempotent.
+-- The ARGUMENT list is unchanged, so this same drop still names it.
 drop function if exists public.begin_waitlist_invitation_proof(text, integer);
 
 create or replace function public.begin_waitlist_invitation_proof(
   p_raw_token   text,
   p_ttl_minutes integer default 15
 )
-returns table (result text, raw_challenge text, delivery_contact text, expires_at timestamptz, challenge_id uuid)
+returns table (
+  result           text,
+  raw_challenge    text,
+  delivery_contact text,
+  expires_at       timestamptz,
+  challenge_id     uuid,
+  -- THE ACTUAL MINT INSTANT, for a server-side delivery caller that has to say
+  -- when the code was issued. It is the SAME `v_now` the expiry is computed
+  -- from -- the post-lock `clock_timestamp()` this command already decided on --
+  -- so `expires_at - issued_at` is exactly the accepted TTL, by construction
+  -- rather than by two clocks agreeing. No new column stores it: it is the
+  -- decision instant, returned, not remembered.
+  issued_at        timestamptz
+)
 language plpgsql volatile security definer
 set search_path = pg_catalog, pg_temp
 as $$
@@ -669,7 +683,7 @@ declare v_inv uuid; v_entry uuid; v_studio uuid; v_now timestamptz;
 begin
   if p_raw_token is null or p_raw_token !~ '^[a-f0-9]{64}$'
      or p_ttl_minutes is null or p_ttl_minutes <= 0 or p_ttl_minutes > 60 then
-    return query select 'invalid_input'::text, null::text, null::text, null::timestamptz, null::uuid; return;
+    return query select 'invalid_input'::text, null::text, null::text, null::timestamptz, null::uuid, null::timestamptz; return;
   end if;
 
   select i.id, i.entry_id, i.studio_id into v_inv, v_entry, v_studio
@@ -677,7 +691,7 @@ begin
    where i.token_hash = encode(extensions.digest(p_raw_token,'sha256'),'hex')
    for update;
   if v_inv is null then
-    return query select 'invalid_token'::text, null::text, null::text, null::timestamptz, null::uuid; return;
+    return query select 'invalid_token'::text, null::text, null::text, null::timestamptz, null::uuid, null::timestamptz; return;
   end if;
 
   v_now := clock_timestamp();          -- POST-LOCK clock, as 0189 established
@@ -688,7 +702,7 @@ begin
      where i.id = v_inv and i.redeemed_at is null and i.expired_at is null
        and i.released_at is null and i.declined_at is null and i.expires_at > v_now
   ) then
-    return query select 'not_live'::text, null::text, null::text, null::timestamptz, null::uuid; return;
+    return query select 'not_live'::text, null::text, null::text, null::timestamptz, null::uuid, null::timestamptz; return;
   end if;
 
   select e.email into v_email
@@ -715,8 +729,10 @@ begin
          proof_capability_expires_at  = null
    where id = v_inv;
 
+  -- `v_now` here is the same value written into proof_challenge_expires_at
+  -- above, not a second reading of the clock.
   return query select 'challenge_issued'::text, v_raw, v_email,
-                      v_now + make_interval(mins => p_ttl_minutes), v_cid;
+                      v_now + make_interval(mins => p_ttl_minutes), v_cid, v_now;
 end;
 $$;
 
