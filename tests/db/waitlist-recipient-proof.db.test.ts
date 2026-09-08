@@ -1355,12 +1355,17 @@ describe("0192 — begin_ returns the authoritative mint instant", () => {
     const minutesFromChallengeMint =
       (new Date(row.rows[0].proof_capability_expires_at as string).getTime() -
         new Date(begun.issued_at as string).getTime()) / 60000;
-    // The capability lives 30 minutes from ITS OWN mint, which is strictly later
-    // than the challenge's -- so measured from the challenge instant the gap is
-    // 30 plus the few milliseconds between the two commands. Strictly greater
-    // than 30, and nowhere near the challenge's 15: the two clocks are neither
-    // the same number nor confused with one another.
-    expect(minutesFromChallengeMint).toBeGreaterThan(30);
+    // The capability lives 30 minutes from ITS OWN mint, which is at or after the
+    // challenge's -- so measured from the challenge instant the gap is 30 plus
+    // however long elapsed between the two commands.
+    //
+    // The bound is INCLUSIVE deliberately. A strict `> 30` encoded an assumption
+    // about scheduling: it passed locally on a 4ms gap and failed on CI, where
+    // both commands landed inside the same millisecond and the difference came
+    // back as exactly 30. The claim being made is about which TTL governs, not
+    // about how fast the runner is, so it is stated as a band: at least 30, under
+    // 31, and nowhere near the challenge's 15.
+    expect(minutesFromChallengeMint).toBeGreaterThanOrEqual(30);
     expect(minutesFromChallengeMint).toBeLessThan(31);
   });
 });
