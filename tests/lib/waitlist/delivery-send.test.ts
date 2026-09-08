@@ -314,8 +314,10 @@ describe("provider failure classification", () => {
     }
   });
 
-  it("a definite refusal MAY invalidate the challenge", () => {
-    const d = classifyDelivery({ status: "rejected", code: "validation_error" }, "invitation");
+  it("a definite PROOF refusal may invalidate the challenge", () => {
+    // Kind matters here, and did not used to: only a proof send has a challenge
+    // in hand. The invitation case is asserted separately below.
+    const d = classifyDelivery({ status: "rejected", code: "validation_error" }, "recipient_proof");
     expect(d.delivered).toBe("no");
     expect(d.mayInvalidateChallenge).toBe(true);
     expect(d.mayMutateLifecycle).toBe(false);
@@ -1513,5 +1515,48 @@ describe("an ambiguous first attempt is never erased by its retry", () => {
     expect(calls).toHaveLength(2);
     expect(out.disposition.delivered).toBe("unknown");
     expect(out.disposition.terminalScope).toBe("none");
+  });
+});
+
+describe("mayInvalidateChallenge is CHALLENGE-scoped", () => {
+  // REPRODUCED at b7f11732: a definitive refusal on the INVITATION path
+  // returned mayInvalidateChallenge true, even though an invitation send has no
+  // challenge in hand. An integration reading the disposition generically was
+  // handed a licence to invalidate some unrelated challenge because an
+  // invitation email was refused.
+  //
+  // Same kind-blindness that `recovery` and `terminalScope` were already fixed
+  // for — this was the one field left untouched.
+
+  it("an INVITATION refusal never authorizes invalidating a challenge", () => {
+    for (const code of ["validation_error", "invalid_to_address", null, PROVIDER_KEY_BOUND_TO_OTHER_BYTES]) {
+      const d = classifyDelivery({ status: "rejected", code }, "invitation");
+      expect(d.mayInvalidateChallenge, `${code}`).toBe(false);
+    }
+  });
+
+  it("a PROOF refusal still may — nothing was delivered, so it strands nobody", () => {
+    for (const code of ["validation_error", null, PROVIDER_KEY_BOUND_TO_OTHER_BYTES]) {
+      const d = classifyDelivery({ status: "rejected", code }, "recipient_proof");
+      expect(d.mayInvalidateChallenge, `${code}`).toBe(true);
+    }
+  });
+
+  it("no AMBIGUOUS outcome authorizes it, whichever kind", () => {
+    // The other condition, unchanged: an ambiguous send may already be in the
+    // inbox, so retiring the code would strand one about to be typed.
+    for (const kind of ["invitation", "recipient_proof"] as const) {
+      for (const reason of ["timeout", "concurrent", "no_message_id"] as const) {
+        expect(
+          classifyDelivery({ status: "ambiguous", reason }, kind).mayInvalidateChallenge,
+        ).toBe(false);
+      }
+    }
+  });
+
+  it("it is never true where no send was attempted", () => {
+    expect(terminalRefusal("x", "invitation").mayInvalidateChallenge).toBe(false);
+    expect(terminalRefusal("x", "recipient_proof").mayInvalidateChallenge).toBe(false);
+    expect(retryableRefusal("x").mayInvalidateChallenge).toBe(false);
   });
 });

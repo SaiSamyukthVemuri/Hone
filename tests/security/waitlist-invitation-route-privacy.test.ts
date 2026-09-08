@@ -128,6 +128,34 @@ type DiscoveredRoute = {
   publicPrefix: string;
 };
 
+/**
+ * Whether any descendant of this directory is a dynamic segment.
+ *
+ * Used to keep the interceptor refusal narrow: only an interceptor that could
+ * carry a bearer credential is the gate's business. A static one is somebody
+ * else's feature.
+ */
+function containsDynamicSegment(absDir: string): boolean {
+  let entries: string[];
+  try {
+    entries = readdirSync(absDir);
+  } catch {
+    return false;
+  }
+  for (const entry of entries) {
+    const abs = join(absDir, entry);
+    try {
+      if (!statSync(abs).isDirectory()) continue;
+    } catch {
+      continue;
+    }
+    if (isPrivate(entry)) continue;
+    if (isDynamic(entry)) return true;
+    if (containsDynamicSegment(abs)) return true;
+  }
+  return false;
+}
+
 /** A dynamic route whose public URL this walker cannot compute. */
 type UnmappableRoute = { dir: string; why: string };
 
@@ -164,13 +192,22 @@ function discoverDynamicRoutes(): DiscoveredRoute[] {
       const rel = relDir ? `${relDir}/${entry}` : entry;
 
       if (isInterceptingRoute(entry)) {
-        // Renders at the INTERCEPTED path, which is not this directory. Record
-        // it as unmappable and do not descend: any prefix built from here would
-        // be fiction.
-        unmappable.push({
-          dir: `app/${rel}`,
-          why: "intercepting route — it renders at the intercepted path, which this scan cannot resolve",
-        });
+        // Renders at the INTERCEPTED path, which is not this directory, so any
+        // prefix built from here would be fiction and the walker must not
+        // descend normally.
+        //
+        // BUT ONLY REPORT IT IF IT ACTUALLY CARRIES A BEARER-SHAPED SEGMENT.
+        // The first version refused every interceptor on sight, which failed
+        // the gate for a perfectly ordinary static route like
+        // `app/feed/(.)photo/page.tsx` — no dynamic segment, no credential,
+        // nothing this file has any stake in. A guard that blocks work it has
+        // no interest in gets worked around, and then it protects nothing.
+        if (containsDynamicSegment(abs)) {
+          unmappable.push({
+            dir: `app/${rel}`,
+            why: "intercepting route containing a dynamic segment — it renders at the intercepted path, which this scan cannot resolve",
+          });
+        }
         continue;
       }
 
@@ -423,6 +460,21 @@ describe("segment classification — which directories reach the URL", () => {
     expect(isRouteGroup("(.)photo")).toBe(false);
     // And a real group is not an interceptor.
     expect(isInterceptingRoute("(app)")).toBe(false);
+  });
+
+  it("containsDynamicSegment keeps the interceptor refusal narrow", () => {
+    // The gate's business is bearer credentials. A STATIC intercepting route —
+    // app/feed/(.)photo/page.tsx — carries none, and failing it would block a
+    // feature this file has no stake in. A guard that obstructs unrelated work
+    // gets worked around, and then it protects nothing.
+    //
+    // Directories that genuinely exist, so the helper is exercised against real
+    // trees rather than a mock: app/(app)/clients holds [id]; app/demo holds no
+    // dynamic segment at any depth.
+    expect(containsDynamicSegment(join(APP_DIR, "(app)", "clients"))).toBe(true);
+    expect(containsDynamicSegment(join(APP_DIR, "demo"))).toBe(false);
+    // A path that does not exist is not a reason to throw mid-scan.
+    expect(containsDynamicSegment(join(APP_DIR, "no-such-directory"))).toBe(false);
   });
 
   it("a dynamic segment is none of the above", () => {

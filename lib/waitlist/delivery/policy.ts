@@ -522,9 +522,16 @@ export type DeliveryDisposition = {
   terminalScope: TerminalScope;
   /**
    * May the caller invalidate the challenge it just tried to deliver?
-   * Only when the provider definitively refused — an ambiguous send may
-   * already be in the recipient's inbox, and killing it would strand a code
-   * they are about to type.
+   *
+   * TWO conditions, and the second was missing. It requires a definitive
+   * provider refusal — an ambiguous send may already be in the recipient's
+   * inbox, and killing it would strand a code they are about to type — AND it
+   * requires that a challenge was the thing being delivered at all.
+   *
+   * An INVITATION send has no challenge in hand. Returning `true` there handed
+   * an integration reading the disposition generically a licence to invalidate
+   * some unrelated challenge because an invitation email was refused. The field
+   * is challenge-scoped, so on the invitation path it is always false.
    */
   mayInvalidateChallenge: boolean;
   /** Always false. See the note above. */
@@ -627,7 +634,8 @@ export function classifyDelivery(
       recovery: recoveryForKind(kind),
       terminalScope: terminalScopeForKind(kind),
       sameEventRetryAllowed: false,
-      mayInvalidateChallenge: true,
+      // Challenge-scoped, as above: an invitation send has no challenge.
+      mayInvalidateChallenge: kind === "recipient_proof",
       mayMutateLifecycle: false,
       reason: `rejected_${PROVIDER_KEY_BOUND_TO_OTHER_BYTES}`,
     };
@@ -638,8 +646,9 @@ export function classifyDelivery(
     terminalScope: terminalScopeForKind(kind),
     sameEventRetryAllowed: false,
     // A definite refusal: nothing was delivered, so retiring the challenge
-    // strands nobody.
-    mayInvalidateChallenge: true,
+    // strands nobody — but ONLY a proof send has a challenge to retire. An
+    // invitation refusal must not authorize touching one.
+    mayInvalidateChallenge: kind === "recipient_proof",
     mayMutateLifecycle: false,
     reason: outcome.code ? `rejected_${outcome.code}` : "rejected",
   };
