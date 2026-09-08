@@ -99,8 +99,14 @@ vi.mock("@/lib/booking/public-slot-range", () => ({
     (fetchPublicSlotsForDates as (...x: unknown[]) => unknown)(...a),
 }));
 
+/** Which limiter slugs were gated, and whether the gate let them through. */
+const rateLimitCalls: string[] = [];
+const rateLimitAllows = { allowed: true };
 vi.mock("@/lib/rate-limit/public", () => ({
-  limitPublicSlots: async () => ({ allowed: true }),
+  limitPublicSlots: async ({ slug }: { slug: string }) => {
+    rateLimitCalls.push(slug);
+    return { allowed: rateLimitAllows.allowed };
+  },
   RATE_LIMIT_MESSAGE: "rate limited",
 }));
 
@@ -182,6 +188,8 @@ beforeEach(() => {
   // test reading `mock.calls[0]` must see THIS test's first call, not a
   // previous one's.
   fetchPublicSlotsForDates.mockClear();
+  rateLimitCalls.length = 0;
+  rateLimitAllows.allowed = true;
   resolveInvitation.mockResolvedValue(liveResolve());
   fetchPublicSlotsAction.mockResolvedValue({ ok: true, slots: [] });
   entryFixture.phone = "555 0100";
@@ -394,6 +402,42 @@ describe("secrets never cross the action boundary", () => {
     await requestInvitationProofAction(TOKEN);
 
     expect(cookieJar.has("wl_proof_capability")).toBe(true);
+  });
+
+  it("PROOF SUBMISSION IS THROTTLED BEFORE THE FIRST DATABASE READ", async () => {
+    // 0192 bounds a challenge to five wrong GUESSES; it does not bound REQUEST
+    // VOLUME, and the two are different protections. Unlimited submissions drove
+    // indexed lookups on a public endpoint for an invalid token — and, with a
+    // VALID one, kept taking the invitation row's lock past the fifth attempt
+    // merely to be told `too_many_attempts`, contending with the real
+    // recipient's verification or redemption. The counter cannot stop that: it
+    // is consulted only once the row has been reached.
+    rateLimitAllows.allowed = false;
+
+    const out = await submitInvitationProofAction(TOKEN, CODE, {
+      maskedContact: "c•••@example.test",
+      expiresAt: "2026-10-07T12:20:00Z",
+    });
+
+    expect(rateLimitCalls).toContain("invitation-proof-submit");
+    // Refused BEFORE any read: the resolve never ran, so a refusal is free.
+    expect(resolveInvitation).not.toHaveBeenCalled();
+    expect(completeRecipientProof).not.toHaveBeenCalled();
+    expect(out.kind).toBe("proof");
+  });
+
+  it("NON-VACUITY — an allowed submission still reaches the command", async () => {
+    // Without this the assertions above would pass against an action that never
+    // worked at all.
+    completeRecipientProof.mockResolvedValue({ kind: "invalid", remainingAttempts: 4 });
+
+    await submitInvitationProofAction(TOKEN, CODE, {
+      maskedContact: "c•••@example.test",
+      expiresAt: "2026-10-07T12:20:00Z",
+    });
+
+    expect(rateLimitCalls).toContain("invitation-proof-submit");
+    expect(completeRecipientProof).toHaveBeenCalledTimes(1);
   });
 
   it("the first paint carries no invitation identifiers at all", async () => {

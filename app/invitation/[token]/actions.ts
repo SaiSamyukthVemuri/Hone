@@ -570,6 +570,32 @@ export async function submitInvitationProofAction(
   // that mid-exchange loses their place.
   previous: { maskedContact: string; expiresAt: string },
 ): Promise<InvitationViewState> {
+  // THROTTLED BEFORE THE FIRST DATABASE READ, and independently of the
+  // database's own attempt counter.
+  //
+  // 0192 bounds a challenge to five wrong GUESSES. It does not bound REQUEST
+  // VOLUME, and the two are different protections. Without a limiter here an
+  // invalid token drove unlimited indexed lookups on a public endpoint, and —
+  // worse — a caller holding a VALID token could keep submitting past the fifth
+  // attempt, taking the invitation row's lock each time merely to be told
+  // `too_many_attempts`, contending with the legitimate verification or
+  // redemption the real recipient is trying to complete. The attempt counter
+  // cannot stop that, because it is consulted only after the row is reached.
+  //
+  // The gate runs FIRST, so a refusal costs no read at all.
+  const gate = await limitPublicSlots({
+    headers: await headers(),
+    slug: "invitation-proof-submit",
+  });
+  if (!gate.allowed) {
+    return {
+      kind: "proof",
+      presentation: PLACEHOLDER,
+      windowDescription: RATE_LIMIT_MESSAGE,
+      stage: { kind: "unavailable", retryable: true },
+    };
+  }
+
   const ctx = await loadContext(rawToken);
   if (!ctx.ok) return ctx.state;
 
