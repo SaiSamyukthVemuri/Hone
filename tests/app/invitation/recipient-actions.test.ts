@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHash, createHmac } from "node:crypto";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 
 // WAIT-03 B3 — the recipient's server actions.
 //
@@ -206,6 +208,47 @@ beforeEach(() => {
 // stopped at "Please enter a phone number" — with no field anywhere on the
 // invitation surface to enter one. The offer, the proof and the scope were all
 // correct and the journey still could not complete.
+
+// ===========================================================================
+// THE ROUTE MUST BE REACHABLE BY THE PEOPLE IT IS FOR
+// ===========================================================================
+//
+// Every recipient is logged out and has never had an account. The auth
+// middleware allowlists public routes EXPLICITLY, and `/invitation/` was
+// missing — so every recipient was redirected to the practitioner `/login`
+// before the page or any of its actions could run, making the whole feature
+// unreachable by its only audience.
+//
+// It survived eight review rounds and every green CI run, because nothing
+// exercised the route as an anonymous visitor: these tests call the server
+// actions directly, which never touches middleware, and no browser spec opens
+// the URL logged out. A source pin is the cheap guard that would have caught it.
+
+describe("the invitation route clears the anonymous-visitor gate", () => {
+  const MW = readFileSync(
+    path.resolve(__dirname, "../../../lib/supabase/middleware.ts"),
+    "utf8",
+  );
+
+  it("is allowlisted by prefix, so the [token] segment is honoured", () => {
+    expect(MW).toMatch(/pathname\.startsWith\("\/invitation\/"\)/);
+  });
+
+  it("NON-VACUITY — the pin can tell a missing entry from a present one", () => {
+    // A route nobody has allowlisted must NOT match, or the assertion above
+    // would pass for any string at all.
+    expect(MW).not.toMatch(/pathname\.startsWith\("\/not-a-real-route\/"\)/);
+  });
+
+  it("sits with the other token-authenticated public flows", () => {
+    // Same shape as /cancel, /reschedule, /manage, /intake: possession of a
+    // signed or bearer token is what the route itself verifies. Reaching the
+    // page is not authorisation.
+    for (const sibling of ["/cancel/", "/reschedule/", "/manage/", "/intake/"]) {
+      expect(MW.includes(`pathname.startsWith("${sibling}")`), sibling).toBe(true);
+    }
+  });
+});
 
 describe("the booking carries a phone, because the engine requires one", () => {
   it("sends the entry's STORED phone", async () => {

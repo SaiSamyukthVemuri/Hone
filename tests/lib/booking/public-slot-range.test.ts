@@ -62,6 +62,9 @@ vi.mock("@/lib/supabase/admin-server", () => ({
       queries.push({ table, op: "select" });
       const chain: Record<string, unknown> = {};
       const self = () => chain;
+      // The requested page, when the caller paginates. `null` means it asked
+      // for everything in one go — which is the shape that silently truncates.
+      let page: { from: number; to: number } | null = null;
       const settle = () => {
         if (table === "services") {
           return scenario.servicesError
@@ -78,10 +81,25 @@ vi.mock("@/lib/supabase/admin-server", () => ({
         if (table === "studio_blockouts") {
           return { data: scenario.blockouts, error: scenario.blockoutError };
         }
-        return { data: scenario.reservations, error: scenario.reservationError };
+        if (scenario.reservationError) {
+          return { data: null, error: scenario.reservationError };
+        }
+        // POSTGREST'S CAP, MODELLED. A page wider than `max_rows` comes back
+        // clamped, with NO error — the behaviour that made a single unbounded
+        // read invent availability. A paginating caller therefore sees a full
+        // page and asks again; a non-paginating one silently loses the rest.
+        const MAX_ROWS = 1000;
+        const from = page?.from ?? 0;
+        const to = Math.min(page?.to ?? MAX_ROWS - 1, from + MAX_ROWS - 1);
+        return { data: scenario.reservations.slice(from, to + 1), error: null };
       };
       Object.assign(chain, {
         select: self, eq: self, lte: self, gte: self, lt: self, gt: self, is: self,
+        order: self,
+        range: (from: number, to: number) => {
+          page = { from, to };
+          return chain;
+        },
         maybeSingle: async () => settle(),
         then: (r: (v: unknown) => unknown) => Promise.resolve(settle()).then(r),
       });
@@ -249,6 +267,80 @@ describe("the weekday comes from the STUDIO-LOCAL date", () => {
     expect(out.ok).toBe(true);
     if (!out.ok) throw new Error("unreachable");
     expect(out.slots).toHaveLength(0);
+  });
+});
+
+describe("the reservation read is PAGINATED, so it cannot invent availability", () => {
+  it("reads past the 1,000-row Data API cap", async () => {
+    // THE DEFECT THIS PINS. PostgREST clamps a response at `max_rows` (1000)
+    // and sets NO error, so a single unbounded read looked correct while
+    // dropping every conflict past the first thousand. A busy studio needs only
+    // ~3 reservations a day to cross that over a 12-month horizon, and each
+    // omitted conflict becomes an apparently-open time the booking command then
+    // refuses. Truncating reservations does not hide availability — it INVENTS
+    // it, which is the worse direction.
+    const dates = range("2026-10-05", "2026-10-09");
+    // 1,500 reservations blanketing the first day's working hours.
+    scenario.reservations = Array.from({ length: 1500 }, (_, i) => ({
+      starts_at: "2026-10-05T13:00:00.000Z",
+      ends_at: "2026-10-05T22:00:00.000Z",
+      source_kind: "appointment",
+      source_id: `res-${i}`,
+    }));
+
+    const out = await fetchPublicSlotsForDates({
+      slug: "studio-a", serviceId: "svc", dates,
+    });
+    expect(out.ok).toBe(true);
+    if (!out.ok) throw new Error("unreachable");
+
+    // The blanket covers 2026-10-05 entirely, and it is only visible if the
+    // read went past row 1000 — the rows are identical, so a truncated read
+    // still sees the blanket. What proves pagination is the QUERY COUNT.
+    const reservationReads = queries.filter(
+      (q) => q.table === "studio_calendar_reservations",
+    ).length;
+    expect(reservationReads).toBeGreaterThan(1);
+  });
+
+  it("a reservation past the cap still blocks its day", async () => {
+    // The rows before it are elsewhere, so this conflict is reachable ONLY by
+    // reading past the cap. An unpaginated read would offer 2026-10-06.
+    const dates = ["2026-10-05", "2026-10-06"];
+    scenario.reservations = [
+      ...Array.from({ length: 1200 }, (_, i) => ({
+        starts_at: "2026-10-05T13:00:00.000Z",
+        ends_at: "2026-10-05T22:00:00.000Z",
+        source_kind: "appointment",
+        source_id: `early-${i}`,
+      })),
+      {
+        starts_at: "2026-10-06T13:00:00.000Z",
+        ends_at: "2026-10-06T22:00:00.000Z",
+        source_kind: "appointment",
+        source_id: "late-blocker",
+      },
+    ];
+
+    const out = await fetchPublicSlotsForDates({
+      slug: "studio-a", serviceId: "svc", dates,
+    });
+    expect(out.ok).toBe(true);
+    if (!out.ok) throw new Error("unreachable");
+
+    const days = new Set(out.slots.map((s) => s.start.slice(0, 10)));
+    expect(days.has("2026-10-06")).toBe(false);
+  });
+
+  it("NON-VACUITY — that day IS offered when nothing blocks it", async () => {
+    // Without this the assertion above would pass against a helper that never
+    // offered 2026-10-06 for any reason at all.
+    const out = await fetchPublicSlotsForDates({
+      slug: "studio-a", serviceId: "svc", dates: ["2026-10-06"],
+    });
+    expect(out.ok).toBe(true);
+    if (!out.ok) throw new Error("unreachable");
+    expect(out.slots.length).toBeGreaterThan(0);
   });
 });
 

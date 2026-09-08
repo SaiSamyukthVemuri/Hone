@@ -14,6 +14,7 @@ import {
 import { isPubliclyBookable } from "@/lib/booking/readiness";
 import { horizonRangeInStudioTz } from "@/lib/booking/horizon";
 import { utcInstantFromLocal } from "@/lib/booking/tz";
+import { fetchAllRows } from "@/lib/export/paginate";
 
 // ===========================================================================
 // PUBLIC SLOTS FOR A RANGE OF DATES — loaded in bulk, throttled by the caller
@@ -198,12 +199,31 @@ export async function fetchPublicSlotsForDates(params: {
       .eq("studio_id", studio.id)
       .lte("starts_on", last)
       .gte("ends_on", first),
-    admin
-      .from("studio_calendar_reservations")
-      .select("starts_at, ends_at, source_kind, source_id")
-      .eq("studio_id", studio.id)
-      .lt("starts_at", rangeEndUtc.toISOString())
-      .gt("ends_at", rangeStartUtc.toISOString()),
+    // PAGINATED, because PostgREST caps a response at `max_rows` (1000 in
+    // supabase/config.toml) and SETS NO ERROR when it does.
+    //
+    // A single unbounded read looked correct and was the most dangerous query
+    // in this module: a studio needs only ~3 reservations a day to cross 1000
+    // over a 12-month horizon, and every omitted conflict becomes an
+    // apparently-open time that the booking command then refuses. Truncating
+    // the reservation set does not hide availability, it INVENTS it.
+    //
+    // `fetchAllRows` refuses rather than returning a capped set, which is the
+    // whole reason it exists — the export lane learned this exact lesson on its
+    // own tables. Ordering is `starts_at, id`: pagination over a non-unique
+    // sort can put one row on two pages and drop another, and `id` is the
+    // primary key.
+    fetchAllRows<ReservationRow>((from, to) =>
+      admin
+        .from("studio_calendar_reservations")
+        .select("starts_at, ends_at, source_kind, source_id")
+        .eq("studio_id", studio.id)
+        .lt("starts_at", rangeEndUtc.toISOString())
+        .gt("ends_at", rangeStartUtc.toISOString())
+        .order("starts_at", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
   ]);
   // A blockout read that failed is not "no blockouts", and a reservation read
   // that failed is not "nothing is booked" — that one would generate open times
