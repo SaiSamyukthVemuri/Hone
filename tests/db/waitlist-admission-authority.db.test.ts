@@ -1127,8 +1127,13 @@ describe("the studio lock mode is compatible with FK key-share", () => {
     const { readFileSync } = await import("node:fs");
     const sql = readFileSync("supabase/migrations/0193_waitlist_admission_authority.sql", "utf8");
     const code = sql.split("\n").filter((l) => !/^\s*--/.test(l)).join("\n");
-    expect(code).not.toMatch(/from public\.studios[^;]*for update/i);
-    expect((code.match(/from public\.studios[^;]*for no key update/gi) ?? []).length).toBe(5);
+    // No FOR UPDATE anywhere, and at least one NO KEY UPDATE per command that
+    // writes a studios-FK table. The exact count is NOT pinned: it moved from 5
+    // to 9 when the audit found four more commands that needed one, and a
+    // hard-coded number would have had to be edited rather than simply holding.
+    expect(code).not.toMatch(/from public\.studios[^;]*for update\b/i);
+    const locks = (code.match(/from public\.studios[^;]*for no key update/gi) ?? []).length;
+    expect(locks).toBeGreaterThanOrEqual(9);
   });
 });
 
@@ -1343,6 +1348,84 @@ describe("0193 writers do not deadlock the historical lifecycle writers", () => 
       ).not.toBeNull();
       await a.client.query("commit");
       expect(await pending).toBe("issued");
+    } finally {
+      await a.client.end();
+      await b.client.end();
+    }
+  });
+});
+
+describe("the ranked claim does not deadlock against 0192's issuer", () => {
+  // The audit's behavioural half. claim_new_client_waitlist_entries_ordered
+  // UPDATEs entries, which fires 0185's record_event trigger and reaches
+  // `studios` through the event table's FK -- AFTER it has locked candidates.
+  // Against 0192's issue_scoped_, which holds studios FOR UPDATE and then waits
+  // for the entry, that was the cycle again. Codex found this one command; the
+  // mechanical sweep in the source contract found three more like it.
+  async function connect(): Promise<{ client: Client; pid: number }> {
+    const client = new Client({ connectionString: resolveLocalDbUrl() });
+    await client.connect();
+    const pid = (await client.query(`select pg_backend_pid() as pid`)).rows[0].pid as number;
+    return { client, pid };
+  }
+
+  it("settles with no 40P01 when a claim races a scoped invitation issue", async () => {
+    const studio = await seedStudio("ordered-vs-0192");
+    await adminQuery(
+      `insert into public.studio_waitlist_admission_rounds (studio_id, allowance) values ($1,5)`,
+      [studio.studioId],
+    );
+    const service = await adminQuery(
+      `insert into public.services (studio_id, name, default_duration_minutes)
+       values ($1,'Svc',30) returning id`,
+      [studio.studioId],
+    );
+    const entry = await adminQuery(
+      `select * from public.create_practitioner_waitlist_entry($1,$2,'P',$3,null,null)`,
+      [studio.studioId, studio.userId, uniqueEmail("ordered")],
+    );
+    const entryId = entry.rows[0].entry_id as string;
+    // issue_scoped_ requires a claimed entry, so give it one to work on.
+    await adminQuery(`select public.claim_new_client_waitlist_entry($1,$2,$3)`, [
+      studio.studioId, entryId, studio.userId,
+    ]);
+    const second = await adminQuery(
+      `select * from public.create_practitioner_waitlist_entry($1,$2,'Q',$3,null,null)`,
+      [studio.studioId, studio.userId, uniqueEmail("ordered2")],
+    );
+    const otherId = second.rows[0].entry_id as string;
+
+    const a = await connect();
+    const b = await connect();
+    try {
+      // A: 0192's issuer takes studios FOR UPDATE, then works on its entry.
+      await a.client.query("begin");
+      const issued = await a.client.query(
+        `select ir.result from public.issue_scoped_new_client_waitlist_invitation(
+           $1,$2,$3,$4,$5,$6,null,72) ir`,
+        [studio.studioId, entryId, studio.userId, service.rows[0].id, "2026-10-01", "2026-10-31"],
+      );
+      expect(issued.rows[0].result).toBe("issued");
+
+      // B: the ranked claim on a DIFFERENT waiting entry in the same studio.
+      const claiming = b.client
+        .query(
+          `select oc.result from public.claim_new_client_waitlist_entries_ordered($1,$2,$3::uuid[]) oc`,
+          [studio.studioId, studio.userId, [otherId]],
+        )
+        .then((r) => ({ ok: true as const, v: r.rows[0].result as string }))
+        .catch((e: { code?: string }) => ({ ok: false as const, code: e.code }));
+
+      await waitUntilBlocked(b.pid);
+      await a.client.query("commit");
+      const result = await claiming;
+      await b.client.query("commit").catch(() => undefined);
+
+      expect(
+        result.ok,
+        `the ranked claim failed with ${"code" in result ? result.code : ""} (40P01 = deadlock)`,
+      ).toBe(true);
+      expect(result.ok && result.v).toBe("claimed");
     } finally {
       await a.client.end();
       await b.client.end();

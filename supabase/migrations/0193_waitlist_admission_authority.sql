@@ -409,6 +409,15 @@ begin
     return;
   end if;
 
+  -- CANONICAL LOCK ORDER, STUDIO FIRST. This command writes a table carrying a
+  -- studios FK, so the write takes a KEY SHARE on studios whether or not this
+  -- line exists; taking it explicitly and FIRST is what stops the order being
+  -- decided by whichever statement happens to run last. NO KEY UPDATE, not FOR
+  -- UPDATE, so a concurrent FK check is admitted while cooperating 0193 writers
+  -- still exclude each other. See the audit guard in
+  -- tests/migrations/0193-waitlist-admission-authority.test.ts.
+  perform 1 from public.studios s where s.id = p_studio_id for no key update;
+
   v_now := clock_timestamp();
 
   begin
@@ -502,6 +511,15 @@ begin
     return query select 'joined_at_in_future'::text, null::uuid;
     return;
   end if;
+
+  -- CANONICAL LOCK ORDER, STUDIO FIRST. This command writes a table carrying a
+  -- studios FK, so the write takes a KEY SHARE on studios whether or not this
+  -- line exists; taking it explicitly and FIRST is what stops the order being
+  -- decided by whichever statement happens to run last. NO KEY UPDATE, not FOR
+  -- UPDATE, so a concurrent FK check is admitted while cooperating 0193 writers
+  -- still exclude each other. See the audit guard in
+  -- tests/migrations/0193-waitlist-admission-authority.test.ts.
+  perform 1 from public.studios s where s.id = p_studio_id for no key update;
 
   begin
     insert into public.new_client_waitlist_entries
@@ -954,6 +972,15 @@ begin
     return 'invalid_input';
   end if;
 
+  -- CANONICAL LOCK ORDER, STUDIO FIRST. This command writes a table carrying a
+  -- studios FK, so the write takes a KEY SHARE on studios whether or not this
+  -- line exists; taking it explicitly and FIRST is what stops the order being
+  -- decided by whichever statement happens to run last. NO KEY UPDATE, not FOR
+  -- UPDATE, so a concurrent FK check is admitted while cooperating 0193 writers
+  -- still exclude each other. See the audit guard in
+  -- tests/migrations/0193-waitlist-admission-authority.test.ts.
+  perform 1 from public.studios s where s.id = p_studio_id for no key update;
+
   begin
     insert into public.studio_waitlist_admission_policy
       (studio_id, ranking_policy, invite_batch_default, invite_batch_max,
@@ -1024,6 +1051,23 @@ begin
     return query select 'invalid_count'::text, null::uuid;
     return;
   end if;
+
+  -- CANONICAL LOCK ORDER, STUDIO FIRST, BEFORE ANY CANDIDATE IS LOCKED.
+  --
+  -- The ranked claim UPDATEs new_client_waitlist_entries, and that fires the
+  -- 0185 record_event trigger, which inserts into
+  -- new_client_waitlist_entry_events -- a table with its own studios FK. So
+  -- this command reaches studios through KEY SHARE no matter what, AFTER it has
+  -- locked the candidate rows. Against 0192's issue_scoped_, which holds studios
+  -- FOR UPDATE and then waits for an entry, that is the studio -> entry /
+  -- entry -> studio cycle again:
+  --
+  --     ordered claim: holds candidates, waits studios (trigger FK)
+  --     0192 issuer:   holds studios FOR UPDATE, waits for the entry
+  --
+  -- Taking studios first, in the compatible mode, removes the cycle without
+  -- weakening SKIP LOCKED or the single decision instant below.
+  perform 1 from public.studios s where s.id = p_studio_id for no key update;
 
   select a.invite_batch_max into v_cap
     from public.studio_waitlist_admission_policy a

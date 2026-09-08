@@ -322,3 +322,109 @@ describe("every command re-derives owner authority in the database", () => {
     }
   });
 });
+
+// ===========================================================================
+// THE LOCK-DISCIPLINE AUDIT — mechanical, not a checklist
+// ===========================================================================
+//
+// FIVE ROUNDS OF REVIEW FOUND FOUR SEPARATE LOCK DEFECTS IN THIS FILE, each one
+// created by the repair before it, and each found by a human reading the SQL
+// rather than by anything that could fail on its own. The last round is the
+// reason this block exists: an exact-head review caught ONE command missing the
+// studio lock, and a mechanical sweep of every command then found THREE MORE
+// that were equally exposed and that nobody had flagged.
+//
+// So the rule is enforced here instead of remembered:
+//
+//   A 0193 command that writes a table carrying a `studios` foreign key MUST
+//   take `studios ... for no key update` FIRST.
+//
+// WHY THE WRITE IMPLIES A STUDIO LOCK. Writing such a table takes an FK KEY
+// SHARE lock on `studios` whether or not the command asks for one. Without an
+// explicit lock the order is decided by whichever statement happens to run
+// last, which is how the command ended up holding an entry and then reaching
+// for the studio -- the exact inversion 0192's issuer deadlocks against.
+//
+// WHY `no key update` AND NOT `for update`. FOR UPDATE conflicts with KEY
+// SHARE, so a studio-first FOR UPDATE moves the cycle rather than closing it:
+// the 0185/0188 lifecycle writers hold an entry and then request KEY SHARE
+// through their status-event trigger. NO KEY UPDATE is compatible with KEY
+// SHARE and still excludes another NO KEY UPDATE, so cooperating writers
+// serialise and FK checks pass. Measured, not assumed -- see the matrix
+// assertion in tests/db/waitlist-admission-authority.db.test.ts.
+//
+// The transitive case is the one a reader misses: writing
+// new_client_waitlist_entries fires 0185's record_event trigger, which inserts
+// into new_client_waitlist_entry_events -- a table with its own studios FK.
+describe("every command that reaches `studios` locks it first", () => {
+  /** Tables with a direct `studios` FK, so writing one takes KEY SHARE on it. */
+  const STUDIO_FK_TABLES = [
+    "new_client_waitlist_entries",
+    "new_client_waitlist_entry_events",
+    "new_client_waitlist_invitations",
+    "new_client_waitlist_preference_grants",
+    "studio_waitlist_admission_policy",
+    "studio_waitlist_admission_rounds",
+  ] as const;
+
+  type Command = { name: string; body: string; writes: string[]; locksStudio: boolean };
+
+  function commands(): Command[] {
+    const found: Command[] = [];
+    const re = /create or replace function (public\.\w+)\s*\(/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(CODE)) !== null) {
+      const body = CODE.slice(m.index, CODE.indexOf("$$;", m.index));
+      // Trigger functions run inside their caller's transaction and take no
+      // locks of their own; the CALLER is what this rule governs.
+      if (/returns trigger/.test(body)) continue;
+      found.push({
+        name: m[1],
+        body,
+        writes: STUDIO_FK_TABLES.filter((t) =>
+          new RegExp(`(insert\\s+into|update)\\s+public\\.${t}\\b`).test(body),
+        ),
+        locksStudio: /from public\.studios[^;]*for no key update/.test(body),
+      });
+    }
+    return found;
+  }
+
+  it("finds the commands at all, so an empty sweep cannot pass vacuously", () => {
+    const all = commands();
+    expect(all.length).toBeGreaterThanOrEqual(9);
+    expect(all.map((c) => c.name)).toContain("public.admit_new_client_waitlist_entry");
+    expect(all.map((c) => c.name)).toContain(
+      "public.claim_new_client_waitlist_entries_ordered",
+    );
+  });
+
+  it("every writer of a studios-FK table takes the studio lock", () => {
+    const offenders = commands()
+      .filter((c) => c.writes.length > 0 && !c.locksStudio)
+      .map((c) => `${c.name} writes ${c.writes.join(", ")} without locking studios`);
+    expect(offenders, "a new command must take `studios ... for no key update` first").toEqual([]);
+  });
+
+  it("no command uses the incompatible FOR UPDATE mode on studios", () => {
+    // FOR UPDATE blocks the FK's KEY SHARE and reintroduces the deadlock.
+    expect(CODE).not.toMatch(/from public\.studios[^;]*for update\b/i);
+  });
+
+  it("the studio lock precedes every entry lock, in every command that takes both", () => {
+    // Order, not just presence. A studio lock taken after the entry is the
+    // inversion itself.
+    for (const c of commands()) {
+      const studio = c.body.search(/from public\.studios[^;]*for no key update/);
+      const entry = c.body.search(/from public\.new_client_waitlist_entries[^;]*for update/);
+      if (studio === -1 || entry === -1) continue;
+      expect(studio, `${c.name} locks the entry before the studio`).toBeLessThan(entry);
+    }
+  });
+
+  it("names the transitive path, so the next reader does not have to rediscover it", () => {
+    // The trigger hop is why writing `entries` counts as reaching `studios`.
+    expect(SQL).toContain("record_event");
+    expect(SQL).toContain("new_client_waitlist_entry_events");
+  });
+});
