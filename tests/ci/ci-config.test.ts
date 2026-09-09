@@ -852,21 +852,47 @@ describe("CI-COST-01 — trigger ownership", () => {
     expect(Object.keys(t)).not.toContain("push");
   });
 
-  it("the production branch is verified by post-merge.yml, on push only", () => {
+  it("the production branch is verified by post-merge.yml", () => {
     const t = triggersOf(POST_MERGE);
-    expect(Object.keys(t)).toEqual(["push"]);
+    // The PROPERTY, not the spelling: its only automatic trigger is a push to
+    // the production branch. workflow_dispatch is permitted (an operator must
+    // be able to re-verify a ref); anything that fires on its own is not.
     expect(t.push).toEqual({ branches: [PRODUCTION_BRANCH] });
+    const automatic = Object.keys(t).filter((k) => k !== "workflow_dispatch");
+    expect(automatic).toEqual(["push"]);
   });
 
   it("EXACTLY ONE workflow runs on a push to the production branch", () => {
-    const onProductionPush = readWorkflowDir().filter(([, body]) => {
-      const push = triggersOf(body).push;
-      if (!isRecord(push) || !Array.isArray(push.branches)) return false;
-      return push.branches.includes(PRODUCTION_BRANCH);
+    // Fail CLOSED on every shape that could run on this branch.
+    //
+    // The first draft asked `Array.isArray(push.branches) &&
+    // push.branches.includes(PRODUCTION_BRANCH)`, which quietly answered "no"
+    // for the shapes that run MORE often, not fewer: a bare `push:` (null ->
+    // every branch), a glob (`claude/**`, `**` - `.includes` is exact-string,
+    // not a matcher), and `branches-ignore:`. A future workflow with `on:\n
+    // push:` and a browser matrix would have re-run the whole thing on every
+    // production push while this guard stayed green - the exact regression the
+    // 2075.9 runner-minutes were spent on.
+    const couldRunOnProductionPush = readWorkflowDir().filter(([, body]) => {
+      let t: Record<string, unknown>;
+      try {
+        t = triggersOf(body);
+      } catch {
+        return true; // unreadable triggers: assume it can, and say so loudly
+      }
+      if (!("push" in t)) return false;
+      const push = t.push;
+      if (push === null || push === undefined) return true; // bare `push:`
+      if (!isRecord(push)) return true; // any shape this guard cannot read
+      if ("branches-ignore" in push) return true; // allow-by-omission
+      const branches = push.branches;
+      if (!Array.isArray(branches)) return true; // push: with no branch filter
+      // Exact name, or any glob that could cover the branch.
+      return branches.some(
+        (b) => typeof b === "string" && (b === PRODUCTION_BRANCH || b.includes("*")),
+      );
     });
-    // A second full-matrix copy re-entering by a new file is the regression
-    // this whole change exists to prevent, so it is asserted by COUNT.
-    expect(onProductionPush.map(([f]) => f)).toEqual(["post-merge.yml"]);
+    expect(couldRunOnProductionPush.map(([f]) => f)).toEqual(["post-merge.yml"]);
   });
 
   it("the post-merge lane does NOT re-run the expensive PR-only lanes", () => {
@@ -893,13 +919,35 @@ describe("CI-COST-01 — trigger ownership", () => {
       "npm run lint",
       "npm run build",
       "npm test",
-      "git diff --check HEAD",
+      "git show --check --first-parent",
       "npm run check:stripe-gates",
       "npm run check:migration-extensions",
       "npm run migration:state",
     ]) {
       expect(scripts, `post-merge must still run ${kept}`).toContain(kept);
     }
+  });
+
+  it("no post-merge step is disarmed by if: / continue-on-error", () => {
+    // The guard above proves eight strings are PRESENT. Presence is not
+    // execution: `continue-on-error: true` or `if: false` on the Unit tests
+    // step keeps every string in place, keeps that guard green, and reports
+    // SUCCESS on the production branch while verifying nothing. That is the
+    // obvious shortcut if this lane ever goes red under time pressure.
+    const doc = yaml.load(POST_MERGE);
+    if (!isRecord(doc) || !isRecord(doc.jobs)) throw new Error("post-merge declares no jobs");
+    const disarmed: string[] = [];
+    for (const [id, job] of Object.entries(doc.jobs)) {
+      if (!isRecord(job)) continue;
+      if (job["continue-on-error"]) disarmed.push(`jobs.${id}.continue-on-error`);
+      if (!Array.isArray(job.steps)) continue;
+      job.steps.forEach((step: unknown, i: number) => {
+        if (!isRecord(step)) return;
+        if (step["continue-on-error"]) disarmed.push(`jobs.${id}.steps[${i}].continue-on-error`);
+        if ("if" in step) disarmed.push(`jobs.${id}.steps[${i}].if`);
+      });
+    }
+    expect(disarmed).toEqual([]);
   });
 
   it("the post-merge lane keeps the offline-font gate the build depends on", () => {
@@ -959,11 +1007,25 @@ describe("CI-COST-01 — trigger ownership", () => {
     // measured at mean 4.2 / p90 4.7 / max 4.8 minutes across the 30 post-merge
     // runs it replaces. The upper bound keeps the ceiling from drifting upward
     // instead of a slow lane being investigated.
-    const m = /timeout-minutes: (\d+)/.exec(POST_MERGE);
-    expect(m, "post-merge must declare an explicit timeout").not.toBeNull();
-    const ceiling = Number(m![1]);
-    expect(ceiling).toBeGreaterThan(5);
-    expect(ceiling).toBeLessThanOrEqual(15);
+    // Read from the PARSED job, not the first regex match in the file: a
+    // second job's ceiling would otherwise never be range-checked.
+    const doc = yaml.load(POST_MERGE);
+    if (!isRecord(doc) || !isRecord(doc.jobs)) throw new Error("post-merge declares no jobs");
+    const ceilings = Object.values(doc.jobs)
+      .filter(isRecord)
+      .map((j) => j["timeout-minutes"]);
+    expect(ceilings.length).toBeGreaterThan(0);
+    for (const c of ceilings) {
+      expect(typeof c).toBe("number");
+      // Lower bound 8 so a revert to the 12 this first shipped - which was
+      // BELOW the 15 ci.yml's `validate` declares for strictly less work -
+      // cannot pass unnoticed. `npm ci` alone has been measured at 7.1 min on
+      // a warm cache (ci.yml:196-206), which is what 12 failed to clear.
+      expect(c as number).toBeGreaterThan(8);
+      // Upper bound 18: CLAUDE.md section 4's documented remedy, and a brake on
+      // ceilings drifting up instead of slow lanes being investigated.
+      expect(c as number).toBeLessThanOrEqual(18);
+    }
   });
 
   it("every job in the post-merge lane declares an explicit timeout", () => {
@@ -975,7 +1037,9 @@ describe("CI-COST-01 — trigger ownership", () => {
   });
 
   it("the post-merge lane cancels superseded runs", () => {
-    expect(POST_MERGE).toMatch(/group: hone-post-merge-\$\{\{ github\.ref \}\}/);
+    // Keyed per COMMIT: a branch-keyed group would cancel the verification of
+    // an earlier merge, which is the one artefact this lane exists to produce.
+    expect(POST_MERGE).toMatch(/group: hone-post-merge-\$\{\{ github\.sha \}\}/);
     expect(POST_MERGE).toMatch(/cancel-in-progress: true/);
   });
 
@@ -986,9 +1050,18 @@ describe("CI-COST-01 — trigger ownership", () => {
     // Any push-shaped diff must ask the first-parent question instead.
     const offenders: string[] = [];
     for (const [file, body] of readWorkflowDir()) {
-      for (const [i, line] of body.split("\n").entries()) {
+      // Three spellings produce a byte-identical empty result on a merge:
+      // `git show --name-only`, `git log -1 --name-only` and
+      // `git diff-tree --no-commit-id --name-only`. Verified on merge 389a3e12:
+      // all three yield 0 paths; only --first-parent yields 7. Pinning one
+      // spelling pins the typo, not the defect.
+      //
+      // Joined across continuations first, so a command split over two lines is
+      // judged as the single command git receives.
+      const joined = body.replace(/\\\n\s*/g, " ");
+      for (const [i, line] of joined.split("\n").entries()) {
         if (line.trim().startsWith("#")) continue;
-        if (!/git show .*--name-only/.test(line)) continue;
+        if (!/git (show|log|diff-tree)\b.*--name-only/.test(line)) continue;
         if (!/--first-parent/.test(line)) offenders.push(`${file}:${i + 1}: ${line.trim()}`);
       }
     }

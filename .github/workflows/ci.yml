@@ -145,7 +145,24 @@ jobs:
             # to run the full matrix unconditionally. --first-parent asks the
             # only question that means anything on a merge: what did this commit
             # change relative to the branch it landed on.
-            git show --name-only --first-parent --pretty=format: "${{ github.sha }}" > changed.txt
+            # Prefer the PUSH RANGE. `github.sha` is only the TIP: a
+            # rebase-merge of a three-commit PR, or a direct multi-commit push,
+            # leaves the earlier commits invisible to a tip-only diff. That
+            # would be worse than the defect above, not better - the old form
+            # produced an EMPTY list and failed SAFE to the full matrix, while a
+            # tip-only list is non-empty and WRONG, so a push that landed a
+            # migration under a doc-only tip would classify docs_only and skip
+            # the build, unit and DB lanes entirely. Fail safe, not fail open.
+            BEFORE="${{ github.event.before }}"
+            ZERO="0000000000000000000000000000000000000000"
+            if [ -n "$BEFORE" ] && [ "$BEFORE" != "$ZERO" ] && git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+              git diff --name-only "$BEFORE" "${{ github.sha }}" > changed.txt || true
+            else
+              # New branch, force-push, or an unreachable `before`: fall back to
+              # the merge's first-parent diff, which is right for a merge commit
+              # and no worse than the tip for anything else.
+              git show --name-only --first-parent --pretty=format: "${{ github.sha }}" > changed.txt
+            fi
           fi
           echo "--- changed files ---"; cat changed.txt
 
