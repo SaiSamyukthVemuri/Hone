@@ -136,6 +136,81 @@ describe("the plan is reconcilable against the source", () => {
   });
 });
 
+describe("the import clock is batch authority, checked once, before any row", () => {
+  // THE DEFECT: every row's chronology is measured AGAINST options.importedAt —
+  // parseJoinedAt refuses a future date with `ms > importedAt.getTime()`, and a
+  // genuinely dateless row is anchored to it. An Invalid Date makes that
+  // comparison NaN, so it is always false and the future-date refusal stops
+  // existing. Reproduced before the repair: a join date of 2099-01-01 came back
+  // `ready` carrying provenance 'operator_supplied' — the planner asserting an
+  // impossible fact rather than declining to judge.
+  const INVALID = new Date("not a date");
+  const ROW = [{ email: "a@example.com", name: "A Person", joinedAt: "2026-01-01" }];
+
+  it("refuses an ordinary batch outright", () => {
+    expect(() => planLegacyWaitlistImport(ROW, { importedAt: INVALID })).toThrow(
+      /importedAt is not a valid instant/,
+    );
+  });
+
+  it("refuses under allowUnknownJoinedAt, where the instant becomes the anchor", () => {
+    expect(() =>
+      planLegacyWaitlistImport([{ email: "a@example.com", name: "A Person" }], {
+        importedAt: INVALID,
+        allowUnknownJoinedAt: true,
+      }),
+    ).toThrow(/importedAt is not a valid instant/);
+  });
+
+  it("refuses an EMPTY batch — the invariant is the batch's, not a row's", () => {
+    // The sharpest form. No row exercises the clock here, so a row-path check
+    // would pass silently and the planner would report a clean empty plan
+    // computed against an authority it could not read.
+    expect(() => planLegacyWaitlistImport([], { importedAt: INVALID })).toThrow(
+      /importedAt is not a valid instant/,
+    );
+  });
+
+  it("refuses at the BOUNDARY rather than rejecting every row", () => {
+    // Rejecting row by row would report a data problem the operator cannot fix
+    // in their data, and would imply the rows were judged. Nothing is returned.
+    let plan: unknown = "not assigned";
+    try {
+      plan = planLegacyWaitlistImport(ROW, { importedAt: INVALID });
+    } catch {
+      /* expected */
+    }
+    expect(plan, "an unreadable import clock must produce no plan at all").toBe("not assigned");
+  });
+
+  it("a VALID clock still anchors an unknown-date row to that exact instant", () => {
+    const result = planLegacyWaitlistImport([{ email: "b@example.com", name: "B Person" }], {
+      importedAt: IMPORTED_AT,
+      allowUnknownJoinedAt: true,
+    });
+    expect(result.ready[0]?.value.joinedAt).toEqual(IMPORTED_AT);
+    expect(result.ready[0]?.value.joinedAtProvenance).toBe("unknown");
+  });
+
+  it("a VALID clock still refuses a future join date", () => {
+    // The refusal the invalid clock silently disabled. Without this the fix
+    // above could pass against a planner that had stopped checking at all.
+    const result = planLegacyWaitlistImport(
+      [{ email: "c@example.com", name: "C Person", joinedAt: "2099-01-01" }],
+      { importedAt: IMPORTED_AT, allowUnknownJoinedAt: true },
+    );
+    expect(result.ready).toHaveLength(0);
+    expect(result.rejected[0]?.reason).toContain("in the future");
+  });
+
+  it("a VALID clock leaves an ordinary historical row exactly as before", () => {
+    const result = planLegacyWaitlistImport(ROW, { importedAt: IMPORTED_AT });
+    expect(result.ready).toHaveLength(1);
+    expect(result.ready[0]?.value.joinedAt).toEqual(new Date("2026-01-01"));
+    expect(result.ready[0]?.value.joinedAtProvenance).toBe("operator_supplied");
+  });
+});
+
 describe("a genuinely dateless row, when the operator has looked", () => {
   const dateless = [{ email: "a@example.com", name: "A Person" }];
 

@@ -194,6 +194,32 @@ export function planLegacyWaitlistImport(
   rows: readonly LegacyImportRow[],
   options: LegacyImportOptions,
 ): LegacyImportPlan {
+  // THE IMPORT CLOCK IS BATCH AUTHORITY, NOT ROW DATA, SO IT IS CHECKED ONCE,
+  // HERE, BEFORE A SINGLE ROW IS LOOKED AT.
+  //
+  // Every row's chronology is measured AGAINST this instant: `parseJoinedAt`
+  // refuses a future date with `ms > importedAt.getTime()`, and an unrecoverable
+  // date is anchored to it. An Invalid Date makes that comparison NaN, so it is
+  // always false and the future-date refusal stops existing. Reproduced: a join
+  // date of 2099-01-01, seventy-three years ahead, came back `ready` carrying
+  // `joined_at_provenance = 'operator_supplied'` — the planner asserting an
+  // impossible fact rather than declining to judge. With allowUnknownJoinedAt
+  // the invalid instant became the queue anchor itself.
+  //
+  // FAIL CLOSED AT THE BOUNDARY, not row by row. Rejecting every row
+  // individually would report a data problem the operator cannot fix in their
+  // data, and falling back to Date.now() or any fabricated stamp would invent
+  // the very chronology this module exists to protect. An EMPTY batch refuses
+  // too: the invariant is about the batch's authority, not about whether any
+  // row happened to exercise it.
+  if (!Number.isFinite(options.importedAt.getTime())) {
+    throw new Error(
+      "planLegacyWaitlistImport: options.importedAt is not a valid instant; " +
+        "the import clock is the authority every row's chronology is measured " +
+        "against and cannot be inferred or defaulted",
+    );
+  }
+
   const allowUnknown = options.allowUnknownJoinedAt === true;
   const ready: Extract<ImportRowOutcome, { kind: "ready" }>[] = [];
   const needsDecision: Extract<ImportRowOutcome, { kind: "needs_decision" }>[] = [];

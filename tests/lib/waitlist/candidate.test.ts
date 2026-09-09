@@ -237,6 +237,88 @@ describe("stale preferences reach the engine as ordinary unstated ones", () => {
   });
 });
 
+describe("the staleness cap is validated before anything is classified", () => {
+  // THE DEFECT: the union admits any `number | null` once a clock is present,
+  // and the guard checked only the CLOCK. A runtime-loaded policy could carry a
+  // cap that cannot express an age limit, and the comparison answered it with
+  // perfect confidence — `ageDays <= NaN` is false, `ageDays <= Infinity` is
+  // always true — silently reclassifying the whole cohort.
+  const ROW = {
+    id: "e1",
+    joined_at: "2026-01-01T00:00:00.000Z",
+    availability_preference: "weekdays",
+    availability_stated_at: "2026-09-08T00:00:00.000Z",
+    availability_confirmed_at: "2026-09-08T00:00:00.000Z",
+    availability_source: "public_form",
+  };
+  const NOW = new Date("2026-09-08T00:00:00.000Z");
+  const loadPolicy = (maxAgeDays: number | null): StalenessPolicy => ({ maxAgeDays });
+
+  it("still disables staleness for null, with no clock at all", () => {
+    const { candidates } = projectCandidates([ROW], { staleness: NEVER_STALE });
+    expect(candidates[0]?.availability.stated).toBe(true);
+  });
+
+  it("accepts a ZERO cap, which is a same-day expiry and not a disabled policy", () => {
+    // Confirmed at exactly NOW: age 0, and `0 <= 0` is fresh.
+    const same = projectCandidates([ROW], { now: NOW, staleness: loadPolicy(0) });
+    expect(same.candidates[0]?.availability.stated).toBe(true);
+    // One day older under the same cap is stale — which is what makes 0 a real
+    // policy rather than a synonym for null.
+    const older = projectCandidates(
+      [{ ...ROW, availability_confirmed_at: "2026-09-06T00:00:00.000Z" }],
+      { now: NOW, staleness: loadPolicy(0) },
+    );
+    expect(older.candidates[0]?.availability.stated).toBe(false);
+  });
+
+  it("accepts an ordinary positive finite cap with a valid clock", () => {
+    expect(() => projectCandidates([ROW], { now: NOW, staleness: loadPolicy(90) })).not.toThrow();
+  });
+
+  it("REFUSES a cap that cannot express an age limit", () => {
+    for (const cap of [Number.NaN, -1, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      expect(
+        () => projectCandidates([ROW], { now: NOW, staleness: loadPolicy(cap) }),
+        `maxAgeDays = ${String(cap)} must be refused`,
+      ).toThrow(/must be a finite, non-negative number of days/);
+    }
+  });
+
+  it("refuses rather than clamping, defaulting or disabling", () => {
+    // The three repairs that would have been worse than the defect: each
+    // invents a policy the studio never wrote. A refused call yields NO result.
+    let result: unknown = "not assigned";
+    try {
+      result = projectCandidates([ROW], { now: NOW, staleness: loadPolicy(Number.NaN) });
+    } catch {
+      /* expected */
+    }
+    expect(result, "an invalid cap must produce no projection at all").toBe("not assigned");
+  });
+
+  it("still refuses a finite cap with no clock, independently of the cap check", () => {
+    expect(() =>
+      // @ts-expect-error `number | null` is inadmissible without a clock.
+      projectCandidates([ROW], { staleness: loadPolicy(90) }),
+    ).toThrow(/cannot be evaluated without a clock/);
+  });
+
+  it("still refuses an INVALID clock, independently of the cap check", () => {
+    expect(() =>
+      projectCandidates([ROW], { now: new Date("bad"), staleness: loadPolicy(90) }),
+    ).toThrow(/not a valid instant/);
+  });
+
+  it("checks the CAP before the clock, so the message names what is wrong", () => {
+    // Both inputs bad at once. The cap is the one the caller can act on, and
+    // reporting the clock would send them to the wrong place.
+    expect(() =>
+      projectCandidates([ROW], { now: new Date("bad"), staleness: loadPolicy(Number.NaN) }),
+    ).toThrow(/must be a finite, non-negative number of days/);
+  });
+});
+
 describe("staleness and the clock", () => {
   const ROW = {
     id: "e1",

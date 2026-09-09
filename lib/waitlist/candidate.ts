@@ -224,6 +224,36 @@ export function projectCandidates(
   // fresh. Refusing is the only honest answer: the caller asked for staleness
   // and would otherwise have received none.
   if (staleness.maxAgeDays !== null) {
+    // THE CAP IS EVIDENCE TOO, AND IT WAS THE LAST INPUT LEFT UNCHECKED.
+    //
+    // The guard below validates the CLOCK, and the type admits any
+    // `number | null` once a clock is present — so a runtime-loaded policy
+    // could arrive carrying a cap that cannot express an age limit at all, and
+    // the comparison downstream answered it with perfect confidence:
+    //
+    //     maxAgeDays = NaN       -> an 8-day-old answer reported STALE
+    //     maxAgeDays = -5        -> everything STALE
+    //     maxAgeDays = Infinity  -> a 6-year-old answer reported FRESH
+    //
+    // `ageDays <= NaN` is false and `ageDays <= Infinity` is always true, so
+    // the whole cohort is silently reclassified under a policy nobody could
+    // have meant. Under `unknownPolicy: "exclude"` that drops people from the
+    // ranking outright. Same family as the clock refusals: the thing being
+    // measured was checked and the thing MEASURING was not.
+    //
+    // REFUSED, NOT REPAIRED. Not clamped to a bound, not swapped for
+    // NEVER_STALE, not defaulted — each of those invents a policy the studio
+    // never wrote, which is the failure this whole union exists to prevent.
+    // Zero is legitimate and stays legitimate: `ageDays <= 0` means "only an
+    // answer confirmed today counts", a real same-day expiry, not a disabled
+    // policy. Disabled is spelled `null`.
+    if (!Number.isFinite(staleness.maxAgeDays) || staleness.maxAgeDays < 0) {
+      throw new Error(
+        `projectCandidates: staleness.maxAgeDays must be a finite, non-negative ` +
+          `number of days or null to disable staleness; received ` +
+          `${String(staleness.maxAgeDays)}`,
+      );
+    }
     if (options.now === undefined) {
       throw new Error(
         "projectCandidates: staleness.maxAgeDays is set but `now` was not supplied; " +
