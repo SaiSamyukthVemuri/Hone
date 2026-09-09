@@ -996,7 +996,117 @@ end;
 $$;
 
 -- ---------------------------------------------------------------------
--- 13. RETIRE THE UNGATED AND CHECK-THEN-ACT SURFACES.
+-- 13. GATED RECIPIENT IDENTITY. The three fields a booking submission needs,
+--     released ONLY to a proven recipient of THIS invitation.
+--
+--     WHY THIS EXISTS. B3 books the invited person into the scoped slot, and
+--     the public booking command requires their name, email and phone. Those
+--     live on the waitlist ENTRY, and 0185 revoked every table privilege on
+--     `new_client_waitlist_entries` from service_role BY NAME precisely so the
+--     server's most privileged client cannot dump contact details directly.
+--     That boundary is correct and is NOT relaxed here -- no table grant is
+--     added, and `has_table_privilege('service_role', ..., 'SELECT')` stays
+--     false. The server reads the three booking fields through this command or
+--     it does not read them at all.
+--
+--     WHY THIS IS NOT THE CHECK-THEN-ACT ORACLE RETIRED BELOW. The dropped
+--     `validate_waitlist_invitation_proof(text,text)` returned a VERDICT: a
+--     caller asked "is this proof good?", received a boolean, and then acted on
+--     its OWN authority in a later transaction. The gap between the verdict and
+--     the act is the defect. This command issues no verdict to act on. It
+--     performs, inside one locked decision, the only thing the capability
+--     entitles its holder to here -- reading their own three booking fields --
+--     and returns them. Nothing downstream trusts its answer:
+--     `redeem_new_client_waitlist_invitation_verified` re-proves the same
+--     capability inside its own locked transaction before anything is consumed.
+--     Removing this command would not remove a gate; it would remove a read.
+--
+--     THE CAPABILITY TEST IS THE MUTATIONS' TEST, VERBATIM -- same liveness
+--     set, same post-lock `clock_timestamp()`, same digest comparison, same
+--     refusal vocabulary. A second, softer reading of "valid proof" is exactly
+--     how a two-authority law erodes, so there is not a second one.
+--
+--     LOCK ORDER. This takes the INVITATION lock only and reads the entry
+--     WITHOUT one. `decline_`, `release_new_client_waitlist_entry` and
+--     `expire_new_client_waitlist_invitation` all take the ENTRY mutex first
+--     and reach for the invitation second; taking an entry lock here too would
+--     close exactly the deadlock cycle the P2 above was raised to remove. An
+--     unlocked read cannot participate in that cycle.
+--
+--     WHAT IT MAY RETURN is a result and three columns, and the values are the
+--     STORED ones verbatim -- this is an authority boundary, not a normaliser.
+--     No lifecycle field, no proof or recipient hash, no scope, no other
+--     invitation and no other entry is reachable through it, and there is no
+--     argument by which a caller could ask for one.
+-- ---------------------------------------------------------------------
+create or replace function public.resolve_waitlist_invitation_recipient_identity(
+  p_raw_token      text,
+  p_raw_capability text
+)
+returns table (result text, name text, email text, phone text)
+language plpgsql volatile security definer
+set search_path = pg_catalog, pg_temp
+as $$
+declare r record; v_now timestamptz;
+        v_name text; v_email text; v_phone text;
+begin
+  if p_raw_token is null or p_raw_token !~ '^[a-f0-9]{64}$'
+     or p_raw_capability is null or p_raw_capability !~ '^[a-f0-9]{64}$' then
+    return query select 'invalid_input'::text, null::text, null::text, null::text; return;
+  end if;
+
+  -- ONE lock, held across the WHOLE authority decision, so a concurrent
+  -- revoke, decline, reissue or redeem either commits first -- and this fails
+  -- closed below -- or waits for it. Same pin as the two gated mutations.
+  select * into r from public.new_client_waitlist_invitations i
+   where i.token_hash = encode(extensions.digest(p_raw_token,'sha256'),'hex')
+   for update;
+  if r.id is null then
+    return query select 'invalid_token'::text, null::text, null::text, null::text; return;
+  end if;
+
+  v_now := clock_timestamp();
+
+  if r.redeemed_at is not null or r.expired_at is not null
+     or r.released_at is not null or r.declined_at is not null
+     or r.expires_at <= v_now then
+    return query select 'not_live'::text, null::text, null::text, null::text; return;
+  end if;
+
+  -- THE GATE. Bearer possession reaches here and stops, exactly as it does at
+  -- redeem and at decline.
+  if r.proof_capability_hash is null then
+    return query select 'proof_required'::text, null::text, null::text, null::text; return;
+  end if;
+  if r.proof_capability_expires_at <= v_now then
+    return query select 'proof_expired'::text, null::text, null::text, null::text; return;
+  end if;
+  if r.proof_capability_hash <> encode(extensions.digest(p_raw_capability,'sha256'),'hex') then
+    return query select 'proof_invalid'::text, null::text, null::text, null::text; return;
+  end if;
+
+  -- IDENTITY COMES FROM THIS INVITATION'S ENTRY, IN THIS INVITATION'S STUDIO.
+  -- The composite FK (entry_id, studio_id) -> entries(id, studio_id) already
+  -- makes a cross-studio pair unrepresentable; the predicate restates it at
+  -- runtime so this read cannot outlive that guarantee.
+  select e.name, e.email, e.phone
+    into v_name, v_email, v_phone
+    from public.new_client_waitlist_entries e
+   where e.id = r.entry_id and e.studio_id = r.studio_id;
+
+  -- The FK cascades the invitation away with its entry, so a live invitation
+  -- always has one. This refuses rather than returning 'resolved' carrying a
+  -- null identity, if that ever stops holding.
+  if not found then
+    return query select 'identity_unavailable'::text, null::text, null::text, null::text; return;
+  end if;
+
+  return query select 'resolved'::text, v_name, v_email, v_phone;
+end;
+$$;
+
+-- ---------------------------------------------------------------------
+-- 14. RETIRE THE UNGATED AND CHECK-THEN-ACT SURFACES.
 --
 --     The mutation owns capability validation inside its own locked
 --     transaction, so a separate read-only oracle is not a caller path. A
@@ -1036,7 +1146,7 @@ revoke all privileges on function public.issue_new_client_waitlist_invitation(uu
 revoke all privileges on function public.issue_new_client_waitlist_invitation(uuid, uuid, uuid, integer) from service_role;
 
 -- ---------------------------------------------------------------------
--- 14. PRIVILEGES. service_role ONLY, revoked from all four BY NAME first.
+-- 15. PRIVILEGES. service_role ONLY, revoked from all four BY NAME first.
 --
 --     Supabase's ALTER DEFAULT PRIVILEGES grants EXECUTE to anon,
 --     authenticated AND service_role at function-create time. An
@@ -1056,7 +1166,8 @@ begin
     'public.complete_waitlist_invitation_proof(text, text)',
     'public.invalidate_waitlist_invitation_proof(uuid)',
     'public.redeem_new_client_waitlist_invitation_verified(text, text)',
-    'public.decline_new_client_waitlist_invitation(text, text)'
+    'public.decline_new_client_waitlist_invitation(text, text)',
+    'public.resolve_waitlist_invitation_recipient_identity(text, text)'
   ] loop
     execute format('revoke all privileges on function %s from public', f);
     execute format('revoke all privileges on function %s from anon', f);

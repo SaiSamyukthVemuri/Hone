@@ -397,6 +397,94 @@ describe("0192 — the read-only resolver cannot consume an invitation", () => {
   });
 });
 
+describe("0192 — the gated recipient-identity read", () => {
+  // 0185 revoked EVERY table privilege on new_client_waitlist_entries from
+  // service_role by name, so the server cannot read a recipient's contact
+  // details directly. B3 still has to submit them to book. This command is the
+  // only bridge, and these assertions pin that it is a NARROW one.
+  const SIG = "create or replace function public.resolve_waitlist_invitation_recipient_identity(";
+  const body = () => {
+    const start = CODE.indexOf(SIG);
+    expect(start, "the identity command must exist").toBeGreaterThan(-1);
+    return CODE.slice(start, CODE.indexOf("$$;", start));
+  };
+
+  it("is CAPABILITY-GATED — there is no bare-token signature", () => {
+    // A one-argument variant would be a bearer path to contact details, which
+    // is the whole thing 0185's revoke and this slice's two-authority law
+    // exist to prevent.
+    expect(body()).toContain("p_raw_capability text");
+    expect(CODE).not.toMatch(
+      /create or replace function public\.resolve_waitlist_invitation_recipient_identity\(\s*p_raw_token\s+text\s*\)/,
+    );
+  });
+
+  it("returns ONLY a result and the three booking fields", () => {
+    // The named mutation: widening this return list. No lifecycle column, no
+    // proof or recipient hash, no scope and no identifier may join it.
+    expect(body()).toContain("returns table (result text, name text, email text, phone text)");
+    for (const leak of [
+      "proof_challenge_sent_to_hash",
+      "recipient_contact_hash",
+      "token_hash",
+      "scope_service_id",
+      "redeemed_at,",
+      "entry_id,",
+    ]) {
+      expect(
+        body().split("returns table")[1].split(")")[0],
+        `${leak} must not be in the return list`,
+      ).not.toContain(leak);
+    }
+  });
+
+  it("applies the SAME capability test as the gated mutations, not a softer one", () => {
+    const b = body();
+    // Identical vocabulary and identical order to redeem_ and decline_.
+    expect(b).toContain("if r.proof_capability_hash is null then");
+    expect(b).toContain("'proof_required'");
+    expect(b).toContain("if r.proof_capability_expires_at <= v_now then");
+    expect(b).toContain("'proof_expired'");
+    expect(b).toMatch(
+      /r\.proof_capability_hash <> encode\(extensions\.digest\(p_raw_capability,'sha256'\),'hex'\)/,
+    );
+    expect(b).toContain("'proof_invalid'");
+    // Liveness is the full set, including decline.
+    expect(b).toMatch(
+      /r\.redeemed_at is not null or r\.expired_at is not null[\s\S]*?r\.released_at is not null or r\.declined_at is not null[\s\S]*?r\.expires_at <= v_now/,
+    );
+    expect(b).toContain("'not_live'");
+    // Post-lock clock, as 0189 established.
+    expect(b).toContain("v_now := clock_timestamp();");
+  });
+
+  it("pins the invitation for the whole decision and does NOT lock the entry", () => {
+    const b = body();
+    expect(b).toContain("for update");
+    // decline_, release_ and expire_ all take the ENTRY mutex first. A second
+    // order over the same pair is the deadlock cycle the decline P2 removed,
+    // so the entry is read WITHOUT a lock here.
+    expect(b).not.toMatch(/from public\.new_client_waitlist_entries e[\s\S]*?for update/);
+  });
+
+  it("reads identity only from THIS invitation's entry, in THIS studio", () => {
+    expect(body()).toMatch(/where e\.id = r\.entry_id and e\.studio_id = r\.studio_id/);
+  });
+
+  it("writes nothing", () => {
+    const b = body();
+    for (const w of ["update public.", "insert into public.", "delete from public."]) {
+      expect(b, `the identity read must not ${w.trim()}`).not.toContain(w);
+    }
+  });
+
+  it("adds NO table privilege on the entries table — 0185's revoke stands", () => {
+    // The forbidden repair. Granting service_role SELECT here would reverse an
+    // explicit privacy boundary and make every other assertion cosmetic.
+    expect(CODE).not.toMatch(/grant[^;]*\bon\b[^;]*public\.new_client_waitlist_entries/i);
+  });
+});
+
 describe("0192 — privileges are enumerated by name, and nothing reaches the browser", () => {
   const FUNCTIONS = [
     "public.waitlist_admission_consumed(uuid)",
@@ -407,6 +495,7 @@ describe("0192 — privileges are enumerated by name, and nothing reaches the br
     "public.invalidate_waitlist_invitation_proof(uuid)",
     "public.redeem_new_client_waitlist_invitation_verified(text, text)",
     "public.decline_new_client_waitlist_invitation(text, text)",
+    "public.resolve_waitlist_invitation_recipient_identity(text, text)",
   ];
 
   it("names every command in the revoke/grant loop", () => {
@@ -439,9 +528,11 @@ describe("0192 — privileges are enumerated by name, and nothing reaches the br
 
   it("every function pins search_path and the definer ones are marked", () => {
     const defs = CODE.match(/create or replace function public\.[\s\S]*?\$\$;/g) ?? [];
-    // EIGHT new commands plus the forward REDEFINITION of the delegated issuer,
+    // NINE new commands plus the forward REDEFINITION of the delegated issuer,
     // which the P1 declined-rows repair required. 0190's file stays frozen.
-    expect(defs.length).toBe(9);
+    // The ninth is the gated recipient-identity read the integration lane
+    // proved B3 could not book without.
+    expect(defs.length).toBe(10);
     for (const d of defs) {
       expect(d).toMatch(/set search_path = pg_catalog, pg_temp/);
     }

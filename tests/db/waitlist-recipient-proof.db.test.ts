@@ -36,6 +36,10 @@ type Offer = {
   token: string;
   invitationId: string;
   email: string;
+  // The STORED identity, carried so a test can assert the exact values the
+  // database holds rather than a shape that merely looks plausible.
+  name: string;
+  phone: string | null;
 };
 
 async function seedService(studioId: string, label: string): Promise<string> {
@@ -57,15 +61,23 @@ async function openRound(studioId: string, allowance: number): Promise<void> {
 }
 
 /** A studio with an open round, a claimed entry, and one live SCOPED offer. */
-async function seedOffer(label: string, allowance = 10): Promise<Offer> {
+async function seedOffer(
+  label: string,
+  allowance = 10,
+  // OPTIONAL BY CONSTRUCTION, exactly as the public join form is: 0185 stores
+  // the column nullable, so a null phone is an ordinary entry and the identity
+  // command must return it as null rather than refusing.
+  phone: string | null = null,
+): Promise<Offer> {
   const studio = await seedStudio(label);
   const serviceId = await seedService(studio.studioId, label);
   await openRound(studio.studioId, allowance);
 
   const email = `p-${label}-${studio.studioId.slice(0, 8)}@harness.local`;
+  const name = `Prospect ${label}`;
   const joined = await adminQuery(
-    `select result, entry_id from public.join_new_client_waitlist($1, $2, $3, null)`,
-    [studio.studioId, `Prospect ${label}`, email],
+    `select result, entry_id from public.join_new_client_waitlist($1, $2, $3, $4)`,
+    [studio.studioId, name, email, phone],
   );
   const entryId = joined.rows[0].entry_id as string;
   await adminQuery(`select public.claim_new_client_waitlist_entry($1, $2, $3)`, [
@@ -88,6 +100,8 @@ async function seedOffer(label: string, allowance = 10): Promise<Offer> {
     token: issued.rows[0].raw_token as string,
     invitationId: issued.rows[0].invitation_id as string,
     email,
+    name,
+    phone,
   };
 }
 
@@ -138,8 +152,11 @@ async function completeProof(token: string, challenge: string) {
 }
 
 /** Drive a full offer to a held capability. */
-async function verifiedOffer(label: string): Promise<Offer & { capability: string }> {
-  const offer = await seedOffer(label);
+async function verifiedOffer(
+  label: string,
+  phone: string | null = null,
+): Promise<Offer & { capability: string }> {
+  const offer = await seedOffer(label, 10, phone);
   const begun = await beginProof(offer.token);
   expect(begun.result).toBe("challenge_issued");
   const done = await completeProof(offer.token, begun.raw_challenge);
@@ -162,6 +179,59 @@ async function decline(token: string, capability: string) {
     [token, capability],
   );
   return r.rows[0];
+}
+
+/** A studio with an open round and one CLAIMED entry that was never invited. */
+async function claimedEntryOnly(
+  label: string,
+): Promise<{ studio: SeededStudio; entryId: string }> {
+  const studio = await seedStudio(label);
+  await openRound(studio.studioId, 10);
+  const joined = await adminQuery(
+    `select entry_id from public.join_new_client_waitlist($1, $2, $3, null)`,
+    [
+      studio.studioId,
+      `Prospect ${label}`,
+      `p-${label}-${studio.studioId.slice(0, 8)}@harness.local`,
+    ],
+  );
+  const entryId = joined.rows[0].entry_id as string;
+  await adminQuery(`select public.claim_new_client_waitlist_entry($1, $2, $3)`, [
+    studio.studioId,
+    entryId,
+    studio.userId,
+  ]);
+  return { studio, entryId };
+}
+
+/**
+ * The gated recipient-identity read — the ONLY path by which the server may
+ * see a waitlist entry's contact details. 0185 revoked every table privilege
+ * on `new_client_waitlist_entries` from service_role by name, so a direct read
+ * is 42501; this command is the bridge, and it opens only for a proven
+ * recipient of THIS invitation.
+ */
+async function resolveIdentity(token: string, capability: string) {
+  const r = await adminQuery(
+    `select result, name, email, phone
+       from public.resolve_waitlist_invitation_recipient_identity($1, $2)`,
+    [token, capability],
+  );
+  return r.rows[0];
+}
+
+/**
+ * NO IDENTITY MEANS NO IDENTITY — not merely "not resolved".
+ *
+ * A refusal that still carried a name or an address would defeat the whole
+ * point of the command, and a test that only checked `result` would not see
+ * it. Every negative below asserts all three columns are null as well.
+ */
+function expectNoIdentity(r: Record<string, unknown>, why: string): void {
+  expect(r.result, `${why} — must not resolve`).not.toBe("resolved");
+  expect(r.name, `${why} — leaked a name`).toBeNull();
+  expect(r.email, `${why} — leaked an email`).toBeNull();
+  expect(r.phone, `${why} — leaked a phone`).toBeNull();
 }
 
 async function invitationRow(invitationId: string) {
@@ -892,6 +962,311 @@ describe("0192 — the read-only resolver never consumes the invitation", () => 
 });
 
 // ===========================================================================
+// GATED RECIPIENT IDENTITY — the only bridge across 0185's revoke
+// ===========================================================================
+//
+// THE DEFECT THIS COMMAND EXISTS FOR. B3 books the invited person into the
+// scoped slot, and the public booking command requires their name, email and
+// phone. Those live on the waitlist ENTRY, and 0185 revoked EVERY table
+// privilege on `new_client_waitlist_entries` from service_role by name so the
+// server's most privileged client cannot dump contact details. Integration
+// proved the consequence: a direct service_role read returns 42501, the
+// identity lookup returns null, and the booking stops before the engine.
+//
+// The repair is NOT a table grant. It is this narrow command, which opens for
+// a proven recipient of THIS invitation and for nobody else.
+describe("0192 — recipient identity is released only to a proven recipient", () => {
+  it("POSITIVE: a live invitation and the CURRENT capability return the stored identity", async () => {
+    const offer = await verifiedOffer("ident-ok", "+61 400 000 111");
+    const r = await resolveIdentity(offer.token, offer.capability);
+    expect(r.result).toBe("resolved");
+    // EXACT stored values, not a plausible shape.
+    expect(r.name).toBe(offer.name);
+    expect(r.email).toBe(offer.email);
+    expect(r.phone).toBe("+61 400 000 111");
+  });
+
+  it("POSITIVE: a null phone comes back as null — it is not a refusal", async () => {
+    // The join form makes phone optional and 0185 stores it nullable, so an
+    // entry without one is ordinary. It changes what the recipient is asked
+    // for, never whether their identity resolves.
+    const offer = await verifiedOffer("ident-nophone");
+    const r = await resolveIdentity(offer.token, offer.capability);
+    expect(r.result).toBe("resolved");
+    expect(r.name).toBe(offer.name);
+    expect(r.email).toBe(offer.email);
+    expect(r.phone).toBeNull();
+  });
+
+  it("BEARER ONLY: holding the invitation URL yields no identity", async () => {
+    // The whole two-authority law in one assertion. Possession may view the
+    // offer and request proof; it may not learn who the offer is for.
+    const offer = await seedOffer("ident-bearer");
+    expectNoIdentity(
+      await resolveIdentity(offer.token, "a".repeat(64)),
+      "bearer possession with no capability",
+    );
+    expect((await resolveIdentity(offer.token, "a".repeat(64))).result).toBe("proof_required");
+  });
+
+  it("WRONG CAPABILITY: a well-formed but incorrect capability yields no identity", async () => {
+    const offer = await verifiedOffer("ident-wrongcap");
+    const r = await resolveIdentity(offer.token, "b".repeat(64));
+    expectNoIdentity(r, "a guessed capability");
+    expect(r.result).toBe("proof_invalid");
+  });
+
+  it("CROSS_INVITATION: another invitation's capability yields no identity", async () => {
+    const a = await verifiedOffer("ident-xinv-a");
+    const b = await verifiedOffer("ident-xinv-b");
+    const r = await resolveIdentity(b.token, a.capability);
+    expectNoIdentity(r, "a capability minted for a different invitation");
+    expect(r.result).toBe("proof_invalid");
+  });
+
+  it("CROSS_INVITATION: a capability cannot reach an invitation that has none", async () => {
+    const a = await verifiedOffer("ident-xinv2-a");
+    const b = await seedOffer("ident-xinv2-b");
+    const r = await resolveIdentity(b.token, a.capability);
+    expectNoIdentity(r, "another invitation's capability against an unproven one");
+    expect(r.result).toBe("proof_required");
+  });
+
+  it("CROSS_STUDIO: a capability from studio A cannot bleed studio B's identity", async () => {
+    const a = await verifiedOffer("ident-xstudio-a");
+    const b = await verifiedOffer("ident-xstudio-b");
+    expect(a.studio.studioId).not.toBe(b.studio.studioId);
+    const r = await resolveIdentity(b.token, a.capability);
+    expectNoIdentity(r, "a capability from another studio");
+    expect(r.result).toBe("proof_invalid");
+    // And the reverse direction, so this is not one-way luck.
+    expectNoIdentity(
+      await resolveIdentity(a.token, b.capability),
+      "a capability from another studio, reversed",
+    );
+  });
+
+  it("EXPIRED CAPABILITY: an aged capability yields no identity", async () => {
+    const offer = await verifiedOffer("ident-capexp");
+    // Same fixture the redeem gate's expiry test uses: these proof columns are
+    // B1.5 state the 0188 append-only trigger does not enumerate.
+    await adminQuery(
+      `update public.new_client_waitlist_invitations
+          set proof_capability_expires_at = clock_timestamp() - interval '1 second'
+        where id = $1`,
+      [offer.invitationId],
+    );
+    const r = await resolveIdentity(offer.token, offer.capability);
+    expectNoIdentity(r, "an expired capability");
+    expect(r.result).toBe("proof_expired");
+  });
+
+  it("STALE CAPABILITY: re-proving replaces it, and the old one stops resolving", async () => {
+    const offer = await verifiedOffer("ident-stale");
+    const old = offer.capability;
+    // A new challenge CLEARS any live capability, then a new one is minted.
+    const begun = await beginProof(offer.token);
+    expect(begun.result).toBe("challenge_issued");
+    const done = await completeProof(offer.token, begun.raw_challenge as string);
+    expect(done.result).toBe("verified");
+    const fresh = done.raw_capability as string;
+    expect(fresh).not.toBe(old);
+
+    expectNoIdentity(await resolveIdentity(offer.token, old), "a replaced capability");
+    // ...and the CURRENT one still works, so the refusal above is about
+    // staleness rather than the command having simply stopped functioning.
+    expect((await resolveIdentity(offer.token, fresh)).result).toBe("resolved");
+  });
+
+  it("REPLACED MID-FLIGHT: requesting a new challenge alone invalidates the capability", async () => {
+    const offer = await verifiedOffer("ident-reissue");
+    await beginProof(offer.token);
+    const r = await resolveIdentity(offer.token, offer.capability);
+    expectNoIdentity(r, "a capability cleared by a reissued challenge");
+    expect(r.result).toBe("proof_required");
+  });
+
+  it("EXPIRED INVITATION: a lapsed wall clock yields no identity", async () => {
+    const offer = await verifiedOffer("ident-invexp");
+    await adminQuery(
+      `alter table public.new_client_waitlist_invitations disable trigger new_client_waitlist_invitations_append_only`,
+    );
+    await adminQuery(
+      `update public.new_client_waitlist_invitations
+          set issued_at = now() - interval '4 days', expires_at = now() - interval '1 minute'
+        where id = $1`,
+      [offer.invitationId],
+    );
+    await adminQuery(
+      `alter table public.new_client_waitlist_invitations enable trigger new_client_waitlist_invitations_append_only`,
+    );
+    const r = await resolveIdentity(offer.token, offer.capability);
+    expectNoIdentity(r, "an expired invitation");
+    expect(r.result).toBe("not_live");
+  });
+
+  it("DECLINED INVITATION: yields no identity", async () => {
+    const offer = await verifiedOffer("ident-declined");
+    expect((await decline(offer.token, offer.capability)).result).toBe("declined");
+    expectNoIdentity(
+      await resolveIdentity(offer.token, offer.capability),
+      "a declined invitation",
+    );
+  });
+
+  it("RELEASED INVITATION: yields no identity", async () => {
+    const offer = await verifiedOffer("ident-released");
+    const rel = await adminQuery(
+      `select public.release_new_client_waitlist_entry($1, $2, $3) as result`,
+      [offer.studio.studioId, offer.entryId, offer.studio.userId],
+    );
+    expect(rel.rows[0].result).toBe("released");
+    const r = await resolveIdentity(offer.token, offer.capability);
+    expectNoIdentity(r, "a released invitation");
+    expect(r.result).toBe("not_live");
+  });
+
+  it("REDEEMED INVITATION: the offer is spent and yields no identity", async () => {
+    const offer = await verifiedOffer("ident-redeemed");
+    expect((await redeem(offer.token, offer.capability)).result).toBe("redeemed");
+    const r = await resolveIdentity(offer.token, offer.capability);
+    expectNoIdentity(r, "a redeemed invitation");
+    expect(r.result).toBe("not_live");
+  });
+
+  it("malformed input is refused before any lookup", async () => {
+    const offer = await verifiedOffer("ident-malformed");
+    for (const [token, cap, why] of [
+      ["nope", offer.capability, "a short token"],
+      [offer.token, "nope", "a short capability"],
+      ["Z".repeat(64), offer.capability, "a non-hex token"],
+      [offer.token, "Z".repeat(64), "a non-hex capability"],
+    ] as Array<[string, string, string]>) {
+      const r = await resolveIdentity(token, cap);
+      expectNoIdentity(r, why);
+      expect(r.result, why).toBe("invalid_input");
+    }
+  });
+
+  it("an unknown token is refused without disclosing anything", async () => {
+    const r = await resolveIdentity("c".repeat(64), "d".repeat(64));
+    expectNoIdentity(r, "an unknown token");
+    expect(r.result).toBe("invalid_token");
+  });
+
+  it("CROSS_STUDIO is STRUCTURAL: the state the studio predicate guards cannot be built", async () => {
+    // HONESTY NOTE, recorded because it changes what this suite is claiming.
+    //
+    // Removing `and e.studio_id = r.studio_id` from the identity read changes
+    // NO observable behaviour — a mutation campaign confirmed this whole block
+    // still passes without it. That is not a gap in the tests: it is because
+    // the composite FK below makes the state that predicate guards against
+    // impossible to construct. The runtime predicate is defence in depth over
+    // a structural guarantee, and it is honest to say so rather than to claim
+    // a behavioural proof that no test could ever produce.
+    //
+    // So the guarantee is proven HERE, where it actually lives. The target
+    // entry is claimed but never invited, because an entry that already has a
+    // live invitation trips `one_live_per_entry` first and would mask the FK.
+    const a = await seedOffer("ident-fk-a");
+    const other = await claimedEntryOnly("ident-fk-b");
+    expect(other.studio.studioId).not.toBe(a.studio.studioId);
+
+    let code: string | undefined;
+    let constraint: string | undefined;
+    try {
+      await adminQuery(
+        `insert into public.new_client_waitlist_invitations
+           (studio_id, entry_id, issued_by_practitioner_id, token_hash, expires_at,
+            scope_service_id, scope_start_date, scope_end_date)
+         values ($1, $2, $3, $4, now() + interval '3 days', $5, current_date, current_date + 13)`,
+        [
+          a.studio.studioId,
+          other.entryId,
+          a.studio.practitionerId,
+          "f".repeat(64),
+          a.serviceId,
+        ],
+      );
+    } catch (e) {
+      code = (e as { code?: string }).code;
+      constraint = (e as { constraint?: string }).constraint;
+    }
+    expect(code, "a cross-studio invitation/entry pairing must be refused").toBe("23503");
+    expect(constraint).toBe("new_client_waitlist_invitations_entry_same_studio_fk");
+  });
+
+  it("THE BOUNDARY HOLDS: service_role still has NO direct read of the entries table", async () => {
+    // The forbidden repair, asserted directly. If a future change grants
+    // service_role SELECT here, every other test in this block would still
+    // pass while the privacy boundary 0185 established was gone.
+    for (const priv of ["SELECT", "INSERT", "UPDATE", "DELETE"]) {
+      const r = await adminQuery(
+        `select has_table_privilege('service_role','public.new_client_waitlist_entries',$1) as ok`,
+        [priv],
+      );
+      expect(r.rows[0].ok, `service_role must NOT hold ${priv} on the entries table`).toBe(
+        false,
+      );
+    }
+    // Column-level too, so a narrower grant cannot slip past the table check.
+    for (const col of ["name", "email", "phone"]) {
+      const r = await adminQuery(
+        `select has_column_privilege('service_role','public.new_client_waitlist_entries',$1,'SELECT') as ok`,
+        [col],
+      );
+      expect(r.rows[0].ok, `service_role must NOT read ${col} directly`).toBe(false);
+    }
+  });
+
+  it("and anon still holds nothing, while the owner's RLS-gated SELECT is unchanged", async () => {
+    const anon = await adminQuery(
+      `select has_table_privilege('anon','public.new_client_waitlist_entries','SELECT') as ok`,
+    );
+    expect(anon.rows[0].ok).toBe(false);
+    // 0185 grants authenticated SELECT, RLS-scoped to the studio's own owner.
+    // Asserted so this change is shown to have neither widened nor narrowed it.
+    const auth = await adminQuery(
+      `select has_table_privilege('authenticated','public.new_client_waitlist_entries','SELECT') as ok`,
+    );
+    expect(auth.rows[0].ok).toBe(true);
+  });
+
+  it("the command itself is server-only", async () => {
+    const sig = "public.resolve_waitlist_invitation_recipient_identity(text,text)";
+    for (const role of ["anon", "authenticated"]) {
+      const r = await adminQuery(
+        `select has_function_privilege($1, $2, 'EXECUTE') as ok`,
+        [role, sig],
+      );
+      expect(r.rows[0].ok, `${role} must NOT execute the identity command`).toBe(false);
+    }
+    const sr = await adminQuery(
+      `select has_function_privilege('service_role', $1, 'EXECUTE') as ok`,
+      [sig],
+    );
+    expect(sr.rows[0].ok).toBe(true);
+  });
+
+  it("PUBLIC holds no execute either — the revoke names it", async () => {
+    // `revoke ... from public` is the one that a by-name list of the three
+    // Supabase roles would miss, and PostgreSQL grants EXECUTE to PUBLIC on
+    // every new function.
+    const r = await adminQuery(
+      `select p.proacl::text as acl
+         from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+        where n.nspname = 'public'
+          and p.proname = 'resolve_waitlist_invitation_recipient_identity'`,
+    );
+    const acl = r.rows[0].acl as string | null;
+    expect(acl, "the function must carry an explicit ACL, not the default").not.toBeNull();
+    // An entry with an empty grantee is PUBLIC. It must not be there.
+    expect(acl).not.toMatch(/(^|,)\{?=/);
+    expect(acl).toContain("service_role=X");
+  });
+});
+
+// ===========================================================================
 // PRIVILEGES — EFFECTIVE, NOT SOURCE
 // ===========================================================================
 describe("0192 — privileges, proved against the database rather than the file", () => {
@@ -904,6 +1279,7 @@ describe("0192 — privileges, proved against the database rather than the file"
     "public.invalidate_waitlist_invitation_proof(uuid)",
     "public.redeem_new_client_waitlist_invitation_verified(text,text)",
     "public.decline_new_client_waitlist_invitation(text,text)",
+    "public.resolve_waitlist_invitation_recipient_identity(text,text)",
   ];
 
   it("GRANTS: service_role holds EXECUTE on every command", async () => {
