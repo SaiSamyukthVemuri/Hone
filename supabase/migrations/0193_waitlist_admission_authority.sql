@@ -626,6 +626,7 @@ declare
   v_code    text;
   v_now     timestamptz;
   v_current text;
+  v_status  text;
 begin
   select r.practitioner_id, r.code into v_actor, v_code
     from public.new_client_waitlist_resolve_owner(p_studio_id, p_actor_user_id) r;
@@ -648,10 +649,34 @@ begin
   -- redeem_waitlist_preference_grant, which writes the same preference table.
   perform 1 from public.studios s where s.id = p_studio_id for no key update;
 
-  perform 1 from public.new_client_waitlist_entries e
+  select e.status into v_status
+    from public.new_client_waitlist_entries e
    where e.id = p_entry_id and e.studio_id = p_studio_id
    for update;
-  if not found then return 'entry_not_found'; end if;
+  if v_status is null then return 'entry_not_found'; end if;
+
+  -- THE THIRD WRITER TO THIS TABLE OBEYS THE SAME TERMINAL RULE AS THE OTHER
+  -- TWO.
+  --
+  -- issue_ refuses to mint a link for a `removed` or `converted` entry and
+  -- redeem_ refuses to honour one. This command writes the SAME preference
+  -- table by a third route, and it read no status at all -- so an operator
+  -- request prepared before the removal, or one that waited behind the terminal
+  -- transition on this very lock, still recorded an availability answer for
+  -- someone who is no longer on the list. Three writers, one table, one rule;
+  -- two out of three is not a rule.
+  --
+  -- Same predicate and same word as issue_waitlist_preference_grant, derived
+  -- the same way: 0188's transition guard gives `removed` and `converted` no
+  -- outgoing edge, while waiting / claimed / invited / expired / released can
+  -- all still move. No new lifecycle state and no second interpretation.
+  --
+  -- Returned BEFORE the clock is read and before the preference row is even
+  -- looked at, so a refusal creates nothing, moves no stated_at or confirmed_at
+  -- and leaves the stored answer byte-identical.
+  if v_status in ('removed', 'converted') then
+    return 'entry_closed';
+  end if;
 
   -- Read after the locks, for the same reason redeem_ does: this transaction
   -- can wait on the entry lock, and every timestamp it writes must describe
@@ -1185,7 +1210,40 @@ begin
     return;
   end if;
 
-  v_n := coalesce(array_length(p_entry_ids, 1), 0);
+  -- SHAPE BEFORE SIZE, AND THE SIZE IS EVERY ELEMENT.
+  --
+  -- `uuid[]` does NOT mean "flat list of uuid" to PostgreSQL: a
+  -- multidimensional literal is a perfectly legal value of that type, and
+  -- `array_length(x, 1)` reports only the FIRST dimension while `unnest`
+  -- flattens and processes ALL of them. A 2 x 100 matrix therefore counted as
+  -- 2 -- clearing the 1..100 bound AND any configured invite_batch_max -- and
+  -- then claimed up to 200 entries. Both ceilings exist to bound how many
+  -- people one call can pull out of the queue, so undercounting them is an
+  -- allowance bypass, not a validation nicety. Measured:
+  --
+  --     array[array[u,u,u], array[u,u,u]]::uuid[]
+  --       array_length(a, 1) = 2    cardinality(a) = 6    unnest -> 6 rows
+  --
+  -- The contract is a FLAT ORDERED list -- `unnest ... with ordinality` gives
+  -- the rank its whole meaning, and a matrix has no single sensible ranking --
+  -- so a matrix is refused outright rather than silently flattened. Silent
+  -- flattening would invent an order the caller never expressed.
+  --
+  -- `invalid_input`, 0193's existing word for a malformed parameter, not
+  -- `invalid_count`: the count is not what is wrong, the SHAPE is, and telling
+  -- an owner their count is invalid when they sent 4 ids would be misleading.
+  -- NULL and '{}' both have NULL ndims, so they fall through the coalesce to
+  -- the count check below and still answer `invalid_count`, exactly as before.
+  if coalesce(array_ndims(p_entry_ids), 1) <> 1 then
+    return query select 'invalid_input'::text, null::uuid;
+    return;
+  end if;
+
+  -- cardinality() counts EVERY element across every dimension. After the shape
+  -- refusal above a flat list is all that reaches here, so the two agree -- but
+  -- the bound is stated in terms of what unnest will actually process, which is
+  -- the property that must hold.
+  v_n := coalesce(cardinality(p_entry_ids), 0);
   if v_n < 1 or v_n > 100 then
     return query select 'invalid_count'::text, null::uuid;
     return;

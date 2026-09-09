@@ -610,6 +610,407 @@ describe("the ordered claim", () => {
 //
 // Neither was hypothetical. Both were reproduced deterministically before the
 // repair, and these are the regressions that stop them returning.
+describe("the ranked claim bounds EVERY element, not the first dimension", () => {
+  // `uuid[]` does not mean "flat list" to PostgreSQL. A multidimensional
+  // literal is a legal value of that type; `array_length(x,1)` reports only the
+  // first dimension while `unnest` flattens and processes all of them. Both the
+  // hard 1..100 bound and the studio's invite_batch_max exist to cap how many
+  // people ONE call can pull out of the queue, so undercounting them is an
+  // allowance bypass.
+  async function seedCohort(label: string, n: number) {
+    const studio = await seedStudio(label);
+    const ids: string[] = [];
+    for (let i = 0; i < n; i++) {
+      const e = await adminQuery(
+        `select * from public.create_practitioner_waitlist_entry($1,$2,$3,$4,null,null)`,
+        [studio.studioId, studio.userId, `P${i}`, uniqueEmail(`${label}-${i}`)],
+      );
+      ids.push(e.rows[0].entry_id as string);
+    }
+    return { studio, ids };
+  }
+  const pad = (n: number) => Array.from({ length: n }, () => crypto.randomUUID());
+
+  it("THE PREMISE: array_length sees the first dimension, unnest sees them all", async () => {
+    // Pinned in SQL rather than asserted in prose, so the defect this guards
+    // cannot quietly stop being true.
+    const r = await adminQuery(
+      `select array_length(a,1) as dim1, cardinality(a) as total,
+              (select count(*)::int from unnest(a)) as unnested
+         from (select array[array[gen_random_uuid(),gen_random_uuid()],
+                            array[gen_random_uuid(),gen_random_uuid()]]::uuid[] as a) t`,
+    );
+    expect(Number(r.rows[0].dim1)).toBe(2);
+    expect(Number(r.rows[0].total)).toBe(4);
+    expect(Number(r.rows[0].unnested)).toBe(4);
+  });
+
+  it("accepts a flat batch of 1", async () => {
+    const { studio, ids } = await seedCohort("rc-flat1", 1);
+    const res = await adminQuery(
+      `select oc.result, oc.entry_id from public.claim_new_client_waitlist_entries_ordered($1,$2,$3::uuid[]) oc`,
+      [studio.studioId, studio.userId, ids],
+    );
+    expect(res.rows.map((r: { result: string }) => r.result)).toEqual(["claimed"]);
+  });
+
+  it("accepts a flat batch of exactly 100, and refuses 101", async () => {
+    const { studio, ids } = await seedCohort("rc-flat100", 1);
+    // 1 real entry + 99 unknown ids = exactly 100 elements. The bound is about
+    // how many the caller may ASK for; unknown ids simply match nothing.
+    const hundred = [...ids, ...pad(99)];
+    const ok = await adminQuery(
+      `select oc.result, oc.entry_id from public.claim_new_client_waitlist_entries_ordered($1,$2,$3::uuid[]) oc`,
+      [studio.studioId, studio.userId, hundred],
+    );
+    expect(ok.rows.map((r: { result: string }) => r.result)).toEqual(["claimed"]);
+    expect(ok.rows[0].entry_id).toBe(ids[0]);
+
+    const { studio: s2, ids: ids2 } = await seedCohort("rc-flat101", 1);
+    const overflow = [...ids2, ...pad(100)];
+    const bad = await adminQuery(
+      `select oc.result from public.claim_new_client_waitlist_entries_ordered($1,$2,$3::uuid[]) oc`,
+      [s2.studioId, s2.userId, overflow],
+    );
+    expect(bad.rows[0].result).toBe("invalid_count");
+    const still = await adminQuery(
+      `select status from public.new_client_waitlist_entries where id = $1`,
+      [ids2[0]],
+    );
+    expect(still.rows[0].status, "a refused batch claims nobody").toBe("waiting");
+  });
+
+  it("refuses a 2 x 100 matrix and claims NOBODY", async () => {
+    // The reported bypass, end to end: dimension 1 is 2 — inside every ceiling —
+    // while unnest would have processed 200.
+    const { studio, ids } = await seedCohort("rc-matrix", 4);
+    const rowA = [...ids.slice(0, 2), ...pad(98)];
+    const rowB = [...ids.slice(2, 4), ...pad(98)];
+    const res = await adminQuery(
+      `select oc.result from public.claim_new_client_waitlist_entries_ordered($1,$2,array[$3::uuid[],$4::uuid[]]) oc`,
+      [studio.studioId, studio.userId, rowA, rowB],
+    );
+    expect(res.rows[0].result).toBe("invalid_input");
+
+    const rows = await adminQuery(
+      `select count(*)::int as n from public.new_client_waitlist_entries
+        where id = any($1::uuid[]) and status <> 'waiting'`,
+      [ids],
+    );
+    expect(rows.rows[0].n, "not one entry may be claimed out of a matrix").toBe(0);
+  });
+
+  it("refuses a SMALL matrix too — the shape is the defect, not the size", async () => {
+    // A 2 x 2 holds four ids, well inside every ceiling. If only the size were
+    // checked this would sail through and claim in an order nobody expressed.
+    const { studio, ids } = await seedCohort("rc-matrix-small", 4);
+    const res = await adminQuery(
+      `select oc.result from public.claim_new_client_waitlist_entries_ordered($1,$2,
+                array[array[$3::uuid,$4::uuid],array[$5::uuid,$6::uuid]]) oc`,
+      [studio.studioId, studio.userId, ids[0], ids[1], ids[2], ids[3]],
+    );
+    expect(res.rows[0].result).toBe("invalid_input");
+    const rows = await adminQuery(
+      `select count(*)::int as n from public.new_client_waitlist_entries
+        where id = any($1::uuid[]) and status <> 'waiting'`,
+      [ids],
+    );
+    expect(rows.rows[0].n).toBe(0);
+  });
+
+  it("keeps NULL and empty answering invalid_count, not the shape refusal", async () => {
+    // Both have NULL ndims. The coalesce is what stops them being mistaken for
+    // matrices, and their existing answer must not have moved.
+    const studio = await seedStudio("rc-empty");
+    for (const expr of ["null::uuid[]", "'{}'::uuid[]"]) {
+      const res = await adminQuery(
+        `select oc.result from public.claim_new_client_waitlist_entries_ordered($1,$2,${expr}) oc`,
+        [studio.studioId, studio.userId],
+      );
+      expect(res.rows[0].result, `${expr} must still be invalid_count`).toBe("invalid_count");
+    }
+  });
+
+  it("measures invite_batch_max against the element count", async () => {
+    const { studio, ids } = await seedCohort("rc-cap", 3);
+    await adminQuery(
+      `select public.set_studio_waitlist_admission_policy($1,$2,$3::jsonb,1,2)`,
+      [studio.studioId, studio.userId, JSON.stringify({ weights: {} })],
+    );
+    const res = await adminQuery(
+      `select oc.result from public.claim_new_client_waitlist_entries_ordered($1,$2,$3::uuid[]) oc`,
+      [studio.studioId, studio.userId, ids],
+    );
+    expect(res.rows[0].result).toBe("exceeds_batch_max");
+    // And a matrix never reaches the ceiling at all — it is refused for shape
+    // first, whatever the ceiling says.
+    const m = await adminQuery(
+      `select oc.result from public.claim_new_client_waitlist_entries_ordered($1,$2,
+                array[array[$3::uuid],array[$4::uuid]]) oc`,
+      [studio.studioId, studio.userId, ids[0], ids[1]],
+    );
+    expect(m.rows[0].result).toBe("invalid_input");
+    const rows = await adminQuery(
+      `select count(*)::int as n from public.new_client_waitlist_entries
+        where id = any($1::uuid[]) and status <> 'waiting'`,
+      [ids],
+    );
+    expect(rows.rows[0].n).toBe(0);
+  });
+
+  it("still returns a valid flat batch in the caller's ranking order", async () => {
+    // The control. Without it every assertion above would pass against a
+    // command that refuses everything.
+    const { studio, ids } = await seedCohort("rc-order", 3);
+    const order = [ids[2], ids[0], ids[1]];
+    const res = await adminQuery(
+      `select oc.entry_id from public.claim_new_client_waitlist_entries_ordered($1,$2,$3::uuid[]) oc`,
+      [studio.studioId, studio.userId, order],
+    );
+    expect(res.rows.map((r: { entry_id: string }) => r.entry_id)).toEqual(order);
+  });
+
+  it("still collapses a duplicated id to ONE claim", async () => {
+    // Duplicate semantics are unchanged by counting differently: cardinality
+    // counts the duplicate toward the bound, and the claim still happens once.
+    const { studio, ids } = await seedCohort("rc-dup", 1);
+    const res = await adminQuery(
+      `select oc.entry_id from public.claim_new_client_waitlist_entries_ordered($1,$2,$3::uuid[]) oc`,
+      [studio.studioId, studio.userId, [ids[0], ids[0]]],
+    );
+    expect(res.rows.map((r: { entry_id: string }) => r.entry_id)).toEqual([ids[0]]);
+  });
+});
+
+describe("the operator path obeys the terminal rule too", () => {
+  // THE THIRD WRITER. issue_ refuses to mint a link for a terminal entry and
+  // redeem_ refuses to honour one; set_waitlist_entry_availability writes the
+  // SAME preference table by a third route and read no status at all. Three
+  // writers, one table, one rule — two out of three is not a rule.
+  async function seedEntry(label: string) {
+    const studio = await seedStudio(label);
+    const entry = await adminQuery(
+      `select * from public.create_practitioner_waitlist_entry($1,$2,'P',$3,null,null)`,
+      [studio.studioId, studio.userId, uniqueEmail(label)],
+    );
+    return { studio, entryId: entry.rows[0].entry_id as string };
+  }
+
+  async function advance(
+    studio: { studioId: string; userId: string },
+    entryId: string,
+    status: "claimed" | "invited" | "expired" | "released" | "converted",
+  ) {
+    await adminQuery(
+      `update public.new_client_waitlist_entries
+          set status = 'claimed', claimed_at = now(),
+              claimed_by_practitioner_id = (select id from public.practitioners
+                                             where studio_id = $2 and user_id = $3 limit 1)
+        where id = $1`,
+      [entryId, studio.studioId, studio.userId],
+    );
+    if (status === "claimed") return;
+    if (status === "released") {
+      await adminQuery(
+        `update public.new_client_waitlist_entries
+            set status = 'released', released_at = now() where id = $1`,
+        [entryId],
+      );
+      return;
+    }
+    await adminQuery(
+      `update public.new_client_waitlist_entries
+          set status = 'invited', invited_at = now() where id = $1`,
+      [entryId],
+    );
+    if (status === "invited") return;
+    if (status === "expired") {
+      await adminQuery(
+        `update public.new_client_waitlist_entries
+            set status = 'expired', expired_at = now() where id = $1`,
+        [entryId],
+      );
+      return;
+    }
+    const client = await adminQuery(
+      `insert into public.clients (studio_id, name) values ($1,'Converted prospect') returning id`,
+      [studio.studioId],
+    );
+    await adminQuery(
+      `update public.new_client_waitlist_entries
+          set status = 'converted', converted_at = now(), converted_client_id = $2
+        where id = $1`,
+      [entryId, client.rows[0].id],
+    );
+  }
+
+  const SET = `select public.set_waitlist_entry_availability($1,$2,$3,$4) as r`;
+
+  it("a WAITING entry still states, confirms and changes", async () => {
+    const { studio, entryId } = await seedEntry("avail-waiting");
+    const stated = await adminQuery(SET, [studio.studioId, entryId, studio.userId, "weekdays"]);
+    expect(stated.rows[0].r).toBe("stated");
+    const confirmed = await adminQuery(SET, [studio.studioId, entryId, studio.userId, "weekdays"]);
+    expect(confirmed.rows[0].r).toBe("confirmed");
+    const changed = await adminQuery(SET, [studio.studioId, entryId, studio.userId, "weekends"]);
+    expect(changed.rows[0].r).toBe("changed");
+  });
+
+  it("CLAIMED, INVITED, EXPIRED and RELEASED are all still allowed", async () => {
+    // The control, and the reason the rule is terminal-only: each of these can
+    // still move under 0188's transition table, so the prospect is on the list
+    // and an operator recording their availability is ordinary work.
+    for (const status of ["claimed", "invited", "expired", "released"] as const) {
+      const { studio, entryId } = await seedEntry(`avail-${status}`);
+      await advance(studio, entryId, status);
+      const reached = await adminQuery(
+        `select status from public.new_client_waitlist_entries where id = $1`,
+        [entryId],
+      );
+      expect(reached.rows[0].status, `the fixture must genuinely be ${status}`).toBe(status);
+
+      const res = await adminQuery(SET, [studio.studioId, entryId, studio.userId, "both"]);
+      expect(res.rows[0].r, `${status} is still on the list`).toBe("stated");
+    }
+  });
+
+  it("REMOVED and CONVERTED are refused, and the stored answer is byte-identical", async () => {
+    for (const status of ["removed", "converted"] as const) {
+      const { studio, entryId } = await seedEntry(`avail-terminal-${status}`);
+      // An answer already on file, so the UPDATE branch is the one refused —
+      // rewriting an existing answer is the more damaging half.
+      await adminQuery(SET, [studio.studioId, entryId, studio.userId, "weekdays"]);
+      const before = await adminQuery(
+        `select preference, stated_at, confirmed_at, source, recorded_by_practitioner_id
+           from public.new_client_waitlist_entry_preferences where entry_id = $1`,
+        [entryId],
+      );
+
+      if (status === "removed") {
+        const r = await adminQuery(
+          `select public.remove_new_client_waitlist_entry($1,$2,$3) as r`,
+          [studio.studioId, entryId, studio.userId],
+        );
+        expect(r.rows[0].r).toBe("removed");
+      } else {
+        await advance(studio, entryId, "converted");
+      }
+
+      const res = await adminQuery(SET, [studio.studioId, entryId, studio.userId, "weekends"]);
+      expect(res.rows[0].r, `${status} must not accept an availability write`).toBe("entry_closed");
+
+      const after = await adminQuery(
+        `select preference, stated_at, confirmed_at, source, recorded_by_practitioner_id
+           from public.new_client_waitlist_entry_preferences where entry_id = $1`,
+        [entryId],
+      );
+      expect(after.rows[0], "not one column may move").toEqual(before.rows[0]);
+    }
+  });
+
+  it("creates NO preference row when the entry is already closed", async () => {
+    // The insert branch, refused. A refusal must not leave a first answer
+    // behind for someone who is no longer on the list.
+    const { studio, entryId } = await seedEntry("avail-terminal-insert");
+    await adminQuery(`select public.remove_new_client_waitlist_entry($1,$2,$3) as r`, [
+      studio.studioId,
+      entryId,
+      studio.userId,
+    ]);
+    const res = await adminQuery(SET, [studio.studioId, entryId, studio.userId, "both"]);
+    expect(res.rows[0].r).toBe("entry_closed");
+    const rows = await adminQuery(
+      `select count(*)::int as n from public.new_client_waitlist_entry_preferences where entry_id = $1`,
+      [entryId],
+    );
+    expect(rows.rows[0].n).toBe(0);
+  });
+
+  it("a stale setter that waited behind the removal is refused once it gets the lock", async () => {
+    // THE DECISION MUST BE MADE UNDER THE LOCK. A setter that started before the
+    // removal and queued on the entry lock must re-read the status it waited
+    // for, not the one it set out with.
+    const { studio, entryId } = await seedEntry("avail-race");
+    await adminQuery(SET, [studio.studioId, entryId, studio.userId, "weekdays"]);
+    const before = await adminQuery(
+      `select preference, stated_at, confirmed_at from public.new_client_waitlist_entry_preferences
+        where entry_id = $1`,
+      [entryId],
+    );
+
+    const remover = new Client({ connectionString: resolveLocalDbUrl() });
+    const setter = new Client({ connectionString: resolveLocalDbUrl() });
+    await remover.connect();
+    await setter.connect();
+    try {
+      const setterPid = (await setter.query(`select pg_backend_pid() as pid`)).rows[0].pid as number;
+
+      await remover.query("begin");
+      const removed = await remover.query(
+        `select public.remove_new_client_waitlist_entry($1,$2,$3) as r`,
+        [studio.studioId, entryId, studio.userId],
+      );
+      expect(removed.rows[0].r).toBe("removed");
+
+      const pending = setter
+        .query(SET, [studio.studioId, entryId, studio.userId, "weekends"])
+        .then((r) => ({ ok: true as const, v: r.rows[0].r as string }))
+        .catch((e: { code?: string }) => ({ ok: false as const, code: e.code }));
+
+      const waiting = await waitUntilBlocked(setterPid);
+      expect(waiting, "the setter must be blocked on the entry lock").not.toBeNull();
+
+      await remover.query("commit");
+
+      const result = await pending;
+      expect(result.ok).toBe(true);
+      expect(result.ok && result.v, "the post-lock read must see the committed removal")
+        .toBe("entry_closed");
+
+      const after = await adminQuery(
+        `select preference, stated_at, confirmed_at from public.new_client_waitlist_entry_preferences
+          where entry_id = $1`,
+        [entryId],
+      );
+      expect(after.rows[0], "the race must move nothing").toEqual(before.rows[0]);
+    } finally {
+      await remover.end();
+      await setter.end();
+    }
+  });
+
+  it("a cross-studio entry still fails closed as entry_not_found", async () => {
+    // Unchanged: an id from another tenant must stay indistinguishable from one
+    // that does not exist, and must NOT leak a lifecycle answer.
+    const mine = await seedEntry("avail-cross-mine");
+    const theirs = await seedEntry("avail-cross-theirs");
+    const res = await adminQuery(SET, [
+      mine.studio.studioId,
+      theirs.entryId,
+      mine.studio.userId,
+      "both",
+    ]);
+    expect(res.rows[0].r).toBe("entry_not_found");
+
+    // And the same holds once THEIR entry is terminal: the refusal must not
+    // become `entry_closed`, which would confirm the entry exists.
+    await adminQuery(`select public.remove_new_client_waitlist_entry($1,$2,$3) as r`, [
+      theirs.studio.studioId,
+      theirs.entryId,
+      theirs.studio.userId,
+    ]);
+    const res2 = await adminQuery(SET, [
+      mine.studio.studioId,
+      theirs.entryId,
+      mine.studio.userId,
+      "both",
+    ]);
+    expect(res2.rows[0].r, "a cross-tenant id must never reveal a lifecycle state").toBe(
+      "entry_not_found",
+    );
+  });
+});
+
 describe("an expired preference link does not strand the entry", () => {
   async function seedWithGrant(label: string) {
     const studio = await seedStudio(label);

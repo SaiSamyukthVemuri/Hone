@@ -293,6 +293,16 @@ describe("the ordered claim keeps what the FIFO claim owns", () => {
     expect(CODE).toContain("order by r.ord");
   });
 
+  it("bounds every element and refuses a matrix outright", () => {
+    // `uuid[]` admits multidimensional values; array_length(x,1) sees only the
+    // first dimension while unnest processes them all, so both the 1..100 bound
+    // and invite_batch_max were undercountable. cardinality() counts every
+    // element; the ndims gate refuses a shape whose ranking nobody expressed.
+    expect(CODE).toContain("if coalesce(array_ndims(p_entry_ids), 1) <> 1 then");
+    expect(CODE).toContain("v_n := coalesce(cardinality(p_entry_ids), 0);");
+    expect(CODE).not.toContain("array_length(p_entry_ids, 1)");
+  });
+
   it("lets a configured batch ceiling only tighten the existing bound", () => {
     expect(CODE).toContain("if v_n < 1 or v_n > 100 then");
     expect(CODE).toContain("if v_cap is not null and v_n > v_cap then");
@@ -316,6 +326,19 @@ describe("the prospect link is bound to a live entry and to one mint instant", (
 
   it("locks the grant row only, leaving the entry lock to the canonical order", () => {
     expect(CODE).toContain("for update of g;");
+  });
+
+  it("refuses an OPERATOR availability write for a terminal entry, same rule", () => {
+    // The third writer to the preference table. Same predicate and same word as
+    // the issuer, refused before the clock is read so nothing is created and no
+    // stated_at / confirmed_at moves.
+    const fn = CODE.slice(CODE.indexOf("create or replace function public.set_waitlist_entry_availability("));
+    const body = fn.slice(0, fn.indexOf("\n$$;"));
+    expect(body).toContain("select e.status into v_status");
+    expect(body).toContain("if v_status in ('removed', 'converted') then");
+    expect(body).toContain("return 'entry_closed';");
+    expect(body.indexOf("'entry_closed'")).toBeLessThan(body.indexOf("v_now := clock_timestamp();"));
+    expect(body.indexOf("'entry_closed'")).toBeLessThan(body.indexOf("insert into public.new_client_waitlist_entry_preferences"));
   });
 
   it("refuses to ISSUE for a terminal entry, on the same derivation", () => {
