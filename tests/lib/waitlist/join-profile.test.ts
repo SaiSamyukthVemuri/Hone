@@ -259,7 +259,6 @@ describe("completing a profile cannot move the queue position", () => {
     expect(Object.keys(patch).sort()).toEqual(
       [
         "availabilityPreference",
-        "email",
         "firstName",
         "lastName",
         "mobile",
@@ -268,6 +267,38 @@ describe("completing a profile cannot move the queue position", () => {
     );
     expect(patch).not.toHaveProperty("joinedAt");
     expect(patch).not.toHaveProperty("joined_at");
+  });
+
+  it("the patch carries NO email, so a leaked link cannot redirect the invitation", () => {
+    const validated = validateWaitlistJoinProfile(goodInput());
+    if (!validated.ok) throw new Error("fixture invalid");
+    const patch = completionPatchFromProfile(validated.value);
+    // The surface renders the address as text with no control, but the TYPE is
+    // what stops a forged post presenting one. The server resolves the address
+    // from the entry it already authorised.
+    expect(patch).not.toHaveProperty("email");
+    // NON-VACUITY: the profile it was projected from DOES carry the address, so
+    // this is an omission the projection performs, not a field that never existed.
+    expect(validated.value.email).toBe("sarah.jones@example.com");
+  });
+
+  it("the three WHO/WHERE fields are all absent together", () => {
+    const validated = validateWaitlistJoinProfile(goodInput());
+    if (!validated.ok) throw new Error("fixture invalid");
+    const patch = completionPatchFromProfile(validated.value);
+    for (const forbidden of ["entryId", "entry_id", "email", "joinedAt", "joined_at"]) {
+      expect(patch).not.toHaveProperty(forbidden);
+    }
+    // And every field a prospect MAY legitimately change is still there.
+    for (const allowed of [
+      "firstName",
+      "lastName",
+      "mobile",
+      "treatmentAreaIds",
+      "availabilityPreference",
+    ]) {
+      expect(patch).toHaveProperty(allowed);
+    }
   });
 
   it("the patch carries no entry id for a caller to name a row with", () => {

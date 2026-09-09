@@ -443,24 +443,44 @@ export function invitationEligibility(
  * belong to is the caller's authorisation problem, decided server-side from a
  * capability. Carrying an id in the payload would invite a client to name the
  * row it wants to write.
+ *
+ * AND THERE IS NO `email`, WHICH IS THE THIRD OMISSION AND THE SAME ARGUMENT.
+ * The completion surface renders the address as TEXT with no form control, so a
+ * person cannot change it — but a TYPE that still carried an email would let a
+ * forged post present one, and a server binding reading the patch field-by-field
+ * would have no reason to distrust it. The stored address is where every future
+ * invitation goes, so a payload that can carry one is a redirect waiting for a
+ * leaked link.
+ *
+ * The server already knows the address: it resolves the entry from the
+ * capability, and the entry holds the email. Nothing is lost by omitting it, and
+ * what is gained is that the dangerous write is unexpressible rather than merely
+ * unreachable. Changing an address stays a support conversation with the studio.
+ *
+ * Every field a prospect may legitimately change is here; the three that decide
+ * WHO and WHERE — `entryId`, `email`, `joinedAt` — are all absent.
  */
 export type ProfileCompletionPatch = {
   firstName: string;
   lastName: string;
-  email: string;
   mobile: string;
   treatmentAreaIds: ReadonlyArray<TreatmentAreaId>;
   availabilityPreference: AvailabilityPreference;
 };
 
-/** Project a validated profile into the patch. Consent travels separately. */
+/**
+ * Project a validated profile into the patch.
+ *
+ * DELIBERATELY LOSSY. The profile carries an email because validation needs one
+ * (the completion draft seeds it from storage); the patch drops it, along with
+ * consent, which travels separately as its own act.
+ */
 export function completionPatchFromProfile(
   profile: WaitlistJoinProfile,
 ): ProfileCompletionPatch {
   return {
     firstName: profile.firstName,
     lastName: profile.lastName,
-    email: profile.email,
     mobile: profile.mobile,
     treatmentAreaIds: profile.treatmentAreaIds,
     availabilityPreference: profile.availabilityPreference,

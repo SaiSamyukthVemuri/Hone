@@ -265,3 +265,50 @@ describe("NON-VACUITY — the negative controls above can actually fail", () => 
     expect(populated).toContain('data-testid="waitlist-field-email"');
   });
 });
+
+describe("mobile usability", () => {
+  const html = joinMarkup();
+  // Attribute names are matched case-insensitively, as HTML itself matches
+  // them: react-dom/server preserves the JSX casing (`inputMode`) while a
+  // browser parses it as `inputmode`. A case-SENSITIVE scan here reports a
+  // false failure on correct markup, which is exactly what it did once.
+  const attrs = html.toLowerCase();
+
+  it("asks for the right keyboard on a phone", () => {
+    expect(attrs).toContain('inputmode="email"');
+    expect(attrs).toContain('inputmode="tel"');
+    expect(attrs).toContain('type="tel"');
+  });
+
+  it("lets a phone autofill the identity fields", () => {
+    // Separate given-name/family-name is what makes the two-field split
+    // autofillable at all; a single "name" field would fill one box with both.
+    expect(attrs).toContain('autocomplete="given-name"');
+    expect(attrs).toContain('autocomplete="family-name"');
+    expect(attrs).toContain('autocomplete="email"');
+    expect(attrs).toContain('autocomplete="tel"');
+  });
+
+  it("uses 16px inputs, so iOS does not zoom on focus", () => {
+    // Below 16px Safari zooms the viewport when a field takes focus, and does
+    // not zoom back out — the single most common mobile form defect.
+    expect((html.match(/text-\[16px\]/g) ?? []).length).toBe(4);
+  });
+
+  it("keeps the 44px floor on every option row, with its inline-flex", () => {
+    const floors = html.match(/min-h-\[44px\]/g) ?? [];
+    const paired = html.match(/inline-flex[^"]*min-h-\[44px\]/g) ?? [];
+    // min-height does nothing to an inline box, so the two must travel together.
+    expect(floors.length).toBe(paired.length);
+    expect(floors.length).toBeGreaterThanOrEqual(TREATMENT_AREA_IDS.length + 3);
+  });
+
+  it("cannot overflow a narrow viewport", () => {
+    // One column by default; the name pair goes side-by-side only at `sm:`.
+    expect(html).toContain("flex-col");
+    expect(html).toContain("max-w-full");
+    // No fixed pixel widths anywhere — the classic source of a horizontally
+    // scrolling form on a 320px phone.
+    expect(html.match(/w-\[\d+px\]/g) ?? []).toHaveLength(0);
+  });
+});
