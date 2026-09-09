@@ -392,3 +392,40 @@ describe("classifier — mixed diffs still take the highest tier", () => {
     expect(a).toEqual(b);
   });
 });
+
+// ---------------------------------------------------------------------------
+// CI-COST-01 — the fail-safe that made the old post-merge lane run everything
+// ---------------------------------------------------------------------------
+// Nothing here asks the classifier to change. Failing safe on an unreadable
+// diff is CORRECT, and the guard below pins it so it cannot be softened into
+// "no files, so nothing to run" by someone chasing minutes.
+//
+// It is recorded here because it is the mechanism behind CI-COST-01, and the
+// mechanism was invisible from the classifier's side. ci.yml used to also run
+// on `push` to the production branch, where it collected changed files with
+//
+//     git show --name-only --pretty=format: "$GITHUB_SHA"
+//
+// On a MERGE commit that prints a COMBINED diff, which for a clean merge is
+// EMPTY. So the classifier was handed zero files on every post-merge run, did
+// exactly what it should with them, and the production-push lane executed the
+// full matrix unconditionally — 37 runs in the measured window, every one of
+// them, regardless of what had merged. The defect was in the QUESTION, not in
+// this answer. The fix is a first-parent diff, and the post-merge lane now
+// lives in .github/workflows/post-merge.yml.
+describe("classifier — an unreadable diff fails safe", () => {
+  it("classifies an EMPTY file list as the full matrix at the highest tier", () => {
+    const r = c();
+    expect(r.changed_file_count).toBe(0);
+    expect(r.full_matrix_required).toBe(true);
+    expect(r.docs_only).toBe(false);
+    expect(r.baselineRiskTier).toBe("T3");
+    expect(reasons()).toContain("no detectable diff: failing safe to the highest tier");
+  });
+
+  it("never reports docs_only for a diff it could not read", () => {
+    // docs_only is the one output that SKIPS the build/unit lane entirely, so
+    // it is the one that must never be reachable by absence of evidence.
+    expect(c().docs_only).toBe(false);
+  });
+});

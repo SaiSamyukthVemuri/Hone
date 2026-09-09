@@ -13,7 +13,14 @@
 #
 # Triggers:
 #   * pull_request (every PR, against any base branch)
-#   * push to the default branch claude/build-hone-saas-hOex7
+#
+# NOT on push to claude/build-hone-saas-hOex7. CI-COST-01 measured 37
+# post-merge runs of this workflow (2026-08-25 -> 2026-09-09): every one of
+# them re-ran the FULL matrix, and 29 of the 30 sampled merges produced a tree
+# BIT-IDENTICAL to the pull-request head that had already tested green. The
+# post-merge lane is now .github/workflows/post-merge.yml, which keeps the one
+# class of evidence a merge can genuinely add - semantic merge skew on a tree
+# no PR run ever saw - and drops the browser/db/payment/google/mobile reruns.
 #
 # Secrets:
 #   * NONE. The job uses dummy/test env values only. See the `env`
@@ -24,9 +31,6 @@ name: ci
 
 on:
   pull_request:
-  push:
-    branches:
-      - claude/build-hone-saas-hOex7
 
 # CI-HARDEN-01B. Least privilege, asserted rather than assumed.
 #
@@ -131,7 +135,17 @@ jobs:
             MB="$(git merge-base "$BASE" "$HEAD_SHA" 2>/dev/null || echo "$BASE")"
             git diff --name-only "$MB" "$HEAD_SHA" > changed.txt || true
           else
-            git show --name-only --pretty=format: "${{ github.sha }}" > changed.txt
+            # CI-COST-01. Unreachable today - this workflow is pull_request-only
+            # (see the trigger block). Kept CORRECT rather than deleted so a
+            # future trigger cannot silently re-inherit the defect it carried:
+            # `git show --name-only` on a MERGE commit prints a COMBINED diff,
+            # which for a clean merge is EMPTY. classify-changes.mjs therefore
+            # saw zero files and failed safe to full_matrix_required=true on
+            # every post-merge run, which is how the production-push lane came
+            # to run the full matrix unconditionally. --first-parent asks the
+            # only question that means anything on a merge: what did this commit
+            # change relative to the branch it landed on.
+            git show --name-only --first-parent --pretty=format: "${{ github.sha }}" > changed.txt
           fi
           echo "--- changed files ---"; cat changed.txt
 
