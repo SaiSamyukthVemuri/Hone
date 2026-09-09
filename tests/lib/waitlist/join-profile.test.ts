@@ -19,6 +19,16 @@ import {
 
 // A complete, valid submission. Every negative case below mutates ONE limb of
 // this, so a failure names the limb rather than the fixture.
+/** An entry that already HOLDS a mobile, so the patch takes the "unchanged" arm. */
+const STORED_WITH_MOBILE = {
+  firstName: "Sarah",
+  lastName: "Jones",
+  email: "sarah.jones@example.com",
+  mobile: "07700 900123",
+  treatmentAreaIds: ["chin"],
+  availabilityPreference: "weekdays",
+};
+
 function goodInput(over: Partial<RawJoinProfileInput> = {}): RawJoinProfileInput {
   return {
     firstName: "Sarah",
@@ -232,6 +242,7 @@ describe("invite-to-book eligibility", () => {
     expect(verdict.eligible).toBe(false);
     if (verdict.eligible) return;
     expect(verdict.reason).toBe("profile_incomplete");
+    if (verdict.reason !== "profile_incomplete") return;
     expect(verdict.missing).toContain("treatmentAreaIds");
   });
 
@@ -254,14 +265,14 @@ describe("completing a profile cannot move the queue position", () => {
     const validated = validateWaitlistJoinProfile(goodInput());
     expect(validated.ok).toBe(true);
     if (!validated.ok) return;
-    const patch = completionPatchFromProfile(validated.value);
+    const patch = completionPatchFromProfile(validated.value, STORED_WITH_MOBILE);
     // Structural, not intentional: there is no key to write through.
     expect(Object.keys(patch).sort()).toEqual(
       [
         "availabilityPreference",
         "firstName",
         "lastName",
-        "mobile",
+        "mobileDisposition",
         "treatmentAreaIds",
       ].sort(),
     );
@@ -272,7 +283,7 @@ describe("completing a profile cannot move the queue position", () => {
   it("the patch carries NO email, so a leaked link cannot redirect the invitation", () => {
     const validated = validateWaitlistJoinProfile(goodInput());
     if (!validated.ok) throw new Error("fixture invalid");
-    const patch = completionPatchFromProfile(validated.value);
+    const patch = completionPatchFromProfile(validated.value, STORED_WITH_MOBILE);
     // The surface renders the address as text with no control, but the TYPE is
     // what stops a forged post presenting one. The server resolves the address
     // from the entry it already authorised.
@@ -285,7 +296,7 @@ describe("completing a profile cannot move the queue position", () => {
   it("the three WHO/WHERE fields are all absent together", () => {
     const validated = validateWaitlistJoinProfile(goodInput());
     if (!validated.ok) throw new Error("fixture invalid");
-    const patch = completionPatchFromProfile(validated.value);
+    const patch = completionPatchFromProfile(validated.value, STORED_WITH_MOBILE);
     for (const forbidden of ["entryId", "entry_id", "email", "joinedAt", "joined_at"]) {
       expect(patch).not.toHaveProperty(forbidden);
     }
@@ -293,7 +304,6 @@ describe("completing a profile cannot move the queue position", () => {
     for (const allowed of [
       "firstName",
       "lastName",
-      "mobile",
       "treatmentAreaIds",
       "availabilityPreference",
     ]) {
@@ -304,7 +314,7 @@ describe("completing a profile cannot move the queue position", () => {
   it("the patch carries no entry id for a caller to name a row with", () => {
     const validated = validateWaitlistJoinProfile(goodInput());
     if (!validated.ok) throw new Error("fixture invalid");
-    const patch = completionPatchFromProfile(validated.value);
+    const patch = completionPatchFromProfile(validated.value, STORED_WITH_MOBILE);
     expect(patch).not.toHaveProperty("entryId");
     expect(patch).not.toHaveProperty("entry_id");
   });
@@ -314,7 +324,7 @@ describe("completing a profile cannot move the queue position", () => {
       goodInput({ smsOperationalConsent: true }),
     );
     if (!validated.ok) throw new Error("fixture invalid");
-    expect(completionPatchFromProfile(validated.value)).not.toHaveProperty(
+    expect(completionPatchFromProfile(validated.value, STORED_WITH_MOBILE)).not.toHaveProperty(
       "smsOperationalConsent",
     );
   });

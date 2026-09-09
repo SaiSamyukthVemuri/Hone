@@ -205,7 +205,7 @@ describe("CLAUSE — the public completion payload names neither the row nor the
   it("carries no entryId, no email, no joinedAt", () => {
     const v = submitted();
     if (!v.ok) throw new Error("fixture invalid");
-    const patch = completionPatchFromProfile(v.value);
+    const patch = completionPatchFromProfile(v.value, COMPLETE);
     for (const forbidden of ["entryId", "entry_id", "email", "joinedAt", "joined_at"]) {
       expect(patch).not.toHaveProperty(forbidden);
     }

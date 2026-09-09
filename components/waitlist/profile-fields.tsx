@@ -21,6 +21,8 @@ import {
 import {
   AVAILABILITY_HELP,
   AVAILABILITY_LEGEND,
+  MOBILE_CANDIDATE_NOTE,
+  MOBILE_ON_FILE_NOTE,
 } from "@/lib/waitlist/join-copy";
 import type { TreatmentAreaId } from "@/lib/waitlist/treatment-area-catalog";
 
@@ -127,6 +129,8 @@ export function ProfileFields({
   onChange,
   disabled = false,
   emailLocked = false,
+  mobileLocked = false,
+  showMobileCandidateNote = false,
 }: {
   draft: JoinProfileDraft;
   errors: ProfileFieldErrors;
@@ -145,6 +149,28 @@ export function ProfileFields({
    * form field on a bearer-reachable page.
    */
   emailLocked?: boolean;
+  /**
+   * Render the mobile as READ-ONLY text instead of an input.
+   *
+   * Set on the completion surface WHENEVER THE ENTRY ALREADY HOLDS A NUMBER,
+   * for the same reason as `emailLocked` and against a sharper threat: the
+   * mobile is where SMS goes, so a bearer link able to replace it would point
+   * the studio's texts at whoever holds the link — and a consent tick in the
+   * same submission would arrive looking like agreement for the new number.
+   *
+   * A legacy entry with NO number leaves this false: supplying one is the whole
+   * point of that visit. What it supplies is a CANDIDATE, never a verified
+   * destination — see `showMobileCandidateNote`.
+   */
+  mobileLocked?: boolean;
+  /**
+   * Say out loud that a newly typed number is not yet usable.
+   *
+   * Product-visible because the alternative is implying we will text a number
+   * we have not confirmed. `prospectMayReceiveSms` refuses to send to an
+   * unverified number, so without this note the copy and the behaviour disagree.
+   */
+  showMobileCandidateNote?: boolean;
 }) {
   const firstId = useId();
   const lastId = useId();
@@ -219,19 +245,47 @@ export function ProfileFields({
         />
       )}
 
-      <TextField
-        id={mobileId}
-        testId="waitlist-field-mobile"
-        label="Mobile"
-        type="tel"
-        autoComplete="tel"
-        inputMode="tel"
-        maxLength={PROFILE_MOBILE_MAX}
-        value={draft.mobile}
-        error={errors.mobile}
-        disabled={disabled}
-        onChange={(mobile) => onChange({ ...draft, mobile })}
-      />
+      {mobileLocked ? (
+        <div className="flex w-full flex-col gap-1" data-testid="waitlist-field-mobile-locked">
+          <span className="text-[12px] uppercase tracking-[0.1em]" style={{ color: MUTED }}>
+            Mobile
+          </span>
+          {/* Plain text, not a disabled input. A disabled control is still a
+              control a forged post could carry a value for; there is no mobile
+              control on this surface at all when a number is on file. */}
+          <p className="py-2 text-[16px]" style={{ color: INK }}>
+            {draft.mobile}
+          </p>
+          <p className="text-[13px] leading-[1.6]" style={{ color: MUTED }}>
+            {MOBILE_ON_FILE_NOTE}
+          </p>
+        </div>
+      ) : (
+        <div className="flex w-full flex-col gap-1">
+          <TextField
+            id={mobileId}
+            testId="waitlist-field-mobile"
+            label="Mobile"
+            type="tel"
+            autoComplete="tel"
+            inputMode="tel"
+            maxLength={PROFILE_MOBILE_MAX}
+            value={draft.mobile}
+            error={errors.mobile}
+            disabled={disabled}
+            onChange={(mobile) => onChange({ ...draft, mobile })}
+          />
+          {showMobileCandidateNote && (
+            <p
+              className="text-[13px] leading-[1.6]"
+              style={{ color: MUTED }}
+              data-testid="waitlist-mobile-candidate-note"
+            >
+              {MOBILE_CANDIDATE_NOTE}
+            </p>
+          )}
+        </div>
+      )}
 
       <TreatmentAreaPicker
         selected={draft.treatmentAreaIds}

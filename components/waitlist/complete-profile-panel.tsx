@@ -6,6 +6,7 @@ import { ProfileFields } from "@/components/waitlist/profile-fields";
 import {
   completionDraftFromStored,
   completionPatchFromProfile,
+  storedMobilePresent,
   validateJoinProfileDraft,
   type JoinProfileDraft,
   type ProfileCompletionPatch,
@@ -46,6 +47,19 @@ import {
 //    would let whoever holds that link redirect the studio's next offer. Every
 //    legacy entry already has an email — it is the one field they all have — so
 //    locking it costs nothing and closes a redirect.
+//
+// 2b. NEITHER CAN A MOBILE THAT IS ALREADY ON FILE. Same threat, sharper: the
+//    mobile is where SMS goes, and a replacement paired with a consent tick in
+//    the same submission would arrive looking like agreement for the NEW number.
+//    Unlike the email this cannot simply be dropped — no legacy entry has a
+//    mobile, and supplying one is why this page exists — so the rule is
+//    conditional on what the entry holds: a number on file is rendered as text
+//    with no control, and only an ABSENT one gets a field.
+//
+//    What that field collects is a CANDIDATE. It is a number someone typed, it
+//    is not an authenticated destination, and `prospectMayReceiveSms` refuses to
+//    send to it until it is verified. The surface says so rather than implying a
+//    text will follow.
 //
 // 3. CONSENT IS ASKED AGAIN, NEVER RE-PRESENTED AS GIVEN.
 //    `completionDraftFromStored` never seeds `smsOperationalConsent` from
@@ -106,6 +120,9 @@ export function CompleteProfilePanel({
   const [draft, setDraft] = useState<JoinProfileDraft>(
     initialDraft ?? completionDraftFromStored(stored),
   );
+  // Read from the ENTRY, never from the draft: the draft is browser state and a
+  // caller could hand one carrying a mobile for an entry that has none.
+  const mobileOnFile = storedMobilePresent(stored);
   const [errors, setErrors] = useState<ProfileFieldErrors>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
@@ -125,7 +142,9 @@ export function CompleteProfilePanel({
 
     startSubmitting(async () => {
       const result = await onSubmit(
-        completionPatchFromProfile(validated.value),
+        // `stored` decides which arm of the patch union this is, so a submission
+        // cannot claim to be supplying a first number for an entry that has one.
+        completionPatchFromProfile(validated.value, stored),
         validated.value.smsOperationalConsent,
       );
       if (!result.ok) {
@@ -187,6 +206,11 @@ export function CompleteProfilePanel({
         onChange={setDraft}
         disabled={submitting}
         emailLocked
+        // Conditional, unlike the email: locked when the entry holds a number,
+        // open when it does not, because a legacy entry has none and supplying
+        // one is the point of this visit.
+        mobileLocked={mobileOnFile}
+        showMobileCandidateNote={!mobileOnFile}
       />
 
       <div className="flex flex-col gap-3">

@@ -324,10 +324,62 @@ export type StoredWaitlistProfile = {
   firstName?: string | null;
   lastName?: string | null;
   email?: string | null;
+  /**
+   * The number on file. Its PRESENCE says someone typed it; it says nothing
+   * about whether it reaches them. See `mobileVerifiedAt`.
+   */
   mobile?: string | null;
+  /**
+   * When the number was proven to reach this person, or `null`.
+   *
+   * SEPARATE FROM THE NUMBER ITSELF, because "we hold a string" and "texts sent
+   * there arrive with the right person" are different facts and only the second
+   * one may authorise a send. A single `mobile` column would collapse them and
+   * a bearer-supplied candidate would be indistinguishable from a proven
+   * destination the moment it was written.
+   *
+   * WAIT-04A never sets this — there is no verification mechanism in this slice
+   * and inventing a value would be the exact fake-completeness this module
+   * refuses. It is `null` for every existing entry, which is the truth.
+   */
+  mobileVerifiedAt?: string | null;
   treatmentAreaIds?: ReadonlyArray<string> | null;
   availabilityPreference?: string | null;
 };
+
+/** Is there a number on file at all? Says nothing about whether it is verified. */
+export function storedMobilePresent(stored: StoredWaitlistProfile): boolean {
+  return (
+    presentString(stored.mobile, PROFILE_MOBILE_MAX) &&
+    digitCount(stored.mobile ?? "") >= PROFILE_MOBILE_MIN_DIGITS
+  );
+}
+
+/**
+ * What we actually know about reaching this person by phone.
+ *
+ *   absent    - no number at all. A completion may collect a candidate.
+ *   candidate - a number someone typed. NOT an authenticated destination.
+ *   verified  - proven to reach them. The only standing that may authorise SMS.
+ *
+ * THE MIDDLE STATE IS THE POINT. Without it a candidate and a verified number
+ * are the same column, and "we have their mobile" quietly becomes "we may text
+ * their mobile" — which is how a bearer link redirects a studio's texts.
+ */
+export type MobileStanding = "absent" | "candidate" | "verified";
+
+export function mobileStanding(stored: StoredWaitlistProfile): MobileStanding {
+  if (!storedMobilePresent(stored)) return "absent";
+  const verifiedAt = stored.mobileVerifiedAt;
+  return typeof verifiedAt === "string" && verifiedAt.trim().length > 0
+    ? "verified"
+    : "candidate";
+}
+
+/** True only for a number proven to reach this person. */
+export function mobileIsVerified(stored: StoredWaitlistProfile): boolean {
+  return mobileStanding(stored) === "verified";
+}
 
 export const PROFILE_COMPLETE = "PROFILE_COMPLETE" as const;
 export const PROFILE_INCOMPLETE = "PROFILE_INCOMPLETE" as const;
@@ -401,7 +453,8 @@ export function displayName(stored: StoredWaitlistProfile): string {
 
 export type InvitationEligibility =
   | { eligible: true }
-  | { eligible: false; reason: "profile_incomplete"; missing: ReadonlyArray<ProfileField> };
+  | { eligible: false; reason: "profile_incomplete"; missing: ReadonlyArray<ProfileField> }
+  | { eligible: false; reason: "mobile_unverified"; standing: MobileStanding };
 
 /**
  * May this prospect be sent a NEW Invite-to-book?
@@ -418,14 +471,35 @@ export type InvitationEligibility =
  */
 export function invitationEligibility(
   stored: StoredWaitlistProfile,
+  /**
+   * Does the invitation being considered need to reach them BY SMS?
+   *
+   * Defaults to false, because the shipped invitation is an email and most
+   * callers are asking the older question. When true the bar rises: a number
+   * someone typed is not a channel, so an unverified mobile FAILS CLOSED rather
+   * than being tried and hoped for.
+   */
+  options: { requiresSms?: boolean } = {},
 ): InvitationEligibility {
   const completeness = assessProfileCompleteness(stored);
-  if (completeness.status === PROFILE_COMPLETE) return { eligible: true };
-  return {
-    eligible: false,
-    reason: "profile_incomplete",
-    missing: completeness.missing,
-  };
+  if (completeness.status !== PROFILE_COMPLETE) {
+    return {
+      eligible: false,
+      reason: "profile_incomplete",
+      missing: completeness.missing,
+    };
+  }
+  // ORDER MATTERS: completeness first, so "you never told us your areas" is
+  // never reported as a phone problem. A complete profile with a candidate
+  // number is a real, invitable prospect — by email.
+  if (options.requiresSms === true && !mobileIsVerified(stored)) {
+    return {
+      eligible: false,
+      reason: "mobile_unverified",
+      standing: mobileStanding(stored),
+    };
+  }
+  return { eligible: true };
 }
 
 // --- 7. COMPLETION PATCH ---------------------------------------------------
@@ -457,33 +531,79 @@ export function invitationEligibility(
  * what is gained is that the dangerous write is unexpressible rather than merely
  * unreachable. Changing an address stays a support conversation with the studio.
  *
- * Every field a prospect may legitimately change is here; the three that decide
- * WHO and WHERE — `entryId`, `email`, `joinedAt` — are all absent.
+ * AND MOBILE IS A DESTINATION TOO — the finding this shape closes.
+ * `email` was removed because it is where the INVITATION goes. `mobile` is where
+ * the SMS goes, and a bearer link that could replace it would point the studio's
+ * texts at whoever holds the link — worse when paired with a consent tick in the
+ * same submission, which would arrive looking like agreement for the new number.
+ *
+ * It cannot simply be dropped the way `email` was, because the asymmetry is
+ * real: every legacy entry already HAS an email, and none has a mobile. Removing
+ * the field would break the one thing this surface exists to do.
+ *
+ * So the patch is a UNION on what the entry already holds:
+ *
+ *   mobile ON FILE  -> the patch carries NO mobile value at all. Replacement is
+ *                      unexpressible, not merely refused.
+ *   mobile ABSENT   -> the patch may carry a CANDIDATE, which is a number
+ *                      someone typed and nothing more. It is not an
+ *                      authenticated destination and this type never calls it
+ *                      one; see `MobileStanding` and `prospectMayReceiveSms`.
+ *
+ * The server still checks the entry itself before applying either arm — a forged
+ * post can always claim the wrong one — but the common, dangerous case is now
+ * impossible to even say.
+ *
+ * Every field a prospect may legitimately change is here; the four that decide
+ * WHO, WHERE and WHEN — `entryId`, `email`, `joinedAt`, and a stored `mobile` —
+ * are absent or non-replaceable.
  */
-export type ProfileCompletionPatch = {
+type CompletionCore = {
   firstName: string;
   lastName: string;
-  mobile: string;
   treatmentAreaIds: ReadonlyArray<TreatmentAreaId>;
   availabilityPreference: AvailabilityPreference;
 };
 
+export type ProfileCompletionPatch =
+  | (CompletionCore & {
+      /** The entry already holds a mobile. There is no field to change it with. */
+      mobileDisposition: "unchanged";
+    })
+  | (CompletionCore & {
+      /** The entry held none. This is a typed number, NOT a verified destination. */
+      mobileDisposition: "candidate_supplied";
+      mobileCandidate: string;
+    });
+
 /**
  * Project a validated profile into the patch.
  *
- * DELIBERATELY LOSSY. The profile carries an email because validation needs one
- * (the completion draft seeds it from storage); the patch drops it, along with
- * consent, which travels separately as its own act.
+ * DELIBERATELY LOSSY, AND NOW IN TWO WAYS. The profile carries an email because
+ * validation needs one (the completion draft seeds it from storage) and the
+ * patch drops it. It carries a mobile for the same reason, and the patch drops
+ * that too WHENEVER THE ENTRY ALREADY HAS ONE — which is what makes a
+ * replacement unexpressible rather than merely unwritten.
+ *
+ * `stored` is required for exactly that decision. Passing the entry's own state
+ * is what lets this pick an arm; a projection that could not see it would have
+ * to trust the submission about which case it was in.
  */
 export function completionPatchFromProfile(
   profile: WaitlistJoinProfile,
+  stored: StoredWaitlistProfile,
 ): ProfileCompletionPatch {
-  return {
+  const core: CompletionCore = {
     firstName: profile.firstName,
     lastName: profile.lastName,
-    mobile: profile.mobile,
     treatmentAreaIds: profile.treatmentAreaIds,
     availabilityPreference: profile.availabilityPreference,
+  };
+  if (storedMobilePresent(stored)) return { ...core, mobileDisposition: "unchanged" };
+  return {
+    ...core,
+    mobileDisposition: "candidate_supplied",
+    mobileCandidate: profile.mobile,
   };
 }
 

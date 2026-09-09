@@ -187,13 +187,25 @@ export type SmsOptOutSource = (typeof SMS_OPT_OUT_SOURCES)[number];
 export type ProspectSmsState = ProspectSmsConsentRecord & {
   sms_opted_out_at: string | null;
   sms_opt_out_source: SmsOptOutSource | null;
+  /**
+   * When the number was proven to reach this person, or `null`.
+   *
+   * THE THIRD INDEPENDENT FACT, and the one this file was missing. Consent
+   * answers "may we", opt-out answers "have they since said no", and this
+   * answers "does the number even reach them". All three are required for a
+   * send and none substitutes for another.
+   *
+   * WAIT-04A never sets it. There is no verification mechanism in this slice.
+   */
+  mobile_verified_at: string | null;
 };
 
-/** Never agreed, never opted out. The state a new entry starts in. */
+/** Never agreed, never opted out, nothing verified. A new entry starts here. */
 export const NO_SMS_STATE: ProspectSmsState = {
   ...NO_SMS_CONSENT,
   sms_opted_out_at: null,
   sms_opt_out_source: null,
+  mobile_verified_at: null,
 };
 
 /**
@@ -280,7 +292,20 @@ export function buildProspectSmsConsentRecord(input: {
 export function prospectMayReceiveSms(record: {
   sms_consent_at: string | null;
   sms_opted_out_at: string | null;
+  /**
+   * REQUIRED, and required for a reason. Making it optional would let every
+   * existing call site keep compiling while silently authorising sends to
+   * unverified numbers — the precise failure this parameter exists to stop.
+   */
+  mobile_verified_at: string | null;
 }): boolean {
+  // 1. A person who said STOP is not textable, whatever else is true.
   if (record.sms_opted_out_at) return false;
+  // 2. A NUMBER SOMEONE TYPED IS NOT A CHANNEL. A bearer completion link can
+  //    supply a candidate; verification is what makes it a destination. Without
+  //    this line, a candidate paired with a consent tick in the same submission
+  //    would authorise texts to whoever holds the link.
+  if (!record.mobile_verified_at) return false;
+  // 3. And only then does consent decide.
   return Boolean(record.sms_consent_at);
 }

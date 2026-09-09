@@ -43,6 +43,7 @@ import type {
   WaitlistJoinProfile,
   WaitlistCommitPoint,
 } from "@/lib/waitlist/join-profile";
+import type { MobileStanding } from "@/lib/waitlist/join-profile";
 import type { SmsConsentSource } from "@/lib/waitlist/prospect-sms-consent";
 import type { TreatmentAreaId } from "@/lib/waitlist/treatment-area-catalog";
 
@@ -56,12 +57,29 @@ export type ProfileAdapterCapabilities = {
    */
   storesProfileFields: boolean;
   /**
-   * The entry row can store the five SMS columns AND an inbound STOP reaches
+   * The entry row can store the six SMS columns AND an inbound STOP reaches
    * it. BOTH halves, deliberately: consent whose opt-out cannot be honoured is
    * a promise the label makes and the system breaks, so a binding that can
    * write `sms_consent_at` but not `sms_opted_out_at` must report FALSE here.
    */
   recordsSmsConsent: boolean;
+  /**
+   * A mobile can be PROVEN to reach the person, and `mobile_verified_at` is
+   * written only by that proof.
+   *
+   * FALSE IN WAIT-04A AND IN WAIT-04B UNTIL A VERIFICATION MECHANISM EXISTS.
+   * While it is false, `mobile_verified_at` is null for every entry and
+   * `prospectMayReceiveSms` therefore refuses every send — which is the correct
+   * standing behaviour, not a gap to work around.
+   *
+   * THE RULE THIS FLAG EXISTS TO MAKE UNMISSABLE: a binding may STORE a
+   * candidate and may STORE a consent, and doing both still does not make a
+   * destination. Writing `mobile_verified_at` from anything other than a
+   * completed verification — from the candidate's own arrival, from a consent
+   * tick, from an operator's assertion — reintroduces the redirect this whole
+   * shape closes.
+   */
+  verifiesMobile: boolean;
   /** A capability grant can be issued and redeemed for the completion surface. */
   supportsCompletionCapability: boolean;
 };
@@ -221,8 +239,25 @@ export interface WaitlistProfileAdapter {
  *     suppression rule. UNTIL THIS LANDS, `recordsSmsConsent` is false and
  *     nothing may send.
  *
- *  5. TREATMENT AREAS are stored as catalog IDS, never labels. A label may be
+  5. TREATMENT AREAS are stored as catalog IDS, never labels. A label may be
  *     re-worded; an id may not be re-pointed.
+ *
+ *  5b. MOBILE VERIFICATION BEFORE ANY SMS DESTINATION. The completion patch is
+ *     a union: an entry that HOLDS a mobile produces an `"unchanged"` patch with
+ *     no mobile value in it at all, so replacement is unexpressible. An entry
+ *     with none may produce `"candidate_supplied"`.
+ *
+ *     THE BINDING MUST DO THREE THINGS AND NOT A FOURTH.
+ *       * Re-check the ENTRY before applying either arm. A forged post can
+ *         always claim the wrong one; the type narrows the honest client, the
+ *         server decides.
+ *       * Refuse a `"candidate_supplied"` patch outright when the entry already
+ *         holds a mobile. That is an attempted replacement, and it is the
+ *         finding this section closes.
+ *       * Write a candidate to `mobile` and LEAVE `mobile_verified_at` NULL.
+ *       * And NOT write `mobile_verified_at` in the same statement, from the
+ *         same submission, or on the strength of a consent tick. Nothing a
+ *         bearer link supplies may verify itself.
  *
  *  6. RE-VALIDATE SERVER-SIDE. The client validation is a courtesy that saves a
  *     round trip. `validateWaitlistJoinProfile` runs again on the server, and
@@ -235,6 +270,7 @@ export const WAIT_04B_PREREQUISITES = [
   "completion_capability_0193",
   "inbound_stop_reaches_entries",
   "areas_stored_as_ids",
+  "mobile_verified_before_sms_destination",
   "server_side_revalidation",
 ] as const;
 
@@ -246,6 +282,7 @@ export type Wait04bPrerequisite = (typeof WAIT_04B_PREREQUISITES)[number];
  */
 export type {
   AvailabilityPreference,
+  MobileStanding,
   ProfileCompletionPatch,
   SmsConsentSource,
   TreatmentAreaId,

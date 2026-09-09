@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { selectHoneSuppressionTargets } from "@/lib/sms/suppression";
+
+/** A number already proven to reach the person, so tests below isolate consent. */
+const VERIFIED = "2026-09-01T00:00:00.000Z";
 import {
   commitPointFromDurableFlag,
   profileJoinIsSupported,
@@ -26,13 +29,14 @@ describe("possession is not consent", () => {
   it("the send decision does not take a phone number at all", () => {
     // Structural: a phone is not an argument, so it cannot be part of the
     // decision. Consent alone authorises.
-    expect(prospectMayReceiveSms({ sms_consent_at: null, sms_opted_out_at: null })).toBe(
+    expect(prospectMayReceiveSms({ sms_consent_at: null, sms_opted_out_at: null, mobile_verified_at: VERIFIED })).toBe(
       false,
     );
     expect(
       prospectMayReceiveSms({
         sms_consent_at: "2026-09-08T10:00:00.000Z",
         sms_opted_out_at: null,
+        mobile_verified_at: VERIFIED,
       }),
     ).toBe(true);
   });
@@ -44,6 +48,7 @@ describe("possession is not consent", () => {
       prospectMayReceiveSms({
         sms_consent_at: "2026-09-08T10:00:00.000Z",
         sms_opted_out_at: "2026-09-09T10:00:00.000Z",
+        mobile_verified_at: VERIFIED,
       }),
     ).toBe(false);
     // Even an opt-out that PRE-dates the consent still blocks: this function
@@ -53,6 +58,7 @@ describe("possession is not consent", () => {
       prospectMayReceiveSms({
         sms_consent_at: "2026-09-09T10:00:00.000Z",
         sms_opted_out_at: "2026-09-08T10:00:00.000Z",
+        mobile_verified_at: VERIFIED,
       }),
     ).toBe(false);
   });
@@ -95,7 +101,7 @@ describe("what a decline stores", () => {
     // The instant is NOT carried over into the column that authorises sending:
     // a reader checking for presence would read it as agreement.
     expect(declined.sms_consent_at).toBeNull();
-    expect(prospectMayReceiveSms({ ...declined, sms_opted_out_at: null })).toBe(false);
+    expect(prospectMayReceiveSms({ ...declined, sms_opted_out_at: null, mobile_verified_at: VERIFIED })).toBe(false);
   });
 
   it("all three limbs are null together", () => {
@@ -173,9 +179,10 @@ describe("the label promises STOP, so the model must be able to honour it", () =
   // it must reach the one phone-wide selector that already exists, rather than
   // a second rule that can drift from it.
 
-  it("the stored state carries opt-out, not just consent", () => {
-    // The gap this closes: prospectMayReceiveSms reads `sms_opted_out_at`, so a
-    // record type without it describes a shape the decision cannot be made from.
+  it("the stored state carries opt-out and verification, not just consent", () => {
+    // The gap this closes: prospectMayReceiveSms reads `sms_opted_out_at` AND
+    // `mobile_verified_at`, so a record type missing either describes a shape
+    // the decision cannot be made from.
     expect(Object.keys(NO_SMS_STATE).sort()).toEqual(
       [
         "sms_consent_at",
@@ -183,13 +190,15 @@ describe("the label promises STOP, so the model must be able to honour it", () =
         "sms_consent_text_version",
         "sms_opted_out_at",
         "sms_opt_out_source",
+        "mobile_verified_at",
       ].sort(),
     );
   });
 
-  it("a new entry starts neither consented nor opted out", () => {
+  it("a new entry starts unconsented, un-opted-out AND unverified", () => {
     expect(NO_SMS_STATE.sms_consent_at).toBeNull();
     expect(NO_SMS_STATE.sms_opted_out_at).toBeNull();
+    expect(NO_SMS_STATE.mobile_verified_at).toBeNull();
     expect(prospectMayReceiveSms(NO_SMS_STATE)).toBe(false);
   });
 
@@ -274,7 +283,7 @@ describe("THE DURABLE CLARIFICATION — consent needs an entry to live on", () =
       commitPoint: "studio_notification", // ...but nothing will be stored
     });
     expect(onNotificationPath).toEqual(NO_SMS_CONSENT);
-    expect(prospectMayReceiveSms({ ...onNotificationPath, sms_opted_out_at: null })).toBe(
+    expect(prospectMayReceiveSms({ ...onNotificationPath, sms_opted_out_at: null, mobile_verified_at: VERIFIED })).toBe(
       false,
     );
   });
@@ -287,7 +296,7 @@ describe("THE DURABLE CLARIFICATION — consent needs an entry to live on", () =
       commitPoint: "durable_record",
     });
     expect(onDurablePath.sms_consent_at).toBe("2026-09-08T10:00:00.000Z");
-    expect(prospectMayReceiveSms({ ...onDurablePath, sms_opted_out_at: null })).toBe(true);
+    expect(prospectMayReceiveSms({ ...onDurablePath, sms_opted_out_at: null, mobile_verified_at: VERIFIED })).toBe(true);
   });
 
   it("the join experience is only offered where a record exists", () => {

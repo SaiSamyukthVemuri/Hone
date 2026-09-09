@@ -86,3 +86,26 @@ export const COMPLETE_DONE_HEADING = "Thanks — that's everything we need.";
 /** What an operator-facing surface says about a blocked invitation. */
 export const INVITE_BLOCKED_INCOMPLETE =
   "This person joined before we asked for treatment areas and availability. They keep their place in the queue, and can be invited once those details are complete.";
+
+// --- The mobile, and what we can honestly say about it ----------------------
+
+/**
+ * Shown beside a mobile the entry already holds, which the completion surface
+ * renders as text with no control.
+ *
+ * Same reasoning as the email: it is a DESTINATION, and a page reachable by
+ * possession of a link must not be able to repoint one.
+ */
+export const MOBILE_ON_FILE_NOTE =
+  "Contact the studio if this number needs to change.";
+
+/**
+ * Shown beside a mobile a legacy prospect is supplying for the first time.
+ *
+ * SAYS THE UNVERIFIED PART OUT LOUD. A number someone types is not yet a number
+ * we can text — it may have a typo, or belong to someone else. Promising texts
+ * against it would be a promise the system cannot keep, so the copy commits only
+ * to what is true: we will confirm it first.
+ */
+export const MOBILE_CANDIDATE_NOTE =
+  "We'll confirm this number before sending any texts to it.";
