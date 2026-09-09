@@ -109,3 +109,22 @@ export const MOBILE_ON_FILE_NOTE =
  */
 export const MOBILE_CANDIDATE_NOTE =
   "We'll confirm this number before sending any texts to it.";
+
+/**
+ * Shown when the mobile ALREADY ON FILE cannot be used — it is present, so a
+ * bearer completion may not replace it, but it fails validation, so the profile
+ * cannot be completed either.
+ *
+ * A DISTINCT STRING FROM `MOBILE_ON_FILE_NOTE`, deliberately. That note
+ * describes a normal, healthy condition ("here is your number, ask the studio to
+ * change it"). This one describes a BLOCKED SUBMIT, which is a different event
+ * and needs its own words — reusing the calm note as an error would leave the
+ * person pressing Save against a form that never explains why it will not move.
+ *
+ * NAMES THE REMEDIATION, NOT THE FIELD. The prospect cannot fix this by typing:
+ * there is no control, by design, because the number is a destination and this
+ * page is reachable by possession of a link. So the copy points at the one route
+ * that does work rather than at an input that does not exist.
+ */
+export const MOBILE_ON_FILE_UNUSABLE =
+  "We can't use the mobile number currently on file. Contact the studio to update it, then come back here to finish your details.";

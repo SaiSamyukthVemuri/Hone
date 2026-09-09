@@ -23,6 +23,7 @@ import {
   AVAILABILITY_LEGEND,
   MOBILE_CANDIDATE_NOTE,
   MOBILE_ON_FILE_NOTE,
+  MOBILE_ON_FILE_UNUSABLE,
 } from "@/lib/waitlist/join-copy";
 import type { TreatmentAreaId } from "@/lib/waitlist/treatment-area-catalog";
 
@@ -176,6 +177,9 @@ export function ProfileFields({
   const lastId = useId();
   const emailId = useId();
   const mobileId = useId();
+  const mobileLockedLabelId = useId();
+  const mobileLockedErrorId = useId();
+  const mobileOnFileNoteId = useId();
   const availabilityHelpId = useId();
   const availabilityErrorId = useId();
   const consentId = useId();
@@ -246,8 +250,22 @@ export function ProfileFields({
       )}
 
       {mobileLocked ? (
-        <div className="flex w-full flex-col gap-1" data-testid="waitlist-field-mobile-locked">
-          <span className="text-[12px] uppercase tracking-[0.1em]" style={{ color: MUTED }}>
+        // A GROUP WITH A NAME AND A DESCRIPTION. `aria-describedby` needs an
+        // element with a role to be reliably announced, and a bare <div> has
+        // none — so the region is a labelled `group`, named by its own "Mobile"
+        // heading and described by whichever of the two messages applies.
+        <div
+          className="flex w-full flex-col gap-1"
+          data-testid="waitlist-field-mobile-locked"
+          role="group"
+          aria-labelledby={mobileLockedLabelId}
+          aria-describedby={errors.mobile ? mobileLockedErrorId : mobileOnFileNoteId}
+        >
+          <span
+            id={mobileLockedLabelId}
+            className="text-[12px] uppercase tracking-[0.1em]"
+            style={{ color: MUTED }}
+          >
             Mobile
           </span>
           {/* Plain text, not a disabled input. A disabled control is still a
@@ -256,9 +274,33 @@ export function ProfileFields({
           <p className="py-2 text-[16px]" style={{ color: INK }}>
             {draft.mobile}
           </p>
-          <p className="text-[13px] leading-[1.6]" style={{ color: MUTED }}>
-            {MOBILE_ON_FILE_NOTE}
-          </p>
+          {errors.mobile ? (
+            // THE STORED NUMBER IS PRESENT BUT UNUSABLE. Presence keeps it
+            // immutable here; validity is what completeness needs, and it does
+            // not have it — so Save is refused and this is the only thing on
+            // screen that says why. Without it the prospect presses Save
+            // forever against a form that changes nothing.
+            //
+            // `errors.mobile` is the CONDITION, not the message: its text tells
+            // someone to enter a number, and there is deliberately no field to
+            // enter one into.
+            <span
+              id={mobileLockedErrorId}
+              role="alert"
+              data-testid="waitlist-field-mobile-locked-error"
+              className="text-[13px] leading-[1.6] text-red-600"
+            >
+              {MOBILE_ON_FILE_UNUSABLE}
+            </span>
+          ) : (
+            <p
+              id={mobileOnFileNoteId}
+              className="text-[13px] leading-[1.6]"
+              style={{ color: MUTED }}
+            >
+              {MOBILE_ON_FILE_NOTE}
+            </p>
+          )}
         </div>
       ) : (
         <div className="flex w-full flex-col gap-1">
