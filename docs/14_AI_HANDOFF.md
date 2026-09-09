@@ -747,7 +747,7 @@ npm run check:stripe-gates
 
 Or `npm run ci` to run all six in sequence. All must pass before pushing. The Vercel preview deploy must reach `READY` before merge.
 
-GitHub Actions runs the same six steps automatically on every PR and on every push to the default branch (`claude/build-hone-saas-hOex7`). See `.github/workflows/ci.yml`. A red CI check is a hard merge block. CI does NOT replace manual smoke; browser / Stripe Elements / real-send paths still need a human against the live deploy.
+GitHub Actions runs these steps automatically on every PR, risk-based — only the lanes your diff can affect. See `.github/workflows/ci.yml`. A push to the default branch (`claude/build-hone-saas-hOex7`) runs the lightweight post-merge lane instead (`.github/workflows/post-merge.yml`): the same static/unit steps plus a migration-state derivation, and deliberately NOT the browser, DB, payment, google or mobile lanes, which a merge over an already-tested tree cannot say anything new about. The complete matrix runs nightly and on demand (`.github/workflows/nightly.yml`). A red CI check is a hard merge block. CI does NOT replace manual smoke; browser / Stripe Elements / real-send paths still need a human against the live deploy.
 
 ## Grep gates (current)
 
