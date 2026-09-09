@@ -40,6 +40,12 @@ const rpcCalls: string[] = [];
 const dbWrites: Array<{ table: string; op: string }> = [];
 
 const scenario = {
+  // P2-A. The service the booking command reads. An ACTIVE CONSULTATION by
+  // default -- the ordinary invitation journey -- and varied below to prove an
+  // invitation buys no exemption from the new-client service rule.
+  serviceModality: "consultation" as string | null,
+  serviceName: "Consultation",
+  serviceActive: true,
   resolveResult: "live" as string,
   studioIdOnInvitation: STUDIO_ID,
   scopeServiceId: SERVICE_ID,
@@ -77,10 +83,14 @@ function makeChain(table: string) {
     upsert: () => { dbWrites.push({ table, op: "upsert" }); return chain; },
     maybeSingle: async () => {
       if (table === "services") {
+        // The action's own read filters `active`, so an inactive service must
+        // come back as NO ROW here rather than as an inactive one.
+        if (!scenario.serviceActive) return { data: null, error: null };
         return {
           data: {
-            id: SERVICE_ID, studio_id: STUDIO_ID, name: "Consultation",
-            modality: "consultation", default_duration_minutes: 45, active: true,
+            id: SERVICE_ID, studio_id: STUDIO_ID, name: scenario.serviceName,
+            modality: scenario.serviceModality, default_duration_minutes: 45,
+            active: true,
           },
           error: null,
         };
@@ -232,6 +242,9 @@ beforeEach(() => {
   rpcCalls.length = 0;
   dbWrites.length = 0;
   Object.assign(scenario, {
+    serviceModality: "consultation",
+    serviceName: "Consultation",
+    serviceActive: true,
     resolveResult: "live",
     studioIdOnInvitation: STUDIO_ID,
     scopeServiceId: SERVICE_ID,
@@ -413,15 +426,241 @@ describe("scoped invitation — the authorised path", () => {
   });
 });
 
-describe("scoped invitation — the gate is not weakened for anyone else", () => {
-  it("does not consult an invitation when the studio is not waitlisted", async () => {
+// ===========================================================================
+// P2-B — AN ISSUED INVITATION'S AUTHORITY OUTLIVES THE FEATURE FLAG
+// ===========================================================================
+//
+// THE ASSERTION THIS REPLACES SAID THE OPPOSITE, and said it deliberately:
+//
+//     it("does not consult an invitation when the studio is not waitlisted",
+//        ... expect(out.ok).toBe(true); expect(redeemed()).toBe(false); ...)
+//
+// A booking that carried a token and a capability, succeeded, and consumed
+// NOTHING. That is the defect stated as a guarantee, which is why it survived
+// -- the suite was pinning it.
+//
+// The sequence it permitted: issue an invitation while the waitlist is on, turn
+// the waitlist off, then redeem. The gate is skipped, so
+// `authorizeInvitationForBooking` never runs (no recipient check, no scope
+// check) and `consumeInvitationForBooking` -- reachable only from an authorised
+// result -- never runs either. An appointment exists and the invitation is
+// still LIVE.
+//
+// The flag governs ADMISSION: whether a visitor presenting nothing may book as
+// a new client. It does not govern AUTHORITY over an invitation already issued.
+
+describe("P2-B — the flag controls admission, never an issued invitation", () => {
+  const flagOff = () => {
     process.env[NEW_CLIENT_WAITLIST_SLUGS_ENV] = "some-other-studio";
+  };
+
+  it("PROOF 1 — flag ON + valid invitation: behaviour unchanged", async () => {
     const out = await publicBookAppointmentAction(
       form({ invitation_token: TOKEN, invitation_capability: CAP }),
     );
     expect(out.ok).toBe(true);
-    // No invitation was consumed: the gate never applied, so nothing was spent.
+    expect(redeemed()).toBe(true);
+    expect(booked()).toBe(true);
+  });
+
+  it("PROOF 2 — flag OFF + valid in-scope invitation: still authorised, still consumed", async () => {
+    flagOff();
+    const out = await publicBookAppointmentAction(
+      form({ invitation_token: TOKEN, invitation_capability: CAP }),
+    );
+    expect(out.ok).toBe(true);
+    // Authorization ran: the non-consuming resolve is what it reads scope from.
+    expect(rpcCalls).toContain("resolve_new_client_waitlist_invitation");
+    // And the offer was spent -- the whole point.
+    expect(redeemed()).toBe(true);
+    expect(booked()).toBe(true);
+  });
+
+  it("PROOF 2 — consumed EXACTLY ONCE, and before the appointment", async () => {
+    flagOff();
+    await publicBookAppointmentAction(
+      form({ invitation_token: TOKEN, invitation_capability: CAP }),
+    );
+    const redeems = rpcCalls.filter(
+      (c) => c === "redeem_new_client_waitlist_invitation_verified",
+    );
+    expect(redeems).toHaveLength(1);
+    expect(rpcCalls.indexOf("redeem_new_client_waitlist_invitation_verified")).toBeLessThan(
+      rpcCalls.indexOf("create_public_appointment"),
+    );
+  });
+
+  it("PROOF 2 — the RECIPIENT is still checked with the flag off", async () => {
+    flagOff();
+    const out = await publicBookAppointmentAction(
+      form({
+        invitation_token: TOKEN,
+        invitation_capability: CAP,
+        email: "someone.else@example.test",
+      }),
+    );
+    expect(out.ok).toBe(false);
     expect(redeemed()).toBe(false);
+    expect(booked()).toBe(false);
+  });
+
+  it("PROOF 3 — flag OFF + OUT-OF-SCOPE slot: refused, no appointment", async () => {
+    flagOff();
+    // START is a Wednesday in Toronto; offer Mondays only.
+    scenario.scopeWeekdays = [1];
+    const out = await publicBookAppointmentAction(
+      form({ invitation_token: TOKEN, invitation_capability: CAP }),
+    );
+    expect(out.ok).toBe(false);
+    if (out.ok) throw new Error("unreachable");
+    expect(out.code).toBe("invitation_refused");
+    expect(redeemed()).toBe(false);
+    expect(booked()).toBe(false);
+    // NO SCOPE BYPASS: nothing was written on the refused path at all.
+    expect(dbWrites).toEqual([]);
+  });
+
+  it("PROOF 3 — an out-of-window DATE is refused with the flag off too", async () => {
+    flagOff();
+    scenario.scopeStart = "2026-11-01";
+    scenario.scopeEnd = "2026-11-30";
+    const out = await publicBookAppointmentAction(
+      form({ invitation_token: TOKEN, invitation_capability: CAP }),
+    );
+    expect(out.ok).toBe(false);
+    expect(booked()).toBe(false);
+  });
+
+  it("PROOF 3 — a service outside the offer is refused with the flag off too", async () => {
+    flagOff();
+    scenario.scopeServiceId = OTHER_SERVICE_ID;
+    const out = await publicBookAppointmentAction(
+      form({ invitation_token: TOKEN, invitation_capability: CAP }),
+    );
+    expect(out.ok).toBe(false);
+    expect(booked()).toBe(false);
+  });
+
+  it.each(["proof_required", "proof_expired", "proof_invalid", "not_live"])(
+    "PROOF 4 — flag OFF + a capability the locked redeem rejects (%s): refused, no appointment",
+    async (code) => {
+      flagOff();
+      scenario.redeemResult = code;
+      const out = await publicBookAppointmentAction(
+        form({ invitation_token: TOKEN, invitation_capability: CAP }),
+      );
+      expect(out.ok).toBe(false);
+      if (out.ok) throw new Error("unreachable");
+      expect(out.code).toBe("invitation_refused");
+      expect(booked()).toBe(false);
+    },
+  );
+
+  it("PROOF 4 — flag OFF + a STALE invitation is refused", async () => {
+    flagOff();
+    scenario.resolveResult = "expired";
+    const out = await publicBookAppointmentAction(
+      form({ invitation_token: TOKEN, invitation_capability: CAP }),
+    );
+    expect(out.ok).toBe(false);
+    expect(redeemed()).toBe(false);
+    expect(booked()).toBe(false);
+  });
+
+  it("PROOF 5 — flag OFF + NO credentials: ordinary public booking, unchanged", async () => {
+    flagOff();
+    const out = await publicBookAppointmentAction(form());
+    expect(out.ok).toBe(true);
+    expect(booked()).toBe(true);
+    // The invitation machinery is not consulted at all for an ordinary visitor.
+    expect(rpcCalls).not.toContain("resolve_new_client_waitlist_invitation");
+    expect(redeemed()).toBe(false);
+  });
+
+  it("PROOF 6 — flag ON + NO credentials: the admission gate is unchanged", async () => {
+    const out = await publicBookAppointmentAction(form());
+    expect(out.ok).toBe(false);
+    if (out.ok) throw new Error("unreachable");
+    expect(out.code).toBe("new_client_waitlist");
+    expect(rpcCalls).toEqual([]);
+  });
+
+  // THE PROPERTY, STATED AS ONE COMPARISON. Every other test here fixes the
+  // flag and varies the request; this one fixes the request and varies the
+  // flag, which is the thing that must not matter.
+  it("PROOF 7 — toggling the flag never converts an invitation booking into an ordinary one", async () => {
+    const runWith = async (enabled: boolean) => {
+      process.env[NEW_CLIENT_WAITLIST_SLUGS_ENV] = enabled ? SLUG : "some-other-studio";
+      rpcCalls.length = 0;
+      const out = await publicBookAppointmentAction(
+        form({ invitation_token: TOKEN, invitation_capability: CAP }),
+      );
+      return { ok: out.ok, redeemed: redeemed(), booked: booked() };
+    };
+    const on = await runWith(true);
+    const off = await runWith(false);
+    expect(off).toEqual(on);
+    // And it is the AUTHORISED shape both times, not "refused both times".
+    expect(off).toEqual({ ok: true, redeemed: true, booked: true });
+  });
+
+  it("PROOF 7 — a BEARER token alone still cannot book with the flag off", async () => {
+    flagOff();
+    const out = await publicBookAppointmentAction(form({ invitation_token: TOKEN }));
+    expect(out.ok).toBe(false);
+    if (out.ok) throw new Error("unreachable");
+    expect(out.code).toBe("invitation_refused");
+    expect(redeemed()).toBe(false);
+    expect(booked()).toBe(false);
+  });
+
+  it("PROOF 7 — a lone capability does not buy the ordinary path with the flag off", async () => {
+    flagOff();
+    // Presenting half a credential is not a way to opt out of invitation
+    // handling: there is no invitation to authorise, so it fails closed.
+    const out = await publicBookAppointmentAction(form({ invitation_capability: CAP }));
+    expect(out.ok).toBe(false);
+    if (out.ok) throw new Error("unreachable");
+    expect(out.code).toBe("invitation_refused");
+    expect(booked()).toBe(false);
+  });
+
+  // With the flag OFF the studio IS taking new clients, so the admission copy
+  // ("we're not taking new clients right now") would be a false statement about
+  // the studio. It is never returned on that path.
+  it("never claims the studio is closed to new clients when it is not", async () => {
+    flagOff();
+    for (const fd of [
+      form({ invitation_token: TOKEN }),
+      form({ invitation_capability: CAP }),
+      form({ invitation_token: TOKEN, invitation_capability: CAP, email: "x@y.test" }),
+    ]) {
+      const out = await publicBookAppointmentAction(fd);
+      if (out.ok) throw new Error("expected refusal");
+      expect(out.code).not.toBe("new_client_waitlist");
+    }
+  });
+
+  // The gate's own copy is UNCHANGED for the case it actually describes.
+  it("still returns the admission refusal for a bare new client at a waitlisted studio", async () => {
+    const out = await publicBookAppointmentAction(form());
+    if (out.ok) throw new Error("expected refusal");
+    expect(out.code).toBe("new_client_waitlist");
+  });
+});
+
+describe("scoped invitation — the gate is not weakened for anyone else", () => {
+  it("leaves an EXISTING client's booking untouched with the flag on", async () => {
+    // Admission control is for new intake only. An existing client presenting
+    // no invitation is not gated, and nothing invitation-shaped is consulted.
+    const out = await publicBookAppointmentAction(form({ client_type: "existing" }));
+    expect(rpcCalls).not.toContain("resolve_new_client_waitlist_invitation");
+    expect(redeemed()).toBe(false);
+    // The existing-client lookup finds nobody in this fixture, so it refuses --
+    // on the EXISTING-client rule, not on admission.
+    expect(out.ok).toBe(false);
+    if (out.ok) throw new Error("unreachable");
+    expect(out.code).not.toBe("new_client_waitlist");
   });
 });
 
@@ -589,5 +828,92 @@ describe("P2-A — the documented recovery path is the one that exists", () => {
     const src = readFileSync("app/book/[slug]/actions.ts", "utf8");
     expect(src).toMatch(/already_redeemed/);
     expect(src).toMatch(/operator surface/i);
+  });
+});
+
+// ===========================================================================
+// P2-A — AN INVITATION IS NOT AN EXEMPTION FROM THE NEW-CLIENT SERVICE RULE
+// ===========================================================================
+//
+// The ruling for this launch: a waitlist invite-to-book is the NEW-CLIENT
+// CONSULTATION path. The tempting repair -- teach the booking command to accept
+// any service "because an invitation says so" -- would let an unconsulted new
+// client book an arbitrary treatment, which is precisely what the
+// consultation-first rule exists to prevent.
+//
+// So the rule is UNCHANGED here and enforced earlier instead: the recipient
+// route refuses to render such an offer at all (see
+// tests/app/invitation/recipient-actions.test.ts). These assert that the
+// booking engine grew no invitation-shaped hole underneath it.
+
+describe("P2-A — an authorised invitation buys no service exemption", () => {
+  it("refuses a NON-CONSULTATION service even with a fully valid invitation", async () => {
+    scenario.serviceModality = "laser";
+    scenario.serviceName = "Laser — full leg";
+    const out = await publicBookAppointmentAction(
+      form({ invitation_token: TOKEN, invitation_capability: CAP }),
+    );
+    expect(out.ok).toBe(false);
+    if (out.ok) throw new Error("unreachable");
+    expect(out.error).toMatch(/must book a consultation/i);
+    expect(booked()).toBe(false);
+  });
+
+  it("refuses it with the waitlist flag OFF too — the rule is not the flag's", async () => {
+    process.env[NEW_CLIENT_WAITLIST_SLUGS_ENV] = "some-other-studio";
+    scenario.serviceModality = "laser";
+    scenario.serviceName = "Laser — full leg";
+    const out = await publicBookAppointmentAction(
+      form({ invitation_token: TOKEN, invitation_capability: CAP }),
+    );
+    expect(out.ok).toBe(false);
+    expect(booked()).toBe(false);
+  });
+
+  // THE INVITATION SURVIVES THE REFUSAL. The service guard sits BEFORE the
+  // consume, so a recipient whose offer names the wrong service does not also
+  // lose it -- the operator can still release and reissue.
+  it("does NOT consume the invitation on that refusal", async () => {
+    scenario.serviceModality = "laser";
+    await publicBookAppointmentAction(
+      form({ invitation_token: TOKEN, invitation_capability: CAP }),
+    );
+    expect(redeemed()).toBe(false);
+    expect(dbWrites).toEqual([]);
+  });
+
+  it("refuses a DEACTIVATED service, and consumes nothing", async () => {
+    scenario.serviceActive = false;
+    const out = await publicBookAppointmentAction(
+      form({ invitation_token: TOKEN, invitation_capability: CAP }),
+    );
+    expect(out.ok).toBe(false);
+    if (out.ok) throw new Error("unreachable");
+    expect(out.error).toMatch(/no longer available/i);
+    expect(redeemed()).toBe(false);
+    expect(booked()).toBe(false);
+  });
+
+  // NON-VACUITY. Without this the block above could pass because the fixture
+  // refuses everything.
+  it("POSITIVE CONTROL — the eligible consultation journey still books", async () => {
+    const out = await publicBookAppointmentAction(
+      form({ invitation_token: TOKEN, invitation_capability: CAP }),
+    );
+    expect(out.ok).toBe(true);
+    expect(redeemed()).toBe(true);
+    expect(booked()).toBe(true);
+  });
+
+  // The name fallback is part of the SHARED rule, so a studio that never set
+  // `modality` is served identically by both surfaces.
+  it("POSITIVE CONTROL — an unset modality named like a consultation books", async () => {
+    scenario.serviceModality = null;
+    scenario.serviceName = "New Client Consultation";
+    const out = await publicBookAppointmentAction(
+      form({ invitation_token: TOKEN, invitation_capability: CAP }),
+    );
+    expect(out.ok).toBe(true);
+    expect(booked()).toBe(true);
   });
 });

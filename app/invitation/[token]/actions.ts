@@ -45,6 +45,7 @@ import {
 // NOT `fetchPublicSlotsAction`: it rate-limits itself per call, so covering a
 // window with it exhausts the caller's own quota and silently drops the tail.
 // The range helper is throttled ONCE by this surface instead.
+import { isBookableByNewClient } from "@/lib/booking/consultation";
 import { fetchPublicSlotsForDates } from "@/lib/booking/public-slot-range";
 import { horizonRangeInStudioTz } from "@/lib/booking/horizon";
 import { localDateString, localTimeString12h, utcInstantFromLocal } from "@/lib/booking/tz";
@@ -193,6 +194,17 @@ type StudioContext = {
    *  Carried because the offered-day scan is bounded by it. */
   horizonMonths: number | null;
   presentation: OfferPresentation;
+  /**
+   * P2-A. Can the PUBLIC BOOKING PATH actually accept this service for a new
+   * client? Answered by `isBookableByNewClient`, the same rule
+   * `publicBookAppointmentAction` applies — not a second opinion about it.
+   *
+   * Carried rather than acted on inside the loader because the loader's `null`
+   * means "we could not read this, try again", and this is the opposite: a
+   * settled, permanent no. Collapsing the two would tell the recipient to
+   * retry something that will never work.
+   */
+  bookableByNewClient: boolean;
 };
 
 /**
@@ -254,7 +266,17 @@ async function loadStudioContext(
       .maybeSingle(),
     admin
       .from("services")
-      .select("name, default_duration_minutes")
+      // P2-A. `modality` and `active` are read for the ELIGIBILITY question
+      // below, not for the screen. Neither reaches the browser: the
+      // presentation this builds carries the service NAME and duration and
+      // nothing else, and it is the only part of this row that travels.
+      //
+      // NOTE the absent `.eq("active", true)`. Filtering here would fold "this
+      // service was deactivated" into "we could not read the studio", and the
+      // loader answers that with a RETRYABLE error — telling the recipient to
+      // try again on an offer that is permanently unusable. The row is read
+      // whatever its state and judged one line down.
+      .select("name, default_duration_minutes, modality, active")
       .eq("id", serviceId)
       .eq("studio_id", studioId)
       .maybeSingle(),
@@ -270,6 +292,18 @@ async function loadStudioContext(
       serviceDurationMinutes: (service.default_duration_minutes as number) ?? 0,
       studioTimezone: studio.timezone as string,
     },
+    // THE BOOKING PATH'S OWN RULE, ASKED HERE. `scope_service_id` is honoured
+    // by B2's scope evaluation, which decides whether a slot is INSIDE the
+    // offer -- a question about the window, not about whether the service can
+    // be booked by a new client at all. Nothing asked that second question, so
+    // an invitation scoped to an ordinary treatment, or to a service since
+    // deactivated, rendered selectable times that the booking command would
+    // then refuse.
+    bookableByNewClient: isBookableByNewClient({
+      name: service.name as string,
+      modality: (service.modality as string | null) ?? null,
+      active: service.active === true,
+    }),
   };
 }
 
@@ -304,6 +338,40 @@ async function loadContext(
   );
   if (!studio) {
     return { ok: false, state: { kind: "error", retryable: true } };
+  }
+  // =====================================================================
+  // P2-A — AN OFFER THE BOOKING PATH CANNOT ACCEPT IS CLOSED HERE
+  // =====================================================================
+  // A waitlist invite-to-book is the NEW-CLIENT CONSULTATION path. An
+  // invitation scoped to any other service is an offer this product cannot
+  // honour, and the refusal belongs at the START of the journey rather than at
+  // its end: the recipient must not be shown selectable times, must not be sent
+  // a proof code for them, and must not tap Book to find out.
+  //
+  // NO BYPASS WAS ADDED, and that was the alternative. Teaching the booking
+  // path to accept an arbitrary service "because an invitation says so" would
+  // let an unconsulted new client book any treatment, which is the rule the
+  // consultation-first requirement exists to hold. NO SUBSTITUTION EITHER: a
+  // studio's actual consultation service is not silently swapped in, because
+  // the recipient was told what they were offered and would be booked into
+  // something else.
+  //
+  // ONE FUNNEL, DELIBERATELY. Every recipient action -- load, request proof,
+  // submit proof, decline, book -- reaches its invitation through this
+  // function, so the check cannot be missed by a surface added later. Decline
+  // is closed WITH the rest and not exempted: declining requires the proof
+  // exchange, and sending a real person a verification code for an offer that
+  // can never be booked is the surface this is removing, not one to keep. The
+  // operator releases the invitation from their side; the copy says so.
+  if (!studio.bookableByNewClient) {
+    return {
+      ok: false,
+      state: {
+        kind: "closed",
+        reason: "unsupported_offer",
+        presentation: studio.presentation,
+      },
+    };
   }
   return { ok: true, resolve: resolved, studio };
 }
@@ -646,9 +714,22 @@ export async function declineInvitationAction(
   rawToken: string,
 ): Promise<InvitationViewState> {
   const capability = await readCapability(rawToken);
+  // P2-A. THE CONTEXT IS RESOLVED BEFORE THE COMMAND, NOT ONLY AFTER IT FAILS.
+  //
+  // This read used to happen on two paths -- no capability, and failed decline
+  // -- so a decline holding a live capability reached the authority WITHOUT
+  // passing the funnel every other recipient action passes. The eligibility
+  // check added to `loadContext` would have had a hole in exactly the shape of
+  // this action, and "every surface is covered" would have been false the day
+  // it was written.
+  //
+  // Resolving first also refuses one command that used to be issued: a decline
+  // against an invitation that is already dead now returns that terminal state
+  // instead of asking the database to decline it and interpreting the answer.
+  // Same screen, one fewer mutation attempted.
+  const ctx = await loadContext(rawToken);
+  if (!ctx.ok) return ctx.state;
   if (!capability) {
-    const ctx = await loadContext(rawToken);
-    if (!ctx.ok) return ctx.state;
     return offerState(ctx.resolve, ctx.studio, { kind: "required" });
   }
   const out = await declineInvitation({ rawToken, rawCapability: capability });
@@ -661,10 +742,12 @@ export async function declineInvitationAction(
   // so the recipient's tap appeared to do nothing and they had no idea whether
   // the studio had been told.
   //
-  // Re-resolve first: if the invitation died underneath them (revoked, expired,
-  // already redeemed) that terminal state is the truth and outranks any notice.
-  const ctx = await loadContext(rawToken);
-  if (!ctx.ok) return ctx.state;
+  // RE-RESOLVE, and it must be a second read rather than the one above: the
+  // invitation can die (revoked, expired, already redeemed) between that read
+  // and this failure, and that terminal state is the truth and outranks any
+  // notice.
+  const after = await loadContext(rawToken);
+  if (!after.ok) return after.state;
 
   // The capability did not satisfy the gate, so it is worthless -- drop it
   // rather than leaving a dead credential to fail again on the next tap.
@@ -673,8 +756,8 @@ export async function declineInvitationAction(
   if (notice === "proof_lapsed") await clearCapability();
 
   return deriveInvitationViewState({
-    resolve: ctx.resolve,
-    presentation: ctx.studio.presentation,
+    resolve: after.resolve,
+    presentation: after.studio.presentation,
     proof: { kind: "required" },
     slots: [],
     booked: null,

@@ -48,7 +48,7 @@ import {
 } from "@/lib/email/send-appointment";
 import { sendBookingConfirmationSmsToClient } from "@/lib/sms/send-appointment";
 import { normalizePhoneForMatch } from "@/lib/sms/twilio";
-import { isConsultationService } from "@/lib/booking/consultation";
+import { isBookableByNewClient } from "@/lib/booking/consultation";
 import {
   isNewClientWaitlistEnabled,
   NEW_CLIENT_WAITLIST_BOOKING_REFUSAL,
@@ -116,7 +116,7 @@ const NEW_CLIENT_MUST_BOOK_CONSULTATION_ERROR =
 // any other value should be treated as a stale/forged request and get
 // the same generic error a missing field would produce. A no-
 // consultation-service condition is surfaced at the UI layer instead
-// of here because the existing isConsultationService guard below
+// of here because the existing isBookableByNewClient guard below
 // already rejects any forged new-client submit that picked a
 // non-consultation service id, which is the only way a no-
 // consultation studio could reach this action with client_type=new.
@@ -507,7 +507,33 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   const invitationCapability = trimmed(formData.get("invitation_capability"));
   let invitationAuth: BookingAuthorization | null = null;
 
-  if (clientType === "new" && isNewClientWaitlistEnabled(studio.slug)) {
+  // WAIT-03 B3 / P2-B. CREDENTIALS ARE PROCESSED AS CREDENTIALS, WHATEVER THE
+  // FLAG CURRENTLY SAYS.
+  //
+  // This block used to be entered ONLY when `isNewClientWaitlistEnabled` was
+  // true, which tied an ALREADY-ISSUED invitation's authority to a setting the
+  // operator can change afterwards. An invitation issued while the waitlist was
+  // on, redeemed after it was turned off, took the ORDINARY new-client path:
+  // the appointment was created, `authorizeInvitationForBooking` never ran, and
+  // `consumeInvitationForBooking` — reached only from an authorised result —
+  // never ran either. So the recipient hash was not checked, the scope was not
+  // checked, and the invitation stayed LIVE with an appointment already booked
+  // against it. The one guarantee the slice exists to provide switched itself
+  // off, silently, with no request looking any different.
+  //
+  // The flag governs ADMISSION: whether a visitor presenting nothing may book
+  // as a new client. It does not govern AUTHORITY, and it must not be able to
+  // erase authority already carried by a live invitation. So the entry
+  // condition is now the OR: the gate applies, or credentials were presented.
+  //
+  // PRESENTING EITHER HALF IS ENOUGH TO BE HELD TO IT. A request carrying a
+  // capability with no token has no invitation to authorise and is refused
+  // rather than waved onto the ordinary path — a caller does not get to opt out
+  // of invitation handling by omitting the half that identifies the invitation.
+  const invitationPresented = Boolean(invitationToken) || Boolean(invitationCapability);
+  const admissionGateApplies = isNewClientWaitlistEnabled(studio.slug);
+
+  if (clientType === "new" && (admissionGateApplies || invitationPresented)) {
     if (invitationToken && invitationCapability) {
       const requestedStartsAt = new Date(startsAtRaw);
       if (!Number.isNaN(requestedStartsAt.getTime())) {
@@ -527,14 +553,24 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
       // forwarded link learns only that it did not work here -- never whether the
       // token exists, whether it belongs to this studio, whether the address
       // matched, or which half of the scope failed.
+      //
+      // WHICH refusal is a question of TRUTH, not of which branch we are in.
+      // `NEW_CLIENT_WAITLIST_BOOKING_REFUSAL` says the studio is not taking new
+      // clients right now. With the gate ON that is true whether or not the
+      // caller also posted a stray capability, so the selector there is
+      // UNCHANGED from B2: a named token gets the invitation answer, anything
+      // else gets the admission one. With the gate OFF it is simply false — the
+      // studio IS taking new clients — so the admission refusal is never
+      // returned on that path.
+      const refusedOnAdmission = admissionGateApplies && !invitationToken;
       return {
         ok: false,
-        error: invitationToken
-          ? "This invitation doesn't cover that booking. Please use the link and time from your invitation email."
-          : NEW_CLIENT_WAITLIST_BOOKING_REFUSAL,
-        code: invitationToken
-          ? "invitation_refused"
-          : NEW_CLIENT_WAITLIST_REFUSAL_CODE,
+        error: refusedOnAdmission
+          ? NEW_CLIENT_WAITLIST_BOOKING_REFUSAL
+          : "This invitation doesn't cover that booking. Please use the link and time from your invitation email.",
+        code: refusedOnAdmission
+          ? NEW_CLIENT_WAITLIST_REFUSAL_CODE
+          : "invitation_refused",
       };
     }
   }
@@ -593,7 +629,14 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // helper (lib/booking/consultation.ts) so the visible list and the
   // server gate cannot drift apart. Rejected attempts surface the
   // explicit copy from the spec; no internal state is leaked.
-  if (clientType === "new" && !isConsultationService(service)) {
+  //
+  // WAIT-03 B3 / P2-A. `isBookableByNewClient` is the SAME predicate one level
+  // up: it adds the `active` half of this rule, which the read above has
+  // already applied as a query filter, so the behaviour here is unchanged. The
+  // point is that the invitation route can now ask the identical question of a
+  // row it fetched itself, instead of restating "what counts as a consultation"
+  // a second time and drifting.
+  if (clientType === "new" && !isBookableByNewClient(service)) {
     return { ok: false, error: NEW_CLIENT_MUST_BOOK_CONSULTATION_ERROR };
   }
 

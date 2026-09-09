@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { InvitationViewState } from "@/lib/waitlist/invitation-offer";
 import { createHash, createHmac } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -123,6 +124,19 @@ vi.mock("@/lib/rate-limit/public", () => ({
 const entryFixture = { phone: "555 0100" as string | null };
 // P2-D: the studio's zone is what the day filter must resolve against.
 const studioFixture = { timezone: "America/Toronto" };
+/**
+ * The service the invitation is scoped to.
+ *
+ * ELIGIBLE BY DEFAULT — an active consultation — because that is the journey
+ * every other test in this file exercises. P2-A varies it: a waitlist
+ * invite-to-book is the new-client CONSULTATION path, so an invitation naming
+ * anything else is an offer the booking command can never accept.
+ */
+const serviceFixture = {
+  name: "Consultation",
+  modality: "consultation" as string | null,
+  active: true as boolean | null,
+};
 
 vi.mock("@/lib/supabase/admin-server", () => ({
   createAdminClient: () => ({
@@ -135,7 +149,15 @@ vi.mock("@/lib/supabase/admin-server", () => ({
           table === "studios"
             ? { data: { slug: "studio-a", name: "Studio A", timezone: studioFixture.timezone }, error: null }
             : table === "services"
-              ? { data: { name: "Consultation", default_duration_minutes: 45 }, error: null }
+              ? {
+                  data: {
+                    name: serviceFixture.name,
+                    default_duration_minutes: 45,
+                    modality: serviceFixture.modality,
+                    active: serviceFixture.active,
+                  },
+                  error: null,
+                }
               : {
                   data: {
                     name: "Chloe",
@@ -196,6 +218,9 @@ beforeEach(() => {
   fetchPublicSlotsAction.mockResolvedValue({ ok: true, slots: [] });
   entryFixture.phone = "555 0100";
   studioFixture.timezone = "America/Toronto";
+  serviceFixture.name = "Consultation";
+  serviceFixture.modality = "consultation";
+  serviceFixture.active = true;
 });
 
 // ===========================================================================
@@ -946,5 +971,157 @@ describe("P3-B — proof is not claimed when it cannot be retained", () => {
     });
     const out = await submitInvitationProofAction(TOKEN, CODE, { maskedContact: "c•••@e.test", expiresAt: "x" });
     expect(out.kind).toBe("offer");
+  });
+});
+
+// ===========================================================================
+// P2-A — THE INVITATION SERVICE MUST BE ONE THE BOOKING PATH CAN ACCEPT
+// ===========================================================================
+//
+// A waitlist invite-to-book is the NEW-CLIENT CONSULTATION path. B2's scope
+// evaluation honours `scope_service_id` and answers a different question -- is
+// this slot inside the offered window -- so an invitation naming an ordinary
+// treatment, or a service since deactivated, passed every check this surface
+// made and rendered selectable times the booking command would refuse.
+//
+// The refusal now happens at the START of the journey. These tests assert the
+// ABSENCE of the downstream calls, not just the returned state: a screen that
+// says "closed" while still querying availability, minting proof codes or
+// posting to the booking action would satisfy a state-only assertion.
+
+describe("P2-A — an offer the booking path cannot accept is closed", () => {
+  const SLOT = "2026-10-07T14:00:00.000Z";
+
+  /** Every recipient action, so a surface added later cannot skip the check. */
+  const everyAction: Array<[string, () => Promise<InvitationViewState>]> = [
+    ["load", () => loadInvitationAction(TOKEN)],
+    ["request proof", () => requestInvitationProofAction(TOKEN)],
+    ["submit proof", () =>
+      submitInvitationProofAction(TOKEN, CODE, { maskedContact: "c•••@e.test", expiresAt: "x" })],
+    ["decline", () => declineInvitationAction(TOKEN)],
+    ["book", () => bookInvitationSlotAction(TOKEN, SLOT)],
+  ];
+
+  describe("an ACTIVE, same-studio, NON-CONSULTATION service", () => {
+    beforeEach(() => {
+      serviceFixture.name = "Laser — full leg";
+      serviceFixture.modality = "laser";
+      serviceFixture.active = true;
+      // Proven, so nothing below can be explained away as "they never proved".
+      cookieJar.set("wl_proof_capability", signedCapability(TOKEN, CAPABILITY));
+    });
+
+    it.each(everyAction)("closes %s as an unsupported offer", async (_label, run) => {
+      const out = await run();
+      expect(out.kind).toBe("closed");
+      if (out.kind !== "closed") throw new Error("unreachable");
+      expect(out.reason).toBe("unsupported_offer");
+    });
+
+    it("presents NO slots as bookable — the availability engine is never asked", async () => {
+      const out = await loadInvitationAction(TOKEN);
+      expect(out.kind).toBe("closed");
+      // The state carries no `days` at all, and nothing walked the window.
+      expect(out).not.toHaveProperty("days");
+      expect(fetchPublicSlotsForDates).not.toHaveBeenCalled();
+      expect(fetchPublicSlotsAction).not.toHaveBeenCalled();
+    });
+
+    it("writes NO appointment — the booking action is never reached", async () => {
+      await bookInvitationSlotAction(TOKEN, SLOT);
+      expect(publicBookAppointmentAction).not.toHaveBeenCalled();
+    });
+
+    it("sends NO proof code for an offer that can never be booked", async () => {
+      await requestInvitationProofAction(TOKEN);
+      expect(beginRecipientProof).not.toHaveBeenCalled();
+    });
+
+    it("does not decline it either — the authority is never called", async () => {
+      await declineInvitationAction(TOKEN);
+      expect(declineInvitation).not.toHaveBeenCalled();
+    });
+
+    it("SUBSTITUTES NOTHING — the service named is the one refused", async () => {
+      const out = await loadInvitationAction(TOKEN);
+      if (out.kind !== "closed") throw new Error("unreachable");
+      // The recipient sees what they were actually offered. A studio's real
+      // consultation service is never quietly swapped in behind the name.
+      expect(out.presentation?.serviceName).toBe("Laser — full leg");
+    });
+
+    it("is NOT the retryable error state — retrying cannot help", async () => {
+      const out = await loadInvitationAction(TOKEN);
+      expect(out.kind).not.toBe("error");
+    });
+
+    it("does not claim the studio withdrew the offer", async () => {
+      const out = await loadInvitationAction(TOKEN);
+      if (out.kind !== "closed") throw new Error("unreachable");
+      // `revoked` is a factual claim about the operator's actions. Nothing here
+      // knows it to be true, and the invitation is in fact still live.
+      expect(out.reason).not.toBe("revoked");
+    });
+  });
+
+  describe("a DEACTIVATED consultation service", () => {
+    beforeEach(() => {
+      serviceFixture.name = "Consultation";
+      serviceFixture.modality = "consultation";
+      serviceFixture.active = false;
+      cookieJar.set("wl_proof_capability", signedCapability(TOKEN, CAPABILITY));
+    });
+
+    it("closes rather than offering times the booking path would refuse", async () => {
+      const out = await loadInvitationAction(TOKEN);
+      expect(out.kind).toBe("closed");
+      if (out.kind !== "closed") throw new Error("unreachable");
+      expect(out.reason).toBe("unsupported_offer");
+      expect(fetchPublicSlotsForDates).not.toHaveBeenCalled();
+    });
+
+    it("a NULL active column fails closed rather than reading as permission", async () => {
+      serviceFixture.active = null;
+      const out = await loadInvitationAction(TOKEN);
+      expect(out.kind).toBe("closed");
+    });
+  });
+
+  describe("POSITIVE CONTROLS — the eligible journey is untouched", () => {
+    beforeEach(() => {
+      cookieJar.set("wl_proof_capability", signedCapability(TOKEN, CAPABILITY));
+    });
+
+    it("an explicit consultation modality still renders the offer", async () => {
+      serviceFixture.modality = "consultation";
+      serviceFixture.name = "First visit";
+      const out = await loadInvitationAction(TOKEN);
+      expect(out.kind).toBe("offer");
+    });
+
+    // The name fallback is part of the SHARED rule, not a second one: studios
+    // that never set `modality` are recognised by the booking path the same way.
+    it("an unset modality named like a consultation still renders the offer", async () => {
+      serviceFixture.modality = null;
+      serviceFixture.name = "New Client Consultation";
+      const out = await loadInvitationAction(TOKEN);
+      expect(out.kind).toBe("offer");
+    });
+
+    it("an eligible booking still reaches the booking action", async () => {
+      publicBookAppointmentAction.mockResolvedValue({
+        ok: true, appointmentId: "a1", manageUrl: "https://x/m", confirmationEmailStatus: "sent",
+      });
+      const out = await bookInvitationSlotAction(TOKEN, SLOT);
+      expect(publicBookAppointmentAction).toHaveBeenCalled();
+      expect(out.kind).toBe("booked");
+    });
+
+    // NON-VACUITY. Without this the suite above could pass because the fixture
+    // never produces a bookable offer at all.
+    it("an eligible offer DOES walk the availability window", async () => {
+      await loadInvitationAction(TOKEN);
+      expect(fetchPublicSlotsForDates).toHaveBeenCalled();
+    });
   });
 });

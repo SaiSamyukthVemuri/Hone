@@ -197,6 +197,20 @@ export type InvitationClosedReason =
    * does not exist and sent the recipient looking for mail that never comes.
    */
   | "consumed_without_booking"
+  /**
+   * The offer names a service the public booking path cannot accept from a new
+   * client -- not a consultation, or no longer active.
+   *
+   * ITS OWN REASON, not folded into `revoked`. Nobody withdrew this offer: it
+   * is still live, and the studio can still see it as live. Saying "the studio
+   * has withdrawn this" would be a factual claim about the operator's actions
+   * that nothing here knows to be true, and it would send the recipient into a
+   * conversation starting from a false premise.
+   *
+   * Nor is it the retryable `error` state. Retrying is exactly what cannot
+   * help: the service will still be the wrong service on the next tap.
+   */
+  | "unsupported_offer"
   | "declined";
 
 export type InvitationViewState =

@@ -155,7 +155,14 @@ describe("an empty window is not a dead end", () => {
 });
 
 describe("terminal states offer nothing to press", () => {
-  for (const reason of ["expired", "revoked", "already_redeemed", "declined"] as const) {
+  for (const reason of [
+    "expired",
+    "revoked",
+    "already_redeemed",
+    "consumed_without_booking",
+    "unsupported_offer",
+    "declined",
+  ] as const) {
     it(`${reason} renders NO booking or decline control at all`, () => {
       const html = render({ kind: "closed", reason, presentation: PRESENTATION });
       // Not a disabled button: a greyed control invites tapping and explains
@@ -173,6 +180,37 @@ describe("terminal states offer nothing to press", () => {
   it("revoked does not blame the recipient", () => {
     const html = render({ kind: "closed", reason: "revoked", presentation: PRESENTATION });
     expect(html).toContain("no longer available");
+  });
+
+  // P2-A. An offer naming a service the booking path cannot accept.
+  describe("unsupported_offer", () => {
+    const html = render({
+      kind: "closed",
+      reason: "unsupported_offer",
+      presentation: PRESENTATION,
+    });
+
+    it("says the link cannot book it, and points at the studio", () => {
+      expect(html).toContain("can’t be booked online");
+      expect(html).toContain("contact the studio");
+    });
+
+    it("makes NO claim the studio withdrew the offer", () => {
+      // `revoked` copy would assert an operator action nothing here knows about,
+      // and the invitation is in fact still live.
+      expect(html).not.toContain("withdrawn");
+    });
+
+    it("does not invite a retry that cannot help", () => {
+      expect(html).not.toContain("Check again");
+      expect(html).not.toContain("Try again");
+    });
+
+    it("still names the service the recipient was actually offered", () => {
+      // No substitution: they see what the invitation said, not a service
+      // silently swapped in behind it.
+      expect(html).toContain(PRESENTATION.serviceName);
+    });
   });
 });
 

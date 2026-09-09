@@ -230,6 +230,15 @@ const CLOSED_COPY: Record<InvitationClosedReason, { title: string; body: string 
     // time directly, which is the only route that still works.
     body: "Your invitation was used, but the appointment didn’t go through, so nothing is booked. Please contact the studio and they can book the time for you.",
   },
+  unsupported_offer: {
+    title: "This invitation can’t be booked online",
+    // Says what is true and nothing more. It does NOT claim the studio
+    // withdrew the offer -- the invitation is still live -- and it does not ask
+    // the recipient to try again, because nothing about a repeat attempt would
+    // differ. Contacting the studio is the only route that still works, and it
+    // is the only one offered.
+    body: "This offer is for a service we can’t book through this link. Please contact the studio and they can arrange your appointment.",
+  },
   declined: {
     title: "You’ve already declined this offer",
     body: "If you’d still like an appointment, please contact the studio directly.",
