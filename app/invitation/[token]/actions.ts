@@ -207,40 +207,85 @@ type StudioContext = {
   bookableByNewClient: boolean;
 };
 
+/** First row of a `returns table` RPC payload, whatever shape the driver used. */
+function firstIdentityRow(data: unknown): Record<string, unknown> | null {
+  const row = Array.isArray(data) ? data[0] : data;
+  return row && typeof row === "object" ? (row as Record<string, unknown>) : null;
+}
+
+function identityField(row: Record<string, unknown> | null, k: string): string | null {
+  const v = row?.[k];
+  return typeof v === "string" ? v : null;
+}
+
 /**
- * The invited person's stored identity.
+ * The invited person's stored booking identity, read through the ACCEPTED 0192
+ * command -- never off the table.
  *
- * Read from the entry, NOT by calling `beginRecipientProof` for its
- * `deliveryContact`: that command mints a new challenge as a side effect, so
- * using it as a lookup would invalidate the code the recipient had just been
- * sent and burn one of their attempts.
+ * WHY NOT A TABLE READ, which is what this was. It ran
+ * `admin.from("new_client_waitlist_entries").select("name, email, phone")`, and
+ * 0185 revoked EVERY table privilege on that table from `service_role` BY NAME,
+ * deliberately and in writing, so that the server's most privileged client
+ * cannot dump contact details directly:
  *
- * Server-side only. It is posted to the booking action, which compares its hash
- * against the stored recipient hash -- so the recipient never types an address
- * and a substituted one could not match anyway.
+ *     has_table_privilege('service_role', 'public.new_client_waitlist_entries',
+ *                         'SELECT')  =  false        PostgREST -> 42501
+ *
+ * So the read returned null ALWAYS -- everywhere, not just locally -- and
+ * `bookInvitationSlotAction` stopped before it reached the booking engine.
+ * Integration found it; no component suite could, because `offerState` tolerates
+ * a null identity BY DESIGN (`phoneNeeded` merely goes false), so every
+ * read-only surface stayed green while the one mutation that needs the identity
+ * could not complete.
+ *
+ * THE REPAIR IS NOT A GRANT. Granting `service_role` SELECT would reverse 0185's
+ * explicit privacy decision. 0192 instead carries a narrow, capability-gated
+ * command that returns these three fields and nothing else, granted to
+ * `service_role` alone. It re-proves the capability INSIDE its own locked
+ * transaction against the same liveness set and the same digest comparison the
+ * gated mutations use, so bearer possession alone, a wrong, stale, expired or
+ * cross-invitation capability, and a redeemed, declined, released or expired
+ * invitation each yield NO identity -- all three columns null, never a partial
+ * one.
+ *
+ * Still read here rather than from `beginRecipientProof`'s `deliveryContact`:
+ * that command mints a new challenge as a side effect, so using it as a lookup
+ * would invalidate the code the recipient had just been sent and burn one of
+ * their attempts.
+ *
+ * Server-side only. The capability is the httpOnly cookie's, never anything the
+ * browser typed, and the identity is posted to the booking action, which
+ * compares its hash against the stored recipient hash -- so the recipient never
+ * types an address and a substituted one could not match anyway.
  */
 async function invitedIdentity(
-  entryId: string,
-  studioId: string,
+  rawToken: string,
+  capability: string,
 ): Promise<{ name: string; email: string; phone: string | null } | null> {
   const admin = createAdminClient();
-  const { data } = await admin
-    .from("new_client_waitlist_entries")
-    .select("name, email, phone")
-    .eq("id", entryId)
-    .eq("studio_id", studioId)
-    .maybeSingle();
-  const name = typeof data?.name === "string" ? data.name : null;
-  const email = typeof data?.email === "string" ? data.email : null;
+  const { data, error } = await admin.rpc(
+    "resolve_waitlist_invitation_recipient_identity",
+    { p_raw_token: rawToken, p_raw_capability: capability },
+  );
+  if (error) return null;
+  const row = firstIdentityRow(data);
+  // ONLY `resolved` carries an identity. Every refusal names its reason and
+  // returns all three columns null, so there is no partial row to assemble one
+  // from, and no refusal reason is echoed to the caller either -- this layer
+  // reports "no identity" and the surfaces above already fail closed on that.
+  if (identityField(row, "result") !== "resolved") return null;
+  const name = identityField(row, "name");
+  const email = identityField(row, "email");
   // OPTIONAL BY CONSTRUCTION. The public join form says "Phone (optional)" and
   // `0185` stores the column nullable, so `null` here is an ordinary, expected
   // entry — not a broken row. It is returned as its own value rather than
   // folded into the truthiness check below, because a missing phone must NOT
   // make the identity unusable: it changes what the recipient is asked for, not
   // whether they may book.
-  const rawPhone = typeof data?.phone === "string" ? data.phone.trim() : "";
+  const rawPhone = identityField(row, "phone");
+  const phone = rawPhone === null ? "" : rawPhone.trim();
   return name && email
-    ? { name, email, phone: rawPhone.length > 0 ? rawPhone : null }
+    ? { name, email, phone: phone.length > 0 ? phone : null }
     : null;
 }
 
@@ -514,6 +559,7 @@ async function offeredDays(
 }
 
 async function offerState(
+  rawToken: string,
   resolve: Extract<ResolveOutcome, { kind: "live" }>,
   studio: StudioContext,
   proof: ProofStage,
@@ -524,12 +570,18 @@ async function offerState(
   // render must not pay for either — and must not disclose, to mere possession
   // of the link, whether the studio holds a phone number for this person.
   const proven = proof.kind === "proven";
+  // THE CAPABILITY IS READ FROM THE COOKIE HERE rather than carried on
+  // `ProofStage`. That type is the view model a Server Action returns to the
+  // browser, and a bearer credential has no business in it — the same rule the
+  // file header states for the code and the challenge id. `proven` without a
+  // readable capability is a stale render, and it resolves no identity.
+  const capability = proven ? await readCapability(rawToken) : null;
   const [offered, identity] = await Promise.all([
     proven
       ? offeredDays(resolve, studio)
       : Promise.resolve({ days: [], unreadable: false }),
-    proven
-      ? invitedIdentity(resolve.invitation.entryId, resolve.invitation.studioId)
+    capability
+      ? invitedIdentity(rawToken, capability)
       : Promise.resolve(null),
   ]);
   // A THROTTLED READ IS NOT AN EMPTY DIARY. Rendering the offer with no days
@@ -569,6 +621,7 @@ export async function loadInvitationAction(
   // only cannot authorise anything.
   const proven = (await readCapability(rawToken)) !== null;
   return offerState(
+    rawToken,
     ctx.resolve,
     ctx.studio,
     proven ? { kind: "proven" } : { kind: "required" },
@@ -628,7 +681,7 @@ export async function requestInvitationProofAction(
       ? { kind: "unavailable", retryable: true }
       : proofStageFromBegin(begun);
 
-  return offerState(ctx.resolve, ctx.studio, stage);
+  return offerState(rawToken, ctx.resolve, ctx.studio, stage);
 }
 
 /** Exchange a typed code for a capability. */
@@ -700,9 +753,10 @@ export async function submitInvitationProofAction(
         proofNotice: "proof_not_retained",
       });
     }
-    return offerState(ctx.resolve, ctx.studio, { kind: "proven" });
+    return offerState(rawToken, ctx.resolve, ctx.studio, { kind: "proven" });
   }
   return offerState(
+    rawToken,
     ctx.resolve,
     ctx.studio,
     proofStageFromComplete(completed, previous),
@@ -730,7 +784,7 @@ export async function declineInvitationAction(
   const ctx = await loadContext(rawToken);
   if (!ctx.ok) return ctx.state;
   if (!capability) {
-    return offerState(ctx.resolve, ctx.studio, { kind: "required" });
+    return offerState(rawToken, ctx.resolve, ctx.studio, { kind: "required" });
   }
   const out = await declineInvitation({ rawToken, rawCapability: capability });
   if (out.kind === "declined") {
@@ -783,7 +837,7 @@ export async function bookInvitationSlotAction(
   const ctx = await loadContext(rawToken);
   if (!ctx.ok) return ctx.state;
   if (!capability) {
-    return offerState(ctx.resolve, ctx.studio, { kind: "required" });
+    return offerState(rawToken, ctx.resolve, ctx.studio, { kind: "required" });
   }
 
   const { publicBookAppointmentAction } = await import("@/app/book/[slug]/actions");
@@ -795,10 +849,7 @@ export async function bookInvitationSlotAction(
   // The invited contact is the stored one. The recipient never types an address:
   // the booking action compares the submitted email's hash against the stored
   // recipient hash, so a typed address could only ever match the real one.
-  const invited = await invitedIdentity(
-    ctx.resolve.invitation.entryId,
-    ctx.resolve.invitation.studioId,
-  );
+  const invited = await invitedIdentity(rawToken, capability);
   if (!invited) return { kind: "error", retryable: true };
   fd.set("email", invited.email);
   fd.set("name", invited.name);
@@ -821,7 +872,7 @@ export async function bookInvitationSlotAction(
     // Fail BEFORE the booking action, so the recipient is asked for the number
     // on the offer they are already looking at rather than being handed the
     // public form's error for a field this surface never showed them.
-    return offerState(ctx.resolve, ctx.studio, { kind: "proven" });
+    return offerState(rawToken, ctx.resolve, ctx.studio, { kind: "proven" });
   }
   fd.set("phone", phone);
 
@@ -899,6 +950,7 @@ export async function bookInvitationSlotAction(
 
   // Every other refusal leaves the offer usable, so it is shown WITH the reason.
   return offerState(
+    rawToken,
     ctx.resolve,
     ctx.studio,
     { kind: "proven" },

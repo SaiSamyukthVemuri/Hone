@@ -138,9 +138,98 @@ const serviceFixture = {
   active: true as boolean | null,
 };
 
+/**
+ * EVERY CALL TO THE IDENTITY COMMAND, with the secrets it was given.
+ *
+ * This is how the suite proves the booking seam reads identity through 0192's
+ * capability-gated command rather than off the table — and proves WHICH token
+ * and capability it presented, since passing the wrong pair would be a real
+ * authorisation defect that a shape-only assertion would miss.
+ */
+const identityRpcCalls: Array<{ fn: string; token: string; capability: string }> = [];
+
+/**
+ * What the identity command answers, beyond the capability check the mock does
+ * for itself. `resolved` is the ordinary case; a test sets a refusal to model a
+ * closed invitation, which the real command reports the same way.
+ */
+const identityFixture = {
+  result: "resolved" as string,
+  /**
+   * Make a REFUSAL carry identity columns anyway.
+   *
+   * The shipped command never does this — every refusal returns all three
+   * columns null, proved against real PostgreSQL. That is exactly why the
+   * `result` check needs its own test: with a well-behaved database the check
+   * is unreachable, so a mutation that deleted it would pass every other
+   * assertion here. This models a database that stops honouring the contract
+   * and pins that this layer trusts `result`, not the presence of fields.
+   */
+  leakOnRefusal: false,
+};
+
 vi.mock("@/lib/supabase/admin-server", () => ({
   createAdminClient: () => ({
+    // 0192's gated recipient-identity read. The mock reproduces the ONE rule
+    // that matters at this seam: identity is returned for the CURRENT
+    // capability and for nothing else, and every refusal carries all three
+    // columns null. A bearer, a wrong, a stale or a cross-invitation capability
+    // therefore yields no identity here exactly as it does in the database —
+    // proved against real PostgreSQL in tests/db/waitlist-recipient-proof.
+    rpc: async (fn: string, args: Record<string, unknown>) => {
+      identityRpcCalls.push({
+        fn,
+        token: String(args?.p_raw_token),
+        capability: String(args?.p_raw_capability),
+      });
+      if (fn !== "resolve_waitlist_invitation_recipient_identity") {
+        throw new Error(`unexpected service-role rpc: ${fn}`);
+      }
+      const refusal =
+        identityFixture.result !== "resolved"
+          ? identityFixture.result
+          : args?.p_raw_capability !== CAPABILITY
+            ? "proof_invalid"
+            : null;
+      return refusal
+        ? {
+            data: [
+              identityFixture.leakOnRefusal
+                ? {
+                    result: refusal,
+                    name: "Chloe",
+                    email: "chloe@example.test",
+                    phone: entryFixture.phone,
+                  }
+                : { result: refusal, name: null, email: null, phone: null },
+            ],
+            error: null,
+          }
+        : {
+            data: [
+              {
+                result: "resolved",
+                name: "Chloe",
+                email: "chloe@example.test",
+                phone: entryFixture.phone,
+              },
+            ],
+            error: null,
+          };
+    },
     from: (table: string) => {
+      // THE TRIPWIRE. 0185 revokes every table privilege on
+      // new_client_waitlist_entries from service_role by name, so a direct read
+      // returns 42501 in production and strands the booking silently — which is
+      // exactly the defect integration caught. Reintroducing one must be loud
+      // here rather than quiet everywhere, so it throws instead of answering.
+      if (table === "new_client_waitlist_entries") {
+        throw new Error(
+          "forbidden direct read of new_client_waitlist_entries: 0185 revokes it " +
+            "from service_role; identity comes from " +
+            "resolve_waitlist_invitation_recipient_identity",
+        );
+      }
       const chain: Record<string, unknown> = {};
       const self = () => chain;
       Object.assign(chain, {
@@ -148,24 +237,15 @@ vi.mock("@/lib/supabase/admin-server", () => ({
         maybeSingle: async () =>
           table === "studios"
             ? { data: { slug: "studio-a", name: "Studio A", timezone: studioFixture.timezone }, error: null }
-            : table === "services"
-              ? {
-                  data: {
-                    name: serviceFixture.name,
-                    default_duration_minutes: 45,
-                    modality: serviceFixture.modality,
-                    active: serviceFixture.active,
-                  },
-                  error: null,
-                }
-              : {
-                  data: {
-                    name: "Chloe",
-                    email: "chloe@example.test",
-                    phone: entryFixture.phone,
-                  },
-                  error: null,
+            : {
+                data: {
+                  name: serviceFixture.name,
+                  default_duration_minutes: 45,
+                  modality: serviceFixture.modality,
+                  active: serviceFixture.active,
                 },
+                error: null,
+              },
       });
       return chain;
     },
@@ -214,6 +294,9 @@ beforeEach(() => {
   fetchPublicSlotsForDates.mockClear();
   rateLimitCalls.length = 0;
   rateLimitAllows.allowed = true;
+  identityRpcCalls.length = 0;
+  identityFixture.result = "resolved";
+  identityFixture.leakOnRefusal = false;
   resolveInvitation.mockResolvedValue(liveResolve());
   fetchPublicSlotsAction.mockResolvedValue({ ok: true, slots: [] });
   entryFixture.phone = "555 0100";
@@ -358,6 +441,133 @@ describe("the booking carries a phone, because the engine requires one", () => {
     const hasIt = await loadInvitationAction(TOKEN);
     expect(hasIt.kind).toBe("offer");
     expect((hasIt as { phoneRequired?: boolean }).phoneRequired).toBeUndefined();
+  });
+});
+
+// ===========================================================================
+// RECIPIENT IDENTITY — across 0185's revoke, through 0192's gated command
+// ===========================================================================
+//
+// THE DEFECT THIS BLOCK EXISTS FOR. This surface used to read
+// new_client_waitlist_entries directly with the service-role client. 0185
+// revoked every table privilege on that table from service_role BY NAME, so the
+// read returned 42501, the identity was always null, and bookInvitationSlotAction
+// stopped before the booking engine — everywhere, not just locally. No component
+// suite could see it, because offerState tolerates a null identity by design.
+//
+// The repair is a capability-gated 0192 command, never a table grant. What
+// follows pins the seam: that the command is used, WITH WHICH secrets, and that
+// every way of not being the proven recipient yields no identity and no booking.
+describe("recipient identity comes from the gated command, not the table", () => {
+  const bookable = () =>
+    publicBookAppointmentAction.mockResolvedValue({
+      ok: true, appointmentId: "a1", manageUrl: "https://x/m", confirmationEmailStatus: "sent",
+    });
+  const prove = () =>
+    cookieJar.set("wl_proof_capability", signedCapability(TOKEN, CAPABILITY));
+  const identityCall = () =>
+    identityRpcCalls.find((c) => c.fn === "resolve_waitlist_invitation_recipient_identity");
+
+  it("USES THE COMMAND, with this invitation's token and the CURRENT capability", async () => {
+    prove();
+    bookable();
+    await bookInvitationSlotAction(TOKEN, "2026-10-07T14:00:00.000Z");
+    const call = identityCall();
+    expect(call, "identity must be read through the 0192 command").toBeDefined();
+    // WHICH secrets it presented, not merely that it called something. Handing
+    // the command a different token or a stale capability would be a real
+    // authorisation defect, and a shape-only assertion could not see it.
+    expect(call?.token).toBe(TOKEN);
+    expect(call?.capability).toBe(CAPABILITY);
+  });
+
+  it("hands the booking action the EXACT stored identity", async () => {
+    prove();
+    bookable();
+    await bookInvitationSlotAction(TOKEN, "2026-10-07T14:00:00.000Z");
+    const fd = publicBookAppointmentAction.mock.calls[0][0] as FormData;
+    expect(fd.get("name")).toBe("Chloe");
+    expect(fd.get("email")).toBe("chloe@example.test");
+    expect(fd.get("phone")).toBe("555 0100");
+  });
+
+  it("BEARER ONLY: it never even asks for an identity, and books nothing", async () => {
+    // Possession of the link must not reach the command at all — asking would
+    // hand the database a bearer request to refuse, when there is nothing here
+    // to ask about.
+    const out = await bookInvitationSlotAction(TOKEN, "2026-10-07T14:00:00.000Z");
+    expect(identityRpcCalls, "a bearer must not reach the identity command").toHaveLength(0);
+    expect(publicBookAppointmentAction).not.toHaveBeenCalled();
+    expect(out.kind).toBe("proof");
+  });
+
+  it("WRONG CAPABILITY: no identity, and the booking engine is never reached", async () => {
+    cookieJar.set("wl_proof_capability", signedCapability(TOKEN, "e".repeat(64)));
+    const out = await bookInvitationSlotAction(TOKEN, "2026-10-07T14:00:00.000Z");
+    expect(identityCall()?.capability).toBe("e".repeat(64));
+    expect(publicBookAppointmentAction).not.toHaveBeenCalled();
+    expect(out.kind).toBe("error");
+  });
+
+  it("CROSS-INVITATION: another invitation's capability resolves nothing here", async () => {
+    // At this seam a capability minted for a different invitation is simply not
+    // this invitation's current one, which is exactly how the database refuses
+    // it — the cross-invitation and cross-studio cases are proved against real
+    // PostgreSQL in tests/db/waitlist-recipient-proof.db.test.ts.
+    cookieJar.set("wl_proof_capability", signedCapability(TOKEN, "f".repeat(64)));
+    const out = await bookInvitationSlotAction(TOKEN, "2026-10-07T14:00:00.000Z");
+    expect(publicBookAppointmentAction).not.toHaveBeenCalled();
+    expect(out.kind).toBe("error");
+  });
+
+  for (const refusal of ["proof_expired", "proof_required", "not_live"]) {
+    it(`STALE/CLOSED (${refusal}): no identity, no booking`, async () => {
+      prove();
+      identityFixture.result = refusal;
+      const out = await bookInvitationSlotAction(TOKEN, "2026-10-07T14:00:00.000Z");
+      expect(publicBookAppointmentAction).not.toHaveBeenCalled();
+      expect(out.kind).toBe("error");
+    });
+  }
+
+  it("a refusal never yields a PARTIAL identity", async () => {
+    // The command returns all three columns null on every refusal, so there is
+    // no half-identity to assemble a booking from. If this layer ever accepted
+    // one, a refused read could still put a name on a real appointment.
+    prove();
+    identityFixture.result = "proof_expired";
+    await bookInvitationSlotAction(TOKEN, "2026-10-07T14:00:00.000Z");
+    expect(publicBookAppointmentAction).not.toHaveBeenCalled();
+  });
+
+  it("ONLY `resolved` yields an identity — a refusal carrying fields is still a refusal", async () => {
+    // The shipped command returns all three columns null on every refusal, so
+    // with a well-behaved database this rule is unreachable and a test that
+    // relied on the nulls would prove nothing about it. The database is made to
+    // break its contract here instead: the refusal arrives WITH a name and an
+    // address, and this layer must still book nothing, because it reads
+    // `result` rather than inferring authorisation from the presence of data.
+    prove();
+    bookable();
+    identityFixture.result = "proof_expired";
+    identityFixture.leakOnRefusal = true;
+    const out = await bookInvitationSlotAction(TOKEN, "2026-10-07T14:00:00.000Z");
+    expect(
+      publicBookAppointmentAction,
+      "a refusal must never book, whatever columns it carries",
+    ).not.toHaveBeenCalled();
+    expect(out.kind).toBe("error");
+  });
+
+  it("THE RENDER PATH is gated the same way — an unproven offer asks for nothing", async () => {
+    await loadInvitationAction(TOKEN);
+    expect(identityRpcCalls, "an unproven render must not read identity").toHaveLength(0);
+  });
+
+  it("and a PROVEN render reads it through the command", async () => {
+    prove();
+    await loadInvitationAction(TOKEN);
+    expect(identityCall()?.capability).toBe(CAPABILITY);
   });
 });
 

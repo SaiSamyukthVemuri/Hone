@@ -26,6 +26,7 @@ const codeOnly = (src: string) =>
 
 const SCREEN = codeOnly(read("app/features/waitlist-invitation/InvitationScreen.tsx"));
 const STATE = codeOnly(read("lib/waitlist/invitation-offer.ts"));
+const ACTIONS = codeOnly(read("app/invitation/[token]/actions.ts"));
 
 describe("the recipient surface cannot mutate", () => {
   it("declares no server action", () => {
@@ -429,5 +430,53 @@ describe("the offered window is narrowed on the way to the screen", () => {
     expect(fn.length).toBeGreaterThan(100);
     expect(fn).toContain("Number.isNaN(startsAt.getTime())");
     expect(fn).toContain("return false;");
+  });
+});
+
+
+// ===========================================================================
+// 0185's REVOKE IS NOT ROUTED AROUND
+// ===========================================================================
+//
+// 0185 revoked EVERY table privilege on new_client_waitlist_entries from
+// service_role by name, so the server's most privileged client cannot dump
+// contact details. This surface used to read that table anyway; the read
+// returned 42501 and the recipient booking stopped before the engine, silently,
+// on every environment. The identity now comes from 0192's capability-gated
+// command instead.
+//
+// These are SOURCE assertions because the failure they guard is a shape: a
+// reintroduced table read would be caught by no render assertion, and in
+// production it fails as a null rather than as an error.
+describe("recipient identity crosses 0185's revoke by command, not by table read", () => {
+  it("performs NO direct read of the waitlist entries table", () => {
+    // Comments explain this history and name the table; `codeOnly` strips them,
+    // so a comment can never satisfy — or break — this check.
+    expect(
+      ACTIONS,
+      "the recipient surface must not read new_client_waitlist_entries directly",
+    ).not.toContain("new_client_waitlist_entries");
+  });
+
+  it("reads identity through the 0192 command", () => {
+    expect(ACTIONS).toContain("resolve_waitlist_invitation_recipient_identity");
+  });
+
+  it("presents BOTH secrets — a token-only call would be a bearer path to identity", () => {
+    expect(ACTIONS).toContain("p_raw_token");
+    expect(ACTIONS).toContain("p_raw_capability");
+  });
+
+  it("asks for no table privilege anywhere on the recipient surface", () => {
+    // The forbidden repair. Granting service_role SELECT would reverse an
+    // explicit privacy decision and make the command above decorative.
+    expect(ACTIONS).not.toMatch(/grant\s+(select|all)/i);
+  });
+
+  it("NON-VACUITY — the pin can tell the command apart from the table read", () => {
+    // Both strings are checked against the same extracted source, so a guard
+    // that silently read an empty file would fail here.
+    expect(ACTIONS.length).toBeGreaterThan(1000);
+    expect(ACTIONS).toContain("invitedIdentity");
   });
 });

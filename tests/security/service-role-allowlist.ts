@@ -411,11 +411,17 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
       "holding an emailed link, so there is no session to scope by and RLS has no " +
       "identity to work with. Every service-role read here happens only AFTER " +
       "resolveInvitation() has returned a LIVE invitation, and each one is keyed by " +
-      "ids taken from THAT row (studio_id, scope_service_id, entry_id) rather than " +
+      "ids taken from THAT row (studio_id, scope_service_id) rather than " +
       "from anything the caller supplied, so the blast radius is the single " +
-      "invitation the token already proves possession of. The reads are three " +
-      "presentation lookups: the studio's slug/name/timezone, the offered " +
-      "service's name/duration, and the invited person's stored name/email. " +
+      "invitation the token already proves possession of. Only TWO reads are " +
+      "presentation lookups off tables: the studio's slug/name/timezone and the " +
+      "offered service's name/duration. THE INVITED PERSON'S IDENTITY IS NOT ONE " +
+      "OF THEM. 0185 revokes every table privilege on new_client_waitlist_entries " +
+      "from service_role by name, so name/email/phone are obtained ONLY through " +
+      "0192's resolve_waitlist_invitation_recipient_identity(token, capability), a " +
+      "service_role-only command that re-proves the recipient capability inside its " +
+      "own locked transaction and returns those three fields or nothing. Bearer " +
+      "possession of the link resolves no identity. " +
       "Nothing here mutates: booking and declining are delegated to the B2 " +
       "authority and the shared public booking action, both of which re-validate " +
       "recipient proof inside their own locked transactions.",
