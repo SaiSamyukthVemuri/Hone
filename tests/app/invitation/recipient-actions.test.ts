@@ -25,6 +25,17 @@ process.env.APPOINTMENT_SIGNING_SECRET =
 
 const cookieJar = new Map<string, string>();
 
+/**
+ * THE RENDER PHASE, in which cookies cannot be written.
+ *
+ * Next permits `cookies().set` only when the request store's phase is
+ * `"action"`, and throws `ReadonlyRequestCookiesError` otherwise. `page.tsx`
+ * renders through `loadInvitationAction`, so any recovery that clears a cookie
+ * runs in BOTH phases and must survive the one that refuses. Flipping this
+ * reproduces that refusal exactly.
+ */
+const cookiesReadonly = { on: false };
+
 /** The cookie value the action itself would write: capability + its binding. */
 function signedCapability(
   token: string,
@@ -47,7 +58,15 @@ function signedCapability(
 vi.mock("next/headers", () => ({
   cookies: async () => ({
     get: (k: string) => (cookieJar.has(k) ? { value: cookieJar.get(k) } : undefined),
-    set: (k: string, v: string) => { if (v === "") cookieJar.delete(k); else cookieJar.set(k, v); },
+    set: (k: string, v: string) => {
+      if (cookiesReadonly.on) {
+        throw new Error(
+          "Cookies can only be modified in a Server Action or Route Handler.",
+        );
+      }
+      if (v === "") cookieJar.delete(k);
+      else cookieJar.set(k, v);
+    },
   }),
   headers: async () => new Headers(),
 }));
@@ -166,6 +185,8 @@ const identityFixture = {
    * and pins that this layer trusts `result`, not the presence of fields.
    */
   leakOnRefusal: false,
+  /** Model a driver/network failure rather than a refusal the command authored. */
+  transportError: false,
 };
 
 vi.mock("@/lib/supabase/admin-server", () => ({
@@ -184,6 +205,9 @@ vi.mock("@/lib/supabase/admin-server", () => ({
       });
       if (fn !== "resolve_waitlist_invitation_recipient_identity") {
         throw new Error(`unexpected service-role rpc: ${fn}`);
+      }
+      if (identityFixture.transportError) {
+        return { data: null, error: { message: "connection reset" } };
       }
       const refusal =
         identityFixture.result !== "resolved"
@@ -286,6 +310,7 @@ function allStrings(v: unknown, acc: string[] = []): string[] {
 beforeEach(() => {
   studioFixture.timezone = "America/Toronto";
   cookieJar.clear();
+  cookiesReadonly.on = false;
   for (const m of [resolveInvitation, beginRecipientProof, completeRecipientProof,
                    declineInvitation, fetchPublicSlotsAction, publicBookAppointmentAction]) m.mockReset();
   // Calls only — `mockReset` would discard the shim's implementation, and a
@@ -297,6 +322,7 @@ beforeEach(() => {
   identityRpcCalls.length = 0;
   identityFixture.result = "resolved";
   identityFixture.leakOnRefusal = false;
+  identityFixture.transportError = false;
   resolveInvitation.mockResolvedValue(liveResolve());
   fetchPublicSlotsAction.mockResolvedValue({ ok: true, slots: [] });
   entryFixture.phone = "555 0100";
@@ -501,44 +527,58 @@ describe("recipient identity comes from the gated command, not the table", () =>
     expect(out.kind).toBe("proof");
   });
 
-  it("WRONG CAPABILITY: no identity, and the booking engine is never reached", async () => {
+  /**
+   * THE LOOP THIS BLOCK EXISTS TO CLOSE.
+   *
+   * A capability the DATABASE has rejected still carries a valid HMAC and a
+   * future signed expiry in the cookie, so this surface kept treating the
+   * browser as proven: the offer rendered as proven, Book hit the same refusal,
+   * and "try again" was the one instruction that could never work. Every proof
+   * refusal must instead drop the cookie and return the recipient to proof —
+   * the same recovery the booking authority's in-scope `invitation_refused`
+   * already used, not a second proof model.
+   */
+  const expectProofRecovery = (out: InvitationViewState, why: string) => {
+    expect(out.kind, `${why} — must return the proof state`).toBe("proof");
+    if (out.kind !== "proof") throw new Error("unreachable");
+    expect(out.notice, `${why} — must explain the lapse`).toBe("proof_lapsed");
+    expect(out.stage.kind, `${why} — proof must restart`).toBe("required");
+    expect(
+      cookieJar.has("wl_proof_capability"),
+      `${why} — the dead capability must be dropped`,
+    ).toBe(false);
+    // `kind: "proof"` carries no slots at all, so a refused recipient cannot be
+    // shown selectable times — that is a type-level guarantee, not an assertion
+    // this test has to make.
+    expect(publicBookAppointmentAction).not.toHaveBeenCalled();
+  };
+
+  it("WRONG CAPABILITY: proof restarts and the booking engine is never reached", async () => {
     cookieJar.set("wl_proof_capability", signedCapability(TOKEN, "e".repeat(64)));
     const out = await bookInvitationSlotAction(TOKEN, "2026-10-07T14:00:00.000Z");
     expect(identityCall()?.capability).toBe("e".repeat(64));
-    expect(publicBookAppointmentAction).not.toHaveBeenCalled();
-    expect(out.kind).toBe("error");
+    expectProofRecovery(out, "a wrong capability");
   });
 
-  it("CROSS-INVITATION: another invitation's capability resolves nothing here", async () => {
+  it("CROSS-INVITATION: another invitation's capability restarts proof", async () => {
     // At this seam a capability minted for a different invitation is simply not
     // this invitation's current one, which is exactly how the database refuses
     // it — the cross-invitation and cross-studio cases are proved against real
     // PostgreSQL in tests/db/waitlist-recipient-proof.db.test.ts.
     cookieJar.set("wl_proof_capability", signedCapability(TOKEN, "f".repeat(64)));
     const out = await bookInvitationSlotAction(TOKEN, "2026-10-07T14:00:00.000Z");
-    expect(publicBookAppointmentAction).not.toHaveBeenCalled();
-    expect(out.kind).toBe("error");
+    expectProofRecovery(out, "another invitation's capability");
   });
 
-  for (const refusal of ["proof_expired", "proof_required", "not_live"]) {
-    it(`STALE/CLOSED (${refusal}): no identity, no booking`, async () => {
+  for (const refusal of ["proof_invalid", "proof_expired", "proof_required"]) {
+    it(`${refusal.toUpperCase()}: the cookie is cleared and proof restarts`, async () => {
       prove();
+      bookable();
       identityFixture.result = refusal;
       const out = await bookInvitationSlotAction(TOKEN, "2026-10-07T14:00:00.000Z");
-      expect(publicBookAppointmentAction).not.toHaveBeenCalled();
-      expect(out.kind).toBe("error");
+      expectProofRecovery(out, refusal);
     });
   }
-
-  it("a refusal never yields a PARTIAL identity", async () => {
-    // The command returns all three columns null on every refusal, so there is
-    // no half-identity to assemble a booking from. If this layer ever accepted
-    // one, a refused read could still put a name on a real appointment.
-    prove();
-    identityFixture.result = "proof_expired";
-    await bookInvitationSlotAction(TOKEN, "2026-10-07T14:00:00.000Z");
-    expect(publicBookAppointmentAction).not.toHaveBeenCalled();
-  });
 
   it("ONLY `resolved` yields an identity — a refusal carrying fields is still a refusal", async () => {
     // The shipped command returns all three columns null on every refusal, so
@@ -552,11 +592,77 @@ describe("recipient identity comes from the gated command, not the table", () =>
     identityFixture.result = "proof_expired";
     identityFixture.leakOnRefusal = true;
     const out = await bookInvitationSlotAction(TOKEN, "2026-10-07T14:00:00.000Z");
-    expect(
-      publicBookAppointmentAction,
-      "a refusal must never book, whatever columns it carries",
-    ).not.toHaveBeenCalled();
+    expectProofRecovery(out, "a refusal carrying identity columns");
+  });
+
+  // ---------------------------------------------------------------------
+  // NON-PROOF FAILURES ARE NOT PROOF FAILURES
+  // ---------------------------------------------------------------------
+  //
+  // Telling a recipient whose proof is perfectly good to start over — and
+  // dropping their live capability on the way — is its own defect. Only the
+  // three results that actually speak about proof may reach that recovery.
+  for (const other of ["not_live", "invalid_token", "invalid_input", "identity_unavailable"]) {
+    it(`${other}: fails closed WITHOUT claiming the proof lapsed`, async () => {
+      prove();
+      bookable();
+      identityFixture.result = other;
+      const out = await bookInvitationSlotAction(TOKEN, "2026-10-07T14:00:00.000Z");
+      expect(publicBookAppointmentAction).not.toHaveBeenCalled();
+      expect(out.kind, `${other} must not be dressed up as a proof state`).toBe("error");
+      expect(
+        cookieJar.has("wl_proof_capability"),
+        `${other} says nothing about proof, so a live capability must survive`,
+      ).toBe(true);
+    });
+  }
+
+  it("a TRANSPORT failure is not a lapsed proof either", async () => {
+    prove();
+    bookable();
+    identityFixture.transportError = true;
+    const out = await bookInvitationSlotAction(TOKEN, "2026-10-07T14:00:00.000Z");
+    expect(publicBookAppointmentAction).not.toHaveBeenCalled();
     expect(out.kind).toBe("error");
+    if (out.kind !== "error") throw new Error("unreachable");
+    expect(out.retryable, "a transport failure IS worth retrying").toBe(true);
+    expect(cookieJar.has("wl_proof_capability")).toBe(true);
+  });
+
+  // ---------------------------------------------------------------------
+  // THE RENDER PATH RECOVERS THE SAME WAY
+  // ---------------------------------------------------------------------
+  it("RELOAD with a still-signed cookie the DATABASE rejects does not render as proven", async () => {
+    // The exact loop: HMAC valid, signed expiry in the future, capability dead.
+    // Before this repair the offer rendered as proven and every Book failed.
+    prove();
+    identityFixture.result = "proof_invalid";
+    const out = await loadInvitationAction(TOKEN);
+    expect(out.kind, "a rejected capability must not paint a proven offer").toBe("proof");
+    if (out.kind !== "proof") throw new Error("unreachable");
+    expect(out.notice).toBe("proof_lapsed");
+    expect(out.stage.kind).toBe("required");
+    expect(cookieJar.has("wl_proof_capability")).toBe(false);
+  });
+
+  it("and the RENDER recovery survives a phase that cannot write cookies", async () => {
+    // `page.tsx` renders through `loadInvitationAction`, and Next only permits
+    // `cookies().set` in the ACTION phase — it throws otherwise. The recovery
+    // must degrade to a no-op clear rather than turning a stale capability into
+    // a 500 on the invitation page, so the state is still proof-required and
+    // still explains itself.
+    prove();
+    identityFixture.result = "proof_invalid";
+    cookiesReadonly.on = true;
+    try {
+      const out = await loadInvitationAction(TOKEN);
+      expect(out.kind).toBe("proof");
+      if (out.kind !== "proof") throw new Error("unreachable");
+      expect(out.notice).toBe("proof_lapsed");
+      expect(out.stage.kind).toBe("required");
+    } finally {
+      cookiesReadonly.on = false;
+    }
   });
 
   it("THE RENDER PATH is gated the same way — an unproven offer asks for nothing", async () => {

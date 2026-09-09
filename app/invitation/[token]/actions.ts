@@ -175,13 +175,29 @@ async function writeCapability(
 
 async function clearCapability(): Promise<void> {
   const jar = await cookies();
-  jar.set(CAPABILITY_COOKIE, "", {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    path: "/invitation",
-    maxAge: 0,
-  });
+  try {
+    jar.set(CAPABILITY_COOKIE, "", {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      path: "/invitation",
+      maxAge: 0,
+    });
+  } catch {
+    // COOKIES ARE ONLY MUTABLE IN THE ACTION PHASE. Next permits `cookies().set`
+    // when `requestStore.phase === "action"` and throws
+    // ReadonlyRequestCookiesError otherwise, and `loadInvitationAction` runs in
+    // BOTH phases: `page.tsx` renders through it, and the container calls it as
+    // an action on retry. The proof recovery below has to clear a rejected
+    // capability from either, so a render-phase clear must degrade to a no-op
+    // rather than turning a stale cookie into a 500 on the invitation page.
+    //
+    // SWALLOWING IS SAFE HERE BECAUSE THE COOKIE IS NOT AN AUTHORITY. The
+    // database re-proves the capability inside every locked command, so a cookie
+    // that survives one render grants nothing; the state returned is
+    // proof-required either way, and the next action -- a retry or a code
+    // request, both of which clear it -- drops it for good.
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -258,22 +274,65 @@ function identityField(row: Record<string, unknown> | null, k: string): string |
  * compares its hash against the stored recipient hash -- so the recipient never
  * types an address and a substituted one could not match anyway.
  */
+type RecipientIdentity = { name: string; email: string; phone: string | null };
+
+/**
+ * THE THREE RESULTS THAT MEAN "THIS CAPABILITY IS NO LONGER PROOF".
+ *
+ * A CLOSED set, matched against 0192's own vocabulary. Everything else the
+ * command can answer -- `not_live`, `invalid_token`, `invalid_input`,
+ * `identity_unavailable` -- is NOT a statement about proof and must never be
+ * reported as one.
+ */
+const PROOF_REFUSALS = new Set(["proof_required", "proof_expired", "proof_invalid"]);
+
+/**
+ * What the identity command said, kept as a RESULT rather than flattened.
+ *
+ * WHY THIS IS NOT `RecipientIdentity | null`. Collapsing every non-resolved
+ * result to null lost the one distinction the recipient's recovery depends on.
+ * A capability the DATABASE has rejected -- because a replacement challenge
+ * cleared it, or it lapsed -- still has a valid HMAC and a future signed expiry
+ * in the cookie, so this surface kept treating the browser as proven, kept
+ * rendering the offer as proven, and every Book hit the same refusal: a loop
+ * with no exit that a generic "try again" could not break, because trying again
+ * is exactly what fails.
+ *
+ * The reason is carried for the SERVER's decision only. It never reaches the
+ * browser: the recipient sees the existing `proof_lapsed` notice and nothing
+ * more specific, so the vocabulary the screen renders is unchanged.
+ */
+type IdentityOutcome =
+  | { kind: "resolved"; identity: RecipientIdentity }
+  /** The database rejected the capability. The cookie must go and proof restarts. */
+  | { kind: "proof_refused"; reason: string }
+  /** Anything else: no proof claim is made, and the caller stays fail-closed. */
+  | { kind: "unusable"; reason: string };
+
 async function invitedIdentity(
   rawToken: string,
   capability: string,
-): Promise<{ name: string; email: string; phone: string | null } | null> {
+): Promise<IdentityOutcome> {
   const admin = createAdminClient();
   const { data, error } = await admin.rpc(
     "resolve_waitlist_invitation_recipient_identity",
     { p_raw_token: rawToken, p_raw_capability: capability },
   );
-  if (error) return null;
+  // A TRANSPORT FAILURE IS NOT A PROOF FAILURE. Labelling it one would tell a
+  // recipient whose proof is perfectly good to start over, and would drop a
+  // live capability on the way.
+  if (error) return { kind: "unusable", reason: "transport" };
   const row = firstIdentityRow(data);
   // ONLY `resolved` carries an identity. Every refusal names its reason and
   // returns all three columns null, so there is no partial row to assemble one
-  // from, and no refusal reason is echoed to the caller either -- this layer
-  // reports "no identity" and the surfaces above already fail closed on that.
-  if (identityField(row, "result") !== "resolved") return null;
+  // from -- and the reason is READ here rather than discarded, because whether
+  // proof must restart is exactly what it says.
+  const result = identityField(row, "result");
+  if (result !== "resolved") {
+    return result !== null && PROOF_REFUSALS.has(result)
+      ? { kind: "proof_refused", reason: result }
+      : { kind: "unusable", reason: result ?? "unreadable" };
+  }
   const name = identityField(row, "name");
   const email = identityField(row, "email");
   // OPTIONAL BY CONSTRUCTION. The public join form says "Phone (optional)" and
@@ -284,9 +343,12 @@ async function invitedIdentity(
   // whether they may book.
   const rawPhone = identityField(row, "phone");
   const phone = rawPhone === null ? "" : rawPhone.trim();
+  // A `resolved` row with no name or address is not an identity, and it is not
+  // a proof failure either -- the capability was accepted. Fail closed without
+  // claiming proof lapsed.
   return name && email
-    ? { name, email, phone: phone.length > 0 ? phone : null }
-    : null;
+    ? { kind: "resolved", identity: { name, email, phone: phone.length > 0 ? phone : null } }
+    : { kind: "unusable", reason: "incomplete" };
 }
 
 /**
@@ -558,6 +620,32 @@ async function offeredDays(
   };
 }
 
+/**
+ * BACK TO PROOF, WITH THE DEAD CAPABILITY DROPPED — the one recovery.
+ *
+ * This is the semantics the in-scope `invitation_refused` branch already used
+ * when the booking authority rejected the capability, lifted out so the identity
+ * command's rejection lands in exactly the same place. There is no second proof
+ * model: one refusal shape, one notice, one state.
+ */
+async function proofLapsedState(
+  resolve: Extract<ResolveOutcome, { kind: "live" }>,
+  studio: StudioContext,
+): Promise<InvitationViewState> {
+  await clearCapability();
+  return deriveInvitationViewState({
+    resolve,
+    presentation: studio.presentation,
+    proof: { kind: "required" },
+    // NO SLOTS. Times are shown only to a proven recipient, and this recipient
+    // is no longer one.
+    slots: [],
+    booked: null,
+    declined: false,
+    proofNotice: "proof_lapsed",
+  });
+}
+
 async function offerState(
   rawToken: string,
   resolve: Extract<ResolveOutcome, { kind: "live" }>,
@@ -582,8 +670,17 @@ async function offerState(
       : Promise.resolve({ days: [], unreadable: false }),
     capability
       ? invitedIdentity(rawToken, capability)
-      : Promise.resolve(null),
+      : Promise.resolve<IdentityOutcome>({ kind: "unusable", reason: "no_capability" }),
   ]);
+  // THE DATABASE OUTRANKS THE COOKIE, AND IT DOES SO ON THE RENDER PATH TOO.
+  //
+  // A capability the database has rejected still has a valid HMAC and a future
+  // signed expiry, so `readCapability` happily returns it and this render would
+  // otherwise paint a proven offer with selectable times — which Book then
+  // refuses, forever. Checked BEFORE `offered.unreadable`, because a rejected
+  // capability is the stronger and more actionable truth: "try again" is the one
+  // instruction that cannot work here.
+  if (identity.kind === "proof_refused") return proofLapsedState(resolve, studio);
   // A THROTTLED READ IS NOT AN EMPTY DIARY. Rendering the offer with no days
   // would say "nothing is open in the times held for you" about dates nobody
   // looked at — the same false statement the day cap used to make, arriving by
@@ -602,7 +699,7 @@ async function offerState(
     // An unreadable identity is NOT treated as "no phone": that would ask a
     // recipient to supply one the studio may already hold. It stays false, the
     // Book attempt then fails closed, and the booking path reports it.
-    phoneNeeded: identity !== null && identity.phone === null,
+    phoneNeeded: identity.kind === "resolved" && identity.identity.phone === null,
   });
 }
 
@@ -850,9 +947,18 @@ export async function bookInvitationSlotAction(
   // the booking action compares the submitted email's hash against the stored
   // recipient hash, so a typed address could only ever match the real one.
   const invited = await invitedIdentity(rawToken, capability);
-  if (!invited) return { kind: "error", retryable: true };
-  fd.set("email", invited.email);
-  fd.set("name", invited.name);
+  // THE REJECTED CAPABILITY IS RECOVERABLE, and only this branch knows it. A
+  // generic retryable error left the dead cookie in place and sent the
+  // recipient around the same loop; the proof restart is the exit.
+  if (invited.kind === "proof_refused") return proofLapsedState(ctx.resolve, ctx.studio);
+  // Everything else keeps the existing fail-closed semantics EXACTLY, and
+  // deliberately is not dressed up as a lapsed proof: a transport failure, an
+  // invitation that closed under us, or an incomplete row says nothing about
+  // whether this recipient proved themselves.
+  if (invited.kind !== "resolved") return { kind: "error", retryable: true };
+  const identity = invited.identity;
+  fd.set("email", identity.email);
+  fd.set("name", identity.name);
 
   // THE PHONE, WHICH THIS OMITTED ENTIRELY AND SO COULD NEVER BOOK.
   //
@@ -867,7 +973,7 @@ export async function bookInvitationSlotAction(
   // overwrite it on the client record this booking creates. A typed number is
   // read ONLY where the entry has none, which is an ordinary case because the
   // join form makes phone optional.
-  const phone = invited.phone ?? (typeof typedPhone === "string" ? typedPhone.trim() : "");
+  const phone = identity.phone ?? (typeof typedPhone === "string" ? typedPhone.trim() : "");
   if (!phone) {
     // Fail BEFORE the booking action, so the recipient is asked for the number
     // on the offer they are already looking at rather than being handed the
@@ -934,18 +1040,7 @@ export async function bookInvitationSlotAction(
       end: startsAt,
       startLabel: "",
     });
-    if (inScope) {
-      await clearCapability();
-      return deriveInvitationViewState({
-        resolve: ctx.resolve,
-        presentation: ctx.studio.presentation,
-        proof: { kind: "required" },
-        slots: [],
-        booked: null,
-        declined: false,
-        proofNotice: "proof_lapsed",
-      });
-    }
+    if (inScope) return proofLapsedState(ctx.resolve, ctx.studio);
   }
 
   // Every other refusal leaves the offer usable, so it is shown WITH the reason.
