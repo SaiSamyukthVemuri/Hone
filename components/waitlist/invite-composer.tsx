@@ -1,3 +1,4 @@
+import { isConsultationService } from "@/lib/booking/consultation";
 import { buttonClasses } from "@/components/ui/button";
 import { cx } from "@/components/ui/control-base";
 import { fieldControlClass } from "@/components/ui/field";
@@ -158,22 +159,41 @@ export function InviteComposer({
    *  bulk claim end up looking like one control. */
   entryName: string;
   draft: InviteDraft;
-  services: ReadonlyArray<{ id: string; name: string }>;
+  /**
+   * Every service the studio offers — UNFILTERED. The composer applies
+   * `isConsultationService` itself rather than trusting a caller to have done
+   * it, which is why `modality` is required here: the predicate reads it, and a
+   * `{ id, name }` shape could not express the question at all.
+   *
+   * THE SAME PREDICATE THE BOOKING SURFACE USES. `lib/booking/consultation.ts`
+   * exists so the visible service filter and the server-side guard cannot drift
+   * apart — its own header says so — and an invitation is an offer to book
+   * exactly through that surface. A separate rule here would let a
+   * practitioner scope an invitation to a service the invitee's own booking
+   * page will not show them.
+   */
+  services: ReadonlyArray<{ id: string; name: string; modality: string | null }>;
   /** `null` until an adapter satisfying `WaitlistInvitationAdapter` is bound. */
   capabilities?: AdapterCapabilities | null;
 }) {
+  // FILTERED ONCE, then used for everything. Rendering and validation read the
+  // same list, so a service the practitioner cannot see is also one the draft
+  // cannot be valid for — the two could otherwise disagree, and the payload
+  // would carry an id the select never offered.
+  const bookableServices = services.filter((s) => isConsultationService(s));
   // The service list is part of validation, not just of rendering: a
   // `serviceId` that is no longer in it must invalidate the draft rather than
   // fall back to "any service" in the summary while the payload keeps the
   // stale id.
-  const draftContext = { serviceIds: services.map((s) => s.id) };
+  const draftContext = { serviceIds: bookableServices.map((s) => s.id) };
   const validation = validateDraft(draft, draftContext);
   const errors = validation.ok ? {} : validation.errors;
   const send = sendState(draft, capabilities, draftContext);
   const windowPreset = activeWindowPreset(draft.windowDays);
   const daysPreset = activeAllowedDaysPreset(draft.allowedWeekdays);
   const ttlPreset = activeTtlPreset(draft.expiresInHours);
-  const selectedService = services.find((s) => s.id === draft.serviceId) ?? null;
+  const selectedService =
+    bookableServices.find((s) => s.id === draft.serviceId) ?? null;
   const serviceName = selectedService?.name ?? null;
   // A chosen-but-missing service must not read as "any service" in the summary.
   // The draft is invalid in that case, so the summary is withheld entirely
@@ -208,7 +228,7 @@ export function InviteComposer({
                 does not mind which service the invitee books should not have to
                 pick one to get past this field. */}
           <option value="">Any service</option>
-          {services.map((service) => (
+          {bookableServices.map((service) => (
             <option key={service.id} value={service.id}>
               {service.name}
             </option>

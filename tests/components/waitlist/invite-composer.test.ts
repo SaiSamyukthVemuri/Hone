@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
+import { createElement } from "react";
 import type { ReactElement } from "react";
+import { isConsultationService } from "@/lib/booking/consultation";
 
 import { InviteComposer } from "@/components/waitlist/invite-composer";
 import {
@@ -21,8 +23,13 @@ import type { AdapterCapabilities } from "@/lib/waitlist/invite-to-book-contract
 // are not exported from any runtime module.
 
 const SERVICES = [
-  { id: "svc-1", name: "Electrolysis consultation" },
-  { id: "svc-2", name: "Laser — full leg" },
+  // Both are CONSULTATIONS, by the canonical predicate: svc-1 through its
+  // modality, svc-2 through the name fallback lib/booking/consultation.ts uses
+  // when a studio has not set one. The composer filters with that predicate, so
+  // a fixture that was not bookable would simply vanish from the select and
+  // every assertion about it would fail for the wrong reason.
+  { id: "svc-1", name: "Electrolysis consultation", modality: "consultation" },
+  { id: "svc-2", name: "Laser consultation — full leg", modality: null },
 ];
 
 const CONNECTED: AdapterCapabilities = {
@@ -493,11 +500,71 @@ describe("the send control", () => {
 
   it("summarises the scope without claiming anything has been sent", () => {
     const html = compose({ serviceId: "svc-2", windowDays: 14, allowedWeekdays: [1, 2] });
-    expect(html).toContain("Laser — full leg");
+    expect(html).toContain("Laser consultation — full leg");
     expect(html).toContain("next 2 weeks");
     expect(html).toContain("Mon, Tue");
     // Future tense only. Nothing here may read as a receipt.
     expect(html).not.toContain("has been sent");
     expect(html).not.toContain("Invitation sent");
+  });
+});
+
+describe("the service list is the BOOKING surface's list", () => {
+  // lib/booking/consultation.ts exists so the visible service filter and the
+  // server-side guard cannot drift apart — its own header says so. An
+  // invitation is an offer to book through exactly that surface, so a separate
+  // rule here would let a practitioner scope an invitation to a service the
+  // invitee's own booking page will never show them.
+  //
+  // The composer therefore applies `isConsultationService` itself rather than
+  // trusting a caller to have pre-filtered, which is why the prop carries
+  // `modality`: a `{ id, name }` shape could not express the question.
+
+  const MIXED = [
+    { id: "svc-1", name: "Electrolysis consultation", modality: "consultation" },
+    { id: "svc-2", name: "Laser — full leg", modality: "laser" },
+    { id: "svc-3", name: "New client consultation", modality: null },
+  ];
+
+  function renderWith(
+    services: ReadonlyArray<{ id: string; name: string; modality: string | null }>,
+    draft = emptyDraft(),
+  ) {
+    return renderToStaticMarkup(
+      createElement(InviteComposer, {
+        entryId: "e1",
+        entryName: "Ada",
+        draft,
+        services,
+      }),
+    );
+  }
+
+  it("offers only services the predicate accepts", () => {
+    const html = renderWith(MIXED);
+    expect(html).toContain("Electrolysis consultation");
+    // Modality "laser" is not a consultation, and the NAME fallback does not
+    // apply because a modality was set.
+    expect(html).not.toContain("Laser — full leg");
+    // No modality set, but the name carries it — the documented fallback.
+    expect(html).toContain("New client consultation");
+  });
+
+  it("agrees with isConsultationService, service by service", () => {
+    // Pinned against the predicate itself rather than against a hand-listed
+    // expectation, so the two cannot drift as the predicate evolves.
+    const html = renderWith(MIXED);
+    for (const s of MIXED) {
+      expect(html.includes(s.name), `${s.name}`).toBe(isConsultationService(s));
+    }
+  });
+
+  it("a draft naming an EXCLUDED service is invalid, not silently 'any service'", () => {
+    // Rendering and validation read the same filtered list. If they disagreed,
+    // the summary could say "any service" while the payload still carried the
+    // excluded id.
+    const html = renderWith(MIXED, { ...emptyDraft(), serviceId: "svc-2" });
+    expect(html).not.toContain("Laser — full leg");
+    expect(html).toContain("composer-error-service");
   });
 });
