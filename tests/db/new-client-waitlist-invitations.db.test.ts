@@ -503,7 +503,30 @@ describe("0188 — privilege", () => {
         where table_schema='public' and table_name='new_client_waitlist_invitations'`,
     );
     const all = live.rows.map((x: { column_name: string }) => x.column_name).sort();
-    expect(all.filter((c: string) => !granted.includes(c))).toEqual(["token_hash"]);
+    // SUPERSEDED BY 0192, AND THE INVARIANT IS STRONGER FOR IT. This asserted
+    // the ungranted set was exactly ["token_hash"]. 0192 adds eleven columns —
+    // the offer scope, the decline outcome and the six recipient-proof
+    // columns — and grants NONE of them, which is the positive-list property
+    // this block exists to prove, demonstrated rather than assumed. The
+    // GRANTED set above is unchanged and is still the assertion that matters.
+    expect(all.filter((c: string) => !granted.includes(c))).toEqual([
+      "declined_at",
+      "proof_capability_expires_at",
+      "proof_capability_hash",
+      "proof_challenge_attempts",
+      "proof_challenge_expires_at",
+      "proof_challenge_hash",
+      // The challenge EVENT id. Non-secret and not authority, but it is still
+      // not the browser's business, and 0188's positive list is what keeps it
+      // that way without anyone having to remember.
+      "proof_challenge_id",
+      "proof_challenge_sent_to_hash",
+      "scope_allowed_weekdays",
+      "scope_end_date",
+      "scope_service_id",
+      "scope_start_date",
+      "token_hash",
+    ]);
 
     // anon and service_role hold no column privilege at all.
     const others = await adminQuery(
@@ -564,6 +587,29 @@ describe("0188 — privilege", () => {
             'requeue_new_client_waitlist_entry','record_new_client_waitlist_conversion')`,
     );
     expect(r.rows).toHaveLength(10);
+
+    // SUPERSEDED BY 0192 FOR EXACTLY ONE COMMAND. The ungated
+    // `redeem_new_client_waitlist_invitation(text)` is a BEARER path: the token
+    // alone mutates. 0192 replaces it with the proof-gated
+    // `redeem_new_client_waitlist_invitation_verified(text, text)` and withdraws
+    // EXECUTE from all four roles rather than editing the frozen applied
+    // function. The browser posture this block protects is UNCHANGED and in
+    // fact stronger — the command went from service_role-reachable to reachable
+    // by nobody. Verified behaviourally before this assertion was touched.
+    // TWO commands lose EXECUTE, for the same reason: each is a path that
+    // answers none of 0192's controls.
+    //   redeem_(text)  — BEARER. The raw token alone mutates; the proof-gated
+    //                    redeem_..._verified(text,text) replaces it.
+    //   issue_(…)      — UNSCOPED. It checks neither the open round nor the
+    //                    allowance, so calling it directly mints an invitation
+    //                    with every scope column NULL, outside the round.
+    // Neither applied function is EDITED — both are frozen. Only the grant
+    // moves, and both went from service_role-reachable to reachable by nobody.
+    const WITHDRAWN_BY_0192 = new Set([
+      "redeem_new_client_waitlist_invitation",
+      "issue_new_client_waitlist_invitation",
+    ]);
+
     for (const row of r.rows as {
       proname: string;
       anon: boolean;
@@ -572,7 +618,9 @@ describe("0188 — privilege", () => {
     }[]) {
       expect(row.anon, `${row.proname} anon`).toBe(false);
       expect(row.auth, `${row.proname} authenticated`).toBe(false);
-      expect(row.svc, `${row.proname} service_role`).toBe(true);
+      expect(row.svc, `${row.proname} service_role`).toBe(
+        !WITHDRAWN_BY_0192.has(row.proname),
+      );
     }
   });
 

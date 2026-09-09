@@ -149,10 +149,39 @@ describe("policy split — what the command does NOT enforce", () => {
     // public-flow product policy rather than an appointment-table lineage fact.
     // It must therefore run before the RPC and must not be claimed as a DB
     // guarantee.
-    const gate = CODE.indexOf("isConsultationService");
+    //
+    // WAIT-03 B3 renamed the predicate: `isConsultationService` -> the wider
+    // `isBookableByNewClient`, which asks the same question plus `active`, so
+    // the invitation route can ask it of a row it fetched itself instead of
+    // restating "what counts as a consultation" a second time.
+    //
+    // PINNED BY CALL, NOT BY NAME ALONE. This guard was a bare
+    // `indexOf("isConsultationService")` and would have been satisfied by the
+    // word appearing anywhere the comment filter did not strip -- a string, an
+    // import left behind after the guard itself was deleted. The `(` ties it to
+    // an actual invocation.
+    const gate = CODE.indexOf("isBookableByNewClient(service)");
     const rpc = CODE.indexOf('"create_public_appointment"');
     expect(gate, "the consultation gate must exist").toBeGreaterThan(-1);
     expect(gate, "and must precede the command").toBeLessThan(rpc);
+  });
+
+  it("NON-VACUITY — the pin can tell a present gate from an absent one", () => {
+    // A predicate nobody calls here must NOT match, or the assertion above
+    // would pass for any source at all.
+    expect(CODE.indexOf("isNotARealPredicate(service)")).toBe(-1);
+  });
+
+  // The rule is a NEW-CLIENT rule, not an invitation-mode rule. WAIT-03 B3
+  // considered and rejected an invitation-shaped bypass here: letting a scoped
+  // invitation admit an arbitrary service would let an unconsulted new client
+  // book a treatment, which is what the consultation-first rule exists to stop.
+  it("the consultation gate is not conditioned on invitation state", () => {
+    const gate = CODE.indexOf("isBookableByNewClient(service)");
+    const line = CODE.slice(CODE.lastIndexOf("\n", gate) + 1, CODE.indexOf("\n", gate));
+    expect(line).toContain('clientType === "new"');
+    expect(line).not.toContain("invitation");
+    expect(line).not.toContain("Auth");
   });
 
   it("does not pass client_type to the command", () => {
