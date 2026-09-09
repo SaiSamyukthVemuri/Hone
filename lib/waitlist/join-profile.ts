@@ -347,12 +347,32 @@ export type StoredWaitlistProfile = {
   availabilityPreference?: string | null;
 };
 
-/** Is there a number on file at all? Says nothing about whether it is verified. */
+/**
+ * Is there a number on file AT ALL?
+ *
+ * PRESENCE, NOT VALIDITY — and the distinction is load-bearing, because this
+ * function is the gate that decides whether a bearer completion may write a
+ * mobile. An earlier revision asked the VALIDITY question here (length bound
+ * plus a digit-count floor, the same checks completeness uses), and the effect
+ * was a bypass of the immutability rule it exists to enforce:
+ *
+ *     stored "n/a"  -> not valid -> read as ABSENT -> patch takes the
+ *     candidate arm -> a bearer link overwrites a number the studio already had.
+ *
+ * Those are ordinary legacy values — an imported "n/a" or "ask", a landline
+ * typed short, an over-long paste — not exotic ones. So the question this asks
+ * is the narrow one its name promises: is the column non-empty. A junk value is
+ * still a value somebody entered, and replacing it is the studio's decision, not
+ * a link-holder's.
+ *
+ * WHAT VALIDITY STILL GOVERNS, ELSEWHERE: `assessProfileCompleteness` keeps the
+ * strict checks, so an entry holding "n/a" is INCOMPLETE and is not invitable.
+ * The two questions have different answers on the same row, on purpose — the
+ * prospect is told to contact the studio, which is the same route a wrong email
+ * takes.
+ */
 export function storedMobilePresent(stored: StoredWaitlistProfile): boolean {
-  return (
-    presentString(stored.mobile, PROFILE_MOBILE_MAX) &&
-    digitCount(stored.mobile ?? "") >= PROFILE_MOBILE_MIN_DIGITS
-  );
+  return typeof stored.mobile === "string" && stored.mobile.trim().length > 0;
 }
 
 /**
@@ -803,4 +823,79 @@ export function commitPointFromDurableFlag(durable: boolean): WaitlistCommitPoin
  */
 export function profileJoinIsSupported(commitPoint: WaitlistCommitPoint): boolean {
   return commitPoint === "durable_record";
+}
+
+// --- 11. CANDIDATE IS NOT A DESTINATION -------------------------------------
+//
+// THREE DISTINCT CONCEPTS, and the whole point is that a binder cannot collapse
+// them by accident:
+//
+//   1. mobileCandidate         a syntactically valid number the prospect
+//                              submitted. May arrive from the INITIAL PUBLIC
+//                              JOIN or from a later completion. Not authority
+//                              to send anything.
+//   2. mobileVerified          possession proven by a future verification flow.
+//                              THE operational SMS destination.
+//   3. smsOperationalConsent   permission to receive operational SMS.
+//                              Independent of verification.
+//
+// Sending requires verified AND consented AND not suppressed. Any two of the
+// three is not enough, and the pair people reach for — candidate plus consent —
+// is the one that reads most like permission and grants least.
+//
+// WHY THE JOIN FORM IS NOT AN EXCEPTION. The public join form proves no
+// possession of the number typed into it. Treating a join-supplied mobile as
+// verified would not remove the wrong-recipient defect, it would relocate it:
+// anyone could enrol a victim's name and email against a phone they control.
+// So a join-supplied number is a candidate exactly like a completion-supplied
+// one, and this module has no path that produces a verified mobile at all.
+
+/**
+ * A number someone typed, carried as a value that CANNOT claim verification.
+ *
+ * `verifiedAt` is typed as the literal `null`, not `string | null`. That is the
+ * enforcement: a `MobileCandidate` is unconstructible with an instant in it, so
+ * a binding holding one cannot promote it to a destination by filling a field.
+ * Promotion has to go through a verification flow that produces a different
+ * value, which is a change a reviewer sees.
+ */
+export type MobileCandidate = {
+  readonly value: string;
+  readonly verifiedAt: null;
+};
+
+/** Wrap a submitted number as what it actually is. */
+export function mobileCandidateFrom(value: string): MobileCandidate {
+  return { value: value.trim(), verifiedAt: null };
+}
+
+/**
+ * The candidate a public join produces.
+ *
+ * Exists so the join path states its own standing rather than handing a bare
+ * string to a binder that must remember what it means. `WaitlistJoinProfile`
+ * keeps `mobile` as a plain string because that is what a form field holds;
+ * this is the projection that names it.
+ */
+export function joinMobileCandidate(profile: WaitlistJoinProfile): MobileCandidate {
+  return mobileCandidateFrom(profile.mobile);
+}
+
+/**
+ * The one shape that may ever receive operational SMS.
+ *
+ * Stated as a single predicate so the three-way rule lives in ONE place and a
+ * caller cannot satisfy two limbs and assume the third. It mirrors
+ * `prospectMayReceiveSms` exactly — that function decides over a stored SMS
+ * record, this one over a profile — and the truth table test walks all eight
+ * combinations to prove only one is sendable.
+ */
+export function mobileIsSendable(input: {
+  standing: MobileStanding;
+  smsOperationalConsent: boolean;
+  suppressed: boolean;
+}): boolean {
+  if (input.suppressed) return false;
+  if (input.standing !== "verified") return false;
+  return input.smsOperationalConsent;
 }

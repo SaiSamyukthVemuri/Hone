@@ -5,13 +5,19 @@ import { CompleteProfilePanel } from "@/components/waitlist/complete-profile-pan
 import {
   completionPatchFromProfile,
   invitationEligibility,
+  joinMobileCandidate,
+  mobileCandidateFrom,
+  mobileIsSendable,
   mobileIsVerified,
   mobileStanding,
   storedMobilePresent,
   validateWaitlistJoinProfile,
   PROFILE_COMPLETE,
+  PROFILE_INCOMPLETE,
   assessProfileCompleteness,
+  type MobileStanding,
 } from "@/lib/waitlist/join-profile";
+import { WaitlistJoinForm } from "@/components/waitlist/waitlist-join-form";
 import { prospectMayReceiveSms } from "@/lib/waitlist/prospect-sms-consent";
 import { MOBILE_CANDIDATE_NOTE } from "@/lib/waitlist/join-copy";
 
@@ -272,5 +278,147 @@ describe("no new authority was added while closing this", () => {
     expect(blank.errors.mobile).toBeTruthy();
     // And a valid one still passes, carrying the number verbatim.
     expect(profile("07700 900123").mobile).toBe("07700 900123");
+  });
+});
+
+// ===========================================================================
+// FINAL MOBILE AUTHORITY RULING — candidate != verified destination
+// ===========================================================================
+
+describe("REGRESSION — a junk stored mobile is still a stored mobile", () => {
+  // The bypass this closes: `storedMobilePresent` asked the VALIDITY question,
+  // so an entry holding "n/a" read as ABSENT, the patch took the candidate arm,
+  // and a bearer link overwrote a number the studio already had. These are
+  // ordinary legacy values, not exotic ones.
+  const JUNK = ["n/a", "ask", "123", "unknown", "-", "  x  ", "x".repeat(45)];
+
+  for (const stored of JUNK) {
+    it(`refuses replacement when the entry holds ${JSON.stringify(stored)}`, () => {
+      const entry = { email: "sarah@example.com", mobile: stored };
+      expect(storedMobilePresent(entry)).toBe(true);
+      const patch = completionPatchFromProfile(profile("07999 111222"), entry);
+      expect(patch.mobileDisposition).toBe("unchanged");
+      expect(JSON.stringify(patch)).not.toContain("07999");
+    });
+  }
+
+  it("NON-VACUITY — a genuinely empty column is still ABSENT", () => {
+    for (const empty of [undefined, null, "", "   "]) {
+      const entry = { email: "sarah@example.com", mobile: empty };
+      expect(storedMobilePresent(entry)).toBe(false);
+      expect(completionPatchFromProfile(profile("07700 900123"), entry).mobileDisposition).toBe(
+        "candidate_supplied",
+      );
+    }
+  });
+
+  it("validity still governs COMPLETENESS, which is a different question", () => {
+    // Same row, two answers, on purpose: the number may not be replaced by a
+    // link-holder, and the profile is not complete until the studio fixes it.
+    const junkEntry = {
+      firstName: "Sarah",
+      lastName: "Jones",
+      email: "sarah@example.com",
+      mobile: "n/a",
+      treatmentAreaIds: ["chin"],
+      availabilityPreference: "both",
+    };
+    expect(storedMobilePresent(junkEntry)).toBe(true);
+    expect(assessProfileCompleteness(junkEntry).status).toBe(PROFILE_INCOMPLETE);
+  });
+});
+
+describe("an INITIAL PUBLIC JOIN mobile starts unverified", () => {
+  it("is required, and arrives as a candidate", () => {
+    const joined = profile("07700 900123");
+    const candidate = joinMobileCandidate(joined);
+    expect(candidate.value).toBe("07700 900123");
+    // The public join form proves no possession of what is typed into it.
+    expect(candidate.verifiedAt).toBeNull();
+  });
+
+  it("a candidate cannot be constructed carrying a verification instant", () => {
+    // `verifiedAt` is the literal `null`, so promotion cannot be expressed by
+    // filling a field — it must go through a flow that produces a different
+    // value, which a reviewer sees.
+    const candidate = mobileCandidateFrom("07700 900123");
+    expect(candidate.verifiedAt).toBeNull();
+    expect(Object.keys(candidate).sort()).toEqual(["value", "verifiedAt"]);
+  });
+
+  it("and the join form says so, rather than implying a text will follow", () => {
+    const html = renderToStaticMarkup(
+      createElement(WaitlistJoinForm, {
+        studioName: "Willow",
+        onSubmit: async () => ({ ok: true }) as const,
+      }),
+    );
+    expect(html).toContain('data-testid="waitlist-mobile-candidate-note"');
+  });
+
+  it("a stored join-supplied number reads as CANDIDATE, never verified", () => {
+    expect(mobileStanding({ mobile: "07700 900123" })).toBe("candidate");
+    expect(mobileIsVerified({ mobile: "07700 900123" })).toBe(false);
+  });
+});
+
+describe("verified + consent + not suppressed is the ONLY sendable shape", () => {
+  const STANDINGS: MobileStanding[] = ["absent", "candidate", "verified"];
+
+  it("walks every combination and finds exactly one", () => {
+    const sendable: string[] = [];
+    for (const standing of STANDINGS) {
+      for (const smsOperationalConsent of [true, false]) {
+        for (const suppressed of [true, false]) {
+          if (mobileIsSendable({ standing, smsOperationalConsent, suppressed })) {
+            sendable.push(`${standing}/consent=${smsOperationalConsent}/suppressed=${suppressed}`);
+          }
+        }
+      }
+    }
+    expect(sendable).toEqual(["verified/consent=true/suppressed=false"]);
+  });
+
+  it("the stored-record decision agrees with the profile-level one", () => {
+    // Two functions, one rule. They must never disagree about the same person.
+    const V = "2026-09-01T00:00:00.000Z";
+    const C = "2026-09-02T00:00:00.000Z";
+    expect(prospectMayReceiveSms({ sms_consent_at: C, sms_opted_out_at: null, mobile_verified_at: V })).toBe(
+      mobileIsSendable({ standing: "verified", smsOperationalConsent: true, suppressed: false }),
+    );
+    expect(prospectMayReceiveSms({ sms_consent_at: C, sms_opted_out_at: null, mobile_verified_at: null })).toBe(
+      mobileIsSendable({ standing: "candidate", smsOperationalConsent: true, suppressed: false }),
+    );
+    expect(prospectMayReceiveSms({ sms_consent_at: null, sms_opted_out_at: null, mobile_verified_at: V })).toBe(
+      mobileIsSendable({ standing: "verified", smsOperationalConsent: false, suppressed: false }),
+    );
+  });
+});
+
+describe("a legitimately stored, VERIFIED mobile keeps the prior semantics", () => {
+  const V = "2026-09-01T00:00:00.000Z";
+  const C = "2026-09-02T00:00:00.000Z";
+
+  it("consent and opt-out behave exactly as they did before verification existed", () => {
+    // Holding verification constant, the two original axes are unchanged: an
+    // opt-out dominates, and consent is what decides otherwise.
+    expect(prospectMayReceiveSms({ sms_consent_at: C, sms_opted_out_at: null, mobile_verified_at: V })).toBe(true);
+    expect(prospectMayReceiveSms({ sms_consent_at: null, sms_opted_out_at: null, mobile_verified_at: V })).toBe(false);
+    expect(prospectMayReceiveSms({ sms_consent_at: C, sms_opted_out_at: C, mobile_verified_at: V })).toBe(false);
+  });
+
+  it("and an SMS-requiring invitation is allowed on a verified number", () => {
+    expect(
+      invitationEligibility({ ...ON_FILE, mobileVerifiedAt: V }, { requiresSms: true }).eligible,
+    ).toBe(true);
+  });
+
+  it("declining consent still does not touch profile completeness", () => {
+    // Sendability and completeness are separate determinations, and consent
+    // participates in only one of them.
+    expect(assessProfileCompleteness({ ...ON_FILE, mobileVerifiedAt: V }).status).toBe(
+      PROFILE_COMPLETE,
+    );
+    expect(invitationEligibility({ ...ON_FILE, mobileVerifiedAt: V }).eligible).toBe(true);
   });
 });

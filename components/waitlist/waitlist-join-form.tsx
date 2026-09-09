@@ -169,6 +169,12 @@ export function WaitlistJoinForm({
         errors={errors}
         onChange={setDraft}
         disabled={submitting}
+        // A JOIN-SUPPLIED NUMBER IS A CANDIDATE TOO. This form proves no
+        // possession of what is typed into it, so treating its mobile as
+        // verified would not remove the wrong-recipient defect — it would move
+        // it here, where anyone could enrol a victim against a phone they
+        // control. The copy says so rather than implying a text will follow.
+        showMobileCandidateNote
       />
 
       <div className="flex flex-col gap-3">

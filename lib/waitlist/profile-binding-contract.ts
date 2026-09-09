@@ -43,7 +43,7 @@ import type {
   WaitlistJoinProfile,
   WaitlistCommitPoint,
 } from "@/lib/waitlist/join-profile";
-import type { MobileStanding } from "@/lib/waitlist/join-profile";
+import type { MobileCandidate, MobileStanding } from "@/lib/waitlist/join-profile";
 import type { SmsConsentSource } from "@/lib/waitlist/prospect-sms-consent";
 import type { TreatmentAreaId } from "@/lib/waitlist/treatment-area-catalog";
 
@@ -101,6 +101,13 @@ export type JoinWithProfileInput = {
   studioSlug: string;
   /** Already validated. A raw draft may not reach a binding. */
   profile: WaitlistJoinProfile;
+  /**
+   * The mobile's standing, stated rather than inferred from the profile string.
+   *
+   * Its `verifiedAt` is the literal `null`, so a binder cannot receive a
+   * join-supplied number that claims to be a destination.
+   */
+  mobileCandidate: MobileCandidate;
   /**
    * Where the agreement was collected. NOT read from the browser: the surface
    * that ran the collection knows which it was.
@@ -192,6 +199,16 @@ export interface WaitlistProfileAdapter {
    * statement. There is no `consentedAt` parameter here on purpose: a
    * browser-supplied or server-process time is evidence of nothing, and the
    * agreement and its timestamp must commit together or not at all.
+   *
+   * THE MOBILE ARRIVES AS A CANDIDATE AND IS STORED AS ONE. The public join
+   * form proves no possession of the number typed into it, so
+   * `mobile_verified_at` MUST be written null here — exactly as it must be for a
+   * completion-supplied candidate. Treating a join-supplied number as verified
+   * would relocate the wrong-recipient defect to the join form rather than
+   * remove it: anyone can enrol a victim's name and email against a phone they
+   * control. `joinMobileCandidate` names the value's standing, and
+   * `MobileCandidate.verifiedAt` is typed as the literal `null` so the promotion
+   * cannot be expressed by filling a field.
    */
   joinWithProfile(input: JoinWithProfileInput): Promise<JoinOutcome>;
 
@@ -282,6 +299,7 @@ export type Wait04bPrerequisite = (typeof WAIT_04B_PREREQUISITES)[number];
  */
 export type {
   AvailabilityPreference,
+  MobileCandidate,
   MobileStanding,
   ProfileCompletionPatch,
   SmsConsentSource,
