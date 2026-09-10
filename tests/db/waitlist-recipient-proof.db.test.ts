@@ -2639,3 +2639,178 @@ describe("0192 §14b — a declined row is closed to expire, release and convers
     expect(conv.rows[0].r).toBe("converted");
   });
 });
+
+// ===========================================================================
+// THE LOAD-BEARING PROOF: POSTGRESQL DECIDES, NOT A TEXT MATCHER
+// ===========================================================================
+//
+// WHY THIS EXISTS. The §14b repair was first proved by a source test that read
+// the migration's SQL and tried to establish that the four liveness terms were
+// conjunctive. That guard was wrong four times running, each time plausibly:
+// counting tokens proved presence but not relationship; checking the gaps
+// between four terms proved only INTERNAL conjunction and missed how the group
+// attaches at its boundaries; and inline `--` comments survived the matcher.
+// Every repair required understanding a little more SQL, which is the road to
+// reimplementing a parser inside a unit test.
+//
+// PostgreSQL already knows SQL semantics. So the semantic claim moved here.
+//
+// THE FIXTURE IS WHAT MAKES THIS DETERMINISTIC, and it is the whole idea.
+// Take the lifecycle only as far as DECLINE A -> REQUEUE -> CLAIM and STOP:
+// never issue B. The entry is then `claimed` with exactly one invitation row,
+// A, which is declined. Measured on that state:
+//
+//     rows matching the OLD three-terminal predicate : 1   <- only A
+//     rows matching the NEW four-terminal predicate  : 0   <- nothing
+//
+// So a command that still asks the three-terminal question has NO CHOICE but to
+// select A and reach for its row lock. A second connection holds that lock. The
+// caller runs under a short `statement_timeout`, so a broken implementation
+// blocks and dies with 57014; a correct one never asks for the lock at all and
+// returns its ordinary no-live-invitation answer.
+//
+// Nothing here depends on which row PostgreSQL happens to return first -- the
+// weakness that made the earlier behavioural tests unable to catch the
+// regression at all. There is only one candidate row, and wanting it is the
+// failure.
+
+/** JOIN -> CLAIM -> ISSUE A -> verify -> DECLINE A -> REQUEUE -> CLAIM. No B. */
+async function declinedOnly(label: string) {
+  const offer = await seedOffer(`lock-${label}`);
+  const begun = await beginProof(offer.token);
+  const done = await completeProof(offer.token, begun.raw_challenge as string);
+  expect(done.result).toBe("verified");
+  const dec = await adminQuery(
+    `select result from public.decline_new_client_waitlist_invitation($1,$2)`,
+    [offer.token, done.raw_capability],
+  );
+  expect(dec.rows[0].result).toBe("declined");
+  await adminQuery(`select public.requeue_new_client_waitlist_entry($1,$2,$3)`, [
+    offer.studio.studioId, offer.entryId, offer.studio.userId,
+  ]);
+  await adminQuery(`select public.claim_new_client_waitlist_entry($1,$2,$3)`, [
+    offer.studio.studioId, offer.entryId, offer.studio.userId,
+  ]);
+
+  // THE DISCRIMINATION, asserted rather than assumed: exactly one row answers
+  // the old question and none answers the new one. If this ever stops holding,
+  // the tests below stop proving anything and say so here first.
+  const counts = await adminQuery(
+    `select
+       count(*) filter (where redeemed_at is null and expired_at is null
+                          and released_at is null)                        as three,
+       count(*) filter (where redeemed_at is null and expired_at is null
+                          and released_at is null and declined_at is null) as four
+     from public.new_client_waitlist_invitations where entry_id = $1`,
+    [offer.entryId],
+  );
+  expect(Number(counts.rows[0].three), "only the declined row answers the OLD predicate").toBe(1);
+  expect(Number(counts.rows[0].four), "nothing answers the NEW predicate").toBe(0);
+
+  return { studio: offer.studio, entryId: offer.entryId, A: offer.invitationId };
+}
+
+/**
+ * Run `call` while a second connection holds `invitationId` under `for update`.
+ *
+ * Returns the command's result, or throws whatever PostgreSQL raised — a
+ * blocked caller surfaces as 57014 (statement_timeout), which is the signal
+ * that the command wanted a row it should never have considered.
+ */
+async function withRowLockHeld<T>(
+  invitationId: string,
+  call: (caller: Client) => Promise<T>,
+): Promise<T> {
+  const holder = await conn();
+  const caller = await conn();
+  try {
+    await holder.query("begin");
+    await holder.query(
+      `select 1 from public.new_client_waitlist_invitations where id = $1 for update`,
+      [invitationId],
+    );
+    // Short, and local to this isolated test connection. Long enough that a
+    // command which does NOT want the lock always finishes; short enough that
+    // one which does fails fast instead of hanging the suite.
+    await caller.query("set statement_timeout = '4s'");
+    return await call(caller);
+  } finally {
+    await holder.query("rollback").catch(() => undefined);
+    await holder.end().catch(() => undefined);
+    await caller.end().catch(() => undefined);
+  }
+}
+
+const declinedOnlyTerms = async (id: string) =>
+  (
+    await adminQuery(
+      `select declined_at is not null d, released_at is not null rel,
+              expired_at is not null exp, redeemed_at is not null red
+         from public.new_client_waitlist_invitations where id = $1`,
+      [id],
+    )
+  ).rows[0];
+
+describe("0192 §14b — PostgreSQL proves the declined row is never even a candidate", () => {
+  it("EXPIRE does not reach for a historical declined row's lock", async () => {
+    const f = await declinedOnly("expire");
+    const r = await withRowLockHeld(f.A, (caller) =>
+      caller.query(`select public.expire_new_client_waitlist_invitation($1,$2,$3) r`, [
+        f.studio.studioId, f.entryId, f.studio.userId,
+      ]),
+    );
+    // Completed before the timeout, with its ordinary no-live-invitation answer.
+    // A three-terminal selector would have blocked on the held lock and raised
+    // 57014 instead of ever getting here.
+    expect(r.rows[0].r).toBe("not_invited");
+    expect(await declinedOnlyTerms(f.A)).toMatchObject({
+      d: true, rel: false, exp: false, red: false,
+    });
+  });
+
+  it("RELEASE does not reach for a historical declined row's lock", async () => {
+    const f = await declinedOnly("release");
+    const r = await withRowLockHeld(f.A, (caller) =>
+      caller.query(`select public.release_new_client_waitlist_entry($1,$2,$3) r`, [
+        f.studio.studioId, f.entryId, f.studio.userId,
+      ]),
+    );
+    // The entry is `claimed` with no live invitation, so release truthfully
+    // takes its claim-only path. What matters is that it never touched A.
+    expect(r.rows[0].r).toBe("released");
+    expect(
+      await declinedOnlyTerms(f.A),
+      "released_at must never land on top of declined_at",
+    ).toMatchObject({ d: true, rel: false, exp: false, red: false });
+  });
+
+  it("CONVERSION does not reach for a historical declined row's lock", async () => {
+    const f = await declinedOnly("convert");
+    const r = await withRowLockHeld(f.A, (caller) =>
+      caller.query(`select public.record_new_client_waitlist_conversion($1,$2,$3) r`, [
+        f.studio.studioId, f.entryId, f.studio.clientId,
+      ]),
+    );
+    expect(r.rows[0].r).toBe("not_invited");
+    expect(await declinedOnlyTerms(f.A)).toMatchObject({
+      d: true, rel: false, exp: false, red: false,
+    });
+  });
+
+  it("THE FIXTURE CAN ACTUALLY DETECT A BLOCKED CALLER — the control for the control", async () => {
+    // If the held lock could never stop anything, all three tests above would
+    // pass vacuously. So: run a statement that DOES want A's lock, under the
+    // same holder and the same timeout, and require it to die with 57014.
+    const f = await declinedOnly("vacuity");
+    let code: string | undefined;
+    try {
+      await withRowLockHeld(f.A, (caller) =>
+        caller.query(`select 1 from public.new_client_waitlist_invitations
+                       where id = $1 for update`, [f.A]),
+      );
+    } catch (e) {
+      code = (e as { code?: string }).code;
+    }
+    expect(code, "the holder must genuinely block a competing row lock").toBe("57014");
+  });
+});
