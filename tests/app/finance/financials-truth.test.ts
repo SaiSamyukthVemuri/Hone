@@ -1,9 +1,16 @@
 import { readFileSync, statSync } from "node:fs";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import ts from "typescript";
 
 import { UNKNOWN_EXPLANATION, UNKNOWN_LABEL, PERMANENT_LINES } from "@/lib/finance/financial-copy";
+
+// WALL TIME HERE IS SUITE LOAD, NOT ASSERTION COST. Same reason as
+// tests/app/clients/skin-notes-retirement.test.ts: these are TypeScript-compiler
+// tree scans that pass in isolation and trip vitest's 5s DEFAULT under a full
+// parallel suite, reporting a TIMEOUT as a failing money-path guard. Adding test
+// files anywhere in the repo is enough to trigger it.
+vi.setConfig({ testTimeout: 30_000 });
 import { summarizeCalendar } from "@/lib/finance/financial-briefing-model";
 import type { FinancialUnknownCause } from "@/lib/finance/financial-fact";
 
