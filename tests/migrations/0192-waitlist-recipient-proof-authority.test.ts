@@ -882,23 +882,132 @@ describe("0192 §14b — the legacy lifecycle commands are declined-aware", () =
     expect(CODE).toContain(`create or replace function public.${fn}(`);
   });
 
+  // -------------------------------------------------------------------------
+  // CONJUNCTION, NOT COUNTING.
+  //
+  // The first version of this guard compared how many times `released_at is
+  // null` and `declined_at is null` appeared and required the counts to match.
+  // That proves TOKEN PRESENCE, not RELATIONSHIP, and it is defeated by the one
+  // mutation most likely to happen by accident:
+  //
+  //     and i.declined_at is null      ->      or i.declined_at is null
+  //
+  // The counts stay equal and the predicate becomes useless — `or declined_at
+  // is null` matches every declined row, which is the exact opposite of the
+  // rule. It is also defeated by moving the token to an unrelated statement, or
+  // into a comment.
+  //
+  // So the guard now reads the four terms out of the SAME executable predicate
+  // and checks what actually joins them. Narrow by construction: it knows three
+  // function names, splits their bodies on statement boundaries, and looks only
+  // at statements that already express the legacy liveness shape. It is not a
+  // SQL parser and it never leaves these three bodies.
+  const LIVENESS_TERMS = [
+    "redeemed_at",
+    "expired_at",
+    "released_at",
+    "declined_at",
+  ] as const;
+
+  /** `... is null` for one column, with the optional `i.` alias. */
+  const termRe = (col: string) => new RegExp(`(?:\\bi\\.)?\\b${col}\\s+is\\s+null\\b`);
+
+  /**
+   * The executable statements in `body` that express invitation liveness.
+   *
+   * Statement split on `;` is sufficient here because these three bodies
+   * contain no string literal or dollar-quoted block carrying a semicolon —
+   * asserted below, so the assumption fails loudly rather than silently.
+   */
+  function livenessStatements(body: string): string[] {
+    return body
+      .split(";")
+      .map((st) => st.replace(/\s+/g, " ").trim())
+      .filter((st) => termRe("released_at").test(st));
+  }
+
   it.each(OWNED)(
-    "%s: every three-terminal invitation predicate also requires declined_at",
+    "%s: the four liveness terms sit in ONE predicate, joined by AND",
     (fn) => {
       const body = bodyOf(fn);
-      const three = (body.match(/released_at is null/g) ?? []).length;
-      const four = (body.match(/declined_at is null/g) ?? []).length;
-      // NON-VACUOUS BY CONSTRUCTION: the first assertion proves the old shape is
-      // actually present to be paired, so a body that simply dropped every
-      // liveness predicate could not pass by having nothing to check.
-      expect(three, `${fn} must still express invitation liveness`).toBeGreaterThan(0);
+
+      // The statement-split assumption, stated rather than assumed: tokenize the
+      // single-quoted literals and check none of them hides a semicolon. (A
+      // naive /'[^']*;[^']*'/ is wrong — it happily matches ACROSS two separate
+      // literals with a statement terminator between them.)
+      for (const lit of body.match(/'(?:[^']|'')*'/g) ?? []) {
+        expect(lit, `${fn}: a quoted literal contains ';' — the split is unsafe`).not.toContain(";");
+      }
+
+      const statements = livenessStatements(body);
+      // NON-VACUITY: a body that dropped every liveness predicate would inspect
+      // nothing and could otherwise pass by vacuous truth.
       expect(
-        four,
-        `${fn} has ${three} three-terminal predicate(s) but only ${four} declined_at ` +
-          `term(s) — a declined row would pass the unpaired one`,
-      ).toBe(three);
+        statements.length,
+        `${fn} expresses no invitation liveness at all — nothing was inspected`,
+      ).toBeGreaterThan(0);
+
+      for (const st of statements) {
+        // Locate each term inside THIS statement. A term living in a different
+        // statement, or only in a comment (CODE has comments stripped), cannot
+        // satisfy this.
+        const found = LIVENESS_TERMS.map((col) => {
+          const m = st.match(termRe(col));
+          return { col, index: m?.index ?? -1, text: m?.[0] ?? "" };
+        });
+
+        for (const f of found) {
+          expect(
+            f.index,
+            `${fn}: a liveness predicate omits \`${f.col} is null\` — ` +
+              `a declined row would pass it`,
+          ).toBeGreaterThanOrEqual(0);
+        }
+
+        // Each term exactly once, so the span below is unambiguous.
+        for (const col of LIVENESS_TERMS) {
+          const all = st.match(new RegExp(termRe(col).source, "g")) ?? [];
+          expect(all.length, `${fn}: \`${col} is null\` appears ${all.length}x in one predicate`).toBe(1);
+        }
+
+        // THE ACTUAL CLAIM: walk the terms in the order they appear and require
+        // the text BETWEEN each adjacent pair to be exactly `and`. This is what
+        // rejects `or`, and what a count could never see.
+        const ordered = [...found].sort((a, b) => a.index - b.index);
+        for (let i = 0; i < ordered.length - 1; i += 1) {
+          const left = ordered[i]!;
+          const right = ordered[i + 1]!;
+          const between = st
+            .slice(left.index + left.text.length, right.index)
+            .replace(/[()]/g, " ")
+            .replace(/\s+/g, " ")
+            .trim()
+            .toLowerCase();
+          expect(
+            between,
+            `${fn}: \`${left.col}\` and \`${right.col}\` are joined by ` +
+              `"${between}" — the four liveness terms must be CONJUNCTIVE. ` +
+              `An OR makes the predicate match the rows it exists to exclude.`,
+          ).toBe("and");
+        }
+      }
     },
   );
+
+  it("REPORTS WHAT IT INSPECTED, so a silent zero-match cannot look like success", () => {
+    const counts = OWNED.map((fn) => ({
+      fn,
+      predicates: livenessStatements(bodyOf(fn)).length,
+    }));
+    // expire_ and record_conversion each select the current cycle once;
+    // release_ also re-checks the same four columns on its UPDATE, because a
+    // decline can now commit in the window a redemption already could.
+    expect(counts).toEqual([
+      { fn: "expire_new_client_waitlist_invitation", predicates: 1 },
+      { fn: "release_new_client_waitlist_entry", predicates: 2 },
+      { fn: "record_new_client_waitlist_conversion", predicates: 1 },
+    ]);
+  });
 
   it.each(OWNED)("%s keeps its exact signature and definer posture", (fn) => {
     const body = bodyOf(fn);
