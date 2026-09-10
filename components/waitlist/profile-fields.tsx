@@ -433,18 +433,31 @@ export function ProfileFields({
             onChange={(e) =>
               onChange({ ...draft, smsOperationalConsent: e.target.checked })
             }
-            aria-describedby={consentNoteId}
+            // DECLINED-ONLY COPY IS DESCRIBED ONLY WHILE DECLINED. The note
+            // below says "we'll email you instead", which is reassurance for
+            // someone who has NOT opted in. Referencing it unconditionally made
+            // a CHECKED box announce that it would email instead of text —
+            // contradicting the choice the person had just made, and doing it
+            // only to screen-reader users, who would hear the opposite of what
+            // the sighted label says.
+            aria-describedby={draft.smsOperationalConsent ? undefined : consentNoteId}
             className={cx("mt-[2px] h-5 w-5 shrink-0 accent-black", FOCUS_RING)}
           />
           <span>{SMS_OPERATIONAL_CONSENT_LABEL}</span>
         </label>
-        <p
-          id={consentNoteId}
-          className="text-[13px] leading-[1.6]"
-          style={{ color: MUTED }}
-        >
-          {SMS_OPERATIONAL_CONSENT_DECLINED_NOTE}
-        </p>
+        {/* Not rendered at all when checked — an absent element cannot be
+            announced, and hiding it with CSS would leave it in the accessibility
+            tree. The label itself already states what agreeing means and how to
+            stop, so the checked state needs no substitute description. */}
+        {!draft.smsOperationalConsent && (
+          <p
+            id={consentNoteId}
+            className="text-[13px] leading-[1.6]"
+            style={{ color: MUTED }}
+          >
+            {SMS_OPERATIONAL_CONSENT_DECLINED_NOTE}
+          </p>
+        )}
       </div>
     </div>
   );

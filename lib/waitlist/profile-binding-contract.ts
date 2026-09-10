@@ -276,6 +276,23 @@ export interface WaitlistProfileAdapter {
  *         same submission, or on the strength of a consent tick. Nothing a
  *         bearer link supplies may verify itself.
  *
+ *  5c. THE PRIVACY POLICY AND THE LIVE COLLECTION BECOME TRUE TOGETHER.
+ *     The WAIT-04 join surface carries its own collection notice and links to
+ *     `/privacy`, exactly as the shipped form does — that is #687's half, and it
+ *     is done. What is NOT done, deliberately, is updating the live policy page.
+ *
+ *     WHY THE ORDER MATTERS IN BOTH DIRECTIONS. The component is dormant, so
+ *     production collects none of these categories yet; a policy describing them
+ *     today would claim a practice that does not exist. The moment WAIT-04B wires
+ *     the surface, the reverse becomes true and the policy is understating what
+ *     is collected. Neither state is acceptable for longer than one deploy, so
+ *     the policy edit belongs in the SAME change that activates collection.
+ *
+ *     WHAT MUST BE DESCRIBED when it lands: treatment areas, availability
+ *     preference, the mobile number, and the SMS-consent record (its instant,
+ *     source and text version). `app/privacy/page.tsx` §6 already carries the
+ *     waitlist distinction the shipped form relies on and is where this extends.
+ *
  *  6. RE-VALIDATE SERVER-SIDE. The client validation is a courtesy that saves a
  *     round trip. `validateWaitlistJoinProfile` runs again on the server, and
  *     the database re-checks independently, exactly as the shipped join path
@@ -288,6 +305,7 @@ export const WAIT_04B_PREREQUISITES = [
   "inbound_stop_reaches_entries",
   "areas_stored_as_ids",
   "mobile_verified_before_sms_destination",
+  "privacy_policy_describes_activated_collection",
   "server_side_revalidation",
 ] as const;
 

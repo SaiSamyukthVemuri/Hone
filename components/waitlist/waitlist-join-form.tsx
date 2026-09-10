@@ -11,10 +11,12 @@ import {
   type WaitlistJoinProfile,
 } from "@/lib/waitlist/join-profile";
 import {
+  JOIN_COLLECTION_NOTICE,
   JOIN_HEADING,
   JOIN_INTRO,
   JOINED_HEADING,
   NOT_A_RESERVATION,
+  PRIVACY_POLICY_PATH,
   WAITLIST_CONTACT_PROMISE,
 } from "@/lib/waitlist/join-copy";
 
@@ -196,6 +198,27 @@ export function WaitlistJoinForm({
         </p>
         <p className="text-[13px] leading-[1.6]" style={{ color: MUTED }}>
           {NOT_A_RESERVATION}
+        </p>
+        {/* THE COLLECTION NOTICE SITS WITH THE COLLECTION. This is the only place
+            a prospective client hands over these details, so the disclosure is
+            here at the point of submission — in the same secondary type as the
+            not-a-reservation line, immediately below the CTA — rather than folded
+            behind a widget or dropped into a footer. Same sentence shape and same
+            destination as the shipped form, so the product has one policy voice.
+            Replacing that form without carrying this across would have removed a
+            live disclosure. */}
+        <p className="text-[13px] leading-[1.6]" style={{ color: MUTED }}>
+          {studioName} and Hone {JOIN_COLLECTION_NOTICE} See Hone&rsquo;s{" "}
+          <a
+            href={PRIVACY_POLICY_PATH}
+            target="_blank"
+            rel="noreferrer"
+            className="underline"
+            style={{ color: INK }}
+          >
+            Privacy Policy
+          </a>
+          .
         </p>
         {formError && (
           <span role="alert" data-testid="waitlist-join-error" className="text-[13px] text-red-600">

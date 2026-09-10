@@ -150,3 +150,42 @@ export const MOBILE_CANDIDATE_NOTE =
  */
 export const MOBILE_ON_FILE_UNUSABLE =
   "We can't use the mobile number on file, and it can't be changed from this page — so your details can't be completed yet. Please contact the studio.";
+
+// --- The collection notice, and what it may honestly claim -------------------
+
+/**
+ * Plain-language collection notice for the WAIT-04 join surface.
+ *
+ * DELIBERATELY THE SAME SENTENCE SHAPE AS THE SHIPPED FORM. The live
+ * `app/book/[slug]/NewClientWaitlistForm.tsx` carries a module-private
+ * `COLLECTION_NOTICE` rendered as
+ * "{studio} and Hone {notice} See Hone's [Privacy Policy]." — same structure,
+ * same verb, same destination. This is a WAIT-04-specific string rather than an
+ * import because exporting the shipped one means editing a production file that
+ * this PR keeps byte-unchanged; the wording follows it so the product speaks with
+ * ONE policy vocabulary rather than two.
+ *
+ * IT ENUMERATES WHAT THIS FORM ACTUALLY TAKES. The shipped notice names three
+ * fields because the shipped form asks for three. This surface asks for more, so
+ * the sentence names more: a notice that undercounts what a form collects is the
+ * same defect as a form with no notice.
+ *
+ * "USE", NOT "STORE", FOLLOWING THE SHIPPED WORDING. The shipped notice chose
+ * "use" because two commit points exist and a WAIT-01 studio gets no stored row.
+ * This surface is offered only on the DURABLE path (`profileJoinIsSupported`), so
+ * "store" would also be true here — but matching the shipped verb keeps one
+ * vocabulary, and "use" is true under both.
+ *
+ * WHAT THIS DOES NOT CLAIM: that any of it is collected in production today. The
+ * component is dormant and unwired, so the notice describes what happens when
+ * someone uses THIS form, not a live practice. Making the live Privacy Policy
+ * describe these categories is WAIT-04B's job, atomically with activation —
+ * recorded as a prerequisite in `lib/waitlist/profile-binding-contract.ts`, not
+ * done prematurely here. A policy that described collection nobody performs yet
+ * would be exactly the reverse of this PR's problem, and equally untrue.
+ */
+export const JOIN_COLLECTION_NOTICE =
+  "use the details you enter here — your name, email, mobile number, treatment areas, availability, and whether you agreed to text messages — to manage this waitlist and contact you about availability.";
+
+/** Where the full notice lives. Same destination the shipped form links to. */
+export const PRIVACY_POLICY_PATH = "/privacy";
