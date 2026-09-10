@@ -95,6 +95,46 @@ function visibleText(html: string): string {
     .trim();
 }
 
+/**
+ * The exact contents of ONE element, found by balanced-tag depth.
+ *
+ * WHY NOT A FLAT REGEX. The previous revision asked "does the notice appear
+ * somewhere after the owner's opening tag?" with `[\s\S]*?`, and that question
+ * is not the contract. A lazy wildcard crosses the owner's own `</div>`, so a
+ * component that closed its container after the button and rendered the notice
+ * as a SIBLING satisfied every assertion while breaking the stated adjacency.
+ * Proven against the regex directly: both the nested and the sibling shape
+ * matched, and both contained `type="submit"`.
+ *
+ * So containment is decided by DEPTH instead. This walks forward from the
+ * opening tag counting nesting, and returns only what lies inside the matching
+ * close — no DOM library is available in this `node` environment, and adding
+ * one is a package change this repair may not make.
+ *
+ * Bounded on purpose: it reads ONE named element out of ONE rendered string. It
+ * resolves no components, discovers no surfaces, and knows nothing about any
+ * file. The retired future-surface walker is not coming back through here.
+ *
+ * Returns null when the element is absent OR its tags are unbalanced — both
+ * fail the assertions rather than passing quietly.
+ */
+function elementContents(html: string, tag: string, testId: string): string | null {
+  const open = new RegExp(`<${tag}[^>]*data-testid="${testId}"[^>]*>`);
+  const found = html.match(open);
+  if (!found || found.index === undefined) return null;
+  const start = found.index + found[0].length;
+  const scanner = new RegExp(`<(/?)${tag}\\b[^>]*?(/?)>`, "g");
+  scanner.lastIndex = start;
+  let depth = 1;
+  let step: RegExpExecArray | null;
+  while ((step = scanner.exec(html)) !== null) {
+    if (step[2] === "/") continue; // self-closing, opens nothing
+    depth += step[1] === "/" ? -1 : 1;
+    if (depth === 0) return html.slice(start, step.index);
+  }
+  return null; // unbalanced — fail closed
+}
+
 describe("each current surface has EXACTLY ONE disclosure owner", () => {
   for (const { rel } of SURFACES) {
     describe(rel, () => {
@@ -140,13 +180,22 @@ describe("each current surface RENDERS the disclosure, adjacent to its submit", 
         );
       });
 
-      it("the notice sits inside the same block as the submit control", () => {
-        const block =
-          html.match(
-            /<div[^>]*data-testid="public-collection-submit"[\s\S]*?data-testid="public-collection-notice"[\s\S]*?<\/p>/,
-          ) ?? [];
-        expect(block.length).toBeGreaterThan(0);
-        expect(block[0]).toContain('type="submit"');
+      it("the submit control and the notice are INSIDE the same owner container", () => {
+        // Structural containment, not proximity in a string.
+        const owner = elementContents(html, "div", "public-collection-submit");
+        expect(owner, "the owner container must be present and balanced").not.toBeNull();
+        expect(owner!).toContain('type="submit"');
+        expect(owner!).toContain('data-testid="public-collection-notice"');
+      });
+
+      it("the Privacy Policy link sits inside the DISCLOSURE region itself", () => {
+        // Not merely inside the owner: inside the notice. A link beside the
+        // notice rather than within it would read as an unrelated control.
+        const owner = elementContents(html, "div", "public-collection-submit");
+        const notice = elementContents(owner ?? "", "p", "public-collection-notice");
+        expect(notice, "the notice must be present and balanced").not.toBeNull();
+        expect(notice!).toContain(`href="${PRIVACY_POLICY_PATH}"`);
+        expect(notice!).toContain("Privacy Policy");
       });
 
       it("renders ONE control, and it is explicitly the owner's submit", () => {
@@ -174,6 +223,59 @@ describe("each current surface RENDERS the disclosure, adjacent to its submit", 
       });
     });
   }
+});
+
+describe("the adjacency check itself refuses the shapes that broke it", () => {
+  // PERMANENT negative controls, not a one-off mutation. Each fixture is the
+  // rendered SHAPE a future edit to PublicCollectionSubmit could produce, and
+  // the checker must reject it here rather than in a review nobody runs twice.
+  const BUTTON = '<button type="submit">Join</button>';
+  const NOTICE =
+    '<p data-testid="public-collection-notice">We share this with ' +
+    '<a href="/privacy">Privacy Policy</a></p>';
+
+  const NESTED = `<div data-testid="public-collection-submit">${BUTTON}${NOTICE}</div>`;
+  const SIBLING = `<div data-testid="public-collection-submit">${BUTTON}</div>${NOTICE}`;
+  const REMOVED = `<div data-testid="public-collection-submit">${BUTTON}</div>`;
+  const DUPLICATED = `<div data-testid="public-collection-submit">${BUTTON}${NOTICE}${NOTICE}</div>`;
+  const WRAPPED = `<div data-testid="public-collection-submit">${BUTTON}<div class="x">${NOTICE}</div></div>`;
+
+  const ownerOf = (html: string) => elementContents(html, "div", "public-collection-submit");
+
+  it("ACCEPTS the shape that ships today", () => {
+    // The control. Without it, a checker that rejected everything would pass
+    // every assertion below.
+    expect(ownerOf(NESTED)).toContain('data-testid="public-collection-notice"');
+    expect(ownerOf(NESTED)).toContain('type="submit"');
+  });
+
+  it("accepts a notice nested DEEPER inside the owner", () => {
+    // Containment, not immediate childhood — a layout wrapper is legitimate.
+    expect(ownerOf(WRAPPED)).toContain('data-testid="public-collection-notice"');
+  });
+
+  it("REJECTS the notice moved outside the owner container", () => {
+    // The exact escape the flat regex allowed: container closed after the
+    // button, notice rendered as a sibling.
+    expect(ownerOf(SIBLING)).not.toContain('data-testid="public-collection-notice"');
+    expect(ownerOf(SIBLING)).toContain('type="submit"');
+  });
+
+  it("REJECTS a removed notice", () => {
+    expect(ownerOf(REMOVED)).not.toContain('data-testid="public-collection-notice"');
+  });
+
+  it("REJECTS a duplicated notice", () => {
+    const owner = ownerOf(DUPLICATED) ?? "";
+    expect(owner.match(/data-testid="public-collection-notice"/g) ?? []).toHaveLength(2);
+    // Which is what the per-surface EXACTLY ONCE assertion rejects.
+    expect(DUPLICATED.match(/data-testid="public-collection-notice"/g) ?? []).toHaveLength(2);
+  });
+
+  it("fails closed on an absent or unbalanced container", () => {
+    expect(ownerOf("<p>nothing here</p>")).toBeNull();
+    expect(ownerOf(`<div data-testid="public-collection-submit">${BUTTON}`)).toBeNull();
+  });
 });
 
 describe("a NON-submission ProfileFields rendering acquires no disclosure", () => {
