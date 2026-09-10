@@ -139,6 +139,7 @@ describe("1+2. LOCKED INVALID MOBILE — refusal is visible, and Save cannot pro
         // The done panel is what a successful save renders; it must be absent.
         const panel = renderToStaticMarkup(
           createElement(CompleteProfilePanel, {
+        studioName: "Willow",
             stored: entry,
             onSubmit: async () => ({ ok: true }) as const,
           }),

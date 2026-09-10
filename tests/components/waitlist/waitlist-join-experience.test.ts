@@ -28,6 +28,7 @@ function joinMarkup(): string {
 function completionMarkup(): string {
   return renderToStaticMarkup(
     createElement(CompleteProfilePanel, {
+        studioName: "Willow",
       stored: { legacyName: "Sarah Jones", email: "sarah@example.com" },
       onSubmit: async () => ({ ok: true }) as const,
     }),

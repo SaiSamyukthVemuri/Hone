@@ -92,6 +92,7 @@ describe("a stored mobile cannot be replaced by a completion payload", () => {
   it("and the surface offers no control to type one into", () => {
     const html = renderToStaticMarkup(
       createElement(CompleteProfilePanel, {
+        studioName: "Willow",
         stored: ON_FILE,
         onSubmit: async () => ({ ok: true }) as const,
       }),
@@ -108,6 +109,7 @@ describe("a stored email remains immutable", () => {
     expect(patch).not.toHaveProperty("email");
     const html = renderToStaticMarkup(
       createElement(CompleteProfilePanel, {
+        studioName: "Willow",
         stored: ON_FILE,
         onSubmit: async () => ({ ok: true }) as const,
       }),
@@ -128,6 +130,7 @@ describe("a legacy entry with NO mobile may supply a candidate", () => {
   it("and the surface DOES offer the field", () => {
     const html = renderToStaticMarkup(
       createElement(CompleteProfilePanel, {
+        studioName: "Willow",
         stored: LEGACY,
         onSubmit: async () => ({ ok: true }) as const,
       }),
@@ -201,6 +204,7 @@ describe("a candidate is structurally and visibly unverified", () => {
   it("VISIBLY — the surface says the number will be confirmed first", () => {
     const html = renderToStaticMarkup(
       createElement(CompleteProfilePanel, {
+        studioName: "Willow",
         stored: LEGACY,
         onSubmit: async () => ({ ok: true }) as const,
       }),

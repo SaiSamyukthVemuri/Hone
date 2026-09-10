@@ -192,6 +192,7 @@ describe("CLAUSE — legacy entries stay honestly incomplete", () => {
   it("and the guess is not made in the markup either", () => {
     const html = renderToStaticMarkup(
       createElement(CompleteProfilePanel, {
+        studioName: "Willow",
         stored: legacy,
         onSubmit: async () => ({ ok: true }) as const,
       }),
@@ -214,6 +215,7 @@ describe("CLAUSE — the public completion payload names neither the row nor the
   it("and the completion surface renders no email control at all", () => {
     const html = renderToStaticMarkup(
       createElement(CompleteProfilePanel, {
+        studioName: "Willow",
         stored: { legacyName: "Sarah Jones", email: "sarah@example.com" },
         onSubmit: async () => ({ ok: true }) as const,
       }),

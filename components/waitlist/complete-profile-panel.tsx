@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { cx, CONTROL_MIN_TOUCH, FOCUS_RING } from "@/components/ui/control-base";
 import { ProfileFields } from "@/components/waitlist/profile-fields";
+import { PublicCollectionSubmit } from "@/components/waitlist/public-collection-submit";
 import {
   completionDraftFromStored,
   completionPatchFromProfile,
@@ -99,9 +99,20 @@ export type CompletionSubmitResult = { ok: true } | { ok: false; error: string }
 
 export function CompleteProfilePanel({
   stored,
+  studioName,
   onSubmit,
   initialDraft,
 }: {
+  /**
+   * Named in the point-of-collection disclosure, so the sentence says WHOSE
+   * waitlist these details go to — the same shape the join surface and the
+   * shipped public form both use.
+   *
+   * REQUIRED, not optional with a fallback. A default would let a caller render
+   * a disclosure that does not name the studio, which is a weaker disclosure
+   * that still looks like one.
+   */
+  studioName: string;
   /** What the entry already holds. Read for pre-fill only; never trusted as complete. */
   stored: StoredWaitlistProfile;
   /**
@@ -213,33 +224,19 @@ export function CompleteProfilePanel({
         showMobileCandidateNote={!mobileOnFile}
       />
 
-      <div className="flex flex-col gap-3">
-        <button
-          type="submit"
-          disabled={submitting}
-          data-testid="waitlist-completion-submit"
-          className={cx(
-            CONTROL_MIN_TOUCH,
-            FOCUS_RING,
-            "w-full px-6 py-3 text-[13px] font-medium uppercase disabled:opacity-60 sm:w-auto sm:self-start",
-          )}
-          style={{ backgroundColor: INK, color: CARD_BG, letterSpacing: "0.1em" }}
-        >
-          {submitting ? "Saving…" : COMPLETE_SUBMIT}
-        </button>
-        <p className="text-[13px] leading-[1.6]" style={{ color: MUTED }}>
-          {COMPLETE_POSITION_UNCHANGED}
-        </p>
-        {formError && (
-          <span
-            role="alert"
-            data-testid="waitlist-completion-error"
-            className="text-[13px] text-red-600"
-          >
-            {formError}
-          </span>
-        )}
-      </div>
+      {/* THE SAME CONTRACT AS THE JOIN SURFACE, from the same owner. This panel
+          collects the same categories from a member of the public over a bearer
+          link; that the person is already on the list has no bearing on whether
+          the collection needs disclosing. */}
+      <PublicCollectionSubmit
+        studioName={studioName}
+        label={COMPLETE_SUBMIT}
+        pendingLabel="Saving…"
+        submitting={submitting}
+        testId="waitlist-completion-submit"
+        supportingLines={[COMPLETE_POSITION_UNCHANGED]}
+        error={formError}
+      />
     </form>
   );
 }
