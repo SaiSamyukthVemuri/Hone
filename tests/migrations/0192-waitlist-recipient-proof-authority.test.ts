@@ -770,3 +770,78 @@ describe("0192 — begin_ returns the authoritative mint instant", () => {
     expect(BEGIN).not.toMatch(/set[\s\S]*?=\s*v_raw\b/);
   });
 });
+
+describe("0192 — the challenge clock is bounded by the invitation clock", () => {
+  const BEGIN = CODE.slice(
+    CODE.indexOf("create or replace function public.begin_waitlist_invitation_proof("),
+    CODE.indexOf("create or replace function public.complete_waitlist_invitation_proof("),
+  );
+
+  it("reads the invitation's own expiry from the LOCKED row, in the locking statement", () => {
+    // Not a second SELECT afterwards, and not a caller argument: the authority
+    // for when this invitation dies is the row this transaction holds.
+    const lockingSelect = BEGIN.slice(
+      BEGIN.indexOf("select i.id, i.entry_id, i.studio_id"),
+      BEGIN.indexOf("for update") + "for update".length,
+    );
+    expect(lockingSelect).toContain("i.expires_at");
+    expect(lockingSelect).toContain("v_inv_expires");
+  });
+
+  it("clamps the persisted expiry to the invitation, and computes it once", () => {
+    expect(BEGIN).toMatch(
+      /v_challenge_expires\s*:=\s*least\(\s*v_now \+ make_interval\(mins => p_ttl_minutes\),\s*v_inv_expires\s*\)/,
+    );
+    const assignments = BEGIN.match(/v_challenge_expires\s*:=/g) ?? [];
+    expect(assignments.length, "one computation, or the two writes can disagree").toBe(1);
+  });
+
+  it("PERSISTS and RETURNS that one variable — never a recomputation", () => {
+    expect(BEGIN).toMatch(/proof_challenge_expires_at\s*=\s*v_challenge_expires,/);
+    expect(BEGIN).toMatch(
+      /return query select 'challenge_issued'[\s\S]*?v_challenge_expires,\s*v_cid,\s*v_now;/,
+    );
+    // THE DEFECT SHAPE ITSELF, named so it cannot come back by edit: the raw
+    // requested window must appear nowhere as a stored or returned expiry.
+    expect(BEGIN).not.toMatch(
+      /proof_challenge_expires_at\s*=\s*v_now \+ make_interval\(mins => p_ttl_minutes\)/,
+    );
+    const unclamped = BEGIN.match(/v_now \+ make_interval\(mins => p_ttl_minutes\)/g) ?? [];
+    expect(
+      unclamped.length,
+      "the requested window may appear ONLY as the left operand of the clamp",
+    ).toBe(1);
+  });
+
+  it("clamps AFTER the liveness gate, so the result is never already expired", () => {
+    // The gate establishes expires_at > v_now; only then is `least` guaranteed
+    // to return an instant strictly in the future. Ordering is the proof that
+    // no new near-expiry refusal word was needed.
+    const gateAt = BEGIN.indexOf("'not_live'::text");
+    const clampAt = BEGIN.indexOf("v_challenge_expires :=");
+    expect(gateAt).toBeGreaterThan(-1);
+    expect(clampAt).toBeGreaterThan(gateAt);
+  });
+
+  it("adds NO new result word — the vocabulary is unchanged", () => {
+    const words = new Set(
+      (BEGIN.match(/'([a-z_]+)'::text/g) ?? []).map((m) => m.slice(1, m.indexOf("'", 1))),
+    );
+    expect([...words].sort()).toEqual([
+      "challenge_issued",
+      "invalid_input",
+      "invalid_token",
+      "not_live",
+    ]);
+  });
+
+  it("leaves the capability's database-owned 30 minutes alone", () => {
+    const COMPLETE = CODE.slice(
+      CODE.indexOf("create or replace function public.complete_waitlist_invitation_proof("),
+      CODE.indexOf("create or replace function public.invalidate_waitlist_invitation_proof("),
+    );
+    expect(COMPLETE).toContain("proof_capability_expires_at = v_now + interval '30 minutes'");
+    expect(COMPLETE).not.toContain("v_challenge_expires");
+    expect(COMPLETE).not.toContain("least(");
+  });
+});
