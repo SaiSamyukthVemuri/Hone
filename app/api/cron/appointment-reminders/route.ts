@@ -110,6 +110,15 @@ type RunStats = {
   skipped: number;
 };
 
+// COMMS-01B2. The SMS pass adds one more non-sensitive counter:
+// `routingFailed` — rows that could not resolve their studio's ACTIVE sender.
+// It is deliberately NOT folded into attempted/failed. No provider request was
+// made for these, so counting them there would corrupt exactly the delivery
+// metrics the heartbeat reports; and it is deliberately not folded into
+// `skipped` either, because a skip is benign and self-correcting while this is
+// a terminal condition someone has to fix. It gets its own number so an
+// operator can see it without either metric lying.
+
 // The email window pass adds one non-sensitive composition counter: how many
 // of the emails it actually sent carried an intake CTA. Aggregate only - no
 // ids, no addresses, no link.
@@ -118,7 +127,7 @@ type EmailRunStats = RunStats & { intakeCtaIncluded: number };
 // SMS pass counts consent/toggle/claim skips in the same bucket, and keeps
 // its OWN intake-CTA counter. Accounting is per channel: an email that
 // carried the link never counts as an SMS that did, or the reverse.
-type SmsRunStats = RunStats & { intakeCtaIncluded: number };
+type SmsRunStats = RunStats & { intakeCtaIncluded: number; routingFailed: number };
 
 // PR #258: when a reminder reaches MAX_ATTEMPTS without sending it is silently
 // dropped (the window query filters attempts >= MAX_ATTEMPTS, so the row is
@@ -476,6 +485,7 @@ async function sendSmsReminderPass(opts: {
     failed: 0,
     skipped: 0,
     intakeCtaIncluded: 0,
+    routingFailed: 0,
   };
   const smsAppOrigin = getRequiredAppOrigin();
 
@@ -575,6 +585,14 @@ async function sendSmsReminderPass(opts: {
       // was made; the operator wants attempted/succeeded/failed to
       // reflect actual Twilio invocations.
       stats.skipped += 1;
+    } else if (result.preProvider) {
+      // COMMS-01B2. The studio's sender could not be resolved, so the send
+      // ended before any Twilio request. Same reasoning as the skip branch
+      // above — no invocation, so no attempt — but kept in its own bucket
+      // because this one is terminal and needs an operator. The signal itself
+      // is raised inside the send helper (logSmsFailure), since the booking and
+      // reschedule callers discard this result.
+      stats.routingFailed += 1;
     } else {
       stats.attempted += 1;
       stats.failed += 1;

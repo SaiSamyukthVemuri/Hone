@@ -14,7 +14,7 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-09-06, post-0191 apply; nothing pending in this tree)
+## Current state (verified 2026-09-06, post-0191 apply; `0194` authored and PENDING on this branch)
 
 > **This block is an APPLY RECORD written by a RECONCILIATION lane, not by the lane
 > that applied `0191`.** It therefore records the **verified result** of the apply and
@@ -27,9 +27,9 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0191** (`0191_studio_sms_sender_provisioning.sql`) |
-| **Repo migration max** | **0191** — **repository and hosted are at parity**, with nothing pending. Next free number is **0192**; note `0192_studio_sms_sender_outbound_lookup.sql` is **authored on PR #674**, which is **not merged**, so the number is spoken for but absent from this tree. |
+| **Repo migration max** | **0194** — **this branch carries `0194_studio_sms_sender_outbound_lookup.sql` (COMMS-01B2)**, so the repository sits **one migration above hosted** here: one FILE, but three NUMBERS. `0192` and `0193` are owned by the WAIT lane and are ABSENT from this tree, so this branch was renumbered off them rather than colliding with them; the distance from hosted is a numbering fact, not three unapplied migrations. **`0194` is PENDING**: not applied to production, and not authorized for apply — that is a separate gate. Hosted remains **0191** and the apply record above is unchanged; this row states the BRANCH-derived position, not a new production claim. Next free number is **0195**, derived from **this tree's** `supabase/migrations/*.sql` by `npm run migration:state` and **not claimed** by this lane. The derivation sees only this working tree, so it records availability *here* and is **not** a statement that `0195` is free on any other branch or worktree — another lane may already have authored it, and this one has not looked. |
 | **Remote-only migrations** | **none** — no migration exists on production that the repository lacks |
-| **Total migrations in repo** | **190** (`0001` … `0157`, `0159` … `0191` — **no `0158`**) — `0001`–`0157` is 157 and `0159`–`0191` is 33. Derived, not incremented from the previous block: the count is unchanged from 0190's because `0191` replaced the gap left by the skipped `0158`, and it agrees with the **190** hosted history rows. |
+| **Total migrations in repo** | **191** (`0001` … `0157`, `0159` … `0191`, `0194` — **no `0158`**, and no `0192`/`0193` in this tree) — derived by `npm run migration:state` on this branch, not incremented by hand: `0001`–`0157` is 157, `0159`–`0191` is 33, and `0194` is 1. The count is UNCHANGED by this branch's renumber — moving a file from `0192` to `0194` moves its number, not its existence. It is **one above** the **190** hosted history rows precisely because `0194` is authored here and unapplied; the apply record above remains the authority for what production holds. |
 | **Apply timestamp** | ⚠️ **NO SERVER-GENERATED APPLY TIMESTAMP WAS CAPTURED**, so `hosted_applied_at` is `null`. **AND NO OPERATOR-OBSERVED CLIENT-SIDE WINDOW IS ASSERTED EITHER** — unlike 0190, 0189, 0188 and 0187, this record was written by a lane that did not perform the apply and had no CLI invocation to bracket. See `hosted_applied_at_precision`. |
 | **Verified applied** | **2026-09-06** — state observed at `2026-09-06T16:03:53Z` (server clock), read-only |
 | **Applied from** | **not captured by this lane.** The migration in production matches `0191_studio_sms_sender_provisioning.sql` as merged in **PR #673** (merge `7e4e09d897f403dd560571978fb33b72516f0fa7`). The apply owner is the **#673 production operator lane**. |
@@ -60,9 +60,11 @@ something the browser knows — and therefore never something it can echo back a
 authority. `service_role` was granted no table privilege at all when read on 2026-09-06, and
 reaches rows only through the five definer commands.
 
-**`0192` is authored on PR #674 and is ABSENT FROM THIS TREE**, so it is not this tree's
-pending migration; `pending_migrations` is empty here. It is the migration that teaches the
-send path to consult this table, which is the first point at which existing SMS
+**`0194` is authored on PR #674 and is PRESENT IN THIS TREE**, so it IS this tree's one
+pending migration; `pending_migrations` is `["0194"]` here. (This paragraph was inherited
+from the base branch, where the file was genuinely absent and the number it carried was
+`0192`; on this branch both halves of that sentence were stale.) It is the migration that
+teaches the send path to consult this table, which is the first point at which existing SMS
 traffic is genuinely exposed. That is a separate gate.
 
 ## Previous state (verified 2026-09-04, post-0190 apply)

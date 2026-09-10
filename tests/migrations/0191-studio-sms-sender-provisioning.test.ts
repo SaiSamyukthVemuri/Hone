@@ -84,11 +84,13 @@ describe("0191 — identity and position", () => {
     expect(FILE).toBe("0191_studio_sms_sender_provisioning.sql");
   });
 
-  it("is the current repository maximum", () => {
-    // Per CLAUDE.md only the CURRENT max asserts this, so that a future
-    // migration does not turn this file red. Whoever adds 0192 moves it.
-    expect(isRepoMax(VERSION)).toBe(true);
-    expect(versionsAbove(VERSION)).toEqual([]);
+  it("is no longer the repository maximum, and does not claim to be", () => {
+    // MOVED BY 0194, exactly as the instruction in this block used to say.
+    // Per CLAUDE.md only the CURRENT max asserts isRepoMax; an older migration
+    // keeping that claim is what turned this file red the moment 0194 landed.
+    // The "nothing above me" tripwire is served centrally, not restated here.
+    expect(isRepoMax(VERSION)).toBe(false);
+    expect(versionsAbove(VERSION).length).toBeGreaterThan(0);
   });
 
   it("IS APPLIED to production, and is the CURRENT hosted head", () => {
@@ -100,7 +102,7 @@ describe("0191 — identity and position", () => {
     // This block asserted the PRE-apply position (`hosted < 191`, and 0191
     // present in `pending_migrations`). Both were true only until the apply and
     // both are false now. 0191 takes over the CURRENT-head claim 0190's file
-    // used to hold; whoever APPLIES 0192 moves this block again and narrows it
+    // used to hold; whoever APPLIES 0194 moves this block again and narrows it
     // to a floor, the way 0190's just was.
     const state = migrationState();
     expect(state.hosted_migration_max).toBe(VERSION);

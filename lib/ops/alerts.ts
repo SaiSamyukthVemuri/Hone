@@ -103,7 +103,19 @@ function structuredConsoleLog(payload: Record<string, unknown>): void {
 // invokes it after the durable write attempt.
 
 // Main entry point.
-export async function recordOpsAlert(input: OpsAlertInput): Promise<void> {
+/**
+ * What the durable write did. Additive: every existing caller ignores it and is
+ * unaffected. It exists because a UNIQUE-violation on a dedupe index is NOT a
+ * failure -- it means the condition is already reported -- and a caller that
+ * cannot tell the two apart would report an alerting fault that did not happen.
+ */
+export type OpsAlertOutcome =
+  | { recorded: true }
+  | { recorded: false; reason: "deduped" | "insert_failed" };
+
+export async function recordOpsAlert(
+  input: OpsAlertInput,
+): Promise<OpsAlertOutcome> {
   // Sanitize first so the structured log uses the redacted detail
   // shape too. The redactor never throws.
   const redacted = redactSafeDetails(input.safeDetails);
@@ -136,6 +148,7 @@ export async function recordOpsAlert(input: OpsAlertInput): Promise<void> {
   });
 
   // Durable row insert. Service-role admin client only.
+  let outcome: OpsAlertOutcome = { recorded: true };
   try {
     const admin = createAdminClient();
     const { error } = await admin.from("ops_alerts").insert({
@@ -152,13 +165,27 @@ export async function recordOpsAlert(input: OpsAlertInput): Promise<void> {
       safe_details: redacted,
     });
     if (error) {
-      structuredConsoleLog({
-        event: "ops_alert_insert_failed",
-        origin_event: input.event,
-        code: error.code,
-        err_message: error.message,
-        timestamp: new Date().toISOString(),
-      });
+      // 23505 on a partial dedupe index is the CONFLICT LOSER, not a fault:
+      // an unresolved alert for this condition already exists, which is exactly
+      // the outcome the index is there to produce. Logging it as a failure
+      // would teach an operator to ignore genuine insert failures.
+      if (error.code === "23505") {
+        structuredConsoleLog({
+          event: "ops_alert_deduped",
+          origin_event: input.event,
+          timestamp: new Date().toISOString(),
+        });
+        outcome = { recorded: false, reason: "deduped" };
+      } else {
+        structuredConsoleLog({
+          event: "ops_alert_insert_failed",
+          origin_event: input.event,
+          code: error.code,
+          err_message: error.message,
+          timestamp: new Date().toISOString(),
+        });
+        outcome = { recorded: false, reason: "insert_failed" };
+      }
     }
   } catch (err) {
     structuredConsoleLog({
@@ -167,6 +194,7 @@ export async function recordOpsAlert(input: OpsAlertInput): Promise<void> {
       err_message: err instanceof Error ? err.message : String(err),
       timestamp: new Date().toISOString(),
     });
+    outcome = { recorded: false, reason: "insert_failed" };
   }
 
   // PR #193: operator email for CRITICAL alerts only, AFTER the
@@ -199,4 +227,6 @@ export async function recordOpsAlert(input: OpsAlertInput): Promise<void> {
       });
     }
   }
+
+  return outcome;
 }

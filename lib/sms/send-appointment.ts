@@ -1,4 +1,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import {
+  recordRoutingFailureAlert,
+  resolveActiveStudioSender,
+  SENDER_AMBIGUOUS_ERROR,
+  SENDER_NOT_ACTIVE_ERROR,
+  SENDER_READ_FAILED_ERROR,
+} from "@/lib/sms/sender-routing";
 import type { Client, Studio, SmsType } from "@/lib/types/database";
 import {
   buildBookingConfirmationSms,
@@ -44,7 +51,31 @@ import {
 export type SmsSendResult =
   | { ok: true; messageSid: string }
   | { ok: false; skipped: true; reason: string }
-  | { ok: false; skipped?: false; error: string; retryable: boolean };
+  // COMMS-01B2. A failure that happened BEFORE any provider request: the
+  // studio's sender could not be resolved, so no Twilio call was made and no
+  // send attempt was consumed. It is not a `skipped` — a skip is benign and
+  // self-correcting, this is a terminal condition an operator must fix — but it
+  // must not be counted as a provider attempt either, or a studio with no
+  // active sender inflates attempted/failed on every cron pass and corrupts the
+  // delivery metrics the heartbeat reports.
+  | {
+      ok: false;
+      skipped?: false;
+      preProvider: true;
+      error: string;
+      retryable: boolean;
+    }
+  // The ordinary provider failure: a Twilio request WAS made and did not
+  // succeed. `preProvider` is present-but-false rather than absent so the
+  // union stays a total discriminant — a caller can branch on it without the
+  // compiler having to guess which member it is holding.
+  | {
+      ok: false;
+      skipped?: false;
+      preProvider?: false;
+      error: string;
+      retryable: boolean;
+    };
 
 // Re-export for callers that import alongside the send helpers.
 export type { SmsType };
@@ -376,6 +407,70 @@ async function sendOne(args: SendOneArgs): Promise<SmsSendResult> {
     return { ok: false, skipped: true, reason: gate.reason };
   }
 
+  // COMMS-01B2. Route BEFORE claiming, deliberately.
+  //
+  // A missing sender is a configuration fact, not a failed send: it is the same
+  // class as the consent gate above, and it must not consume one of the row's
+  // three attempts. Claiming first would burn the whole budget against a studio
+  // whose number simply is not provisioned yet, and the appointment would then
+  // be permanently unreachable by SMS even after the sender went live.
+  //
+  // A read failure is likewise not a send attempt. Skipping without claiming
+  // leaves the next cron pass free to retry, which is what a transient database
+  // fault deserves.
+  const routed = await resolveActiveStudioSender(args.admin, args.studio.id ?? "");
+  if (!routed.ok) {
+    const error =
+      routed.reason === "read_failed"
+        ? SENDER_READ_FAILED_ERROR
+        : routed.reason === "ambiguous"
+          ? SENDER_AMBIGUOUS_ERROR
+          : SENDER_NOT_ACTIVE_ERROR;
+    // "I could not perform the lookup" may resolve on its own. "This studio has
+    // no active sender" cannot, and retrying only repeats the answer. "More
+    // than one active sender" is a violated invariant that needs an operator.
+    const retryable = routed.reason === "read_failed";
+
+    // THE OPERATOR SIGNAL, AND WHY IT IS AWAITED HERE.
+    //
+    // This return happens before `claimSmsSend`, so no attempt is consumed and
+    // the reminder query keeps seeing attempts below the 3-strike cap forever.
+    // The row is therefore re-selected every cron pass and fails identically
+    // every time. Meanwhile the booking and reschedule callers discard this
+    // result entirely. Without a signal raised right here, a missing sender or
+    // a violated uniqueness invariant would suppress every SMS for that studio
+    // in complete silence — the failure would be permanent and invisible at the
+    // same time, which is the worst combination available.
+    //
+    // AWAITED, not fire-and-forget. The general failure logger persists its
+    // alert from an unawaited IIFE; a serverless invocation can return and be
+    // torn down before that insert lands, losing the single signal an operator
+    // gets for a condition no retry will clear on its own.
+    //
+    // EVERY routing reason alerts, including the RETRYABLE one. `read_failed`
+    // is retryable, but a missing RPC or a privilege regression makes it
+    // permanent and total — every send for every studio fails the same way,
+    // with no claim, no provider call and no metric movement. Retryable is not
+    // the same as unimportant, and the dedupe below is what keeps a sustained
+    // fault to one open alert rather than one per cron pass.
+    //
+    // Deduped by (studio, reason), because the actionable condition is the
+    // STUDIO: an operator fixes "no active sender" once, and being told per
+    // appointment every 15 minutes is noise rather than information.
+    //
+    // FAIL-OPEN by construction: recordRoutingFailureAlert returns an outcome
+    // and never throws, so an alerting fault cannot take down a booking. No
+    // send attempt is claimed either way — this is still a pre-provider failure.
+    await recordRoutingFailureAlert(args.admin, {
+      studioId: args.studio.id ?? null,
+      appointmentId: args.appointmentId,
+      reason: routed.reason,
+      smsType: args.smsType,
+    });
+
+    return { ok: false, preProvider: true, error, retryable };
+  }
+
   const claimed = await claimSmsSend(args.admin, args.appointmentId, args.smsType);
   if (!claimed) {
     return { ok: false, skipped: true, reason: "not_claimed" };
@@ -391,7 +486,13 @@ async function sendOne(args: SendOneArgs): Promise<SmsSendResult> {
   try {
     const body = args.buildBody(gate.normalizedPhone);
     const to = args.to(gate.normalizedPhone);
-    const result = await sendSmsSafely({ to, body });
+    const result = await sendSmsSafely({
+      to,
+      body,
+      // Provider-derived, resolved above from this studio's own ACTIVE row.
+      // Nothing a caller or a browser supplied reaches this field.
+      messagingServiceSid: routed.sender.messagingServiceSid,
+    });
     success = result.ok;
     if (result.ok) {
       outcome = { ok: true, messageSid: result.messageSid };

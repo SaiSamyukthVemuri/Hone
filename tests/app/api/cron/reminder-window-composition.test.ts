@@ -339,7 +339,12 @@ describe("intake-link accounting stays truthful PER CHANNEL", () => {
   });
 
   it("counts the two channels separately", () => {
-    expect(CODE).toMatch(/type SmsRunStats = RunStats & \{ intakeCtaIncluded: number \};/);
+    // The SMS pass carries its OWN intake counter, distinct from the email
+    // pass's. Asserted on the field rather than on the exact shape of the type
+    // line, so an unrelated counter added to SmsRunStats (COMMS-01B2 added
+    // `routingFailed`) does not turn this red without the channel separation
+    // actually having changed.
+    expect(CODE).toMatch(/type SmsRunStats = RunStats & \{[^}]*intakeCtaIncluded: number[^}]*\};/);
     expect(SMS_PASS).toMatch(/stats\.intakeCtaIncluded \+= 1;/);
   });
 });

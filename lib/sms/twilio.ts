@@ -102,6 +102,17 @@ export type SendSmsResult =
 type SendSmsParams = {
   to: string;
   body: string;
+  /**
+   * COMMS-01B2. The sender is now an INPUT, resolved server-side from the
+   * studio that owns the message (lib/sms/sender-routing.ts), and is no longer
+   * read from the environment here.
+   *
+   * This file stays transport-only: it has no database access and cannot know
+   * which studio a message belongs to, so it is the wrong place to decide who
+   * a message comes from. Making the sender a required parameter means a caller
+   * cannot forget to route — there is no default to fall back to.
+   */
+  messagingServiceSid: string;
 };
 
 const TWILIO_API_BASE = "https://api.twilio.com/2010-04-01";
@@ -117,8 +128,10 @@ const TWILIO_SEND_TIMEOUT_MS = 15_000;
  *     either returns ok:false with retryable:false. The caller's job
  *     is to surface this once on startup (settings → launch) rather
  *     than blow up booking.
- *   - Uses TWILIO_MESSAGING_SERVICE_SID when set; otherwise falls
- *     back to TWILIO_FROM_NUMBER. Missing both also returns ok:false.
+ *   - The SENDER IS SUPPLIED BY THE CALLER, already resolved from the
+ *     studio's ACTIVE sender row. There is deliberately no environment
+ *     fallback: a studio-scoped message that cannot be routed must fail
+ *     closed rather than leave from Hone's shared number.
  *
  * Logging discipline:
  *   - Auth Token is never logged.
@@ -140,9 +153,11 @@ export async function sendSmsSafely(
     };
   }
 
-  const messagingServiceSid = process.env.TWILIO_MESSAGING_SERVICE_SID;
-  const fromNumber = process.env.TWILIO_FROM_NUMBER;
-  if (!messagingServiceSid && !fromNumber) {
+  // NO ENVIRONMENT FALLBACK. The sender arrives resolved or the send refuses.
+  // An empty value is treated as absent rather than sent to the provider, so a
+  // routing bug cannot degrade into an unrouted message.
+  const messagingServiceSid = params.messagingServiceSid;
+  if (!messagingServiceSid) {
     return {
       ok: false,
       error: "twilio_missing_sender",
@@ -153,11 +168,7 @@ export async function sendSmsSafely(
   const formBody = new URLSearchParams();
   formBody.set("To", params.to);
   formBody.set("Body", params.body);
-  if (messagingServiceSid) {
-    formBody.set("MessagingServiceSid", messagingServiceSid);
-  } else if (fromNumber) {
-    formBody.set("From", fromNumber);
-  }
+  formBody.set("MessagingServiceSid", messagingServiceSid);
 
   const url = `${TWILIO_API_BASE}/Accounts/${encodeURIComponent(
     accountSid,
