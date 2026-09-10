@@ -392,3 +392,312 @@ describe("classifier — mixed diffs still take the highest tier", () => {
     expect(a).toEqual(b);
   });
 });
+
+// ---------------------------------------------------------------------------
+// SEC-ADAPTER-01 — the security-guidance adapter is a SECURITY path
+// ---------------------------------------------------------------------------
+// `.claude/claude-security-guidance.md` is markdown, and DOCS carries a bare
+// /\.md$/, so before this carve-out the file classified docs_only -> T0 -> docs
+// lane. A file whose entire purpose is to steer a security reviewer would have
+// shipped under documentation CI, and a wrong rule in it has no runtime symptom
+// to catch it later.
+//
+// The carve-out is deliberately ONE file (plus its .local sibling). The last two
+// cases here are the controls that keep it that way: ordinary markdown, and the
+// rest of the tracked `.claude/` tree, must still route to docs.
+describe("classifier — the security-guidance adapter (SEC-ADAPTER-01)", () => {
+  it("the adapter alone is a security path at T3, not documentation", () => {
+    const r = c(".claude/claude-security-guidance.md");
+    expect(r.docs_only).toBe(false);
+    expect(r.security).toBe(true);
+    expect(r.baselineRiskTier).toBe("T3");
+    expect(r.riskReasons).toContain("security or privilege boundary path changed");
+  });
+
+  it("the .local sibling routes identically", () => {
+    const r = c(".claude/claude-security-guidance.local.md");
+    expect(r.docs_only).toBe(false);
+    expect(r.security).toBe(true);
+    expect(r.baselineRiskTier).toBe("T3");
+  });
+
+  it("its parity test routes to the security lane too", () => {
+    const r = c("tests/security/security-guidance-parity.test.ts");
+    expect(r.security).toBe(true);
+    expect(r.docs_only).toBe(false);
+    expect(r.baselineRiskTier).toBe("T3");
+  });
+
+  it("the adapter alongside docs is still not docs_only", () => {
+    // One exception file is enough to defeat the `every` — the point of routing
+    // it out of DOCS rather than merely adding it to the security rule.
+    const r = c("docs/03_SECURITY_AND_PRIVACY.md", ".claude/claude-security-guidance.md");
+    expect(r.docs_only).toBe(false);
+    expect(r.security).toBe(true);
+  });
+
+  it("the whole SEC-ADAPTER-01 change set forces the full matrix", () => {
+    const r = c(
+      ".claude/claude-security-guidance.md",
+      "tests/security/security-guidance-parity.test.ts",
+      "scripts/classify-changes.mjs",
+      "tests/ci/classify-changes.test.ts",
+    );
+    expect(r.security).toBe(true);
+    expect(r.ci_workflows).toBe(true);
+    expect(r.docs_only).toBe(false);
+    expect(r.baselineRiskTier).toBe("T3");
+    expect(r.full_matrix_required).toBe(true);
+  });
+
+  // Controls: the input set must not promote markdown generally. The four
+  // canonical sources are deliberately NOT in this list any more — they are
+  // inputs to the control and are asserted security-bearing below.
+  it("ordinary markdown still routes to the docs lane", () => {
+    for (const f of [
+      "README.md",
+      "docs/production/current-state.md",
+      "docs/09_DATABASE_AND_RLS.md",
+      "docs/00_PRODUCT_OVERVIEW.md",
+    ]) {
+      const r = c(f);
+      expect(r.docs_only, `${f} must stay docs_only`).toBe(true);
+      expect(r.security, `${f} must not become a security path`).toBe(false);
+      expect(r.baselineRiskTier, `${f} must stay T0`).toBe("T0");
+    }
+  });
+
+  it("the rest of the tracked .claude tree is untouched by the carve-out", () => {
+    // `.claude/skills/**` is tracked and also markdown. It is prompts, not
+    // security rules, and is deliberately NOT promoted here.
+    const r = c(".claude/skills/prototype/SKILL.md");
+    expect(r.docs_only).toBe(true);
+    expect(r.security).toBe(false);
+    expect(r.baselineRiskTier).toBe("T0");
+  });
+
+  it("a near-miss filename does not inherit the carve-out", () => {
+    for (const f of [
+      ".claude/claude-security-guidance.md.bak",
+      ".claude/claude-security-guidance-notes.md",
+      ".claude/nested/claude-security-guidance.md",
+    ]) {
+      const r = c(f);
+      expect(r.security, `${f} must not match the exception`).toBe(false);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SEC-ADAPTER-01 — the whole INPUT SET of the security-guidance control
+// ---------------------------------------------------------------------------
+// The parity guard proves the adapter and its canonical sources AGREE, so it has
+// to run when EITHER side moves. Routing only the adapter to the security lane
+// guarded half of it: with CONTRIBUTING.md, CLAUDE.md, ENGINEERING_STANDARDS.md
+// and docs/03 all routing docs-only, a PR could delete the very sentence an
+// adapter rule quotes, CI would pick the docs lane, and the parity test that
+// exists to catch exactly that would never execute.
+//
+// The guarded thing is the RELATIONSHIP, so all six inputs route together.
+describe("classifier — the security-guidance INPUT SET (SEC-ADAPTER-01)", () => {
+  const INPUTS = [
+    ".claude/claude-security-guidance.md",
+    ".claude/claude-security-guidance.local.md",
+    "CONTRIBUTING.md",
+    "CLAUDE.md",
+    "ENGINEERING_STANDARDS.md",
+    "docs/03_SECURITY_AND_PRIVACY.md",
+  ];
+
+  it("every input individually selects the security lane at T3", () => {
+    for (const f of INPUTS) {
+      const r = c(f);
+      expect(r.security, `${f} must select the security lane`).toBe(true);
+      expect(r.docs_only, `${f} must not be docs_only`).toBe(false);
+      expect(r.baselineRiskTier, `${f} must be T3`).toBe("T3");
+      expect(r.riskReasons).toContain("security or privilege boundary path changed");
+    }
+  });
+
+  it("changing ANY canonical source alone selects the lane the parity test runs in", () => {
+    // The parity test lives in tests/security/, which the security lane runs.
+    // This is the property the guard depends on, asserted per source rather than
+    // for the set: one source moving must be enough.
+    for (const f of [
+      "CONTRIBUTING.md",
+      "CLAUDE.md",
+      "ENGINEERING_STANDARDS.md",
+      "docs/03_SECURITY_AND_PRIVACY.md",
+    ]) {
+      expect(c(f).security, `${f} alone must run the parity lane`).toBe(true);
+      expect(c(f, "tests/security/security-guidance-parity.test.ts").security).toBe(true);
+    }
+  });
+
+  it("one canonical source alongside ordinary docs is still not docs_only", () => {
+    const r = c("README.md", "docs/production/release-changelog.md", "CONTRIBUTING.md");
+    expect(r.docs_only).toBe(false);
+    expect(r.security).toBe(true);
+  });
+
+  it("the set does not make markdown security-bearing in general", () => {
+    for (const f of [
+      "README.md",
+      "docs/production/current-state.md",
+      "docs/09_DATABASE_AND_RLS.md",
+      "docs/13_DECISIONS.md",
+      ".claude/skills/prototype/SKILL.md",
+    ]) {
+      const r = c(f);
+      expect(r.security, `${f} must not be security-bearing`).toBe(false);
+      expect(r.docs_only, `${f} must stay docs_only`).toBe(true);
+    }
+  });
+
+  it("a near-miss filename does not join the set", () => {
+    for (const f of [
+      "docs/CONTRIBUTING.md",
+      "ENGINEERING_STANDARDS.md.bak",
+      "docs/03_SECURITY_AND_PRIVACY.md.orig",
+      "sub/CLAUDE.md",
+      ".claude/nested/claude-security-guidance.md",
+    ]) {
+      expect(c(f).security, `${f} must not match the input set`).toBe(false);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SEC-ADAPTER-01 — a renamed canonical source is still a security change
+// ---------------------------------------------------------------------------
+// A rename is the one change shape that can REMOVE a path while looking like an
+// ordinary addition. Git's default rename detection reports an R100 as the
+// DESTINATION only, so `CONTRIBUTING.md -> CONTRIBUTING-old.md` reached the
+// classifier as a single unremarkable `.md` path: docs_only, T0, and the
+// security lane that proves the security-guidance adapter still matches its
+// sources never ran — while a source it is pinned to had just disappeared.
+//
+// ci.yml now collects with --no-renames, so both sides arrive. These fixtures
+// pin the classification half of that contract: given both sides, the removal
+// of a canonical source is visible and selects the security lane.
+describe("classifier — renamed canonical security sources (SEC-ADAPTER-01)", () => {
+  const CANONICAL = [
+    "CONTRIBUTING.md",
+    "CLAUDE.md",
+    "ENGINEERING_STANDARDS.md",
+    "docs/03_SECURITY_AND_PRIVACY.md",
+  ];
+
+  it("each canonical source renamed away still selects security at T3", () => {
+    for (const source of CANONICAL) {
+      const destination = source.replace(/\.md$/, "-old.md");
+      // Both sides, as --no-renames produces them.
+      const r = c(destination, source);
+      expect(r.security, `renaming ${source} must stay a security change`).toBe(true);
+      expect(r.docs_only, `renaming ${source} must not be docs_only`).toBe(false);
+      expect(r.baselineRiskTier, `renaming ${source} must be T3`).toBe("T3");
+    }
+  });
+
+  it("the destination ALONE is what the defect looked like", () => {
+    // Documents the pre-fix behaviour so the collection-site fix cannot be
+    // reverted without this reading as an obvious regression.
+    for (const source of CANONICAL) {
+      const destination = source.replace(/\.md$/, "-old.md");
+      const r = c(destination);
+      expect(r.security, `${destination} alone is not recognisable as security`).toBe(false);
+      expect(r.docs_only).toBe(true);
+    }
+  });
+
+  it("the adapter renamed away is still a security change", () => {
+    const r = c(".claude/claude-security-guidance-old.md", ".claude/claude-security-guidance.md");
+    expect(r.security).toBe(true);
+    expect(r.docs_only).toBe(false);
+    expect(r.baselineRiskTier).toBe("T3");
+  });
+
+  it("an ordinary markdown rename does NOT become security", () => {
+    for (const [from, to] of [
+      ["README.md", "README-new.md"],
+      ["docs/00_PRODUCT_OVERVIEW.md", "docs/00_PRODUCT_OVERVIEW-old.md"],
+      ["docs/production/current-state.md", "docs/production/current-state-old.md"],
+    ]) {
+      const r = c(to, from);
+      expect(r.security, `renaming ${from} must not become security`).toBe(false);
+      expect(r.docs_only, `renaming ${from} must stay docs_only`).toBe(true);
+      expect(r.baselineRiskTier).toBe("T0");
+    }
+  });
+
+  it("plain addition, modification and deletion are unchanged", () => {
+    // --no-renames only affects renames; every other shape must behave as before.
+    expect(c("CONTRIBUTING.md").security).toBe(true);
+    expect(c("README.md").docs_only).toBe(true);
+    expect(c("app/(app)/dashboard/page.tsx").application).toBe(true);
+    expect(c("supabase/migrations/0190_x.sql").database).toBe(true);
+  });
+
+  it("a duplicated path does not change any decision", () => {
+    // Neither collection site can emit a duplicate today — the PR site diffs two
+    // commits and the push site shows one — but the guarantee is asserted rather
+    // than assumed, because --no-renames changes what the list contains.
+    //
+    // Every DECISION field is identical. `changed_file_count` is the one field
+    // that moves, and it is purely informational: scripts/ci-plan.mjs prints it,
+    // and no lane, tier or gate reads it. Asserting that precisely beats forcing
+    // deep equality by deduping a number nothing consumes.
+    for (const file of ["CONTRIBUTING.md", "README.md", "app/(app)/dashboard/page.tsx"]) {
+      const once = c(file);
+      const twice = c(file, file);
+      const decisions = (r: Result) => {
+        const { changed_file_count: _ignored, ...rest } = r;
+        return rest;
+      };
+      expect(decisions(twice), `${file} duplicated must decide identically`).toEqual(decisions(once));
+      expect(twice.changed_file_count, "only the informational count reflects the raw list").toBe(2);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SEC-ADAPTER-01 — markdown under public/ is SERVED, not documentation
+// ---------------------------------------------------------------------------
+// Next serves everything in public/ verbatim, so `public/help.md` is deployed
+// content. The bare /\.md$/ docs pattern called it documentation, which routed a
+// served file to the docs lane and — combined with the matching non-shipping
+// exemption in the production-facts guard — would have let it change without
+// invalidating the production runtime pin.
+describe("classifier — markdown under public/ (SEC-ADAPTER-01)", () => {
+  it("public markdown is not documentation", () => {
+    for (const f of ["public/help.md", "public/docs/guide.md", "public/a/b/c.md"]) {
+      const r = c(f);
+      expect(r.docs_only, `${f} is served by Next and must not be docs_only`).toBe(false);
+    }
+  });
+
+  it("markdown everywhere else is still documentation", () => {
+    for (const f of [
+      "README.md",
+      "docs/03_SECURITY_AND_PRIVACY.md",
+      "docs/production/current-state.md",
+      "publicity/notes.md", // a near-miss: the prefix must be exactly `public/`
+      "app/public/notes.md", // not the served root either
+    ]) {
+      const r = c(f);
+      // docs/03 and CONTRIBUTING are security-guidance INPUTS, so they are not
+      // docs_only for a different and deliberate reason; every other one is.
+      if (f === "docs/03_SECURITY_AND_PRIVACY.md") {
+        expect(r.security, `${f} is a security-guidance input`).toBe(true);
+      } else {
+        expect(r.docs_only, `${f} must stay docs_only`).toBe(true);
+      }
+    }
+  });
+
+  it("non-markdown public assets are unchanged", () => {
+    for (const f of ["public/favicon.ico", "public/robots.txt", "public/img/logo.svg"]) {
+      expect(c(f).docs_only, `${f} was never docs_only`).toBe(false);
+    }
+  });
+});
