@@ -1050,22 +1050,96 @@ returns table (result text, studio_id uuid, entry_id uuid)
 language plpgsql volatile security definer
 set search_path = pg_catalog, pg_temp
 as $$
-declare r record; v_now timestamptz;
+declare
+  r record; v_now timestamptz;
+  v_hash  text;
+  v_round uuid;
+  v_id    uuid;
 begin
   if p_raw_token is null or p_raw_token !~ '^[a-f0-9]{64}$'
      or p_raw_capability is null or p_raw_capability !~ '^[a-f0-9]{64}$' then
     return query select 'invalid_input'::text, null::uuid, null::uuid; return;
   end if;
 
-  -- ONE lock, held across the proof check AND the mutation. A concurrent
-  -- revoke either commits first (and we fail closed below) or waits.
+  v_hash := encode(extensions.digest(p_raw_token,'sha256'),'hex');
+
+  -- ------------------------------------------------------------------
+  -- REDEMPTION JOINS THE ROUND'S SERIALISATION BOUNDARY.
+  -- ------------------------------------------------------------------
+  --
+  -- REDEMPTION SPENDS A SEAT, SO IT MUST SERIALISE WITH THE COMMAND THAT
+  -- HANDS SEATS OUT. It previously locked the invitation and nothing else,
+  -- which left a real MVCC window at the expiry boundary:
+  --
+  --     TX A  redeems A before A.expires_at, stamps redeemed_at, does NOT commit
+  --     ...   the clock crosses A.expires_at
+  --     TX B  locks the round and counts. It cannot see A's uncommitted
+  --           redeemed_at, so A is not SPENT; and the clock is now past
+  --           expires_at, so A is not OUTSTANDING either. It counts ZERO and
+  --           issues B.
+  --     TX A  commits.
+  --
+  -- Both seats are then spent against an allowance of one. The committed-state
+  -- formula was never wrong -- every committed state counts correctly. What was
+  -- missing is that the issuer could observe a state in which A's seat had left
+  -- OUTSTANDING before A's redemption had arrived in SPENT.
+  --
+  -- The round row is the serialisation authority, so redemption takes it too.
+  -- Holding it until commit means an issuer for the same round cannot compute
+  -- capacity in that gap: it either counts before this transaction touches
+  -- anything, or waits and counts A as SPENT.
+  --
+  -- LOCK ORDER IS A SAFE SUBSEQUENCE OF THE CANONICAL ONE, ROUND -> INVITATION.
+  -- Every other writer takes STUDIO before ROUND and this one never asks for
+  -- STUDIO at all, so it cannot sit across an inversion: nothing here can hold
+  -- an invitation and then reach for a round.
+  --
+  -- THE DISCOVERY READ IS NOT AUTHORITY. It is unlocked and used for exactly
+  -- one purpose -- learning WHICH round to lock. Every fact it returns is
+  -- re-read under the locks below, against a clock taken after them.
+  select i.id, i.admission_round_id into v_id, v_round
+    from public.new_client_waitlist_invitations i
+   where i.token_hash = v_hash;
+  if v_id is null then
+    return query select 'invalid_token'::text, null::uuid, null::uuid; return;
+  end if;
+
+  -- A LEGACY INVITATION HAS NO ROUND AND THEREFORE NO SEAT TO SERIALISE.
+  -- 0188..0191 issued invitations before durable rounds existed; they consume
+  -- no round's allowance, so there is nothing here for an issuer to race. No
+  -- round is invented for them and their redemption path is unchanged.
+  if v_round is not null then
+    perform 1 from public.studio_waitlist_admission_rounds ar
+     where ar.id = v_round
+     for update;
+  end if;
+
+  -- NOW the authoritative read, under the round lock. Re-resolved by token
+  -- rather than by the id the discovery returned, so a row that changed
+  -- identity underneath us resolves to nothing rather than to the wrong row.
   select * into r from public.new_client_waitlist_invitations i
-   where i.token_hash = encode(extensions.digest(p_raw_token,'sha256'),'hex')
+   where i.token_hash = v_hash
    for update;
   if r.id is null then
     return query select 'invalid_token'::text, null::uuid, null::uuid; return;
   end if;
 
+  -- The discovery read decided which round to lock. If the row it described is
+  -- not the row we now hold, that decision was made about something else and
+  -- this transaction is not serialised against the right round. Fail closed
+  -- rather than proceed on a lock that may protect nothing. (The token and the
+  -- round binding are both immutable, so this is unreachable today -- which is
+  -- exactly why it is cheap to assert rather than assume.)
+  if r.id is distinct from v_id
+     or r.admission_round_id is distinct from v_round then
+    return query select 'not_live'::text, null::uuid, null::uuid; return;
+  end if;
+
+  -- THE CLOCK IS READ AFTER EVERY LOCK, AND NOWHERE ELSE. This transaction can
+  -- wait an unbounded time on the round lock -- behind an issue, an open or a
+  -- close -- and an invitation that was live when the wait began can expire
+  -- during it. A pre-lock instant would let a redemption that waited through
+  -- its own expiry still be stamped as though it had not.
   v_now := clock_timestamp();
 
   if r.redeemed_at is not null or r.expired_at is not null

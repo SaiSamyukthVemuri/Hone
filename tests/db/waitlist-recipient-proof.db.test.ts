@@ -3231,3 +3231,323 @@ describe("0192 §14d — admission rounds are durable, and the quota is per roun
     expect(await roundConsumed(ok.round_id!)).toBe(0);
   });
 });
+
+// ===========================================================================
+// REDEMPTION SERIALISES WITH ISSUANCE ON THE ADMISSION ROUND
+// ===========================================================================
+//
+// THE MVCC WINDOW THIS CLOSES, and it is not a formula error -- every COMMITTED
+// state counts correctly. What was missing is that an issuer could observe a
+// state in which a seat had already left OUTSTANDING but its redemption had not
+// yet arrived in SPENT:
+//
+//     TX A  redeems A before A.expires_at, stamps redeemed_at, does NOT commit
+//     ...   the clock crosses A.expires_at
+//     TX B  locks the round and counts. A's uncommitted redeemed_at is
+//           invisible, so A is not SPENT; the clock is past expires_at, so A is
+//           not OUTSTANDING. It counts ZERO and issues B.
+//     TX A  commits.  ->  two seats spent against an allowance of one.
+//
+// Measured on the unserialised shape: R1 consumed = 2, two invitations in R1.
+//
+// The round row is the serialisation authority, so redemption takes it before
+// the invitation and holds it to commit. These tests drive two real
+// connections; a sequential mock cannot express the interleaving at all.
+
+/** Bring an invitation's expiry to a controlled instant. Test authority only. */
+async function setInvitationExpiresIn(invitationId: string, interval: string) {
+  await adminQuery(
+    `alter table public.new_client_waitlist_invitations
+       disable trigger new_client_waitlist_invitations_append_only`,
+  );
+  await adminQuery(
+    `update public.new_client_waitlist_invitations
+        set expires_at = clock_timestamp() + $2::interval where id = $1`,
+    [invitationId, interval],
+  );
+  await adminQuery(
+    `alter table public.new_client_waitlist_invitations
+       enable trigger new_client_waitlist_invitations_append_only`,
+  );
+}
+
+/** Is `pid` parked on a lock? Polls rather than sleeping a fixed time. */
+async function waitUntilLockWaiting(pid: number, timeoutMs = 6000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const r = await adminQuery(
+      `select wait_event_type from pg_stat_activity where pid = $1`,
+      [pid],
+    );
+    if (r.rows[0]?.wait_event_type === "Lock") return true;
+    await sleep(120);
+  }
+  return false;
+}
+
+/** A round with allowance 1, one issued+proven invitation A, and a spare entry B. */
+async function raceFixture(label: string) {
+  const f = await roundFixture(`race-${label}`, 1);
+  const a = await f.offer("A");
+  expect(a.result).toBe("issued");
+  const begun = await beginProof(a.token!);
+  const done = await completeProof(a.token!, begun.raw_challenge as string);
+  expect(done.result).toBe("verified");
+  const bEntry = await adminQuery(
+    `select entry_id from public.join_new_client_waitlist($1,$2,$3,$4)`,
+    [f.studio.studioId, `B ${label}`, `braceB-${label}-${f.studio.studioId.slice(0, 6)}@h.local`, null],
+  );
+  const bEntryId = bEntry.rows[0].entry_id as string;
+  await adminQuery(`select public.claim_new_client_waitlist_entry($1,$2,$3)`, [
+    f.studio.studioId, bEntryId, f.studio.userId,
+  ]);
+  return { ...f, a, capability: done.raw_capability as string, bEntryId };
+}
+
+const issueOn = (client: Client, f: { studio: SeededStudio; serviceId: string }, entryId: string) =>
+  client.query(
+    `select result from public.issue_scoped_new_client_waitlist_invitation(
+              $1,$2,$3,$4, current_date, current_date + 13, null, 72)`,
+    [f.studio.studioId, entryId, f.studio.userId, f.serviceId],
+  );
+
+describe("0192 — verified redemption serialises with same-round issuance", () => {
+  it("THE EXPIRY BOUNDARY: an issuer cannot count zero while a redemption is in flight", async () => {
+    const f = await raceFixture("expiry");
+    await setInvitationExpiresIn(f.a.invitationId!, "2 seconds");
+
+    const txA = await conn();
+    const txB = await conn();
+    try {
+      await txA.query("begin");
+      const red = await txA.query(
+        `select result from public.redeem_new_client_waitlist_invitation_verified($1,$2)`,
+        [f.a.token, f.capability],
+      );
+      expect(red.rows[0].result, "A redeems while still inside its window").toBe("redeemed");
+      // TX A is NOT committed. It holds the round.
+
+      // Wait on the DATABASE clock until the window has genuinely passed.
+      await adminQuery(
+        `select pg_sleep(greatest(0, extract(epoch from (expires_at - clock_timestamp())) + 0.5))
+           from public.new_client_waitlist_invitations where id = $1`,
+        [f.a.invitationId],
+      );
+      const past = await adminQuery(
+        `select clock_timestamp() > expires_at p
+           from public.new_client_waitlist_invitations where id = $1`,
+        [f.a.invitationId],
+      );
+      expect(past.rows[0].p, "the fixture must actually cross the boundary").toBe(true);
+
+      await txB.query("begin");
+      await txB.query("set local statement_timeout = '8s'");
+      const pid = (await txB.query("select pg_backend_pid() p")).rows[0].p as number;
+      const pending = issueOn(txB, f, f.bEntryId);
+
+      // THE PROPERTY. Without the round lock, B computes capacity in the gap and
+      // issues. With it, B cannot even look until A resolves.
+      expect(
+        await waitUntilLockWaiting(pid),
+        "issuance must block on the round while a redemption for it is in flight",
+      ).toBe(true);
+
+      await txA.query("commit");
+      const out = await pending;
+      await txB.query("commit");
+
+      expect(out.rows[0].result, "A is now SPENT, so the seat is gone").toBe("round_full");
+    } finally {
+      await txA.query("rollback").catch(() => undefined);
+      await txA.end().catch(() => undefined);
+      await txB.query("rollback").catch(() => undefined);
+      await txB.end().catch(() => undefined);
+    }
+
+    expect(await roundConsumed(f.roundId), "exactly one permission is spent").toBe(1);
+    const inRound = await adminQuery(
+      `select count(*)::int n from public.new_client_waitlist_invitations where admission_round_id=$1`,
+      [f.roundId],
+    );
+    expect(Number(inRound.rows[0].n), "B was never issued").toBe(1);
+    expect(await termsOf(f.a.invitationId!)).toMatchObject({ red: true });
+  });
+
+  it("SCHEDULE: ISSUE first — redemption waits, then resolves truthfully", async () => {
+    const f = await raceFixture("issue-first");
+    const txI = await conn();
+    const txR = await conn();
+    try {
+      await txI.query("begin");
+      // The issuer takes studio -> round and holds them.
+      const issued = await issueOn(txI, f, f.bEntryId);
+      expect(issued.rows[0].result, "allowance 1 is already held by live A").toBe("round_full");
+
+      await txR.query("begin");
+      await txR.query("set local statement_timeout = '8s'");
+      const pid = (await txR.query("select pg_backend_pid() p")).rows[0].p as number;
+      const pending = txR.query(
+        `select result from public.redeem_new_client_waitlist_invitation_verified($1,$2)`,
+        [f.a.token, f.capability],
+      );
+      expect(await waitUntilLockWaiting(pid), "redemption waits on the round").toBe(true);
+
+      await txI.query("commit");
+      const out = await pending;
+      await txR.query("commit");
+      // A's window is untouched here, so the truthful answer after waiting is
+      // still a successful redemption.
+      expect(out.rows[0].result).toBe("redeemed");
+    } finally {
+      await txI.query("rollback").catch(() => undefined);
+      await txI.end().catch(() => undefined);
+      await txR.query("rollback").catch(() => undefined);
+      await txR.end().catch(() => undefined);
+    }
+    expect(await roundConsumed(f.roundId)).toBe(1);
+  });
+
+  it("SCHEDULE: REDEEM first — issuance waits, then sees the seat spent", async () => {
+    const f = await raceFixture("redeem-first");
+    const txR = await conn();
+    const txI = await conn();
+    try {
+      await txR.query("begin");
+      const red = await txR.query(
+        `select result from public.redeem_new_client_waitlist_invitation_verified($1,$2)`,
+        [f.a.token, f.capability],
+      );
+      expect(red.rows[0].result).toBe("redeemed");
+
+      await txI.query("begin");
+      await txI.query("set local statement_timeout = '8s'");
+      const pid = (await txI.query("select pg_backend_pid() p")).rows[0].p as number;
+      const pending = issueOn(txI, f, f.bEntryId);
+      expect(await waitUntilLockWaiting(pid), "issuance waits on the round").toBe(true);
+
+      await txR.query("commit");
+      const out = await pending;
+      await txI.query("commit");
+      expect(out.rows[0].result).toBe("round_full");
+    } finally {
+      await txR.query("rollback").catch(() => undefined);
+      await txR.end().catch(() => undefined);
+      await txI.query("rollback").catch(() => undefined);
+      await txI.end().catch(() => undefined);
+    }
+    expect(await roundConsumed(f.roundId)).toBe(1);
+  });
+
+  it("SCHEDULE: CLOSE vs REDEEM — one order, no deadlock", async () => {
+    const f = await raceFixture("close-vs-redeem");
+    const txR = await conn();
+    const txC = await conn();
+    try {
+      await txR.query("begin");
+      await txR.query(
+        `select result from public.redeem_new_client_waitlist_invitation_verified($1,$2)`,
+        [f.a.token, f.capability],
+      );
+
+      await txC.query("begin");
+      await txC.query("set local statement_timeout = '8s'");
+      const pid = (await txC.query("select pg_backend_pid() p")).rows[0].p as number;
+      const pending = txC.query(
+        `select public.close_new_client_waitlist_admission_round($1,$2) r`,
+        [f.studio.studioId, f.studio.userId],
+      );
+      expect(await waitUntilLockWaiting(pid), "close waits on the same round").toBe(true);
+
+      await txR.query("commit");
+      // Redeemed is settled, so the round may close.
+      expect((await pending).rows[0].r).toBe("closed");
+      await txC.query("commit");
+    } finally {
+      await txR.query("rollback").catch(() => undefined);
+      await txR.end().catch(() => undefined);
+      await txC.query("rollback").catch(() => undefined);
+      await txC.end().catch(() => undefined);
+    }
+  });
+
+  it("SCHEDULE: RELEASE vs REDEEM — their lock graphs overlap without inverting", async () => {
+    // release_ takes ENTRY -> INVITATION; redeem takes ROUND -> INVITATION.
+    // Neither can hold an invitation and then reach for what the other holds,
+    // so the worst case is a wait, never 40P01.
+    const f = await raceFixture("release-vs-redeem");
+    const txR = await conn();
+    const txL = await conn();
+    let deadlock: string | undefined;
+    try {
+      await txR.query("begin");
+      await txR.query(
+        `select result from public.redeem_new_client_waitlist_invitation_verified($1,$2)`,
+        [f.a.token, f.capability],
+      );
+
+      await txL.query("begin");
+      await txL.query("set local statement_timeout = '8s'");
+      const pending = txL
+        .query(`select public.release_new_client_waitlist_entry($1,$2,$3) r`, [
+          f.studio.studioId, f.a.entryId, f.studio.userId,
+        ])
+        .catch((e: { code?: string }) => {
+          deadlock = e.code;
+          return { rows: [{ r: null }] };
+        });
+      await sleep(400);
+      await txR.query("commit");
+      await pending;
+      await txL.query("commit").catch(() => undefined);
+    } finally {
+      await txR.query("rollback").catch(() => undefined);
+      await txR.end().catch(() => undefined);
+      await txL.query("rollback").catch(() => undefined);
+      await txL.end().catch(() => undefined);
+    }
+    expect(deadlock, "no deadlock and no timeout").toBeUndefined();
+    // Redemption won; release found nothing live to release and left A spent.
+    expect(await termsOf(f.a.invitationId!)).toMatchObject({ red: true, rel: false });
+    expect(await roundConsumed(f.roundId)).toBe(1);
+  });
+
+  it("LEGACY: a NULL-round invitation still redeems, and locks no round", async () => {
+    // 0188..0191 invitations predate durable rounds. They consume no round's
+    // allowance, so there is nothing to serialise — and no round is invented.
+    const f = await raceFixture("legacy");
+    await adminQuery(
+      `alter table public.new_client_waitlist_invitations
+         disable trigger new_client_waitlist_invitations_append_only`,
+    );
+    await adminQuery(
+      `update public.new_client_waitlist_invitations set admission_round_id = null where id = $1`,
+      [f.a.invitationId],
+    );
+    await adminQuery(
+      `alter table public.new_client_waitlist_invitations
+         enable trigger new_client_waitlist_invitations_append_only`,
+    );
+    expect(await roundConsumed(f.roundId), "an unrounded row consumes no round").toBe(0);
+
+    // Hold the round; a legacy redemption must NOT wait on it.
+    const holder = await conn();
+    const caller = await conn();
+    try {
+      await holder.query("begin");
+      await holder.query(
+        `select 1 from public.studio_waitlist_admission_rounds where id = $1 for update`,
+        [f.roundId],
+      );
+      await caller.query("set statement_timeout = '4s'");
+      const out = await caller.query(
+        `select result from public.redeem_new_client_waitlist_invitation_verified($1,$2)`,
+        [f.a.token, f.capability],
+      );
+      expect(out.rows[0].result, "legacy redemption is unchanged").toBe("redeemed");
+    } finally {
+      await holder.query("rollback").catch(() => undefined);
+      await holder.end().catch(() => undefined);
+      await caller.end().catch(() => undefined);
+    }
+  });
+});
