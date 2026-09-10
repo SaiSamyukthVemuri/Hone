@@ -680,13 +680,21 @@ set search_path = pg_catalog, pg_temp
 as $$
 declare v_inv uuid; v_entry uuid; v_studio uuid; v_now timestamptz;
         v_raw text; v_email text; v_cid uuid;
+        -- The invitation's OWN death, read from the locked authoritative row,
+        -- and the challenge window actually granted after it is bounded by it.
+        v_inv_expires timestamptz; v_challenge_expires timestamptz;
 begin
   if p_raw_token is null or p_raw_token !~ '^[a-f0-9]{64}$'
      or p_ttl_minutes is null or p_ttl_minutes <= 0 or p_ttl_minutes > 60 then
     return query select 'invalid_input'::text, null::text, null::text, null::timestamptz, null::uuid, null::timestamptz; return;
   end if;
 
-  select i.id, i.entry_id, i.studio_id into v_inv, v_entry, v_studio
+  -- `expires_at` IS READ FROM THE LOCKED ROW, in the same statement that takes
+  -- the lock. It is not re-derived, not re-read afterwards, and never supplied
+  -- by a caller: the authority for when this invitation dies is the row this
+  -- transaction now holds.
+  select i.id, i.entry_id, i.studio_id, i.expires_at
+    into v_inv, v_entry, v_studio, v_inv_expires
     from public.new_client_waitlist_invitations i
    where i.token_hash = encode(extensions.digest(p_raw_token,'sha256'),'hex')
    for update;
@@ -709,6 +717,45 @@ begin
     from public.new_client_waitlist_entries e
    where e.id = v_entry and e.studio_id = v_studio;
 
+  -- ------------------------------------------------------------------
+  -- A CHALLENGE MAY NEVER OUTLIVE THE INVITATION THAT AUTHORISES IT.
+  -- ------------------------------------------------------------------
+  --
+  -- The requested TTL was bounded 1..60 minutes and nothing else, so an
+  -- invitation with two minutes left minted a fifteen-minute challenge: the
+  -- stored column asserted a fact that was false, and `begin_` RETURNS this
+  -- instant to the server-side delivery caller, which states it to the
+  -- recipient. The email then promised a window the authority would refuse
+  -- inside -- `complete_` gates on invitation liveness BEFORE it looks at the
+  -- challenge, so every use after `expires_at` answers `not_live`. A code that
+  -- says it is good until 14:15 and stops working at 14:02 is a promise the
+  -- system cannot keep.
+  --
+  -- BOUNDED AT THE MINT, WHICH IS THE ONLY PLACE IT CAN BE STRUCTURAL. This
+  -- function is the sole writer of a NON-NULL proof_challenge_expires_at --
+  -- the only other two writes in this file set it to NULL -- so clamping here
+  -- makes a longer-lived challenge unrepresentable rather than merely refused.
+  -- A delivery caller may still decline to send a window it considers too
+  -- short; that is a second opinion about output, not the authority for the
+  -- lifetime, and it cannot repair a value already persisted.
+  --
+  -- `least` IS SAFE HERE BECAUSE THE COLUMN IS NOT NULL. `least` ignores NULL
+  -- operands and would silently return the unclamped instant if v_inv_expires
+  -- were null; new_client_waitlist_invitations.expires_at is `timestamptz not
+  -- null` from 0188 and no migration has relaxed it, so the null operand this
+  -- would need cannot exist. Stated rather than assumed, because the failure
+  -- would be silent.
+  --
+  -- NO NEW REFUSAL, AND NONE IS NEEDED. The liveness gate above already
+  -- established `expires_at > v_now`, so the clamped instant is strictly in the
+  -- future for every challenge this command issues -- it can be short, but it
+  -- is never already expired and never earlier than the mint. The existing
+  -- vocabulary therefore still describes the outcome exactly: the challenge WAS
+  -- issued, and `expires_at` reports the window that was actually granted. A
+  -- near-expiry refusal would be a new user-facing policy, and this repair does
+  -- not invent one.
+  v_challenge_expires := least(v_now + make_interval(mins => p_ttl_minutes), v_inv_expires);
+
   v_raw := encode(extensions.gen_random_bytes(32), 'hex');
   -- INDEPENDENT OF THE SECRET, deliberately. Deriving this from v_raw would
   -- make the handle a function of the credential, which is exactly the class of
@@ -722,17 +769,20 @@ begin
   update public.new_client_waitlist_invitations
      set proof_challenge_id           = v_cid,
          proof_challenge_hash         = encode(extensions.digest(v_raw,'sha256'),'hex'),
-         proof_challenge_expires_at   = v_now + make_interval(mins => p_ttl_minutes),
+         proof_challenge_expires_at   = v_challenge_expires,
          proof_challenge_sent_to_hash = encode(extensions.digest(lower(btrim(v_email)),'sha256'),'hex'),
          proof_challenge_attempts     = 0,
          proof_capability_hash        = null,
          proof_capability_expires_at  = null
    where id = v_inv;
 
-  -- `v_now` here is the same value written into proof_challenge_expires_at
-  -- above, not a second reading of the clock.
+  -- THE RETURNED EXPIRY IS THE PERSISTED ONE, the same variable, not a second
+  -- computation that happens to agree. Recomputing it here is what let the
+  -- returned value and the stored value drift apart in principle; one variable
+  -- makes them the same fact. `v_now` is likewise the instant the expiry was
+  -- measured from, not a second reading of the clock.
   return query select 'challenge_issued'::text, v_raw, v_email,
-                      v_now + make_interval(mins => p_ttl_minutes), v_cid, v_now;
+                      v_challenge_expires, v_cid, v_now;
 end;
 $$;
 
