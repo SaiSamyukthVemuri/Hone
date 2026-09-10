@@ -77,6 +77,9 @@ T3. This is an intentional limitation of path-based classification —
 real database behaviour → real server/action behaviour → component behaviour →
 browser E2E → source/static contract test.
 
+Which *sources* may settle a question — as distinct from which tests to write —
+is named in [docs/16_TOOL_AUTHORITY.md](./docs/16_TOOL_AUTHORITY.md).
+
 Source and grep tests are architectural **tripwires**. They are right for
 properties like "no direct writer exists" or "this forbidden symbol never
 appears", and wrong as a substitute for behavioural proof when the behaviour can
