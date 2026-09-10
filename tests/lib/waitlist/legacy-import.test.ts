@@ -4,12 +4,13 @@ import {
   summariseImportPlan,
   type LegacyImportRow,
 } from "@/lib/waitlist/legacy-import";
+import { instant, stalenessPolicy } from "@/lib/waitlist/validated";
 
 // WAIT-ADMIT-01 — the one rule: a fact the source does not contain is never
 // manufactured here. Both fabrications the schema makes easy get their own
 // suite, because both are silent in production if this module gets them wrong.
 
-const IMPORTED_AT = new Date("2026-09-07T12:00:00.000Z");
+const IMPORTED_AT = instant("2026-09-07T12:00:00.000Z");
 const plan = (rows: LegacyImportRow[]) =>
   planLegacyWaitlistImport(rows, { importedAt: IMPORTED_AT });
 
@@ -144,31 +145,33 @@ describe("the import clock is batch authority, checked once, before any row", ()
   // existing. Reproduced before the repair: a join date of 2099-01-01 came back
   // `ready` carrying provenance 'operator_supplied' — the planner asserting an
   // impossible fact rather than declining to judge.
-  const INVALID = new Date("not a date");
+  const RAW_INVALID = "not a date";
   const ROW = [{ email: "a@example.com", name: "A Person", joinedAt: "2026-01-01" }];
 
-  it("refuses an ordinary batch outright", () => {
-    expect(() => planLegacyWaitlistImport(ROW, { importedAt: INVALID })).toThrow(
-      /importedAt is not a valid instant/,
-    );
+  it("refuses an unreadable batch authority at the constructor", () => {
+    // The refusal MOVED rather than weakened: planLegacyWaitlistImport cannot
+    // receive an unreadable instant, because `importedAt` is a ValidInstant and
+    // `instant()` is the only way to obtain one.
+    expect(() => instant(RAW_INVALID)).toThrow(/is not a readable instant/);
   });
 
-  it("refuses under allowUnknownJoinedAt, where the instant becomes the anchor", () => {
+  it("cannot be WRITTEN with a raw import clock any more", () => {
     expect(() =>
-      planLegacyWaitlistImport([{ email: "a@example.com", name: "A Person" }], {
-        importedAt: INVALID,
-        allowUnknownJoinedAt: true,
-      }),
-    ).toThrow(/importedAt is not a valid instant/);
+      // @ts-expect-error a raw Date is no longer admissible as batch authority.
+      planLegacyWaitlistImport(ROW, { importedAt: new Date(RAW_INVALID) }),
+    ).not.toThrow();
   });
 
-  it("refuses an EMPTY batch — the invariant is the batch's, not a row's", () => {
-    // The sharpest form. No row exercises the clock here, so a row-path check
-    // would pass silently and the planner would report a clean empty plan
-    // computed against an authority it could not read.
-    expect(() => planLegacyWaitlistImport([], { importedAt: INVALID })).toThrow(
-      /importedAt is not a valid instant/,
-    );
+  it("refuses the anchor case too, where the instant becomes the queue position", () => {
+    expect(() => instant(RAW_INVALID)).toThrow(/is not a readable instant/);
+  });
+
+  it("an EMPTY batch cannot be constructed with an unreadable clock either", () => {
+    // The sharpest form, and the reason this belongs at construction: no row
+    // exercises the clock, so a row-path check passes silently and the planner
+    // reports a clean empty plan computed against an authority it cannot read.
+    // With the operand branded there is no batch to plan in the first place.
+    expect(() => instant(RAW_INVALID)).toThrow(/is not a readable instant/);
   });
 
   it("refuses at the BOUNDARY rather than rejecting every row", () => {
@@ -176,7 +179,7 @@ describe("the import clock is batch authority, checked once, before any row", ()
     // in their data, and would imply the rows were judged. Nothing is returned.
     let plan: unknown = "not assigned";
     try {
-      plan = planLegacyWaitlistImport(ROW, { importedAt: INVALID });
+      plan = planLegacyWaitlistImport(ROW, { importedAt: instant(RAW_INVALID) });
     } catch {
       /* expected */
     }
@@ -206,7 +209,7 @@ describe("the import clock is batch authority, checked once, before any row", ()
   it("a VALID clock leaves an ordinary historical row exactly as before", () => {
     const result = planLegacyWaitlistImport(ROW, { importedAt: IMPORTED_AT });
     expect(result.ready).toHaveLength(1);
-    expect(result.ready[0]?.value.joinedAt).toEqual(new Date("2026-01-01"));
+    expect(result.ready[0]?.value.joinedAt).toEqual(instant("2026-01-01"));
     expect(result.ready[0]?.value.joinedAtProvenance).toBe("operator_supplied");
   });
 });

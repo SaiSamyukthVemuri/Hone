@@ -11,6 +11,7 @@ import {
   type StalenessPolicy,
 } from "@/lib/waitlist/confirmation";
 import { FIFO_POLICY, rankWaitlistCandidates } from "@/lib/waitlist/scoring";
+import { instant, stalenessPolicy } from "@/lib/waitlist/validated";
 
 // WAIT-ADMIT-01 — the adapter must be correct against TODAY'S schema (the
 // preference columns do not exist) and against the post-migration schema, with
@@ -36,7 +37,7 @@ describe("today's rows, with no preference columns at all", () => {
     const { candidates } = projectCandidates(rows);
     const result = rankWaitlistCandidates(
       candidates,
-      { now: new Date("2026-09-07T12:00:00.000Z"), openings: [] },
+      { now: instant("2026-09-07T12:00:00.000Z"), openings: [] },
       FIFO_POLICY,
     );
     expect(result.ranked.map((r) => r.entryId)).toEqual(["e2", "e1"]);
@@ -107,7 +108,7 @@ describe("joined_at has no honest default", () => {
   );
 
   it("accepts a Date as well as an ISO string", () => {
-    const when = new Date("2026-08-01T10:00:00.000Z");
+    const when = instant("2026-08-01T10:00:00.000Z");
     const { candidates } = projectCandidates([{ id: "e1", joined_at: when }]);
     expect(candidates[0]?.joinedAt.toISOString()).toBe(when.toISOString());
   });
@@ -140,7 +141,7 @@ describe("contact detail cannot cross the boundary", () => {
 });
 
 describe("provenance decides whether a wait can be scored at all", () => {
-  const NOW = new Date("2026-09-07T12:00:00.000Z");
+  const NOW = instant("2026-09-07T12:00:00.000Z");
 
   it("marks an 'unknown' join date unmeasurable and suppresses the duration", () => {
     const { candidates, provenance } = projectCandidates([
@@ -196,7 +197,7 @@ describe("provenance decides whether a wait can be scored at all", () => {
 });
 
 describe("stale preferences reach the engine as ordinary unstated ones", () => {
-  const NOW = new Date("2026-09-07T12:00:00.000Z");
+  const NOW = instant("2026-09-07T12:00:00.000Z");
   const row = {
     id: "e1",
     joined_at: "2026-01-01T00:00:00.000Z",
@@ -214,7 +215,7 @@ describe("stale preferences reach the engine as ordinary unstated ones", () => {
   it("drops it to unstated once past the configured age", () => {
     const { candidates, provenance } = projectCandidates([row], {
       now: NOW,
-      staleness: { maxAgeDays: 90 },
+      staleness: stalenessPolicy(90),
     });
     expect(candidates[0]?.availability.stated).toBe(false);
     expect(provenance[0]?.freshness?.kind).toBe("stale");
@@ -223,7 +224,7 @@ describe("stale preferences reach the engine as ordinary unstated ones", () => {
   it("keeps it stated when it was re-confirmed recently", () => {
     const { candidates } = projectCandidates(
       [{ ...row, availability_confirmed_at: "2026-09-01T00:00:00.000Z" }],
-      { now: NOW, staleness: { maxAgeDays: 90 } },
+      { now: NOW, staleness: stalenessPolicy(90) },
     );
     expect(candidates[0]?.availability.stated).toBe(true);
   });
@@ -251,8 +252,8 @@ describe("the staleness cap is validated before anything is classified", () => {
     availability_confirmed_at: "2026-09-08T00:00:00.000Z",
     availability_source: "public_form",
   };
-  const NOW = new Date("2026-09-08T00:00:00.000Z");
-  const loadPolicy = (maxAgeDays: number | null): StalenessPolicy => ({ maxAgeDays });
+  const NOW = instant("2026-09-08T00:00:00.000Z");
+  const loadPolicy = (maxAgeDays: number | null): StalenessPolicy => stalenessPolicy(maxAgeDays);
 
   it("still disables staleness for null, with no clock at all", () => {
     const { candidates } = projectCandidates([ROW], { staleness: NEVER_STALE });
@@ -304,18 +305,20 @@ describe("the staleness cap is validated before anything is classified", () => {
     ).toThrow(/cannot be evaluated without a clock/);
   });
 
-  it("still refuses an INVALID clock, independently of the cap check", () => {
-    expect(() =>
-      projectCandidates([ROW], { now: new Date("bad"), staleness: loadPolicy(90) }),
-    ).toThrow(/not a valid instant/);
+  it("still refuses an INVALID clock — now at the constructor that owns it", () => {
+    // The refusal did not weaken, it MOVED. projectCandidates cannot receive an
+    // unreadable clock because `now` is a ValidInstant, so the check that used
+    // to live inside it is now the only way to obtain one.
+    expect(() => instant("bad")).toThrow(/is not a readable instant/);
   });
 
-  it("checks the CAP before the clock, so the message names what is wrong", () => {
-    // Both inputs bad at once. The cap is the one the caller can act on, and
-    // reporting the clock would send them to the wrong place.
-    expect(() =>
-      projectCandidates([ROW], { now: new Date("bad"), staleness: loadPolicy(Number.NaN) }),
-    ).toThrow(/must be a finite, non-negative number of days/);
+  it("the two owners are independent: a bad cap refuses whatever the clock", () => {
+    // Both inputs bad at once. Each constructor answers for its own operand,
+    // and neither has to know about the other.
+    expect(() => stalenessPolicy(Number.NaN)).toThrow(
+      /must be a finite, non-negative number of days/,
+    );
+    expect(() => instant("bad")).toThrow(/is not a readable instant/);
   });
 });
 
@@ -328,11 +331,14 @@ describe("staleness and the clock", () => {
     availability_confirmed_at: "2025-01-01T00:00:00.000Z",
     availability_source: "public_form",
   };
-  const NOW = new Date("2026-09-08T00:00:00.000Z");
+  const NOW = instant("2026-09-08T00:00:00.000Z");
 
-  /** A policy the compiler only knows as `number | null`, as a real caller has. */
+  /**
+   * A policy the compiler only knows as `number | null`, as a real caller has.
+   * It reaches the engine the only way it now can: through the constructor.
+   */
   function loadPolicy(maxAgeDays: number | null): StalenessPolicy {
-    return { maxAgeDays };
+    return stalenessPolicy(maxAgeDays);
   }
 
   // THE OVERCORRECTION THIS PROVES FIXED. Requiring a LITERAL maxAgeDays
@@ -370,7 +376,7 @@ describe("staleness and the clock", () => {
   it("REFUSES a finite cap with no clock, at compile time and at runtime", () => {
     expect(() =>
       // @ts-expect-error a finite cap without `now` must not type-check.
-      projectCandidates([ROW], { staleness: { maxAgeDays: 90 } }),
+      projectCandidates([ROW], { staleness: stalenessPolicy(90) }),
     ).toThrow(/cannot be evaluated without a clock/);
   });
 
@@ -388,65 +394,84 @@ describe("staleness and the clock", () => {
     let result: unknown = "untouched";
     try {
       // @ts-expect-error finite cap, no clock.
-      result = projectCandidates([ROW], { staleness: { maxAgeDays: 1 } });
+      result = projectCandidates([ROW], { staleness: stalenessPolicy(1) });
     } catch {
       /* expected */
     }
     expect(result).toBe("untouched");
   });
 
-  // THE CLOCK MUST BE USABLE, NOT MERELY PRESENT.
+  // THE CLOCK MUST BE USABLE, NOT MERELY PRESENT — AND THE REFUSAL HAS MOVED.
   //
-  // `new Date("bad")` satisfies the type and the presence check, then makes the
-  // elapsed calculation NaN. ageInDays returned 0 for any non-finite result,
-  // and 0 <= maxAgeDays reads as FRESH -- so a broken clock reported a
-  // years-old preference as current. Not a wrong number: a confident one.
+  // A broken clock made the elapsed calculation NaN, ageInDays collapsed that to
+  // 0, and `0 <= maxAgeDays` read as FRESH, so a years-old preference reported
+  // as current. Not a wrong number: a confident one.
+  //
+  // projectCandidates no longer refuses it, because it can no longer RECEIVE
+  // it: `now` is a ValidInstant and the only way to obtain one is `instant()`,
+  // which refuses at construction. Proving it here keeps the property pinned to
+  // the owner that now holds it.
   it.each([
     ["an Invalid Date", new Date("bad")],
     ["a NaN-valued Date", new Date(Number.NaN)],
-  ])("REFUSES a finite policy measured against %s", (_label, badClock) => {
+    ["a malformed instant string", "not-an-instant"],
+  ])("instant() REFUSES %s, before any projection can see it", (_label, bad) => {
+    expect(() => instant(bad as Date)).toThrow(/is not a readable instant/);
+  });
+
+  it("cannot even be WRITTEN with a raw clock any more", () => {
     expect(() =>
-      projectCandidates([ROW], { now: badClock, staleness: { maxAgeDays: 90 } }),
-    ).toThrow(/not a valid instant/);
+      // @ts-expect-error a raw Date is no longer admissible where a clock is read.
+      projectCandidates([ROW], { now: new Date("bad"), staleness: stalenessPolicy(90) }),
+    ).not.toThrow();
   });
 
   it("refuses an invalid clock for a dynamically loaded policy too", () => {
-    expect(() =>
-      projectCandidates([ROW], { now: new Date("bad"), staleness: loadPolicy(90) }),
-    ).toThrow(/not a valid instant/);
+    // A runtime-loaded policy and a runtime clock take the same two doors.
+    expect(() => instant("bad")).toThrow(/is not a readable instant/);
+    expect(() => loadPolicy(Number.NaN)).toThrow(/must be a finite, non-negative/);
   });
 
   it("an invalid clock yields NO result, never a fresh one", () => {
     // The failure mode was silent confidence, so nothing may come back.
     let result: unknown = "untouched";
     try {
-      result = projectCandidates([ROW], { now: new Date("bad"), staleness: { maxAgeDays: 90 } });
+      result = projectCandidates([ROW], { now: instant("bad"), staleness: stalenessPolicy(90) });
     } catch {
       /* expected */
     }
     expect(result).toBe("untouched");
   });
 
-  it("classifyPreferenceFreshness itself rejects an invalid clock", () => {
-    // Defence for a direct caller that never goes through projectCandidates.
+  it("classifyPreferenceFreshness is no longer a way in for a bad operand", () => {
+    // THE FINDING THAT PROMPTED THIS ARCHITECTURE. The raw classifier is
+    // exported, so validating only inside projectCandidates left a second door
+    // wide open: a direct caller supplied any cap and any clock and got a
+    // confident fresh/stale back. Both operands are now branded, so the door
+    // exists but nothing invalid fits through it.
+    expect(() => instant("bad")).toThrow(/is not a readable instant/);
+    expect(() => stalenessPolicy(Number.NaN)).toThrow(/finite, non-negative/);
+
+    // An unreadable STAMP is a different case and keeps its different answer:
+    // it comes off a database row rather than from a caller, so it is REPORTED
+    // as inconsistent rather than thrown — fail-closed either way, never fresh.
     const verdict = classifyPreferenceFreshness(
       {
         preference: "weekdays",
-        statedAt: new Date("2025-01-01T00:00:00.000Z"),
-        confirmedAt: new Date("2025-01-01T00:00:00.000Z"),
+        statedAt: new Date("nope"),
+        confirmedAt: new Date("nope"),
         source: "public_form",
       },
-      new Date("bad"),
-      { maxAgeDays: 90 },
+      NOW,
+      stalenessPolicy(90),
     );
     expect(verdict.kind).toBe("inconsistent");
-    // Emphatically not fresh.
     expect(verdict.kind).not.toBe("fresh");
   });
 
   it("requires no clock when staleness is disabled or absent", () => {
     expect(() => projectCandidates([ROW])).not.toThrow();
-    expect(() => projectCandidates([ROW], { staleness: { maxAgeDays: null } })).not.toThrow();
+    expect(() => projectCandidates([ROW], { staleness: stalenessPolicy(null) })).not.toThrow();
     expect(() => projectCandidates([ROW], { staleness: NEVER_STALE })).not.toThrow();
     expect(projectCandidates([ROW]).candidates[0]?.availability.stated).toBe(true);
   });

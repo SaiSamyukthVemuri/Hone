@@ -24,6 +24,11 @@ import {
   type ScoringCandidate,
   type ServiceInterest,
 } from "./scoring";
+import {
+  optionalInstant,
+  type DisabledStalenessPolicy,
+  type ValidInstant,
+} from "./validated";
 
 // ===========================================================================
 // WAIT-ADMIT-01 — PERSISTED ROW -> SCORING CANDIDATE
@@ -153,21 +158,25 @@ export type CandidateProjection = {
  */
 export type ProjectionOptions =
   | {
-      /** A clock is supplied, so any policy shape is evaluable. */
-      readonly now: Date;
+      /** A clock is supplied, so any VALIDATED policy is evaluable. */
+      readonly now: ValidInstant;
       readonly staleness?: StalenessPolicy;
     }
   | {
       /** No clock: only staleness the compiler can see is disabled. */
       readonly now?: undefined;
-      readonly staleness?: { readonly maxAgeDays: null };
+      readonly staleness?: DisabledStalenessPolicy;
     };
 
-function readInstant(value: string | Date | null | undefined): Date | null {
-  if (value instanceof Date) return Number.isFinite(value.getTime()) ? value : null;
-  if (typeof value !== "string" || value.trim().length === 0) return null;
-  const parsed = new Date(value);
-  return Number.isFinite(parsed.getTime()) ? parsed : null;
+/**
+ * Read an instant off a database row.
+ *
+ * This is the ROW-side constructor: it already refused an unreadable value, so
+ * it now says so in its type. A row that cannot be read yields null and the
+ * caller decides what that means — never a substituted clock.
+ */
+function readInstant(value: string | Date | null | undefined): ValidInstant | null {
+  return optionalInstant(value);
 }
 
 /**
@@ -217,6 +226,8 @@ export function projectCandidates(
   options: ProjectionOptions = {},
 ): CandidateProjection {
   const staleness: StalenessPolicy = options.staleness ?? NEVER_STALE;
+  /** Non-null exactly when a finite cap is in force; see the refusal below. */
+  let clock: ValidInstant | null = null;
 
   // FAIL CLOSED ON AN INCOMPLETE POLICY. The type above stops this at a literal
   // call site; a policy built at runtime can still arrive with a finite cap and
@@ -224,54 +235,28 @@ export function projectCandidates(
   // fresh. Refusing is the only honest answer: the caller asked for staleness
   // and would otherwise have received none.
   if (staleness.maxAgeDays !== null) {
-    // THE CAP IS EVIDENCE TOO, AND IT WAS THE LAST INPUT LEFT UNCHECKED.
-    //
-    // The guard below validates the CLOCK, and the type admits any
-    // `number | null` once a clock is present — so a runtime-loaded policy
-    // could arrive carrying a cap that cannot express an age limit at all, and
-    // the comparison downstream answered it with perfect confidence:
-    //
-    //     maxAgeDays = NaN       -> an 8-day-old answer reported STALE
-    //     maxAgeDays = -5        -> everything STALE
-    //     maxAgeDays = Infinity  -> a 6-year-old answer reported FRESH
-    //
-    // `ageDays <= NaN` is false and `ageDays <= Infinity` is always true, so
-    // the whole cohort is silently reclassified under a policy nobody could
-    // have meant. Under `unknownPolicy: "exclude"` that drops people from the
-    // ranking outright. Same family as the clock refusals: the thing being
-    // measured was checked and the thing MEASURING was not.
-    //
-    // REFUSED, NOT REPAIRED. Not clamped to a bound, not swapped for
-    // NEVER_STALE, not defaulted — each of those invents a policy the studio
-    // never wrote, which is the failure this whole union exists to prevent.
-    // Zero is legitimate and stays legitimate: `ageDays <= 0` means "only an
-    // answer confirmed today counts", a real same-day expiry, not a disabled
-    // policy. Disabled is spelled `null`.
-    if (!Number.isFinite(staleness.maxAgeDays) || staleness.maxAgeDays < 0) {
-      throw new Error(
-        `projectCandidates: staleness.maxAgeDays must be a finite, non-negative ` +
-          `number of days or null to disable staleness; received ` +
-          `${String(staleness.maxAgeDays)}`,
-      );
-    }
     if (options.now === undefined) {
       throw new Error(
         "projectCandidates: staleness.maxAgeDays is set but `now` was not supplied; " +
           "a finite staleness policy cannot be evaluated without a clock",
       );
     }
-    // A PRESENT CLOCK IS NOT NECESSARILY A USABLE ONE. `new Date("bad")`
-    // satisfies the type and the presence check, then makes the elapsed
-    // calculation NaN -- which used to collapse to age 0 and report years-old
-    // preferences as fresh. An unusable clock is refused for the same reason a
-    // missing one is: the policy cannot be evaluated, and saying "fresh"
-    // is a confident wrong answer rather than an absent one.
-    if (!Number.isFinite(options.now.getTime())) {
-      throw new Error(
-        "projectCandidates: `now` is not a valid instant; " +
-          "a finite staleness policy cannot be evaluated against an invalid clock",
-      );
-    }
+    // BOUND HERE, WHERE THE COMPILER CAN SEE IT. The previous shape re-read
+    // `options.now` inside the loop and needed an `as Date` to convince tsc it
+    // was defined -- an assertion standing in for a fact the code had already
+    // established. Binding it at the point of the refusal makes the narrowing
+    // real, so nothing downstream asserts anything.
+    clock = options.now;
+    // THE CAP AND THE CLOCK ARE NO LONGER CHECKED HERE, and that is the repair
+    // rather than a regression: neither can be unreadable, because neither can
+    // be CONSTRUCTED unreadable. `stalenessPolicy()` and `instant()` own that,
+    // once each, and every path into a comparison runs through them.
+    //
+    // WHAT SURVIVES IS A DIFFERENT RULE. "A finite cap with no clock" is not a
+    // question about either operand's validity — both may be perfectly valid —
+    // it is a question about the PAIR. The union above states it to the
+    // compiler; this states it to a caller the types never saw. Absent is a
+    // decision, incomplete is an error.
   }
   const candidates: ScoringCandidate[] = [];
   const provenance: CandidateProvenance[] = [];
@@ -303,13 +288,10 @@ export function projectCandidates(
         availability = UNSTATED_AVAILABILITY;
         freshness = { kind: "inconsistent", detail: "preference stored without a timestamp" };
       } else {
-        if (staleness.maxAgeDays === null) {
+        if (clock === null) {
           // Nothing can go stale, so no clock is needed and none is invented.
           freshness = { kind: "fresh", ageDays: 0 };
         } else {
-          // Non-null by the refusal above: a finite cap without a clock never
-          // reaches here.
-          const now = options.now as Date;
           freshness = classifyPreferenceFreshness(
             {
               preference: stored.preference,
@@ -317,7 +299,7 @@ export function projectCandidates(
               confirmedAt,
               source: availabilitySource ?? "public_form",
             },
-            now,
+            clock,
             staleness,
           );
         }

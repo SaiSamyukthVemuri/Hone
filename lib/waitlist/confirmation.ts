@@ -1,5 +1,11 @@
 import type { AvailabilityPreference } from "./preferences";
 import type { AvailabilitySource } from "./provenance";
+import {
+  stalenessPolicy,
+  type DisabledStalenessPolicy,
+  type ValidInstant,
+  type ValidStalenessPolicy,
+} from "./validated";
 
 // ===========================================================================
 // WAIT-ADMIT-01 — PREFERENCE FRESHNESS
@@ -64,14 +70,22 @@ export type PreferenceFreshness =
  * person who answered honestly back into the "not stated" pool — and no studio
  * should acquire it by upgrading.
  */
-export type StalenessPolicy = { readonly maxAgeDays: number | null };
+/**
+ * A staleness policy that has been through `stalenessPolicy()`.
+ *
+ * The NAME is unchanged so every existing reader keeps reading, but it now
+ * denotes VALIDATED evidence: a cap that cannot express an age limit is
+ * unrepresentable in this type, so no consumer has to re-check one — and no
+ * consumer can forget to.
+ */
+export type StalenessPolicy = ValidStalenessPolicy;
 
 /**
  * Declared with the LITERAL null rather than as StalenessPolicy so it stays
  * usable where no clock is supplied: a `number | null` cannot be admitted
  * there, because the compiler cannot rule out the finite case.
  */
-export const NEVER_STALE: { readonly maxAgeDays: null } = { maxAgeDays: null };
+export const NEVER_STALE: DisabledStalenessPolicy = stalenessPolicy(null);
 
 /** Whole days between two instants, floored, never negative. */
 function ageInDays(from: Date, to: Date): number {
@@ -87,7 +101,7 @@ function ageInDays(from: Date, to: Date): number {
 
 export function classifyPreferenceFreshness(
   stored: StoredPreference,
-  now: Date,
+  now: ValidInstant,
   policy: StalenessPolicy,
 ): PreferenceFreshness {
   const statedMs = stored.statedAt.getTime();
@@ -146,7 +160,7 @@ export function preferenceIsActionable(freshness: PreferenceFreshness): boolean 
 export function applyConfirmation(
   current: StoredPreference | null,
   answer: { readonly preference: AvailabilityPreference; readonly source: AvailabilitySource },
-  at: Date,
+  at: ValidInstant,
 ): StoredPreference {
   if (current === null || current.preference !== answer.preference) {
     return {

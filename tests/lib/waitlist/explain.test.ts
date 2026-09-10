@@ -10,13 +10,14 @@ import {
   type ScoringPolicy,
   type StudioOpening,
 } from "@/lib/waitlist/scoring";
+import { instant, stalenessPolicy } from "@/lib/waitlist/validated";
 
 // WAIT-ADMIT-01 — the explanation is the audit trail for a decision about who
 // is offered capacity first. It must be byte-stable and must carry no contact
 // detail.
 
-const NOW = new Date("2026-09-07T12:00:00.000Z");
-const day = (n: number) => new Date(NOW.getTime() - n * 86_400_000);
+const NOW = instant("2026-09-07T12:00:00.000Z");
+const day = (n: number) => instant(NOW.getTime() - n * 86_400_000);
 
 const OPENINGS: StudioOpening[] = [
   { dayClass: "weekday", serviceId: null, slots: 8 },

@@ -4,6 +4,7 @@ import {
   type CandidateAvailability,
   type DayClass,
 } from "./preferences";
+import { instant, type ValidInstant } from "./validated";
 
 // ===========================================================================
 // WAIT-ADMIT-01 — WAITLIST RANKING ENGINE (GENERAL STUDIO POLICY)
@@ -111,8 +112,8 @@ export type StudioOpening = {
 };
 
 export type ScoringContext = {
-  /** Injected. This module never reads a clock. */
-  readonly now: Date;
+  /** Injected, and VALIDATED at construction. This module never reads a clock. */
+  readonly now: ValidInstant;
   readonly openings: readonly StudioOpening[];
 };
 
@@ -265,11 +266,11 @@ export type RankingResult = {
  * one. Same doctrine as `ageInDays` in ./confirmation — a clock you cannot
  * trust must not be allowed to answer.
  */
-export function daysBetween(from: Date, to: Date): number {
+export function daysBetween(from: ValidInstant, to: ValidInstant): number {
+  // No finiteness check here any more: both operands are ValidInstant, so a
+  // non-finite interval is unconstructable rather than merely unlikely.
+  // `instant()` refused it before it could reach a parameter position.
   const ms = to.getTime() - from.getTime();
-  if (!Number.isFinite(ms)) {
-    throw new Error("daysBetween: non-finite interval; the clock or the join date is invalid");
-  }
   return Math.max(0, Math.floor(ms / 86_400_000));
 }
 
@@ -460,20 +461,9 @@ export function rankWaitlistCandidates(
   const validated = validateScoringPolicy(policy);
   if (!validated.ok) throw new Error(`Invalid scoring policy: ${validated.error}`);
 
-  // THE RANKING CLOCK IS CONFIGURATION TOO, AND IT WAS THE ONE INPUT NOT
-  // CHECKED. With an Invalid Date every candidate's elapsed wait came out
-  // non-finite, the old zero fallback turned that into "waited 0 days", and a
-  // waiting-time factor the studio had deliberately weighted then contributed
-  // an identical zero across the whole cohort — collapsing that part of the
-  // ranking to FIFO while reporting it as scored. Nothing surfaced, because a
-  // uniform wrong answer looks exactly like a uniform right one.
-  //
-  // Refused here rather than only inside daysBetween so the error names the
-  // ranking clock, and so an EMPTY cohort — where the per-candidate loop never
-  // runs — cannot quietly accept an unusable clock either.
-  if (!Number.isFinite(context.now.getTime())) {
-    throw new Error("Invalid ranking clock: context.now is not a valid instant");
-  }
+  // The ranking clock is not re-checked here: ScoringContext.now is a
+  // ValidInstant, so an unreadable clock cannot occupy it. `instant()` owns
+  // that refusal, and owns it for every comparison in this module.
 
   const openings = usableOpenings(context.openings);
   const demand = demandByDayClass(candidates);
@@ -483,7 +473,11 @@ export function rankWaitlistCandidates(
   const decidedBy = new Set<ScoringFactor>();
 
   for (const candidate of candidates) {
-    const days = daysBetween(candidate.joinedAt, context.now);
+    // `joinedAt` arrives as a plain Date on ScoringCandidate, which callers
+    // build from rows. It crosses into a comparison HERE, so it goes through
+    // the constructor here — the owner is the constructor, wherever raw
+    // evidence enters.
+    const days = daysBetween(instant(candidate.joinedAt), context.now);
     const waitMeasurable = candidate.waitIsMeasurable !== false;
 
     const outcomes: Readonly<Record<ScoringFactor, FactorOutcome>> = {

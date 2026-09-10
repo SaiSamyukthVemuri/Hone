@@ -6,12 +6,13 @@ import {
   preferenceIsActionable,
   type StoredPreference,
 } from "@/lib/waitlist/confirmation";
+import { instant, stalenessPolicy } from "@/lib/waitlist/validated";
 
 // WAIT-ADMIT-01 — why the schema needs TWO timestamps, proved by the two things
 // a single one cannot do.
 
-const NOW = new Date("2026-09-07T12:00:00.000Z");
-const ago = (days: number) => new Date(NOW.getTime() - days * 86_400_000);
+const NOW = instant("2026-09-07T12:00:00.000Z");
+const ago = (days: number) => instant(NOW.getTime() - days * 86_400_000);
 
 const stored = (statedDaysAgo: number, confirmedDaysAgo: number): StoredPreference => ({
   preference: "weekdays",
@@ -24,18 +25,18 @@ describe("age is measured from confirmedAt, not statedAt", () => {
   it("keeps a long-held but recently re-confirmed preference fresh", () => {
     // Stated 240 days ago, re-confirmed 5 days ago. A single timestamp could
     // not represent this without destroying one of the two facts.
-    const result = classifyPreferenceFreshness(stored(240, 5), NOW, { maxAgeDays: 90 });
+    const result = classifyPreferenceFreshness(stored(240, 5), NOW, stalenessPolicy(90));
     expect(result).toEqual({ kind: "fresh", ageDays: 5 });
   });
 
   it("ages out a preference nobody has re-confirmed", () => {
-    const result = classifyPreferenceFreshness(stored(240, 240), NOW, { maxAgeDays: 90 });
+    const result = classifyPreferenceFreshness(stored(240, 240), NOW, stalenessPolicy(90));
     expect(result.kind).toBe("stale");
     expect(result.kind === "stale" && result.ageDays).toBe(240);
   });
 
   it("treats exactly-at-the-cap as still fresh", () => {
-    expect(classifyPreferenceFreshness(stored(90, 90), NOW, { maxAgeDays: 90 }).kind).toBe(
+    expect(classifyPreferenceFreshness(stored(90, 90), NOW, stalenessPolicy(90)).kind).toBe(
       "fresh",
     );
   });

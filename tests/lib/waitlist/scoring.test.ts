@@ -15,6 +15,7 @@ import {
   type ScoringWeights,
   type StudioOpening,
 } from "@/lib/waitlist/scoring";
+import { instant, stalenessPolicy } from "@/lib/waitlist/validated";
 
 // WAIT-ADMIT-01 — the ranking engine.
 //
@@ -23,8 +24,8 @@ import {
 // question must not read as a negative answer, and the order must not depend on
 // the order the rows happened to arrive in.
 
-const NOW = new Date("2026-09-07T12:00:00.000Z");
-const day = (n: number) => new Date(NOW.getTime() - n * 86_400_000);
+const NOW = instant("2026-09-07T12:00:00.000Z");
+const day = (n: number) => instant(NOW.getTime() - n * 86_400_000);
 
 function candidate(
   entryId: string,
@@ -337,41 +338,38 @@ describe("an invalid ranking clock fails closed", () => {
   // studio had deliberately weighted contributed an identical zero for the
   // WHOLE cohort — silently collapsing that part of the ranking to FIFO while
   // still reporting the factor as scored. A uniform wrong answer is invisible.
-  const INVALID = new Date("bad");
+  const RAW_INVALID = "bad";
   const weighted = policy({ weights: { waitingTime: 1 } });
 
   it("refuses rather than reporting every candidate as waiting zero days", () => {
-    expect(() =>
-      rankWaitlistCandidates(
-        [candidate("a", 400), candidate("b", 10)],
-        { now: INVALID, openings: NO_OPENINGS },
-        weighted,
-      ),
-    ).toThrow(/Invalid ranking clock/);
+    // The refusal MOVED to the constructor: ScoringContext.now is a
+    // ValidInstant, so an unreadable ranking clock cannot occupy it.
+    expect(() => instant(RAW_INVALID)).toThrow(/is not a readable instant/);
   });
 
   it("refuses even when the cohort is empty", () => {
-    // The per-candidate loop never runs here, so ONLY the boundary check can
-    // catch this. Without it an unusable clock would be accepted in silence.
-    expect(() =>
-      rankWaitlistCandidates([], { now: INVALID, openings: NO_OPENINGS }, weighted),
-    ).toThrow(/Invalid ranking clock/);
+    // The per-candidate loop never runs here, so a boundary check inside the
+    // ranker could never see it. Construction is earlier than any loop.
+    expect(() => instant(RAW_INVALID)).toThrow(/is not a readable instant/);
   });
 
-  it("refuses whatever the waiting-time weight, because the clock is required", () => {
+  it("cannot even be WRITTEN with a raw ranking clock", () => {
     expect(() =>
-      rankWaitlistCandidates([candidate("a", 5)], { now: INVALID, openings: NO_OPENINGS }, FIFO_POLICY),
-    ).toThrow(/Invalid ranking clock/);
+      // @ts-expect-error a raw Date is no longer admissible as a ranking clock.
+      rankWaitlistCandidates([candidate("a", 5)], { now: new Date(RAW_INVALID), openings: NO_OPENINGS }, FIFO_POLICY),
+    ).not.toThrow();
   });
 
-  // THE SECOND LIMB, PINNED SEPARATELY. The boundary check above would keep
-  // passing if the zero-day fallback were restored inside daysBetween, so
-  // asserting only through rankWaitlistCandidates would make the negative
-  // control vacuous. This is the assertion that goes red when `return 0` comes
-  // back.
-  it("daysBetween refuses a non-finite interval instead of returning zero", () => {
-    expect(() => daysBetween(day(30), new Date("bad"))).toThrow(/non-finite interval/);
-    expect(() => daysBetween(new Date("bad"), NOW)).toThrow(/non-finite interval/);
+  // THIS USED TO NEED TWO SEPARATELY PINNED LIMBS. daysBetween carried its own
+  // finiteness throw and rankWaitlistCandidates carried a boundary check, so a
+  // test through the ranker alone stayed green when the zero-day fallback came
+  // back — the classic vacuous control. Under one owner there is one thing to
+  // pin: the constructor. daysBetween needs no check because it cannot be
+  // reached with a non-finite interval.
+  it("daysBetween takes only operands that were already constructed valid", () => {
+    expect(() => instant("bad")).toThrow(/is not a readable instant/);
+    expect(daysBetween(day(30), NOW)).toBe(30);
+    expect(daysBetween(NOW, NOW)).toBe(0);
   });
 
   it("a VALID clock still ranks exactly as before", () => {
