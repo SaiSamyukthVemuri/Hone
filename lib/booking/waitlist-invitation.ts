@@ -130,9 +130,17 @@ export type BeginProofOutcome =
        * TAKEN FROM THE RPC, never reconstructed. Deriving it as
        * `expires_at - ttl` would put the caller's arithmetic back into a value
        * the database owns, and reading a local clock would be a second clock:
-       * neither can be trusted to agree with the row. Because both come from
-       * the same instant, `expiresAt - issuedAt` is exactly the accepted TTL by
-       * construction.
+       * neither can be trusted to agree with the row.
+       *
+       * `expiresAt - issuedAt` IS NOT THE REQUESTED TTL, and must not be
+       * assumed to be. Both instants are the database's — `issuedAt` is the
+       * post-lock mint instant, `expiresAt` is the challenge expiry it decided
+       * — but 0192 clamps that expiry to the invitation's own remaining
+       * lifetime, so the window is `min(requested, remaining)` and is SHORTER
+       * than the TTL asked for whenever the invitation dies first. The two
+       * values are reported facts, not a pair related by a constant: neither
+       * may be reconstructed from the other, from the requested TTL, or from
+       * an application clock.
        *
        * SERVER-SIDE ONLY, like `deliveryContact` and `proofChallengeId`. The
        * delivery layer needs it to say when a code was issued; a browser has no
@@ -648,7 +656,32 @@ export async function completeRecipientProof(
     if (result === "verified") {
       const rawCapability = str(row, "raw_capability");
       const expiresAt = str(row, "expires_at");
-      if (!rawCapability || !expiresAt) return { kind: "unavailable" };
+      // THE MINTED CAPABILITY IS HELD TO THE SAME CONTRACT AS EVERY OTHER
+      // SECRET THAT CROSSES THIS BOUNDARY, and it was the one that was not.
+      //
+      // A non-empty check accepts any string, so a `verified` row carrying a
+      // capability of the wrong shape was translated into B2's own `verified`
+      // outcome. The result is internally contradictory rather than merely
+      // untidy: the challenge is ALREADY CONSUMED in the database, the
+      // recipient is told verification succeeded, and the credential they were
+      // handed is then rejected by `consumeInvitationForBooking` and
+      // `declineInvitation`, both of which test RAW_SECRET before they will act.
+      // The recipient ends up holding an unusable credential after an apparent
+      // success, with no challenge left to retry.
+      //
+      // The same RAW_SECRET authority the rest of this file uses — declared
+      // once, never restated. `beginRecipientProof` already holds its
+      // `rawChallenge` to it; this is the matching half.
+      //
+      // `unavailable`, NOT A REFUSAL. A refusal word would claim we know the
+      // proof failed, and we do not: the database said `verified` and may
+      // already have consumed the challenge and minted a capability we cannot
+      // read. In-doubt is the honest answer. Nothing is retried, nothing is
+      // re-minted, and the database is not called again — a second call could
+      // only fail, because the challenge it would need is gone.
+      if (!rawCapability || !RAW_SECRET.test(rawCapability) || !expiresAt) {
+        return { kind: "unavailable" };
+      }
       return { kind: "verified", rawCapability, expiresAt };
     }
     switch (result) {
