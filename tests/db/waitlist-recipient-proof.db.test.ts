@@ -1,8 +1,17 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { adminQuery, asRole, closePool, seedStudio, type SeededStudio } from "./helpers/harness";
+import { Client } from "pg";
+import {
+  adminQuery,
+  asRole,
+  closePool,
+  resolveLocalDbUrl,
+  seedStudio,
+  type SeededStudio,
+} from "./helpers/harness";
 import {
   expectPostgresSameInstant,
   expectPostgresTemporalRelation,
+  waitUntilBlocked,
 } from "./helpers/waitlist-concurrency";
 
 // 0192 — WAIT-03B recipient-proof authority, proved against a real PostgreSQL.
@@ -1833,5 +1842,520 @@ describe("0192 — begin_ returns the authoritative mint instant", () => {
     // 31, and nowhere near the challenge's 15.
     expect(minutesFromChallengeMint).toBeGreaterThanOrEqual(30);
     expect(minutesFromChallengeMint).toBeLessThan(31);
+  });
+});
+
+// ===========================================================================
+// A PROOF CHALLENGE MAY NEVER OUTLIVE THE INVITATION THAT AUTHORISES IT
+// ===========================================================================
+//
+// THE DEFECT THIS BLOCK EXISTS TO KEEP CLOSED. `begin_waitlist_invitation_proof`
+// bounded the requested TTL at 1..60 minutes and nothing else, so an invitation
+// with two minutes of life left minted a fifteen-minute challenge. Nothing
+// escalated: `complete_` gates on invitation liveness BEFORE it looks at the
+// challenge, so a use after `expires_at` already answered `not_live`. What broke
+// was TRUTH — the stored column asserted an instant the authority would never
+// honour, and `begin_` RETURNS that instant to the server-side delivery caller,
+// which states it to the recipient. The email promised a window that had already
+// been overtaken by the invitation's own death.
+//
+// THE RULE IS ENFORCED AT THE MINT, WHICH IS THE ONLY PLACE IT CAN BE
+// STRUCTURAL. `begin_` is the sole writer of a non-null
+// proof_challenge_expires_at — the two other writes in 0192 set it to NULL — so
+// the clamp makes a longer-lived challenge unrepresentable rather than merely
+// refused downstream. A delivery caller may still decline to send a window it
+// judges too short; that is a second opinion about output and cannot repair a
+// value already persisted.
+//
+// EVERY TEMPORAL VERDICT HERE IS POSTGRESQL'S. node-postgres truncates
+// timestamptz microseconds to JS milliseconds, so a clamp that lands exactly on
+// the invitation's expiry would compare equal under a `Date` round trip whether
+// or not it actually did. The comparisons run in the database.
+
+/**
+ * Run `fn` with the invitation table's append-only guard lifted.
+ *
+ * THE GUARD IS REAL AND LOAD-BEARING: 0188 makes identity, tenancy, token and
+ * the validity window immutable — "there is no renewal or extension" — so an
+ * invitation's `expires_at` cannot be moved by any shipped path. That is
+ * exactly WHY this defect matters rather than an obstacle to proving it: a
+ * short remaining lifetime is reached by the passage of TIME and cannot be
+ * repaired by extending the invitation, so the mint is the only place the two
+ * clocks can be reconciled.
+ *
+ * A test cannot wait fifty-eight minutes, so the fixture moves the stored
+ * expiry to simulate elapsed time. The same disable/enable dance the expired-
+ * invitation tests above already use, and the guard is restored in `finally`
+ * so a failing assertion cannot leave the table unprotected for later files.
+ * `fileParallelism: false` keeps the window from overlapping another suite.
+ */
+async function withInvitationWindowMutable<T>(fn: () => Promise<T>): Promise<T> {
+  await adminQuery(
+    `alter table public.new_client_waitlist_invitations
+       disable trigger new_client_waitlist_invitations_append_only`,
+  );
+  try {
+    return await fn();
+  } finally {
+    await adminQuery(
+      `alter table public.new_client_waitlist_invitations
+         enable trigger new_client_waitlist_invitations_append_only`,
+    );
+  }
+}
+
+/**
+ * Age an invitation so `interval` of its life remains.
+ *
+ * BOTH STAMPS MOVE, because 0188 bounds the window relative to issuance —
+ * `expires_at > issued_at and expires_at <= issued_at + interval '7 days'` — so
+ * dragging the expiry alone would either invert the window or leave the row
+ * describing a lifetime it never had. Moving both is also the honest model of
+ * what actually happens in production: nothing shortens an invitation, TIME
+ * passes. `seedOffer` issues a 72-hour offer, so 71 hours of elapsed time
+ * leaves exactly the last hour to play with and every offset used here — from
+ * six hours down to one second past death — stays inside the constraint.
+ */
+async function setInvitationExpiry(invitationId: string, interval: string): Promise<void> {
+  await withInvitationWindowMutable(async () => {
+    await adminQuery(
+      `update public.new_client_waitlist_invitations
+          set issued_at  = clock_timestamp() - interval '71 hours',
+              expires_at = clock_timestamp() + $2::interval
+        where id = $1`,
+      [invitationId, interval],
+    );
+  });
+}
+
+/** The stored challenge expiry beside the invitation's own, as one row. */
+const CHALLENGE_VS_INVITATION = `
+  select i.proof_challenge_expires_at, i.expires_at
+    from public.new_client_waitlist_invitations i
+   where i.id = $1`;
+
+async function conn(): Promise<Client> {
+  const c = new Client({ connectionString: resolveLocalDbUrl() });
+  await c.connect();
+  return c;
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+describe("0192 — the challenge clock is bounded by the invitation clock", () => {
+  it("NORMAL CASE UNCHANGED: ample remaining lifetime still grants the full requested TTL", async () => {
+    // seedOffer issues a 72-hour invitation, so every accepted challenge TTL
+    // (1..60 minutes) is far inside it and the clamp must not engage at all.
+    for (const ttl of [1, 15, 60]) {
+      const offer = await seedOffer(`clamp-normal-${ttl}`);
+      const r = await adminQuery(
+        `select result,
+                to_char(expires_at, 'YYYY-MM-DD"T"HH24:MI:SS.USOF') as expires_us,
+                to_char(issued_at,  'YYYY-MM-DD"T"HH24:MI:SS.USOF') as issued_us
+           from public.begin_waitlist_invitation_proof($1, $2)`,
+        [offer.token, ttl],
+      );
+      expect(r.rows[0].result, `ttl ${ttl}`).toBe("challenge_issued");
+
+      // EXACTLY the requested window, judged in the database at microsecond
+      // precision: expires_at - issued_at = ttl minutes, to the microsecond.
+      await expectPostgresSameInstant(
+        {
+          sql: `select $1::timestamptz, $2::timestamptz + make_interval(mins => $3::int)`,
+          params: [r.rows[0].expires_us, r.rows[0].issued_us, ttl],
+        },
+        `ttl ${ttl} — an unclamped mint must still grant the whole requested window`,
+      );
+
+      // NON-VACUITY: the clamp had room to engage and did not. A test that
+      // asserted only the invariant would pass here even if the clamp had
+      // wrongly pulled the expiry back to the invitation's.
+      await expectPostgresTemporalRelation(
+        {
+          sql: CHALLENGE_VS_INVITATION,
+          params: [offer.invitationId],
+          relation: "lt",
+        },
+        `ttl ${ttl} — the challenge must sit strictly INSIDE a 72-hour invitation`,
+      );
+    }
+  });
+
+  it("SHORT REMAINING: the challenge is clamped to the invitation's own expiry, never past it", async () => {
+    const offer = await seedOffer("clamp-short");
+    // Three minutes left against a fifteen-minute request: the old shape minted
+    // a challenge twelve minutes past the invitation's death.
+    await setInvitationExpiry(offer.invitationId, "3 minutes");
+
+    const r = await beginProof(offer.token, 15);
+    expect(r.result, "a live invitation still issues — clamping is not refusing").toBe(
+      "challenge_issued",
+    );
+
+    // THE INVARIANT, stated as the equality the clamp actually produces: with
+    // less remaining than requested, the challenge dies exactly when the
+    // invitation does, to the microsecond.
+    await expectPostgresSameInstant(
+      {
+        sql: CHALLENGE_VS_INVITATION,
+        params: [offer.invitationId],
+      },
+      "a short-remaining invitation must pull the challenge back to its own expiry",
+    );
+  });
+
+  it("THE INVARIANT HOLDS ACROSS THE WHOLE REMAINING/REQUESTED MATRIX", async () => {
+    // Remaining lifetimes either side of, and exactly on, the requested window.
+    // `lte` is the invariant itself; the two cases above pin which side each
+    // one lands on, so this is the general claim rather than a restatement.
+    for (const [label, remaining, ttl] of [
+      ["far-inside", "6 hours", 15],
+      ["just-inside", "16 minutes", 15],
+      ["equal", "15 minutes", 15],
+      ["just-outside", "14 minutes", 15],
+      ["far-outside", "30 seconds", 60],
+    ] as const) {
+      const offer = await seedOffer(`clamp-matrix-${label}`);
+      await setInvitationExpiry(offer.invitationId, remaining);
+
+      const r = await beginProof(offer.token, ttl);
+      expect(r.result, `${label} — still live, so still issued`).toBe("challenge_issued");
+
+      await expectPostgresTemporalRelation(
+        {
+          sql: CHALLENGE_VS_INVITATION,
+          params: [offer.invitationId],
+          relation: "lte",
+        },
+        `${label} (${remaining} left, ${ttl}m requested) — the challenge outlived the invitation`,
+      );
+
+      // AND IT IS NEVER MINTED ALREADY DEAD. The liveness gate established
+      // expires_at > now, so the clamped instant is strictly in the future for
+      // every challenge this command issues. This is why the repair needs no
+      // new refusal word: `challenge_issued` stays truthful at every remaining
+      // lifetime, and the returned expiry reports the window actually granted.
+      await expectPostgresTemporalRelation(
+        {
+          sql: `select i.proof_challenge_expires_at, clock_timestamp()
+                  from public.new_client_waitlist_invitations i where i.id = $1`,
+          params: [offer.invitationId],
+          relation: "gt",
+        },
+        `${label} — a challenge was minted already expired`,
+      );
+    }
+  });
+
+  it("THE RETURNED EXPIRY IS THE PERSISTED ONE, on the clamped path too", async () => {
+    const offer = await seedOffer("clamp-returned");
+    await setInvitationExpiry(offer.invitationId, "4 minutes");
+
+    // Rendered to microsecond TEXT by the statement that mints it, so the value
+    // never becomes a JS Date and can be handed back as a timestamptz. A
+    // millisecond round trip would hide a sub-millisecond disagreement between
+    // what was returned and what was written.
+    const r = await adminQuery(
+      `select result,
+              to_char(expires_at, 'YYYY-MM-DD"T"HH24:MI:SS.USOF') as expires_us
+         from public.begin_waitlist_invitation_proof($1, $2)`,
+      [offer.token, 15],
+    );
+    expect(r.rows[0].result).toBe("challenge_issued");
+
+    await expectPostgresSameInstant(
+      {
+        sql: `select $1::timestamptz, i.proof_challenge_expires_at
+                from public.new_client_waitlist_invitations i where i.id = $2`,
+        params: [r.rows[0].expires_us, offer.invitationId],
+      },
+      "the caller was told an expiry the row does not hold",
+    );
+  });
+
+  it("AN EXPIRED INVITATION MINTS NOTHING — no challenge state is written at all", async () => {
+    const offer = await seedOffer("clamp-expired");
+    await setInvitationExpiry(offer.invitationId, "-1 second");
+
+    const r = await beginProof(offer.token, 15);
+    expect(r.result).toBe("not_live");
+    expect(r.expires_at, "a refusal must not hand back an expiry").toBeNull();
+    expect(r.raw_challenge).toBeNull();
+    expect(r.challenge_id).toBeNull();
+
+    // The clamp must not have quietly written a zero-length challenge on the
+    // way to refusing: the row carries no challenge state whatsoever.
+    const row = await invitationRow(offer.invitationId);
+    expect(row.proof_challenge_hash).toBeNull();
+    expect(row.proof_challenge_id).toBeNull();
+    const stored = await adminQuery(
+      `select proof_challenge_expires_at from public.new_client_waitlist_invitations where id = $1`,
+      [offer.invitationId],
+    );
+    expect(stored.rows[0].proof_challenge_expires_at).toBeNull();
+  });
+
+  it("POST-LOCK TRUTH WINS: an invitation SHORTENED while begin_ waits clamps to the NEW expiry", async () => {
+    const offer = await seedOffer("clamp-lock-shorten");
+    // The guard is lifted around the WHOLE dance: `alter table` needs an
+    // ACCESS EXCLUSIVE lock, which the holder's row lock would block, so it
+    // cannot be taken while a transaction is parked on the row.
+    await withInvitationWindowMutable(async () => {
+      const holder = await conn();
+      const waiter = await conn();
+      try {
+        // The holder takes the invitation mutex begin_ must have, then moves the
+        // invitation's death while the waiter is parked on it.
+        await holder.query("begin");
+        await holder.query(
+          `select 1 from public.new_client_waitlist_invitations where id = $1 for update`,
+          [offer.invitationId],
+        );
+
+        await waiter.query("begin");
+        const pid = (await waiter.query("select pg_backend_pid() as pid")).rows[0].pid as number;
+        const pending = waiter.query(
+          `select result,
+                  to_char(expires_at, 'YYYY-MM-DD"T"HH24:MI:SS.USOF') as expires_us
+             from public.begin_waitlist_invitation_proof($1, $2)`,
+          [offer.token, 60],
+        );
+
+        // PROVE it is really parked on the lock, not merely slow — otherwise this
+        // test could pass without the race it exists to describe ever happening.
+        expect(
+          await waitUntilBlocked(pid),
+          "begin_ never blocked on the invitation mutex — this case tests nothing",
+        ).not.toBeNull();
+
+        await holder.query(
+          `update public.new_client_waitlist_invitations
+              set issued_at  = clock_timestamp() - interval '71 hours',
+                  expires_at = clock_timestamp() + interval '2 minutes'
+            where id = $1`,
+          [offer.invitationId],
+        );
+        await holder.query("commit");
+
+        const got = (await pending).rows[0] as { result: string; expires_us: string };
+        await waiter.query("commit");
+
+        expect(got.result).toBe("challenge_issued");
+
+        // The value the waiter clamped against is the one it read AFTER acquiring
+        // the lock. A pre-lock read would have clamped against the original
+        // 72-hour expiry and granted the full 60 minutes.
+        await expectPostgresSameInstant(
+          {
+            sql: `select $1::timestamptz, i.expires_at
+                    from public.new_client_waitlist_invitations i where i.id = $2`,
+            params: [got.expires_us, offer.invitationId],
+          },
+          "begin_ clamped against a stale pre-lock expiry",
+        );
+        await expectPostgresTemporalRelation(
+          {
+            sql: CHALLENGE_VS_INVITATION,
+            params: [offer.invitationId],
+            relation: "lte",
+          },
+          "the persisted challenge outlived the shortened invitation",
+        );
+      } finally {
+        await holder.end().catch(() => undefined);
+        await waiter.end().catch(() => undefined);
+      }
+    });
+  });
+
+  it("POST-LOCK TRUTH WINS: an invitation EXPIRED while begin_ waits refuses outright", async () => {
+    const offer = await seedOffer("clamp-lock-expire");
+    await withInvitationWindowMutable(async () => {
+      const holder = await conn();
+      const waiter = await conn();
+      try {
+        await holder.query("begin");
+        await holder.query(
+          `select 1 from public.new_client_waitlist_invitations where id = $1 for update`,
+          [offer.invitationId],
+        );
+
+        await waiter.query("begin");
+        const pid = (await waiter.query("select pg_backend_pid() as pid")).rows[0].pid as number;
+        const pending = waiter.query(
+          `select result, expires_at, raw_challenge
+             from public.begin_waitlist_invitation_proof($1, $2)`,
+          [offer.token, 15],
+        );
+        expect(
+          await waitUntilBlocked(pid),
+          "begin_ never blocked on the invitation mutex — this case tests nothing",
+        ).not.toBeNull();
+
+        // A material wait, so the liveness verdict cannot be explained by the two
+        // statements landing in the same instant.
+        await sleep(250);
+        await holder.query(
+          `update public.new_client_waitlist_invitations
+              set issued_at  = clock_timestamp() - interval '71 hours',
+                  expires_at = clock_timestamp() - interval '1 second'
+            where id = $1`,
+          [offer.invitationId],
+        );
+        await holder.query("commit");
+
+        const got = (await pending).rows[0] as Record<string, unknown>;
+        await waiter.query("commit");
+
+        // The post-lock clock and the post-lock row together: the invitation died
+        // during the wait, so nothing is minted for it.
+        expect(got.result).toBe("not_live");
+        expect(got.expires_at).toBeNull();
+        expect(got.raw_challenge).toBeNull();
+
+        const row = await invitationRow(offer.invitationId);
+        expect(row.proof_challenge_hash).toBeNull();
+        expect(row.proof_challenge_id).toBeNull();
+      } finally {
+        await holder.end().catch(() => undefined);
+        await waiter.end().catch(() => undefined);
+      }
+    });
+  });
+
+  it("REISSUE STILL REPLACES: a clamped challenge is invalidated by the next one, exactly as before", async () => {
+    const offer = await seedOffer("clamp-reissue");
+    await setInvitationExpiry(offer.invitationId, "5 minutes");
+
+    const first = await beginProof(offer.token, 15);
+    expect(first.result).toBe("challenge_issued");
+    const firstChallenge = first.raw_challenge as string;
+    const firstId = first.challenge_id as string;
+
+    // Verify to mint a capability, so the reissue has BOTH credentials to kill.
+    const verified = await completeProof(offer.token, firstChallenge);
+    expect(verified.result).toBe("verified");
+
+    const second = await beginProof(offer.token, 15);
+    expect(second.result).toBe("challenge_issued");
+    expect(second.challenge_id).not.toBe(firstId);
+
+    // The older challenge no longer verifies, and the capability minted from it
+    // is gone — the clamp changed the expiry, not the replacement rule.
+    const stale = await completeProof(offer.token, firstChallenge);
+    expect(stale.result).toBe("wrong_challenge");
+    const row = await invitationRow(offer.invitationId);
+    expect(row.proof_capability_hash, "reissue must kill any live capability").toBeNull();
+
+    // ...and the replacement is clamped too.
+    await expectPostgresSameInstant(
+      { sql: CHALLENGE_VS_INVITATION, params: [offer.invitationId] },
+      "the replacement challenge escaped the clamp",
+    );
+  });
+
+  it("THE CAPABILITY CLOCK IS UNTOUCHED: still database-owned 30 minutes, even on a clamped challenge", async () => {
+    const offer = await seedOffer("clamp-capability");
+    await setInvitationExpiry(offer.invitationId, "2 minutes");
+
+    const begun = (
+      await adminQuery(
+        `select result, raw_challenge,
+                to_char(issued_at, 'YYYY-MM-DD"T"HH24:MI:SS.USOF') as issued_us
+           from public.begin_waitlist_invitation_proof($1, $2)`,
+        [offer.token, 15],
+      )
+    ).rows[0] as { result: string; raw_challenge: string; issued_us: string };
+    expect(begun.result).toBe("challenge_issued");
+    // MICROSECOND TEXT, for the reason `beginProofPrecise` exists: node-postgres
+    // renders a timestamptz as a JS Date and drops microseconds, so a stored
+    // value and a returned one that differ by 793us compare EQUAL after the
+    // round trip. Measured here before it was written this way.
+    const done = (
+      await adminQuery(
+        `select result, raw_capability,
+                to_char(expires_at, 'YYYY-MM-DD"T"HH24:MI:SS.USOF') as expires_us
+           from public.complete_waitlist_invitation_proof($1, $2)`,
+        [offer.token, begun.raw_challenge],
+      )
+    ).rows[0] as { result: string; raw_capability: string; expires_us: string };
+    expect(done.result).toBe("verified");
+
+    // DELIBERATELY NOT CLAMPED, and this test pins that as a decision rather
+    // than an oversight. The capability's 30 minutes is the database's own law
+    // and this repair does not touch it. It is safe for it to outlast the
+    // invitation because every consumer —
+    // redeem_new_client_waitlist_invitation_verified, decline_, and
+    // resolve_waitlist_invitation_recipient_identity — gates on invitation
+    // liveness BEFORE it looks at the capability, so a capability on a dead
+    // invitation answers `not_live` rather than acting.
+    // `complete_` RETURNS the capability's own expiry, so the stored value and
+    // the returned one are the same fact and are asserted as such — no second
+    // arithmetic here that could disagree with the command's.
+    await expectPostgresSameInstant(
+      {
+        sql: `select i.proof_capability_expires_at, $2::timestamptz
+                from public.new_client_waitlist_invitations i where i.id = $1`,
+        params: [offer.invitationId, done.expires_us],
+      },
+      "the stored capability expiry is not the one complete_ reported",
+    );
+    // STILL THIRTY MINUTES FROM ITS OWN MINT, stated as a band and judged in the
+    // database. A strict equality would be decided by how many microseconds
+    // elapsed between begin_ and complete_, not by which TTL governs; at least
+    // 30 and under 31 is the claim, and 15 — the challenge's — is what a
+    // regression would show. Both operands stay timestamptz throughout: the
+    // microsecond text `to_char` produces is not parseable by `new Date`, which
+    // is why the arithmetic does not come back to JavaScript at all.
+    for (const [rel, bound, why] of [
+      ["gte", "30 minutes", "the capability lost time to the challenge's TTL"],
+      ["lt", "31 minutes", "the capability gained time it was never granted"],
+    ] as const) {
+      await expectPostgresTemporalRelation(
+        {
+          sql: `select i.proof_capability_expires_at,
+                       $2::timestamptz + $3::interval
+                  from public.new_client_waitlist_invitations i where i.id = $1`,
+          params: [offer.invitationId, begun.issued_us, bound],
+          relation: rel,
+        },
+        why,
+      );
+    }
+    // And it genuinely does outlive the 2-minute invitation, so the claim above
+    // is being exercised rather than asserted about an impossible state.
+    await expectPostgresTemporalRelation(
+      {
+        sql: `select i.proof_capability_expires_at, i.expires_at
+                from public.new_client_waitlist_invitations i where i.id = $1`,
+        params: [offer.invitationId],
+        relation: "gt",
+      },
+      "the capability no longer outlives a short invitation — the premise moved",
+    );
+
+    // The consumer's own verdict, not an argument about it.
+    await setInvitationExpiry(offer.invitationId, "-1 second");
+    const spent = await redeem(offer.token, done.raw_capability);
+    expect(spent.result, "a live capability on a dead invitation must not act").toBe("not_live");
+  });
+
+  it("NO PLAINTEXT IS PERSISTED ON THE CLAMPED PATH EITHER", async () => {
+    const offer = await seedOffer("clamp-plaintext");
+    await setInvitationExpiry(offer.invitationId, "90 seconds");
+
+    const begun = await beginProof(offer.token, 60);
+    expect(begun.result).toBe("challenge_issued");
+    const done = await completeProof(offer.token, begun.raw_challenge as string);
+    expect(done.result).toBe("verified");
+
+    const stored = await adminQuery(
+      `select * from public.new_client_waitlist_invitations where id = $1`,
+      [offer.invitationId],
+    );
+    const blob = JSON.stringify(stored.rows[0]);
+    expect(blob).not.toContain(begun.raw_challenge);
+    expect(blob).not.toContain(done.raw_capability);
+    expect(blob).not.toContain(offer.token);
   });
 });

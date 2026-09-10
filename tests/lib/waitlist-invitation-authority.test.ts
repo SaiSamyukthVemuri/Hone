@@ -715,6 +715,143 @@ describe("capability acquisition — the TTL is the database's, not the caller's
   });
 });
 
+// ===========================================================================
+// A MINTED CAPABILITY IS HELD TO THE SAME SECRET CONTRACT AS EVERY OTHER
+// ===========================================================================
+//
+// THE DEFECT THIS BLOCK KEEPS CLOSED. `completeRecipientProof` accepted any
+// non-empty `raw_capability` on a `verified` row, so a credential of the wrong
+// shape became B2's own `verified` outcome. That result is internally
+// contradictory: the database has ALREADY CONSUMED the challenge, the recipient
+// is told verification succeeded, and `consumeInvitationForBooking` and
+// `declineInvitation` then reject the credential against RAW_SECRET — leaving
+// someone holding an unusable capability after an apparent success, with no
+// challenge left to retry.
+//
+// The mirror of the `raw_challenge` block above: `beginRecipientProof` already
+// held its code to RAW_SECRET on the way out, and this is the matching half on
+// the way back in. One authority, declared once, tested from both sides.
+const verifiedRow = (over: Record<string, unknown> = {}) => [
+  { result: "verified", raw_capability: CAP, expires_at: "2026-09-10T12:30:00Z", ...over },
+];
+
+describe("capability acquisition — a malformed capability is IN DOUBT, never verified", () => {
+  it("a VALID 64-char lowercase hex capability still verifies, unchanged", async () => {
+    rpc.mockResolvedValue({ data: verifiedRow(), error: null });
+    const out = await completeRecipientProof(TOKEN, CHALLENGE);
+    if (out.kind !== "verified") throw new Error("unreachable");
+    expect(out.rawCapability).toBe(CAP);
+    // The neighbouring value is untouched by the new guard.
+    expect(out.expiresAt).toBe("2026-09-10T12:30:00Z");
+  });
+
+  it.each([
+    ["too short (63)", "b".repeat(63)],
+    ["too long (65)", "b".repeat(65)],
+    ["uppercase", "B".repeat(64)],
+    ["mixed case", "bD".repeat(32)],
+    ["non-hex", "z".repeat(64)],
+    ["empty", ""],
+    ["whitespace-padded", ` ${"b".repeat(64)} `],
+  ])("refuses a verified row whose raw_capability is %s", async (_l, bad) => {
+    rpc.mockResolvedValue({ data: verifiedRow({ raw_capability: bad }), error: null });
+    expect((await completeRecipientProof(TOKEN, CHALLENGE)).kind).toBe("unavailable");
+  });
+
+  it("is unavailable when the verified row carries NO capability at all", async () => {
+    rpc.mockResolvedValue({ data: verifiedRow({ raw_capability: null }), error: null });
+    expect((await completeRecipientProof(TOKEN, CHALLENGE)).kind).toBe("unavailable");
+  });
+
+  it("is unavailable when the verified row carries no expiry — that check survives", async () => {
+    rpc.mockResolvedValue({ data: verifiedRow({ expires_at: null }), error: null });
+    expect((await completeRecipientProof(TOKEN, CHALLENGE)).kind).toBe("unavailable");
+  });
+
+  it("a malformed capability NEVER yields verified, whatever else the row says", async () => {
+    for (const bad of ["", " ", "short", "B".repeat(64), "z".repeat(64), "b".repeat(65)]) {
+      rpc.mockResolvedValue({ data: verifiedRow({ raw_capability: bad }), error: null });
+      const out = await completeRecipientProof(TOKEN, CHALLENGE);
+      expect(out.kind, `raw_capability=${JSON.stringify(bad)}`).not.toBe("verified");
+      expect(out).not.toHaveProperty("rawCapability");
+    }
+  });
+
+  it("REPORTS IN DOUBT, NOT A REFUSAL — and never retries or re-mints", async () => {
+    // The database said `verified` and may already have consumed the challenge,
+    // so claiming a refusal would assert something we do not know. `unavailable`
+    // is the honest answer, and exactly one RPC call is made: no second attempt
+    // to complete, and nothing that could mint another capability.
+    rpc.mockResolvedValue({ data: verifiedRow({ raw_capability: "nope" }), error: null });
+    const out = await completeRecipientProof(TOKEN, CHALLENGE);
+    expect(out.kind).toBe("unavailable");
+    expect(rpc).toHaveBeenCalledTimes(1);
+    expect(rpc.mock.calls[0][0]).toBe("complete_waitlist_invitation_proof");
+    for (const refusal of [
+      "wrong_challenge",
+      "no_challenge",
+      "challenge_expired",
+      "too_many_attempts",
+      "recipient_changed",
+      "proof_invalid",
+      "invalid_input",
+      "invalid_token",
+      "not_live",
+    ]) {
+      expect(out.kind).not.toBe(refusal);
+    }
+  });
+
+  it("NO OTHER CompleteProofOutcome MAPPING MOVED", async () => {
+    // Every non-verified code still maps exactly as before, and an unknown one
+    // still falls through to unavailable. The guard touches the verified arm
+    // alone.
+    for (const code of [
+      "wrong_challenge",
+      "no_challenge",
+      "challenge_expired",
+      "too_many_attempts",
+      "recipient_changed",
+      "invalid_token",
+      "not_live",
+      "invalid_input",
+    ]) {
+      rpc.mockResolvedValue({ data: [{ result: code }], error: null });
+      expect((await completeRecipientProof(TOKEN, CHALLENGE)).kind).toBe(code);
+    }
+    rpc.mockResolvedValue({ data: [{ result: "something_new" }], error: null });
+    expect((await completeRecipientProof(TOKEN, CHALLENGE)).kind).toBe("unavailable");
+    rpc.mockResolvedValue({ data: null, error: { message: "boom" } });
+    expect((await completeRecipientProof(TOKEN, CHALLENGE)).kind).toBe("unavailable");
+  });
+
+  it("DOWNSTREAM IS UNCHANGED: the consumers keep their own RAW_SECRET gate", async () => {
+    // The new guard sits at the completion boundary only. Both consumers still
+    // hold the capability to the same contract themselves, so this repair adds
+    // a layer rather than moving one.
+    const auth = await authorized();
+
+    rpc.mockResolvedValue({
+      data: [{ result: "redeemed", studio_id: "studio-1", entry_id: "entry-1" }],
+      error: null,
+    });
+    expect((await consumeInvitationForBooking(auth, CAP)).kind).not.toBe("proof_invalid");
+
+    rpc.mockClear();
+    expect((await consumeInvitationForBooking(auth, "nope")).kind).toBe("proof_invalid");
+    expect(
+      rpc.mock.calls.find((c) => c[0] === "redeem_new_client_waitlist_invitation_verified"),
+      "a malformed capability must not reach the redeem command",
+    ).toBeUndefined();
+
+    rpc.mockClear();
+    expect(
+      (await declineInvitation({ rawToken: TOKEN, rawCapability: "nope" })).kind,
+    ).toBe("proof_invalid");
+    expect(rpc).not.toHaveBeenCalled();
+  });
+});
+
 describe("issue / revoke / expire — studio and actor come from the session", () => {
   const session = {
     studio: { id: "studio-1" },
