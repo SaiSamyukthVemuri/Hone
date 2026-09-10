@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 
 // PR #220. Static pins (unit lane) for the DB/RLS integration
@@ -18,6 +18,41 @@ const UNIT_CONFIG = read("vitest.config.ts");
 const DB_CONFIG = read("vitest.db.config.ts");
 const CI = read(".github/workflows/ci.yml");
 const PKG = read("package.json");
+
+/**
+ * EVERY workflow, enumerated from the directory - not `ci.yml` alone.
+ *
+ * CI-COST-01: the production-safety scans below were bound to the literal
+ * ".github/workflows/ci.yml" since PR #220, when ci.yml was the only workflow
+ * that touched a database. It is no longer the only workflow, and it is no
+ * longer the one triggered by a push to the production branch - post-merge.yml
+ * is. A guard that names one file exempts every file added after it, and the
+ * exemption is invisible: a reviewer reading this test sees "CI is secret-free"
+ * and has no reason to ask which CI.
+ *
+ * Membership is by EXTENSION, matching what GitHub Actions itself reads, so a
+ * new workflow is enrolled by existing rather than by somebody remembering to
+ * edit this file. Same reasoning, and same shape, as readWorkflowDir() in
+ * tests/ci/ci-config.test.ts.
+ */
+const WORKFLOW_DIR = ".github/workflows";
+function readWorkflows(): ReadonlyArray<readonly [string, string]> {
+  const dir = path.resolve(__dirname, "../..", WORKFLOW_DIR);
+  return readdirSync(dir)
+    .filter((n) => /\.ya?ml$/.test(n))
+    .filter((n) => statSync(path.join(dir, n)).isFile())
+    .sort()
+    .map((n) => [n, readFileSync(path.join(dir, n), "utf8")] as const);
+}
+const WORKFLOWS = readWorkflows();
+
+/** A workflow's executable text: comment-only lines stripped. */
+function executableText(body: string): string {
+  return body
+    .split("\n")
+    .filter((l) => !l.trim().startsWith("#"))
+    .join("\n");
+}
 
 describe("unit lane stays DB-free", () => {
   it("vitest.config.ts excludes tests/db/**", () => {
@@ -76,22 +111,36 @@ describe("CI db-integration job is local-only and secret-free", () => {
     expect(CI).toMatch(/npm run test:db/);
   });
 
-  it("never uses --linked, a project ref, or an access token", () => {
+  it("NO workflow uses --linked, a project ref, or an access token", () => {
     // Scan executable lines only; comments may mention --linked to
     // document that it is NOT used.
-    const runLines = CI.split("\n").filter(
-      (l) => !l.trim().startsWith("#"),
-    );
-    const executable = runLines.join("\n");
-    expect(executable).not.toMatch(/--linked/);
-    expect(executable).not.toMatch(/SUPABASE_ACCESS_TOKEN/);
-    expect(executable).not.toMatch(/db push/);
-    expect(executable).not.toMatch(/secrets\./);
+    const offenders: string[] = [];
+    for (const [file, body] of WORKFLOWS) {
+      const executable = executableText(body);
+      for (const [label, re] of [
+        ["--linked", /--linked/],
+        ["SUPABASE_ACCESS_TOKEN", /SUPABASE_ACCESS_TOKEN/],
+        ["db push", /db push/],
+        ["secrets.", /secrets\./],
+      ] as const) {
+        if (re.test(executable)) offenders.push(`${file}: ${label}`);
+      }
+    }
+    expect(offenders).toEqual([]);
   });
 
-  it("does not point the harness anywhere", () => {
-    // No HONE_LOCAL_DB_URL override in CI: the harness uses its
+  it("NO workflow points the harness anywhere", () => {
+    // No HONE_LOCAL_DB_URL override in any workflow: the harness uses its
     // localhost default, and the in-harness guard is the backstop.
-    expect(CI).not.toMatch(/HONE_LOCAL_DB_URL/);
+    expect(
+      WORKFLOWS.filter(([, body]) => /HONE_LOCAL_DB_URL/.test(body)).map(([f]) => f),
+    ).toEqual([]);
+  });
+
+  it("the workflow universe being scanned is the DIRECTORY, not one file", () => {
+    // Guards the guard. If this ever reads a single file again, the scans
+    // above silently stop covering whatever was added last.
+    expect(WORKFLOWS.length).toBeGreaterThanOrEqual(3);
+    expect(WORKFLOWS.map(([f]) => f)).toContain("post-merge.yml");
   });
 });

@@ -23,6 +23,33 @@ const NIGHTLY = readFileSync(".github/workflows/nightly.yml", "utf8");
 
 const WORKFLOW_DIR = ".github/workflows";
 
+/**
+ * The branch-protection required-check contexts, named ONCE.
+ *
+ * These are the contexts branch protection evaluates on a PULL REQUEST, so
+ * they must keep being produced by ci.yml. Two guards depend on this list —
+ * "preserves the existing required-check names" and CI-COST-01's collision
+ * check — and a second hand-maintained copy is exactly the drift this
+ * repository has already paid for elsewhere.
+ *
+ * Verified operator-side with `gh pr checks <n> --required`, which reported
+ * "changed-path detection", "typecheck / lint / build / test / safety gates",
+ * "db integration (local supabase)" and "browser e2e (local stack)". The
+ * payment / mobile / google contexts are NOT required today; they are kept in
+ * this list anyway because renaming one is still a branch-protection-visible
+ * change, and a guard that only notices the four is a guard that invites a
+ * silent rename of the other three.
+ */
+const REQUIRED_CHECK_NAMES = [
+  "changed-path detection",
+  "typecheck / lint / build / test / safety gates",
+  "db integration (local supabase)",
+  "browser e2e (local stack)",
+  "payment browser e2e (fake stripe)",
+  "mobile completion e2e (chromium iphone-profile)",
+  "google browser e2e (fake google)",
+] as const;
+
 /** A workflow as the supply-chain guards see it: its file name, and its text. */
 type Workflow = readonly [name: string, body: string];
 
@@ -432,14 +459,7 @@ describe("PR CI — path-aware lane selection", () => {
   });
 
   it("preserves the existing required-check names", () => {
-    for (const name of [
-      "typecheck / lint / build / test / safety gates",
-      "db integration (local supabase)",
-      "browser e2e (local stack)",
-      "payment browser e2e (fake stripe)",
-      "mobile completion e2e (chromium iphone-profile)",
-      "google browser e2e (fake google)",
-    ]) {
+    for (const name of REQUIRED_CHECK_NAMES) {
       expect(CI, `required check "${name}" must still exist`).toContain(name);
     }
   });
@@ -758,6 +778,294 @@ describe("nightly / manual full matrix", () => {
 
   it("pins the Supabase CLI to the grants-parity version", () => {
     expect(NIGHTLY).toMatch(/version: 2\.102\.0/);
+  });
+});
+// ---------------------------------------------------------------------------
+// CI-COST-01 — which trigger owns which evidence
+// ---------------------------------------------------------------------------
+// Three lanes, three distinct jobs, no accidental third copy of the matrix:
+//
+//   pull_request           ci.yml          risk-based, gates the merge
+//   push (production)      post-merge.yml  semantic merge skew only
+//   schedule / dispatch    nightly.yml     the complete matrix, once a day
+//
+// ci.yml used to carry the middle one too, and it was not a cheaper second
+// opinion: on a merge commit its changed-file step produced an EMPTY list (a
+// clean merge's combined diff is empty), the classifier correctly failed safe,
+// and the full matrix ran every time. Measured over 2026-08-25 -> 2026-09-09:
+// 37 post-merge runs, 30/30 sampled with four extended browser shards, 29/30
+// over a tree BIT-IDENTICAL to the PR head that had already tested green,
+// 2075.9 runner-minutes against 1405.4 for the PR runs themselves, and ZERO
+// true positives — the only two failures were a Sentry ECONNRESET flake and a
+// Supabase container that could not bind its port.
+//
+// These guards pin the split. They are deliberately about SHAPE — which
+// trigger, which lane, which name — because that is what a future edit would
+// get wrong, and because the required-check contexts branch protection depends
+// on are produced by name.
+describe("CI-COST-01 — trigger ownership", () => {
+  const POST_MERGE = readFileSync(".github/workflows/post-merge.yml", "utf8");
+  const PRODUCTION_BRANCH = "claude/build-hone-saas-hOex7";
+
+  /**
+   * A workflow's trigger map.
+   *
+   * `on` is a YAML 1.1 boolean, and a parser that resolves it as one turns the
+   * key into `true` rather than `"on"`. js-yaml 4 keeps the string, but reading
+   * BOTH means this guard reports a real answer instead of a vacuous pass if
+   * that ever changes — an empty trigger map would otherwise satisfy every
+   * "does not run on push" assertion below for the wrong reason.
+   */
+  function triggersOf(body: string): Record<string, unknown> {
+    const doc = yaml.load(body);
+    if (!isRecord(doc)) throw new Error("workflow is not a YAML mapping");
+    const node = doc.on ?? (doc as Record<string, unknown>)["true"];
+    if (node === undefined) throw new Error("workflow declares no triggers");
+    if (!isRecord(node)) throw new Error("triggers are not a mapping");
+    return node;
+  }
+
+  /** Every `run:` script in a workflow, joined — what the lane actually does. */
+  function runScripts(body: string): string {
+    const doc = yaml.load(body);
+    if (!isRecord(doc) || !isRecord(doc.jobs)) return "";
+    const out: string[] = [];
+    for (const job of Object.values(doc.jobs)) {
+      if (!isRecord(job) || !Array.isArray(job.steps)) continue;
+      for (const step of job.steps) {
+        if (isRecord(step) && typeof step.run === "string") out.push(step.run);
+      }
+    }
+    return out.join("\n");
+  }
+
+  it("the YAML trigger reader is functioning, not silently empty", () => {
+    // Guards the guard: every assertion below is a statement about this map.
+    expect(Object.keys(triggersOf(CI))).not.toEqual([]);
+    expect(Object.keys(triggersOf(POST_MERGE))).not.toEqual([]);
+    expect(Object.keys(triggersOf(NIGHTLY))).not.toEqual([]);
+  });
+
+  it("PR CI runs on pull_request and NO LONGER on push", () => {
+    const t = triggersOf(CI);
+    expect(Object.keys(t)).toContain("pull_request");
+    expect(Object.keys(t)).not.toContain("push");
+  });
+
+  it("the production branch is verified by post-merge.yml", () => {
+    const t = triggersOf(POST_MERGE);
+    // The PROPERTY, not the spelling: its only automatic trigger is a push to
+    // the production branch. workflow_dispatch is permitted (an operator must
+    // be able to re-verify a ref); anything that fires on its own is not.
+    expect(t.push).toEqual({ branches: [PRODUCTION_BRANCH] });
+    const automatic = Object.keys(t).filter((k) => k !== "workflow_dispatch");
+    expect(automatic).toEqual(["push"]);
+  });
+
+  it("EXACTLY ONE workflow runs on a push to the production branch", () => {
+    // Fail CLOSED on every shape that could run on this branch.
+    //
+    // The first draft asked `Array.isArray(push.branches) &&
+    // push.branches.includes(PRODUCTION_BRANCH)`, which quietly answered "no"
+    // for the shapes that run MORE often, not fewer: a bare `push:` (null ->
+    // every branch), a glob (`claude/**`, `**` - `.includes` is exact-string,
+    // not a matcher), and `branches-ignore:`. A future workflow with `on:\n
+    // push:` and a browser matrix would have re-run the whole thing on every
+    // production push while this guard stayed green - the exact regression the
+    // 2075.9 runner-minutes were spent on.
+    const couldRunOnProductionPush = readWorkflowDir().filter(([, body]) => {
+      let t: Record<string, unknown>;
+      try {
+        t = triggersOf(body);
+      } catch {
+        return true; // unreadable triggers: assume it can, and say so loudly
+      }
+      if (!("push" in t)) return false;
+      const push = t.push;
+      if (push === null || push === undefined) return true; // bare `push:`
+      if (!isRecord(push)) return true; // any shape this guard cannot read
+      if ("branches-ignore" in push) return true; // allow-by-omission
+      const branches = push.branches;
+      if (!Array.isArray(branches)) return true; // push: with no branch filter
+      // Exact name, or any glob that could cover the branch.
+      return branches.some(
+        (b) => typeof b === "string" && (b === PRODUCTION_BRANCH || b.includes("*")),
+      );
+    });
+    expect(couldRunOnProductionPush.map(([f]) => f)).toEqual(["post-merge.yml"]);
+  });
+
+  it("the post-merge lane does NOT re-run the expensive PR-only lanes", () => {
+    const scripts = runScripts(POST_MERGE);
+    for (const forbidden of [
+      "playwright", // four browser shards
+      "test:e2e", // payment / mobile / google e2e
+      "test:db", // DB + RLS integration
+      "supabase", // no local stack: no db reset, no db push, no chain apply
+    ]) {
+      expect(
+        scripts.toLowerCase(),
+        `post-merge must not run ${forbidden} — nothing in the measured window shows it producing post-merge evidence a PR run had not`,
+      ).not.toContain(forbidden);
+    }
+    // And no Supabase CLI action, which is how a DB lane would actually arrive.
+    expect(POST_MERGE).not.toMatch(/supabase\/setup-cli/);
+  });
+
+  it("the post-merge lane keeps every check that catches semantic merge skew", () => {
+    const scripts = runScripts(POST_MERGE);
+    for (const kept of [
+      "npm run typecheck",
+      "npm run lint",
+      "npm run build",
+      "npm test",
+      "git show --check --first-parent",
+      "npm run check:stripe-gates",
+      "npm run check:migration-extensions",
+      "npm run migration:state",
+    ]) {
+      expect(scripts, `post-merge must still run ${kept}`).toContain(kept);
+    }
+  });
+
+  it("no post-merge step is disarmed by if: / continue-on-error", () => {
+    // The guard above proves eight strings are PRESENT. Presence is not
+    // execution: `continue-on-error: true` or `if: false` on the Unit tests
+    // step keeps every string in place, keeps that guard green, and reports
+    // SUCCESS on the production branch while verifying nothing. That is the
+    // obvious shortcut if this lane ever goes red under time pressure.
+    const doc = yaml.load(POST_MERGE);
+    if (!isRecord(doc) || !isRecord(doc.jobs)) throw new Error("post-merge declares no jobs");
+    const disarmed: string[] = [];
+    for (const [id, job] of Object.entries(doc.jobs)) {
+      if (!isRecord(job)) continue;
+      if (job["continue-on-error"]) disarmed.push(`jobs.${id}.continue-on-error`);
+      if (!Array.isArray(job.steps)) continue;
+      job.steps.forEach((step: unknown, i: number) => {
+        if (!isRecord(step)) return;
+        if (step["continue-on-error"]) disarmed.push(`jobs.${id}.steps[${i}].continue-on-error`);
+        if ("if" in step) disarmed.push(`jobs.${id}.steps[${i}].if`);
+      });
+    }
+    expect(disarmed).toEqual([]);
+  });
+
+  it("the post-merge lane keeps the offline-font gate the build depends on", () => {
+    // A build that reaches for Google Fonts must fail HERE, not wherever the
+    // network is restricted. Carrying `npm run build` without the preload would
+    // be a silently weaker gate than ci.yml's.
+    expect(POST_MERGE).toMatch(/NODE_OPTIONS: --require \.\/scripts\/block-google-fonts\.cjs/);
+  });
+
+  it("the post-merge job name does NOT collide with a required check", () => {
+    // Branch protection's contexts are produced by ci.yml on pull_request,
+    // which is where they gate a merge. A same-named context appearing on the
+    // production branch would mean something different from the one that
+    // gated it.
+    const doc = yaml.load(POST_MERGE);
+    if (!isRecord(doc) || !isRecord(doc.jobs)) throw new Error("post-merge declares no jobs");
+    const names = Object.values(doc.jobs)
+      .filter(isRecord)
+      .map((j) => j.name)
+      .filter((n): n is string => typeof n === "string");
+    expect(names.length).toBeGreaterThan(0);
+    for (const required of REQUIRED_CHECK_NAMES) {
+      expect(names, `post-merge job must not be named "${required}"`).not.toContain(required);
+    }
+  });
+
+  it("PR CI still produces every branch-protection required check name", () => {
+    // The same list as "preserves the existing required-check names" above,
+    // asserted again from the trigger's side: these names must be reachable on
+    // a PULL REQUEST, because that is the event branch protection evaluates.
+    expect(Object.keys(triggersOf(CI))).toContain("pull_request");
+    for (const name of REQUIRED_CHECK_NAMES) {
+      expect(CI, `required check "${name}" must still be produced by PR CI`).toContain(name);
+    }
+  });
+
+  it("nightly still owns the complete matrix, unchanged by CI-COST-01", () => {
+    const t = triggersOf(NIGHTLY);
+    expect(Object.keys(t).sort()).toEqual(["schedule", "workflow_dispatch"]);
+    // The lanes post-merge deliberately drops must still exist somewhere, and
+    // this is that somewhere.
+    for (const lane of [
+      "full migration chain + db/rls integration",
+      "core browser e2e (shard 1/4)",
+      "core browser e2e (shard 4/4)",
+      "payment e2e (fake stripe)",
+      "mobile completion e2e",
+      "google e2e (fake google)",
+    ]) {
+      expect(NIGHTLY, `nightly must still cover "${lane}"`).toContain(lane);
+    }
+  });
+
+  it("the post-merge ceiling EXCEEDS its measured target", () => {
+    // CLAUDE.md section 4: a hard timeout must exceed its performance target,
+    // and must clear SETUP as well as tests. The work this lane performs was
+    // measured at mean 4.2 / p90 4.7 / max 4.8 minutes across the 30 post-merge
+    // runs it replaces. The upper bound keeps the ceiling from drifting upward
+    // instead of a slow lane being investigated.
+    // Read from the PARSED job, not the first regex match in the file: a
+    // second job's ceiling would otherwise never be range-checked.
+    const doc = yaml.load(POST_MERGE);
+    if (!isRecord(doc) || !isRecord(doc.jobs)) throw new Error("post-merge declares no jobs");
+    const ceilings = Object.values(doc.jobs)
+      .filter(isRecord)
+      .map((j) => j["timeout-minutes"]);
+    expect(ceilings.length).toBeGreaterThan(0);
+    for (const c of ceilings) {
+      expect(typeof c).toBe("number");
+      // Lower bound 8 so a revert to the 12 this first shipped - which was
+      // BELOW the 15 ci.yml's `validate` declares for strictly less work -
+      // cannot pass unnoticed. `npm ci` alone has been measured at 7.1 min on
+      // a warm cache (ci.yml:196-206), which is what 12 failed to clear.
+      expect(c as number).toBeGreaterThan(8);
+      // Upper bound 18: CLAUDE.md section 4's documented remedy, and a brake on
+      // ceilings drifting up instead of slow lanes being investigated.
+      expect(c as number).toBeLessThanOrEqual(18);
+    }
+  });
+
+  it("every job in the post-merge lane declares an explicit timeout", () => {
+    const doc = yaml.load(POST_MERGE);
+    if (!isRecord(doc) || !isRecord(doc.jobs)) throw new Error("post-merge declares no jobs");
+    for (const [name, job] of Object.entries(doc.jobs)) {
+      expect(isRecord(job) && typeof job["timeout-minutes"] === "number", `${name}`).toBe(true);
+    }
+  });
+
+  it("the post-merge lane cancels superseded runs", () => {
+    // Keyed per COMMIT: a branch-keyed group would cancel the verification of
+    // an earlier merge, which is the one artefact this lane exists to produce.
+    expect(POST_MERGE).toMatch(/group: hone-post-merge-\$\{\{ github\.sha \}\}/);
+    expect(POST_MERGE).toMatch(/cancel-in-progress: true/);
+  });
+
+  it("a merge commit is never diffed with a bare `git show --name-only`", () => {
+    // The defect itself, pinned across EVERY workflow. `git show --name-only`
+    // on a merge prints a combined diff, which for a clean merge is empty —
+    // that is how a risk-based lane came to run the full matrix every time.
+    // Any push-shaped diff must ask the first-parent question instead.
+    const offenders: string[] = [];
+    for (const [file, body] of readWorkflowDir()) {
+      // Three spellings produce a byte-identical empty result on a merge:
+      // `git show --name-only`, `git log -1 --name-only` and
+      // `git diff-tree --no-commit-id --name-only`. Verified on merge 389a3e12:
+      // all three yield 0 paths; only --first-parent yields 7. Pinning one
+      // spelling pins the typo, not the defect.
+      //
+      // Joined across continuations first, so a command split over two lines is
+      // judged as the single command git receives.
+      const joined = body.replace(/\\\n\s*/g, " ");
+      for (const [i, line] of joined.split("\n").entries()) {
+        if (line.trim().startsWith("#")) continue;
+        if (!/git (show|log|diff-tree)\b.*--name-only/.test(line)) continue;
+        if (!/--first-parent/.test(line)) offenders.push(`${file}:${i + 1}: ${line.trim()}`);
+      }
+    }
+    expect(offenders).toEqual([]);
   });
 });
 
@@ -1270,11 +1578,15 @@ describe("CI-HARDEN-01B — supply chain and least privilege", () => {
   //    checkout cannot be DELETED to dodge the opt-out without moving this
   //    number. Counted over the whole directory, so a checkout added by a new
   //    workflow lands here too.
+  //
+  //    CI-COST-01 moved it 8 -> 9: post-merge.yml carries one checkout. This
+  //    guard firing on that addition is the guard WORKING — a new workflow must
+  //    be reviewed into the count, never silently absorbed by it.
   it("the checkout count across the workflow directory is the reviewed one", () => {
     expect(
       checkoutCount(WORKFLOWS),
-      "7 in ci.yml (the aggregator has none) + 1 in nightly.yml",
-    ).toBe(8);
+      "7 in ci.yml (the aggregator has none) + 1 in nightly.yml + 1 in post-merge.yml",
+    ).toBe(9);
   });
 
   // -------------------------------------------------------------------------
