@@ -319,14 +319,44 @@ function resolveSpecifier(fromFile: string, spec: string): string | null {
 }
 
 /**
- * Every module transitively reachable from `app/`, with the path that got
- * there — a boolean answer to "is this live?" is far less useful in a failure
- * than the chain that made it live.
+ * The SHIPPED APPLICATION entry points — the roots of everything that runs in
+ * production.
+ *
+ * `app/` is the router. The three root-level files are Next's own entry points
+ * and ship with every request; they were missing, which meant an adapter or an
+ * import placed in `middleware.ts` was invisible to a guard whose whole job is
+ * reachability.
+ *
+ * DELIBERATELY ABSENT: `e2e/`, `scripts/`, and the test tree. They are not
+ * shipped, so a value constructed there cannot make the practitioner surface
+ * live — see the note above the adapter guard.
+ */
+function shippedApplicationRoots(): string[] {
+  const roots = [...walk("app")];
+  for (const entry of ["middleware.ts", "instrumentation.ts", "instrumentation-client.ts"]) {
+    try {
+      if (statSync(join(ROOT, entry)).isFile()) roots.push(entry);
+    } catch {
+      // not present in this tree
+    }
+  }
+  return roots;
+}
+
+/**
+ * Every module transitively reachable from the shipped application, with the
+ * path that got there — a boolean answer to "is this live?" is far less useful
+ * in a failure than the chain that made it live.
+ *
+ * THE ROOTS ARE SHIPPED ENTRY POINTS; THE TRAVERSAL GOES ANYWHERE. An
+ * application file that reaches `#683` through a helper in `lib/`, a barrel in
+ * `components/`, or any other directory is still reachable, and this walk
+ * follows it. Narrowing WHAT IS CLAIMED must never narrow WHERE THE WALK LOOKS.
  */
 function reachableFromApp(): Map<string, string[]> {
   const reached = new Map<string, string[]>();
   const queue: string[] = [];
-  for (const entry of walk("app")) {
+  for (const entry of shippedApplicationRoots()) {
     reached.set(entry, [entry]);
     queue.push(entry);
   }
@@ -367,14 +397,143 @@ const CONTRACT_MODULE = "lib/waitlist/invite-to-book-contract.ts";
  *               matched `implements`, a keyword nobody has to write.
  *   ANNOTATION  a value declared as, or asserted to satisfy, the type.
  */
+/** Object literals a module declares, and the bindings it pulls in from other
+ *  modules. Both halves are needed to follow a spread: `{...parts}` is answered
+ *  by `locals` when `parts` is declared here and by `imported` when it is not. */
+type LiteralIndex = {
+  locals: Map<string, ts.ObjectLiteralExpression>;
+  imported: Map<string, { spec: string; exported: string }>;
+};
+
+function literalIndexOf(source: ts.SourceFile): LiteralIndex {
+  const locals = new Map<string, ts.ObjectLiteralExpression>();
+  const imported = new Map<string, { spec: string; exported: string }>();
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.initializer &&
+      ts.isObjectLiteralExpression(node.initializer)
+    ) {
+      locals.set(node.name.text, node.initializer);
+    } else if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
+      const spec = node.moduleSpecifier.text;
+      const bindings = node.importClause?.namedBindings;
+      if (bindings && ts.isNamedImports(bindings)) {
+        for (const el of bindings.elements) {
+          imported.set(el.name.text, { spec, exported: (el.propertyName ?? el.name).text });
+        }
+      }
+      if (node.importClause?.name) {
+        imported.set(node.importClause.name.text, { spec, exported: "default" });
+      }
+    } else if (
+      ts.isExportDeclaration(node) &&
+      node.moduleSpecifier &&
+      ts.isStringLiteral(node.moduleSpecifier) &&
+      node.exportClause &&
+      ts.isNamedExports(node.exportClause)
+    ) {
+      // `export { parts } from "./m"` binds nothing locally, so a later lookup
+      // for `parts` has to follow the re-export or it dead-ends here.
+      for (const el of node.exportClause.elements) {
+        imported.set(el.name.text, {
+          spec: node.moduleSpecifier.text,
+          exported: (el.propertyName ?? el.name).text,
+        });
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(source, visit);
+  return { locals, imported };
+}
+
+/** Follow an imported binding to the literal the exporting module names, so a
+ *  shape assembled from parts that live in other files is still one shape.
+ *  Uses `resolveSpecifier` — the resolver the reachability walk already uses —
+ *  so "inside the repository" means the same thing in both places. */
+function exportedMemberNames(
+  fromRel: string,
+  binding: { spec: string; exported: string },
+  seen: Set<unknown>,
+): string[] {
+  const target = resolveSpecifier(fromRel, binding.spec);
+  if (target === null) return [];
+  const key = `${target}#${binding.exported}`;
+  if (seen.has(key)) return [];
+  seen.add(key);
+  let text: string;
+  try {
+    text = readFileSync(join(ROOT, target), "utf8");
+  } catch {
+    return [];
+  }
+  const source = ts.createSourceFile(
+    target,
+    text,
+    ts.ScriptTarget.Latest,
+    false,
+    target.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+  );
+  const index = literalIndexOf(source);
+  const local = index.locals.get(binding.exported);
+  if (local) return literalMemberNames(local, target, index, seen);
+  const reExported = index.imported.get(binding.exported);
+  return reExported ? exportedMemberNames(target, reExported, seen) : [];
+}
+
+/** Member names a literal contributes, following spreads — same-file and ACROSS
+ *  MODULE BOUNDARIES. `seen` breaks both `const a = {...b}; const b = {...a};`
+ *  and an import cycle between two files. */
+function literalMemberNames(
+  literal: ts.ObjectLiteralExpression,
+  rel: string,
+  index: LiteralIndex,
+  seen: Set<unknown>,
+): string[] {
+  if (seen.has(literal)) return [];
+  seen.add(literal);
+  const out: string[] = [];
+  for (const prop of literal.properties) {
+    if (ts.isSpreadAssignment(prop)) {
+      if (ts.isObjectLiteralExpression(prop.expression)) {
+        out.push(...literalMemberNames(prop.expression, rel, index, seen));
+      } else if (ts.isIdentifier(prop.expression)) {
+        const local = index.locals.get(prop.expression.text);
+        if (local) {
+          out.push(...literalMemberNames(local, rel, index, seen));
+        } else {
+          const binding = index.imported.get(prop.expression.text);
+          if (binding) out.push(...exportedMemberNames(rel, binding, seen));
+        }
+      }
+    } else if (
+      prop.name &&
+      (ts.isIdentifier(prop.name) || ts.isStringLiteral(prop.name))
+    ) {
+      out.push(prop.name.text);
+    }
+  }
+  return out;
+}
+
 function adapterSignals(
   rel: string,
   text: string,
   members: ReadonlyArray<string>,
 ): string[] {
-  // Cheap prefilter that cannot miss: a complete structural implementation must
-  // contain every member name, so it must contain this one.
-  if (!text.includes(members[0]) && !text.includes("WaitlistInvitationAdapter")) {
+  // Cheap prefilter, and the third clause is load-bearing rather than defensive.
+  // "A complete implementation must contain every member name, so it must
+  // contain this one" STOPPED BEING TRUE the moment spreads were followed across
+  // modules: `export const a = { ...partsA, ...partsB }` names no member at all.
+  // Without the spread clause the split-shape test below silently passes for the
+  // wrong reason, which is how this class of gap survived twice already.
+  if (
+    !text.includes(members[0]) &&
+    !text.includes("WaitlistInvitationAdapter") &&
+    !/\.\.\.\s*[A-Za-z_$]/.test(text)
+  ) {
     return [];
   }
   const source = ts.createSourceFile(
@@ -386,56 +545,17 @@ function adapterSignals(
   );
   const found: string[] = [];
 
-  // SPREADS CARRY MEMBERS, AND SPLITTING A LITERAL IN TWO USED TO EVADE THIS.
+  // SPREADS CARRY MEMBERS, AND SPLITTING A LITERAL USED TO EVADE THIS TWICE.
   // Neither half declares the full set and the merged literal declares no named
   // property at all, so the shape signal saw nothing while the merge typechecks
-  // as a real adapter. Same-file object literals are therefore indexed by the
-  // name they are bound to, and a spread of one contributes its members.
+  // as a real adapter. First the halves were same-file; the fix indexed local
+  // literals by name. Then the halves moved into two OTHER modules and the same
+  // evasion worked again — a measured gap, not a hypothetical one.
   //
-  // KNOWN BOUND, stated rather than implied: a spread whose source is imported
-  // from another module, or returned by a call, is not resolved. Following the
-  // import graph for that would be a second program; the seam is recorded here
-  // and in the test named "the bound this detector does not cross".
-  const literalsByName = new Map<string, ts.ObjectLiteralExpression>();
-  const index = (node: ts.Node): void => {
-    if (
-      ts.isVariableDeclaration(node) &&
-      ts.isIdentifier(node.name) &&
-      node.initializer &&
-      ts.isObjectLiteralExpression(node.initializer)
-    ) {
-      literalsByName.set(node.name.text, node.initializer);
-    }
-    ts.forEachChild(node, index);
-  };
-  ts.forEachChild(source, index);
-
-  /** Member names a literal contributes, following same-file spreads. `seen`
-   *  breaks the cycle in `const a = {...b}; const b = {...a};`. */
-  const literalMembers = (
-    literal: ts.ObjectLiteralExpression,
-    seen: Set<ts.Node>,
-  ): string[] => {
-    if (seen.has(literal)) return [];
-    seen.add(literal);
-    const out: string[] = [];
-    for (const prop of literal.properties) {
-      if (ts.isSpreadAssignment(prop)) {
-        const from = ts.isIdentifier(prop.expression)
-          ? literalsByName.get(prop.expression.text)
-          : ts.isObjectLiteralExpression(prop.expression)
-            ? prop.expression
-            : undefined;
-        if (from) out.push(...literalMembers(from, seen));
-      } else if (
-        prop.name &&
-        (ts.isIdentifier(prop.name) || ts.isStringLiteral(prop.name))
-      ) {
-        out.push(prop.name.text);
-      }
-    }
-    return out;
-  };
+  // So spreads are now followed across module boundaries too, by the resolver
+  // the reachability walk already uses. Recording that seam as a "known bound"
+  // was the cheaper-looking option and it is what let the second escape happen.
+  const index = literalIndexOf(source);
 
   const names = (
     list: ReadonlyArray<{ name?: ts.PropertyName | ts.BindingName }>,
@@ -452,7 +572,7 @@ function adapterSignals(
 
   const visit = (node: ts.Node): void => {
     if (ts.isObjectLiteralExpression(node)) {
-      const declared = literalMembers(node, new Set());
+      const declared = literalMemberNames(node, rel, index, new Set());
       if (members.every((m) => declared.includes(m))) found.push(`${rel} (shape)`);
     } else if (ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
       const declared = names(node.members);
@@ -510,7 +630,7 @@ describe("this module is UNREACHABLE from the application", () => {
   // against vitest's 5s default and so passed alone and failed under
   // full-suite CPU contention. A ceiling that equals its target is not a
   // ceiling — the same lesson the CI budgets in CLAUDE.md record three times.
-  it("no prototype entry point is reachable from app/, at ANY depth", { timeout: 30_000 }, () => {
+  it("no prototype entry point is reachable from the SHIPPED APPLICATION, at ANY depth", { timeout: 30_000 }, () => {
     const reached = reachableFromApp();
 
     // NON-VACUITY, THREE WAYS. A traversal that silently resolved nothing would
@@ -519,7 +639,7 @@ describe("this module is UNREACHABLE from the application", () => {
     // It genuinely follows edges: the LIVE model is reachable, and not because
     // it sits under app/ — it is pulled in through an import.
     const liveModel = reached.get("lib/waitlist/admission-model.ts");
-    expect(liveModel, "the live model is no longer reachable from app/").toBeDefined();
+    expect(liveModel, "the live model is no longer reachable from the shipped application").toBeDefined();
     expect(liveModel!.length).toBeGreaterThan(1);
     // And it follows them TRANSITIVELY, not just one hop out of app/.
     const deepest = Math.max(...[...reached.values()].map((p) => p.length));
@@ -529,7 +649,7 @@ describe("this module is UNREACHABLE from the application", () => {
       const path = reached.get(entry);
       expect(
         path === undefined ? null : path.join("\n  -> "),
-        `an app/ surface now reaches ${entry}, which no server action carries`,
+        `a shipped application path now reaches ${entry}, which no server action carries`,
       ).toBeNull();
     }
   });
@@ -670,28 +790,45 @@ describe("this module is UNREACHABLE from the application", () => {
     }
   });
 
-  it("no adapter implementation exists anywhere in the repository", () => {
-    // TYPESCRIPT IS STRUCTURALLY TYPED, AND THIS TEST WAS NOT.
+  it("no SHIPPED APPLICATION path binds an adapter for this surface", () => {
+    // THE REPOSITORY-WIDE CLAIM IS RETIRED, AND IT WAS THE DEFECT.
     //
-    // It matched `/implements\s+WaitlistInvitationAdapter/`, which only sees a
-    // NOMINAL clause. A plain object literal carrying the five methods
-    // satisfies the interface, typechecks as a real adapter, and left this
-    // assertion green — proved by writing one. That matters more than an
-    // ordinary gap: "there is nothing to fake a send with" is the claim that
-    // makes an unwired prototype safe to keep on a branch, and it was enforced
-    // by a regex over a keyword nobody has to write.
+    // This test used to assert that NOTHING ANYWHERE in the repository could
+    // structurally satisfy `WaitlistInvitationAdapter`. That is not the product
+    // invariant, and chasing it produced four rounds of findings that were all
+    // really the same complaint: the claim was broader than the property. Each
+    // round widened the detector — nominal clause, then shapes, then same-file
+    // spreads, then imported spreads and every source root — and each widening
+    // created the next gap, because "no value anywhere can have this shape" is
+    // not a property a source scan can honestly close.
     //
-    // Two signals now, both from the syntax tree.
+    // The load-bearing invariant is narrower and true:
+    //
+    //     #683 stays UNWIRED and UNREACHABLE from the shipped application until
+    //     a deliberately reviewed binding lands.
+    //
+    // A test helper, a script, an e2e fixture or a future isolated
+    // implementation may construct an adapter without making the practitioner
+    // surface live. Those are not application authority, and calling them
+    // violations trains the reader to dismiss this test.
+    //
+    // So the scan set is DERIVED, not enumerated: exactly the modules the
+    // shipped application can reach. That is the same graph the dormancy guard
+    // above walks, so the two cannot disagree, and an adapter assembled from
+    // IMPORTED SPREADS is caught the moment an application path reaches the
+    // module holding it — which is the only moment it matters.
     const members = adapterMemberNames();
     // Derived from the interface, not copied beside it: a sixth method on the
     // contract tightens this automatically instead of being silently optional.
     expect(members).toContain("inviteToBook");
     expect(members.length).toBeGreaterThan(4);
 
-    const sources = [...walk("app"), ...walk("lib"), ...walk("components")];
-    expect(sources.length).toBeGreaterThan(50);
+    const reachable = [...reachableFromApp().keys()];
+    // Non-vacuity: the application graph must actually have been walked, or an
+    // empty set would report "no adapter is reachable" for the wrong reason.
+    expect(reachable.length).toBeGreaterThan(200);
 
-    const offenders = sources.flatMap((rel) =>
+    const offenders = reachable.flatMap((rel) =>
       rel === CONTRACT_MODULE
         ? []
         : adapterSignals(rel, readFileSync(join(ROOT, rel), "utf8"), members),
@@ -699,7 +836,7 @@ describe("this module is UNREACHABLE from the application", () => {
 
     expect(
       [...new Set(offenders)].sort(),
-      "something in this repository is an invitation adapter",
+      "a module the shipped application can reach is an invitation adapter",
     ).toEqual([]);
   });
 });
@@ -802,15 +939,62 @@ describe("the adapter detector, exercised on sources that ARE adapters", () => {
     expect(adapterSignals("probe.ts", cyclic, M)).toEqual([]);
   });
 
-  it("the bound this detector does not cross", () => {
-    // STATED, NOT IMPLIED. A spread whose source is imported from another
-    // module is not resolved — following the import graph for it would be a
-    // second program. Recording the seam is the honest alternative to a test
-    // list that reads as exhaustive and is not, which is exactly how the spread
-    // case was missed: considered, set aside, then described as covered.
-    const crossModule =
-      'import { base } from "./elsewhere";\nexport const a = { ...base };';
-    expect(adapterSignals("probe.ts", crossModule, M)).toEqual([]);
+  it("a shape SPLIT ACROSS MODULES is still one shape", () => {
+    // The evasion this closes, pinned on real files so it cannot rot into an
+    // assertion about a string literal: two modules each hold part of the
+    // adapter, a third spreads them together, and no single file declares the
+    // full set. NEGATIVE CONTROL: deleting the `index.imported` branch in
+    // `literalMemberNames` turns this red.
+    const dir = "tests/fixtures/adapter-spread";
+    const read = (f: string) => readFileSync(join(ROOT, dir, f), "utf8");
+    const halves = [
+      ...literalMemberNames(
+        literalIndexOf(
+          ts.createSourceFile("a.ts", read("parts-a.ts"), ts.ScriptTarget.Latest, false),
+        ).locals.get("partsA")!,
+        `${dir}/parts-a.ts`,
+        literalIndexOf(
+          ts.createSourceFile("a.ts", read("parts-a.ts"), ts.ScriptTarget.Latest, false),
+        ),
+        new Set(),
+      ),
+      ...literalMemberNames(
+        literalIndexOf(
+          ts.createSourceFile("b.ts", read("parts-b.ts"), ts.ScriptTarget.Latest, false),
+        ).locals.get("partsB")!,
+        `${dir}/parts-b.ts`,
+        literalIndexOf(
+          ts.createSourceFile("b.ts", read("parts-b.ts"), ts.ScriptTarget.Latest, false),
+        ),
+        new Set(),
+      ),
+    ];
+    // Non-vacuity, and a self-explaining failure if the interface gains a
+    // member: the fixtures must together cover exactly the contract, and
+    // neither half may cover it alone.
+    expect([...halves].sort()).toEqual([...M].sort());
+    expect(adapterSignals(`${dir}/parts-a.ts`, read("parts-a.ts"), M)).toEqual([]);
+    expect(adapterSignals(`${dir}/parts-b.ts`, read("parts-b.ts"), M)).toEqual([]);
+
+    expect(
+      adapterSignals(`${dir}/assembled.ts`, read("assembled.ts"), M),
+    ).toContain(`${dir}/assembled.ts (shape)`);
+  });
+
+  it("the structural scan is a tripwire; REACHABILITY is the invariant", () => {
+    // Still uncrossed, and stated: this reads source, it does not run it, so a
+    // value built by `Object.assign` or returned from a factory is not tracked.
+    expect(
+      adapterSignals("probe.ts", "export const a = Object.assign({}, parts);", M),
+    ).toEqual([]);
+
+    // THAT BOUND IS NOT LOAD-BEARING, and this is the reason. Binding an
+    // adapter to the practitioner surface requires IMPORTING one of its entry
+    // points — including the contract module that declares the type — and the
+    // dormancy guard catches that at any depth regardless of how the adapter
+    // value was assembled. The structural scan only shortens the distance
+    // between someone writing an adapter and someone being told about it.
+    expect(PROTOTYPE_ENTRY_POINTS).toContain(CONTRACT_MODULE);
   });
 
   it("tightens automatically when the contract grows a method", () => {
