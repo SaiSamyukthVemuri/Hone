@@ -65,12 +65,62 @@ set local lock_timeout = '5s';
 -- blast radius on an existing table. The allowance therefore lives in its OWN
 -- table, which starts with no grants at all and needs no privilege surgery
 -- anywhere else.
+--
+-- A ROUND IS A DURABLE ROW, NOT A MUTABLE SLOT. The first shape keyed this
+-- table by studio_id alone, so "opening the next round" could only mean
+-- overwriting the one row -- and consumption, having no round to belong to,
+-- was counted over the studio's whole history instead. Measured on that shape:
+-- after admitting and converting ONE prospect against an allowance of 1, a
+-- fresh round at allowance 1 answered `round_full` forever. The allowance was
+-- a LIFETIME CAP wearing the word "per-round".
+--
+-- The product ruling is that it is a PER-ROUND QUOTA, so the schema now says
+-- so: every round is its own immutable row with its own identity, its own
+-- opening and closing evidence, and its own allowance. Closing a round never
+-- erases it; opening the next one never overwrites the last.
 create table if not exists public.studio_waitlist_admission_rounds (
-  studio_id  uuid primary key references public.studios(id) on delete cascade,
+  id         uuid primary key default gen_random_uuid(),
+  studio_id  uuid not null references public.studios(id) on delete cascade,
   allowance  integer not null,
+  -- SERVER-OWNED. Both stamps come from the opening/closing command's own
+  -- post-lock clock; no caller supplies either.
+  opened_at  timestamptz not null default now(),
+  opened_by_practitioner_id uuid not null,
+  closed_at  timestamptz,
+  closed_by_practitioner_id uuid,
   updated_at timestamptz not null default now(),
-  constraint studio_waitlist_admission_rounds_allowance_check check (allowance >= 0)
+
+  constraint studio_waitlist_admission_rounds_allowance_check check (allowance >= 0),
+  -- Closing is one fact with two halves. A closed_at with no actor, or an actor
+  -- with no instant, describes a close nobody performed.
+  constraint studio_waitlist_admission_rounds_close_evidence_check
+    check ((closed_at is null) = (closed_by_practitioner_id is null)),
+  constraint studio_waitlist_admission_rounds_close_order_check
+    check (closed_at is null or closed_at >= opened_at),
+  -- STRUCTURAL TENANCY, the same composite shape 0185/0188 already use: a
+  -- practitioner from another studio cannot be recorded here even if a command
+  -- were wrong.
+  constraint studio_waitlist_admission_rounds_opener_same_studio_fk
+    foreign key (opened_by_practitioner_id, studio_id)
+    references public.practitioners (id, studio_id) on delete restrict,
+  constraint studio_waitlist_admission_rounds_closer_same_studio_fk
+    foreign key (closed_by_practitioner_id, studio_id)
+    references public.practitioners (id, studio_id) on delete restrict,
+  -- The target of the invitation's composite same-studio FK below. It is what
+  -- makes "an invitation may only name a round of its OWN studio" structural
+  -- rather than policed.
+  constraint studio_waitlist_admission_rounds_id_studio_uniq unique (id, studio_id)
 );
+
+-- AT MOST ONE OPEN ROUND PER STUDIO, enforced by the database rather than by
+-- the command. A second open row is the one state that would make "the current
+-- round" ambiguous, and no application code is trusted to prevent it.
+create unique index if not exists studio_waitlist_admission_rounds_one_open_per_studio
+  on public.studio_waitlist_admission_rounds (studio_id)
+  where closed_at is null;
+
+create index if not exists studio_waitlist_admission_rounds_studio_opened_idx
+  on public.studio_waitlist_admission_rounds (studio_id, opened_at desc);
 
 alter table public.studio_waitlist_admission_rounds enable row level security;
 
@@ -78,8 +128,14 @@ revoke all on public.studio_waitlist_admission_rounds from public;
 revoke all on public.studio_waitlist_admission_rounds from anon;
 revoke all on public.studio_waitlist_admission_rounds from authenticated;
 revoke all on public.studio_waitlist_admission_rounds from service_role;
-grant select (studio_id, allowance, updated_at)
-  on public.studio_waitlist_admission_rounds to authenticated;
+-- READ ONLY, and by COLUMN LIST. The owner's settings page needs to render the
+-- round; nothing in a browser may forge one, alter its allowance, reopen it, or
+-- move an invitation between rounds. Every mutation goes through the two
+-- SECURITY DEFINER commands below.
+grant select (
+  id, studio_id, allowance, opened_at, opened_by_practitioner_id,
+  closed_at, closed_by_practitioner_id, updated_at
+) on public.studio_waitlist_admission_rounds to authenticated;
 
 -- IDEMPOTENT, like every applied migration in this repo. Without the drop,
 -- re-applying aborts the transaction here and every later statement — including
@@ -92,12 +148,18 @@ create policy "studio_waitlist_admission_rounds_owner_select"
   using (public.is_studio_owner(studio_id));
 
 comment on table public.studio_waitlist_admission_rounds is
-  'WAIT-03B: explicit per-round manual intake allowance, set by the owner. '
-  'A studio with NO ROW here has no open round and no invitation may issue. '
-  'It is never defaulted to a live number and never inferred from calendar '
-  'emptiness. Deliberately its own table: a new column on studios would '
-  'inherit the browser-reachable table-level UPDATE grant anon/authenticated '
-  'already hold, and a column-level revoke cannot remove a table-level grant.';
+  'WAIT-03B: one DURABLE ROW PER ADMISSION ROUND. The allowance is a PER-ROUND '
+  'QUOTA, not a lifetime cap: consumption is counted only over invitations '
+  'stamped with that round''s id, so a new round starts at zero however many '
+  'prospects earlier rounds admitted. A studio with no OPEN row (closed_at is '
+  'null) has no open round and no invitation may issue; the allowance is never '
+  'defaulted to a live number and never inferred from calendar emptiness. '
+  'Closed rounds are retained as history and are never overwritten. At most one '
+  'row per studio may be open, enforced by a partial unique index rather than '
+  'by application code. Deliberately its own table: a new column on studios '
+  'would inherit the browser-reachable table-level UPDATE grant anon and '
+  'authenticated already hold, and a column-level revoke cannot remove a '
+  'table-level grant.';
 
 -- ---------------------------------------------------------------------
 -- 2. OFFER SCOPE + DECLINE OUTCOME on the invitation.
@@ -109,7 +171,26 @@ alter table public.new_client_waitlist_invitations
   add column if not exists scope_start_date      date,
   add column if not exists scope_end_date        date,
   add column if not exists scope_allowed_weekdays smallint[],
-  add column if not exists declined_at           timestamptz;
+  add column if not exists declined_at           timestamptz,
+  -- THE ROUND THAT AUTHORISED THIS INVITATION. Nullable, and deliberately so:
+  -- invitations issued by 0188..0191 predate rounds entirely and belong to
+  -- none. That is the honest record AND the safe one -- a legacy row cannot
+  -- consume any round's capacity, because consumption is counted only over
+  -- rows stamped with the round being asked about.
+  add column if not exists admission_round_id    uuid;
+
+-- SAME-STUDIO BY CONSTRUCTION. A caller cannot name another studio's round to
+-- borrow its allowance: the composite key makes a cross-studio pairing
+-- unrepresentable rather than merely refused.
+alter table public.new_client_waitlist_invitations
+  drop constraint if exists new_client_waitlist_invitations_round_same_studio_fk;
+alter table public.new_client_waitlist_invitations
+  add constraint new_client_waitlist_invitations_round_same_studio_fk
+  foreign key (admission_round_id, studio_id)
+  references public.studio_waitlist_admission_rounds (id, studio_id) on delete restrict;
+
+create index if not exists new_client_waitlist_invitations_admission_round_idx
+  on public.new_client_waitlist_invitations (admission_round_id);
 
 -- Tenancy: the offered service must belong to the SAME studio as the
 -- invitation. Composite FK, the same shape 0188 uses for entry and issuer.
@@ -226,42 +307,87 @@ create unique index if not exists new_client_waitlist_invitations_no_repeat_decl
 --    consumed = outstanding permission + permission already spent on a booking.
 --    A booked permission stays consumed; it is NOT recycled on cancellation.
 -- ---------------------------------------------------------------------
-create or replace function public.waitlist_admission_consumed(p_studio_id uuid)
+-- THE STUDIO-LIFETIME COUNTER IS WITHDRAWN, not renamed. Keeping the name
+-- `waitlist_admission_consumed(uuid)` while silently swapping its argument from
+-- a studio to a round would leave a same-signature function whose meaning had
+-- changed underneath every reader -- exactly the trap this slice has already
+-- paid for elsewhere. 0192 is unapplied, so this drops something production has
+-- never seen.
+drop function if exists public.waitlist_admission_consumed(uuid);
+
+-- ---------------------------------------------------------------------
+-- ROUND-SCOPED CONSUMPTION. One round, one quota, counted over invitations
+-- stamped with that round and nothing else.
+--
+-- TWO CORRECTIONS LIVE IN THIS ONE QUERY.
+--
+-- 1. IT IS SCOPED TO A ROUND. The previous shape counted every converted entry
+--    the studio had ever produced, so old rounds consumed new ones forever.
+--    Measured: allowance 1, admit+convert one prospect, and the NEXT round at
+--    allowance 1 answered `round_full` with nobody in it.
+--
+-- 2. A REDEEMED INVITATION COUNTS FROM REDEMPTION, not from conversion. The
+--    previous shape counted `outstanding` (redeemed_at IS NULL) plus
+--    `converted entries`, so an invitation that had been redeemed but not yet
+--    converted was in NEITHER term. Measured: consumption fell 1 -> 0 -> 1 and
+--    a second prospect was admitted against an allowance of 1. That window is
+--    not a race -- it is the whole booking flow, a human choosing a slot.
+--
+-- ONE ROW, ONE SEAT, COUNTED ONCE. This reads invitations only. Conversion is
+-- not joined at all, because conversion REQUIRES redemption, so a redeemed row
+-- already carries its own seat and adding an entry-side term could only
+-- double-count it.
+--
+-- MONOTONIC ACROSS THE LIFECYCLE, which is what closes the race without a new
+-- lock: LIVE counts through the second limb, REDEEMED and CONVERTED both count
+-- through the first, and no committed state between them counts zero.
+--
+-- TERMINAL BEFORE REDEMPTION RELEASES THE SEAT. declined / expired / released
+-- fail the second limb and never satisfy the first, so the seat returns to the
+-- round -- which is the point of ending an offer early. A lapsed window does
+-- the same with no state change at all, by `expires_at`.
+create or replace function public.waitlist_admission_round_consumed(p_round_id uuid)
 returns integer
 language sql
 stable
 security invoker
 set search_path = pg_catalog, pg_temp
 as $$
-  select
-    (
-      -- outstanding: live invitations whose response window has not passed
-      select count(*)
-        from public.new_client_waitlist_invitations i
-       where i.studio_id   = p_studio_id
-         and i.redeemed_at is null
-         and i.expired_at  is null
-         and i.released_at is null
-         and i.declined_at is null
-         and i.expires_at  > clock_timestamp()
-    )
-    +
-    (
-      -- spent: entries converted after redeeming an invitation
-      select count(distinct e.id)
-        from public.new_client_waitlist_entries e
-        join public.new_client_waitlist_invitations i
-          on i.entry_id = e.id and i.studio_id = e.studio_id
-       where e.studio_id = p_studio_id
-         and e.status    = 'converted'
-         and i.redeemed_at is not null
-    )
+  select count(*)::integer
+    from public.new_client_waitlist_invitations i
+   where i.admission_round_id = p_round_id
+     and (
+           -- SPENT: redemption consumes the seat for the rest of the round, and
+           -- a later cancellation does not recycle it.
+           i.redeemed_at is not null
+           or
+           -- OUTSTANDING: still answerable, and its window has not lapsed.
+           --
+           -- `redeemed_at is null` makes the two limbs DISJOINT, which is not
+           -- cosmetic. Without it a redeemed invitation inside its original
+           -- window satisfies BOTH, and the SPENT limb only becomes load-bearing
+           -- once that window lapses — so a test suite that never ages a
+           -- redeemed row would pass with the SPENT limb deleted entirely. Found
+           -- exactly that way, by a negative control that failed to go red.
+           -- Disjoint limbs also make "one row, one seat" obvious rather than
+           -- something a reader has to reason about.
+           (    i.redeemed_at is null
+            and i.expired_at  is null
+            and i.released_at is null
+            and i.declined_at is null
+            and i.expires_at  > clock_timestamp())
+         )
 $$;
 
-comment on function public.waitlist_admission_consumed(uuid) is
-  'WAIT-03B: admission permission consumed for a studio. Outstanding live '
-  'invitations plus permissions already spent on a booking. A declined or '
-  'expired invitation frees permission; a booked one does not, and is not '
+comment on function public.waitlist_admission_round_consumed(uuid) is
+  'WAIT-03B: admission permission consumed WITHIN ONE ROUND, counted only over '
+  'invitations stamped with that round. A new round therefore starts at zero '
+  'however many prospects earlier rounds admitted — the allowance is a '
+  'per-round quota, not a lifetime cap. A seat is consumed while an invitation '
+  'is still answerable, and from the moment it is REDEEMED — not from '
+  'conversion, which would leave the whole booking flow counting zero. Each '
+  'invitation counts at most once. A declined, expired or released invitation '
+  'frees its seat back to the round; a redeemed one does not, and is not '
   'recycled when an appointment is later cancelled.';
 
 -- ---------------------------------------------------------------------
@@ -401,6 +527,7 @@ as $$
 declare
   v_allowance integer;
   v_consumed  integer;
+  v_round_id  uuid;
   v_issue     record;
   v_inv_id    uuid;
 begin
@@ -411,12 +538,17 @@ begin
     return query select 'unknown_studio'::text, null::text, null::uuid; return;
   end if;
 
-  select r.allowance into v_allowance
+  -- THE OPEN ROUND IS IDENTIFIED AND LOCKED ONCE, and its identity is carried
+  -- through every later decision in this command. `closed_at is null` is what
+  -- makes it THE current round; the partial unique index guarantees there is at
+  -- most one, so no ordering or tie-break is needed or wanted.
+  select r.id, r.allowance into v_round_id, v_allowance
     from public.studio_waitlist_admission_rounds r
    where r.studio_id = p_studio_id
+     and r.closed_at is null
    for update;
 
-  if v_allowance is null then
+  if v_round_id is null then
     return query select 'no_round_open'::text, null::text, null::uuid; return;
   end if;
 
@@ -485,8 +617,10 @@ begin
     return query select 'already_declined_offer'::text, null::text, null::uuid; return;
   end if;
 
-  -- ALLOWANCE CHECKED UNDER THE STUDIO LOCK, not before it.
-  v_consumed := public.waitlist_admission_consumed(p_studio_id);
+  -- ALLOWANCE CHECKED UNDER THE STUDIO AND ROUND LOCKS, not before them, and
+  -- against THE ROUND ALREADY LOCKED ABOVE -- never by re-asking which round is
+  -- current, which could answer differently after the decision.
+  v_consumed := public.waitlist_admission_round_consumed(v_round_id);
   if v_consumed >= v_allowance then
     return query select 'round_full'::text, null::text, null::uuid; return;
   end if;
@@ -514,11 +648,16 @@ begin
   -- Stamp the scope onto the row just created, inside this same transaction.
   -- 0188's append-only trigger guards identity, tenancy, token and window and
   -- does not forbid these columns, so scope is settable exactly once here.
+  -- THE ROUND IS STAMPED IN THE SAME STATEMENT AS THE SCOPE, from the variable
+  -- captured under the lock above. The invitation therefore belongs to exactly
+  -- the round whose allowance authorised it, and the append-only trigger makes
+  -- that binding immutable from here on.
   update public.new_client_waitlist_invitations i
      set scope_service_id       = p_service_id,
          scope_start_date       = p_start_date,
          scope_end_date         = p_end_date,
-         scope_allowed_weekdays = p_allowed_weekdays
+         scope_allowed_weekdays = p_allowed_weekdays,
+         admission_round_id     = v_round_id
    where i.studio_id   = p_studio_id
      and i.entry_id    = p_entry_id
      and i.redeemed_at is null and i.expired_at is null
@@ -1712,6 +1851,205 @@ revoke all privileges on function public.record_new_client_waitlist_conversion(u
 grant  execute on function public.record_new_client_waitlist_conversion(uuid, uuid, uuid) to service_role;
 
 -- ---------------------------------------------------------------------
+-- 14d. OPENING AND CLOSING A ROUND IS A COMMAND, NOT A TABLE WRITE.
+--
+--      Before this, the round table had NO writer anywhere: no RPC, no server
+--      action, no application path. The only way to establish a round was a
+--      raw service-role upsert, which is not a product contract -- it has no
+--      owner check, no attribution, no close evidence and nothing stopping two
+--      open rounds. Both commands below re-derive authority in the database
+--      from (studio_id, auth user id) through the existing resolver, exactly as
+--      every other command in this file does.
+--
+--      LOCK ORDER IS THE CANONICAL ONE: STUDIO -> ROUND. Issuance takes
+--      studios then the round; these take the same two in the same order, so an
+--      open or close cannot invert against a concurrent issue.
+--
+--      MID-ROUND ALLOWANCE CHANGE IS DELIBERATELY NOT OFFERED. Nothing in the
+--      shipped product asks for it, and it is the one edit that could put a
+--      round below what it has already spent. When a studio wants a different
+--      number it closes the round and opens the next one, which leaves history
+--      instead of rewriting it. Adding it later is a small forward command; it
+--      would have to refuse an allowance below the round's consumed count.
+-- ---------------------------------------------------------------------
+create or replace function public.open_new_client_waitlist_admission_round(
+  p_studio_id     uuid,
+  p_actor_user_id uuid,
+  p_allowance     integer
+)
+returns table (result text, round_id uuid)
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog, pg_temp
+as $$
+declare
+  v_actor uuid;
+  v_code  text;
+  v_now   timestamptz;
+  v_id    uuid;
+begin
+  select r.practitioner_id, r.code into v_actor, v_code
+    from public.new_client_waitlist_resolve_owner(p_studio_id, p_actor_user_id) r;
+  if v_code <> 'ok' then
+    return query select v_code, null::uuid; return;
+  end if;
+
+  -- NO DEFAULTED ALLOWANCE, EVER. A null is not "unlimited" and not "the last
+  -- one again"; it is a caller that did not say. Zero is legitimate and means
+  -- a round that admits nobody yet.
+  if p_allowance is null or p_allowance < 0 then
+    return query select 'invalid_input'::text, null::uuid; return;
+  end if;
+
+  perform 1 from public.studios s where s.id = p_studio_id for update;
+  if not found then
+    return query select 'unknown_studio'::text, null::uuid; return;
+  end if;
+
+  -- Decided under the lock, so two concurrent opens cannot both see "none
+  -- open". The partial unique index is still the last word -- the exception
+  -- handler below turns its verdict into this command's own vocabulary rather
+  -- than letting a 23505 escape.
+  perform 1 from public.studio_waitlist_admission_rounds r
+   where r.studio_id = p_studio_id and r.closed_at is null
+   for update;
+  if found then
+    return query select 'round_already_open'::text, null::uuid; return;
+  end if;
+
+  v_now := clock_timestamp();
+
+  begin
+    insert into public.studio_waitlist_admission_rounds
+      (studio_id, allowance, opened_at, opened_by_practitioner_id, updated_at)
+    values (p_studio_id, p_allowance, v_now, v_actor, v_now)
+    returning id into v_id;
+  exception
+    when unique_violation then
+      return query select 'round_already_open'::text, null::uuid; return;
+  end;
+
+  return query select 'opened'::text, v_id;
+end;
+$$;
+
+create or replace function public.close_new_client_waitlist_admission_round(
+  p_studio_id     uuid,
+  p_actor_user_id uuid
+)
+returns text
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog, pg_temp
+as $$
+declare
+  v_actor uuid;
+  v_code  text;
+  v_id    uuid;
+begin
+  select r.practitioner_id, r.code into v_actor, v_code
+    from public.new_client_waitlist_resolve_owner(p_studio_id, p_actor_user_id) r;
+  if v_code <> 'ok' then return v_code; end if;
+
+  perform 1 from public.studios s where s.id = p_studio_id for update;
+  if not found then return 'unknown_studio'; end if;
+
+  select r.id into v_id
+    from public.studio_waitlist_admission_rounds r
+   where r.studio_id = p_studio_id and r.closed_at is null
+   for update;
+  if v_id is null then return 'no_round_open'; end if;
+
+  -- A ROUND MAY NOT CLOSE WHILE AN OFFER IT AUTHORISED IS STILL ANSWERABLE.
+  --
+  -- Closing is what moves the quota to the next round. If a live unredeemed
+  -- invitation could be left behind, its seat would leave the accounting the
+  -- moment the round closed -- while the recipient could still redeem it and
+  -- book. The studio would then have admitted someone no round is counting.
+  --
+  -- The owner is not stuck: the existing lifecycle already ends an outstanding
+  -- offer early (release), and an unanswered one lapses on its own window. Only
+  -- SETTLED rounds close -- redeemed, declined, expired, released, or lapsed.
+  if exists (
+    select 1 from public.new_client_waitlist_invitations i
+     where i.admission_round_id = v_id
+       and i.redeemed_at is null
+       and i.expired_at  is null
+       and i.released_at is null
+       and i.declined_at is null
+       and i.expires_at  > clock_timestamp()
+  ) then
+    return 'live_offers_outstanding';
+  end if;
+
+  update public.studio_waitlist_admission_rounds r
+     set closed_at = clock_timestamp(),
+         closed_by_practitioner_id = v_actor,
+         updated_at = clock_timestamp()
+   where r.id = v_id and r.closed_at is null;
+
+  return 'closed';
+end;
+$$;
+
+-- ---------------------------------------------------------------------
+-- 14c. AN INVITATION'S ROUND IS IMMUTABLE.
+--
+--      0188's append-only trigger already freezes identity, tenancy, token and
+--      the validity window, and its bytes are APPLIED AND FROZEN. It cannot
+--      know about a column added here, so the guard is re-created forward with
+--      `admission_round_id` added to the same immutable set.
+--
+--      WITHOUT THIS, THE QUOTA IS ADVISORY. A row could be moved from a full
+--      round to an emptier one after issuance -- or out of a round entirely --
+--      and the count would follow it. The seat an invitation spent must stay
+--      spent in the round that authorised it.
+--
+--      Issuance itself still works: the trigger is BEFORE UPDATE, and the stamp
+--      in issue_scoped_ moves the column from NULL to its round inside the same
+--      transaction, which `is distinct from` permits exactly once because every
+--      later write would be from a non-NULL value.
+create or replace function public.new_client_waitlist_invitations_append_only()
+returns trigger
+language plpgsql
+set search_path = pg_catalog, pg_temp
+as $$
+begin
+  if new.id is distinct from old.id
+     or new.studio_id is distinct from old.studio_id
+     or new.entry_id is distinct from old.entry_id
+     or new.token_hash is distinct from old.token_hash
+     or new.issued_at is distinct from old.issued_at
+     or new.expires_at is distinct from old.expires_at
+     or new.issued_by_practitioner_id is distinct from old.issued_by_practitioner_id then
+    raise exception
+      'new_client_waitlist_invitations: identity, tenancy, token and validity window are immutable; there is no renewal or extension'
+      using errcode = 'check_violation';
+  end if;
+
+  -- The round may be set ONCE, at issuance, and never changed or cleared after.
+  if old.admission_round_id is not null
+     and new.admission_round_id is distinct from old.admission_round_id then
+    raise exception
+      'new_client_waitlist_invitations: the admission round that authorised an invitation is immutable'
+      using errcode = 'check_violation';
+  end if;
+
+  if (old.redeemed_at is not null and new.redeemed_at is distinct from old.redeemed_at)
+     or (old.expired_at is not null and new.expired_at is distinct from old.expired_at)
+     or (old.released_at is not null and new.released_at is distinct from old.released_at) then
+    raise exception
+      'new_client_waitlist_invitations: a terminal outcome is recorded once and cannot be rewritten'
+      using errcode = 'check_violation';
+  end if;
+
+  return new;
+end;
+$$;
+
+-- ---------------------------------------------------------------------
 -- 15. PRIVILEGES. service_role ONLY, revoked from all four BY NAME first.
 --
 --     Supabase's ALTER DEFAULT PRIVILEGES grants EXECUTE to anon,
@@ -1725,7 +2063,9 @@ do $$
 declare f text;
 begin
   foreach f in array array[
-    'public.waitlist_admission_consumed(uuid)',
+    'public.waitlist_admission_round_consumed(uuid)',
+    'public.open_new_client_waitlist_admission_round(uuid, uuid, integer)',
+    'public.close_new_client_waitlist_admission_round(uuid, uuid)',
     'public.issue_scoped_new_client_waitlist_invitation(uuid, uuid, uuid, uuid, date, date, smallint[], integer)',
     'public.resolve_new_client_waitlist_invitation(text)',
     'public.begin_waitlist_invitation_proof(text, integer)',

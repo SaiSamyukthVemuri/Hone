@@ -5,6 +5,7 @@ import {
   asRole,
   closePool,
   resolveLocalDbUrl,
+  seedMember,
   seedStudio,
   type SeededStudio,
 } from "./helpers/harness";
@@ -60,13 +61,27 @@ async function seedService(studioId: string, label: string): Promise<string> {
   return r.rows[0].id as string;
 }
 
-async function openRound(studioId: string, allowance: number): Promise<void> {
-  await adminQuery(
-    `insert into public.studio_waitlist_admission_rounds (studio_id, allowance)
-     values ($1, $2)
-     on conflict (studio_id) do update set allowance = excluded.allowance`,
-    [studioId, allowance],
+/**
+ * Open a round through the SUPPORTED COMMAND, not a raw upsert.
+ *
+ * A round is now a durable row with its own identity, so there is no
+ * "upsert by studio_id" to fall back on -- and a fixture that wrote the table
+ * directly would be testing a path the product does not offer. Takes the
+ * studio's owner, because the command re-derives authority from the session
+ * user exactly as every other command here does.
+ */
+async function openRound(
+  studioId: string,
+  allowance: number,
+  userId: string,
+): Promise<string> {
+  const r = await adminQuery(
+    `select result, round_id
+       from public.open_new_client_waitlist_admission_round($1, $2, $3)`,
+    [studioId, userId, allowance],
   );
+  expect(r.rows[0].result, "the fixture must actually open a round").toBe("opened");
+  return r.rows[0].round_id as string;
 }
 
 /** A studio with an open round, a claimed entry, and one live SCOPED offer. */
@@ -80,7 +95,7 @@ async function seedOffer(
 ): Promise<Offer> {
   const studio = await seedStudio(label);
   const serviceId = await seedService(studio.studioId, label);
-  await openRound(studio.studioId, allowance);
+  await openRound(studio.studioId, allowance, studio.userId);
 
   const email = `p-${label}-${studio.studioId.slice(0, 8)}@harness.local`;
   const name = `Prospect ${label}`;
@@ -195,7 +210,7 @@ async function claimedEntryOnly(
   label: string,
 ): Promise<{ studio: SeededStudio; entryId: string }> {
   const studio = await seedStudio(label);
-  await openRound(studio.studioId, 10);
+  await openRound(studio.studioId, 10, studio.userId);
   const joined = await adminQuery(
     `select entry_id from public.join_new_client_waitlist($1, $2, $3, null)`,
     [
@@ -809,7 +824,7 @@ describe("0192 — a stored invitation cannot express a permission its owner did
   it("outstanding permission can never exceed the round allowance", async () => {
     const studio = await seedStudio("allowance");
     const serviceId = await seedService(studio.studioId, "allowance");
-    await openRound(studio.studioId, 1);
+    await openRound(studio.studioId, 1, studio.userId);
 
     const ids: string[] = [];
     for (const label of ["one", "two"]) {
@@ -844,7 +859,7 @@ describe("0192 — a stored invitation cannot express a permission its owner did
   it("a declined invitation FREES permission, so a later offer is possible", async () => {
     const studio = await seedStudio("free-perm");
     const serviceId = await seedService(studio.studioId, "free-perm");
-    await openRound(studio.studioId, 1);
+    await openRound(studio.studioId, 1, studio.userId);
 
     const mk = async (label: string) => {
       const j = await adminQuery(
@@ -1280,7 +1295,9 @@ describe("0192 — recipient identity is released only to a proven recipient", (
 // ===========================================================================
 describe("0192 — privileges, proved against the database rather than the file", () => {
   const COMMANDS = [
-    "public.waitlist_admission_consumed(uuid)",
+    "public.waitlist_admission_round_consumed(uuid)",
+    "public.open_new_client_waitlist_admission_round(uuid, uuid, integer)",
+    "public.close_new_client_waitlist_admission_round(uuid, uuid)",
     "public.issue_scoped_new_client_waitlist_invitation(uuid,uuid,uuid,uuid,date,date,smallint[],integer)",
     "public.resolve_new_client_waitlist_invitation(text)",
     "public.begin_waitlist_invitation_proof(text,integer)",
@@ -2666,8 +2683,16 @@ describe("0192 §14b — a declined row is closed to expire, release and convers
 // So a command that still asks the three-terminal question has NO CHOICE but to
 // select A and reach for its row lock. A second connection holds that lock. The
 // caller runs under a short `statement_timeout`, so a broken implementation
-// blocks and dies with 57014; a correct one never asks for the lock at all and
+// blocks and dies with 57014; a correct one never asks for that lock and
 // returns its ordinary no-live-invitation answer.
+//
+// WHAT THIS PROVES, EXACTLY — and it is narrower than the earlier wording
+// claimed. It proves that none of these paths SELECTS the declined row as the
+// current cycle, requests a CONFLICTING ROW LOCK on it, or applies a TERMINAL
+// MUTATION to it. It does NOT prove the row is never READ: `expire_` plainly
+// scans this table in several `exists (...)` subqueries that touch A and simply
+// never match or lock it. Those reads are correct and harmless, and a test that
+// forbade them would be asserting a rule the product does not have.
 //
 // Nothing here depends on which row PostgreSQL happens to return first -- the
 // weakness that made the earlier behavioural tests unable to catch the
@@ -2751,8 +2776,8 @@ const declinedOnlyTerms = async (id: string) =>
     )
   ).rows[0];
 
-describe("0192 §14b — PostgreSQL proves the declined row is never even a candidate", () => {
-  it("EXPIRE does not reach for a historical declined row's lock", async () => {
+describe("0192 §14b — no lifecycle path SELECTS, LOCKS or MUTATES the declined row", () => {
+  it("EXPIRE does not select or lock a historical declined row", async () => {
     const f = await declinedOnly("expire");
     const r = await withRowLockHeld(f.A, (caller) =>
       caller.query(`select public.expire_new_client_waitlist_invitation($1,$2,$3) r`, [
@@ -2760,15 +2785,15 @@ describe("0192 §14b — PostgreSQL proves the declined row is never even a cand
       ]),
     );
     // Completed before the timeout, with its ordinary no-live-invitation answer.
-    // A three-terminal selector would have blocked on the held lock and raised
-    // 57014 instead of ever getting here.
+    // A three-terminal selector would have SELECTED A and blocked on the held
+    // lock, raising 57014 instead of ever getting here.
     expect(r.rows[0].r).toBe("not_invited");
     expect(await declinedOnlyTerms(f.A)).toMatchObject({
       d: true, rel: false, exp: false, red: false,
     });
   });
 
-  it("RELEASE does not reach for a historical declined row's lock", async () => {
+  it("RELEASE does not select or lock a historical declined row", async () => {
     const f = await declinedOnly("release");
     const r = await withRowLockHeld(f.A, (caller) =>
       caller.query(`select public.release_new_client_waitlist_entry($1,$2,$3) r`, [
@@ -2784,7 +2809,7 @@ describe("0192 §14b — PostgreSQL proves the declined row is never even a cand
     ).toMatchObject({ d: true, rel: false, exp: false, red: false });
   });
 
-  it("CONVERSION does not reach for a historical declined row's lock", async () => {
+  it("CONVERSION does not select or lock a historical declined row", async () => {
     const f = await declinedOnly("convert");
     const r = await withRowLockHeld(f.A, (caller) =>
       caller.query(`select public.record_new_client_waitlist_conversion($1,$2,$3) r`, [
@@ -2812,5 +2837,397 @@ describe("0192 §14b — PostgreSQL proves the declined row is never even a cand
       code = (e as { code?: string }).code;
     }
     expect(code, "the holder must genuinely block a competing row lock").toBe("57014");
+  });
+});
+
+// ===========================================================================
+// THE ALLOWANCE IS A PER-ROUND QUOTA, NOT A LIFETIME CAP
+// ===========================================================================
+//
+// THE TWO DEFECTS THIS BLOCK KEEPS CLOSED, both measured on the previous shape:
+//
+// 1. NO ROUND BOUNDARY. `studio_waitlist_admission_rounds` was keyed by
+//    studio_id alone, so "opening the next round" could only mean overwriting
+//    the single row -- and consumption, having no round to belong to, was
+//    counted over the studio's entire history. Measured: allowance 1, admit and
+//    convert ONE prospect, and a fresh round at allowance 1 answered
+//    `round_full` with nobody in it. The quota was a lifetime cap.
+//
+// 2. THE REDEEM -> CONVERSION HOLE. Consumption was `outstanding` (redeemed_at
+//    IS NULL) plus `converted entries`, so a redeemed-but-unconverted
+//    invitation was in NEITHER term. Measured: 1 -> 0 -> 1, and a second
+//    prospect admitted against an allowance of 1. That window is not a race --
+//    it is the whole booking flow, a human choosing a slot.
+//
+// Rounds are now durable rows with their own identity, invitations are stamped
+// with the round that authorised them, and consumption is counted over that
+// round's invitations alone -- with redemption consuming the seat immediately.
+
+async function openRoundFor(studio: SeededStudio, allowance: number) {
+  const r = await adminQuery(
+    `select result, round_id from public.open_new_client_waitlist_admission_round($1,$2,$3)`,
+    [studio.studioId, studio.userId, allowance],
+  );
+  return r.rows[0] as { result: string; round_id: string | null };
+}
+const closeRoundFor = async (studio: SeededStudio) =>
+  (
+    await adminQuery(`select public.close_new_client_waitlist_admission_round($1,$2) r`, [
+      studio.studioId, studio.userId,
+    ])
+  ).rows[0].r as string;
+const roundConsumed = async (roundId: string) =>
+  Number(
+    (await adminQuery(`select public.waitlist_admission_round_consumed($1) n`, [roundId]))
+      .rows[0].n,
+  );
+
+/** A studio with a service and an open round, and a helper to offer a prospect. */
+async function roundFixture(label: string, allowance: number) {
+  const studio = await seedStudio(`rnd-${label}`);
+  const serviceId = await seedService(studio.studioId, label);
+  const opened = await openRoundFor(studio, allowance);
+  expect(opened.result).toBe("opened");
+  const offer = async (tag: string) => {
+    const joined = await adminQuery(
+      `select entry_id from public.join_new_client_waitlist($1,$2,$3,$4)`,
+      [studio.studioId, `${tag} ${label}`, `${tag}-${label}-${studio.studioId.slice(0, 6)}@h.local`, null],
+    );
+    const entryId = joined.rows[0].entry_id as string;
+    await adminQuery(`select public.claim_new_client_waitlist_entry($1,$2,$3)`, [
+      studio.studioId, entryId, studio.userId,
+    ]);
+    const r = await adminQuery(
+      `select result, raw_token, invitation_id
+         from public.issue_scoped_new_client_waitlist_invitation(
+                $1,$2,$3,$4, current_date, current_date + 13, null, 72)`,
+      [studio.studioId, entryId, studio.userId, serviceId],
+    );
+    return {
+      entryId,
+      result: r.rows[0].result as string,
+      token: r.rows[0].raw_token as string | null,
+      invitationId: r.rows[0].invitation_id as string | null,
+    };
+  };
+  const redeem = async (token: string) => {
+    const b = await beginProof(token);
+    const c = await completeProof(token, b.raw_challenge as string);
+    expect(c.result).toBe("verified");
+    return (
+      await adminQuery(
+        `select result from public.redeem_new_client_waitlist_invitation_verified($1,$2)`,
+        [token, c.raw_capability],
+      )
+    ).rows[0].result as string;
+  };
+  return { studio, serviceId, roundId: opened.round_id as string, offer, redeem };
+}
+
+describe("0192 §14d — admission rounds are durable, and the quota is per round", () => {
+  it("NO OPEN ROUND: nothing may issue", async () => {
+    const studio = await seedStudio("rnd-noopen");
+    const serviceId = await seedService(studio.studioId, "noopen");
+    const joined = await adminQuery(
+      `select entry_id from public.join_new_client_waitlist($1,$2,$3,$4)`,
+      [studio.studioId, "NoRound", `noround-${studio.studioId.slice(0, 6)}@h.local`, null],
+    );
+    const entryId = joined.rows[0].entry_id as string;
+    await adminQuery(`select public.claim_new_client_waitlist_entry($1,$2,$3)`, [
+      studio.studioId, entryId, studio.userId,
+    ]);
+    const r = await adminQuery(
+      `select result from public.issue_scoped_new_client_waitlist_invitation(
+                $1,$2,$3,$4, current_date, current_date + 13, null, 72)`,
+      [studio.studioId, entryId, studio.userId, serviceId],
+    );
+    expect(r.rows[0].result).toBe("no_round_open");
+  });
+
+  it("AT MOST ONE OPEN ROUND, and it is the DATABASE that says so", async () => {
+    const f = await roundFixture("oneopen", 3);
+    expect((await openRoundFor(f.studio, 5)).result).toBe("round_already_open");
+
+    // Structural, not merely command-enforced: the partial unique index refuses
+    // a second open row even on a direct write.
+    await expect(
+      adminQuery(
+        `insert into public.studio_waitlist_admission_rounds
+           (studio_id, allowance, opened_by_practitioner_id)
+         values ($1, 5, $2)`,
+        [f.studio.studioId, f.studio.practitionerId],
+      ),
+    ).rejects.toThrow(/one_open_per_studio|duplicate key/i);
+  });
+
+  it("THE SEAT IS HELD FROM REDEMPTION, not from conversion — the P1", async () => {
+    const f = await roundFixture("p1", 1);
+    const a = await f.offer("A");
+    expect(a.result).toBe("issued");
+    expect(await roundConsumed(f.roundId), "live A holds the seat").toBe(1);
+
+    expect(await f.redeem(a.token!)).toBe("redeemed");
+    expect(
+      await roundConsumed(f.roundId),
+      "REDEEMED but not converted must still hold the seat — this was 0",
+    ).toBe(1);
+
+    // The window that used to admit a second prospect against an allowance of 1.
+    const b = await f.offer("B");
+    expect(b.result, "the quota must hold during the booking flow").toBe("round_full");
+
+    await adminQuery(`select public.record_new_client_waitlist_conversion($1,$2,$3)`, [
+      f.studio.studioId, a.entryId, f.studio.clientId,
+    ]);
+    expect(
+      await roundConsumed(f.roundId),
+      "redeemed AND converted is ONE seat, never two",
+    ).toBe(1);
+  });
+
+  it.each([
+    ["DECLINED", "decline"],
+    ["RELEASED", "release"],
+    ["LAPSED", "lapse"],
+  ])("%s before redemption returns the seat to the round", async (_label, how) => {
+    const f = await roundFixture(`free-${how}`, 1);
+    const a = await f.offer("A");
+    expect(await roundConsumed(f.roundId)).toBe(1);
+
+    if (how === "decline") {
+      const b = await beginProof(a.token!);
+      const c = await completeProof(a.token!, b.raw_challenge as string);
+      await adminQuery(`select public.decline_new_client_waitlist_invitation($1,$2)`, [
+        a.token, c.raw_capability,
+      ]);
+    } else if (how === "release") {
+      await adminQuery(`select public.release_new_client_waitlist_entry($1,$2,$3)`, [
+        f.studio.studioId, a.entryId, f.studio.userId,
+      ]);
+    } else {
+      await adminQuery(
+        `alter table public.new_client_waitlist_invitations
+           disable trigger new_client_waitlist_invitations_append_only`,
+      );
+      await adminQuery(
+        `update public.new_client_waitlist_invitations
+            set issued_at = clock_timestamp() - interval '96 hours',
+                expires_at = clock_timestamp() - interval '1 minute'
+          where id = $1`,
+        [a.invitationId],
+      );
+      await adminQuery(
+        `alter table public.new_client_waitlist_invitations
+           enable trigger new_client_waitlist_invitations_append_only`,
+      );
+    }
+    expect(await roundConsumed(f.roundId), "the seat returns to the round").toBe(0);
+  });
+
+  it("A ROUND WITH A LIVE OFFER MAY NOT CLOSE", async () => {
+    const f = await roundFixture("closelive", 2);
+    const a = await f.offer("A");
+    expect(a.result).toBe("issued");
+    expect(
+      await closeRoundFor(f.studio),
+      "closing would drop an answerable offer out of every round's accounting",
+    ).toBe("live_offers_outstanding");
+
+    // Settle it the way the shipped lifecycle already allows, then close.
+    await adminQuery(`select public.release_new_client_waitlist_entry($1,$2,$3)`, [
+      f.studio.studioId, a.entryId, f.studio.userId,
+    ]);
+    expect(await closeRoundFor(f.studio)).toBe("closed");
+    expect(await closeRoundFor(f.studio)).toBe("no_round_open");
+  });
+
+  it("ROUND 2 STARTS AT ZERO — the proof the old model could not give", async () => {
+    const f = await roundFixture("reset", 1);
+    const a = await f.offer("A");
+    expect(await f.redeem(a.token!)).toBe("redeemed");
+    await adminQuery(`select public.record_new_client_waitlist_conversion($1,$2,$3)`, [
+      f.studio.studioId, a.entryId, f.studio.clientId,
+    ]);
+    expect(await roundConsumed(f.roundId)).toBe(1);
+    expect(await closeRoundFor(f.studio)).toBe("closed");
+
+    const r2 = await openRoundFor(f.studio, 1);
+    expect(r2.result).toBe("opened");
+    expect(r2.round_id, "a new round is a NEW immutable identity").not.toBe(f.roundId);
+    expect(
+      await roundConsumed(r2.round_id!),
+      "round 1's redeemed history must not consume round 2",
+    ).toBe(0);
+
+    const b = await f.offer("B");
+    expect(b.result, "allowance 1 again, and B is admissible").toBe("issued");
+
+    // And round 1 is retained as history, still counting its own seat.
+    expect(await roundConsumed(f.roundId)).toBe(1);
+    const rows = await adminQuery(
+      `select count(*)::int n from public.studio_waitlist_admission_rounds where studio_id=$1`,
+      [f.studio.studioId],
+    );
+    expect(Number(rows.rows[0].n), "closing keeps history; it does not overwrite").toBe(2);
+  });
+
+  it("AN INVITATION'S ROUND IS IMMUTABLE, and same-studio by construction", async () => {
+    const f = await roundFixture("immutable", 2);
+    const a = await f.offer("A");
+    const other = await roundFixture("foreign", 2);
+
+    // Stamped with the round that authorised it.
+    const stamped = await adminQuery(
+      `select admission_round_id from public.new_client_waitlist_invitations where id=$1`,
+      [a.invitationId],
+    );
+    expect(stamped.rows[0].admission_round_id).toBe(f.roundId);
+
+    // It cannot be moved — not to another round of its own studio, nor away.
+    await expect(
+      adminQuery(
+        `update public.new_client_waitlist_invitations set admission_round_id=$2 where id=$1`,
+        [a.invitationId, other.roundId],
+      ),
+    ).rejects.toThrow(/admission round that authorised an invitation is immutable/);
+    await expect(
+      adminQuery(
+        `update public.new_client_waitlist_invitations set admission_round_id=null where id=$1`,
+        [a.invitationId],
+      ),
+    ).rejects.toThrow(/admission round that authorised an invitation is immutable/);
+
+    // CROSS-STUDIO IS STRUCTURAL: the composite FK refuses a foreign round on a
+    // FRESH row, independently of the immutability trigger. A separate entry is
+    // used so the one-live-per-entry index cannot answer first and mask it.
+    const spare = await adminQuery(
+      `select entry_id from public.join_new_client_waitlist($1,$2,$3,$4)`,
+      [f.studio.studioId, "Spare", `spare-${f.studio.studioId.slice(0, 8)}@h.local`, null],
+    );
+    await expect(
+      adminQuery(
+        `insert into public.new_client_waitlist_invitations
+           (studio_id, entry_id, token_hash, expires_at, issued_by_practitioner_id, admission_round_id)
+         values ($1,$2,$3, clock_timestamp() + interval '72 hours', $4, $5)`,
+        [
+          f.studio.studioId,
+          spare.rows[0].entry_id,
+          "f".repeat(64),
+          f.studio.practitionerId,
+          other.roundId,
+        ],
+      ),
+    ).rejects.toThrow(/round_same_studio_fk|foreign key/i);
+  });
+
+  it("BOOKING FAILURE AFTER REDEMPTION: the seat stays consumed (WAIT-RECOVERY-01)", async () => {
+    // The product law: a redeemed permission is spent. B2/B3 deliberately allow
+    // "redeemed, booking never created" and surface it as
+    // `consumed_without_booking`. Nothing here silently recycles that seat, and
+    // redemption is not reversible — a future operator recovery authority
+    // (WAIT-RECOVERY-01) is the only thing that may ever restore capacity.
+    const f = await roundFixture("nobooking", 1);
+    const a = await f.offer("A");
+    expect(await f.redeem(a.token!)).toBe("redeemed");
+    // No conversion is ever recorded — the booking failed.
+    expect(await roundConsumed(f.roundId)).toBe(1);
+    expect((await f.offer("B")).result).toBe("round_full");
+  });
+
+  it("A REDEEMED SEAT SURVIVES ITS OWN WINDOW LAPSING", async () => {
+    // THE CASE THAT MAKES THE SPENT LIMB LOAD-BEARING. While a redeemed
+    // invitation is still inside its original window it would be counted by the
+    // outstanding limb anyway; only after that window passes does the redeemed
+    // limb become the sole reason the seat is still held. A suite that never
+    // ages a redeemed row would pass with that limb deleted — measured, by a
+    // negative control that failed to go red.
+    const f = await roundFixture("aged-redeem", 1);
+    const a = await f.offer("A");
+    expect(await f.redeem(a.token!)).toBe("redeemed");
+    expect(await roundConsumed(f.roundId)).toBe(1);
+
+    await adminQuery(
+      `alter table public.new_client_waitlist_invitations
+         disable trigger new_client_waitlist_invitations_append_only`,
+    );
+    await adminQuery(
+      `update public.new_client_waitlist_invitations
+          set issued_at = clock_timestamp() - interval '96 hours',
+              expires_at = clock_timestamp() - interval '1 minute'
+        where id = $1`,
+      [a.invitationId],
+    );
+    await adminQuery(
+      `alter table public.new_client_waitlist_invitations
+         enable trigger new_client_waitlist_invitations_append_only`,
+    );
+
+    expect(
+      await roundConsumed(f.roundId),
+      "a spent seat is not returned by the clock — only an UNREDEEMED offer lapses",
+    ).toBe(1);
+    expect((await f.offer("B")).result).toBe("round_full");
+  });
+
+  it("THE ROUND TABLE IS UNREACHABLE FOR WRITES BY EVERY BROWSER ROLE", async () => {
+    // Proved behaviourally against the live catalog, not by reading GRANT text.
+    for (const role of ["anon", "authenticated"]) {
+      for (const priv of ["insert", "update", "delete"]) {
+        const r = await adminQuery(
+          `select has_table_privilege($1,'public.studio_waitlist_admission_rounds',$2) ok`,
+          [role, priv],
+        );
+        expect(r.rows[0].ok, `${role} must not hold ${priv}`).toBe(false);
+      }
+    }
+    // service_role holds no table privilege either — the commands are definer.
+    for (const priv of ["insert", "update", "delete", "select"]) {
+      const r = await adminQuery(
+        `select has_table_privilege('service_role','public.studio_waitlist_admission_rounds',$1) ok`,
+        [priv],
+      );
+      expect(r.rows[0].ok, `service_role must not hold ${priv}`).toBe(false);
+    }
+    // ...and the two commands ARE reachable by service_role.
+    for (const fn of [
+      "public.open_new_client_waitlist_admission_round(uuid, uuid, integer)",
+      "public.close_new_client_waitlist_admission_round(uuid, uuid)",
+    ]) {
+      const r = await adminQuery(
+        `select has_function_privilege('service_role',$1,'execute') ok`,
+        [fn],
+      );
+      expect(r.rows[0].ok, `${fn} must be executable by service_role`).toBe(true);
+    }
+  });
+
+  it("A NON-OWNER CANNOT OPEN OR CLOSE A ROUND", async () => {
+    const f = await roundFixture("authz", 2);
+    const member = await seedMember(f.studio, "authz-member");
+    const opened = await adminQuery(
+      `select result from public.open_new_client_waitlist_admission_round($1,$2,$3)`,
+      [f.studio.studioId, member.userId, 5],
+    );
+    expect(opened.rows[0].result).toBe("not_owner");
+    const closed = await adminQuery(
+      `select public.close_new_client_waitlist_admission_round($1,$2) r`,
+      [f.studio.studioId, member.userId],
+    );
+    expect(closed.rows[0].r).toBe("not_owner");
+  });
+
+  it("A ROUND'S ALLOWANCE IS NEVER DEFAULTED OR INFERRED", async () => {
+    const studio = await seedStudio("rnd-nodefault");
+    for (const bad of [null, -1]) {
+      const r = await adminQuery(
+        `select result from public.open_new_client_waitlist_admission_round($1,$2,$3)`,
+        [studio.studioId, studio.userId, bad],
+      );
+      expect(r.rows[0].result, `allowance ${bad} must be refused`).toBe("invalid_input");
+    }
+    // Zero is legitimate: a round that has opened but admits nobody yet.
+    const ok = await openRoundFor(studio, 0);
+    expect(ok.result).toBe("opened");
+    expect(await roundConsumed(ok.round_id!)).toBe(0);
   });
 });

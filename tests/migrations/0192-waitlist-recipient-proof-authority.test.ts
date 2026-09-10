@@ -92,7 +92,7 @@ describe("0192 — the round allowance is its own table, not a studios column", 
 
   it("grants the browser a COLUMN select and no DML at all", () => {
     expect(CODE).toMatch(
-      /grant select \(studio_id, allowance, updated_at\)\s*\n\s*on public\.studio_waitlist_admission_rounds to authenticated;/,
+      /grant select \(\s*\n?\s*id, studio_id, allowance, opened_at, opened_by_practitioner_id,\s*\n?\s*closed_at, closed_by_practitioner_id, updated_at\s*\n?\s*\) on public\.studio_waitlist_admission_rounds to authenticated;/,
     );
     expect(CODE).not.toMatch(
       /grant (insert|update|delete)[^;]*on public\.studio_waitlist_admission_rounds/i,
@@ -487,7 +487,9 @@ describe("0192 — the gated recipient-identity read", () => {
 
 describe("0192 — privileges are enumerated by name, and nothing reaches the browser", () => {
   const FUNCTIONS = [
-    "public.waitlist_admission_consumed(uuid)",
+    "public.waitlist_admission_round_consumed(uuid)",
+    "public.open_new_client_waitlist_admission_round(uuid, uuid, integer)",
+    "public.close_new_client_waitlist_admission_round(uuid, uuid)",
     "public.issue_scoped_new_client_waitlist_invitation(uuid, uuid, uuid, uuid, date, date, smallint[], integer)",
     "public.resolve_new_client_waitlist_invitation(text)",
     "public.begin_waitlist_invitation_proof(text, integer)",
@@ -535,10 +537,15 @@ describe("0192 — privileges are enumerated by name, and nothing reaches the br
     //   1 delegated issuer            — the first repair in this family (§4b)
     //   3 legacy lifecycle commands   — expire_, release_, record_conversion
     //                                   (§14b, the class-wide completion)
+    //   1 invitation append-only guard — so a round binding is immutable (§14c)
     //
-    // The ninth new command is the gated recipient-identity read the
+    // Plus TWO new round-authority commands (§14d), open_ and close_, which
+    // replace the raw service-role upsert that was previously the only way to
+    // establish a round.
+    //
+    // The ninth original command is the gated recipient-identity read the
     // integration lane proved B3 could not book without.
-    expect(defs.length).toBe(13);
+    expect(defs.length).toBe(16);
     for (const d of defs) {
       expect(d).toMatch(/set search_path = pg_catalog, pg_temp/);
     }
@@ -905,9 +912,15 @@ describe("0192 §14b — the legacy lifecycle commands are declined-aware", () =
   // load-bearing proof is the LOCK-TARGET fixture in
   // tests/db/waitlist-recipient-proof.db.test.ts: a historical declined row is
   // held under `for update` by a second connection, and each lifecycle command
-  // is called with a short `statement_timeout`. A command that still considers
-  // that row live MUST try to lock it and MUST time out with 57014. No physical
-  // row ordering, comment placement or operator precedence can hide that.
+  // is called with a short `statement_timeout`. A command that still SELECTS
+  // that row as the current cycle MUST try to lock it and MUST time out with
+  // 57014. No physical row ordering, comment placement or operator precedence
+  // can hide that.
+  //
+  // Its claim is bounded to SELECTION, LOCKING and TERMINAL MUTATION. It does
+  // not assert the declined row is never read — `expire_` legitimately scans
+  // this table in `exists (...)` subqueries that touch it without matching or
+  // locking it.
   //
   // WHAT REMAINS BELOW IS ONLY WHAT TEXT CAN HONESTLY ESTABLISH: that these
   // three functions are forward-redefined here at all, with their signatures,
