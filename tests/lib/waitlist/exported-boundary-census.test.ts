@@ -106,6 +106,7 @@ const CENSUS: ReadonlyArray<readonly [string, string]> = [
   ["validated.instant", "self — it IS a constructor"],
   ["validated.optionalInstant", "self — it IS a constructor"],
   ["validated.stalenessPolicy", "self — it IS a constructor"],
+  ["validated.toDate", "self — the interop edge; takes an ALREADY validated instant"],
 ];
 const CENSUS_COMPARISON_BEARING = CENSUS.map(([k]) => k);
 
@@ -149,13 +150,74 @@ function isComparisonBearing(sig: Signature): boolean {
   return false;
 }
 
-/** True when every clock/cap this signature can reach is a validated type. */
+/**
+ * Operands that are RAW on purpose, each with the owner that answers for it.
+ *
+ * Turning the guard from `any` to `every` immediately surfaced four, and every
+ * one is recorded here rather than made to disappear by loosening the detector.
+ * Loosening is how a real hole gets exempted by accident; declaring costs a
+ * line and makes the next raw operand fail until someone justifies it too.
+ */
+const DECLARED_RAW: ReadonlyMap<string, string> = new Map([
+  // The no-clock arm of the union. `undefined` is the ABSENCE of evidence, not
+  // unvalidated evidence — and the arm exists precisely to forbid a finite cap
+  // without a clock.
+  ["ProjectionOptions.now: undefined", "n/a — the statically-disabled arm"],
+  // The untrusted INPUT ROW. This is the value being parsed, not evidence being
+  // consumed: parseJoinedAt refuses a non-finite or future date before it can
+  // reach a comparison.
+  ["LegacyImportRow.joinedAt: unknown", "parseJoinedAt — it is the input under validation"],
+  // Validated at the CALL SITE rather than in the type: rankWaitlistCandidates
+  // runs `instant(candidate.joinedAt)`, so an unreadable value throws instead of
+  // being compared. Fail-closed, but the type does not carry it — recorded as a
+  // known limit of this repair's bounded scope, not as a clean result.
+  ["ScoringCandidate.joinedAt: Date", "instant() at the rankWaitlistCandidates call site"],
+  // The pre-existing third owner, declared in re-entry #1 and out of scope here.
+  ["ScoringPolicy.waitingTimeCapDays: number", "validateScoringPolicy (pre-existing)"],
+]);
+
+/** Every recognised clock/cap occurrence in a fragment, with its declared type. */
+function operands(fragment: string): { name: string; declared: string }[] {
+  const found: { name: string; declared: string }[] = [];
+  const re = new RegExp(
+    `\\b(now|at|from|to|importedAt|joinedAt|asOf|since|until|maxAgeDays|capDays` +
+      `|waitingTimeCapDays|thresholdDays|ageDays)\\s*[?]?:\\s*([^,;)}\\n]+)`,
+    "g",
+  );
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(fragment)) !== null) found.push({ name: m[1]!, declared: m[2]!.trim() });
+  return found;
+}
+
+/**
+ * True when EVERY clock/cap this signature can reach is a validated type.
+ *
+ * IT USED TO BE `ANY`, AND THAT WAS A FALSE NEGATIVE ON THE VERY CLASS THIS
+ * FILE EXISTS TO CATCH. One branded type anywhere in the parameter list vouched
+ * for the whole signature, so `f(now: ValidInstant, maxAgeDays: number)` passed
+ * — a validated operand standing surety for a raw one sitting right beside it,
+ * which is precisely the mixed shape that lets an unreadable value reach a
+ * comparison. The guard has to hold for each operand or it holds for none.
+ */
 function takesValidatedEvidence(sig: Signature): boolean {
-  if (VALIDATED.test(sig.params)) return true;
-  for (const [carrier, body] of CARRIERS) {
-    if (new RegExp(`\\b${carrier}\\b`).test(sig.params) && VALIDATED.test(body)) return true;
+  return unvalidatedOperands(sig).length === 0;
+}
+
+/** The offending operands, named, so a failure says WHICH one is raw. */
+function unvalidatedOperands(sig: Signature): string[] {
+  const bad: string[] = [];
+  for (const { name, declared } of operands(sig.params)) {
+    const entry = `${name}: ${declared}`;
+    if (!VALIDATED.test(declared) && !DECLARED_RAW.has(entry)) bad.push(entry);
   }
-  return false;
+  for (const [carrier, body] of CARRIERS) {
+    if (!new RegExp(`\\b${carrier}\\b`).test(sig.params)) continue;
+    for (const { name, declared } of operands(body)) {
+      const entry = `${carrier}.${name}: ${declared}`;
+      if (!VALIDATED.test(declared) && !DECLARED_RAW.has(entry)) bad.push(entry);
+    }
+  }
+  return bad;
 }
 
 const SIGNATURES = exportedSignatures(ALL);
@@ -183,8 +245,23 @@ describe("the exported comparison-bearing surface is enumerated, not remembered"
       .filter((s) => !OWNERS.has(key(s)))
       .filter((s) => !DOWNSTREAM.has(key(s)))
       .filter((s) => !takesValidatedEvidence(s))
-      .map((s) => `${key(s)}(${s.params.replace(/\s+/g, " ").trim()})`);
+      .map((s) => `${key(s)} -> raw: ${unvalidatedOperands(s).join(", ")}`);
     expect(offenders, "a comparison-bearing export must not take a raw Date or number").toEqual([]);
+  });
+
+  it("declares every RAW operand and the owner that answers for it", () => {
+    // Four exist. None is silently exempt, and a fifth fails the guard above
+    // until it is declared here — which is the moment to ask whether it should
+    // be validated instead.
+    expect([...DECLARED_RAW.keys()].sort()).toEqual([
+      "LegacyImportRow.joinedAt: unknown",
+      "ProjectionOptions.now: undefined",
+      "ScoringCandidate.joinedAt: Date",
+      "ScoringPolicy.waitingTimeCapDays: number",
+    ]);
+    for (const [operand, owner] of DECLARED_RAW) {
+      expect(owner, `${operand} must name who answers for it`).not.toBe("");
+    }
   });
 
   it("declares every owner, so a fourth cannot appear unnoticed", () => {
@@ -203,6 +280,26 @@ describe("the exported comparison-bearing surface is enumerated, not remembered"
     }
   });
 
+  it("requires EVERY operand to be validated, not merely one of them", () => {
+    // The property directly: a mixed signature must be rejected. Asserted on a
+    // synthetic fragment so it holds whether or not such a signature exists in
+    // the module today — a guard that only works on present-tense code is a
+    // guard that stops working the moment someone writes the bad shape.
+    const mixed = { file: "synthetic.ts", name: "mixed",
+      params: "now: ValidInstant, maxAgeDays: number" };
+    expect(takesValidatedEvidence(mixed)).toBe(false);
+    expect(unvalidatedOperands(mixed)).toEqual(["maxAgeDays: number"]);
+
+    // And an UNDECLARED raw operand must fail even beside a validated one.
+    const sneaky = { file: "synthetic.ts", name: "sneaky",
+      params: "now: ValidInstant, until: Date" };
+    expect(unvalidatedOperands(sneaky)).toEqual(["until: Date"]);
+
+    const clean = { file: "synthetic.ts", name: "clean",
+      params: "now: ValidInstant, policy: StalenessPolicy" };
+    expect(takesValidatedEvidence(clean)).toBe(true);
+  });
+
   it("resolves a clock hidden inside an options type, not just a named parameter", () => {
     // The detector must follow the TYPE. projectCandidates names no clock in
     // its own parameter list and consumes one through ProjectionOptions; a
@@ -217,6 +314,6 @@ describe("the exported comparison-bearing surface is enumerated, not remembered"
 
   it("the validated module exports exactly its three constructors", () => {
     const owners = SIGNATURES.filter((s) => s.file === "validated.ts").map((s) => s.name).sort();
-    expect(owners).toEqual(["instant", "optionalInstant", "stalenessPolicy"]);
+    expect(owners).toEqual(["instant", "optionalInstant", "stalenessPolicy", "toDate"]);
   });
 });

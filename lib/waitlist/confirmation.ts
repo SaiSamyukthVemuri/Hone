@@ -2,6 +2,7 @@ import type { AvailabilityPreference } from "./preferences";
 import type { AvailabilitySource } from "./provenance";
 import {
   stalenessPolicy,
+  toDate,
   type DisabledStalenessPolicy,
   type ValidInstant,
   type ValidStalenessPolicy,
@@ -88,8 +89,8 @@ export type StalenessPolicy = ValidStalenessPolicy;
 export const NEVER_STALE: DisabledStalenessPolicy = stalenessPolicy(null);
 
 /** Whole days between two instants, floored, never negative. */
-function ageInDays(from: Date, to: Date): number {
-  const ms = to.getTime() - from.getTime();
+function ageInDays(fromMs: number, toMs: number): number {
+  const ms = toMs - fromMs;
   // Both operands are validated by every caller before reaching here, so a
   // non-finite result is a programming error rather than data to interpret.
   // It used to return 0, which is how an invalid clock became "fresh".
@@ -110,16 +111,12 @@ export function classifyPreferenceFreshness(
   if (!Number.isFinite(statedMs) || !Number.isFinite(confirmedMs)) {
     return { kind: "inconsistent", detail: "statedAt or confirmedAt is not a valid instant" };
   }
-  // THE CLOCK IS EVIDENCE TOO, AND IT WAS THE ONE INPUT NOT CHECKED.
-  //
-  // An Invalid Date makes the elapsed calculation NaN, ageInDays returned 0 for
-  // any non-finite result, and 0 <= maxAgeDays reads as FRESH -- so a broken
-  // clock made a years-old preference look current. That is the age-zero
-  // failure in its most damaging form: not a wrong number, a confident one.
-  // An unusable clock cannot establish freshness, so it establishes nothing.
-  if (!Number.isFinite(now.getTime())) {
-    return { kind: "inconsistent", detail: "now is not a valid instant" };
-  }
+  // THE CLOCK IS NOT RE-CHECKED HERE, and its absence is the repair rather
+  // than a regression. `now` is a ValidInstant: a finite epoch primitive, so
+  // there is no unreadable state for it to be in and nothing that could put it
+  // in one after construction. The stamps above ARE still checked, because they
+  // come off a database row rather than from a caller -- an unreadable stored
+  // value is data to report, not a caller's mistake.
   if (confirmedMs < statedMs) {
     return {
       kind: "inconsistent",
@@ -130,7 +127,7 @@ export function classifyPreferenceFreshness(
   // AGE IS MEASURED FROM confirmedAt, NOT statedAt. That is the whole point of
   // holding both: re-confirming an unchanged preference refreshes trust without
   // rewriting the history of the value.
-  const ageDays = ageInDays(stored.confirmedAt, now);
+  const ageDays = ageInDays(confirmedMs, now);
   if (policy.maxAgeDays === null || ageDays <= policy.maxAgeDays) {
     return { kind: "fresh", ageDays };
   }
@@ -165,15 +162,18 @@ export function applyConfirmation(
   if (current === null || current.preference !== answer.preference) {
     return {
       preference: answer.preference,
-      statedAt: at,
-      confirmedAt: at,
+      // A FRESH Date at the storage edge. The validated value is a primitive;
+      // this is the one place it becomes an object again, and each field gets
+      // its own so a caller mutating one cannot reach the other.
+      statedAt: toDate(at),
+      confirmedAt: toDate(at),
       source: answer.source,
     };
   }
   return {
     preference: current.preference,
     statedAt: current.statedAt,
-    confirmedAt: at,
+    confirmedAt: toDate(at),
     // The most recent route that affirmed it, so provenance describes the
     // freshest evidence rather than the oldest.
     source: answer.source,

@@ -1,50 +1,63 @@
 /**
  * VALIDATED EVIDENCE — the single place invalid comparison operands are refused.
  *
- * THE DEFECT CLASS THIS EXISTS TO END. Five separate repairs on this branch each
- * validated one operand at one boundary, and the next review found the next
- * unguarded one: the preference stamps but not the clock; then the ranking
- * clock; then the staleness cap; then the import instant; then the exported
- * classifier the wrapper called. The census that followed found a sixth
- * (`applyConfirmation`) before anyone reported it.
+ * THE DEFECT CLASS. Five repairs on this branch each validated one operand at
+ * one boundary and the next review found the next unguarded one; a census then
+ * found a sixth before any review did. Three things composed to guarantee it:
+ * an invalid operand stayed REPRESENTABLE (`Date` admits Invalid Date, `number`
+ * admits NaN and ±Infinity); ownership was spread over five partial owners; and
+ * the raw classifiers are exported, so the validating wrapper was never the
+ * only door.
  *
- * Three things composed to make that inevitable:
+ * THE FIRST ATTEMPT AT THIS FILE BRANDED A `Date`, AND IT FAILED ITS OWN
+ * CLOSURE TEST. A brand describes a REFERENCE; `Date` keeps its value in an
+ * internal slot that the reference can rewrite. So ordinary TypeScript, with no
+ * cast and no JavaScript caller, could undo the guarantee two ways:
  *
- *   A. `Date` is inhabited by Invalid Date and `number` by NaN and ±Infinity,
- *      so an invalid operand stayed REPRESENTABLE no matter what any wrapper
- *      checked;
- *   B. validation ownership was spread across five partial owners, none
- *      authoritative, so "is this operand guarded?" had no single answer;
- *   C. the raw classifiers were exported, so the wrapper that validated was
- *      never the only door.
+ *     const d = new Date(...); const v = instant(d); d.setTime(NaN);  // aliasing
+ *     v.setTime(NaN);                                                 // mutator API
  *
- * THE FIX IS TO MAKE THE INVALID VALUE UNREPRESENTABLE PAST CONSTRUCTION rather
- * than to add a sixth check. Both branded types below can only be obtained from
- * their constructor, and every comparison-bearing signature consumes the branded
- * type. There is then nothing to validate at each boundary, because an invalid
- * operand cannot occupy a parameter position. Ownership is TWO constructors, by
- * construction rather than by discipline.
+ * Measured on that head: `daysBetween` returned NaN and `applyConfirmation`
+ * persisted `Invalid Date`, while the value still carried the validated type.
  *
- * THE HONEST LIMIT, STATED HERE RATHER THAN DISCOVERED LATER. Branding is a
- * compile-time device: a `as ValidInstant` cast, or a caller compiled from
- * JavaScript, defeats it. That is precisely why the runtime refusal lives in the
- * constructors — the type system's job is to make FORGETTING impossible, not to
- * enforce at runtime. The census guard in
- * tests/lib/waitlist/exported-boundary-census.test.ts is what keeps a new
- * comparison-bearing export from quietly taking a raw operand again.
+ * `Object.freeze` DOES NOT FIX IT, and this was tested rather than assumed:
+ * freeze guards properties, `[[DateValue]]` is an internal slot, and
+ * `setTime(NaN)` on a frozen Date SUCCEEDS SILENTLY — no throw, even in strict
+ * mode. A guard test pins that fact so nobody repairs this by freezing later.
+ *
+ * SO THE VALIDATED INSTANT IS NOT AN OBJECT. It is a finite epoch-millisecond
+ * NUMBER: immutable by the language rather than by remembering to freeze, with
+ * no mutator surface to expose and no reference to alias. Validation-once
+ * requires post-validation immutability, and a primitive is the only
+ * representation here that has it for free.
+ *
+ * Three properties that made this the choice over a frozen `{ epochMs }` value
+ * object, all measured against the real call sites:
+ *
+ *   1. every in-module consumption was already `.getTime()` — the modules want
+ *      epoch milliseconds, so this REMOVES conversions rather than adding them;
+ *   2. arithmetic DROPS the brand (`v + 1` is a plain `number`), so a derived
+ *      value cannot masquerade as validated;
+ *   3. a value object's immutability is conditional on every construction
+ *      remembering `Object.freeze` and every caller being in strict mode —
+ *      a discipline requirement, which is the thing this file exists to remove.
+ *
+ * THE REMAINING LIMIT, STATED. An explicit `as ValidInstant` cast still
+ * bypasses this, in any representation TypeScript can express. That belongs to
+ * review and to the census guard in
+ * tests/lib/waitlist/exported-boundary-census.test.ts, not to the type.
  */
 
 declare const VALID_INSTANT: unique symbol;
 declare const VALID_STALENESS: unique symbol;
 
 /**
- * An instant that is known to be readable.
+ * An instant known to be readable: epoch milliseconds, finite, immutable.
  *
- * Still a `Date` at runtime, so it formats, compares and serialises exactly as
- * before — but one whose `getTime()` is guaranteed finite, because `instant()`
- * is the only way to obtain the brand.
+ * A `number` at runtime, so comparisons and ordering are direct arithmetic and
+ * there is nothing to mutate. Use `toDate()` at a formatting or interop edge.
  */
-export type ValidInstant = Date & { readonly [VALID_INSTANT]: true };
+export type ValidInstant = number & { readonly [VALID_INSTANT]: true };
 
 /** A staleness policy whose cap can express an age limit. */
 export type ValidStalenessPolicy = {
@@ -54,32 +67,41 @@ export type ValidStalenessPolicy = {
 /**
  * A policy the COMPILER can see is disabled.
  *
- * The distinction is load-bearing where no clock is supplied: `number | null`
- * cannot be admitted there because the compiler cannot rule out the finite
- * case, which is the one that silently did nothing.
+ * Load-bearing where no clock is supplied: `number | null` cannot be admitted
+ * there, because the compiler cannot rule out the finite case — the one that
+ * silently did nothing.
  */
 export type DisabledStalenessPolicy = ValidStalenessPolicy & {
   readonly maxAgeDays: null;
 };
 
+function readEpoch(value: Date | string | number): number {
+  if (value instanceof Date) return value.getTime();
+  if (typeof value === "number") return value;
+  return new Date(value).getTime();
+}
+
 /**
- * Refuse an unreadable instant.
+ * Refuse an unreadable instant, and return a value that cannot become one.
  *
  * Accepts what a caller genuinely has — a `Date`, an ISO string, or epoch
- * milliseconds — and refuses anything that cannot be read as a real instant.
- * Refusing rather than substituting is the whole point: `Date.now()`, epoch
- * zero or a clamped value would each invent a chronology the caller never
- * supplied, and a confident wrong instant is worse than an absent one.
+ * milliseconds — and reads it ONCE into a finite primitive. Nothing the caller
+ * subsequently does to the argument can reach the returned value: there is no
+ * shared reference, because there is no reference.
+ *
+ * Refusing rather than substituting is the point. `Date.now()`, epoch zero or a
+ * clamped value would each invent a chronology the caller never supplied, and a
+ * confident wrong instant is worse than an absent one.
  */
 export function instant(value: Date | string | number): ValidInstant {
-  const asDate = value instanceof Date ? value : new Date(value);
-  if (!Number.isFinite(asDate.getTime())) {
+  const epochMs = readEpoch(value);
+  if (!Number.isFinite(epochMs)) {
     throw new Error(
       `instant: ${JSON.stringify(String(value))} is not a readable instant; ` +
         `a comparison cannot be made against a clock that cannot be read`,
     );
   }
-  return asDate as ValidInstant;
+  return epochMs as ValidInstant;
 }
 
 /** Read an instant that may legitimately be absent. Returns null, never throws. */
@@ -88,8 +110,19 @@ export function optionalInstant(
 ): ValidInstant | null {
   if (value === null || value === undefined) return null;
   if (typeof value === "string" && value.trim().length === 0) return null;
-  const asDate = value instanceof Date ? value : new Date(value);
-  return Number.isFinite(asDate.getTime()) ? (asDate as ValidInstant) : null;
+  const epochMs = readEpoch(value);
+  return Number.isFinite(epochMs) ? (epochMs as ValidInstant) : null;
+}
+
+/**
+ * Materialise a `Date` at a formatting or interoperability edge.
+ *
+ * A FRESH object every time, deliberately. Handing the same one back twice
+ * would reintroduce exactly the aliasing this representation exists to remove —
+ * the caller may mutate what they receive, and it must reach nothing else.
+ */
+export function toDate(value: ValidInstant): Date {
+  return new Date(value);
 }
 
 export function stalenessPolicy(maxAgeDays: null): DisabledStalenessPolicy;
@@ -97,10 +130,10 @@ export function stalenessPolicy(maxAgeDays: number | null): ValidStalenessPolicy
 /**
  * Refuse a cap that cannot express an age limit.
  *
- * `NaN`, `±Infinity` and negatives are each refused rather than clamped,
- * defaulted or swapped for a disabled policy — every one of those invents a
- * policy the studio never wrote. Measured against a 6-year-old and an 8-day-old
- * preference before this existed:
+ * `NaN`, `±Infinity` and negatives are refused rather than clamped, defaulted
+ * or swapped for a disabled policy — every one of those invents a policy the
+ * studio never wrote. Measured against a 6-year-old and an 8-day-old preference
+ * before this existed:
  *
  *     maxAgeDays = NaN       -> stale | stale      an 8-day-old answer, STALE
  *     maxAgeDays = -5        -> stale | stale

@@ -267,10 +267,10 @@ export type RankingResult = {
  * trust must not be allowed to answer.
  */
 export function daysBetween(from: ValidInstant, to: ValidInstant): number {
-  // No finiteness check here any more: both operands are ValidInstant, so a
-  // non-finite interval is unconstructable rather than merely unlikely.
-  // `instant()` refused it before it could reach a parameter position.
-  const ms = to.getTime() - from.getTime();
+  // Direct arithmetic on two finite epoch primitives. There is no finiteness
+  // check because there is no unreadable state either operand could be in, and
+  // no `.getTime()` because the validated value already IS the milliseconds.
+  const ms = to - from;
   return Math.max(0, Math.floor(ms / 86_400_000));
 }
 

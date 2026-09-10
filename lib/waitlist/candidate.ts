@@ -26,6 +26,7 @@ import {
 } from "./scoring";
 import {
   optionalInstant,
+  toDate,
   type DisabledStalenessPolicy,
   type ValidInstant,
 } from "./validated";
@@ -295,8 +296,8 @@ export function projectCandidates(
           freshness = classifyPreferenceFreshness(
             {
               preference: stored.preference,
-              statedAt,
-              confirmedAt,
+              statedAt: toDate(statedAt),
+              confirmedAt: toDate(confirmedAt),
               source: availabilitySource ?? "public_form",
             },
             clock,
@@ -309,7 +310,7 @@ export function projectCandidates(
 
     candidates.push({
       entryId: row.id,
-      joinedAt,
+      joinedAt: toDate(joinedAt),
       // The provenance flag becomes a RANKING input here, not just a display
       // hint: an entry whose join date nobody has must not be scored on a wait
       // it never had.

@@ -25,7 +25,7 @@ import { instant, stalenessPolicy } from "@/lib/waitlist/validated";
 // the order the rows happened to arrive in.
 
 const NOW = instant("2026-09-07T12:00:00.000Z");
-const day = (n: number) => instant(NOW.getTime() - n * 86_400_000);
+const day = (n: number) => new Date(NOW - n * 86_400_000);
 
 function candidate(
   entryId: string,
@@ -368,7 +368,7 @@ describe("an invalid ranking clock fails closed", () => {
   // reached with a non-finite interval.
   it("daysBetween takes only operands that were already constructed valid", () => {
     expect(() => instant("bad")).toThrow(/is not a readable instant/);
-    expect(daysBetween(day(30), NOW)).toBe(30);
+    expect(daysBetween(instant(day(30)), NOW)).toBe(30);
     expect(daysBetween(NOW, NOW)).toBe(0);
   });
 
@@ -384,7 +384,7 @@ describe("an invalid ranking clock fails closed", () => {
     expect(result.ranked[0]?.score).toBe(1);
     expect(result.ranked[0]?.daysWaiting).toBe(400);
     expect(result.ranked[1]?.daysWaiting).toBe(10);
-    expect(daysBetween(day(30), NOW)).toBe(30);
+    expect(daysBetween(instant(day(30)), NOW)).toBe(30);
   });
 });
 

@@ -11,7 +11,7 @@ import {
   type StalenessPolicy,
 } from "@/lib/waitlist/confirmation";
 import { FIFO_POLICY, rankWaitlistCandidates } from "@/lib/waitlist/scoring";
-import { instant, stalenessPolicy } from "@/lib/waitlist/validated";
+import { instant, stalenessPolicy, type ValidInstant } from "@/lib/waitlist/validated";
 
 // WAIT-ADMIT-01 — the adapter must be correct against TODAY'S schema (the
 // preference columns do not exist) and against the post-migration schema, with
@@ -108,7 +108,7 @@ describe("joined_at has no honest default", () => {
   );
 
   it("accepts a Date as well as an ISO string", () => {
-    const when = instant("2026-08-01T10:00:00.000Z");
+    const when = new Date("2026-08-01T10:00:00.000Z");
     const { candidates } = projectCandidates([{ id: "e1", joined_at: when }]);
     expect(candidates[0]?.joinedAt.toISOString()).toBe(when.toISOString());
   });
@@ -420,10 +420,14 @@ describe("staleness and the clock", () => {
   });
 
   it("cannot even be WRITTEN with a raw clock any more", () => {
-    expect(() =>
-      // @ts-expect-error a raw Date is no longer admissible where a clock is read.
-      projectCandidates([ROW], { now: new Date("bad"), staleness: stalenessPolicy(90) }),
-    ).not.toThrow();
+    // @ts-expect-error a raw Date is no longer admissible where a clock is read.
+    const rejected: ValidInstant = new Date("bad");
+    void rejected;
+    // And the validated form has no mutation surface to undo it with.
+    const good = instant("2026-09-08T00:00:00.000Z");
+    expect(typeof good).toBe("number");
+    expect(projectCandidates([ROW], { now: good, staleness: stalenessPolicy(90) })
+      .candidates).toHaveLength(1);
   });
 
   it("refuses an invalid clock for a dynamically loaded policy too", () => {

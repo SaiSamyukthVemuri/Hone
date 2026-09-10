@@ -25,7 +25,7 @@
 //
 //   * `name` is NOT NULL with CHECK (length(btrim(name)) >= 1). An email-only
 //     row has no name, so an import must either be given one or invent one.
-import { type ValidInstant } from "./validated";
+import { toDate, type ValidInstant } from "./validated";
 //     "Unknown", the email local-part, "Legacy import" — each satisfies the
 //     constraint and each is a fabricated identity sitting in the field a
 //     practitioner reads before contacting a stranger.
@@ -170,7 +170,7 @@ function text(value: unknown): string {
  */
 function parseJoinedAt(
   raw: unknown,
-  importedAt: Date,
+  importedAt: ValidInstant,
 ): { ok: true; value: Date } | { ok: false; reason: string } | null {
   const asText = text(raw);
   if (asText.length === 0) return null; // absent — a decision, not an error
@@ -179,7 +179,7 @@ function parseJoinedAt(
   if (!Number.isFinite(ms)) {
     return { ok: false, reason: `join date "${asText}" is not a valid date` };
   }
-  if (ms > importedAt.getTime()) {
+  if (ms > importedAt) {
     return { ok: false, reason: `join date "${asText}" is in the future` };
   }
   return { ok: true, value: parsed };
@@ -293,7 +293,7 @@ export function planLegacyWaitlistImport(
         emailNormalized,
         name,
         phone: phoneRaw.length === 0 ? null : phoneRaw,
-        joinedAt: joined === null ? options.importedAt : joined.value,
+        joinedAt: joined === null ? toDate(options.importedAt) : joined.value,
         joinedAtProvenance: joined === null ? "unknown" : "operator_supplied",
       },
     });

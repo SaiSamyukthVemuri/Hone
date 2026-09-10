@@ -4,7 +4,7 @@ import {
   summariseImportPlan,
   type LegacyImportRow,
 } from "@/lib/waitlist/legacy-import";
-import { instant, stalenessPolicy } from "@/lib/waitlist/validated";
+import { instant, stalenessPolicy, toDate } from "@/lib/waitlist/validated";
 
 // WAIT-ADMIT-01 — the one rule: a fact the source does not contain is never
 // manufactured here. Both fabrications the schema makes easy get their own
@@ -191,7 +191,7 @@ describe("the import clock is batch authority, checked once, before any row", ()
       importedAt: IMPORTED_AT,
       allowUnknownJoinedAt: true,
     });
-    expect(result.ready[0]?.value.joinedAt).toEqual(IMPORTED_AT);
+    expect(result.ready[0]?.value.joinedAt).toEqual(toDate(IMPORTED_AT));
     expect(result.ready[0]?.value.joinedAtProvenance).toBe("unknown");
   });
 
@@ -209,7 +209,7 @@ describe("the import clock is batch authority, checked once, before any row", ()
   it("a VALID clock leaves an ordinary historical row exactly as before", () => {
     const result = planLegacyWaitlistImport(ROW, { importedAt: IMPORTED_AT });
     expect(result.ready).toHaveLength(1);
-    expect(result.ready[0]?.value.joinedAt).toEqual(instant("2026-01-01"));
+    expect(result.ready[0]?.value.joinedAt).toEqual(new Date("2026-01-01"));
     expect(result.ready[0]?.value.joinedAtProvenance).toBe("operator_supplied");
   });
 });
@@ -232,7 +232,7 @@ describe("a genuinely dateless row, when the operator has looked", () => {
     expect(result.ready[0]?.value.joinedAtProvenance).toBe("unknown");
     // The import instant is a QUEUE ANCHOR, not a claim about the wait — the
     // provenance is the only thing that says so, and it travels with it.
-    expect(result.ready[0]?.value.joinedAt).toEqual(IMPORTED_AT);
+    expect(result.ready[0]?.value.joinedAt).toEqual(toDate(IMPORTED_AT));
   });
 
   it("still refuses a missing name — there is no allowUnknownName counterpart", () => {

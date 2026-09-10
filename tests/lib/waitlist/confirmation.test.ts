@@ -7,12 +7,13 @@ import {
   type StoredPreference,
 } from "@/lib/waitlist/confirmation";
 import { instant, stalenessPolicy } from "@/lib/waitlist/validated";
+import { toDate } from "@/lib/waitlist/validated";
 
 // WAIT-ADMIT-01 — why the schema needs TWO timestamps, proved by the two things
 // a single one cannot do.
 
 const NOW = instant("2026-09-07T12:00:00.000Z");
-const ago = (days: number) => instant(NOW.getTime() - days * 86_400_000);
+const ago = (days: number) => new Date(NOW - days * 86_400_000);
 
 const stored = (statedDaysAgo: number, confirmedDaysAgo: number): StoredPreference => ({
   preference: "weekdays",
@@ -59,7 +60,7 @@ describe("an inconsistent pair is surfaced, never repaired", () => {
     const bad: StoredPreference = {
       preference: "both",
       statedAt: new Date("nope"),
-      confirmedAt: NOW,
+      confirmedAt: toDate(NOW),
       source: "public_form",
     };
     expect(classifyPreferenceFreshness(bad, NOW, NEVER_STALE).kind).toBe("inconsistent");
@@ -82,21 +83,21 @@ describe("applying a confirmation", () => {
   it("moves ONLY confirmedAt when the answer is unchanged", () => {
     const next = applyConfirmation(current, { preference: "weekdays", source: "prospect_link" }, NOW);
     expect(next.statedAt).toEqual(current.statedAt);
-    expect(next.confirmedAt).toEqual(NOW);
+    expect(next.confirmedAt).toEqual(toDate(NOW));
     expect(next.preference).toBe("weekdays");
   });
 
   it("moves BOTH when the answer changes, because that is a new statement", () => {
     const next = applyConfirmation(current, { preference: "weekends", source: "practitioner" }, NOW);
-    expect(next.statedAt).toEqual(NOW);
-    expect(next.confirmedAt).toEqual(NOW);
+    expect(next.statedAt).toEqual(toDate(NOW));
+    expect(next.confirmedAt).toEqual(toDate(NOW));
     expect(next.preference).toBe("weekends");
   });
 
   it("seeds both when there was no prior preference", () => {
     const next = applyConfirmation(null, { preference: "both", source: "public_form" }, NOW);
-    expect(next.statedAt).toEqual(NOW);
-    expect(next.confirmedAt).toEqual(NOW);
+    expect(next.statedAt).toEqual(toDate(NOW));
+    expect(next.confirmedAt).toEqual(toDate(NOW));
   });
 
   it("records the freshest route, so provenance describes the newest evidence", () => {
