@@ -2,6 +2,8 @@ import { afterAll, describe, expect, it } from "vitest";
 import { Client } from "pg";
 import { adminQuery, closePool, resolveLocalDbUrl, seedMember, seedStudio } from "./helpers/harness";
 import { waitUntilBlocked } from "./helpers/waitlist-concurrency";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 
 // 0193 — WAIT-ADMIT-01, proved against a real local PostgreSQL.
 //
@@ -25,6 +27,11 @@ const TABLES = [
 ] as const;
 
 const COMMANDS = [
+  // The primary entrypoint. It was absent from this live-ACL matrix and from
+  // the migration's source matrix, so a drift in its posture would have been
+  // proved by nothing: the behavioural tests below call it through the ADMIN
+  // connection, which says nothing about which roles may execute it.
+  "public.admit_new_client_waitlist_entry(uuid,uuid,uuid,uuid,date,date,smallint[],integer)",
   "public.create_practitioner_waitlist_entry(uuid,uuid,text,text,text,text)",
   "public.import_legacy_waitlist_entry(uuid,uuid,text,text,timestamptz,text,text)",
   "public.set_waitlist_entry_availability(uuid,uuid,uuid,text)",
@@ -37,6 +44,75 @@ const COMMANDS = [
 
 let n = 0;
 const uniqueEmail = (label: string) => `${label}-${Date.now()}-${n++}@harness.local`;
+
+/**
+ * THE FRONTIER, DERIVED FROM 0193 AND CHECKED AGAINST THE LIVE DATABASE.
+ *
+ * The source-side twin of this guard lives in
+ * tests/migrations/0193-waitlist-admission-authority.test.ts. This one closes
+ * the other half: that the ACLs PostgreSQL actually holds match the set the
+ * migration declares, so neither a missing matrix entry nor a missing REVOKE
+ * can hide. Signature-aware, because an overload with the same name is drift
+ * this suite has already had to be rewritten once to catch.
+ */
+const MIGRATION_SQL = readFileSync(
+  path.join(process.cwd(), "supabase", "migrations", "0193_waitlist_admission_authority.sql"),
+  "utf8",
+);
+
+const GRANTED_IN_MIGRATION = (() => {
+  const re = /grant execute on function (public\.[a-z_]+)\(([^)]*)\) to service_role;/g;
+  const found: string[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(MIGRATION_SQL)) !== null) {
+    found.push(`${m[1]}(${m[2]!.split(",").map((a) => a.trim()).join(",")})`);
+  }
+  return found;
+})();
+
+describe("the live privilege frontier is the one 0193 declared", () => {
+  it("finds the migration's grant statements at all", () => {
+    // Anti-vacuity: an empty derivation would make every comparison below pass.
+    expect(GRANTED_IN_MIGRATION.length).toBeGreaterThanOrEqual(9);
+    expect(GRANTED_IN_MIGRATION).toContain(
+      "public.admit_new_client_waitlist_entry(uuid,uuid,uuid,uuid,date,date,smallint[],integer)",
+    );
+  });
+
+  it("every command the migration grants is in this file's live-ACL matrix", () => {
+    const asserted = [...COMMANDS].map((c) => c.replace(/\s+/g, "")).sort();
+    expect(asserted, "a granted command missing here is a command nothing proves").toEqual(
+      [...GRANTED_IN_MIGRATION].sort(),
+    );
+  });
+
+  it("and PostgreSQL actually holds exactly that posture for each one", async () => {
+    // The live half. `has_function_privilege` resolves the signature, so a
+    // command that drifted to a different argument list would fail to resolve
+    // rather than pass silently.
+    for (const fn of GRANTED_IN_MIGRATION) {
+      const res = await adminQuery(
+        `select has_function_privilege('anon',$1,'execute') as anon,
+                has_function_privilege('authenticated',$1,'execute') as auth,
+                has_function_privilege('service_role',$1,'execute') as svc,
+                (select coalesce(array_to_string(p.proacl, ','), '(default)')
+                   from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+                  where n.nspname = 'public'
+                    and p.oid = $1::regprocedure) as acl`,
+        [fn],
+      );
+      expect(res.rows[0].anon, `anon must not execute ${fn}`).toBe(false);
+      expect(res.rows[0].auth, `authenticated must not execute ${fn}`).toBe(false);
+      expect(res.rows[0].svc, `service_role must execute ${fn}`).toBe(true);
+      // PUBLIC leaves no grantee entry, so an explicit ACL that never mentions
+      // it is the proof — a `(default)` ACL would mean PUBLIC still holds
+      // EXECUTE by inheritance, which is the whole defect class.
+      expect(res.rows[0].acl, `${fn} must carry an explicit ACL`).not.toBe("(default)");
+      expect(String(res.rows[0].acl)).not.toMatch(/(^|,)=X/);
+    }
+  });
+});
+
 
 describe("privileges are what the migration wrote, not what Supabase defaults gave", () => {
   it.each(TABLES)("anon holds nothing at all on %s", async (table) => {

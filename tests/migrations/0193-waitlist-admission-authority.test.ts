@@ -49,6 +49,15 @@ const TABLES = [
 ] as const;
 
 const COMMANDS: readonly [string, string][] = [
+  // THE PRIMARY ENTRYPOINT, AND THE ONE THIS MATRIX USED TO OMIT. Its absence
+  // meant a drift in its revoke/grant posture would have left every privilege
+  // test green while the admission command quietly became browser-callable —
+  // and `pg_default_acl` grants anon and authenticated EXECUTE at function
+  // create time, so that drift is one forgotten REVOKE away, not a hypothetical.
+  // Same trap CLAUDE.md records being missed in 0129 (anon) and 0164
+  // (service_role). The completeness guard below is what stops a tenth command
+  // repeating it.
+  ["public.admit_new_client_waitlist_entry", "uuid, uuid, uuid, uuid, date, date, smallint[], integer"],
   ["public.create_practitioner_waitlist_entry", "uuid, uuid, text, text, text, text"],
   ["public.import_legacy_waitlist_entry", "uuid, uuid, text, text, timestamptz, text, text"],
   ["public.set_waitlist_entry_availability", "uuid, uuid, uuid, text"],
@@ -108,6 +117,56 @@ describe("the disproved privilege model is not reintroduced", () => {
     expect(CODE).toContain("for update");
   });
 });
+
+/**
+ * THE PRIVILEGE FRONTIER, DERIVED FROM THE MIGRATION ITSELF.
+ *
+ * 0193 declares its own frontier: every command reachable by the server is
+ * named, WITH ITS SIGNATURE, in a `grant execute ... to service_role` statement.
+ * That is the authoritative list, so the matrix above is checked AGAINST it
+ * rather than trusted. A hand-maintained list is exactly how the ninth command
+ * went missing.
+ *
+ * Signature-aware on purpose: a bare name would let an overload be added — same
+ * name, new argument list, no revoke — and pass. That is the drift 0193's own
+ * lock-audit test already had to be rewritten to catch once.
+ */
+const GRANTED_TO_SERVICE_ROLE: readonly [string, string][] = (() => {
+  const re = /grant execute on function (public\.[a-z_]+)\(([^)]*)\) to service_role;/g;
+  const found: [string, string][] = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(CODE)) !== null) found.push([m[1]!, m[2]!.trim()]);
+  return found;
+})();
+
+/** Signatures differ only by spacing between the two files; compare on content. */
+const sigKey = (fn: string, args: string) =>
+  `${fn}(${args.split(",").map((a) => a.trim()).join(",")})`;
+
+describe("the privilege matrix covers every command 0193 exposes", () => {
+  it("finds the grant statements at all", () => {
+    // Anti-vacuity: a regex that matched nothing would make the equality below
+    // pass while proving that no command exists.
+    expect(GRANTED_TO_SERVICE_ROLE.length).toBeGreaterThanOrEqual(9);
+  });
+
+  it("the matrix and the migration's own grants are the SAME set, signature for signature", () => {
+    const declared = GRANTED_TO_SERVICE_ROLE.map(([fn, args]) => sigKey(fn, args)).sort();
+    const asserted = COMMANDS.map(([fn, args]) => sigKey(fn, args)).sort();
+    // Both directions: a command granted but unasserted is the defect that
+    // prompted this; a command asserted but no longer granted means the matrix
+    // is testing something the migration stopped doing.
+    expect(asserted, "every service_role-granted command must be in the matrix").toEqual(declared);
+  });
+
+  it("names the admission command specifically, so its omission cannot recur silently", () => {
+    expect(COMMANDS.map(([fn]) => fn)).toContain("public.admit_new_client_waitlist_entry");
+    expect(GRANTED_TO_SERVICE_ROLE.map(([fn]) => fn)).toContain(
+      "public.admit_new_client_waitlist_entry",
+    );
+  });
+});
+
 
 describe("privileges are explicit, never inherited", () => {
   it.each(TABLES)("revokes all four grantees on %s", (table) => {
