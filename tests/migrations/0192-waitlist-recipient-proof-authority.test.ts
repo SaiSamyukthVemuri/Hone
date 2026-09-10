@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import {
   fileForVersion,
@@ -528,11 +528,17 @@ describe("0192 — privileges are enumerated by name, and nothing reaches the br
 
   it("every function pins search_path and the definer ones are marked", () => {
     const defs = CODE.match(/create or replace function public\.[\s\S]*?\$\$;/g) ?? [];
-    // NINE new commands plus the forward REDEFINITION of the delegated issuer,
-    // which the P1 declined-rows repair required. 0190's file stays frozen.
-    // The ninth is the gated recipient-identity read the integration lane
-    // proved B3 could not book without.
-    expect(defs.length).toBe(10);
+    // NINE new commands, plus FOUR forward REDEFINITIONS of already-applied
+    // functions. 0188/0189/0190 stay frozen; a function whose meaning changed
+    // when declined_at arrived is re-created here instead.
+    //
+    //   1 delegated issuer            — the first repair in this family (§4b)
+    //   3 legacy lifecycle commands   — expire_, release_, record_conversion
+    //                                   (§14b, the class-wide completion)
+    //
+    // The ninth new command is the gated recipient-identity read the
+    // integration lane proved B3 could not book without.
+    expect(defs.length).toBe(13);
     for (const d of defs) {
       expect(d).toMatch(/set search_path = pg_catalog, pg_temp/);
     }
@@ -843,5 +849,100 @@ describe("0192 — the challenge clock is bounded by the invitation clock", () =
     expect(COMPLETE).toContain("proof_capability_expires_at = v_now + interval '30 minutes'");
     expect(COMPLETE).not.toContain("v_challenge_expires");
     expect(COMPLETE).not.toContain("least(");
+  });
+});
+
+describe("0192 §14b — the legacy lifecycle commands are declined-aware", () => {
+  // A NAMED-AUTHORITY REGRESSION GUARD, deliberately not a SQL parser.
+  //
+  // It knows exactly three functions by name — the three the class census
+  // identified — and asks one question of each: does every three-terminal
+  // invitation predicate in its body also require `declined_at is null`?
+  //
+  // Scoped this narrowly on purpose. A general scan over arbitrary migrations
+  // would flag 0188/0189/0190, whose bytes are APPLIED AND FROZEN and whose
+  // three-terminal predicates were correct when written — they are superseded
+  // here, not wrong there. The guard protects the forward definitions that are
+  // now authoritative, and nothing else.
+  const OWNED = [
+    "expire_new_client_waitlist_invitation",
+    "release_new_client_waitlist_entry",
+    "record_new_client_waitlist_conversion",
+  ] as const;
+
+  const bodyOf = (fn: string): string => {
+    const start = CODE.indexOf(`create or replace function public.${fn}(`);
+    expect(start, `${fn} must be forward-redefined in 0192`).toBeGreaterThan(-1);
+    const end = CODE.indexOf("\n$$;", start);
+    expect(end, `${fn} must terminate`).toBeGreaterThan(start);
+    return CODE.slice(start, end);
+  };
+
+  it.each(OWNED)("%s is redefined here, so 0189's version is superseded", (fn) => {
+    expect(CODE).toContain(`create or replace function public.${fn}(`);
+  });
+
+  it.each(OWNED)(
+    "%s: every three-terminal invitation predicate also requires declined_at",
+    (fn) => {
+      const body = bodyOf(fn);
+      const three = (body.match(/released_at is null/g) ?? []).length;
+      const four = (body.match(/declined_at is null/g) ?? []).length;
+      // NON-VACUOUS BY CONSTRUCTION: the first assertion proves the old shape is
+      // actually present to be paired, so a body that simply dropped every
+      // liveness predicate could not pass by having nothing to check.
+      expect(three, `${fn} must still express invitation liveness`).toBeGreaterThan(0);
+      expect(
+        four,
+        `${fn} has ${three} three-terminal predicate(s) but only ${four} declined_at ` +
+          `term(s) — a declined row would pass the unpaired one`,
+      ).toBe(three);
+    },
+  );
+
+  it.each(OWNED)("%s keeps its exact signature and definer posture", (fn) => {
+    const body = bodyOf(fn);
+    expect(body).toMatch(/\(\s*\n\s*p_studio_id\s+uuid,/);
+    expect(body).toContain("security definer");
+    expect(body).toContain("set search_path = pg_catalog, pg_temp");
+  });
+
+  it.each(OWNED)("%s is re-granted to service_role ONLY, by name", (fn) => {
+    for (const role of ["public", "anon", "authenticated", "service_role"]) {
+      expect(CODE).toContain(
+        `revoke all privileges on function public.${fn}(uuid, uuid, uuid) from ${role};`,
+      );
+    }
+    expect(CODE).toContain(
+      `grant  execute on function public.${fn}(uuid, uuid, uuid) to service_role;`,
+    );
+    expect(CODE).not.toContain(
+      `grant  execute on function public.${fn}(uuid, uuid, uuid) to authenticated;`,
+    );
+    expect(CODE).not.toContain(
+      `grant  execute on function public.${fn}(uuid, uuid, uuid) to anon;`,
+    );
+  });
+
+  it("CHRONOLOGY IS NOT THE REPAIR: no ordering was smuggled into the selectors", () => {
+    // An `order by issued_at desc limit 1` would also make the ambiguous select
+    // single-valued, and would be WRONG — it picks by age rather than liveness
+    // and still acts on a declined row when that row is newest. The invariant is
+    // the four-terminal predicate.
+    for (const fn of OWNED) {
+      const body = bodyOf(fn);
+      expect(body, `${fn} must not order the invitation selector`).not.toMatch(
+        /order by[\s\S]{0,40}issued_at/,
+      );
+    }
+  });
+
+  it("the frozen migrations are NOT edited — this is a forward redefinition", () => {
+    // 0188/0189/0190 are applied. The repair may only add a later definition.
+    for (const older of ["0188", "0189", "0190"]) {
+      const p = path.resolve(__dirname, "../../supabase/migrations");
+      const file = readdirSync(p).find((f) => f.startsWith(`${older}_`));
+      expect(file, `${older} must still exist`).toBeTruthy();
+    }
   });
 });

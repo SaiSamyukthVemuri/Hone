@@ -2359,3 +2359,283 @@ describe("0192 — the challenge clock is bounded by the invitation clock", () =
     expect(blob).not.toContain(offer.token);
   });
 });
+
+// ===========================================================================
+// A DECLINED INVITATION IS CLOSED TO EVERY LIFECYCLE COMMAND, NOT JUST TO
+// ISSUANCE
+// ===========================================================================
+//
+// THE CLASS THIS BLOCK CLOSES. Section 3 of 0192 replaced 0188's
+// `..._one_live_per_entry` UNIQUE index -- (entry_id) WHERE redeemed_at,
+// expired_at and released_at are all null -- with the four-column predicate
+// that also requires `declined_at is null`. That is deliberate: it is what lets
+// a declined invitation stop blocking its entry so a later offer is possible.
+//
+// But that index was not decoration. Its UNIQUENESS is what made an UNORDERED
+// `select i.id into v_inv` over the three columns correct in 0188 and 0189: at
+// most one row could match, so "the row matching" and "the current cycle" were
+// the same thing by construction. Widening the index DELETED that guarantee
+// while three commands were still asking the three-column question:
+//
+//     expire_new_client_waitlist_invitation
+//     release_new_client_waitlist_entry
+//     record_new_client_waitlist_conversion
+//
+// Section 14b redefines all three forward, each gaining `and i.declined_at is
+// null`. 0188/0189/0190 are applied and frozen and are never edited.
+//
+// WHAT GOES WRONG WITHOUT IT. A declined row PASSES the old guards, so whichever
+// row the unordered select happens to return is the one these commands act on.
+// Stamping a declined row raises `one_terminal_outcome_check` (SQLSTATE 23514),
+// so the command RAISES where 0185 requires it to answer with a WORD. Physical
+// row order decided which branch ran -- the benign outcome was luck, not a
+// guarantee, and a vacuum or plan change is enough to flip it. That is why the
+// structural assertion below is stated over the PREDICATE and not over which row
+// PostgreSQL happened to return.
+
+/** JOIN -> CLAIM -> OFFER A -> verify -> DECLINE A -> REQUEUE -> CLAIM -> OFFER B. */
+async function declinedThenReissued(label: string) {
+  const offer = await seedOffer(`decl-${label}`);
+  const svcB = await seedService(offer.studio.studioId, `${label}-B`);
+
+  const begun = await beginProof(offer.token);
+  const done = await completeProof(offer.token, begun.raw_challenge as string);
+  expect(done.result, "the fixture must reach a real capability").toBe("verified");
+  const dec = await adminQuery(
+    `select result from public.decline_new_client_waitlist_invitation($1,$2)`,
+    [offer.token, done.raw_capability],
+  );
+  expect(dec.rows[0].result).toBe("declined");
+
+  await adminQuery(`select public.requeue_new_client_waitlist_entry($1,$2,$3)`, [
+    offer.studio.studioId, offer.entryId, offer.studio.userId,
+  ]);
+  await adminQuery(`select public.claim_new_client_waitlist_entry($1,$2,$3)`, [
+    offer.studio.studioId, offer.entryId, offer.studio.userId,
+  ]);
+  // A DIFFERENT offer: the no-repeat-declined rule still forbids re-issuing the
+  // same one, and this fixture must not depend on relaxing it.
+  const b = await adminQuery(
+    `select result, raw_token, invitation_id
+       from public.issue_scoped_new_client_waitlist_invitation(
+              $1,$2,$3,$4, current_date, current_date + 13, null, 72)`,
+    [offer.studio.studioId, offer.entryId, offer.studio.userId, svcB],
+  );
+  expect(b.rows[0].result, "a genuinely different later offer must remain possible").toBe("issued");
+  return {
+    studio: offer.studio,
+    entryId: offer.entryId,
+    A: offer.invitationId,
+    B: b.rows[0].invitation_id as string,
+    tokenB: b.rows[0].raw_token as string,
+  };
+}
+
+const termsOf = async (id: string) =>
+  (
+    await adminQuery(
+      `select declined_at is not null d, released_at is not null rel,
+              expired_at is not null exp, redeemed_at is not null red
+         from public.new_client_waitlist_invitations where id = $1`,
+      [id],
+    )
+  ).rows[0];
+
+describe("0192 §14b — a declined row is closed to expire, release and conversion", () => {
+  it("THE FIXTURE ITSELF: A is declined-only, and B is the single live row", async () => {
+    const f = await declinedThenReissued("shape");
+
+    const a = await termsOf(f.A);
+    expect(a.d, "A must be declined").toBe(true);
+    expect([a.rel, a.exp, a.red], "A must carry NO other terminal outcome").toEqual([
+      false, false, false,
+    ]);
+
+    // The invariant, stated over the PREDICATE rather than over row order.
+    const counts = await adminQuery(
+      `select
+         count(*) filter (where redeemed_at is null and expired_at is null
+                            and released_at is null)                        as three_terminal,
+         count(*) filter (where redeemed_at is null and expired_at is null
+                            and released_at is null and declined_at is null) as four_terminal
+       from public.new_client_waitlist_invitations where entry_id = $1`,
+      [f.entryId],
+    );
+    // ADVERSARIAL / NEGATIVE CONTROL, and it does not depend on which row
+    // PostgreSQL returns first: the OLD predicate is genuinely ambiguous here
+    // (two rows), while the NEW one is single-valued (one row). That ambiguity
+    // IS the defect; ordering would not have fixed it.
+    expect(Number(counts.rows[0].three_terminal), "the OLD predicate is ambiguous").toBe(2);
+    expect(Number(counts.rows[0].four_terminal), "the NEW predicate is decisive").toBe(1);
+
+    const live = await adminQuery(
+      `select id from public.new_client_waitlist_invitations
+        where entry_id = $1 and redeemed_at is null and expired_at is null
+          and released_at is null and declined_at is null`,
+      [f.entryId],
+    );
+    expect(live.rows.map((r) => r.id)).toEqual([f.B]);
+  });
+
+  it("RELEASE acts on B, and never adds a second terminal outcome to A", async () => {
+    const f = await declinedThenReissued("release");
+    const r = await adminQuery(`select public.release_new_client_waitlist_entry($1,$2,$3) r`, [
+      f.studio.studioId, f.entryId, f.studio.userId,
+    ]);
+    // A WORD, NOT AN ERROR. Acting on the declined row would raise 23514.
+    expect(r.rows[0].r).toBe("released");
+
+    expect(await termsOf(f.B)).toMatchObject({ rel: true, d: false });
+    expect(
+      await termsOf(f.A),
+      "A's declined_at must remain its SOLE terminal evidence",
+    ).toMatchObject({ d: true, rel: false, exp: false, red: false });
+  });
+
+  it("EXPIRE adjudicates B's clock, never A's, and leaves A untouched", async () => {
+    const f = await declinedThenReissued("expire");
+
+    // B's window is open, so the truthful answer is `not_expired` -- and it must
+    // be reached by reading B. A's window is aged past, so a command that
+    // adjudicated A would answer differently.
+    await adminQuery(
+      `alter table public.new_client_waitlist_invitations
+         disable trigger new_client_waitlist_invitations_append_only`,
+    );
+    await adminQuery(
+      `update public.new_client_waitlist_invitations
+          set issued_at = clock_timestamp() - interval '96 hours',
+              expires_at = clock_timestamp() - interval '24 hours'
+        where id = $1`,
+      [f.A],
+    );
+    await adminQuery(
+      `alter table public.new_client_waitlist_invitations
+         enable trigger new_client_waitlist_invitations_append_only`,
+    );
+
+    const open = await adminQuery(
+      `select public.expire_new_client_waitlist_invitation($1,$2,$3) r`,
+      [f.studio.studioId, f.entryId, f.studio.userId],
+    );
+    expect(open.rows[0].r, "B is still live, so nothing expires").toBe("not_expired");
+    expect(await termsOf(f.A)).toMatchObject({ d: true, exp: false });
+
+    // Now age B itself. Expiry must land on B.
+    await adminQuery(
+      `alter table public.new_client_waitlist_invitations
+         disable trigger new_client_waitlist_invitations_append_only`,
+    );
+    await adminQuery(
+      `update public.new_client_waitlist_invitations
+          set issued_at = clock_timestamp() - interval '96 hours',
+              expires_at = clock_timestamp() - interval '1 minute'
+        where id = $1`,
+      [f.B],
+    );
+    await adminQuery(
+      `alter table public.new_client_waitlist_invitations
+         enable trigger new_client_waitlist_invitations_append_only`,
+    );
+
+    const done = await adminQuery(
+      `select public.expire_new_client_waitlist_invitation($1,$2,$3) r`,
+      [f.studio.studioId, f.entryId, f.studio.userId],
+    );
+    expect(done.rows[0].r).toBe("expired");
+    expect(await termsOf(f.B)).toMatchObject({ exp: true, d: false });
+    expect(
+      await termsOf(f.A),
+      "A must never receive expired_at on top of declined_at",
+    ).toMatchObject({ d: true, exp: false, rel: false, red: false });
+  });
+
+  it("CONVERSION binds to B's redeemed cycle, never to historical A", async () => {
+    const f = await declinedThenReissued("convert");
+
+    const begun = await beginProof(f.tokenB);
+    const done = await completeProof(f.tokenB, begun.raw_challenge as string);
+    expect(done.result).toBe("verified");
+    const red = await adminQuery(
+      `select result from public.redeem_new_client_waitlist_invitation_verified($1,$2)`,
+      [f.tokenB, done.raw_capability],
+    );
+    expect(red.rows[0].result).toBe("redeemed");
+
+    const conv = await adminQuery(
+      `select public.record_new_client_waitlist_conversion($1,$2,$3) r`,
+      [f.studio.studioId, f.entryId, f.studio.clientId],
+    );
+    expect(conv.rows[0].r).toBe("converted");
+
+    expect(await termsOf(f.B)).toMatchObject({ red: true, d: false });
+    expect(
+      await termsOf(f.A),
+      "A stays declined-only through a conversion on a later cycle",
+    ).toMatchObject({ d: true, red: false, rel: false, exp: false });
+  });
+
+  // -------------------------------------------------------------------------
+  // NON-VACUITY: the repair adds awareness of a NEW terminal state. It must not
+  // redefine the old ones. With no declined row anywhere, every verdict below is
+  // the one 0188/0189 already gave.
+  // -------------------------------------------------------------------------
+  it("NO DECLINED ROW: release is unchanged", async () => {
+    const o = await seedOffer("nodecl-release");
+    const r = await adminQuery(`select public.release_new_client_waitlist_entry($1,$2,$3) r`, [
+      o.studio.studioId, o.entryId, o.studio.userId,
+    ]);
+    expect(r.rows[0].r).toBe("released");
+    expect(await termsOf(o.invitationId)).toMatchObject({ rel: true, d: false });
+  });
+
+  it("NO DECLINED ROW: expire is unchanged, on both sides of the boundary", async () => {
+    const o = await seedOffer("nodecl-expire");
+    expect(
+      (
+        await adminQuery(`select public.expire_new_client_waitlist_invitation($1,$2,$3) r`, [
+          o.studio.studioId, o.entryId, o.studio.userId,
+        ])
+      ).rows[0].r,
+      "a live window still refuses",
+    ).toBe("not_expired");
+
+    await adminQuery(
+      `alter table public.new_client_waitlist_invitations
+         disable trigger new_client_waitlist_invitations_append_only`,
+    );
+    await adminQuery(
+      `update public.new_client_waitlist_invitations
+          set issued_at = clock_timestamp() - interval '96 hours',
+              expires_at = clock_timestamp() - interval '1 minute'
+        where id = $1`,
+      [o.invitationId],
+    );
+    await adminQuery(
+      `alter table public.new_client_waitlist_invitations
+         enable trigger new_client_waitlist_invitations_append_only`,
+    );
+    expect(
+      (
+        await adminQuery(`select public.expire_new_client_waitlist_invitation($1,$2,$3) r`, [
+          o.studio.studioId, o.entryId, o.studio.userId,
+        ])
+      ).rows[0].r,
+    ).toBe("expired");
+  });
+
+  it("NO DECLINED ROW: conversion is unchanged", async () => {
+    const o = await seedOffer("nodecl-convert");
+    const begun = await beginProof(o.token);
+    const done = await completeProof(o.token, begun.raw_challenge as string);
+    await adminQuery(
+      `select result from public.redeem_new_client_waitlist_invitation_verified($1,$2)`,
+      [o.token, done.raw_capability],
+    );
+    const conv = await adminQuery(
+      `select public.record_new_client_waitlist_conversion($1,$2,$3) r`,
+      [o.studio.studioId, o.entryId, o.studio.clientId],
+    );
+    expect(conv.rows[0].r).toBe("converted");
+  });
+});
