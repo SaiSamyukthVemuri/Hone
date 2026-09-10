@@ -79,16 +79,35 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PUBLIC_BOOKING_GENERIC_ERROR =
   "We couldn't complete your booking. Please try again or contact the studio.";
 
-// Returned when an unauthenticated public booking attempts to use an
-// email address that is owned by a client the studio has archived
-// (migration 0050 + PR #113). We deliberately do NOT reveal that an
-// archived client exists or invite the booker to retry with different
-// details that would unmask the archive: that would re-introduce a
-// soft enumeration channel. The wording matches the spec and stays
-// generic. studio.name is interpolated at call time.
-function archivedClientCollisionError(studioName: string): string {
-  return `We couldn't complete this booking with those details. Please contact ${studioName} or use a different email.`;
-}
+// SEC-01A. The archived-collision refusal has NO message of its own.
+//
+// It used to return a distinct string ("...with those details. Please contact
+// {studio} or use a different email."). That wording never said "archived",
+// which is why it read as safe -- but enumeration does not need a confession,
+// only a DISTINGUISHABLE response. The string was reachable on exactly one
+// condition, an archived row owning the submitted email, so an unauthenticated
+// caller could classify any address as archived by submitting client_type=new
+// and watching which of three replies came back. Worse, that probe is free and
+// silent: the archived branch returns BEFORE `create_public_appointment`, so
+// nothing is written and no operator sees a booking.
+//
+// The three outcomes of the SAME client INSERT -- archived winner, unresolved
+// unique-index race, and any other insert error -- now return one identical
+// string, `PUBLIC_BOOKING_GENERIC_ERROR`. Archived is therefore
+// indistinguishable from its nearest neighbours rather than from nothing.
+//
+// Operator visibility is unchanged: `public_booking_archived_client_collision`
+// still fires with the salted email fingerprint and the
+// `archivedClientCollision` flag, so the case stays diagnosable from the logs
+// it always used. Only the VISITOR-facing channel lost its resolution.
+//
+// This does not close the remaining enumeration channel on the
+// client_type=existing path (success vs `EXISTING_CLIENT_NO_MATCH_ERROR` still
+// separates an active client from an unknown address). That divergence cannot
+// be removed without the identity-possession model, so it is pinned as an
+// explicit KNOWN GAP in
+// tests/app/book/public-booking-identity-contract.test.ts rather than papered
+// over here.
 
 // Returned when an unauthenticated public booking with
 // client_type=existing cannot find an ACTIVE client by normalized
@@ -760,9 +779,9 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
           .eq("normalized_email", normalizedEmail)
           .maybeSingle();
         if (winner && winner.archived_at != null) {
-          // Archived-collision case. Log internally so an operator
-          // can see what happened; return a generic message that
-          // does not reveal the archive.
+          // Archived-collision case. Log internally so an operator can see
+          // what happened; return the SAME generic message every other
+          // failure on this INSERT returns.
           // PR #261: never write the raw booker email or the internal
           // archived client UUID to logs from this unauthenticated
           // path. The salted email fingerprint preserves operator
@@ -774,10 +793,9 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
             emailFingerprint: hashFingerprint(normalizedEmail),
             archivedClientCollision: true,
           });
-          return {
-            ok: false,
-            error: archivedClientCollisionError(studio.name),
-          };
+          // SEC-01A: identical to the sibling INSERT failures below, so the
+          // archived case carries no response signature of its own.
+          return { ok: false, error: PUBLIC_BOOKING_GENERIC_ERROR };
         }
         if (winner) {
           clientId = winner.id;
