@@ -6,6 +6,7 @@ import { CompleteProfilePanel } from "@/components/waitlist/complete-profile-pan
 import {
   completionDraftFromStored,
   validateJoinProfileDraft,
+  invitationEligibility,
   storedMobilePresent,
   type JoinProfileDraft,
   type StoredWaitlistProfile,
@@ -119,9 +120,8 @@ describe("1+2. LOCKED INVALID MOBILE — refusal is visible, and Save cannot pro
         expect(html).toMatch(/role="alert"/);
         const text = visibleText(html);
         expect(text).toContain(MOBILE_ON_FILE_UNUSABLE);
-        // Tells them to contact the studio, NOT to type into a field that is
-        // deliberately absent.
-        expect(text).toContain("Contact the studio");
+        // Points at a human, NOT at a field that is deliberately absent.
+        expect(text).toMatch(/contact the studio/i);
         expect(text).not.toContain("Enter a mobile number");
       });
 
@@ -265,3 +265,56 @@ function readPanelSource(): string {
     "utf8",
   );
 }
+
+
+describe("the refusal copy promises nothing the product cannot do", () => {
+  // The operator queue exposes remove / claim / release / expire / requeue /
+  // claim-next and NONE writes a phone; the page renders `phone` with no input,
+  // and no migration provides an RPC that updates one. So the studio can see a
+  // bad number and remove the person — it cannot correct the number. Copy that
+  // said otherwise sent the prospect to a capability that does not exist.
+
+  it("does NOT claim the studio can update the number", () => {
+    for (const promise of [
+      /to update it/i,
+      /studio to update/i,
+      /studio can update/i,
+      /studio will update/i,
+      /we'll update/i,
+      /have it updated/i,
+    ]) {
+      expect(MOBILE_ON_FILE_UNUSABLE).not.toMatch(promise);
+    }
+  });
+
+  it("does NOT promise a return trip that would hit the same refusal", () => {
+    expect(MOBILE_ON_FILE_UNUSABLE).not.toMatch(/come back|return here|then finish/i);
+  });
+
+  it("does NOT promise contact by email, which an incomplete entry cannot get", () => {
+    // invitationEligibility refuses an incomplete profile on EVERY channel, so
+    // an email reassurance would be as false as the update promise it replaced.
+    expect(MOBILE_ON_FILE_UNUSABLE).not.toMatch(/email you|be in touch|contact you/i);
+  });
+
+  it("NON-VACUITY — it still says the three true things and names one action", () => {
+    expect(MOBILE_ON_FILE_UNUSABLE).toMatch(/can't use the mobile number/i);
+    expect(MOBILE_ON_FILE_UNUSABLE).toMatch(/can't be changed from this page/i);
+    expect(MOBILE_ON_FILE_UNUSABLE).toMatch(/can't be completed/i);
+    expect(MOBILE_ON_FILE_UNUSABLE).toMatch(/contact the studio/i);
+  });
+
+  it("and the entry it describes really is uninvitable, on every channel", () => {
+    const verdict = invitationEligibility({
+      firstName: "Sarah",
+      lastName: "Jones",
+      email: "sarah@example.com",
+      mobile: "n/a",
+      treatmentAreaIds: ["chin"],
+      availabilityPreference: "both",
+    });
+    expect(verdict.eligible).toBe(false);
+    if (verdict.eligible) return;
+    expect(verdict.reason).toBe("profile_incomplete");
+  });
+});

@@ -116,15 +116,37 @@ export const MOBILE_CANDIDATE_NOTE =
  * cannot be completed either.
  *
  * A DISTINCT STRING FROM `MOBILE_ON_FILE_NOTE`, deliberately. That note
- * describes a normal, healthy condition ("here is your number, ask the studio to
- * change it"). This one describes a BLOCKED SUBMIT, which is a different event
- * and needs its own words — reusing the calm note as an error would leave the
- * person pressing Save against a form that never explains why it will not move.
+ * describes a normal, healthy condition. This one describes a BLOCKED SUBMIT,
+ * which is a different event and needs its own words — reusing the calm note as
+ * an error would leave the person pressing Save against a form that never
+ * explains why it will not move.
  *
- * NAMES THE REMEDIATION, NOT THE FIELD. The prospect cannot fix this by typing:
- * there is no control, by design, because the number is a destination and this
- * page is reachable by possession of a link. So the copy points at the one route
- * that does work rather than at an input that does not exist.
+ * IT PROMISES NO REMEDIATION, BECAUSE THERE IS NONE TO PROMISE.
+ *
+ * An earlier revision said "Contact the studio to update it, then come back here
+ * to finish your details", which asserted two things the product cannot do. The
+ * operator queue (`app/(app)/settings/waitlist/`) exposes six actions — remove,
+ * claim, release, expire, requeue, claim-next — and NONE writes a phone; the
+ * page reads `phone` and renders it, with no input and no form. No migration
+ * provides an RPC that updates one either. So the studio can SEE the bad number
+ * and can remove the person from the queue; it cannot correct the number, and
+ * "come back here to finish" describes a return trip that would hit the same
+ * refusal.
+ *
+ * That is the label-promise rule applied to copy: a message may only promise
+ * what the system delivers. So every clause below is checkable —
+ *
+ *   * the number cannot be used            -> it fails validation
+ *   * it cannot be changed from this page  -> there is no control, by design
+ *   * the details cannot be completed      -> assessProfileCompleteness says so
+ *   * contact the studio                   -> reaching a human is always
+ *                                             possible, and this claims nothing
+ *                                             about what they can then do
+ *
+ * DELIBERATELY NOT SAID: that the studio will email them instead. An entry with
+ * an unusable mobile is PROFILE_INCOMPLETE, so `invitationEligibility` refuses
+ * it on every channel — an email reassurance would be as false as the update
+ * promise it replaced.
  */
 export const MOBILE_ON_FILE_UNUSABLE =
-  "We can't use the mobile number currently on file. Contact the studio to update it, then come back here to finish your details.";
+  "We can't use the mobile number on file, and it can't be changed from this page — so your details can't be completed yet. Please contact the studio.";
