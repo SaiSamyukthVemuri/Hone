@@ -15,6 +15,11 @@ import {
   adapterMissingReason,
   admitResultToOutcome,
   isWireInstant,
+  deliveryStateFrom,
+  INVITATION_DELIVERY_COPY,
+  INVITATION_DELIVERY_STATES,
+  type InvitationDeliveryState,
+  type InvitationOutcome,
   type AdmitServerRefusal,
   type InviteToBookFailure,
 } from "@/lib/waitlist/invite-to-book-contract";
@@ -392,7 +397,7 @@ describe("the admission vocabulary this component was REVIEWED against", () => {
         `${refusal} maps to a code outside the contract`,
       ).toContain(shown);
 
-      const outcome = admitResultToOutcome(refusal, "2026-09-12T10:00:00.000Z");
+      const outcome = admitResultToOutcome(refusal, "2026-09-12T10:00:00.000Z", "accepted");
       expect(outcome.ok, `${refusal} must never read as success`).toBe(false);
     }
   });
@@ -415,11 +420,11 @@ describe("the admission vocabulary this component was REVIEWED against", () => {
     expect(ADMIT_REFUSAL_PRESENTATION.unknown_studio).toBe("unavailable");
     expect(ADMIT_REFUSAL_PRESENTATION.not_admissible).toBe("unavailable");
 
-    expect(admitResultToOutcome("unknown_studio", null)).toEqual({
+    expect(admitResultToOutcome("unknown_studio", null, "accepted")).toEqual({
       ok: false,
       code: "unavailable",
     });
-    expect(admitResultToOutcome("not_admissible", null)).toEqual({
+    expect(admitResultToOutcome("not_admissible", null, "accepted")).toEqual({
       ok: false,
       code: "unavailable",
     });
@@ -439,19 +444,19 @@ describe("the admission vocabulary this component was REVIEWED against", () => {
 
   it("fails closed on anything it does not recognise", () => {
     // A server result added without updating this contract.
-    expect(admitResultToOutcome("newly_invented_refusal", null)).toEqual({
+    expect(admitResultToOutcome("newly_invented_refusal", null, "accepted")).toEqual({
       ok: false,
       code: "unavailable",
     });
     // Malformed runtime values. None of these may produce a success.
     for (const junk of [null, undefined, 42, {}, [], true, ""]) {
-      const outcome = admitResultToOutcome(junk, "2026-09-12T10:00:00.000Z");
+      const outcome = admitResultToOutcome(junk, "2026-09-12T10:00:00.000Z", "accepted");
       expect(outcome.ok, `${String(junk)} must not read as success`).toBe(false);
       expect(outcome).toEqual({ ok: false, code: "unavailable" });
     }
     // Inherited property names must not resolve through the prototype chain.
     for (const inherited of ["constructor", "toString", "__proto__"]) {
-      expect(admitResultToOutcome(inherited, null)).toEqual({
+      expect(admitResultToOutcome(inherited, null, "accepted")).toEqual({
         ok: false,
         code: "unavailable",
       });
@@ -459,14 +464,15 @@ describe("the admission vocabulary this component was REVIEWED against", () => {
   });
 
   it("never synthesises an expiry for a success it cannot date", () => {
-    expect(admitResultToOutcome("admitted", "2026-09-12T10:00:00.000Z")).toEqual({
+    expect(admitResultToOutcome("admitted", "2026-09-12T10:00:00.000Z", "accepted")).toEqual({
       ok: true,
       expiresAt: "2026-09-12T10:00:00.000Z",
+      delivery: "accepted",
     });
     // 0190's correction: the window belongs to the issuing instant, which only
     // the database observes. An undated success is malformed, not successful.
     for (const missing of [null, undefined, "", "   ", 0]) {
-      expect(admitResultToOutcome("admitted", missing)).toEqual({
+      expect(admitResultToOutcome("admitted", missing, "accepted")).toEqual({
         ok: false,
         code: "unavailable",
       });
@@ -487,6 +493,8 @@ describe("the admission vocabulary this component was REVIEWED against", () => {
     "2026-09-12T15:00:00-05:00",
     "2026-09-12T15:00:00+0000",
     "2026-09-12T15:00:00.074892Z",
+    "2026-09-12T23:59:59Z", // the real last second of the day
+    "2026-09-12T00:00:00Z", // and its first
     "2028-02-29T00:00:00Z", // a real leap day
   ] as const;
 
@@ -500,6 +508,9 @@ describe("the admission vocabulary this component was REVIEWED against", () => {
     "2026-02-30T00:00:00Z", // impossible day — Date.parse ACCEPTS this
     "2027-02-29T00:00:00Z", // not a leap year
     "2026-13-01T00:00:00Z", // impossible month
+    "2026-09-12T24:00:00Z", // hour 24: Date.parse ACCEPTS and rolls to the 13th
+    "2026-09-12T24:00:00+00:00", // the same, offset-spelled
+    "2026-09-12T24:30:00Z",
     "2026-09-12T25:00:00Z", // impossible hour
     "2026-09-12T15:60:00Z", // impossible minute
     "2026-09-12 15:00:00+00:00", // space separator: not what this wire emits
@@ -518,9 +529,10 @@ describe("the admission vocabulary this component was REVIEWED against", () => {
   it("accepts every instant spelling this wire carries", () => {
     for (const valid of VALID_WIRE_INSTANTS) {
       expect(isWireInstant(valid), `${valid} must be accepted`).toBe(true);
-      expect(admitResultToOutcome("admitted", valid)).toEqual({
+      expect(admitResultToOutcome("admitted", valid, "accepted")).toEqual({
         ok: true,
         expiresAt: valid,
+        delivery: "accepted",
       });
     }
   });
@@ -528,7 +540,7 @@ describe("the admission vocabulary this component was REVIEWED against", () => {
   it("refuses every malformed expiry, and NONE of them can become success", () => {
     for (const junk of MALFORMED_EXPIRIES) {
       expect(isWireInstant(junk), `${String(junk)} must be refused`).toBe(false);
-      const outcome = admitResultToOutcome("admitted", junk);
+      const outcome = admitResultToOutcome("admitted", junk, "accepted");
       expect(outcome.ok, `admitted + ${String(junk)} must not read as success`).toBe(
         false,
       );
@@ -551,5 +563,144 @@ describe("the admission vocabulary this component was REVIEWED against", () => {
     // Only the PARSE rejects these — the shape and the calendar date are fine.
     expect(WIRE_INSTANT_SHAPE.test("2026-09-12T25:00:00Z")).toBe(true);
     expect(Number.isNaN(Date.parse("2026-09-12T25:00:00Z"))).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe("hour 24 is not a time of day this wire accepts", () => {
+  it("refuses hour 24 and keeps hour 23 valid", () => {
+    // THE BOUNDARY, stated as a pair. `24:00:00` satisfies the shape, and V8
+    // parses it by NORMALISING it into the next day — so the calendar check,
+    // which reads the Y/M/D the string carries, sees a valid 12 September while
+    // the instant has silently become the 13th. A deadline moved by a day is
+    // exactly the class of bug this validator exists to stop.
+    expect(isWireInstant("2026-09-12T23:59:59Z")).toBe(true);
+    expect(isWireInstant("2026-09-12T24:00:00Z")).toBe(false);
+    expect(isWireInstant("2026-09-12T24:00:00+00:00")).toBe(false);
+
+    // The normalisation itself, measured rather than asserted from memory.
+    expect(Number.isNaN(Date.parse("2026-09-12T24:00:00Z"))).toBe(false);
+    expect(new Date("2026-09-12T24:00:00Z").toISOString()).toBe(
+      "2026-09-13T00:00:00.000Z",
+    );
+
+    // The other clock fields, bounded in the same place. These are already NaN
+    // to V8, so this pins the law rather than changing behaviour — and it is
+    // NOT leap-second support: second 60 is refused exactly as V8 refuses it.
+    expect(isWireInstant("2026-09-12T23:60:00Z")).toBe(false);
+    expect(isWireInstant("2026-09-12T23:59:60Z")).toBe(false);
+    expect(Number.isNaN(Date.parse("2026-09-12T23:59:60Z"))).toBe(true);
+
+    // And no hour-24 value can reach a success.
+    for (const bad of ["2026-09-12T24:00:00Z", "2026-09-12T24:00:00+00:00"]) {
+      expect(admitResultToOutcome("admitted", bad, "accepted")).toEqual({
+        ok: false,
+        code: "unavailable",
+      });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe("admission and delivery are two facts, never one", () => {
+  const ISO = "2026-09-12T10:00:00.000Z";
+
+  it("reports the invitation as existing whatever the email did", () => {
+    // LAW 2 AND LAW 5 TOGETHER. A provider refusal happens after the database
+    // has already committed; reporting ok:false would claim the prospect was
+    // never admitted, and the practitioner would go looking for an entry that
+    // has in fact moved on.
+    for (const delivery of INVITATION_DELIVERY_STATES) {
+      const outcome = admitResultToOutcome("admitted", ISO, delivery);
+      expect(outcome.ok, `${delivery} must not read as admission failure`).toBe(true);
+      expect(outcome).toEqual({ ok: true, expiresAt: ISO, delivery });
+    }
+  });
+
+  it("keeps the three states distinct", () => {
+    expect(new Set(INVITATION_DELIVERY_STATES).size).toBe(3);
+    const states = INVITATION_DELIVERY_STATES.map(
+      (d) => admitResultToOutcome("admitted", ISO, d) as { delivery: string },
+    ).map((o) => o.delivery);
+    expect(states).toEqual(["accepted", "unknown", "refused"]);
+    // accepted !== unknown !== refused, asserted rather than assumed: collapsing
+    // any pair is what makes "sent" a lie.
+    expect(new Set(states).size).toBe(3);
+  });
+
+  it("fails closed to `unknown`, never to a claim", () => {
+    // LAW 7. `accepted` would claim custody nobody reported; `refused` would
+    // claim a definite failure nobody observed. "We do not know" is the only
+    // honest reading of an unreadable value.
+    for (const junk of [undefined, null, "", "sent", "delivered", "ACCEPTED", 0, {}, [], true]) {
+      expect(deliveryStateFrom(junk), `${String(junk)} must fail closed`).toBe("unknown");
+      const outcome = admitResultToOutcome("admitted", ISO, junk);
+      expect(outcome).toEqual({ ok: true, expiresAt: ISO, delivery: "unknown" });
+    }
+  });
+
+  it("cannot express a success without a delivery state", () => {
+    // LAW 6, at the type level: this does not compile if `delivery` is optional
+    // or absent from the success arm.
+    const withDelivery: InvitationOutcome = { ok: true, expiresAt: ISO, delivery: "unknown" };
+    expect(withDelivery.ok).toBe(true);
+    // @ts-expect-error a success with no delivery state is not an InvitationOutcome
+    const withoutDelivery: InvitationOutcome = { ok: true, expiresAt: ISO };
+    expect(withoutDelivery).toBeDefined();
+
+    // And every runtime success carries one.
+    for (const delivery of [undefined, "accepted", "refused", "nonsense"]) {
+      const outcome = admitResultToOutcome("admitted", ISO, delivery);
+      expect(outcome.ok).toBe(true);
+      if (outcome.ok) {
+        expect(INVITATION_DELIVERY_STATES as ReadonlyArray<string>).toContain(
+          outcome.delivery,
+        );
+      }
+    }
+  });
+
+  it("only `accepted` may imply the email went out", () => {
+    // THE PRODUCT LAW. "Invitation sent" against an unknown or refused delivery
+    // is the untruth this whole type exists to prevent.
+    expect(Object.keys(INVITATION_DELIVERY_COPY).sort()).toEqual(
+      [...INVITATION_DELIVERY_STATES].sort(),
+    );
+    for (const state of ["unknown", "refused"] as const) {
+      expect(INVITATION_DELIVERY_COPY[state]).not.toMatch(/\bsent\b/i);
+      // Each must still confirm the invitation EXISTS, or the practitioner is
+      // left thinking nothing happened.
+      expect(INVITATION_DELIVERY_COPY[state]).toMatch(/created/i);
+    }
+    expect(INVITATION_DELIVERY_COPY.unknown).toMatch(/could not be confirmed/i);
+    expect(INVITATION_DELIVERY_COPY.refused).toMatch(/not accepted/i);
+
+    // No copy line offers a resend: `canResend` is false until an atomic
+    // reissue command exists, and no release/requeue/claim/issue sequence may
+    // stand in for one.
+    for (const state of INVITATION_DELIVERY_STATES) {
+      expect(INVITATION_DELIVERY_COPY[state]).not.toMatch(/resend|try again|retry/i);
+    }
+  });
+
+  it("leaves the admission refusal vocabulary untouched", () => {
+    // Delivery states are not failure codes and must never leak into that union.
+    for (const state of INVITATION_DELIVERY_STATES) {
+      expect(INVITE_TO_BOOK_FAILURES as ReadonlyArray<string>).not.toContain(state);
+    }
+    // And a refusal still refuses, whatever is passed as delivery.
+    for (const delivery of ["accepted", "refused", undefined]) {
+      expect(admitResultToOutcome("not_admissible", ISO, delivery)).toEqual({
+        ok: false,
+        code: "unavailable",
+      });
+    }
+    // expiresAt validation stays load-bearing under the new signature.
+    expect(admitResultToOutcome("admitted", "not-a-date", "accepted")).toEqual({
+      ok: false,
+      code: "unavailable",
+    });
   });
 });

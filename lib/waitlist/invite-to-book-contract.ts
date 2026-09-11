@@ -199,6 +199,32 @@ export const INVITE_TO_BOOK_FAILURES = [
 
 export type InviteToBookFailure = (typeof INVITE_TO_BOOK_FAILURES)[number];
 
+/**
+ * What happened to the EMAIL, which is a different question from what happened
+ * to the invitation.
+ *
+ * Delivery is attempted AFTER the database has already committed the admission
+ * and minted the invitation. A provider refusing the message does not un-invite
+ * anybody, so collapsing these two facts into one boolean forces a choice
+ * between two lies: reporting a failure that did not happen to the admission,
+ * or reporting a send that did not happen to the email.
+ *
+ * - `accepted` — the provider took custody. IT DOES NOT SAY the human received
+ *   or opened anything; nothing this side of the wire can know that.
+ * - `unknown`  — custody is undetermined: a timeout, an ambiguous response, or
+ *   no delivery information at all. The caller may claim NEITHER "sent" NOR
+ *   "failed". This is the fail-closed state.
+ * - `refused`  — the provider definitely did not take custody. The invitation
+ *   still exists.
+ */
+export type InvitationDeliveryState = "accepted" | "unknown" | "refused";
+
+export const INVITATION_DELIVERY_STATES = [
+  "accepted",
+  "unknown",
+  "refused",
+] as const;
+
 export type InvitationOutcome =
   | {
       ok: true;
@@ -206,8 +232,53 @@ export type InvitationOutcome =
        *  whole correction was that the window belongs to the issuing instant,
        *  which only the database observes. */
       expiresAt: string;
+      /** REQUIRED on every success. `ok: true` means the invitation EXISTS;
+       *  what reached the prospect is this field's business and only this
+       *  field's, so a success that omitted it would be silently claiming the
+       *  email went out. */
+      delivery: InvitationDeliveryState;
     }
   | { ok: false; code: InviteToBookFailure };
+
+/**
+ * Practitioner copy for each delivery state.
+ *
+ * THE LAW IS THAT ONLY `accepted` MAY IMPLY THE EMAIL WENT OUT. "Invitation
+ * sent" against an unknown or refused delivery is the specific untruth this
+ * whole type exists to prevent, and a test below asserts the word cannot appear
+ * in either.
+ *
+ * None of these copy lines offers a resend. `canResend` stays false until an
+ * atomic reissue command exists, and telling a practitioner to retry a control
+ * that is disabled — or worse, one that would run a release/requeue/claim/issue
+ * sequence — would be inventing a recovery capability this product does not
+ * have.
+ */
+export const INVITATION_DELIVERY_COPY: Record<InvitationDeliveryState, string> = {
+  accepted: "Invitation created. The email was accepted for delivery.",
+  unknown: "Invitation created, but delivery could not be confirmed.",
+  refused: "Invitation created, but the email was not accepted for delivery.",
+};
+
+/**
+ * Narrow a delivery value arriving from the integration.
+ *
+ * FAILS CLOSED TO `unknown`, which is the only honest default: `accepted` would
+ * claim custody nobody reported, and `refused` would claim a definite failure
+ * that was never observed. An unreadable value means we do not know, and
+ * `unknown` is precisely "we do not know".
+ *
+ * This component owns the VOCABULARY only. #689 maps the delivery provider's
+ * own disposition into these three words at assembly; nothing from that module
+ * is imported here.
+ */
+export function deliveryStateFrom(value: unknown): InvitationDeliveryState {
+  return (INVITATION_DELIVERY_STATES as ReadonlyArray<string>).includes(
+    value as string,
+  )
+    ? (value as InvitationDeliveryState)
+    : "unknown";
+}
 
 export type EntryOutcome = { ok: true } | { ok: false; code: InviteToBookFailure };
 
@@ -368,6 +439,11 @@ export const ADMIT_REFUSAL_PRESENTATION: Record<AdmitServerRefusal, InviteToBook
  * enforces at runtime. Everything unrecognised — a new server code, a null, a
  * number, a success with no expiry stamp — becomes a refusal.
  *
+ * DELIVERY IS A SEPARATE FACT AND IS NEVER INFERRED FROM THIS ROW. The admit
+ * command reports what the DATABASE did; whether an email was accepted is
+ * observed elsewhere and arrives as the third argument. A refusal there does not
+ * turn this into `ok: false`, because the invitation exists either way.
+ *
  * A SUCCESS IS NEVER SYNTHESISED, AND NEVER MERELY NON-EMPTY. `admitted` with an
  * `expires_at` that is not a well-formed instant is malformed rather than
  * successful: 0190's correction was that the window belongs to the issuing
@@ -397,16 +473,19 @@ const WIRE_INSTANT_RE =
 /**
  * Is this a timestamp the server could actually have stamped?
  *
- * THREE LAYERS, AND EACH ONE CATCHES SOMETHING THE OTHERS DO NOT. This was
+ * FOUR LAYERS, AND EACH ONE CATCHES SOMETHING THE OTHERS DO NOT. This was
  * measured, not reasoned about:
  *
  *   shape     rejects `2026-09-12`, `2026-09-12T15:00:00` and `not-a-date`,
  *             all three of which `Date.parse` accepts or mis-zones.
+ *   bounds    reject `…T24:00:00Z` — the shape allows hour 24 and `Date.parse`
+ *             NORMALISES it into the next day, so the calendar check below sees
+ *             the valid date the string carries while the instant has moved.
  *   calendar  rejects `2026-02-30T00:00:00Z` — `Date.parse` accepts it and
  *             quietly rolls it to 2 March, so a shape-plus-parse guard would
  *             hand back a success carrying a day that does not exist.
  *   parse     rejects `2026-09-12T25:00:00Z` and `…T15:60:00Z`, which satisfy
- *             the shape and the calendar.
+ *             the shape.
  *
  * Dropping any one layer lets a documented case through; the tests mutate each
  * in turn to prove it.
@@ -420,6 +499,23 @@ export function isWireInstant(value: unknown): value is string {
   const year = Number(match[1]);
   const month = Number(match[2]);
   const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  const second = Number(match[6]);
+
+  // EXPLICIT CLOCK BOUNDS, because `Date.parse` does not draw this line where
+  // the wire does. `24:00:00` is the one that got through: V8 accepts it and
+  // NORMALISES it into the following day, so the calendar round-trip below —
+  // which checks the Y/M/D the string actually carries — sees a perfectly valid
+  // 12 September while the parsed instant is the 13th. The value was refused
+  // nowhere and silently moved a deadline by a day.
+  //
+  // `24:00:01`, `23:60:00` and `23:59:60` are already NaN to V8, so bounding
+  // them changes no behaviour — it puts the whole clock law in ONE place rather
+  // than leaving three of the four fields to an engine detail. NO LEAP SECOND
+  // SUPPORT is introduced by that: second 60 is refused here exactly as V8
+  // refuses it, which is the contract this wire already had.
+  if (hour > 23 || minute > 59 || second > 59) return false;
 
   // Round-trip the civil date through UTC. The offset shifts WHICH instant this
   // is, never whether the calendar date exists, so checking it in UTC is sound.
@@ -438,6 +534,10 @@ export function isWireInstant(value: unknown): value is string {
 export function admitResultToOutcome(
   result: unknown,
   expiresAt: unknown,
+  /** REQUIRED, even when the caller has nothing to report — passing `undefined`
+   *  yields `unknown` and makes the absence of delivery information visible at
+   *  the call site instead of defaulting silently into a claim. */
+  delivery: unknown,
 ): InvitationOutcome {
   if (typeof result !== "string") return { ok: false, code: "unavailable" };
 
@@ -447,7 +547,7 @@ export function admitResultToOutcome(
     // deadline nothing could render — `InvitationOutcome` promises a server
     // timestamp, and a promise the mapper does not enforce is the mapper's bug.
     return isWireInstant(expiresAt)
-      ? { ok: true, expiresAt }
+      ? { ok: true, expiresAt, delivery: deliveryStateFrom(delivery) }
       : { ok: false, code: "unavailable" };
   }
 
