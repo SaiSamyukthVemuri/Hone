@@ -86,6 +86,34 @@ const MIGRATION_SQL = readFileSync(
   "utf8",
 );
 
+/**
+ * DISCOVERY FROM DEFINITIONS. VERDICT FROM POSTGRESQL.
+ *
+ * The census this replaces derived its subject set from the migration's own
+ * `grant execute ... to service_role` statements. That is GRANT TEXT, and it
+ * fails in exactly one direction: a function 0193 creates whose ACL block is
+ * forgotten is absent from the grants, therefore absent from both matrices,
+ * therefore never asked about. Both sides agree and the suite stays green while
+ * the function keeps whatever `ALTER DEFAULT PRIVILEGES` armed at create time --
+ * EXECUTE for anon, authenticated AND service_role. The predecessor defect here
+ * was one missing string; repairing it with a derivation from the same
+ * untrustworthy source left the class open.
+ *
+ * So discovery now reads what 0193 CREATES, and PostgreSQL supplies every
+ * verdict. The regex matches a `create function` HEADER and nothing else -- no
+ * comment parser, no paren matcher, no grammar. It captures the NAME only, and
+ * the database enumerates that name's overloads, so an added overload is
+ * discovered rather than inferred. A function omitted from its own grant block
+ * can no longer disappear from the census.
+ */
+const CREATED_FUNCTIONS: readonly string[] = (() => {
+  const re = /^create (?:or replace )?function public\.([a-z_]+)\s*\(/gm;
+  const found = new Set<string>();
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(MIGRATION_SQL)) !== null) found.add(m[1]!);
+  return [...found].sort();
+})();
+
 const GRANTED_IN_MIGRATION = (() => {
   const re = /grant execute on function (public\.[a-z_]+)\(([^)]*)\) to service_role;/g;
   const found: string[] = [];
@@ -96,13 +124,125 @@ const GRANTED_IN_MIGRATION = (() => {
   return found;
 })();
 
-describe("the live privilege frontier is the one 0193 declared", () => {
-  it("finds the migration's grant statements at all", () => {
-    // Anti-vacuity: an empty derivation would make every comparison below pass.
-    expect(GRANTED_IN_MIGRATION.length).toBeGreaterThanOrEqual(9);
-    expect(GRANTED_IN_MIGRATION).toContain(
-      "public.admit_new_client_waitlist_entry(uuid,uuid,uuid,uuid,date,date,smallint[],integer)",
-    );
+type LiveFunction = {
+  oid: number;
+  signature: string;
+  isTrigger: boolean;
+  anon: boolean;
+  auth: boolean;
+  svc: boolean;
+  acl: string;
+};
+
+/** Every overload PostgreSQL holds for the names 0193 creates. */
+async function liveFunctionsFor(name: string): Promise<LiveFunction[]> {
+  const res = await adminQuery(
+    `select p.oid                                            as oid,
+            p.oid::regprocedure::text                        as signature,
+            p.prorettype = 'pg_catalog.trigger'::regtype    as is_trigger,
+            has_function_privilege('anon', p.oid, 'execute') as anon,
+            has_function_privilege('authenticated', p.oid, 'execute') as auth,
+            has_function_privilege('service_role', p.oid, 'execute') as svc,
+            coalesce(array_to_string(p.proacl, ','), '(default)') as acl
+       from pg_proc p
+       join pg_namespace n on n.oid = p.pronamespace
+      where n.nspname = 'public' and p.proname = $1`,
+    [name],
+  );
+  return res.rows.map((r) => ({
+    oid: Number(r.oid),
+    signature: r.signature as string,
+    isTrigger: r.is_trigger as boolean,
+    anon: r.anon as boolean,
+    auth: r.auth as boolean,
+    svc: r.svc as boolean,
+    acl: String(r.acl),
+  }));
+}
+
+describe("the live privilege frontier is derived from 0193's functions", () => {
+  it("finds the migration's function definitions at all", () => {
+    // Anti-vacuity. An empty derivation would make every census below pass
+    // while proving that no function exists.
+    expect(CREATED_FUNCTIONS.length).toBeGreaterThanOrEqual(10);
+    expect(CREATED_FUNCTIONS).toContain("admit_new_client_waitlist_entry");
+    // The trigger function is the standing proof that discovery is NOT the
+    // grant list: it is created here, it is deliberately never granted, and a
+    // grant-derived census cannot see it.
+    expect(CREATED_FUNCTIONS).toContain("new_client_waitlist_entries_server_timestamps");
+    expect(CREATED_FUNCTIONS.length).toBeGreaterThan(GRANTED_IN_MIGRATION.length);
+  });
+
+  it("every function 0193 creates exists in PostgreSQL and is disposed by class", async () => {
+    const seen: string[] = [];
+    for (const name of CREATED_FUNCTIONS) {
+      const live = await liveFunctionsFor(name);
+      expect(live.length, `0193 creates ${name} but PostgreSQL has no such function`).toBeGreaterThan(0);
+      for (const fn of live) {
+        seen.push(fn.signature);
+
+        // NO FUNCTION MAY CARRY A CREATE-TIME DEFAULT ACL. This is the check
+        // the grant-derived census structurally could not perform on a
+        // forgotten function: `(default)` means PUBLIC still holds EXECUTE by
+        // inheritance, and Supabase's ALTER DEFAULT PRIVILEGES additionally
+        // arms anon, authenticated and service_role.
+        expect(fn.acl, `${fn.signature} must carry an explicit ACL`).not.toBe("(default)");
+        expect(fn.acl, `${fn.signature} must not grant PUBLIC`).not.toMatch(/(^|,)=X/);
+
+        // THE BROWSER EXECUTES NOTHING HERE, whatever the class.
+        expect(fn.anon, `anon must not execute ${fn.signature}`).toBe(false);
+        expect(fn.auth, `authenticated must not execute ${fn.signature}`).toBe(false);
+
+        if (fn.isTrigger) {
+          // A TRIGGER FUNCTION IS NOT A COMMAND. PostgreSQL raises 0A000 on a
+          // direct call, so an EXECUTE grant on it is inert -- but it is
+          // revoked from all four by name anyway, exactly as 0185 does, so the
+          // API surface states the fact rather than inheriting it. The server
+          // does not call it either: the trigger does.
+          expect(fn.svc, `service_role must not execute trigger function ${fn.signature}`).toBe(false);
+        } else {
+          expect(fn.svc, `service_role must execute ${fn.signature}`).toBe(true);
+        }
+      }
+    }
+    // Every overload of every created name was examined, not just the first.
+    expect(seen.length).toBeGreaterThanOrEqual(CREATED_FUNCTIONS.length);
+  });
+
+  it("the commands PostgreSQL lets service_role run are exactly the ones 0193 grants", async () => {
+    // The grant list is kept as a SUBORDINATE cross-check. It is fine
+    // corroboration once it is no longer the discovery source: a command
+    // granted but not live, or live but not granted, is drift either way.
+    //
+    // BOTH SIDES ARE RESOLVED BY POSTGRESQL, not string-matched. `timestamptz`
+    // and `timestamp with time zone` are the same type and different text, and
+    // pg_get_function_identity_arguments interleaves parameter NAMES -- two
+    // ways a purely textual comparison reports drift that does not exist.
+    // Casting the migration's own grant signature to regprocedure makes the
+    // database the authority on what a signature means, which is the point of
+    // this redesign.
+    const liveCommands = new Map<number, string>();
+    for (const name of CREATED_FUNCTIONS) {
+      for (const fn of await liveFunctionsFor(name)) {
+        if (!fn.isTrigger) liveCommands.set(fn.oid, fn.signature);
+      }
+    }
+
+    const grantedOids = new Map<number, string>();
+    for (const sig of GRANTED_IN_MIGRATION) {
+      const res = await adminQuery(
+        `select $1::regprocedure::oid as oid, $1::regprocedure::text as signature`,
+        [sig],
+      );
+      // A grant naming a function that does not resolve is itself the defect:
+      // the cast raises 42883 rather than passing quietly.
+      grantedOids.set(Number(res.rows[0].oid), res.rows[0].signature as string);
+    }
+
+    expect(
+      [...liveCommands.values()].sort(),
+      "the live command set and the granted set must agree",
+    ).toEqual([...grantedOids.values()].sort());
   });
 
   it("every command the migration grants is in this file's live-ACL matrix", () => {
@@ -110,32 +250,6 @@ describe("the live privilege frontier is the one 0193 declared", () => {
     expect(asserted, "a granted command missing here is a command nothing proves").toEqual(
       [...GRANTED_IN_MIGRATION].sort(),
     );
-  });
-
-  it("and PostgreSQL actually holds exactly that posture for each one", async () => {
-    // The live half. `has_function_privilege` resolves the signature, so a
-    // command that drifted to a different argument list would fail to resolve
-    // rather than pass silently.
-    for (const fn of GRANTED_IN_MIGRATION) {
-      const res = await adminQuery(
-        `select has_function_privilege('anon',$1,'execute') as anon,
-                has_function_privilege('authenticated',$1,'execute') as auth,
-                has_function_privilege('service_role',$1,'execute') as svc,
-                (select coalesce(array_to_string(p.proacl, ','), '(default)')
-                   from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-                  where n.nspname = 'public'
-                    and p.oid = $1::regprocedure) as acl`,
-        [fn],
-      );
-      expect(res.rows[0].anon, `anon must not execute ${fn}`).toBe(false);
-      expect(res.rows[0].auth, `authenticated must not execute ${fn}`).toBe(false);
-      expect(res.rows[0].svc, `service_role must execute ${fn}`).toBe(true);
-      // PUBLIC leaves no grantee entry, so an explicit ACL that never mentions
-      // it is the proof — a `(default)` ACL would mean PUBLIC still holds
-      // EXECUTE by inheritance, which is the whole defect class.
-      expect(res.rows[0].acl, `${fn} must carry an explicit ACL`).not.toBe("(default)");
-      expect(String(res.rows[0].acl)).not.toMatch(/(^|,)=X/);
-    }
   });
 });
 

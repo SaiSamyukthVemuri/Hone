@@ -162,18 +162,44 @@ describe("the disproved privilege model is not reintroduced", () => {
 });
 
 /**
- * THE PRIVILEGE FRONTIER, DERIVED FROM THE MIGRATION ITSELF.
+ * THE PRIVILEGE FRONTIER, DERIVED FROM WHAT 0193 CREATES.
  *
- * 0193 declares its own frontier: every command reachable by the server is
- * named, WITH ITS SIGNATURE, in a `grant execute ... to service_role` statement.
- * That is the authoritative list, so the matrix above is checked AGAINST it
- * rather than trusted. A hand-maintained list is exactly how the ninth command
- * went missing.
+ * THE PREVIOUS DERIVATION READ THE GRANTS, and that is the flaw. A function
+ * 0193 creates whose ACL block is forgotten is absent from the grant
+ * statements, therefore absent from the derived set, therefore absent from the
+ * comparison — both sides agree and the suite stays green while the function
+ * keeps whatever `ALTER DEFAULT PRIVILEGES` armed at create time. The census
+ * proved the nine GRANTED commands were asserted; it could say nothing about a
+ * tenth. The defect before it was one missing string, and repairing that with a
+ * derivation from the same source left the class wide open.
  *
- * Signature-aware on purpose: a bare name would let an overload be added — same
- * name, new argument list, no revoke — and pass. That is the drift 0193's own
- * lock-audit test already had to be rewritten to catch once.
+ * Discovery is therefore the set of functions 0193 DEFINES. The regex matches a
+ * `create function` HEADER at the start of a line and captures the NAME only —
+ * no comment parser, no paren matcher, no grammar, no argument parsing. Every
+ * created function must then be disposed by NAME in an ACL statement of its
+ * own, and the live half in tests/db/waitlist-admission-authority.db.test.ts
+ * asks PostgreSQL what privileges each one actually holds.
+ *
+ * The grant list survives as a SUBORDINATE cross-check against the matrix,
+ * which is a fine use for it once it is no longer deciding who gets examined.
  */
+const CREATED_FUNCTIONS: readonly string[] = (() => {
+  const re = /^create (?:or replace )?function public\.([a-z_]+)\s*\(/gm;
+  const found = new Set<string>();
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(CODE)) !== null) found.add(m[1]!);
+  return [...found].sort();
+})();
+
+/** Names appearing in any revoke on a function, whatever the statement's shape. */
+const REVOKED_FUNCTIONS: ReadonlySet<string> = (() => {
+  const re = /revoke [^;]*? on function public\.([a-z_]+)\s*\(/g;
+  const found = new Set<string>();
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(CODE)) !== null) found.add(m[1]!);
+  return found;
+})();
+
 const GRANTED_TO_SERVICE_ROLE: readonly [string, string][] = (() => {
   const re = /grant execute on function (public\.[a-z_]+)\(([^)]*)\) to service_role;/g;
   const found: [string, string][] = [];
@@ -186,10 +212,48 @@ const GRANTED_TO_SERVICE_ROLE: readonly [string, string][] = (() => {
 const sigKey = (fn: string, args: string) =>
   `${fn}(${args.split(",").map((a) => a.trim()).join(",")})`;
 
-describe("the privilege matrix covers every command 0193 exposes", () => {
+describe("the privilege census covers every function 0193 creates", () => {
+  it("finds the function definitions at all", () => {
+    // Anti-vacuity: a regex that matched nothing would make every check below
+    // pass while proving that no function exists.
+    expect(CREATED_FUNCTIONS.length).toBeGreaterThanOrEqual(10);
+    expect(CREATED_FUNCTIONS).toContain("admit_new_client_waitlist_entry");
+  });
+
+  it("EVERY created function is named in an ACL statement of its own", () => {
+    // THE CHECK THE GRANT-DERIVED CENSUS COULD NOT PERFORM. A function omitted
+    // from its own ACL block was invisible to the old derivation; here it is
+    // discovered from its definition and the omission is the failure.
+    //
+    // REVOKE, not grant, is the universal obligation. Supabase's ALTER DEFAULT
+    // PRIVILEGES arms anon, authenticated AND service_role with EXECUTE at
+    // create time — missed for anon in 0129 and for service_role in 0164 — so
+    // every function must strip them by name. Only some functions are then
+    // granted back.
+    const undisposed = CREATED_FUNCTIONS.filter((fn) => !REVOKED_FUNCTIONS.has(fn));
+    expect(
+      undisposed,
+      "a function created without its own revoke keeps Supabase's create-time EXECUTE defaults",
+    ).toEqual([]);
+  });
+
+  it("the trigger function is disposed WITHOUT being granted", () => {
+    // The standing proof that discovery is not the grant list. This function is
+    // created by 0193, deliberately never granted, and a grant-derived census
+    // cannot see it at all. PostgreSQL raises 0A000 on a direct call so an
+    // EXECUTE grant would be inert — but it is revoked from all four by name
+    // anyway, as 0185 does, so the API surface states the fact.
+    const trigger = "new_client_waitlist_entries_server_timestamps";
+    expect(CREATED_FUNCTIONS).toContain(trigger);
+    expect(REVOKED_FUNCTIONS.has(trigger)).toBe(true);
+    expect(GRANTED_TO_SERVICE_ROLE.map(([fn]) => fn)).not.toContain(`public.${trigger}`);
+    // And the census is therefore strictly larger than the grant list, which is
+    // the structural reason the old derivation was incomplete.
+    expect(CREATED_FUNCTIONS.length).toBeGreaterThan(GRANTED_TO_SERVICE_ROLE.length);
+  });
+
   it("finds the grant statements at all", () => {
-    // Anti-vacuity: a regex that matched nothing would make the equality below
-    // pass while proving that no command exists.
+    // Anti-vacuity for the subordinate cross-check below.
     expect(GRANTED_TO_SERVICE_ROLE.length).toBeGreaterThanOrEqual(9);
   });
 
