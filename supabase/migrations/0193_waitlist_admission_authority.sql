@@ -1401,6 +1401,14 @@ $$;
 -- that delivers AFTER commit. A provider failure then means "the invitation
 -- exists and delivery must be retried", never a rollback decided by an
 -- uncertain provider answer.
+-- The return type gains `issued_at`, and PostgreSQL cannot change a return type
+-- in place, so the prior signature is dropped first -- the same shape 0192 uses
+-- for begin_waitlist_invitation_proof. On a fresh chain this is a no-op; on a
+-- re-apply it is what keeps this file idempotent. The ARGUMENT list is
+-- unchanged, so this same drop still names it.
+drop function if exists public.admit_new_client_waitlist_entry(
+  uuid, uuid, uuid, uuid, date, date, smallint[], integer);
+
 create or replace function public.admit_new_client_waitlist_entry(
   p_studio_id        uuid,
   p_actor_user_id    uuid,
@@ -1415,6 +1423,12 @@ returns table (
   result         text,
   invitation_id  uuid,
   raw_token      text,
+  -- BOTH INSTANTS, READ FROM THE STORED INVITATION ROW. Delivery needs the mint
+  -- time as well as the deadline, and a caller that reconstructed it as
+  -- `expires_at - ttl` or read its own clock would become a SECOND timestamp
+  -- authority over a row the database already owns -- changing a send decision
+  -- on clock skew alone. 0192 mints; this command only carries the facts out.
+  issued_at      timestamptz,
   expires_at     timestamptz,
   delivery_email text,
   delivery_name  text
@@ -1431,6 +1445,7 @@ declare
   v_needs_claim boolean;
   v_claim    text;
   v_issue    record;
+  v_issued   timestamptz;
   v_expires  timestamptz;
   v_email    text;
   v_name     text;
@@ -1441,7 +1456,7 @@ begin
   select r.practitioner_id, r.code into v_actor, v_code
     from public.new_client_waitlist_resolve_owner(p_studio_id, p_actor_user_id) r;
   if v_code <> 'ok' then
-    return query select v_code, null::uuid, null::text, null::timestamptz, null::text, null::text;
+    return query select v_code, null::uuid, null::text, null::timestamptz, null::timestamptz, null::text, null::text;
     return;
   end if;
 
@@ -1461,7 +1476,7 @@ begin
   -- rather than argued: see "admission vs each lifecycle writer".
   perform 1 from public.studios s where s.id = p_studio_id for no key update;
   if not found then
-    return query select 'unknown_studio'::text, null::uuid, null::text, null::timestamptz, null::text, null::text;
+    return query select 'unknown_studio'::text, null::uuid, null::text, null::timestamptz, null::timestamptz, null::text, null::text;
     return;
   end if;
   --
@@ -1507,7 +1522,7 @@ begin
   -- Scoped by BOTH id and studio_id, so an entry belonging to another tenant is
   -- indistinguishable from one that does not exist.
   if v_status is null then
-    return query select 'not_found'::text, null::uuid, null::text, null::timestamptz, null::text, null::text;
+    return query select 'not_found'::text, null::uuid, null::text, null::timestamptz, null::timestamptz, null::text, null::text;
     return;
   end if;
 
@@ -1519,7 +1534,7 @@ begin
   else
     -- invited / converted / expired / released / removed. Each has its own
     -- lifecycle exit; none of them is admissible by pressing this button.
-    return query select 'not_admissible'::text, null::uuid, null::text, null::timestamptz, null::text, null::text;
+    return query select 'not_admissible'::text, null::uuid, null::text, null::timestamptz, null::timestamptz, null::text, null::text;
     return;
   end if;
 
@@ -1548,19 +1563,23 @@ begin
       raise exception '%', v_issue.result using errcode = 'WA001';
     end if;
 
-    select i.expires_at into v_expires
+    -- ONE ROW, BOTH COLUMNS, NEITHER DERIVED. issued_at is the post-lock mint
+    -- 0192 stamped; expires_at is the deadline it derived from that same mint.
+    -- Reading them together is what makes them consistent with each other by
+    -- construction rather than by two queries agreeing.
+    select i.issued_at, i.expires_at into v_issued, v_expires
       from public.new_client_waitlist_invitations i
      where i.id = v_issue.invitation_id;
 
     return query select 'admitted'::text, v_issue.invitation_id, v_issue.raw_token,
-                        v_expires, v_email, v_name;
+                        v_issued, v_expires, v_email, v_name;
     return;
 
   exception
     when sqlstate 'WA001' then
       -- The subtransaction has already rolled back the claim, if one was taken.
       -- SQLERRM carries the refusal code the inner command produced.
-      return query select SQLERRM::text, null::uuid, null::text, null::timestamptz, null::text, null::text;
+      return query select SQLERRM::text, null::uuid, null::text, null::timestamptz, null::timestamptz, null::text, null::text;
       return;
   end;
 end;
