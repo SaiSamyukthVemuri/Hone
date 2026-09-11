@@ -45,6 +45,32 @@ const COMMANDS = [
 let n = 0;
 const uniqueEmail = (label: string) => `${label}-${Date.now()}-${n++}@harness.local`;
 
+type Seeded = { studioId: string; userId: string };
+
+/**
+ * ROUNDS ARE OPENED BY THEIR COMMAND, NEVER BY A RAW INSERT.
+ *
+ * Two fixtures here used to insert the row directly, which worked only while
+ * `studio_id` was this table's primary key. 0192 made rounds a durable ledger:
+ * the key is `id`, `opened_by_practitioner_id` is NOT NULL with no default, and
+ * the only uniqueness left on `studio_id` is a PARTIAL index over open rows.
+ * Both inserts now fail twice over -- on the missing opener, and on an ON
+ * CONFLICT target that no longer exists.
+ *
+ * Raw writes remain legitimate for STRUCTURAL negative controls, where the
+ * point is to attempt a row no command would produce. They are not the
+ * happy-path authority, and the lock and lifecycle tests below are happy paths.
+ */
+async function openRound(studio: Seeded, allowance: number): Promise<string> {
+  const res = await adminQuery(
+    `select * from public.open_new_client_waitlist_admission_round($1,$2,$3)`,
+    [studio.studioId, studio.userId, allowance],
+  );
+  expect(res.rows[0].result, "the fixture must actually open a round").toBe("opened");
+  expect(res.rows[0].round_id).not.toBeNull();
+  return res.rows[0].round_id as string;
+}
+
 /**
  * THE FRONTIER, DERIVED FROM 0193 AND CHECKED AGAINST THE LIVE DATABASE.
  *
@@ -2124,10 +2150,7 @@ describe("issuing a grant cannot deadlock against admission", () => {
     // Same two commands, opposite order. A single ordering that only works one
     // way round is not an ordering.
     const studio = await seedStudio("deadlock-issue-admit");
-    await adminQuery(
-      `insert into public.studio_waitlist_admission_rounds (studio_id, allowance) values ($1,5)`,
-      [studio.studioId],
-    );
+    await openRound(studio, 5);
     const service = await adminQuery(
       `insert into public.services (studio_id, name, default_duration_minutes)
        values ($1,'Svc',30) returning id`,
@@ -2467,11 +2490,7 @@ describe("0193 writers do not deadlock the historical lifecycle writers", () => 
 
   async function scenario(label: string) {
     const studio = await seedStudio(label);
-    await adminQuery(
-      `insert into public.studio_waitlist_admission_rounds (studio_id, allowance) values ($1,5)
-       on conflict (studio_id) do update set allowance = 5`,
-      [studio.studioId],
-    );
+    await openRound(studio, 5);
     const service = await adminQuery(
       `insert into public.services (studio_id, name, default_duration_minutes)
        values ($1,'Svc',30) returning id`,
