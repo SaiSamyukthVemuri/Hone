@@ -342,6 +342,79 @@ describe("B — the invite-to-book adapter binds #683's contract to 0193", () =>
     expect(utc.end).toBe("2026-09-17");
   });
 
+  it("counts CALENDAR days across DST, not 24-hour blocks", async () => {
+    const { __windowToDatesForTest } = await import("@/lib/waitlist/invite-to-book-adapter");
+
+    /** Inclusive count of local calendar dates from start..end. */
+    const inclusiveDays = (start: string, end: string) => {
+      let n = 1;
+      let cursor = start;
+      while (cursor < end) {
+        const d = new Date(`${cursor}T12:00:00Z`);
+        d.setUTCDate(d.getUTCDate() + 1);
+        cursor = d.toISOString().slice(0, 10);
+        n += 1;
+      }
+      return n;
+    };
+
+    // THE INSTANT MUST HUG LOCAL MIDNIGHT, or this control is vacuous.
+    //
+    // A one-hour offset change only moves a DATE when the local clock is within
+    // an hour of midnight. An earlier version of this test used mid-afternoon
+    // instants, and restoring the 24-hour arithmetic left it GREEN — the two
+    // methods agreed because nothing crossed a date boundary. Caught by running
+    // the mutation, and the fix is the times below, not more cases.
+    //
+    // Direction matters too. Springing forward (offset rises) makes a 24-hour
+    // sum drift LATER in local time, so it only overshoots from a LATE local
+    // time. Falling back makes it drift EARLIER, so it only undershoots from an
+    // EARLY one.
+    const cases: Array<{ label: string; tz: string; at: string; start: string }> = [
+      // Toronto spring-forward 2026-03-08 (23h). Local 2026-03-05 23:30 EST.
+      { label: "toronto-spring", tz: "America/Toronto", at: "2026-03-06T04:30:00.000Z", start: "2026-03-05" },
+      // Toronto fall-back 2026-11-01 (25h). Local 2026-10-29 00:30 EDT.
+      { label: "toronto-fall", tz: "America/Toronto", at: "2026-10-29T04:30:00.000Z", start: "2026-10-29" },
+      // Auckland DST ends 2026-04-05 (25h). Local 2026-04-02 00:30 NZDT.
+      { label: "auckland-end", tz: "Pacific/Auckland", at: "2026-04-01T11:30:00.000Z", start: "2026-04-02" },
+      // Auckland DST begins 2026-09-27 (23h). Local 2026-09-24 23:30 NZST.
+      { label: "auckland-begin", tz: "Pacific/Auckland", at: "2026-09-24T11:30:00.000Z", start: "2026-09-24" },
+      // Kiritimati +14:00, the extreme offset and no DST: a PARITY case. Both
+      // methods agree here, which is the point — the fix must not move a zone
+      // that never transitions.
+      { label: "kiritimati", tz: "Pacific/Kiritimati", at: "2026-03-04T10:30:00.000Z", start: "2026-03-05" },
+      { label: "utc", tz: "UTC", at: "2026-03-05T23:30:00.000Z", start: "2026-03-05" },
+    ];
+
+    for (const N of [1, 7, 14, 30]) {
+      for (const c of cases) {
+        const { start, end } = __windowToDatesForTest(
+          { serviceId: "s", windowDays: N, allowedWeekdays: null },
+          c.tz,
+          new Date(c.at),
+        );
+        expect(start, `${c.label} start`).toBe(c.start);
+        expect(inclusiveDays(start, end), `${c.label} N=${N}`).toBe(N);
+      }
+    }
+  });
+
+  it("hands the corrected LOCAL dates to the weekday scope evaluator", async () => {
+    // The weekday rule is evaluated against the invitation's stored dates, so a
+    // start date that drifted by a day would shift which weekdays are offered.
+    // Toronto on 2026-03-05 is a Thursday; the window's first date must evaluate
+    // as Thursday, not as the UTC day the server happened to be on.
+    const { __windowToDatesForTest } = await import("@/lib/waitlist/invite-to-book-adapter");
+    const { start } = __windowToDatesForTest(
+      { serviceId: "s", windowDays: 7, allowedWeekdays: [4] },
+      "America/Toronto",
+      // 01:00Z on the 6th is still the 5th in Toronto.
+      new Date("2026-03-06T01:00:00.000Z"),
+    );
+    expect(start).toBe("2026-03-05");
+    expect(new Date(`${start}T12:00:00Z`).getUTCDay()).toBe(4);
+  });
+
   it("refuses bad product input — scope, TTL and weekdays — without widening", async () => {
     const { validateInviteInput } = await import("@/lib/waitlist/invite-to-book-adapter");
     const svc = "00000000-0000-0000-0000-000000000002";

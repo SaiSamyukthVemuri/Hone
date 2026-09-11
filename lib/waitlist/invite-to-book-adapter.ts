@@ -1,7 +1,7 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
-import { localDateString } from "@/lib/booking/tz";
+import { addDays, localDateString } from "@/lib/booking/tz";
 import {
   type BookingScope,
   type EntryOnlyInput,
@@ -127,6 +127,20 @@ async function resolveSession(): Promise<
  * ANCHORED TO THE STUDIO'S TODAY, INCLUSIVE. `windowDays: 7` means today plus
  * the next six studio-local days — seven bookable days, not eight.
  *
+ * CALENDAR DAYS, NOT 24-HOUR BLOCKS. An earlier revision advanced the INSTANT by
+ * `(windowDays - 1) * 86_400_000` and then localised it. That is wrong wherever
+ * a clock changes: a spring-forward day is 23 hours, so adding six 24-hour
+ * blocks across it lands on the SEVENTH local date and the practitioner's
+ * "7 days" silently became 8; a fall-back day is 25 hours, so the same sum lands
+ * short and 7 became 6. The window the studio chose is a count of local calendar
+ * DATES, and nothing about it is a duration in milliseconds.
+ *
+ * So the arithmetic happens entirely in the date domain: localise the issuing
+ * instant ONCE to get the studio's calendar date, then advance by whole dates
+ * with `addDays`, which is anchored at noon UTC precisely so no offset change
+ * can move it. The inclusive count is then `windowDays` in every zone and on
+ * every transition, which is what the controls below assert.
+ *
  * RESIDUAL, RECORDED RATHER THAN HIDDEN: this computes the anchor microseconds
  * before the database issues the row, so an invitation created across a
  * studio-local midnight boundary is anchored to the day the practitioner was
@@ -141,8 +155,7 @@ function windowToDates(
   now: Date,
 ): { start: string; end: string } {
   const start = localDateString(now, timezone);
-  const endMs = now.getTime() + (scope.windowDays - 1) * 86_400_000;
-  return { start, end: localDateString(new Date(endMs), timezone) };
+  return { start, end: addDays(start, scope.windowDays - 1) };
 }
 
 const NOT_IMPLEMENTED_ATOMICALLY: InviteToBookFailure = "unavailable";
