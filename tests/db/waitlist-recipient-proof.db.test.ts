@@ -1,8 +1,18 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { adminQuery, asRole, closePool, seedStudio, type SeededStudio } from "./helpers/harness";
+import { Client } from "pg";
+import {
+  adminQuery,
+  asRole,
+  closePool,
+  resolveLocalDbUrl,
+  seedMember,
+  seedStudio,
+  type SeededStudio,
+} from "./helpers/harness";
 import {
   expectPostgresSameInstant,
   expectPostgresTemporalRelation,
+  waitUntilBlocked,
 } from "./helpers/waitlist-concurrency";
 
 // 0192 — WAIT-03B recipient-proof authority, proved against a real PostgreSQL.
@@ -51,13 +61,27 @@ async function seedService(studioId: string, label: string): Promise<string> {
   return r.rows[0].id as string;
 }
 
-async function openRound(studioId: string, allowance: number): Promise<void> {
-  await adminQuery(
-    `insert into public.studio_waitlist_admission_rounds (studio_id, allowance)
-     values ($1, $2)
-     on conflict (studio_id) do update set allowance = excluded.allowance`,
-    [studioId, allowance],
+/**
+ * Open a round through the SUPPORTED COMMAND, not a raw upsert.
+ *
+ * A round is now a durable row with its own identity, so there is no
+ * "upsert by studio_id" to fall back on -- and a fixture that wrote the table
+ * directly would be testing a path the product does not offer. Takes the
+ * studio's owner, because the command re-derives authority from the session
+ * user exactly as every other command here does.
+ */
+async function openRound(
+  studioId: string,
+  allowance: number,
+  userId: string,
+): Promise<string> {
+  const r = await adminQuery(
+    `select result, round_id
+       from public.open_new_client_waitlist_admission_round($1, $2, $3)`,
+    [studioId, userId, allowance],
   );
+  expect(r.rows[0].result, "the fixture must actually open a round").toBe("opened");
+  return r.rows[0].round_id as string;
 }
 
 /** A studio with an open round, a claimed entry, and one live SCOPED offer. */
@@ -71,7 +95,7 @@ async function seedOffer(
 ): Promise<Offer> {
   const studio = await seedStudio(label);
   const serviceId = await seedService(studio.studioId, label);
-  await openRound(studio.studioId, allowance);
+  await openRound(studio.studioId, allowance, studio.userId);
 
   const email = `p-${label}-${studio.studioId.slice(0, 8)}@harness.local`;
   const name = `Prospect ${label}`;
@@ -186,7 +210,7 @@ async function claimedEntryOnly(
   label: string,
 ): Promise<{ studio: SeededStudio; entryId: string }> {
   const studio = await seedStudio(label);
-  await openRound(studio.studioId, 10);
+  await openRound(studio.studioId, 10, studio.userId);
   const joined = await adminQuery(
     `select entry_id from public.join_new_client_waitlist($1, $2, $3, null)`,
     [
@@ -647,18 +671,14 @@ describe("0192 — revoke, reissue and replacement invalidate outstanding proof"
 
   it("an EXPIRED invitation refuses proof entirely", async () => {
     const offer = await seedOffer("inv-expired");
-    await adminQuery(
-      `alter table public.new_client_waitlist_invitations disable trigger new_client_waitlist_invitations_append_only`,
-    );
-    await adminQuery(
-      `update public.new_client_waitlist_invitations
-          set issued_at = now() - interval '4 days', expires_at = now() - interval '1 minute'
-        where id = $1`,
-      [offer.invitationId],
-    );
-    await adminQuery(
-      `alter table public.new_client_waitlist_invitations enable trigger new_client_waitlist_invitations_append_only`,
-    );
+    await withInvitationWindowMutable(async () => {
+      await adminQuery(
+        `update public.new_client_waitlist_invitations
+            set issued_at = now() - interval '4 days', expires_at = now() - interval '1 minute'
+          where id = $1`,
+        [offer.invitationId],
+      );
+    });
     expect((await beginProof(offer.token)).result).toBe("not_live");
   });
 });
@@ -800,7 +820,7 @@ describe("0192 — a stored invitation cannot express a permission its owner did
   it("outstanding permission can never exceed the round allowance", async () => {
     const studio = await seedStudio("allowance");
     const serviceId = await seedService(studio.studioId, "allowance");
-    await openRound(studio.studioId, 1);
+    await openRound(studio.studioId, 1, studio.userId);
 
     const ids: string[] = [];
     for (const label of ["one", "two"]) {
@@ -835,7 +855,7 @@ describe("0192 — a stored invitation cannot express a permission its owner did
   it("a declined invitation FREES permission, so a later offer is possible", async () => {
     const studio = await seedStudio("free-perm");
     const serviceId = await seedService(studio.studioId, "free-perm");
-    await openRound(studio.studioId, 1);
+    await openRound(studio.studioId, 1, studio.userId);
 
     const mk = async (label: string) => {
       const j = await adminQuery(
@@ -1088,18 +1108,14 @@ describe("0192 — recipient identity is released only to a proven recipient", (
 
   it("EXPIRED INVITATION: a lapsed wall clock yields no identity", async () => {
     const offer = await verifiedOffer("ident-invexp");
-    await adminQuery(
-      `alter table public.new_client_waitlist_invitations disable trigger new_client_waitlist_invitations_append_only`,
-    );
-    await adminQuery(
-      `update public.new_client_waitlist_invitations
-          set issued_at = now() - interval '4 days', expires_at = now() - interval '1 minute'
-        where id = $1`,
-      [offer.invitationId],
-    );
-    await adminQuery(
-      `alter table public.new_client_waitlist_invitations enable trigger new_client_waitlist_invitations_append_only`,
-    );
+    await withInvitationWindowMutable(async () => {
+      await adminQuery(
+        `update public.new_client_waitlist_invitations
+            set issued_at = now() - interval '4 days', expires_at = now() - interval '1 minute'
+          where id = $1`,
+        [offer.invitationId],
+      );
+    });
     const r = await resolveIdentity(offer.token, offer.capability);
     expectNoIdentity(r, "an expired invitation");
     expect(r.result).toBe("not_live");
@@ -1271,7 +1287,9 @@ describe("0192 — recipient identity is released only to a proven recipient", (
 // ===========================================================================
 describe("0192 — privileges, proved against the database rather than the file", () => {
   const COMMANDS = [
-    "public.waitlist_admission_consumed(uuid)",
+    "public.waitlist_admission_round_consumed(uuid)",
+    "public.open_new_client_waitlist_admission_round(uuid, uuid, integer)",
+    "public.close_new_client_waitlist_admission_round(uuid, uuid)",
     "public.issue_scoped_new_client_waitlist_invitation(uuid,uuid,uuid,uuid,date,date,smallint[],integer)",
     "public.resolve_new_client_waitlist_invitation(text)",
     "public.begin_waitlist_invitation_proof(text,integer)",
@@ -1833,5 +1851,1846 @@ describe("0192 — begin_ returns the authoritative mint instant", () => {
     // 31, and nowhere near the challenge's 15.
     expect(minutesFromChallengeMint).toBeGreaterThanOrEqual(30);
     expect(minutesFromChallengeMint).toBeLessThan(31);
+  });
+});
+
+// ===========================================================================
+// A PROOF CHALLENGE MAY NEVER OUTLIVE THE INVITATION THAT AUTHORISES IT
+// ===========================================================================
+//
+// THE DEFECT THIS BLOCK EXISTS TO KEEP CLOSED. `begin_waitlist_invitation_proof`
+// bounded the requested TTL at 1..60 minutes and nothing else, so an invitation
+// with two minutes of life left minted a fifteen-minute challenge. Nothing
+// escalated: `complete_` gates on invitation liveness BEFORE it looks at the
+// challenge, so a use after `expires_at` already answered `not_live`. What broke
+// was TRUTH — the stored column asserted an instant the authority would never
+// honour, and `begin_` RETURNS that instant to the server-side delivery caller,
+// which states it to the recipient. The email promised a window that had already
+// been overtaken by the invitation's own death.
+//
+// THE RULE IS ENFORCED AT THE MINT, WHICH IS THE ONLY PLACE IT CAN BE
+// STRUCTURAL. `begin_` is the sole writer of a non-null
+// proof_challenge_expires_at — the two other writes in 0192 set it to NULL — so
+// the clamp makes a longer-lived challenge unrepresentable rather than merely
+// refused downstream. A delivery caller may still decline to send a window it
+// judges too short; that is a second opinion about output and cannot repair a
+// value already persisted.
+//
+// EVERY TEMPORAL VERDICT HERE IS POSTGRESQL'S. node-postgres truncates
+// timestamptz microseconds to JS milliseconds, so a clamp that lands exactly on
+// the invitation's expiry would compare equal under a `Date` round trip whether
+// or not it actually did. The comparisons run in the database.
+
+/**
+ * Run `fn` with the invitation table's append-only guard lifted.
+ *
+ * THE GUARD IS REAL AND LOAD-BEARING: 0188 makes identity, tenancy, token and
+ * the validity window immutable — "there is no renewal or extension" — so an
+ * invitation's `expires_at` cannot be moved by any shipped path. That is
+ * exactly WHY this defect matters rather than an obstacle to proving it: a
+ * short remaining lifetime is reached by the passage of TIME and cannot be
+ * repaired by extending the invitation, so the mint is the only place the two
+ * clocks can be reconciled.
+ *
+ * A test cannot wait fifty-eight minutes, so the fixture moves the stored
+ * expiry to simulate elapsed time.
+ *
+ * THE `finally` IS THE WHOLE POINT, AND IT IS WHY EVERY CALLER GOES THROUGH
+ * HERE. A raw disable/mutate/enable sequence restores nothing if the mutation
+ * throws, an assertion fails between the two statements, or the connection
+ * drops — and what it leaves behind is not a failed test but a DATABASE WITH
+ * APPEND-ONLY ENFORCEMENT SWITCHED OFF. Every later test in the run then
+ * silently exercises a weaker table than the one that ships, so the next
+ * failure is somewhere else entirely and looks nothing like this one.
+ * `alter table` is not transactional here either: a rolled-back transaction
+ * does not put the trigger back.
+ *
+ * `fileParallelism: false` keeps the window from overlapping another suite, so
+ * the only exposure that ever mattered was an unrestored one.
+ */
+async function withInvitationWindowMutable<T>(fn: () => Promise<T>): Promise<T> {
+  await adminQuery(
+    `alter table public.new_client_waitlist_invitations
+       disable trigger new_client_waitlist_invitations_append_only`,
+  );
+  try {
+    return await fn();
+  } finally {
+    await adminQuery(
+      `alter table public.new_client_waitlist_invitations
+         enable trigger new_client_waitlist_invitations_append_only`,
+    );
+  }
+}
+
+/**
+ * Age an invitation so `interval` of its life remains.
+ *
+ * BOTH STAMPS MOVE, because 0188 bounds the window relative to issuance —
+ * `expires_at > issued_at and expires_at <= issued_at + interval '7 days'` — so
+ * dragging the expiry alone would either invert the window or leave the row
+ * describing a lifetime it never had. Moving both is also the honest model of
+ * what actually happens in production: nothing shortens an invitation, TIME
+ * passes. `seedOffer` issues a 72-hour offer, so 71 hours of elapsed time
+ * leaves exactly the last hour to play with and every offset used here — from
+ * six hours down to one second past death — stays inside the constraint.
+ */
+async function setInvitationExpiry(invitationId: string, interval: string): Promise<void> {
+  await withInvitationWindowMutable(async () => {
+    await adminQuery(
+      `update public.new_client_waitlist_invitations
+          set issued_at  = clock_timestamp() - interval '71 hours',
+              expires_at = clock_timestamp() + $2::interval
+        where id = $1`,
+      [invitationId, interval],
+    );
+  });
+}
+
+/** The stored challenge expiry beside the invitation's own, as one row. */
+const CHALLENGE_VS_INVITATION = `
+  select i.proof_challenge_expires_at, i.expires_at
+    from public.new_client_waitlist_invitations i
+   where i.id = $1`;
+
+async function conn(): Promise<Client> {
+  const c = new Client({ connectionString: resolveLocalDbUrl() });
+  await c.connect();
+  return c;
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+describe("0192 — the challenge clock is bounded by the invitation clock", () => {
+  it("NORMAL CASE UNCHANGED: ample remaining lifetime still grants the full requested TTL", async () => {
+    // seedOffer issues a 72-hour invitation, so every accepted challenge TTL
+    // (1..60 minutes) is far inside it and the clamp must not engage at all.
+    for (const ttl of [1, 15, 60]) {
+      const offer = await seedOffer(`clamp-normal-${ttl}`);
+      const r = await adminQuery(
+        `select result,
+                to_char(expires_at, 'YYYY-MM-DD"T"HH24:MI:SS.USOF') as expires_us,
+                to_char(issued_at,  'YYYY-MM-DD"T"HH24:MI:SS.USOF') as issued_us
+           from public.begin_waitlist_invitation_proof($1, $2)`,
+        [offer.token, ttl],
+      );
+      expect(r.rows[0].result, `ttl ${ttl}`).toBe("challenge_issued");
+
+      // EXACTLY the requested window, judged in the database at microsecond
+      // precision: expires_at - issued_at = ttl minutes, to the microsecond.
+      await expectPostgresSameInstant(
+        {
+          sql: `select $1::timestamptz, $2::timestamptz + make_interval(mins => $3::int)`,
+          params: [r.rows[0].expires_us, r.rows[0].issued_us, ttl],
+        },
+        `ttl ${ttl} — an unclamped mint must still grant the whole requested window`,
+      );
+
+      // NON-VACUITY: the clamp had room to engage and did not. A test that
+      // asserted only the invariant would pass here even if the clamp had
+      // wrongly pulled the expiry back to the invitation's.
+      await expectPostgresTemporalRelation(
+        {
+          sql: CHALLENGE_VS_INVITATION,
+          params: [offer.invitationId],
+          relation: "lt",
+        },
+        `ttl ${ttl} — the challenge must sit strictly INSIDE a 72-hour invitation`,
+      );
+    }
+  });
+
+  it("SHORT REMAINING: the challenge is clamped to the invitation's own expiry, never past it", async () => {
+    const offer = await seedOffer("clamp-short");
+    // Three minutes left against a fifteen-minute request: the old shape minted
+    // a challenge twelve minutes past the invitation's death.
+    await setInvitationExpiry(offer.invitationId, "3 minutes");
+
+    const r = await beginProof(offer.token, 15);
+    expect(r.result, "a live invitation still issues — clamping is not refusing").toBe(
+      "challenge_issued",
+    );
+
+    // THE INVARIANT, stated as the equality the clamp actually produces: with
+    // less remaining than requested, the challenge dies exactly when the
+    // invitation does, to the microsecond.
+    await expectPostgresSameInstant(
+      {
+        sql: CHALLENGE_VS_INVITATION,
+        params: [offer.invitationId],
+      },
+      "a short-remaining invitation must pull the challenge back to its own expiry",
+    );
+  });
+
+  it("THE INVARIANT HOLDS ACROSS THE WHOLE REMAINING/REQUESTED MATRIX", async () => {
+    // Remaining lifetimes either side of, and exactly on, the requested window.
+    // `lte` is the invariant itself; the two cases above pin which side each
+    // one lands on, so this is the general claim rather than a restatement.
+    for (const [label, remaining, ttl] of [
+      ["far-inside", "6 hours", 15],
+      ["just-inside", "16 minutes", 15],
+      ["equal", "15 minutes", 15],
+      ["just-outside", "14 minutes", 15],
+      ["far-outside", "30 seconds", 60],
+    ] as const) {
+      const offer = await seedOffer(`clamp-matrix-${label}`);
+      await setInvitationExpiry(offer.invitationId, remaining);
+
+      const r = await beginProof(offer.token, ttl);
+      expect(r.result, `${label} — still live, so still issued`).toBe("challenge_issued");
+
+      await expectPostgresTemporalRelation(
+        {
+          sql: CHALLENGE_VS_INVITATION,
+          params: [offer.invitationId],
+          relation: "lte",
+        },
+        `${label} (${remaining} left, ${ttl}m requested) — the challenge outlived the invitation`,
+      );
+
+      // AND IT IS NEVER MINTED ALREADY DEAD. The liveness gate established
+      // expires_at > now, so the clamped instant is strictly in the future for
+      // every challenge this command issues. This is why the repair needs no
+      // new refusal word: `challenge_issued` stays truthful at every remaining
+      // lifetime, and the returned expiry reports the window actually granted.
+      await expectPostgresTemporalRelation(
+        {
+          sql: `select i.proof_challenge_expires_at, clock_timestamp()
+                  from public.new_client_waitlist_invitations i where i.id = $1`,
+          params: [offer.invitationId],
+          relation: "gt",
+        },
+        `${label} — a challenge was minted already expired`,
+      );
+    }
+  });
+
+  it("THE RETURNED EXPIRY IS THE PERSISTED ONE, on the clamped path too", async () => {
+    const offer = await seedOffer("clamp-returned");
+    await setInvitationExpiry(offer.invitationId, "4 minutes");
+
+    // Rendered to microsecond TEXT by the statement that mints it, so the value
+    // never becomes a JS Date and can be handed back as a timestamptz. A
+    // millisecond round trip would hide a sub-millisecond disagreement between
+    // what was returned and what was written.
+    const r = await adminQuery(
+      `select result,
+              to_char(expires_at, 'YYYY-MM-DD"T"HH24:MI:SS.USOF') as expires_us
+         from public.begin_waitlist_invitation_proof($1, $2)`,
+      [offer.token, 15],
+    );
+    expect(r.rows[0].result).toBe("challenge_issued");
+
+    await expectPostgresSameInstant(
+      {
+        sql: `select $1::timestamptz, i.proof_challenge_expires_at
+                from public.new_client_waitlist_invitations i where i.id = $2`,
+        params: [r.rows[0].expires_us, offer.invitationId],
+      },
+      "the caller was told an expiry the row does not hold",
+    );
+  });
+
+  it("AN EXPIRED INVITATION MINTS NOTHING — no challenge state is written at all", async () => {
+    const offer = await seedOffer("clamp-expired");
+    await setInvitationExpiry(offer.invitationId, "-1 second");
+
+    const r = await beginProof(offer.token, 15);
+    expect(r.result).toBe("not_live");
+    expect(r.expires_at, "a refusal must not hand back an expiry").toBeNull();
+    expect(r.raw_challenge).toBeNull();
+    expect(r.challenge_id).toBeNull();
+
+    // The clamp must not have quietly written a zero-length challenge on the
+    // way to refusing: the row carries no challenge state whatsoever.
+    const row = await invitationRow(offer.invitationId);
+    expect(row.proof_challenge_hash).toBeNull();
+    expect(row.proof_challenge_id).toBeNull();
+    const stored = await adminQuery(
+      `select proof_challenge_expires_at from public.new_client_waitlist_invitations where id = $1`,
+      [offer.invitationId],
+    );
+    expect(stored.rows[0].proof_challenge_expires_at).toBeNull();
+  });
+
+  it("POST-LOCK TRUTH WINS: an invitation SHORTENED while begin_ waits clamps to the NEW expiry", async () => {
+    const offer = await seedOffer("clamp-lock-shorten");
+    // The guard is lifted around the WHOLE dance: `alter table` needs an
+    // ACCESS EXCLUSIVE lock, which the holder's row lock would block, so it
+    // cannot be taken while a transaction is parked on the row.
+    await withInvitationWindowMutable(async () => {
+      const holder = await conn();
+      const waiter = await conn();
+      try {
+        // The holder takes the invitation mutex begin_ must have, then moves the
+        // invitation's death while the waiter is parked on it.
+        await holder.query("begin");
+        await holder.query(
+          `select 1 from public.new_client_waitlist_invitations where id = $1 for update`,
+          [offer.invitationId],
+        );
+
+        await waiter.query("begin");
+        const pid = (await waiter.query("select pg_backend_pid() as pid")).rows[0].pid as number;
+        const pending = waiter.query(
+          `select result,
+                  to_char(expires_at, 'YYYY-MM-DD"T"HH24:MI:SS.USOF') as expires_us
+             from public.begin_waitlist_invitation_proof($1, $2)`,
+          [offer.token, 60],
+        );
+
+        // PROVE it is really parked on the lock, not merely slow — otherwise this
+        // test could pass without the race it exists to describe ever happening.
+        expect(
+          await waitUntilBlocked(pid),
+          "begin_ never blocked on the invitation mutex — this case tests nothing",
+        ).not.toBeNull();
+
+        await holder.query(
+          `update public.new_client_waitlist_invitations
+              set issued_at  = clock_timestamp() - interval '71 hours',
+                  expires_at = clock_timestamp() + interval '2 minutes'
+            where id = $1`,
+          [offer.invitationId],
+        );
+        await holder.query("commit");
+
+        const got = (await pending).rows[0] as { result: string; expires_us: string };
+        await waiter.query("commit");
+
+        expect(got.result).toBe("challenge_issued");
+
+        // The value the waiter clamped against is the one it read AFTER acquiring
+        // the lock. A pre-lock read would have clamped against the original
+        // 72-hour expiry and granted the full 60 minutes.
+        await expectPostgresSameInstant(
+          {
+            sql: `select $1::timestamptz, i.expires_at
+                    from public.new_client_waitlist_invitations i where i.id = $2`,
+            params: [got.expires_us, offer.invitationId],
+          },
+          "begin_ clamped against a stale pre-lock expiry",
+        );
+        await expectPostgresTemporalRelation(
+          {
+            sql: CHALLENGE_VS_INVITATION,
+            params: [offer.invitationId],
+            relation: "lte",
+          },
+          "the persisted challenge outlived the shortened invitation",
+        );
+      } finally {
+        await holder.end().catch(() => undefined);
+        await waiter.end().catch(() => undefined);
+      }
+    });
+  });
+
+  it("POST-LOCK TRUTH WINS: an invitation EXPIRED while begin_ waits refuses outright", async () => {
+    const offer = await seedOffer("clamp-lock-expire");
+    await withInvitationWindowMutable(async () => {
+      const holder = await conn();
+      const waiter = await conn();
+      try {
+        await holder.query("begin");
+        await holder.query(
+          `select 1 from public.new_client_waitlist_invitations where id = $1 for update`,
+          [offer.invitationId],
+        );
+
+        await waiter.query("begin");
+        const pid = (await waiter.query("select pg_backend_pid() as pid")).rows[0].pid as number;
+        const pending = waiter.query(
+          `select result, expires_at, raw_challenge
+             from public.begin_waitlist_invitation_proof($1, $2)`,
+          [offer.token, 15],
+        );
+        expect(
+          await waitUntilBlocked(pid),
+          "begin_ never blocked on the invitation mutex — this case tests nothing",
+        ).not.toBeNull();
+
+        // A material wait, so the liveness verdict cannot be explained by the two
+        // statements landing in the same instant.
+        await sleep(250);
+        await holder.query(
+          `update public.new_client_waitlist_invitations
+              set issued_at  = clock_timestamp() - interval '71 hours',
+                  expires_at = clock_timestamp() - interval '1 second'
+            where id = $1`,
+          [offer.invitationId],
+        );
+        await holder.query("commit");
+
+        const got = (await pending).rows[0] as Record<string, unknown>;
+        await waiter.query("commit");
+
+        // The post-lock clock and the post-lock row together: the invitation died
+        // during the wait, so nothing is minted for it.
+        expect(got.result).toBe("not_live");
+        expect(got.expires_at).toBeNull();
+        expect(got.raw_challenge).toBeNull();
+
+        const row = await invitationRow(offer.invitationId);
+        expect(row.proof_challenge_hash).toBeNull();
+        expect(row.proof_challenge_id).toBeNull();
+      } finally {
+        await holder.end().catch(() => undefined);
+        await waiter.end().catch(() => undefined);
+      }
+    });
+  });
+
+  it("REISSUE STILL REPLACES: a clamped challenge is invalidated by the next one, exactly as before", async () => {
+    const offer = await seedOffer("clamp-reissue");
+    await setInvitationExpiry(offer.invitationId, "5 minutes");
+
+    const first = await beginProof(offer.token, 15);
+    expect(first.result).toBe("challenge_issued");
+    const firstChallenge = first.raw_challenge as string;
+    const firstId = first.challenge_id as string;
+
+    // Verify to mint a capability, so the reissue has BOTH credentials to kill.
+    const verified = await completeProof(offer.token, firstChallenge);
+    expect(verified.result).toBe("verified");
+
+    const second = await beginProof(offer.token, 15);
+    expect(second.result).toBe("challenge_issued");
+    expect(second.challenge_id).not.toBe(firstId);
+
+    // The older challenge no longer verifies, and the capability minted from it
+    // is gone — the clamp changed the expiry, not the replacement rule.
+    const stale = await completeProof(offer.token, firstChallenge);
+    expect(stale.result).toBe("wrong_challenge");
+    const row = await invitationRow(offer.invitationId);
+    expect(row.proof_capability_hash, "reissue must kill any live capability").toBeNull();
+
+    // ...and the replacement is clamped too.
+    await expectPostgresSameInstant(
+      { sql: CHALLENGE_VS_INVITATION, params: [offer.invitationId] },
+      "the replacement challenge escaped the clamp",
+    );
+  });
+
+  it("THE CAPABILITY CLOCK IS UNTOUCHED: still database-owned 30 minutes, even on a clamped challenge", async () => {
+    const offer = await seedOffer("clamp-capability");
+    await setInvitationExpiry(offer.invitationId, "2 minutes");
+
+    const begun = (
+      await adminQuery(
+        `select result, raw_challenge,
+                to_char(issued_at, 'YYYY-MM-DD"T"HH24:MI:SS.USOF') as issued_us
+           from public.begin_waitlist_invitation_proof($1, $2)`,
+        [offer.token, 15],
+      )
+    ).rows[0] as { result: string; raw_challenge: string; issued_us: string };
+    expect(begun.result).toBe("challenge_issued");
+    // MICROSECOND TEXT, for the reason `beginProofPrecise` exists: node-postgres
+    // renders a timestamptz as a JS Date and drops microseconds, so a stored
+    // value and a returned one that differ by 793us compare EQUAL after the
+    // round trip. Measured here before it was written this way.
+    const done = (
+      await adminQuery(
+        `select result, raw_capability,
+                to_char(expires_at, 'YYYY-MM-DD"T"HH24:MI:SS.USOF') as expires_us
+           from public.complete_waitlist_invitation_proof($1, $2)`,
+        [offer.token, begun.raw_challenge],
+      )
+    ).rows[0] as { result: string; raw_capability: string; expires_us: string };
+    expect(done.result).toBe("verified");
+
+    // DELIBERATELY NOT CLAMPED, and this test pins that as a decision rather
+    // than an oversight. The capability's 30 minutes is the database's own law
+    // and this repair does not touch it. It is safe for it to outlast the
+    // invitation because every consumer —
+    // redeem_new_client_waitlist_invitation_verified, decline_, and
+    // resolve_waitlist_invitation_recipient_identity — gates on invitation
+    // liveness BEFORE it looks at the capability, so a capability on a dead
+    // invitation answers `not_live` rather than acting.
+    // `complete_` RETURNS the capability's own expiry, so the stored value and
+    // the returned one are the same fact and are asserted as such — no second
+    // arithmetic here that could disagree with the command's.
+    await expectPostgresSameInstant(
+      {
+        sql: `select i.proof_capability_expires_at, $2::timestamptz
+                from public.new_client_waitlist_invitations i where i.id = $1`,
+        params: [offer.invitationId, done.expires_us],
+      },
+      "the stored capability expiry is not the one complete_ reported",
+    );
+    // STILL THIRTY MINUTES FROM ITS OWN MINT, stated as a band and judged in the
+    // database. A strict equality would be decided by how many microseconds
+    // elapsed between begin_ and complete_, not by which TTL governs; at least
+    // 30 and under 31 is the claim, and 15 — the challenge's — is what a
+    // regression would show. Both operands stay timestamptz throughout: the
+    // microsecond text `to_char` produces is not parseable by `new Date`, which
+    // is why the arithmetic does not come back to JavaScript at all.
+    for (const [rel, bound, why] of [
+      ["gte", "30 minutes", "the capability lost time to the challenge's TTL"],
+      ["lt", "31 minutes", "the capability gained time it was never granted"],
+    ] as const) {
+      await expectPostgresTemporalRelation(
+        {
+          sql: `select i.proof_capability_expires_at,
+                       $2::timestamptz + $3::interval
+                  from public.new_client_waitlist_invitations i where i.id = $1`,
+          params: [offer.invitationId, begun.issued_us, bound],
+          relation: rel,
+        },
+        why,
+      );
+    }
+    // And it genuinely does outlive the 2-minute invitation, so the claim above
+    // is being exercised rather than asserted about an impossible state.
+    await expectPostgresTemporalRelation(
+      {
+        sql: `select i.proof_capability_expires_at, i.expires_at
+                from public.new_client_waitlist_invitations i where i.id = $1`,
+        params: [offer.invitationId],
+        relation: "gt",
+      },
+      "the capability no longer outlives a short invitation — the premise moved",
+    );
+
+    // The consumer's own verdict, not an argument about it.
+    await setInvitationExpiry(offer.invitationId, "-1 second");
+    const spent = await redeem(offer.token, done.raw_capability);
+    expect(spent.result, "a live capability on a dead invitation must not act").toBe("not_live");
+  });
+
+  it("NO PLAINTEXT IS PERSISTED ON THE CLAMPED PATH EITHER", async () => {
+    const offer = await seedOffer("clamp-plaintext");
+    await setInvitationExpiry(offer.invitationId, "90 seconds");
+
+    const begun = await beginProof(offer.token, 60);
+    expect(begun.result).toBe("challenge_issued");
+    const done = await completeProof(offer.token, begun.raw_challenge as string);
+    expect(done.result).toBe("verified");
+
+    const stored = await adminQuery(
+      `select * from public.new_client_waitlist_invitations where id = $1`,
+      [offer.invitationId],
+    );
+    const blob = JSON.stringify(stored.rows[0]);
+    expect(blob).not.toContain(begun.raw_challenge);
+    expect(blob).not.toContain(done.raw_capability);
+    expect(blob).not.toContain(offer.token);
+  });
+});
+
+// ===========================================================================
+// A DECLINED INVITATION IS CLOSED TO EVERY LIFECYCLE COMMAND, NOT JUST TO
+// ISSUANCE
+// ===========================================================================
+//
+// THE CLASS THIS BLOCK CLOSES. Section 3 of 0192 replaced 0188's
+// `..._one_live_per_entry` UNIQUE index -- (entry_id) WHERE redeemed_at,
+// expired_at and released_at are all null -- with the four-column predicate
+// that also requires `declined_at is null`. That is deliberate: it is what lets
+// a declined invitation stop blocking its entry so a later offer is possible.
+//
+// But that index was not decoration. Its UNIQUENESS is what made an UNORDERED
+// `select i.id into v_inv` over the three columns correct in 0188 and 0189: at
+// most one row could match, so "the row matching" and "the current cycle" were
+// the same thing by construction. Widening the index DELETED that guarantee
+// while three commands were still asking the three-column question:
+//
+//     expire_new_client_waitlist_invitation
+//     release_new_client_waitlist_entry
+//     record_new_client_waitlist_conversion
+//
+// Section 14b redefines all three forward, each gaining `and i.declined_at is
+// null`. 0188/0189/0190 are applied and frozen and are never edited.
+//
+// WHAT GOES WRONG WITHOUT IT. A declined row PASSES the old guards, so whichever
+// row the unordered select happens to return is the one these commands act on.
+// Stamping a declined row raises `one_terminal_outcome_check` (SQLSTATE 23514),
+// so the command RAISES where 0185 requires it to answer with a WORD. Physical
+// row order decided which branch ran -- the benign outcome was luck, not a
+// guarantee, and a vacuum or plan change is enough to flip it. That is why the
+// structural assertion below is stated over the PREDICATE and not over which row
+// PostgreSQL happened to return.
+
+/** JOIN -> CLAIM -> OFFER A -> verify -> DECLINE A -> REQUEUE -> CLAIM -> OFFER B. */
+async function declinedThenReissued(label: string) {
+  const offer = await seedOffer(`decl-${label}`);
+  const svcB = await seedService(offer.studio.studioId, `${label}-B`);
+
+  const begun = await beginProof(offer.token);
+  const done = await completeProof(offer.token, begun.raw_challenge as string);
+  expect(done.result, "the fixture must reach a real capability").toBe("verified");
+  const dec = await adminQuery(
+    `select result from public.decline_new_client_waitlist_invitation($1,$2)`,
+    [offer.token, done.raw_capability],
+  );
+  expect(dec.rows[0].result).toBe("declined");
+
+  await adminQuery(`select public.requeue_new_client_waitlist_entry($1,$2,$3)`, [
+    offer.studio.studioId, offer.entryId, offer.studio.userId,
+  ]);
+  await adminQuery(`select public.claim_new_client_waitlist_entry($1,$2,$3)`, [
+    offer.studio.studioId, offer.entryId, offer.studio.userId,
+  ]);
+  // A DIFFERENT offer: the no-repeat-declined rule still forbids re-issuing the
+  // same one, and this fixture must not depend on relaxing it.
+  const b = await adminQuery(
+    `select result, raw_token, invitation_id
+       from public.issue_scoped_new_client_waitlist_invitation(
+              $1,$2,$3,$4, current_date, current_date + 13, null, 72)`,
+    [offer.studio.studioId, offer.entryId, offer.studio.userId, svcB],
+  );
+  expect(b.rows[0].result, "a genuinely different later offer must remain possible").toBe("issued");
+  return {
+    studio: offer.studio,
+    entryId: offer.entryId,
+    A: offer.invitationId,
+    B: b.rows[0].invitation_id as string,
+    tokenB: b.rows[0].raw_token as string,
+  };
+}
+
+const termsOf = async (id: string) =>
+  (
+    await adminQuery(
+      `select declined_at is not null d, released_at is not null rel,
+              expired_at is not null exp, redeemed_at is not null red
+         from public.new_client_waitlist_invitations where id = $1`,
+      [id],
+    )
+  ).rows[0];
+
+describe("0192 §14b — a declined row is closed to expire, release and conversion", () => {
+  it("THE FIXTURE ITSELF: A is declined-only, and B is the single live row", async () => {
+    const f = await declinedThenReissued("shape");
+
+    const a = await termsOf(f.A);
+    expect(a.d, "A must be declined").toBe(true);
+    expect([a.rel, a.exp, a.red], "A must carry NO other terminal outcome").toEqual([
+      false, false, false,
+    ]);
+
+    // The invariant, stated over the PREDICATE rather than over row order.
+    const counts = await adminQuery(
+      `select
+         count(*) filter (where redeemed_at is null and expired_at is null
+                            and released_at is null)                        as three_terminal,
+         count(*) filter (where redeemed_at is null and expired_at is null
+                            and released_at is null and declined_at is null) as four_terminal
+       from public.new_client_waitlist_invitations where entry_id = $1`,
+      [f.entryId],
+    );
+    // ADVERSARIAL / NEGATIVE CONTROL, and it does not depend on which row
+    // PostgreSQL returns first: the OLD predicate is genuinely ambiguous here
+    // (two rows), while the NEW one is single-valued (one row). That ambiguity
+    // IS the defect; ordering would not have fixed it.
+    expect(Number(counts.rows[0].three_terminal), "the OLD predicate is ambiguous").toBe(2);
+    expect(Number(counts.rows[0].four_terminal), "the NEW predicate is decisive").toBe(1);
+
+    const live = await adminQuery(
+      `select id from public.new_client_waitlist_invitations
+        where entry_id = $1 and redeemed_at is null and expired_at is null
+          and released_at is null and declined_at is null`,
+      [f.entryId],
+    );
+    expect(live.rows.map((r) => r.id)).toEqual([f.B]);
+  });
+
+  it("RELEASE acts on B, and never adds a second terminal outcome to A", async () => {
+    const f = await declinedThenReissued("release");
+    const r = await adminQuery(`select public.release_new_client_waitlist_entry($1,$2,$3) r`, [
+      f.studio.studioId, f.entryId, f.studio.userId,
+    ]);
+    // A WORD, NOT AN ERROR. Acting on the declined row would raise 23514.
+    expect(r.rows[0].r).toBe("released");
+
+    expect(await termsOf(f.B)).toMatchObject({ rel: true, d: false });
+    expect(
+      await termsOf(f.A),
+      "A's declined_at must remain its SOLE terminal evidence",
+    ).toMatchObject({ d: true, rel: false, exp: false, red: false });
+  });
+
+  it("EXPIRE adjudicates B's clock, never A's, and leaves A untouched", async () => {
+    const f = await declinedThenReissued("expire");
+
+    // B's window is open, so the truthful answer is `not_expired` -- and it must
+    // be reached by reading B. A's window is aged past, so a command that
+    // adjudicated A would answer differently.
+    await withInvitationWindowMutable(async () => {
+      await adminQuery(
+        `update public.new_client_waitlist_invitations
+            set issued_at = clock_timestamp() - interval '96 hours',
+                expires_at = clock_timestamp() - interval '24 hours'
+          where id = $1`,
+        [f.A],
+      );
+    });
+
+    const open = await adminQuery(
+      `select public.expire_new_client_waitlist_invitation($1,$2,$3) r`,
+      [f.studio.studioId, f.entryId, f.studio.userId],
+    );
+    expect(open.rows[0].r, "B is still live, so nothing expires").toBe("not_expired");
+    expect(await termsOf(f.A)).toMatchObject({ d: true, exp: false });
+
+    // Now age B itself. Expiry must land on B.
+    await withInvitationWindowMutable(async () => {
+      await adminQuery(
+        `update public.new_client_waitlist_invitations
+            set issued_at = clock_timestamp() - interval '96 hours',
+                expires_at = clock_timestamp() - interval '1 minute'
+          where id = $1`,
+        [f.B],
+      );
+    });
+
+    const done = await adminQuery(
+      `select public.expire_new_client_waitlist_invitation($1,$2,$3) r`,
+      [f.studio.studioId, f.entryId, f.studio.userId],
+    );
+    expect(done.rows[0].r).toBe("expired");
+    expect(await termsOf(f.B)).toMatchObject({ exp: true, d: false });
+    expect(
+      await termsOf(f.A),
+      "A must never receive expired_at on top of declined_at",
+    ).toMatchObject({ d: true, exp: false, rel: false, red: false });
+  });
+
+  it("CONVERSION binds to B's redeemed cycle, never to historical A", async () => {
+    const f = await declinedThenReissued("convert");
+
+    const begun = await beginProof(f.tokenB);
+    const done = await completeProof(f.tokenB, begun.raw_challenge as string);
+    expect(done.result).toBe("verified");
+    const red = await adminQuery(
+      `select result from public.redeem_new_client_waitlist_invitation_verified($1,$2)`,
+      [f.tokenB, done.raw_capability],
+    );
+    expect(red.rows[0].result).toBe("redeemed");
+
+    const conv = await adminQuery(
+      `select public.record_new_client_waitlist_conversion($1,$2,$3) r`,
+      [f.studio.studioId, f.entryId, f.studio.clientId],
+    );
+    expect(conv.rows[0].r).toBe("converted");
+
+    expect(await termsOf(f.B)).toMatchObject({ red: true, d: false });
+    expect(
+      await termsOf(f.A),
+      "A stays declined-only through a conversion on a later cycle",
+    ).toMatchObject({ d: true, red: false, rel: false, exp: false });
+  });
+
+  // -------------------------------------------------------------------------
+  // NON-VACUITY: the repair adds awareness of a NEW terminal state. It must not
+  // redefine the old ones. With no declined row anywhere, every verdict below is
+  // the one 0188/0189 already gave.
+  // -------------------------------------------------------------------------
+  it("NO DECLINED ROW: release is unchanged", async () => {
+    const o = await seedOffer("nodecl-release");
+    const r = await adminQuery(`select public.release_new_client_waitlist_entry($1,$2,$3) r`, [
+      o.studio.studioId, o.entryId, o.studio.userId,
+    ]);
+    expect(r.rows[0].r).toBe("released");
+    expect(await termsOf(o.invitationId)).toMatchObject({ rel: true, d: false });
+  });
+
+  it("NO DECLINED ROW: expire is unchanged, on both sides of the boundary", async () => {
+    const o = await seedOffer("nodecl-expire");
+    expect(
+      (
+        await adminQuery(`select public.expire_new_client_waitlist_invitation($1,$2,$3) r`, [
+          o.studio.studioId, o.entryId, o.studio.userId,
+        ])
+      ).rows[0].r,
+      "a live window still refuses",
+    ).toBe("not_expired");
+
+    await withInvitationWindowMutable(async () => {
+      await adminQuery(
+        `update public.new_client_waitlist_invitations
+            set issued_at = clock_timestamp() - interval '96 hours',
+                expires_at = clock_timestamp() - interval '1 minute'
+          where id = $1`,
+        [o.invitationId],
+      );
+    });
+    expect(
+      (
+        await adminQuery(`select public.expire_new_client_waitlist_invitation($1,$2,$3) r`, [
+          o.studio.studioId, o.entryId, o.studio.userId,
+        ])
+      ).rows[0].r,
+    ).toBe("expired");
+  });
+
+  it("NO DECLINED ROW: conversion is unchanged", async () => {
+    const o = await seedOffer("nodecl-convert");
+    const begun = await beginProof(o.token);
+    const done = await completeProof(o.token, begun.raw_challenge as string);
+    await adminQuery(
+      `select result from public.redeem_new_client_waitlist_invitation_verified($1,$2)`,
+      [o.token, done.raw_capability],
+    );
+    const conv = await adminQuery(
+      `select public.record_new_client_waitlist_conversion($1,$2,$3) r`,
+      [o.studio.studioId, o.entryId, o.studio.clientId],
+    );
+    expect(conv.rows[0].r).toBe("converted");
+  });
+});
+
+// ===========================================================================
+// THE LOAD-BEARING PROOF: POSTGRESQL DECIDES, NOT A TEXT MATCHER
+// ===========================================================================
+//
+// WHY THIS EXISTS. The §14b repair was first proved by a source test that read
+// the migration's SQL and tried to establish that the four liveness terms were
+// conjunctive. That guard was wrong four times running, each time plausibly:
+// counting tokens proved presence but not relationship; checking the gaps
+// between four terms proved only INTERNAL conjunction and missed how the group
+// attaches at its boundaries; and inline `--` comments survived the matcher.
+// Every repair required understanding a little more SQL, which is the road to
+// reimplementing a parser inside a unit test.
+//
+// PostgreSQL already knows SQL semantics. So the semantic claim moved here.
+//
+// THE FIXTURE IS WHAT MAKES THIS DETERMINISTIC, and it is the whole idea.
+// Take the lifecycle only as far as DECLINE A -> REQUEUE -> CLAIM and STOP:
+// never issue B. The entry is then `claimed` with exactly one invitation row,
+// A, which is declined. Measured on that state:
+//
+//     rows matching the OLD three-terminal predicate : 1   <- only A
+//     rows matching the NEW four-terminal predicate  : 0   <- nothing
+//
+// So a command that still asks the three-terminal question has NO CHOICE but to
+// select A and reach for its row lock. A second connection holds that lock. The
+// caller runs under a short `statement_timeout`, so a broken implementation
+// blocks and dies with 57014; a correct one never asks for that lock and
+// returns its ordinary no-live-invitation answer.
+//
+// WHAT THIS PROVES, EXACTLY — and it is narrower than the earlier wording
+// claimed. It proves that none of these paths SELECTS the declined row as the
+// current cycle, requests a CONFLICTING ROW LOCK on it, or applies a TERMINAL
+// MUTATION to it. It does NOT prove the row is never READ: `expire_` plainly
+// scans this table in several `exists (...)` subqueries that touch A and simply
+// never match or lock it. Those reads are correct and harmless, and a test that
+// forbade them would be asserting a rule the product does not have.
+//
+// Nothing here depends on which row PostgreSQL happens to return first -- the
+// weakness that made the earlier behavioural tests unable to catch the
+// regression at all. There is only one candidate row, and wanting it is the
+// failure.
+
+/** JOIN -> CLAIM -> ISSUE A -> verify -> DECLINE A -> REQUEUE -> CLAIM. No B. */
+async function declinedOnly(label: string) {
+  const offer = await seedOffer(`lock-${label}`);
+  const begun = await beginProof(offer.token);
+  const done = await completeProof(offer.token, begun.raw_challenge as string);
+  expect(done.result).toBe("verified");
+  const dec = await adminQuery(
+    `select result from public.decline_new_client_waitlist_invitation($1,$2)`,
+    [offer.token, done.raw_capability],
+  );
+  expect(dec.rows[0].result).toBe("declined");
+  await adminQuery(`select public.requeue_new_client_waitlist_entry($1,$2,$3)`, [
+    offer.studio.studioId, offer.entryId, offer.studio.userId,
+  ]);
+  await adminQuery(`select public.claim_new_client_waitlist_entry($1,$2,$3)`, [
+    offer.studio.studioId, offer.entryId, offer.studio.userId,
+  ]);
+
+  // THE DISCRIMINATION, asserted rather than assumed: exactly one row answers
+  // the old question and none answers the new one. If this ever stops holding,
+  // the tests below stop proving anything and say so here first.
+  const counts = await adminQuery(
+    `select
+       count(*) filter (where redeemed_at is null and expired_at is null
+                          and released_at is null)                        as three,
+       count(*) filter (where redeemed_at is null and expired_at is null
+                          and released_at is null and declined_at is null) as four
+     from public.new_client_waitlist_invitations where entry_id = $1`,
+    [offer.entryId],
+  );
+  expect(Number(counts.rows[0].three), "only the declined row answers the OLD predicate").toBe(1);
+  expect(Number(counts.rows[0].four), "nothing answers the NEW predicate").toBe(0);
+
+  return { studio: offer.studio, entryId: offer.entryId, A: offer.invitationId };
+}
+
+/**
+ * Run `call` while a second connection holds `invitationId` under `for update`.
+ *
+ * Returns the command's result, or throws whatever PostgreSQL raised — a
+ * blocked caller surfaces as 57014 (statement_timeout), which is the signal
+ * that the command wanted a row it should never have considered.
+ */
+async function withRowLockHeld<T>(
+  invitationId: string,
+  call: (caller: Client) => Promise<T>,
+): Promise<T> {
+  const holder = await conn();
+  const caller = await conn();
+  try {
+    await holder.query("begin");
+    await holder.query(
+      `select 1 from public.new_client_waitlist_invitations where id = $1 for update`,
+      [invitationId],
+    );
+    // Short, and local to this isolated test connection. Long enough that a
+    // command which does NOT want the lock always finishes; short enough that
+    // one which does fails fast instead of hanging the suite.
+    await caller.query("set statement_timeout = '4s'");
+    return await call(caller);
+  } finally {
+    await holder.query("rollback").catch(() => undefined);
+    await holder.end().catch(() => undefined);
+    await caller.end().catch(() => undefined);
+  }
+}
+
+const declinedOnlyTerms = async (id: string) =>
+  (
+    await adminQuery(
+      `select declined_at is not null d, released_at is not null rel,
+              expired_at is not null exp, redeemed_at is not null red
+         from public.new_client_waitlist_invitations where id = $1`,
+      [id],
+    )
+  ).rows[0];
+
+describe("0192 §14b — no lifecycle path SELECTS, LOCKS or MUTATES the declined row", () => {
+  it("EXPIRE does not select or lock a historical declined row", async () => {
+    const f = await declinedOnly("expire");
+    const r = await withRowLockHeld(f.A, (caller) =>
+      caller.query(`select public.expire_new_client_waitlist_invitation($1,$2,$3) r`, [
+        f.studio.studioId, f.entryId, f.studio.userId,
+      ]),
+    );
+    // Completed before the timeout, with its ordinary no-live-invitation answer.
+    // A three-terminal selector would have SELECTED A and blocked on the held
+    // lock, raising 57014 instead of ever getting here.
+    expect(r.rows[0].r).toBe("not_invited");
+    expect(await declinedOnlyTerms(f.A)).toMatchObject({
+      d: true, rel: false, exp: false, red: false,
+    });
+  });
+
+  it("RELEASE does not select or lock a historical declined row", async () => {
+    const f = await declinedOnly("release");
+    const r = await withRowLockHeld(f.A, (caller) =>
+      caller.query(`select public.release_new_client_waitlist_entry($1,$2,$3) r`, [
+        f.studio.studioId, f.entryId, f.studio.userId,
+      ]),
+    );
+    // The entry is `claimed` with no live invitation, so release truthfully
+    // takes its claim-only path. What matters is that it never touched A.
+    expect(r.rows[0].r).toBe("released");
+    expect(
+      await declinedOnlyTerms(f.A),
+      "released_at must never land on top of declined_at",
+    ).toMatchObject({ d: true, rel: false, exp: false, red: false });
+  });
+
+  it("CONVERSION does not select or lock a historical declined row", async () => {
+    const f = await declinedOnly("convert");
+    const r = await withRowLockHeld(f.A, (caller) =>
+      caller.query(`select public.record_new_client_waitlist_conversion($1,$2,$3) r`, [
+        f.studio.studioId, f.entryId, f.studio.clientId,
+      ]),
+    );
+    expect(r.rows[0].r).toBe("not_invited");
+    expect(await declinedOnlyTerms(f.A)).toMatchObject({
+      d: true, rel: false, exp: false, red: false,
+    });
+  });
+
+  it("THE FIXTURE CAN ACTUALLY DETECT A BLOCKED CALLER — the control for the control", async () => {
+    // If the held lock could never stop anything, all three tests above would
+    // pass vacuously. So: run a statement that DOES want A's lock, under the
+    // same holder and the same timeout, and require it to die with 57014.
+    const f = await declinedOnly("vacuity");
+    let code: string | undefined;
+    try {
+      await withRowLockHeld(f.A, (caller) =>
+        caller.query(`select 1 from public.new_client_waitlist_invitations
+                       where id = $1 for update`, [f.A]),
+      );
+    } catch (e) {
+      code = (e as { code?: string }).code;
+    }
+    expect(code, "the holder must genuinely block a competing row lock").toBe("57014");
+  });
+});
+
+// ===========================================================================
+// THE ALLOWANCE IS A PER-ROUND QUOTA, NOT A LIFETIME CAP
+// ===========================================================================
+//
+// THE TWO DEFECTS THIS BLOCK KEEPS CLOSED, both measured on the previous shape:
+//
+// 1. NO ROUND BOUNDARY. `studio_waitlist_admission_rounds` was keyed by
+//    studio_id alone, so "opening the next round" could only mean overwriting
+//    the single row -- and consumption, having no round to belong to, was
+//    counted over the studio's entire history. Measured: allowance 1, admit and
+//    convert ONE prospect, and a fresh round at allowance 1 answered
+//    `round_full` with nobody in it. The quota was a lifetime cap.
+//
+// 2. THE REDEEM -> CONVERSION HOLE. Consumption was `outstanding` (redeemed_at
+//    IS NULL) plus `converted entries`, so a redeemed-but-unconverted
+//    invitation was in NEITHER term. Measured: 1 -> 0 -> 1, and a second
+//    prospect admitted against an allowance of 1. That window is not a race --
+//    it is the whole booking flow, a human choosing a slot.
+//
+// Rounds are now durable rows with their own identity, invitations are stamped
+// with the round that authorised them, and consumption is counted over that
+// round's invitations alone -- with redemption consuming the seat immediately.
+
+async function openRoundFor(studio: SeededStudio, allowance: number) {
+  const r = await adminQuery(
+    `select result, round_id from public.open_new_client_waitlist_admission_round($1,$2,$3)`,
+    [studio.studioId, studio.userId, allowance],
+  );
+  return r.rows[0] as { result: string; round_id: string | null };
+}
+const closeRoundFor = async (studio: SeededStudio) =>
+  (
+    await adminQuery(`select public.close_new_client_waitlist_admission_round($1,$2) r`, [
+      studio.studioId, studio.userId,
+    ])
+  ).rows[0].r as string;
+const roundConsumed = async (roundId: string) =>
+  Number(
+    (await adminQuery(`select public.waitlist_admission_round_consumed($1) n`, [roundId]))
+      .rows[0].n,
+  );
+
+/** A studio with a service and an open round, and a helper to offer a prospect. */
+async function roundFixture(label: string, allowance: number) {
+  const studio = await seedStudio(`rnd-${label}`);
+  const serviceId = await seedService(studio.studioId, label);
+  const opened = await openRoundFor(studio, allowance);
+  expect(opened.result).toBe("opened");
+  const offer = async (tag: string) => {
+    const joined = await adminQuery(
+      `select entry_id from public.join_new_client_waitlist($1,$2,$3,$4)`,
+      [studio.studioId, `${tag} ${label}`, `${tag}-${label}-${studio.studioId.slice(0, 6)}@h.local`, null],
+    );
+    const entryId = joined.rows[0].entry_id as string;
+    await adminQuery(`select public.claim_new_client_waitlist_entry($1,$2,$3)`, [
+      studio.studioId, entryId, studio.userId,
+    ]);
+    const r = await adminQuery(
+      `select result, raw_token, invitation_id
+         from public.issue_scoped_new_client_waitlist_invitation(
+                $1,$2,$3,$4, current_date, current_date + 13, null, 72)`,
+      [studio.studioId, entryId, studio.userId, serviceId],
+    );
+    return {
+      entryId,
+      result: r.rows[0].result as string,
+      token: r.rows[0].raw_token as string | null,
+      invitationId: r.rows[0].invitation_id as string | null,
+    };
+  };
+  const redeem = async (token: string) => {
+    const b = await beginProof(token);
+    const c = await completeProof(token, b.raw_challenge as string);
+    expect(c.result).toBe("verified");
+    return (
+      await adminQuery(
+        `select result from public.redeem_new_client_waitlist_invitation_verified($1,$2)`,
+        [token, c.raw_capability],
+      )
+    ).rows[0].result as string;
+  };
+  return { studio, serviceId, roundId: opened.round_id as string, offer, redeem };
+}
+
+describe("0192 §14d — admission rounds are durable, and the quota is per round", () => {
+  it("NO OPEN ROUND: nothing may issue", async () => {
+    const studio = await seedStudio("rnd-noopen");
+    const serviceId = await seedService(studio.studioId, "noopen");
+    const joined = await adminQuery(
+      `select entry_id from public.join_new_client_waitlist($1,$2,$3,$4)`,
+      [studio.studioId, "NoRound", `noround-${studio.studioId.slice(0, 6)}@h.local`, null],
+    );
+    const entryId = joined.rows[0].entry_id as string;
+    await adminQuery(`select public.claim_new_client_waitlist_entry($1,$2,$3)`, [
+      studio.studioId, entryId, studio.userId,
+    ]);
+    const r = await adminQuery(
+      `select result from public.issue_scoped_new_client_waitlist_invitation(
+                $1,$2,$3,$4, current_date, current_date + 13, null, 72)`,
+      [studio.studioId, entryId, studio.userId, serviceId],
+    );
+    expect(r.rows[0].result).toBe("no_round_open");
+  });
+
+  it("AT MOST ONE OPEN ROUND, and it is the DATABASE that says so", async () => {
+    const f = await roundFixture("oneopen", 3);
+    expect((await openRoundFor(f.studio, 5)).result).toBe("round_already_open");
+
+    // Structural, not merely command-enforced: the partial unique index refuses
+    // a second open row even on a direct write.
+    await expect(
+      adminQuery(
+        `insert into public.studio_waitlist_admission_rounds
+           (studio_id, allowance, opened_by_practitioner_id)
+         values ($1, 5, $2)`,
+        [f.studio.studioId, f.studio.practitionerId],
+      ),
+    ).rejects.toThrow(/one_open_per_studio|duplicate key/i);
+  });
+
+  it("THE SEAT IS HELD FROM REDEMPTION, not from conversion — the P1", async () => {
+    const f = await roundFixture("p1", 1);
+    const a = await f.offer("A");
+    expect(a.result).toBe("issued");
+    expect(await roundConsumed(f.roundId), "live A holds the seat").toBe(1);
+
+    expect(await f.redeem(a.token!)).toBe("redeemed");
+    expect(
+      await roundConsumed(f.roundId),
+      "REDEEMED but not converted must still hold the seat — this was 0",
+    ).toBe(1);
+
+    // The window that used to admit a second prospect against an allowance of 1.
+    const b = await f.offer("B");
+    expect(b.result, "the quota must hold during the booking flow").toBe("round_full");
+
+    await adminQuery(`select public.record_new_client_waitlist_conversion($1,$2,$3)`, [
+      f.studio.studioId, a.entryId, f.studio.clientId,
+    ]);
+    expect(
+      await roundConsumed(f.roundId),
+      "redeemed AND converted is ONE seat, never two",
+    ).toBe(1);
+  });
+
+  it.each([
+    ["DECLINED", "decline"],
+    ["RELEASED", "release"],
+    ["LAPSED", "lapse"],
+  ])("%s before redemption returns the seat to the round", async (_label, how) => {
+    const f = await roundFixture(`free-${how}`, 1);
+    const a = await f.offer("A");
+    expect(await roundConsumed(f.roundId)).toBe(1);
+
+    if (how === "decline") {
+      const b = await beginProof(a.token!);
+      const c = await completeProof(a.token!, b.raw_challenge as string);
+      await adminQuery(`select public.decline_new_client_waitlist_invitation($1,$2)`, [
+        a.token, c.raw_capability,
+      ]);
+    } else if (how === "release") {
+      await adminQuery(`select public.release_new_client_waitlist_entry($1,$2,$3)`, [
+        f.studio.studioId, a.entryId, f.studio.userId,
+      ]);
+    } else {
+      await withInvitationWindowMutable(async () => {
+        await adminQuery(
+          `update public.new_client_waitlist_invitations
+              set issued_at = clock_timestamp() - interval '96 hours',
+                  expires_at = clock_timestamp() - interval '1 minute'
+            where id = $1`,
+          [a.invitationId],
+        );
+      });
+    }
+    expect(await roundConsumed(f.roundId), "the seat returns to the round").toBe(0);
+  });
+
+  it("A ROUND WITH A LIVE OFFER MAY NOT CLOSE", async () => {
+    const f = await roundFixture("closelive", 2);
+    const a = await f.offer("A");
+    expect(a.result).toBe("issued");
+    expect(
+      await closeRoundFor(f.studio),
+      "closing would drop an answerable offer out of every round's accounting",
+    ).toBe("live_offers_outstanding");
+
+    // Settle it the way the shipped lifecycle already allows, then close.
+    await adminQuery(`select public.release_new_client_waitlist_entry($1,$2,$3)`, [
+      f.studio.studioId, a.entryId, f.studio.userId,
+    ]);
+    expect(await closeRoundFor(f.studio)).toBe("closed");
+    expect(await closeRoundFor(f.studio)).toBe("no_round_open");
+  });
+
+  it("ROUND 2 STARTS AT ZERO — the proof the old model could not give", async () => {
+    const f = await roundFixture("reset", 1);
+    const a = await f.offer("A");
+    expect(await f.redeem(a.token!)).toBe("redeemed");
+    await adminQuery(`select public.record_new_client_waitlist_conversion($1,$2,$3)`, [
+      f.studio.studioId, a.entryId, f.studio.clientId,
+    ]);
+    expect(await roundConsumed(f.roundId)).toBe(1);
+    expect(await closeRoundFor(f.studio)).toBe("closed");
+
+    const r2 = await openRoundFor(f.studio, 1);
+    expect(r2.result).toBe("opened");
+    expect(r2.round_id, "a new round is a NEW immutable identity").not.toBe(f.roundId);
+    expect(
+      await roundConsumed(r2.round_id!),
+      "round 1's redeemed history must not consume round 2",
+    ).toBe(0);
+
+    const b = await f.offer("B");
+    expect(b.result, "allowance 1 again, and B is admissible").toBe("issued");
+
+    // And round 1 is retained as history, still counting its own seat.
+    expect(await roundConsumed(f.roundId)).toBe(1);
+    const rows = await adminQuery(
+      `select count(*)::int n from public.studio_waitlist_admission_rounds where studio_id=$1`,
+      [f.studio.studioId],
+    );
+    expect(Number(rows.rows[0].n), "closing keeps history; it does not overwrite").toBe(2);
+  });
+
+  it("AN INVITATION'S ROUND IS IMMUTABLE, and same-studio by construction", async () => {
+    const f = await roundFixture("immutable", 2);
+    const a = await f.offer("A");
+    const other = await roundFixture("foreign", 2);
+
+    // Stamped with the round that authorised it.
+    const stamped = await adminQuery(
+      `select admission_round_id from public.new_client_waitlist_invitations where id=$1`,
+      [a.invitationId],
+    );
+    expect(stamped.rows[0].admission_round_id).toBe(f.roundId);
+
+    // It cannot be moved — not to another round of its own studio, nor away.
+    await expect(
+      adminQuery(
+        `update public.new_client_waitlist_invitations set admission_round_id=$2 where id=$1`,
+        [a.invitationId, other.roundId],
+      ),
+    ).rejects.toThrow(/admission round that authorised an invitation is immutable/);
+    await expect(
+      adminQuery(
+        `update public.new_client_waitlist_invitations set admission_round_id=null where id=$1`,
+        [a.invitationId],
+      ),
+    ).rejects.toThrow(/admission round that authorised an invitation is immutable/);
+
+    // CROSS-STUDIO IS STRUCTURAL: the composite FK refuses a foreign round on a
+    // FRESH row, independently of the immutability trigger. A separate entry is
+    // used so the one-live-per-entry index cannot answer first and mask it.
+    const spare = await adminQuery(
+      `select entry_id from public.join_new_client_waitlist($1,$2,$3,$4)`,
+      [f.studio.studioId, "Spare", `spare-${f.studio.studioId.slice(0, 8)}@h.local`, null],
+    );
+    await expect(
+      adminQuery(
+        `insert into public.new_client_waitlist_invitations
+           (studio_id, entry_id, token_hash, expires_at, issued_by_practitioner_id, admission_round_id)
+         values ($1,$2,$3, clock_timestamp() + interval '72 hours', $4, $5)`,
+        [
+          f.studio.studioId,
+          spare.rows[0].entry_id,
+          "f".repeat(64),
+          f.studio.practitionerId,
+          other.roundId,
+        ],
+      ),
+    ).rejects.toThrow(/round_same_studio_fk|foreign key/i);
+  });
+
+  it("BOOKING FAILURE AFTER REDEMPTION: the seat stays consumed (WAIT-RECOVERY-01)", async () => {
+    // The product law: a redeemed permission is spent. B2/B3 deliberately allow
+    // "redeemed, booking never created" and surface it as
+    // `consumed_without_booking`. Nothing here silently recycles that seat, and
+    // redemption is not reversible — a future operator recovery authority
+    // (WAIT-RECOVERY-01) is the only thing that may ever restore capacity.
+    const f = await roundFixture("nobooking", 1);
+    const a = await f.offer("A");
+    expect(await f.redeem(a.token!)).toBe("redeemed");
+    // No conversion is ever recorded — the booking failed.
+    expect(await roundConsumed(f.roundId)).toBe(1);
+    expect((await f.offer("B")).result).toBe("round_full");
+  });
+
+  it("A REDEEMED SEAT SURVIVES ITS OWN WINDOW LAPSING", async () => {
+    // THE CASE THAT MAKES THE SPENT LIMB LOAD-BEARING. While a redeemed
+    // invitation is still inside its original window it would be counted by the
+    // outstanding limb anyway; only after that window passes does the redeemed
+    // limb become the sole reason the seat is still held. A suite that never
+    // ages a redeemed row would pass with that limb deleted — measured, by a
+    // negative control that failed to go red.
+    const f = await roundFixture("aged-redeem", 1);
+    const a = await f.offer("A");
+    expect(await f.redeem(a.token!)).toBe("redeemed");
+    expect(await roundConsumed(f.roundId)).toBe(1);
+
+    await withInvitationWindowMutable(async () => {
+      await adminQuery(
+        `update public.new_client_waitlist_invitations
+            set issued_at = clock_timestamp() - interval '96 hours',
+                expires_at = clock_timestamp() - interval '1 minute'
+          where id = $1`,
+        [a.invitationId],
+      );
+    });
+
+    expect(
+      await roundConsumed(f.roundId),
+      "a spent seat is not returned by the clock — only an UNREDEEMED offer lapses",
+    ).toBe(1);
+    expect((await f.offer("B")).result).toBe("round_full");
+  });
+
+  it("THE ROUND TABLE IS UNREACHABLE FOR WRITES BY EVERY BROWSER ROLE", async () => {
+    // Proved behaviourally against the live catalog, not by reading GRANT text.
+    for (const role of ["anon", "authenticated"]) {
+      for (const priv of ["insert", "update", "delete"]) {
+        const r = await adminQuery(
+          `select has_table_privilege($1,'public.studio_waitlist_admission_rounds',$2) ok`,
+          [role, priv],
+        );
+        expect(r.rows[0].ok, `${role} must not hold ${priv}`).toBe(false);
+      }
+    }
+    // service_role holds no table privilege either — the commands are definer.
+    for (const priv of ["insert", "update", "delete", "select"]) {
+      const r = await adminQuery(
+        `select has_table_privilege('service_role','public.studio_waitlist_admission_rounds',$1) ok`,
+        [priv],
+      );
+      expect(r.rows[0].ok, `service_role must not hold ${priv}`).toBe(false);
+    }
+    // ...and the two commands ARE reachable by service_role.
+    for (const fn of [
+      "public.open_new_client_waitlist_admission_round(uuid, uuid, integer)",
+      "public.close_new_client_waitlist_admission_round(uuid, uuid)",
+    ]) {
+      const r = await adminQuery(
+        `select has_function_privilege('service_role',$1,'execute') ok`,
+        [fn],
+      );
+      expect(r.rows[0].ok, `${fn} must be executable by service_role`).toBe(true);
+    }
+  });
+
+  it("A NON-OWNER CANNOT OPEN OR CLOSE A ROUND", async () => {
+    const f = await roundFixture("authz", 2);
+    const member = await seedMember(f.studio, "authz-member");
+    const opened = await adminQuery(
+      `select result from public.open_new_client_waitlist_admission_round($1,$2,$3)`,
+      [f.studio.studioId, member.userId, 5],
+    );
+    expect(opened.rows[0].result).toBe("not_owner");
+    const closed = await adminQuery(
+      `select public.close_new_client_waitlist_admission_round($1,$2) r`,
+      [f.studio.studioId, member.userId],
+    );
+    expect(closed.rows[0].r).toBe("not_owner");
+  });
+
+  it("A ROUND'S ALLOWANCE IS NEVER DEFAULTED OR INFERRED", async () => {
+    const studio = await seedStudio("rnd-nodefault");
+    for (const bad of [null, -1]) {
+      const r = await adminQuery(
+        `select result from public.open_new_client_waitlist_admission_round($1,$2,$3)`,
+        [studio.studioId, studio.userId, bad],
+      );
+      expect(r.rows[0].result, `allowance ${bad} must be refused`).toBe("invalid_input");
+    }
+    // Zero is legitimate: a round that has opened but admits nobody yet.
+    const ok = await openRoundFor(studio, 0);
+    expect(ok.result).toBe("opened");
+    expect(await roundConsumed(ok.round_id!)).toBe(0);
+  });
+});
+
+// ===========================================================================
+// REDEMPTION SERIALISES WITH ISSUANCE ON THE ADMISSION ROUND
+// ===========================================================================
+//
+// THE MVCC WINDOW THIS CLOSES, and it is not a formula error -- every COMMITTED
+// state counts correctly. What was missing is that an issuer could observe a
+// state in which a seat had already left OUTSTANDING but its redemption had not
+// yet arrived in SPENT:
+//
+//     TX A  redeems A before A.expires_at, stamps redeemed_at, does NOT commit
+//     ...   the clock crosses A.expires_at
+//     TX B  locks the round and counts. A's uncommitted redeemed_at is
+//           invisible, so A is not SPENT; the clock is past expires_at, so A is
+//           not OUTSTANDING. It counts ZERO and issues B.
+//     TX A  commits.  ->  two seats spent against an allowance of one.
+//
+// Measured on the unserialised shape: R1 consumed = 2, two invitations in R1.
+//
+// The round row is the serialisation authority, so redemption takes it before
+// the invitation and holds it to commit. These tests drive two real
+// connections; a sequential mock cannot express the interleaving at all.
+
+/** Bring an invitation's expiry to a controlled instant. Test authority only. */
+async function setInvitationExpiresIn(invitationId: string, interval: string) {
+  await withInvitationWindowMutable(async () => {
+    await adminQuery(
+      `update public.new_client_waitlist_invitations
+          set expires_at = clock_timestamp() + $2::interval where id = $1`,
+      [invitationId, interval],
+    );
+  });
+}
+
+/** Is `pid` parked on a lock? Polls rather than sleeping a fixed time. */
+async function waitUntilLockWaiting(pid: number, timeoutMs = 6000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const r = await adminQuery(
+      `select wait_event_type from pg_stat_activity where pid = $1`,
+      [pid],
+    );
+    if (r.rows[0]?.wait_event_type === "Lock") return true;
+    await sleep(120);
+  }
+  return false;
+}
+
+/** A round with allowance 1, one issued+proven invitation A, and a spare entry B. */
+async function raceFixture(label: string) {
+  const f = await roundFixture(`race-${label}`, 1);
+  const a = await f.offer("A");
+  expect(a.result).toBe("issued");
+  const begun = await beginProof(a.token!);
+  const done = await completeProof(a.token!, begun.raw_challenge as string);
+  expect(done.result).toBe("verified");
+  const bEntry = await adminQuery(
+    `select entry_id from public.join_new_client_waitlist($1,$2,$3,$4)`,
+    [f.studio.studioId, `B ${label}`, `braceB-${label}-${f.studio.studioId.slice(0, 6)}@h.local`, null],
+  );
+  const bEntryId = bEntry.rows[0].entry_id as string;
+  await adminQuery(`select public.claim_new_client_waitlist_entry($1,$2,$3)`, [
+    f.studio.studioId, bEntryId, f.studio.userId,
+  ]);
+  return { ...f, a, capability: done.raw_capability as string, bEntryId };
+}
+
+const issueOn = (client: Client, f: { studio: SeededStudio; serviceId: string }, entryId: string) =>
+  client.query(
+    `select result from public.issue_scoped_new_client_waitlist_invitation(
+              $1,$2,$3,$4, current_date, current_date + 13, null, 72)`,
+    [f.studio.studioId, entryId, f.studio.userId, f.serviceId],
+  );
+
+describe("0192 — the append-only fixture restores enforcement on every exit", () => {
+  // THE CONTAMINATION HAZARD THIS CLOSES. Several fixtures must age an
+  // invitation to simulate elapsed time, which means lifting 0188's append-only
+  // guard. Nine of them did it inline: disable, mutate, enable. If the mutation
+  // threw — a bad interval, a constraint, a dropped connection — the enable
+  // never ran, and `alter table` is not undone by a rollback. The suite would
+  // then keep running against a table with enforcement switched off, and the
+  // next failure would appear somewhere unrelated.
+  //
+  // Every site now goes through `withInvitationWindowMutable`, whose `finally`
+  // restores the guard on every exit. These tests prove that claim rather than
+  // trusting the keyword.
+
+  // THE CANONICAL APPEND-ONLY REJECTION, as 0188 raises it and 0192 re-raises
+  // it verbatim in the forward redefinition: SQLSTATE 23514 (check_violation)
+  // carrying this exact sentence. Both halves are required — 23514 alone is the
+  // whole check-constraint family on this table (the ttl bound, the terminal
+  // -outcome rule, the hash shapes), so a code-only match would accept a
+  // rejection that proves nothing about the trigger.
+  const APPEND_ONLY_SQLSTATE = "23514";
+  const APPEND_ONLY_MESSAGE =
+    /identity, tenancy, token and validity window are immutable/;
+
+  const isAppendOnlyRejection = (e: unknown): boolean => {
+    const err = e as { code?: string; message?: string } | null;
+    return (
+      err?.code === APPEND_ONLY_SQLSTATE && APPEND_ONLY_MESSAGE.test(err?.message ?? "")
+    );
+  };
+
+  /**
+   * Is append-only enforcement actually live?
+   *
+   * BEHAVIOURAL, not metadata. `pg_trigger.tgenabled` reports what the catalog
+   * says; this asks the table whether it still refuses a forbidden write, which
+   * is the property a fixture can actually damage.
+   *
+   * AND A GENERIC `catch` WAS NOT PROOF. Treating any rejection as enforcement
+   * makes the probe agree with itself in exactly the situation it exists to
+   * detect: if restoration failed because of connection, pool or timeout
+   * trouble, the probe's own write fails for that same reason and the failure
+   * is read as "the trigger refused me". The trigger could be disabled and this
+   * would still report enforced.
+   *
+   * So only the canonical rejection counts. Anything else — a dropped
+   * connection, a statement timeout, an unrelated constraint, a malformed
+   * parameter — is RETHROWN, because none of them is evidence either way and
+   * silently converting them into a verdict is the defect.
+   */
+  const enforcementIsLive = async (invitationId: string): Promise<boolean> => {
+    try {
+      await adminQuery(
+        `update public.new_client_waitlist_invitations
+            set expires_at = expires_at + interval '1 hour' where id = $1`,
+        [invitationId],
+      );
+      // The forbidden write SUCCEEDED: enforcement is off.
+      return false;
+    } catch (e) {
+      if (isAppendOnlyRejection(e)) return true;
+      throw e;
+    }
+  };
+
+  it("a THROWING mutation still restores append-only enforcement", async () => {
+    const offer = await seedOffer("fixture-throw");
+    expect(await enforcementIsLive(offer.invitationId), "enforced before").toBe(true);
+
+    await expect(
+      withInvitationWindowMutable(async () => {
+        // A deliberately invalid mutation: expires_at must stay after issued_at,
+        // so 0188's ttl CHECK rejects this from inside the mutable window.
+        await adminQuery(
+          `update public.new_client_waitlist_invitations
+              set expires_at = issued_at - interval '1 hour' where id = $1`,
+          [offer.invitationId],
+        );
+      }),
+    ).rejects.toThrow();
+
+    expect(
+      await enforcementIsLive(offer.invitationId),
+      "the guard must be back even though the callback threw",
+    ).toBe(true);
+  });
+
+  it("a THROWING ASSERTION inside the window restores it too", async () => {
+    const offer = await seedOffer("fixture-assert");
+    await expect(
+      withInvitationWindowMutable(async () => {
+        await adminQuery(
+          `update public.new_client_waitlist_invitations
+              set expires_at = clock_timestamp() + interval '1 hour' where id = $1`,
+          [offer.invitationId],
+        );
+        expect(1, "a deliberate in-window failure").toBe(2);
+      }),
+    ).rejects.toThrow();
+
+    expect(
+      await enforcementIsLive(offer.invitationId),
+      "an assertion failure must not leave the table unprotected",
+    ).toBe(true);
+  });
+
+  it("NON-VACUITY: the probe can actually tell enforced from unenforced", async () => {
+    // If `enforcementIsLive` returned true unconditionally, both tests above
+    // would pass against a permanently disabled trigger. Inside the window the
+    // forbidden write must SUCCEED — and the guard must be back afterwards.
+    const offer = await seedOffer("fixture-probe");
+    let insideWindow: boolean | null = null;
+    await withInvitationWindowMutable(async () => {
+      insideWindow = await enforcementIsLive(offer.invitationId);
+    });
+    expect(insideWindow, "the probe must observe the window as OPEN").toBe(false);
+    expect(await enforcementIsLive(offer.invitationId), "and closed after").toBe(true);
+  });
+
+  it("ONLY THE CANONICAL REJECTION COUNTS — the classifier, over representative errors", () => {
+    // The seam the probe decides on, exercised directly. A generic catch would
+    // have said "enforced" to every one of these.
+    expect(
+      isAppendOnlyRejection({
+        code: "23514",
+        message:
+          'new row for relation "new_client_waitlist_invitations" violates check ' +
+          "constraint: new_client_waitlist_invitations: identity, tenancy, token " +
+          "and validity window are immutable; there is no renewal or extension",
+      }),
+      "the real rejection",
+    ).toBe(true);
+
+    for (const [why, err] of [
+      ["a dropped connection", { code: "57P01", message: "terminating connection due to administrator command" }],
+      ["a statement timeout", { code: "57014", message: "canceling statement due to statement timeout" }],
+      ["a pool/connection failure", { code: "08006", message: "connection terminated unexpectedly" }],
+      ["a malformed parameter", { code: "22P02", message: 'invalid input syntax for type uuid: "nope"' }],
+      // SAME SQLSTATE, DIFFERENT RULE. 23514 is the whole check-constraint
+      // family on this table; the terminal-outcome rule raises it too. A
+      // code-only match would have accepted this as proof of the trigger.
+      ["a DIFFERENT 23514 on the same table", {
+        code: "23514",
+        message:
+          "new_client_waitlist_invitations: a terminal outcome is recorded once and cannot be rewritten",
+      }],
+      ["the one_terminal_outcome CHECK", {
+        code: "23514",
+        message:
+          'violates check constraint "new_client_waitlist_invitations_one_terminal_outcome_check"',
+      }],
+      ["no error object at all", null],
+      ["a plain Error", new Error("boom")],
+    ] as const) {
+      expect(isAppendOnlyRejection(err), why).toBe(false);
+    }
+  });
+
+  it("AN UNRELATED DATABASE ERROR IS RETHROWN, never counted as enforcement", async () => {
+    // End to end, through the real probe and a real PostgreSQL failure: a
+    // malformed uuid produces 22P02 on the same statement. The probe must
+    // propagate it rather than answer `true` or `false`.
+    await expect(enforcementIsLive("not-a-uuid")).rejects.toMatchObject({ code: "22P02" });
+  });
+
+  it("LATER TESTS DO NOT INHERIT A WEAKENED DATABASE", async () => {
+    // The end state every other test in this file depends on: an immutable
+    // field is refused by its real message, not merely by a catalog flag.
+    const offer = await seedOffer("fixture-inherit");
+    await expect(
+      adminQuery(
+        `update public.new_client_waitlist_invitations
+            set expires_at = expires_at + interval '1 hour' where id = $1`,
+        [offer.invitationId],
+      ),
+    ).rejects.toMatchObject({
+      code: "23514",
+      message: expect.stringContaining(
+        "identity, tenancy, token and validity window are immutable",
+      ),
+    });
+  });
+});
+
+describe("0192 — verified redemption serialises with same-round issuance", () => {
+  it("THE EXPIRY BOUNDARY: an issuer cannot count zero while a redemption is in flight", async () => {
+    const f = await raceFixture("expiry");
+    await setInvitationExpiresIn(f.a.invitationId!, "2 seconds");
+
+    const txA = await conn();
+    const txB = await conn();
+    try {
+      await txA.query("begin");
+      const red = await txA.query(
+        `select result from public.redeem_new_client_waitlist_invitation_verified($1,$2)`,
+        [f.a.token, f.capability],
+      );
+      expect(red.rows[0].result, "A redeems while still inside its window").toBe("redeemed");
+      // TX A is NOT committed. It holds the round.
+
+      // Wait on the DATABASE clock until the window has genuinely passed.
+      await adminQuery(
+        `select pg_sleep(greatest(0, extract(epoch from (expires_at - clock_timestamp())) + 0.5))
+           from public.new_client_waitlist_invitations where id = $1`,
+        [f.a.invitationId],
+      );
+      const past = await adminQuery(
+        `select clock_timestamp() > expires_at p
+           from public.new_client_waitlist_invitations where id = $1`,
+        [f.a.invitationId],
+      );
+      expect(past.rows[0].p, "the fixture must actually cross the boundary").toBe(true);
+
+      await txB.query("begin");
+      await txB.query("set local statement_timeout = '8s'");
+      const pid = (await txB.query("select pg_backend_pid() p")).rows[0].p as number;
+      const pending = issueOn(txB, f, f.bEntryId);
+
+      // THE PROPERTY. Without the round lock, B computes capacity in the gap and
+      // issues. With it, B cannot even look until A resolves.
+      expect(
+        await waitUntilLockWaiting(pid),
+        "issuance must block on the round while a redemption for it is in flight",
+      ).toBe(true);
+
+      await txA.query("commit");
+      const out = await pending;
+      await txB.query("commit");
+
+      expect(out.rows[0].result, "A is now SPENT, so the seat is gone").toBe("round_full");
+    } finally {
+      await txA.query("rollback").catch(() => undefined);
+      await txA.end().catch(() => undefined);
+      await txB.query("rollback").catch(() => undefined);
+      await txB.end().catch(() => undefined);
+    }
+
+    expect(await roundConsumed(f.roundId), "exactly one permission is spent").toBe(1);
+    const inRound = await adminQuery(
+      `select count(*)::int n from public.new_client_waitlist_invitations where admission_round_id=$1`,
+      [f.roundId],
+    );
+    expect(Number(inRound.rows[0].n), "B was never issued").toBe(1);
+    expect(await termsOf(f.a.invitationId!)).toMatchObject({ red: true });
+  });
+
+  it("SCHEDULE: ISSUE first — redemption waits, then resolves truthfully", async () => {
+    const f = await raceFixture("issue-first");
+    const txI = await conn();
+    const txR = await conn();
+    try {
+      await txI.query("begin");
+      // The issuer takes studio -> round and holds them.
+      const issued = await issueOn(txI, f, f.bEntryId);
+      expect(issued.rows[0].result, "allowance 1 is already held by live A").toBe("round_full");
+
+      await txR.query("begin");
+      await txR.query("set local statement_timeout = '8s'");
+      const pid = (await txR.query("select pg_backend_pid() p")).rows[0].p as number;
+      const pending = txR.query(
+        `select result from public.redeem_new_client_waitlist_invitation_verified($1,$2)`,
+        [f.a.token, f.capability],
+      );
+      expect(await waitUntilLockWaiting(pid), "redemption waits on the round").toBe(true);
+
+      await txI.query("commit");
+      const out = await pending;
+      await txR.query("commit");
+      // A's window is untouched here, so the truthful answer after waiting is
+      // still a successful redemption.
+      expect(out.rows[0].result).toBe("redeemed");
+    } finally {
+      await txI.query("rollback").catch(() => undefined);
+      await txI.end().catch(() => undefined);
+      await txR.query("rollback").catch(() => undefined);
+      await txR.end().catch(() => undefined);
+    }
+    expect(await roundConsumed(f.roundId)).toBe(1);
+  });
+
+  it("SCHEDULE: REDEEM first — issuance waits, then sees the seat spent", async () => {
+    const f = await raceFixture("redeem-first");
+    const txR = await conn();
+    const txI = await conn();
+    try {
+      await txR.query("begin");
+      const red = await txR.query(
+        `select result from public.redeem_new_client_waitlist_invitation_verified($1,$2)`,
+        [f.a.token, f.capability],
+      );
+      expect(red.rows[0].result).toBe("redeemed");
+
+      await txI.query("begin");
+      await txI.query("set local statement_timeout = '8s'");
+      const pid = (await txI.query("select pg_backend_pid() p")).rows[0].p as number;
+      const pending = issueOn(txI, f, f.bEntryId);
+      expect(await waitUntilLockWaiting(pid), "issuance waits on the round").toBe(true);
+
+      await txR.query("commit");
+      const out = await pending;
+      await txI.query("commit");
+      expect(out.rows[0].result).toBe("round_full");
+    } finally {
+      await txR.query("rollback").catch(() => undefined);
+      await txR.end().catch(() => undefined);
+      await txI.query("rollback").catch(() => undefined);
+      await txI.end().catch(() => undefined);
+    }
+    expect(await roundConsumed(f.roundId)).toBe(1);
+  });
+
+  it("SCHEDULE: CLOSE vs REDEEM — one order, no deadlock", async () => {
+    const f = await raceFixture("close-vs-redeem");
+    const txR = await conn();
+    const txC = await conn();
+    try {
+      await txR.query("begin");
+      await txR.query(
+        `select result from public.redeem_new_client_waitlist_invitation_verified($1,$2)`,
+        [f.a.token, f.capability],
+      );
+
+      await txC.query("begin");
+      await txC.query("set local statement_timeout = '8s'");
+      const pid = (await txC.query("select pg_backend_pid() p")).rows[0].p as number;
+      const pending = txC.query(
+        `select public.close_new_client_waitlist_admission_round($1,$2) r`,
+        [f.studio.studioId, f.studio.userId],
+      );
+      expect(await waitUntilLockWaiting(pid), "close waits on the same round").toBe(true);
+
+      await txR.query("commit");
+      // Redeemed is settled, so the round may close.
+      expect((await pending).rows[0].r).toBe("closed");
+      await txC.query("commit");
+    } finally {
+      await txR.query("rollback").catch(() => undefined);
+      await txR.end().catch(() => undefined);
+      await txC.query("rollback").catch(() => undefined);
+      await txC.end().catch(() => undefined);
+    }
+  });
+
+  it("SCHEDULE: RELEASE vs REDEEM — their lock graphs overlap without inverting", async () => {
+    // release_ takes ENTRY -> INVITATION; redeem takes ROUND -> INVITATION.
+    // Neither can hold an invitation and then reach for what the other holds,
+    // so the worst case is a wait, never 40P01.
+    const f = await raceFixture("release-vs-redeem");
+    const txR = await conn();
+    const txL = await conn();
+    let deadlock: string | undefined;
+    try {
+      await txR.query("begin");
+      await txR.query(
+        `select result from public.redeem_new_client_waitlist_invitation_verified($1,$2)`,
+        [f.a.token, f.capability],
+      );
+
+      await txL.query("begin");
+      await txL.query("set local statement_timeout = '8s'");
+      const pending = txL
+        .query(`select public.release_new_client_waitlist_entry($1,$2,$3) r`, [
+          f.studio.studioId, f.a.entryId, f.studio.userId,
+        ])
+        .catch((e: { code?: string }) => {
+          deadlock = e.code;
+          return { rows: [{ r: null }] };
+        });
+      await sleep(400);
+      await txR.query("commit");
+      await pending;
+      await txL.query("commit").catch(() => undefined);
+    } finally {
+      await txR.query("rollback").catch(() => undefined);
+      await txR.end().catch(() => undefined);
+      await txL.query("rollback").catch(() => undefined);
+      await txL.end().catch(() => undefined);
+    }
+    expect(deadlock, "no deadlock and no timeout").toBeUndefined();
+    // Redemption won; release found nothing live to release and left A spent.
+    expect(await termsOf(f.a.invitationId!)).toMatchObject({ red: true, rel: false });
+    expect(await roundConsumed(f.roundId)).toBe(1);
+  });
+
+  it("LEGACY: a NULL-round invitation still redeems, and locks no round", async () => {
+    // 0188..0191 invitations predate durable rounds. They consume no round's
+    // allowance, so there is nothing to serialise — and no round is invented.
+    const f = await raceFixture("legacy");
+    await withInvitationWindowMutable(async () => {
+      await adminQuery(
+        `update public.new_client_waitlist_invitations set admission_round_id = null where id = $1`,
+        [f.a.invitationId],
+      );
+    });
+    expect(await roundConsumed(f.roundId), "an unrounded row consumes no round").toBe(0);
+
+    // Hold the round; a legacy redemption must NOT wait on it.
+    const holder = await conn();
+    const caller = await conn();
+    try {
+      await holder.query("begin");
+      await holder.query(
+        `select 1 from public.studio_waitlist_admission_rounds where id = $1 for update`,
+        [f.roundId],
+      );
+      await caller.query("set statement_timeout = '4s'");
+      const out = await caller.query(
+        `select result from public.redeem_new_client_waitlist_invitation_verified($1,$2)`,
+        [f.a.token, f.capability],
+      );
+      expect(out.rows[0].result, "legacy redemption is unchanged").toBe("redeemed");
+    } finally {
+      await holder.query("rollback").catch(() => undefined);
+      await holder.end().catch(() => undefined);
+      await caller.end().catch(() => undefined);
+    }
   });
 });
