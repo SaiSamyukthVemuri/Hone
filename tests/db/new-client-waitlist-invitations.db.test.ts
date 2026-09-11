@@ -510,6 +510,10 @@ describe("0188 — privilege", () => {
     // this block exists to prove, demonstrated rather than assumed. The
     // GRANTED set above is unchanged and is still the assertion that matters.
     expect(all.filter((c: string) => !granted.includes(c))).toEqual([
+      // The round that authorised the invitation. Not secret, but not the
+      // browser's business either, and it must never become writable there —
+      // moving an invitation between rounds would move the seat it spent.
+      "admission_round_id",
       "declined_at",
       "proof_capability_expires_at",
       "proof_capability_hash",
