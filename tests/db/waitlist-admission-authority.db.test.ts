@@ -2178,6 +2178,185 @@ describe("the grant's issuance instant is the post-lock mint, not transaction st
   });
 });
 
+describe("a practitioner-created entry joins at the DECISION clock, not transaction start", () => {
+  // THE DEFECT. The command reads clock_timestamp() into v_now immediately after
+  // its studio lock, uses it for the preference row -- and then omitted
+  // joined_at from the ENTRY insert. 0185's trigger fills a NULL joined_at with
+  // now(), which is TRANSACTION-START time: fixed for the whole transaction
+  // however long it ran or waited.
+  //
+  // joined_at IS THE QUEUE'S ORDERING KEY (the ranked claim orders by
+  // `joined_at, id`), so this is not a cosmetic audit stamp. A command that
+  // opened a transaction, blocked on the studio lock, and only then created the
+  // entry would be stamped as having joined BEFORE every prospect who actually
+  // entered the queue while it waited -- and would be claimed ahead of them.
+  //
+  // NO SLEEP. The gap between transaction start and the decision instant is
+  // produced by a REAL LOCK WAIT and observed through pg_stat_activity, so the
+  // test is deterministic rather than racing a wall clock. The sibling defect
+  // above still dwells on a timer; this one does not need to.
+  it("is stamped after a prospect who joined while it waited on the lock", async () => {
+    const studio = await seedStudio("joined-at-decision");
+    // A SEPARATE STUDIO for the comparison prospect, so it is not itself
+    // waiting on the lock this test uses to create the gap.
+    const other = await seedStudio("joined-at-comparison");
+
+    const holder = new Client({ connectionString: resolveLocalDbUrl() });
+    const creator = new Client({ connectionString: resolveLocalDbUrl() });
+    await holder.connect();
+    await creator.connect();
+    try {
+      // 1. Hold the studio row the command will want. FOR UPDATE conflicts with
+      //    the FOR NO KEY UPDATE the command takes.
+      await holder.query("begin");
+      await holder.query(`select 1 from public.studios where id = $1 for update`, [
+        studio.studioId,
+      ]);
+
+      // 2. Open the creating transaction and FREEZE its now(). Everything after
+      //    this point happens strictly later on the real clock, and not at all
+      //    on this one.
+      await creator.query("begin");
+      const txStart = (await creator.query(`select now() as t`)).rows[0].t as Date;
+      const creatorPid = (await creator.query(`select pg_backend_pid() as pid`)).rows[0]
+        .pid as number;
+
+      // 3. Fire the command. It parks on the studio lock.
+      const creating = creator
+        .query(`select * from public.create_practitioner_waitlist_entry($1,$2,'P',$3,null,null)`, [
+          studio.studioId,
+          studio.userId,
+          uniqueEmail("joined-at-decision"),
+        ])
+        .then((r) => r.rows[0].entry_id as string);
+
+      expect(
+        await waitUntilBlocked(creatorPid),
+        "the creating command must actually park on the studio lock",
+      ).not.toBeNull();
+
+      // 4. WHILE IT WAITS, a prospect really does join the queue. Its own short
+      //    transaction gives it an honest current-clock joined_at.
+      const comparison = await adminQuery(
+        `select * from public.create_practitioner_waitlist_entry($1,$2,'Q',$3,null,null)`,
+        [other.studioId, other.userId, uniqueEmail("joined-at-comparison")],
+      );
+      expect(comparison.rows[0].result).toBe("created");
+      const comparisonAt = (
+        await adminQuery(
+          `select joined_at from public.new_client_waitlist_entries where id = $1`,
+          [comparison.rows[0].entry_id],
+        )
+      ).rows[0].joined_at as Date;
+
+      // 5. Release the lock; the command proceeds and decides NOW.
+      await holder.query("rollback");
+      const entryId = await creating;
+      const created = await creator.query(
+        `select joined_at,
+                extract(epoch from (joined_at - $2::timestamptz)) as after_tx_start
+           from public.new_client_waitlist_entries where id = $1`,
+        [entryId, txStart],
+      );
+      await creator.query("commit");
+
+      const joinedAt = created.rows[0].joined_at as Date;
+
+      // THE ORDERING CLAIM, which is what the queue actually consumes.
+      expect(
+        joinedAt.getTime(),
+        "a practitioner entry created AFTER a prospect joined must not sort before them",
+      ).toBeGreaterThan(comparisonAt.getTime());
+
+      // AND THE DIRECT DISTINCTION between the two clocks. now() /
+      // transaction_timestamp() froze at step 2; clock_timestamp() did not. The
+      // wait itself is the margin, so this is strictly positive without any
+      // timer having been set.
+      expect(
+        Number(created.rows[0].after_tx_start),
+        "joined_at must be the post-lock decision clock, not transaction start",
+      ).toBeGreaterThan(0);
+      expect(joinedAt.getTime()).toBeGreaterThan(txStart.getTime());
+    } finally {
+      await holder.query("rollback").catch(() => undefined);
+      await creator.query("rollback").catch(() => undefined);
+      await holder.end();
+      await creator.end();
+    }
+  });
+
+  it("gives the entry and its preference row the SAME instant", async () => {
+    // The command reads the clock ONCE. Stamping joined_at from a second
+    // clock_timestamp() would work for the test above and still let one action
+    // report two different times for itself.
+    const studio = await seedStudio("joined-at-single-clock");
+    const created = await adminQuery(
+      `select * from public.create_practitioner_waitlist_entry($1,$2,'P',$3,null,'weekdays')`,
+      [studio.studioId, studio.userId, uniqueEmail("joined-at-single-clock")],
+    );
+    expect(created.rows[0].result).toBe("created");
+
+    const row = await adminQuery(
+      `select e.joined_at, p.stated_at, p.confirmed_at
+         from public.new_client_waitlist_entries e
+         join public.new_client_waitlist_entry_preferences p on p.entry_id = e.id
+        where e.id = $1`,
+      [created.rows[0].entry_id],
+    );
+    expect(row.rows[0].joined_at.getTime()).toBe(row.rows[0].stated_at.getTime());
+    expect(row.rows[0].joined_at.getTime()).toBe(row.rows[0].confirmed_at.getTime());
+  });
+
+  it("leaves the public form and legacy import exactly as they were", async () => {
+    // The trigger was NOT changed. It still stamps public_booking
+    // unconditionally, and still fills a NULL joined_at for anything else --
+    // this command simply stopped handing it a NULL.
+    const studio = await seedStudio("joined-at-untouched");
+
+    // PUBLIC PATH: the trigger overrides even a supplied joined_at.
+    const ancient = new Date("2020-01-01T00:00:00.000Z");
+    const pub = await adminQuery(
+      `insert into public.new_client_waitlist_entries (studio_id, name, email, source, joined_at)
+       values ($1,'Web',$2,'public_booking',$3) returning id, joined_at`,
+      [studio.studioId, uniqueEmail("joined-at-public"), ancient],
+    );
+    expect(new Date(pub.rows[0].joined_at).getTime()).not.toBe(ancient.getTime());
+    expect(pub.rows[0].joined_at.getTime()).toBeGreaterThan(Date.now() - 300_000);
+
+    // LEGACY IMPORT: an operator-asserted historical date still survives.
+    const asserted = new Date("2024-03-04T05:06:07.000Z");
+    const imported = await adminQuery(
+      `select * from public.import_legacy_waitlist_entry($1,$2,'Old',$3,$4,'operator_supplied',null)`,
+      [studio.studioId, studio.userId, uniqueEmail("joined-at-legacy"), asserted],
+    );
+    expect(imported.rows[0].result).toBe("imported");
+    const kept = await adminQuery(
+      `select joined_at, joined_at_provenance from public.new_client_waitlist_entries where id = $1`,
+      [imported.rows[0].entry_id],
+    );
+    expect(new Date(kept.rows[0].joined_at).toISOString()).toBe(asserted.toISOString());
+    expect(kept.rows[0].joined_at_provenance).toBe("operator_supplied");
+  });
+
+  it("keeps the practitioner path's provenance unchanged", async () => {
+    // The new timestamp says "the studio added this person now". It must not be
+    // mistaken for the operator knowing an older historical join date.
+    const studio = await seedStudio("joined-at-provenance");
+    const created = await adminQuery(
+      `select * from public.create_practitioner_waitlist_entry($1,$2,'P',$3,null,null)`,
+      [studio.studioId, studio.userId, uniqueEmail("joined-at-provenance")],
+    );
+    const row = await adminQuery(
+      `select source, joined_at_provenance, created_by_practitioner_id
+         from public.new_client_waitlist_entries where id = $1`,
+      [created.rows[0].entry_id],
+    );
+    expect(row.rows[0].source).toBe("practitioner");
+    expect(row.rows[0].joined_at_provenance).toBe("operator_supplied");
+    expect(row.rows[0].created_by_practitioner_id).toBe(studio.practitionerId);
+  });
+});
+
 describe("issuing a grant cannot deadlock against admission", () => {
   // THE DEFECT: inserting a grant takes an implicit FK key-share lock on
   // `studios`, so locking only the entry gave issue_ a real order of

@@ -465,14 +465,34 @@ begin
 
   begin
     insert into public.new_client_waitlist_entries
-      (studio_id, name, email, phone, source,
+      (studio_id, name, email, phone, source, joined_at,
        joined_at_provenance, created_by_practitioner_id)
     values
       (p_studio_id, btrim(p_name), btrim(p_email), nullif(btrim(coalesce(p_phone, '')), ''),
        'practitioner',
+       -- THE DECISION CLOCK, NOT THE TRANSACTION'S START. Omitting joined_at
+       -- left it NULL, and 0185's trigger then filled it with now() -- which is
+       -- TRANSACTION-START time, fixed for the whole transaction however long it
+       -- ran or waited. A command that opened a transaction, blocked on the
+       -- studio lock, and only then created the entry would be stamped as having
+       -- joined before prospects who actually entered the queue while it waited,
+       -- and joined_at is the queue's ordering key.
+       --
+       -- v_now is the clock this command ALREADY read, once, immediately after
+       -- its lock and before any insert. Reading the clock a second time here
+       -- would let this row and its preference row disagree about when the same
+       -- action happened.
+       --
+       -- The trigger is untouched: it still stamps public_booking unconditionally
+       -- and still fills a NULL joined_at for any other path. This command simply
+       -- stops handing it a NULL. Legacy import already supplies its own
+       -- joined_at for the same reason.
+       v_now,
        -- The studio took this down as it happened, but it is still a human
        -- assertion rather than the form's own stamp. 'form' is not available
-       -- to this path and the CHECK enforces that.
+       -- to this path and the CHECK enforces that. This timestamp says "the
+       -- studio added this person now", never that the operator knows an older
+       -- historical join date -- that remains the legacy-import path.
        'operator_supplied', v_actor)
     returning id into v_id;
   exception
