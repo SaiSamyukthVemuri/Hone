@@ -188,6 +188,16 @@ export const INVITE_TO_BOOK_FAILURES = [
   // The request itself was malformed — a bug on this side of the wire.
   "invalid_input",
   "invalid_ttl",
+  // DEFINITE refusals the admission command can give. These used to normalise
+  // onto `unavailable`, which is now reserved for "we could not find out" — and
+  // a definite answer must never borrow the word for an unknown one. Naming
+  // them also settles the flagged case: `previously_declined` is permanent, and
+  // reading as "try again" was always wrong.
+  "unknown_studio",
+  "not_admissible",
+  "no_admission_round",
+  "admission_round_full",
+  "previously_declined",
   // The scope the practitioner expressed could not be honoured. NEW: no
   // shipped command can answer this yet, and it is the one code this contract
   // ADDS rather than derives. It exists so an adapter that cannot carry a
@@ -199,17 +209,430 @@ export const INVITE_TO_BOOK_FAILURES = [
 
 export type InviteToBookFailure = (typeof INVITE_TO_BOOK_FAILURES)[number];
 
+/**
+ * What happened to the EMAIL, which is a different question from what happened
+ * to the invitation.
+ *
+ * Delivery is attempted AFTER the database has already committed the admission
+ * and minted the invitation. A provider refusing the message does not un-invite
+ * anybody, so collapsing these two facts into one boolean forces a choice
+ * between two lies: reporting a failure that did not happen to the admission,
+ * or reporting a send that did not happen to the email.
+ *
+ * - `accepted` — the provider took custody. IT DOES NOT SAY the human received
+ *   or opened anything; nothing this side of the wire can know that.
+ * - `unknown`  — custody is undetermined: a timeout, an ambiguous response, or
+ *   no delivery information at all. The caller may claim NEITHER "sent" NOR
+ *   "failed". This is the fail-closed state.
+ * - `refused`  — the provider definitely did not take custody. The invitation
+ *   still exists.
+ */
+export type InvitationDeliveryState = "accepted" | "unknown" | "refused";
+
+export const INVITATION_DELIVERY_STATES = [
+  "accepted",
+  "unknown",
+  "refused",
+] as const;
+
+/**
+ * A refusal the SERVER actually gave.
+ *
+ * `unavailable` is excluded deliberately. It means "we could not find out",
+ * which is the opposite of a refusal, and letting it sit in this arm is exactly
+ * how a lost response came to look like a definite "no".
+ */
+export type DefiniteInviteToBookRefusal = Exclude<InviteToBookFailure, "unavailable">;
+
+/**
+ * What happened to the ADMISSION — three answers, not two.
+ *
+ * A BOOLEAN CANNOT EXPRESS THE THIRD ONE, and the third one is real. A request
+ * can reach PostgreSQL, commit the admission, mint the invitation, and then lose
+ * its HTTP response. The caller now knows nothing: reporting `ok: false` would
+ * claim a refusal the database never gave, and the practitioner, told it failed,
+ * would press the button again.
+ *
+ * THAT RETRY IS THE DANGER. An invitation may already exist, it has already
+ * consumed the round's allowance, and its one-time raw token went missing with
+ * the response — so a blind second attempt burns capacity on a prospect who has
+ * already been invited and cannot be handed the link that was minted for them.
+ *
+ * - `committed`     — the admission is KNOWN to exist. Delivery is a separate
+ *                     fact and is carried separately.
+ * - `refused`       — the server gave an authoritative refusal. The admission
+ *                     did not commit.
+ * - `indeterminate` — transport loss, timeout, or an answer this contract cannot
+ *                     read. NOT success, NOT refusal, and NOT a safe retry.
+ */
 export type InvitationOutcome =
   | {
-      ok: true;
+      state: "committed";
       /** ISO 8601, server-stamped. The surface never computes this: 0190's
        *  whole correction was that the window belongs to the issuing instant,
        *  which only the database observes. */
       expiresAt: string;
+      /** REQUIRED on every committed outcome. `committed` means the invitation
+       *  EXISTS; what reached the prospect is this field's business and only
+       *  this field's, so omitting it would silently claim the email went out. */
+      delivery: InvitationDeliveryState;
     }
-  | { ok: false; code: InviteToBookFailure };
+  | { state: "refused"; code: DefiniteInviteToBookRefusal }
+  | { state: "indeterminate"; code: "unavailable" };
+
+/**
+ * The one indeterminate value, so callers cannot spell it three ways.
+ *
+ * #689 returns this for a lost or timed-out response, and owns the question of
+ * whether it can RECONCILE one by reading authoritative invitation state before
+ * answering at all. Reconciliation is deliberately not attempted here: this
+ * module has no database access and inventing one would be the second authority
+ * this whole contract exists to avoid.
+ */
+export const INDETERMINATE_ADMISSION: InvitationOutcome = Object.freeze({
+  state: "indeterminate",
+  code: "unavailable",
+});
+
+/**
+ * What to tell a practitioner when the answer was lost.
+ *
+ * IT MUST NOT SAY "FAILED" AND MUST NOT OFFER A BARE RETRY. Both would be
+ * guesses, and the expensive one is wrong: an invitation may exist, holding the
+ * round's allowance. Reconciliation — looking at the waitlist — is the only
+ * honest next step, and there is no atomic reissue command to point at instead.
+ */
+export const INDETERMINATE_ADMISSION_COPY =
+  "We couldn't confirm whether the invitation was created. Check the waitlist before trying again.";
+
+/**
+ * Practitioner copy for each delivery state.
+ *
+ * THE LAW IS THAT ONLY `accepted` MAY IMPLY THE EMAIL WENT OUT. "Invitation
+ * sent" against an unknown or refused delivery is the specific untruth this
+ * whole type exists to prevent, and a test below asserts the word cannot appear
+ * in either.
+ *
+ * None of these copy lines offers a resend. `canResend` stays false until an
+ * atomic reissue command exists, and telling a practitioner to retry a control
+ * that is disabled — or worse, one that would run a release/requeue/claim/issue
+ * sequence — would be inventing a recovery capability this product does not
+ * have.
+ */
+export const INVITATION_DELIVERY_COPY: Record<InvitationDeliveryState, string> = {
+  accepted: "Invitation created. The email was accepted for delivery.",
+  unknown: "Invitation created, but delivery could not be confirmed.",
+  refused: "Invitation created, but the email was not accepted for delivery.",
+};
+
+/**
+ * Narrow a delivery value arriving from the integration.
+ *
+ * FAILS CLOSED TO `unknown`, which is the only honest default: `accepted` would
+ * claim custody nobody reported, and `refused` would claim a definite failure
+ * that was never observed. An unreadable value means we do not know, and
+ * `unknown` is precisely "we do not know".
+ *
+ * This component owns the VOCABULARY only. #689 maps the delivery provider's
+ * own disposition into these three words at assembly; nothing from that module
+ * is imported here.
+ */
+export function deliveryStateFrom(value: unknown): InvitationDeliveryState {
+  return (INVITATION_DELIVERY_STATES as ReadonlyArray<string>).includes(
+    value as string,
+  )
+    ? (value as InvitationDeliveryState)
+    : "unknown";
+}
 
 export type EntryOutcome = { ok: true } | { ok: false; code: InviteToBookFailure };
+
+// --- 2b. THE SERVER VOCABULARY THIS CONTRACT MUST CARRY ----------------------
+
+/**
+ * A SNAPSHOT of what `admit_new_client_waitlist_entry` could return at the head
+ * this component was reviewed against. NOT a live guarantee, and the difference
+ * matters enough to state twice.
+ *
+ * The command lives on WAIT-ADMIT-01 (migration
+ * `0193_waitlist_admission_authority.sql`), which is NOT AN ANCESTOR of this
+ * branch. Nothing in this repository, at this commit, can observe what that
+ * command returns today. A test here that claimed to derive the current
+ * vocabulary would be claiming to read a file it cannot open.
+ *
+ * SO THE OWNERSHIP SPLIT IS EXPLICIT:
+ *
+ *   THIS COMPONENT   pins the vocabulary it was reviewed against, types every
+ *                    value in it, normalises them to practitioner outcomes, and
+ *                    fails closed on anything outside the set.
+ *
+ *   THE INTEGRATION  re-proves completeness against the assembled authority.
+ *                    See `INTEGRATION_EXHAUSTIVENESS_OBLIGATION` below.
+ *
+ * What this snapshot buys is real but bounded: a reviewer can see exactly what
+ * was pinned and when, and a value outside it cannot reach the practitioner as
+ * a success. What it does NOT buy is any warning when 0193 changes.
+ *
+ * It was derived mechanically rather than assumed — the command's own literals
+ * plus the refusals it re-emits from its callees — and the test beside it holds
+ * an independent copy.
+ *
+ * THE SET IS A UNION, AND THAT IS THE WHOLE POINT. The command returns four
+ * literals of its own, and then carries its callees' refusals out unchanged
+ * through a `WA001` raise caught by its own handler, which re-emits `SQLERRM`
+ * as the result. Reading only the literal `return query select` statements in
+ * the command reports FOUR results and misses ten. The integration finding named
+ * two missing codes; deriving the union found eight.
+ *
+ * `0193`'s own source comment lists this pass-through vocabulary as
+ * "no_round_open, round_full, invalid_service, invalid_scope_dates,
+ * invalid_weekdays, already_declined_offer, already_invited, invalid_ttl...",
+ * which trails off AND names two codes 0192 no longer emits directly. Prose was
+ * not treated as the authority; each callee was read.
+ */
+/**
+ * The exact WAIT-ADMIT-01 head the vocabulary below was read at, so a reviewer
+ * can diff against it rather than trust this file's prose.
+ */
+export const ADMIT_VOCABULARY_REVIEWED_AT =
+  "519cfe6cf7e3281d4c445a35f34653c10b054100";
+
+/**
+ * WHAT #689 MUST DO AT ASSEMBLY, because this component cannot.
+ *
+ * At assembly time, compare the ACTUAL #685 result vocabulary against
+ * `ADMIT_REFUSAL_PRESENTATION`; any current result with no explicit disposition
+ * is RED. That check is load-bearing and this one is not: only the assembled
+ * candidate has both branches in the same tree, so only it can tell whether the
+ * snapshot below has gone stale.
+ */
+export const INTEGRATION_EXHAUSTIVENESS_OBLIGATION =
+  "At assembly time, compare the actual #685 result vocabulary against the " +
+  "adapter disposition table; any unmapped current result is RED.";
+
+export const ADMIT_SERVER_SUCCESS = "admitted" as const;
+
+export const ADMIT_SERVER_REFUSALS = [
+  // --- the command's own refusals, returned directly -----------------------
+  /** The studio id resolved to no studio, or the actor is not its owner. */
+  "unknown_studio",
+  /** No entry with that id in that studio. Scoped by both, so another tenant's
+   *  entry is indistinguishable from one that does not exist. */
+  "not_found",
+  /** The entry is not in a status this button can act on — `invited`,
+   *  `converted`, `expired`, `released` and `removed` each have their own exit. */
+  "not_admissible",
+
+  // --- carried out of `claim_new_client_waitlist_entry` (0189) -------------
+  "not_waiting",
+  "invalid_input",
+
+  // --- carried out of `issue_scoped_new_client_waitlist_invitation` (0192) --
+  /** No admission round is open for the studio. */
+  "no_round_open",
+  /** The open round's allowance is already consumed. */
+  "round_full",
+  "invalid_service",
+  "invalid_scope_dates",
+  "invalid_weekdays",
+  /** The person declined a previous offer; 0192 forbids re-offering. */
+  "already_declined_offer",
+
+  // --- which 0192 in turn passes through from
+  //     `issue_new_client_waitlist_invitation` (0188/0190) ------------------
+  "already_invited",
+  "invalid_ttl",
+  "not_claimed",
+] as const;
+
+export type AdmitServerRefusal = (typeof ADMIT_SERVER_REFUSALS)[number];
+export type AdmitServerResult = typeof ADMIT_SERVER_SUCCESS | AdmitServerRefusal;
+
+/**
+ * How each server refusal is shown to the practitioner.
+ *
+ * `Record<AdmitServerRefusal, …>` is load-bearing: a result added to the union
+ * without a disposition here does not COMPILE. That is the property being
+ * bought — not documentation, a build failure.
+ *
+ * SERVER EXHAUSTIVENESS AND PRACTITIONER COPY ARE SEPARATE. Several refusals
+ * deliberately normalise to one practitioner outcome, because the practitioner's
+ * recovery action — not the database's reason — is what the surface must
+ * communicate.
+ *
+ * EVERY VALUE HERE IS A DEFINITE REFUSAL, and the type says so: `unavailable`
+ * is excluded, because it now means "we could not find out" and a server that
+ * answered is not that. This is what closes the case flagged earlier —
+ * `already_declined_offer` is permanent and never resolves by retrying, so
+ * landing it on a word that reads as "try again" was a real untruth rather than
+ * a tolerable normalisation.
+ *
+ * Normalisation is still allowed where the practitioner's recovery action is
+ * genuinely the same: the three scope refusals share `scope_not_supported`,
+ * because what needs changing in all three is the composer.
+ */
+export const ADMIT_REFUSAL_PRESENTATION: Record<
+  AdmitServerRefusal,
+  DefiniteInviteToBookRefusal
+> = {
+  // Authority and identity failures the practitioner cannot act on.
+  unknown_studio: "unknown_studio",
+  not_admissible: "not_admissible",
+  // The entry moved under the practitioner between render and press; these have
+  // exact counterparts the surface already knows how to explain.
+  not_found: "not_found",
+  not_waiting: "not_waiting",
+  not_claimed: "not_claimed",
+  already_invited: "already_invited",
+  // A bug on this side of the wire.
+  invalid_input: "invalid_input",
+  invalid_ttl: "invalid_ttl",
+  // THE COMPOSER CAN FIX THESE. What the practitioner expressed — the service,
+  // the booking window, the allowed days — could not be honoured, which is
+  // exactly what `scope_not_supported` exists to say.
+  invalid_service: "scope_not_supported",
+  invalid_scope_dates: "scope_not_supported",
+  invalid_weekdays: "scope_not_supported",
+  // Capacity and consent. See the note above: detail is lost here on purpose.
+  no_round_open: "no_admission_round",
+  round_full: "admission_round_full",
+  already_declined_offer: "previously_declined",
+};
+
+/**
+ * Turn one raw server row into an outcome, failing closed on anything this
+ * contract does not recognise.
+ *
+ * `result` is typed `string` ON PURPOSE: it arrives over the wire from
+ * PostgREST, so the compiler has no say in what actually shows up, and a
+ * function that accepted only the union would be describing a guarantee nobody
+ * enforces at runtime. Everything unrecognised — a new server code, a null, a
+ * number, a success with no expiry stamp — becomes a refusal.
+ *
+ * DELIVERY IS A SEPARATE FACT AND IS NEVER INFERRED FROM THIS ROW. The admit
+ * command reports what the DATABASE did; whether an email was accepted is
+ * observed elsewhere and arrives as the third argument. A refusal there does not
+ * turn this into `ok: false`, because the invitation exists either way.
+ *
+ * A SUCCESS IS NEVER SYNTHESISED, AND NEVER MERELY NON-EMPTY. `admitted` with an
+ * `expires_at` that is not a well-formed instant is malformed rather than
+ * successful: 0190's correction was that the window belongs to the issuing
+ * instant, so a surface that invented — or accepted an unreadable — deadline
+ * would be showing one the database never agreed to. See `isWireInstant`.
+ */
+/**
+ * The exact shapes this wire carries an instant in.
+ *
+ * TWO PRODUCERS, TWO SPELLINGS, both legitimate — the same pair
+ * `app/(app)/calendar/move-confirm-state.ts` documents: `Date#toISOString()`
+ * renders `…T15:00:00.000Z`, while a `timestamptz` read straight off PostgREST
+ * renders an offset and microsecond precision, `…T15:00:00.074892+00:00`.
+ *
+ * An INSTANT is required, so a date-only value and an offset-less local time are
+ * both rejected by shape: `2026-09-12` and `2026-09-12T15:00:00` are points in
+ * nobody's particular time, and `Date` silently invents a zone for each.
+ *
+ * KNOWN BOUND, stated rather than discovered later: a two-digit offset (`+00`)
+ * is refused. V8 cannot parse that form at all, so honouring it would mean
+ * hand-rolling a second date parser — the exact "second, divergent law" the
+ * move-confirm guard warns against — and this wire is not observed to emit it.
+ */
+const WIRE_INSTANT_RE =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(?:Z|[+-]\d{2}:?\d{2})$/;
+
+/**
+ * Is this a timestamp the server could actually have stamped?
+ *
+ * FOUR LAYERS, AND EACH ONE CATCHES SOMETHING THE OTHERS DO NOT. This was
+ * measured, not reasoned about:
+ *
+ *   shape     rejects `2026-09-12`, `2026-09-12T15:00:00` and `not-a-date`,
+ *             all three of which `Date.parse` accepts or mis-zones.
+ *   bounds    reject `…T24:00:00Z` — the shape allows hour 24 and `Date.parse`
+ *             NORMALISES it into the next day, so the calendar check below sees
+ *             the valid date the string carries while the instant has moved.
+ *   calendar  rejects `2026-02-30T00:00:00Z` — `Date.parse` accepts it and
+ *             quietly rolls it to 2 March, so a shape-plus-parse guard would
+ *             hand back a success carrying a day that does not exist.
+ *   parse     rejects `2026-09-12T25:00:00Z` and `…T15:60:00Z`, which satisfy
+ *             the shape.
+ *
+ * Dropping any one layer lets a documented case through; the tests mutate each
+ * in turn to prove it.
+ */
+export function isWireInstant(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+
+  const match = WIRE_INSTANT_RE.exec(value);
+  if (match === null) return false;
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  const second = Number(match[6]);
+
+  // EXPLICIT CLOCK BOUNDS, because `Date.parse` does not draw this line where
+  // the wire does. `24:00:00` is the one that got through: V8 accepts it and
+  // NORMALISES it into the following day, so the calendar round-trip below —
+  // which checks the Y/M/D the string actually carries — sees a perfectly valid
+  // 12 September while the parsed instant is the 13th. The value was refused
+  // nowhere and silently moved a deadline by a day.
+  //
+  // `24:00:01`, `23:60:00` and `23:59:60` are already NaN to V8, so bounding
+  // them changes no behaviour — it puts the whole clock law in ONE place rather
+  // than leaving three of the four fields to an engine detail. NO LEAP SECOND
+  // SUPPORT is introduced by that: second 60 is refused here exactly as V8
+  // refuses it, which is the contract this wire already had.
+  if (hour > 23 || minute > 59 || second > 59) return false;
+
+  // Round-trip the civil date through UTC. The offset shifts WHICH instant this
+  // is, never whether the calendar date exists, so checking it in UTC is sound.
+  const civil = new Date(Date.UTC(year, month - 1, day));
+  if (
+    civil.getUTCFullYear() !== year ||
+    civil.getUTCMonth() !== month - 1 ||
+    civil.getUTCDate() !== day
+  ) {
+    return false;
+  }
+
+  return !Number.isNaN(Date.parse(value));
+}
+
+export function admitResultToOutcome(
+  result: unknown,
+  expiresAt: unknown,
+  /** REQUIRED, even when the caller has nothing to report — passing `undefined`
+   *  yields `unknown` and makes the absence of delivery information visible at
+   *  the call site instead of defaulting silently into a claim. */
+  delivery: unknown,
+): InvitationOutcome {
+  // An answer we cannot read is not a refusal. The server may well have
+  // committed; we simply cannot say, and `indeterminate` is that sentence.
+  if (typeof result !== "string") return INDETERMINATE_ADMISSION;
+
+  if (result === ADMIT_SERVER_SUCCESS) {
+    // NON-EMPTY IS NOT VALID. This previously accepted any non-blank string, so
+    // `admitted` with `expires_at: "not-a-date"` became `ok: true` carrying a
+    // deadline nothing could render — `InvitationOutcome` promises a server
+    // timestamp, and a promise the mapper does not enforce is the mapper's bug.
+    // `admitted` with an unreadable expiry is MORE than we know after a
+    // timeout — the admission did commit — but this contract has no arm for
+    // "committed and undatable", and the safe action is identical: do not
+    // retry, go and look. Calling it `refused` would be flatly false.
+    return isWireInstant(expiresAt)
+      ? { state: "committed", expiresAt, delivery: deliveryStateFrom(delivery) }
+      : INDETERMINATE_ADMISSION;
+  }
+
+  // `Object.prototype.hasOwnProperty` rather than a truthiness check, so a
+  // result spelled `constructor` or `toString` cannot reach an inherited value.
+  return Object.prototype.hasOwnProperty.call(ADMIT_REFUSAL_PRESENTATION, result)
+    ? { state: "refused", code: ADMIT_REFUSAL_PRESENTATION[result as AdmitServerRefusal] }
+    : INDETERMINATE_ADMISSION;
+}
 
 // --- 3. THE ADAPTER ----------------------------------------------------------
 
@@ -384,7 +807,7 @@ export type BoundAdapter = WaitlistInvitationAdapter | typeof NO_ADAPTER_BOUND;
  * clicking a link that has silently stopped working.
  */
 export const RESEND_MINTS_A_NEW_LINK =
-  "Resending sends a new booking link and starts the expiry window again. Any link they already have stops working.";
+  "Replacing the invitation creates a new booking link and starts the expiry window again. The earlier link stops working.";
 
 /**
  * Why a send control is off when no adapter is bound.

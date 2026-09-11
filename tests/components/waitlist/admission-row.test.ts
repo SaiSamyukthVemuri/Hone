@@ -260,10 +260,13 @@ describe("what each state offers", () => {
         entry: { ...ENTRY, status: "invited", invitation: { invitationElapsed: false, invitationRedeemed: false } },
       }),
     );
-    expect(html).toContain("Resend invitation");
+    expect(html).toContain("Replace invitation");
+    // "Resend" claimed a previous send the row cannot prove. Kept as a
+    // tripwire so a revert fails here rather than passing quietly.
+    expect(html).not.toContain("Resend invitation");
     expect(html).toContain("Cancel invitation");
     expect(hasControl(html, "invite_to_book")).toBe(false);
-    expect(html).toContain("Invitation sent");
+    expect(html).toContain("Invitation created");
   });
 
   it("offers Return to waitlist once the invitation has run out", () => {
@@ -459,6 +462,8 @@ describe("nothing is connected, and every control says so in its own words", () 
         `${JSON.stringify(invitation)}: Cancel was enabled`,
       ).toContain('disabled=""');
       expect(html).toContain("could not be checked");
+      expect(html).not.toContain("is active and has not been used");
+      // The retired wording is kept as a tripwire: a revert must not pass.
       expect(html).not.toContain("live booking link");
     }
 
@@ -476,7 +481,7 @@ describe("nothing is connected, and every control says so in its own words", () 
     );
     expect(controlTag(complete, "resend_invitation")).not.toContain('disabled=""');
     expect(controlTag(complete, "cancel_invitation")).not.toContain('disabled=""');
-    expect(complete).toContain("live booking link");
+    expect(complete).toContain("is active and has not been used");
   });
 
   it("does not give a non-invited row invitation semantics when facts are omitted", () => {
@@ -506,7 +511,7 @@ describe("nothing is connected, and every control says so in its own words", () 
         },
       }),
     );
-    expect(html).toContain("Invitation sent");
+    expect(html).toContain("Invitation created");
     expect(html).not.toContain("Invitation expired");
     expect(html).toContain("could not be checked");
     expect(hasControl(html, "cancel_invitation")).toBe(true);
@@ -526,7 +531,7 @@ describe("nothing is connected, and every control says so in its own words", () 
       }),
     );
     expect(html).toContain("already used their invitation");
-    expect(html).not.toContain("“Resend invitation” is not connected yet");
+    expect(html).not.toContain("“Replace invitation” is not connected yet");
   });
 });
 

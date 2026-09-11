@@ -101,7 +101,11 @@ import {
 export const PRACTITIONER_STATUS_LABEL: Record<WaitlistEntryStatus, string> = {
   waiting: "Waiting",
   claimed: "Ready to invite",
-  invited: "Invitation sent",
+  // DELIVERY-NEUTRAL BY NECESSITY. `invited` proves an invitation EXISTS; it
+  // proves nothing about an email. Delivery acceptance is not durable row state,
+  // so after a refresh this label cannot reconstruct what the provider did — a
+  // label that said "sent" would be a claim the row can never support again.
+  invited: "Invitation created",
   converted: "Booked",
   expired: "Invitation expired",
   released: "Ready to return",
@@ -137,7 +141,7 @@ export function practitionerStatusLabel(
  * object had any keys, which closed the missing-object hole and left the
  * partial one wide open: `{ invitationElapsed: false }` has a key, so it passed
  * through unchanged, `invitationRedeemed` stayed absent and read as false, and
- * the row went back to announcing "a live booking link ... not used it yet" —
+ * the row went back to announcing an active, unused invitation —
  * a claim about redemption that the caller never made. `{ invitationElapsed:
  * undefined }` failed the same way, because a key whose value is `undefined`
  * still counts as a key.
@@ -227,6 +231,19 @@ export function invitationHasRunOut(context: AdmissionContext): boolean {
 
 /** One line of plain explanation under the name. Never mentions a state name,
  *  a command, or a transition. */
+/**
+ * THE ROW MAY DESCRIBE THE INVITATION'S LIFECYCLE AND NOTHING ELSE.
+ *
+ * What survives a refresh is what the database stores: an invitation exists, is
+ * active, ran out, or was used. Whether a provider accepted, refused or never
+ * answered about the EMAIL is not on the row, so after a reload the surface
+ * cannot tell which it was — and a sentence that implied one would be asserting
+ * something it can no longer check.
+ *
+ * Hence no `sent`, `delivered`, `out`, `received` or `reached them` here, and no
+ * "they have a live booking link" either: that says the link arrived. The
+ * prospect having been invited is provable; the prospect having the link is not.
+ */
 export function practitionerStatusDetail(
   status: WaitlistEntryStatus,
   rawContext: AdmissionContext = {},
@@ -236,10 +253,10 @@ export function practitionerStatusDetail(
     case "waiting":
       return "In the queue, waiting for an invitation.";
     case "claimed":
-      return "Held for this studio. Nothing has been sent yet.";
+      return "Held for this studio. No invitation has been created yet.";
     case "invited":
       if (context.invitationFactsUnknown) {
-        return "An invitation is out. Its current state could not be checked just now.";
+        return "An invitation exists. Its current state could not be checked just now.";
       }
       if (context.invitationRedeemed) {
         return "They have used their invitation. This entry stays here until their booking is recorded.";
@@ -247,7 +264,7 @@ export function practitionerStatusDetail(
       if (invitationHasRunOut(context)) {
         return "Their invitation ran out before they booked.";
       }
-      return "They have a live booking link and have not used it yet.";
+      return "Their invitation is active and has not been used yet.";
     case "converted":
       return "They booked. Nothing further is needed here.";
     case "expired":
@@ -309,9 +326,23 @@ export const PRACTITIONER_ACTIONS = [
 
 export type PractitionerAction = (typeof PRACTITIONER_ACTIONS)[number];
 
+/**
+ * WHAT THE PRACTITIONER IS TOLD THEY ARE DOING, which is not always what the
+ * internal identifier is called.
+ *
+ * `resend_invitation` reads "Replace invitation" for two reasons, and either
+ * alone would be enough. "Resend" claims a previous send, and whether a provider
+ * ever accepted the email is not durable row state — so after a refresh the
+ * surface cannot know it. And the operation does not re-deliver the old link at
+ * all: only `token_hash` is stored, so a replacement MINTS A NEW TOKEN and a new
+ * expiry window. The old word promised the one thing the command cannot do.
+ *
+ * The identifier stays `resend_invitation`. Internal names may carry
+ * implementation history; practitioner-facing words may not.
+ */
 export const PRACTITIONER_ACTION_LABEL: Record<PractitionerAction, string> = {
   invite_to_book: "Invite to book",
-  resend_invitation: "Resend invitation",
+  resend_invitation: "Replace invitation",
   cancel_invitation: "Cancel invitation",
   return_to_waitlist: "Return to waitlist",
   remove_from_waitlist: "Remove from waitlist",
@@ -464,7 +495,7 @@ function invitationRefusal(
       available: false,
       reason:
         action === "resend_invitation"
-          ? "They have already used their invitation, so there is nothing left to resend."
+          ? "They have already used their invitation, so there is nothing left to replace."
           : "They have already used their invitation, so it can no longer be canceled.",
     };
   }
@@ -492,7 +523,7 @@ export function practitionerActionAvailability(
       if (status === "invited") {
         return {
           available: false,
-          reason: "They already have an invitation. Resend it or cancel it first.",
+          reason: "An invitation already exists. Replace it or cancel it first.",
         };
       }
       // expired | released
@@ -506,7 +537,7 @@ export function practitionerActionAvailability(
       if (status !== "invited") {
         return {
           available: false,
-          reason: "Nothing has been sent to them yet, so there is nothing to resend.",
+          reason: "No invitation has been created for them yet, so there is nothing to replace.",
         };
       }
       // NOT ON AN INVITATION THAT HAS ALREADY RUN OUT. Resending begins with

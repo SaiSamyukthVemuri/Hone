@@ -16,6 +16,7 @@ import {
   practitionerStatusDetail,
   BOOKING_WINDOW_PRESETS,
   INVITE_TO_BOOK_STATUSES,
+  ACTION_CAPABILITIES,
   PRACTITIONER_ACTIONS,
   PRACTITIONER_ACTION_LABEL,
   PRACTITIONER_STATUS_LABEL,
@@ -40,6 +41,7 @@ import {
   type PractitionerAction,
   type PractitionerActionItem,
 } from "@/lib/waitlist/b4-invitation-draft";
+import { RESEND_MINTS_A_NEW_LINK } from "@/lib/waitlist/invite-to-book-contract";
 import type { AdapterCapabilities } from "@/lib/waitlist/invite-to-book-contract";
 
 // ===========================================================================
@@ -1222,7 +1224,7 @@ describe("the state machine is invisible", () => {
       "Invitation expired",
     );
     expect(practitionerStatusLabel("invited", { invitationElapsed: false, invitationRedeemed: false })).toBe(
-      "Invitation sent",
+      "Invitation created",
     );
     // A REDEEMED invitation is not expired even after its window passes: they
     // used it, and the entry is waiting on a booking record, not on a clock.
@@ -1231,7 +1233,7 @@ describe("the state machine is invisible", () => {
         invitationElapsed: true,
         invitationRedeemed: true,
       }),
-    ).toBe("Invitation sent");
+    ).toBe("Invitation created");
   });
 
   it("a previously invited person who is eligible again gets the ordinary invite", () => {
@@ -1368,7 +1370,7 @@ describe("every verdict is the live model's, not a second copy of it", () => {
         "could not be checked",
       );
       expect(practitionerStatusLabel("invited", raw as AdmissionContext)).toBe(
-        "Invitation sent",
+        "Invitation created",
       );
     }
 
@@ -1564,7 +1566,7 @@ describe("every verdict is the live model's, not a second copy of it", () => {
     const unreadable = { invitationFactsUnknown: true, invitationElapsed: true };
 
     expect(invitationHasRunOut(unreadable)).toBe(false);
-    expect(practitionerStatusLabel("invited", unreadable)).toBe("Invitation sent");
+    expect(practitionerStatusLabel("invited", unreadable)).toBe("Invitation created");
     expect(practitionerStatusDetail("invited", unreadable)).toContain("could not be checked");
 
     // The row keeps the LIVE shape, where every control refuses with a
@@ -2087,5 +2089,144 @@ describe("the composer's draft", () => {
     for (const preset of BOOKING_WINDOW_PRESETS) {
       expect(validateDraft(draft({ windowDays: preset.days })).ok).toBe(true);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe("the invited row describes a LIFECYCLE, never a delivery", () => {
+  // The row stores whether an invitation exists, is active, ran out or was
+  // used. It does NOT store whether a provider accepted the email — so after a
+  // refresh no sentence can tell which it was, and one that implied delivery
+  // would be asserting something it can no longer check.
+  const DELIVERY_WORDS = /\bsent\b|\bdelivered\b|\bis out\b|\breceived\b|reached them|\bthey have a (live )?booking link\b/i;
+
+  const INVITED_CONTEXTS: Array<[string, AdmissionContext]> = [
+    ["no facts at all", {}],
+    ["facts unreadable", { invitationFactsUnknown: true }],
+    ["live and unused", { invitationElapsed: false, invitationRedeemed: false }],
+    ["elapsed", { invitationElapsed: true, invitationRedeemed: false }],
+    ["redeemed", { invitationElapsed: false, invitationRedeemed: true }],
+    ["partial facts", { invitationElapsed: false }],
+  ];
+
+  it("never implies the email was sent, delivered or received", () => {
+    for (const [name, context] of INVITED_CONTEXTS) {
+      const detail = practitionerStatusDetail("invited", context);
+      expect(detail, `${name}: "${detail}" claims delivery`).not.toMatch(DELIVERY_WORDS);
+    }
+    // The base label too, in every one of those states.
+    for (const [name, context] of INVITED_CONTEXTS) {
+      const label = practitionerStatusLabel("invited", context);
+      expect(label, `${name}: "${label}" claims delivery`).not.toMatch(DELIVERY_WORDS);
+    }
+  });
+
+  it("says the invitation EXISTS when its state cannot be read", () => {
+    const unknown = practitionerStatusDetail("invited", { invitationFactsUnknown: true });
+    expect(unknown).toBe(
+      "An invitation exists. Its current state could not be checked just now.",
+    );
+    // Fail closed: it must not assert usage either way while blind.
+    expect(unknown).not.toMatch(/has been used|has not been used|ran out/i);
+  });
+
+  it("keeps the facts the row DOES carry specific", () => {
+    // These are durable database facts, unlike delivery, so they stay precise.
+    expect(
+      practitionerStatusDetail("invited", { invitationElapsed: false, invitationRedeemed: true }),
+    ).toMatch(/used their invitation/i);
+    expect(
+      practitionerStatusDetail("invited", { invitationElapsed: true, invitationRedeemed: false }),
+    ).toMatch(/ran out/i);
+    expect(
+      practitionerStatusDetail("invited", { invitationElapsed: false, invitationRedeemed: false }),
+    ).toBe("Their invitation is active and has not been used yet.");
+  });
+
+  it("uses ONE vocabulary before the invitation exists too", () => {
+    // NOT a truth defect: "nothing has been sent yet" is provable when no
+    // invitation exists. It is a vocabulary one. The rest of this surface now
+    // talks about invitations being created, active or used, and leaving two
+    // framings in the same function is how "sent" creeps back in as the natural
+    // word for the next sentence somebody writes here.
+    const beforeInvitation = practitionerStatusDetail("claimed", {});
+    expect(beforeInvitation).toBe("Held for this studio. No invitation has been created yet.");
+    expect(beforeInvitation).not.toMatch(/\bsent\b/i);
+
+    const cannotResend = practitionerActionAvailability("resend_invitation", "claimed", {});
+    expect(cannotResend.available).toBe(false);
+    // Narrowed, not asserted past: `reason` lives only on the refusing arm.
+    if (!cannotResend.available) {
+      expect(cannotResend.reason).not.toMatch(/\bsent\b/i);
+      expect(cannotResend.reason).toMatch(/no invitation has been created/i);
+    }
+  });
+
+  it("keeps the base invited label delivery-neutral", () => {
+    expect(PRACTITIONER_STATUS_LABEL.invited).toBe("Invitation created");
+    expect(PRACTITIONER_STATUS_LABEL.invited).not.toMatch(DELIVERY_WORDS);
+  });
+
+  it("extends the same rule to every ACTION LABEL", () => {
+    // A status sentence and a button are the same promise to a practitioner.
+    // "Resend" claimed a previous send, which is not durable row state, so the
+    // guard that covers sentences has to cover labels too.
+    for (const [action, label] of Object.entries(PRACTITIONER_ACTION_LABEL)) {
+      expect(label, `${action}: "${label}" claims delivery`).not.toMatch(DELIVERY_WORDS);
+      expect(label, `${action}: "${label}" claims a previous send`).not.toMatch(
+        /\bresend\b|send again/i,
+      );
+    }
+    expect(PRACTITIONER_ACTION_LABEL.resend_invitation).toBe("Replace invitation");
+  });
+
+  it("keeps the internal identifier, and changes only the words", () => {
+    // Internal names may carry implementation history; practitioner-facing
+    // words may not. Renaming the id would touch the capability map, the
+    // delegate table and the surface for no truth gained.
+    expect(PRACTITIONER_ACTIONS).toContain("resend_invitation");
+    expect(Object.keys(PRACTITIONER_ACTION_LABEL)).toContain("resend_invitation");
+  });
+
+  it("never claims a previous send in an action REFUSAL either", () => {
+    // The reasons are practitioner-facing too, and two of them said "nothing
+    // left to resend" — which asserts something was sent.
+    for (const status of WAITLIST_ENTRY_STATUSES) {
+      for (const action of PRACTITIONER_ACTIONS) {
+        for (const [name, context] of INVITED_CONTEXTS) {
+          const verdict = practitionerActionAvailability(action, status, context);
+          if (verdict.available) continue;
+          expect(
+            verdict.reason,
+            `${action}@${status} (${name}): "${verdict.reason}" claims a send`,
+          ).not.toMatch(/\bresend\b|\bsent\b|send again/i);
+        }
+      }
+    }
+  });
+
+  it("still discloses that replacing MINTS A NEW LINK and window", () => {
+    // The operation cannot re-deliver the old link — only `token_hash` is
+    // stored — so the disclosure is the load-bearing half of this rename and
+    // must survive it.
+    expect(RESEND_MINTS_A_NEW_LINK).toMatch(/new booking link/i);
+    expect(RESEND_MINTS_A_NEW_LINK).toMatch(/expiry window/i);
+    expect(RESEND_MINTS_A_NEW_LINK).toMatch(/earlier link stops working/i);
+    // ...without claiming the earlier one ever arrived.
+    expect(RESEND_MINTS_A_NEW_LINK).not.toMatch(DELIVERY_WORDS);
+    expect(RESEND_MINTS_A_NEW_LINK).not.toMatch(/\bresending\b/i);
+  });
+
+  it("leaves the capability gate exactly where it was", () => {
+    // CORRECT COPY IS NOT AUTHORITY. The control stays unavailable until an
+    // atomic replacement command exists; no release/requeue/claim/issue
+    // sequence stands in for one.
+    const noAdapter = practitionerActionAvailability("resend_invitation", "invited", {
+      invitationElapsed: false,
+      invitationRedeemed: false,
+    });
+    expect(ACTION_CAPABILITIES.resend_invitation).toEqual(["canResend", "enforcesScope"]);
+    expect(noAdapter).toBeDefined();
   });
 });

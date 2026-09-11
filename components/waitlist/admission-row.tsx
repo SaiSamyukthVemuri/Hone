@@ -257,7 +257,7 @@ function DestructiveDisclosure({
         // Copy promising they "keep their place" read as reassurance and would
         // leave a practitioner stopping one step early with the person silently
         // inactive.
-        `Their booking link stops working straight away. ${entryName} will be set aside and will not be active on the waitlist until you return them to it.`
+        `The booking link stops working straight away. ${entryName} will be set aside and will not be active on the waitlist until you return them to it.`
       : `${entryName} is taken off the waitlist and loses their place in the queue. This cannot be undone.`;
 
   return (
