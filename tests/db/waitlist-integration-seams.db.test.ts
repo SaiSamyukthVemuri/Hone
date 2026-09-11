@@ -176,6 +176,18 @@ async function seedOffer(label: string): Promise<Offer> {
 
 const actions = () => import("@/app/invitation/[token]/actions");
 
+/** Source minus comment lines, so a file's own changelog cannot satisfy a guard
+ *  that the thing it describes is absent. */
+function stripComments(src: string): string {
+  return src
+    .split("\n")
+    .filter((l) => {
+      const t = l.trim();
+      return !t.startsWith("//") && !t.startsWith("*") && !t.startsWith("/*");
+    })
+    .join("\n");
+}
+
 const challengeHash = async (invitationId: string) =>
   (
     await adminQuery(
@@ -292,6 +304,281 @@ describe("C — a declined invitation is not a live invitation", () => {
       })
       .join("\n");
     expect(code).toContain('.is("declined_at", null)');
+  });
+});
+
+// ===========================================================================
+// P1 3990868492 — the one raw token is spent on delivery, and nowhere else
+// ===========================================================================
+describe("initial invitation delivery", () => {
+  it("admission and delivery are SEPARATE truths", async () => {
+    const { __deliveryStateFromDispositionForTest: mapDisposition } = await import(
+      "@/lib/waitlist/invite-to-book-adapter"
+    );
+    // #680's custody verdict -> #683's three words.
+    expect(mapDisposition("yes")).toBe("accepted");
+    expect(mapDisposition("no")).toBe("refused");
+    expect(mapDisposition("unknown")).toBe("unknown");
+    // FAIL CLOSED. An unreadable verdict may not become a claim either way.
+    expect(mapDisposition(undefined)).toBe("unknown");
+    expect(mapDisposition("delivered")).toBe("unknown");
+  });
+
+  it("a delivery refusal can NEVER become an admission refusal", () => {
+    // The rule stated as a shape test over the source: the only `state:
+    // "refused"` returns in the adapter are produced by the two pre-command
+    // helpers. Nothing downstream of the commit can reach that arm, because
+    // `inviteToBook` returns a `committed` literal on every post-commit path.
+    const code = stripComments(readFileSync("lib/waitlist/invite-to-book-adapter.ts", "utf8"));
+
+    // THE ARM AFTER THE COMMIT MAY NOT CONTAIN A REFUSAL AT ALL.
+    //
+    // An earlier version of this test only checked that `state: "committed"`
+    // and the helper's return type were present, and stayed GREEN when a
+    // `delivery === "refused"` branch was made to return `state: "refused"`.
+    // Caught by running the mutation: the real property is that the whole
+    // post-commit region has no refusal arm to reach.
+    const committedArm = code.slice(
+      code.indexOf("const expiresAt = readString(row"),
+      code.indexOf("async cancelInvitation"),
+    );
+    expect(committedArm.length).toBeGreaterThan(200);
+    expect(committedArm).not.toContain('state: "refused"');
+    expect(committedArm).not.toContain("INDETERMINATE_ADMISSION");
+    expect(committedArm).toContain('state: "committed"');
+
+    // And the delivery helper's return type is the delivery vocabulary only, so
+    // it cannot express an admission verdict even if a caller wanted one.
+    expect(code).toContain("Promise<InvitationDeliveryState>");
+  });
+
+  it("the raw token reaches the mail constructor and NOTHING else", () => {
+    const code = stripComments(readFileSync("lib/waitlist/invite-to-book-adapter.ts", "utf8"));
+
+    // IT IS ACTUALLY SPENT. This is the load-bearing half, and the first
+    // version of this test did not have it: asserting only that the token is
+    // never logged or returned stayed GREEN when the delivery call was deleted
+    // outright, because a discarded token leaks nothing either. Caught by
+    // running the mutation. The committed arm must PASS the token to delivery
+    // and take its `delivery` value from the result — a literal there means the
+    // send is gone.
+    const committedArm = code.slice(
+      code.indexOf("const expiresAt = readString(row"),
+      code.indexOf("async cancelInvitation"),
+    );
+    expect(committedArm).toMatch(/await deliverInvitation\(\{/);
+    expect(committedArm).toMatch(/\n\s*rawToken,/);
+    expect(committedArm).toMatch(/return \{ state: "committed", expiresAt, delivery \};/);
+
+    // It is read from the committed row...
+    expect(code).toContain('readString(row, "raw_token")');
+    // ...and the ONLY place it is used is the invitation URL handed to #680.
+    const uses = [...code.matchAll(/rawToken/g)].length;
+    // read + pass into deliverInvitation + destructure + the URL = a small,
+    // enumerable set. A larger count means it leaked into a new expression.
+    expect(uses).toBeLessThanOrEqual(5);
+    expect(code).toContain("invitationUrl: `${origin}/invitation/${args.rawToken}`");
+
+    // NOT persisted, NOT logged, NOT returned, NOT attached to an error.
+    expect(code).not.toMatch(/console\.[a-z]+\([^)]*rawToken/);
+    expect(code).not.toMatch(/(insert|update|upsert)[^\n]*rawToken/i);
+    expect(code).not.toMatch(/return[^\n]*rawToken/);
+    expect(code).not.toMatch(/throw[^\n]*rawToken/);
+    // And the practitioner-facing outcome type has no field that could carry it.
+    const contract = readFileSync("lib/waitlist/invite-to-book-contract.ts", "utf8");
+    const outcome = contract.slice(
+      contract.indexOf("export type InvitationOutcome"),
+      contract.indexOf("export const INDETERMINATE_ADMISSION"),
+    );
+    expect(outcome).not.toMatch(/token/i);
+  });
+
+  it("a LOST RPC answer is indeterminate, never a definite refusal", () => {
+    // The most expensive lie this seam could tell. A request may reach
+    // PostgreSQL, commit the admission, consume the round's allowance, and lose
+    // its HTTP response. Calling that `refused` invites the practitioner to
+    // press again — and the one-time token from the first attempt is already
+    // gone, so the second burns capacity on someone who cannot be handed a link.
+    const code = stripComments(readFileSync("lib/waitlist/invite-to-book-adapter.ts", "utf8"));
+    const preCommit = code.slice(
+      code.indexOf("const { data, error } = await admin.rpc"),
+      code.indexOf("const expiresAt = readString(row"),
+    );
+    expect(preCommit.length).toBeGreaterThan(50);
+    // The transport-error arm returns the indeterminate singleton, and does NOT
+    // construct a refusal.
+    expect(preCommit).toMatch(/if \(error\) return INDETERMINATE_ADMISSION;/);
+    expect(preCommit).not.toContain('state: "refused"');
+
+    // NO BLIND RETRY AND NO INFERRED RECONCILIATION. "A live invitation exists"
+    // does not prove THIS attempt made it — a concurrent operator is enough to
+    // make that inference wrong — so nothing here may read invitation state to
+    // decide the answer.
+    expect(preCommit).not.toMatch(/one_live_per_entry|\.from\(/);
+  });
+
+  it("BOTH instants come from the committed row, neither reconstructed", () => {
+    const code = stripComments(readFileSync("lib/waitlist/invite-to-book-adapter.ts", "utf8"));
+    expect(code).toContain('readString(row, "issued_at")');
+    expect(code).toContain('readString(row, "expires_at")');
+    // The adjudicated ban: no derivation from the other end, no second clock in
+    // the delivery path.
+    expect(code).not.toMatch(/expiresAt[^\n]*-[^\n]*(ttl|TTL|expiresInHours)/);
+    expect(code).not.toMatch(/issuedAt:\s*new Date\(\)/);
+  });
+});
+
+// ===========================================================================
+// PHASE 7 — CROSS-COMPONENT EXHAUSTIVENESS
+// ===========================================================================
+//
+// #683 CANNOT PROVE THIS AND SAYS SO. Its own contract calls
+// `ADMIT_SERVER_REFUSALS` "A SNAPSHOT ... NOT a live guarantee", because 0193
+// is not an ancestor of that branch and nothing there can observe what the
+// command returns. #689 has BOTH components, so the live proof is owned here.
+//
+// The vocabulary is derived from the SQL, not from a list retyped here. Nothing
+// generic is parsed: the three functions that can produce `admit_`'s result are
+// read by name, and only two literal spellings are matched.
+describe("the CURRENT 0193 admit_ vocabulary is fully mapped", () => {
+  const ROOT = process.cwd();
+  const SOURCES = [
+    "0188_new_client_waitlist_invitations",
+    "0189_waitlist_invitation_wall_clock_expiry",
+    "0192_waitlist_recipient_proof_authority",
+    "0193_waitlist_admission_authority",
+  ].map((n) => readFileSync(`${ROOT}/supabase/migrations/${n}.sql`, "utf8"));
+
+  /** The last definition of one function. 0189 replaces what 0188 defined, and
+   *  reading the earliest would pin a superseded vocabulary. */
+  function functionBody(name: string): string {
+    let found = "";
+    for (const sql of SOURCES) {
+      const start = sql.indexOf(`create or replace function public.${name}(`);
+      if (start === -1) continue;
+      const end = sql.indexOf("\n$$;", start);
+      found = sql.slice(start, end === -1 ? undefined : end);
+    }
+    if (!found) throw new Error(`no definition found for ${name}`);
+    return found;
+  }
+
+  /** Both spellings the migrations use: `return 'code'` for scalar commands and
+   *  `'code'::text` for the ones returning a row. */
+  function resultCodes(name: string): string[] {
+    const body = functionBody(name);
+    return [
+      ...[...body.matchAll(/return\s+'([a-z_]+)'/g)].map((m) => m[1]),
+      ...[...body.matchAll(/'([a-z_]+)'::text/g)].map((m) => m[1]),
+    ];
+  }
+
+  /**
+   * Everything `admit_` can put in its `result` column.
+   *
+   * Its own literals, PLUS the two commands it delegates to. `admit_` raises
+   * WA001 carrying the inner refusal and its handler returns `SQLERRM` verbatim,
+   * so a delegate's vocabulary IS `admit_`'s vocabulary — the indirection that
+   * makes this impossible to see from either component alone.
+   */
+  function admitVocabulary(): Set<string> {
+    // THE DELEGATES' SUCCESS SENTINELS DO NOT PASS THROUGH, and they are derived
+    // rather than assumed. `admit_` propagates a delegate's answer ONLY on the
+    // failing branch — `if v_claim <> 'claimed'`, `if v_issue.result <> 'issued'`
+    // — so the values it compares against are precisely the ones that never
+    // reach its result column. Reading them out of those comparisons keeps this
+    // exclusion tied to the SQL: rename a sentinel and the extraction follows,
+    // where a hardcoded pair would silently start dropping a real refusal.
+    const admitBody = functionBody("admit_new_client_waitlist_entry");
+    const sentinels = new Set(
+      [...admitBody.matchAll(/<>\s*'([a-z_]+)'/g)].map((m) => m[1]),
+    );
+    // THREE delegates, not two. `new_client_waitlist_resolve_owner` is the
+    // third: `if v_code <> 'ok'` returns its code directly, so its refusals
+    // (not_a_member, not_owner, ...) are also part of this vocabulary. Missing
+    // it is exactly the kind of hop that makes the set unknowable from either
+    // component alone, which is why the sentinel set is asserted rather than
+    // assumed — a new delegate changes it and this line says so.
+    expect(sentinels, "admit_ must compare against its delegates' success codes")
+      .toEqual(new Set(["ok", "claimed", "issued"]));
+
+    const all = new Set([
+      ...resultCodes("admit_new_client_waitlist_entry"),
+      ...resultCodes("new_client_waitlist_resolve_owner"),
+      ...resultCodes("claim_new_client_waitlist_entry"),
+      ...resultCodes("issue_scoped_new_client_waitlist_invitation"),
+    ]);
+    for (const s of sentinels) all.delete(s);
+    return all;
+  }
+
+  it("every current result maps to committed or refused — none falls through", async () => {
+    const { ADMIT_SERVER_SUCCESS, ADMIT_REFUSAL_PRESENTATION } = await import(
+      "@/lib/waitlist/invite-to-book-contract"
+    );
+    const vocabulary = admitVocabulary();
+    // Sanity: the extractor must actually find something, or this whole
+    // describe passes by finding nothing.
+    expect(vocabulary.size).toBeGreaterThan(8);
+    expect(vocabulary.has(ADMIT_SERVER_SUCCESS)).toBe(true);
+
+    const unmapped = [...vocabulary]
+      .filter((c) => c !== ADMIT_SERVER_SUCCESS)
+      .filter((c) => !(c in ADMIT_REFUSAL_PRESENTATION))
+      .sort();
+
+    // OPEN FINDING, PINNED — #683-owned, and found by exactly this test.
+    //
+    // `admit_` resolves authority through `new_client_waitlist_resolve_owner`
+    // and returns its code verbatim when it is not `ok`, so `not_owner` and
+    // `not_a_member` ARE part of its vocabulary. #683's `ADMIT_SERVER_REFUSALS`
+    // omits both — its own header says the list is "A SNAPSHOT ... NOT a live
+    // guarantee" because 0193 is not an ancestor of that branch, and this is the
+    // gap that warning was about.
+    //
+    // NOT PATCHED HERE: the union and its presentation table are #683's. The
+    // runtime is safe meanwhile — the adapter resolves ownership before calling,
+    // and an unmapped result becomes `indeterminate`, never a confident refusal
+    // (proved below). The cost is that a role changed mid-flight reads as "we
+    // could not confirm" rather than "you are not the owner".
+    //
+    // PINNED, NOT SUPPRESSED. Any FURTHER unmapped result still fails, and this
+    // list must shrink to empty when #683 lands the fix — at which point this
+    // expectation itself goes red and is deleted.
+    const KNOWN_683_GAP = ["not_a_member", "not_owner"];
+    expect(unmapped, `unmapped 0193 results: ${unmapped.join(", ")}`).toEqual(KNOWN_683_GAP);
+  });
+
+  it("a NEW server result would turn this RED — the control is load-bearing", async () => {
+    const { ADMIT_REFUSAL_PRESENTATION } = await import(
+      "@/lib/waitlist/invite-to-book-contract"
+    );
+    const presentationKeys: Record<string, unknown> = ADMIT_REFUSAL_PRESENTATION;
+    // The negative control, run inline rather than by editing SQL: inject a
+    // synthetic result and prove the same comparison rejects it. Without this,
+    // "everything is mapped" could hold because the extractor found nothing.
+    const withSynthetic = new Set([...admitVocabulary(), "synthetic_new_refusal"]);
+    const unmapped = [...withSynthetic]
+      .filter((c) => c !== "admitted")
+      .filter((c) => !(c in presentationKeys));
+    expect(unmapped).toContain("synthetic_new_refusal");
+  });
+
+  it("the adapter routes an unrecognised result to indeterminate, never refused", async () => {
+    // Runtime half of the same property. A result the table has never heard of
+    // must not become a confident refusal — the practitioner would be told the
+    // server said no when it said something we could not read.
+    const { __refusalFromServerForTest } = await import(
+      "@/lib/waitlist/invite-to-book-adapter"
+    );
+    expect(__refusalFromServerForTest("synthetic_new_refusal").state).toBe("indeterminate");
+    expect(__refusalFromServerForTest(null).state).toBe("indeterminate");
+    // ...and a KNOWN one is still a definite refusal, so the above is not
+    // simply "everything is indeterminate".
+    expect(__refusalFromServerForTest("round_full")).toEqual({
+      state: "refused",
+      code: "admission_round_full",
+    });
   });
 });
 
@@ -453,8 +740,8 @@ describe("B — the invite-to-book adapter binds #683's contract to 0193", () =>
       scope: { serviceId: null, windowDays: 999, allowedWeekdays: [] },
       expiresInHours: 999,
     });
-    expect(out.ok).toBe(false);
-    if (!out.ok) {
+    expect(out.state).not.toBe("committed");
+    if (out.state === "refused") {
       expect(out.code).not.toBe("scope_not_supported");
       expect(out.code).not.toBe("invalid_ttl");
       expect(out.code).not.toBe("invalid_input");

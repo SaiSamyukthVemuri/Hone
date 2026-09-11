@@ -2,15 +2,25 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { addDays, localDateString } from "@/lib/booking/tz";
+import { getRequiredAppOrigin } from "@/lib/app-origin";
+import {
+  sendWaitlistInvitationEmail,
+  type DeliveryStudio,
+} from "@/lib/waitlist/delivery/send";
 import {
   type BookingScope,
+  type DefiniteInviteToBookRefusal,
   type EntryOnlyInput,
   type EntryOutcome,
+  type InvitationDeliveryState,
   type InvitationOutcome,
   type InviteToBookFailure,
   type InviteToBookInput,
   type ResendInvitationInput,
   type WaitlistInvitationAdapter,
+  ADMIT_REFUSAL_PRESENTATION,
+  ADMIT_SERVER_SUCCESS,
+  INDETERMINATE_ADMISSION,
   INVITE_TO_BOOK_FAILURES,
 } from "@/lib/waitlist/invite-to-book-contract";
 
@@ -80,7 +90,13 @@ function asFailure(code: unknown): InviteToBookFailure {
     : "unavailable";
 }
 
-type Session = { studioId: string; actorUserId: string; timezone: string };
+type Session = {
+  studioId: string;
+  actorUserId: string;
+  timezone: string;
+  /** The sender identity the invitation email is sent AS. Server-resolved. */
+  studio: DeliveryStudio;
+};
 
 /**
  * Studio and actor from the SESSION. Never parameters.
@@ -106,6 +122,15 @@ async function resolveSession(): Promise<
         studioId: studio.id,
         actorUserId,
         timezone: studio.timezone ?? "UTC",
+        studio: {
+          id: studio.id,
+          name: studio.name ?? null,
+          // COMMS-01A: a client-facing send speaks as the studio and offers a
+          // reply path. These ride along from a row already fetched.
+          postcare_contact_email:
+            (studio as { postcare_contact_email?: string | null }).postcare_contact_email ?? null,
+          owner_email: (studio as { owner_email?: string | null }).owner_email ?? null,
+        },
       },
     };
   } catch {
@@ -159,6 +184,95 @@ function windowToDates(
 }
 
 const NOT_IMPLEMENTED_ATOMICALLY: InviteToBookFailure = "unavailable";
+
+function readString(row: unknown, key: string): string | null {
+  const v = (row as Record<string, unknown> | null)?.[key];
+  return typeof v === "string" && v.length > 0 ? v : null;
+}
+
+/**
+ * A failure this side of the wire, expressed in the three-state contract.
+ *
+ * `unavailable` is NOT a refusal — it means "we could not find out" — so it maps
+ * to `indeterminate`. Everything else is something we decided before the command
+ * ran, which is a definite refusal: nothing committed.
+ */
+function refusedOrIndeterminate(code: InviteToBookFailure): InvitationOutcome {
+  return code === "unavailable"
+    ? INDETERMINATE_ADMISSION
+    : { state: "refused", code: code as DefiniteInviteToBookRefusal };
+}
+
+/**
+ * A result the SERVER gave, mapped through #683's total presentation table.
+ *
+ * `ADMIT_REFUSAL_PRESENTATION` is `Record<AdmitServerRefusal, …>`, so a result
+ * added to that union without a disposition does not compile — the exhaustiveness
+ * is bought by the type, not by this function. What this adds is the runtime
+ * half: a result the table has never heard of is `indeterminate`, never a
+ * confident refusal, because an unrecognised answer is one we could not read.
+ *
+ * The integration test in tests/db/ proves the table covers what the CURRENT
+ * 0193 can actually return, which is the half #683 cannot check for itself.
+ */
+function refusalFromServer(result: unknown): InvitationOutcome {
+  if (typeof result !== "string") return INDETERMINATE_ADMISSION;
+  const mapped = (
+    ADMIT_REFUSAL_PRESENTATION as Record<string, DefiniteInviteToBookRefusal | undefined>
+  )[result];
+  return mapped ? { state: "refused", code: mapped } : INDETERMINATE_ADMISSION;
+}
+
+/**
+ * Spend the one raw token on #680's reviewed invitation send.
+ *
+ * DELIVERY CANNOT UN-INVITE ANYBODY. This returns only the delivery state; the
+ * caller has already committed and says so regardless of what happens here.
+ *
+ * `delivered` maps straight across: `yes` -> accepted (the provider took
+ * CUSTODY — it says nothing about receipt or opening), `no` -> refused,
+ * `unknown` -> unknown. A throw is `unknown` too, never `refused`: an exception
+ * on this side is not evidence the provider declined.
+ */
+async function deliverInvitation(args: {
+  studio: DeliveryStudio;
+  invitationId: string;
+  recipientEmail: string;
+  rawToken: string;
+  issuedAt: Date;
+  expiresAt: Date;
+}): Promise<InvitationDeliveryState> {
+  try {
+    const origin = getRequiredAppOrigin();
+    const result = await sendWaitlistInvitationEmail({
+      studio: args.studio,
+      invitationId: args.invitationId,
+      recipientEmail: args.recipientEmail,
+      // The token appears in exactly one place: the URL handed to the mail
+      // constructor. It is built here and held nowhere else.
+      invitationUrl: `${origin}/invitation/${args.rawToken}`,
+      issuedAt: args.issuedAt,
+      expiresAt: args.expiresAt,
+    });
+    return deliveryStateFromDisposition(result.disposition.delivered);
+  } catch {
+    return "unknown";
+  }
+}
+
+/**
+ * #680's custody verdict in #683's three words.
+ *
+ * `yes` -> `accepted` means THE PROVIDER TOOK CUSTODY. It does not say the
+ * person received or opened anything, and no copy built on it may.
+ * `no` -> `refused`: the provider definitely did not take it. The invitation
+ * still exists either way.
+ * Anything else -> `unknown`, the fail-closed word, so an unreadable verdict can
+ * never become a claim in either direction.
+ */
+function deliveryStateFromDisposition(delivered: unknown): InvitationDeliveryState {
+  return delivered === "yes" ? "accepted" : delivered === "no" ? "refused" : "unknown";
+}
 
 /**
  * Product-input validation, PURE and exported.
@@ -218,12 +332,12 @@ class AdmissionCommandAdapter implements WaitlistInvitationAdapter {
 
   async inviteToBook(input: InviteToBookInput): Promise<InvitationOutcome> {
     const resolved = await resolveSession();
-    if (!resolved.ok) return { ok: false, code: resolved.code };
-    const { studioId, actorUserId, timezone } = resolved.session;
+    if (!resolved.ok) return refusedOrIndeterminate(resolved.code);
+    const { studioId, actorUserId, timezone, studio } = resolved.session;
 
     // AUTHORITY FIRST, INPUT SECOND. See `validateInviteInput`.
     const invalid = validateInviteInput(input);
-    if (invalid) return { ok: false, code: invalid };
+    if (invalid) return refusedOrIndeterminate(invalid);
     const weekdays = input.scope.allowedWeekdays;
 
     const { start, end } = windowToDates(input.scope, timezone, new Date());
@@ -238,21 +352,67 @@ class AdmissionCommandAdapter implements WaitlistInvitationAdapter {
       p_allowed_weekdays: weekdays === null ? null : [...weekdays],
       p_ttl_hours: input.expiresInHours,
     });
-    if (error) return { ok: false, code: "unavailable" };
+
+    // A LOST ANSWER IS NOT A REFUSAL, AND THIS IS THE WHOLE REASON THE THIRD
+    // STATE EXISTS.
+    //
+    // The request may have reached PostgreSQL, committed the admission, minted
+    // the invitation and consumed the round's allowance, and then lost its HTTP
+    // response. Reporting `refused` would claim an answer the database never
+    // gave, and the practitioner — told it failed — presses the button again.
+    // That retry is the expensive mistake: the invitation already exists, and
+    // its one-time raw token went missing with the response, so a second attempt
+    // burns capacity on a prospect who can no longer be handed their link.
+    //
+    // NO RECONCILIATION IS ATTEMPTED. "A live invitation now exists" does not
+    // prove THIS attempt created it — a concurrent operator is enough to make
+    // that inference wrong — and nothing here correlates an attempt with a row.
+    // Until an attempt-correlated mechanism exists, indeterminate is the honest
+    // answer and the copy sends the practitioner to look at the waitlist.
+    if (error) return INDETERMINATE_ADMISSION;
+
     const row = Array.isArray(data) ? data[0] : data;
     const result = (row as { result?: unknown } | null)?.result;
-    if (result !== "admitted" && result !== "invited") {
-      return { ok: false, code: asFailure(result) };
+    if (result !== ADMIT_SERVER_SUCCESS) {
+      return refusalFromServer(result);
     }
-    const expiresAt = (row as { expires_at?: unknown } | null)?.expires_at;
-    // THE SERVER STAMPS THE WINDOW. A success without a server expiry is IN
-    // DOUBT rather than ok: the surface would otherwise have to compute one,
-    // which is precisely the anchoring error 0190 removed.
-    if (typeof expiresAt !== "string") return { ok: false, code: "unavailable" };
-    // The raw token is deliberately read and DISCARDED here. Delivery of the
-    // invitation belongs to #680's send path, and this adapter returning it
-    // would put a bearer credential into a practitioner-surface return value.
-    return { ok: true, expiresAt };
+
+    // --- The admission is COMMITTED from here down. -------------------------
+    //
+    // Nothing below may turn this into `refused`. Delivery is a separate truth
+    // and travels in its own field.
+    const expiresAt = readString(row, "expires_at");
+    const issuedAt = readString(row, "issued_at");
+    const rawToken = readString(row, "raw_token");
+    const recipientEmail = readString(row, "delivery_email");
+    const invitationId = readString(row, "invitation_id");
+
+    // BOTH INSTANTS ARE THE DATABASE'S. `admit_` returns `issued_at` and
+    // `expires_at` from the same committed row; neither is reconstructed from
+    // the other, from the requested TTL, or from an application clock. That
+    // reconstruction was adjudicated out for the proof challenge and the same
+    // ruling governs here.
+    if (!expiresAt || !issuedAt || !rawToken || !recipientEmail || !invitationId) {
+      // The row committed but we cannot read what it returned, so we can neither
+      // deliver nor describe the window. Not a refusal — the invitation exists.
+      return { state: "committed", expiresAt: expiresAt ?? "", delivery: "unknown" };
+    }
+
+    // THE RAW TOKEN EXISTS EXACTLY ONCE, IN MEMORY, HERE. Only its digest is
+    // persisted, so if this function returns without spending it the invitation
+    // can never be delivered by any later process. It is passed straight into
+    // #680's reviewed send path and into nothing else: not stored, not logged,
+    // not returned, not attached to an error.
+    const delivery = await deliverInvitation({
+      studio,
+      invitationId,
+      recipientEmail,
+      rawToken,
+      issuedAt: new Date(issuedAt),
+      expiresAt: new Date(expiresAt),
+    });
+
+    return { state: "committed", expiresAt, delivery };
   }
 
   async cancelInvitation(input: EntryOnlyInput): Promise<EntryOutcome> {
@@ -276,9 +436,18 @@ class AdmissionCommandAdapter implements WaitlistInvitationAdapter {
   // rather than performing the hops in sequence, and `capabilities` reports
   // false so the surface never offers them. See the header.
 
+  /**
+   * UNREACHABLE BY CONSTRUCTION — `canResend` is false, so no surface offers it.
+   *
+   * `indeterminate` rather than a refusal code, and the reason is narrow: every
+   * member of `DefiniteInviteToBookRefusal` names something the SERVER decided,
+   * and no command ran here at all. Borrowing one would put a false reason in
+   * front of a practitioner. `indeterminate`'s copy asks them to check the
+   * waitlist, which is always safe advice about a state nothing has touched.
+   */
   async resendInvitation(_input: ResendInvitationInput): Promise<InvitationOutcome> {
     void _input;
-    return { ok: false, code: NOT_IMPLEMENTED_ATOMICALLY };
+    return INDETERMINATE_ADMISSION;
   }
 
   async returnToWaitlist(_input: EntryOnlyInput): Promise<EntryOutcome> {
@@ -297,3 +466,5 @@ export const admissionCommandAdapter: WaitlistInvitationAdapter =
   new AdmissionCommandAdapter();
 
 export { windowToDates as __windowToDatesForTest };
+export { refusalFromServer as __refusalFromServerForTest };
+export { deliveryStateFromDisposition as __deliveryStateFromDispositionForTest };
