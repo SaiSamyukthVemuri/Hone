@@ -141,7 +141,7 @@ export function practitionerStatusLabel(
  * object had any keys, which closed the missing-object hole and left the
  * partial one wide open: `{ invitationElapsed: false }` has a key, so it passed
  * through unchanged, `invitationRedeemed` stayed absent and read as false, and
- * the row went back to announcing "a live booking link ... not used it yet" —
+ * the row went back to announcing an active, unused invitation —
  * a claim about redemption that the caller never made. `{ invitationElapsed:
  * undefined }` failed the same way, because a key whose value is `undefined`
  * still counts as a key.
@@ -231,6 +231,19 @@ export function invitationHasRunOut(context: AdmissionContext): boolean {
 
 /** One line of plain explanation under the name. Never mentions a state name,
  *  a command, or a transition. */
+/**
+ * THE ROW MAY DESCRIBE THE INVITATION'S LIFECYCLE AND NOTHING ELSE.
+ *
+ * What survives a refresh is what the database stores: an invitation exists, is
+ * active, ran out, or was used. Whether a provider accepted, refused or never
+ * answered about the EMAIL is not on the row, so after a reload the surface
+ * cannot tell which it was — and a sentence that implied one would be asserting
+ * something it can no longer check.
+ *
+ * Hence no `sent`, `delivered`, `out`, `received` or `reached them` here, and no
+ * "they have a live booking link" either: that says the link arrived. The
+ * prospect having been invited is provable; the prospect having the link is not.
+ */
 export function practitionerStatusDetail(
   status: WaitlistEntryStatus,
   rawContext: AdmissionContext = {},
@@ -240,10 +253,10 @@ export function practitionerStatusDetail(
     case "waiting":
       return "In the queue, waiting for an invitation.";
     case "claimed":
-      return "Held for this studio. Nothing has been sent yet.";
+      return "Held for this studio. No invitation has been created yet.";
     case "invited":
       if (context.invitationFactsUnknown) {
-        return "An invitation is out. Its current state could not be checked just now.";
+        return "An invitation exists. Its current state could not be checked just now.";
       }
       if (context.invitationRedeemed) {
         return "They have used their invitation. This entry stays here until their booking is recorded.";
@@ -251,7 +264,7 @@ export function practitionerStatusDetail(
       if (invitationHasRunOut(context)) {
         return "Their invitation ran out before they booked.";
       }
-      return "They have a live booking link and have not used it yet.";
+      return "Their invitation is active and has not been used yet.";
     case "converted":
       return "They booked. Nothing further is needed here.";
     case "expired":
@@ -510,7 +523,7 @@ export function practitionerActionAvailability(
       if (status !== "invited") {
         return {
           available: false,
-          reason: "Nothing has been sent to them yet, so there is nothing to resend.",
+          reason: "No invitation has been created for them yet, so there is nothing to resend.",
         };
       }
       // NOT ON AN INVITATION THAT HAS ALREADY RUN OUT. Resending begins with

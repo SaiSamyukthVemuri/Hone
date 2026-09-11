@@ -2089,3 +2089,80 @@ describe("the composer's draft", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+
+describe("the invited row describes a LIFECYCLE, never a delivery", () => {
+  // The row stores whether an invitation exists, is active, ran out or was
+  // used. It does NOT store whether a provider accepted the email — so after a
+  // refresh no sentence can tell which it was, and one that implied delivery
+  // would be asserting something it can no longer check.
+  const DELIVERY_WORDS = /\bsent\b|\bdelivered\b|\bis out\b|\breceived\b|reached them|\bthey have a (live )?booking link\b/i;
+
+  const INVITED_CONTEXTS: Array<[string, AdmissionContext]> = [
+    ["no facts at all", {}],
+    ["facts unreadable", { invitationFactsUnknown: true }],
+    ["live and unused", { invitationElapsed: false, invitationRedeemed: false }],
+    ["elapsed", { invitationElapsed: true, invitationRedeemed: false }],
+    ["redeemed", { invitationElapsed: false, invitationRedeemed: true }],
+    ["partial facts", { invitationElapsed: false }],
+  ];
+
+  it("never implies the email was sent, delivered or received", () => {
+    for (const [name, context] of INVITED_CONTEXTS) {
+      const detail = practitionerStatusDetail("invited", context);
+      expect(detail, `${name}: "${detail}" claims delivery`).not.toMatch(DELIVERY_WORDS);
+    }
+    // The base label too, in every one of those states.
+    for (const [name, context] of INVITED_CONTEXTS) {
+      const label = practitionerStatusLabel("invited", context);
+      expect(label, `${name}: "${label}" claims delivery`).not.toMatch(DELIVERY_WORDS);
+    }
+  });
+
+  it("says the invitation EXISTS when its state cannot be read", () => {
+    const unknown = practitionerStatusDetail("invited", { invitationFactsUnknown: true });
+    expect(unknown).toBe(
+      "An invitation exists. Its current state could not be checked just now.",
+    );
+    // Fail closed: it must not assert usage either way while blind.
+    expect(unknown).not.toMatch(/has been used|has not been used|ran out/i);
+  });
+
+  it("keeps the facts the row DOES carry specific", () => {
+    // These are durable database facts, unlike delivery, so they stay precise.
+    expect(
+      practitionerStatusDetail("invited", { invitationElapsed: false, invitationRedeemed: true }),
+    ).toMatch(/used their invitation/i);
+    expect(
+      practitionerStatusDetail("invited", { invitationElapsed: true, invitationRedeemed: false }),
+    ).toMatch(/ran out/i);
+    expect(
+      practitionerStatusDetail("invited", { invitationElapsed: false, invitationRedeemed: false }),
+    ).toBe("Their invitation is active and has not been used yet.");
+  });
+
+  it("uses ONE vocabulary before the invitation exists too", () => {
+    // NOT a truth defect: "nothing has been sent yet" is provable when no
+    // invitation exists. It is a vocabulary one. The rest of this surface now
+    // talks about invitations being created, active or used, and leaving two
+    // framings in the same function is how "sent" creeps back in as the natural
+    // word for the next sentence somebody writes here.
+    const beforeInvitation = practitionerStatusDetail("claimed", {});
+    expect(beforeInvitation).toBe("Held for this studio. No invitation has been created yet.");
+    expect(beforeInvitation).not.toMatch(/\bsent\b/i);
+
+    const cannotResend = practitionerActionAvailability("resend_invitation", "claimed", {});
+    expect(cannotResend.available).toBe(false);
+    // Narrowed, not asserted past: `reason` lives only on the refusing arm.
+    if (!cannotResend.available) {
+      expect(cannotResend.reason).not.toMatch(/\bsent\b/i);
+      expect(cannotResend.reason).toMatch(/no invitation has been created/i);
+    }
+  });
+
+  it("keeps the base invited label delivery-neutral", () => {
+    expect(PRACTITIONER_STATUS_LABEL.invited).toBe("Invitation created");
+    expect(PRACTITIONER_STATUS_LABEL.invited).not.toMatch(DELIVERY_WORDS);
+  });
+});

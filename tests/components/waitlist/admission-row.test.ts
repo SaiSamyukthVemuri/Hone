@@ -459,6 +459,8 @@ describe("nothing is connected, and every control says so in its own words", () 
         `${JSON.stringify(invitation)}: Cancel was enabled`,
       ).toContain('disabled=""');
       expect(html).toContain("could not be checked");
+      expect(html).not.toContain("is active and has not been used");
+      // The retired wording is kept as a tripwire: a revert must not pass.
       expect(html).not.toContain("live booking link");
     }
 
@@ -476,7 +478,7 @@ describe("nothing is connected, and every control says so in its own words", () 
     );
     expect(controlTag(complete, "resend_invitation")).not.toContain('disabled=""');
     expect(controlTag(complete, "cancel_invitation")).not.toContain('disabled=""');
-    expect(complete).toContain("live booking link");
+    expect(complete).toContain("is active and has not been used");
   });
 
   it("does not give a non-invited row invitation semantics when facts are omitted", () => {
