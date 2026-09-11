@@ -807,7 +807,7 @@ export type BoundAdapter = WaitlistInvitationAdapter | typeof NO_ADAPTER_BOUND;
  * clicking a link that has silently stopped working.
  */
 export const RESEND_MINTS_A_NEW_LINK =
-  "Resending sends a new booking link and starts the expiry window again. Any link they already have stops working.";
+  "Replacing the invitation creates a new booking link and starts the expiry window again. The earlier link stops working.";
 
 /**
  * Why a send control is off when no adapter is bound.

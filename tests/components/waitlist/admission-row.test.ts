@@ -260,7 +260,10 @@ describe("what each state offers", () => {
         entry: { ...ENTRY, status: "invited", invitation: { invitationElapsed: false, invitationRedeemed: false } },
       }),
     );
-    expect(html).toContain("Resend invitation");
+    expect(html).toContain("Replace invitation");
+    // "Resend" claimed a previous send the row cannot prove. Kept as a
+    // tripwire so a revert fails here rather than passing quietly.
+    expect(html).not.toContain("Resend invitation");
     expect(html).toContain("Cancel invitation");
     expect(hasControl(html, "invite_to_book")).toBe(false);
     expect(html).toContain("Invitation created");
@@ -528,7 +531,7 @@ describe("nothing is connected, and every control says so in its own words", () 
       }),
     );
     expect(html).toContain("already used their invitation");
-    expect(html).not.toContain("“Resend invitation” is not connected yet");
+    expect(html).not.toContain("“Replace invitation” is not connected yet");
   });
 });
 

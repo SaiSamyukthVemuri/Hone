@@ -326,9 +326,23 @@ export const PRACTITIONER_ACTIONS = [
 
 export type PractitionerAction = (typeof PRACTITIONER_ACTIONS)[number];
 
+/**
+ * WHAT THE PRACTITIONER IS TOLD THEY ARE DOING, which is not always what the
+ * internal identifier is called.
+ *
+ * `resend_invitation` reads "Replace invitation" for two reasons, and either
+ * alone would be enough. "Resend" claims a previous send, and whether a provider
+ * ever accepted the email is not durable row state — so after a refresh the
+ * surface cannot know it. And the operation does not re-deliver the old link at
+ * all: only `token_hash` is stored, so a replacement MINTS A NEW TOKEN and a new
+ * expiry window. The old word promised the one thing the command cannot do.
+ *
+ * The identifier stays `resend_invitation`. Internal names may carry
+ * implementation history; practitioner-facing words may not.
+ */
 export const PRACTITIONER_ACTION_LABEL: Record<PractitionerAction, string> = {
   invite_to_book: "Invite to book",
-  resend_invitation: "Resend invitation",
+  resend_invitation: "Replace invitation",
   cancel_invitation: "Cancel invitation",
   return_to_waitlist: "Return to waitlist",
   remove_from_waitlist: "Remove from waitlist",
@@ -481,7 +495,7 @@ function invitationRefusal(
       available: false,
       reason:
         action === "resend_invitation"
-          ? "They have already used their invitation, so there is nothing left to resend."
+          ? "They have already used their invitation, so there is nothing left to replace."
           : "They have already used their invitation, so it can no longer be canceled.",
     };
   }
@@ -509,7 +523,7 @@ export function practitionerActionAvailability(
       if (status === "invited") {
         return {
           available: false,
-          reason: "They already have an invitation. Resend it or cancel it first.",
+          reason: "An invitation already exists. Replace it or cancel it first.",
         };
       }
       // expired | released
@@ -523,7 +537,7 @@ export function practitionerActionAvailability(
       if (status !== "invited") {
         return {
           available: false,
-          reason: "No invitation has been created for them yet, so there is nothing to resend.",
+          reason: "No invitation has been created for them yet, so there is nothing to replace.",
         };
       }
       // NOT ON AN INVITATION THAT HAS ALREADY RUN OUT. Resending begins with
