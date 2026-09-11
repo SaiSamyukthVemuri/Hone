@@ -211,6 +211,149 @@ export type InvitationOutcome =
 
 export type EntryOutcome = { ok: true } | { ok: false; code: InviteToBookFailure };
 
+// --- 2b. THE SERVER VOCABULARY THIS CONTRACT MUST CARRY ----------------------
+
+/**
+ * Every result `admit_new_client_waitlist_entry` can return.
+ *
+ * DERIVED MECHANICALLY, NOT ASSUMED. The command lives on WAIT-ADMIT-01
+ * (migration `0193_waitlist_admission_authority.sql`, read at exact head
+ * `519cfe6cf7e3281d4c445a35f34653c10b054100`), which is not on this branch, so
+ * this list cannot be re-derived from the migrations in this tree the way the
+ * shipped vocabulary is. It is therefore written out with the provenance of
+ * every value, and the test beside it holds an independent copy.
+ *
+ * THE SET IS A UNION, AND THAT IS THE WHOLE POINT. The command returns four
+ * literals of its own, and then carries its callees' refusals out unchanged
+ * through a `WA001` raise caught by its own handler, which re-emits `SQLERRM`
+ * as the result. Reading only the literal `return query select` statements in
+ * the command reports FOUR results and misses ten. The integration finding named
+ * two missing codes; deriving the union found eight.
+ *
+ * `0193`'s own source comment lists this pass-through vocabulary as
+ * "no_round_open, round_full, invalid_service, invalid_scope_dates,
+ * invalid_weekdays, already_declined_offer, already_invited, invalid_ttl...",
+ * which trails off AND names two codes 0192 no longer emits directly. Prose was
+ * not treated as the authority; each callee was read.
+ */
+export const ADMIT_SERVER_SUCCESS = "admitted" as const;
+
+export const ADMIT_SERVER_REFUSALS = [
+  // --- the command's own refusals, returned directly -----------------------
+  /** The studio id resolved to no studio, or the actor is not its owner. */
+  "unknown_studio",
+  /** No entry with that id in that studio. Scoped by both, so another tenant's
+   *  entry is indistinguishable from one that does not exist. */
+  "not_found",
+  /** The entry is not in a status this button can act on — `invited`,
+   *  `converted`, `expired`, `released` and `removed` each have their own exit. */
+  "not_admissible",
+
+  // --- carried out of `claim_new_client_waitlist_entry` (0189) -------------
+  "not_waiting",
+  "invalid_input",
+
+  // --- carried out of `issue_scoped_new_client_waitlist_invitation` (0192) --
+  /** No admission round is open for the studio. */
+  "no_round_open",
+  /** The open round's allowance is already consumed. */
+  "round_full",
+  "invalid_service",
+  "invalid_scope_dates",
+  "invalid_weekdays",
+  /** The person declined a previous offer; 0192 forbids re-offering. */
+  "already_declined_offer",
+
+  // --- which 0192 in turn passes through from
+  //     `issue_new_client_waitlist_invitation` (0188/0190) ------------------
+  "already_invited",
+  "invalid_ttl",
+  "not_claimed",
+] as const;
+
+export type AdmitServerRefusal = (typeof ADMIT_SERVER_REFUSALS)[number];
+export type AdmitServerResult = typeof ADMIT_SERVER_SUCCESS | AdmitServerRefusal;
+
+/**
+ * How each server refusal is shown to the practitioner.
+ *
+ * `Record<AdmitServerRefusal, …>` is load-bearing: a result added to the union
+ * without a disposition here does not COMPILE. That is the property being
+ * bought — not documentation, a build failure.
+ *
+ * SERVER EXHAUSTIVENESS AND PRACTITIONER COPY ARE SEPARATE. Several refusals
+ * deliberately normalise to one practitioner outcome, because the practitioner's
+ * recovery action — not the database's reason — is what the surface must
+ * communicate.
+ *
+ * NORMALISATIONS THAT LOSE DETAIL, recorded rather than buried:
+ * `no_round_open`, `round_full` and `already_declined_offer` are all definite,
+ * well-understood refusals with no composer edit that fixes them, and they
+ * currently land on `unavailable`, which reads as "try again". `round_full` and
+ * `no_round_open` resolve on their own when a round opens, so a retry is at
+ * least not wrong. `already_declined_offer` never resolves by retrying, and it
+ * is the one normalisation here worth revisiting when this contract gains
+ * practitioner copy — it is flagged, not silently dropped.
+ */
+export const ADMIT_REFUSAL_PRESENTATION: Record<AdmitServerRefusal, InviteToBookFailure> = {
+  // Authority and identity failures the practitioner cannot act on.
+  unknown_studio: "unavailable",
+  not_admissible: "unavailable",
+  // The entry moved under the practitioner between render and press; these have
+  // exact counterparts the surface already knows how to explain.
+  not_found: "not_found",
+  not_waiting: "not_waiting",
+  not_claimed: "not_claimed",
+  already_invited: "already_invited",
+  // A bug on this side of the wire.
+  invalid_input: "invalid_input",
+  invalid_ttl: "invalid_ttl",
+  // THE COMPOSER CAN FIX THESE. What the practitioner expressed — the service,
+  // the booking window, the allowed days — could not be honoured, which is
+  // exactly what `scope_not_supported` exists to say.
+  invalid_service: "scope_not_supported",
+  invalid_scope_dates: "scope_not_supported",
+  invalid_weekdays: "scope_not_supported",
+  // Capacity and consent. See the note above: detail is lost here on purpose.
+  no_round_open: "unavailable",
+  round_full: "unavailable",
+  already_declined_offer: "unavailable",
+};
+
+/**
+ * Turn one raw server row into an outcome, failing closed on anything this
+ * contract does not recognise.
+ *
+ * `result` is typed `string` ON PURPOSE: it arrives over the wire from
+ * PostgREST, so the compiler has no say in what actually shows up, and a
+ * function that accepted only the union would be describing a guarantee nobody
+ * enforces at runtime. Everything unrecognised — a new server code, a null, a
+ * number, a success with no expiry stamp — becomes a refusal.
+ *
+ * A SUCCESS IS NEVER SYNTHESISED. `admitted` without a usable `expires_at` is
+ * malformed rather than successful: 0190's correction was that the window
+ * belongs to the issuing instant, so a surface that invented one would be
+ * showing a deadline the database never agreed to.
+ */
+export function admitResultToOutcome(
+  result: unknown,
+  expiresAt: unknown,
+): InvitationOutcome {
+  if (typeof result !== "string") return { ok: false, code: "unavailable" };
+
+  if (result === ADMIT_SERVER_SUCCESS) {
+    return typeof expiresAt === "string" && expiresAt.trim() !== ""
+      ? { ok: true, expiresAt }
+      : { ok: false, code: "unavailable" };
+  }
+
+  // `Object.prototype.hasOwnProperty` rather than a truthiness check, so a
+  // result spelled `constructor` or `toString` cannot reach an inherited value.
+  return Object.prototype.hasOwnProperty.call(ADMIT_REFUSAL_PRESENTATION, result)
+    ? { ok: false, code: ADMIT_REFUSAL_PRESENTATION[result as AdmitServerRefusal] }
+    : { ok: false, code: "unavailable" };
+}
+
 // --- 3. THE ADAPTER ----------------------------------------------------------
 
 /**

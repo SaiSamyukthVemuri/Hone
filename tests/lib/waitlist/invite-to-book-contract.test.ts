@@ -4,10 +4,14 @@ import { join } from "node:path";
 
 import { WAITLIST_ENTRY_STATUSES } from "@/lib/waitlist/admission-model";
 import {
+  ADMIT_REFUSAL_PRESENTATION,
+  ADMIT_SERVER_REFUSALS,
+  ADMIT_SERVER_SUCCESS,
   INVITE_TO_BOOK_FAILURES,
   NO_ADAPTER_BOUND,
   RESEND_MINTS_A_NEW_LINK,
   adapterMissingReason,
+  admitResultToOutcome,
   type InviteToBookFailure,
 } from "@/lib/waitlist/invite-to-book-contract";
 
@@ -274,5 +278,155 @@ describe("nothing here can be mistaken for a working adapter", () => {
       INVITE_TO_BOOK_FAILURES.map((c) => [c, true]),
     ) as Record<InviteToBookFailure, true>;
     expect(Object.keys(exhaustive).sort()).toEqual([...INVITE_TO_BOOK_FAILURES].sort());
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe("the admission command's result vocabulary is carried in full", () => {
+  // INDEPENDENT ORACLE. Read by hand out of WAIT-ADMIT-01's
+  // `0193_waitlist_admission_authority.sql` at exact head
+  // `519cfe6cf7e3281d4c445a35f34653c10b054100`, plus the two callees whose
+  // refusals it re-emits. It is deliberately NOT derived from
+  // ADMIT_SERVER_REFUSALS: a list compared against itself proves only that it
+  // equals itself, and this suite has already been taught that lesson once.
+  //
+  // 0193 is not on this branch, so `resultCodes()` above cannot reach it. That
+  // is a stated bound, not an oversight — and it is why the oracle carries the
+  // SHA it was read at.
+  const EXPECTED_ADMIT_RESULTS = {
+    success: "admitted",
+    // returned directly by admit_new_client_waitlist_entry
+    own: ["unknown_studio", "not_found", "not_admissible"],
+    // raised as WA001 out of claim_new_client_waitlist_entry (0189) and
+    // re-emitted by admit's own exception handler as SQLERRM
+    fromClaim: ["invalid_input", "not_found", "not_waiting"],
+    // the same channel, out of issue_scoped_new_client_waitlist_invitation
+    fromIssueScoped: [
+      "already_declined_offer",
+      "invalid_scope_dates",
+      "invalid_service",
+      "invalid_weekdays",
+      "no_round_open",
+      "round_full",
+      "unknown_studio",
+    ],
+    // which 0192 in turn passes through from issue_new_client_waitlist_invitation
+    fromIssueScopedPassthrough: [
+      "already_invited",
+      "invalid_input",
+      "invalid_ttl",
+      "not_claimed",
+      "not_found",
+    ],
+  } as const;
+
+  const expectedRefusals = [
+    ...new Set<string>([
+      ...EXPECTED_ADMIT_RESULTS.own,
+      ...EXPECTED_ADMIT_RESULTS.fromClaim,
+      ...EXPECTED_ADMIT_RESULTS.fromIssueScoped,
+      ...EXPECTED_ADMIT_RESULTS.fromIssueScopedPassthrough,
+    ]),
+  ].sort();
+
+  it("represents every result the command can return", () => {
+    // Non-vacuity: the union must be genuinely larger than the command's own
+    // literals, or the derivation collapsed back to reading `return query`.
+    expect(expectedRefusals.length).toBe(14);
+    expect(EXPECTED_ADMIT_RESULTS.own.length).toBeLessThan(expectedRefusals.length);
+
+    expect(ADMIT_SERVER_SUCCESS).toBe(EXPECTED_ADMIT_RESULTS.success);
+    expect(
+      [...ADMIT_SERVER_REFUSALS].sort(),
+      "a result admit_new_client_waitlist_entry can return is not represented",
+    ).toEqual(expectedRefusals);
+
+    // The two the integration finding named, pinned individually so a rename
+    // cannot quietly drop them into a larger diff.
+    expect(ADMIT_SERVER_REFUSALS).toContain("unknown_studio");
+    expect(ADMIT_SERVER_REFUSALS).toContain("not_admissible");
+  });
+
+  it("gives every server result a presentation, and none of them success", () => {
+    expect(Object.keys(ADMIT_REFUSAL_PRESENTATION).sort()).toEqual(expectedRefusals);
+
+    for (const refusal of ADMIT_SERVER_REFUSALS) {
+      const shown = ADMIT_REFUSAL_PRESENTATION[refusal];
+      // Presentation may normalise, but only ever onto a code the practitioner
+      // surface already knows — never an invented string.
+      expect(
+        INVITE_TO_BOOK_FAILURES as ReadonlyArray<string>,
+        `${refusal} maps to a code outside the contract`,
+      ).toContain(shown);
+
+      const outcome = admitResultToOutcome(refusal, "2026-09-12T10:00:00.000Z");
+      expect(outcome.ok, `${refusal} must never read as success`).toBe(false);
+    }
+  });
+
+  it("normalises the two unactionable refusals to `unavailable`", () => {
+    // Neither has a composer edit or a retry that changes the answer, so the
+    // practitioner is told the send is unavailable rather than shown a database
+    // reason they cannot act on.
+    expect(ADMIT_REFUSAL_PRESENTATION.unknown_studio).toBe("unavailable");
+    expect(ADMIT_REFUSAL_PRESENTATION.not_admissible).toBe("unavailable");
+
+    expect(admitResultToOutcome("unknown_studio", null)).toEqual({
+      ok: false,
+      code: "unavailable",
+    });
+    expect(admitResultToOutcome("not_admissible", null)).toEqual({
+      ok: false,
+      code: "unavailable",
+    });
+  });
+
+  it("keeps the refusals the composer CAN fix distinguishable", () => {
+    // Normalising these to `unavailable` would tell a practitioner to retry a
+    // send that will refuse identically every time. The scope they expressed is
+    // the thing to change, and the contract already has a word for that.
+    for (const scoped of ["invalid_service", "invalid_scope_dates", "invalid_weekdays"] as const) {
+      expect(ADMIT_REFUSAL_PRESENTATION[scoped]).toBe("scope_not_supported");
+    }
+    // And the ones with exact counterparts keep them rather than collapsing.
+    expect(ADMIT_REFUSAL_PRESENTATION.not_found).toBe("not_found");
+    expect(ADMIT_REFUSAL_PRESENTATION.already_invited).toBe("already_invited");
+  });
+
+  it("fails closed on anything it does not recognise", () => {
+    // A server result added without updating this contract.
+    expect(admitResultToOutcome("newly_invented_refusal", null)).toEqual({
+      ok: false,
+      code: "unavailable",
+    });
+    // Malformed runtime values. None of these may produce a success.
+    for (const junk of [null, undefined, 42, {}, [], true, ""]) {
+      const outcome = admitResultToOutcome(junk, "2026-09-12T10:00:00.000Z");
+      expect(outcome.ok, `${String(junk)} must not read as success`).toBe(false);
+      expect(outcome).toEqual({ ok: false, code: "unavailable" });
+    }
+    // Inherited property names must not resolve through the prototype chain.
+    for (const inherited of ["constructor", "toString", "__proto__"]) {
+      expect(admitResultToOutcome(inherited, null)).toEqual({
+        ok: false,
+        code: "unavailable",
+      });
+    }
+  });
+
+  it("never synthesises an expiry for a success it cannot date", () => {
+    expect(admitResultToOutcome("admitted", "2026-09-12T10:00:00.000Z")).toEqual({
+      ok: true,
+      expiresAt: "2026-09-12T10:00:00.000Z",
+    });
+    // 0190's correction: the window belongs to the issuing instant, which only
+    // the database observes. An undated success is malformed, not successful.
+    for (const missing of [null, undefined, "", "   ", 0]) {
+      expect(admitResultToOutcome("admitted", missing)).toEqual({
+        ok: false,
+        code: "unavailable",
+      });
+    }
   });
 });
