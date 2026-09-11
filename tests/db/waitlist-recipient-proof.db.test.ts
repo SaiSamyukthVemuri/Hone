@@ -671,18 +671,14 @@ describe("0192 — revoke, reissue and replacement invalidate outstanding proof"
 
   it("an EXPIRED invitation refuses proof entirely", async () => {
     const offer = await seedOffer("inv-expired");
-    await adminQuery(
-      `alter table public.new_client_waitlist_invitations disable trigger new_client_waitlist_invitations_append_only`,
-    );
-    await adminQuery(
-      `update public.new_client_waitlist_invitations
-          set issued_at = now() - interval '4 days', expires_at = now() - interval '1 minute'
-        where id = $1`,
-      [offer.invitationId],
-    );
-    await adminQuery(
-      `alter table public.new_client_waitlist_invitations enable trigger new_client_waitlist_invitations_append_only`,
-    );
+    await withInvitationWindowMutable(async () => {
+      await adminQuery(
+        `update public.new_client_waitlist_invitations
+            set issued_at = now() - interval '4 days', expires_at = now() - interval '1 minute'
+          where id = $1`,
+        [offer.invitationId],
+      );
+    });
     expect((await beginProof(offer.token)).result).toBe("not_live");
   });
 });
@@ -1112,18 +1108,14 @@ describe("0192 — recipient identity is released only to a proven recipient", (
 
   it("EXPIRED INVITATION: a lapsed wall clock yields no identity", async () => {
     const offer = await verifiedOffer("ident-invexp");
-    await adminQuery(
-      `alter table public.new_client_waitlist_invitations disable trigger new_client_waitlist_invitations_append_only`,
-    );
-    await adminQuery(
-      `update public.new_client_waitlist_invitations
-          set issued_at = now() - interval '4 days', expires_at = now() - interval '1 minute'
-        where id = $1`,
-      [offer.invitationId],
-    );
-    await adminQuery(
-      `alter table public.new_client_waitlist_invitations enable trigger new_client_waitlist_invitations_append_only`,
-    );
+    await withInvitationWindowMutable(async () => {
+      await adminQuery(
+        `update public.new_client_waitlist_invitations
+            set issued_at = now() - interval '4 days', expires_at = now() - interval '1 minute'
+          where id = $1`,
+        [offer.invitationId],
+      );
+    });
     const r = await resolveIdentity(offer.token, offer.capability);
     expectNoIdentity(r, "an expired invitation");
     expect(r.result).toBe("not_live");
@@ -1901,10 +1893,20 @@ describe("0192 — begin_ returns the authoritative mint instant", () => {
  * clocks can be reconciled.
  *
  * A test cannot wait fifty-eight minutes, so the fixture moves the stored
- * expiry to simulate elapsed time. The same disable/enable dance the expired-
- * invitation tests above already use, and the guard is restored in `finally`
- * so a failing assertion cannot leave the table unprotected for later files.
- * `fileParallelism: false` keeps the window from overlapping another suite.
+ * expiry to simulate elapsed time.
+ *
+ * THE `finally` IS THE WHOLE POINT, AND IT IS WHY EVERY CALLER GOES THROUGH
+ * HERE. A raw disable/mutate/enable sequence restores nothing if the mutation
+ * throws, an assertion fails between the two statements, or the connection
+ * drops — and what it leaves behind is not a failed test but a DATABASE WITH
+ * APPEND-ONLY ENFORCEMENT SWITCHED OFF. Every later test in the run then
+ * silently exercises a weaker table than the one that ships, so the next
+ * failure is somewhere else entirely and looks nothing like this one.
+ * `alter table` is not transactional here either: a rolled-back transaction
+ * does not put the trigger back.
+ *
+ * `fileParallelism: false` keeps the window from overlapping another suite, so
+ * the only exposure that ever mattered was an unrestored one.
  */
 async function withInvitationWindowMutable<T>(fn: () => Promise<T>): Promise<T> {
   await adminQuery(
@@ -2515,21 +2517,15 @@ describe("0192 §14b — a declined row is closed to expire, release and convers
     // B's window is open, so the truthful answer is `not_expired` -- and it must
     // be reached by reading B. A's window is aged past, so a command that
     // adjudicated A would answer differently.
-    await adminQuery(
-      `alter table public.new_client_waitlist_invitations
-         disable trigger new_client_waitlist_invitations_append_only`,
-    );
-    await adminQuery(
-      `update public.new_client_waitlist_invitations
-          set issued_at = clock_timestamp() - interval '96 hours',
-              expires_at = clock_timestamp() - interval '24 hours'
-        where id = $1`,
-      [f.A],
-    );
-    await adminQuery(
-      `alter table public.new_client_waitlist_invitations
-         enable trigger new_client_waitlist_invitations_append_only`,
-    );
+    await withInvitationWindowMutable(async () => {
+      await adminQuery(
+        `update public.new_client_waitlist_invitations
+            set issued_at = clock_timestamp() - interval '96 hours',
+                expires_at = clock_timestamp() - interval '24 hours'
+          where id = $1`,
+        [f.A],
+      );
+    });
 
     const open = await adminQuery(
       `select public.expire_new_client_waitlist_invitation($1,$2,$3) r`,
@@ -2539,21 +2535,15 @@ describe("0192 §14b — a declined row is closed to expire, release and convers
     expect(await termsOf(f.A)).toMatchObject({ d: true, exp: false });
 
     // Now age B itself. Expiry must land on B.
-    await adminQuery(
-      `alter table public.new_client_waitlist_invitations
-         disable trigger new_client_waitlist_invitations_append_only`,
-    );
-    await adminQuery(
-      `update public.new_client_waitlist_invitations
-          set issued_at = clock_timestamp() - interval '96 hours',
-              expires_at = clock_timestamp() - interval '1 minute'
-        where id = $1`,
-      [f.B],
-    );
-    await adminQuery(
-      `alter table public.new_client_waitlist_invitations
-         enable trigger new_client_waitlist_invitations_append_only`,
-    );
+    await withInvitationWindowMutable(async () => {
+      await adminQuery(
+        `update public.new_client_waitlist_invitations
+            set issued_at = clock_timestamp() - interval '96 hours',
+                expires_at = clock_timestamp() - interval '1 minute'
+          where id = $1`,
+        [f.B],
+      );
+    });
 
     const done = await adminQuery(
       `select public.expire_new_client_waitlist_invitation($1,$2,$3) r`,
@@ -2617,21 +2607,15 @@ describe("0192 §14b — a declined row is closed to expire, release and convers
       "a live window still refuses",
     ).toBe("not_expired");
 
-    await adminQuery(
-      `alter table public.new_client_waitlist_invitations
-         disable trigger new_client_waitlist_invitations_append_only`,
-    );
-    await adminQuery(
-      `update public.new_client_waitlist_invitations
-          set issued_at = clock_timestamp() - interval '96 hours',
-              expires_at = clock_timestamp() - interval '1 minute'
-        where id = $1`,
-      [o.invitationId],
-    );
-    await adminQuery(
-      `alter table public.new_client_waitlist_invitations
-         enable trigger new_client_waitlist_invitations_append_only`,
-    );
+    await withInvitationWindowMutable(async () => {
+      await adminQuery(
+        `update public.new_client_waitlist_invitations
+            set issued_at = clock_timestamp() - interval '96 hours',
+                expires_at = clock_timestamp() - interval '1 minute'
+          where id = $1`,
+        [o.invitationId],
+      );
+    });
     expect(
       (
         await adminQuery(`select public.expire_new_client_waitlist_invitation($1,$2,$3) r`, [
@@ -3005,21 +2989,15 @@ describe("0192 §14d — admission rounds are durable, and the quota is per roun
         f.studio.studioId, a.entryId, f.studio.userId,
       ]);
     } else {
-      await adminQuery(
-        `alter table public.new_client_waitlist_invitations
-           disable trigger new_client_waitlist_invitations_append_only`,
-      );
-      await adminQuery(
-        `update public.new_client_waitlist_invitations
-            set issued_at = clock_timestamp() - interval '96 hours',
-                expires_at = clock_timestamp() - interval '1 minute'
-          where id = $1`,
-        [a.invitationId],
-      );
-      await adminQuery(
-        `alter table public.new_client_waitlist_invitations
-           enable trigger new_client_waitlist_invitations_append_only`,
-      );
+      await withInvitationWindowMutable(async () => {
+        await adminQuery(
+          `update public.new_client_waitlist_invitations
+              set issued_at = clock_timestamp() - interval '96 hours',
+                  expires_at = clock_timestamp() - interval '1 minute'
+            where id = $1`,
+          [a.invitationId],
+        );
+      });
     }
     expect(await roundConsumed(f.roundId), "the seat returns to the round").toBe(0);
   });
@@ -3146,21 +3124,15 @@ describe("0192 §14d — admission rounds are durable, and the quota is per roun
     expect(await f.redeem(a.token!)).toBe("redeemed");
     expect(await roundConsumed(f.roundId)).toBe(1);
 
-    await adminQuery(
-      `alter table public.new_client_waitlist_invitations
-         disable trigger new_client_waitlist_invitations_append_only`,
-    );
-    await adminQuery(
-      `update public.new_client_waitlist_invitations
-          set issued_at = clock_timestamp() - interval '96 hours',
-              expires_at = clock_timestamp() - interval '1 minute'
-        where id = $1`,
-      [a.invitationId],
-    );
-    await adminQuery(
-      `alter table public.new_client_waitlist_invitations
-         enable trigger new_client_waitlist_invitations_append_only`,
-    );
+    await withInvitationWindowMutable(async () => {
+      await adminQuery(
+        `update public.new_client_waitlist_invitations
+            set issued_at = clock_timestamp() - interval '96 hours',
+                expires_at = clock_timestamp() - interval '1 minute'
+          where id = $1`,
+        [a.invitationId],
+      );
+    });
 
     expect(
       await roundConsumed(f.roundId),
@@ -3256,19 +3228,13 @@ describe("0192 §14d — admission rounds are durable, and the quota is per roun
 
 /** Bring an invitation's expiry to a controlled instant. Test authority only. */
 async function setInvitationExpiresIn(invitationId: string, interval: string) {
-  await adminQuery(
-    `alter table public.new_client_waitlist_invitations
-       disable trigger new_client_waitlist_invitations_append_only`,
-  );
-  await adminQuery(
-    `update public.new_client_waitlist_invitations
-        set expires_at = clock_timestamp() + $2::interval where id = $1`,
-    [invitationId, interval],
-  );
-  await adminQuery(
-    `alter table public.new_client_waitlist_invitations
-       enable trigger new_client_waitlist_invitations_append_only`,
-  );
+  await withInvitationWindowMutable(async () => {
+    await adminQuery(
+      `update public.new_client_waitlist_invitations
+          set expires_at = clock_timestamp() + $2::interval where id = $1`,
+      [invitationId, interval],
+    );
+  });
 }
 
 /** Is `pid` parked on a lock? Polls rather than sleeping a fixed time. */
@@ -3310,6 +3276,103 @@ const issueOn = (client: Client, f: { studio: SeededStudio; serviceId: string },
               $1,$2,$3,$4, current_date, current_date + 13, null, 72)`,
     [f.studio.studioId, entryId, f.studio.userId, f.serviceId],
   );
+
+describe("0192 — the append-only fixture restores enforcement on every exit", () => {
+  // THE CONTAMINATION HAZARD THIS CLOSES. Several fixtures must age an
+  // invitation to simulate elapsed time, which means lifting 0188's append-only
+  // guard. Nine of them did it inline: disable, mutate, enable. If the mutation
+  // threw — a bad interval, a constraint, a dropped connection — the enable
+  // never ran, and `alter table` is not undone by a rollback. The suite would
+  // then keep running against a table with enforcement switched off, and the
+  // next failure would appear somewhere unrelated.
+  //
+  // Every site now goes through `withInvitationWindowMutable`, whose `finally`
+  // restores the guard on every exit. These tests prove that claim rather than
+  // trusting the keyword.
+
+  const enforcementIsLive = async (invitationId: string): Promise<boolean> => {
+    // BEHAVIOURAL, not metadata. `pg_trigger.tgenabled` would tell us what the
+    // catalog says; this asks the table whether it still refuses a forbidden
+    // write, which is the property the fixture can actually damage.
+    try {
+      await adminQuery(
+        `update public.new_client_waitlist_invitations
+            set expires_at = expires_at + interval '1 hour' where id = $1`,
+        [invitationId],
+      );
+      return false;
+    } catch {
+      return true;
+    }
+  };
+
+  it("a THROWING mutation still restores append-only enforcement", async () => {
+    const offer = await seedOffer("fixture-throw");
+    expect(await enforcementIsLive(offer.invitationId), "enforced before").toBe(true);
+
+    await expect(
+      withInvitationWindowMutable(async () => {
+        // A deliberately invalid mutation: expires_at must stay after issued_at,
+        // so 0188's ttl CHECK rejects this from inside the mutable window.
+        await adminQuery(
+          `update public.new_client_waitlist_invitations
+              set expires_at = issued_at - interval '1 hour' where id = $1`,
+          [offer.invitationId],
+        );
+      }),
+    ).rejects.toThrow();
+
+    expect(
+      await enforcementIsLive(offer.invitationId),
+      "the guard must be back even though the callback threw",
+    ).toBe(true);
+  });
+
+  it("a THROWING ASSERTION inside the window restores it too", async () => {
+    const offer = await seedOffer("fixture-assert");
+    await expect(
+      withInvitationWindowMutable(async () => {
+        await adminQuery(
+          `update public.new_client_waitlist_invitations
+              set expires_at = clock_timestamp() + interval '1 hour' where id = $1`,
+          [offer.invitationId],
+        );
+        expect(1, "a deliberate in-window failure").toBe(2);
+      }),
+    ).rejects.toThrow();
+
+    expect(
+      await enforcementIsLive(offer.invitationId),
+      "an assertion failure must not leave the table unprotected",
+    ).toBe(true);
+  });
+
+  it("NON-VACUITY: the probe can actually tell enforced from unenforced", async () => {
+    // If `enforcementIsLive` returned true unconditionally, both tests above
+    // would pass against a permanently disabled trigger. Inside the window the
+    // forbidden write must SUCCEED — and the guard must be back afterwards.
+    const offer = await seedOffer("fixture-probe");
+    let insideWindow: boolean | null = null;
+    await withInvitationWindowMutable(async () => {
+      insideWindow = await enforcementIsLive(offer.invitationId);
+    });
+    expect(insideWindow, "the probe must observe the window as OPEN").toBe(false);
+    expect(await enforcementIsLive(offer.invitationId), "and closed after").toBe(true);
+  });
+
+  it("LATER TESTS DO NOT INHERIT A WEAKENED DATABASE", async () => {
+    // The end state every other test in this file depends on: an immutable
+    // field is refused by its real message, not merely by a catalog flag.
+    const offer = await seedOffer("fixture-inherit");
+    await expect(
+      adminQuery(
+        `update public.new_client_waitlist_invitations
+            set expires_at = expires_at + interval '1 hour' where id = $1`,
+        [offer.invitationId],
+      ),
+    ).rejects.toThrow(/identity, tenancy, token and validity window are immutable/);
+  });
+});
 
 describe("0192 — verified redemption serialises with same-round issuance", () => {
   it("THE EXPIRY BOUNDARY: an issuer cannot count zero while a redemption is in flight", async () => {
@@ -3515,18 +3578,12 @@ describe("0192 — verified redemption serialises with same-round issuance", () 
     // 0188..0191 invitations predate durable rounds. They consume no round's
     // allowance, so there is nothing to serialise — and no round is invented.
     const f = await raceFixture("legacy");
-    await adminQuery(
-      `alter table public.new_client_waitlist_invitations
-         disable trigger new_client_waitlist_invitations_append_only`,
-    );
-    await adminQuery(
-      `update public.new_client_waitlist_invitations set admission_round_id = null where id = $1`,
-      [f.a.invitationId],
-    );
-    await adminQuery(
-      `alter table public.new_client_waitlist_invitations
-         enable trigger new_client_waitlist_invitations_append_only`,
-    );
+    await withInvitationWindowMutable(async () => {
+      await adminQuery(
+        `update public.new_client_waitlist_invitations set admission_round_id = null where id = $1`,
+        [f.a.invitationId],
+      );
+    });
     expect(await roundConsumed(f.roundId), "an unrounded row consumes no round").toBe(0);
 
     // Hold the round; a legacy redemption must NOT wait on it.
