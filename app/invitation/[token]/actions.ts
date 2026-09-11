@@ -49,13 +49,20 @@ import { isBookableByNewClient } from "@/lib/booking/consultation";
 import { fetchPublicSlotsForDates } from "@/lib/booking/public-slot-range";
 import { horizonRangeInStudioTz } from "@/lib/booking/horizon";
 import { localDateString, localTimeString12h, utcInstantFromLocal } from "@/lib/booking/tz";
-import { limitPublicSlots, RATE_LIMIT_MESSAGE } from "@/lib/rate-limit/public";
+import {
+  limitPublicSlots,
+  limitWaitlistProofRequest,
+  RATE_LIMIT_MESSAGE,
+} from "@/lib/rate-limit/public";
 // WAIT INTEGRATION-01 — the proof-delivery binding.
 //
-// Pinned from WAIT DELIVERY-01 (#680) at exactly
-// c8ea9e5d1ab711a13f60aa7d09383ae5a5709da4. That seam's dependency closure
-// (send.ts, ./policy, ./log-safety, send-refusals, both templates,
-// new-client-waitlist-send) is vendored VERBATIM at that SHA.
+// WAIT DELIVERY-01 (#680) is MERGED into this candidate at
+// e9e5fa63b7ca6a4e79f244d0548e2573811b51a6, not vendored. An earlier rebuild
+// hand-copied seven of its files because #680 and the #686 chain then overlapped
+// on nine, which made a branch merge unsafe. That overlap is now ZERO, so the
+// merge is both simpler and safer: it carries #680's own tests, and it cannot go
+// stale against the head it came from — which hand-vendoring silently did, and
+// which is exactly how the proof-request limiter below went missing.
 //
 // NOTHING HERE REIMPLEMENTS DELIVERY, and this branch is not its authority:
 // #680 remains the owner. The BINDING below is the only new code, because it is
@@ -783,6 +790,41 @@ export async function requestInvitationProofAction(
   }
   const ctx = await loadContext(rawToken);
   if (!ctx.ok) return ctx.state;
+
+  // WAIT INTEGRATION-01 — THE DELIVERY POLICY'S OWN LIMITS, ENFORCED.
+  //
+  // The gate above is the cheap pre-resolve IP throttle every public surface
+  // runs; it bounds unresolvable tokens and knows nothing about this flow. It is
+  // NOT the proof-request policy. #680 states that policy in
+  // `PROOF_REQUEST_LIMITS` (3 per invitation / 15m, 10 per IP-and-studio / 1h)
+  // and ships `limitWaitlistProofRequest` to enforce it — with ZERO callers,
+  // because the limiter lives on #680 and the only call site lives on #686, and
+  // the two are siblings off production. Neither branch can wire it; only an
+  // assembly can. Unwired, the exported "policy" was decorative and one link
+  // could be made to mail a real person without bound.
+  //
+  // IT RUNS HERE, AFTER RESOLVE AND BEFORE THE MINT. `invitationId` and
+  // `studioId` are server-resolved row ids that exist only once `loadContext`
+  // has run, and keying on the invitation id keeps the bearer token out of the
+  // key derivation entirely. Placing it before `beginRecipientProof` is the
+  // whole point: a refusal must cost no challenge, because minting one retires
+  // the previous code in the recipient's inbox.
+  //
+  // FAIL OPEN, by #680's own classified ruling: a limiter outage must not strand
+  // a prospect who has no other route to the code.
+  const proofGate = await limitWaitlistProofRequest({
+    headers: await headers(),
+    studioId: ctx.resolve.invitation.studioId,
+    invitationId: ctx.resolve.invitation.invitationId,
+  });
+  if (!proofGate.allowed) {
+    // The offer itself is intact and still resolves, so this returns the proof
+    // screen with the throttle message rather than a terminal state.
+    return offerState(rawToken, ctx.resolve, ctx.studio, {
+      kind: "unavailable",
+      retryable: true,
+    });
+  }
 
   const begun = await beginRecipientProof(rawToken);
 

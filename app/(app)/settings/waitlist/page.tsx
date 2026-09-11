@@ -379,7 +379,33 @@ export default async function WaitlistSettingsPage({
         .in("entry_id", invitedIds)
         .is("redeemed_at", null)
         .is("expired_at", null)
-        .is("released_at", null),
+        .is("released_at", null)
+        // WAIT INTEGRATION-01 — THE PREDICATE MUST BE THE INDEX'S PREDICATE.
+        //
+        // The comment above names `..._one_live_per_entry` as the authority for
+        // "which invitation is current", and that is right — but 0192 REDEFINED
+        // that index. It is now FOUR columns:
+        //
+        //   where redeemed_at is null and expired_at is null
+        //     and released_at is null and declined_at is null
+        //
+        // This read still asked 0188/0189's THREE. That is not a stylistic gap:
+        // 0192 added `declined_at` precisely so a declined invitation stops
+        // blocking its entry, so the database considers such a row CLOSED and
+        // frees the entry for a later offer — while this page went on counting
+        // it as live. The practitioner saw a phantom live invitation on a row
+        // that was in fact available, with Cancel/Record-expired decided from a
+        // dead cycle's clock.
+        //
+        // Neither component is wrong alone, which is why only an assembly finds
+        // it: the page is correct against a pre-0192 schema, and 0192 is correct
+        // on its own. Matching the index is the fix; no privilege changes and no
+        // second opinion about liveness.
+        //
+        // MIGRATION-FIRST: this column exists because 0192 is in this candidate.
+        // Deploying this read before hosted 0192 is applied would query a column
+        // production does not have. See the PR body's deployment boundary.
+        .is("declined_at", null),
       supabase
         .from("new_client_waitlist_invitations")
         .select("entry_id")

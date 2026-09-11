@@ -170,11 +170,21 @@ async function seedOffer(label: string, opts: OfferOpts = {}): Promise<Offer> {
   const consultation = opts.consultation ?? true;
   const phone = opts.phone === undefined ? "+15550000123" : opts.phone;
   const { studio, slug, serviceId } = await makeBookableStudio(label, consultation);
-  await adminQuery(
-    `insert into public.studio_waitlist_admission_rounds (studio_id, allowance)
-     values ($1, 10) on conflict (studio_id) do update set allowance = excluded.allowance`,
-    [studio.studioId],
+  // THROUGH 0193'S OWN COMMAND, not an insert.
+  //
+  // 0192 keyed this table on `studio_id`, one row per studio, so the fixture
+  // upserted it directly. 0193 made rounds a DURABLE LEDGER with an open/close
+  // lifecycle, server-owned stamps and a one-open-round rule, and the old
+  // `on conflict (studio_id)` no longer matches any constraint. Using the
+  // command means the fixture cannot drift from the authority again.
+  //
+  // ANTI-VACUITY: a fixture that silently failed to open a round would make
+  // every admission assertion pass for the wrong reason.
+  const round = await adminQuery(
+    `select * from public.open_new_client_waitlist_admission_round($1,$2,$3)`,
+    [studio.studioId, studio.userId, 10],
   );
+  expect(round.rows[0].result, "the fixture must actually open a round").toBe("opened");
   const email = `p-${label}-${studio.studioId.slice(0, 8)}@harness.local`;
   const name = `Prospect ${label}`;
   const joined = await adminQuery(
