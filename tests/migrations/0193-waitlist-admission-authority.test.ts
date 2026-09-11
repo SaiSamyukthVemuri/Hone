@@ -147,6 +147,80 @@ describe("the disproved privilege model is not reintroduced", () => {
     expect(CODE).toContain("and r.closed_at is null");
   });
 
+  it("returns BOTH stored instants, read from one invitation row", () => {
+    // #680's delivery path needs the mint time as well as the deadline, and
+    // treats issuedAt as "stored mint time, owned by the database". Returning
+    // only expires_at would force the caller to invent the other one.
+    const body = CODE.slice(
+      CODE.indexOf("create or replace function public.admit_new_client_waitlist_entry"),
+    );
+    const admit = body.slice(0, body.indexOf("\n$$;"));
+
+    expect(admit).toContain("issued_at      timestamptz,");
+    expect(admit).toContain("expires_at     timestamptz,");
+    // ONE ROW, ONE READ. Two separate selects could disagree; a single select
+    // makes the pair consistent by construction.
+    expect(admit).toMatch(
+      /select i\.issued_at, i\.expires_at into v_issued, v_expires\s*\n\s*from public\.new_client_waitlist_invitations i\s*\n\s*where i\.id = v_issue\.invitation_id;/,
+    );
+    expect(admit).toContain("v_issued, v_expires, v_email, v_name;");
+  });
+
+  it("NEVER reconstructs issued_at, from a clock or from the TTL", () => {
+    // THE NARROW PROHIBITION. A caller that derived issued_at as
+    // `expires_at - ttl`, or read its own clock, would become a SECOND
+    // timestamp authority over a row the database already owns -- and #680
+    // decides a send/idempotency window from it, so clock skew alone could
+    // change a delivery decision. 0192 mints; this command only carries the
+    // facts out.
+    //
+    // Scoped to THIS function's body, not the file: 0192's issuer legitimately
+    // does interval arithmetic, and a file-wide ban would forbid the correct
+    // code somewhere else.
+    const body = CODE.slice(
+      CODE.indexOf("create or replace function public.admit_new_client_waitlist_entry"),
+    );
+    const admit = body.slice(0, body.indexOf("\n$$;"));
+    // Comments discuss these by name, so the executable lines are isolated
+    // first. This is a line filter, not a SQL parser.
+    const executable = admit
+      .split("\n")
+      .filter((line) => !line.trim().startsWith("--"))
+      .join("\n");
+
+    expect(executable, "the admission command must not read a clock").not.toMatch(
+      /clock_timestamp\s*\(/,
+    );
+    expect(executable, "the admission command must not read a clock").not.toMatch(/\bnow\s*\(/);
+    expect(executable, "issued_at must not be derived from the TTL").not.toMatch(
+      /make_interval|interval\s*'/,
+    );
+    // p_ttl_hours may only be DECLARED and PASSED THROUGH to 0192's issuer --
+    // never used in arithmetic here.
+    const ttlUses = executable.match(/p_ttl_hours/g) ?? [];
+    expect(ttlUses.length, "p_ttl_hours is the declaration and the passthrough, nothing else").toBe(2);
+    expect(executable).toContain("p_allowed_weekdays, p_ttl_hours);");
+  });
+
+  it("drops the prior signature before changing its return type", () => {
+    // PostgreSQL cannot change a return type in place: a bare `create or
+    // replace` over an already-applied older shape aborts with 42P13 and takes
+    // the rest of the transaction with it. 0192 solves this the same way for
+    // begin_waitlist_invitation_proof. The ARGUMENT list is unchanged, so this
+    // drop still names the old function.
+    const drop = CODE.indexOf(
+      "drop function if exists public.admit_new_client_waitlist_entry(",
+    );
+    const create = CODE.indexOf(
+      "create or replace function public.admit_new_client_waitlist_entry(",
+    );
+    expect(drop, "the prior signature must be dropped").toBeGreaterThan(-1);
+    expect(drop, "the drop must precede the create").toBeLessThan(create);
+    expect(CODE.slice(drop, create)).toContain(
+      "uuid, uuid, uuid, uuid, date, date, smallint[], integer)",
+    );
+  });
+
   it("still delegates the no_round_open verdict to 0192", () => {
     // The lock is LOCK-ONLY on purpose: it takes no `found` check and returns
     // no code. `no_round_open` is the issuer's word, carried out through the

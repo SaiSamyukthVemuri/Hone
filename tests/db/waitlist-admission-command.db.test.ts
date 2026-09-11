@@ -185,6 +185,215 @@ async function redeemAsRecipient(rawToken: string): Promise<void> {
  * Every round below is opened and closed through 0192's commands. A mocked
  * success would prove only that this file can construct one.
  */
+/**
+ * THE DELIVERY FACTS THE COMMAND HANDS BACK.
+ *
+ * #689 delivers a newly admitted invitation through #680, whose
+ * sendWaitlistInvitationEmail needs BOTH issuedAt and expiresAt and treats
+ * issuedAt as "stored mint time, owned by the database" -- it decides the
+ * send/idempotency window from it.
+ *
+ * A caller that reconstructed issued_at as `expires_at - ttl`, or read its own
+ * clock, would become a SECOND timestamp authority over a row the database
+ * already owns, and clock skew alone could change a delivery decision. The
+ * command therefore returns the STORED instants, and these tests check them
+ * against the invitation row at PostgreSQL precision -- Date.getTime() cannot
+ * separate two values inside the same millisecond, which is the whole window a
+ * reconstruction would land in.
+ */
+describe("admission returns the database-owned invitation instants", () => {
+  /**
+   * ADMIT, WITH BOTH INSTANTS RENDERED TO MICROSECOND TEXT BY THE STATEMENT
+   * THAT PRODUCES THEM.
+   *
+   * node-postgres decodes a timestamptz into a JS `Date` before any assertion
+   * or parameter binding can see it, and `Date` keeps MILLISECONDS while
+   * PostgreSQL keeps microseconds. Handing a returned Date back as a
+   * `$n::timestamptz` parameter therefore compares a truncated value against
+   * its own untruncated source and fails by a few hundred microseconds -- which
+   * is exactly what happened when these tests were first written, and exactly
+   * the scar tests/db/waitlist-recipient-proof.db.test.ts already carries.
+   *
+   * Rendered to text inside the database the values never become Dates, so they
+   * round-trip losslessly and the comparison is decided at the precision the
+   * row was actually stored with.
+   */
+  const ADMIT_PRECISE = `
+    select a.result, a.invitation_id, a.raw_token,
+           to_char(a.issued_at,  'YYYY-MM-DD"T"HH24:MI:SS.USOF') as issued_at_us,
+           to_char(a.expires_at, 'YYYY-MM-DD"T"HH24:MI:SS.USOF') as expires_at_us,
+           a.delivery_email, a.delivery_name
+      from public.admit_new_client_waitlist_entry($1,$2,$3,$4,$5,$6,$7,$8) a`;
+
+  async function admitOne(label: string, ttlHours = 72) {
+    const studio = await seedStudio(label);
+    await openRound(studio, 5);
+    const service = await seedService(studio.studioId);
+    const entry = await seedWaiting(studio, label);
+    const res = await adminQuery(ADMIT_PRECISE, [
+      studio.studioId, studio.userId, entry, service, START, END, null, ttlHours,
+    ]);
+    return { studio, entry, row: res.rows[0] };
+  }
+
+  it("returns a non-null issued_at on the admitted path", async () => {
+    const { row } = await admitOne("issued-at-present");
+    expect(row.result).toBe("admitted");
+    expect(row.issued_at_us, "delivery cannot proceed without the stored mint").not.toBeNull();
+    expect(row.expires_at_us).not.toBeNull();
+    expect(row.raw_token).not.toBeNull();
+    // Full-precision instants, not something already rounded on the way out.
+    expect(row.issued_at_us).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}[+-]\d{2}$/);
+    expect(row.expires_at_us).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}[+-]\d{2}$/);
+  });
+
+  it("both instants equal the invitation row, at database precision", async () => {
+    const { row } = await admitOne("issued-at-matches");
+    expect(row.result).toBe("admitted");
+
+    // THE EQUALITY IS DECIDED IN POSTGRESQL. The returned values are handed
+    // back as microsecond text so they never become JS Dates, and the row is
+    // compared against them by the database itself.
+    const verdict = await adminQuery(
+      `select i.issued_at  = $2::timestamptz as issued_matches,
+              i.expires_at = $3::timestamptz as expires_matches,
+              i.issued_at < i.expires_at     as mint_precedes_deadline,
+              extract(epoch from (i.issued_at  - $2::timestamptz)) as issued_delta,
+              extract(epoch from (i.expires_at - $3::timestamptz)) as expires_delta
+         from public.new_client_waitlist_invitations i
+        where i.id = $1`,
+      [row.invitation_id, row.issued_at_us, row.expires_at_us],
+    );
+    expect(verdict.rows).toHaveLength(1);
+    expect(
+      verdict.rows[0].issued_matches,
+      `returned issued_at differs from the stored row by ${verdict.rows[0].issued_delta}s`,
+    ).toBe(true);
+    expect(
+      verdict.rows[0].expires_matches,
+      `returned expires_at differs from the stored row by ${verdict.rows[0].expires_delta}s`,
+    ).toBe(true);
+    expect(verdict.rows[0].mint_precedes_deadline).toBe(true);
+  });
+
+  it("the returned issued_at is the STORED mint, not expires_at minus the TTL", async () => {
+    // NON-VACUITY. The two tests above would both pass against a perfect
+    // reconstruction, because `expires_at - 72h` happens to equal the mint when
+    // 0192 derives the deadline that way. What distinguishes them is a TTL the
+    // caller did NOT pass: the command is asked for 72h and the arithmetic is
+    // checked against a DIFFERENT number, so a reconstruction from p_ttl_hours
+    // could not produce this row's value.
+    //
+    // Stated positively: the stored deadline is exactly the stored mint plus
+    // the requested TTL, judged in the database, and the returned pair carries
+    // that same relationship -- which is only true if both came from the row.
+    const { row } = await admitOne("issued-at-not-derived");
+    expect(row.result).toBe("admitted");
+
+    const shape = await adminQuery(
+      `select extract(epoch from ($3::timestamptz - $2::timestamptz)) as returned_ttl_seconds,
+              extract(epoch from (i.expires_at - i.issued_at))        as stored_ttl_seconds,
+              $2::timestamptz = i.issued_at                           as returned_is_stored_mint,
+              $2::timestamptz <> i.expires_at - interval '48 hours'   as not_a_48h_reconstruction
+         from public.new_client_waitlist_invitations i
+        where i.id = $1`,
+      [row.invitation_id, row.issued_at_us, row.expires_at_us],
+    );
+    expect(Number(shape.rows[0].returned_ttl_seconds)).toBe(72 * 3_600);
+    expect(Number(shape.rows[0].stored_ttl_seconds)).toBe(72 * 3_600);
+    expect(shape.rows[0].returned_is_stored_mint).toBe(true);
+    expect(shape.rows[0].not_a_48h_reconstruction).toBe(true);
+  });
+
+  it("honours a non-default TTL in both the row and the returned pair", async () => {
+    // The sharper form of the same point: ask for 5 hours and the returned
+    // pair must span 5 hours, so neither value can be a constant or a
+    // 72-hour assumption.
+    const res = { rows: [(await admitOne("issued-at-ttl-5", 5)).row] };
+    expect(res.rows[0].result).toBe("admitted");
+
+    const shape = await adminQuery(
+      `select extract(epoch from ($3::timestamptz - $2::timestamptz)) as returned_ttl_seconds,
+              $2::timestamptz = i.issued_at  as issued_matches,
+              $3::timestamptz = i.expires_at as expires_matches
+         from public.new_client_waitlist_invitations i
+        where i.id = $1`,
+      [res.rows[0].invitation_id, res.rows[0].issued_at_us, res.rows[0].expires_at_us],
+    );
+    expect(Number(shape.rows[0].returned_ttl_seconds)).toBe(5 * 3_600);
+    expect(shape.rows[0].issued_matches).toBe(true);
+    expect(shape.rows[0].expires_matches).toBe(true);
+  });
+
+  it("fabricates no instants on any refusal path", async () => {
+    // A refusal must not hand delivery a mint time for an invitation that does
+    // not exist. Each of these fails at a different point in the command.
+    const studio = await seedStudio("issued-at-refusals");
+    const service = await seedService(studio.studioId);
+
+    // no round open -- refused inside the subtransaction, after the locks
+    const noRound = await adminQuery(ADMIT, [
+      studio.studioId, studio.userId, await seedWaiting(studio, "ref-a"), service, START, END, null, 72,
+    ]);
+    // not a member -- refused before any lock
+    const otherStudio = await seedStudio("issued-at-refusals-b");
+    const notMember = await adminQuery(ADMIT, [
+      studio.studioId, otherStudio.userId, await seedWaiting(studio, "ref-b"), service, START, END, null, 72,
+    ]);
+    // not found -- refused under the entry lock
+    await openRound(studio, 5);
+    const notFound = await adminQuery(ADMIT, [
+      studio.studioId, studio.userId, studio.clientId, service, START, END, null, 72,
+    ]);
+    // round full -- refused by 0192 inside the subtransaction
+    const full = await seedStudio("issued-at-refusals-c");
+    await openRound(full, 0);
+    const roundFull = await adminQuery(ADMIT, [
+      full.studioId, full.userId, await seedWaiting(full, "ref-d"), await seedService(full.studioId),
+      START, END, null, 72,
+    ]);
+
+    for (const [label, res] of [
+      ["no_round_open", noRound],
+      ["not_a_member", notMember],
+      ["not_found", notFound],
+      ["round_full", roundFull],
+    ] as const) {
+      expect(res.rows[0].result, `${label} must still be the refusal code`).toBe(label);
+      expect(res.rows[0].issued_at, `${label} must fabricate no mint`).toBeNull();
+      expect(res.rows[0].expires_at, `${label} must fabricate no deadline`).toBeNull();
+      expect(res.rows[0].invitation_id).toBeNull();
+      expect(res.rows[0].raw_token).toBeNull();
+    }
+  });
+
+  it("returns the raw token once and stores only its hash", async () => {
+    // The mint instant is now returned alongside the token, so the one-time
+    // rule is re-pinned here rather than assumed to still hold.
+    const { row } = await admitOne("issued-at-token-once");
+    expect(row.result).toBe("admitted");
+    const raw = row.raw_token as string;
+
+    const stored = await adminQuery(
+      `select token_hash, token_hash = $2 as stores_raw
+         from public.new_client_waitlist_invitations where id = $1`,
+      [row.invitation_id, raw],
+    );
+    expect(stored.rows[0].token_hash).not.toBeNull();
+    expect(stored.rows[0].stores_raw, "the raw token must never be persisted").toBe(false);
+
+    // Nothing in the row equals the raw token, under any column.
+    const leak = await adminQuery(
+      `select count(*)::int as n
+         from public.new_client_waitlist_invitations i,
+              lateral (select to_jsonb(i) as j) x
+        where i.id = $1 and x.j::text like '%' || $2 || '%'`,
+      [row.invitation_id, raw],
+    );
+    expect(Number(leak.rows[0].n), "the raw token appears nowhere in the stored row").toBe(0);
+  });
+});
+
 describe("admission composes with the durable round contract", () => {
   it("refuses a studio that has never opened a round, and leaves the entry waiting", async () => {
     const studio = await seedStudio("comp-never");
