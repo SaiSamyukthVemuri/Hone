@@ -67,6 +67,18 @@ const ROOT = process.cwd();
 
 /** Every .ts/.tsx file under a directory, recursively. Node 20 has no
  *  `fs.globSync`, and this is the walk the repo's other dormancy proofs use. */
+/**
+ * The source extensions an application module in this repository can use.
+ *
+ * ONE LIST, and that is the whole point. The directory walker already accepted
+ * JavaScript; the special roots below were spelled `.ts` only. Two lists that
+ * must agree drifted the moment the second one was written, which is exactly
+ * the defect this constant removes.
+ */
+const APPLICATION_EXTENSIONS = ["ts", "tsx", "js", "jsx", "mjs", "cjs"] as const;
+
+const APPLICATION_FILE = new RegExp(`\\.(${APPLICATION_EXTENSIONS.join("|")})$`);
+
 function walk(dir: string): string[] {
   let entries: string[];
   try {
@@ -80,7 +92,7 @@ function walk(dir: string): string[] {
     if (statSync(join(ROOT, rel)).isDirectory()) {
       if (name === "node_modules" || name === ".next") continue;
       out.push(...walk(rel));
-    } else if (/\.(ts|tsx|js|jsx|mjs|cjs)$/.test(name)) {
+    } else if (APPLICATION_FILE.test(name)) {
       // JAVASCRIPT COUNTS. Next accepts `.js`/`.jsx` routes, and enumerating
       // only TypeScript meant a `.jsx` route could import a prototype entry
       // point while this assertion stayed green. There are none under `app/`
@@ -322,20 +334,45 @@ function resolveSpecifier(fromFile: string, spec: string): string | null {
  * The SHIPPED APPLICATION entry points — the roots of everything that runs in
  * production.
  *
- * `app/` is the router. The three root-level files are Next's own entry points
- * and ship with every request; they were missing, which meant an adapter or an
+ * `app/` is the router. The root-level special files are Next's own entry
+ * points and ship with every request; they were missing entirely, which meant an
  * import placed in `middleware.ts` was invisible to a guard whose whole job is
- * reachability.
+ * reachability — and then they were enumerated in TypeScript only, which left
+ * `middleware.js` invisible the same way.
  *
  * DELIBERATELY ABSENT: `e2e/`, `scripts/`, and the test tree. They are not
  * shipped, so a value constructed there cannot make the practitioner surface
  * live — see the note above the adapter guard.
  */
+const SPECIAL_ROOT_BASENAMES = [
+  "middleware",
+  "instrumentation",
+  "instrumentation-client",
+] as const;
+
+/**
+ * Every spelling a special root could have, whether or not it exists today.
+ *
+ * Pure and separately asserted, because "did we enumerate `middleware.js`?" is
+ * a question about this list rather than about the current tree — and the tree
+ * having only `.ts` files is precisely why the omission was invisible.
+ *
+ * The vocabulary is the walker's, so a root cannot be a kind of file the walk
+ * would refuse to follow. Being broader than Next strictly accepts for a given
+ * basename is deliberate: an extra candidate that does not exist costs one
+ * `statSync`, while a missing one is a silent hole in a reachability claim.
+ */
+function specialRootCandidates(): string[] {
+  return SPECIAL_ROOT_BASENAMES.flatMap((base) =>
+    APPLICATION_EXTENSIONS.map((ext) => `${base}.${ext}`),
+  );
+}
+
 function shippedApplicationRoots(): string[] {
   const roots = [...walk("app")];
-  for (const entry of ["middleware.ts", "instrumentation.ts", "instrumentation-client.ts"]) {
+  for (const rel of specialRootCandidates()) {
     try {
-      if (statSync(join(ROOT, entry)).isFile()) roots.push(entry);
+      if (statSync(join(ROOT, rel)).isFile()) roots.push(rel);
     } catch {
       // not present in this tree
     }
@@ -630,6 +667,37 @@ describe("this module is UNREACHABLE from the application", () => {
   // against vitest's 5s default and so passed alone and failed under
   // full-suite CPU contention. A ceiling that equals its target is not a
   // ceiling — the same lesson the CI budgets in CLAUDE.md record three times.
+  it("every special shipped root is enumerated in EVERY supported extension", () => {
+    // THE DEFECT THIS PINS. The directory walker accepted `.js` and said so in
+    // its own comment; the special roots added beside it were spelled `.ts`
+    // only. So `middleware.js` — a supported Next entry point that ships with
+    // every request — could import the practitioner surface while this suite
+    // stayed green. Same class the walker had already closed, reopened one
+    // function away, because the extension vocabulary was written down twice.
+    const candidates = specialRootCandidates();
+    expect(candidates).toContain("middleware.js");
+    expect(candidates).toContain("middleware.ts");
+    for (const base of SPECIAL_ROOT_BASENAMES) {
+      for (const ext of APPLICATION_EXTENSIONS) {
+        expect(candidates).toContain(`${base}.${ext}`);
+      }
+    }
+
+    // The vocabulary is shared with the walker rather than copied beside it, so
+    // a root can never be a kind of file the traversal would then refuse to
+    // follow. Deleting an extension from APPLICATION_EXTENSIONS fails here AND
+    // narrows the walk, which is the coupling that stops the two drifting.
+    for (const ext of APPLICATION_EXTENSIONS) {
+      expect(APPLICATION_FILE.test(`probe.${ext}`)).toBe(true);
+    }
+    expect(APPLICATION_FILE.test("probe.md")).toBe(false);
+
+    // Roots are SPECIAL FILES AND `app/` ONLY. A detached script or test does
+    // not become a shipped entry point merely by existing, or the guard would
+    // report work that cannot make anything live.
+    expect(candidates.some((c) => c.startsWith("scripts/") || c.startsWith("tests/"))).toBe(false);
+  });
+
   it("no prototype entry point is reachable from the SHIPPED APPLICATION, at ANY depth", { timeout: 30_000 }, () => {
     const reached = reachableFromApp();
 
