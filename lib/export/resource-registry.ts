@@ -1629,6 +1629,13 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "Append-only lifecycle provenance for waitlist entries, written by trigger on every status change since migration 0188. Studio-owned operational history - it is the only record of a claim/release cycle that issues no invitation - but it is an event log whose payload and export shape have not been reviewed, so it is tier 2 and decided deliberately rather than dumped.",
   },
+  studio_waitlist_admission_rounds: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    reason:
+      "One DURABLE ROW PER ADMISSION ROUND for the new-client waitlist, live since migration 0192 (WAIT-03B). PENDING rather than EXCLUDED because the allowance is the owner's OWN decision about how many people they will admit in a round - studio-owned intent, not a machine-derived projection - and these rows are now the only record of what the studio chose and when. THE SHAPE CHANGED AND SO DID THE STAKES: this was previously one mutable row per studio holding a single current number, which carried no history worth exporting. It is now an append-mostly ledger of rounds, each with its own identity, allowance, opening and closing instants and the practitioners who opened and closed it - so an export that dropped it would lose the studio's admission history outright, and one that emitted only the latest row would silently misrepresent it. Still tier 2 and still decided with new_client_waitlist_entries rather than dumped on its own. No security material and no provider identifier, so no field review is required; opened_by_practitioner_id and closed_by_practitioner_id are ordinary attribution of the kind new_client_waitlist_entries already carries. No export surface ships in WAIT-03B.",
+  },
   // -------------------------------------------------------------------------
   // STORAGE
   // -------------------------------------------------------------------------
