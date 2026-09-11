@@ -2791,3 +2791,230 @@ describe("the ranked claim does not deadlock against 0192's issuer", () => {
     }
   });
 });
+
+/**
+ * THE ROUND LOCK'S SCOPE, PROVED BY CONTENTION.
+ *
+ * The admission command pre-takes the round lock so the canonical order
+ * studios -> open round -> entry -> invitation is established before anything
+ * is claimed. What that statement LOCKS stopped being obvious when 0192 made
+ * rounds durable: `where r.studio_id = ...` named exactly one row while
+ * studio_id was the primary key, and now names every round the studio has ever
+ * had.
+ *
+ * NEITHER OF THESE CAN BE PROVED BY OUTCOME. Attribution comes from the
+ * issuer's own select, so an invitation lands in the open round whether or not
+ * this command's lock was scoped -- a test asserting admission_round_id would
+ * pass either way and prove nothing. Lock scope is only visible as CONTENTION,
+ * so these two tests hold a real lock on a second connection and watch whether
+ * admission parks on it.
+ */
+describe("the admission round lock names the open round and nothing else", () => {
+  async function connect(): Promise<{ client: Client; pid: number }> {
+    const client = new Client({ connectionString: resolveLocalDbUrl() });
+    await client.connect();
+    const pid = (await client.query(`select pg_backend_pid() as pid`)).rows[0].pid as number;
+    return { client, pid };
+  }
+
+  it("does not queue behind a lock held on a CLOSED round", async () => {
+    // The scope proof. R1 is closed history; an admission into R2 has no
+    // business waiting for it. Without the `closed_at is null` predicate the
+    // command takes FOR UPDATE on every row for the studio, so this admission
+    // parks on R1 and the statement_timeout below fires.
+    const studio = await seedStudio("roundscope-closed");
+    const r1 = await openRound(studio, 5);
+    await adminQuery(
+      `select public.close_new_client_waitlist_admission_round($1,$2)`,
+      [studio.studioId, studio.userId],
+    );
+    await openRound(studio, 5);
+
+    const service = await adminQuery(
+      `insert into public.services (studio_id, name, default_duration_minutes)
+       values ($1,'Svc',30) returning id`,
+      [studio.studioId],
+    );
+    const entry = await adminQuery(
+      `select * from public.create_practitioner_waitlist_entry($1,$2,'P',$3,null,null)`,
+      [studio.studioId, studio.userId, uniqueEmail("roundscope")],
+    );
+
+    const holder = await connect();
+    const admitter = await connect();
+    try {
+      // Hold a real FOR UPDATE on the CLOSED round only.
+      await holder.client.query("begin");
+      await holder.client.query(
+        `select 1 from public.studio_waitlist_admission_rounds where id = $1 for update`,
+        [r1],
+      );
+
+      // A short timeout turns "blocked" into a deterministic 57014 rather than
+      // a hang, so a regression fails fast instead of stalling the suite.
+      await admitter.client.query("begin");
+      await admitter.client.query("set local statement_timeout = '4s'");
+      const res = await admitter.client
+        .query(
+          `select * from public.admit_new_client_waitlist_entry($1,$2,$3,$4,$5,$6,$7,$8)`,
+          [
+            studio.studioId, studio.userId, entry.rows[0].entry_id,
+            service.rows[0].id, "2026-10-01", "2026-10-31", null, 72,
+          ],
+        )
+        .then((r) => ({ ok: true as const, v: r.rows[0].result as string }))
+        .catch((e: { code?: string }) => ({ ok: false as const, code: e.code }));
+
+      expect(
+        res.ok,
+        `admission waited on a CLOSED round (${!res.ok ? res.code : ""}; 57014 = lock wait timeout)`,
+      ).toBe(true);
+      expect(res.ok && res.v).toBe("admitted");
+      await admitter.client.query("commit");
+    } finally {
+      await holder.client.query("rollback").catch(() => undefined);
+      await admitter.client.query("rollback").catch(() => undefined);
+      await holder.client.end();
+      await admitter.client.end();
+    }
+  });
+
+  it("DOES queue behind a lock held on the OPEN round", async () => {
+    // The other half, and what stops the test above from passing vacuously: if
+    // admission never waited for any round, "it did not wait for the closed
+    // one" would be true of a command that took no round lock at all.
+    const studio = await seedStudio("roundscope-open");
+    const open = await openRound(studio, 5);
+
+    const service = await adminQuery(
+      `insert into public.services (studio_id, name, default_duration_minutes)
+       values ($1,'Svc',30) returning id`,
+      [studio.studioId],
+    );
+    const entry = await adminQuery(
+      `select * from public.create_practitioner_waitlist_entry($1,$2,'P',$3,null,null)`,
+      [studio.studioId, studio.userId, uniqueEmail("roundscope-open")],
+    );
+
+    const holder = await connect();
+    const admitter = await connect();
+    try {
+      await holder.client.query("begin");
+      await holder.client.query(
+        `select 1 from public.studio_waitlist_admission_rounds where id = $1 for update`,
+        [open],
+      );
+
+      const admitting = admitter.client
+        .query(
+          `select * from public.admit_new_client_waitlist_entry($1,$2,$3,$4,$5,$6,$7,$8)`,
+          [
+            studio.studioId, studio.userId, entry.rows[0].entry_id,
+            service.rows[0].id, "2026-10-01", "2026-10-31", null, 72,
+          ],
+        )
+        .then((r) => r.rows[0].result as string);
+
+      expect(
+        await waitUntilBlocked(admitter.pid),
+        "admission must park on the OPEN round's lock",
+      ).not.toBeNull();
+
+      await holder.client.query("rollback");
+      expect(await admitting).toBe("admitted");
+    } finally {
+      await holder.client.query("rollback").catch(() => undefined);
+      await holder.client.end();
+      await admitter.client.end();
+    }
+  });
+
+  it("serialises admission against verified redemption at the round boundary", async () => {
+    // ATOMIC ADMISSION vs VERIFIED REDEMPTION, competing for the last seat.
+    //
+    // Redemption is the moment a seat stops being "outstanding" and becomes
+    // "spent" -- the consumed count reads both, so the two paths are deciding
+    // against the same number. 0192 gives redemption the same round lock for
+    // exactly this reason. What this proves is that admission observes it: with
+    // one seat left, a redemption in flight must not let a second admission
+    // through on a stale count.
+    const studio = await seedStudio("roundrace");
+    await openRound(studio, 2);
+    const service = await adminQuery(
+      `insert into public.services (studio_id, name, default_duration_minutes)
+       values ($1,'Svc',30) returning id`,
+      [studio.studioId],
+    );
+    const mk = async (tag: string) => {
+      const e = await adminQuery(
+        `select * from public.create_practitioner_waitlist_entry($1,$2,'P',$3,null,null)`,
+        [studio.studioId, studio.userId, uniqueEmail(`roundrace-${tag}`)],
+      );
+      return e.rows[0].entry_id as string;
+    };
+
+    // Seat one: issued and still live.
+    const first = await adminQuery(
+      `select * from public.admit_new_client_waitlist_entry($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [
+        studio.studioId, studio.userId, await mk("a"), service.rows[0].id,
+        "2026-10-01", "2026-10-31", null, 72,
+      ],
+    );
+    expect(first.rows[0].result).toBe("admitted");
+
+    const begun = await adminQuery(
+      `select * from public.begin_waitlist_invitation_proof($1, 30)`,
+      [first.rows[0].raw_token],
+    );
+    const done = await adminQuery(
+      `select * from public.complete_waitlist_invitation_proof($1,$2)`,
+      [first.rows[0].raw_token, begun.rows[0].raw_challenge],
+    );
+    expect(done.rows[0].result).toBe("verified");
+
+    const secondEntry = await mk("b");
+    const redeemer = await connect();
+    const admitter = await connect();
+    try {
+      await redeemer.client.query("begin");
+      await redeemer.client.query(
+        `select * from public.redeem_new_client_waitlist_invitation_verified($1,$2)`,
+        [first.rows[0].raw_token, done.rows[0].raw_capability],
+      );
+
+      const admitting = admitter.client
+        .query(
+          `select * from public.admit_new_client_waitlist_entry($1,$2,$3,$4,$5,$6,$7,$8)`,
+          [
+            studio.studioId, studio.userId, secondEntry, service.rows[0].id,
+            "2026-10-01", "2026-10-31", null, 72,
+          ],
+        )
+        .then((r) => r.rows[0].result as string);
+
+      expect(
+        await waitUntilBlocked(admitter.pid),
+        "admission must serialise with an in-flight redemption on the same round",
+      ).not.toBeNull();
+
+      await redeemer.client.query("commit");
+
+      // Seat two was always available; the point is that it was decided AFTER
+      // the redemption settled rather than concurrently with it.
+      expect(await admitting).toBe("admitted");
+
+      const consumed = await adminQuery(
+        `select public.waitlist_admission_round_consumed(
+           (select id from public.studio_waitlist_admission_rounds
+             where studio_id = $1 and closed_at is null)) as n`,
+        [studio.studioId],
+      );
+      expect(consumed.rows[0].n, "one redeemed plus one live is two seats").toBe(2);
+    } finally {
+      await redeemer.client.query("rollback").catch(() => undefined);
+      await redeemer.client.end();
+      await admitter.client.end();
+    }
+  });
+});
