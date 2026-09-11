@@ -214,14 +214,32 @@ export type EntryOutcome = { ok: true } | { ok: false; code: InviteToBookFailure
 // --- 2b. THE SERVER VOCABULARY THIS CONTRACT MUST CARRY ----------------------
 
 /**
- * Every result `admit_new_client_waitlist_entry` can return.
+ * A SNAPSHOT of what `admit_new_client_waitlist_entry` could return at the head
+ * this component was reviewed against. NOT a live guarantee, and the difference
+ * matters enough to state twice.
  *
- * DERIVED MECHANICALLY, NOT ASSUMED. The command lives on WAIT-ADMIT-01
- * (migration `0193_waitlist_admission_authority.sql`, read at exact head
- * `519cfe6cf7e3281d4c445a35f34653c10b054100`), which is not on this branch, so
- * this list cannot be re-derived from the migrations in this tree the way the
- * shipped vocabulary is. It is therefore written out with the provenance of
- * every value, and the test beside it holds an independent copy.
+ * The command lives on WAIT-ADMIT-01 (migration
+ * `0193_waitlist_admission_authority.sql`), which is NOT AN ANCESTOR of this
+ * branch. Nothing in this repository, at this commit, can observe what that
+ * command returns today. A test here that claimed to derive the current
+ * vocabulary would be claiming to read a file it cannot open.
+ *
+ * SO THE OWNERSHIP SPLIT IS EXPLICIT:
+ *
+ *   THIS COMPONENT   pins the vocabulary it was reviewed against, types every
+ *                    value in it, normalises them to practitioner outcomes, and
+ *                    fails closed on anything outside the set.
+ *
+ *   THE INTEGRATION  re-proves completeness against the assembled authority.
+ *                    See `INTEGRATION_EXHAUSTIVENESS_OBLIGATION` below.
+ *
+ * What this snapshot buys is real but bounded: a reviewer can see exactly what
+ * was pinned and when, and a value outside it cannot reach the practitioner as
+ * a success. What it does NOT buy is any warning when 0193 changes.
+ *
+ * It was derived mechanically rather than assumed — the command's own literals
+ * plus the refusals it re-emits from its callees — and the test beside it holds
+ * an independent copy.
  *
  * THE SET IS A UNION, AND THAT IS THE WHOLE POINT. The command returns four
  * literals of its own, and then carries its callees' refusals out unchanged
@@ -236,6 +254,26 @@ export type EntryOutcome = { ok: true } | { ok: false; code: InviteToBookFailure
  * which trails off AND names two codes 0192 no longer emits directly. Prose was
  * not treated as the authority; each callee was read.
  */
+/**
+ * The exact WAIT-ADMIT-01 head the vocabulary below was read at, so a reviewer
+ * can diff against it rather than trust this file's prose.
+ */
+export const ADMIT_VOCABULARY_REVIEWED_AT =
+  "519cfe6cf7e3281d4c445a35f34653c10b054100";
+
+/**
+ * WHAT #689 MUST DO AT ASSEMBLY, because this component cannot.
+ *
+ * At assembly time, compare the ACTUAL #685 result vocabulary against
+ * `ADMIT_REFUSAL_PRESENTATION`; any current result with no explicit disposition
+ * is RED. That check is load-bearing and this one is not: only the assembled
+ * candidate has both branches in the same tree, so only it can tell whether the
+ * snapshot below has gone stale.
+ */
+export const INTEGRATION_EXHAUSTIVENESS_OBLIGATION =
+  "At assembly time, compare the actual #685 result vocabulary against the " +
+  "adapter disposition table; any unmapped current result is RED.";
+
 export const ADMIT_SERVER_SUCCESS = "admitted" as const;
 
 export const ADMIT_SERVER_REFUSALS = [

@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { WAITLIST_ENTRY_STATUSES } from "@/lib/waitlist/admission-model";
 import {
   ADMIT_REFUSAL_PRESENTATION,
+  ADMIT_VOCABULARY_REVIEWED_AT,
+  INTEGRATION_EXHAUSTIVENESS_OBLIGATION,
   ADMIT_SERVER_REFUSALS,
   ADMIT_SERVER_SUCCESS,
   INVITE_TO_BOOK_FAILURES,
@@ -12,6 +14,7 @@ import {
   RESEND_MINTS_A_NEW_LINK,
   adapterMissingReason,
   admitResultToOutcome,
+  type AdmitServerRefusal,
   type InviteToBookFailure,
 } from "@/lib/waitlist/invite-to-book-contract";
 
@@ -283,17 +286,26 @@ describe("nothing here can be mistaken for a working adapter", () => {
 
 // ---------------------------------------------------------------------------
 
-describe("the admission command's result vocabulary is carried in full", () => {
+describe("the admission vocabulary this component was REVIEWED against", () => {
+  // WHAT THIS BLOCK DOES AND DOES NOT PROVE.
+  //
+  // 0193 is not an ancestor of this branch, so `resultCodes()` above cannot
+  // reach it and neither can anything else here. These tests therefore prove a
+  // COMPONENT-LEVEL property — the reviewed vocabulary is fully typed, fully
+  // dispositioned, and nothing outside it can become a success — and they prove
+  // NOTHING about what 0193 returns today.
+  //
+  // A future #685 commit that adds a result WILL NOT turn this suite red. That
+  // is not a gap to be closed here; it is the integration candidate's job, and
+  // the obligation is recorded in the contract so it cannot be lost. Writing a
+  // test here that appeared to catch it would be the more dangerous outcome,
+  // because it would look like coverage.
+  //
   // INDEPENDENT ORACLE. Read by hand out of WAIT-ADMIT-01's
-  // `0193_waitlist_admission_authority.sql` at exact head
-  // `519cfe6cf7e3281d4c445a35f34653c10b054100`, plus the two callees whose
-  // refusals it re-emits. It is deliberately NOT derived from
+  // `0193_waitlist_admission_authority.sql` at the reviewed head, plus the two
+  // callees whose refusals it re-emits. Deliberately NOT derived from
   // ADMIT_SERVER_REFUSALS: a list compared against itself proves only that it
   // equals itself, and this suite has already been taught that lesson once.
-  //
-  // 0193 is not on this branch, so `resultCodes()` above cannot reach it. That
-  // is a stated bound, not an oversight — and it is why the oracle carries the
-  // SHA it was read at.
   const EXPECTED_ADMIT_RESULTS = {
     success: "admitted",
     // returned directly by admit_new_client_waitlist_entry
@@ -330,7 +342,7 @@ describe("the admission command's result vocabulary is carried in full", () => {
     ]),
   ].sort();
 
-  it("represents every result the command can return", () => {
+  it("types every refusal known at the reviewed #685 head", () => {
     // Non-vacuity: the union must be genuinely larger than the command's own
     // literals, or the derivation collapsed back to reading `return query`.
     expect(expectedRefusals.length).toBe(14);
@@ -339,13 +351,27 @@ describe("the admission command's result vocabulary is carried in full", () => {
     expect(ADMIT_SERVER_SUCCESS).toBe(EXPECTED_ADMIT_RESULTS.success);
     expect(
       [...ADMIT_SERVER_REFUSALS].sort(),
-      "a result admit_new_client_waitlist_entry can return is not represented",
+      "a refusal known at the reviewed #685 head is not represented",
     ).toEqual(expectedRefusals);
 
     // The two the integration finding named, pinned individually so a rename
     // cannot quietly drop them into a larger diff.
     expect(ADMIT_SERVER_REFUSALS).toContain("unknown_studio");
     expect(ADMIT_SERVER_REFUSALS).toContain("not_admissible");
+  });
+
+  it("carries the provenance a reviewer needs to check the snapshot", () => {
+    // Requirement 6: the pin must say WHAT it was pinned against, or "reviewed"
+    // is an unfalsifiable word.
+    expect(ADMIT_VOCABULARY_REVIEWED_AT).toBe(
+      "519cfe6cf7e3281d4c445a35f34653c10b054100",
+    );
+    expect(ADMIT_VOCABULARY_REVIEWED_AT).toMatch(/^[0-9a-f]{40}$/);
+
+    // And the obligation this component cannot discharge must be written down
+    // where the next reader of the contract will find it.
+    expect(INTEGRATION_EXHAUSTIVENESS_OBLIGATION).toMatch(/assembly time/i);
+    expect(INTEGRATION_EXHAUSTIVENESS_OBLIGATION).toMatch(/unmapped current result is RED/i);
   });
 
   it("gives every server result a presentation, and none of them success", () => {
@@ -363,6 +389,17 @@ describe("the admission command's result vocabulary is carried in full", () => {
       const outcome = admitResultToOutcome(refusal, "2026-09-12T10:00:00.000Z");
       expect(outcome.ok, `${refusal} must never read as success`).toBe(false);
     }
+  });
+
+  it("types the two refusals integration found missing", () => {
+    // Requirements 1 and 2, asserted at the TYPE level rather than by string
+    // search: these annotations do not compile unless each literal is a member
+    // of the union, so deleting one from ADMIT_SERVER_REFUSALS fails the build
+    // as well as the assertion.
+    const unknownStudio: AdmitServerRefusal = "unknown_studio";
+    const notAdmissible: AdmitServerRefusal = "not_admissible";
+    expect(ADMIT_SERVER_REFUSALS).toContain(unknownStudio);
+    expect(ADMIT_SERVER_REFUSALS).toContain(notAdmissible);
   });
 
   it("normalises the two unactionable refusals to `unavailable`", () => {
