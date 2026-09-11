@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { Client } from "pg";
 import { adminQuery, closePool, resolveLocalDbUrl, seedMember, seedStudio } from "./helpers/harness";
-import { waitUntilBlocked } from "./helpers/waitlist-concurrency";
+import { readStoredInstant, waitUntilBlocked } from "./helpers/waitlist-concurrency";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
@@ -2217,7 +2217,14 @@ describe("a practitioner-created entry joins at the DECISION clock, not transact
       //    this point happens strictly later on the real clock, and not at all
       //    on this one.
       await creator.query("begin");
-      const txStart = (await creator.query(`select now() as t`)).rows[0].t as Date;
+      // MICROSECOND TEXT, not a JS Date. Handing this back as a Date parameter
+      // would truncate it on the way out and again on the way in; as text it
+      // round-trips to PostgreSQL exactly as stored.
+      const txStart = (
+        await creator.query(
+          `select to_char(now(), 'YYYY-MM-DD"T"HH24:MI:SS.USOF') as t`,
+        )
+      ).rows[0].t as string;
       const creatorPid = (await creator.query(`select pg_backend_pid() as pid`)).rows[0]
         .pid as number;
 
@@ -2242,41 +2249,41 @@ describe("a practitioner-created entry joins at the DECISION clock, not transact
         [other.studioId, other.userId, uniqueEmail("joined-at-comparison")],
       );
       expect(comparison.rows[0].result).toBe("created");
-      const comparisonAt = (
-        await adminQuery(
-          `select joined_at from public.new_client_waitlist_entries where id = $1`,
-          [comparison.rows[0].entry_id],
-        )
-      ).rows[0].joined_at as Date;
+      const comparisonId = comparison.rows[0].entry_id as string;
 
       // 5. Release the lock; the command proceeds and decides NOW.
       await holder.query("rollback");
       const entryId = await creating;
-      const created = await creator.query(
-        `select joined_at,
-                extract(epoch from (joined_at - $2::timestamptz)) as after_tx_start
-           from public.new_client_waitlist_entries where id = $1`,
-        [entryId, txStart],
-      );
       await creator.query("commit");
 
-      const joinedAt = created.rows[0].joined_at as Date;
+      // BOTH COMPARISONS ARE DECIDED IN POSTGRESQL, at the precision it stored.
+      // The margins here are lock waits of many milliseconds, so this is not the
+      // same hazard the shared-instant test faces — but an ordering oracle that
+      // silently rounds is one runner-speed change away from being one.
+      const verdict = await adminQuery(
+        `select e.joined_at > c.joined_at        as after_comparison,
+                e.joined_at > $3::timestamptz    as after_tx_start,
+                extract(epoch from (e.joined_at - c.joined_at))     as vs_comparison,
+                extract(epoch from (e.joined_at - $3::timestamptz)) as vs_tx_start
+           from public.new_client_waitlist_entries e
+           join public.new_client_waitlist_entries c on c.id = $2
+          where e.id = $1`,
+        [entryId, comparisonId, txStart],
+      );
 
       // THE ORDERING CLAIM, which is what the queue actually consumes.
       expect(
-        joinedAt.getTime(),
-        "a practitioner entry created AFTER a prospect joined must not sort before them",
-      ).toBeGreaterThan(comparisonAt.getTime());
+        verdict.rows[0].after_comparison,
+        `a practitioner entry created AFTER a prospect joined must not sort before them (delta ${verdict.rows[0].vs_comparison}s)`,
+      ).toBe(true);
 
       // AND THE DIRECT DISTINCTION between the two clocks. now() /
       // transaction_timestamp() froze at step 2; clock_timestamp() did not. The
-      // wait itself is the margin, so this is strictly positive without any
-      // timer having been set.
+      // wait itself is the margin, so this holds without any timer being set.
       expect(
-        Number(created.rows[0].after_tx_start),
-        "joined_at must be the post-lock decision clock, not transaction start",
-      ).toBeGreaterThan(0);
-      expect(joinedAt.getTime()).toBeGreaterThan(txStart.getTime());
+        verdict.rows[0].after_tx_start,
+        `joined_at must be the post-lock decision clock, not transaction start (delta ${verdict.rows[0].vs_tx_start}s)`,
+      ).toBe(true);
     } finally {
       await holder.query("rollback").catch(() => undefined);
       await creator.query("rollback").catch(() => undefined);
@@ -2285,26 +2292,99 @@ describe("a practitioner-created entry joins at the DECISION clock, not transact
     }
   });
 
-  it("gives the entry and its preference row the SAME instant", async () => {
+  it("a JS millisecond cannot tell two PostgreSQL instants apart", async () => {
+    // THE ORACLE CONTROL, and the reason the test below is written the way it
+    // is. node-postgres decodes a timestamptz into a JS `Date` before any
+    // assertion can see it, and `Date` keeps MILLISECONDS while PostgreSQL
+    // keeps MICROSECONDS. Two instants 800us apart inside the same millisecond
+    // arrive at the driver already identical.
+    //
+    // Both values come back through the SAME driver path the real test uses, so
+    // this is a demonstration rather than an argument about the driver.
+    const probe = await adminQuery(
+      `select a, b,
+              a = b                                              as pg_equal,
+              to_char(a, 'YYYY-MM-DD"T"HH24:MI:SS.USOF')         as a_us,
+              to_char(b, 'YYYY-MM-DD"T"HH24:MI:SS.USOF')         as b_us
+         from (select timestamptz '2026-01-01 12:00:00.123100+00' as a,
+                      timestamptz '2026-01-01 12:00:00.123900+00' as b) s`,
+    );
+    const row = probe.rows[0];
+
+    // PostgreSQL knows they are different.
+    expect(row.pg_equal, "PostgreSQL must distinguish 123100us from 123900us").toBe(false);
+    expect(row.a_us).not.toBe(row.b_us);
+
+    // JavaScript does not. This is exactly the collapse the previous oracle
+    // rested on, so an equality decided in JS would have called these two
+    // readings "the same instant".
+    expect(
+      (row.a as Date).getTime(),
+      "the JS millisecond collapse this test exists to document",
+    ).toBe((row.b as Date).getTime());
+  });
+
+  it("gives the entry and its preference row the SAME instant, at database precision", async () => {
     // The command reads the clock ONCE. Stamping joined_at from a second
-    // clock_timestamp() would work for the test above and still let one action
-    // report two different times for itself.
+    // clock_timestamp() would satisfy the ordering test above and still let one
+    // action report two different times for itself.
+    //
+    // THE EQUALITY IS DECIDED IN POSTGRESQL. The previous version compared
+    // Date.getTime() values, which — per the control above — cannot separate
+    // two readings inside the same millisecond. That is precisely the window a
+    // duplicated clock read would land in, so the old oracle was green against
+    // the defect it was written to catch. No millisecond, epoch, rounded or
+    // date_trunc comparison appears here: the database owns the precision.
     const studio = await seedStudio("joined-at-single-clock");
     const created = await adminQuery(
       `select * from public.create_practitioner_waitlist_entry($1,$2,'P',$3,null,'weekdays')`,
       [studio.studioId, studio.userId, uniqueEmail("joined-at-single-clock")],
     );
     expect(created.rows[0].result).toBe("created");
+    const entryId = created.rows[0].entry_id as string;
 
-    const row = await adminQuery(
-      `select e.joined_at, p.stated_at, p.confirmed_at
+    const verdict = await adminQuery(
+      `select e.joined_at = p.stated_at     as joined_equals_stated,
+              e.joined_at = p.confirmed_at  as joined_equals_confirmed,
+              extract(epoch from (p.stated_at    - e.joined_at)) as stated_delta,
+              extract(epoch from (p.confirmed_at - e.joined_at)) as confirmed_delta
          from public.new_client_waitlist_entries e
          join public.new_client_waitlist_entry_preferences p on p.entry_id = e.id
         where e.id = $1`,
-      [created.rows[0].entry_id],
+      [entryId],
     );
-    expect(row.rows[0].joined_at.getTime()).toBe(row.rows[0].stated_at.getTime());
-    expect(row.rows[0].joined_at.getTime()).toBe(row.rows[0].confirmed_at.getTime());
+    expect(verdict.rows, "the entry and its preference row must both exist").toHaveLength(1);
+
+    // The deltas are reported so a failure names the drift instead of only
+    // denying equality; they are not what decides the test.
+    expect(
+      verdict.rows[0].joined_equals_stated,
+      `joined_at and stated_at differ by ${verdict.rows[0].stated_delta}s`,
+    ).toBe(true);
+    expect(
+      verdict.rows[0].joined_equals_confirmed,
+      `joined_at and confirmed_at differ by ${verdict.rows[0].confirmed_delta}s`,
+    ).toBe(true);
+
+    // And the stored values really are full-precision instants rather than
+    // something already rounded on the way in. readStoredInstant is the
+    // repository's existing full-precision reader; three renderings of one
+    // shared clock must be one string.
+    const joined = await readStoredInstant(
+      `select joined_at from public.new_client_waitlist_entries where id = $1`,
+      [entryId],
+    );
+    const stated = await readStoredInstant(
+      `select stated_at from public.new_client_waitlist_entry_preferences where entry_id = $1`,
+      [entryId],
+    );
+    const confirmed = await readStoredInstant(
+      `select confirmed_at from public.new_client_waitlist_entry_preferences where entry_id = $1`,
+      [entryId],
+    );
+    expect(joined).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}[+-]\d{2}$/);
+    expect(stated).toBe(joined);
+    expect(confirmed).toBe(joined);
   });
 
   it("leaves the public form and legacy import exactly as they were", async () => {
@@ -2317,11 +2397,13 @@ describe("a practitioner-created entry joins at the DECISION clock, not transact
     const ancient = new Date("2020-01-01T00:00:00.000Z");
     const pub = await adminQuery(
       `insert into public.new_client_waitlist_entries (studio_id, name, email, source, joined_at)
-       values ($1,'Web',$2,'public_booking',$3) returning id, joined_at`,
+       values ($1,'Web',$2,'public_booking',$3)
+       returning joined_at <> $3::timestamptz                as overridden,
+                 joined_at > now() - interval '5 minutes'    as is_fresh`,
       [studio.studioId, uniqueEmail("joined-at-public"), ancient],
     );
-    expect(new Date(pub.rows[0].joined_at).getTime()).not.toBe(ancient.getTime());
-    expect(pub.rows[0].joined_at.getTime()).toBeGreaterThan(Date.now() - 300_000);
+    expect(pub.rows[0].overridden, "the trigger must override a supplied public joined_at").toBe(true);
+    expect(pub.rows[0].is_fresh).toBe(true);
 
     // LEGACY IMPORT: an operator-asserted historical date still survives.
     const asserted = new Date("2024-03-04T05:06:07.000Z");
