@@ -368,11 +368,73 @@ export const ADMIT_REFUSAL_PRESENTATION: Record<AdmitServerRefusal, InviteToBook
  * enforces at runtime. Everything unrecognised — a new server code, a null, a
  * number, a success with no expiry stamp — becomes a refusal.
  *
- * A SUCCESS IS NEVER SYNTHESISED. `admitted` without a usable `expires_at` is
- * malformed rather than successful: 0190's correction was that the window
- * belongs to the issuing instant, so a surface that invented one would be
- * showing a deadline the database never agreed to.
+ * A SUCCESS IS NEVER SYNTHESISED, AND NEVER MERELY NON-EMPTY. `admitted` with an
+ * `expires_at` that is not a well-formed instant is malformed rather than
+ * successful: 0190's correction was that the window belongs to the issuing
+ * instant, so a surface that invented — or accepted an unreadable — deadline
+ * would be showing one the database never agreed to. See `isWireInstant`.
  */
+/**
+ * The exact shapes this wire carries an instant in.
+ *
+ * TWO PRODUCERS, TWO SPELLINGS, both legitimate — the same pair
+ * `app/(app)/calendar/move-confirm-state.ts` documents: `Date#toISOString()`
+ * renders `…T15:00:00.000Z`, while a `timestamptz` read straight off PostgREST
+ * renders an offset and microsecond precision, `…T15:00:00.074892+00:00`.
+ *
+ * An INSTANT is required, so a date-only value and an offset-less local time are
+ * both rejected by shape: `2026-09-12` and `2026-09-12T15:00:00` are points in
+ * nobody's particular time, and `Date` silently invents a zone for each.
+ *
+ * KNOWN BOUND, stated rather than discovered later: a two-digit offset (`+00`)
+ * is refused. V8 cannot parse that form at all, so honouring it would mean
+ * hand-rolling a second date parser — the exact "second, divergent law" the
+ * move-confirm guard warns against — and this wire is not observed to emit it.
+ */
+const WIRE_INSTANT_RE =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(?:Z|[+-]\d{2}:?\d{2})$/;
+
+/**
+ * Is this a timestamp the server could actually have stamped?
+ *
+ * THREE LAYERS, AND EACH ONE CATCHES SOMETHING THE OTHERS DO NOT. This was
+ * measured, not reasoned about:
+ *
+ *   shape     rejects `2026-09-12`, `2026-09-12T15:00:00` and `not-a-date`,
+ *             all three of which `Date.parse` accepts or mis-zones.
+ *   calendar  rejects `2026-02-30T00:00:00Z` — `Date.parse` accepts it and
+ *             quietly rolls it to 2 March, so a shape-plus-parse guard would
+ *             hand back a success carrying a day that does not exist.
+ *   parse     rejects `2026-09-12T25:00:00Z` and `…T15:60:00Z`, which satisfy
+ *             the shape and the calendar.
+ *
+ * Dropping any one layer lets a documented case through; the tests mutate each
+ * in turn to prove it.
+ */
+export function isWireInstant(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+
+  const match = WIRE_INSTANT_RE.exec(value);
+  if (match === null) return false;
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+
+  // Round-trip the civil date through UTC. The offset shifts WHICH instant this
+  // is, never whether the calendar date exists, so checking it in UTC is sound.
+  const civil = new Date(Date.UTC(year, month - 1, day));
+  if (
+    civil.getUTCFullYear() !== year ||
+    civil.getUTCMonth() !== month - 1 ||
+    civil.getUTCDate() !== day
+  ) {
+    return false;
+  }
+
+  return !Number.isNaN(Date.parse(value));
+}
+
 export function admitResultToOutcome(
   result: unknown,
   expiresAt: unknown,
@@ -380,7 +442,11 @@ export function admitResultToOutcome(
   if (typeof result !== "string") return { ok: false, code: "unavailable" };
 
   if (result === ADMIT_SERVER_SUCCESS) {
-    return typeof expiresAt === "string" && expiresAt.trim() !== ""
+    // NON-EMPTY IS NOT VALID. This previously accepted any non-blank string, so
+    // `admitted` with `expires_at: "not-a-date"` became `ok: true` carrying a
+    // deadline nothing could render — `InvitationOutcome` promises a server
+    // timestamp, and a promise the mapper does not enforce is the mapper's bug.
+    return isWireInstant(expiresAt)
       ? { ok: true, expiresAt }
       : { ok: false, code: "unavailable" };
   }

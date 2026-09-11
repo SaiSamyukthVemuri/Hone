@@ -14,6 +14,7 @@ import {
   RESEND_MINTS_A_NEW_LINK,
   adapterMissingReason,
   admitResultToOutcome,
+  isWireInstant,
   type AdmitServerRefusal,
   type InviteToBookFailure,
 } from "@/lib/waitlist/invite-to-book-contract";
@@ -286,6 +287,11 @@ describe("nothing here can be mistaken for a working adapter", () => {
 
 // ---------------------------------------------------------------------------
 
+// Mirrors the contract's shape rule. Used ONLY to demonstrate which layer
+// rejects which value; the contract's own regexp stays private to it.
+const WIRE_INSTANT_SHAPE =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(?:Z|[+-]\d{2}:?\d{2})$/;
+
 describe("the admission vocabulary this component was REVIEWED against", () => {
   // WHAT THIS BLOCK DOES AND DOES NOT PROVE.
   //
@@ -465,5 +471,85 @@ describe("the admission vocabulary this component was REVIEWED against", () => {
         code: "unavailable",
       });
     }
+  });
+
+  // --- the expiry must be an INSTANT, not merely a non-empty string ---------
+
+  // Both spellings this wire actually carries. `Date#toISOString()` for a value
+  // the application produced, and PostgREST's `timestamptz` rendering — offset
+  // plus microsecond precision — for one read straight off a row.
+  const VALID_WIRE_INSTANTS = [
+    "2026-09-12T15:00:00.000Z",
+    "2026-09-12T15:00:00Z",
+    "2026-09-12T15:00:00.074892+00:00",
+    "2026-09-12T15:00:00.5Z",
+    "2026-09-12T15:00:00+01:00",
+    "2026-09-12T15:00:00-05:00",
+    "2026-09-12T15:00:00+0000",
+    "2026-09-12T15:00:00.074892Z",
+    "2028-02-29T00:00:00Z", // a real leap day
+  ] as const;
+
+  const MALFORMED_EXPIRIES = [
+    "",
+    "   ",
+    "not-a-date",
+    "2026-09-12", // date only: no instant
+    "2026-09-12T15:00:00", // no zone: an instant in nobody's particular time
+    "2026-09-12T15:00", // no seconds
+    "2026-02-30T00:00:00Z", // impossible day — Date.parse ACCEPTS this
+    "2027-02-29T00:00:00Z", // not a leap year
+    "2026-13-01T00:00:00Z", // impossible month
+    "2026-09-12T25:00:00Z", // impossible hour
+    "2026-09-12T15:60:00Z", // impossible minute
+    "2026-09-12 15:00:00+00:00", // space separator: not what this wire emits
+    "2026-09-12T15:00:00+00", // two-digit offset: V8 cannot parse it
+    "  2026-09-12T15:00:00Z  ", // padded
+    null,
+    undefined,
+    0,
+    1757678400000, // a real epoch value, but not a string
+    {},
+    [],
+    true,
+    new Date("2026-09-12T15:00:00Z"), // a Date object, not wire text
+  ];
+
+  it("accepts every instant spelling this wire carries", () => {
+    for (const valid of VALID_WIRE_INSTANTS) {
+      expect(isWireInstant(valid), `${valid} must be accepted`).toBe(true);
+      expect(admitResultToOutcome("admitted", valid)).toEqual({
+        ok: true,
+        expiresAt: valid,
+      });
+    }
+  });
+
+  it("refuses every malformed expiry, and NONE of them can become success", () => {
+    for (const junk of MALFORMED_EXPIRIES) {
+      expect(isWireInstant(junk), `${String(junk)} must be refused`).toBe(false);
+      const outcome = admitResultToOutcome("admitted", junk);
+      expect(outcome.ok, `admitted + ${String(junk)} must not read as success`).toBe(
+        false,
+      );
+      expect(outcome).toEqual({ ok: false, code: "unavailable" });
+    }
+  });
+
+  it("each validation layer catches something the others do not", () => {
+    // Non-vacuity for the layering, measured rather than argued. If any of
+    // these three ever became redundant, a layer could be deleted silently.
+    //
+    // Only the SHAPE rejects these — Date.parse accepts both.
+    expect(Number.isNaN(Date.parse("2026-09-12"))).toBe(false);
+    expect(Number.isNaN(Date.parse("2026-09-12T15:00:00"))).toBe(false);
+    // Only the CALENDAR round-trip rejects this — it matches the shape AND
+    // Date.parse accepts it, rolling 30 February forward to 2 March.
+    expect(WIRE_INSTANT_SHAPE.test("2026-02-30T00:00:00Z")).toBe(true);
+    expect(Number.isNaN(Date.parse("2026-02-30T00:00:00Z"))).toBe(false);
+    expect(new Date("2026-02-30T00:00:00Z").getUTCDate()).toBe(2);
+    // Only the PARSE rejects these — the shape and the calendar date are fine.
+    expect(WIRE_INSTANT_SHAPE.test("2026-09-12T25:00:00Z")).toBe(true);
+    expect(Number.isNaN(Date.parse("2026-09-12T25:00:00Z"))).toBe(true);
   });
 });
