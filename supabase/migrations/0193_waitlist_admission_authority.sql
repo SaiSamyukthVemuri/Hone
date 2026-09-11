@@ -52,11 +52,14 @@
 -- ---------------------------------------------------------------------------
 --
 --   * It does NOT create public.studio_waitlist_admission_rounds. That table
---     belongs to WAIT-03B/B1 and holds THIS ROUND's allowance. This file adds
---     only standing configuration (invite_batch_default / invite_batch_max),
---     which are DEFAULTS AND BOUNDS for a recommendation and never permission
---     to admit. When B1 lands, its per-round allowance is the tighter
---     authority and the ordered claim below must consult it.
+--     belongs to WAIT-03B/B1, which has since landed it as a DURABLE LEDGER:
+--     one row per round, keyed by `id`, opened and closed through 0192's own
+--     commands, with at most one open row per studio. This file adds only
+--     standing configuration (invite_batch_default / invite_batch_max), which
+--     are DEFAULTS AND BOUNDS for a recommendation and never permission to
+--     admit. B1's per-round allowance IS the tighter authority, and this file
+--     defers to it rather than re-deriving it: the admission command locks the
+--     open round and lets issue_scoped_ return round_full.
 --   * It does NOT relax `name`. An email-only legacy row still needs a real
 --     name from the operator; there is no name_provenance column and no
 --     placeholder path.
@@ -1348,14 +1351,20 @@ $$;
 --
 -- LOCK ORDER IS THE CANONICAL ONE, AND IT IS TAKEN HERE FIRST:
 --
---     studios -> studio_waitlist_admission_rounds -> entry -> invitation
+--     studios -> the OPEN studio_waitlist_admission_rounds row -> entry
+--       -> invitation
 --
--- issue_scoped_new_client_waitlist_invitation takes studios then the round;
--- claim_new_client_waitlist_entry takes the entry. Calling claim_ first would
--- give studios -> entry -> round and invert the order against a bare
+-- issue_scoped_new_client_waitlist_invitation takes studios then the open
+-- round; claim_new_client_waitlist_entry takes the entry. Calling claim_ first
+-- would give studios -> entry -> round and invert the order against a bare
 -- issue_scoped running concurrently, which is a deadlock. Taking the studio and
 -- round locks up front makes the nested calls re-acquire locks this transaction
 -- already holds, which is free.
+--
+-- "THE ROUND" IS A ROW, NOT A STUDIO. Rounds are an append-mostly ledger keyed
+-- by `id`, with at most one open row per studio held by a partial unique index.
+-- The lock below therefore names `closed_at is null` -- a studio's closed
+-- history is not part of this order and is not locked by an admission.
 --
 -- ALLOWANCE IS NOT RE-IMPLEMENTED HERE. The round, the consumed count and the
 -- round_full verdict all belong to 0192 and are enforced inside issue_scoped_
@@ -1435,8 +1444,38 @@ begin
     return query select 'unknown_studio'::text, null::uuid, null::text, null::timestamptz, null::text, null::text;
     return;
   end if;
+  --
+  -- THE OPEN ROUND, NOT EVERY ROUND THIS STUDIO HAS EVER HAD. `studio_id` was
+  -- the primary key of this table when the line below was written, so
+  -- `where r.studio_id = ...` named exactly one row. It no longer does: the key
+  -- is now `id`, closed rounds persist as an append-mostly ledger, and at most
+  -- one open round per studio is enforced by a PARTIAL unique index
+  -- `(studio_id) where closed_at is null`. Without the predicate this statement
+  -- would still take a lock -- it has no `found` check and never decided
+  -- anything -- but it would take FOR UPDATE on every historical row, so
+  -- admission contention would grow with the studio's history and the order
+  -- named above would no longer describe a round.
+  --
+  -- THE PREDICATE IS THE ISSUER'S, CHARACTER FOR CHARACTER. 0192's
+  -- issue_scoped_new_client_waitlist_invitation selects
+  -- `where r.studio_id = p_studio_id and r.closed_at is null for update`, and
+  -- this lock is only useful if it names the same row that command will.
+  --
+  -- FOR UPDATE, NOT FOR NO KEY UPDATE, unlike the studios lock above. This row
+  -- is the TARGET of the invitation's composite (admission_round_id, studio_id)
+  -- foreign key, so a competing issuance needs KEY SHARE on it. FOR UPDATE
+  -- excludes KEY SHARE and that exclusion is precisely what serialises the
+  -- allowance seat; NO KEY UPDATE here would let two issuances past.
+  --
+  -- LOCK-ONLY, WITH NO VERDICT. `no_round_open` belongs to 0192 and is returned
+  -- by the issuer below. Deciding it here would duplicate the authority this
+  -- command exists to delegate, and would be a second place to get it wrong.
+  -- When no round is open this locks nothing, the entry lock is still taken,
+  -- and the issuer refuses -- unwinding the claim through WA001.
   perform 1 from public.studio_waitlist_admission_rounds r
-   where r.studio_id = p_studio_id for update;
+   where r.studio_id = p_studio_id
+     and r.closed_at is null
+   for update;
 
   -- 3. LOCK ORDER STEP 3. Read the entry's admissibility under its own lock, so
   -- the status this decision rests on cannot move underneath it.

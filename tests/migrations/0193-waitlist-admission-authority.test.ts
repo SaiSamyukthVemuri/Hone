@@ -111,10 +111,53 @@ describe("the disproved privilege model is not reintroduced", () => {
   it("does not create 0192's admission-rounds table, though it does use it", () => {
     // That object belongs to 0192. Creating it here would collide; LOCKING it
     // is required, because the admission command must take the canonical
-    // studios -> rounds -> entry order before it claims anything.
+    // studios -> open round -> entry order before it claims anything.
     expect(CODE).not.toMatch(/create table[^;]*studio_waitlist_admission_rounds/i);
     expect(CODE).toContain("from public.studio_waitlist_admission_rounds r");
-    expect(CODE).toContain("for update");
+  });
+
+  it("locks the OPEN round, not every round the studio has ever had", () => {
+    // THE ASSERTION THIS REPLACES WAS NEARLY VACUOUS. It paired the table name
+    // with a bare `toContain("for update")` -- a string this file contains in a
+    // dozen unrelated commands -- so it stayed green through exactly the drift
+    // it existed to catch. `studio_id` was this table's primary key when that
+    // guard was written, which made "the studio's round" and "the studio's
+    // rounds" the same set. 0192 then made rounds a durable ledger keyed by
+    // `id`: closed rounds persist, and only the partial unique index
+    // `(studio_id) where closed_at is null` makes "the current round" singular.
+    //
+    // So the predicate is pinned as ONE statement, not as three independent
+    // substrings that could each be satisfied somewhere else in the file.
+    const lock = CODE.match(
+      /perform 1 from public\.studio_waitlist_admission_rounds r\s*\n\s*where r\.studio_id = p_studio_id\s*\n\s*and r\.closed_at is null\s*\n\s*for update;/,
+    );
+    expect(lock, "the admission round lock must name the OPEN round").not.toBeNull();
+
+    // AND THE MODE, WHICH IS NOT THE STUDIO'S. The studios row above is taken
+    // FOR NO KEY UPDATE so it stays compatible with the KEY SHARE the lifecycle
+    // writers' FK checks request. The round row is the opposite case: it is the
+    // TARGET of the invitation's composite (admission_round_id, studio_id) FK,
+    // so a competing issuance needs KEY SHARE on it and FOR UPDATE is what
+    // excludes them. NO KEY UPDATE here would let two issuances share a seat.
+    expect(lock?.[0]).toContain("for update;");
+    expect(lock?.[0]).not.toContain("for no key update");
+
+    // The same predicate 0192's issuer uses, so this lock names the row that
+    // command will re-select. A lock on a different row proves nothing.
+    expect(CODE).toContain("and r.closed_at is null");
+  });
+
+  it("still delegates the no_round_open verdict to 0192", () => {
+    // The lock is LOCK-ONLY on purpose: it takes no `found` check and returns
+    // no code. `no_round_open` is the issuer's word, carried out through the
+    // WA001 handler. A second copy of that decision here is a second place for
+    // the quota authority to drift.
+    const body = CODE.slice(
+      CODE.indexOf("create or replace function public.admit_new_client_waitlist_entry"),
+    );
+    const admit = body.slice(0, body.indexOf("\n$$;"));
+    expect(admit).not.toContain("'no_round_open'");
+    expect(admit).toContain("public.issue_scoped_new_client_waitlist_invitation(");
   });
 });
 
