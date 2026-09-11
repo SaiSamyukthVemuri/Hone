@@ -65,13 +65,20 @@ paragraph said `0192` was authored on PR #674 and absent from this tree. That is
 true and contradicted the Current-state row above, so it is corrected here rather than left
 standing: **WAIT owns `0192`**, this branch carries
 `0192_waitlist_recipient_proof_authority.sql` (recipient-proof **and** admission-round
-authority), and `npm run migration:state` reports it as this tree's **pending** migration —
-repo max **0192**, hosted max **0191**, pending **0192**. #674's SMS-routing migration was
-renumbered to **`0194`** and is **HELD** on its own branch; it is the migration that teaches
-the send path to consult this table, and it remains a separate gate.
+authority), and `npm run migration:state` reports it as one of this tree's **pending**
+migrations. #674's SMS-routing migration was renumbered to **`0194`** and is **HELD** on its
+own branch; it is the migration that teaches the send path to consult this table, and it
+remains a separate gate.
 
-**Hosted is still `0191`.** Nothing above records a hosted `0192`, and the apply evidence for
-`0191` in this block is unchanged: `0192` is authored and **UNAPPLIED**.
+**THIS PARAGRAPH DESCRIBES `0192` ONLY, AND THE BRANCH HAS SINCE MOVED.** An earlier revision
+ended with "repo max **0192** … pending **0192**", written when `0192` was the only migration
+here. WAIT-ADMIT-01 then authored `0193_waitlist_admission_authority.sql` on this same branch,
+so that sentence contradicted the Current-state row above it — the very failure this paragraph
+was added to correct, reintroduced from the other direction. The **Current-state table is the
+authority** for this tree's position: repo max **0193**, both `0192` and `0193` pending.
+
+**Hosted is still `0191`.** Nothing above records a hosted `0192` or `0193`, and the apply
+evidence for `0191` in this block is unchanged: both are authored and **UNAPPLIED**.
 
 ## Previous state (verified 2026-09-04, post-0190 apply)
 
