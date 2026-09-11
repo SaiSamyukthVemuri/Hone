@@ -3290,19 +3290,54 @@ describe("0192 — the append-only fixture restores enforcement on every exit", 
   // restores the guard on every exit. These tests prove that claim rather than
   // trusting the keyword.
 
+  // THE CANONICAL APPEND-ONLY REJECTION, as 0188 raises it and 0192 re-raises
+  // it verbatim in the forward redefinition: SQLSTATE 23514 (check_violation)
+  // carrying this exact sentence. Both halves are required — 23514 alone is the
+  // whole check-constraint family on this table (the ttl bound, the terminal
+  // -outcome rule, the hash shapes), so a code-only match would accept a
+  // rejection that proves nothing about the trigger.
+  const APPEND_ONLY_SQLSTATE = "23514";
+  const APPEND_ONLY_MESSAGE =
+    /identity, tenancy, token and validity window are immutable/;
+
+  const isAppendOnlyRejection = (e: unknown): boolean => {
+    const err = e as { code?: string; message?: string } | null;
+    return (
+      err?.code === APPEND_ONLY_SQLSTATE && APPEND_ONLY_MESSAGE.test(err?.message ?? "")
+    );
+  };
+
+  /**
+   * Is append-only enforcement actually live?
+   *
+   * BEHAVIOURAL, not metadata. `pg_trigger.tgenabled` reports what the catalog
+   * says; this asks the table whether it still refuses a forbidden write, which
+   * is the property a fixture can actually damage.
+   *
+   * AND A GENERIC `catch` WAS NOT PROOF. Treating any rejection as enforcement
+   * makes the probe agree with itself in exactly the situation it exists to
+   * detect: if restoration failed because of connection, pool or timeout
+   * trouble, the probe's own write fails for that same reason and the failure
+   * is read as "the trigger refused me". The trigger could be disabled and this
+   * would still report enforced.
+   *
+   * So only the canonical rejection counts. Anything else — a dropped
+   * connection, a statement timeout, an unrelated constraint, a malformed
+   * parameter — is RETHROWN, because none of them is evidence either way and
+   * silently converting them into a verdict is the defect.
+   */
   const enforcementIsLive = async (invitationId: string): Promise<boolean> => {
-    // BEHAVIOURAL, not metadata. `pg_trigger.tgenabled` would tell us what the
-    // catalog says; this asks the table whether it still refuses a forbidden
-    // write, which is the property the fixture can actually damage.
     try {
       await adminQuery(
         `update public.new_client_waitlist_invitations
             set expires_at = expires_at + interval '1 hour' where id = $1`,
         [invitationId],
       );
+      // The forbidden write SUCCEEDED: enforcement is off.
       return false;
-    } catch {
-      return true;
+    } catch (e) {
+      if (isAppendOnlyRejection(e)) return true;
+      throw e;
     }
   };
 
@@ -3360,6 +3395,52 @@ describe("0192 — the append-only fixture restores enforcement on every exit", 
     expect(await enforcementIsLive(offer.invitationId), "and closed after").toBe(true);
   });
 
+  it("ONLY THE CANONICAL REJECTION COUNTS — the classifier, over representative errors", () => {
+    // The seam the probe decides on, exercised directly. A generic catch would
+    // have said "enforced" to every one of these.
+    expect(
+      isAppendOnlyRejection({
+        code: "23514",
+        message:
+          'new row for relation "new_client_waitlist_invitations" violates check ' +
+          "constraint: new_client_waitlist_invitations: identity, tenancy, token " +
+          "and validity window are immutable; there is no renewal or extension",
+      }),
+      "the real rejection",
+    ).toBe(true);
+
+    for (const [why, err] of [
+      ["a dropped connection", { code: "57P01", message: "terminating connection due to administrator command" }],
+      ["a statement timeout", { code: "57014", message: "canceling statement due to statement timeout" }],
+      ["a pool/connection failure", { code: "08006", message: "connection terminated unexpectedly" }],
+      ["a malformed parameter", { code: "22P02", message: 'invalid input syntax for type uuid: "nope"' }],
+      // SAME SQLSTATE, DIFFERENT RULE. 23514 is the whole check-constraint
+      // family on this table; the terminal-outcome rule raises it too. A
+      // code-only match would have accepted this as proof of the trigger.
+      ["a DIFFERENT 23514 on the same table", {
+        code: "23514",
+        message:
+          "new_client_waitlist_invitations: a terminal outcome is recorded once and cannot be rewritten",
+      }],
+      ["the one_terminal_outcome CHECK", {
+        code: "23514",
+        message:
+          'violates check constraint "new_client_waitlist_invitations_one_terminal_outcome_check"',
+      }],
+      ["no error object at all", null],
+      ["a plain Error", new Error("boom")],
+    ] as const) {
+      expect(isAppendOnlyRejection(err), why).toBe(false);
+    }
+  });
+
+  it("AN UNRELATED DATABASE ERROR IS RETHROWN, never counted as enforcement", async () => {
+    // End to end, through the real probe and a real PostgreSQL failure: a
+    // malformed uuid produces 22P02 on the same statement. The probe must
+    // propagate it rather than answer `true` or `false`.
+    await expect(enforcementIsLive("not-a-uuid")).rejects.toMatchObject({ code: "22P02" });
+  });
+
   it("LATER TESTS DO NOT INHERIT A WEAKENED DATABASE", async () => {
     // The end state every other test in this file depends on: an immutable
     // field is refused by its real message, not merely by a catalog flag.
@@ -3370,7 +3451,12 @@ describe("0192 — the append-only fixture restores enforcement on every exit", 
             set expires_at = expires_at + interval '1 hour' where id = $1`,
         [offer.invitationId],
       ),
-    ).rejects.toThrow(/identity, tenancy, token and validity window are immutable/);
+    ).rejects.toMatchObject({
+      code: "23514",
+      message: expect.stringContaining(
+        "identity, tenancy, token and validity window are immutable",
+      ),
+    });
   });
 });
 
