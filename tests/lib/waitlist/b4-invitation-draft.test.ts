@@ -667,35 +667,80 @@ describe("this module is UNREACHABLE from the application", () => {
   // against vitest's 5s default and so passed alone and failed under
   // full-suite CPU contention. A ceiling that equals its target is not a
   // ceiling — the same lesson the CI budgets in CLAUDE.md record three times.
-  it("every special shipped root is enumerated in EVERY supported extension", () => {
-    // THE DEFECT THIS PINS. The directory walker accepted `.js` and said so in
-    // its own comment; the special roots added beside it were spelled `.ts`
-    // only. So `middleware.js` — a supported Next entry point that ships with
-    // every request — could import the practitioner surface while this suite
-    // stayed green. Same class the walker had already closed, reopened one
-    // function away, because the extension vocabulary was written down twice.
-    const candidates = specialRootCandidates();
-    expect(candidates).toContain("middleware.js");
-    expect(candidates).toContain("middleware.ts");
-    for (const base of SPECIAL_ROOT_BASENAMES) {
-      for (const ext of APPLICATION_EXTENSIONS) {
-        expect(candidates).toContain(`${base}.${ext}`);
-      }
-    }
+  // INDEPENDENT ORACLE — deliberately NOT derived from the implementation.
+  //
+  // The previous version of this proof looped over APPLICATION_EXTENSIONS on
+  // BOTH sides, so it asserted only that the list equals itself. Delete "jsx"
+  // and the walker stopped seeing JSX, the roots stopped generating `.jsx`, the
+  // expectation stopped expecting it, and the suite stayed green — a guard that
+  // cannot fail is not a guard.
+  //
+  // These two lists are therefore written out by hand. There is no repo-wide
+  // extension constant to derive them from: `tsconfig.json` includes `**/*.ts`
+  // and `**/*.tsx` only, because the application is TypeScript today. That is
+  // the reason the JavaScript spellings must still be covered — this guard
+  // exists to fail on the change that introduces one, not to describe the tree
+  // as it currently stands.
+  const EXPECTED_SUPPORTED_APPLICATION_EXTENSIONS = [
+    "ts",
+    "tsx",
+    "js",
+    "jsx",
+    "mjs",
+    "cjs",
+  ] as const;
 
-    // The vocabulary is shared with the walker rather than copied beside it, so
-    // a root can never be a kind of file the traversal would then refuse to
-    // follow. Deleting an extension from APPLICATION_EXTENSIONS fails here AND
-    // narrows the walk, which is the coupling that stops the two drifting.
-    for (const ext of APPLICATION_EXTENSIONS) {
-      expect(APPLICATION_FILE.test(`probe.${ext}`)).toBe(true);
+  const EXPECTED_SPECIAL_ROOT_NAMES = [
+    "middleware",
+    "instrumentation",
+    "instrumentation-client",
+  ] as const;
+
+  it("the walker vocabulary is EXACTLY the supported vocabulary", () => {
+    // Equality, not containment: an extension quietly dropped is the defect
+    // being guarded against, and an extension quietly added is a widening
+    // nobody reviewed.
+    expect(
+      [...APPLICATION_EXTENSIONS].sort(),
+      "APPLICATION_EXTENSIONS drifted from the supported application vocabulary",
+    ).toEqual([...EXPECTED_SUPPORTED_APPLICATION_EXTENSIONS].sort());
+
+    // The constant feeds a regular expression, so pin the regexp against the
+    // same independent oracle — building it differently must not silently
+    // narrow what the walk accepts.
+    for (const ext of EXPECTED_SUPPORTED_APPLICATION_EXTENSIONS) {
+      expect(APPLICATION_FILE.test(`probe.${ext}`), `${ext} must be walked`).toBe(true);
     }
     expect(APPLICATION_FILE.test("probe.md")).toBe(false);
+    expect(APPLICATION_FILE.test("probe.json")).toBe(false);
+  });
 
-    // Roots are SPECIAL FILES AND `app/` ONLY. A detached script or test does
-    // not become a shipped entry point merely by existing, or the guard would
-    // report work that cannot make anything live.
-    expect(candidates.some((c) => c.startsWith("scripts/") || c.startsWith("tests/"))).toBe(false);
+  it("special roots are the full cross product of NAMES x SUPPORTED EXTENSIONS", () => {
+    // Expected candidates are generated from the independent oracle on both
+    // axes, so neither a dropped extension nor a dropped root name can shrink
+    // the expectation along with the implementation.
+    const expected = EXPECTED_SPECIAL_ROOT_NAMES.flatMap((name) =>
+      EXPECTED_SUPPORTED_APPLICATION_EXTENSIONS.map((ext) => `${name}.${ext}`),
+    );
+    expect(expected).toContain("middleware.js");
+    expect(expected.length).toBe(18);
+
+    expect(
+      [...specialRootCandidates()].sort(),
+      "a supported shipped entry point spelling is no longer enumerated as a root",
+    ).toEqual([...expected].sort());
+
+    expect([...SPECIAL_ROOT_BASENAMES].sort()).toEqual(
+      [...EXPECTED_SPECIAL_ROOT_NAMES].sort(),
+    );
+
+    // Roots are special files and `app/` only. A detached script or test does
+    // not become a shipped entry point merely by existing.
+    expect(
+      specialRootCandidates().some(
+        (c) => c.startsWith("scripts/") || c.startsWith("tests/"),
+      ),
+    ).toBe(false);
   });
 
   it("no prototype entry point is reachable from the SHIPPED APPLICATION, at ANY depth", { timeout: 30_000 }, () => {
