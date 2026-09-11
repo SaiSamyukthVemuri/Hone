@@ -188,6 +188,16 @@ export const INVITE_TO_BOOK_FAILURES = [
   // The request itself was malformed — a bug on this side of the wire.
   "invalid_input",
   "invalid_ttl",
+  // DEFINITE refusals the admission command can give. These used to normalise
+  // onto `unavailable`, which is now reserved for "we could not find out" — and
+  // a definite answer must never borrow the word for an unknown one. Naming
+  // them also settles the flagged case: `previously_declined` is permanent, and
+  // reading as "try again" was always wrong.
+  "unknown_studio",
+  "not_admissible",
+  "no_admission_round",
+  "admission_round_full",
+  "previously_declined",
   // The scope the practitioner expressed could not be honoured. NEW: no
   // shipped command can answer this yet, and it is the one code this contract
   // ADDS rather than derives. It exists so an adapter that cannot carry a
@@ -225,20 +235,75 @@ export const INVITATION_DELIVERY_STATES = [
   "refused",
 ] as const;
 
+/**
+ * A refusal the SERVER actually gave.
+ *
+ * `unavailable` is excluded deliberately. It means "we could not find out",
+ * which is the opposite of a refusal, and letting it sit in this arm is exactly
+ * how a lost response came to look like a definite "no".
+ */
+export type DefiniteInviteToBookRefusal = Exclude<InviteToBookFailure, "unavailable">;
+
+/**
+ * What happened to the ADMISSION — three answers, not two.
+ *
+ * A BOOLEAN CANNOT EXPRESS THE THIRD ONE, and the third one is real. A request
+ * can reach PostgreSQL, commit the admission, mint the invitation, and then lose
+ * its HTTP response. The caller now knows nothing: reporting `ok: false` would
+ * claim a refusal the database never gave, and the practitioner, told it failed,
+ * would press the button again.
+ *
+ * THAT RETRY IS THE DANGER. An invitation may already exist, it has already
+ * consumed the round's allowance, and its one-time raw token went missing with
+ * the response — so a blind second attempt burns capacity on a prospect who has
+ * already been invited and cannot be handed the link that was minted for them.
+ *
+ * - `committed`     — the admission is KNOWN to exist. Delivery is a separate
+ *                     fact and is carried separately.
+ * - `refused`       — the server gave an authoritative refusal. The admission
+ *                     did not commit.
+ * - `indeterminate` — transport loss, timeout, or an answer this contract cannot
+ *                     read. NOT success, NOT refusal, and NOT a safe retry.
+ */
 export type InvitationOutcome =
   | {
-      ok: true;
+      state: "committed";
       /** ISO 8601, server-stamped. The surface never computes this: 0190's
        *  whole correction was that the window belongs to the issuing instant,
        *  which only the database observes. */
       expiresAt: string;
-      /** REQUIRED on every success. `ok: true` means the invitation EXISTS;
-       *  what reached the prospect is this field's business and only this
-       *  field's, so a success that omitted it would be silently claiming the
-       *  email went out. */
+      /** REQUIRED on every committed outcome. `committed` means the invitation
+       *  EXISTS; what reached the prospect is this field's business and only
+       *  this field's, so omitting it would silently claim the email went out. */
       delivery: InvitationDeliveryState;
     }
-  | { ok: false; code: InviteToBookFailure };
+  | { state: "refused"; code: DefiniteInviteToBookRefusal }
+  | { state: "indeterminate"; code: "unavailable" };
+
+/**
+ * The one indeterminate value, so callers cannot spell it three ways.
+ *
+ * #689 returns this for a lost or timed-out response, and owns the question of
+ * whether it can RECONCILE one by reading authoritative invitation state before
+ * answering at all. Reconciliation is deliberately not attempted here: this
+ * module has no database access and inventing one would be the second authority
+ * this whole contract exists to avoid.
+ */
+export const INDETERMINATE_ADMISSION: InvitationOutcome = Object.freeze({
+  state: "indeterminate",
+  code: "unavailable",
+});
+
+/**
+ * What to tell a practitioner when the answer was lost.
+ *
+ * IT MUST NOT SAY "FAILED" AND MUST NOT OFFER A BARE RETRY. Both would be
+ * guesses, and the expensive one is wrong: an invitation may exist, holding the
+ * round's allowance. Reconciliation — looking at the waitlist — is the only
+ * honest next step, and there is no atomic reissue command to point at instead.
+ */
+export const INDETERMINATE_ADMISSION_COPY =
+  "We couldn't confirm whether the invitation was created. Check the waitlist before trying again.";
 
 /**
  * Practitioner copy for each delivery state.
@@ -395,19 +460,24 @@ export type AdmitServerResult = typeof ADMIT_SERVER_SUCCESS | AdmitServerRefusal
  * recovery action — not the database's reason — is what the surface must
  * communicate.
  *
- * NORMALISATIONS THAT LOSE DETAIL, recorded rather than buried:
- * `no_round_open`, `round_full` and `already_declined_offer` are all definite,
- * well-understood refusals with no composer edit that fixes them, and they
- * currently land on `unavailable`, which reads as "try again". `round_full` and
- * `no_round_open` resolve on their own when a round opens, so a retry is at
- * least not wrong. `already_declined_offer` never resolves by retrying, and it
- * is the one normalisation here worth revisiting when this contract gains
- * practitioner copy — it is flagged, not silently dropped.
+ * EVERY VALUE HERE IS A DEFINITE REFUSAL, and the type says so: `unavailable`
+ * is excluded, because it now means "we could not find out" and a server that
+ * answered is not that. This is what closes the case flagged earlier —
+ * `already_declined_offer` is permanent and never resolves by retrying, so
+ * landing it on a word that reads as "try again" was a real untruth rather than
+ * a tolerable normalisation.
+ *
+ * Normalisation is still allowed where the practitioner's recovery action is
+ * genuinely the same: the three scope refusals share `scope_not_supported`,
+ * because what needs changing in all three is the composer.
  */
-export const ADMIT_REFUSAL_PRESENTATION: Record<AdmitServerRefusal, InviteToBookFailure> = {
+export const ADMIT_REFUSAL_PRESENTATION: Record<
+  AdmitServerRefusal,
+  DefiniteInviteToBookRefusal
+> = {
   // Authority and identity failures the practitioner cannot act on.
-  unknown_studio: "unavailable",
-  not_admissible: "unavailable",
+  unknown_studio: "unknown_studio",
+  not_admissible: "not_admissible",
   // The entry moved under the practitioner between render and press; these have
   // exact counterparts the surface already knows how to explain.
   not_found: "not_found",
@@ -424,9 +494,9 @@ export const ADMIT_REFUSAL_PRESENTATION: Record<AdmitServerRefusal, InviteToBook
   invalid_scope_dates: "scope_not_supported",
   invalid_weekdays: "scope_not_supported",
   // Capacity and consent. See the note above: detail is lost here on purpose.
-  no_round_open: "unavailable",
-  round_full: "unavailable",
-  already_declined_offer: "unavailable",
+  no_round_open: "no_admission_round",
+  round_full: "admission_round_full",
+  already_declined_offer: "previously_declined",
 };
 
 /**
@@ -539,23 +609,29 @@ export function admitResultToOutcome(
    *  the call site instead of defaulting silently into a claim. */
   delivery: unknown,
 ): InvitationOutcome {
-  if (typeof result !== "string") return { ok: false, code: "unavailable" };
+  // An answer we cannot read is not a refusal. The server may well have
+  // committed; we simply cannot say, and `indeterminate` is that sentence.
+  if (typeof result !== "string") return INDETERMINATE_ADMISSION;
 
   if (result === ADMIT_SERVER_SUCCESS) {
     // NON-EMPTY IS NOT VALID. This previously accepted any non-blank string, so
     // `admitted` with `expires_at: "not-a-date"` became `ok: true` carrying a
     // deadline nothing could render — `InvitationOutcome` promises a server
     // timestamp, and a promise the mapper does not enforce is the mapper's bug.
+    // `admitted` with an unreadable expiry is MORE than we know after a
+    // timeout — the admission did commit — but this contract has no arm for
+    // "committed and undatable", and the safe action is identical: do not
+    // retry, go and look. Calling it `refused` would be flatly false.
     return isWireInstant(expiresAt)
-      ? { ok: true, expiresAt, delivery: deliveryStateFrom(delivery) }
-      : { ok: false, code: "unavailable" };
+      ? { state: "committed", expiresAt, delivery: deliveryStateFrom(delivery) }
+      : INDETERMINATE_ADMISSION;
   }
 
   // `Object.prototype.hasOwnProperty` rather than a truthiness check, so a
   // result spelled `constructor` or `toString` cannot reach an inherited value.
   return Object.prototype.hasOwnProperty.call(ADMIT_REFUSAL_PRESENTATION, result)
-    ? { ok: false, code: ADMIT_REFUSAL_PRESENTATION[result as AdmitServerRefusal] }
-    : { ok: false, code: "unavailable" };
+    ? { state: "refused", code: ADMIT_REFUSAL_PRESENTATION[result as AdmitServerRefusal] }
+    : INDETERMINATE_ADMISSION;
 }
 
 // --- 3. THE ADAPTER ----------------------------------------------------------

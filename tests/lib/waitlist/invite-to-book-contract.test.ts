@@ -18,6 +18,9 @@ import {
   deliveryStateFrom,
   INVITATION_DELIVERY_COPY,
   INVITATION_DELIVERY_STATES,
+  INDETERMINATE_ADMISSION,
+  INDETERMINATE_ADMISSION_COPY,
+  type DefiniteInviteToBookRefusal,
   type InvitationDeliveryState,
   type InvitationOutcome,
   type AdmitServerRefusal,
@@ -175,14 +178,27 @@ describe("every failure the adapter may report is one a command can produce", ()
     ).toEqual([]);
   });
 
-  it("adds exactly the two codes no command can produce, and says so", () => {
+  it("adds only codes no SHIPPED command can produce, and says why each exists", () => {
     const produced = new Set(COMMANDS.flatMap((c) => resultCodes(c)));
     const invented = INVITE_TO_BOOK_FAILURES.filter((c) => !produced.has(c)).sort();
-    // `scope_not_supported` is the contract's own: no shipped command carries a
-    // service or booking window yet, so an adapter that cannot honour one needs
-    // a way to refuse rather than widen the invitation silently.
-    // `unavailable` covers transport and unmapped database errors.
-    expect(invented).toEqual(["scope_not_supported", "unavailable"]);
+    expect(invented).toEqual([
+      // Definite refusals the ADMISSION command gives. Not produced by any
+      // command in this tree because 0193 is not on this branch — they are
+      // named rather than normalised onto `unavailable`, which now means "we
+      // could not find out" and must not absorb an answer the server gave.
+      "admission_round_full",
+      "no_admission_round",
+      "not_admissible",
+      "previously_declined",
+      // The contract's own: no shipped command carries a service or booking
+      // window yet, so an adapter that cannot honour one needs a way to refuse
+      // rather than widen the invitation silently.
+      "scope_not_supported",
+      // The INDETERMINATE code. Transport loss and answers this contract cannot
+      // read — never a refusal the server actually gave.
+      "unavailable",
+      "unknown_studio",
+    ]);
   });
 
   it("never reports a success code as a failure", () => {
@@ -398,7 +414,7 @@ describe("the admission vocabulary this component was REVIEWED against", () => {
       ).toContain(shown);
 
       const outcome = admitResultToOutcome(refusal, "2026-09-12T10:00:00.000Z", "accepted");
-      expect(outcome.ok, `${refusal} must never read as success`).toBe(false);
+      expect(outcome.state, `${refusal} must never read as committed`).not.toBe("committed");
     }
   });
 
@@ -413,21 +429,30 @@ describe("the admission vocabulary this component was REVIEWED against", () => {
     expect(ADMIT_SERVER_REFUSALS).toContain(notAdmissible);
   });
 
-  it("normalises the two unactionable refusals to `unavailable`", () => {
-    // Neither has a composer edit or a retry that changes the answer, so the
-    // practitioner is told the send is unavailable rather than shown a database
-    // reason they cannot act on.
-    expect(ADMIT_REFUSAL_PRESENTATION.unknown_studio).toBe("unavailable");
-    expect(ADMIT_REFUSAL_PRESENTATION.not_admissible).toBe("unavailable");
+  it("gives the two refusals integration found a DEFINITE code, not `unavailable`", () => {
+    // They were normalised onto `unavailable` before the outcome went tri-state.
+    // That is no longer allowed: `unavailable` means "we could not find out",
+    // and a server that answered is not that. Borrowing the word for a definite
+    // refusal is precisely how a lost response came to look like a "no".
+    expect(ADMIT_REFUSAL_PRESENTATION.unknown_studio).toBe("unknown_studio");
+    expect(ADMIT_REFUSAL_PRESENTATION.not_admissible).toBe("not_admissible");
 
     expect(admitResultToOutcome("unknown_studio", null, "accepted")).toEqual({
-      ok: false,
-      code: "unavailable",
+      state: "refused",
+      code: "unknown_studio",
     });
     expect(admitResultToOutcome("not_admissible", null, "accepted")).toEqual({
-      ok: false,
-      code: "unavailable",
+      state: "refused",
+      code: "not_admissible",
     });
+
+    // No definite refusal may carry the indeterminate code.
+    for (const refusal of ADMIT_SERVER_REFUSALS) {
+      expect(
+        ADMIT_REFUSAL_PRESENTATION[refusal],
+        `${refusal} is a definite refusal and must not read as unavailable`,
+      ).not.toBe("unavailable");
+    }
   });
 
   it("keeps the refusals the composer CAN fix distinguishable", () => {
@@ -445,19 +470,19 @@ describe("the admission vocabulary this component was REVIEWED against", () => {
   it("fails closed on anything it does not recognise", () => {
     // A server result added without updating this contract.
     expect(admitResultToOutcome("newly_invented_refusal", null, "accepted")).toEqual({
-      ok: false,
+      state: "indeterminate",
       code: "unavailable",
     });
     // Malformed runtime values. None of these may produce a success.
     for (const junk of [null, undefined, 42, {}, [], true, ""]) {
       const outcome = admitResultToOutcome(junk, "2026-09-12T10:00:00.000Z", "accepted");
-      expect(outcome.ok, `${String(junk)} must not read as success`).toBe(false);
-      expect(outcome).toEqual({ ok: false, code: "unavailable" });
+      expect(outcome.state, `${String(junk)} must not read as committed`).not.toBe("committed");
+      expect(outcome).toEqual({ state: "indeterminate", code: "unavailable" });
     }
     // Inherited property names must not resolve through the prototype chain.
     for (const inherited of ["constructor", "toString", "__proto__"]) {
       expect(admitResultToOutcome(inherited, null, "accepted")).toEqual({
-        ok: false,
+        state: "indeterminate",
         code: "unavailable",
       });
     }
@@ -465,7 +490,7 @@ describe("the admission vocabulary this component was REVIEWED against", () => {
 
   it("never synthesises an expiry for a success it cannot date", () => {
     expect(admitResultToOutcome("admitted", "2026-09-12T10:00:00.000Z", "accepted")).toEqual({
-      ok: true,
+      state: "committed",
       expiresAt: "2026-09-12T10:00:00.000Z",
       delivery: "accepted",
     });
@@ -473,7 +498,7 @@ describe("the admission vocabulary this component was REVIEWED against", () => {
     // the database observes. An undated success is malformed, not successful.
     for (const missing of [null, undefined, "", "   ", 0]) {
       expect(admitResultToOutcome("admitted", missing, "accepted")).toEqual({
-        ok: false,
+        state: "indeterminate",
         code: "unavailable",
       });
     }
@@ -530,7 +555,7 @@ describe("the admission vocabulary this component was REVIEWED against", () => {
     for (const valid of VALID_WIRE_INSTANTS) {
       expect(isWireInstant(valid), `${valid} must be accepted`).toBe(true);
       expect(admitResultToOutcome("admitted", valid, "accepted")).toEqual({
-        ok: true,
+        state: "committed",
         expiresAt: valid,
         delivery: "accepted",
       });
@@ -541,10 +566,11 @@ describe("the admission vocabulary this component was REVIEWED against", () => {
     for (const junk of MALFORMED_EXPIRIES) {
       expect(isWireInstant(junk), `${String(junk)} must be refused`).toBe(false);
       const outcome = admitResultToOutcome("admitted", junk, "accepted");
-      expect(outcome.ok, `admitted + ${String(junk)} must not read as success`).toBe(
-        false,
-      );
-      expect(outcome).toEqual({ ok: false, code: "unavailable" });
+      expect(
+        outcome.state,
+        `admitted + ${String(junk)} must not read as committed`,
+      ).not.toBe("committed");
+      expect(outcome).toEqual({ state: "indeterminate", code: "unavailable" });
     }
   });
 
@@ -595,7 +621,7 @@ describe("hour 24 is not a time of day this wire accepts", () => {
     // And no hour-24 value can reach a success.
     for (const bad of ["2026-09-12T24:00:00Z", "2026-09-12T24:00:00+00:00"]) {
       expect(admitResultToOutcome("admitted", bad, "accepted")).toEqual({
-        ok: false,
+        state: "indeterminate",
         code: "unavailable",
       });
     }
@@ -614,8 +640,10 @@ describe("admission and delivery are two facts, never one", () => {
     // has in fact moved on.
     for (const delivery of INVITATION_DELIVERY_STATES) {
       const outcome = admitResultToOutcome("admitted", ISO, delivery);
-      expect(outcome.ok, `${delivery} must not read as admission failure`).toBe(true);
-      expect(outcome).toEqual({ ok: true, expiresAt: ISO, delivery });
+      expect(outcome.state, `${delivery} must not read as admission failure`).toBe(
+        "committed",
+      );
+      expect(outcome).toEqual({ state: "committed", expiresAt: ISO, delivery });
     }
   });
 
@@ -637,24 +665,28 @@ describe("admission and delivery are two facts, never one", () => {
     for (const junk of [undefined, null, "", "sent", "delivered", "ACCEPTED", 0, {}, [], true]) {
       expect(deliveryStateFrom(junk), `${String(junk)} must fail closed`).toBe("unknown");
       const outcome = admitResultToOutcome("admitted", ISO, junk);
-      expect(outcome).toEqual({ ok: true, expiresAt: ISO, delivery: "unknown" });
+      expect(outcome).toEqual({ state: "committed", expiresAt: ISO, delivery: "unknown" });
     }
   });
 
   it("cannot express a success without a delivery state", () => {
     // LAW 6, at the type level: this does not compile if `delivery` is optional
     // or absent from the success arm.
-    const withDelivery: InvitationOutcome = { ok: true, expiresAt: ISO, delivery: "unknown" };
-    expect(withDelivery.ok).toBe(true);
-    // @ts-expect-error a success with no delivery state is not an InvitationOutcome
-    const withoutDelivery: InvitationOutcome = { ok: true, expiresAt: ISO };
+    const withDelivery: InvitationOutcome = {
+      state: "committed",
+      expiresAt: ISO,
+      delivery: "unknown",
+    };
+    expect(withDelivery.state).toBe("committed");
+    // @ts-expect-error a committed outcome with no delivery state is not an InvitationOutcome
+    const withoutDelivery: InvitationOutcome = { state: "committed", expiresAt: ISO };
     expect(withoutDelivery).toBeDefined();
 
     // And every runtime success carries one.
     for (const delivery of [undefined, "accepted", "refused", "nonsense"]) {
       const outcome = admitResultToOutcome("admitted", ISO, delivery);
-      expect(outcome.ok).toBe(true);
-      if (outcome.ok) {
+      expect(outcome.state).toBe("committed");
+      if (outcome.state === "committed") {
         expect(INVITATION_DELIVERY_STATES as ReadonlyArray<string>).toContain(
           outcome.delivery,
         );
@@ -693,14 +725,120 @@ describe("admission and delivery are two facts, never one", () => {
     // And a refusal still refuses, whatever is passed as delivery.
     for (const delivery of ["accepted", "refused", undefined]) {
       expect(admitResultToOutcome("not_admissible", ISO, delivery)).toEqual({
-        ok: false,
-        code: "unavailable",
+        state: "refused",
+        code: "not_admissible",
       });
     }
     // expiresAt validation stays load-bearing under the new signature.
     expect(admitResultToOutcome("admitted", "not-a-date", "accepted")).toEqual({
-      ok: false,
+      state: "indeterminate",
       code: "unavailable",
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe("a lost answer is neither a success nor a refusal", () => {
+  const ISO = "2026-09-12T10:00:00.000Z";
+
+  it("gives transport loss its own state", () => {
+    // THE CASE A BOOLEAN CANNOT HOLD. The request reached PostgreSQL, committed
+    // the admission and minted the invitation; only the response went missing.
+    // `refused` would claim the database said no. It did not — nobody heard it.
+    expect(INDETERMINATE_ADMISSION).toEqual({
+      state: "indeterminate",
+      code: "unavailable",
+    });
+    expect(INDETERMINATE_ADMISSION.state).not.toBe("refused");
+    expect(INDETERMINATE_ADMISSION.state).not.toBe("committed");
+    // Frozen so a caller cannot mutate the shared value into a claim.
+    expect(Object.isFrozen(INDETERMINATE_ADMISSION)).toBe(true);
+  });
+
+  it("cannot put the indeterminate code in the definite-refusal arm", () => {
+    // TYPE CONTROL. `unavailable` is excluded from DefiniteInviteToBookRefusal,
+    // so a caller literally cannot spell "the server refused: unavailable".
+    // @ts-expect-error `unavailable` is not a definite refusal
+    const notDefinite: DefiniteInviteToBookRefusal = "unavailable";
+    expect(notDefinite).toBeDefined();
+
+    // @ts-expect-error a refused outcome may not carry the indeterminate code
+    const badRefusal: InvitationOutcome = { state: "refused", code: "unavailable" };
+    expect(badRefusal).toBeDefined();
+
+    // And the other direction: indeterminate carries only `unavailable`.
+    // @ts-expect-error a definite code cannot inhabit the indeterminate arm
+    const badIndeterminate: InvitationOutcome = { state: "indeterminate", code: "not_found" };
+    expect(badIndeterminate).toBeDefined();
+  });
+
+  it("routes every unreadable server answer to indeterminate, never to refused", () => {
+    // A code this contract does not know means the server may well have
+    // committed. Fail closed to "we do not know" — not to "it failed".
+    for (const junk of ["newly_invented_refusal", "", "ok", null, undefined, 42, {}, [], true]) {
+      const outcome = admitResultToOutcome(junk, ISO, "accepted");
+      expect(outcome, `${String(junk)} must be indeterminate`).toEqual(
+        INDETERMINATE_ADMISSION,
+      );
+      expect(outcome.state).not.toBe("committed");
+      expect(outcome.state).not.toBe("refused");
+    }
+  });
+
+  it("keeps every authoritative refusal DEFINITE", () => {
+    for (const refusal of ADMIT_SERVER_REFUSALS) {
+      const outcome = admitResultToOutcome(refusal, ISO, "accepted");
+      expect(outcome.state, `${refusal} is an authoritative answer`).toBe("refused");
+      if (outcome.state === "refused") {
+        // A definite refusal never borrows the indeterminate word.
+        expect(outcome.code).not.toBe("unavailable");
+        expect(INVITE_TO_BOOK_FAILURES as ReadonlyArray<string>).toContain(outcome.code);
+      }
+    }
+  });
+
+  it("commits regardless of what the email did", () => {
+    // LAW: delivery never demotes a committed admission. All three states are
+    // committed outcomes, and `refused` delivery is still a created invitation.
+    for (const delivery of INVITATION_DELIVERY_STATES) {
+      expect(admitResultToOutcome("admitted", ISO, delivery)).toEqual({
+        state: "committed",
+        expiresAt: ISO,
+        delivery,
+      });
+    }
+    // committed+accepted, committed+unknown and committed+refused are distinct.
+    const shapes = INVITATION_DELIVERY_STATES.map((d) =>
+      JSON.stringify(admitResultToOutcome("admitted", ISO, d)),
+    );
+    expect(new Set(shapes).size).toBe(3);
+  });
+
+  it("an undatable success is indeterminate, not refused", () => {
+    // MORE IS KNOWN HERE than after a timeout — `admitted` did arrive — but the
+    // contract has no arm for "committed and undatable", and the safe action is
+    // identical: do not retry, go and look. Calling it refused would be false.
+    expect(admitResultToOutcome("admitted", "not-a-date", "accepted")).toEqual(
+      INDETERMINATE_ADMISSION,
+    );
+    expect(admitResultToOutcome("admitted", "2026-09-12T24:00:00Z", "accepted")).toEqual(
+      INDETERMINATE_ADMISSION,
+    );
+  });
+
+  it("never tells the practitioner it failed, or to just try again", () => {
+    // A BLIND RETRY IS THE EXPENSIVE MISTAKE: an invitation may already exist,
+    // it has consumed the round's allowance, and its one-time raw token went
+    // missing with the response.
+    expect(INDETERMINATE_ADMISSION_COPY).not.toMatch(/\bfailed\b/i);
+    expect(INDETERMINATE_ADMISSION_COPY).not.toMatch(/send again|resend/i);
+    // It must say what is unknown, and send the practitioner to reconcile.
+    expect(INDETERMINATE_ADMISSION_COPY).toMatch(/could ?n[o']?t confirm/i);
+    expect(INDETERMINATE_ADMISSION_COPY).toMatch(/check the waitlist/i);
+    // Any mention of trying again must come AFTER the reconciliation step.
+    const again = INDETERMINATE_ADMISSION_COPY.search(/again/i);
+    const check = INDETERMINATE_ADMISSION_COPY.search(/check the waitlist/i);
+    expect(again === -1 || check < again).toBe(true);
   });
 });

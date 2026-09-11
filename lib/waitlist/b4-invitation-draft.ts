@@ -101,7 +101,11 @@ import {
 export const PRACTITIONER_STATUS_LABEL: Record<WaitlistEntryStatus, string> = {
   waiting: "Waiting",
   claimed: "Ready to invite",
-  invited: "Invitation sent",
+  // DELIVERY-NEUTRAL BY NECESSITY. `invited` proves an invitation EXISTS; it
+  // proves nothing about an email. Delivery acceptance is not durable row state,
+  // so after a refresh this label cannot reconstruct what the provider did — a
+  // label that said "sent" would be a claim the row can never support again.
+  invited: "Invitation created",
   converted: "Booked",
   expired: "Invitation expired",
   released: "Ready to return",

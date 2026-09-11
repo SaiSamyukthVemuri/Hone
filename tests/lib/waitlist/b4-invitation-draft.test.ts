@@ -1222,7 +1222,7 @@ describe("the state machine is invisible", () => {
       "Invitation expired",
     );
     expect(practitionerStatusLabel("invited", { invitationElapsed: false, invitationRedeemed: false })).toBe(
-      "Invitation sent",
+      "Invitation created",
     );
     // A REDEEMED invitation is not expired even after its window passes: they
     // used it, and the entry is waiting on a booking record, not on a clock.
@@ -1231,7 +1231,7 @@ describe("the state machine is invisible", () => {
         invitationElapsed: true,
         invitationRedeemed: true,
       }),
-    ).toBe("Invitation sent");
+    ).toBe("Invitation created");
   });
 
   it("a previously invited person who is eligible again gets the ordinary invite", () => {
@@ -1368,7 +1368,7 @@ describe("every verdict is the live model's, not a second copy of it", () => {
         "could not be checked",
       );
       expect(practitionerStatusLabel("invited", raw as AdmissionContext)).toBe(
-        "Invitation sent",
+        "Invitation created",
       );
     }
 
@@ -1564,7 +1564,7 @@ describe("every verdict is the live model's, not a second copy of it", () => {
     const unreadable = { invitationFactsUnknown: true, invitationElapsed: true };
 
     expect(invitationHasRunOut(unreadable)).toBe(false);
-    expect(practitionerStatusLabel("invited", unreadable)).toBe("Invitation sent");
+    expect(practitionerStatusLabel("invited", unreadable)).toBe("Invitation created");
     expect(practitionerStatusDetail("invited", unreadable)).toContain("could not be checked");
 
     // The row keeps the LIVE shape, where every control refuses with a

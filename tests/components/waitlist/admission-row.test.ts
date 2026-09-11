@@ -263,7 +263,7 @@ describe("what each state offers", () => {
     expect(html).toContain("Resend invitation");
     expect(html).toContain("Cancel invitation");
     expect(hasControl(html, "invite_to_book")).toBe(false);
-    expect(html).toContain("Invitation sent");
+    expect(html).toContain("Invitation created");
   });
 
   it("offers Return to waitlist once the invitation has run out", () => {
@@ -506,7 +506,7 @@ describe("nothing is connected, and every control says so in its own words", () 
         },
       }),
     );
-    expect(html).toContain("Invitation sent");
+    expect(html).toContain("Invitation created");
     expect(html).not.toContain("Invitation expired");
     expect(html).toContain("could not be checked");
     expect(hasControl(html, "cancel_invitation")).toBe(true);

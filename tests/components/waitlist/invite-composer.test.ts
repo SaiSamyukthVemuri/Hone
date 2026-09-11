@@ -505,6 +505,9 @@ describe("the send control", () => {
     expect(html).toContain("Mon, Tue");
     // Future tense only. Nothing here may read as a receipt.
     expect(html).not.toContain("has been sent");
+    expect(html).not.toContain("Invitation created");
+    // The composer must not claim delivery under EITHER spelling — the old
+    // wording is kept here so a revert cannot pass this test.
     expect(html).not.toContain("Invitation sent");
   });
 });
