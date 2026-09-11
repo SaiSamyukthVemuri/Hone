@@ -60,10 +60,18 @@ something the browser knows — and therefore never something it can echo back a
 authority. `service_role` was granted no table privilege at all when read on 2026-09-06, and
 reaches rows only through the five definer commands.
 
-**`0192` is authored on PR #674 and is ABSENT FROM THIS TREE**, so it is not this tree's
-pending migration; `pending_migrations` is empty here. It is the migration that teaches the
-send path to consult this table, which is the first point at which existing SMS
-traffic is genuinely exposed. That is a separate gate.
+**SLOT OWNERSHIP MOVED AFTER THIS RECORD WAS WRITTEN.** An earlier revision of this
+paragraph said `0192` was authored on PR #674 and absent from this tree. That is no longer
+true and contradicted the Current-state row above, so it is corrected here rather than left
+standing: **WAIT owns `0192`**, this branch carries
+`0192_waitlist_recipient_proof_authority.sql` (recipient-proof **and** admission-round
+authority), and `npm run migration:state` reports it as this tree's **pending** migration —
+repo max **0192**, hosted max **0191**, pending **0192**. #674's SMS-routing migration was
+renumbered to **`0194`** and is **HELD** on its own branch; it is the migration that teaches
+the send path to consult this table, and it remains a separate gate.
+
+**Hosted is still `0191`.** Nothing above records a hosted `0192`, and the apply evidence for
+`0191` in this block is unchanged: `0192` is authored and **UNAPPLIED**.
 
 ## Previous state (verified 2026-09-04, post-0190 apply)
 

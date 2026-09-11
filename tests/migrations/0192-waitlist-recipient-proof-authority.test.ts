@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 // isRepoMax / versionsAbove are deliberately NOT imported any more: the
 // repo-max assertion moved to 0193 (see below), and leaving unused imports
@@ -92,7 +92,7 @@ describe("0192 — the round allowance is its own table, not a studios column", 
 
   it("grants the browser a COLUMN select and no DML at all", () => {
     expect(CODE).toMatch(
-      /grant select \(studio_id, allowance, updated_at\)\s*\n\s*on public\.studio_waitlist_admission_rounds to authenticated;/,
+      /grant select \(\s*\n?\s*id, studio_id, allowance, opened_at, opened_by_practitioner_id,\s*\n?\s*closed_at, closed_by_practitioner_id, updated_at\s*\n?\s*\) on public\.studio_waitlist_admission_rounds to authenticated;/,
     );
     expect(CODE).not.toMatch(
       /grant (insert|update|delete)[^;]*on public\.studio_waitlist_admission_rounds/i,
@@ -487,7 +487,9 @@ describe("0192 — the gated recipient-identity read", () => {
 
 describe("0192 — privileges are enumerated by name, and nothing reaches the browser", () => {
   const FUNCTIONS = [
-    "public.waitlist_admission_consumed(uuid)",
+    "public.waitlist_admission_round_consumed(uuid)",
+    "public.open_new_client_waitlist_admission_round(uuid, uuid, integer)",
+    "public.close_new_client_waitlist_admission_round(uuid, uuid)",
     "public.issue_scoped_new_client_waitlist_invitation(uuid, uuid, uuid, uuid, date, date, smallint[], integer)",
     "public.resolve_new_client_waitlist_invitation(text)",
     "public.begin_waitlist_invitation_proof(text, integer)",
@@ -528,11 +530,22 @@ describe("0192 — privileges are enumerated by name, and nothing reaches the br
 
   it("every function pins search_path and the definer ones are marked", () => {
     const defs = CODE.match(/create or replace function public\.[\s\S]*?\$\$;/g) ?? [];
-    // NINE new commands plus the forward REDEFINITION of the delegated issuer,
-    // which the P1 declined-rows repair required. 0190's file stays frozen.
-    // The ninth is the gated recipient-identity read the integration lane
-    // proved B3 could not book without.
-    expect(defs.length).toBe(10);
+    // NINE new commands, plus FOUR forward REDEFINITIONS of already-applied
+    // functions. 0188/0189/0190 stay frozen; a function whose meaning changed
+    // when declined_at arrived is re-created here instead.
+    //
+    //   1 delegated issuer            — the first repair in this family (§4b)
+    //   3 legacy lifecycle commands   — expire_, release_, record_conversion
+    //                                   (§14b, the class-wide completion)
+    //   1 invitation append-only guard — so a round binding is immutable (§14c)
+    //
+    // Plus TWO new round-authority commands (§14d), open_ and close_, which
+    // replace the raw service-role upsert that was previously the only way to
+    // establish a round.
+    //
+    // The ninth original command is the gated recipient-identity read the
+    // integration lane proved B3 could not book without.
+    expect(defs.length).toBe(16);
     for (const d of defs) {
       expect(d).toMatch(/set search_path = pg_catalog, pg_temp/);
     }
@@ -768,5 +781,204 @@ describe("0192 — begin_ returns the authoritative mint instant", () => {
     expect(BEGIN).toMatch(/proof_challenge_hash\s+= encode\(extensions\.digest\(v_raw/);
     // v_raw is returned to the caller and written nowhere in plaintext.
     expect(BEGIN).not.toMatch(/set[\s\S]*?=\s*v_raw\b/);
+  });
+});
+
+describe("0192 — the challenge clock is bounded by the invitation clock", () => {
+  const BEGIN = CODE.slice(
+    CODE.indexOf("create or replace function public.begin_waitlist_invitation_proof("),
+    CODE.indexOf("create or replace function public.complete_waitlist_invitation_proof("),
+  );
+
+  it("reads the invitation's own expiry from the LOCKED row, in the locking statement", () => {
+    // Not a second SELECT afterwards, and not a caller argument: the authority
+    // for when this invitation dies is the row this transaction holds.
+    const lockingSelect = BEGIN.slice(
+      BEGIN.indexOf("select i.id, i.entry_id, i.studio_id"),
+      BEGIN.indexOf("for update") + "for update".length,
+    );
+    expect(lockingSelect).toContain("i.expires_at");
+    expect(lockingSelect).toContain("v_inv_expires");
+  });
+
+  it("clamps the persisted expiry to the invitation, and computes it once", () => {
+    expect(BEGIN).toMatch(
+      /v_challenge_expires\s*:=\s*least\(\s*v_now \+ make_interval\(mins => p_ttl_minutes\),\s*v_inv_expires\s*\)/,
+    );
+    const assignments = BEGIN.match(/v_challenge_expires\s*:=/g) ?? [];
+    expect(assignments.length, "one computation, or the two writes can disagree").toBe(1);
+  });
+
+  it("PERSISTS and RETURNS that one variable — never a recomputation", () => {
+    expect(BEGIN).toMatch(/proof_challenge_expires_at\s*=\s*v_challenge_expires,/);
+    expect(BEGIN).toMatch(
+      /return query select 'challenge_issued'[\s\S]*?v_challenge_expires,\s*v_cid,\s*v_now;/,
+    );
+    // THE DEFECT SHAPE ITSELF, named so it cannot come back by edit: the raw
+    // requested window must appear nowhere as a stored or returned expiry.
+    expect(BEGIN).not.toMatch(
+      /proof_challenge_expires_at\s*=\s*v_now \+ make_interval\(mins => p_ttl_minutes\)/,
+    );
+    const unclamped = BEGIN.match(/v_now \+ make_interval\(mins => p_ttl_minutes\)/g) ?? [];
+    expect(
+      unclamped.length,
+      "the requested window may appear ONLY as the left operand of the clamp",
+    ).toBe(1);
+  });
+
+  it("clamps AFTER the liveness gate, so the result is never already expired", () => {
+    // The gate establishes expires_at > v_now; only then is `least` guaranteed
+    // to return an instant strictly in the future. Ordering is the proof that
+    // no new near-expiry refusal word was needed.
+    const gateAt = BEGIN.indexOf("'not_live'::text");
+    const clampAt = BEGIN.indexOf("v_challenge_expires :=");
+    expect(gateAt).toBeGreaterThan(-1);
+    expect(clampAt).toBeGreaterThan(gateAt);
+  });
+
+  it("adds NO new result word — the vocabulary is unchanged", () => {
+    const words = new Set(
+      (BEGIN.match(/'([a-z_]+)'::text/g) ?? []).map((m) => m.slice(1, m.indexOf("'", 1))),
+    );
+    expect([...words].sort()).toEqual([
+      "challenge_issued",
+      "invalid_input",
+      "invalid_token",
+      "not_live",
+    ]);
+  });
+
+  it("leaves the capability's database-owned 30 minutes alone", () => {
+    const COMPLETE = CODE.slice(
+      CODE.indexOf("create or replace function public.complete_waitlist_invitation_proof("),
+      CODE.indexOf("create or replace function public.invalidate_waitlist_invitation_proof("),
+    );
+    expect(COMPLETE).toContain("proof_capability_expires_at = v_now + interval '30 minutes'");
+    expect(COMPLETE).not.toContain("v_challenge_expires");
+    expect(COMPLETE).not.toContain("least(");
+  });
+});
+
+describe("0192 §14b — the legacy lifecycle commands are declined-aware", () => {
+  // A NAMED-AUTHORITY REGRESSION GUARD, deliberately not a SQL parser.
+  //
+  // It knows exactly three functions by name — the three the class census
+  // identified — and asks one question of each: does every three-terminal
+  // invitation predicate in its body also require `declined_at is null`?
+  //
+  // Scoped this narrowly on purpose. A general scan over arbitrary migrations
+  // would flag 0188/0189/0190, whose bytes are APPLIED AND FROZEN and whose
+  // three-terminal predicates were correct when written — they are superseded
+  // here, not wrong there. The guard protects the forward definitions that are
+  // now authoritative, and nothing else.
+  const OWNED = [
+    "expire_new_client_waitlist_invitation",
+    "release_new_client_waitlist_entry",
+    "record_new_client_waitlist_conversion",
+  ] as const;
+
+  const bodyOf = (fn: string): string => {
+    const start = CODE.indexOf(`create or replace function public.${fn}(`);
+    expect(start, `${fn} must be forward-redefined in 0192`).toBeGreaterThan(-1);
+    const end = CODE.indexOf("\n$$;", start);
+    expect(end, `${fn} must terminate`).toBeGreaterThan(start);
+    return CODE.slice(start, end);
+  };
+
+  it.each(OWNED)("%s is redefined here, so 0189's version is superseded", (fn) => {
+    expect(CODE).toContain(`create or replace function public.${fn}(`);
+  });
+
+  // -------------------------------------------------------------------------
+  // SOURCE PRESENCE IS A SECOND OPINION.
+  // POSTGRESQL BEHAVIOURAL TESTS OWN SEMANTIC DECLINED-ROW EXCLUSION.
+  //
+  // THIS GUARD USED TO CLAIM MORE THAN A TEXT MATCHER CAN HONESTLY PROVE, and
+  // it was wrong four times in a row, each time in a way that looked correct:
+  //
+  //   1. counting tokens proved PRESENCE, not RELATIONSHIP — `and` -> `or` kept
+  //      the counts equal while inverting the predicate;
+  //   2. checking the gaps between four terms proved only INTERNAL conjunction,
+  //      and said nothing about how the group attaches to what surrounds it;
+  //   3. so a disjunction at either BOUNDARY of the group still passed;
+  //   4. and inline `--` comments inside a statement survived the matcher.
+  //
+  // Every repair required understanding a little more SQL: operator precedence,
+  // parentheses, comment syntax. That road ends at reimplementing a SQL parser
+  // inside a Vitest source test, which is out of scope and would itself need
+  // proving. PostgreSQL already knows SQL semantics.
+  //
+  // SO THE SEMANTIC CLAIM IS RETIRED HERE AND MOVED TO THE DATABASE. The
+  // load-bearing proof is the LOCK-TARGET fixture in
+  // tests/db/waitlist-recipient-proof.db.test.ts: a historical declined row is
+  // held under `for update` by a second connection, and each lifecycle command
+  // is called with a short `statement_timeout`. A command that still SELECTS
+  // that row as the current cycle MUST try to lock it and MUST time out with
+  // 57014. No physical row ordering, comment placement or operator precedence
+  // can hide that.
+  //
+  // Its claim is bounded to SELECTION, LOCKING and TERMINAL MUTATION. It does
+  // not assert the declined row is never read — `expire_` legitimately scans
+  // this table in `exists (...)` subqueries that touch it without matching or
+  // locking it.
+  //
+  // WHAT REMAINS BELOW IS ONLY WHAT TEXT CAN HONESTLY ESTABLISH: that these
+  // three functions are forward-redefined here at all, with their signatures,
+  // definer posture, pinned search_path and explicit privileges intact, and
+  // that no chronology-based "repair" was smuggled in. Presence of `declined_at`
+  // is asserted as corroboration — deliberately NOT as proof of liveness
+  // semantics, which this layer cannot and no longer pretends to decide.
+  // -------------------------------------------------------------------------
+
+  it.each(OWNED)("%s mentions declined_at — corroboration only, never proof", (fn) => {
+    // A necessary condition, not a sufficient one. If this fails the repair is
+    // certainly gone; if it passes, the DB lock-target tests are what decide.
+    expect(bodyOf(fn)).toContain("declined_at");
+  });
+
+  it.each(OWNED)("%s keeps its exact signature and definer posture", (fn) => {
+    const body = bodyOf(fn);
+    expect(body).toMatch(/\(\s*\n\s*p_studio_id\s+uuid,/);
+    expect(body).toContain("security definer");
+    expect(body).toContain("set search_path = pg_catalog, pg_temp");
+  });
+
+  it.each(OWNED)("%s is re-granted to service_role ONLY, by name", (fn) => {
+    for (const role of ["public", "anon", "authenticated", "service_role"]) {
+      expect(CODE).toContain(
+        `revoke all privileges on function public.${fn}(uuid, uuid, uuid) from ${role};`,
+      );
+    }
+    expect(CODE).toContain(
+      `grant  execute on function public.${fn}(uuid, uuid, uuid) to service_role;`,
+    );
+    expect(CODE).not.toContain(
+      `grant  execute on function public.${fn}(uuid, uuid, uuid) to authenticated;`,
+    );
+    expect(CODE).not.toContain(
+      `grant  execute on function public.${fn}(uuid, uuid, uuid) to anon;`,
+    );
+  });
+
+  it("CHRONOLOGY IS NOT THE REPAIR: no ordering was smuggled into the selectors", () => {
+    // An `order by issued_at desc limit 1` would also make the ambiguous select
+    // single-valued, and would be WRONG — it picks by age rather than liveness
+    // and still acts on a declined row when that row is newest. The invariant is
+    // the four-terminal predicate.
+    for (const fn of OWNED) {
+      const body = bodyOf(fn);
+      expect(body, `${fn} must not order the invitation selector`).not.toMatch(
+        /order by[\s\S]{0,40}issued_at/,
+      );
+    }
+  });
+
+  it("the frozen migrations are NOT edited — this is a forward redefinition", () => {
+    // 0188/0189/0190 are applied. The repair may only add a later definition.
+    for (const older of ["0188", "0189", "0190"]) {
+      const p = path.resolve(__dirname, "../../supabase/migrations");
+      const file = readdirSync(p).find((f) => f.startsWith(`${older}_`));
+      expect(file, `${older} must still exist`).toBeTruthy();
+    }
   });
 });
