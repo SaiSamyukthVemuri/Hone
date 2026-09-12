@@ -16,9 +16,17 @@ import {
 import type { AdapterCapabilities } from "@/lib/waitlist/invite-to-book-contract";
 import {
   COMPOSER_FIELD_NAMES,
+  composerReducer,
+  initialComposerState,
   inviteSubmissionFromFormData,
+  scopeSummary,
+  sendState,
+  validateDraft,
+  type ComposerEvent,
+  type ComposerState,
   type InviteComposerAction,
 } from "@/lib/waitlist/b4-invitation-draft";
+import { InviteComposerView } from "@/components/waitlist/invite-composer";
 
 // ===========================================================================
 // WAIT-03 B4 — the composer renders against NON-AUTHORITATIVE fixtures
@@ -63,13 +71,15 @@ const draft = (over: Partial<InviteDraft> = {}): InviteDraft => ({
  *  its presence is what makes the send bindable at all. */
 const NOOP_ACTION = async (_formData: FormData) => {};
 
+const CUSTOM = "custom" as const;
+
 const compose = (
   over: Partial<InviteDraft> = {},
   capabilities: AdapterCapabilities | null = null,
   action: InviteComposerAction | null = NOOP_ACTION,
 ) =>
   render(
-    InviteComposer({
+    createElement(InviteComposer, {
       entryId: ENTRY_ID,
       entryName: "Sarah",
       draft: draft(over),
@@ -194,13 +204,12 @@ describe("booking window", () => {
     expect(pillFor(html, "composer-window-14")).toContain("peer-checked:border-accent");
   });
 
-  it("always renders the custom field, and checks Custom when off-preset", () => {
-    // IT USED TO APPEAR ONLY FOR AN OFF-PRESET VALUE, which was possible because
-    // nothing here submitted anything. Without client JavaScript a radio cannot
-    // reveal a field, so a practitioner who picks Custom would have had nowhere
-    // to type. It is always present and read ONLY when Custom is selected —
-    // proved in the payload tests, not here.
-    expect(compose({ windowDays: 7 })).toContain('data-testid="composer-window-days"');
+  it("renders the custom field only while Custom is selected", () => {
+    // An inactive number field is not just clutter: its min/max join the
+    // browser's own constraint validation, so a stale out-of-range value would
+    // block a submit the practitioner has since repaired — and block Cancel
+    // with it. Selecting Custom re-renders and brings the field with it.
+    expect(compose({ windowDays: 7 })).not.toContain('data-testid="composer-window-days"');
     const custom = compose({ windowDays: 45 });
     expect(custom).toContain('data-testid="composer-window-days"');
     expect(controlTag(custom, "composer-window-custom")).toContain('checked=""');
@@ -231,11 +240,8 @@ describe("allowed days", () => {
     ).toContain('checked=""');
   });
 
-  it("always renders the weekday toggles, Monday first", () => {
-    // Same reason as the custom day count: a preset radio cannot reveal a group
-    // without client JavaScript, and toggles that appear only after a round trip
-    // are toggles nobody can reach.
-    expect(compose()).toContain('data-testid="composer-weekdays"');
+  it("renders the weekday toggles only for a custom set, Monday first", () => {
+    expect(compose()).not.toContain('data-testid="composer-weekdays"');
     const html = compose({ allowedWeekdays: [1, 3] });
     expect(html).toContain('data-testid="composer-weekdays"');
 
@@ -291,7 +297,7 @@ describe("two composers on one page cannot cross-reference each other", () => {
     // reader could announce another person's validation error.
     const draftA: Partial<InviteDraft> = { serviceId: "svc-deleted" };
     const a = render(
-      InviteComposer({
+    createElement(InviteComposer, {
         entryId: "entry-A",
         entryName: "Sarah",
         draft: { ...emptyDraft(), ...draftA },
@@ -300,7 +306,7 @@ describe("two composers on one page cannot cross-reference each other", () => {
       }),
     );
     const b = render(
-      InviteComposer({
+    createElement(InviteComposer, {
         entryId: "entry-B",
         entryName: "Nadia",
         draft: { ...emptyDraft(), ...draftA },
@@ -334,7 +340,7 @@ describe("two composers on one page cannot cross-reference each other", () => {
 
     // A composer whose entry id is not id-safe still emits usable ids.
     const odd = render(
-      InviteComposer({
+    createElement(InviteComposer, {
         entryId: "weird id/with:chars",
         entryName: "X",
         draft: emptyDraft(),
@@ -765,7 +771,14 @@ describe("a real caller can bind this composer and receive the draft", () => {
     // an allowance or a claim state.
     const html = compose({}, CONNECTED);
     const names = [...html.matchAll(/name="([^"]*)"/g)].map((m) => m[1]);
-    expect(new Set(names)).toEqual(new Set(Object.values(COMPOSER_FIELD_NAMES)));
+    // A SUBSET, because the custom fields and the weekday group are rendered
+    // only while their mode is selected. Nothing outside the contract appears.
+    for (const name of names) {
+      expect(Object.values(COMPOSER_FIELD_NAMES), `${name} is not a contract field`).toContain(
+        name,
+      );
+    }
+    expect(names.length).toBeGreaterThan(3);
     for (const forbidden of [
       "studio_id", "studio", "actor_id", "actor", "role", "round_id", "round",
       "allowance", "claim_state", "claimed", "practitioner_id", "proof",
@@ -806,7 +819,7 @@ describe("a real caller can bind this composer and receive the draft", () => {
     // Cancel with nothing behind it is disabled rather than decorative.
     expect(controlTag(html, "composer-cancel")).toContain('disabled=""');
     const withCancel = render(
-      InviteComposer({
+      createElement(InviteComposer, {
         entryId: ENTRY_ID,
         entryName: "Sarah",
         draft: draft({}),
@@ -817,5 +830,228 @@ describe("a real caller can bind this composer and receive the draft", () => {
       }),
     );
     expect(controlTag(withCancel, "composer-cancel")).not.toContain('disabled=""');
+  });
+});
+
+// ===========================================================================
+// LIVE INTERACTION — visible == validated == submitted, after every change
+// ===========================================================================
+//
+// HARNESS LIMIT, STATED RATHER THAN PAPERED OVER: this repo ships no jsdom and
+// no testing-library (several suites say so in their own comments), so a real
+// click cannot be dispatched here and none was added — a shared test dependency
+// is not something to slip into a review cycle.
+//
+// What is proved instead is stronger than a source pin and covers all four
+// findings. Every interaction IS `composerReducer`, which is pure; the view is
+// pure too. So an interaction script runs the reducer, renders the state it
+// produced, and then checks the three answers that used to disagree:
+//
+//     what the practitioner SEES   (summary, checked controls, Send state)
+//     what VALIDATES               (validateDraft on the live draft)
+//     what would be SUBMITTED      (FormData derived from that same markup)
+//
+// The one link this cannot reach is React's own onChange plumbing.
+
+const CONTEXT = { serviceIds: SERVICES.filter((s) => s.modality !== null).map((s) => s.id) };
+
+/** Run an interaction script from an opening draft. */
+function interact(over: Partial<InviteDraft>, events: ReadonlyArray<ComposerEvent>): ComposerState {
+  return events.reduce(composerReducer, initialComposerState(draft(over)));
+}
+
+/** Render exactly the state an interaction produced. */
+function view(state: ComposerState, capabilities: AdapterCapabilities | null = CONNECTED) {
+  return render(
+    createElement(InviteComposerView, {
+      entryId: ENTRY_ID,
+      entryName: "Sarah",
+      // DELIBERATELY THE OPENING DRAFT, not the live one. The prop is what the
+      // composer was mounted with; the state is what the practitioner has since
+      // chosen. Passing the live draft here would hide a view that still read
+      // the prop — which is precisely the bug this suite exists to catch.
+      draft: draft({}),
+      services: SERVICES,
+      capabilities,
+      action: NOOP_ACTION,
+      state,
+      dispatch: () => {},
+    }),
+  );
+}
+
+/** The three answers, for one state. They must agree. */
+function answers(state: ComposerState, capabilities: AdapterCapabilities | null = CONNECTED) {
+  const html = view(state, capabilities);
+  const summaryMatch = /data-testid="composer-summary"[^>]*>([^<]*)</.exec(html);
+  return {
+    html,
+    visibleSummary: summaryMatch?.[1] ?? null,
+    sendDisabled: controlTag(html, "composer-send").includes('disabled=""'),
+    validation: validateDraft(state.draft, CONTEXT),
+    submitted: inviteSubmissionFromFormData(formDataFrom(html)),
+  };
+}
+
+describe("one live draft drives everything", () => {
+  it("1. SERVICE: changing it moves the confirmation AND the payload", () => {
+    const before = answers(interact({ serviceId: "svc-1" }, []));
+    const after = answers(
+      interact({ serviceId: "svc-1" }, [{ type: "service", serviceId: "svc-2" }]),
+    );
+    expect(after.submitted.serviceId).toBe("svc-2");
+    expect(after.visibleSummary).not.toBe(before.visibleSummary);
+    expect(after.visibleSummary).toContain("Laser consultation");
+  });
+
+  it("2. WINDOW: 7 -> 30 changes the confirmation AND the payload together", () => {
+    const state = interact({ serviceId: "svc-1" }, [{ type: "windowPreset", preset: 30 }]);
+    const { visibleSummary, submitted } = answers(state);
+    expect(submitted.windowDays).toBe(30);
+    expect(visibleSummary).toContain("next 30 days");
+    // THE DEFECT, NAMED: the summary used to keep saying 7 while the form sent
+    // 30. Both halves are asserted from the SAME render.
+    expect(visibleSummary).not.toContain("next 7 days");
+  });
+
+  it("3. CUSTOM WINDOW: selecting Custom activates the field and carries its value", () => {
+    const state = interact({ serviceId: "svc-1" }, [
+      { type: "windowPreset", preset: CUSTOM },
+      { type: "windowCustom", days: 45 },
+    ]);
+    const { html, submitted, visibleSummary } = answers(state);
+    expect(html).toContain('data-testid="composer-window-days"');
+    expect(submitted.windowDays).toBe(45);
+    expect(visibleSummary).toContain("45");
+  });
+
+  it("4. LEAVING CUSTOM: an invalid leftover cannot block a repaired draft", () => {
+    const state = interact({ serviceId: "svc-1" }, [
+      { type: "windowPreset", preset: CUSTOM },
+      { type: "windowCustom", days: 9999 }, // out of range
+      { type: "windowPreset", preset: 14 }, // ...then repaired by leaving Custom
+    ]);
+    const { html, sendDisabled, submitted, validation } = answers(state);
+    // The field is GONE, so its min/max cannot join constraint validation.
+    expect(html).not.toContain('data-testid="composer-window-days"');
+    expect(validation.ok).toBe(true);
+    expect(sendDisabled).toBe(false);
+    expect(submitted.windowDays).toBe(14);
+  });
+
+  it("5. WEEKDAYS: custom with nothing ticked is [] — never every day", () => {
+    // THE P1. `null` is the WIDEST scope there is. A practitioner who unticked
+    // every day must not be read as one who allowed all of them.
+    const state = interact({ serviceId: "svc-1" }, [{ type: "daysPreset", preset: "custom" }]);
+    expect(state.draft.allowedWeekdays).toEqual([]);
+
+    const { sendDisabled, submitted, validation, html } = answers(state);
+    expect(submitted.allowedWeekdays).toEqual([]);
+    expect(submitted.allowedWeekdays).not.toBeNull();
+    expect(validation.ok).toBe(false);
+    expect(sendDisabled).toBe(true);
+    expect(html).toContain("Choose at least one day");
+
+    // ...and the same through a tick-then-untick, which is how it happens.
+    const emptied = interact({ serviceId: "svc-1", allowedWeekdays: [1] }, [
+      { type: "weekday", index: 1, checked: false },
+    ]);
+    expect(emptied.draft.allowedWeekdays).toEqual([]);
+    expect(answers(emptied).submitted.allowedWeekdays).toEqual([]);
+  });
+
+  it("6. REPAIR: ticking Monday re-enables Send and submits Monday only", () => {
+    const state = interact({ serviceId: "svc-1" }, [
+      { type: "daysPreset", preset: "custom" },
+      { type: "weekday", index: 1, checked: true },
+    ]);
+    const { sendDisabled, submitted, validation, visibleSummary } = answers(state);
+    expect(validation.ok).toBe(true);
+    expect(sendDisabled).toBe(false);
+    expect(submitted.allowedWeekdays).toEqual([1]);
+    expect(visibleSummary).toContain("Mon");
+  });
+
+  it("7. EXPIRY: an invalid custom value cannot block after switching to a preset", () => {
+    const state = interact({ serviceId: "svc-1" }, [
+      { type: "expiryPreset", preset: CUSTOM },
+      { type: "expiryCustom", hours: 9999 },
+      { type: "expiryPreset", preset: 48 },
+    ]);
+    const { html, sendDisabled, submitted } = answers(state);
+    expect(html).not.toContain('data-testid="composer-expiry-hours"');
+    expect(sendDisabled).toBe(false);
+    expect(submitted.expiresInHours).toBe(48);
+  });
+
+  it("8. INITIAL INVALID: repairing it interactively enables Send, no refresh", () => {
+    // The composer opens on a service that has since been deleted.
+    const opened = initialComposerState(draft({ serviceId: "svc-deleted" }));
+    expect(answers(opened).sendDisabled).toBe(true);
+
+    const repaired = composerReducer(opened, { type: "service", serviceId: "svc-1" });
+    const after = answers(repaired);
+    expect(after.validation.ok).toBe(true);
+    // THE P2: Send used to stay disabled because it read the INITIAL prop.
+    expect(after.sendDisabled).toBe(false);
+    expect(after.submitted.serviceId).toBe("svc-1");
+  });
+
+  it("9. CONFIRMATION: visible scope and submitted scope agree for EVERY mutation", () => {
+    const scripts: ReadonlyArray<ReadonlyArray<ComposerEvent>> = [
+      [],
+      [{ type: "service", serviceId: "svc-2" }],
+      [{ type: "windowPreset", preset: 30 }],
+      [{ type: "windowPreset", preset: CUSTOM }, { type: "windowCustom", days: 21 }],
+      [{ type: "daysPreset", preset: "weekdays" }],
+      [{ type: "daysPreset", preset: "weekends" }],
+      [{ type: "daysPreset", preset: "custom" }, { type: "weekday", index: 3, checked: true }],
+      [{ type: "expiryPreset", preset: 24 }],
+      [{ type: "expiryPreset", preset: CUSTOM }, { type: "expiryCustom", hours: 100 }],
+      [
+        { type: "service", serviceId: "svc-2" },
+        { type: "windowPreset", preset: 14 },
+        { type: "daysPreset", preset: "custom" },
+        { type: "weekday", index: 2, checked: true },
+        { type: "weekday", index: 5, checked: true },
+        { type: "expiryPreset", preset: 168 },
+      ],
+    ];
+
+    for (const script of scripts) {
+      const state = interact({ serviceId: "svc-1" }, script);
+      const { visibleSummary, submitted, validation } = answers(state);
+      // The payload IS the live draft — not the prop the composer opened on.
+      expect(submitted.windowDays, JSON.stringify(script)).toBe(state.draft.windowDays);
+      expect(submitted.serviceId, JSON.stringify(script)).toBe(state.draft.serviceId);
+      expect(submitted.expiresInHours, JSON.stringify(script)).toBe(state.draft.expiresInHours);
+      expect(submitted.allowedWeekdays ?? null, JSON.stringify(script)).toEqual(
+        state.draft.allowedWeekdays ?? null,
+      );
+      // ...and the sentence above Send describes that same draft.
+      if (validation.ok) {
+        const selected = SERVICES.find((svc) => svc.id === state.draft.serviceId) ?? null;
+        expect(visibleSummary).toBe(
+          `They will be able to book ${scopeSummary(state.draft, selected?.name ?? null)}.`,
+        );
+      }
+    }
+  });
+
+  it("10. EXACTLY ONE submit control, and it is a real one", () => {
+    const html = view(interact({ serviceId: "svc-1" }, []));
+    expect(
+      [...html.matchAll(/<button[^>]*data-testid="composer-send"[^>]*>/g)],
+    ).toHaveLength(1);
+    expect(controlTag(html, "composer-send")).toContain('type="submit"');
+    expect(html).toContain("React form unexpectedly submitted");
+  });
+
+  it("capability authority still beats every interaction", () => {
+    // A perfectly repaired draft cannot talk its way past a missing capability.
+    const state = interact({ serviceId: "svc-1" }, [{ type: "windowPreset", preset: 30 }]);
+    expect(answers(state, null).sendDisabled).toBe(true);
+    expect(sendState(state.draft, null, CONTEXT).disabled).toBe(true);
+    expect(answers(state, CONNECTED).sendDisabled).toBe(false);
   });
 });

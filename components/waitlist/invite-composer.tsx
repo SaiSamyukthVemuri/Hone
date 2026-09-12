@@ -1,3 +1,7 @@
+"use client";
+
+import { useReducer } from "react";
+
 import { isConsultationService } from "@/lib/booking/consultation";
 import { buttonClasses } from "@/components/ui/button";
 import { cx } from "@/components/ui/control-base";
@@ -20,6 +24,10 @@ import {
   waitlistDomId,
   COMPOSER_FIELD_NAMES,
   CUSTOM_PRESET_VALUE,
+  composerReducer,
+  initialComposerState,
+  type ComposerEvent,
+  type ComposerState,
   type InviteComposerAction,
 } from "@/lib/waitlist/b4-invitation-draft";
 import {
@@ -140,13 +148,15 @@ function PresetRadio({
   name,
   value,
   testId,
-  defaultChecked,
+  checked,
+  onSelect,
   children,
 }: {
   name: string;
   value: string | number;
   testId: string;
-  defaultChecked: boolean;
+  checked: boolean;
+  onSelect: () => void;
   children: React.ReactNode;
 }) {
   return (
@@ -155,7 +165,8 @@ function PresetRadio({
         type="radio"
         name={name}
         value={value}
-        defaultChecked={defaultChecked}
+        checked={checked}
+        onChange={onSelect}
         data-testid={testId}
         className="peer sr-only"
       />
@@ -179,12 +190,14 @@ function PresetRadio({
 function WeekdayCheckbox({
   value,
   testId,
-  defaultChecked,
+  checked,
+  onToggle,
   children,
 }: {
   value: number;
   testId: string;
-  defaultChecked: boolean;
+  checked: boolean;
+  onToggle: (checked: boolean) => void;
   children: React.ReactNode;
 }) {
   return (
@@ -193,7 +206,8 @@ function WeekdayCheckbox({
         type="checkbox"
         name={COMPOSER_FIELD_NAMES.allowedWeekdays}
         value={value}
-        defaultChecked={defaultChecked}
+        checked={checked}
+        onChange={(event) => onToggle(event.currentTarget.checked)}
         data-testid={testId}
         className="peer sr-only"
       />
@@ -213,15 +227,22 @@ function WeekdayCheckbox({
   );
 }
 
-export function InviteComposer({
-  entryId,
-  entryName,
-  draft,
-  services,
-  capabilities = null,
-  action = null,
-  cancelAction = null,
-}: {
+/**
+ * The composer, holding the practitioner's live answers.
+ *
+ * A CLIENT COMPONENT, AND ONLY THIS ONE. It was server-rendered from a frozen
+ * `draft` prop while the browser's own controls moved independently, so the
+ * summary, the validation and the Send state all described a draft the
+ * practitioner had already changed. Interaction state is the smallest thing
+ * that fixes that, and it is all this boundary buys: no data fetching, no
+ * authority, no mutation. The form's action still comes from outside.
+ */
+export function InviteComposer(props: InviteComposerProps) {
+  const [state, dispatch] = useReducer(composerReducer, props.draft, initialComposerState);
+  return <InviteComposerView {...props} state={state} dispatch={dispatch} />;
+}
+
+export type InviteComposerProps = {
   /** Namespaces every id this composer emits, so two mounted composers cannot
    *  cross-reference each other's labels and errors. */
   entryId: string;
@@ -259,7 +280,33 @@ export function InviteComposer({
   /** Dismissal, bound the same way. A Cancel with nothing behind it is disabled
    *  for the same reason the send is. */
   cancelAction?: InviteComposerAction | null;
+};
+
+/**
+ * The rendering half, PURE and exported so the whole surface can be proved
+ * against any state the reducer can reach.
+ *
+ * This repo has no jsdom and no testing-library — several suites say so in their
+ * own comments — so a click cannot be dispatched here. Splitting the view from
+ * the state is what makes the invariant provable anyway: drive the reducer
+ * through an interaction, render the state it produces, and check that what is
+ * VISIBLE, what VALIDATES and what would be SUBMITTED are the same three
+ * answers.
+ */
+export function InviteComposerView({
+  entryId,
+  entryName,
+  services,
+  capabilities = null,
+  action = null,
+  cancelAction = null,
+  state,
+  dispatch,
+}: InviteComposerProps & {
+  state: ComposerState;
+  dispatch: (event: ComposerEvent) => void;
 }) {
+  const draft = state.draft;
   // FILTERED ONCE, then used for everything. Rendering and validation read the
   // same list, so a service the practitioner cannot see is also one the draft
   // cannot be valid for — the two could otherwise disagree, and the payload
@@ -273,9 +320,12 @@ export function InviteComposer({
   const validation = validateDraft(draft, draftContext);
   const errors = validation.ok ? {} : validation.errors;
   const send = sendState(draft, capabilities, draftContext);
-  const windowPreset = activeWindowPreset(draft.windowDays);
-  const daysPreset = activeAllowedDaysPreset(draft.allowedWeekdays);
-  const ttlPreset = activeTtlPreset(draft.expiresInHours);
+  // MODES COME FROM THE STATE, NOT FROM THE VALUE. Re-deriving them each render
+  // would take the custom field away the moment a typed number happened to
+  // match a preset, mid-edit.
+  const windowPreset = state.windowMode;
+  const daysPreset = state.daysMode;
+  const ttlPreset = state.expiryMode;
   const selectedService =
     bookableServices.find((s) => s.id === draft.serviceId) ?? null;
   const serviceName = selectedService?.name ?? null;
@@ -322,7 +372,14 @@ export function InviteComposer({
           // and never told why Send is blocked.
           aria-invalid={errors.service ? true : undefined}
           aria-describedby={errors.service ? composerErrorId(entryId, "service") : undefined}
-          defaultValue={draft.serviceId ?? ""}
+          value={draft.serviceId ?? ""}
+          onChange={(event) =>
+            dispatch({
+              type: "service",
+              // "Any service" is a real answer and it is the empty option.
+              serviceId: event.currentTarget.value === "" ? null : event.currentTarget.value,
+            })
+          }
           className={fieldControlClass()}
         >
             {/* "Any service" is a real answer, not an empty one. A studio that
@@ -345,7 +402,8 @@ export function InviteComposer({
                 name={COMPOSER_FIELD_NAMES.windowDays}
                 value={preset.days}
                 testId={`composer-window-${preset.days}`}
-                defaultChecked={windowPreset === preset.days}
+                checked={windowPreset === preset.days}
+                onSelect={() => dispatch({ type: "windowPreset", preset: preset.days })}
               >
                 {preset.label}
               </PresetRadio>
@@ -356,18 +414,21 @@ export function InviteComposer({
               name={COMPOSER_FIELD_NAMES.windowDays}
               value={CUSTOM_PRESET_VALUE}
               testId="composer-window-custom"
-              defaultChecked={windowPreset === "custom"}
+              checked={windowPreset === "custom"}
+              onSelect={() => dispatch({ type: "windowPreset", preset: CUSTOM_PRESET_VALUE })}
             >
               Custom
             </PresetRadio>
           </li>
         </ul>
-        {/* ALWAYS RENDERED, because choosing "Custom" cannot reveal a field
-            without client JavaScript, and a field that appears only after a
-            round trip is a field the practitioner cannot fill. It is read ONLY
-            when the Custom radio is the one selected. */}
+        {/* RENDERED ONLY WHILE CUSTOM IS SELECTED. An inactive number field left
+            in the form is not merely clutter: `min`/`max` on it take part in the
+            browser's own constraint validation, so an out-of-range leftover
+            would block a submit the practitioner has since made valid — and
+            block Cancel with it. Leaving Custom removes it from the form. */}
+        {windowPreset === CUSTOM_PRESET_VALUE && (
         <label className="flex flex-col gap-1.5">
-          <span className="text-xs text-fg-muted">Days from today, if Custom</span>
+          <span className="text-xs text-fg-muted">Days from today</span>
             <input
               type="number"
               name={COMPOSER_FIELD_NAMES.windowDaysCustom}
@@ -375,12 +436,21 @@ export function InviteComposer({
               min={1}
               max={365}
               data-testid="composer-window-days"
-              defaultValue={draft.windowDays}
+              value={Number.isFinite(draft.windowDays) ? draft.windowDays : ""}
+              onChange={(event) =>
+                dispatch({
+                  type: "windowCustom",
+                  // An empty box is NOT zero days. NaN keeps the draft invalid
+                  // instead of quietly becoming a number nobody typed.
+                  days: event.currentTarget.value === "" ? Number.NaN : Number(event.currentTarget.value),
+                })
+              }
               aria-invalid={errors.window ? true : undefined}
               aria-describedby={errors.window ? composerErrorId(entryId, "window") : undefined}
               className={fieldControlClass()}
             />
         </label>
+        )}
       </FieldSection>
 
       <FieldSection entryId={entryId} id="days" title="Allowed days" error={errors.days}>
@@ -393,17 +463,18 @@ export function InviteComposer({
                 name={COMPOSER_FIELD_NAMES.allowedDaysPreset}
                 value={preset}
                 testId={`composer-days-${preset}`}
-                defaultChecked={daysPreset === preset}
+                checked={daysPreset === preset}
+                onSelect={() => dispatch({ type: "daysPreset", preset })}
               >
                 {ALLOWED_DAYS_PRESET_LABEL[preset]}
               </PresetRadio>
             </li>
           ))}
         </ul>
-        {/* ALWAYS RENDERED, for the same reason as the custom day counts: a
-            preset radio cannot reveal a field without client JavaScript. The
-            checkboxes are read ONLY when the Custom preset is selected. */}
-        {(
+        {/* ONLY WHILE CUSTOM IS SELECTED. The preset radio still submits
+            `custom`, so a set with nothing ticked reaches the payload as `[]` —
+            an explicit empty set — rather than as the absence of an answer. */}
+        {daysPreset === "custom" && (
           // MONDAY FIRST, WHICH IS NOT INDEX ORDER. The value is 0=Sunday, the
           // week a studio reads starts on Monday, and the display order travels
           // with the index precisely so selecting "Mon–Fri" by position cannot
@@ -431,7 +502,8 @@ export function InviteComposer({
                 <WeekdayCheckbox
                   value={day.index}
                   testId={`composer-weekday-${day.index}`}
-                  defaultChecked={draft.allowedWeekdays?.includes(day.index) ?? false}
+                  checked={draft.allowedWeekdays?.includes(day.index) ?? false}
+                  onToggle={(checked) => dispatch({ type: "weekday", index: day.index, checked })}
                 >
                   {day.label}
                 </WeekdayCheckbox>
@@ -450,7 +522,8 @@ export function InviteComposer({
                 name={COMPOSER_FIELD_NAMES.expiresInHours}
                 value={preset.hours}
                 testId={`composer-expiry-${preset.hours}`}
-                defaultChecked={ttlPreset === preset.hours}
+                checked={ttlPreset === preset.hours}
+                onSelect={() => dispatch({ type: "expiryPreset", preset: preset.hours })}
               >
                 {preset.label}
               </PresetRadio>
@@ -461,19 +534,20 @@ export function InviteComposer({
               name={COMPOSER_FIELD_NAMES.expiresInHours}
               value={CUSTOM_PRESET_VALUE}
               testId="composer-expiry-custom"
-              defaultChecked={ttlPreset === "custom"}
+              checked={ttlPreset === "custom"}
+              onSelect={() => dispatch({ type: "expiryPreset", preset: CUSTOM_PRESET_VALUE })}
             >
               Custom
             </PresetRadio>
           </li>
         </ul>
-        {(
+        {ttlPreset === CUSTOM_PRESET_VALUE && (
           <label className="flex flex-col gap-1.5">
             {/* The bound is the shipped command's own and is stated rather than
                 enforced silently: it REFUSES an out-of-range window instead of
                 clamping it, so a practitioner who types 200 needs to know why
                 nothing happened. */}
-            <span className="text-xs text-fg-muted">Hours, from 1 hour to 7 days, if Custom</span>
+            <span className="text-xs text-fg-muted">Hours, from 1 hour to 7 days</span>
             <input
               type="number"
               name={COMPOSER_FIELD_NAMES.expiresInHoursCustom}
@@ -481,7 +555,13 @@ export function InviteComposer({
               min={1}
               max={168}
               data-testid="composer-expiry-hours"
-              defaultValue={draft.expiresInHours}
+              value={Number.isFinite(draft.expiresInHours) ? draft.expiresInHours : ""}
+              onChange={(event) =>
+                dispatch({
+                  type: "expiryCustom",
+                  hours: event.currentTarget.value === "" ? Number.NaN : Number(event.currentTarget.value),
+                })
+              }
               aria-invalid={errors.expiry ? true : undefined}
               aria-describedby={errors.expiry ? composerErrorId(entryId, "expiry") : undefined}
               className={fieldControlClass()}
@@ -524,6 +604,11 @@ export function InviteComposer({
           // than a button that looks live and does nothing. Disabled while no
           // binding exists, for the same reason the send is.
           type="submit"
+          // LEAVING MUST NEVER BE BLOCKED BY A FIELD YOU ARE LEAVING BEHIND.
+          // Without this, a half-typed custom number makes the browser refuse
+          // to run Cancel and points at the very control the practitioner is
+          // trying to abandon.
+          formNoValidate
           formAction={cancelAction ?? undefined}
           disabled={cancelAction === null}
           data-testid="composer-cancel"

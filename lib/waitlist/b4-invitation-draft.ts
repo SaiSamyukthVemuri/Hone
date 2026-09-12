@@ -977,11 +977,14 @@ export function inviteSubmissionFromFormData(formData: FormData): InviteSubmissi
     // NO SELECTION MEANS "ANY DAY", not "no days". An empty checkbox group
     // submits nothing at all, and reading that as an empty allow-list would
     // invite a person to book on no day of the week.
+    // CUSTOM WITH NOTHING TICKED IS `[]`, NEVER `null`, AND THE DIFFERENCE IS THE
+    // WHOLE INVITATION. `null` means "any day" — the widest scope there is — so
+    // reading an empty custom set as `null` would turn a practitioner who
+    // unticked every day into one who invited the prospect to book on ALL of
+    // them. `[]` is deliberately invalid, and `validateDraft` refuses it.
     allowedWeekdays:
       daysPreset === CUSTOM_PRESET_VALUE
-        ? checkedWeekdays.length > 0
-          ? checkedWeekdays
-          : null
+        ? checkedWeekdays
         : (ALLOWED_DAYS_PRESET_VALUES[
             (daysPreset as Exclude<AllowedDaysPreset, "custom">) ?? "every"
           ] ?? null),
@@ -991,6 +994,119 @@ export function inviteSubmissionFromFormData(formData: FormData): InviteSubmissi
       COMPOSER_FIELD_NAMES.expiresInHoursCustom,
     ),
   };
+}
+
+/**
+ * WHAT THE PRACTITIONER IS LOOKING AT — one state, and the only one.
+ *
+ * The draft alone cannot express the whole interaction, because a preset and a
+ * value are different questions. "Custom" with 7 days in the box is not the
+ * same screen as the "7 days" preset, yet both have `windowDays: 7`. Deriving
+ * the mode from the value each render therefore loses the practitioner's actual
+ * choice the moment it coincides with a preset, so the mode is held explicitly.
+ *
+ * Everything visible — selections, validation, the confirmation sentence, the
+ * Send state and the submitted fields — is computed from THIS, so there is no
+ * second place for them to disagree.
+ */
+export type ComposerState = {
+  draft: InviteDraft;
+  windowMode: number | typeof CUSTOM_PRESET_VALUE;
+  daysMode: AllowedDaysPreset;
+  expiryMode: number | typeof CUSTOM_PRESET_VALUE;
+};
+
+export type ComposerEvent =
+  | { type: "service"; serviceId: string | null }
+  | { type: "windowPreset"; preset: number | typeof CUSTOM_PRESET_VALUE }
+  | { type: "windowCustom"; days: number }
+  | { type: "daysPreset"; preset: AllowedDaysPreset }
+  | { type: "weekday"; index: number; checked: boolean }
+  | { type: "expiryPreset"; preset: number | typeof CUSTOM_PRESET_VALUE }
+  | { type: "expiryCustom"; hours: number };
+
+/** Open the composer on a draft, reading the modes the draft implies. */
+export function initialComposerState(draft: InviteDraft): ComposerState {
+  return {
+    draft,
+    windowMode: activeWindowPreset(draft.windowDays),
+    daysMode: activeAllowedDaysPreset(draft.allowedWeekdays),
+    expiryMode: activeTtlPreset(draft.expiresInHours),
+  };
+}
+
+/**
+ * Every interaction the composer supports, as ONE pure function.
+ *
+ * Pure on purpose: this is the part that has to be exhaustively true, and it is
+ * testable without a browser. The component is then a thin binding — controls
+ * dispatch these events and render from the result, so a control cannot drift
+ * from the state the way an uncontrolled input did.
+ */
+export function composerReducer(state: ComposerState, event: ComposerEvent): ComposerState {
+  switch (event.type) {
+    case "service":
+      return { ...state, draft: { ...state.draft, serviceId: event.serviceId } };
+
+    case "windowPreset":
+      return event.preset === CUSTOM_PRESET_VALUE
+        ? // The number is KEPT, not cleared: leaving a preset for Custom is how
+          // a practitioner starts from the value they already had.
+          { ...state, windowMode: CUSTOM_PRESET_VALUE }
+        : {
+            ...state,
+            windowMode: event.preset,
+            draft: { ...state.draft, windowDays: event.preset },
+          };
+
+    case "windowCustom":
+      return { ...state, draft: { ...state.draft, windowDays: event.days } };
+
+    case "daysPreset": {
+      if (event.preset === "custom") {
+        // THE P1, AND IT LIVES HERE. Arriving at Custom from "Every day" leaves
+        // NOTHING ticked, and that state is `[]` — an explicit empty set that
+        // `validateDraft` refuses — not `null`, which would silently mean the
+        // widest possible scope.
+        return {
+          ...state,
+          daysMode: "custom",
+          draft: { ...state.draft, allowedWeekdays: state.draft.allowedWeekdays ?? [] },
+        };
+      }
+      return {
+        ...state,
+        daysMode: event.preset,
+        draft: {
+          ...state.draft,
+          allowedWeekdays: ALLOWED_DAYS_PRESET_VALUES[event.preset] ?? null,
+        },
+      };
+    }
+
+    case "weekday": {
+      const current = state.draft.allowedWeekdays ?? [];
+      const next = event.checked
+        ? [...current, event.index].sort((a, b) => a - b)
+        : current.filter((d) => d !== event.index);
+      // Ticking a day is only meaningful inside a custom set, and it KEEPS the
+      // mode custom — otherwise the next render would re-derive "weekdays" for
+      // a set that happens to match and take the checkboxes away mid-edit.
+      return { ...state, daysMode: "custom", draft: { ...state.draft, allowedWeekdays: next } };
+    }
+
+    case "expiryPreset":
+      return event.preset === CUSTOM_PRESET_VALUE
+        ? { ...state, expiryMode: CUSTOM_PRESET_VALUE }
+        : {
+            ...state,
+            expiryMode: event.preset,
+            draft: { ...state.draft, expiresInHours: event.preset },
+          };
+
+    case "expiryCustom":
+      return { ...state, draft: { ...state.draft, expiresInHours: event.hours } };
+  }
 }
 
 export function emptyDraft(): InviteDraft {
