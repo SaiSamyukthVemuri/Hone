@@ -18,8 +18,14 @@ import {
   type DraftFieldId,
   type InviteDraft,
   waitlistDomId,
+  COMPOSER_FIELD_NAMES,
+  CUSTOM_PRESET_VALUE,
+  type InviteComposerAction,
 } from "@/lib/waitlist/b4-invitation-draft";
-import type { AdapterCapabilities } from "@/lib/waitlist/invite-to-book-contract";
+import {
+  adapterMissingReason,
+  type AdapterCapabilities,
+} from "@/lib/waitlist/invite-to-book-contract";
 
 // ===========================================================================
 // WAIT-03 B4 — the invitation composer
@@ -116,31 +122,94 @@ function FieldSection({
   );
 }
 
-/** A preset button. `aria-pressed` carries the selection to assistive tech and
- *  a border carries it visually — never colour alone, because the presets are
- *  otherwise identical boxes and several studios' staff are colour-blind. */
-function PresetButton({
+/**
+ * A preset, as a REAL RADIO that happens to look like a pill.
+ *
+ * It was a `type="button"` with `aria-pressed`, which looked operable and
+ * submitted nothing: no name, no value, no form. A radio carries the answer
+ * natively, so choosing one is a choice the browser will actually send, and the
+ * selected state comes from `:checked` rather than from a prop that only the
+ * server could change.
+ *
+ * The input is `sr-only` rather than hidden — it stays focusable and reachable,
+ * and the visible pill is its label, so the whole box is the target. The border
+ * still carries selection, never colour alone: several studios' staff are
+ * colour-blind and the presets are otherwise identical boxes.
+ */
+function PresetRadio({
+  name,
+  value,
   testId,
-  pressed,
+  defaultChecked,
   children,
 }: {
+  name: string;
+  value: string | number;
   testId: string;
-  pressed: boolean;
+  defaultChecked: boolean;
   children: React.ReactNode;
 }) {
   return (
-    <button
-      type="button"
-      data-testid={testId}
-      aria-pressed={pressed}
-      className={cx(
-        buttonClasses({ variant: "secondary", size: "sm", fullWidth: true }),
-        "sm:w-auto",
-        pressed && "border-accent text-accent",
-      )}
-    >
-      {children}
-    </button>
+    <label className="block w-full sm:w-auto">
+      <input
+        type="radio"
+        name={name}
+        value={value}
+        defaultChecked={defaultChecked}
+        data-testid={testId}
+        className="peer sr-only"
+      />
+      <span
+        className={cx(
+          buttonClasses({ variant: "secondary", size: "sm", fullWidth: true }),
+          "sm:w-auto",
+          "peer-checked:border-accent peer-checked:text-accent",
+          "peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-accent",
+        )}
+      >
+        {children}
+      </span>
+    </label>
+  );
+}
+
+/** A weekday, as a real checkbox. Same reasoning as `PresetRadio`: the group
+ *  submits `allowed_weekdays` natively, so an empty group is genuinely "any
+ *  day" rather than a prop nobody can change. */
+function WeekdayCheckbox({
+  value,
+  testId,
+  defaultChecked,
+  children,
+}: {
+  value: number;
+  testId: string;
+  defaultChecked: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <label className="block">
+      <input
+        type="checkbox"
+        name={COMPOSER_FIELD_NAMES.allowedWeekdays}
+        value={value}
+        defaultChecked={defaultChecked}
+        data-testid={testId}
+        className="peer sr-only"
+      />
+      <span
+        className={cx(
+          buttonClasses({ variant: "secondary", size: "sm" }),
+          // A 44px floor with three-letter labels needs a width floor too, or
+          // the box is taller than it is wide and reads as a mis-render.
+          "min-w-[3.25rem]",
+          "peer-checked:border-accent peer-checked:text-accent",
+          "peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-accent",
+        )}
+      >
+        {children}
+      </span>
+    </label>
   );
 }
 
@@ -150,6 +219,8 @@ export function InviteComposer({
   draft,
   services,
   capabilities = null,
+  action = null,
+  cancelAction = null,
 }: {
   /** Namespaces every id this composer emits, so two mounted composers cannot
    *  cross-reference each other's labels and errors. */
@@ -175,6 +246,19 @@ export function InviteComposer({
   services: ReadonlyArray<{ id: string; name: string; modality: string | null }>;
   /** `null` until an adapter satisfying `WaitlistInvitationAdapter` is bound. */
   capabilities?: AdapterCapabilities | null;
+  /**
+   * The submission binding. `null` until the integration supplies its server
+   * action, and while it is null the send control is DISABLED rather than
+   * rendered as a button that quietly does nothing.
+   *
+   * This component never calls a database, never resolves who is acting, and
+   * never decides whether the command is allowed. It collects four answers and
+   * hands them over.
+   */
+  action?: InviteComposerAction | null;
+  /** Dismissal, bound the same way. A Cancel with nothing behind it is disabled
+   *  for the same reason the send is. */
+  cancelAction?: InviteComposerAction | null;
 }) {
   // FILTERED ONCE, then used for everything. Rendering and validation read the
   // same list, so a service the practitioner cannot see is also one the draft
@@ -200,8 +284,24 @@ export function InviteComposer({
   // rather than describing a scope the send would not carry.
   const serviceMissing = draft.serviceId !== null && selectedService === null;
 
+  // NO BINDING MEANS NO OPERABLE SEND. The capability gate is unchanged and
+  // still decides on its own; this only adds the second reason a send can be
+  // impossible — nothing is listening yet.
+  const unbound = action === null;
+  const sendDisabled = send.disabled || unbound;
+  const sendReason =
+    send.reason ?? (unbound ? adapterMissingReason("Send invitation") : undefined);
+
   return (
-    <div className="flex flex-col" data-testid="invite-composer">
+    <form
+      action={action ?? undefined}
+      className="flex flex-col"
+      data-testid="invite-composer"
+    >
+      {/* The entry is the one fact the form carries that is not one of the four
+          questions, and it is an IDENTIFIER, not authority: the server still
+          decides whether this practitioner may act on it. */}
+      <input type="hidden" name={COMPOSER_FIELD_NAMES.entryId} value={entryId} />
       <header className="px-4 py-4">
         <h2 className="text-base font-medium text-fg">
           Invite {entryName} to book
@@ -213,6 +313,7 @@ export function InviteComposer({
             rather than repeated: an `sr-only` copy of the same word made a
             screen reader announce "Service" twice. */}
         <select
+          name={COMPOSER_FIELD_NAMES.serviceId}
           data-testid="composer-service"
           aria-labelledby={composerLabelId(entryId, "service")}
           // THE CONTROL CARRIES THE RELATIONSHIP, not just the section. A
@@ -240,28 +341,36 @@ export function InviteComposer({
         <ul className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
           {BOOKING_WINDOW_PRESETS.map((preset) => (
             <li key={preset.days} className="w-full sm:w-auto">
-              <PresetButton
+              <PresetRadio
+                name={COMPOSER_FIELD_NAMES.windowDays}
+                value={preset.days}
                 testId={`composer-window-${preset.days}`}
-                pressed={windowPreset === preset.days}
+                defaultChecked={windowPreset === preset.days}
               >
                 {preset.label}
-              </PresetButton>
+              </PresetRadio>
             </li>
           ))}
           <li className="w-full sm:w-auto">
-            <PresetButton
+            <PresetRadio
+              name={COMPOSER_FIELD_NAMES.windowDays}
+              value={CUSTOM_PRESET_VALUE}
               testId="composer-window-custom"
-              pressed={windowPreset === "custom"}
+              defaultChecked={windowPreset === "custom"}
             >
               Custom
-            </PresetButton>
+            </PresetRadio>
           </li>
         </ul>
-        {windowPreset === "custom" && (
-          <label className="flex flex-col gap-1.5">
-            <span className="text-xs text-fg-muted">Days from today</span>
+        {/* ALWAYS RENDERED, because choosing "Custom" cannot reveal a field
+            without client JavaScript, and a field that appears only after a
+            round trip is a field the practitioner cannot fill. It is read ONLY
+            when the Custom radio is the one selected. */}
+        <label className="flex flex-col gap-1.5">
+          <span className="text-xs text-fg-muted">Days from today, if Custom</span>
             <input
               type="number"
+              name={COMPOSER_FIELD_NAMES.windowDaysCustom}
               inputMode="numeric"
               min={1}
               max={365}
@@ -271,8 +380,7 @@ export function InviteComposer({
               aria-describedby={errors.window ? composerErrorId(entryId, "window") : undefined}
               className={fieldControlClass()}
             />
-          </label>
-        )}
+        </label>
       </FieldSection>
 
       <FieldSection entryId={entryId} id="days" title="Allowed days" error={errors.days}>
@@ -281,16 +389,21 @@ export function InviteComposer({
             ["every", "weekdays", "weekends", "custom"] as ReadonlyArray<AllowedDaysPreset>
           ).map((preset) => (
             <li key={preset} className="w-full sm:w-auto">
-              <PresetButton
+              <PresetRadio
+                name={COMPOSER_FIELD_NAMES.allowedDaysPreset}
+                value={preset}
                 testId={`composer-days-${preset}`}
-                pressed={daysPreset === preset}
+                defaultChecked={daysPreset === preset}
               >
                 {ALLOWED_DAYS_PRESET_LABEL[preset]}
-              </PresetButton>
+              </PresetRadio>
             </li>
           ))}
         </ul>
-        {daysPreset === "custom" && (
+        {/* ALWAYS RENDERED, for the same reason as the custom day counts: a
+            preset radio cannot reveal a field without client JavaScript. The
+            checkboxes are read ONLY when the Custom preset is selected. */}
+        {(
           // MONDAY FIRST, WHICH IS NOT INDEX ORDER. The value is 0=Sunday, the
           // week a studio reads starts on Monday, and the display order travels
           // with the index precisely so selecting "Mon–Fri" by position cannot
@@ -315,22 +428,13 @@ export function InviteComposer({
           <ul className="flex flex-wrap gap-2" data-testid="composer-weekdays">
             {WEEKDAYS_IN_DISPLAY_ORDER.map((day) => (
               <li key={day.index}>
-                <button
-                  type="button"
-                  data-testid={`composer-weekday-${day.index}`}
-                  aria-pressed={draft.allowedWeekdays?.includes(day.index) ?? false}
-                  className={cx(
-                    buttonClasses({ variant: "secondary", size: "sm" }),
-                    // A 44px floor with three-letter labels needs a width floor
-                    // too, or the box is taller than it is wide and reads as a
-                    // mis-render rather than a target.
-                    "min-w-[3.25rem]",
-                    draft.allowedWeekdays?.includes(day.index) &&
-                      "border-accent text-accent",
-                  )}
+                <WeekdayCheckbox
+                  value={day.index}
+                  testId={`composer-weekday-${day.index}`}
+                  defaultChecked={draft.allowedWeekdays?.includes(day.index) ?? false}
                 >
                   {day.label}
-                </button>
+                </WeekdayCheckbox>
               </li>
             ))}
           </ul>
@@ -342,29 +446,37 @@ export function InviteComposer({
         <ul className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
           {TTL_PRESETS.map((preset) => (
             <li key={preset.hours} className="w-full sm:w-auto">
-              <PresetButton
+              <PresetRadio
+                name={COMPOSER_FIELD_NAMES.expiresInHours}
+                value={preset.hours}
                 testId={`composer-expiry-${preset.hours}`}
-                pressed={ttlPreset === preset.hours}
+                defaultChecked={ttlPreset === preset.hours}
               >
                 {preset.label}
-              </PresetButton>
+              </PresetRadio>
             </li>
           ))}
           <li className="w-full sm:w-auto">
-            <PresetButton testId="composer-expiry-custom" pressed={ttlPreset === "custom"}>
+            <PresetRadio
+              name={COMPOSER_FIELD_NAMES.expiresInHours}
+              value={CUSTOM_PRESET_VALUE}
+              testId="composer-expiry-custom"
+              defaultChecked={ttlPreset === "custom"}
+            >
               Custom
-            </PresetButton>
+            </PresetRadio>
           </li>
         </ul>
-        {ttlPreset === "custom" && (
+        {(
           <label className="flex flex-col gap-1.5">
             {/* The bound is the shipped command's own and is stated rather than
                 enforced silently: it REFUSES an out-of-range window instead of
                 clamping it, so a practitioner who types 200 needs to know why
                 nothing happened. */}
-            <span className="text-xs text-fg-muted">Hours, from 1 hour to 7 days</span>
+            <span className="text-xs text-fg-muted">Hours, from 1 hour to 7 days, if Custom</span>
             <input
               type="number"
+              name={COMPOSER_FIELD_NAMES.expiresInHoursCustom}
               inputMode="numeric"
               min={1}
               max={168}
@@ -385,13 +497,13 @@ export function InviteComposer({
             They will be able to book {scopeSummary(draft, serviceName)}.
           </p>
         )}
-        {send.reason && (
+        {sendReason && (
           <span
             id={waitlistDomId(entryId, "composer-send-reason")}
             data-testid="composer-send-reason"
             className="text-xs leading-snug text-fg-muted"
           >
-            {send.reason}
+            {sendReason}
           </span>
         )}
         {/* PRIMARY IS FULL WIDTH AND FIRST IN THE DOM. On a phone the send
@@ -399,22 +511,27 @@ export function InviteComposer({
             source order to get it visually left on a desktop would put it under
             the thumb on every phone. */}
         <button
-          type="button"
-          disabled={send.disabled}
+          type="submit"
+          disabled={sendDisabled}
           data-testid="composer-send"
-          aria-describedby={send.reason ? waitlistDomId(entryId, "composer-send-reason") : undefined}
+          aria-describedby={sendReason ? waitlistDomId(entryId, "composer-send-reason") : undefined}
           className={buttonClasses({ variant: "primary", size: "md", fullWidth: true })}
         >
           Send invitation
         </button>
         <button
-          type="button"
+          // Submits to its OWN binding, so dismissing is a real action rather
+          // than a button that looks live and does nothing. Disabled while no
+          // binding exists, for the same reason the send is.
+          type="submit"
+          formAction={cancelAction ?? undefined}
+          disabled={cancelAction === null}
           data-testid="composer-cancel"
           className={buttonClasses({ variant: "quiet", size: "md", fullWidth: true })}
         >
           Cancel
         </button>
       </div>
-    </div>
+    </form>
   );
 }

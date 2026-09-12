@@ -874,6 +874,125 @@ export type InviteDraft = {
   expiresInHours: number;
 };
 
+/**
+ * The names the composer's controls actually carry, in ONE place.
+ *
+ * The form emits these and `inviteSubmissionFromFormData` reads them, so a
+ * renamed control cannot quietly stop reaching the payload — the two sides are
+ * the same constant rather than two strings that happen to match today.
+ */
+export const COMPOSER_FIELD_NAMES = {
+  entryId: "entry_id",
+  serviceId: "service_id",
+  windowDays: "window_days",
+  windowDaysCustom: "window_days_custom",
+  allowedDaysPreset: "allowed_days_preset",
+  allowedWeekdays: "allowed_weekdays",
+  expiresInHours: "expires_in_hours",
+  expiresInHoursCustom: "expires_in_hours_custom",
+} as const;
+
+/** The value a preset radio carries when the practitioner wants to type a
+ *  number instead of taking one of the offered ones. */
+export const CUSTOM_PRESET_VALUE = "custom";
+
+/**
+ * The binding #689 supplies. A plain `(FormData) => …`, which is exactly the
+ * shape of a Next server action, so the integration passes its own action
+ * straight in without an adapter in between.
+ *
+ * THIS IS THE WHOLE SEAM. #683 renders controls and hands over what the
+ * practitioner chose; it never learns who they are, which studio they act for,
+ * or whether the command will be allowed.
+ */
+export type InviteComposerAction = (formData: FormData) => void | Promise<void>;
+
+/**
+ * PRACTITIONER INTENT ONLY — the four answers plus the entry they are about.
+ *
+ * Deliberately not a studio, an actor, a role, a round, an allowance or a claim
+ * state. Those are authority, the server derives them, and a browser that could
+ * supply them could choose them.
+ */
+export type InviteSubmission = {
+  entryId: string;
+  serviceId: string | null;
+  windowDays: number | null;
+  allowedWeekdays: ReadonlyArray<number> | null;
+  expiresInHours: number | null;
+};
+
+function numberOrNull(value: FormDataEntryValue | null): number | null {
+  if (typeof value !== "string" || value.trim() === "") return null;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) ? parsed : null;
+}
+
+/**
+ * Read a preset field, following the custom escape hatch when it is chosen.
+ *
+ * ONE DETERMINISTIC RULE, because two sources for one answer is how a form
+ * comes to submit a number nobody selected: the custom input is read ONLY when
+ * the preset radio says `custom`, and is ignored otherwise however it is filled.
+ */
+function presetOrCustom(formData: FormData, preset: string, custom: string): number | null {
+  const chosen = formData.get(preset);
+  if (chosen === CUSTOM_PRESET_VALUE) return numberOrNull(formData.get(custom));
+  return numberOrNull(chosen);
+}
+
+/**
+ * What the practitioner chose, read from the form they actually filled in.
+ *
+ * READS ONLY THE NAMES ABOVE. Anything else in the payload — a `studio_id` a
+ * caller tacked on, an `actor_id`, a `round_id` — is not consulted, so a
+ * crafted request cannot smuggle authority through this function. It is a
+ * projection, not a filter: there is no branch that could let one through.
+ */
+export function inviteSubmissionFromFormData(formData: FormData): InviteSubmission {
+  const entryId = formData.get(COMPOSER_FIELD_NAMES.entryId);
+  const serviceId = formData.get(COMPOSER_FIELD_NAMES.serviceId);
+  // "Any service" is a real answer and it submits as the empty string, which
+  // must reach the payload as `null` rather than as an id nothing matches.
+  const service = typeof serviceId === "string" && serviceId !== "" ? serviceId : null;
+
+  // The day presets are shorthands for SETS, and the set they stand for is
+  // already written down once in ALLOWED_DAYS_PRESET_VALUES. Reading it here
+  // rather than restating it is the difference between reusing the rule and
+  // growing a second one that can disagree with the first.
+  const daysPreset = formData.get(COMPOSER_FIELD_NAMES.allowedDaysPreset);
+  const checkedWeekdays = formData
+    .getAll(COMPOSER_FIELD_NAMES.allowedWeekdays)
+    .map((value) => numberOrNull(value))
+    .filter((value): value is number => value !== null);
+
+  return {
+    entryId: typeof entryId === "string" ? entryId : "",
+    serviceId: service,
+    windowDays: presetOrCustom(
+      formData,
+      COMPOSER_FIELD_NAMES.windowDays,
+      COMPOSER_FIELD_NAMES.windowDaysCustom,
+    ),
+    // NO SELECTION MEANS "ANY DAY", not "no days". An empty checkbox group
+    // submits nothing at all, and reading that as an empty allow-list would
+    // invite a person to book on no day of the week.
+    allowedWeekdays:
+      daysPreset === CUSTOM_PRESET_VALUE
+        ? checkedWeekdays.length > 0
+          ? checkedWeekdays
+          : null
+        : (ALLOWED_DAYS_PRESET_VALUES[
+            (daysPreset as Exclude<AllowedDaysPreset, "custom">) ?? "every"
+          ] ?? null),
+    expiresInHours: presetOrCustom(
+      formData,
+      COMPOSER_FIELD_NAMES.expiresInHours,
+      COMPOSER_FIELD_NAMES.expiresInHoursCustom,
+    ),
+  };
+}
+
 export function emptyDraft(): InviteDraft {
   return {
     serviceId: null,

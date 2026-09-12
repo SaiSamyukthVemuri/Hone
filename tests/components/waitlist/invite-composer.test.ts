@@ -14,6 +14,11 @@ import {
   type InviteDraft,
 } from "@/lib/waitlist/b4-invitation-draft";
 import type { AdapterCapabilities } from "@/lib/waitlist/invite-to-book-contract";
+import {
+  COMPOSER_FIELD_NAMES,
+  inviteSubmissionFromFormData,
+  type InviteComposerAction,
+} from "@/lib/waitlist/b4-invitation-draft";
 
 // ===========================================================================
 // WAIT-03 B4 — the composer renders against NON-AUTHORITATIVE fixtures
@@ -54,7 +59,15 @@ const draft = (over: Partial<InviteDraft> = {}): InviteDraft => ({
   ...over,
 });
 
-const compose = (over: Partial<InviteDraft> = {}, capabilities: AdapterCapabilities | null = null) =>
+/** A stand-in for #689's server action. It is never invoked by a static render;
+ *  its presence is what makes the send bindable at all. */
+const NOOP_ACTION = async (_formData: FormData) => {};
+
+const compose = (
+  over: Partial<InviteDraft> = {},
+  capabilities: AdapterCapabilities | null = null,
+  action: InviteComposerAction | null = NOOP_ACTION,
+) =>
   render(
     InviteComposer({
       entryId: ENTRY_ID,
@@ -62,8 +75,20 @@ const compose = (over: Partial<InviteDraft> = {}, capabilities: AdapterCapabilit
       draft: draft(over),
       services: SERVICES,
       capabilities,
+      action,
     }),
   );
+
+/** The VISIBLE pill for a control whose input is `sr-only`. The input carries
+ *  the value; the span beside it carries the look, so styling assertions have
+ *  to read the span. */
+function pillFor(html: string, testId: string): string {
+  const at = html.indexOf(`data-testid="${testId}"`);
+  if (at === -1) throw new Error(`no control rendered for "${testId}"`);
+  const spanAt = html.indexOf("<span", at);
+  if (spanAt === -1) throw new Error(`no pill rendered for "${testId}"`);
+  return html.slice(spanAt, html.indexOf(">", spanAt) + 1);
+}
 
 /** The whole opening tag carrying one test id — see the note in the row test
  *  about why a forward slice from the test id is vacuous. */
@@ -157,17 +182,31 @@ describe("booking window", () => {
     }
   });
 
-  it("marks the selected preset with aria-pressed, not colour alone", () => {
+  it("marks the selected preset by CHECKING it, not by colour alone", () => {
+    // It was `aria-pressed` on a `type="button"` that submitted nothing. The
+    // selection is now the radio's own checked state, so what the practitioner
+    // sees and what the browser sends cannot disagree.
     const html = compose({ windowDays: 14 });
-    expect(controlTag(html, "composer-window-14")).toContain('aria-pressed="true"');
-    expect(controlTag(html, "composer-window-7")).toContain('aria-pressed="false"');
+    expect(controlTag(html, "composer-window-14")).toContain('checked=""');
+    expect(controlTag(html, "composer-window-7")).not.toContain('checked=""');
+    expect(controlTag(html, "composer-window-14")).toContain('type="radio"');
+    // Still not colour alone: the border carries it too.
+    expect(pillFor(html, "composer-window-14")).toContain("peer-checked:border-accent");
   });
 
-  it("reveals the number field only when the value is off-preset", () => {
-    expect(compose({ windowDays: 7 })).not.toContain('data-testid="composer-window-days"');
+  it("always renders the custom field, and checks Custom when off-preset", () => {
+    // IT USED TO APPEAR ONLY FOR AN OFF-PRESET VALUE, which was possible because
+    // nothing here submitted anything. Without client JavaScript a radio cannot
+    // reveal a field, so a practitioner who picks Custom would have had nowhere
+    // to type. It is always present and read ONLY when Custom is selected —
+    // proved in the payload tests, not here.
+    expect(compose({ windowDays: 7 })).toContain('data-testid="composer-window-days"');
     const custom = compose({ windowDays: 45 });
     expect(custom).toContain('data-testid="composer-window-days"');
-    expect(controlTag(custom, "composer-window-custom")).toContain('aria-pressed="true"');
+    expect(controlTag(custom, "composer-window-custom")).toContain('checked=""');
+    expect(controlTag(compose({ windowDays: 7 }), "composer-window-custom")).not.toContain(
+      'checked=""',
+    );
   });
 });
 
@@ -182,18 +221,21 @@ describe("allowed days", () => {
     expect(html).toContain("Weekends");
   });
 
-  it("derives the pressed preset from the value rather than a second field", () => {
-    expect(controlTag(compose(), "composer-days-every")).toContain('aria-pressed="true"');
+  it("derives the checked preset from the value rather than a second field", () => {
+    expect(controlTag(compose(), "composer-days-every")).toContain('checked=""');
     expect(
       controlTag(compose({ allowedWeekdays: [1, 2, 3, 4, 5] }), "composer-days-weekdays"),
-    ).toContain('aria-pressed="true"');
+    ).toContain('checked=""');
     expect(
       controlTag(compose({ allowedWeekdays: [0, 6] }), "composer-days-weekends"),
-    ).toContain('aria-pressed="true"');
+    ).toContain('checked=""');
   });
 
-  it("shows the weekday toggles only for a custom set, Monday first", () => {
-    expect(compose()).not.toContain('data-testid="composer-weekdays"');
+  it("always renders the weekday toggles, Monday first", () => {
+    // Same reason as the custom day count: a preset radio cannot reveal a group
+    // without client JavaScript, and toggles that appear only after a round trip
+    // are toggles nobody can reach.
+    expect(compose()).toContain('data-testid="composer-weekdays"');
     const html = compose({ allowedWeekdays: [1, 3] });
     expect(html).toContain('data-testid="composer-weekdays"');
 
@@ -206,14 +248,15 @@ describe("allowed days", () => {
     expect(order).toEqual(WEEKDAYS_IN_DISPLAY_ORDER.map((d) => d.index));
     expect(order).toEqual([1, 2, 3, 4, 5, 6, 0]);
 
-    expect(controlTag(html, "composer-weekday-1")).toContain('aria-pressed="true"');
-    expect(controlTag(html, "composer-weekday-2")).toContain('aria-pressed="false"');
+    expect(controlTag(html, "composer-weekday-1")).toContain('checked=""');
+    expect(controlTag(html, "composer-weekday-2")).not.toContain('checked=""');
+    expect(controlTag(html, "composer-weekday-1")).toContain('type="checkbox"');
   });
 
   it("gives the three-letter toggles a width floor as well as a height one", () => {
     // A 44px-tall box around "Mon" is taller than it is wide and reads as a
     // mis-render rather than as a target.
-    const tag = controlTag(compose({ allowedWeekdays: [1] }), "composer-weekday-1");
+    const tag = pillFor(compose({ allowedWeekdays: [1] }), "composer-weekday-1");
     expect(tag).toContain("min-h-[44px]");
     expect(tag).toContain("min-w-[3.25rem]");
   });
@@ -569,5 +612,210 @@ describe("the service list is the BOOKING surface's list", () => {
     const html = renderWith(MIXED, { ...emptyDraft(), serviceId: "svc-2" });
     expect(html).not.toContain("Laser — full leg");
     expect(html).toContain("composer-error-service");
+  });
+});
+
+// ===========================================================================
+// THE BINDING — can a real caller actually submit these four answers?
+// ===========================================================================
+//
+// There is no jsdom here, so nothing can click. What CAN be done, and is more
+// honest than a hand-written payload, is to build the FormData FROM THE RENDERED
+// FORM the way a browser would: read the named controls, take the selected
+// option, the checked radios and checkboxes, and the typed values. If a control
+// loses its name or stops being a real input, this derivation stops finding it
+// and every payload assertion below fails — which is exactly the coupling a
+// hand-written FormData would throw away.
+
+/** Serialize a rendered form the way a browser would on submit. */
+function formDataFrom(html: string): FormData {
+  const formData = new FormData();
+
+  for (const tag of html.matchAll(/<input\b[^>]*>/g)) {
+    const el = tag[0];
+    const name = /name="([^"]*)"/.exec(el)?.[1];
+    if (!name) continue;
+    const type = /type="([^"]*)"/.exec(el)?.[1] ?? "text";
+    const value = /value="([^"]*)"/.exec(el)?.[1] ?? "";
+    // Unchecked radios and checkboxes submit NOTHING, which is the behaviour
+    // that makes an empty weekday group mean "any day".
+    if ((type === "radio" || type === "checkbox") && !el.includes('checked=""')) continue;
+    if (type === "number") {
+      const typed = /defaultvalue="([^"]*)"/i.exec(el)?.[1] ?? value;
+      formData.append(name, typed);
+      continue;
+    }
+    formData.append(name, value);
+  }
+
+  // <select> submits its selected option.
+  for (const sel of html.matchAll(/<select\b[^>]*>([\s\S]*?)<\/select>/g)) {
+    const name = /name="([^"]*)"/.exec(sel[0])?.[1];
+    if (!name) continue;
+    const selected =
+      /<option[^>]*selected[^>]*value="([^"]*)"/.exec(sel[1])?.[1] ??
+      /value="([^"]*)"[^>]*selected/.exec(sel[1])?.[1] ??
+      /<option[^>]*value="([^"]*)"/.exec(sel[1])?.[1] ??
+      "";
+    formData.append(name, selected);
+  }
+  return formData;
+}
+
+/** What a submit of this rendered composer would hand the bound action. */
+function submissionOf(html: string) {
+  return inviteSubmissionFromFormData(formDataFrom(html));
+}
+
+describe("a real caller can bind this composer and receive the draft", () => {
+  it("A. accepts a binding, and carries it onto a real form", () => {
+    const html = compose({}, CONNECTED);
+    expect(html).toContain("<form");
+    // React renders a function action as its own sentinel plus a replay script.
+    // An unbound composer renders neither, so this distinguishes "wired" from
+    // "looks wired".
+    expect(html).toContain("React form unexpectedly submitted");
+    expect(compose({}, CONNECTED, null)).not.toContain("React form unexpectedly submitted");
+  });
+
+  it("B. offers exactly one submit control for the invitation", () => {
+    const html = compose({}, CONNECTED);
+    const send = controlTag(html, "composer-send");
+    expect(send).toContain('type="submit"');
+    expect(send).not.toContain('disabled=""');
+    // One send, not two. A second submit would make "exactly one submission"
+    // untrue no matter what the binding does.
+    const submits = [...html.matchAll(/<button[^>]*type="submit"[^>]*>/g)].filter((m) =>
+      m[0].includes('data-testid="composer-send"'),
+    );
+    expect(submits).toHaveLength(1);
+  });
+
+  it("C. submits exactly the practitioner's four current selections", () => {
+    const html = compose(
+      { serviceId: "svc-1", windowDays: 14, allowedWeekdays: [1, 3], expiresInHours: 24 },
+      CONNECTED,
+    );
+    expect(submissionOf(html)).toEqual({
+      entryId: ENTRY_ID,
+      serviceId: "svc-1",
+      windowDays: 14,
+      allowedWeekdays: [1, 3],
+      expiresInHours: 24,
+    });
+  });
+
+  it("D. changing ANY of the four changes what would be submitted", () => {
+    const base = submissionOf(compose({ serviceId: "svc-1" }, CONNECTED));
+
+    const service = submissionOf(compose({ serviceId: "svc-2" }, CONNECTED));
+    expect(service.serviceId).toBe("svc-2");
+    expect(service.serviceId).not.toBe(base.serviceId);
+
+    const window = submissionOf(compose({ serviceId: "svc-1", windowDays: 30 }, CONNECTED));
+    expect(window.windowDays).toBe(30);
+    expect(window.windowDays).not.toBe(base.windowDays);
+
+    const days = submissionOf(
+      compose({ serviceId: "svc-1", allowedWeekdays: [2, 4] }, CONNECTED),
+    );
+    expect(days.allowedWeekdays).toEqual([2, 4]);
+    expect(days.allowedWeekdays).not.toEqual(base.allowedWeekdays);
+
+    // 24, deliberately: the default draft already expires in 72 hours, so
+    // asserting 72 "changed" would have passed without anything changing.
+    const expiry = submissionOf(
+      compose({ serviceId: "svc-1", expiresInHours: 24 }, CONNECTED),
+    );
+    expect(expiry.expiresInHours).toBe(24);
+    expect(expiry.expiresInHours).not.toBe(base.expiresInHours);
+  });
+
+  it("D2. an off-preset value travels through the custom field", () => {
+    // The custom input is always rendered, so the ONE rule that keeps it
+    // unambiguous is that it is read only when Custom is the checked radio.
+    const custom = compose({ serviceId: "svc-1", windowDays: 45 }, CONNECTED);
+    expect(submissionOf(custom).windowDays).toBe(45);
+
+    // ...and ignored when a preset is chosen, however it is filled in.
+    const preset = formDataFrom(compose({ serviceId: "svc-1", windowDays: 14 }, CONNECTED));
+    preset.set(COMPOSER_FIELD_NAMES.windowDaysCustom, "999");
+    expect(inviteSubmissionFromFormData(preset).windowDays).toBe(14);
+  });
+
+  it("E. an invalid draft has no usable submit control", () => {
+    // The send is the only way in, and it is disabled — the server revalidates
+    // regardless, because a disabled button is a courtesy, not a guarantee.
+    const vanished = compose({ serviceId: "svc-deleted" }, CONNECTED);
+    expect(controlTag(vanished, "composer-send")).toContain('disabled=""');
+  });
+
+  it("F. no binding and no capability each disable the send on their own", () => {
+    // Two independent gates. Correct copy did not make the button live, and
+    // neither does a binding without the capability.
+    expect(controlTag(compose({}, CONNECTED, null), "composer-send")).toContain('disabled=""');
+    expect(controlTag(compose({}, null, NOOP_ACTION), "composer-send")).toContain('disabled=""');
+    expect(controlTag(compose({}, CONNECTED, NOOP_ACTION), "composer-send")).not.toContain(
+      'disabled=""',
+    );
+  });
+
+  it("G. the browser cannot supply authority, only intent", () => {
+    // Nothing in the rendered form names a studio, an actor, a role, a round,
+    // an allowance or a claim state.
+    const html = compose({}, CONNECTED);
+    const names = [...html.matchAll(/name="([^"]*)"/g)].map((m) => m[1]);
+    expect(new Set(names)).toEqual(new Set(Object.values(COMPOSER_FIELD_NAMES)));
+    for (const forbidden of [
+      "studio_id", "studio", "actor_id", "actor", "role", "round_id", "round",
+      "allowance", "claim_state", "claimed", "practitioner_id", "proof",
+    ]) {
+      expect(names, `${forbidden} is a browser-supplied authority field`).not.toContain(
+        forbidden,
+      );
+    }
+
+    // And a crafted payload cannot smuggle them through the reader: it is a
+    // projection of five names, so extra keys have nowhere to land.
+    const crafted = formDataFrom(html);
+    for (const [key, value] of [
+      ["studio_id", "other-studio"], ["actor_id", "someone-else"], ["role", "owner"],
+      ["round_id", "round-9"], ["allowance", "999"], ["claim_state", "claimed"],
+    ] as const) {
+      crafted.set(key, value);
+    }
+    expect(inviteSubmissionFromFormData(crafted)).toEqual(submissionOf(html));
+  });
+
+  it("H. no Claim vocabulary reaches the practitioner", () => {
+    const html = compose({}, CONNECTED);
+    expect(html).not.toMatch(/\bclaim(ed|ing|s)?\b/i);
+  });
+
+  it("no visible control is inert", () => {
+    // EVERY control either submits or is disabled. A button that looks live and
+    // does nothing is the defect this whole change exists to remove.
+    const html = compose({}, CONNECTED);
+    for (const tag of html.matchAll(/<button\b[^>]*>/g)) {
+      const el = tag[0];
+      expect(
+        el.includes('type="submit"') || el.includes('disabled=""'),
+        `inert control: ${el}`,
+      ).toBe(true);
+    }
+    // Cancel with nothing behind it is disabled rather than decorative.
+    expect(controlTag(html, "composer-cancel")).toContain('disabled=""');
+    const withCancel = render(
+      InviteComposer({
+        entryId: ENTRY_ID,
+        entryName: "Sarah",
+        draft: draft({}),
+        services: SERVICES,
+        capabilities: CONNECTED,
+        action: NOOP_ACTION,
+        cancelAction: NOOP_ACTION,
+      }),
+    );
+    expect(controlTag(withCancel, "composer-cancel")).not.toContain('disabled=""');
   });
 });
