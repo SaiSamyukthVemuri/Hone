@@ -421,6 +421,25 @@ export function InviteComposerView({
             </option>
           ))}
         </select>
+        {/* A SELECTED DISABLED OPTION IS NOT A SUCCESSFUL CONTROL. The browser
+            omits `service_id` entirely for it, and an absent service reads as
+            "any service" — so the screen would say the choice is unavailable
+            while the submission quietly said the widest thing possible. This
+            hidden field carries the stale id through serialization so the
+            payload keeps saying what the practitioner is looking at.
+
+            IT EXISTS ONLY WHILE THE CHOICE IS STALE. Picking Any service or a
+            real one makes `serviceMissing` false, the field is gone in that same
+            render, and the select serializes normally — so there is never a
+            moment with two `service_id` values. */}
+        {serviceMissing && draft.serviceId !== null && (
+          <input
+            type="hidden"
+            name={COMPOSER_FIELD_NAMES.serviceId}
+            value={draft.serviceId}
+            data-testid="composer-service-stale"
+          />
+        )}
       </FieldSection>
 
       <FieldSection entryId={entryId} id="window" title="Booking window" error={errors.window}>

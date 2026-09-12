@@ -634,37 +634,54 @@ describe("the service list is the BOOKING surface's list", () => {
 // and every payload assertion below fails — which is exactly the coupling a
 // hand-written FormData would throw away.
 
-/** Serialize a rendered form the way a browser would on submit. */
+/**
+ * Serialize a rendered form the way a browser actually would.
+ *
+ * SUCCESSFUL CONTROLS ONLY, and getting that wrong is not a detail — the first
+ * version of this helper read the `selected` option without checking whether it
+ * was DISABLED. A disabled option contributes nothing, so a real browser omits
+ * `service_id` for a vanished service while this helper reported it, and the
+ * test agreed with a browser that does not exist.
+ *
+ * The rules modelled here, all of them load-bearing for this form:
+ *   - a disabled control contributes nothing;
+ *   - a hidden input contributes;
+ *   - an unchecked radio or checkbox contributes nothing;
+ *   - a select contributes its selected option UNLESS that option is disabled;
+ *   - a select with nothing marked selected falls back to its first ENABLED
+ *     option, which is what the browser displays.
+ */
 function formDataFrom(html: string): FormData {
   const formData = new FormData();
+  const attr = (tag: string, name: string): string | null =>
+    new RegExp(`${name}="([^"]*)"`).exec(tag)?.[1] ?? null;
+  const isDisabled = (tag: string): boolean => /\bdisabled(=""|\s|>|\/)/.test(tag);
 
-  for (const tag of html.matchAll(/<input\b[^>]*>/g)) {
-    const el = tag[0];
-    const name = /name="([^"]*)"/.exec(el)?.[1];
-    if (!name) continue;
-    const type = /type="([^"]*)"/.exec(el)?.[1] ?? "text";
-    const value = /value="([^"]*)"/.exec(el)?.[1] ?? "";
-    // Unchecked radios and checkboxes submit NOTHING, which is the behaviour
-    // that makes an empty weekday group mean "any day".
+  for (const match of html.matchAll(/<input\b[^>]*>/g)) {
+    const el = match[0];
+    const name = attr(el, "name");
+    if (!name || isDisabled(el)) continue;
+    const type = attr(el, "type") ?? "text";
     if ((type === "radio" || type === "checkbox") && !el.includes('checked=""')) continue;
-    if (type === "number") {
-      const typed = /defaultvalue="([^"]*)"/i.exec(el)?.[1] ?? value;
-      formData.append(name, typed);
-      continue;
-    }
-    formData.append(name, value);
+    formData.append(name, attr(el, "value") ?? "");
   }
 
-  // <select> submits its selected option.
-  for (const sel of html.matchAll(/<select\b[^>]*>([\s\S]*?)<\/select>/g)) {
-    const name = /name="([^"]*)"/.exec(sel[0])?.[1];
-    if (!name) continue;
-    const selected =
-      /<option[^>]*selected[^>]*value="([^"]*)"/.exec(sel[1])?.[1] ??
-      /value="([^"]*)"[^>]*selected/.exec(sel[1])?.[1] ??
-      /<option[^>]*value="([^"]*)"/.exec(sel[1])?.[1] ??
-      "";
-    formData.append(name, selected);
+  for (const sel of html.matchAll(/<select\b([^>]*)>([\s\S]*?)<\/select>/g)) {
+    const openTag = `<select${sel[1]}>`;
+    const name = attr(openTag, "name");
+    if (!name || isDisabled(openTag)) continue;
+
+    const options = [...sel[2].matchAll(/<option\b([^>]*)>/g)].map((m) => ({
+      tag: `<option${m[1]}>`,
+      value: attr(`<option${m[1]}>`, "value") ?? "",
+      disabled: isDisabled(`<option${m[1]}>`),
+      selected: /\bselected(=""|\s|>|\/)/.test(`<option${m[1]}>`),
+    }));
+
+    const chosen = options.find((o) => o.selected) ?? options.find((o) => !o.disabled);
+    // A DISABLED SELECTED OPTION SUBMITS NOTHING. This is the whole finding.
+    if (!chosen || chosen.disabled) continue;
+    formData.append(name, chosen.value);
   }
   return formData;
 }
@@ -1255,6 +1272,102 @@ describe("an unreadable weekday preset can never mean every day", () => {
       const result = withPreset(preset);
       expect(result.ok).toBe(true);
       if (result.ok) expect(result.submission.allowedWeekdays).toEqual(expected);
+    }
+  });
+});
+
+// ===========================================================================
+// THE VANISHED SERVICE MUST SURVIVE SERIALIZATION
+// ===========================================================================
+
+describe("a stale service stays stale all the way to the payload", () => {
+  const serviceValues = (html: string) =>
+    formDataFrom(html).getAll(COMPOSER_FIELD_NAMES.serviceId);
+
+  it("the harness itself obeys successful-control rules", () => {
+    // NON-VACUITY FOR EVERY ASSERTION BELOW. If this helper still serialized a
+    // disabled selected option, it would be describing a browser that does not
+    // exist and the cases after it would prove nothing.
+    const disabledSelected =
+      '<select name="s"><option value="dead" disabled selected="">Gone</option>' +
+      '<option value="">Any</option></select>';
+    expect(formDataFrom(disabledSelected).getAll("s")).toEqual([]);
+
+    const enabledSelected =
+      '<select name="s"><option value="a">A</option><option value="b" selected="">B</option></select>';
+    expect(formDataFrom(enabledSelected).get("s")).toBe("b");
+
+    // Nothing marked selected: the browser shows — and submits — the first
+    // enabled option.
+    const noneSelected =
+      '<select name="s"><option value="x" disabled>X</option><option value="y">Y</option></select>';
+    expect(formDataFrom(noneSelected).get("s")).toBe("y");
+
+    expect(formDataFrom('<input type="hidden" name="h" value="v"/>').get("h")).toBe("v");
+    expect(formDataFrom('<input name="d" value="v" disabled=""/>').getAll("d")).toEqual([]);
+  });
+
+  it("CASE A: a vanished service serializes as the stale id, never as null", () => {
+    const html = compose({ serviceId: "svc-deleted" }, CONNECTED);
+
+    // Visible: its own words, not "Any service".
+    expect(html).toContain("Previously selected service is unavailable");
+    // Validated: still invalid, and the send is shut.
+    expect(validateDraft(draft({ serviceId: "svc-deleted" }), CONTEXT).ok).toBe(false);
+    expect(controlTag(html, "composer-send")).toContain('disabled=""');
+    // Submitted: the SAME stale id — exactly once.
+    expect(serviceValues(html)).toEqual(["svc-deleted"]);
+    expect(submissionOf(html).serviceId).toBe("svc-deleted");
+    expect(submissionOf(html).serviceId).not.toBeNull();
+  });
+
+  it("CASE B: choosing Any service repairs it and leaves nothing stale behind", () => {
+    const repaired = composerReducer(
+      initialComposerState(draft({ serviceId: "svc-deleted" })),
+      { type: "service", serviceId: null },
+    );
+    const html = view(repaired);
+
+    expect(html).not.toContain("Previously selected service is unavailable");
+    expect(html).not.toContain('data-testid="composer-service-stale"');
+    // Exactly one service value, and it is the canonical Any-service one.
+    expect(serviceValues(html)).toEqual([""]);
+    expect(submissionOf(html).serviceId).toBeNull();
+
+    const after = answers(repaired);
+    expect(after.validation.ok).toBe(true);
+    expect(after.sendDisabled).toBe(false);
+  });
+
+  it("CASE C: choosing a real service repairs it and leaves nothing stale behind", () => {
+    const repaired = composerReducer(
+      initialComposerState(draft({ serviceId: "svc-deleted" })),
+      { type: "service", serviceId: "svc-2" },
+    );
+    const html = view(repaired);
+
+    expect(html).not.toContain('data-testid="composer-service-stale"');
+    expect(serviceValues(html)).toEqual(["svc-2"]);
+    expect(submissionOf(html).serviceId).toBe("svc-2");
+    expect(answers(repaired).visibleSummary).toContain("Laser consultation");
+    expect(answers(repaired).validation.ok).toBe(true);
+  });
+
+  it("never emits two service values, in any of the three states", () => {
+    // A stale bridge left in place after a repair would hand the server two
+    // answers and let it pick.
+    for (const state of [
+      initialComposerState(draft({ serviceId: "svc-deleted" })),
+      composerReducer(initialComposerState(draft({ serviceId: "svc-deleted" })), {
+        type: "service",
+        serviceId: null,
+      }),
+      composerReducer(initialComposerState(draft({ serviceId: "svc-deleted" })), {
+        type: "service",
+        serviceId: "svc-1",
+      }),
+    ]) {
+      expect(serviceValues(view(state))).toHaveLength(1);
     }
   });
 });
