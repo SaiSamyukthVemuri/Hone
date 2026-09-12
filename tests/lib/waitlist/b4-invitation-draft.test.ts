@@ -745,6 +745,30 @@ describe("this module is UNREACHABLE from the application", () => {
     ).toBe(false);
   });
 
+  // WAIT INTEGRATION-01 — THIS TRIPWIRE HAS FIRED, AND IT WAS RIGHT TO.
+  //
+  // On #683 alone this surface is DORMANT: `NO_ADAPTER_BOUND` is the only value
+  // it renders against, and this guard exists to make binding an adapter
+  // impossible to do quietly. Its own note says so — "Binding an adapter to the
+  // practitioner surface requires IMPORTING one of its entry points ... and the
+  // dormancy guard catches that at any depth".
+  //
+  // In the ASSEMBLY that binding is the deliverable. #689 carries both the
+  // composer (#683) and `admit_` (#685), which are siblings off production, so
+  // the wiring cannot exist on either branch and exists here. The prototype is
+  // therefore no longer dormant in this candidate, and asserting dormancy would
+  // be asserting that the integration was not done.
+  //
+  // NARROWED, NOT DELETED, AND THAT DISTINCTION IS THE WHOLE POINT. Exactly two
+  // shipped files may reach it — the server action and the queue page that
+  // renders the composer — and every other path is still forbidden at any
+  // depth. A second surface binding this prototype still fails here, which is
+  // the property #683 actually wanted.
+  const SANCTIONED_INTEGRATION_ENTRY = [
+    "app/(app)/settings/waitlist/invite-actions.ts",
+    "app/(app)/settings/waitlist/page.tsx",
+  ];
+
   it("no prototype entry point is reachable from the SHIPPED APPLICATION, at ANY depth", { timeout: 30_000 }, () => {
     const reached = reachableFromApp();
 
@@ -762,11 +786,25 @@ describe("this module is UNREACHABLE from the application", () => {
 
     for (const entry of PROTOTYPE_ENTRY_POINTS) {
       const path = reached.get(entry);
+      if (path === undefined) continue;
+      // The path's FIRST element is the shipped entry point it was reached
+      // from. Only the integration binding may be that root.
       expect(
-        path === undefined ? null : path.join("\n  -> "),
-        `a shipped application path now reaches ${entry}, which no server action carries`,
+        SANCTIONED_INTEGRATION_ENTRY.includes(path[0]) ? null : path.join("\n  -> "),
+        `an UNSANCTIONED shipped path now reaches ${entry}`,
       ).toBeNull();
     }
+
+    // AND THE SANCTIONED PATH REALLY EXISTS. Without this the loop above passes
+    // just as well when nothing is wired at all, which is the state this
+    // integration was built to leave behind — the guard would then be asserting
+    // dormancy under a name that says otherwise.
+    const draft = reached.get("lib/waitlist/b4-invitation-draft.ts");
+    expect(
+      draft,
+      "the practitioner binding is gone: nothing shipped reaches the composer's draft",
+    ).toBeDefined();
+    expect(SANCTIONED_INTEGRATION_ENTRY).toContain(draft![0]);
   });
 
   it("reads imports from the syntax tree, not from a pattern", () => {
@@ -943,8 +981,18 @@ describe("this module is UNREACHABLE from the application", () => {
     // empty set would report "no adapter is reachable" for the wrong reason.
     expect(reachable.length).toBeGreaterThan(200);
 
+    // WAIT INTEGRATION-01. The ONE adapter this assembly binds, plus the two
+    // shipped files that carry it. Everything else reaching an adapter shape is
+    // still an offender at any depth — which is the property this scan exists
+    // for. Excluded by NAME rather than by loosening `adapterSignals`, so the
+    // detector itself keeps its full strength.
+    const SANCTIONED_ADAPTER = [
+      "lib/waitlist/invite-to-book-adapter.ts",
+      "app/(app)/settings/waitlist/invite-actions.ts",
+      "app/(app)/settings/waitlist/page.tsx",
+    ];
     const offenders = reachable.flatMap((rel) =>
-      rel === CONTRACT_MODULE
+      rel === CONTRACT_MODULE || SANCTIONED_ADAPTER.includes(rel)
         ? []
         : adapterSignals(rel, readFileSync(join(ROOT, rel), "utf8"), members),
     );
@@ -953,6 +1001,18 @@ describe("this module is UNREACHABLE from the application", () => {
       [...new Set(offenders)].sort(),
       "a module the shipped application can reach is an invitation adapter",
     ).toEqual([]);
+
+    // NON-VACUITY FOR THE EXCLUSION ITSELF: the sanctioned adapter must really
+    // BE one, or this list is quietly excusing a file that never mattered and
+    // the real binding has gone missing somewhere else.
+    expect(
+      adapterSignals(
+        SANCTIONED_ADAPTER[0],
+        readFileSync(join(ROOT, SANCTIONED_ADAPTER[0]), "utf8"),
+        members,
+      ).length,
+      "the integration adapter no longer looks like an adapter",
+    ).toBeGreaterThan(0);
   });
 });
 

@@ -319,10 +319,42 @@ describe("dormant presentation is not described as active production collection"
   }
 
   it("no WAIT-04 surface is reachable from a route", () => {
-    const referencing = walkFiles(path.join(process.cwd(), "app"), [".ts", ".tsx"]).filter(
-      (f) => readFileSync(f, "utf8").includes("components/waitlist"),
-    );
+    // WAIT INTEGRATION-01 — NARROWED FROM THE DIRECTORY TO THE WAIT-04 FILES,
+    // and narrowed is the operative word: this now forbids more PRECISELY, not
+    // less.
+    //
+    // `components/waitlist/` holds two unrelated slices. WAIT-04A's join and
+    // profile surfaces live there, and so does WAIT-03 B4's invite composer.
+    // Matching the directory meant the guard fired on either, so binding B4 —
+    // which the assembly does deliberately, and which collects no treatment
+    // area, availability or SMS consent whatsoever — read as activating WAIT-04.
+    //
+    // THE INVARIANT THAT MATTERS IS UNCHANGED AND STILL ENFORCED: no route may
+    // reach a WAIT-04 COLLECTION surface, because none of that collection is
+    // built, disclosed in the privacy policy, or authorised. The five files are
+    // named explicitly, so adding a sixth WAIT-04 component and wiring it to a
+    // route still fails here.
+    const WAIT_04_SURFACES = [
+      "components/waitlist/waitlist-join-form",
+      "components/waitlist/complete-profile-panel",
+      "components/waitlist/profile-fields",
+      "components/waitlist/public-collection-submit",
+      "components/waitlist/treatment-area-picker",
+    ];
+    const referencing = walkFiles(path.join(process.cwd(), "app"), [".ts", ".tsx"]).filter((f) => {
+      const src = readFileSync(f, "utf8");
+      return WAIT_04_SURFACES.some((surface) => src.includes(surface));
+    });
     expect(referencing).toEqual([]);
+
+    // NON-VACUITY: every named file must exist, or this guard is watching for
+    // imports of nothing and would pass however WAIT-04 were activated.
+    for (const surface of WAIT_04_SURFACES) {
+      expect(
+        readFileSync(path.join(process.cwd(), `${surface}.tsx`), "utf8").length,
+        `${surface} no longer exists — the WAIT-04 guard list is stale`,
+      ).toBeGreaterThan(0);
+    }
   });
 
   it("the live Privacy Policy does NOT yet describe the WAIT-04 categories", () => {

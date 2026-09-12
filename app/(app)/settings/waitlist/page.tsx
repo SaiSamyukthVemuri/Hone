@@ -1,3 +1,10 @@
+import { InviteComposer } from "@/components/waitlist/invite-composer";
+import {
+  emptyDraft,
+  INVITE_TO_BOOK_STATUSES,
+} from "@/lib/waitlist/b4-invitation-draft";
+import { admissionCommandAdapter } from "@/lib/waitlist/invite-to-book-adapter";
+import { inviteToBookFormAction } from "./invite-actions";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { localLongDate } from "@/lib/booking/tz";
@@ -338,6 +345,27 @@ export default async function WaitlistSettingsPage({
     ? SECTIONS.filter(({ status }) => status === focusedStatus)
     : SECTIONS;
   const now = Date.now();
+
+  // WAIT INTEGRATION-01. The composer needs the studio's services to offer a
+  // scope, and it needs them UNFILTERED: it applies `isConsultationService`
+  // itself rather than trusting a caller, which is why `modality` is selected
+  // here and why no `.eq("active", true)` narrows this read. Filtering in two
+  // places is how the visible list and the validation rule come to disagree —
+  // the composer's own header says so.
+  //
+  // An unreadable list is an EMPTY list, not a missing one: the composer then
+  // shows no bookable service and its own draft validation refuses the send,
+  // which is the fail-closed direction. It must never become "any service".
+  const { data: serviceRows } = await supabase
+    .from("services")
+    .select("id, name, modality")
+    .eq("studio_id", studio.id)
+    .order("name");
+  const bookableServices = ((serviceRows ?? []) as Array<{
+    id: string;
+    name: string;
+    modality: string | null;
+  }>).map((s) => ({ id: s.id, name: s.name, modality: s.modality ?? null }));
 
   // WHETHER AN INVITATION HAS RUN OUT IS A DATABASE FACT, NOT A GUESS.
   //
@@ -736,6 +764,36 @@ export default async function WaitlistSettingsPage({
                               </button>
                             </form>
                           </details>
+                          )}
+                          {/* WAIT INTEGRATION-01 — THE REAL INVITE-TO-BOOK PATH.
+                              #683 ships the composer and #685 ships `admit_`;
+                              they are siblings off production, so this binding
+                              exists only in the assembly. The composer is given
+                              the server action directly — its `action` prop is
+                              typed as a plain `(FormData) => …`, which IS a
+                              server action's shape — so there is no second form
+                              and no duplicated composer state here.
+
+                              OFFERED ONLY WHERE THE STATE ALLOWS IT, from
+                              #683's own `INVITE_TO_BOOK_STATUSES`. A row in any
+                              other state gets no composer at all rather than a
+                              disabled one, because the send control's own
+                              disabled state is about the DRAFT, not about
+                              whether this person can be invited. */}
+                          {INVITE_TO_BOOK_STATUSES.includes(row.status) && (
+                            <details className="mt-2">
+                              <summary className="min-h-[44px] cursor-pointer list-none rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium dark:border-neutral-700">
+                                Invite to book
+                              </summary>
+                              <InviteComposer
+                                entryId={row.id}
+                                entryName={row.name}
+                                draft={emptyDraft()}
+                                services={bookableServices}
+                                capabilities={admissionCommandAdapter.capabilities}
+                                action={inviteToBookFormAction}
+                              />
+                            </details>
                           )}
                         </div>
                       </li>

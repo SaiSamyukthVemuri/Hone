@@ -308,6 +308,130 @@ describe("C — a declined invitation is not a live invitation", () => {
 });
 
 // ===========================================================================
+// P1 3990868504 — the practitioner surface reaches the real adapter
+// ===========================================================================
+describe("the practitioner binding is a real production consumer", () => {
+  it("the waitlist page renders #683's composer bound to the server action", () => {
+    const page = stripComments(
+      readFileSync("app/(app)/settings/waitlist/page.tsx", "utf8"),
+    );
+    // ONE composer, #683's own, given the server action directly. Not a second
+    // form and not a re-implementation — the `action` prop is typed as a plain
+    // `(FormData) => …`, which is a server action's shape.
+    expect(page).toContain("<InviteComposer");
+    expect(page).toContain("action={inviteToBookFormAction}");
+    expect(page).toContain('from "@/components/waitlist/invite-composer"');
+    // Offered only where #683 says the state allows it.
+    expect(page).toContain("INVITE_TO_BOOK_STATUSES.includes(row.status)");
+    // The capability gate stays load-bearing: the real adapter's capabilities
+    // are passed, never a hand-written object.
+    expect(page).toContain("capabilities={admissionCommandAdapter.capabilities}");
+    // Services are handed over UNFILTERED — the composer applies the
+    // consultation predicate itself, and filtering twice is how the visible
+    // list and the validation rule drift apart.
+    expect(page).not.toMatch(/from\("services"\)[\s\S]{0,200}eq\("active"/);
+  });
+
+  it("the action reaches the adapter, and nothing else parses the form", () => {
+    const action = stripComments(
+      readFileSync("app/(app)/settings/waitlist/invite-actions.ts", "utf8"),
+    );
+    expect(action).toContain("inviteSubmissionFromFormData");
+    expect(action).toContain("admissionCommandAdapter.inviteToBook");
+    // NO SECOND READER OF THE PAYLOAD. #683's parser is a projection that reads
+    // only the four product fields plus the entry id, so a `studio_id` or
+    // `actor_id` tacked on is never consulted. A direct `formData.get` here
+    // would reintroduce exactly the door the parser closes.
+    expect(action).not.toMatch(/formData\.(get|getAll)\(/);
+    // Authority is never taken from the browser.
+    expect(action).not.toMatch(/studio_id|actor_id|round_id|"role"/);
+  });
+
+  it("malformed submissions fail closed at the server boundary", async () => {
+    const { inviteToBookAction } = await import(
+      "@/app/(app)/settings/waitlist/invite-actions"
+    );
+    const base = () => {
+      const fd = new FormData();
+      fd.set("entry_id", "00000000-0000-0000-0000-000000000001");
+      fd.set("service_id", "00000000-0000-0000-0000-000000000002");
+      fd.set("window_days", "7");
+      fd.set("allowed_days_preset", "every");
+      fd.set("expires_in_hours", "72");
+      return fd;
+    };
+
+    // An UNRECOGNISED day preset must not become "every day", which is the
+    // widest scope this product can express.
+    const badPreset = base();
+    badPreset.set("allowed_days_preset", "mondays-ish");
+    expect(await inviteToBookAction(badPreset)).toEqual({
+      outcome: null,
+      reason: "malformed_submission",
+    });
+
+    // CUSTOM with no days checked authorises nothing — refused, never widened.
+    const emptyCustom = base();
+    emptyCustom.set("allowed_days_preset", "custom");
+    expect(await inviteToBookAction(emptyCustom)).toEqual({
+      outcome: null,
+      reason: "malformed_submission",
+    });
+
+    // A VANISHED service submits as the empty string. It must stay invalid, not
+    // silently widen to "any service".
+    const vanished = base();
+    vanished.set("service_id", "");
+    const out = await inviteToBookAction(vanished);
+    expect(out.outcome).toBeNull();
+
+    // Out-of-range window and expiry are refused rather than clamped.
+    for (const [field, value] of [
+      ["window_days", "0"],
+      ["window_days", "999"],
+      ["expires_in_hours", "0"],
+      ["expires_in_hours", "9999"],
+    ] as const) {
+      const fd = base();
+      fd.set(field, value);
+      expect(
+        (await inviteToBookAction(fd)).outcome,
+        `${field}=${value} must fail closed`,
+      ).toBeNull();
+    }
+
+    // A missing entry id is not a lookup key.
+    const noEntry = base();
+    noEntry.set("entry_id", "");
+    expect((await inviteToBookAction(noEntry)).outcome).toBeNull();
+  });
+
+  it("smuggled authority fields are never consulted", async () => {
+    const { inviteToBookAction } = await import(
+      "@/app/(app)/settings/waitlist/invite-actions"
+    );
+    const fd = new FormData();
+    fd.set("entry_id", "00000000-0000-0000-0000-000000000001");
+    fd.set("service_id", "00000000-0000-0000-0000-000000000002");
+    fd.set("window_days", "7");
+    fd.set("allowed_days_preset", "every");
+    fd.set("expires_in_hours", "72");
+    // Everything a crafted request might try to choose for itself.
+    fd.set("studio_id", "11111111-1111-1111-1111-111111111111");
+    fd.set("actor_id", "22222222-2222-2222-2222-222222222222");
+    fd.set("role", "owner");
+    fd.set("round_id", "33333333-3333-3333-3333-333333333333");
+    fd.set("allowance", "999");
+
+    // No session in this lane, so the adapter refuses at AUTHORITY — which is
+    // the point: the smuggled studio/actor bought nothing. A `committed` here
+    // would mean the payload had been believed.
+    const out = await inviteToBookAction(fd);
+    expect(out.outcome?.state).not.toBe("committed");
+  });
+});
+
+// ===========================================================================
 // P1 3990868492 — the one raw token is spent on delivery, and nowhere else
 // ===========================================================================
 describe("initial invitation delivery", () => {

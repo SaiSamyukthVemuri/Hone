@@ -512,7 +512,24 @@ describe("rendered rows", () => {
     // Claim, no "Claim next", no Release, no Record expired, no Send invitation
     // — none of those is either permitted on a waiting entry or a job a
     // practitioner is being asked to do.
-    expect(controls.sort()).toEqual(["Confirm removal", "Remove"]);
+    // WAIT INTEGRATION-01 — THE LIST CHANGED, EXACTLY AS THIS GUARD PREDICTED.
+    //
+    // The note above says "WAIT-03's invitation and ADMIT's release would each
+    // have to add a control here, and this list would change". The assembly
+    // binds #683's composer to #685's `admit_`, so a waiting row now also
+    // offers Invite to book, and the composer it opens carries its own send and
+    // dismiss controls.
+    //
+    // CLAIMING IS STILL INTERNAL AND STILL NOT OFFERED — the part that was never
+    // about invitation. The equality keeps a further control from arriving
+    // unannounced, and the `claim` assertion below is untouched.
+    expect(controls.sort()).toEqual([
+      "Cancel",
+      "Confirm removal",
+      "Invite to book",
+      "Remove",
+      "Send invitation",
+    ]);
     // Stated as its own claim so a future control named something else cannot
     // reintroduce claiming past the equality above.
     expect(html).not.toMatch(/\bclaim/i);
@@ -522,11 +539,24 @@ describe("rendered rows", () => {
     expect(html).not.toMatch(/<a\s/);
   });
 
-  it("promises no queue position, invitation or capacity", async () => {
+  it("promises no queue position or capacity", async () => {
     scenario.rows = [entry()];
     scenario.count = 1;
     const html = await render();
-    for (const forbidden of [/invite/i, /position/i, /\brank/i, /next \d+/i, /capacity/i]) {
+    // WAIT INTEGRATION-01 — `/invite/i` AND `/next \d+/i` ARE NO LONGER
+    // FORBIDDEN, and only those two changed.
+    //
+    // This surface could not invite when the guard was written; the page header
+    // said so outright ("It still cannot INVITE ... Those wait on B1/B1.5c +
+    // B2"). Those now exist and the assembly binds them, so the page really
+    // does offer "Invite to book", and the composer's own booking-window
+    // presets read "Next 7 days".
+    //
+    // WHAT THE GUARD WAS ACTUALLY PROTECTING IS UNTOUCHED: no queue POSITION,
+    // no RANK, no CAPACITY forecast. Those were never about invitation — they
+    // are promises this product cannot keep about where someone sits in a line
+    // or when a slot will exist, and they remain forbidden.
+    for (const forbidden of [/position/i, /\brank/i, /capacity/i]) {
       expect(html, `forbidden vocabulary: ${forbidden}`).not.toMatch(forbidden);
     }
   });
