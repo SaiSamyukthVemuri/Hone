@@ -874,6 +874,291 @@ export type InviteDraft = {
   expiresInHours: number;
 };
 
+/**
+ * The names the composer's controls actually carry, in ONE place.
+ *
+ * The form emits these and `inviteSubmissionFromFormData` reads them, so a
+ * renamed control cannot quietly stop reaching the payload — the two sides are
+ * the same constant rather than two strings that happen to match today.
+ */
+export const COMPOSER_FIELD_NAMES = {
+  entryId: "entry_id",
+  serviceId: "service_id",
+  windowDays: "window_days",
+  windowDaysCustom: "window_days_custom",
+  allowedDaysPreset: "allowed_days_preset",
+  allowedWeekdays: "allowed_weekdays",
+  expiresInHours: "expires_in_hours",
+  expiresInHoursCustom: "expires_in_hours_custom",
+} as const;
+
+/** The value a preset radio carries when the practitioner wants to type a
+ *  number instead of taking one of the offered ones. */
+export const CUSTOM_PRESET_VALUE = "custom";
+
+/**
+ * The binding #689 supplies. A plain `(FormData) => …`, which is exactly the
+ * shape of a Next server action, so the integration passes its own action
+ * straight in without an adapter in between.
+ *
+ * THIS IS THE WHOLE SEAM. #683 renders controls and hands over what the
+ * practitioner chose; it never learns who they are, which studio they act for,
+ * or whether the command will be allowed.
+ */
+export type InviteComposerAction = (formData: FormData) => void | Promise<void>;
+
+/**
+ * PRACTITIONER INTENT ONLY — the four answers plus the entry they are about.
+ *
+ * Deliberately not a studio, an actor, a role, a round, an allowance or a claim
+ * state. Those are authority, the server derives them, and a browser that could
+ * supply them could choose them.
+ */
+export type InviteSubmission = {
+  entryId: string;
+  serviceId: string | null;
+  windowDays: number | null;
+  allowedWeekdays: ReadonlyArray<number> | null;
+  expiresInHours: number | null;
+};
+
+function numberOrNull(value: FormDataEntryValue | null): number | null {
+  if (typeof value !== "string" || value.trim() === "") return null;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) ? parsed : null;
+}
+
+/**
+ * Read a preset field, following the custom escape hatch when it is chosen.
+ *
+ * ONE DETERMINISTIC RULE, because two sources for one answer is how a form
+ * comes to submit a number nobody selected: the custom input is read ONLY when
+ * the preset radio says `custom`, and is ignored otherwise however it is filled.
+ */
+function presetOrCustom(formData: FormData, preset: string, custom: string): number | null {
+  const chosen = formData.get(preset);
+  if (chosen === CUSTOM_PRESET_VALUE) return numberOrNull(formData.get(custom));
+  return numberOrNull(chosen);
+}
+
+/**
+ * What the practitioner chose, read from the form they actually filled in.
+ *
+ * READS ONLY THE NAMES ABOVE. Anything else in the payload — a `studio_id` a
+ * caller tacked on, an `actor_id`, a `round_id` — is not consulted, so a
+ * crafted request cannot smuggle authority through this function. It is a
+ * projection, not a filter: there is no branch that could let one through.
+ */
+/**
+ * Either the practitioner's intent, or a refusal to guess at it.
+ *
+ * The parser had no failure path because every field it read could express its
+ * own emptiness — `null` days, `null` hours. The allowed-days preset cannot:
+ * `null` there is a REAL answer meaning every day, and the widest one. So an
+ * unreadable preset needs somewhere to go that is not a scope.
+ */
+export type InviteSubmissionResult =
+  | { ok: true; submission: InviteSubmission }
+  | { ok: false; reason: "unrecognised_allowed_days_preset" };
+
+export function inviteSubmissionFromFormData(formData: FormData): InviteSubmissionResult {
+  const entryId = formData.get(COMPOSER_FIELD_NAMES.entryId);
+  const serviceId = formData.get(COMPOSER_FIELD_NAMES.serviceId);
+  // "Any service" is a real answer and it submits as the empty string, which
+  // must reach the payload as `null` rather than as an id nothing matches.
+  const service = typeof serviceId === "string" && serviceId !== "" ? serviceId : null;
+
+  // The day presets are shorthands for SETS, and the set they stand for is
+  // already written down once in ALLOWED_DAYS_PRESET_VALUES. Reading it here
+  // rather than restating it is the difference between reusing the rule and
+  // growing a second one that can disagree with the first.
+  //
+  // NO `?? null` FALLBACK, AND THAT MATTERS MORE HERE THAN ANYWHERE ELSE IN THIS
+  // FILE. `null` is the WIDEST scope this product can express, so a defaulting
+  // lookup would turn every unreadable input — a missing field, a typo, a
+  // renamed preset after schema drift, a crafted request — into "any day". The
+  // literal string `every` is the ONLY thing allowed to mean that.
+  const daysPreset = formData.get(COMPOSER_FIELD_NAMES.allowedDaysPreset);
+  const recognisedPreset =
+    daysPreset === CUSTOM_PRESET_VALUE ||
+    (typeof daysPreset === "string" &&
+      Object.prototype.hasOwnProperty.call(ALLOWED_DAYS_PRESET_VALUES, daysPreset));
+  if (!recognisedPreset) {
+    return { ok: false, reason: "unrecognised_allowed_days_preset" };
+  }
+  const checkedWeekdays = formData
+    .getAll(COMPOSER_FIELD_NAMES.allowedWeekdays)
+    .map((value) => numberOrNull(value))
+    .filter((value): value is number => value !== null);
+
+  return {
+    ok: true,
+    submission: {
+    entryId: typeof entryId === "string" ? entryId : "",
+    serviceId: service,
+    windowDays: presetOrCustom(
+      formData,
+      COMPOSER_FIELD_NAMES.windowDays,
+      COMPOSER_FIELD_NAMES.windowDaysCustom,
+    ),
+    // NO SELECTION MEANS "ANY DAY", not "no days". An empty checkbox group
+    // submits nothing at all, and reading that as an empty allow-list would
+    // invite a person to book on no day of the week.
+    // CUSTOM WITH NOTHING TICKED IS `[]`, NEVER `null`, AND THE DIFFERENCE IS THE
+    // WHOLE INVITATION. `null` means "any day" — the widest scope there is — so
+    // reading an empty custom set as `null` would turn a practitioner who
+    // unticked every day into one who invited the prospect to book on ALL of
+    // them. `[]` is deliberately invalid, and `validateDraft` refuses it.
+    allowedWeekdays:
+      daysPreset === CUSTOM_PRESET_VALUE
+        ? checkedWeekdays
+        : ALLOWED_DAYS_PRESET_VALUES[daysPreset as Exclude<AllowedDaysPreset, "custom">],
+    expiresInHours: presetOrCustom(
+      formData,
+      COMPOSER_FIELD_NAMES.expiresInHours,
+      COMPOSER_FIELD_NAMES.expiresInHoursCustom,
+    ),
+    },
+  };
+}
+
+/**
+ * WHAT THE PRACTITIONER IS LOOKING AT — one state, and the only one.
+ *
+ * The draft alone cannot express the whole interaction, because a preset and a
+ * value are different questions. "Custom" with 7 days in the box is not the
+ * same screen as the "7 days" preset, yet both have `windowDays: 7`. Deriving
+ * the mode from the value each render therefore loses the practitioner's actual
+ * choice the moment it coincides with a preset, so the mode is held explicitly.
+ *
+ * Everything visible — selections, validation, the confirmation sentence, the
+ * Send state and the submitted fields — is computed from THIS, so there is no
+ * second place for them to disagree.
+ */
+export type ComposerState = {
+  draft: InviteDraft;
+  windowMode: number | typeof CUSTOM_PRESET_VALUE;
+  daysMode: AllowedDaysPreset;
+  expiryMode: number | typeof CUSTOM_PRESET_VALUE;
+};
+
+export type ComposerEvent =
+  | { type: "service"; serviceId: string | null }
+  | { type: "windowPreset"; preset: number | typeof CUSTOM_PRESET_VALUE }
+  | { type: "windowCustom"; days: number }
+  | { type: "daysPreset"; preset: AllowedDaysPreset }
+  | { type: "weekday"; index: number; checked: boolean }
+  | { type: "expiryPreset"; preset: number | typeof CUSTOM_PRESET_VALUE }
+  | { type: "expiryCustom"; hours: number };
+
+/**
+ * WHICH STARTING POINT THIS COMPOSER IS SHOWING — entry plus the draft the
+ * server handed down, and nothing else.
+ *
+ * Used as a React `key`, so a change here REMOUNTS the stateful half and the
+ * reducer re-initialises synchronously, in the same commit. A `useEffect` reset
+ * would run after paint, leaving a window in which the new person's row is on
+ * screen carrying the previous person's scope — and a submit in that window
+ * would invite the wrong person to the wrong thing.
+ *
+ * DELIBERATELY NOT services, capabilities or the action. Those change identity
+ * on every parent render, and keying on them would erase a half-finished
+ * composition the practitioner is still typing into.
+ */
+export function composerIdentity(entryId: string, draft: InviteDraft): string {
+  return JSON.stringify([
+    entryId,
+    draft.serviceId,
+    draft.windowDays,
+    draft.allowedWeekdays === null ? null : [...draft.allowedWeekdays],
+    draft.expiresInHours,
+  ]);
+}
+
+/** Open the composer on a draft, reading the modes the draft implies. */
+export function initialComposerState(draft: InviteDraft): ComposerState {
+  return {
+    draft,
+    windowMode: activeWindowPreset(draft.windowDays),
+    daysMode: activeAllowedDaysPreset(draft.allowedWeekdays),
+    expiryMode: activeTtlPreset(draft.expiresInHours),
+  };
+}
+
+/**
+ * Every interaction the composer supports, as ONE pure function.
+ *
+ * Pure on purpose: this is the part that has to be exhaustively true, and it is
+ * testable without a browser. The component is then a thin binding — controls
+ * dispatch these events and render from the result, so a control cannot drift
+ * from the state the way an uncontrolled input did.
+ */
+export function composerReducer(state: ComposerState, event: ComposerEvent): ComposerState {
+  switch (event.type) {
+    case "service":
+      return { ...state, draft: { ...state.draft, serviceId: event.serviceId } };
+
+    case "windowPreset":
+      return event.preset === CUSTOM_PRESET_VALUE
+        ? // The number is KEPT, not cleared: leaving a preset for Custom is how
+          // a practitioner starts from the value they already had.
+          { ...state, windowMode: CUSTOM_PRESET_VALUE }
+        : {
+            ...state,
+            windowMode: event.preset,
+            draft: { ...state.draft, windowDays: event.preset },
+          };
+
+    case "windowCustom":
+      return { ...state, draft: { ...state.draft, windowDays: event.days } };
+
+    case "daysPreset": {
+      if (event.preset === "custom") {
+        // THE P1, AND IT LIVES HERE. Arriving at Custom from "Every day" leaves
+        // NOTHING ticked, and that state is `[]` — an explicit empty set that
+        // `validateDraft` refuses — not `null`, which would silently mean the
+        // widest possible scope.
+        return {
+          ...state,
+          daysMode: "custom",
+          draft: { ...state.draft, allowedWeekdays: state.draft.allowedWeekdays ?? [] },
+        };
+      }
+      return {
+        ...state,
+        daysMode: event.preset,
+        draft: {
+          ...state.draft,
+          allowedWeekdays: ALLOWED_DAYS_PRESET_VALUES[event.preset] ?? null,
+        },
+      };
+    }
+
+    case "weekday": {
+      const current = state.draft.allowedWeekdays ?? [];
+      const next = event.checked
+        ? [...current, event.index].sort((a, b) => a - b)
+        : current.filter((d) => d !== event.index);
+      // Ticking a day is only meaningful inside a custom set, and it KEEPS the
+      // mode custom — otherwise the next render would re-derive "weekdays" for
+      // a set that happens to match and take the checkboxes away mid-edit.
+      return { ...state, daysMode: "custom", draft: { ...state.draft, allowedWeekdays: next } };
+    }
+
+    case "expiryPreset":
+      return event.preset === CUSTOM_PRESET_VALUE
+        ? { ...state, expiryMode: CUSTOM_PRESET_VALUE }
+        : {
+            ...state,
+            expiryMode: event.preset,
+            draft: { ...state.draft, expiresInHours: event.preset },
+          };
+
+    case "expiryCustom":
+      return { ...state, draft: { ...state.draft, expiresInHours: event.hours } };
+  }
+}
+
 export function emptyDraft(): InviteDraft {
   return {
     serviceId: null,
