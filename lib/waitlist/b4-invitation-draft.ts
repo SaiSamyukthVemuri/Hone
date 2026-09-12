@@ -949,7 +949,19 @@ function presetOrCustom(formData: FormData, preset: string, custom: string): num
  * crafted request cannot smuggle authority through this function. It is a
  * projection, not a filter: there is no branch that could let one through.
  */
-export function inviteSubmissionFromFormData(formData: FormData): InviteSubmission {
+/**
+ * Either the practitioner's intent, or a refusal to guess at it.
+ *
+ * The parser had no failure path because every field it read could express its
+ * own emptiness — `null` days, `null` hours. The allowed-days preset cannot:
+ * `null` there is a REAL answer meaning every day, and the widest one. So an
+ * unreadable preset needs somewhere to go that is not a scope.
+ */
+export type InviteSubmissionResult =
+  | { ok: true; submission: InviteSubmission }
+  | { ok: false; reason: "unrecognised_allowed_days_preset" };
+
+export function inviteSubmissionFromFormData(formData: FormData): InviteSubmissionResult {
   const entryId = formData.get(COMPOSER_FIELD_NAMES.entryId);
   const serviceId = formData.get(COMPOSER_FIELD_NAMES.serviceId);
   // "Any service" is a real answer and it submits as the empty string, which
@@ -960,13 +972,28 @@ export function inviteSubmissionFromFormData(formData: FormData): InviteSubmissi
   // already written down once in ALLOWED_DAYS_PRESET_VALUES. Reading it here
   // rather than restating it is the difference between reusing the rule and
   // growing a second one that can disagree with the first.
+  //
+  // NO `?? null` FALLBACK, AND THAT MATTERS MORE HERE THAN ANYWHERE ELSE IN THIS
+  // FILE. `null` is the WIDEST scope this product can express, so a defaulting
+  // lookup would turn every unreadable input — a missing field, a typo, a
+  // renamed preset after schema drift, a crafted request — into "any day". The
+  // literal string `every` is the ONLY thing allowed to mean that.
   const daysPreset = formData.get(COMPOSER_FIELD_NAMES.allowedDaysPreset);
+  const recognisedPreset =
+    daysPreset === CUSTOM_PRESET_VALUE ||
+    (typeof daysPreset === "string" &&
+      Object.prototype.hasOwnProperty.call(ALLOWED_DAYS_PRESET_VALUES, daysPreset));
+  if (!recognisedPreset) {
+    return { ok: false, reason: "unrecognised_allowed_days_preset" };
+  }
   const checkedWeekdays = formData
     .getAll(COMPOSER_FIELD_NAMES.allowedWeekdays)
     .map((value) => numberOrNull(value))
     .filter((value): value is number => value !== null);
 
   return {
+    ok: true,
+    submission: {
     entryId: typeof entryId === "string" ? entryId : "",
     serviceId: service,
     windowDays: presetOrCustom(
@@ -985,14 +1012,13 @@ export function inviteSubmissionFromFormData(formData: FormData): InviteSubmissi
     allowedWeekdays:
       daysPreset === CUSTOM_PRESET_VALUE
         ? checkedWeekdays
-        : (ALLOWED_DAYS_PRESET_VALUES[
-            (daysPreset as Exclude<AllowedDaysPreset, "custom">) ?? "every"
-          ] ?? null),
+        : ALLOWED_DAYS_PRESET_VALUES[daysPreset as Exclude<AllowedDaysPreset, "custom">],
     expiresInHours: presetOrCustom(
       formData,
       COMPOSER_FIELD_NAMES.expiresInHours,
       COMPOSER_FIELD_NAMES.expiresInHoursCustom,
     ),
+    },
   };
 }
 
@@ -1024,6 +1050,30 @@ export type ComposerEvent =
   | { type: "weekday"; index: number; checked: boolean }
   | { type: "expiryPreset"; preset: number | typeof CUSTOM_PRESET_VALUE }
   | { type: "expiryCustom"; hours: number };
+
+/**
+ * WHICH STARTING POINT THIS COMPOSER IS SHOWING — entry plus the draft the
+ * server handed down, and nothing else.
+ *
+ * Used as a React `key`, so a change here REMOUNTS the stateful half and the
+ * reducer re-initialises synchronously, in the same commit. A `useEffect` reset
+ * would run after paint, leaving a window in which the new person's row is on
+ * screen carrying the previous person's scope — and a submit in that window
+ * would invite the wrong person to the wrong thing.
+ *
+ * DELIBERATELY NOT services, capabilities or the action. Those change identity
+ * on every parent render, and keying on them would erase a half-finished
+ * composition the practitioner is still typing into.
+ */
+export function composerIdentity(entryId: string, draft: InviteDraft): string {
+  return JSON.stringify([
+    entryId,
+    draft.serviceId,
+    draft.windowDays,
+    draft.allowedWeekdays === null ? null : [...draft.allowedWeekdays],
+    draft.expiresInHours,
+  ]);
+}
 
 /** Open the composer on a draft, reading the modes the draft implies. */
 export function initialComposerState(draft: InviteDraft): ComposerState {

@@ -24,6 +24,7 @@ import {
   waitlistDomId,
   COMPOSER_FIELD_NAMES,
   CUSTOM_PRESET_VALUE,
+  composerIdentity,
   composerReducer,
   initialComposerState,
   type ComposerEvent,
@@ -238,6 +239,20 @@ function WeekdayCheckbox({
  * authority, no mutation. The form's action still comes from outside.
  */
 export function InviteComposer(props: InviteComposerProps) {
+  // KEYED, NOT EFFECT-RESET. `useReducer`'s initial argument is read once, so a
+  // composer reused for a different entry — or for the same entry after the
+  // server refreshed its draft — would keep the previous state while showing
+  // the new heading. Remounting on identity resets it in the SAME commit, so
+  // there is no frame in which one person's row carries another's scope.
+  return (
+    <StatefulInviteComposer
+      key={composerIdentity(props.entryId, props.draft)}
+      {...props}
+    />
+  );
+}
+
+function StatefulInviteComposer(props: InviteComposerProps) {
   const [state, dispatch] = useReducer(composerReducer, props.draft, initialComposerState);
   return <InviteComposerView {...props} state={state} dispatch={dispatch} />;
 }
@@ -382,6 +397,20 @@ export function InviteComposerView({
           }
           className={fieldControlClass()}
         >
+          {/* THE VANISHED CHOICE KEEPS ITS PLACE, AND ITS OWN WORDS.
+              A controlled select whose value matches no option falls back to
+              displaying the FIRST one — which is "Any service". The scope would
+              then LOOK like the widest possible answer while the state still
+              held a dead id, and selecting the option that already appears
+              selected fires no change event, so the practitioner could not even
+              clear it. Rendering the stale value as its own disabled option
+              keeps it visibly wrong and leaves "Any service" a different,
+              choosable answer. */}
+          {serviceMissing && draft.serviceId !== null && (
+            <option value={draft.serviceId} disabled>
+              Previously selected service is unavailable
+            </option>
+          )}
             {/* "Any service" is a real answer, not an empty one. A studio that
                 does not mind which service the invitee books should not have to
                 pick one to get past this field. */}

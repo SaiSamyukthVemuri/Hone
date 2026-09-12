@@ -18,6 +18,7 @@ import {
   COMPOSER_FIELD_NAMES,
   composerReducer,
   initialComposerState,
+  composerIdentity,
   inviteSubmissionFromFormData,
   scopeSummary,
   sendState,
@@ -668,9 +669,13 @@ function formDataFrom(html: string): FormData {
   return formData;
 }
 
-/** What a submit of this rendered composer would hand the bound action. */
+/** What a submit of this rendered composer would hand the bound action.
+ *  Throws rather than papering over a refusal — a test that silently accepted
+ *  one would be asserting about a payload that does not exist. */
 function submissionOf(html: string) {
-  return inviteSubmissionFromFormData(formDataFrom(html));
+  const result = inviteSubmissionFromFormData(formDataFrom(html));
+  if (!result.ok) throw new Error(`parser refused: ${result.reason}`);
+  return result.submission;
 }
 
 describe("a real caller can bind this composer and receive the draft", () => {
@@ -746,7 +751,9 @@ describe("a real caller can bind this composer and receive the draft", () => {
     // ...and ignored when a preset is chosen, however it is filled in.
     const preset = formDataFrom(compose({ serviceId: "svc-1", windowDays: 14 }, CONNECTED));
     preset.set(COMPOSER_FIELD_NAMES.windowDaysCustom, "999");
-    expect(inviteSubmissionFromFormData(preset).windowDays).toBe(14);
+    const parsed = inviteSubmissionFromFormData(preset);
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) expect(parsed.submission.windowDays).toBe(14);
   });
 
   it("E. an invalid draft has no usable submit control", () => {
@@ -797,7 +804,9 @@ describe("a real caller can bind this composer and receive the draft", () => {
     ] as const) {
       crafted.set(key, value);
     }
-    expect(inviteSubmissionFromFormData(crafted)).toEqual(submissionOf(html));
+    const craftedResult = inviteSubmissionFromFormData(crafted);
+    expect(craftedResult.ok).toBe(true);
+    if (craftedResult.ok) expect(craftedResult.submission).toEqual(submissionOf(html));
   });
 
   it("H. no Claim vocabulary reaches the practitioner", () => {
@@ -853,7 +862,13 @@ describe("a real caller can bind this composer and receive the draft", () => {
 //
 // The one link this cannot reach is React's own onChange plumbing.
 
-const CONTEXT = { serviceIds: SERVICES.filter((s) => s.modality !== null).map((s) => s.id) };
+// THE SAME PREDICATE THE COMPOSER USES, not a lookalike. Filtering on
+// `modality !== null` dropped svc-2 — which is bookable through the name
+// fallback — so a repaired draft read as invalid and the assertion failed for
+// a reason that had nothing to do with the code under test.
+const CONTEXT = {
+  serviceIds: SERVICES.filter((svc) => isConsultationService(svc)).map((svc) => svc.id),
+};
 
 /** Run an interaction script from an opening draft. */
 function interact(over: Partial<InviteDraft>, events: ReadonlyArray<ComposerEvent>): ComposerState {
@@ -889,7 +904,7 @@ function answers(state: ComposerState, capabilities: AdapterCapabilities | null 
     visibleSummary: summaryMatch?.[1] ?? null,
     sendDisabled: controlTag(html, "composer-send").includes('disabled=""'),
     validation: validateDraft(state.draft, CONTEXT),
-    submitted: inviteSubmissionFromFormData(formDataFrom(html)),
+    submitted: submissionOf(html),
   };
 }
 
@@ -1053,5 +1068,193 @@ describe("one live draft drives everything", () => {
     expect(answers(state, null).sendDisabled).toBe(true);
     expect(sendState(state.draft, null, CONTEXT).disabled).toBe(true);
     expect(answers(state, CONNECTED).sendDisabled).toBe(false);
+  });
+});
+
+// ===========================================================================
+// THE THREE CONTROLLED-FORM REPAIRS
+// ===========================================================================
+
+describe("the composer resets when its target changes", () => {
+  const props = (entryId: string, over: Partial<InviteDraft>) => ({
+    entryId,
+    entryName: "Sarah",
+    draft: draft(over),
+    services: SERVICES,
+    capabilities: CONNECTED,
+    action: NOOP_ACTION,
+  });
+
+  /** The key React will actually reconcile on. `InviteComposer` holds no hooks
+   *  itself, so calling it returns the element it builds and the key can be
+   *  read directly — a real assertion about reconciliation, not a source pin. */
+  const keyOf = (p: ReturnType<typeof props>) =>
+    (InviteComposer(p) as unknown as { key: string | null }).key;
+
+  it("remounts for a different entry, so no draft can cross between people", () => {
+    // THE DEFECT: useReducer reads its initial argument ONCE. Reused for another
+    // person's row, the component would show B's name above A's scope — and a
+    // submit in that state invites the wrong person to the wrong thing.
+    const personA = props("entry-A", { serviceId: "svc-1", windowDays: 7 });
+    const personB = props("entry-B", { serviceId: "svc-2", windowDays: 30 });
+    expect(keyOf(personA)).not.toBe(keyOf(personB));
+    expect(keyOf(personA)).toBe(composerIdentity("entry-A", personA.draft));
+
+    // THE CASE THAT ACTUALLY LEAKS, and the first version of this test missed
+    // it: two people whose drafts are IDENTICAL. Both open on the default, so
+    // only the entry distinguishes them — and if the key ignored the entry, the
+    // second person would inherit whatever the first had typed.
+    const sameDraftA = props("entry-A", {});
+    const sameDraftB = props("entry-B", {});
+    expect(sameDraftA.draft).toEqual(sameDraftB.draft);
+    expect(
+      keyOf(sameDraftA),
+      "two entries sharing a draft must still be different composers",
+    ).not.toBe(keyOf(sameDraftB));
+  });
+
+  it("remounts when the SAME entry's authoritative draft is refreshed", () => {
+    const before = props("entry-A", { serviceId: "svc-1", windowDays: 7 });
+    const after = props("entry-A", { serviceId: "svc-1", windowDays: 30 });
+    expect(keyOf(before)).not.toBe(keyOf(after));
+    // ...and the state that mounts starts from the refreshed draft.
+    expect(initialComposerState(after.draft).draft.windowDays).toBe(30);
+  });
+
+  it("does NOT erase a half-finished composition for unrelated prop churn", () => {
+    // Keying on services/capabilities/action would remount on every parent
+    // render and throw away what the practitioner was typing.
+    const base = props("entry-A", { serviceId: "svc-1" });
+    expect(
+      composerIdentity("entry-A", base.draft),
+      "identity must not depend on services, capabilities or the action",
+    ).toBe(composerIdentity("entry-A", draft({ serviceId: "svc-1" })));
+  });
+
+  it("the reset is SYNCHRONOUS — a key, not an effect", () => {
+    // A post-paint effect would leave a frame in which the new row carries the
+    // old scope. The key makes the reset part of the same commit.
+    const el = InviteComposer(props("entry-A", {})) as unknown as { key: string | null };
+    expect(el.key).not.toBeNull();
+    expect(el.key).toBe(composerIdentity("entry-A", draft({})));
+  });
+});
+
+describe("a vanished service stays visibly wrong, and is repairable", () => {
+  const vanished = () => compose({ serviceId: "svc-deleted" }, CONNECTED);
+
+  it("never masquerades as Any service", () => {
+    const html = vanished();
+    // The stale id is the select's value AND has its own option, so the browser
+    // cannot fall back to displaying the first one.
+    expect(html).toContain('value="svc-deleted"');
+    expect(html).toContain("Previously selected service is unavailable");
+    // "Any service" must NOT be the selected option here.
+    expect(html).not.toMatch(/<option value=""[^>]*selected/);
+    // ...and it is visibly invalid, not silently widened.
+    expect(html).toContain('data-testid="composer-error-service"');
+    expect(controlTag(html, "composer-send")).toContain('disabled=""');
+  });
+
+  it("does not silently submit Any service in place of the dead id", () => {
+    // Silently normalising to null would widen the scope without the
+    // practitioner choosing to.
+    expect(submissionOf(vanished()).serviceId).toBe("svc-deleted");
+    expect(submissionOf(vanished()).serviceId).not.toBeNull();
+  });
+
+  it("choosing Any service explicitly clears it and repairs the draft", () => {
+    const repaired = composerReducer(
+      initialComposerState(draft({ serviceId: "svc-deleted" })),
+      { type: "service", serviceId: null },
+    );
+    const after = answers(repaired);
+    expect(after.validation.ok).toBe(true);
+    expect(after.sendDisabled).toBe(false);
+    expect(after.submitted.serviceId).toBeNull();
+    expect(after.visibleSummary).toContain("any service");
+  });
+
+  it("choosing another real service repairs it too", () => {
+    const repaired = composerReducer(
+      initialComposerState(draft({ serviceId: "svc-deleted" })),
+      { type: "service", serviceId: "svc-2" },
+    );
+    const after = answers(repaired);
+    expect(after.validation.ok).toBe(true);
+    expect(after.submitted.serviceId).toBe("svc-2");
+  });
+
+  it("stays repairable when Any service is the only option left", () => {
+    const html = render(
+      createElement(InviteComposer, {
+        entryId: ENTRY_ID,
+        entryName: "Sarah",
+        draft: draft({ serviceId: "svc-deleted" }),
+        services: [],
+        capabilities: CONNECTED,
+        action: NOOP_ACTION,
+      }),
+    );
+    expect(html).toContain("Previously selected service is unavailable");
+    expect(html).toContain("Any service");
+  });
+});
+
+describe("an unreadable weekday preset can never mean every day", () => {
+  const withPreset = (value: string | null) => {
+    const formData = formDataFrom(compose({ serviceId: "svc-1" }, CONNECTED));
+    if (value === null) formData.delete(COMPOSER_FIELD_NAMES.allowedDaysPreset);
+    else formData.set(COMPOSER_FIELD_NAMES.allowedDaysPreset, value);
+    return inviteSubmissionFromFormData(formData);
+  };
+
+  it("refuses a missing preset", () => {
+    // `null` is the WIDEST scope this product can express, so a defaulting
+    // lookup would turn every unreadable input into "any day".
+    const result = withPreset(null);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe("unrecognised_allowed_days_preset");
+  });
+
+  it("refuses an unrecognised preset, however plausible", () => {
+    for (const junk of ["garbage", "EVERY", "every ", "weekday", "all", "", "__proto__", "toString"]) {
+      const result = withPreset(junk);
+      expect(result.ok, `"${junk}" must not be accepted`).toBe(false);
+    }
+  });
+
+  it("only the literal `every` maps to null", () => {
+    const result = withPreset("every");
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.submission.allowedWeekdays).toBeNull();
+  });
+
+  it("custom with zero boxes is [] and invalid — not null, not refused", () => {
+    const formData = formDataFrom(compose({ serviceId: "svc-1" }, CONNECTED));
+    formData.set(COMPOSER_FIELD_NAMES.allowedDaysPreset, "custom");
+    formData.delete(COMPOSER_FIELD_NAMES.allowedWeekdays);
+    const result = inviteSubmissionFromFormData(formData);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.submission.allowedWeekdays).toEqual([]);
+      expect(result.submission.allowedWeekdays).not.toBeNull();
+      // [] is deliberately invalid rather than a refusal: the practitioner DID
+      // answer, and the answer is one the product will not send.
+      expect(
+        validateDraft({ ...draft({ serviceId: "svc-1" }), allowedWeekdays: [] }, CONTEXT).ok,
+      ).toBe(false);
+    }
+  });
+
+  it("the recognised presets still map to their canonical sets", () => {
+    for (const [preset, expected] of [
+      ["weekdays", [1, 2, 3, 4, 5]],
+      ["weekends", [0, 6]],
+    ] as const) {
+      const result = withPreset(preset);
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.submission.allowedWeekdays).toEqual(expected);
+    }
   });
 });
