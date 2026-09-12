@@ -516,44 +516,61 @@ describe("the CURRENT 0193 admit_ vocabulary is fully mapped", () => {
     const { ADMIT_SERVER_SUCCESS, ADMIT_REFUSAL_PRESENTATION } = await import(
       "@/lib/waitlist/invite-to-book-contract"
     );
+    const { ADMIT_AUTHORITY_REFUSALS } = await import(
+      "@/lib/waitlist/invite-to-book-adapter"
+    );
     const vocabulary = admitVocabulary();
     // Sanity: the extractor must actually find something, or this whole
     // describe passes by finding nothing.
     expect(vocabulary.size).toBeGreaterThan(8);
     expect(vocabulary.has(ADMIT_SERVER_SUCCESS)).toBe(true);
 
+    // THE MAPPING IS THE UNION OF BOTH TABLES, and that is the point.
+    //
+    // #683's `ADMIT_REFUSAL_PRESENTATION` covers what it could see. It does NOT
+    // enumerate `not_owner` / `not_a_member`, which `admit_` propagates verbatim
+    // from `new_client_waitlist_resolve_owner` — a hop invisible from that
+    // branch, and exactly what its "A SNAPSHOT ... NOT a live guarantee" header
+    // warns about. #689's `ADMIT_AUTHORITY_REFUSALS` supplies precisely those,
+    // so the assembled runtime is truthful today; the contract fix remains
+    // #683's.
+    //
+    // Asserting the UNION rather than #683's table alone means nothing rots the
+    // day #683 adds them: the codes move from one table to the other and this
+    // still passes, while any genuinely NEW result still fails.
+    const mappedHere = new Set([
+      ...Object.keys(ADMIT_REFUSAL_PRESENTATION),
+      ...Object.keys(ADMIT_AUTHORITY_REFUSALS),
+    ]);
     const unmapped = [...vocabulary]
       .filter((c) => c !== ADMIT_SERVER_SUCCESS)
-      .filter((c) => !(c in ADMIT_REFUSAL_PRESENTATION))
+      .filter((c) => !mappedHere.has(c))
       .sort();
+    expect(unmapped, `unmapped 0193 results: ${unmapped.join(", ")}`).toEqual([]);
 
-    // OPEN FINDING, PINNED — #683-owned, and found by exactly this test.
-    //
-    // `admit_` resolves authority through `new_client_waitlist_resolve_owner`
-    // and returns its code verbatim when it is not `ok`, so `not_owner` and
-    // `not_a_member` ARE part of its vocabulary. #683's `ADMIT_SERVER_REFUSALS`
-    // omits both — its own header says the list is "A SNAPSHOT ... NOT a live
-    // guarantee" because 0193 is not an ancestor of that branch, and this is the
-    // gap that warning was about.
-    //
-    // NOT PATCHED HERE: the union and its presentation table are #683's. The
-    // runtime is safe meanwhile — the adapter resolves ownership before calling,
-    // and an unmapped result becomes `indeterminate`, never a confident refusal
-    // (proved below). The cost is that a role changed mid-flight reads as "we
-    // could not confirm" rather than "you are not the owner".
-    //
-    // PINNED, NOT SUPPRESSED. Any FURTHER unmapped result still fails, and this
-    // list must shrink to empty when #683 lands the fix — at which point this
-    // expectation itself goes red and is deleted.
-    const KNOWN_683_GAP = ["not_a_member", "not_owner"];
-    expect(unmapped, `unmapped 0193 results: ${unmapped.join(", ")}`).toEqual(KNOWN_683_GAP);
+    // AND THE SUPPLEMENT IS NOT A CATCH-ALL. It carries exactly the authority
+    // codes one named command can return — never the whole failure union, which
+    // would let a future result borrow an unrelated name and become a confident
+    // refusal.
+    expect(Object.keys(ADMIT_AUTHORITY_REFUSALS).sort()).toEqual([
+      "not_a_member",
+      "not_owner",
+    ]);
   });
 
   it("a NEW server result would turn this RED — the control is load-bearing", async () => {
     const { ADMIT_REFUSAL_PRESENTATION } = await import(
       "@/lib/waitlist/invite-to-book-contract"
     );
-    const presentationKeys: Record<string, unknown> = ADMIT_REFUSAL_PRESENTATION;
+    const { ADMIT_AUTHORITY_REFUSALS } = await import(
+      "@/lib/waitlist/invite-to-book-adapter"
+    );
+    // The SAME union the real check uses, so this control cannot pass by
+    // testing a narrower table than production consults.
+    const presentationKeys: Record<string, unknown> = {
+      ...ADMIT_REFUSAL_PRESENTATION,
+      ...ADMIT_AUTHORITY_REFUSALS,
+    };
     // The negative control, run inline rather than by editing SQL: inject a
     // synthetic result and prove the same comparison rejects it. Without this,
     // "everything is mapped" could hold because the extractor found nothing.
@@ -579,6 +596,38 @@ describe("the CURRENT 0193 admit_ vocabulary is fully mapped", () => {
       state: "refused",
       code: "admission_round_full",
     });
+    // AND the authority refusals admit_ propagates from resolve_owner are
+    // DEFINITE, not indeterminate. Before the supplement these fell through and
+    // a flat "you are not the owner" read as "we could not confirm — go and
+    // check the waitlist", sending a practitioner after a row that never existed.
+    expect(__refusalFromServerForTest("not_owner")).toEqual({
+      state: "refused",
+      code: "not_owner",
+    });
+    expect(__refusalFromServerForTest("not_a_member")).toEqual({
+      state: "refused",
+      code: "not_a_member",
+    });
+
+    // THE SUPPLEMENT IS NOT A CATCH-ALL, PROVED BY BEHAVIOUR RATHER THAN BY
+    // READING ITS KEYS.
+    //
+    // An earlier version asserted only `Object.keys(ADMIT_AUTHORITY_REFUSALS)`,
+    // which stayed GREEN when the lookup was replaced by "anything in
+    // INVITE_TO_BOOK_FAILURES" — the table was still correct, it was simply no
+    // longer what the code consulted. Caught by running that mutation.
+    //
+    // These codes are real members of the general failure union but are NOT in
+    // `admit_`'s vocabulary: they belong to release / requeue / expire / remove.
+    // If one ever comes back from `admit_`, we have misread the answer, and
+    // `indeterminate` is the only honest reading. A widened lookup turns each
+    // into a confident refusal and reds here.
+    for (const foreign of ["not_removable", "not_requeueable", "already_active"]) {
+      expect(
+        __refusalFromServerForTest(foreign).state,
+        `${foreign} is not an admit_ result and must not become a refusal`,
+      ).toBe("indeterminate");
+    }
   });
 });
 

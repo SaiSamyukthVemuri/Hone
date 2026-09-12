@@ -220,8 +220,43 @@ function refusalFromServer(result: unknown): InvitationOutcome {
   const mapped = (
     ADMIT_REFUSAL_PRESENTATION as Record<string, DefiniteInviteToBookRefusal | undefined>
   )[result];
-  return mapped ? { state: "refused", code: mapped } : INDETERMINATE_ADMISSION;
+  if (mapped) return { state: "refused", code: mapped };
+  const authority = ADMIT_AUTHORITY_REFUSALS[result];
+  if (authority) return { state: "refused", code: authority };
+  return INDETERMINATE_ADMISSION;
 }
+
+/**
+ * The authority refusals `admit_` PROPAGATES but #683's table does not enumerate.
+ *
+ * `admit_` resolves authority through `new_client_waitlist_resolve_owner` and,
+ * when that answers anything but `ok`, returns its code VERBATIM. That command
+ * can answer `not_owner`, `not_a_member` or `invalid_input`. Only the last is in
+ * `ADMIT_SERVER_REFUSALS`, so without this the other two fall through to
+ * `indeterminate` — telling a practitioner "we could not confirm whether the
+ * invitation was created, go and check the waitlist" when the database gave a
+ * flat, final No and nothing committed. That is a false alarm about state, and
+ * it sends them looking for a row that does not exist.
+ *
+ * WHY IT LIVES HERE. The omission is real and component-owned — the presentation
+ * table is #683's, and its own header calls the admit_ result list "A SNAPSHOT
+ * ... NOT a live guarantee" precisely because 0193 is not an ancestor of that
+ * branch. #689 is the first place both halves exist, so the gap is observable
+ * here and nowhere else. This supplement makes the ASSEMBLED runtime truthful;
+ * it is not a substitute for #683 enumerating them, and the integration test
+ * asserts the union of the two tables covers the live vocabulary so the day
+ * #683 adds them nothing here silently rots.
+ *
+ * NARROW AND DERIVED, NOT A CATCH-ALL. It lists exactly what ONE named command
+ * can return, each identity-mapped onto the same word. It deliberately does NOT
+ * fall back to "anything in INVITE_TO_BOOK_FAILURES", which would let a FUTURE
+ * 0193 result that happens to share a name with an unrelated failure become a
+ * confident refusal. Anything outside both tables stays indeterminate.
+ */
+const ADMIT_AUTHORITY_REFUSALS: Record<string, DefiniteInviteToBookRefusal | undefined> = {
+  not_owner: "not_owner",
+  not_a_member: "not_a_member",
+};
 
 /**
  * Spend the one raw token on #680's reviewed invitation send.
@@ -467,4 +502,5 @@ export const admissionCommandAdapter: WaitlistInvitationAdapter =
 
 export { windowToDates as __windowToDatesForTest };
 export { refusalFromServer as __refusalFromServerForTest };
+export { ADMIT_AUTHORITY_REFUSALS };
 export { deliveryStateFromDisposition as __deliveryStateFromDispositionForTest };
