@@ -94,10 +94,16 @@
  */
 export type BookingScope = {
   /**
-   * The service the invitation is for. `null` means the studio did not narrow
-   * it and the invitee may book any bookable service.
+   * The service the invitation is for. REQUIRED, and deliberately not nullable.
+   *
+   * The composer's draft may hold `null`, where it means "not chosen yet" — an
+   * incomplete answer. This type is the VALIDATED scope, and the admission
+   * authority mints a service-scoped invitation, so there is no unscoped
+   * invitation for `null` to describe here. Letting the draft's nullability
+   * reach this far is what allowed the surface to offer a send the command
+   * could not perform.
    */
-  serviceId: string | null;
+  serviceId: string;
   /**
    * How many days from issuance the invitee may book within. Product presets
    * are 7, 14 and 30; a custom value is bounded 1..365.

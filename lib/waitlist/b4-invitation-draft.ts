@@ -1200,6 +1200,9 @@ export type DraftContext = {
   serviceIds?: ReadonlyArray<string>;
 };
 
+/** Said once, so the rule above and the narrowing below cannot drift apart. */
+const SERVICE_REQUIRED = "Choose the service they can book.";
+
 export function validateDraft(
   draft: InviteDraft,
   { serviceIds }: DraftContext = {},
@@ -1210,7 +1213,7 @@ export function validateDraft(
   // so leaving this blank has nothing to send — and the practitioner has to say
   // which, rather than the screen picking for them.
   if (draft.serviceId === null) {
-    errors.service = "Choose the service they can book.";
+    errors.service = SERVICE_REQUIRED;
   } else if (serviceIds !== undefined && !serviceIds.includes(draft.serviceId)) {
     // A SERVICE THAT VANISHED IS NOT A BLANK ONE EITHER. The composer renders
     // the chosen service by looking it up; when the lookup misses — deleted, or
@@ -1248,10 +1251,19 @@ export function validateDraft(
   }
 
   if (Object.keys(errors).length > 0) return { ok: false, errors };
+
+  // THE SAME RULE, RE-STATED WHERE THE TYPE NEEDS IT — not a cast and not an
+  // assertion. TypeScript cannot carry the narrowing out of the error-collecting
+  // branch above, and the two honest options are to re-check or to lie. If this
+  // ever disagreed with the check above, the function refuses rather than
+  // fabricating a scope with a service nobody chose.
+  const serviceId = draft.serviceId;
+  if (serviceId === null) return { ok: false, errors: { service: SERVICE_REQUIRED } };
+
   return {
     ok: true,
     scope: {
-      serviceId: draft.serviceId,
+      serviceId,
       windowDays: draft.windowDays,
       allowedWeekdays: draft.allowedWeekdays,
     },
