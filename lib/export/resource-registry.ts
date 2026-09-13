@@ -1636,6 +1636,28 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "One DURABLE ROW PER ADMISSION ROUND for the new-client waitlist, live since migration 0192 (WAIT-03B). PENDING rather than EXCLUDED because the allowance is the owner's OWN decision about how many people they will admit in a round - studio-owned intent, not a machine-derived projection - and these rows are now the only record of what the studio chose and when. THE SHAPE CHANGED AND SO DID THE STAKES: this was previously one mutable row per studio holding a single current number, which carried no history worth exporting. It is now an append-mostly ledger of rounds, each with its own identity, allowance, opening and closing instants and the practitioners who opened and closed it - so an export that dropped it would lose the studio's admission history outright, and one that emitted only the latest row would silently misrepresent it. Still tier 2 and still decided with new_client_waitlist_entries rather than dumped on its own. No security material and no provider identifier, so no field review is required; opened_by_practitioner_id and closed_by_practitioner_id are ordinary attribution of the kind new_client_waitlist_entries already carries. No export surface ships in WAIT-03B.",
   },
+  new_client_waitlist_entry_preferences: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 1,
+    reason:
+      "Which days a waiting prospect told the studio they can attend (weekdays / weekends / both), live since migration 0193 (WAIT-ADMIT-01). Tier 1 for the same reason new_client_waitlist_entries is: this is the prospect's OWN answer, a one-to-one attribute of a studio-owned demand record rather than an event log or a derived projection, and the absence of a row is itself the meaningful state (nobody has asked yet). It carries no security material and no provider identifier, so it needs no field review; recorded_by_practitioner_id is ordinary attribution of the kind new_client_waitlist_entries already carries at tier 1 (claimed_by_practitioner_id, removed_by_practitioner_id, created_by_practitioner_id). It should be decided with new_client_waitlist_entries, whose demand records it belongs to. No export surface ships in WAIT-ADMIT-01.",
+  },
+  new_client_waitlist_preference_grants: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    fieldReviewRequired: true,
+    reason:
+      "The expiring, hashed capability that lets a prospect update their own availability without an account, live since migration 0193 (WAIT-ADMIT-01). Same verdict and the same reasoning as new_client_waitlist_invitations, which this table deliberately mirrors: the lifecycle is studio-owned truth about who was asked and when, so PENDING rather than EXCLUDED, but token_hash is security material and MUST NEVER be emitted, raw or otherwise, and the row also carries operational attribution and lifecycle stamps (issued_by_practitioner_id, redeemed_at, revoked_at) whose export shape has not been reviewed. Excluding the whole resource on account of one column would hide legitimate history from the backlog; the field review decides the payload column by column. The schema already withholds token_hash from the studio's own browser session by a positive column-level SELECT grant, and an export must not hand out through one door what the schema closes at another. No export surface ships in WAIT-ADMIT-01.",
+  },
+  studio_waitlist_admission_policy: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 1,
+    reason:
+      "How an owner wants their waitlist ranked and how many people they invite at a time, live since migration 0193 (WAIT-ADMIT-01). STANDING BUSINESS CONFIGURATION THE OWNER AUTHORED, which is the tier 1 class studio_availability_default (\"practice configuration it authored\") and studio_recurring_break_rules (\"the rule, not the derived occurrence, is the studio's fact\") already occupy. It is deliberately NOT grouped with studio_waitlist_admission_rounds despite the adjacent name: that table holds THIS ROUND's transient allowance — per-round workflow state — whereas this one holds the durable policy a studio sets once and keeps. Not provider telemetry, not credential material, not audit telemetry, so no field review is required; ranking_policy is the owner's own configuration document rather than a machine-derived payload, and updated_by_practitioner_id is ordinary attribution. Absence of a row means FIFO, so a studio that has configured nothing has nothing here to export. No export surface ships in WAIT-ADMIT-01.",
+  },
   // -------------------------------------------------------------------------
   // STORAGE
   // -------------------------------------------------------------------------
