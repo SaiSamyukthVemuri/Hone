@@ -61,12 +61,43 @@ export type InviteActionResult =
   | { outcome: InvitationOutcome }
   | { outcome: null; reason: "malformed_submission" };
 
+/**
+ * Has a service actually been chosen?
+ *
+ * THE NARROWED TYPE IS NOT A BROWSER GUARANTEE. Final #683 types
+ * `BookingScope.serviceId` as `string` and says outright why that is not
+ * permission to drop this guard: the browser did not compile — a page can be
+ * refreshed, a payload hand-built, a field renamed by a stale cache. Its
+ * exported `INTEGRATION_INPUT_REVALIDATION_OBLIGATION` names the duty this
+ * discharges.
+ *
+ * THE SAME RULE THE COMPOSER APPLIES, deliberately: `trim()` decides emptiness
+ * and NOTHING else, and the identifier is then used EXACTLY as given. Trimming
+ * one into a different id would be choosing a service on the practitioner's
+ * behalf, and a zero-width space is content by this rule rather than whitespace
+ * — left for the database to refuse as the nonexistent id it is. That keeps the
+ * UI's classification and the server's from disagreeing on the same bytes.
+ *
+ * `unknown`, not `string | null`: a hand-built payload is not obliged to send
+ * either. This is a validation boundary; its job is to answer, not to throw.
+ *
+ * A TYPE PREDICATE, so the narrowing below is EARNED rather than asserted —
+ * there is no cast and no `!` anywhere on this path.
+ */
+function isChosenServiceId(value: unknown): value is string {
+  return typeof value === "string" && value.trim() !== "";
+}
+
 /** Re-check the parsed intent. Returns null when it may be forwarded. */
 function rejectSubmission(s: InviteSubmission): "malformed_submission" | null {
   // An entry id is the one identifier the browser legitimately names, and it is
   // still only a lookup key: the command scopes by (id, studio_id), so an id
   // from another studio is simply not found.
   if (!s.entryId || typeof s.entryId !== "string") return "malformed_submission";
+  // A SERVICE IS NOW REQUIRED, and blank is not a service. Existence, tenancy
+  // and eligibility remain the DATABASE's questions; this refuses only a value
+  // nobody could have picked.
+  if (!isChosenServiceId(s.serviceId)) return "malformed_submission";
   // FAIL CLOSED ON ABSENCE. The composer can express "no answer yet" for each of
   // these, and an absent answer must never fall back to a default here — a
   // defaulted window or expiry is one the practitioner never chose and cannot
@@ -113,19 +144,30 @@ export async function inviteToBookAction(formData: FormData): Promise<InviteActi
   // or a renamed preset into the broadest possible invitation.
   if (!parsed.ok) return { outcome: null, reason: "malformed_submission" };
 
-  const submission = parsed.submission;
-  if (rejectSubmission(submission)) {
+  const s = parsed.submission;
+  if (rejectSubmission(s)) {
+    return { outcome: null, reason: "malformed_submission" };
+  }
+
+  // NARROWING IS EARNED HERE, NOT ASSERTED. `rejectSubmission` above answers a
+  // reason, which does not narrow `s` for the compiler, so the three optional
+  // fields are re-tested with predicates rather than cast. An earlier revision
+  // wrote `submission.windowDays as number`, and a cast is precisely the thing
+  // that would let a future edit drop the guard above and still compile — the
+  // failure mode #683's revalidation obligation warns about, one line further on.
+  const { serviceId, windowDays, expiresInHours } = s;
+  if (
+    !isChosenServiceId(serviceId) ||
+    typeof windowDays !== "number" ||
+    typeof expiresInHours !== "number"
+  ) {
     return { outcome: null, reason: "malformed_submission" };
   }
 
   const input = {
-    entryId: submission.entryId,
-    scope: {
-      serviceId: submission.serviceId,
-      windowDays: submission.windowDays as number,
-      allowedWeekdays: submission.allowedWeekdays,
-    },
-    expiresInHours: submission.expiresInHours as number,
+    entryId: s.entryId,
+    scope: { serviceId, windowDays, allowedWeekdays: s.allowedWeekdays },
+    expiresInHours,
   };
   // The adapter's own product-input rules, applied before the command so a
   // refusal costs no round trip. It re-applies them internally too; this is the

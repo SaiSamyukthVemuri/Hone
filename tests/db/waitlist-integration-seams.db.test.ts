@@ -308,6 +308,88 @@ describe("C — a declined invitation is not a live invitation", () => {
 });
 
 // ===========================================================================
+// SERVICE ELIGIBILITY — the UI rule and the database rule are the same rule
+// ===========================================================================
+//
+// Two predicates now decide the same question: `isBookableByNewClient` narrows
+// the practitioner's selector, and 0193's `service_is_bookable_by_new_client`
+// refuses the admission. Defence in depth only works if they AGREE — a service
+// the UI offers and the database rejects is a practitioner told to pick again
+// with no way to tell which of the two was wrong.
+//
+// Neither is a copy of the other, so this compares them on the SAME inputs,
+// including the classification edges where two implementations usually drift.
+describe("service eligibility: TypeScript and SQL agree", () => {
+  const CASES: Array<{ active: boolean | null; modality: string | null; name: string }> = [
+    { active: true, modality: "consultation", name: "Plain" },
+    // Padding and case: both sides trim and lowercase the modality.
+    { active: true, modality: "  consultation  ", name: "Padded" },
+    { active: true, modality: "CONSULTATION", name: "Upper" },
+    // The empty-modality fallback reads the NAME instead.
+    { active: true, modality: "", name: "Initial consultation" },
+    { active: true, modality: "", name: "  Initial Consultation  " },
+    { active: true, modality: "", name: "facial" },
+    { active: true, modality: null, name: "Consultation intro" },
+    // A non-consultation modality wins over a consultation-looking NAME.
+    { active: true, modality: "treatment", name: "Consultation-looking name" },
+    // NON-BREAKING SPACE around the modality. JS `trim()` and SQL `btrim` treat
+    // U+00A0 differently in some engines; this pins that they do not here.
+    { active: true, modality: " consultation ", name: "Nbsp padded" },
+    // Inactive and unknown-active both fail closed on BOTH sides.
+    { active: false, modality: "consultation", name: "Archived" },
+    { active: null, modality: "consultation", name: "Unknown state" },
+  ];
+
+  it("returns the same verdict for every classification edge", async () => {
+    const { isBookableByNewClient } = await import("@/lib/booking/consultation");
+    for (const c of CASES) {
+      const ts = isBookableByNewClient({
+        name: c.name,
+        modality: c.modality,
+        active: c.active === true,
+      });
+      const sql = (
+        await adminQuery(
+          `select public.service_is_bookable_by_new_client($1, $2, $3) as ok`,
+          [c.active, c.modality, c.name],
+        )
+      ).rows[0].ok;
+      expect(
+        sql,
+        `TS/SQL disagree for active=${c.active} modality=${JSON.stringify(c.modality)} name=${JSON.stringify(c.name)}`,
+      ).toBe(ts);
+    }
+  });
+
+  it("both sides say YES to something and NO to something", async () => {
+    // NON-VACUITY. A pair of predicates that both answered `false` to every case
+    // would satisfy the equality above and prove nothing at all.
+    const { isBookableByNewClient } = await import("@/lib/booking/consultation");
+    const verdicts = CASES.map((c) =>
+      isBookableByNewClient({ name: c.name, modality: c.modality, active: c.active === true }),
+    );
+    expect(verdicts).toContain(true);
+    expect(verdicts).toContain(false);
+  });
+
+  it("admit_ locks the service row and consults the SQL twin", async () => {
+    // The UI narrowing decides what is OFFERED; this is what makes the database
+    // the authority regardless, and what stops the row changing under a decision
+    // already taken. Read from the APPLIED function, not from the migration file.
+    const def = (
+      await adminQuery(
+        `select pg_get_functiondef(p.oid) as def from pg_proc p
+           join pg_namespace n on n.oid = p.pronamespace
+          where n.nspname = 'public' and p.proname = 'admit_new_client_waitlist_entry'`,
+      )
+    ).rows[0].def as string;
+    expect(def).toMatch(/from public\.services sv[\s\S]{0,300}for share/i);
+    expect(def).toContain("service_is_bookable_by_new_client");
+    expect(def).toContain("invalid_service");
+  });
+});
+
+// ===========================================================================
 // P1 3990868504 — the practitioner surface reaches the real adapter
 // ===========================================================================
 describe("the practitioner binding is a real production consumer", () => {
@@ -379,11 +461,35 @@ describe("the practitioner binding is a real production consumer", () => {
     });
 
     // A VANISHED service submits as the empty string. It must stay invalid, not
-    // silently widen to "any service".
+    // silently widen to "any service" — which final #683 no longer even has a
+    // type for, and which the server must still refuse because the browser did
+    // not compile.
     const vanished = base();
     vanished.set("service_id", "");
-    const out = await inviteToBookAction(vanished);
-    expect(out.outcome).toBeNull();
+    expect((await inviteToBookAction(vanished)).outcome).toBeNull();
+
+    // WHITESPACE IS NOT A SERVICE EITHER. Ordinary spaces, a tab, and a
+    // non-breaking space — the shapes a hand-built payload or a stale cache
+    // actually produces. `trim()` decides emptiness and nothing else, matching
+    // the composer's own rule so the two cannot disagree on the same bytes.
+    for (const blank of ["   ", "\t", "\n", " ", " 　 "]) {
+      const fd = base();
+      fd.set("service_id", blank);
+      expect(
+        (await inviteToBookAction(fd)).outcome,
+        `service_id=${JSON.stringify(blank)} must fail closed`,
+      ).toBeNull();
+    }
+
+    // A ZERO-WIDTH SPACE IS CONTENT, not whitespace. It is preserved and passed
+    // on for the DATABASE to refuse as the nonexistent id it is — the same
+    // ruling #683 records, so neither side silently rewrites an identifier.
+    const zwsp = base();
+    zwsp.set("service_id", "​");
+    const zwspOut = await inviteToBookAction(zwsp);
+    // It reaches the adapter, which has no session here, so it cannot commit —
+    // but it must NOT have been rejected as malformed on this side.
+    expect(zwspOut.outcome?.state).not.toBe("committed");
 
     // Out-of-range window and expiry are refused rather than clamped.
     for (const [field, value] of [
@@ -881,10 +987,26 @@ describe("B — the invite-to-book adapter binds #683's contract to 0193", () =>
     const ok = { serviceId: svc, windowDays: 7, allowedWeekdays: null } as const;
     const entryId = "00000000-0000-0000-0000-000000000001";
 
-    // Unscoped service: refused rather than sent as "any service".
-    expect(
-      validateInviteInput({ entryId, scope: { ...ok, serviceId: null }, expiresInHours: 72 }),
-    ).toBe("scope_not_supported");
+    // UNSCOPED SERVICE — now a TYPE error as well as a runtime refusal.
+    //
+    // Final #683 types `BookingScope.serviceId` as `string`, so a null can no
+    // longer be written by code that compiles. The adapter's runtime check is
+    // kept anyway and proved here through a deliberately untyped caller, which
+    // is what a hand-built payload or a stale bundle actually is — the contract
+    // says as much: "a narrower TypeScript type is not a browser guarantee".
+    // The cast lives in the TEST, never on the production path.
+    const untyped = validateInviteInput as unknown as (i: unknown) => string | null;
+    expect(untyped({ entryId, scope: { ...ok, serviceId: null }, expiresInHours: 72 })).toBe(
+      "scope_not_supported",
+    );
+    // A BLANK or whitespace-only id is not a chosen service either, and must not
+    // reach the command as an id nothing matches.
+    expect(untyped({ entryId, scope: { ...ok, serviceId: "" }, expiresInHours: 72 })).toBe(
+      "scope_not_supported",
+    );
+    expect(untyped({ entryId, scope: { ...ok, serviceId: "   " }, expiresInHours: 72 })).toBe(
+      "scope_not_supported",
+    );
     // TTL out of the command's own 1..168: refused, never clamped.
     expect(validateInviteInput({ entryId, scope: ok, expiresInHours: 999 })).toBe("invalid_ttl");
     expect(validateInviteInput({ entryId, scope: ok, expiresInHours: 0 })).toBe("invalid_ttl");
@@ -910,8 +1032,14 @@ describe("B — the invite-to-book adapter binds #683's contract to 0193", () =>
     const { admissionCommandAdapter } = await import("@/lib/waitlist/invite-to-book-adapter");
     const out = await admissionCommandAdapter.inviteToBook({
       entryId: "00000000-0000-0000-0000-000000000001",
-      scope: { serviceId: null, windowDays: 999, allowedWeekdays: [] },
-      expiresInHours: 999,
+      // A well-formed service: this case is about AUTHORITY, and a malformed
+      // scope would let the refusal come from input validation instead.
+      scope: {
+        serviceId: "00000000-0000-0000-0000-000000000002",
+        windowDays: 7,
+        allowedWeekdays: null,
+      },
+      expiresInHours: 72,
     });
     expect(out.state).not.toBe("committed");
     if (out.state === "refused") {

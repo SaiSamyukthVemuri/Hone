@@ -322,10 +322,25 @@ function deliveryStateFromDisposition(delivered: unknown): InvitationDeliverySta
  * Returns the failure code, or null when the input is sendable.
  */
 export function validateInviteInput(input: InviteToBookInput): InviteToBookFailure | null {
-  // REFUSED, NOT WIDENED. The contract says `serviceId: null` means "any
-  // bookable service", but `admit_` requires a service to scope the invitation.
-  // Sending unscoped is the one thing `scope_not_supported` exists to prevent.
-  if (input.scope.serviceId === null) return "scope_not_supported";
+  // A CONCRETE, NONBLANK SERVICE OR NOTHING.
+  //
+  // Final #683 narrowed `BookingScope.serviceId` to `string`, and states plainly
+  // that a narrower type is about code that COMPILED — the browser did not. So
+  // this still refuses at runtime, and it now refuses MORE than `null`: the
+  // earlier `=== null` check let `""`, or a stray space from a hand-built
+  // payload, pass as a chosen service and reach the command as an id nothing
+  // matches.
+  //
+  // `trim()` decides emptiness and NOTHING else, matching the composer's own
+  // rule so the two cannot disagree about the same bytes. The identifier is then
+  // used EXACTLY as given: trimming one into a different id would be choosing a
+  // service on the practitioner's behalf, and a zero-width space is content
+  // rather than whitespace — preserved, and left for the database to refuse as
+  // the nonexistent id it is.
+  const serviceId: unknown = input.scope.serviceId;
+  if (typeof serviceId !== "string" || serviceId.trim() === "") {
+    return "scope_not_supported";
+  }
   // Bounds are the shipped command's own; out of range is refused, never
   // clamped — a clamped window is one the caller cannot see.
   if (
