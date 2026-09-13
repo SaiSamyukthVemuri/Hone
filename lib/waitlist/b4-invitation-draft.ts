@@ -964,8 +964,9 @@ export type InviteSubmissionResult =
 export function inviteSubmissionFromFormData(formData: FormData): InviteSubmissionResult {
   const entryId = formData.get(COMPOSER_FIELD_NAMES.entryId);
   const serviceId = formData.get(COMPOSER_FIELD_NAMES.serviceId);
-  // "Any service" is a real answer and it submits as the empty string, which
-  // must reach the payload as `null` rather than as an id nothing matches.
+  // The placeholder submits as the empty string and reaches the payload as
+  // `null` — which means NOT CHOSEN YET, not "any service". `validateDraft`
+  // refuses it; the parser's job is only to report what the form said.
   const service = typeof serviceId === "string" && serviceId !== "" ? serviceId : null;
 
   // The day presets are shorthands for SETS, and the set they stand for is
@@ -1177,9 +1178,15 @@ export type DraftValidation =
 /**
  * Validate a draft for submission.
  *
- * NO SERVICE MEANS ANY SERVICE, and that is a legitimate choice rather than a
- * missing answer — a studio that does not care which service the invitee books
- * should not have to pick one to get past this screen.
+ * NO SERVICE IS NOT AN ANSWER. It reads as "not chosen yet", and a draft in that
+ * state is incomplete rather than broad.
+ *
+ * THIS REVERSES AN EARLIER READING, deliberately. `null` was treated as a real
+ * choice meaning "any service", on the reasoning that a studio indifferent to
+ * which service is booked should not have to pick one. The admission authority
+ * settles it the other way: it mints a SERVICE-SCOPED invitation, so there is no
+ * command behind an unscoped one. Offering it would advertise an operation
+ * nothing can perform — the same class of defect as a button with no binding.
  *
  * AN EMPTY WEEKDAY SET IS NOT. `null` means every day; `[]` means no day is
  * permitted, which is an invitation that cannot be redeemed. The distinction is
@@ -1199,16 +1206,19 @@ export function validateDraft(
 ): DraftValidation {
   const errors: Partial<Record<DraftFieldId, string>> = {};
 
-  // A SERVICE THAT VANISHED IS NOT "ANY SERVICE". The composer renders the
-  // chosen service by looking it up in the list; when the lookup misses — the
-  // service was deleted, or the list refreshed under an open composer — the
-  // summary silently read "any service" while `draftToInviteInput` still
-  // forwarded the stale id. The practitioner would then confirm one scope and
-  // send a different one. Refusing is the only honest option, because the two
-  // readings are both wrong: sending the stale id sends something invisible,
-  // and dropping it silently widens the invitation.
-  if (serviceIds !== undefined && draft.serviceId !== null && !serviceIds.includes(draft.serviceId)) {
-    errors.service = "That service is no longer available. Choose another, or choose any service.";
+  // NOT CHOSEN YET IS INCOMPLETE, NOT BROAD. An invitation carries one service,
+  // so leaving this blank has nothing to send — and the practitioner has to say
+  // which, rather than the screen picking for them.
+  if (draft.serviceId === null) {
+    errors.service = "Choose the service they can book.";
+  } else if (serviceIds !== undefined && !serviceIds.includes(draft.serviceId)) {
+    // A SERVICE THAT VANISHED IS NOT A BLANK ONE EITHER. The composer renders
+    // the chosen service by looking it up; when the lookup misses — deleted, or
+    // the list refreshed under an open composer — the stale id must stay
+    // visible and invalid rather than quietly becoming the placeholder. Both
+    // silent readings are wrong: sending the dead id sends something invisible,
+    // and blanking it discards a choice the practitioner never revisited.
+    errors.service = "That service is no longer available. Choose another.";
   }
 
   if (
@@ -1273,7 +1283,10 @@ export function scopeSummary(
   draft: InviteDraft,
   serviceName: string | null,
 ): string {
-  const service = serviceName ? serviceName : "any service";
+  // A summary is only ever shown for a valid draft, and a valid draft names a
+  // service. The fallback exists so this function is total, not because "no
+  // service" is a scope anything can send.
+  const service = serviceName ? serviceName : "a service they have not chosen yet";
   const window =
     BOOKING_WINDOW_PRESETS.find((p) => p.days === draft.windowDays)?.label ??
     `next ${draft.windowDays} days`;

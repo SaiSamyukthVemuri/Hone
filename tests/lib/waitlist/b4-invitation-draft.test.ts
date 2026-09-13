@@ -1970,13 +1970,23 @@ describe("wiring state is not eligibility", () => {
 describe("the composer's draft", () => {
   const draft = (over: Partial<InviteDraft> = {}): InviteDraft => ({
     ...emptyDraft(),
+    // A CONCRETE SERVICE BY DEFAULT. Invite-to-book requires one, so a fixture
+    // without it is invalid for that reason alone and every assertion about
+    // windows, days and expiry would fail for the wrong cause.
+    serviceId: "svc-1",
     ...over,
   });
 
-  it("treats no service as a real answer and no permitted day as an error", () => {
-    // `null` weekdays means every day. `[]` means no day is permitted, which is
-    // an invitation that opens onto an empty calendar.
-    expect(validateDraft(draft({ serviceId: null })).ok).toBe(true);
+  it("treats NO SERVICE as incomplete, and no permitted day as an error", () => {
+    // THE PRODUCT LAW, REVERSED DELIBERATELY. `null` used to mean "any service"
+    // and pass. The admission authority mints a SERVICE-SCOPED invitation, so an
+    // unscoped one has no command behind it and must not be offered.
+    const noService = validateDraft(draft({ serviceId: null }));
+    expect(noService.ok).toBe(false);
+    expect(noService.ok === false && noService.errors.service).toBeTruthy();
+
+    // `null` weekdays still means every day. `[]` means no day is permitted,
+    // which is an invitation that opens onto an empty calendar.
     expect(validateDraft(draft({ allowedWeekdays: null })).ok).toBe(true);
     const empty = validateDraft(draft({ allowedWeekdays: [] }));
     expect(empty.ok).toBe(false);
@@ -2004,9 +2014,11 @@ describe("the composer's draft", () => {
   it("hands the adapter nothing at all for an invalid draft", () => {
     // A partially-repaired payload is the one thing worse than no payload.
     expect(draftToInviteInput("e1", draft({ expiresInHours: 999 }))).toBeNull();
+    // A draft with no service chosen is invalid too, so it reaches nothing.
+    expect(draftToInviteInput("e1", draft({ serviceId: null }))).toBeNull();
     expect(draftToInviteInput("e1", draft())).toEqual({
       entryId: "e1",
-      scope: { serviceId: null, windowDays: 7, allowedWeekdays: null },
+      scope: { serviceId: "svc-1", windowDays: 7, allowedWeekdays: null },
       expiresInHours: 72,
     });
   });
@@ -2017,7 +2029,8 @@ describe("the composer's draft", () => {
     // the summary read "any service" while the payload still carried the stale
     // id, so the practitioner confirmed one scope and sent another.
     const withService = draft({ serviceId: "svc-gone" });
-    // With no service list supplied the draft is unjudged, as before.
+    // With no service list supplied, membership is unjudged — but a service was
+    // at least CHOSEN, which is now its own requirement.
     expect(validateDraft(withService).ok).toBe(true);
 
     const judged = validateDraft(withService, { serviceIds: ["svc-1", "svc-2"] });
@@ -2030,8 +2043,12 @@ describe("the composer's draft", () => {
 
     // NEGATIVE CONTROL: a service that IS in the list passes the identical call.
     expect(validateDraft(withService, { serviceIds: ["svc-gone"] }).ok).toBe(true);
-    // "Any service" is still a real answer and is never judged missing.
-    expect(validateDraft(draft({ serviceId: null }), { serviceIds: [] }).ok).toBe(true);
+    // AND NOT CHOOSING IS ITS OWN REFUSAL, whatever the list holds. An empty
+    // service list cannot make "no service" acceptable — it makes the send
+    // impossible, which is the honest answer when nothing is bookable.
+    const unchosen = validateDraft(draft({ serviceId: null }), { serviceIds: [] });
+    expect(unchosen.ok).toBe(false);
+    expect(unchosen.ok === false && unchosen.errors.service).toBeTruthy();
   });
 
   it("derives the pressed preset from the value, so the two cannot disagree", () => {

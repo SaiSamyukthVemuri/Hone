@@ -65,6 +65,10 @@ const labelId = (field: string) => waitlistDomId(ENTRY_ID, `composer-label-${fie
 
 const draft = (over: Partial<InviteDraft> = {}): InviteDraft => ({
   ...emptyDraft(),
+  // See the note in the lib suite: Invite-to-book needs a concrete service, so
+  // the default fixture names one and the "not chosen" case is asserted
+  // explicitly where it belongs.
+  serviceId: "svc-1",
   ...over,
 });
 
@@ -154,9 +158,56 @@ describe("the composer is one screen, not a wizard", () => {
 describe("the service selector", () => {
   const html = compose();
 
-  it("lists the studio's services and treats no preference as an answer", () => {
-    expect(html).toContain("Any service");
+  it("lists the studio's services behind a PROMPT, not an any-service answer", () => {
+    expect(html).toContain("Choose a service");
+    // The old wording was a real, sendable answer. There is no unscoped
+    // invitation for the authority to mint, so it must not be offered at all.
+    expect(html).not.toContain("Any service");
+    expect(html).not.toContain("any service");
     for (const service of SERVICES) expect(html).toContain(service.name);
+  });
+
+  it("an unchosen service is invalid and the send is shut", () => {
+    const unchosen = compose({ serviceId: null }, CONNECTED);
+    expect(unchosen).toContain("Choose a service");
+    expect(unchosen).toContain('data-testid="composer-error-service"');
+    expect(controlTag(unchosen, "composer-send")).toContain('disabled=""');
+    // No scope is described for a draft that cannot be sent.
+    expect(unchosen).not.toContain('data-testid="composer-summary"');
+    // The placeholder is not auto-resolved to the first service.
+    expect(controlTag(unchosen, "composer-service")).toContain("required");
+  });
+
+  it("choosing a service repairs it, and returning to the prompt breaks it again", () => {
+    const chosen = composerReducer(initialComposerState(draft({ serviceId: null })), {
+      type: "service",
+      serviceId: "svc-2",
+    });
+    expect(answers(chosen).validation.ok).toBe(true);
+    expect(answers(chosen).sendDisabled).toBe(false);
+    expect(answers(chosen).submitted.serviceId).toBe("svc-2");
+    expect(answers(chosen).visibleSummary).toContain("Laser consultation");
+
+    const backToPrompt = composerReducer(chosen, { type: "service", serviceId: null });
+    expect(answers(backToPrompt).validation.ok).toBe(false);
+    expect(answers(backToPrompt).sendDisabled).toBe(true);
+    expect(answers(backToPrompt).submitted.serviceId).toBeNull();
+  });
+
+  it("with NO eligible services, the send is impossible", () => {
+    const none = render(
+      createElement(InviteComposer, {
+        entryId: ENTRY_ID,
+        entryName: "Sarah",
+        draft: draft({ serviceId: null }),
+        services: [],
+        capabilities: CONNECTED,
+        action: NOOP_ACTION,
+      }),
+    );
+    expect(controlTag(none, "composer-send")).toContain('disabled=""');
+    expect(none).toContain("Choose a service");
+    expect(none).not.toContain("Any service");
   });
 
   it("takes its accessible name from the visible heading, once", () => {
@@ -1180,16 +1231,21 @@ describe("a vanished service stays visibly wrong, and is repairable", () => {
     expect(submissionOf(vanished()).serviceId).not.toBeNull();
   });
 
-  it("choosing Any service explicitly clears it and repairs the draft", () => {
-    const repaired = composerReducer(
+  it("returning to the prompt clears the stale id WITHOUT becoming valid", () => {
+    // The dead id must go — but "not chosen" is not a repair, it is the start
+    // of one. Send stays shut until a real service is picked.
+    const cleared = composerReducer(
       initialComposerState(draft({ serviceId: "svc-deleted" })),
       { type: "service", serviceId: null },
     );
-    const after = answers(repaired);
-    expect(after.validation.ok).toBe(true);
-    expect(after.sendDisabled).toBe(false);
+    const html = view(cleared);
+    expect(html).not.toContain("Previously selected service is unavailable");
+    expect(html).not.toContain('data-testid="composer-service-stale"');
+
+    const after = answers(cleared);
     expect(after.submitted.serviceId).toBeNull();
-    expect(after.visibleSummary).toContain("any service");
+    expect(after.validation.ok).toBe(false);
+    expect(after.sendDisabled).toBe(true);
   });
 
   it("choosing another real service repairs it too", () => {
@@ -1202,7 +1258,7 @@ describe("a vanished service stays visibly wrong, and is repairable", () => {
     expect(after.submitted.serviceId).toBe("svc-2");
   });
 
-  it("stays repairable when Any service is the only option left", () => {
+  it("stays visible and repairable when no service is selectable", () => {
     const html = render(
       createElement(InviteComposer, {
         entryId: ENTRY_ID,
@@ -1214,7 +1270,9 @@ describe("a vanished service stays visibly wrong, and is repairable", () => {
       }),
     );
     expect(html).toContain("Previously selected service is unavailable");
-    expect(html).toContain("Any service");
+    // The prompt is still there to return to; it just cannot complete a draft.
+    expect(html).toContain("Choose a service");
+    expect(html).not.toContain("Any service");
   });
 });
 
@@ -1321,7 +1379,7 @@ describe("a stale service stays stale all the way to the payload", () => {
     expect(submissionOf(html).serviceId).not.toBeNull();
   });
 
-  it("CASE B: choosing Any service repairs it and leaves nothing stale behind", () => {
+  it("CASE B: returning to the prompt leaves nothing stale behind", () => {
     const repaired = composerReducer(
       initialComposerState(draft({ serviceId: "svc-deleted" })),
       { type: "service", serviceId: null },
@@ -1334,9 +1392,10 @@ describe("a stale service stays stale all the way to the payload", () => {
     expect(serviceValues(html)).toEqual([""]);
     expect(submissionOf(html).serviceId).toBeNull();
 
+    // Cleared, but NOT valid: the practitioner still has to choose one.
     const after = answers(repaired);
-    expect(after.validation.ok).toBe(true);
-    expect(after.sendDisabled).toBe(false);
+    expect(after.validation.ok).toBe(false);
+    expect(after.sendDisabled).toBe(true);
   });
 
   it("CASE C: choosing a real service repairs it and leaves nothing stale behind", () => {
