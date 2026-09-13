@@ -379,6 +379,9 @@ export function InviteComposerView({
             screen reader announce "Service" twice. */}
         <select
           name={COMPOSER_FIELD_NAMES.serviceId}
+          // The placeholder is not a value, and assistive tech is told so
+          // rather than left to infer it from the wording.
+          required
           data-testid="composer-service"
           aria-labelledby={composerLabelId(entryId, "service")}
           // THE CONTROL CARRIES THE RELATIONSHIP, not just the section. A
@@ -391,7 +394,8 @@ export function InviteComposerView({
           onChange={(event) =>
             dispatch({
               type: "service",
-              // "Any service" is a real answer and it is the empty option.
+              // The empty option is the PROMPT, and it clears the choice rather
+              // than standing for a scope.
               serviceId: event.currentTarget.value === "" ? null : event.currentTarget.value,
             })
           }
@@ -399,22 +403,23 @@ export function InviteComposerView({
         >
           {/* THE VANISHED CHOICE KEEPS ITS PLACE, AND ITS OWN WORDS.
               A controlled select whose value matches no option falls back to
-              displaying the FIRST one — which is "Any service". The scope would
-              then LOOK like the widest possible answer while the state still
-              held a dead id, and selecting the option that already appears
-              selected fires no change event, so the practitioner could not even
-              clear it. Rendering the stale value as its own disabled option
-              keeps it visibly wrong and leaves "Any service" a different,
-              choosable answer. */}
+              displaying the FIRST one — the prompt. The field would then look
+              merely unanswered while the state still held a dead id, and
+              selecting the option that already appears selected fires no change
+              event, so the practitioner could not even clear it. Rendering the stale value as its own disabled option
+              keeps it visibly wrong and leaves the prompt a different,
+              choosable state. */}
           {serviceMissing && draft.serviceId !== null && (
             <option value={draft.serviceId} disabled>
               Previously selected service is unavailable
             </option>
           )}
-            {/* "Any service" is a real answer, not an empty one. A studio that
-                does not mind which service the invitee books should not have to
-                pick one to get past this field. */}
-          <option value="">Any service</option>
+          {/* A PROMPT, NOT A SCOPE. This used to read "Any service" and count as
+              a real answer; the admission authority mints a service-scoped
+              invitation, so there is no unscoped send to offer. It stays
+              selectable — the practitioner may return to "not chosen" — but the
+              draft is invalid while it is selected, and Send is shut. */}
+          <option value="">Choose a service</option>
           {bookableServices.map((service) => (
             <option key={service.id} value={service.id}>
               {service.name}
@@ -428,10 +433,10 @@ export function InviteComposerView({
             hidden field carries the stale id through serialization so the
             payload keeps saying what the practitioner is looking at.
 
-            IT EXISTS ONLY WHILE THE CHOICE IS STALE. Picking Any service or a
-            real one makes `serviceMissing` false, the field is gone in that same
-            render, and the select serializes normally — so there is never a
-            moment with two `service_id` values. */}
+            IT EXISTS ONLY WHILE THE CHOICE IS STALE. Returning to the prompt or
+            picking a real service makes `serviceMissing` false, the field is
+            gone in that same render, and the select serializes normally — so
+            there is never a moment with two `service_id` values. */}
         {serviceMissing && draft.serviceId !== null && (
           <input
             type="hidden"
@@ -619,7 +624,11 @@ export function InviteComposerView({
       </FieldSection>
 
       <div className="flex flex-col gap-3 border-t border-line px-4 py-4">
-        {!serviceMissing && (
+        {/* WITHHELD FOR ANY INVALID DRAFT, not just a vanished service. A
+            summary is a description of what will be sent, and an incomplete
+            draft sends nothing — describing one would be the "confirmed one
+            scope, sent another" defect in a new place. */}
+        {validation.ok && (
           <p data-testid="composer-summary" className="text-sm leading-snug text-fg-muted">
             {/* States the SCOPE, never that anything has been sent. */}
             They will be able to book {scopeSummary(draft, serviceName)}.

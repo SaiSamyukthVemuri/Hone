@@ -94,10 +94,26 @@
  */
 export type BookingScope = {
   /**
-   * The service the invitation is for. `null` means the studio did not narrow
-   * it and the invitee may book any bookable service.
+   * The service the invitation is for. REQUIRED, and deliberately not nullable.
+   *
+   * The composer's draft may hold `null`, where it means "not chosen yet" — an
+   * incomplete answer. This type is the VALIDATED scope, and the admission
+   * authority mints a service-scoped invitation, so there is no unscoped
+   * invitation for `null` to describe here. Letting the draft's nullability
+   * reach this far is what allowed the surface to offer a send the command
+   * could not perform.
+   *
+   * `string` IS NOT A PROOF OF NONBLANK. TypeScript cannot express "has
+   * content", so `validateDraft` checks it at RUNTIME before constructing this
+   * type — blank and whitespace-only identifiers are refused there, not here.
+   * The type records the obligation; it does not discharge it, and a caller
+   * that never met the compiler is exactly the caller that matters.
+   *
+   * EXISTENCE, TENANCY AND ELIGIBILITY REMAIN THE DATABASE'S. This side can say
+   * only that an identifier was chosen and, where a service list is supplied,
+   * that it was one of the ones offered.
    */
-  serviceId: string | null;
+  serviceId: string;
   /**
    * How many days from issuance the invitee may book within. Product presets
    * are 7, 14 and 30; a custom value is bounded 1..365.
@@ -406,6 +422,24 @@ export const ADMIT_VOCABULARY_REVIEWED_AT =
  * candidate has both branches in the same tree, so only it can tell whether the
  * snapshot below has gone stale.
  */
+/**
+ * WHAT #689 MUST STILL DO WITH BROWSER INPUT, despite the narrower type here.
+ *
+ * `BookingScope.serviceId: string` is a statement about code that compiled. The
+ * browser did not compile: a page can be refreshed, a payload hand-built, a
+ * field renamed by a stale cache. Every value arriving from a form is unknown
+ * text until the server says otherwise.
+ *
+ * So the type is not permission to drop a guard. #689 re-validates the parsed
+ * submission on the server, and the database keeps the questions only it can
+ * answer — whether the service exists, belongs to that studio, and is eligible
+ * for new-client booking.
+ */
+export const INTEGRATION_INPUT_REVALIDATION_OBLIGATION =
+  "A narrower TypeScript type is not a browser guarantee: #689 must re-validate " +
+  "every submitted field server-side, and existence, tenancy and eligibility " +
+  "remain the database's to decide.";
+
 export const INTEGRATION_EXHAUSTIVENESS_OBLIGATION =
   "At assembly time, compare the actual #685 result vocabulary against the " +
   "adapter disposition table; any unmapped current result is RED.";
