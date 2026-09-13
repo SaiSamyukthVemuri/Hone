@@ -40,6 +40,13 @@ const COMMANDS = [
   "public.redeem_waitlist_preference_grant(text,text)",
   "public.set_studio_waitlist_admission_policy(uuid,uuid,jsonb,integer,integer)",
   "public.claim_new_client_waitlist_entries_ordered(uuid,uuid,uuid[])",
+  // NOT A COMMAND -- a pure predicate over scalars, carrying the database's copy
+  // of lib/booking/consultation.ts's new-client service rule. It is here because
+  // the frontier census discovers every function 0193 CREATES, and this one must
+  // be disposed like any other: anon and authenticated hold nothing, and
+  // service_role keeps EXECUTE because the function reads no rows and is a pure
+  // function of arguments the caller already holds.
+  "public.service_is_bookable_by_new_client(boolean,text,text)",
 ] as const;
 
 let n = 0;
@@ -2527,8 +2534,10 @@ describe("issuing a grant cannot deadlock against admission", () => {
     const studio = await seedStudio("deadlock-issue-admit");
     await openRound(studio, 5);
     const service = await adminQuery(
-      `insert into public.services (studio_id, name, default_duration_minutes)
-       values ($1,'Svc',30) returning id`,
+      // ELIGIBLE BY MODALITY. Admission requires a service a new client may
+      // book -- this studio's, active, and a consultation.
+      `insert into public.services (studio_id, name, default_duration_minutes, active, modality)
+       values ($1,'Svc Consultation',30,true,'consultation') returning id`,
       [studio.studioId],
     );
     const entry = await adminQuery(
@@ -2841,7 +2850,15 @@ describe("the studio lock mode is compatible with FK key-share", () => {
          from pg_proc p join pg_namespace n on n.oid = p.pronamespace
         where n.nspname = 'public'
           and p.proname = any($1::text[])
-          and pg_get_function_result(p.oid) <> 'trigger'`,
+          and pg_get_function_result(p.oid) <> 'trigger'
+          -- IMMUTABLE FUNCTIONS ARE EXEMPT, on PostgreSQL's own authority rather
+          -- than by name: an IMMUTABLE function is declared not to access the
+          -- database at all, so it can take no lock and a lock-presence
+          -- assertion over it would assert nothing. provolatile = 'i' is that
+          -- declaration, read from the catalogue, so the exemption cannot be
+          -- claimed by a function that actually reads rows -- one that did would
+          -- have to be stable or volatile to be correct, and would reappear here.
+          and p.provolatile <> 'i'`,
       [[...definedNames]],
     );
     const listed = new Set(LOCK_BEARING_COMMANDS.map(([n, a]) => `${n}(${a})`));
@@ -2867,8 +2884,10 @@ describe("0193 writers do not deadlock the historical lifecycle writers", () => 
     const studio = await seedStudio(label);
     await openRound(studio, 5);
     const service = await adminQuery(
-      `insert into public.services (studio_id, name, default_duration_minutes)
-       values ($1,'Svc',30) returning id`,
+      // ELIGIBLE BY MODALITY. Admission requires a service a new client may
+      // book -- this studio's, active, and a consultation.
+      `insert into public.services (studio_id, name, default_duration_minutes, active, modality)
+       values ($1,'Svc Consultation',30,true,'consultation') returning id`,
       [studio.studioId],
     );
     const mk = async (tag: string) => {
@@ -3206,8 +3225,10 @@ describe("the admission round lock names the open round and nothing else", () =>
     await openRound(studio, 5);
 
     const service = await adminQuery(
-      `insert into public.services (studio_id, name, default_duration_minutes)
-       values ($1,'Svc',30) returning id`,
+      // ELIGIBLE BY MODALITY. Admission requires a service a new client may
+      // book -- this studio's, active, and a consultation.
+      `insert into public.services (studio_id, name, default_duration_minutes, active, modality)
+       values ($1,'Svc Consultation',30,true,'consultation') returning id`,
       [studio.studioId],
     );
     const entry = await adminQuery(
@@ -3262,8 +3283,10 @@ describe("the admission round lock names the open round and nothing else", () =>
     const open = await openRound(studio, 5);
 
     const service = await adminQuery(
-      `insert into public.services (studio_id, name, default_duration_minutes)
-       values ($1,'Svc',30) returning id`,
+      // ELIGIBLE BY MODALITY. Admission requires a service a new client may
+      // book -- this studio's, active, and a consultation.
+      `insert into public.services (studio_id, name, default_duration_minutes, active, modality)
+       values ($1,'Svc Consultation',30,true,'consultation') returning id`,
       [studio.studioId],
     );
     const entry = await adminQuery(
@@ -3316,8 +3339,10 @@ describe("the admission round lock names the open round and nothing else", () =>
     const studio = await seedStudio("roundrace");
     await openRound(studio, 2);
     const service = await adminQuery(
-      `insert into public.services (studio_id, name, default_duration_minutes)
-       values ($1,'Svc',30) returning id`,
+      // ELIGIBLE BY MODALITY. Admission requires a service a new client may
+      // book -- this studio's, active, and a consultation.
+      `insert into public.services (studio_id, name, default_duration_minutes, active, modality)
+       values ($1,'Svc Consultation',30,true,'consultation') returning id`,
       [studio.studioId],
     );
     const mk = async (tag: string) => {

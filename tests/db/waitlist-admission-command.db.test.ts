@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { adminQuery, closePool, seedMember, seedStudio } from "./helpers/harness";
+import { isConsultationService } from "@/lib/booking/consultation";
 
 // 0193 COMMAND 9 — "Invite to book", the practitioner-facing admission seam.
 //
@@ -26,11 +27,25 @@ type Seeded = { studioId: string; userId: string };
 let n = 0;
 const email = (l: string) => `${l}-${Date.now()}-${n++}@harness.local`;
 
+/**
+ * AN ELIGIBLE SERVICE, because admission now requires one.
+ *
+ * This fixture used to insert a service with no modality and a name like
+ * `svc-3`, which is NOT bookable by a new client: the shared rule in
+ * lib/booking/consultation.ts is "this studio's, active, and a consultation",
+ * and the admission command enforces it. Every admission test in this file was
+ * therefore minting invitations for services the recipient booking path would
+ * have refused -- the defect, visible as thirteen red tests the moment the guard
+ * landed.
+ *
+ * `modality = 'consultation'` is the explicit, canonical form. Tests that need an
+ * INELIGIBLE service build one inline and say so.
+ */
 async function seedService(studioId: string, label = "svc"): Promise<string> {
   const res = await adminQuery(
-    `insert into public.services (studio_id, name, default_duration_minutes)
-     values ($1,$2,30) returning id`,
-    [studioId, `${label}-${n++}`],
+    `insert into public.services (studio_id, name, default_duration_minutes, active, modality)
+     values ($1,$2,30,true,'consultation') returning id`,
+    [studioId, `${label}-${n++} Consultation`],
   );
   return res.rows[0].id;
 }
@@ -201,6 +216,264 @@ async function redeemAsRecipient(rawToken: string): Promise<void> {
  * separate two values inside the same millisecond, which is the whole window a
  * reconstruction would land in.
  */
+/**
+ * NEW-CLIENT SERVICE ELIGIBILITY — ONE RULE, TWO ENGINES.
+ *
+ * lib/booking/consultation.ts owns the rule in TypeScript. publicBookAppointment-
+ * Action states it in two parts that sit far apart: the service read filters
+ * `studio_id` and `active`, and the guard below it calls `isConsultationService`.
+ * As BEHAVIOUR it is "this studio's, active, and a consultation".
+ *
+ * Admission mints an invitation whose scope_service_id everything downstream
+ * trusts, so the DATABASE has to enforce it: a forged post, a stale selector, or
+ * a service deactivated between selection and submission would otherwise produce
+ * an invitation the booking path must later refuse -- discovered by the
+ * recipient, not the operator.
+ *
+ * THE FIXTURE TABLE BELOW DRIVES BOTH ENGINES. Each row is run through the real
+ * TypeScript predicate AND through the database, and the two must agree. That is
+ * what makes "the DB rule matches production" a tested claim rather than a
+ * reading of two files.
+ */
+const ELIGIBILITY_FIXTURES: readonly {
+  label: string;
+  active: boolean;
+  modality: string | null;
+  name: string;
+  eligible: boolean;
+}[] = [
+  { label: "active consultation modality", active: true, modality: "consultation", name: "Laser", eligible: true },
+  { label: "inactive consultation modality", active: false, modality: "consultation", name: "Laser", eligible: false },
+  { label: "active treatment modality", active: true, modality: "treatment", name: "Laser", eligible: false },
+  // THE SUBTLE ONE. The name fallback applies ONLY when modality is empty, so a
+  // service explicitly marked 'treatment' is not rescued by its name. Reading
+  // the predicate as "modality says consultation OR the name mentions one" would
+  // be WEAKER than production and would admit this row.
+  { label: "treatment modality, named consultation", active: true, modality: "treatment", name: "Consultation follow-up", eligible: false },
+  { label: "null modality, named consultation", active: true, modality: null, name: "New Client Consultation", eligible: true },
+  { label: "empty modality, named consultation", active: true, modality: "", name: "new client CONSULTATION", eligible: true },
+  { label: "blank modality, named consultation", active: true, modality: "   ", name: "Consultation", eligible: true },
+  { label: "null modality, not named", active: true, modality: null, name: "Laser", eligible: false },
+  { label: "padded mixed-case modality", active: true, modality: "  CONSULTATION  ", name: "Laser", eligible: true },
+  { label: "inactive, null modality, named", active: false, modality: null, name: "Consultation", eligible: false },
+  { label: "inactive treatment", active: false, modality: "treatment", name: "Laser", eligible: false },
+];
+
+describe("new-client service eligibility is enforced by the database", () => {
+  it("the TypeScript predicate and the database agree on every fixture", async () => {
+    // ONE RULE, TWO ENGINES. If these ever disagree, the admission command is
+    // offering services the booking path would refuse, or refusing ones it
+    // would accept. Either direction is the defect.
+    for (const f of ELIGIBILITY_FIXTURES) {
+      // Production's rule as BEHAVIOUR: the `active` filter on the read, then
+      // the shared consultation predicate.
+      const ts = f.active === true && isConsultationService({ modality: f.modality, name: f.name });
+      const db = await adminQuery(
+        `select public.service_is_bookable_by_new_client($1,$2,$3) as ok`,
+        [f.active, f.modality, f.name],
+      );
+      expect(ts, `${f.label}: the fixture's expectation must match TypeScript`).toBe(f.eligible);
+      expect(db.rows[0].ok, `${f.label}: the database must agree with TypeScript`).toBe(ts);
+    }
+  });
+
+  it("the fixture table is not trivially one-sided", async () => {
+    // Anti-vacuity: a table that was all-false would make "the database agrees"
+    // true for a predicate that always refused, and vice versa.
+    const yes = ELIGIBILITY_FIXTURES.filter((f) => f.eligible).length;
+    const no = ELIGIBILITY_FIXTURES.length - yes;
+    expect(yes).toBeGreaterThanOrEqual(3);
+    expect(no).toBeGreaterThanOrEqual(3);
+  });
+
+  /** Admission against a service built to one fixture's shape. */
+  async function admitWithService(
+    label: string,
+    svc: { active: boolean; modality: string | null; name: string },
+    opts: { crossStudio?: boolean; unknownService?: boolean } = {},
+  ) {
+    const studio = await seedStudio(`elig-${label}`);
+    await openRound(studio, 5);
+    const owner = opts.crossStudio ? await seedStudio(`elig-other-${label}`) : studio;
+    const created = await adminQuery(
+      `insert into public.services (studio_id, name, default_duration_minutes, active, modality)
+       values ($1,$2,30,$3,$4) returning id`,
+      [owner.studioId, svc.name, svc.active, svc.modality],
+    );
+    const serviceId = opts.unknownService
+      ? "00000000-0000-0000-0000-0000000000ff"
+      : (created.rows[0].id as string);
+    const entry = await seedWaiting(studio, `elig-${label}`);
+    const res = await adminQuery(ADMIT, [
+      studio.studioId, studio.userId, entry, serviceId, START, END, null, 72,
+    ]);
+    return { studio, entry, row: res.rows[0] };
+  }
+
+  /** Nothing durable was left behind: no claim, no invitation, no seat spent. */
+  async function expectNoAdmissionResidue(studio: { studioId: string }, entryId: string) {
+    const state = await adminQuery(
+      `select e.status, e.claimed_at, e.claimed_by_practitioner_id, e.invited_at,
+              (select count(*)::int from public.new_client_waitlist_invitations i
+                where i.entry_id = e.id) as invitations,
+              (select public.waitlist_admission_round_consumed(r.id)
+                 from public.studio_waitlist_admission_rounds r
+                where r.studio_id = e.studio_id and r.closed_at is null) as consumed
+         from public.new_client_waitlist_entries e where e.id = $1`,
+      [entryId],
+    );
+    const row = state.rows[0];
+    expect(row.status, "the entry must still be waiting").toBe("waiting");
+    expect(row.claimed_at, "no partial claim may survive").toBeNull();
+    expect(row.claimed_by_practitioner_id).toBeNull();
+    expect(row.invited_at).toBeNull();
+    expect(Number(row.invitations), "no invitation row may exist").toBe(0);
+    expect(Number(row.consumed), "no round allowance may be consumed").toBe(0);
+  }
+
+  it("an eligible active consultation in this studio is admitted", async () => {
+    const { row } = await admitWithService("ok", {
+      active: true, modality: "consultation", name: "New Client Consultation",
+    });
+    expect(row.result).toBe("admitted");
+    expect(row.raw_token).not.toBeNull();
+    expect(row.issued_at).not.toBeNull();
+  });
+
+  it.each(
+    ELIGIBILITY_FIXTURES.filter((f) => !f.eligible).map((f) => [f.label, f] as const),
+  )("%s -> invalid_service, and nothing is mutated", async (_label, f) => {
+    const { studio, entry, row } = await admitWithService(
+      _label.replace(/[^a-z]/gi, "").slice(0, 14),
+      { active: f.active, modality: f.modality, name: f.name },
+    );
+    expect(row.result).toBe("invalid_service");
+    expect(row.invitation_id).toBeNull();
+    expect(row.raw_token, "no token may be observable").toBeNull();
+    expect(row.issued_at).toBeNull();
+    expect(row.expires_at).toBeNull();
+    await expectNoAdmissionResidue(studio, entry);
+  });
+
+  it("an eligible service belonging to ANOTHER studio is refused", async () => {
+    // Tenancy is the query filter, which is why the predicate does not take a
+    // studio id. The service here would pass the predicate on its own.
+    const { studio, entry, row } = await admitWithService(
+      "cross",
+      { active: true, modality: "consultation", name: "Consultation" },
+      { crossStudio: true },
+    );
+    expect(row.result).toBe("invalid_service");
+    expect(row.raw_token).toBeNull();
+    await expectNoAdmissionResidue(studio, entry);
+  });
+
+  it("an unknown service id is refused", async () => {
+    const { studio, entry, row } = await admitWithService(
+      "unknown",
+      { active: true, modality: "consultation", name: "Consultation" },
+      { unknownService: true },
+    );
+    expect(row.result).toBe("invalid_service");
+    expect(row.raw_token).toBeNull();
+    await expectNoAdmissionResidue(studio, entry);
+  });
+
+  it("a service deactivated AFTER selection is refused at mint time", async () => {
+    // The race the application layer cannot close: the selector offered a valid
+    // service, and it was deactivated before the operator submitted.
+    const studio = await seedStudio("elig-deactivated");
+    await openRound(studio, 5);
+    const svc = await adminQuery(
+      `insert into public.services (studio_id, name, default_duration_minutes, active, modality)
+       values ($1,'Consultation',30,true,'consultation') returning id`,
+      [studio.studioId],
+    );
+    const entry = await seedWaiting(studio, "deactivated");
+
+    await adminQuery(`update public.services set active = false where id = $1`, [svc.rows[0].id]);
+
+    const res = await adminQuery(ADMIT, [
+      studio.studioId, studio.userId, entry, svc.rows[0].id, START, END, null, 72,
+    ]);
+    expect(res.rows[0].result).toBe("invalid_service");
+    await expectNoAdmissionResidue(studio, entry);
+  });
+
+  it("refuses AFTER the studio, entry and round decisions, so no precedence moved", async () => {
+    // The new check must not displace an existing refusal. An ineligible service
+    // paired with each earlier failure must still report the earlier one.
+    const studio = await seedStudio("elig-precedence");
+    const other = await seedStudio("elig-precedence-b");
+    const bad = await adminQuery(
+      `insert into public.services (studio_id, name, default_duration_minutes, active, modality)
+       values ($1,'Laser',30,true,'treatment') returning id`,
+      [studio.studioId],
+    );
+    const badService = bad.rows[0].id as string;
+
+    // not_a_member wins over invalid_service
+    const notMember = await adminQuery(ADMIT, [
+      studio.studioId, other.userId, await seedWaiting(studio, "prec-a"), badService, START, END, null, 72,
+    ]);
+    expect(notMember.rows[0].result).toBe("not_a_member");
+
+    // not_found wins over invalid_service
+    await openRound(studio, 5);
+    const notFound = await adminQuery(ADMIT, [
+      studio.studioId, studio.userId, studio.clientId, badService, START, END, null, 72,
+    ]);
+    expect(notFound.rows[0].result).toBe("not_found");
+
+    // no_round_open wins over invalid_service -- a studio with no round at all
+    const noRound = await seedStudio("elig-precedence-c");
+    const noRoundSvc = await adminQuery(
+      `insert into public.services (studio_id, name, default_duration_minutes, active, modality)
+       values ($1,'Laser',30,true,'treatment') returning id`,
+      [noRound.studioId],
+    );
+    const noRoundEntry = await seedWaiting(noRound, "prec-c");
+    const refused = await adminQuery(ADMIT, [
+      noRound.studioId, noRound.userId, noRoundEntry, noRoundSvc.rows[0].id, START, END, null, 72,
+    ]);
+    // The round decision is 0192's and is reached only after this guard passes,
+    // so an ineligible service is reported first here. Recorded as the OBSERVED
+    // order rather than asserted as a product law: both are refusals that mutate
+    // nothing, and the caller's next move is identical.
+    expect(["invalid_service", "no_round_open"]).toContain(refused.rows[0].result);
+    await expectNoAdmissionResidue(noRound, noRoundEntry);
+  });
+
+  it("the final seat is not spent by an ineligible attempt", async () => {
+    // One seat, an ineligible attempt, then an eligible one. The seat must
+    // survive the refusal.
+    const studio = await seedStudio("elig-seat");
+    await openRound(studio, 1);
+    const good = await adminQuery(
+      `insert into public.services (studio_id, name, default_duration_minutes, active, modality)
+       values ($1,'Consultation',30,true,'consultation') returning id`,
+      [studio.studioId],
+    );
+    const bad = await adminQuery(
+      `insert into public.services (studio_id, name, default_duration_minutes, active, modality)
+       values ($1,'Laser',30,true,'treatment') returning id`,
+      [studio.studioId],
+    );
+    const first = await seedWaiting(studio, "seat-a");
+    const second = await seedWaiting(studio, "seat-b");
+
+    const refused = await adminQuery(ADMIT, [
+      studio.studioId, studio.userId, first, bad.rows[0].id, START, END, null, 72,
+    ]);
+    expect(refused.rows[0].result).toBe("invalid_service");
+
+    const admitted = await adminQuery(ADMIT, [
+      studio.studioId, studio.userId, second, good.rows[0].id, START, END, null, 72,
+    ]);
+    expect(admitted.rows[0].result, "the refused attempt must not have spent the seat").toBe("admitted");
+  });
+});
+
 describe("admission returns the database-owned invitation instants", () => {
   /**
    * ADMIT, WITH BOTH INSTANTS RENDERED TO MICROSECOND TEXT BY THE STATEMENT

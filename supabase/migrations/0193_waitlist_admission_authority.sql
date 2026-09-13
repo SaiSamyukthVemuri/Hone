@@ -1401,6 +1401,79 @@ $$;
 -- that delivers AFTER commit. A provider failure then means "the invitation
 -- exists and delivery must be retried", never a rollback decided by an
 -- uncertain provider answer.
+-- ===========================================================================
+-- NEW-CLIENT SERVICE ELIGIBILITY — THE DATABASE'S COPY OF ONE SHARED RULE
+-- ===========================================================================
+--
+-- WHOSE RULE THIS IS. lib/booking/consultation.ts owns it in TypeScript as
+-- `isBookableByNewClient`, and publicBookAppointmentAction states the same rule
+-- in two parts that sit far apart: the service read filters `studio_id` and
+-- `active`, and the guard below it calls `isConsultationService`. As BEHAVIOUR
+-- it is "this studio's, active, and a consultation", and anything offering a
+-- service to a new client must satisfy all three.
+--
+-- WHY THE DATABASE NEEDS ITS OWN COPY. The admission command mints an
+-- invitation whose scope_service_id everything downstream trusts. The browser,
+-- the practitioner's selector and the application layer are all advisory: a
+-- forged post, a stale selector, or a service deactivated between selection and
+-- submission would otherwise produce an invitation that the recipient booking
+-- path must later refuse — discovered by the recipient, not the operator.
+--
+-- TRANSLATED FROM THE PREDICATE, NOT FROM ITS NAME:
+--
+--     const modality = service.modality?.trim().toLowerCase() ?? "";
+--     if (modality === "consultation") return true;
+--     if (modality.length === 0 && service.name.toLowerCase().includes("consultation"))
+--       return true;
+--     return false;
+--
+--   * THE NAME FALLBACK APPLIES ONLY WHEN MODALITY IS EMPTY. A service with
+--     modality 'treatment' named "Consultation follow-up" is NOT a
+--     consultation. Reading the predicate as "modality is consultation OR the
+--     name mentions one" would be a WEAKER rule than production's and would
+--     admit services the booking path refuses.
+--   * SUBSTRING, NOT EQUALITY, on the name, and case-insensitive, so
+--     "New Client Consultation" qualifies.
+--   * `active` is compared with STRICT `is true`, mirroring `!== true`, so a
+--     null could never be coerced into "probably fine". The column is NOT NULL
+--     today; the strictness does not depend on that staying true.
+--   * PRICE AND DURATION ARE DELIBERATELY NOT READ. The TypeScript predicate
+--     says so explicitly; adding them here would be a second, stricter rule.
+--
+-- TENANCY IS NOT A PARAMETER, exactly as in TypeScript: `studio_id` is a query
+-- filter at every call site and belongs there. A predicate that took a studio
+-- id would invite callers to fetch first and check after.
+--
+-- Columns in, boolean out: no table access, so it cannot leak a row and needs
+-- no definer rights.
+create or replace function public.service_is_bookable_by_new_client(
+  p_active   boolean,
+  p_modality text,
+  p_name     text
+)
+returns boolean
+language sql
+immutable
+security invoker
+set search_path = pg_catalog, pg_temp
+as $$
+  select p_active is true
+     and (
+           lower(btrim(coalesce(p_modality, ''))) = 'consultation'
+           or (
+                lower(btrim(coalesce(p_modality, ''))) = ''
+                and position('consultation' in lower(coalesce(p_name, ''))) > 0
+              )
+         )
+$$;
+
+comment on function public.service_is_bookable_by_new_client(boolean, text, text) is
+  'WAIT-ADMIT-01: the database''s copy of lib/booking/consultation.ts''s '
+  'isBookableByNewClient -- active, and a consultation by modality or (only '
+  'when modality is empty) by name. Tenancy is a caller-side query filter, as '
+  'in TypeScript. Pure over its arguments: no table access, no row leak. '
+  'Price and duration are deliberately not read.';
+
 -- The return type gains `issued_at`, and PostgreSQL cannot change a return type
 -- in place, so the prior signature is dropped first -- the same shape 0192 uses
 -- for begin_waitlist_invitation_proof. On a fresh chain this is a no-op; on a
@@ -1535,6 +1608,36 @@ begin
     -- invited / converted / expired / released / removed. Each has its own
     -- lifecycle exit; none of them is admissible by pressing this button.
     return query select 'not_admissible'::text, null::uuid, null::text, null::timestamptz, null::timestamptz, null::text, null::text;
+    return;
+  end if;
+
+  -- 3b. THE SERVICE MUST BE ONE A NEW CLIENT MAY ACTUALLY BOOK.
+  --
+  -- BEFORE THE SUBTRANSACTION, so no claim is taken and unwound -- this refusal
+  -- leaves no durable state at all rather than relying on a rollback to remove
+  -- it. 0192's issuer checks that the service EXISTS and belongs to the studio;
+  -- it does not ask whether a new client may book it, and that migration is not
+  -- this lane's to change.
+  --
+  -- AFTER the studio, round and entry decisions, so every existing refusal
+  -- keeps its precedence: unknown_studio, not_found and not_admissible are
+  -- still answered first and none of their meanings move.
+  --
+  -- `invalid_service` IS THE EXISTING WORD for it, carried from 0192's own
+  -- vocabulary. A new code would make callers learn a second name for "that
+  -- service cannot be offered", and the recipient-facing outcome is identical.
+  --
+  -- Tenancy is the query filter here, which is why the predicate does not take
+  -- a studio id: a row fetched without `studio_id` is already the wrong row.
+  -- A missing row therefore also refuses, covering an unknown or deleted id.
+  if not exists (
+    select 1
+      from public.services sv
+     where sv.id = p_service_id
+       and sv.studio_id = p_studio_id
+       and public.service_is_bookable_by_new_client(sv.active, sv.modality, sv.name)
+  ) then
+    return query select 'invalid_service'::text, null::uuid, null::text, null::timestamptz, null::timestamptz, null::text, null::text;
     return;
   end if;
 
@@ -1684,6 +1787,18 @@ revoke execute on function public.set_studio_waitlist_admission_policy(uuid, uui
 revoke execute on function public.set_studio_waitlist_admission_policy(uuid, uuid, jsonb, integer, integer) from authenticated;
 revoke execute on function public.set_studio_waitlist_admission_policy(uuid, uuid, jsonb, integer, integer) from service_role;
 
+-- A PURE PREDICATE, not a command, but disposed by name like everything else:
+-- ALTER DEFAULT PRIVILEGES arms anon, authenticated AND service_role at
+-- create time and nothing here may inherit that. service_role keeps EXECUTE
+-- because it reads no rows and is a pure function of arguments the caller
+-- already holds -- there is nothing for it to leak -- and because the frontier
+-- guard's rule is the simple one: service_role runs every non-trigger function
+-- this file creates.
+revoke execute on function public.service_is_bookable_by_new_client(boolean, text, text) from public;
+revoke execute on function public.service_is_bookable_by_new_client(boolean, text, text) from anon;
+revoke execute on function public.service_is_bookable_by_new_client(boolean, text, text) from authenticated;
+revoke execute on function public.service_is_bookable_by_new_client(boolean, text, text) from service_role;
+
 revoke execute on function public.claim_new_client_waitlist_entries_ordered(uuid, uuid, uuid[]) from public;
 revoke execute on function public.claim_new_client_waitlist_entries_ordered(uuid, uuid, uuid[]) from anon;
 revoke execute on function public.claim_new_client_waitlist_entries_ordered(uuid, uuid, uuid[]) from authenticated;
@@ -1698,6 +1813,7 @@ grant execute on function public.revoke_waitlist_preference_grant(uuid, uuid, uu
 grant execute on function public.redeem_waitlist_preference_grant(text, text) to service_role;
 grant execute on function public.set_studio_waitlist_admission_policy(uuid, uuid, jsonb, integer, integer) to service_role;
 grant execute on function public.claim_new_client_waitlist_entries_ordered(uuid, uuid, uuid[]) to service_role;
+grant execute on function public.service_is_bookable_by_new_client(boolean, text, text) to service_role;
 
 -- The replaced trigger function is SECURITY INVOKER-shaped and `returns
 -- trigger`, so an EXECUTE grant on it is inert (PostgreSQL raises 0A000 on a
