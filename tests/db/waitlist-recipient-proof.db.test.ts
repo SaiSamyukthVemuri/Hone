@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Client } from "pg";
+import { createHash, randomUUID } from "node:crypto";
 import {
   adminQuery,
   asRole,
@@ -3692,5 +3693,211 @@ describe("0192 — verified redemption serialises with same-round issuance", () 
       await holder.end().catch(() => undefined);
       await caller.end().catch(() => undefined);
     }
+  });
+});
+
+// ===========================================================================
+// REDEEM -> BOOK -> RECORD, the whole chain on a real database.
+// ===========================================================================
+//
+// The application half of this is proved in
+// tests/app/book/invitation-conversion.test.ts, which drives the real booking
+// action against a fake database. That file cannot see whether the REAL
+// commands accept the sequence it issues -- whether the entry id a redemption
+// hands back is the one `record_new_client_waitlist_conversion` will take, what
+// the entry row actually holds afterwards, and whether the database has its own
+// opinion about the order.
+//
+// This block asks exactly those questions of PostgreSQL.
+
+/** A studio that can genuinely take a public booking: open all day, every day. */
+async function makeBookable(studioId: string): Promise<void> {
+  await adminQuery(
+    `insert into public.studio_availability_default
+       (studio_id, day_of_week, is_open, open_time, close_time, practitioner_id)
+     select $1, g, true, '00:00', '23:59', null from generate_series(0,6) g`,
+    [studioId],
+  );
+}
+
+/** An in-horizon instant: `days` from now at 12:00 UTC. */
+function inDays(days: number): string {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() + days);
+  d.setUTCHours(12, 0, 0, 0);
+  return d.toISOString();
+}
+
+async function bookPublicly(
+  studioId: string,
+  clientId: string,
+  serviceId: string,
+  startsAt: string,
+) {
+  const r = await adminQuery(
+    `select result, appointment_id, created_at
+       from public.create_public_appointment($1,$2,$3,$4::timestamptz,$5,null,null)`,
+    // `appointments_cancellation_token_hash_uniq` is GLOBAL, so one fixed hash
+    // makes the SECOND booking in this file a duplicate-key error rather than a
+    // refusal. One unique hash per booking, exactly as the action mints one.
+    [studioId, clientId, serviceId, startsAt, createHash("sha256").update(randomUUID()).digest("hex")],
+  );
+  return r.rows[0];
+}
+
+async function entryState(entryId: string) {
+  const r = await adminQuery(
+    `select status, converted_at, converted_client_id
+       from public.new_client_waitlist_entries where id = $1`,
+    [entryId],
+  );
+  return r.rows[0];
+}
+
+describe("WAIT-03 — a redeemed invitation that produces an appointment CONVERTS", () => {
+  it("the entry starts invited, is redeemed, is booked, and ends converted", async () => {
+    const o = await verifiedOffer("convert-journey");
+    await makeBookable(o.studio.studioId);
+
+    // 1. INVITED. The starting state the queue actually renders.
+    expect(await entryState(o.entryId)).toMatchObject({
+      status: "invited",
+      converted_at: null,
+      converted_client_id: null,
+    });
+
+    // 2. REDEEM, through proof, exactly as a recipient must.
+    const red = await redeem(o.token, o.capability);
+    expect(red.result).toBe("redeemed");
+
+    // REDEMPTION IS NOT CONVERSION. This is the whole defect in one assertion:
+    // the offer is spent and the queue has not moved.
+    expect(
+      (await entryState(o.entryId)).status,
+      "redeeming alone must leave the entry invited",
+    ).toBe("invited");
+
+    // 3. BOOK. A real appointment, from the real public command.
+    const appt = await bookPublicly(
+      o.studio.studioId,
+      o.studio.clientId,
+      o.serviceId,
+      inDays(3),
+    );
+    expect(appt.result).toBe("created");
+    expect(appt.appointment_id).toBeTruthy();
+
+    // 4. RECORD, with the id the REDEMPTION returned -- not one reconstructed
+    // from the entry we happen to be holding in the fixture.
+    expect(red.entry_id).toBe(o.entryId);
+    const conv = await adminQuery(
+      `select public.record_new_client_waitlist_conversion($1,$2,$3) r`,
+      [red.studio_id, red.entry_id, o.studio.clientId],
+    );
+    expect(conv.rows[0].r).toBe("converted");
+
+    // 5. THE QUEUE'S OWN TRUTH.
+    const after = await entryState(o.entryId);
+    expect(after.status).toBe("converted");
+    expect(after.converted_client_id).toBe(o.studio.clientId);
+    expect(after.converted_at).not.toBeNull();
+    // And the record is LATE, never early: stamped at or after the appointment
+    // row the booking created.
+    expect(new Date(after.converted_at).getTime()).toBeGreaterThanOrEqual(
+      new Date(appt.created_at).getTime(),
+    );
+  });
+
+  it("ORDER IS THE DATABASE'S TOO — conversion before redemption is refused", async () => {
+    const o = await verifiedOffer("convert-too-early");
+    await makeBookable(o.studio.studioId);
+
+    // A booking can exist without the invitation having been accepted; the
+    // command still refuses, because `invited` only means an offer was SENT.
+    const appt = await bookPublicly(
+      o.studio.studioId,
+      o.studio.clientId,
+      o.serviceId,
+      inDays(4),
+    );
+    expect(appt.result).toBe("created");
+
+    const early = await adminQuery(
+      `select public.record_new_client_waitlist_conversion($1,$2,$3) r`,
+      [o.studio.studioId, o.entryId, o.studio.clientId],
+    );
+    expect(early.rows[0].r).toBe("not_redeemed");
+    expect((await entryState(o.entryId)).status).toBe("invited");
+
+    // NOTHING WAS CONSUMED BY THE REFUSAL, so the proper order still works.
+    const red = await redeem(o.token, o.capability);
+    expect(red.result).toBe("redeemed");
+    const late = await adminQuery(
+      `select public.record_new_client_waitlist_conversion($1,$2,$3) r`,
+      [o.studio.studioId, o.entryId, o.studio.clientId],
+    );
+    expect(late.rows[0].r).toBe("converted");
+  });
+
+  it("a SECOND conversion is refused rather than re-stamped", async () => {
+    const o = await verifiedOffer("convert-twice");
+    await makeBookable(o.studio.studioId);
+    expect((await redeem(o.token, o.capability)).result).toBe("redeemed");
+    expect(
+      (
+        await bookPublicly(o.studio.studioId, o.studio.clientId, o.serviceId, inDays(5))
+      ).result,
+    ).toBe("created");
+
+    const first = await adminQuery(
+      `select public.record_new_client_waitlist_conversion($1,$2,$3) r`,
+      [o.studio.studioId, o.entryId, o.studio.clientId],
+    );
+    expect(first.rows[0].r).toBe("converted");
+    const stamped = await entryState(o.entryId);
+
+    // A duplicate is HARMLESS rather than destructive: the action calls this
+    // once, but a retry at any layer must not re-date the record or re-point it
+    // at a different client.
+    const second = await adminQuery(
+      `select public.record_new_client_waitlist_conversion($1,$2,$3) r`,
+      [o.studio.studioId, o.entryId, o.studio.clientId],
+    );
+    expect(second.rows[0].r).toBe("not_invited");
+    expect(await entryState(o.entryId)).toMatchObject({
+      status: "converted",
+      converted_at: stamped.converted_at,
+      converted_client_id: stamped.converted_client_id,
+    });
+  });
+
+  it("an entry id from ANOTHER studio's queue converts nothing", async () => {
+    // The reconstruction hazard, made concrete: if the caller ever derived the
+    // entry id from anything other than the redemption, this is the shape of
+    // the row it could reach for.
+    const mine = await verifiedOffer("convert-tenancy-a");
+    const theirs = await verifiedOffer("convert-tenancy-b");
+    expect((await redeem(mine.token, mine.capability)).result).toBe("redeemed");
+
+    const crossed = await adminQuery(
+      `select public.record_new_client_waitlist_conversion($1,$2,$3) r`,
+      [mine.studio.studioId, theirs.entryId, mine.studio.clientId],
+    );
+    expect(crossed.rows[0].r).toBe("not_invited");
+    expect((await entryState(theirs.entryId)).status).toBe("invited");
+    expect((await entryState(mine.entryId)).status).toBe("invited");
+  });
+
+  it("a client from another studio is refused, and the entry does not move", async () => {
+    const o = await verifiedOffer("convert-foreign-client");
+    const other = await seedStudio("convert-foreign-owner");
+    expect((await redeem(o.token, o.capability)).result).toBe("redeemed");
+
+    const r = await adminQuery(
+      `select public.record_new_client_waitlist_conversion($1,$2,$3) r`,
+      [o.studio.studioId, o.entryId, other.clientId],
+    );
+    expect(r.rows[0].r).toBe("client_not_found");
+    expect((await entryState(o.entryId)).status).toBe("invited");
   });
 });

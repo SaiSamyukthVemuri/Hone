@@ -48,7 +48,7 @@ import {
 } from "@/lib/email/send-appointment";
 import { sendBookingConfirmationSmsToClient } from "@/lib/sms/send-appointment";
 import { normalizePhoneForMatch } from "@/lib/sms/twilio";
-import { isConsultationService } from "@/lib/booking/consultation";
+import { isBookableByNewClient } from "@/lib/booking/consultation";
 import {
   isNewClientWaitlistEnabled,
   NEW_CLIENT_WAITLIST_BOOKING_REFUSAL,
@@ -57,7 +57,9 @@ import {
 import {
   authorizeInvitationForBooking,
   consumeInvitationForBooking,
+  recordInvitationConversion,
   type BookingAuthorization,
+  type ConversionOutcome,
 } from "@/lib/booking/waitlist-invitation";
 import {
   buildBookingMarketingConsentRow,
@@ -116,7 +118,7 @@ const NEW_CLIENT_MUST_BOOK_CONSULTATION_ERROR =
 // any other value should be treated as a stale/forged request and get
 // the same generic error a missing field would produce. A no-
 // consultation-service condition is surfaced at the UI layer instead
-// of here because the existing isConsultationService guard below
+// of here because the existing isBookableByNewClient guard below
 // already rejects any forged new-client submit that picked a
 // non-consultation service id, which is the only way a no-
 // consultation studio could reach this action with client_type=new.
@@ -507,7 +509,33 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   const invitationCapability = trimmed(formData.get("invitation_capability"));
   let invitationAuth: BookingAuthorization | null = null;
 
-  if (clientType === "new" && isNewClientWaitlistEnabled(studio.slug)) {
+  // WAIT-03 B3 / P2-B. CREDENTIALS ARE PROCESSED AS CREDENTIALS, WHATEVER THE
+  // FLAG CURRENTLY SAYS.
+  //
+  // This block used to be entered ONLY when `isNewClientWaitlistEnabled` was
+  // true, which tied an ALREADY-ISSUED invitation's authority to a setting the
+  // operator can change afterwards. An invitation issued while the waitlist was
+  // on, redeemed after it was turned off, took the ORDINARY new-client path:
+  // the appointment was created, `authorizeInvitationForBooking` never ran, and
+  // `consumeInvitationForBooking` — reached only from an authorised result —
+  // never ran either. So the recipient hash was not checked, the scope was not
+  // checked, and the invitation stayed LIVE with an appointment already booked
+  // against it. The one guarantee the slice exists to provide switched itself
+  // off, silently, with no request looking any different.
+  //
+  // The flag governs ADMISSION: whether a visitor presenting nothing may book
+  // as a new client. It does not govern AUTHORITY, and it must not be able to
+  // erase authority already carried by a live invitation. So the entry
+  // condition is now the OR: the gate applies, or credentials were presented.
+  //
+  // PRESENTING EITHER HALF IS ENOUGH TO BE HELD TO IT. A request carrying a
+  // capability with no token has no invitation to authorise and is refused
+  // rather than waved onto the ordinary path — a caller does not get to opt out
+  // of invitation handling by omitting the half that identifies the invitation.
+  const invitationPresented = Boolean(invitationToken) || Boolean(invitationCapability);
+  const admissionGateApplies = isNewClientWaitlistEnabled(studio.slug);
+
+  if (clientType === "new" && (admissionGateApplies || invitationPresented)) {
     if (invitationToken && invitationCapability) {
       const requestedStartsAt = new Date(startsAtRaw);
       if (!Number.isNaN(requestedStartsAt.getTime())) {
@@ -527,14 +555,24 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
       // forwarded link learns only that it did not work here -- never whether the
       // token exists, whether it belongs to this studio, whether the address
       // matched, or which half of the scope failed.
+      //
+      // WHICH refusal is a question of TRUTH, not of which branch we are in.
+      // `NEW_CLIENT_WAITLIST_BOOKING_REFUSAL` says the studio is not taking new
+      // clients right now. With the gate ON that is true whether or not the
+      // caller also posted a stray capability, so the selector there is
+      // UNCHANGED from B2: a named token gets the invitation answer, anything
+      // else gets the admission one. With the gate OFF it is simply false — the
+      // studio IS taking new clients — so the admission refusal is never
+      // returned on that path.
+      const refusedOnAdmission = admissionGateApplies && !invitationToken;
       return {
         ok: false,
-        error: invitationToken
-          ? "This invitation doesn't cover that booking. Please use the link and time from your invitation email."
-          : NEW_CLIENT_WAITLIST_BOOKING_REFUSAL,
-        code: invitationToken
-          ? "invitation_refused"
-          : NEW_CLIENT_WAITLIST_REFUSAL_CODE,
+        error: refusedOnAdmission
+          ? NEW_CLIENT_WAITLIST_BOOKING_REFUSAL
+          : "This invitation doesn't cover that booking. Please use the link and time from your invitation email.",
+        code: refusedOnAdmission
+          ? NEW_CLIENT_WAITLIST_REFUSAL_CODE
+          : "invitation_refused",
       };
     }
   }
@@ -593,7 +631,14 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // helper (lib/booking/consultation.ts) so the visible list and the
   // server gate cannot drift apart. Rejected attempts surface the
   // explicit copy from the spec; no internal state is leaked.
-  if (clientType === "new" && !isConsultationService(service)) {
+  //
+  // WAIT-03 B3 / P2-A. `isBookableByNewClient` is the SAME predicate one level
+  // up: it adds the `active` half of this rule, which the read above has
+  // already applied as a query filter, so the behaviour here is unchanged. The
+  // point is that the invitation route can now ask the identical question of a
+  // row it fetched itself, instead of restating "what counts as a consultation"
+  // a second time and drifting.
+  if (clientType === "new" && !isBookableByNewClient(service)) {
     return { ok: false, error: NEW_CLIENT_MUST_BOOK_CONSULTATION_ERROR };
   }
 
@@ -686,6 +731,14 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // invitationConsumedWithoutBooking(), so none of them can hand back retryable
   // copy for an invitation that is already gone.
   let consumedInvitationId: string | null = null;
+  // WAIT-03. THE AUTHORITATIVE ENTRY ID, kept server-side for the conversion
+  // record below. The locked redemption is the ONLY authority on which entry
+  // was just spent: it is not the submitted email, not the resolved client, not
+  // "the studio's oldest invited entry" and not the newest invitation. Every
+  // one of those can name somebody else's entry -- two prospects invited in the
+  // same round, a shared household address, an entry requeued after a release.
+  // So the id travels from the command that spent it, and nowhere else.
+  let redeemedEntryId: string | null = null;
   if (invitationAuth?.kind === "authorized") {
     const redeemed = await consumeInvitationForBooking(
       invitationAuth,
@@ -700,6 +753,11 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
         code: "invitation_refused",
       };
     }
+    // BOTH are kept, and they answer different questions. The invitation id is
+    // the OPERATIONAL evidence the recovery log already records; the entry id
+    // is what the conversion command is scoped by. Neither substitutes for the
+    // other, so the existing recovery path is untouched.
+    redeemedEntryId = redeemed.entryId;
     consumedInvitationId = invitationAuth.invitation.invitationId;
   }
 
@@ -1218,6 +1276,74 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
       return fallback;
     }
   };
+
+  // -----------------------------------------------------------------------
+  // WAIT-03. RECORD THE CONVERSION. The lifecycle is REDEEM -> BOOK -> RECORD
+  // and this is the third step, placed here because this is the first line at
+  // which the appointment is DURABLE: `create_public_appointment` answered
+  // `created` AND handed back an appointment id, and the invitation-spent guard
+  // above has already turned every other outcome into a refusal.
+  //
+  // WITHOUT THIS, a successful invitation booking left the entry in `invited`
+  // forever: the prospect has an appointment, the queue still shows them as
+  // waiting to hear back, the admission round's allowance is never reconciled,
+  // and the next operator sweep can invite the same person again. Nothing else
+  // in the product writes `converted` -- this command is its only author.
+  //
+  // ORDER IS A SAFETY PROPERTY, NOT A STYLE CHOICE. Conversion is terminal:
+  // `remove_new_client_waitlist_entry` answers `not_removable` on a converted
+  // entry, so there is no operator undo for a conversion recorded against a
+  // booking that then failed. Running it after the commit means the record can
+  // only ever be late, never wrong.
+  //
+  // `clientId` is the resolved client this appointment was actually created
+  // for, whichever branch produced it -- existing, newly inserted, or the
+  // unique-race winner -- because the command above was given this same value.
+  // -----------------------------------------------------------------------
+  //
+  // The narrowing is EARNED: `redeemedEntryId` is a `let`, so TypeScript drops
+  // its narrowing inside the closure below. Binding a const here is what makes
+  // the argument provably non-null without a cast or a `!`.
+  const convertedEntryId = redeemedEntryId;
+  if (convertedEntryId) {
+    // POST-COMMIT LAW. The appointment is already durable, so a conversion
+    // failure may not reach the visitor: they booked, and telling them
+    // otherwise would send them back to a link that can no longer book.
+    // `postCommit` contains an unexpected THROW; the closed refusals and the
+    // transport failure come back as values and are handled immediately below.
+    const conversion = await postCommit<ConversionOutcome>(
+      "public_booking_waitlist_conversion_threw",
+      { kind: "unavailable" },
+      () =>
+        recordInvitationConversion({
+          studioId: studio.id,
+          entryId: convertedEntryId,
+          clientId,
+        }),
+    );
+    if (conversion.kind !== "converted") {
+      // FAIL-SOFT IS NOT SILENT. This is the one durable trace that an entry
+      // needs its status repaired by hand, so it carries everything an operator
+      // needs to find all three rows -- appointment, invitation, entry -- and
+      // the command's own answer for why it refused.
+      //
+      // NO AUTOMATIC RECOVERY. The invitation is not re-redeemed, reissued or
+      // retried: it is already spent, the booking already exists, and a blind
+      // retry against a command whose refusal may be permanent (`not_invited`
+      // on an entry an operator has since removed) would loop rather than heal.
+      //
+      // SECRETS ARE ABSENT BY CONSTRUCTION. The raw token, the capability, the
+      // proof code and the recipient address are never in scope at this point
+      // in the function, let alone in this payload.
+      logInternalBookingError("public_booking_waitlist_conversion_not_recorded", {
+        appointmentId: evidenceAppointmentId,
+        studioId: evidenceStudioId,
+        invitationId: consumedInvitationId,
+        entryId: convertedEntryId,
+        code: conversion.kind,
+      });
+    }
+  }
 
   // AUTHORITATIVE PRACTITIONER. `commandRow.practitioner_id` is the practitioner
   // the appointment was actually assigned to, resolved inside the transaction
