@@ -58,6 +58,10 @@ const COMMANDS: readonly [string, string][] = [
   // (service_role). The completeness guard below is what stops a tenth command
   // repeating it.
   ["public.admit_new_client_waitlist_entry", "uuid, uuid, uuid, uuid, date, date, smallint[], integer"],
+  // A PURE PREDICATE, not a command: the database's copy of
+  // lib/booking/consultation.ts's new-client service rule. Listed because the
+  // census covers every function 0193 creates, not only the ones that act.
+  ["public.service_is_bookable_by_new_client", "boolean, text, text"],
   ["public.create_practitioner_waitlist_entry", "uuid, uuid, text, text, text, text"],
   ["public.import_legacy_waitlist_entry", "uuid, uuid, text, text, timestamptz, text, text"],
   ["public.set_waitlist_entry_availability", "uuid, uuid, uuid, text"],
@@ -626,13 +630,51 @@ describe("every command re-derives owner authority in the database", () => {
     expect(CODE).toContain("public.redeem_waitlist_preference_grant(\n  p_raw_token  text,\n  p_preference text\n)");
   });
 
-  it("declares every command SECURITY DEFINER with a pinned search_path", () => {
+  it("pins search_path on EVERY function, definer or not", () => {
+    // search_path is not negotiable for either class. A function that resolves
+    // names through the caller's path can be made to call a different object.
     const defs = Array.from(CODE.matchAll(/create or replace function public\.[a-z_]+\([\s\S]*?\$\$;/g));
     expect(defs.length).toBeGreaterThanOrEqual(COMMANDS.length);
     for (const d of defs) {
-      expect(d[0]).toContain("security definer");
       expect(d[0]).toContain("set search_path = pg_catalog, pg_temp");
     }
+  });
+
+  it("declares every ACTING command SECURITY DEFINER, and the pure predicate INVOKER", () => {
+    // THE DISTINCTION IS REAL AND WORTH KEEPING. A command reaches tables the
+    // caller may not touch, so it runs as its owner. The new-client eligibility
+    // predicate reaches NOTHING: columns in, boolean out. Making it definer to
+    // satisfy a uniform assertion would hand it owner rights it has no use for,
+    // which is the wrong direction for a privilege guard to push.
+    //
+    // The classes are told apart by what PostgreSQL will enforce -- IMMUTABLE is
+    // a declaration that the function cannot read the database at all -- not by
+    // a name list that a future function could quietly join.
+    const defs = Array.from(CODE.matchAll(/create or replace function public\.[a-z_]+\([\s\S]*?\$\$;/g));
+    let definers = 0;
+    let invokers = 0;
+    for (const d of defs) {
+      const immutable = /\n\s*immutable\s*\n/.test(d[0]);
+      if (immutable) {
+        invokers += 1;
+        expect(
+          d[0],
+          "an immutable function touches no table and must not run as the owner",
+        ).toContain("security invoker");
+        expect(d[0]).not.toContain("security definer");
+        // And it must genuinely read nothing, which is what earns the exemption.
+        expect(d[0], "an immutable function may not reference a table").not.toMatch(
+          /\bfrom\s+public\./,
+        );
+      } else {
+        definers += 1;
+        expect(d[0], "an acting command must run as its owner").toContain("security definer");
+      }
+    }
+    // Anti-vacuity in BOTH directions: a regex that found neither class, or a
+    // change that quietly moved every function into the exempt class, fails here.
+    expect(definers, "the acting commands must still be definer").toBeGreaterThanOrEqual(9);
+    expect(invokers, "the pure predicate must still be invoker").toBe(1);
   });
 });
 

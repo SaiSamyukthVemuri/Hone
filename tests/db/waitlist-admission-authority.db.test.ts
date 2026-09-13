@@ -40,6 +40,13 @@ const COMMANDS = [
   "public.redeem_waitlist_preference_grant(text,text)",
   "public.set_studio_waitlist_admission_policy(uuid,uuid,jsonb,integer,integer)",
   "public.claim_new_client_waitlist_entries_ordered(uuid,uuid,uuid[])",
+  // NOT A COMMAND -- a pure predicate over scalars, carrying the database's copy
+  // of lib/booking/consultation.ts's new-client service rule. It is here because
+  // the frontier census discovers every function 0193 CREATES, and this one must
+  // be disposed like any other: anon and authenticated hold nothing, and
+  // service_role keeps EXECUTE because the function reads no rows and is a pure
+  // function of arguments the caller already holds.
+  "public.service_is_bookable_by_new_client(boolean,text,text)",
 ] as const;
 
 let n = 0;
@@ -2527,8 +2534,10 @@ describe("issuing a grant cannot deadlock against admission", () => {
     const studio = await seedStudio("deadlock-issue-admit");
     await openRound(studio, 5);
     const service = await adminQuery(
-      `insert into public.services (studio_id, name, default_duration_minutes)
-       values ($1,'Svc',30) returning id`,
+      // ELIGIBLE BY MODALITY. Admission requires a service a new client may
+      // book -- this studio's, active, and a consultation.
+      `insert into public.services (studio_id, name, default_duration_minutes, active, modality)
+       values ($1,'Svc Consultation',30,true,'consultation') returning id`,
       [studio.studioId],
     );
     const entry = await adminQuery(
@@ -2841,7 +2850,15 @@ describe("the studio lock mode is compatible with FK key-share", () => {
          from pg_proc p join pg_namespace n on n.oid = p.pronamespace
         where n.nspname = 'public'
           and p.proname = any($1::text[])
-          and pg_get_function_result(p.oid) <> 'trigger'`,
+          and pg_get_function_result(p.oid) <> 'trigger'
+          -- IMMUTABLE FUNCTIONS ARE EXEMPT, on PostgreSQL's own authority rather
+          -- than by name: an IMMUTABLE function is declared not to access the
+          -- database at all, so it can take no lock and a lock-presence
+          -- assertion over it would assert nothing. provolatile = 'i' is that
+          -- declaration, read from the catalogue, so the exemption cannot be
+          -- claimed by a function that actually reads rows -- one that did would
+          -- have to be stable or volatile to be correct, and would reappear here.
+          and p.provolatile <> 'i'`,
       [[...definedNames]],
     );
     const listed = new Set(LOCK_BEARING_COMMANDS.map(([n, a]) => `${n}(${a})`));
@@ -2867,8 +2884,10 @@ describe("0193 writers do not deadlock the historical lifecycle writers", () => 
     const studio = await seedStudio(label);
     await openRound(studio, 5);
     const service = await adminQuery(
-      `insert into public.services (studio_id, name, default_duration_minutes)
-       values ($1,'Svc',30) returning id`,
+      // ELIGIBLE BY MODALITY. Admission requires a service a new client may
+      // book -- this studio's, active, and a consultation.
+      `insert into public.services (studio_id, name, default_duration_minutes, active, modality)
+       values ($1,'Svc Consultation',30,true,'consultation') returning id`,
       [studio.studioId],
     );
     const mk = async (tag: string) => {
@@ -3206,8 +3225,10 @@ describe("the admission round lock names the open round and nothing else", () =>
     await openRound(studio, 5);
 
     const service = await adminQuery(
-      `insert into public.services (studio_id, name, default_duration_minutes)
-       values ($1,'Svc',30) returning id`,
+      // ELIGIBLE BY MODALITY. Admission requires a service a new client may
+      // book -- this studio's, active, and a consultation.
+      `insert into public.services (studio_id, name, default_duration_minutes, active, modality)
+       values ($1,'Svc Consultation',30,true,'consultation') returning id`,
       [studio.studioId],
     );
     const entry = await adminQuery(
@@ -3262,8 +3283,10 @@ describe("the admission round lock names the open round and nothing else", () =>
     const open = await openRound(studio, 5);
 
     const service = await adminQuery(
-      `insert into public.services (studio_id, name, default_duration_minutes)
-       values ($1,'Svc',30) returning id`,
+      // ELIGIBLE BY MODALITY. Admission requires a service a new client may
+      // book -- this studio's, active, and a consultation.
+      `insert into public.services (studio_id, name, default_duration_minutes, active, modality)
+       values ($1,'Svc Consultation',30,true,'consultation') returning id`,
       [studio.studioId],
     );
     const entry = await adminQuery(
@@ -3316,8 +3339,10 @@ describe("the admission round lock names the open round and nothing else", () =>
     const studio = await seedStudio("roundrace");
     await openRound(studio, 2);
     const service = await adminQuery(
-      `insert into public.services (studio_id, name, default_duration_minutes)
-       values ($1,'Svc',30) returning id`,
+      // ELIGIBLE BY MODALITY. Admission requires a service a new client may
+      // book -- this studio's, active, and a consultation.
+      `insert into public.services (studio_id, name, default_duration_minutes, active, modality)
+       values ($1,'Svc Consultation',30,true,'consultation') returning id`,
       [studio.studioId],
     );
     const mk = async (tag: string) => {
@@ -3391,5 +3416,311 @@ describe("the admission round lock names the open round and nothing else", () =>
       await redeemer.client.end();
       await admitter.client.end();
     }
+  });
+});
+
+/**
+ * ELIGIBILITY MUST HOLD THROUGH THE ADMISSION'S COMMIT.
+ *
+ * The eligibility read used to be an unlocked `exists`, so the verdict rested on
+ * a snapshot the owner could change before the nested issuer committed:
+ * deactivate the service, or retitle it, and the invitation was minted anyway.
+ *
+ * The read now holds `FOR SHARE` on the service row to commit. The MODE is the
+ * substance of the repair, so the first test here proves the mode that LOOKS
+ * sufficient is not -- otherwise the choice reads as arbitrary.
+ */
+describe("service eligibility is held through admission commit", () => {
+  async function connect(): Promise<{ client: Client; pid: number }> {
+    const client = new Client({ connectionString: resolveLocalDbUrl() });
+    await client.connect();
+    const pid = (await client.query(`select pg_backend_pid() as pid`)).rows[0].pid as number;
+    return { client, pid };
+  }
+
+  async function eligibleScenario(label: string, allowance = 5) {
+    const studio = await seedStudio(label);
+    await openRound(studio, allowance);
+    const svc = await adminQuery(
+      `insert into public.services (studio_id, name, default_duration_minutes, active, modality)
+       values ($1,'Consultation',30,true,'consultation') returning id`,
+      [studio.studioId],
+    );
+    const entry = await adminQuery(
+      `select * from public.create_practitioner_waitlist_entry($1,$2,'P',$3,null,null)`,
+      [studio.studioId, studio.userId, uniqueEmail(label)],
+    );
+    return {
+      studio,
+      serviceId: svc.rows[0].id as string,
+      entryId: entry.rows[0].entry_id as string,
+    };
+  }
+
+  const ADMIT_SQL =
+    `select * from public.admit_new_client_waitlist_entry($1,$2,$3,$4,'2026-10-01','2026-10-31',null,72)`;
+
+  async function expectNoResidue(entryId: string) {
+    const state = await adminQuery(
+      `select e.status, e.claimed_at, e.claimed_by_practitioner_id, e.invited_at,
+              (select count(*)::int from public.new_client_waitlist_invitations i
+                where i.entry_id = e.id) as invitations,
+              (select public.waitlist_admission_round_consumed(r.id)
+                 from public.studio_waitlist_admission_rounds r
+                where r.studio_id = e.studio_id and r.closed_at is null) as consumed
+         from public.new_client_waitlist_entries e where e.id = $1`,
+      [entryId],
+    );
+    const row = state.rows[0];
+    expect(row.status).toBe("waiting");
+    expect(row.claimed_at, "no partial claim may survive").toBeNull();
+    expect(row.claimed_by_practitioner_id).toBeNull();
+    expect(row.invited_at).toBeNull();
+    expect(Number(row.invitations)).toBe(0);
+    expect(Number(row.consumed)).toBe(0);
+  }
+
+  it("FOR KEY SHARE would NOT protect the eligibility columns, and FOR SHARE does", async () => {
+    // WHY THE MODE IS NOT ARBITRARY. `active`, `modality` and `name` are NON-KEY
+    // columns, so an ordinary UPDATE of them requests FOR NO KEY UPDATE -- which
+    // FOR KEY SHARE does not conflict with. A lock on the service's KEY protects
+    // nothing this predicate reads, and it is the mode a reader reaching for
+    // "the lightest thing that sounds safe" would pick.
+    const { serviceId } = await eligibleScenario("lockmode");
+    const holder = await connect();
+    const writer = await connect();
+    try {
+      await holder.client.query("begin");
+      await holder.client.query(
+        `select 1 from public.services where id = $1 for key share`,
+        [serviceId],
+      );
+
+      // The update sails straight past a KEY SHARE holder.
+      await writer.client.query("begin");
+      await writer.client.query("set local statement_timeout = '4s'");
+      const underKeyShare = await writer.client
+        .query(`update public.services set active = false where id = $1`, [serviceId])
+        .then(() => ({ ok: true as const }))
+        .catch((e: { code?: string }) => ({ ok: false as const, code: e.code }));
+      expect(
+        underKeyShare.ok,
+        "FOR KEY SHARE must NOT block a non-key UPDATE -- that is the trap",
+      ).toBe(true);
+      await writer.client.query("rollback");
+      await holder.client.query("rollback");
+
+      // FOR SHARE does block it.
+      await holder.client.query("begin");
+      await holder.client.query(
+        `select 1 from public.services where id = $1 for share`,
+        [serviceId],
+      );
+      await writer.client.query("begin");
+      await writer.client.query("set local statement_timeout = '4s'");
+      const underShare = await writer.client
+        .query(`update public.services set active = false where id = $1`, [serviceId])
+        .then(() => ({ ok: true as const }))
+        .catch((e: { code?: string }) => ({ ok: false as const, code: e.code }));
+      expect(underShare.ok, "FOR SHARE must block the eligibility UPDATE").toBe(false);
+      expect(!underShare.ok && underShare.code, "blocked on the lock, not something else").toBe(
+        "57014",
+      );
+    } finally {
+      await holder.client.query("rollback").catch(() => undefined);
+      await writer.client.query("rollback").catch(() => undefined);
+      await holder.client.end();
+      await writer.client.end();
+    }
+  });
+
+  it("FOR SHARE still admits the FK key-share an ordinary booking needs", async () => {
+    // The other half of the mode choice: holding this lock must not stall
+    // unrelated work. An appointment referencing the service requests FOR KEY
+    // SHARE on it, which FOR SHARE permits.
+    const { studio, serviceId } = await eligibleScenario("lockmode-fk");
+    const holder = await connect();
+    const booker = await connect();
+    try {
+      await holder.client.query("begin");
+      await holder.client.query(
+        `select 1 from public.services where id = $1 for share`,
+        [serviceId],
+      );
+
+      await booker.client.query("begin");
+      await booker.client.query("set local statement_timeout = '4s'");
+      const booked = await booker.client
+        .query(
+          `insert into public.appointments
+             (studio_id, client_id, service_id, starts_at, ends_at,
+              duration_minutes, buffer_minutes_snapshot, blocked_ends_at, status)
+           values ($1,$2,$3,
+                   now() + interval '1 day', now() + interval '1 day 30 minutes',
+                   30, 0, now() + interval '1 day 30 minutes', 'confirmed')
+           returning id`,
+          [studio.studioId, studio.clientId, serviceId],
+        )
+        .then(() => ({ ok: true as const }))
+        .catch((e: { code?: string; message?: string }) => ({ ok: false as const, code: e.code, message: e.message }));
+      expect(
+        booked.ok,
+        `an FK key-share must not be blocked (${!booked.ok ? `${booked.code}: ${booked.message}` : ""})`,
+      ).toBe(true);
+      await booker.client.query("rollback");
+    } finally {
+      await holder.client.query("rollback").catch(() => undefined);
+      await booker.client.query("rollback").catch(() => undefined);
+      await holder.client.end();
+      await booker.client.end();
+    }
+  });
+
+  it("UPDATE FIRST: admission waits, then refuses against the committed new state", async () => {
+    // PROOF 1. The owner's change is in flight and uncommitted when admission
+    // arrives. Admission must not mint on the old eligible snapshot; it must
+    // wait, see the committed change, and refuse.
+    const { studio, serviceId, entryId } = await eligibleScenario("interleave-update-first");
+    const updater = await connect();
+    const admitter = await connect();
+    try {
+      await updater.client.query("begin");
+      await updater.client.query(
+        `update public.services set active = false where id = $1`,
+        [serviceId],
+      );
+
+      const admitting = admitter.client
+        .query(ADMIT_SQL, [studio.studioId, studio.userId, entryId, serviceId])
+        .then((r) => r.rows[0].result as string);
+
+      // Observed parked on the lock, not guessed by a timer. Captured rather
+      // than asserted FIRST, so that when the protection is absent this test
+      // reports the unsafe MINT rather than merely "it did not wait" -- the
+      // outcome is the defect, the wait is only how it is prevented.
+      const parked = await waitUntilBlocked(admitter.pid);
+
+      await updater.client.query("commit");
+
+      expect(
+        await admitting,
+        "admission must refuse against the COMMITTED state, not the snapshot it first saw",
+      ).toBe("invalid_service");
+      await expectNoResidue(entryId);
+      expect(parked, "and it must have parked on the in-flight update to do so").not.toBeNull();
+    } finally {
+      await updater.client.query("rollback").catch(() => undefined);
+      await updater.client.end();
+      await admitter.client.end();
+    }
+  });
+
+  it("UPDATE FIRST, rolled back: admission proceeds on the state that actually stands", async () => {
+    // The converse, so the test above is not passing merely because admission
+    // refuses whenever it had to wait.
+    const { studio, serviceId, entryId } = await eligibleScenario("interleave-rollback");
+    const updater = await connect();
+    const admitter = await connect();
+    try {
+      await updater.client.query("begin");
+      await updater.client.query(
+        `update public.services set active = false where id = $1`,
+        [serviceId],
+      );
+      const admitting = admitter.client
+        .query(ADMIT_SQL, [studio.studioId, studio.userId, entryId, serviceId])
+        .then((r) => r.rows[0].result as string);
+      const parked = await waitUntilBlocked(admitter.pid);
+
+      await updater.client.query("rollback");
+
+      expect(await admitting, "the service is still eligible, so admission proceeds").toBe(
+        "admitted",
+      );
+      // The outcome is the same either way here, so the WAIT is what this case
+      // adds: admission reached the contested path rather than racing past it.
+      expect(parked, "admission must have contended for the service row").not.toBeNull();
+    } finally {
+      await updater.client.query("rollback").catch(() => undefined);
+      await updater.client.end();
+      await admitter.client.end();
+    }
+  });
+
+  it("ADMISSION FIRST: an eligibility UPDATE cannot complete while admission is open", async () => {
+    // PROOF 2. The protection is held to COMMIT, not merely taken. While the
+    // admission transaction is open the owner's change waits; once it ends, the
+    // change proceeds.
+    const { studio, serviceId, entryId } = await eligibleScenario("interleave-admit-first");
+    const admitter = await connect();
+    const updater = await connect();
+    try {
+      await admitter.client.query("begin");
+      const res = await admitter.client.query(ADMIT_SQL, [
+        studio.studioId, studio.userId, entryId, serviceId,
+      ]);
+      expect(res.rows[0].result).toBe("admitted");
+
+      const updating = updater.client
+        .query("begin")
+        .then(() =>
+          updater.client.query(`update public.services set active = false where id = $1`, [
+            serviceId,
+          ]),
+        )
+        .then(() => ({ ok: true as const }))
+        .catch((e: { code?: string }) => ({ ok: false as const, code: e.code }));
+
+      expect(
+        await waitUntilBlocked(updater.pid),
+        "the eligibility update must park while the admission transaction is open",
+      ).not.toBeNull();
+
+      await admitter.client.query("commit");
+
+      // And once admission has ended, the owner is not stuck.
+      expect((await updating).ok, "the update proceeds after admission commits").toBe(true);
+      await updater.client.query("commit");
+
+      // The invitation the admission minted is real and still there. This test
+      // makes no claim about service changes AFTER commit -- that is a separate
+      // lifecycle question and is deliberately not asserted here.
+      const live = await adminQuery(
+        `select count(*)::int as n from public.new_client_waitlist_invitations where entry_id = $1`,
+        [entryId],
+      );
+      expect(Number(live.rows[0].n)).toBe(1);
+    } finally {
+      await admitter.client.query("rollback").catch(() => undefined);
+      await updater.client.query("rollback").catch(() => undefined);
+      await admitter.client.end();
+      await updater.client.end();
+    }
+  });
+
+  it("ADMISSION FIRST, refused: the lock is released and the update proceeds", async () => {
+    // A refusal must not strand the owner either. The service here is ineligible
+    // from the start, so admission refuses while holding the lock only briefly.
+    const studio = await seedStudio("interleave-refused");
+    await openRound(studio, 5);
+    const svc = await adminQuery(
+      `insert into public.services (studio_id, name, default_duration_minutes, active, modality)
+       values ($1,'Laser',30,true,'treatment') returning id`,
+      [studio.studioId],
+    );
+    const entry = await adminQuery(
+      `select * from public.create_practitioner_waitlist_entry($1,$2,'P',$3,null,null)`,
+      [studio.studioId, studio.userId, uniqueEmail("interleave-refused")],
+    );
+    const res = await adminQuery(ADMIT_SQL, [
+      studio.studioId, studio.userId, entry.rows[0].entry_id, svc.rows[0].id,
+    ]);
+    expect(res.rows[0].result).toBe("invalid_service");
+    const after = await adminQuery(
+      `update public.services set modality = 'consultation' where id = $1 returning modality`,
+      [svc.rows[0].id],
+    );
+    expect(after.rows[0].modality).toBe("consultation");
+    await expectNoResidue(entry.rows[0].entry_id);
   });
 });
