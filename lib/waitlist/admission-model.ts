@@ -102,7 +102,7 @@ export const STATUS_MEANING: Record<WaitlistEntryStatus, string> = {
   claimed: "Ready for an invitation. Nothing has been sent to them yet.",
   // For an `invited` entry the page may know MORE than the status does — see
   // `statusMeaning` below. This sentence is only the no-context default.
-  invited: "An invitation is out.",
+  invited: "An invitation has been created for them.",
   converted: "They booked. This entry is closed.",
   expired: "The invitation ran out before it was used.",
   released: "Off the waitlist for now. Return them to it to put them back in line.",
@@ -375,9 +375,15 @@ export function actionAvailability(
 /**
  * The status sentence, refined by whatever the caller actually knows.
  *
+ * NONE OF THESE SENTENCES MAY CLAIM AN EMAIL ARRIVED. "An invitation is out"
+ * read as "it went out to them", and whether a provider accepted the message is
+ * not recorded on the row — so after any refresh the surface would be asserting
+ * something it can no longer check. These describe the INVITATION LIFECYCLE,
+ * which the row does prove.
+ *
  * `redeem_new_client_waitlist_invitation` stamps the invitation and LEAVES the
  * entry at `invited` until a conversion is recorded, so a status-only sentence
- * says "an invitation is out and has not yet been used" while the page's own
+ * describes a live invitation while the page's own
  * controls have already recognised it as used. Where the invitation facts are
  * loaded, the description has to agree with them — a surface that contradicts
  * its own buttons teaches an operator to distrust both.
@@ -388,7 +394,7 @@ export function statusMeaning(
 ): string {
   if (status === "invited") {
     if (context.invitationFactsUnknown) {
-      return "An invitation is out. Its current state could not be checked just now.";
+      return "An invitation exists. Its current state could not be checked just now.";
     }
     if (context.invitationRedeemed) {
       return "The invitation has been used. This entry stays here until the booking is recorded.";
@@ -396,7 +402,7 @@ export function statusMeaning(
     if (context.invitationElapsed) {
       return "The invitation ran out and has not been recorded as expired yet.";
     }
-    return "An invitation is out and has not yet been used.";
+    return "Their invitation is active and has not been used yet.";
   }
   return STATUS_MEANING[status];
 }
