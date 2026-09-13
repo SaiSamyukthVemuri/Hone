@@ -1,0 +1,1892 @@
+-- ===========================================================================
+-- WAIT-ADMIT-01 — PROSPECT PREFERENCE vs STUDIO ADMISSION POLICY — 0193
+-- ===========================================================================
+--
+-- WHAT THIS ADDS. Three things a studio needs before it can admit from its
+-- waitlist deliberately rather than in arrival order: what days a prospect can
+-- actually attend, where each entry came from, and how the studio wants its
+-- queue ranked.
+--
+-- ---------------------------------------------------------------------------
+-- THE PRIVILEGE SPLIT IS THE POINT OF THIS FILE
+-- ---------------------------------------------------------------------------
+--
+-- Two authorities that must never be one:
+--
+--   PROSPECT PREFERENCE   the prospect's own answer about when they can come.
+--                         Updated by them (through an expiring token) or by a
+--                         practitioner relaying a phone call. It is an answer,
+--                         never an admission decision.
+--
+--   ADMISSION POLICY      how the studio ranks its queue and how many it
+--                         invites. OWNER-ONLY, for read as well as write.
+--
+-- They are separate tables with separate commands, so no single write path
+-- spans them: a fault in the prospect path cannot reach ranking policy, and a
+-- prospect holding a valid token cannot influence their own position.
+--
+-- WHY ADMISSION POLICY IS NOT A COLUMN ON `studios`. It was, in an earlier
+-- draft, and that was disproved. ALTER DEFAULT PRIVILEGES grants anon,
+-- authenticated AND service_role full DML (arwdDxtm) on every new table in
+-- `public`, so `studios` carries UPDATE for anon and authenticated across all
+-- 47 of its columns with no granting statement anywhere in the migrations --
+-- the default did it. That grant cannot be narrowed per column: `REVOKE UPDATE
+-- (col)` succeeds and changes nothing, and an RLS policy authorises a ROW, not
+-- a column. So on `studios` there is NO mechanism able to say "owners may edit
+-- the studio, but admission policy needs a command".
+--
+-- An ordinary member cannot write `studios` today -- is_studio_owner requires
+-- role='owner' AND active -- so this was never a live hole. The defect is that
+-- the design could not STRUCTURALLY prevent one: a future permissive UPDATE
+-- policy added to `studios` for any unrelated reason would admit members to
+-- admission policy in the same statement. WAIT-03B/B1 found this first for its
+-- own allowance column and moved it to its own table; this file does the same.
+--
+-- EVERY NEW OBJECT HERE STRIPS ITS CREATE-TIME DEFAULTS EXPLICITLY. Nothing
+-- below relies on what PostgreSQL or Supabase grants on creation. See the
+-- PRIVILEGES section: `revoke all` from all four grantees on every table, then
+-- a POSITIVE COLUMN LIST for the one role that needs to read.
+--
+-- ---------------------------------------------------------------------------
+-- WHAT THIS FILE DOES NOT DO
+-- ---------------------------------------------------------------------------
+--
+--   * It does NOT create public.studio_waitlist_admission_rounds. That table
+--     belongs to WAIT-03B/B1, which has since landed it as a DURABLE LEDGER:
+--     one row per round, keyed by `id`, opened and closed through 0192's own
+--     commands, with at most one open row per studio. This file adds only
+--     standing configuration (invite_batch_default / invite_batch_max), which
+--     are DEFAULTS AND BOUNDS for a recommendation and never permission to
+--     admit. B1's per-round allowance IS the tighter authority, and this file
+--     defers to it rather than re-deriving it: the admission command locks the
+--     open round and lets issue_scoped_ return round_full.
+--   * It does NOT relax `name`. An email-only legacy row still needs a real
+--     name from the operator; there is no name_provenance column and no
+--     placeholder path.
+--   * It creates no appointment, sends nothing, and admits nobody. Every
+--     command here records or authorises; none of them books.
+--   * It does not touch the repo-wide default-grant weakness beyond its own
+--     objects. That is a separate finding with its own ticket.
+--
+-- Re-runnable: create-if-not-exists / drop-if-exists throughout.
+
+-- ---------------------------------------------------------------------------
+-- LOCK DISCIPLINE FOR ANYONE ADDING A COMMAND HERE
+-- ---------------------------------------------------------------------------
+--
+--   Take `studios ... for no key update` FIRST -- before any write, any row
+--   lock, and any call to a command that writes.
+--
+-- WHY AT ALL. Writing any table with a `studios` foreign key takes an FK KEY
+-- SHARE lock on studios whether you ask for one or not. Without an explicit
+-- lock the order is decided by whichever statement runs last, and a command
+-- that holds an entry and then reaches for the studio deadlocks against 0192's
+-- issuer, which holds the studio and waits for the entry.
+--
+-- THE TRAP: A COMMAND CAN REACH `studios` WITHOUT NAMING IT.
+--   * writing new_client_waitlist_entries fires 0185's record_event trigger,
+--     which inserts into new_client_waitlist_entry_events -- its own studios FK;
+--   * a command that only DELEGATES still reaches everything its callees do.
+--     admit_ writes nothing directly and needs the lock all the same.
+--
+-- WHY `no key update` AND NOT `for update`. FOR UPDATE conflicts with KEY
+-- SHARE, so a studio-first FOR UPDATE moves the cycle rather than closing it:
+-- the 0185/0188 lifecycle writers hold an entry and then request KEY SHARE
+-- through that same trigger. Measured against this database:
+--
+--     held FOR UPDATE        + requested KEY SHARE      -> BLOCKS
+--     held FOR NO KEY UPDATE + requested KEY SHARE      -> compatible
+--     held FOR NO KEY UPDATE + requested NO KEY UPDATE  -> BLOCKS
+--
+-- so NO KEY UPDATE still serialises cooperating writers here while letting an
+-- FK check through.
+--
+-- HOW IT IS ENFORCED, AND HOW IT IS NOT. A static audit of this rule was built
+-- twice and abandoned: review found eleven holes in it, because deciding what a
+-- PL/pgSQL body can write is unbounded once dynamic SQL exists. The rule is
+-- proved instead by the deadlock and serialisation races in
+-- tests/db/waitlist-admission-authority.db.test.ts, which no syntax can evade.
+-- One static assertion remains, for the one spelling that silently reopens the
+-- cycle: no `for update` on studios.
+-- ---------------------------------------------------------------------------
+
+begin;
+set local lock_timeout = '5s';
+
+-- ===========================================================================
+-- UNIT A — ENTRY ORIGIN AND PROVENANCE
+-- ===========================================================================
+--
+-- SAFE AS COLUMNS ON THE EXISTING TABLE, and the reason is specific rather
+-- than assumed: 0185 already stripped this table's create-time defaults, so it
+-- holds exactly `authenticated SELECT` and nothing else. A new column inherits
+-- that SELECT (the operator queue needs to read it) and inherits NO write
+-- grant. The `studios` hazard does not reach here.
+--
+-- STANDING RULE: never take a TABLE-level UPDATE grant on this table. While it
+-- holds none, a future column can still be made writable with a COLUMN-level
+-- grant; once a table-level grant exists that door cannot be shut again.
+
+alter table public.new_client_waitlist_entries
+  add column if not exists created_by_practitioner_id uuid,
+  add column if not exists joined_at_provenance       text not null default 'form';
+
+-- SOURCE. Was CHECK (source = 'public_booking') -- single-valued, and the one
+-- line that made a practitioner-created entry and a legacy import structurally
+-- impossible.
+alter table public.new_client_waitlist_entries
+  drop constraint if exists new_client_waitlist_entries_source_check;
+alter table public.new_client_waitlist_entries
+  add constraint new_client_waitlist_entries_source_check
+  check (source in ('public_booking', 'practitioner', 'legacy_import'));
+
+-- PROVENANCE OF `joined_at`.
+--   'form'              the public form stamped it as it happened. Strongest.
+--   'operator_supplied' a human asserted it from their records. Weaker: the
+--                       difference between an observation and a recollection.
+--   'unknown'           nobody has a date. `joined_at` then holds the import
+--                       instant and is a QUEUE ANCHOR ONLY.
+--
+-- THE DEFAULT 'form' FABRICATES NOTHING, and the constraint replaced above is
+-- the proof: every existing row satisfied source = 'public_booking', so every
+-- existing row demonstrably arrived through the public form. That is a verified
+-- fact about the current data, not an assumption about it.
+alter table public.new_client_waitlist_entries
+  drop constraint if exists new_client_waitlist_entries_joined_at_provenance_check;
+alter table public.new_client_waitlist_entries
+  add constraint new_client_waitlist_entries_joined_at_provenance_check
+  check (joined_at_provenance in ('form', 'operator_supplied', 'unknown'));
+
+-- ONLY THE FORM MAY CLAIM 'form'. Without this the column stops meaning
+-- anything: an import could write 'form' and a recollection would be
+-- indistinguishable from an observation, which is the exact confusion the
+-- column exists to prevent.
+alter table public.new_client_waitlist_entries
+  drop constraint if exists new_client_waitlist_entries_provenance_source_check;
+alter table public.new_client_waitlist_entries
+  add constraint new_client_waitlist_entries_provenance_source_check
+  check (
+    (source = 'public_booking' and joined_at_provenance = 'form')
+    or
+    (source <> 'public_booking' and joined_at_provenance in ('operator_supplied', 'unknown'))
+  );
+
+-- STRUCTURAL TENANCY. Composite (id, studio_id) foreign key, exactly like the
+-- three actor columns 0185 already carries: a practitioner from another studio
+-- cannot be referenced even if a policy or a command were wrong.
+alter table public.new_client_waitlist_entries
+  drop constraint if exists new_client_waitlist_entries_created_by_same_studio_fk;
+alter table public.new_client_waitlist_entries
+  add constraint new_client_waitlist_entries_created_by_same_studio_fk
+  foreign key (created_by_practitioner_id, studio_id)
+  references public.practitioners (id, studio_id) on delete restrict;
+
+-- An operator-originated entry NAMES the operator; a public one must not,
+-- because nobody at the studio created it. Both directions.
+alter table public.new_client_waitlist_entries
+  drop constraint if exists new_client_waitlist_entries_created_by_evidence_check;
+alter table public.new_client_waitlist_entries
+  add constraint new_client_waitlist_entries_created_by_evidence_check
+  check (
+    (source = 'public_booking' and created_by_practitioner_id is null)
+    or
+    (source <> 'public_booking' and created_by_practitioner_id is not null)
+  );
+
+-- ===========================================================================
+-- UNIT B — PROSPECT PREFERENCE
+-- ===========================================================================
+--
+-- NOT STATED IS THE ABSENCE OF A ROW. That is why this is a table and not four
+-- columns: every column here can then be NOT NULL, and "we never asked" becomes
+-- structurally unforgeable rather than enforced by a four-way CHECK that a
+-- later migration could weaken. It also contains the write surface -- a command
+-- scoped to this table cannot touch status, claimed_at or invited_at.
+create table if not exists public.new_client_waitlist_entry_preferences (
+  entry_id     uuid primary key,
+  studio_id    uuid not null,
+  preference   text not null,
+  -- TWO TIMESTAMPS, NOT ONE, AND THIS IS THE PART MOST LIKELY TO BE
+  -- "SIMPLIFIED" LATER. stated_at is when the VALUE was last set or changed;
+  -- confirmed_at is when it was last AFFIRMED, changed or not. Collapse them
+  -- and you must choose which truth to lose: move one column on
+  -- re-confirmation and the history of the value is destroyed (a preference
+  -- held for eight months looks like one set last week); do not move it and the
+  -- preference ages out while the person is actively telling you it still
+  -- holds, so the studio re-asks someone who answered last week.
+  stated_at    timestamptz not null,
+  confirmed_at timestamptz not null,
+  source       text not null,
+  recorded_by_practitioner_id uuid,
+
+  constraint new_client_waitlist_entry_preferences_preference_check
+    check (preference in ('weekdays', 'weekends', 'both')),
+  constraint new_client_waitlist_entry_preferences_source_check
+    check (source in ('public_form', 'practitioner', 'prospect_link')),
+  -- Setting a value IS confirming it, so a fresh statement seeds both to the
+  -- same instant. A confirmation predating the value it confirms describes a
+  -- write ordering nobody intended.
+  constraint new_client_waitlist_entry_preferences_order_check
+    check (confirmed_at >= stated_at),
+  -- Only a practitioner-recorded preference names a practitioner. Both
+  -- directions, so a token-authenticated answer cannot be attributed to a
+  -- human who was not involved.
+  constraint new_client_waitlist_entry_preferences_recorder_check
+    check (
+      (source = 'practitioner' and recorded_by_practitioner_id is not null)
+      or
+      (source <> 'practitioner' and recorded_by_practitioner_id is null)
+    ),
+  constraint new_client_waitlist_entry_preferences_entry_same_studio_fk
+    foreign key (entry_id, studio_id)
+    references public.new_client_waitlist_entries (id, studio_id) on delete cascade,
+  constraint new_client_waitlist_entry_preferences_recorder_same_studio_fk
+    foreign key (recorded_by_practitioner_id, studio_id)
+    references public.practitioners (id, studio_id) on delete restrict
+);
+
+-- ---------------------------------------------------------------------------
+-- PREFERENCE-UPDATE GRANTS
+-- ---------------------------------------------------------------------------
+--
+-- A SEPARATE TABLE FROM new_client_waitlist_invitations, deliberately. That
+-- table's cycle-evidence CHECK requires claimed_at, claimed_by_practitioner_id
+-- and invited_at for status 'invited', so issuing one drags a waiting prospect
+-- through claim -> invite. Asking someone which days suit them is not an offer
+-- of an appointment, and reusing the invitation would consume an admission
+-- allowance to ask a question.
+create table if not exists public.new_client_waitlist_preference_grants (
+  id                        uuid primary key default gen_random_uuid(),
+  studio_id                 uuid not null references public.studios (id) on delete cascade,
+  entry_id                  uuid not null,
+  -- The raw token exists only in the single return value of the issue command
+  -- and is stored nowhere. Same shape as 0188's invitation verifier.
+  token_hash                text not null,
+  issued_at                 timestamptz not null default now(),
+  expires_at                timestamptz not null,
+  issued_by_practitioner_id uuid not null,
+  redeemed_at               timestamptz,
+  revoked_at                timestamptz,
+
+  constraint new_client_waitlist_preference_grants_token_hash_check
+    check (token_hash ~ '^[a-f0-9]{64}$'),
+  constraint new_client_waitlist_preference_grants_ttl_check
+    check (expires_at > issued_at),
+  -- Redeemed and revoked are both terminal and mutually exclusive.
+  constraint new_client_waitlist_preference_grants_terminal_outcome_check
+    check (redeemed_at is null or revoked_at is null),
+  constraint new_client_waitlist_preference_grants_entry_same_studio_fk
+    foreign key (entry_id, studio_id)
+    references public.new_client_waitlist_entries (id, studio_id) on delete cascade,
+  constraint new_client_waitlist_preference_grants_issuer_same_studio_fk
+    foreign key (issued_by_practitioner_id, studio_id)
+    references public.practitioners (id, studio_id) on delete restrict
+);
+
+create unique index if not exists new_client_waitlist_preference_grants_token_hash_uniq
+  on public.new_client_waitlist_preference_grants (token_hash);
+
+-- AT MOST ONE LIVE GRANT PER ENTRY. Two outstanding links means two people can
+-- answer the same question and the later answer silently wins.
+create unique index if not exists new_client_waitlist_preference_grants_one_live_per_entry
+  on public.new_client_waitlist_preference_grants (entry_id)
+  where redeemed_at is null and revoked_at is null;
+
+-- ===========================================================================
+-- UNIT C — STUDIO ADMISSION POLICY  (OWNER-ONLY)
+-- ===========================================================================
+--
+-- NO ROW = FIFO ordering and no configured batch = today's exact behaviour, so
+-- applying this file changes nothing for any studio until an owner configures
+-- one. Same "absence is the default" shape B1 uses for its allowance.
+create table if not exists public.studio_waitlist_admission_policy (
+  studio_id            uuid primary key references public.studios (id) on delete cascade,
+  -- STORAGE, NEVER A TYPE. Every parse rule lives in lib/waitlist/policy.ts,
+  -- where ABSENT means FIFO and MALFORMED means refuse -- kept distinct so a
+  -- corrupt document cannot silently reorder a queue while the operator
+  -- believes their policy is running.
+  ranking_policy       jsonb not null,
+  -- ADMISSION-ROUND SUPPORT. Defaults and BOUNDS for a recommendation, never
+  -- permission to admit. B1's per-round allowance, when it lands, is the
+  -- tighter authority and this never overrides it.
+  invite_batch_default integer not null,
+  invite_batch_max     integer not null,
+  updated_at           timestamptz not null default now(),
+  updated_by_practitioner_id uuid not null,
+
+  constraint studio_waitlist_admission_policy_batch_default_check
+    check (invite_batch_default >= 0),
+  constraint studio_waitlist_admission_policy_batch_max_check
+    check (invite_batch_max >= invite_batch_default),
+  -- The same 1..100 ceiling the existing FIFO claim enforces, so a policy
+  -- cannot authorise a batch the claim command would refuse anyway.
+  constraint studio_waitlist_admission_policy_batch_ceiling_check
+    check (invite_batch_max <= 100),
+  constraint studio_waitlist_admission_policy_updater_same_studio_fk
+    foreign key (updated_by_practitioner_id, studio_id)
+    references public.practitioners (id, studio_id) on delete restrict
+);
+
+-- ===========================================================================
+-- ROW LEVEL SECURITY
+-- ===========================================================================
+--
+-- SELECT-ONLY policies, role-scoped TO authenticated, matching the two policies
+-- 0185 already carries. No insert/update/delete policy on any table here: every
+-- write goes through a SECURITY DEFINER command, which re-derives authority in
+-- the database from (studio_id, auth user id) and never takes a role from a
+-- request body.
+alter table public.new_client_waitlist_entry_preferences enable row level security;
+alter table public.new_client_waitlist_preference_grants enable row level security;
+alter table public.studio_waitlist_admission_policy enable row level security;
+
+drop policy if exists "new_client_waitlist_entry_preferences_owner_select"
+  on public.new_client_waitlist_entry_preferences;
+create policy "new_client_waitlist_entry_preferences_owner_select"
+  on public.new_client_waitlist_entry_preferences
+  for select to authenticated
+  using (public.is_studio_owner(studio_id));
+
+drop policy if exists "new_client_waitlist_preference_grants_owner_select"
+  on public.new_client_waitlist_preference_grants;
+create policy "new_client_waitlist_preference_grants_owner_select"
+  on public.new_client_waitlist_preference_grants
+  for select to authenticated
+  using (public.is_studio_owner(studio_id));
+
+-- OWNER-ONLY FOR READ AS WELL AS WRITE. A member has no business reading how
+-- the studio ranks its queue; is_studio_member would have been the broader,
+-- lazier predicate.
+drop policy if exists "studio_waitlist_admission_policy_owner_select"
+  on public.studio_waitlist_admission_policy;
+create policy "studio_waitlist_admission_policy_owner_select"
+  on public.studio_waitlist_admission_policy
+  for select to authenticated
+  using (public.is_studio_owner(studio_id));
+
+-- ===========================================================================
+-- THE SERVER-TIMESTAMP TRIGGER MUST STOP OVERWRITING AN IMPORTED joined_at
+-- ===========================================================================
+--
+-- 0185 installed a BEFORE INSERT trigger that does `new.joined_at := now()`
+-- UNCONDITIONALLY. That is correct and load-bearing for the public form: an
+-- anonymous submitter must not be able to forge an earlier join time and buy
+-- themselves a better queue position. It is left exactly as it was for that
+-- path.
+--
+-- But it would SILENTLY DEFEAT this file's entire provenance model. A legacy
+-- import passing a real join date would have that date discarded and replaced
+-- with today, with no error anywhere -- the precise fabrication
+-- joined_at_provenance exists to prevent, performed by the database itself.
+--
+-- So the rule becomes conditional on the ROW'S OWN SOURCE, which is set in the
+-- same INSERT and constrained by the CHECKs above:
+--
+--   source = 'public_booking'  -> joined_at := now(), exactly as before. The
+--                                 public path cannot supply one.
+--   source <> 'public_booking' -> the caller's joined_at is preserved. Those
+--                                 rows are reachable only through the
+--                                 owner-authorised commands below, which
+--                                 validate the date and require an explicit
+--                                 provenance for it.
+--
+-- updated_at is stamped unconditionally either way; nobody supplies that.
+create or replace function public.new_client_waitlist_entries_server_timestamps()
+returns trigger
+language plpgsql
+security definer
+set search_path = pg_catalog, pg_temp
+as $$
+begin
+  if new.source = 'public_booking' or new.joined_at is null then
+    new.joined_at := now();
+  end if;
+  new.updated_at := now();
+  return new;
+end;
+$$;
+
+-- ===========================================================================
+-- COMMANDS
+-- ===========================================================================
+--
+-- Every one is SECURITY DEFINER, authorises through the existing
+-- new_client_waitlist_resolve_owner (which re-derives membership AND role from
+-- (studio_id, auth user id) and returns 'not_a_member' / 'not_owner'), and is
+-- granted to service_role ALONE. The browser is `anon` on any public path and
+-- `authenticated` on the operator path; neither holds EXECUTE on anything here.
+
+-- ---------------------------------------------------------------------------
+-- COMMAND 1 — create a waitlist entry for a phone call, walk-in or referral
+-- ---------------------------------------------------------------------------
+create or replace function public.create_practitioner_waitlist_entry(
+  p_studio_id     uuid,
+  p_actor_user_id uuid,
+  p_name          text,
+  p_email         text,
+  p_phone         text default null,
+  p_preference    text default null
+)
+returns table (result text, entry_id uuid)
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog, pg_temp
+as $$
+declare
+  v_actor uuid;
+  v_code  text;
+  v_id    uuid;
+  v_now   timestamptz;
+begin
+  select r.practitioner_id, r.code into v_actor, v_code
+    from public.new_client_waitlist_resolve_owner(p_studio_id, p_actor_user_id) r;
+  if v_code <> 'ok' then
+    return query select v_code, null::uuid;
+    return;
+  end if;
+
+  if p_preference is not null
+     and p_preference not in ('weekdays', 'weekends', 'both') then
+    return query select 'invalid_input'::text, null::uuid;
+    return;
+  end if;
+
+  -- CANONICAL LOCK ORDER, STUDIO FIRST. This command writes a table carrying a
+  -- studios FK, so the write takes a KEY SHARE on studios whether or not this
+  -- line exists; taking it explicitly and FIRST is what stops the order being
+  -- decided by whichever statement happens to run last. NO KEY UPDATE, not FOR
+  -- UPDATE, so a concurrent FK check is admitted while cooperating 0193 writers
+  -- still exclude each other. See the audit guard in
+  -- tests/migrations/0193-waitlist-admission-authority.test.ts.
+  perform 1 from public.studios s where s.id = p_studio_id for no key update;
+
+  v_now := clock_timestamp();
+
+  begin
+    insert into public.new_client_waitlist_entries
+      (studio_id, name, email, phone, source, joined_at,
+       joined_at_provenance, created_by_practitioner_id)
+    values
+      (p_studio_id, btrim(p_name), btrim(p_email), nullif(btrim(coalesce(p_phone, '')), ''),
+       'practitioner',
+       -- THE DECISION CLOCK, NOT THE TRANSACTION'S START. Omitting joined_at
+       -- left it NULL, and 0185's trigger then filled it with now() -- which is
+       -- TRANSACTION-START time, fixed for the whole transaction however long it
+       -- ran or waited. A command that opened a transaction, blocked on the
+       -- studio lock, and only then created the entry would be stamped as having
+       -- joined before prospects who actually entered the queue while it waited,
+       -- and joined_at is the queue's ordering key.
+       --
+       -- v_now is the clock this command ALREADY read, once, immediately after
+       -- its lock and before any insert. Reading the clock a second time here
+       -- would let this row and its preference row disagree about when the same
+       -- action happened.
+       --
+       -- The trigger is untouched: it still stamps public_booking unconditionally
+       -- and still fills a NULL joined_at for any other path. This command simply
+       -- stops handing it a NULL. Legacy import already supplies its own
+       -- joined_at for the same reason.
+       v_now,
+       -- The studio took this down as it happened, but it is still a human
+       -- assertion rather than the form's own stamp. 'form' is not available
+       -- to this path and the CHECK enforces that. This timestamp says "the
+       -- studio added this person now", never that the operator knows an older
+       -- historical join date -- that remains the legacy-import path.
+       'operator_supplied', v_actor)
+    returning id into v_id;
+  exception
+    when unique_violation then
+      -- The partial unique index on (studio_id, email_normalized) where status
+      -- in (waiting, claimed, invited). Someone is already in the queue.
+      return query select 'already_waiting'::text, null::uuid;
+      return;
+    when check_violation or not_null_violation then
+      return query select 'invalid_input'::text, null::uuid;
+      return;
+  end;
+
+  if p_preference is not null then
+    insert into public.new_client_waitlist_entry_preferences
+      (entry_id, studio_id, preference, stated_at, confirmed_at,
+       source, recorded_by_practitioner_id)
+    values
+      (v_id, p_studio_id, p_preference, v_now, v_now, 'practitioner', v_actor);
+  end if;
+
+  return query select 'created'::text, v_id;
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- COMMAND 2 — import ONE historical, email-only prospect
+-- ---------------------------------------------------------------------------
+--
+-- THERE IS NO DEFAULTING PATH FOR joined_at, and that is the whole command.
+-- Both the date and its provenance must be supplied explicitly; passing
+-- neither is an error rather than "today". A caller that genuinely has no date
+-- passes provenance 'unknown' AND the import instant, and every reader
+-- downstream must then treat joined_at as a queue anchor, not a duration.
+--
+-- One row per call. No bulk endpoint: a loop the caller controls is auditable,
+-- interruptible, and cannot half-apply a spreadsheet.
+create or replace function public.import_legacy_waitlist_entry(
+  p_studio_id     uuid,
+  p_actor_user_id uuid,
+  p_name          text,
+  p_email         text,
+  p_joined_at     timestamptz,
+  p_provenance    text,
+  p_phone         text default null
+)
+returns table (result text, entry_id uuid)
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog, pg_temp
+as $$
+declare
+  v_actor uuid;
+  v_code  text;
+  v_id    uuid;
+begin
+  select r.practitioner_id, r.code into v_actor, v_code
+    from public.new_client_waitlist_resolve_owner(p_studio_id, p_actor_user_id) r;
+  if v_code <> 'ok' then
+    return query select v_code, null::uuid;
+    return;
+  end if;
+
+  -- 'form' is REFUSED here, not merely absent from the CHECK's reach. An import
+  -- claiming the public form's own timestamp would make a recollection
+  -- indistinguishable from an observation.
+  if p_provenance is null or p_provenance not in ('operator_supplied', 'unknown') then
+    return query select 'invalid_provenance'::text, null::uuid;
+    return;
+  end if;
+  -- 'unknown' MEANS THE CALLER'S DATE IS NOT EVIDENCE, SO IT IS NOT USED.
+  --
+  -- This command's whole purpose is that a join date is never fabricated, and
+  -- it had the inverse hole wide open: with provenance 'unknown' it accepted
+  -- whatever instant the caller passed and only refused FUTURE ones. Measured
+  -- before the repair -- an entry imported as "nobody knows when they joined",
+  -- carrying a caller-supplied date five years back, sorted AHEAD of a genuine
+  -- form joiner in the (joined_at, id) queue. That is queue-position forgery by
+  -- the one command written to prevent date fabrication.
+  --
+  -- Under 'unknown' the row still needs a position, so joined_at is stamped
+  -- from the SERVER clock at import and means only "entered the queue here".
+  -- joined_at_provenance stays 'unknown', so no reader may render it as a wait,
+  -- and nothing the caller sends can move a queue position.
+  if p_provenance = 'operator_supplied' then
+    -- The operator is ASSERTING a real historical date, so it is required and
+    -- validated. This half is unchanged.
+    if p_joined_at is null then
+      return query select 'joined_at_required'::text, null::uuid;
+      return;
+    end if;
+    -- A future join date is not a plausible historical fact and is far more
+    -- likely a mis-parsed day/month order than a real one.
+    if p_joined_at > clock_timestamp() then
+      return query select 'joined_at_in_future'::text, null::uuid;
+      return;
+    end if;
+  end if;
+
+  -- CANONICAL LOCK ORDER, STUDIO FIRST. This command writes a table carrying a
+  -- studios FK, so the write takes a KEY SHARE on studios whether or not this
+  -- line exists; taking it explicitly and FIRST is what stops the order being
+  -- decided by whichever statement happens to run last. NO KEY UPDATE, not FOR
+  -- UPDATE, so a concurrent FK check is admitted while cooperating 0193 writers
+  -- still exclude each other. See the audit guard in
+  -- tests/migrations/0193-waitlist-admission-authority.test.ts.
+  perform 1 from public.studios s where s.id = p_studio_id for no key update;
+
+  begin
+    insert into public.new_client_waitlist_entries
+      (studio_id, name, email, phone, source, joined_at,
+       joined_at_provenance, created_by_practitioner_id)
+    values
+      (p_studio_id, btrim(p_name), btrim(p_email), nullif(btrim(coalesce(p_phone, '')), ''),
+       'legacy_import',
+       -- The server clock for 'unknown'; the operator's asserted date otherwise.
+       case when p_provenance = 'unknown' then clock_timestamp() else p_joined_at end,
+       p_provenance, v_actor)
+    returning id into v_id;
+  exception
+    when unique_violation then
+      return query select 'already_waiting'::text, null::uuid;
+      return;
+    when check_violation or not_null_violation then
+      -- Includes the name CHECK. `name` stays NOT NULL with length >= 1: an
+      -- email-only row must be given a real name by the operator, and there is
+      -- deliberately no placeholder path.
+      return query select 'invalid_input'::text, null::uuid;
+      return;
+  end;
+
+  return query select 'imported'::text, v_id;
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- COMMAND 3 — record a prospect's availability (practitioner relaying it)
+-- ---------------------------------------------------------------------------
+create or replace function public.set_waitlist_entry_availability(
+  p_studio_id     uuid,
+  p_entry_id      uuid,
+  p_actor_user_id uuid,
+  p_preference    text
+)
+returns text
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog, pg_temp
+as $$
+declare
+  v_actor   uuid;
+  v_code    text;
+  v_now     timestamptz;
+  v_current text;
+  v_status  text;
+begin
+  select r.practitioner_id, r.code into v_actor, v_code
+    from public.new_client_waitlist_resolve_owner(p_studio_id, p_actor_user_id) r;
+  if v_code <> 'ok' then return v_code; end if;
+
+  if p_preference is null or p_preference not in ('weekdays', 'weekends', 'both') then
+    return 'invalid_input';
+  end if;
+
+  -- Scoped by BOTH id and studio_id, so a guessed entry id from another tenant
+  -- resolves to nothing rather than to someone else's prospect.
+  --
+  -- LOCKED, NOT MERELY CHECKED. `select ... for update` on the PREFERENCE row
+  -- below locks NOTHING when that row is absent, so two callers setting an
+  -- entry's FIRST preference both saw no row, both took the insert path, and
+  -- the loser raised a bare unique_violation instead of returning a code --
+  -- which 0185 forbids and 0188's requeue repair is the precedent against.
+  -- Reproduced deterministically before it was fixed. The ENTRY row always
+  -- exists, so locking it is a real mutex, and it serialises this path against
+  -- redeem_waitlist_preference_grant, which writes the same preference table.
+  perform 1 from public.studios s where s.id = p_studio_id for no key update;
+
+  select e.status into v_status
+    from public.new_client_waitlist_entries e
+   where e.id = p_entry_id and e.studio_id = p_studio_id
+   for update;
+  if v_status is null then return 'entry_not_found'; end if;
+
+  -- THE THIRD WRITER TO THIS TABLE OBEYS THE SAME TERMINAL RULE AS THE OTHER
+  -- TWO.
+  --
+  -- issue_ refuses to mint a link for a `removed` or `converted` entry and
+  -- redeem_ refuses to honour one. This command writes the SAME preference
+  -- table by a third route, and it read no status at all -- so an operator
+  -- request prepared before the removal, or one that waited behind the terminal
+  -- transition on this very lock, still recorded an availability answer for
+  -- someone who is no longer on the list. Three writers, one table, one rule;
+  -- two out of three is not a rule.
+  --
+  -- Same predicate and same word as issue_waitlist_preference_grant, derived
+  -- the same way: 0188's transition guard gives `removed` and `converted` no
+  -- outgoing edge, while waiting / claimed / invited / expired / released can
+  -- all still move. No new lifecycle state and no second interpretation.
+  --
+  -- Returned BEFORE the clock is read and before the preference row is even
+  -- looked at, so a refusal creates nothing, moves no stated_at or confirmed_at
+  -- and leaves the stored answer byte-identical.
+  if v_status in ('removed', 'converted') then
+    return 'entry_closed';
+  end if;
+
+  -- Read after the locks, for the same reason redeem_ does: this transaction
+  -- can wait on the entry lock, and every timestamp it writes must describe
+  -- when it actually acted.
+  v_now := clock_timestamp();
+
+  select p.preference into v_current
+    from public.new_client_waitlist_entry_preferences p
+   where p.entry_id = p_entry_id
+   for update;
+
+  if v_current is null then
+    insert into public.new_client_waitlist_entry_preferences
+      (entry_id, studio_id, preference, stated_at, confirmed_at,
+       source, recorded_by_practitioner_id)
+    values (p_entry_id, p_studio_id, p_preference, v_now, v_now, 'practitioner', v_actor);
+    return 'stated';
+  end if;
+
+  -- THE CONFIRMATION RULE, and it is the reason there are two timestamps.
+  -- An UNCHANGED answer moves only confirmed_at: trust is refreshed without
+  -- rewriting the history of the value. A CHANGED answer moves both, because a
+  -- different answer is a new statement.
+  if v_current = p_preference then
+    update public.new_client_waitlist_entry_preferences
+       set confirmed_at = v_now,
+           source = 'practitioner',
+           recorded_by_practitioner_id = v_actor
+     where entry_id = p_entry_id;
+    return 'confirmed';
+  end if;
+
+  update public.new_client_waitlist_entry_preferences
+     set preference = p_preference,
+         stated_at = v_now,
+         confirmed_at = v_now,
+         source = 'practitioner',
+         recorded_by_practitioner_id = v_actor
+   where entry_id = p_entry_id;
+  return 'changed';
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- COMMAND 4 — issue a preference-update link for a prospect
+-- ---------------------------------------------------------------------------
+--
+-- The raw token is generated HERE and returned exactly once. Only its hash is
+-- stored, so a database read -- by anyone, including the operator -- cannot
+-- reconstruct a live credential.
+create or replace function public.issue_waitlist_preference_grant(
+  p_studio_id     uuid,
+  p_entry_id      uuid,
+  p_actor_user_id uuid,
+  p_ttl_hours     integer default 168
+)
+returns table (result text, raw_token text, expires_at timestamptz)
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog, pg_temp
+as $$
+declare
+  v_actor   uuid;
+  v_code    text;
+  v_raw     text;
+  v_hash    text;
+  v_ttl     integer := coalesce(p_ttl_hours, 168);
+  v_expires timestamptz;
+  v_status  text;
+  -- ONE authoritative instant for the whole command: retirement, the liveness
+  -- verdict and the new window are all measured against the same clock, so a
+  -- grant cannot be judged expired by one line and live by the next.
+  v_now     timestamptz;
+begin
+  select r.practitioner_id, r.code into v_actor, v_code
+    from public.new_client_waitlist_resolve_owner(p_studio_id, p_actor_user_id) r;
+  if v_code <> 'ok' then
+    return query select v_code, null::text, null::timestamptz;
+    return;
+  end if;
+  if v_ttl < 1 or v_ttl > 720 then
+    return query select 'invalid_input'::text, null::text, null::timestamptz;
+    return;
+  end if;
+
+  -- CANONICAL LOCK ORDER: STUDIO -> ENTRY -> GRANT. Every writer, no exceptions.
+  --
+  -- THE STUDIO LOCK IS NOT DECORATION. Inserting a grant takes an implicit FK
+  -- KEY SHARE lock on `studios`, because the row carries a studio_id reference.
+  -- Locking only the entry therefore gave this command a real order of
+  -- ENTRY -> STUDIO against admission's STUDIO -> ENTRY, which deadlocks.
+  --
+  -- AND THE LOCK *MODE* IS THE SECOND HALF OF THAT, LEARNED THE HARD WAY.
+  -- `for update` conflicts with KEY SHARE, so a studio-first FOR UPDATE simply
+  -- moved the cycle rather than closing it: the pre-existing lifecycle writers
+  -- (claim_/release_/requeue_/remove_, 0185/0188) hold the ENTRY and then their
+  -- status-event trigger inserts into new_client_waitlist_entry_events, whose
+  -- own studio_id FK requests KEY SHARE on studios. That request is blocked by
+  -- a FOR UPDATE held here, while this command waits on the entry they hold:
+  --
+  --     0193 writer:      holds studios FOR UPDATE, waits for the entry
+  --     lifecycle writer: holds the entry, waits for studios KEY SHARE
+  --
+  -- `for no key update` is the narrow, compatible strategy. Measured against
+  -- this database rather than assumed:
+  --
+  --     held FOR UPDATE        + requested KEY SHARE       -> BLOCKS
+  --     held FOR NO KEY UPDATE + requested KEY SHARE       -> compatible
+  --     held FOR NO KEY UPDATE + requested NO KEY UPDATE   -> BLOCKS
+  --
+  -- So it still serialises cooperating 0193 writers against each other -- the
+  -- property the studio lock exists for -- while letting an FK check through.
+  -- Nothing here mutates the studio row or its key, so NO KEY UPDATE is also
+  -- the honest description of what this command does to it. No FK is weakened
+  -- and no historical lifecycle writer had to be edited.
+  --
+  -- The ENTRY lock below is what serialises the grant lifecycle itself: the
+  -- entry row always exists, so it is a real mutex where a lock on an absent
+  -- grant or preference row is not.
+  perform 1 from public.studios s where s.id = p_studio_id for no key update;
+  if not found then
+    return query select 'entry_not_found'::text, null::text, null::timestamptz;
+    return;
+  end if;
+
+  -- THE ENTRY'S STATUS IS READ UNDER ITS OWN LOCK, not merely alongside it, so
+  -- the lifecycle this decision rests on cannot move underneath it. Same shape
+  -- as admit_'s step 3.
+  select e.status into v_status
+    from public.new_client_waitlist_entries e
+   where e.id = p_entry_id and e.studio_id = p_studio_id
+   for update;
+  if v_status is null then
+    return query select 'entry_not_found'::text, null::text, null::timestamptz;
+    return;
+  end if;
+
+  -- A TERMINAL ENTRY GETS NO LINK, FOR THE SAME REASON REDEMPTION REFUSES ONE.
+  --
+  -- redeem_ now requires `status not in ('removed','converted')`, so a token
+  -- minted for a terminal entry is unusable from the instant it is created.
+  -- Issuing one anyway is worse than useless: the raw token is returned exactly
+  -- once and the row takes the ONE-LIVE-GRANT slot, so the operator is handed a
+  -- dead credential AND the entry's only grant seat is occupied by it. The two
+  -- commands must share one rule or the pair is incoherent.
+  --
+  -- Same derivation as redemption: 0188's transition guard gives `removed` and
+  -- `converted` no outgoing edge, while waiting / claimed / invited / expired /
+  -- released can all still move, so those prospects stay on the list and a link
+  -- to them is still worth issuing. NO NEW LIFECYCLE STATE, and no column.
+  --
+  -- `entry_closed` rather than a borrowed word: `entry_not_found` would be a
+  -- lie to an owner looking straight at the entry, and admit_'s
+  -- `not_admissible` names a DIFFERENT set -- it also excludes invited, expired
+  -- and released, which are perfectly issuable here. One word for two sets is
+  -- how a vocabulary stops meaning anything. This is a result code, not a
+  -- status: the lifecycle vocabulary is untouched.
+  --
+  -- Returned BEFORE any mutation, so a refusal retires nothing, writes no row
+  -- and consumes no slot.
+  if v_status in ('removed', 'converted') then
+    return query select 'entry_closed'::text, null::text, null::timestamptz;
+    return;
+  end if;
+
+  v_now := clock_timestamp();
+
+  -- RETIRE AN EXPIRED LINK BEFORE ISSUING A REPLACEMENT.
+  --
+  -- The one-live-grant index keys on redeemed_at/revoked_at ONLY, so an EXPIRED
+  -- grant still occupies the slot while redemption already refuses it. Without
+  -- this, the first expiry made the entry permanently un-issuable: every later
+  -- issue returned `grant_already_live`, and the owner's only exit was a
+  -- separate revoke of a link that was already dead. Reproduced before it was
+  -- fixed; expiry is now self-healing and costs the operator nothing.
+  --
+  -- NO ENTRY LOCK IS TAKEN HERE, DELIBERATELY. Locking the entry would give
+  -- this command an entry -> grant order while redeem_ holds grant -> entry,
+  -- and that inversion is a deadlock. Concurrency is already handled: the
+  -- partial unique index lets exactly one live row exist, and the loser of a
+  -- race is told `grant_already_live`, which is then TRUE.
+  update public.new_client_waitlist_preference_grants g
+     set revoked_at = v_now
+   where g.entry_id    = p_entry_id
+     and g.studio_id   = p_studio_id
+     and g.redeemed_at is null
+     and g.revoked_at  is null
+     and g.expires_at  <= v_now;
+
+  -- NOW ask whether a GENUINELY live link remains. Under the entry lock this is
+  -- decisive rather than advisory, so the caller is told `grant_already_live`
+  -- by a deliberate verdict instead of by catching a constraint. The unique
+  -- index below stays exactly as it was and remains the last word.
+  if exists (
+    select 1 from public.new_client_waitlist_preference_grants g
+     where g.entry_id    = p_entry_id
+       and g.studio_id   = p_studio_id
+       and g.redeemed_at is null
+       and g.revoked_at  is null
+  ) then
+    return query select 'grant_already_live'::text, null::text, null::timestamptz;
+    return;
+  end if;
+
+  v_raw     := encode(extensions.gen_random_bytes(32), 'hex');
+  v_hash    := encode(extensions.digest(v_raw, 'sha256'), 'hex');
+  v_expires := v_now + make_interval(hours => v_ttl);
+
+  -- ISSUED_AT IS WRITTEN, NOT DEFAULTED, AND IT IS THE SAME v_now THE EXPIRY
+  -- WAS COMPUTED FROM.
+  --
+  -- The column carries `default now()`, and `now()` is TRANSACTION START. Every
+  -- other instant in this command comes from the post-lock `clock_timestamp()`
+  -- held in v_now. Letting the default fill the column therefore stamps the
+  -- audit time from a clock that can be arbitrarily older than the mint: inside
+  -- a transaction that began earlier -- a server action doing other work first,
+  -- or a caller that waited on the entry lock -- `expires_at - issued_at` comes
+  -- out LONGER than the TTL that was actually granted, and the row says the
+  -- link was minted at an instant when it did not yet exist.
+  --
+  -- Same ruling as 0192's challenge mint: the issuance instant is a decision
+  -- this command makes, so it is written from the decision, never inferred from
+  -- when the surrounding transaction happened to open. Both stamps now describe
+  -- one issuance, and `expires_at - issued_at` is exactly the requested TTL by
+  -- construction rather than by two clocks agreeing.
+  begin
+    insert into public.new_client_waitlist_preference_grants
+      (studio_id, entry_id, token_hash, issued_at, expires_at,
+       issued_by_practitioner_id)
+    values (p_studio_id, p_entry_id, v_hash, v_now, v_expires, v_actor);
+  exception
+    when unique_violation then
+      -- The one-live-grant-per-entry partial index. Two outstanding links mean
+      -- two people can answer the same question and the later answer wins.
+      return query select 'grant_already_live'::text, null::text, null::timestamptz;
+      return;
+  end;
+
+  return query select 'issued'::text, v_raw, v_expires;
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- COMMAND 5 — revoke a live preference-update link
+-- ---------------------------------------------------------------------------
+create or replace function public.revoke_waitlist_preference_grant(
+  p_studio_id     uuid,
+  p_entry_id      uuid,
+  p_actor_user_id uuid
+)
+returns text
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog, pg_temp
+as $$
+declare
+  v_actor uuid;
+  v_code  text;
+  v_n     integer;
+begin
+  select r.practitioner_id, r.code into v_actor, v_code
+    from public.new_client_waitlist_resolve_owner(p_studio_id, p_actor_user_id) r;
+  if v_code <> 'ok' then return v_code; end if;
+
+  -- The same STUDIO -> ENTRY order every other writer takes. This command only
+  -- stamps revoked_at and could not deadlock on its own, but a uniform rule is
+  -- worth more than a per-command exemption someone must later re-derive --
+  -- which is exactly how the entry -> studio inversion got in.
+  perform 1 from public.studios s where s.id = p_studio_id for no key update;
+
+  perform 1 from public.new_client_waitlist_entries e
+   where e.id = p_entry_id and e.studio_id = p_studio_id
+   for update;
+
+  update public.new_client_waitlist_preference_grants g
+     set revoked_at = clock_timestamp()
+   where g.entry_id    = p_entry_id
+     and g.studio_id   = p_studio_id
+     and g.redeemed_at is null
+     and g.revoked_at  is null;
+  get diagnostics v_n = row_count;
+
+  return case when v_n = 1 then 'revoked' else 'no_live_grant' end;
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- COMMAND 6 — the PROSPECT'S OWN path. No session; the token is the authority.
+-- ---------------------------------------------------------------------------
+--
+-- WHAT IT MAY WRITE: `preference` and the grant's own redeemed_at. Nothing
+-- else. It cannot reach status, claimed_at, invited_at or any lifecycle
+-- evidence -- structurally, because the preferences table contains none of
+-- them -- so a prospect holding a valid token cannot influence their own
+-- position in the queue.
+--
+-- ONE REFUSAL FOR EVERY FAILURE. Unknown, expired, revoked, already-redeemed
+-- and belonging-to-a-removed-entry all return the identical 'refused'. A
+-- distinguishable answer would turn this endpoint into a membership oracle:
+-- one request per guessed token telling an anonymous caller something about a
+-- named person's request for treatment.
+create or replace function public.redeem_waitlist_preference_grant(
+  p_raw_token  text,
+  p_preference text
+)
+returns text
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog, pg_temp
+as $$
+declare
+  v_grant   record;
+  v_entry   uuid;
+  v_studio  uuid;
+  v_now     timestamptz;
+  v_current text;
+begin
+  if p_raw_token is null or p_preference is null
+     or p_preference not in ('weekdays', 'weekends', 'both') then
+    return 'refused';
+  end if;
+
+  -- STEP 1: an UNLOCKED read, for one purpose only -- to learn WHICH studio and
+  -- entry this token belongs to, so the canonical locks can be taken in order.
+  -- NOTHING IS DECIDED HERE, and no clock is read yet: every predicate is
+  -- re-checked in step 4 under the locks, against a clock read after them.
+  select g.entry_id, g.studio_id into v_entry, v_studio
+    from public.new_client_waitlist_preference_grants g
+   where g.token_hash = encode(extensions.digest(p_raw_token, 'sha256'), 'hex');
+  if v_entry is null then return 'refused'; end if;
+
+  -- STEP 2: CANONICAL LOCK ORDER, STUDIO -> ENTRY, the same order
+  -- admit_new_client_waitlist_entry and issue_ take. Taking the entry alone
+  -- would leave this command free to reach for studios afterwards through an
+  -- FK and invert against admission.
+  perform 1 from public.studios s where s.id = v_studio for no key update;
+
+  perform 1 from public.new_client_waitlist_entries e
+   where e.id = v_entry
+   for update;
+
+  -- STEP 3: READ THE CLOCK ONLY NOW, AFTER THE LOCKS.
+  --
+  -- Capturing it before the lock was a real defect, not a tidiness point. This
+  -- transaction can WAIT on the entry lock for an unbounded time -- behind an
+  -- operator recording a preference, or another redemption -- and a grant that
+  -- was live when the wait began can expire during it. A pre-lock timestamp
+  -- makes the expiry re-check pass on evidence that is already stale, and the
+  -- redemption is then stamped as though it happened before expiry. The whole
+  -- point of re-resolving under the lock is to decide on CURRENT truth, and a
+  -- stale clock quietly re-introduces the window the lock was taken to close.
+  v_now := clock_timestamp();
+
+  -- STEP 4: re-resolve the grant UNDER the locks, with the full validity
+  -- predicate and the post-lock clock. This is the read that decides.
+  --
+  -- THE ENTRY'S LIFECYCLE IS PART OF THAT PREDICATE, AND IT WAS THE MISSING
+  -- LIMB. Removal moves the entry to `removed`; it does not delete the row and
+  -- it does not touch the grant, whose own columns stay perfectly valid. With
+  -- only the grant's columns checked here, a link issued while the prospect was
+  -- waiting stayed redeemable after the owner had removed them -- writing a
+  -- preference for someone who is no longer on the list, and stamping the grant
+  -- redeemed. The refusal above already CLAIMED to cover
+  -- "belonging-to-a-removed-entry"; this is the predicate that makes the claim
+  -- true.
+  --
+  -- TERMINAL IS DERIVED FROM THE EXISTING LIFECYCLE, NOT INVENTED. 0188's
+  -- transition guard enumerates every legal move, and exactly two states have
+  -- no outgoing transition: `removed` and `converted`. Every other state --
+  -- waiting, claimed, invited, expired, released -- can still move, so the
+  -- prospect is still on the list and their availability still means something.
+  -- No new state, no new column and no new refusal word: a terminal entry
+  -- simply fails the validity predicate, and STEP 4's existing single refusal
+  -- answers it exactly as it answers an unknown, expired or revoked token.
+  --
+  -- `for update of g` locks the GRANT only. The entry is already held FOR
+  -- UPDATE from step 2 in the canonical studio -> entry order, and re-locking
+  -- it through this join would add nothing while making the lock order of this
+  -- statement harder to read.
+  select g.id, g.entry_id, g.studio_id
+    into v_grant
+    from public.new_client_waitlist_preference_grants g
+    join public.new_client_waitlist_entries e
+      on e.id = g.entry_id and e.studio_id = g.studio_id
+   where g.token_hash  = encode(extensions.digest(p_raw_token, 'sha256'), 'hex')
+     and g.redeemed_at is null
+     and g.revoked_at  is null
+     and g.expires_at  > v_now
+     and e.status not in ('removed', 'converted')
+   for update of g;
+
+  if not found then return 'refused'; end if;
+
+  select p.preference into v_current
+    from public.new_client_waitlist_entry_preferences p
+   where p.entry_id = v_grant.entry_id
+   for update;
+
+  if v_current is null then
+    insert into public.new_client_waitlist_entry_preferences
+      (entry_id, studio_id, preference, stated_at, confirmed_at, source,
+       recorded_by_practitioner_id)
+    values (v_grant.entry_id, v_grant.studio_id, p_preference, v_now, v_now,
+            'prospect_link', null);
+  elsif v_current = p_preference then
+    update public.new_client_waitlist_entry_preferences
+       set confirmed_at = v_now, source = 'prospect_link',
+           recorded_by_practitioner_id = null
+     where entry_id = v_grant.entry_id;
+  else
+    update public.new_client_waitlist_entry_preferences
+       set preference = p_preference, stated_at = v_now, confirmed_at = v_now,
+           source = 'prospect_link', recorded_by_practitioner_id = null
+     where entry_id = v_grant.entry_id;
+  end if;
+
+  update public.new_client_waitlist_preference_grants
+     set redeemed_at = v_now
+   where id = v_grant.id;
+
+  return 'accepted';
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- COMMAND 7 — set the studio's admission policy. OWNER ONLY.
+-- ---------------------------------------------------------------------------
+create or replace function public.set_studio_waitlist_admission_policy(
+  p_studio_id            uuid,
+  p_actor_user_id        uuid,
+  p_ranking_policy       jsonb,
+  p_invite_batch_default integer,
+  p_invite_batch_max     integer
+)
+returns text
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog, pg_temp
+as $$
+declare
+  v_actor uuid;
+  v_code  text;
+begin
+  select r.practitioner_id, r.code into v_actor, v_code
+    from public.new_client_waitlist_resolve_owner(p_studio_id, p_actor_user_id) r;
+  -- A member reaches exactly this line and leaves with 'not_owner'. No row is
+  -- read, none is written, and the caller learns nothing about the policy.
+  if v_code <> 'ok' then return v_code; end if;
+
+  if p_ranking_policy is null
+     or jsonb_typeof(p_ranking_policy) <> 'object'
+     or p_invite_batch_default is null or p_invite_batch_max is null then
+    return 'invalid_input';
+  end if;
+
+  -- CANONICAL LOCK ORDER, STUDIO FIRST. This command writes a table carrying a
+  -- studios FK, so the write takes a KEY SHARE on studios whether or not this
+  -- line exists; taking it explicitly and FIRST is what stops the order being
+  -- decided by whichever statement happens to run last. NO KEY UPDATE, not FOR
+  -- UPDATE, so a concurrent FK check is admitted while cooperating 0193 writers
+  -- still exclude each other. See the audit guard in
+  -- tests/migrations/0193-waitlist-admission-authority.test.ts.
+  perform 1 from public.studios s where s.id = p_studio_id for no key update;
+
+  begin
+    insert into public.studio_waitlist_admission_policy
+      (studio_id, ranking_policy, invite_batch_default, invite_batch_max,
+       updated_at, updated_by_practitioner_id)
+    values (p_studio_id, p_ranking_policy, p_invite_batch_default,
+            p_invite_batch_max, clock_timestamp(), v_actor)
+    on conflict (studio_id) do update
+       set ranking_policy       = excluded.ranking_policy,
+           invite_batch_default = excluded.invite_batch_default,
+           invite_batch_max     = excluded.invite_batch_max,
+           updated_at           = excluded.updated_at,
+           updated_by_practitioner_id = excluded.updated_by_practitioner_id;
+  exception
+    when check_violation then
+      return 'invalid_input';
+  end;
+
+  return 'set';
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- COMMAND 8 — claim a RANKED batch, preserving every property of the FIFO one
+-- ---------------------------------------------------------------------------
+--
+-- The ranked counterpart to claim_new_client_waitlist_entries. Ranking happens
+-- in the application (lib/waitlist), which hands this an EXPLICIT ordered id
+-- list; the database keeps owning the parts that must not move to the client:
+--
+--   * FOR UPDATE SKIP LOCKED, so two concurrent operators never claim one row;
+--   * ONE decision instant shared by every row this call wins, read INSIDE the
+--     candidate-dependent statement rather than before it -- 0185's ordering
+--     defect, where a requeue committing in the gap was stamped before the
+--     `waiting` event that created it;
+--   * the 1..100 bound;
+--   * and the studio's own configured ceiling, when it has one.
+--
+-- ADMISSION-ROUND SUPPORT: invite_batch_max only ever TIGHTENS. A studio with
+-- no policy row behaves exactly as today. When WAIT-03B/B1's per-round
+-- allowance lands it becomes the tighter authority again, and this must consult
+-- it rather than replace it.
+create or replace function public.claim_new_client_waitlist_entries_ordered(
+  p_studio_id     uuid,
+  p_actor_user_id uuid,
+  p_entry_ids     uuid[]
+)
+returns table (result text, entry_id uuid)
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog, pg_temp
+as $$
+declare
+  v_actor uuid;
+  v_code  text;
+  v_cap   integer;
+  v_n     integer;
+begin
+  select r.practitioner_id, r.code into v_actor, v_code
+    from public.new_client_waitlist_resolve_owner(p_studio_id, p_actor_user_id) r;
+  if v_code <> 'ok' then
+    return query select v_code, null::uuid;
+    return;
+  end if;
+
+  -- SHAPE BEFORE SIZE, AND THE SIZE IS EVERY ELEMENT.
+  --
+  -- `uuid[]` does NOT mean "flat list of uuid" to PostgreSQL: a
+  -- multidimensional literal is a perfectly legal value of that type, and
+  -- `array_length(x, 1)` reports only the FIRST dimension while `unnest`
+  -- flattens and processes ALL of them. A 2 x 100 matrix therefore counted as
+  -- 2 -- clearing the 1..100 bound AND any configured invite_batch_max -- and
+  -- then claimed up to 200 entries. Both ceilings exist to bound how many
+  -- people one call can pull out of the queue, so undercounting them is an
+  -- allowance bypass, not a validation nicety. Measured:
+  --
+  --     array[array[u,u,u], array[u,u,u]]::uuid[]
+  --       array_length(a, 1) = 2    cardinality(a) = 6    unnest -> 6 rows
+  --
+  -- The contract is a FLAT ORDERED list -- `unnest ... with ordinality` gives
+  -- the rank its whole meaning, and a matrix has no single sensible ranking --
+  -- so a matrix is refused outright rather than silently flattened. Silent
+  -- flattening would invent an order the caller never expressed.
+  --
+  -- `invalid_input`, 0193's existing word for a malformed parameter, not
+  -- `invalid_count`: the count is not what is wrong, the SHAPE is, and telling
+  -- an owner their count is invalid when they sent 4 ids would be misleading.
+  -- NULL and '{}' both have NULL ndims, so they fall through the coalesce to
+  -- the count check below and still answer `invalid_count`, exactly as before.
+  if coalesce(array_ndims(p_entry_ids), 1) <> 1 then
+    return query select 'invalid_input'::text, null::uuid;
+    return;
+  end if;
+
+  -- cardinality() counts EVERY element across every dimension. After the shape
+  -- refusal above a flat list is all that reaches here, so the two agree -- but
+  -- the bound is stated in terms of what unnest will actually process, which is
+  -- the property that must hold.
+  v_n := coalesce(cardinality(p_entry_ids), 0);
+  if v_n < 1 or v_n > 100 then
+    return query select 'invalid_count'::text, null::uuid;
+    return;
+  end if;
+
+  -- CANONICAL LOCK ORDER, STUDIO FIRST, BEFORE ANY CANDIDATE IS LOCKED.
+  --
+  -- The ranked claim UPDATEs new_client_waitlist_entries, and that fires the
+  -- 0185 record_event trigger, which inserts into
+  -- new_client_waitlist_entry_events -- a table with its own studios FK. So
+  -- this command reaches studios through KEY SHARE no matter what, AFTER it has
+  -- locked the candidate rows. Against 0192's issue_scoped_, which holds studios
+  -- FOR UPDATE and then waits for an entry, that is the studio -> entry /
+  -- entry -> studio cycle again:
+  --
+  --     ordered claim: holds candidates, waits studios (trigger FK)
+  --     0192 issuer:   holds studios FOR UPDATE, waits for the entry
+  --
+  -- Taking studios first, in the compatible mode, removes the cycle without
+  -- weakening SKIP LOCKED or the single decision instant below.
+  perform 1 from public.studios s where s.id = p_studio_id for no key update;
+
+  select a.invite_batch_max into v_cap
+    from public.studio_waitlist_admission_policy a
+   where a.studio_id = p_studio_id;
+  if v_cap is not null and v_n > v_cap then
+    return query select 'exceeds_batch_max'::text, null::uuid;
+    return;
+  end if;
+
+  return query
+  with requested as (
+    select u.id, u.ord
+      from unnest(p_entry_ids) with ordinality as u(id, ord)
+  ),
+  candidates as materialized (
+    select e.id, r.ord
+      from public.new_client_waitlist_entries e
+      join requested r on r.id = e.id
+     where e.studio_id = p_studio_id
+       and e.status    = 'waiting'
+     order by r.ord
+     for update of e skip locked
+  ),
+  decision as materialized (
+    select clock_timestamp() as decision_at from candidates limit 1
+  ),
+  claimed as (
+    update public.new_client_waitlist_entries t
+       set status                     = 'claimed',
+           claimed_at                 = d.decision_at,
+           claimed_by_practitioner_id = v_actor
+      from candidates c
+      cross join decision d
+     where t.id        = c.id
+       and t.studio_id = p_studio_id
+       and t.status    = 'waiting'
+    -- `c.ord` IS CARRIED OUT OF THE UPDATE ON PURPOSE. An UPDATE ... RETURNING
+    -- emits rows in whatever order the executor produced them, which for this
+    -- statement is NOT the caller's ranking -- measured: a two-element batch
+    -- came back reversed. Selecting the rank alongside the id is what lets the
+    -- final projection restore it. Ordering only the `candidates` CTE is not
+    -- enough: that orders which rows are LOCKED, not which are RETURNED.
+    returning t.id, c.ord
+  )
+  select 'claimed'::text, claimed.id from claimed order by claimed.ord;
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- COMMAND 9 — "INVITE TO BOOK": the practitioner-facing admission operation
+-- ---------------------------------------------------------------------------
+--
+-- THE PRODUCT LAW THIS ENFORCES. A practitioner sees a waiting person, chooses
+-- a service, a booking window and an expiry, and presses one button. CLAIM IS
+-- NOT A WORKFLOW STEP. It remains an internal lifecycle state that this command
+-- establishes on the practitioner's behalf, inside the same transaction, and
+-- never surfaces as a second thing a human must remember to do.
+--
+-- WHY IT IS NOT "CALL claim_ THEN CALL issue_". Two commands is two round
+-- trips, and the window between them is not theoretical: allowance can be
+-- consumed by another operator, the round can close, the service can be
+-- deleted, the scope can be rejected. Every one of those leaves the entry
+-- CLAIMED with no invitation — a prospect frozen out of the queue by a
+-- half-finished action nobody can see. That is the state this command exists to
+-- make unreachable.
+--
+-- ---------------------------------------------------------------------------
+-- HOW "NO PARTIAL CLAIM" IS ACTUALLY GUARANTEED
+-- ---------------------------------------------------------------------------
+--
+-- A plpgsql `return` DOES NOT UNDO WORK ALREADY DONE. Claiming the entry and
+-- then returning 'round_full' would COMMIT the claim — the precise stray state
+-- negative control A exists to catch. So the mutating half runs inside a
+-- BEGIN/EXCEPTION block, which PostgreSQL implements as a SUBTRANSACTION: any
+-- exception raised inside it rolls back everything it did.
+--
+-- Failure therefore RAISES a sentinel carrying the code, the subtransaction
+-- unwinds the claim, and the handler returns that code as an ordinary value.
+-- The caller still gets a CODE and never an error — 0185's rule, and 0188's
+-- requeue precedent — while the database gets a true all-or-nothing.
+--
+-- LOCK ORDER IS THE CANONICAL ONE, AND IT IS TAKEN HERE FIRST:
+--
+--     studios -> the OPEN studio_waitlist_admission_rounds row -> entry
+--       -> invitation
+--
+-- issue_scoped_new_client_waitlist_invitation takes studios then the open
+-- round; claim_new_client_waitlist_entry takes the entry. Calling claim_ first
+-- would give studios -> entry -> round and invert the order against a bare
+-- issue_scoped running concurrently, which is a deadlock. Taking the studio and
+-- round locks up front makes the nested calls re-acquire locks this transaction
+-- already holds, which is free.
+--
+-- "THE ROUND" IS A ROW, NOT A STUDIO. Rounds are an append-mostly ledger keyed
+-- by `id`, with at most one open row per studio held by a partial unique index.
+-- The lock below therefore names `closed_at is null` -- a studio's closed
+-- history is not part of this order and is not locked by an admission.
+--
+-- ALLOWANCE IS NOT RE-IMPLEMENTED HERE. The round, the consumed count and the
+-- round_full verdict all belong to 0192 and are enforced inside issue_scoped_
+-- under the same lock this function already holds. A second copy of that
+-- arithmetic is a second thing to drift.
+--
+-- AN ALREADY-CLAIMED ENTRY IS ADMITTED, NOT REFUSED. Rows left `claimed` by the
+-- previous two-step workflow are legitimate, and making an operator perform a
+-- release/requeue round trip to reach the new button would be a migration cost
+-- paid by the person least able to understand it. Such an entry skips the claim
+-- and goes straight to issue.
+--
+-- NO EMAIL IS SENT HERE. The raw token is returned exactly once, to a caller
+-- that delivers AFTER commit. A provider failure then means "the invitation
+-- exists and delivery must be retried", never a rollback decided by an
+-- uncertain provider answer.
+-- ===========================================================================
+-- NEW-CLIENT SERVICE ELIGIBILITY — THE DATABASE'S COPY OF ONE SHARED RULE
+-- ===========================================================================
+--
+-- WHOSE RULE THIS IS. lib/booking/consultation.ts owns it in TypeScript as
+-- `isBookableByNewClient`, and publicBookAppointmentAction states the same rule
+-- in two parts that sit far apart: the service read filters `studio_id` and
+-- `active`, and the guard below it calls `isConsultationService`. As BEHAVIOUR
+-- it is "this studio's, active, and a consultation", and anything offering a
+-- service to a new client must satisfy all three.
+--
+-- WHY THE DATABASE NEEDS ITS OWN COPY. The admission command mints an
+-- invitation whose scope_service_id everything downstream trusts. The browser,
+-- the practitioner's selector and the application layer are all advisory: a
+-- forged post, a stale selector, or a service deactivated between selection and
+-- submission would otherwise produce an invitation that the recipient booking
+-- path must later refuse — discovered by the recipient, not the operator.
+--
+-- TRANSLATED FROM THE PREDICATE, NOT FROM ITS NAME:
+--
+--     const modality = service.modality?.trim().toLowerCase() ?? "";
+--     if (modality === "consultation") return true;
+--     if (modality.length === 0 && service.name.toLowerCase().includes("consultation"))
+--       return true;
+--     return false;
+--
+--   * THE NAME FALLBACK APPLIES ONLY WHEN MODALITY IS EMPTY. A service with
+--     modality 'treatment' named "Consultation follow-up" is NOT a
+--     consultation. Reading the predicate as "modality is consultation OR the
+--     name mentions one" would be a WEAKER rule than production's and would
+--     admit services the booking path refuses.
+--   * SUBSTRING, NOT EQUALITY, on the name, and case-insensitive, so
+--     "New Client Consultation" qualifies.
+--   * `active` is compared with STRICT `is true`, mirroring `!== true`, so a
+--     null could never be coerced into "probably fine". The column is NOT NULL
+--     today; the strictness does not depend on that staying true.
+--   * PRICE AND DURATION ARE DELIBERATELY NOT READ. The TypeScript predicate
+--     says so explicitly; adding them here would be a second, stricter rule.
+--
+-- TENANCY IS NOT A PARAMETER, exactly as in TypeScript: `studio_id` is a query
+-- filter at every call site and belongs there. A predicate that took a studio
+-- id would invite callers to fetch first and check after.
+--
+-- Columns in, boolean out: no table access, so it cannot leak a row and needs
+-- no definer rights.
+create or replace function public.service_is_bookable_by_new_client(
+  p_active   boolean,
+  p_modality text,
+  p_name     text
+)
+returns boolean
+language sql
+immutable
+security invoker
+set search_path = pg_catalog, pg_temp
+as $$
+  -- THE TRIM CLASS IS ECMAScript's, ENUMERATED, NOT GUESSED. One-argument
+  -- btrim() removes SPACES ONLY, so a modality of E'\u00A0' (non-breaking
+  -- space) stayed non-empty here while JavaScript's .trim() reduced it to "" --
+  -- and the two engines then disagreed about whether the name fallback applied.
+  --
+  -- String.prototype.trim removes WhiteSpace + LineTerminator, which is exactly
+  -- these 25 characters: TAB, LF, VT, FF, CR, SPACE, NBSP, the Zs category
+  -- (U+1680, U+2000..U+200A, U+202F, U+205F, U+3000), LS, PS and ZWNBSP.
+  --
+  -- DELIBERATELY ABSENT, because JavaScript does NOT trim them, and a class
+  -- broader than the predicate it mirrors would make the database MORE
+  -- permissive than production: U+200B zero-width space, U+0085 NEL, U+180E
+  -- Mongolian vowel separator. A regex shorthand would have swept some of those
+  -- in, which is why the class is written out.
+  select p_active is true
+     and (
+           lower(btrim(coalesce(p_modality, ''), E'\u0009\u000A\u000B\u000C\u000D\u0020\u00A0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF')) = 'consultation'
+           or (
+                lower(btrim(coalesce(p_modality, ''), E'\u0009\u000A\u000B\u000C\u000D\u0020\u00A0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF')) = ''
+                and position('consultation' in lower(coalesce(p_name, ''))) > 0
+              )
+         )
+$$;
+
+comment on function public.service_is_bookable_by_new_client(boolean, text, text) is
+  'WAIT-ADMIT-01: the database''s copy of lib/booking/consultation.ts''s '
+  'isBookableByNewClient -- active, and a consultation by modality or (only '
+  'when modality is empty) by name. Tenancy is a caller-side query filter, as '
+  'in TypeScript. Pure over its arguments: no table access, no row leak. '
+  'Price and duration are deliberately not read.';
+
+-- The return type gains `issued_at`, and PostgreSQL cannot change a return type
+-- in place, so the prior signature is dropped first -- the same shape 0192 uses
+-- for begin_waitlist_invitation_proof. On a fresh chain this is a no-op; on a
+-- re-apply it is what keeps this file idempotent. The ARGUMENT list is
+-- unchanged, so this same drop still names it.
+drop function if exists public.admit_new_client_waitlist_entry(
+  uuid, uuid, uuid, uuid, date, date, smallint[], integer);
+
+create or replace function public.admit_new_client_waitlist_entry(
+  p_studio_id        uuid,
+  p_actor_user_id    uuid,
+  p_entry_id         uuid,
+  p_service_id       uuid,
+  p_start_date       date,
+  p_end_date         date,
+  p_allowed_weekdays smallint[] default null,
+  p_ttl_hours        integer default 72
+)
+returns table (
+  result         text,
+  invitation_id  uuid,
+  raw_token      text,
+  -- BOTH INSTANTS, READ FROM THE STORED INVITATION ROW. Delivery needs the mint
+  -- time as well as the deadline, and a caller that reconstructed it as
+  -- `expires_at - ttl` or read its own clock would become a SECOND timestamp
+  -- authority over a row the database already owns -- changing a send decision
+  -- on clock skew alone. 0192 mints; this command only carries the facts out.
+  issued_at      timestamptz,
+  expires_at     timestamptz,
+  delivery_email text,
+  delivery_name  text
+)
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog, pg_temp
+as $$
+declare
+  v_actor    uuid;
+  v_code     text;
+  v_status   text;
+  v_needs_claim boolean;
+  v_claim    text;
+  v_issue    record;
+  v_issued   timestamptz;
+  v_expires  timestamptz;
+  v_svc_active   boolean;
+  v_svc_modality text;
+  v_svc_name     text;
+  v_email    text;
+  v_name     text;
+begin
+  -- 1. AUTHORITY. Membership and owner role are re-derived in the database from
+  -- (studio_id, auth user id). No browser-supplied studio or actor becomes
+  -- authority: the caller passes ids, the database decides what they mean.
+  select r.practitioner_id, r.code into v_actor, v_code
+    from public.new_client_waitlist_resolve_owner(p_studio_id, p_actor_user_id) r;
+  if v_code <> 'ok' then
+    return query select v_code, null::uuid, null::text, null::timestamptz, null::timestamptz, null::text, null::text;
+    return;
+  end if;
+
+  -- 2. LOCK ORDER STEP 1 and 2, before any entry is touched.
+  --
+  -- NO KEY UPDATE, not FOR UPDATE, for the reason spelled out in the issue
+  -- command: FOR UPDATE blocks the KEY SHARE that the lifecycle writers' event
+  -- trigger requests through its studio_id FK, and this command waits on the
+  -- entry those writers hold. Two NO KEY UPDATE holders still exclude each
+  -- other, so the allowance seat stays serialised.
+  --
+  -- 0192's issue_scoped_new_client_waitlist_invitation takes `studios FOR
+  -- UPDATE` of its own, and that migration is not this lane's to change. It is
+  -- reached only AFTER this transaction already holds the entry, so a lifecycle
+  -- writer on ANOTHER entry may hold KEY SHARE and delay the upgrade, but it
+  -- needs nothing this transaction holds and no cycle forms. Proved by test
+  -- rather than argued: see "admission vs each lifecycle writer".
+  perform 1 from public.studios s where s.id = p_studio_id for no key update;
+  if not found then
+    return query select 'unknown_studio'::text, null::uuid, null::text, null::timestamptz, null::timestamptz, null::text, null::text;
+    return;
+  end if;
+  --
+  -- THE OPEN ROUND, NOT EVERY ROUND THIS STUDIO HAS EVER HAD. `studio_id` was
+  -- the primary key of this table when the line below was written, so
+  -- `where r.studio_id = ...` named exactly one row. It no longer does: the key
+  -- is now `id`, closed rounds persist as an append-mostly ledger, and at most
+  -- one open round per studio is enforced by a PARTIAL unique index
+  -- `(studio_id) where closed_at is null`. Without the predicate this statement
+  -- would still take a lock -- it has no `found` check and never decided
+  -- anything -- but it would take FOR UPDATE on every historical row, so
+  -- admission contention would grow with the studio's history and the order
+  -- named above would no longer describe a round.
+  --
+  -- THE PREDICATE IS THE ISSUER'S, CHARACTER FOR CHARACTER. 0192's
+  -- issue_scoped_new_client_waitlist_invitation selects
+  -- `where r.studio_id = p_studio_id and r.closed_at is null for update`, and
+  -- this lock is only useful if it names the same row that command will.
+  --
+  -- FOR UPDATE, NOT FOR NO KEY UPDATE, unlike the studios lock above. This row
+  -- is the TARGET of the invitation's composite (admission_round_id, studio_id)
+  -- foreign key, so a competing issuance needs KEY SHARE on it. FOR UPDATE
+  -- excludes KEY SHARE and that exclusion is precisely what serialises the
+  -- allowance seat; NO KEY UPDATE here would let two issuances past.
+  --
+  -- LOCK-ONLY, WITH NO VERDICT. `no_round_open` belongs to 0192 and is returned
+  -- by the issuer below. Deciding it here would duplicate the authority this
+  -- command exists to delegate, and would be a second place to get it wrong.
+  -- When no round is open this locks nothing, the entry lock is still taken,
+  -- and the issuer refuses -- unwinding the claim through WA001.
+  perform 1 from public.studio_waitlist_admission_rounds r
+   where r.studio_id = p_studio_id
+     and r.closed_at is null
+   for update;
+
+  -- 3. LOCK ORDER STEP 3. Read the entry's admissibility under its own lock, so
+  -- the status this decision rests on cannot move underneath it.
+  select e.status, e.email, e.name into v_status, v_email, v_name
+    from public.new_client_waitlist_entries e
+   where e.id = p_entry_id and e.studio_id = p_studio_id
+   for update;
+
+  -- Scoped by BOTH id and studio_id, so an entry belonging to another tenant is
+  -- indistinguishable from one that does not exist.
+  if v_status is null then
+    return query select 'not_found'::text, null::uuid, null::text, null::timestamptz, null::timestamptz, null::text, null::text;
+    return;
+  end if;
+
+  if v_status = 'waiting' then
+    v_needs_claim := true;
+  elsif v_status = 'claimed' then
+    -- Left by the previous workflow, or by an internal path. Legitimate.
+    v_needs_claim := false;
+  else
+    -- invited / converted / expired / released / removed. Each has its own
+    -- lifecycle exit; none of them is admissible by pressing this button.
+    return query select 'not_admissible'::text, null::uuid, null::text, null::timestamptz, null::timestamptz, null::text, null::text;
+    return;
+  end if;
+
+  -- 3b. THE SERVICE MUST BE ONE A NEW CLIENT MAY ACTUALLY BOOK.
+  --
+  -- BEFORE THE SUBTRANSACTION, so no claim is taken and unwound -- this refusal
+  -- leaves no durable state at all rather than relying on a rollback to remove
+  -- it. 0192's issuer checks that the service EXISTS and belongs to the studio;
+  -- it does not ask whether a new client may book it, and that migration is not
+  -- this lane's to change.
+  --
+  -- AFTER the studio, round and entry decisions, so every existing refusal
+  -- keeps its precedence: unknown_studio, not_found and not_admissible are
+  -- still answered first and none of their meanings move.
+  --
+  -- `invalid_service` IS THE EXISTING WORD for it, carried from 0192's own
+  -- vocabulary. A new code would make callers learn a second name for "that
+  -- service cannot be offered", and the recipient-facing outcome is identical.
+  --
+  -- Tenancy is the query filter here, which is why the predicate does not take
+  -- a studio id: a row fetched without `studio_id` is already the wrong row.
+  -- A missing row therefore also refuses, covering an unknown or deleted id.
+  -- READ UNDER A LOCK THAT OUTLIVES THE DECISION. An unlocked `exists` check
+  -- decided eligibility against a snapshot the owner could change before the
+  -- nested issuer committed: deactivate the service, or retitle it, and the
+  -- invitation was still minted against the stale verdict. The lock is held to
+  -- COMMIT, so the row the decision rests on cannot move underneath it.
+  --
+  -- FOR SHARE, AND THE MODE IS THE POINT.
+  --
+  --   * FOR KEY SHARE WOULD NOT WORK AND LOOKS LIKE IT WOULD. `active`,
+  --     `modality` and `name` are NON-KEY columns, so an ordinary UPDATE of them
+  --     takes FOR NO KEY UPDATE -- which KEY SHARE does not conflict with.
+  --     Protecting the service's KEY protects nothing this predicate reads.
+  --   * FOR SHARE is the NARROWEST mode that does conflict with FOR NO KEY
+  --     UPDATE, so it blocks every eligibility-changing UPDATE and any DELETE.
+  --   * FOR UPDATE / FOR NO KEY UPDATE would ALSO work and are worse: they
+  --     exclude each other, so two admissions naming the SAME service would
+  --     serialise on it. They should contend for the round seat, not for a row
+  --     neither of them writes. FOR SHARE admits both.
+  --   * AND FOR SHARE DOES NOT BLOCK FK KEY-SHARE CHECKS. An appointment
+  --     referencing this service requests FOR KEY SHARE, which FOR SHARE
+  --     permits -- so holding this lock cannot stall an ordinary booking. Same
+  --     reasoning that chose NO KEY UPDATE for the studios row above, applied to
+  --     the other side of the matrix.
+  --
+  -- LOCK ORDER STEP 4: services comes LAST, after the entry, and no existing
+  -- writer inverts it. Every service mutation -- the settings UPDATE, the
+  -- active toggle, show_studio_service and reorder_studio_service -- locks
+  -- service rows and NOTHING this command holds, so none of them can be waiting
+  -- on the studio, round or entry while this command waits on them. No cycle
+  -- can form.
+  select sv.active, sv.modality, sv.name
+    into v_svc_active, v_svc_modality, v_svc_name
+    from public.services sv
+   where sv.id = p_service_id
+     and sv.studio_id = p_studio_id
+   for share;
+
+  -- Tenancy is the query filter, which is why the predicate takes no studio id.
+  -- A missing row covers an unknown id, a deleted one, another studio's, and a
+  -- null p_service_id -- all of them `invalid_service`, as 0192 already says.
+  if not found
+     or not public.service_is_bookable_by_new_client(v_svc_active, v_svc_modality, v_svc_name) then
+    return query select 'invalid_service'::text, null::uuid, null::text, null::timestamptz, null::timestamptz, null::text, null::text;
+    return;
+  end if;
+
+  -- 4-9. THE MUTATING HALF, in a subtransaction. Everything from here either
+  -- commits together or leaves no trace.
+  begin
+    if v_needs_claim then
+      v_claim := public.claim_new_client_waitlist_entry(p_studio_id, p_entry_id, p_actor_user_id);
+      if v_claim <> 'claimed' then
+        raise exception '%', v_claim using errcode = 'WA001';
+      end if;
+    end if;
+
+    -- 0192 owns service validation, scope validation, weekday canonicalisation,
+    -- the no-repeat-declined rule, the allowance verdict and the token. This
+    -- command owns only the ORDER and the atomicity.
+    select * into v_issue
+      from public.issue_scoped_new_client_waitlist_invitation(
+             p_studio_id, p_entry_id, p_actor_user_id, p_service_id,
+             p_start_date, p_end_date, p_allowed_weekdays, p_ttl_hours);
+
+    if v_issue.result <> 'issued' then
+      -- Carries 0192's own vocabulary out unchanged: no_round_open, round_full,
+      -- invalid_service, invalid_scope_dates, invalid_weekdays,
+      -- already_declined_offer, already_invited, invalid_ttl...
+      raise exception '%', v_issue.result using errcode = 'WA001';
+    end if;
+
+    -- ONE ROW, BOTH COLUMNS, NEITHER DERIVED. issued_at is the post-lock mint
+    -- 0192 stamped; expires_at is the deadline it derived from that same mint.
+    -- Reading them together is what makes them consistent with each other by
+    -- construction rather than by two queries agreeing.
+    select i.issued_at, i.expires_at into v_issued, v_expires
+      from public.new_client_waitlist_invitations i
+     where i.id = v_issue.invitation_id;
+
+    return query select 'admitted'::text, v_issue.invitation_id, v_issue.raw_token,
+                        v_issued, v_expires, v_email, v_name;
+    return;
+
+  exception
+    when sqlstate 'WA001' then
+      -- The subtransaction has already rolled back the claim, if one was taken.
+      -- SQLERRM carries the refusal code the inner command produced.
+      return query select SQLERRM::text, null::uuid, null::text, null::timestamptz, null::timestamptz, null::text, null::text;
+      return;
+  end;
+end;
+$$;
+
+-- ===========================================================================
+-- PRIVILEGES — EXPLICIT FOR EVERY NEW OBJECT
+-- ===========================================================================
+--
+-- NOTHING HERE RELIES ON A CREATE-TIME DEFAULT. ALTER DEFAULT PRIVILEGES grants
+-- anon, authenticated AND service_role full DML on every new table in `public`
+-- and EXECUTE on every new function, so each object is stripped by name first
+-- and then given back only what it demonstrably needs.
+
+revoke all on public.new_client_waitlist_entry_preferences from public;
+revoke all on public.new_client_waitlist_entry_preferences from anon;
+revoke all on public.new_client_waitlist_entry_preferences from authenticated;
+revoke all on public.new_client_waitlist_entry_preferences from service_role;
+
+revoke all on public.new_client_waitlist_preference_grants from public;
+revoke all on public.new_client_waitlist_preference_grants from anon;
+revoke all on public.new_client_waitlist_preference_grants from authenticated;
+revoke all on public.new_client_waitlist_preference_grants from service_role;
+
+revoke all on public.studio_waitlist_admission_policy from public;
+revoke all on public.studio_waitlist_admission_policy from anon;
+revoke all on public.studio_waitlist_admission_policy from authenticated;
+revoke all on public.studio_waitlist_admission_policy from service_role;
+
+-- READ, AND ONLY READ. The operator queue and settings pages read with the
+-- USER-scoped client under RLS, so `authenticated` genuinely needs SELECT;
+-- granting nothing would leave those pages unable to render. No role receives
+-- INSERT, UPDATE or DELETE on anything here -- that is what makes the write
+-- path unreachable from a session rather than merely policed by one.
+--
+-- service_role receives NO table privilege either: a SECURITY DEFINER function
+-- executes as its owner and needs none. The server's most privileged client can
+-- therefore run the commands and cannot dump these tables directly.
+grant select (
+  entry_id, studio_id, preference, stated_at, confirmed_at, source,
+  recorded_by_practitioner_id
+) on public.new_client_waitlist_entry_preferences to authenticated;
+
+-- COLUMN PRIVILEGES, NOT WHOLE-TABLE SELECT, exactly as 0188 does for the
+-- invitation verifier. `token_hash` is a live credential and RLS scopes ROWS,
+-- not COLUMNS -- a plain table-level grant would let an authenticated owner
+-- read the hash for every grant their studio can see. The safe set is a
+-- POSITIVE LIST, so a column added later is unreadable until someone adds it
+-- here deliberately.
+grant select (
+  id, studio_id, entry_id, issued_at, expires_at,
+  issued_by_practitioner_id, redeemed_at, revoked_at
+) on public.new_client_waitlist_preference_grants to authenticated;
+
+grant select (
+  studio_id, ranking_policy, invite_batch_default, invite_batch_max,
+  updated_at, updated_by_practitioner_id
+) on public.studio_waitlist_admission_policy to authenticated;
+
+-- COMMANDS: service_role ONLY. Written as literal statements, never a DO-block
+-- with format(), because the grant guards read them textually. All four
+-- grantees are revoked BY NAME first -- ALTER DEFAULT PRIVILEGES arms anon,
+-- authenticated AND service_role at function-create time, missed for anon in
+-- 0129 and for service_role in 0164.
+revoke execute on function public.admit_new_client_waitlist_entry(uuid, uuid, uuid, uuid, date, date, smallint[], integer) from public;
+revoke execute on function public.admit_new_client_waitlist_entry(uuid, uuid, uuid, uuid, date, date, smallint[], integer) from anon;
+revoke execute on function public.admit_new_client_waitlist_entry(uuid, uuid, uuid, uuid, date, date, smallint[], integer) from authenticated;
+revoke execute on function public.admit_new_client_waitlist_entry(uuid, uuid, uuid, uuid, date, date, smallint[], integer) from service_role;
+
+revoke execute on function public.create_practitioner_waitlist_entry(uuid, uuid, text, text, text, text) from public;
+revoke execute on function public.create_practitioner_waitlist_entry(uuid, uuid, text, text, text, text) from anon;
+revoke execute on function public.create_practitioner_waitlist_entry(uuid, uuid, text, text, text, text) from authenticated;
+revoke execute on function public.create_practitioner_waitlist_entry(uuid, uuid, text, text, text, text) from service_role;
+
+revoke execute on function public.import_legacy_waitlist_entry(uuid, uuid, text, text, timestamptz, text, text) from public;
+revoke execute on function public.import_legacy_waitlist_entry(uuid, uuid, text, text, timestamptz, text, text) from anon;
+revoke execute on function public.import_legacy_waitlist_entry(uuid, uuid, text, text, timestamptz, text, text) from authenticated;
+revoke execute on function public.import_legacy_waitlist_entry(uuid, uuid, text, text, timestamptz, text, text) from service_role;
+
+revoke execute on function public.set_waitlist_entry_availability(uuid, uuid, uuid, text) from public;
+revoke execute on function public.set_waitlist_entry_availability(uuid, uuid, uuid, text) from anon;
+revoke execute on function public.set_waitlist_entry_availability(uuid, uuid, uuid, text) from authenticated;
+revoke execute on function public.set_waitlist_entry_availability(uuid, uuid, uuid, text) from service_role;
+
+revoke execute on function public.issue_waitlist_preference_grant(uuid, uuid, uuid, integer) from public;
+revoke execute on function public.issue_waitlist_preference_grant(uuid, uuid, uuid, integer) from anon;
+revoke execute on function public.issue_waitlist_preference_grant(uuid, uuid, uuid, integer) from authenticated;
+revoke execute on function public.issue_waitlist_preference_grant(uuid, uuid, uuid, integer) from service_role;
+
+revoke execute on function public.revoke_waitlist_preference_grant(uuid, uuid, uuid) from public;
+revoke execute on function public.revoke_waitlist_preference_grant(uuid, uuid, uuid) from anon;
+revoke execute on function public.revoke_waitlist_preference_grant(uuid, uuid, uuid) from authenticated;
+revoke execute on function public.revoke_waitlist_preference_grant(uuid, uuid, uuid) from service_role;
+
+revoke execute on function public.redeem_waitlist_preference_grant(text, text) from public;
+revoke execute on function public.redeem_waitlist_preference_grant(text, text) from anon;
+revoke execute on function public.redeem_waitlist_preference_grant(text, text) from authenticated;
+revoke execute on function public.redeem_waitlist_preference_grant(text, text) from service_role;
+
+revoke execute on function public.set_studio_waitlist_admission_policy(uuid, uuid, jsonb, integer, integer) from public;
+revoke execute on function public.set_studio_waitlist_admission_policy(uuid, uuid, jsonb, integer, integer) from anon;
+revoke execute on function public.set_studio_waitlist_admission_policy(uuid, uuid, jsonb, integer, integer) from authenticated;
+revoke execute on function public.set_studio_waitlist_admission_policy(uuid, uuid, jsonb, integer, integer) from service_role;
+
+-- A PURE PREDICATE, not a command, but disposed by name like everything else:
+-- ALTER DEFAULT PRIVILEGES arms anon, authenticated AND service_role at
+-- create time and nothing here may inherit that. service_role keeps EXECUTE
+-- because it reads no rows and is a pure function of arguments the caller
+-- already holds -- there is nothing for it to leak -- and because the frontier
+-- guard's rule is the simple one: service_role runs every non-trigger function
+-- this file creates.
+revoke execute on function public.service_is_bookable_by_new_client(boolean, text, text) from public;
+revoke execute on function public.service_is_bookable_by_new_client(boolean, text, text) from anon;
+revoke execute on function public.service_is_bookable_by_new_client(boolean, text, text) from authenticated;
+revoke execute on function public.service_is_bookable_by_new_client(boolean, text, text) from service_role;
+
+revoke execute on function public.claim_new_client_waitlist_entries_ordered(uuid, uuid, uuid[]) from public;
+revoke execute on function public.claim_new_client_waitlist_entries_ordered(uuid, uuid, uuid[]) from anon;
+revoke execute on function public.claim_new_client_waitlist_entries_ordered(uuid, uuid, uuid[]) from authenticated;
+revoke execute on function public.claim_new_client_waitlist_entries_ordered(uuid, uuid, uuid[]) from service_role;
+
+grant execute on function public.admit_new_client_waitlist_entry(uuid, uuid, uuid, uuid, date, date, smallint[], integer) to service_role;
+grant execute on function public.create_practitioner_waitlist_entry(uuid, uuid, text, text, text, text) to service_role;
+grant execute on function public.import_legacy_waitlist_entry(uuid, uuid, text, text, timestamptz, text, text) to service_role;
+grant execute on function public.set_waitlist_entry_availability(uuid, uuid, uuid, text) to service_role;
+grant execute on function public.issue_waitlist_preference_grant(uuid, uuid, uuid, integer) to service_role;
+grant execute on function public.revoke_waitlist_preference_grant(uuid, uuid, uuid) to service_role;
+grant execute on function public.redeem_waitlist_preference_grant(text, text) to service_role;
+grant execute on function public.set_studio_waitlist_admission_policy(uuid, uuid, jsonb, integer, integer) to service_role;
+grant execute on function public.claim_new_client_waitlist_entries_ordered(uuid, uuid, uuid[]) to service_role;
+grant execute on function public.service_is_bookable_by_new_client(boolean, text, text) to service_role;
+
+-- The replaced trigger function is SECURITY INVOKER-shaped and `returns
+-- trigger`, so an EXECUTE grant on it is inert (PostgreSQL raises 0A000 on a
+-- direct call). Revoked from all four anyway, exactly as 0185 does, so the API
+-- surface states the fact rather than carrying create-time defaults.
+revoke all privileges on function public.new_client_waitlist_entries_server_timestamps()
+  from public, anon, authenticated, service_role;
+
+-- ===========================================================================
+-- COMMENTS
+-- ===========================================================================
+comment on table public.new_client_waitlist_entry_preferences is
+  'WAIT-ADMIT-01: a prospect''s own answer about which days they can attend. NOT STATED IS THE ABSENCE OF A ROW, which is why every column is NOT NULL — "we never asked" is structurally unforgeable rather than CHECK-enforced. stated_at is when the VALUE last changed; confirmed_at is when it was last AFFIRMED, changed or not, and staleness is measured from confirmed_at so re-confirming an unchanged preference refreshes trust without rewriting the value''s history. Prospect-owned data: it records an answer and never an admission decision. Separate from studio_waitlist_admission_policy so no single write path spans a prospect''s answer and the studio''s ranking.';
+
+comment on table public.new_client_waitlist_preference_grants is
+  'WAIT-ADMIT-01: an expiring, hashed capability letting a prospect update their own availability without an account. Deliberately NOT new_client_waitlist_invitations: that table''s cycle-evidence CHECK requires claimed_at + claimed_by + invited_at for status ''invited'', so issuing one would drag a waiting prospect through claim -> invite. Asking which days suit someone is not an offer of an appointment and must not consume an admission allowance. The raw token exists only in the return value of issue_waitlist_preference_grant; token_hash is excluded from the authenticated SELECT grant because RLS scopes rows, not columns.';
+
+comment on table public.studio_waitlist_admission_policy is
+  'WAIT-ADMIT-01: OWNER-ONLY ranking and invite-batch configuration. NO ROW = FIFO ordering and no configured batch = the behaviour before this migration, so applying it changes nothing until an owner configures a studio. Deliberately its own table: a column on studios would inherit the browser-reachable table-level UPDATE grant anon and authenticated already hold from ALTER DEFAULT PRIVILEGES, and a column-level revoke cannot remove a table-level grant — the same correction WAIT-03B/B1 made for its allowance. invite_batch_default/max are DEFAULTS AND BOUNDS for a recommendation, never permission to admit; B1''s per-round allowance remains the tighter authority when it lands.';
+
+comment on column public.new_client_waitlist_entries.joined_at_provenance is
+  'WAIT-ADMIT-01: the evidence behind joined_at. ''form'' = the public form stamped it as it happened. ''operator_supplied'' = a human asserted it from their records — an observation vs a recollection, and the distinction must survive. ''unknown'' = nobody has a date, joined_at then holds the import instant and is a QUEUE ANCHOR ONLY: no reader may render it as a duration. The DEFAULT ''form'' fabricates nothing — the single-valued source CHECK it replaced proves every pre-existing row arrived through the public form.';
+
+commit;
