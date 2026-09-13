@@ -277,6 +277,91 @@ describe("new-client service eligibility is enforced by the database", () => {
     }
   });
 
+  /**
+   * ECMAScript's trim class, enumerated.
+   *
+   * String.prototype.trim removes WhiteSpace + LineTerminator. These are every
+   * character in that set; the three below them are characters JavaScript does
+   * NOT trim, and they are here so the SQL class cannot quietly become BROADER
+   * than the predicate it mirrors -- a broader class would make the database
+   * MORE permissive than production, which is the same failure as a narrower one
+   * pointing the other way.
+   */
+  const JS_TRIMMED = [
+    0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x20, 0xa0, 0x1680,
+    0x2000, 0x2001, 0x2002, 0x2003, 0x2004, 0x2005, 0x2006, 0x2007, 0x2008, 0x2009, 0x200a,
+    0x2028, 0x2029, 0x202f, 0x205f, 0x3000, 0xfeff,
+  ] as const;
+  // U+200B zero-width space (Cf), U+0085 NEL (Cc), U+180E Mongolian vowel
+  // separator (Cf since Unicode 6.3). A regex shorthand would have swept some of
+  // these in.
+  const JS_NOT_TRIMMED = [0x200b, 0x0085, 0x180e] as const;
+
+  it("the SQL trim class is EXACTLY what JavaScript trims, character by character", async () => {
+    // THE EXPECTATION IS COMPUTED BY JAVASCRIPT, not written down. A hard-coded
+    // table would be a second opinion about ECMAScript's whitespace set; calling
+    // .trim() makes the runtime itself the authority, which is the whole point
+    // of the parity claim.
+    for (const cp of [...JS_TRIMMED, ...JS_NOT_TRIMMED]) {
+      const ch = String.fromCodePoint(cp);
+      const modality = `${ch}consultation${ch}`;
+      const hex = `U+${cp.toString(16).toUpperCase().padStart(4, "0")}`;
+
+      // What JavaScript's own predicate concludes.
+      const ts = isConsultationService({ modality, name: "Laser" });
+      // What the database concludes about the same string.
+      const db = await adminQuery(
+        `select public.service_is_bookable_by_new_client(true, $1, 'Laser') as ok`,
+        [modality],
+      );
+      expect(db.rows[0].ok, `${hex}: the database must agree with JavaScript trim()`).toBe(ts);
+
+      // And the direction, so the loop cannot pass by both engines being wrong
+      // the same way.
+      const trimmedByJs = modality.trim() === "consultation";
+      expect(trimmedByJs, `${hex}: JS_TRIMMED membership must match .trim()`).toBe(
+        (JS_TRIMMED as readonly number[]).includes(cp),
+      );
+      expect(ts, `${hex}: eligibility follows the trim`).toBe(trimmedByJs);
+    }
+  });
+
+  it("a trimmed-to-empty modality falls back to the NAME, in both engines", async () => {
+    // The fallback is what the trim actually gates. A non-breaking-space-only
+    // modality is empty to JavaScript, so the name decides -- and under
+    // one-argument btrim it was NOT empty to PostgreSQL, so the name never got
+    // its turn and the two engines disagreed.
+    for (const cp of JS_TRIMMED) {
+      const ch = String.fromCodePoint(cp);
+      const hex = `U+${cp.toString(16).toUpperCase().padStart(4, "0")}`;
+      const ts = isConsultationService({ modality: ch, name: "New Client Consultation" });
+      const db = await adminQuery(
+        `select public.service_is_bookable_by_new_client(true, $1, 'New Client Consultation') as ok`,
+        [ch],
+      );
+      expect(ts, `${hex}: a whitespace-only modality is empty to JavaScript`).toBe(true);
+      expect(db.rows[0].ok, `${hex}: and must be empty to PostgreSQL too`).toBe(true);
+    }
+    // The same name with an EXPLICIT non-consultation modality must stay
+    // ineligible, so the fallback has not been loosened into a name-only rule.
+    const guard = await adminQuery(
+      `select public.service_is_bookable_by_new_client(true, 'treatment', 'New Client Consultation') as ok`,
+    );
+    expect(guard.rows[0].ok, "modality precedence must survive the trim repair").toBe(false);
+  });
+
+  it("the trim repair did not touch active or tenancy strictness", async () => {
+    // Both halves of the rule that sit outside the trim.
+    const inactive = await adminQuery(
+      `select public.service_is_bookable_by_new_client(false, 'consultation', 'Laser') as ok`,
+    );
+    expect(inactive.rows[0].ok).toBe(false);
+    const nullActive = await adminQuery(
+      `select public.service_is_bookable_by_new_client(null, 'consultation', 'Laser') as ok`,
+    );
+    expect(nullActive.rows[0].ok, "a null active must fail closed").not.toBe(true);
+  });
+
   it("the fixture table is not trivially one-sided", async () => {
     // Anti-vacuity: a table that was all-false would make "the database agrees"
     // true for a predicate that always refused, and vice versa.

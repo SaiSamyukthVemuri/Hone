@@ -1457,11 +1457,25 @@ immutable
 security invoker
 set search_path = pg_catalog, pg_temp
 as $$
+  -- THE TRIM CLASS IS ECMAScript's, ENUMERATED, NOT GUESSED. One-argument
+  -- btrim() removes SPACES ONLY, so a modality of E'\u00A0' (non-breaking
+  -- space) stayed non-empty here while JavaScript's .trim() reduced it to "" --
+  -- and the two engines then disagreed about whether the name fallback applied.
+  --
+  -- String.prototype.trim removes WhiteSpace + LineTerminator, which is exactly
+  -- these 25 characters: TAB, LF, VT, FF, CR, SPACE, NBSP, the Zs category
+  -- (U+1680, U+2000..U+200A, U+202F, U+205F, U+3000), LS, PS and ZWNBSP.
+  --
+  -- DELIBERATELY ABSENT, because JavaScript does NOT trim them, and a class
+  -- broader than the predicate it mirrors would make the database MORE
+  -- permissive than production: U+200B zero-width space, U+0085 NEL, U+180E
+  -- Mongolian vowel separator. A regex shorthand would have swept some of those
+  -- in, which is why the class is written out.
   select p_active is true
      and (
-           lower(btrim(coalesce(p_modality, ''))) = 'consultation'
+           lower(btrim(coalesce(p_modality, ''), E'\u0009\u000A\u000B\u000C\u000D\u0020\u00A0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF')) = 'consultation'
            or (
-                lower(btrim(coalesce(p_modality, ''))) = ''
+                lower(btrim(coalesce(p_modality, ''), E'\u0009\u000A\u000B\u000C\u000D\u0020\u00A0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF')) = ''
                 and position('consultation' in lower(coalesce(p_name, ''))) > 0
               )
          )
@@ -1520,6 +1534,9 @@ declare
   v_issue    record;
   v_issued   timestamptz;
   v_expires  timestamptz;
+  v_svc_active   boolean;
+  v_svc_modality text;
+  v_svc_name     text;
   v_email    text;
   v_name     text;
 begin
@@ -1630,13 +1647,48 @@ begin
   -- Tenancy is the query filter here, which is why the predicate does not take
   -- a studio id: a row fetched without `studio_id` is already the wrong row.
   -- A missing row therefore also refuses, covering an unknown or deleted id.
-  if not exists (
-    select 1
-      from public.services sv
-     where sv.id = p_service_id
-       and sv.studio_id = p_studio_id
-       and public.service_is_bookable_by_new_client(sv.active, sv.modality, sv.name)
-  ) then
+  -- READ UNDER A LOCK THAT OUTLIVES THE DECISION. An unlocked `exists` check
+  -- decided eligibility against a snapshot the owner could change before the
+  -- nested issuer committed: deactivate the service, or retitle it, and the
+  -- invitation was still minted against the stale verdict. The lock is held to
+  -- COMMIT, so the row the decision rests on cannot move underneath it.
+  --
+  -- FOR SHARE, AND THE MODE IS THE POINT.
+  --
+  --   * FOR KEY SHARE WOULD NOT WORK AND LOOKS LIKE IT WOULD. `active`,
+  --     `modality` and `name` are NON-KEY columns, so an ordinary UPDATE of them
+  --     takes FOR NO KEY UPDATE -- which KEY SHARE does not conflict with.
+  --     Protecting the service's KEY protects nothing this predicate reads.
+  --   * FOR SHARE is the NARROWEST mode that does conflict with FOR NO KEY
+  --     UPDATE, so it blocks every eligibility-changing UPDATE and any DELETE.
+  --   * FOR UPDATE / FOR NO KEY UPDATE would ALSO work and are worse: they
+  --     exclude each other, so two admissions naming the SAME service would
+  --     serialise on it. They should contend for the round seat, not for a row
+  --     neither of them writes. FOR SHARE admits both.
+  --   * AND FOR SHARE DOES NOT BLOCK FK KEY-SHARE CHECKS. An appointment
+  --     referencing this service requests FOR KEY SHARE, which FOR SHARE
+  --     permits -- so holding this lock cannot stall an ordinary booking. Same
+  --     reasoning that chose NO KEY UPDATE for the studios row above, applied to
+  --     the other side of the matrix.
+  --
+  -- LOCK ORDER STEP 4: services comes LAST, after the entry, and no existing
+  -- writer inverts it. Every service mutation -- the settings UPDATE, the
+  -- active toggle, show_studio_service and reorder_studio_service -- locks
+  -- service rows and NOTHING this command holds, so none of them can be waiting
+  -- on the studio, round or entry while this command waits on them. No cycle
+  -- can form.
+  select sv.active, sv.modality, sv.name
+    into v_svc_active, v_svc_modality, v_svc_name
+    from public.services sv
+   where sv.id = p_service_id
+     and sv.studio_id = p_studio_id
+   for share;
+
+  -- Tenancy is the query filter, which is why the predicate takes no studio id.
+  -- A missing row covers an unknown id, a deleted one, another studio's, and a
+  -- null p_service_id -- all of them `invalid_service`, as 0192 already says.
+  if not found
+     or not public.service_is_bookable_by_new_client(v_svc_active, v_svc_modality, v_svc_name) then
     return query select 'invalid_service'::text, null::uuid, null::text, null::timestamptz, null::timestamptz, null::text, null::text;
     return;
   end if;
