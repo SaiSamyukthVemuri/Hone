@@ -1,4 +1,5 @@
 import { InviteComposer } from "@/components/waitlist/invite-composer";
+import { isBookableByNewClient } from "@/lib/booking/consultation";
 import {
   emptyDraft,
   INVITE_TO_BOOK_STATUSES,
@@ -346,26 +347,77 @@ export default async function WaitlistSettingsPage({
     : SECTIONS;
   const now = Date.now();
 
-  // WAIT INTEGRATION-01. The composer needs the studio's services to offer a
-  // scope, and it needs them UNFILTERED: it applies `isConsultationService`
-  // itself rather than trusting a caller, which is why `modality` is selected
-  // here and why no `.eq("active", true)` narrows this read. Filtering in two
-  // places is how the visible list and the validation rule come to disagree —
-  // the composer's own header says so.
+  // WAIT INTEGRATION-01 — THE SELECTOR SHOWS EXACTLY WHAT A NEW CLIENT CAN BOOK.
   //
-  // An unreadable list is an EMPTY list, not a missing one: the composer then
-  // shows no bookable service and its own draft validation refuses the send,
-  // which is the fail-closed direction. It must never become "any service".
-  const { data: serviceRows } = await supabase
+  // AN EARLIER REVISION OF THIS READ WAS WRONG, and its own comment argued for
+  // the mistake: it selected only `id, name, modality`, declined to narrow on
+  // `active`, and left the filtering to the composer on the grounds that
+  // filtering twice is how a visible list and a validation rule drift apart.
+  //
+  // The premise was false. The composer applies `isConsultationService`, which
+  // is STRICTLY WEAKER than the rule the booking path enforces: it asks only
+  // "is this a consultation", never "is it active". So an archived consultation
+  // service passed it, appeared in the selector, and was rejected later by the
+  // recipient's own booking path — the practitioner scoping an invitation to a
+  // service the invitee could never book.
+  //
+  // THE CANONICAL PREDICATE OWNS THE RULE. `isBookableByNewClient` is the same
+  // function `publicBookAppointmentAction` and the invitation route consult, and
+  // it is deliberately more than an `active` flag: it fails closed on
+  // `active !== true` and THEN asks the consultation question. Reusing it —
+  // rather than adding `.eq("active", true)` here — is what keeps this selector
+  // from becoming a second, quietly diverging opinion about eligibility. Every
+  // field the predicate reads is loaded for it, `active` included.
+  //
+  // The database remains the final authority regardless: `admit_` re-checks the
+  // service itself, so this narrowing decides what is OFFERED, never what is
+  // ALLOWED.
+  //
+  // AN UNREADABLE LIST IS AN EMPTY LIST, not a missing one. #683's contract
+  // requires an explicit concrete service, so an empty list leaves the send
+  // control refusing rather than widening — the failure must never resolve
+  // towards "any service".
+  const { data: serviceRows, error: servicesError } = await supabase
     .from("services")
-    .select("id, name, modality")
+    .select("id, name, modality, active")
     .eq("studio_id", studio.id)
     .order("name");
-  const bookableServices = ((serviceRows ?? []) as Array<{
-    id: string;
-    name: string;
-    modality: string | null;
-  }>).map((s) => ({ id: s.id, name: s.name, modality: s.modality ?? null }));
+  if (servicesError) {
+    console.error(
+      JSON.stringify({
+        event: "waitlist_composer_services_read_failed",
+        studioId: studio.id,
+        code: servicesError.code ?? "unknown",
+        timestamp: new Date().toISOString(),
+      }),
+    );
+  }
+  const bookableServices = (
+    servicesError
+      ? []
+      : ((serviceRows ?? []) as Array<{
+          id: string;
+          name: string;
+          modality: string | null;
+          active: boolean | null;
+        }>)
+  )
+    // Shaped for the predicate, then judged BY the predicate. The mapping exists
+    // only because `Pick<Service, "modality" | "name" | "active">` is what it
+    // reads; the decision itself is never re-expressed here.
+    .filter((s) =>
+      isBookableByNewClient({
+        name: s.name,
+        modality: s.modality,
+        // `Service.active` is non-nullable in the schema type, but this row came
+        // over the wire and could arrive null. `=== true` is the SAME strictness
+        // the predicate applies one line later (`active !== true` fails closed),
+        // so narrowing here cannot widen the answer — a null is ineligible under
+        // either spelling. It is a type narrowing, not a second decision.
+        active: s.active === true,
+      }),
+    )
+    .map((s) => ({ id: s.id, name: s.name, modality: s.modality ?? null }));
 
   // WHETHER AN INVITATION HAS RUN OUT IS A DATABASE FACT, NOT A GUESS.
   //

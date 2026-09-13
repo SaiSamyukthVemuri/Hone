@@ -67,6 +67,10 @@ const scenario = {
   // The REDEEMED invitation read, asked separately.
   redeemedInvitations: [] as Array<Record<string, unknown>>,
   invitationsError: null as { code: string } | null,
+  // The studio's services, as the composer's selector reads them. `active` is
+  // carried because the canonical new-client predicate reads it.
+  services: [] as Array<Record<string, unknown>>,
+  servicesError: null as { code: string } | null,
   // Per-section totals, when a test needs a count LARGER than the rows it
   // seeded (truncation). Absent means "the count equals what was seeded".
   sectionTotals: null as Record<string, number> | null,
@@ -93,6 +97,8 @@ function reset() {
     liveInvitations: [],
     redeemedInvitations: [],
     invitationsError: null,
+    services: [],
+    servicesError: null,
     sectionTotals: null,
     ignoreRange: false,
   });
@@ -132,6 +138,15 @@ vi.mock("@/lib/supabase/server", () => ({
       const settle = () => {
         const filterVal = (op: string, col: string) =>
           shape.filters.find((f) => f[0] === op && f[1] === col)?.[2];
+
+        // The composer's service selector. Answered from its own seed so a test
+        // can distinguish an ELIGIBLE service from one the booking path would
+        // refuse — the distinction this branch exists to make testable.
+        if (table === "services") {
+          return scenario.servicesError
+            ? { data: null, error: scenario.servicesError }
+            : { data: scenario.services, error: null };
+        }
 
         if (table === "new_client_waitlist_invitations") {
           if (scenario.invitationsError) {
@@ -537,6 +552,106 @@ describe("rendered rows", () => {
     // No links: a waiting person has no client record to navigate to, and
     // offering one would imply they are already a client.
     expect(html).not.toMatch(/<a\s/);
+  });
+
+  // =========================================================================
+  // P1 3998286099 — the selector offers exactly what a new client can book
+  // =========================================================================
+  //
+  // The composer's own filter is `isConsultationService`, which asks only "is
+  // this a consultation" and never "is it active". That is STRICTLY WEAKER than
+  // the rule the booking path enforces, so an archived consultation reached the
+  // selector, was scoped into an invitation, and was then refused by the
+  // recipient's own booking page. The page now filters with the canonical
+  // `isBookableByNewClient` before the composer ever sees a row.
+  describe("the Invite-to-book service selector", () => {
+    const service = (over: Record<string, unknown> = {}) => ({
+      id: "svc-1",
+      name: "Consultation",
+      modality: "consultation",
+      active: true,
+      ...over,
+    });
+    const withWaitingRow = () => {
+      scenario.rows = [entry({ status: "waiting" })];
+      scenario.count = 1;
+    };
+
+    it("offers an ACTIVE new-client-bookable consultation", async () => {
+      withWaitingRow();
+      scenario.services = [service({ id: "svc-live", name: "Initial consultation" })];
+      const html = await render();
+      expect(html).toContain("Initial consultation");
+      expect(html).toContain('value="svc-live"');
+    });
+
+    it("does NOT offer an INACTIVE consultation", async () => {
+      withWaitingRow();
+      scenario.services = [
+        service({ id: "svc-archived", name: "Archived consultation", active: false }),
+      ];
+      const html = await render();
+      expect(html).not.toContain("svc-archived");
+      expect(html).not.toContain("Archived consultation");
+    });
+
+    it("does NOT offer an ACTIVE non-consultation service", async () => {
+      withWaitingRow();
+      scenario.services = [
+        service({ id: "svc-treatment", name: "Laser treatment", modality: "treatment" }),
+      ];
+      const html = await render();
+      expect(html).not.toContain("svc-treatment");
+      expect(html).not.toContain("Laser treatment");
+    });
+
+    it("does NOT offer an INACTIVE non-consultation service", async () => {
+      withWaitingRow();
+      scenario.services = [
+        service({
+          id: "svc-dead",
+          name: "Retired facial",
+          modality: "treatment",
+          active: false,
+        }),
+      ];
+      const html = await render();
+      expect(html).not.toContain("svc-dead");
+      expect(html).not.toContain("Retired facial");
+    });
+
+    it("treats a NULL active as ineligible, failing closed", async () => {
+      // The schema type says non-null, but this row crosses the wire. The
+      // canonical predicate's `active !== true` refuses it, and so must this.
+      withWaitingRow();
+      scenario.services = [service({ id: "svc-null", name: "Unknown state", active: null })];
+      const html = await render();
+      expect(html).not.toContain("svc-null");
+    });
+
+    it("scopes the read to THIS studio", async () => {
+      // Tenancy is enforced by the query, not by filtering afterwards: a
+      // service belonging to another studio is never returned to be filtered.
+      withWaitingRow();
+      scenario.services = [service()];
+      await render();
+      const read = queries.find((c) => c.table === "services");
+      expect(read, "the page must read services for the composer").toBeDefined();
+      expect(read!.filters).toContainEqual(["eq", "studio_id", STUDIO_ID]);
+      // And it loads the field the canonical predicate needs.
+      expect(read!.columns).toContain("active");
+    });
+
+    it("an UNREADABLE service list leaves nothing sendable", async () => {
+      // Fail closed: #683's contract requires an explicit concrete service, so
+      // an empty list means the send refuses. It must never widen to "any".
+      withWaitingRow();
+      scenario.servicesError = { code: "PGRST500" };
+      const html = await render();
+      expect(html).toContain("Invite to book");
+      // No service option beyond the placeholder the composer renders itself.
+      expect(html).not.toContain('value="svc-');
+    });
   });
 
   it("promises no queue position or capacity", async () => {

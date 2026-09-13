@@ -943,7 +943,17 @@ describe("this module is UNREACHABLE from the application", () => {
     }
   });
 
-  it("no SHIPPED APPLICATION path binds an adapter for this surface", () => {
+  // TIMEOUT MATCHES ITS SIBLING, AND FOR THE SAME REASON. This scan walks the
+  // whole application import graph and then reads every reachable file, so it is
+  // seconds of real work; `reachableFromApp` above already carries 30s.
+  //
+  // IT ONLY BECAME NECESSARY WHEN THE BINDING LANDED. Wiring the composer made
+  // the prototype reachable, which ENLARGED the graph this walks — it ran in
+  // ~4.1s alone and crossed the 5s default under full-suite load, failing as a
+  // timeout with no assertion involved. That reads exactly like a broken diff
+  // and is not one; a lane sitting just under its ceiling is a budget problem,
+  // not a test failure.
+  it("no SHIPPED APPLICATION path binds an adapter for this surface", { timeout: 30_000 }, () => {
     // THE REPOSITORY-WIDE CLAIM IS RETIRED, AND IT WAS THE DEFECT.
     //
     // This test used to assert that NOTHING ANYWHERE in the repository could
