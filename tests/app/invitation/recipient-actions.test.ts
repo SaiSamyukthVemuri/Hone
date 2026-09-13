@@ -142,7 +142,12 @@ vi.mock("@/lib/rate-limit/public", () => ({
  */
 const entryFixture = { phone: "555 0100" as string | null };
 // P2-D: the studio's zone is what the day filter must resolve against.
-const studioFixture = { timezone: "America/Toronto" };
+// `horizonMonths` is the studio's OWN configured public-booking horizon. It
+// stays null for every test that does not care -- which is how the studios row
+// actually arrives when nobody has set one -- so those tests keep reading the
+// default. P2-B sets it explicitly, because a horizon the runtime is supposed
+// to READ must not be the same number it would have FALLEN BACK to.
+const studioFixture = { timezone: "America/Toronto", horizonMonths: null as number | null };
 /**
  * The service the invitation is scoped to.
  *
@@ -260,7 +265,15 @@ vi.mock("@/lib/supabase/admin-server", () => ({
         select: self, eq: self,
         maybeSingle: async () =>
           table === "studios"
-            ? { data: { slug: "studio-a", name: "Studio A", timezone: studioFixture.timezone }, error: null }
+            ? {
+                data: {
+                  slug: "studio-a",
+                  name: "Studio A",
+                  timezone: studioFixture.timezone,
+                  public_booking_horizon_months: studioFixture.horizonMonths,
+                },
+                error: null,
+              }
             : {
                 data: {
                   name: serviceFixture.name,
@@ -327,6 +340,7 @@ beforeEach(() => {
   fetchPublicSlotsAction.mockResolvedValue({ ok: true, slots: [] });
   entryFixture.phone = "555 0100";
   studioFixture.timezone = "America/Toronto";
+  studioFixture.horizonMonths = null;
   serviceFixture.name = "Consultation";
   serviceFixture.modality = "consultation";
   serviceFixture.active = true;
@@ -1029,21 +1043,77 @@ describe("P2-A — a lapsed capability restarts proof; a bad slot does not", () 
   });
 });
 
+/** Calendar arithmetic on plain YYYY-MM-DD, independent of anything under test. */
+function addDaysUtc(dateStr: string, days: number): string {
+  return new Date(Date.parse(`${dateStr}T00:00:00.000Z`) + days * 86_400_000)
+    .toISOString()
+    .slice(0, 10);
+}
+function daysInclusive(fromStr: string, toStr: string): number {
+  return (Date.parse(`${toStr}T00:00:00.000Z`) - Date.parse(`${fromStr}T00:00:00.000Z`))
+    / 86_400_000 + 1;
+}
+
 // P2-B. The day list used to stop after 21 days with no pagination and no
 // signal, so a longer offer silently lost its tail.
 describe("P2-B — the whole authorised window is reachable", () => {
+  // WHY THE CLOCK IS FROZEN HERE.
+  //
+  // The stop is `min(scope end, studio public-booking horizon)`, and the
+  // horizon is `today + months * 31` — a function of WHEN THE SUITE RUNS. On
+  // the real clock this block's boundary drifted a day per day until, on
+  // 2026-09-13, `today + 93` reached the scope's own end: the horizon stopped
+  // binding, the walk covered the entire 76-day scope, and the bound assertion
+  // went red. No runtime behaviour changed on that day, and none is asserted
+  // differently now. Freezing `now` turns the horizon into a fixture fact, so
+  // the boundary is derivable instead of drifting.
+  const FROZEN_NOW = new Date("2026-08-05T12:00:00.000Z");
+  const FROZEN_TODAY = "2026-08-05"; // that instant's America/Toronto calendar date
+  // FOUR, deliberately NOT the default three: the runtime is supposed to read
+  // the STUDIO's configured horizon, and a fixture sitting on the default
+  // cannot tell "read the studio" apart from "fell back".
+  const HORIZON_MONTHS = 4;
+  const DAYS_PER_HORIZON_MONTH = 31; // lib/booking/horizon's conservative month
+  const SCOPE_START = "2026-10-01";
+  const SCOPE_END = "2026-12-15"; // 76 days — deliberately reaching PAST the horizon
+
+  // Derived by plain calendar arithmetic, NOT by calling `horizonRangeInStudioTz`.
+  // That function is part of the chain under test, so computing the expected
+  // boundary with it would assert only that the code agrees with itself.
+  const EXPECTED_SCAN_END = addDaysUtc(FROZEN_TODAY, HORIZON_MONTHS * DAYS_PER_HORIZON_MONTH);
+  const EXPECTED_DAYS = daysInclusive(SCOPE_START, EXPECTED_SCAN_END);
+  const RETIRED_CAP_DAYS = 21; // the arbitrary constant this replaced
+
   beforeEach(() => {
+    // Only `Date` is faked. The action awaits real promises, and faking timers
+    // wholesale would stall them.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(FROZEN_NOW);
+    studioFixture.horizonMonths = HORIZON_MONTHS;
     cookieJar.set("wl_proof_capability", signedCapability(TOKEN, CAPABILITY));
     fetchPublicSlotsAction.mockImplementation(async ({ date }: { date: string }) => ({
       ok: true,
       slots: [{ start: `${date}T14:00:00.000Z`, end: `${date}T14:45:00.000Z` }],
     }));
   });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // THE FIXTURE MUST ACTUALLY POSE THE QUESTION. If the horizon ever landed on
+  // or past the scope's end, every assertion below would still pass while
+  // proving only that the walk respects `endDate` — which is the precise way
+  // this block went vacuous before. Fail loudly instead.
+  it("poses a scope that genuinely OUTRUNS the horizon", () => {
+    expect(EXPECTED_SCAN_END < SCOPE_END).toBe(true);
+    expect(EXPECTED_DAYS).toBeGreaterThan(RETIRED_CAP_DAYS);
+    expect(EXPECTED_DAYS).toBeLessThan(daysInclusive(SCOPE_START, SCOPE_END));
+  });
 
   function longOffer(weekdays: number[] | null) {
     const r = liveResolve(weekdays);
-    r.invitation.scope.startDate = "2026-10-01";
-    r.invitation.scope.endDate = "2026-12-15"; // 76 days: well past the old cap
+    r.invitation.scope.startDate = SCOPE_START;
+    r.invitation.scope.endDate = SCOPE_END;
     resolveInvitation.mockResolvedValue(r);
   }
 
@@ -1051,7 +1121,7 @@ describe("P2-B — the whole authorised window is reachable", () => {
     longOffer(null);
     const out = await loadInvitationAction(TOKEN);
     if (out.kind !== "offer") throw new Error(`expected offer, got ${out.kind}`);
-    expect(out.days.length).toBeGreaterThan(21);
+    expect(out.days.length).toBeGreaterThan(RETIRED_CAP_DAYS);
   });
 
   it("reaches the final day the studio can actually be BOOKED on", async () => {
@@ -1061,22 +1131,19 @@ describe("P2-B — the whole authorised window is reachable", () => {
     // are unbookable by ANY route, and walking them would spend the whole
     // budget discovering that one refusal at a time.
     //
-    // The fixture studio has no configured horizon, so it takes the default.
-    // With a scope ending 2026-12-15 the walk therefore stops at the horizon,
-    // and what matters is that it goes FAR past the old 21-day cap and stops
-    // for an authoritative reason rather than an arbitrary constant.
+    // The fixture studio configures FOUR months, so the walk stops at that
+    // horizon rather than at the scope's later end — and the last day is
+    // derived from the frozen clock, not day 21 and not a magic date.
     longOffer(null);
     const out = await loadInvitationAction(TOKEN);
     if (out.kind !== "offer") throw new Error("unreachable");
 
     const dates = out.days.map((d) => d.date);
-    expect(dates.length).toBeGreaterThan(60);
-    // Well beyond the old cap, and contiguous to the end of what it scanned.
-    expect(dates).toContain("2026-11-30");
-    // The last day scanned is the horizon's, not day 21 and not a magic number.
+    expect(dates.length).toBe(EXPECTED_DAYS);
+    expect(dates.length).toBeGreaterThan(RETIRED_CAP_DAYS * 2);
     const last = dates[dates.length - 1]!;
-    expect(last > "2026-11-30").toBe(true);
-    expect(last <= "2026-12-15").toBe(true);
+    expect(last).toBe(EXPECTED_SCAN_END);
+    expect(last < SCOPE_END).toBe(true);
   });
 
   it("STOPS AT THE HORIZON, and does not query past it", async () => {
@@ -1085,11 +1152,22 @@ describe("P2-B — the whole authorised window is reachable", () => {
     longOffer(null);
     await loadInvitationAction(TOKEN);
 
+    // The loader is REACHED, once, for a real range — so none of what follows
+    // can be satisfied by an offer that was never bookable in the first place.
+    expect(fetchPublicSlotsForDates).toHaveBeenCalledTimes(1);
     const asked = (fetchPublicSlotsForDates.mock.calls[0]![0] as { dates: string[] }).dates;
-    expect(asked.length).toBeGreaterThan(60);
-    // Bounded, and bounded by something far below the 76-day scope.
-    expect(asked.length).toBeLessThan(76);
-    for (const d of asked) expect(d <= "2026-12-15", d).toBe(true);
+
+    // A. MATERIALLY PAST THE RETIRED CAP — not "one more than 21".
+    expect(asked.length).toBeGreaterThan(RETIRED_CAP_DAYS * 2);
+    expect(asked).toContain(addDaysUtc(SCOPE_START, RETIRED_CAP_DAYS + 1));
+
+    // B. AND IT STOPS AT THE STUDIO'S OWN HORIZON — the exact derived date,
+    // strictly short of the scope it was given. An off-by-one either way, or a
+    // fall back to the default three months, moves this and fails.
+    expect(asked[asked.length - 1]).toBe(EXPECTED_SCAN_END);
+    expect(asked.length).toBe(EXPECTED_DAYS);
+    expect(EXPECTED_SCAN_END < SCOPE_END).toBe(true);
+    for (const d of asked) expect(d <= EXPECTED_SCAN_END, d).toBe(true);
   });
 
   it("A THROTTLED READ IS AN ERROR, never an empty diary", async () => {
@@ -1113,7 +1191,7 @@ describe("P2-B — the whole authorised window is reachable", () => {
     // invitation. It used to allocate tens of thousands of dates before the
     // first fetch; `9999-12-31` could exhaust the invocation outright.
     const r = liveResolve(null);
-    r.invitation.scope.startDate = "2026-10-01";
+    r.invitation.scope.startDate = SCOPE_START;
     r.invitation.scope.endDate = "9999-12-31";
     resolveInvitation.mockResolvedValue(r);
 
@@ -1127,7 +1205,7 @@ describe("P2-B — the whole authorised window is reachable", () => {
     longOffer(null);
     const out = await loadInvitationAction(TOKEN);
     if (out.kind !== "offer") throw new Error("unreachable");
-    for (const d of out.days) expect(d.date <= "2026-12-15").toBe(true);
+    for (const d of out.days) expect(d.date <= SCOPE_END).toBe(true);
   });
 
   it("queries only the days the offer permits", async () => {
