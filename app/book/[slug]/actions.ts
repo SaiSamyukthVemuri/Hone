@@ -57,7 +57,9 @@ import {
 import {
   authorizeInvitationForBooking,
   consumeInvitationForBooking,
+  recordInvitationConversion,
   type BookingAuthorization,
+  type ConversionOutcome,
 } from "@/lib/booking/waitlist-invitation";
 import {
   buildBookingMarketingConsentRow,
@@ -729,6 +731,14 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // invitationConsumedWithoutBooking(), so none of them can hand back retryable
   // copy for an invitation that is already gone.
   let consumedInvitationId: string | null = null;
+  // WAIT-03. THE AUTHORITATIVE ENTRY ID, kept server-side for the conversion
+  // record below. The locked redemption is the ONLY authority on which entry
+  // was just spent: it is not the submitted email, not the resolved client, not
+  // "the studio's oldest invited entry" and not the newest invitation. Every
+  // one of those can name somebody else's entry -- two prospects invited in the
+  // same round, a shared household address, an entry requeued after a release.
+  // So the id travels from the command that spent it, and nowhere else.
+  let redeemedEntryId: string | null = null;
   if (invitationAuth?.kind === "authorized") {
     const redeemed = await consumeInvitationForBooking(
       invitationAuth,
@@ -743,6 +753,11 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
         code: "invitation_refused",
       };
     }
+    // BOTH are kept, and they answer different questions. The invitation id is
+    // the OPERATIONAL evidence the recovery log already records; the entry id
+    // is what the conversion command is scoped by. Neither substitutes for the
+    // other, so the existing recovery path is untouched.
+    redeemedEntryId = redeemed.entryId;
     consumedInvitationId = invitationAuth.invitation.invitationId;
   }
 
@@ -1261,6 +1276,74 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
       return fallback;
     }
   };
+
+  // -----------------------------------------------------------------------
+  // WAIT-03. RECORD THE CONVERSION. The lifecycle is REDEEM -> BOOK -> RECORD
+  // and this is the third step, placed here because this is the first line at
+  // which the appointment is DURABLE: `create_public_appointment` answered
+  // `created` AND handed back an appointment id, and the invitation-spent guard
+  // above has already turned every other outcome into a refusal.
+  //
+  // WITHOUT THIS, a successful invitation booking left the entry in `invited`
+  // forever: the prospect has an appointment, the queue still shows them as
+  // waiting to hear back, the admission round's allowance is never reconciled,
+  // and the next operator sweep can invite the same person again. Nothing else
+  // in the product writes `converted` -- this command is its only author.
+  //
+  // ORDER IS A SAFETY PROPERTY, NOT A STYLE CHOICE. Conversion is terminal:
+  // `remove_new_client_waitlist_entry` answers `not_removable` on a converted
+  // entry, so there is no operator undo for a conversion recorded against a
+  // booking that then failed. Running it after the commit means the record can
+  // only ever be late, never wrong.
+  //
+  // `clientId` is the resolved client this appointment was actually created
+  // for, whichever branch produced it -- existing, newly inserted, or the
+  // unique-race winner -- because the command above was given this same value.
+  // -----------------------------------------------------------------------
+  //
+  // The narrowing is EARNED: `redeemedEntryId` is a `let`, so TypeScript drops
+  // its narrowing inside the closure below. Binding a const here is what makes
+  // the argument provably non-null without a cast or a `!`.
+  const convertedEntryId = redeemedEntryId;
+  if (convertedEntryId) {
+    // POST-COMMIT LAW. The appointment is already durable, so a conversion
+    // failure may not reach the visitor: they booked, and telling them
+    // otherwise would send them back to a link that can no longer book.
+    // `postCommit` contains an unexpected THROW; the closed refusals and the
+    // transport failure come back as values and are handled immediately below.
+    const conversion = await postCommit<ConversionOutcome>(
+      "public_booking_waitlist_conversion_threw",
+      { kind: "unavailable" },
+      () =>
+        recordInvitationConversion({
+          studioId: studio.id,
+          entryId: convertedEntryId,
+          clientId,
+        }),
+    );
+    if (conversion.kind !== "converted") {
+      // FAIL-SOFT IS NOT SILENT. This is the one durable trace that an entry
+      // needs its status repaired by hand, so it carries everything an operator
+      // needs to find all three rows -- appointment, invitation, entry -- and
+      // the command's own answer for why it refused.
+      //
+      // NO AUTOMATIC RECOVERY. The invitation is not re-redeemed, reissued or
+      // retried: it is already spent, the booking already exists, and a blind
+      // retry against a command whose refusal may be permanent (`not_invited`
+      // on an entry an operator has since removed) would loop rather than heal.
+      //
+      // SECRETS ARE ABSENT BY CONSTRUCTION. The raw token, the capability, the
+      // proof code and the recipient address are never in scope at this point
+      // in the function, let alone in this payload.
+      logInternalBookingError("public_booking_waitlist_conversion_not_recorded", {
+        appointmentId: evidenceAppointmentId,
+        studioId: evidenceStudioId,
+        invitationId: consumedInvitationId,
+        entryId: convertedEntryId,
+        code: conversion.kind,
+      });
+    }
+  }
 
   // AUTHORITATIVE PRACTITIONER. `commandRow.practitioner_id` is the practitioner
   // the appointment was actually assigned to, resolved inside the transaction

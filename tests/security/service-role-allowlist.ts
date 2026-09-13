@@ -441,8 +441,17 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
       "not an active member of. resolve/begin/complete/redeem/decline are PUBLIC and " +
       "guarded by secrets, not by a session: a 64-hex invitation token plus, for " +
       "either mutation, a short-lived recipient capability that the database " +
-      "validates INSIDE its own locked transaction. This module never derives " +
-      "tenancy, admission or recipient identity itself.",
+      "validates INSIDE its own locked transaction. A THIRD shape was added by " +
+      "WAIT-03: record_new_client_waitlist_conversion carries no session and no " +
+      "secret of its own, because it is not a caller-initiated command -- it is " +
+      "the bookkeeping tail of a redemption that has ALREADY happened, and every " +
+      "argument is server-derived (studio from the server-resolved slug, entry " +
+      "from the locked redemption's own return, client from this server's " +
+      "resolution). The browser names none of them. The command re-scopes by " +
+      "(entry_id, studio_id) and independently requires a redeemed invitation, " +
+      "so it can neither reach another studio's queue nor convert an entry " +
+      "nobody accepted. This module never derives tenancy, admission or " +
+      "recipient identity itself.",
     scopeGuard: "getCurrentPractitionerWithStudio",
   },
   {

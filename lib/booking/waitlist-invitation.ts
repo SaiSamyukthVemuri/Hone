@@ -244,6 +244,26 @@ export type DeclineOutcome =
   | { kind: "invalid_input" }
   | Unavailable;
 
+/**
+ * The lifecycle's LAST step. Every refusal here is a closed, expected answer
+ * rather than an error:
+ *
+ *   * `not_redeemed`     - the entry is invited but nobody has accepted yet, so
+ *                          there is nothing to record. Nothing is consumed by
+ *                          the refusal, so it stays repeatable.
+ *   * `not_invited`      - the entry was not in `invited` when the stamp was
+ *                          attempted; ALREADY CONVERTED reads as this too,
+ *                          which is what makes a duplicate call harmless.
+ *   * `client_not_found` - the client is not this studio's.
+ */
+export type ConversionOutcome =
+  | { kind: "converted" }
+  | { kind: "not_redeemed" }
+  | { kind: "not_invited" }
+  | { kind: "client_not_found" }
+  | { kind: "invalid_input" }
+  | Unavailable;
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -954,6 +974,64 @@ export async function expireInvitation(input: { entryId: string }): Promise<Expi
       case "invalid_input":
         return { kind: code };
       default:
+        return { kind: "unavailable" };
+    }
+  } catch {
+    return { kind: "unavailable" };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 8. CONVERT - recorded AFTER the appointment exists, never before
+//
+// The waitlist lifecycle is REDEEM -> BOOK -> RECORD, and the database enforces
+// the first arrow itself: `record_new_client_waitlist_conversion` refuses with
+// `not_redeemed` unless this entry's own invitation carries a `redeemed_at`.
+// The SECOND arrow is the caller's to honour, because the command has no way to
+// see an appointment. Recording before the booking commits would leave a
+// converted entry behind a booking that never happened, and conversion is
+// terminal - `remove_` answers `not_removable` on a converted entry, so there
+// is no operator undo.
+//
+// Nothing here is reachable by the recipient: the command is service_role-only
+// (0188, 0189 and 0192 each revoke EXECUTE from public, anon and authenticated
+// by name), and every argument is server-derived.
+// ---------------------------------------------------------------------------
+
+/**
+ * Record that a redeemed waitlist entry has become a booked client.
+ *
+ * The `entryId` MUST be the one the redemption itself returned. It is never
+ * derived from the browser, the submitted email, the resolved client, queue
+ * order or invitation chronology: the locked redemption is the only authority
+ * on which entry was just spent, and a reconstructed id could name a different
+ * person's entry - the one failure this argument exists to make impossible.
+ */
+export async function recordInvitationConversion(input: {
+  studioId: string;
+  entryId: string;
+  clientId: string;
+}): Promise<ConversionOutcome> {
+  const admin = createAdminClient();
+  try {
+    const { data, error } = await admin.rpc("record_new_client_waitlist_conversion", {
+      p_studio_id: input.studioId,
+      p_entry_id: input.entryId,
+      p_client_id: input.clientId,
+    });
+    if (error) return { kind: "unavailable" };
+    const code = scalarCode(data);
+    switch (code) {
+      case "converted":
+      case "not_redeemed":
+      case "not_invited":
+      case "client_not_found":
+      case "invalid_input":
+        return { kind: code };
+      default:
+        // Includes null. A command that answered nothing recognisable is
+        // reported as unavailable rather than guessed at, so a vocabulary
+        // change downstream surfaces as "we do not know" and not as success.
         return { kind: "unavailable" };
     }
   } catch {
