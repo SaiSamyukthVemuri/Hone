@@ -15,6 +15,7 @@ import {
   type InviteToBookInput,
   ADMIT_VOCABULARY_REVIEWED_AT,
   INTEGRATION_EXHAUSTIVENESS_OBLIGATION,
+  INTEGRATION_INPUT_REVALIDATION_OBLIGATION,
   ADMIT_SERVER_REFUSALS,
   ADMIT_SERVER_SUCCESS,
   INVITE_TO_BOOK_FAILURES,
@@ -407,6 +408,14 @@ describe("the admission vocabulary this component was REVIEWED against", () => {
     // where the next reader of the contract will find it.
     expect(INTEGRATION_EXHAUSTIVENESS_OBLIGATION).toMatch(/assembly time/i);
     expect(INTEGRATION_EXHAUSTIVENESS_OBLIGATION).toMatch(/unmapped current result is RED/i);
+
+    // AND THE ONE THIS ROUND ADDS. A narrower type tempts a reader into
+    // treating the compiler as the boundary; the browser never compiled.
+    expect(INTEGRATION_INPUT_REVALIDATION_OBLIGATION).toMatch(/re-validate/i);
+    expect(INTEGRATION_INPUT_REVALIDATION_OBLIGATION).toMatch(/server-side/i);
+    expect(INTEGRATION_INPUT_REVALIDATION_OBLIGATION).toMatch(
+      /existence, tenancy and eligibility/i,
+    );
   });
 
   it("gives every server result a presentation, and none of them success", () => {
@@ -917,5 +926,84 @@ describe("the validated scope requires a service the draft may still lack", () =
         serviceIds: ["svc-1"],
       }),
     ).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe("a blank identifier is not a chosen service", () => {
+  // CONTEXT DELIBERATELY OMITTED IN EVERY CASE HERE. With a service list
+  // supplied, membership would catch these for the wrong reason; the point is
+  // that the boundary refuses them on its own, which is the situation a caller
+  // that does not pass a list is actually in.
+
+  const BLANK_IDENTIFIERS = [
+    null,
+    "",
+    " ",
+    "   ",
+    "\t",
+    "\n",
+    "\r\n",
+    "\t \n ",
+    "\u00a0", // non-breaking space alone
+    "\u00a0\u00a0",
+    " \u00a0\t ", // mixed
+    "\u3000", // ideographic space
+  ];
+
+  it("refuses every blank or whitespace-only identifier", () => {
+    for (const blank of BLANK_IDENTIFIERS) {
+      const draft = { ...emptyDraft(), serviceId: blank as string | null };
+      const result = validateDraft(draft);
+      expect(result.ok, `${JSON.stringify(blank)} was accepted`).toBe(false);
+      expect(result.ok === false && result.errors.service).toBeTruthy();
+      expect(draftToInviteInput("e1", draft), `${JSON.stringify(blank)}`).toBeNull();
+    }
+  });
+
+  it("fails closed on a malformed non-string, without throwing", () => {
+    // The draft's TYPE says string | null. A caller that never met the compiler
+    // says otherwise, and a validation boundary answers rather than throws.
+    for (const malformed of [42, 0, true, false, {}, [], undefined, Symbol("s"), () => "svc-1"]) {
+      const draft = { ...emptyDraft(), serviceId: malformed as unknown as string };
+      expect(() => validateDraft(draft)).not.toThrow();
+      expect(validateDraft(draft).ok, `${String(malformed)} was accepted`).toBe(false);
+      expect(draftToInviteInput("e1", draft)).toBeNull();
+    }
+  });
+
+  it("passes a real identifier through UNCHANGED", () => {
+    // No trimming into a different id, no default, no service chosen on the
+    // practitioner's behalf.
+    for (const id of ["svc-1", "a", "svc with spaces inside", " svc-1 ", "\u200bsvc"]) {
+      const input = draftToInviteInput("e1", { ...emptyDraft(), serviceId: id });
+      expect(input?.scope.serviceId, `${JSON.stringify(id)} was altered`).toBe(id);
+    }
+  });
+
+  it("still checks membership when a service list IS supplied", () => {
+    // The new predicate must not have replaced the old rule.
+    const stale = { ...emptyDraft(), serviceId: "svc-gone" };
+    expect(validateDraft(stale, { serviceIds: ["svc-1", "svc-2"] }).ok).toBe(false);
+    expect(draftToInviteInput("e1", stale, { serviceIds: ["svc-1"] })).toBeNull();
+    expect(validateDraft(stale, { serviceIds: ["svc-gone"] }).ok).toBe(true);
+  });
+
+  it("refuses everything when the supplied service list is empty", () => {
+    for (const id of ["svc-1", "anything", null]) {
+      expect(
+        validateDraft({ ...emptyDraft(), serviceId: id }, { serviceIds: [] }).ok,
+      ).toBe(false);
+    }
+  });
+
+  it("a valid draft still validates, so none of the above is over-broad", () => {
+    // NON-VACUITY. If the predicate refused everything, every assertion above
+    // would pass and the boundary would be useless.
+    const valid = { ...emptyDraft(), serviceId: "svc-1" };
+    expect(validateDraft(valid).ok).toBe(true);
+    expect(validateDraft(valid, { serviceIds: ["svc-1"] }).ok).toBe(true);
+    expect(draftToInviteInput("e1", valid)?.scope.serviceId).toBe("svc-1");
   });
 });

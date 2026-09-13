@@ -1203,6 +1203,30 @@ export type DraftContext = {
 /** Said once, so the rule above and the narrowing below cannot drift apart. */
 const SERVICE_REQUIRED = "Choose the service they can book.";
 
+/**
+ * Has a service actually been chosen?
+ *
+ * ONE PREDICATE, USED BY BOTH CHECKS, because the two previously said
+ * `=== null` independently and a blank string satisfied neither. With no service
+ * list supplied there was nothing else to catch it, so `""` — or a stray space
+ * from a hand-built payload — reached `draftToInviteInput` as a SUCCESSFUL
+ * validated input carrying a service nobody could have picked.
+ *
+ * `unknown`, not `string | null`: the draft's type says one thing and a caller
+ * that never met the compiler says another. A non-string is refused rather than
+ * thrown on — this is a validation boundary, and its job is to answer.
+ *
+ * `trim()` decides emptiness and NOTHING ELSE. It covers the ordinary spaces,
+ * tabs, newlines, non-breaking and ideographic spaces, and the identifier is
+ * then used EXACTLY as given — trimming one into a different id would be
+ * choosing a service on the practitioner's behalf. A zero-width space is
+ * content by this rule, not whitespace, so it is preserved and left for the
+ * database to refuse as the nonexistent id it is.
+ */
+function isChosenServiceId(value: unknown): value is string {
+  return typeof value === "string" && value.trim() !== "";
+}
+
 export function validateDraft(
   draft: InviteDraft,
   { serviceIds }: DraftContext = {},
@@ -1212,7 +1236,7 @@ export function validateDraft(
   // NOT CHOSEN YET IS INCOMPLETE, NOT BROAD. An invitation carries one service,
   // so leaving this blank has nothing to send — and the practitioner has to say
   // which, rather than the screen picking for them.
-  if (draft.serviceId === null) {
+  if (!isChosenServiceId(draft.serviceId)) {
     errors.service = SERVICE_REQUIRED;
   } else if (serviceIds !== undefined && !serviceIds.includes(draft.serviceId)) {
     // A SERVICE THAT VANISHED IS NOT A BLANK ONE EITHER. The composer renders
@@ -1258,7 +1282,9 @@ export function validateDraft(
   // ever disagreed with the check above, the function refuses rather than
   // fabricating a scope with a service nobody chose.
   const serviceId = draft.serviceId;
-  if (serviceId === null) return { ok: false, errors: { service: SERVICE_REQUIRED } };
+  if (!isChosenServiceId(serviceId)) {
+    return { ok: false, errors: { service: SERVICE_REQUIRED } };
+  }
 
   return {
     ok: true,
