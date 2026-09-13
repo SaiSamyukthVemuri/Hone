@@ -350,6 +350,101 @@ describe("new-client service eligibility is enforced by the database", () => {
     expect(guard.rows[0].ok, "modality precedence must survive the trim repair").toBe(false);
   });
 
+  /**
+   * UNICODE CLASSIFICATION VECTORS.
+   *
+   * Each is judged by the REAL reviewed predicate in lib/booking/consultation.ts
+   * and by the database, and the two must agree. The expectations are not
+   * written down anywhere: JavaScript is the oracle, which is the only way a
+   * parity claim means anything.
+   */
+  const UNICODE_VECTORS: readonly { label: string; modality: string | null; name: string }[] = [
+    { label: "lowercase ascii modality", modality: "consultation", name: "Laser" },
+    { label: "uppercase ascii modality", modality: "CONSULTATION", name: "Laser" },
+    { label: "mixed-case ascii modality", modality: "CoNsUlTaTiOn", name: "Laser" },
+    // THE REPORTED CASE. U+0130 lowercases (JS) to i + COMBINING DOT ABOVE, so
+    // the token is broken; a Turkish collation's lower() collapses it to a bare
+    // 'i' and would call this a consultation.
+    { label: "U+0130 dotted capital I", modality: "CONSULTATİON", name: "Laser" },
+    // And the reverse direction, which is the alarming one: a plain all-caps
+    // English name that a Turkish lower() turns into a dotless i.
+    { label: "U+0130 in the NAME", modality: null, name: "CONSULTATİON" },
+    { label: "dotless i U+0131", modality: "consultatıon", name: "Laser" },
+    { label: "dotless i in the NAME", modality: null, name: "Consultatıon" },
+    { label: "decomposed i + U+0307", modality: "consultati̇on", name: "Laser" },
+    { label: "decomposed in the NAME", modality: null, name: "Consultati̇on" },
+    { label: "accented u", modality: "consültation", name: "Laser" },
+    { label: "accented in the NAME", modality: null, name: "Consültation" },
+    { label: "full-width I", modality: "CONSULTATＩON", name: "Laser" },
+    { label: "full-width whole token", modality: "ｃｏｎｓｕｌｔａｔｉｏｎ", name: "Laser" },
+    { label: "kelvin sign prefix", modality: "KCONSULTATION", name: "Laser" },
+    // AN INTACT ASCII TOKEN SURROUNDED BY UNICODE -- must still be found.
+    { label: "unicode around an intact token", modality: null, name: "日本 CONSULTATION テ" },
+    { label: "emoji around an intact token", modality: null, name: "✨ New Client Consultation ✨" },
+    // UNICODE INSIDE the would-be token -- must not be found.
+    { label: "unicode inside the token", modality: null, name: "Consułtation" },
+    { label: "cyrillic lookalike o", modality: null, name: "Cоnsultation" },
+    // Modality precedence, unchanged by any of this.
+    { label: "explicit treatment, consultation name", modality: "treatment", name: "New Client Consultation" },
+    { label: "explicit TREATMENT upper, consultation name", modality: "TREATMENT", name: "Consultation" },
+    // Whitespace fixtures, carried forward.
+    { label: "NBSP-only modality, consultation name", modality: " ", name: "New Client Consultation" },
+    { label: "ZWSP-only modality (JS does NOT trim)", modality: "​", name: "New Client Consultation" },
+  ];
+
+  it("SQL classification equals the canonical JavaScript predicate on every Unicode vector", async () => {
+    for (const v of UNICODE_VECTORS) {
+      for (const active of [true, false]) {
+        const ts = active === true && isConsultationService({ modality: v.modality, name: v.name });
+        const db = await adminQuery(
+          `select public.service_is_bookable_by_new_client($1,$2,$3) as ok`,
+          [active, v.modality, v.name],
+        );
+        expect(
+          db.rows[0].ok,
+          `${v.label} (active=${active}): SQL must decide exactly as JavaScript`,
+        ).toBe(ts);
+      }
+    }
+    // A null/unknown active must fail closed in both engines.
+    const nullActive = await adminQuery(
+      `select public.service_is_bookable_by_new_client(null,'consultation','Laser') as ok`,
+    );
+    expect(nullActive.rows[0].ok).not.toBe(true);
+  });
+
+  it("the vector set actually exercises both verdicts", async () => {
+    // Anti-vacuity: a set that JavaScript judged uniformly would make the
+    // agreement above true for a predicate that ignored its input.
+    const yes = UNICODE_VECTORS.filter((v) =>
+      isConsultationService({ modality: v.modality, name: v.name }),
+    ).length;
+    expect(yes, "some vectors must be consultations").toBeGreaterThanOrEqual(4);
+    expect(UNICODE_VECTORS.length - yes, "and some must not be").toBeGreaterThanOrEqual(8);
+  });
+
+  it("classification does not move under a hostile collation", async () => {
+    // THE DEFECT, STATED DIRECTLY. lower() reads the collation in force; the
+    // ASCII fold does not. Both directions are shown, because the second --
+    // a plain English all-caps name judged NOT a consultation -- is the one
+    // that would quietly refuse ordinary services.
+    const hostile = await adminQuery(
+      `select lower(E'CONSULTATİON' collate "tr-TR-x-icu") = 'consultation' as lower_says_yes,
+              lower(E'CONSULTATION'  collate "tr-TR-x-icu") = 'consultation' as lower_says_no,
+              public.service_is_bookable_by_new_client(true, E'CONSULTATİON' collate "tr-TR-x-icu", 'Laser') as fold_dotted,
+              public.service_is_bookable_by_new_client(true, E'CONSULTATION' collate "tr-TR-x-icu", 'Laser')  as fold_plain`,
+    );
+    const r = hostile.rows[0];
+    // What lower() would have concluded, and what JavaScript concludes.
+    expect(r.lower_says_yes, "lower() under tr-TR calls U+0130 a consultation").toBe(true);
+    expect(isConsultationService({ modality: "CONSULTATİON", name: "Laser" })).toBe(false);
+    expect(r.lower_says_no, "lower() under tr-TR refuses a plain ASCII CONSULTATION").toBe(false);
+    expect(isConsultationService({ modality: "CONSULTATION", name: "Laser" })).toBe(true);
+    // What the shipped predicate concludes: JavaScript's answer, both times.
+    expect(r.fold_dotted, "the fold must not be swayed by the collation").toBe(false);
+    expect(r.fold_plain).toBe(true);
+  });
+
   it("the trim repair did not touch active or tenancy strictness", async () => {
     // Both halves of the rule that sit outside the trim.
     const inactive = await adminQuery(
@@ -527,6 +622,66 @@ describe("new-client service eligibility is enforced by the database", () => {
     // nothing, and the caller's next move is identical.
     expect(["invalid_service", "no_round_open"]).toContain(refused.rows[0].result);
     await expectNoAdmissionResidue(noRound, noRoundEntry);
+  });
+
+  it("a U+0130 service cannot mint an invitation or spend allowance", async () => {
+    // THE REPORTED MISMATCH, AS AN ADMISSION OUTCOME rather than a predicate
+    // result. Under a collation whose lower() collapses U+0130 to a bare 'i',
+    // this service would classify as a consultation in SQL while the recipient
+    // booking path -- which asks JavaScript -- refuses it. The invitation would
+    // be sent, the seat spent, and the recipient would discover the dead offer.
+    const studio = await seedStudio("elig-u0130");
+    await openRound(studio, 1);
+    const svc = await adminQuery(
+      `insert into public.services (studio_id, name, default_duration_minutes, active, modality)
+       values ($1,'Laser',30,true,$2) returning id`,
+      [studio.studioId, "CONSULTATİON"],
+    );
+    const entry = await seedWaiting(studio, "u0130");
+
+    // JavaScript's verdict on this exact row, for the record.
+    expect(isConsultationService({ modality: "CONSULTATİON", name: "Laser" })).toBe(false);
+
+    const res = await adminQuery(ADMIT, [
+      studio.studioId, studio.userId, entry, svc.rows[0].id, START, END, null, 72,
+    ]);
+    expect(res.rows[0].result).toBe("invalid_service");
+    expect(res.rows[0].invitation_id).toBeNull();
+    expect(res.rows[0].raw_token, "no token may reach a caller").toBeNull();
+    await expectNoAdmissionResidue(studio, entry);
+
+    // And the seat it did not spend is still there for a real consultation.
+    const good = await adminQuery(
+      `insert into public.services (studio_id, name, default_duration_minutes, active, modality)
+       values ($1,'Consultation',30,true,'consultation') returning id`,
+      [studio.studioId],
+    );
+    const next = await seedWaiting(studio, "u0130-next");
+    const admitted = await adminQuery(ADMIT, [
+      studio.studioId, studio.userId, next, good.rows[0].id, START, END, null, 72,
+    ]);
+    expect(admitted.rows[0].result, "the refused attempt must not have spent the seat").toBe(
+      "admitted",
+    );
+  });
+
+  it("a plain all-caps CONSULTATION service is still admitted", async () => {
+    // The other direction of the same defect, as an outcome. A collation that
+    // lowercases ASCII 'I' to a dotless one would refuse this ordinary service.
+    const studio = await seedStudio("elig-allcaps");
+    await openRound(studio, 5);
+    const svc = await adminQuery(
+      `insert into public.services (studio_id, name, default_duration_minutes, active, modality)
+       values ($1,'LASER',30,true,'CONSULTATION') returning id`,
+      [studio.studioId],
+    );
+    const entry = await seedWaiting(studio, "allcaps");
+    expect(isConsultationService({ modality: "CONSULTATION", name: "LASER" })).toBe(true);
+    const res = await adminQuery(ADMIT, [
+      studio.studioId, studio.userId, entry, svc.rows[0].id, START, END, null, 72,
+    ]);
+    expect(res.rows[0].result).toBe("admitted");
+    expect(res.rows[0].raw_token).not.toBeNull();
   });
 
   it("the final seat is not spent by an ineligible attempt", async () => {

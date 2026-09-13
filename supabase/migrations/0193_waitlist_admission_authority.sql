@@ -1471,12 +1471,57 @@ as $$
   -- permissive than production: U+200B zero-width space, U+0085 NEL, U+180E
   -- Mongolian vowel separator. A regex shorthand would have swept some of those
   -- in, which is why the class is written out.
+  -- ASCII CASE FOLDING, NOT lower(). `lower()` is COLLATION-DEPENDENT, and the
+  -- token being recognised is a fixed ASCII word, so the database's locale was
+  -- silently part of the eligibility rule. Demonstrated on this very instance:
+  --
+  --     lower('CONSULTAT{I}ON')  collate "tr-TR-x-icu" -> 'consultation'   (eligible)
+  --     lower('CONSULTATION')    collate "tr-TR-x-icu" -> 'consultat{i}on' (NOT eligible)
+  --
+  --   ...where {I} is U+0130 and {i} is U+0131. The second is the alarming one:
+  --   an ordinary all-caps English service name classified as NOT a
+  --   consultation. JavaScript's toLowerCase() is locale-INDEPENDENT, so under
+  --   such a collation the two engines disagree in BOTH directions. The default
+  --   en_US.UTF-8 collation on the local instance happens to agree with
+  --   JavaScript on U+0130; the hosted locale is not guaranteed to, and nothing
+  --   here should depend on which one it is.
+  --
+  -- WHY ASCII FOLDING IS EXACTLY EQUIVALENT HERE, and not merely close. The
+  -- decision is "does this text equal, or contain, the fixed ASCII token
+  -- 'consultation'". Enumerating the whole Unicode range against Node's own
+  -- toLowerCase gives two facts:
+  --
+  --   * ZERO non-ASCII codepoints lowercase into a sequence made only of
+  --     characters drawn from 'consultation'. No non-ASCII character can ever
+  --     supply a piece of the token.
+  --   * EXACTLY ONE, U+0130, introduces a token character at all: it lowercases
+  --     to U+0069 U+0307 -- 'i' followed by a COMBINING DOT. The dot is not in
+  --     the token, so the 'i' can never be followed by the 'o' the token needs.
+  --     U+0130 cannot complete the token under JavaScript either.
+  --
+  -- So for THIS decision, folding only A-Z and leaving every other character
+  -- untouched yields the same boolean as toLowerCase() for every input in
+  -- Unicode. It is not a general lowercasing replacement and is not used as one.
+  -- Accents, combining marks and full-width lookalikes stay distinct from ASCII
+  -- letters, which is exactly what the TypeScript predicate does.
+  --
+  -- COLLATE "C" ON THE COMPARISONS, because conversion is only half of it: a
+  -- non-deterministic ICU collation can make `=` equate different byte
+  -- sequences, and `position()` is collation-aware too. The default collation
+  -- here is deterministic, but that is a property of this database rather than
+  -- of this rule.
   select p_active is true
      and (
-           lower(btrim(coalesce(p_modality, ''), E'\u0009\u000A\u000B\u000C\u000D\u0020\u00A0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF')) = 'consultation'
+           translate(btrim(coalesce(p_modality, ''), E'\u0009\u000A\u000B\u000C\u000D\u0020\u00A0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF'),
+                     'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz') collate "C" = 'consultation'
            or (
-                lower(btrim(coalesce(p_modality, ''), E'\u0009\u000A\u000B\u000C\u000D\u0020\u00A0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF')) = ''
-                and position('consultation' in lower(coalesce(p_name, ''))) > 0
+                translate(btrim(coalesce(p_modality, ''), E'\u0009\u000A\u000B\u000C\u000D\u0020\u00A0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF'),
+                          'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz') collate "C" = ''
+                -- The NAME is not trimmed, mirroring the TypeScript exactly:
+                -- it calls name.toLowerCase().includes(...) with no trim.
+                and position(('consultation' collate "C")
+                             in (translate(coalesce(p_name, ''),
+                                           'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz') collate "C")) > 0
               )
          )
 $$;
