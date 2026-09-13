@@ -84,11 +84,14 @@ describe("0191 — identity and position", () => {
     expect(FILE).toBe("0191_studio_sms_sender_provisioning.sql");
   });
 
-  it("is the current repository maximum", () => {
-    // Per CLAUDE.md only the CURRENT max asserts this, so that a future
-    // migration does not turn this file red. Whoever adds 0192 moves it.
-    expect(isRepoMax(VERSION)).toBe(true);
-    expect(versionsAbove(VERSION)).toEqual([]);
+  it("is no longer the repository maximum, and does not claim to be", () => {
+    // MOVED BY 0192, exactly as the instruction in this block used to say.
+    // Per CLAUDE.md only the CURRENT max asserts isRepoMax; an older migration
+    // keeping that claim is what turns its file red the moment the next one
+    // lands. The "nothing above me" tripwire is served centrally, not restated
+    // here.
+    expect(isRepoMax(VERSION)).toBe(false);
+    expect(versionsAbove(VERSION).length).toBeGreaterThan(0);
   });
 
   it("IS APPLIED to production, and is the CURRENT hosted head", () => {

@@ -14,7 +14,7 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-09-06, post-0191 apply; nothing pending in this tree)
+## Current state (verified 2026-09-06, post-0191 apply; `0192` and `0193` authored and PENDING on this branch)
 
 > **This block is an APPLY RECORD written by a RECONCILIATION lane, not by the lane
 > that applied `0191`.** It therefore records the **verified result** of the apply and
@@ -27,9 +27,9 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0191** (`0191_studio_sms_sender_provisioning.sql`) |
-| **Repo migration max** | **0191** — **repository and hosted are at parity**, with nothing pending. Next free number is **0192**; note `0192_studio_sms_sender_outbound_lookup.sql` is **authored on PR #674**, which is **not merged**, so the number is spoken for but absent from this tree. |
+| **Repo migration max** | **0193** — **this branch carries BOTH `0192_waitlist_recipient_proof_authority.sql` (WAIT-03B, B1 … B1.5c) and `0193_waitlist_admission_authority.sql` (WAIT-ADMIT-01)**, so the repository sits **two migrations above hosted** here. **`0192` is PENDING** and **`0193` is PENDING**: neither is applied to production, and neither is authorized for apply — that is a separate gate. Hosted remains **0191** and the apply record above is unchanged; this row states the BRANCH-derived position, not a new production claim. **Slot ownership was reassigned.** An earlier revision recorded `0192` as spoken for by `0192_studio_sms_sender_outbound_lookup.sql` on PR #674. That is no longer true: **WAIT owns `0192` and `0193`**, and #674's migration was renumbered to **`0194`** on its own branch. `0193` is no longer merely spoken for — it is **authored here** by the WAIT admission slice, which is what moved this row. Next free number is **0194**, derived from **this tree's** `supabase/migrations/*.sql` by `npm run migration:state` and **not claimed** by this lane — but note it is the slot #674 now occupies on its own branch, so the next lane to author from here must confirm ownership rather than take the derived number. The derivation sees only this working tree and is **not** a statement about any other branch. |
 | **Remote-only migrations** | **none** — no migration exists on production that the repository lacks |
-| **Total migrations in repo** | **190** (`0001` … `0157`, `0159` … `0191` — **no `0158`**) — `0001`–`0157` is 157 and `0159`–`0191` is 33. Derived, not incremented from the previous block: the count is unchanged from 0190's because `0191` replaced the gap left by the skipped `0158`, and it agrees with the **190** hosted history rows. |
+| **Total migrations in repo** | **192** (`0001` … `0157`, `0159` … `0193` — **no `0158`**) — `0001`–`0157` is 157 and `0159`–`0193` is 35. Derived by `npm run migration:state` on this branch, which reports **192** with `0192` and `0193` both pending. This row moves with the repo max above it: leaving it at 191 made the ledger contradict the very command it cites, and neither `verify:prepush` nor the docs guard compares the total against the derived value. |
 | **Apply timestamp** | ⚠️ **NO SERVER-GENERATED APPLY TIMESTAMP WAS CAPTURED**, so `hosted_applied_at` is `null`. **AND NO OPERATOR-OBSERVED CLIENT-SIDE WINDOW IS ASSERTED EITHER** — unlike 0190, 0189, 0188 and 0187, this record was written by a lane that did not perform the apply and had no CLI invocation to bracket. See `hosted_applied_at_precision`. |
 | **Verified applied** | **2026-09-06** — state observed at `2026-09-06T16:03:53Z` (server clock), read-only |
 | **Applied from** | **not captured by this lane.** The migration in production matches `0191_studio_sms_sender_provisioning.sql` as merged in **PR #673** (merge `7e4e09d897f403dd560571978fb33b72516f0fa7`). The apply owner is the **#673 production operator lane**. |
@@ -60,10 +60,25 @@ something the browser knows — and therefore never something it can echo back a
 authority. `service_role` was granted no table privilege at all when read on 2026-09-06, and
 reaches rows only through the five definer commands.
 
-**`0192` is authored on PR #674 and is ABSENT FROM THIS TREE**, so it is not this tree's
-pending migration; `pending_migrations` is empty here. It is the migration that teaches the
-send path to consult this table, which is the first point at which existing SMS
-traffic is genuinely exposed. That is a separate gate.
+**SLOT OWNERSHIP MOVED AFTER THIS RECORD WAS WRITTEN.** An earlier revision of this
+paragraph said `0192` was authored on PR #674 and absent from this tree. That is no longer
+true and contradicted the Current-state row above, so it is corrected here rather than left
+standing: **WAIT owns `0192`**, this branch carries
+`0192_waitlist_recipient_proof_authority.sql` (recipient-proof **and** admission-round
+authority), and `npm run migration:state` reports it as one of this tree's **pending**
+migrations. #674's SMS-routing migration was renumbered to **`0194`** and is **HELD** on its
+own branch; it is the migration that teaches the send path to consult this table, and it
+remains a separate gate.
+
+**THIS PARAGRAPH DESCRIBES `0192` ONLY, AND THE BRANCH HAS SINCE MOVED.** An earlier revision
+ended with "repo max **0192** … pending **0192**", written when `0192` was the only migration
+here. WAIT-ADMIT-01 then authored `0193_waitlist_admission_authority.sql` on this same branch,
+so that sentence contradicted the Current-state row above it — the very failure this paragraph
+was added to correct, reintroduced from the other direction. The **Current-state table is the
+authority** for this tree's position: repo max **0193**, both `0192` and `0193` pending.
+
+**Hosted is still `0191`.** Nothing above records a hosted `0192` or `0193`, and the apply
+evidence for `0191` in this block is unchanged: both are authored and **UNAPPLIED**.
 
 ## Previous state (verified 2026-09-04, post-0190 apply)
 

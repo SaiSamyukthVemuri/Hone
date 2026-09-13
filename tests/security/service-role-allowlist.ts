@@ -331,6 +331,17 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "remove_new_client_waitlist_entry",
   },
   {
+    // WAIT INTEGRATION-01. Added by the assembly: #683 ships the contract and
+    // #685 ships the command, and neither branch can hold the adapter that
+    // joins them, so this call site exists only here. Listing it is the
+    // deliberate, reviewable act this file's header requires.
+    path: "lib/waitlist/invite-to-book-adapter.ts",
+    purpose:
+      "WAIT-03 B4 practitioner Invite-to-book — the sole caller of admit_new_client_waitlist_entry (migration 0193), and of release_new_client_waitlist_entry for Cancel invitation.",
+    why: "The adapter resolves the studio + acting practitioner server-side via getCurrentPractitionerWithStudio() and refuses a non-owner before any command runs; the browser supplies an entry id and product scope only — never a studio_id, user_id, role, round id, claim state or allowance count. `authenticated` holds SELECT and nothing else on new_client_waitlist_entries (0185), so there is no direct-DML route: the transition goes only through admit_new_client_waitlist_entry (service_role-only), which independently re-derives membership AND owner role from (studio_id, auth user id), scopes the entry by BOTH id and studio_id so a cross-studio id is not found, takes the studio and entry locks in the canonical order, and owns the claim-then-issue compound atomically. This file performs no waitlist DML of its own, and it discards the raw token the command returns rather than surfacing it to a practitioner view.",
+    scopeGuard: "getCurrentPractitionerWithStudio",
+  },
+  {
     path: "app/calendar-feed/[token]/route.ts",
     purpose: "Public, unauthenticated token-scoped route/query.",
     why: "No session; the bearer signed/hashed token is verified (token_hash) and resolves the exact appointment/intake/portal row. Scope comes from the verified token, so service-role is required.",
@@ -403,6 +414,49 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "verifyCancellationToken",
   },
   {
+    path: "app/invitation/[token]/actions.ts",
+    purpose:
+      "WAIT-03 B3 recipient invitation experience: server actions behind the public invitation link.",
+    why:
+      "PUBLIC and unauthenticated by design -- the caller is a prospective client " +
+      "holding an emailed link, so there is no session to scope by and RLS has no " +
+      "identity to work with. Every service-role read here happens only AFTER " +
+      "resolveInvitation() has returned a LIVE invitation, and each one is keyed by " +
+      "ids taken from THAT row (studio_id, scope_service_id) rather than " +
+      "from anything the caller supplied, so the blast radius is the single " +
+      "invitation the token already proves possession of. Only TWO reads are " +
+      "presentation lookups off tables: the studio's slug/name/timezone and the " +
+      "offered service's name/duration. THE INVITED PERSON'S IDENTITY IS NOT ONE " +
+      "OF THEM. 0185 revokes every table privilege on new_client_waitlist_entries " +
+      "from service_role by name, so name/email/phone are obtained ONLY through " +
+      "0192's resolve_waitlist_invitation_recipient_identity(token, capability), a " +
+      "service_role-only command that re-proves the recipient capability inside its " +
+      "own locked transaction and returns those three fields or nothing. Bearer " +
+      "possession of the link resolves no identity. " +
+      "Nothing here mutates: booking and declining are delegated to the B2 " +
+      "authority and the shared public booking action, both of which re-validate " +
+      "recipient proof inside their own locked transactions.",
+    scopeGuard: "resolveInvitation",
+  },
+  {
+    path: "lib/booking/waitlist-invitation.ts",
+    purpose:
+      "WAIT-03B B2 server authority for scoped new-client waitlist invitations.",
+    why:
+      "The accepted B1/B1.5c commands are granted to service_role ALONE -- anon and " +
+      "authenticated are revoked from every one of them by name -- so there is no " +
+      "RLS path to reach them and service_role is the only way to call them at all. " +
+      "Two distinct guards apply. issue/revoke/expire are practitioner-authorised: " +
+      "studio and actor come from getCurrentPractitionerWithStudio() and are never " +
+      "taken from the caller, so a practitioner cannot act into a studio they are " +
+      "not an active member of. resolve/begin/complete/redeem/decline are PUBLIC and " +
+      "guarded by secrets, not by a session: a 64-hex invitation token plus, for " +
+      "either mutation, a short-lived recipient capability that the database " +
+      "validates INSIDE its own locked transaction. This module never derives " +
+      "tenancy, admission or recipient identity itself.",
+    scopeGuard: "getCurrentPractitionerWithStudio",
+  },
+  {
     path: "lib/billing/manual-fee-eligibility.ts",
     purpose: "Payment / consent ledger helper.",
     why: "Invoked by authenticated actions and the signature-verified webhook; uses service-role for the payment_charge_attempts / consent RPCs and write-throughs. Scoped by the caller-supplied studio_id/client_id/appointment_id.",
@@ -436,6 +490,22 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     path: "lib/billing/session-payment-eligibility.ts",
     purpose: "Payment / consent ledger helper.",
     why: "Invoked by authenticated actions and the signature-verified webhook; uses service-role for the payment_charge_attempts / consent RPCs and write-throughs. Scoped by the caller-supplied studio_id/client_id/appointment_id.",
+    scopeGuard: '.eq("studio_id"',
+  },
+  {
+    path: "lib/booking/public-slot-range.ts",
+    purpose: "Public availability read across a DATE RANGE, resolved once.",
+    why:
+      "Identical authority to the single-date public slot read it factors out of " +
+      "app/book/[slug]/actions.ts: a session-less public caller cannot satisfy member " +
+      "RLS, so the studio row, its readiness, the service duration and the per-day " +
+      "availability are read with service-role. It ADDS no authority -- same tables, " +
+      "same tenant scoping, same past-time filter, and the studio's own public booking " +
+      "horizon still bounds which dates are queried. It exists because the per-date " +
+      "action rate-limits itself, so covering a whole invitation window with it drained " +
+      "the caller's own quota and silently dropped the remaining days; the throttle now " +
+      "wraps the operation once, in the caller, and this helper deliberately applies " +
+      "none of its own -- every caller must hold that gate.",
     scopeGuard: '.eq("studio_id"',
   },
   {
