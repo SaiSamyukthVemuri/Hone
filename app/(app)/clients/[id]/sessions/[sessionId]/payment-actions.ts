@@ -604,6 +604,11 @@ export type SendPaymentReceiptActionResult =
         | "studio_missing"
         | "send_failed_retryable"
         | "send_failed_terminal"
+        // PAY-RECEIPT-PDF. The receipt PDF could not be prepared, so NO email
+        // was sent and the claim was released. Nothing reached a provider, so
+        // unlike every send_failed_* case the honest advice is simply "try
+        // again" -- there is no delivery to reconcile.
+        | "receipt_pdf_unavailable"
         // The send failed AND the write recording that failure also
         // failed, so the row is stranded at receipt_status='sending'
         // and cannot be retried until an operator clears it. Distinct

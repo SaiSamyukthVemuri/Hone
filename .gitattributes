@@ -26,3 +26,10 @@ public/fonts/LICENSE-*.txt -whitespace
 # across the repair commit itself, not merely afterwards.
 lib/email/studio-identity.ts diff
 tests/lib/email/studio-identity.test.ts diff
+
+# PAY-RECEIPT-PDF: vendored DejaVu font binaries and their upstream licence.
+# The licence text is reproduced VERBATIM -- its trailing whitespace is part of
+# the file as published, and editing a legal document to satisfy a whitespace
+# check would be the wrong trade. Binaries are marked so diffs stay readable.
+lib/billing/fonts/*.ttf binary
+lib/billing/fonts/LICENSE.txt -whitespace

@@ -86,6 +86,15 @@ export async function sendEmailSafely(opts: {
   text: string;
   icsContent?: string;
   /**
+   * PAY-RECEIPT-PDF. Additional files to attach, already rendered to bytes.
+   *
+   * There is exactly ONE Resend path in this codebase and this widens it
+   * rather than forking it: a second transport would fork From-header
+   * sanitisation, Reply-To handling, the 15s timeout and the retryable /
+   * terminal classification that the receipt row depends on.
+   */
+  attachments?: ReadonlyArray<{ filename: string; content: Buffer }>;
+  /**
    * COMMS-01A. Server-resolved studio identity. OPTIONAL on purpose: a caller
    * that has no studio in scope (ops alerts, team invitations — Hone speaking
    * as Hone) omits it and keeps today's exact From with no Reply-To.
@@ -125,13 +134,22 @@ export async function sendEmailSafely(opts: {
   if (opts.studioIdentity?.replyTo) {
     payload.replyTo = opts.studioIdentity.replyTo;
   }
+  // ONE array, built once. This was previously a direct ASSIGNMENT for the
+  // calendar invite, so a second `payload.attachments = [...]` for any other
+  // file would have silently clobbered it. Accumulating is what makes adding
+  // the receipt PDF safe.
+  const attachments: Array<{ filename: string; content: Buffer }> = [];
   if (opts.icsContent) {
-    payload.attachments = [
-      {
-        filename: "appointment.ics",
-        content: Buffer.from(opts.icsContent, "utf8"),
-      },
-    ];
+    attachments.push({
+      filename: "appointment.ics",
+      content: Buffer.from(opts.icsContent, "utf8"),
+    });
+  }
+  if (opts.attachments) {
+    attachments.push(...opts.attachments);
+  }
+  if (attachments.length > 0) {
+    payload.attachments = attachments;
   }
 
   const controller = new AbortController();
