@@ -79,12 +79,17 @@ so that sentence contradicted the Current-state row above it — the very failur
 was added to correct, reintroduced from the other direction. IT HAS SINCE MOVED AGAIN: `0194`
 was extracted from #674 onto this branch, and the same failure reappeared a third time —
 the table rows were updated while this prose still said `0193`. A guard cannot catch it,
-because the rule reads the table ROW by regex and never reaches this paragraph. The
-**Current-state table is the authority** for this tree's position: repo max **0194**, with
-`0192`, `0193` and `0194` all pending.
+because the rule reads the table ROW by regex and never reaches this paragraph. IT HAPPENED A
+FOURTH TIME, HERE: the DB assembly of #691 and #692 rewrote the table to `0195` and four
+pending, and carried THIS paragraph across byte-identically from #692, where `0194` really was
+the max and the sentence was true. A merge can import a true sentence into a tree that makes
+it false, and the local test run stays green for the reason stated above. It was caught by
+independent review of the assembly, not by a guard. The **Current-state table is the
+authority** for this tree's position: repo max **0195**, with `0192`, `0193`, `0194` and
+`0195` all pending.
 
-**Hosted is still `0191`.** Nothing above records a hosted `0192`, `0193` or `0194`, and the
-apply evidence for `0191` in this block is unchanged: all three are authored and
+**Hosted is still `0191`.** Nothing above records a hosted `0192`, `0193`, `0194` or `0195`,
+and the apply evidence for `0191` in this block is unchanged: all four are authored and
 **UNAPPLIED**.
 
 ## Previous state (verified 2026-09-04, post-0190 apply)
