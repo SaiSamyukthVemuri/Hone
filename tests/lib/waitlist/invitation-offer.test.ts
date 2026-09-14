@@ -183,7 +183,13 @@ describe("the view state maps B2's outcomes", () => {
   for (const [wire, shown] of [
     ["expired", "expired"],
     ["released", "revoked"],
-    ["already_redeemed", "already_redeemed"],
+    // P1 4007891164. B2's wire word still says the invitation was SPENT, but on
+    // a reload that is all it says — `already_redeemed` would assert an
+    // appointment exists and send the recipient after a confirmation email that
+    // may never arrive. A completed booking is carried by `booked`, which
+    // outranks this verdict (asserted separately below), so nothing reaching
+    // here knows the outcome.
+    ["already_redeemed", "booking_outcome_unknown"],
     ["declined", "declined"],
   ] as const) {
     it(`B2's \`${wire}\` renders as the \`${shown}\` dead end`, () => {
@@ -446,5 +452,67 @@ describe("a day always carries at least one slot", () => {
   it("an unreadable instant cannot create an empty day", () => {
     const days = groupSlotsByDay(TZ, [{ start: "nope", end: "x", startLabel: "?" }]);
     expect(days).toEqual([]);
+  });
+});
+
+// ===========================================================================
+// P1 4007891164 — REDEMPTION IS NOT APPOINTMENT EVIDENCE
+// ===========================================================================
+//
+// On a durable reload the server can see only that the invitation was spent.
+// `already_redeemed` ASSERTS an appointment exists and sends the recipient to
+// look for a confirmation email; selecting it from `redeemed_at` alone told a
+// recipient whose booking never committed that they were booked.
+//
+// SCOPE. This governs the RELOAD interpretation only. A completed booking
+// short-circuits on `ctx.booked` before the resolve switch is consulted, and
+// the original request returns its own precise answer directly — both are
+// asserted below so this repair cannot silently swallow them.
+
+describe("a reloaded redeemed invitation claims neither outcome", () => {
+  const presentation = { studioTimezone: "America/Toronto" } as never;
+
+  it("maps a reloaded already_redeemed to booking_outcome_unknown", () => {
+    const view = deriveInvitationViewState({
+      resolve: { kind: "already_redeemed" },
+      presentation,
+      proof: { kind: "proven" },
+      booked: null,
+    } as never);
+    expect(view.kind).toBe("closed");
+    if (view.kind !== "closed") throw new Error("expected a closed view");
+    expect(view.reason).toBe("booking_outcome_unknown");
+    // The whole point: it must NOT be the reason whose copy asserts an
+    // appointment exists.
+    expect(view.reason).not.toBe("already_redeemed");
+    // And it must not assert the negative either.
+    expect(view.reason).not.toBe("consumed_without_booking");
+  });
+
+  it("does NOT collapse the immediate successful booking response", () => {
+    // NON-VACUITY, and the scope guard. The same resolve verdict follows a
+    // successful redeem; what separates the two is `booked`, which only the
+    // original request holds.
+    const view = deriveInvitationViewState({
+      resolve: { kind: "already_redeemed" },
+      presentation,
+      proof: { kind: "proven" },
+      booked: { startLabel: "9:00 am", dateLabel: "Monday 5 October" },
+    } as never);
+    expect(view.kind).toBe("booked");
+  });
+
+  it("a closed unknown view offers no slots and no booking route", () => {
+    const view = deriveInvitationViewState({
+      resolve: { kind: "already_redeemed" },
+      presentation,
+      proof: { kind: "proven" },
+      booked: null,
+    } as never);
+    // A `closed` view carries no days and no slots by construction — there is
+    // nothing on it to press.
+    expect(view.kind).toBe("closed");
+    expect((view as unknown as { days?: unknown }).days).toBeUndefined();
+    expect((view as unknown as { slots?: unknown }).slots).toBeUndefined();
   });
 });

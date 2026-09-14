@@ -424,6 +424,66 @@ describe("WAIT INTEGRATION-01 — recipient journey, accepted stack", () => {
   });
 
   // -------------------------------------------------------------------------
+  it("P1: a SUCCESSFUL booking stays confirmed in its own response, then reopens as UNKNOWN", async () => {
+    // Case 1. The immediate response must NOT be collapsed — the recipient who
+    // just booked still sees their confirmation. The degradation is only after
+    // that transient knowledge is gone.
+    const offer = await seedOffer("reload-booked");
+    const { loadInvitationAction, bookInvitationSlotAction } = await actions();
+    await proveWithDeliveredCode(offer);
+    const loaded = await loadInvitationAction(offer.token);
+    if (loaded.kind !== "offer") throw new Error("expected an offer");
+    const slot = loaded.days.flatMap((d) => d.slots)[0]!;
+
+    const booked = await bookInvitationSlotAction(offer.token, slot.start);
+    expect(booked.kind, "the original response keeps its confirmed success").toBe("booked");
+    expect(await apptCount(offer.studio.studioId)).toBe(1);
+
+    // FRESH RELOAD. Redemption is all that survives, and it is not appointment
+    // evidence — so neither outcome may be asserted.
+    const reopened = await loadInvitationAction(offer.token);
+    expect(reopened.kind).toBe("closed");
+    if (reopened.kind !== "closed") throw new Error("expected closed");
+    expect(reopened.reason).toBe("booking_outcome_unknown");
+    expect(reopened.reason).not.toBe("already_redeemed");
+    // No slots survive into the unknown state, so nothing can be pressed.
+    expect((reopened as unknown as { days?: unknown }).days).toBeUndefined();
+  });
+
+  // -------------------------------------------------------------------------
+  it("P1: a REFUSED booking keeps its precise answer, then reopens as UNKNOWN", async () => {
+    // Case 2. `consumed_without_booking` remains exact in the original
+    // response; only the reload loses the right to assert it.
+    const offer = await seedOffer("reload-refused");
+    const { loadInvitationAction, bookInvitationSlotAction } = await actions();
+    await proveWithDeliveredCode(offer);
+    const loaded = await loadInvitationAction(offer.token);
+    if (loaded.kind !== "offer") throw new Error("expected an offer");
+    const slot = loaded.days.flatMap((d) => d.slots)[0]!;
+
+    // Out of the offered window: 0195 refuses after redemption is spent.
+    const beyond = new Date(Date.parse(slot.start) + 400 * 24 * 60 * 60 * 1000);
+    const refused = await bookInvitationSlotAction(offer.token, beyond.toISOString());
+    expect(refused.kind).not.toBe("booked");
+    expect(await apptCount(offer.studio.studioId), "nothing was booked").toBe(0);
+
+    const reopened = await loadInvitationAction(offer.token);
+    if (reopened.kind === "closed") {
+      // Whatever the original response said, the RELOAD must not claim an
+      // appointment exists — and must not claim the negative either.
+      expect(reopened.reason).not.toBe("already_redeemed");
+    }
+    // Still nothing booked, and the reload reached no mutation of any kind.
+    expect(await apptCount(offer.studio.studioId)).toBe(0);
+    const entry = await adminQuery(
+      `select status, converted_at from public.new_client_waitlist_entries where id = $1`,
+      [offer.entryId],
+    );
+    expect(entry.rows[0].status).not.toBe("converted");
+    expect(entry.rows[0].converted_at).toBeNull();
+  });
+
+  // -------------------------------------------------------------------------
   it("NO post-book conversion writer exists on the application path", () => {
     // The structural half of the proof above. 0195 composes the conversion, so
     // the old "book, then convert" second write must have no caller at all —

@@ -893,7 +893,11 @@ describe("terminal states are explicit", () => {
   it.each([
     ["expired", "expired"],
     ["released", "revoked"],
-    ["already_redeemed", "already_redeemed"],
+    // P1 4007891164. `loadInvitationAction` IS the reload path: all it can see
+    // is that the invitation was spent, and that is not appointment evidence.
+    // `already_redeemed` would assert a booking exists and send the recipient
+    // after a confirmation that may never arrive.
+    ["already_redeemed", "booking_outcome_unknown"],
     ["declined", "declined"],
   ])("a %s invitation closes with reason %s", async (resolved, reason) => {
     resolveInvitation.mockResolvedValue({ kind: resolved });

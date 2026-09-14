@@ -484,7 +484,35 @@ export function deriveInvitationViewState(ctx: RecipientContext): InvitationView
       // B2's wire word for a withdrawn offer.
       return { kind: "closed", reason: "revoked", presentation: ctx.presentation };
     case "already_redeemed":
-      return { kind: "closed", reason: "already_redeemed", presentation: ctx.presentation };
+      // P1 4007891164 — REDEMPTION IS NOT APPOINTMENT EVIDENCE.
+      //
+      // This case is reached ONLY on a durable reload/reopen: a completed
+      // booking short-circuits above on `ctx.booked`, and the original request
+      // returns its own precise answer directly. So everything arriving here
+      // has lost the transient knowledge of what the booking actually did, and
+      // all this server can still see is that the invitation was spent.
+      //
+      // `already_redeemed` ASSERTS AN APPOINTMENT EXISTS -- its own definition
+      // says so, and its copy sends the recipient to look for a confirmation
+      // email. Selecting it from `redeemed_at` alone told a recipient whose
+      // booking never committed that they were booked, and sent them after mail
+      // that will never arrive.
+      //
+      // `booking_outcome_unknown` is the only truthful state available: it
+      // claims neither outcome, offers no slots and no retry, and says the
+      // studio must verify. A recipient who DID book is now told that too, and
+      // that degradation is deliberate -- a false "you are booked" is worse than
+      // an honest "we cannot confirm".
+      //
+      // RECORDED LIMITATION, NOT A RECONCILIATION. This removes the false claim.
+      // It does NOT recover the real outcome: exact booked/not-booked
+      // reconstruction after process loss needs durable conversion evidence,
+      // and the only client this path holds cannot read it -- `service_role`
+      // has NO privilege on `new_client_waitlist_entries` (0185, guarded by
+      // tests/db/new-client-waitlist-entries.db.test.ts). Reaching it needs a
+      // new gated read, which is a separately authorized decision. This is not
+      // exactly-once reconciliation and must not be described as one.
+      return { kind: "closed", reason: "booking_outcome_unknown", presentation: ctx.presentation };
     case "declined":
       return { kind: "closed", reason: "declined", presentation: ctx.presentation };
     case "invalid_token":
