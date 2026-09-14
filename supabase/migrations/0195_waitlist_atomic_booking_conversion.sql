@@ -420,6 +420,39 @@ begin
    where i.entry_id = p_entry_id and i.studio_id = p_studio_id
      and i.redeemed_at is not null;
 
+  -- ZERO REDEEMED INVITATIONS REFUSES HERE, AND THE REASON IS READ COMMITTED.
+  --
+  -- An earlier revision fell through on a zero count, reasoning that the nested
+  -- conversion checks for a redeemed invitation itself and would refuse. That
+  -- reasoning is WRONG, and an independent review was right to reject it. The
+  -- two checks are separate statements, so under READ COMMITTED they take
+  -- separate snapshots:
+  --
+  --   1. this function's scope query observes NO redeemed invitation;
+  --   2. a concurrent redemption COMMITS;
+  --   3. the appointment work runs;
+  --   4. the nested conversion takes a LATER snapshot, sees redeemed_at, and
+  --      converts.
+  --
+  -- That commits an appointment whose service, date and weekday scope was never
+  -- checked by anything — the exact bypass step 4 exists to prevent. Returning
+  -- here closes it: once this invocation has observed zero it cannot proceed,
+  -- and a redemption committing afterwards cannot resurrect it. The caller is
+  -- free to retry, and that retry observes the redeemed row and IS scoped.
+  --
+  -- 'not_redeemed' is `record_new_client_waitlist_conversion`'s own word for
+  -- this state, returned bare rather than as a 'conversion:' sentinel because
+  -- no conversion was attempted. NOT a second "no scope" meaning: an entry with
+  -- no proven authority is refused, whereas a REDEEMED invitation carrying
+  -- all-null legacy scope is authorised and unrestricted. Those are different
+  -- states and this function must not conflate them.
+  if v_scope_count = 0 then
+    return query select 'not_redeemed'::text,
+      null::uuid, null::timestamptz, null::timestamptz,
+      null::integer, null::uuid, null::timestamptz;
+    return;
+  end if;
+
   if v_scope_count > 1 then
     return query select 'scope_ambiguous'::text,
       null::uuid, null::timestamptz, null::timestamptz,
@@ -434,13 +467,12 @@ begin
   -- transaction through any supported path. Adding a lock object would change
   -- the measured lock order and require re-proving it, to protect a value that
   -- is already immutable.
-  if v_scope_count = 1 then
-    select i.scope_service_id, i.scope_start_date, i.scope_end_date, i.scope_allowed_weekdays
-      into v_scope_svc, v_scope_from, v_scope_to, v_scope_dows
-      from public.new_client_waitlist_invitations i
-     where i.entry_id = p_entry_id and i.studio_id = p_studio_id
-       and i.redeemed_at is not null;
-  end if;
+  -- Exactly one by elimination: zero and many both returned above.
+  select i.scope_service_id, i.scope_start_date, i.scope_end_date, i.scope_allowed_weekdays
+    into v_scope_svc, v_scope_from, v_scope_to, v_scope_dows
+    from public.new_client_waitlist_invitations i
+   where i.entry_id = p_entry_id and i.studio_id = p_studio_id
+     and i.redeemed_at is not null;
 
   -- LEGACY IS UNSCOPED, AND STAYS THAT WAY. Invitations issued by 0188..0191
   -- predate these columns and carry all four NULL, which 0192's all-or-nothing

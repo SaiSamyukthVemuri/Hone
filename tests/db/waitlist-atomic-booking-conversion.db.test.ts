@@ -210,6 +210,38 @@ async function redeemedScopedEntry(
   return { entryId: r[0].entry_id as string, email };
 }
 
+/**
+ * An entry with a live, SCOPED invitation that was deliberately NOT redeemed.
+ * This is NOT the same as a redeemed invitation carrying legacy all-null scope:
+ * one has no proven authority at all, the other has authority with no
+ * restrictions. Conflating them is the defect this fixture exists to catch.
+ */
+async function admittedNotRedeemedEntry(
+  f: Fixture,
+  label: string,
+  scope: { serviceId: string; from: string; to: string; weekdays: number[] | null },
+): Promise<{ entryId: string; email: string }> {
+  const email = `u-${label}-${f.studioId.slice(0, 8)}@example.com`;
+  const e = await q<any>(
+    `select * from public.create_practitioner_waitlist_entry($1,$2,'Prospect',$3,null,null)`,
+    [f.studioId, f.userId, email],
+  );
+  expect(e[0].result).toBe("created");
+  const a = await q<any>(
+    `select * from public.admit_new_client_waitlist_entry($1,$2,$3,$4,$5,$6,$7::smallint[],72)`,
+    [f.studioId, f.userId, e[0].entry_id, scope.serviceId, scope.from, scope.to, scope.weekdays],
+  );
+  expect(a[0].result).toBe("admitted");
+  // No proof, no redemption. The invitation stays live.
+  const inv = await q<any>(
+    `select count(*)::int as n from public.new_client_waitlist_invitations
+      where entry_id = $1 and redeemed_at is not null`,
+    [e[0].entry_id],
+  );
+  expect(inv[0].n).toBe(0);
+  return { entryId: e[0].entry_id as string, email };
+}
+
 /** A second, genuinely bookable service in the same studio. */
 async function extraService(f: Fixture, name: string): Promise<string> {
   const r = await q<any>(
@@ -588,6 +620,38 @@ describe("0195 — the booking stays inside the invitation's stored offer scope"
       BOOK, [f.studioId, c.clientId, other, slot, tokenHash("nw"), s.entryId],
     );
     expect(r[0].result).toBe("scope_service_not_offered");
+    expect(await apptCount(f.studioId)).toBe(appts);
+    expect(await auditCount(f.studioId)).toBe(audits);
+    const e = await entryRow(s.entryId);
+    expect(e.status).toBe("invited");
+    expect(e.converted_at).toBeNull();
+    expect(e.converted_client_id).toBeNull();
+  });
+
+  it("refuses when NO redeemed invitation is visible, before any appointment work", async () => {
+    // READ COMMITTED MAKES THIS A CORRECTNESS BUG, NOT JUST TIDINESS. The scope
+    // read and the nested conversion's own check are separate statements and so
+    // take separate snapshots. If this function merely fell through on a zero
+    // count, a redemption committing in between would let the conversion see a
+    // redeemed invitation whose service/date/weekday scope was NEVER checked —
+    // and that booking would commit.
+    const f = await fixture("no-redeem");
+    const s = await admittedNotRedeemedEntry(f, "no-redeem", {
+      serviceId: f.serviceId,
+      from: await studioDate(f, 2), to: await studioDate(f, 20), weekdays: null,
+    });
+    const c = await bookingClient(f, s.email);
+    const slot = await slotOnDate(f, await studioDate(f, 4));
+    expect(slot).not.toBeNull();          // positive control: the slot is bookable
+    const appts = await apptCount(f.studioId);
+    const audits = await auditCount(f.studioId);
+
+    const r = await q<any>(
+      BOOK, [f.studioId, c.clientId, f.serviceId, slot, tokenHash("nr"), s.entryId],
+    );
+
+    expect(r[0].result).toBe("not_redeemed");
+    expect(r[0].appointment_id).toBeNull();
     expect(await apptCount(f.studioId)).toBe(appts);
     expect(await auditCount(f.studioId)).toBe(audits);
     const e = await entryRow(s.entryId);

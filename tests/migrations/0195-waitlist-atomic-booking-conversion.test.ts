@@ -174,6 +174,41 @@ describe("the booking is held to the invitation's stored offer scope", () => {
     expect(CODE).toMatch(/v_scope_count\s*>\s*1/);
   });
 
+  it("refuses when ZERO redeemed invitations are visible", () => {
+    expect(CODE).toMatch(/v_scope_count\s*=\s*0/);
+    expect(CODE).toContain("'not_redeemed'::text");
+  });
+
+  it("ORDERS the guards ahead of appointment work — the READ COMMITTED contract", () => {
+    // Executable source only: CODE is comment-stripped, so prose cannot satisfy
+    // this. If the zero-count guard is ever deleted or moved below the booking,
+    // this goes red — which is the point. Falling through on zero lets a
+    // redemption that commits AFTER this read reach a conversion whose scope was
+    // never checked.
+    const scopeSelect = CODE.search(/select\s+count\(\*\)::int\s+into\s+v_scope_count/i);
+    const zeroGuard   = CODE.search(/v_scope_count\s*=\s*0/);
+    const ambiguity   = CODE.search(/v_scope_count\s*>\s*1/);
+    const scopeCheck  = CODE.search(/v_scope_svc\s+is\s+not\s+null/i);
+    const apptCall    = CODE.search(/from\s+public\.create_public_appointment\(/);
+
+    for (const [label, at] of Object.entries({ scopeSelect, zeroGuard, ambiguity, scopeCheck, apptCall })) {
+      expect(at, `${label} not found in executable source`).toBeGreaterThan(-1);
+    }
+    expect(scopeSelect).toBeLessThan(zeroGuard);
+    expect(zeroGuard).toBeLessThan(ambiguity);
+    expect(ambiguity).toBeLessThan(scopeCheck);
+    expect(scopeCheck).toBeLessThan(apptCall);
+  });
+
+  it("returns the zero-count refusal rather than falling through", () => {
+    // A bare `if v_scope_count = 0 then ... end if;` with no RETURN would order
+    // correctly and still be wrong.
+    const zero = CODE.search(/v_scope_count\s*=\s*0/);
+    const appt = CODE.search(/from\s+public\.create_public_appointment\(/);
+    const between = CODE.slice(zero, appt);
+    expect(between).toMatch(/'not_redeemed'::text[\s\S]{0,200}?\breturn\s*;/);
+  });
+
   it("treats an all-null (legacy) scope as unscoped, via the all-or-nothing CHECK", () => {
     expect(CODE).toMatch(/v_scope_svc\s+is\s+not\s+null/i);
   });
