@@ -129,15 +129,34 @@ export function splitOversizedToken(
 /**
  * Whitespace a line may be broken at.
  *
- * DELIBERATELY EXCLUDES the non-breaking family -- U+00A0, U+202F NARROW
- * NO-BREAK SPACE, U+2007 FIGURE SPACE, U+2060 WORD JOINER. Those exist
- * precisely to say "do not break here", and French typography in particular
- * puts a narrow no-break space inside business names. Treating one as a break
- * opportunity both rewrites the name and breaks it where its author said not
- * to.
+ * The characters that are whitespace-like but are NEVER a break opportunity.
+ *
+ * They exist precisely to say "do not break here" -- French typography puts a
+ * narrow no-break space inside business names, and a FIGURE SPACE holds digit
+ * columns together. Breaking at one both rewrites the name and splits it where
+ * its author said not to.
  */
-const BREAKABLE_WS =
-  /[\t\n\v\f\r \u1680\u2000-\u200A\u2028\u2029\u205F\u3000]+/;
+export const NON_BREAKING_SPACES = [
+  "\u00A0", // NO-BREAK SPACE
+  "\u2007", // FIGURE SPACE -- Unicode line-break class GL (glue), same as NBSP
+  "\u202F", // NARROW NO-BREAK SPACE
+  "\u2060", // WORD JOINER (not whitespace, but never a break opportunity)
+  "\uFEFF", // ZERO WIDTH NO-BREAK SPACE
+] as const;
+
+/**
+ * Whitespace a line may be broken at.
+ *
+ * Built by EXCLUDING `NON_BREAKING_SPACES` from the whitespace set rather than
+ * by hand-writing a range. A hand-written `\u2000-\u200A` silently swallowed
+ * U+2007 FIGURE SPACE while the comment beside it claimed U+2007 was excluded
+ * -- the code and its own documentation disagreed, and the test passed only
+ * because that fixture never had to break there. Deriving one from the other
+ * makes that class of drift impossible.
+ */
+const BREAKABLE_WS = new RegExp(
+  `(?:(?!${NON_BREAKING_SPACES.map((c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`).join("|")})\\s)+`,
+);
 
 /**
  * Split into (whitespace, word) pairs with the whitespace kept VERBATIM.

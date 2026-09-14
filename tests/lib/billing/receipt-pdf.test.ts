@@ -9,6 +9,7 @@ import {
   splitOversizedToken,
   graphemes,
   wrapReceiptText,
+  NON_BREAKING_SPACES,
 } from "@/lib/billing/receipt-pdf";
 import {
   UnsupportedReceiptCharacterError,
@@ -583,29 +584,72 @@ describe("whitespace in a name is reproduced, not normalised", () => {
     }
   });
 
-  it("a NON-BREAKING space is never used as a break opportunity", async () => {
-    const f = await font();
-    const glued = "Alpha\u00A0Beta";
-    // Wide enough for the glued pair, too narrow for it plus the next word.
-    const width = f.widthOfTextAtSize(`${glued} Gam`, 11);
-    const lines = wrapReceiptText(`${glued} Gamma`, f, 11, width);
-    expect(lines).toEqual([glued, "Gamma"]);
-    // A BREAKABLE space in the same position DOES wrap -- so the behaviour is
-    // specific to the non-breaking class, not a refusal to wrap at all.
-    const breakable = wrapReceiptText("Alpha Beta Gamma", f, 11, width);
-    expect(breakable.length).toBeGreaterThan(1);
+  it.each(NON_BREAKING_SPACES.map((c) => [`U+${c.charCodeAt(0).toString(16).toUpperCase().padStart(4, "0")}`, c] as const))(
+    "%s is never used as a break opportunity",
+    async (_label, ch) => {
+      // Driven off the EXPORTED list, so a character added to the
+      // documentation without being honoured by the break set fails here. A
+      // hand-written range previously swallowed U+2007 FIGURE SPACE while the
+      // comment beside it claimed U+2007 was excluded, and the fixture never
+      // had to break there -- so the test agreed with the comment rather than
+      // with the code.
+      const f = await font();
+      const glued = `Alpha${ch}Beta`;
+      const width = f.widthOfTextAtSize(`${glued} Gam`, 11);
+      expect(wrapReceiptText(`${glued} Gamma`, f, 11, width)).toEqual([glued, "Gamma"]);
+    },
+  );
 
-    // THE DECISIVE CASE. A column too narrow for the glued pair. Treating the
-    // NBSP as breakable would split cleanly into ["Alpha", "Beta"]; honouring
-    // it means the pair is ONE token, so it is hard-split by grapheme instead.
-    // Nothing clips either way -- the difference is whether the character's
-    // meaning was respected.
-    const tooNarrow = f.widthOfTextAtSize("Alpha", 11) * 1.1;
-    const forced = wrapReceiptText(glued, f, 11, tooNarrow);
-    expect(forced).not.toEqual(["Alpha", "Beta"]);
-    expect(forced.join("")).toBe(glued);
-    for (const l of forced) {
-      expect(f.widthOfTextAtSize(l, 11)).toBeLessThanOrEqual(tooNarrow);
+  it("the non-breaking list is PINNED INDEPENDENTLY of itself", () => {
+    // The it.each above is driven off NON_BREAKING_SPACES, so deleting an
+    // entry would delete its own test -- a list-driven suite cannot see a
+    // SHRINKING list. Verified: removing U+2007 or U+202F from the list left
+    // every other test green. This literal pin is what catches that.
+    expect([...NON_BREAKING_SPACES].sort()).toEqual(
+      ["\u00A0", "\u2007", "\u202F", "\u2060", "\uFEFF"].sort(),
+    );
+  });
+
+  it("ANTI-VACUITY: an ordinary space in the same position DOES wrap", async () => {
+    const f = await font();
+    const width = f.widthOfTextAtSize("Alpha Beta Gam", 11);
+    expect(wrapReceiptText("Alpha Beta Gamma", f, 11, width).length).toBeGreaterThan(1);
+  });
+
+  it("BREAKABLE Unicode spaces still break — the exclusion is not blanket", async () => {
+    const f = await font();
+    // Thin, em and en spaces are ordinary break opportunities.
+    for (const ch of ["\u2009", "\u2003", "\u2002"]) {
+      const width = f.widthOfTextAtSize("Alpha Bet", 11);
+      const lines = wrapReceiptText(`Alpha${ch}Beta Gamma`, f, 11, width);
+      expect(lines.length).toBeGreaterThan(1);
+      expect(lines[0]).toBe("Alpha");
+    }
+  });
+
+  it("the non-breaking list and the break set cannot disagree", async () => {
+    // The structural guarantee: the regex is DERIVED from the list, so the
+    // documentation and the behaviour are the same object.
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const src = readFileSync(join(process.cwd(), "lib/billing/receipt-pdf.ts"), "utf8");
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^[ \t]*\/\/.*$/gm, "");
+    expect(code).toContain("NON_BREAKING_SPACES.map");
+    // No hand-written whitespace range to drift from the list again.
+    expect(code).not.toMatch(/\\u2000-\\u200A/);
+  });
+
+  it("a glued pair too wide for its column hard-splits rather than clipping", async () => {
+    const f = await font();
+    for (const ch of NON_BREAKING_SPACES) {
+      const glued = `Alpha${ch}Beta`;
+      const tooNarrow = f.widthOfTextAtSize("Alpha", 11) * 1.1;
+      const forced = wrapReceiptText(glued, f, 11, tooNarrow);
+      expect(forced).not.toEqual(["Alpha", "Beta"]);
+      expect(forced.join("")).toBe(glued);
+      for (const l of forced) {
+        expect(f.widthOfTextAtSize(l, 11)).toBeLessThanOrEqual(tooNarrow);
+      }
     }
   });
 
