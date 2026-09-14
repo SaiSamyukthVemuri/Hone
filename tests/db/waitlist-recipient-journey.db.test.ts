@@ -451,29 +451,60 @@ describe("WAIT INTEGRATION-01 — recipient journey, accepted stack", () => {
   });
 
   // -------------------------------------------------------------------------
-  it("P1: a REFUSED booking keeps its precise answer, then reopens as UNKNOWN", async () => {
-    // Case 2. `consumed_without_booking` remains exact in the original
-    // response; only the reload loses the right to assert it.
-    const offer = await seedOffer("reload-refused");
+  it("P1: a refusal AFTER redemption is consumed_without_booking, and reopens UNKNOWN", async () => {
+    // P2 4008485175 — THE PREVIOUS FIXTURE PROVED NOTHING ABOUT REDEMPTION.
+    //
+    // It posted a date ~400 days out. `authorizeInvitationForBooking` rejects
+    // that at app/book/[slug]/actions.ts:547, BEFORE
+    // `consumeInvitationForBooking` runs at :748 — so the offer was never
+    // spent, and the case it claimed to cover was never exercised.
+    //
+    // WHY NOT `client_not_resolved`. That exit (:856) needs
+    // `client_type=existing`, and invitation authorization is gated on
+    // `clientType === "new"` (:531) — so with `existing` the invitation is
+    // never authorized, never consumed, and its `consumedInvitationId` branch
+    // is unreachable. Measured, not assumed: driving it that way returned the
+    // no-match error with no code at all.
+    //
+    // THE REAL POST-REDEMPTION EXIT, on the path the recipient actually uses.
+    // `bookInvitationSlotAction` already posts `client_type=new`, so the offer
+    // authorizes and CONSUMES; the new-client INSERT then collides (23505) with
+    // an ARCHIVED client holding the same normalized email, and :1001 returns
+    // `invitationConsumedWithoutBooking("client_identity_collision")`. Nothing
+    // is stubbed and no failure hook is invented — an archived client with a
+    // reused address is an ordinary studio state.
+    const offer = await seedOffer("post-redeem-refusal");
     const { loadInvitationAction, bookInvitationSlotAction } = await actions();
     await proveWithDeliveredCode(offer);
+
     const loaded = await loadInvitationAction(offer.token);
     if (loaded.kind !== "offer") throw new Error("expected an offer");
     const slot = loaded.days.flatMap((d) => d.slots)[0]!;
+    expect(slot, "the fixture must offer an IN-SCOPE slot").toBeTruthy();
 
-    // Out of the offered window: 0195 refuses after redemption is spent.
-    const beyond = new Date(Date.parse(slot.start) + 400 * 24 * 60 * 60 * 1000);
-    const refused = await bookInvitationSlotAction(offer.token, beyond.toISOString());
-    expect(refused.kind).not.toBe("booked");
-    expect(await apptCount(offer.studio.studioId), "nothing was booked").toBe(0);
+    // The collision: an ARCHIVED client already holds this email.
+    await adminQuery(
+      `insert into public.clients (studio_id, name, email, archived_at)
+       values ($1, $2, $3, now())`,
+      [offer.studio.studioId, "Archived Prior", offer.email],
+    );
 
-    const reopened = await loadInvitationAction(offer.token);
-    if (reopened.kind === "closed") {
-      // Whatever the original response said, the RELOAD must not claim an
-      // appointment exists — and must not claim the negative either.
-      expect(reopened.reason).not.toBe("already_redeemed");
-    }
-    // Still nothing booked, and the reload reached no mutation of any kind.
+    // IN-SCOPE slot, the offer's own service: authorization SUCCEEDS and the
+    // offer is spent before the collision is reached.
+    const res = await bookInvitationSlotAction(offer.token, slot.start);
+
+    // 1. THE OFFER WAS GENUINELY SPENT — the assertion the old fixture could
+    //    never make.
+    const inv = await invitationRow(offer.invitationId);
+    expect(inv.redeemed_at, "the invitation must actually be redeemed").not.toBeNull();
+
+    // 2. THE IMMEDIATE ANSWER IS EXACT and stays precise: this is the one
+    //    moment the server knows no appointment exists.
+    expect(res.kind).toBe("closed");
+    if (res.kind !== "closed") throw new Error("expected closed");
+    expect(res.reason).toBe("consumed_without_booking");
+
+    // 3. NOTHING WAS BOOKED.
     expect(await apptCount(offer.studio.studioId)).toBe(0);
     const entry = await adminQuery(
       `select status, converted_at from public.new_client_waitlist_entries where id = $1`,
@@ -481,6 +512,21 @@ describe("WAIT INTEGRATION-01 — recipient journey, accepted stack", () => {
     );
     expect(entry.rows[0].status).not.toBe("converted");
     expect(entry.rows[0].converted_at).toBeNull();
+
+    // 4. THE DURABLE RELOAD CLAIMS NEITHER OUTCOME. Reverting the
+    //    already_redeemed mapping to its old value makes this line fail — the
+    //    reload would say an appointment exists for a booking that never
+    //    committed, which is the P1 exactly.
+    const reopened = await loadInvitationAction(offer.token);
+    expect(reopened.kind).toBe("closed");
+    if (reopened.kind !== "closed") throw new Error("expected closed");
+    expect(reopened.reason).toBe("booking_outcome_unknown");
+    expect(reopened.reason).not.toBe("already_redeemed");
+
+    // 5. NO SLOTS AND NO ROUTE BACK, and the reload mutated nothing.
+    expect((reopened as unknown as { days?: unknown }).days).toBeUndefined();
+    expect((reopened as unknown as { slots?: unknown }).slots).toBeUndefined();
+    expect(await apptCount(offer.studio.studioId)).toBe(0);
   });
 
   // -------------------------------------------------------------------------
