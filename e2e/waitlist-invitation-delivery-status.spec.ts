@@ -68,6 +68,63 @@ async function invite(page: Page, name: string) {
   await row.locator('[data-testid="composer-send"]').click();
 }
 
+test.describe("queue navigation cannot strand an in-flight invitation", () => {
+  test("every navigation control is inert while a send is pending, and live after", async ({
+    page,
+  }) => {
+    // THE ONLY OBSERVER OF THE RESULT is the boundary's useActionState, and
+    // nothing persists it by design. A full navigation mid-flight therefore
+    // destroys the answer — while the invitation may already have committed and
+    // consumed the round's allowance.
+    //
+    // The `hold+` recipient prefix keeps the fake transport genuinely IN FLIGHT,
+    // which is the only way to observe a pending surface. It releases itself.
+    const seed = await seedE2eStudio();
+    await openAdmissionRound(seed);
+    const name = `Held Person ${seed.runId.slice(0, 6)}`;
+    await seedWaitingEntry(seed, name, `hold+${seed.runId}@harness.local`);
+
+    await loginAsOwner(page, seed);
+    // THE FOCUSED VIEW, so the queue actually renders navigation to guard:
+    // "Back to all groups" exists only here, and it is the control that used to
+    // sit ABOVE the boundary entirely.
+    await page.goto("/settings/waitlist?section=waiting");
+    await expect(page.getByText(name, { exact: false }).first()).toBeVisible({ timeout: T });
+
+    const navs = page.locator('[data-waitlist-nav]');
+    const before = await navs.count();
+    expect(before, "no queue navigation rendered to guard").toBeGreaterThan(0);
+
+    await invite(page, name);
+
+    // --- DURING THE PENDING INTERVAL -------------------------------------
+    await expect(navs.first()).toHaveAttribute("data-pending", "true", { timeout: T });
+    const pendingCount = await navs.count();
+    for (let i = 0; i < pendingCount; i += 1) {
+      const nav = navs.nth(i);
+      // NOT A LINK AT ALL: no href to follow by mouse OR keyboard, and out of
+      // the tab order. An aria-disabled label over a live href would still
+      // navigate for a keyboard user.
+      await expect(nav).toHaveAttribute("aria-disabled", "true");
+      expect(await nav.getAttribute("href"), "a usable href survived").toBeNull();
+      expect(await nav.evaluate((el) => el.tagName)).not.toBe("A");
+    }
+    // The URL must not move even if something tries.
+    const urlDuring = page.url();
+    await navs.first().click({ force: true }).catch(() => undefined);
+    expect(page.url(), "navigation happened while pending").toBe(urlDuring);
+
+    // --- AFTER SETTLEMENT -------------------------------------------------
+    const notice = page.locator('[data-testid="invite-outcome"]');
+    await expect(notice).toBeVisible({ timeout: T });
+    await expect(notice).toContainText(name);
+    await expect(notice).toContainText(/Invitation created/i);
+    // Navigation is operable again.
+    await expect(navs.first()).toHaveAttribute("data-pending", "false", { timeout: T });
+    expect(await navs.first().getAttribute("href")).not.toBeNull();
+  });
+});
+
 test.describe("delivery status survives revalidation", () => {
   test("a committed invitation reports its delivery AFTER the queue refreshes", async ({
     page,

@@ -1,5 +1,6 @@
 import { InviteComposer } from "@/components/waitlist/invite-composer";
 import { InviteOutcomeBoundary } from "@/components/waitlist/invite-outcome-boundary";
+import { WaitlistNavLink } from "@/components/waitlist/waitlist-nav-link";
 import { isBookableByNewClient } from "@/lib/booking/consultation";
 import {
   emptyDraft,
@@ -560,11 +561,15 @@ export default async function WaitlistSettingsPage({
         </div>
       ) : (
         <>
+          <InviteOutcomeBoundary
+            action={inviteToBookAction}
+            entryNames={Object.fromEntries(rows.map((r) => [r.id, r.name]))}
+          >
           {focusedStatus && (
             <p className="text-sm">
-              <a href={QUEUE_PATH} className="underline">
+              <WaitlistNavLink href={QUEUE_PATH} className="underline">
                 Back to all groups
-              </a>
+              </WaitlistNavLink>
             </p>
           )}
 
@@ -575,10 +580,6 @@ export default async function WaitlistSettingsPage({
               disposition. This boundary survives that, and survives the row
               leaving the visible list altogether. */}
 
-          <InviteOutcomeBoundary
-            action={inviteToBookAction}
-            entryNames={Object.fromEntries(rows.map((r) => [r.id, r.name]))}
-          >
           {visibleSections.map(({ status, heading }) => {
             const group = bySection.get(status);
             if (!group) return null;
@@ -616,13 +617,13 @@ export default async function WaitlistSettingsPage({
                     <p className="text-sm text-neutral-500">
                       That page is past the end of this group, which holds{" "}
                       {group.total}.{" "}
-                      <a
+                      <WaitlistNavLink
                         href={sectionHref(status)}
                         data-testid="waitlist-page-first"
                         className="underline"
                       >
                         Go to the first page
-                      </a>
+                      </WaitlistNavLink>
                     </p>
                   ) : group.total === 0 ? (
                     <p className="text-sm text-neutral-500">
@@ -638,13 +639,13 @@ export default async function WaitlistSettingsPage({
                     <p className="text-sm text-neutral-500">
                       Showing the {group.rows.length} longest-waiting of{" "}
                       {group.total}.{" "}
-                      <a
+                      <WaitlistNavLink
                         href={sectionHref(status)}
                         data-testid={`waitlist-section-all-${status}`}
                         className="underline"
                       >
                         Show all {group.total}
-                      </a>
+                      </WaitlistNavLink>
                     </p>
                   )
                 )}
@@ -872,22 +873,22 @@ export default async function WaitlistSettingsPage({
                 {(hasPrev || hasNext) && (
                   <nav aria-label={`${heading} pages`} className="flex flex-wrap gap-2">
                     {hasPrev && (
-                      <a
+                      <WaitlistNavLink
                         href={sectionHref(status, pageNumber - 1)}
                         data-testid="waitlist-page-prev"
                         className={NAV_LINK_CLASS}
                       >
                         Previous
-                      </a>
+                      </WaitlistNavLink>
                     )}
                     {hasNext && (
-                      <a
+                      <WaitlistNavLink
                         href={sectionHref(status, pageNumber + 1)}
                         data-testid="waitlist-page-next"
                         className={NAV_LINK_CLASS}
                       >
                         Next
-                      </a>
+                      </WaitlistNavLink>
                     )}
                   </nav>
                 )}

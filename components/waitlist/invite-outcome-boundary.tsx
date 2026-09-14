@@ -62,7 +62,21 @@ export type InviteOutcomeResult =
  */
 export const OUTCOME_ENTRY_FIELD = COMPOSER_FIELD_NAMES.entryId;
 
-const InviteOutcomeContext = createContext<((formData: FormData) => void) | null>(null);
+type InviteOutcomeBinding = {
+  action: (formData: FormData) => void;
+  /**
+   * A submission is in flight.
+   *
+   * THIS IS THE ONLY OBSERVER OF THE RESULT. Nothing is persisted — no store, no
+   * cookie, no URL payload — so a full navigation during the round trip destroys
+   * the answer before anyone reads it, and the invitation may already have
+   * committed and consumed the round's allowance. Queue navigation is therefore
+   * withheld until the action settles, and returns immediately afterwards.
+   */
+  pending: boolean;
+};
+
+const InviteOutcomeContext = createContext<InviteOutcomeBinding | null>(null);
 
 /**
  * The bound action a composer submits through.
@@ -71,7 +85,17 @@ const InviteOutcomeContext = createContext<((formData: FormData) => void) | null
  * supports keep working untouched.
  */
 export function useInviteOutcomeAction(): ((formData: FormData) => void) | null {
-  return useContext(InviteOutcomeContext);
+  return useContext(InviteOutcomeContext)?.action ?? null;
+}
+
+/**
+ * Is a submission in flight?
+ *
+ * `false` when no boundary is present, so a surface without one navigates
+ * exactly as it always did.
+ */
+export function useInviteOutcomePending(): boolean {
+  return useContext(InviteOutcomeContext)?.pending ?? false;
 }
 
 /**
@@ -127,7 +151,10 @@ export function InviteOutcomeBoundary({
   entryNames: Readonly<Record<string, string>>;
   children: React.ReactNode;
 }) {
-  const [submitted, boundAction] = useActionState<SubmittedInvitation | null, FormData>(
+  const [submitted, boundAction, pending] = useActionState<
+    SubmittedInvitation | null,
+    FormData
+  >(
     async (_prev, formData) => {
       // Identity is captured from THIS submission before the action runs, so the
       // answer cannot be attributed to whichever row happens to be rendered when
@@ -151,7 +178,7 @@ export function InviteOutcomeBoundary({
   );
 
   return (
-    <InviteOutcomeContext.Provider value={boundAction}>
+    <InviteOutcomeContext.Provider value={{ action: boundAction, pending }}>
       <div className="flex flex-col gap-3">
         <InvitationOutcomeNotice submitted={submitted} />
         {children}
