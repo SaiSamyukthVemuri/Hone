@@ -14,7 +14,7 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-09-06, post-0191 apply; `0192`, `0193` and `0195` authored and PENDING on this branch)
+## Current state (hosted observation dated 2026-09-06, post-0191 apply; `0192`, `0193`, `0194` and `0195` authored and PENDING on this branch)
 
 > **This block is an APPLY RECORD written by a RECONCILIATION lane, not by the lane
 > that applied `0191`.** It therefore records the **verified result** of the apply and
@@ -27,9 +27,9 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0191** (`0191_studio_sms_sender_provisioning.sql`) |
-| **Repo migration max** | **0195** — **this branch carries `0192_waitlist_recipient_proof_authority.sql` (WAIT-03B), `0193_waitlist_admission_authority.sql` (WAIT-ADMIT-01) and `0195_waitlist_atomic_booking_conversion.sql` (WAIT-03 atomic invitation booking + conversion)**, so the repository sits **three migrations above hosted** here. **`0192` is PENDING, `0193` is PENDING, and `0195` is PENDING**: none is applied to production, and none is authorized for apply — that is a separate gate. Hosted remains **0191** and the apply record above is unchanged; this row states the BRANCH-derived position, not a new production claim. **There is a HOLE at `0194`, and it is deliberate.** `0194` is owned by `feat/comms01b2-studio-sms-routing` (the renumbered outbound sender lookup, formerly #674's `0192`), which is pushed but not merged and is **not** present in this tree. This branch therefore derives the pending suffix `0192, 0193, 0195` — a set the contiguity guard in `tests/docs/canonical-production-facts.test.ts` correctly reports as holed, because a branch that skipped a number really would be a deployment hazard **if it were the whole repository**. It is not: the hole closes the moment the two lanes share a tree. Taking `0194` for this migration instead would DUPLICATE a number already pushed on another branch, which is the worse failure, so this lane keeps `0195` and records the reason rather than renumbering. Next free number is **0196**, derived from **this tree's** `supabase/migrations/*.sql` by `npm run migration:state` and **not claimed** by this lane. The derivation sees only this working tree and is **not** a statement about any other branch. |
+| **Repo migration max** | **0195** — this branch is the **DATABASE ASSEMBLY** of two independently reviewed components and carries four pending migrations, **contiguous with no hole**: `0192_waitlist_recipient_proof_authority.sql` (WAIT-03B, #681), `0193_waitlist_admission_authority.sql` (WAIT-ADMIT-01, #685), `0194_studio_sms_sender_outbound_lookup.sql` (COMMS-01B2, extracted by #692) and `0195_waitlist_atomic_booking_conversion.sql` (WAIT-03 atomic invitation booking + conversion, #691). The repository therefore sits **four migrations above hosted** here. **`0192`, `0193`, `0194` and `0195` are ALL PENDING**: none is applied to production, and none is authorized for apply — that is a separate gate. Hosted remains **0191** and the apply record above is unchanged; this row states the BRANCH-derived position, not a new production claim. **`0194` IS NOW PRESENT, and the hole earlier lanes recorded at `0194` IS CLOSED.** It is present through the **extracted DATABASE CAPABILITY** on #692, whose SQL is byte-identical to #674's (`sha256 b4a40929acf4e7d291b1752ea1615aa63f1ee19120a33906b3bfa67ab6ce725b`), taken so the database capability can land independently of SMS runtime activation. **#674's RUNTIME REMAINS SEPARATE AND UNMERGED** — it stays the owner of sender-routing activation, `sendSmsSafely`, the Twilio path, the cron routing and every env/deployment change, and **none of that is present in this tree**. **No SMS activation is implied or enabled by this assembly**; `0194` adds a lookup capability only. `0195` follows `0194` and is unchanged by the assembly. The earlier ledger revisions that recorded a deliberate hole at `0194`, and that named `0194` or `0195` as the max while the other component was absent, are superseded by this row: both components now share one tree, which is the condition those revisions said would close the hole. Next free number is **0196**, derived from **this tree's** `supabase/migrations/*.sql` by `npm run migration:state` and **not claimed** by this lane. The derivation sees only this working tree and is **not** a statement about any other branch. |
 | **Remote-only migrations** | **none** — no migration exists on production that the repository lacks |
-| **Total migrations in repo** | **193** (`0001` … `0157`, `0159` … `0193`, `0195` — **no `0158`**, **no `0194` on this branch**) — `0001`–`0157` is 157, `0159`–`0193` is 35, plus `0195`. Derived by `npm run migration:state` on this branch, which reports **193** with `0192`, `0193` and `0195` pending. This row moves with the repo max above it: leaving it stale made the ledger contradict the very command it cites, and neither `verify:prepush` nor the docs guard compares the total against the derived value. |
+| **Total migrations in repo** | **194** (`0001` … `0157`, `0159` … `0195` — **no `0158`**) — `0001`–`0157` is 157 and `0159`–`0195` is 37. Derived mechanically by `npm run migration:state` on **this assembled tree**, which reports **194** with `0192`, `0193`, `0194` and `0195` all pending. This number is NOT copied from either component: each reported **193** while carrying only three of the four migrations. This row moves with the repo max above it. |
 | **Apply timestamp** | ⚠️ **NO SERVER-GENERATED APPLY TIMESTAMP WAS CAPTURED**, so `hosted_applied_at` is `null`. **AND NO OPERATOR-OBSERVED CLIENT-SIDE WINDOW IS ASSERTED EITHER** — unlike 0190, 0189, 0188 and 0187, this record was written by a lane that did not perform the apply and had no CLI invocation to bracket. See `hosted_applied_at_precision`. |
 | **Verified applied** | **2026-09-06** — state observed at `2026-09-06T16:03:53Z` (server clock), read-only |
 | **Applied from** | **not captured by this lane.** The migration in production matches `0191_studio_sms_sender_provisioning.sql` as merged in **PR #673** (merge `7e4e09d897f403dd560571978fb33b72516f0fa7`). The apply owner is the **#673 production operator lane**. |
@@ -66,19 +66,26 @@ true and contradicted the Current-state row above, so it is corrected here rathe
 standing: **WAIT owns `0192`**, this branch carries
 `0192_waitlist_recipient_proof_authority.sql` (recipient-proof **and** admission-round
 authority), and `npm run migration:state` reports it as one of this tree's **pending**
-migrations. #674's SMS-routing migration was renumbered to **`0194`** and is **HELD** on its
-own branch; it is the migration that teaches the send path to consult this table, and it
-remains a separate gate.
+migrations. #674's SMS-routing migration was renumbered to **`0194`**, and that migration is
+now **carried here**: extracted byte-identically so the DATABASE capability can land
+independently of SMS runtime activation. **#674 itself is NOT merged and is NOT obsolete** —
+it remains the owner of the send path that consults this table, and that remains a separate
+gate.
 
 **THIS PARAGRAPH DESCRIBES `0192` ONLY, AND THE BRANCH HAS SINCE MOVED.** An earlier revision
 ended with "repo max **0192** … pending **0192**", written when `0192` was the only migration
 here. WAIT-ADMIT-01 then authored `0193_waitlist_admission_authority.sql` on this same branch,
 so that sentence contradicted the Current-state row above it — the very failure this paragraph
-was added to correct, reintroduced from the other direction. The **Current-state table is the
-authority** for this tree's position: repo max **0193**, both `0192` and `0193` pending.
+was added to correct, reintroduced from the other direction. IT HAS SINCE MOVED AGAIN: `0194`
+was extracted from #674 onto this branch, and the same failure reappeared a third time —
+the table rows were updated while this prose still said `0193`. A guard cannot catch it,
+because the rule reads the table ROW by regex and never reaches this paragraph. The
+**Current-state table is the authority** for this tree's position: repo max **0194**, with
+`0192`, `0193` and `0194` all pending.
 
-**Hosted is still `0191`.** Nothing above records a hosted `0192` or `0193`, and the apply
-evidence for `0191` in this block is unchanged: both are authored and **UNAPPLIED**.
+**Hosted is still `0191`.** Nothing above records a hosted `0192`, `0193` or `0194`, and the
+apply evidence for `0191` in this block is unchanged: all three are authored and
+**UNAPPLIED**.
 
 ## Previous state (verified 2026-09-04, post-0190 apply)
 
