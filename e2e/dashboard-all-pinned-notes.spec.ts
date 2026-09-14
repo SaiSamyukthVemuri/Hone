@@ -2,7 +2,6 @@ import { test, expect } from "@playwright/test";
 import {
   seedE2eDashboardMemoryClient,
   seedE2eStudio,
-  seedE2eTodayAppointment,
   seedPinnedNote,
 } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
@@ -29,7 +28,11 @@ const NOTE_NEWEST = "PINNEDTHREE bring the shorter cable";
 
 test("every pinned note renders, and the row action is Chart session", async ({ page }) => {
   const seed = await seedE2eStudio();
-  const { clientId } = await seedE2eDashboardMemoryClient(seed, {
+  // This fixture ALREADY seeds a confirmed appointment today (now + 2h) and
+  // returns its id. Seeding a second one for the same client collides with the
+  // studio-wide no-overlap exclusion constraint, which is exactly how the first
+  // run of this spec failed in CI.
+  const { clientId, appointmentId } = await seedE2eDashboardMemoryClient(seed, {
     cautionNote: "Avoid the jawline",
     nextVisitNote: "Lower the energy one step",
   });
@@ -38,12 +41,6 @@ test("every pinned note renders, and the row action is Chart session", async ({ 
   await seedPinnedNote(seed.studioId, clientId, NOTE_OLDEST);
   await seedPinnedNote(seed.studioId, clientId, NOTE_MIDDLE);
   await seedPinnedNote(seed.studioId, clientId, NOTE_NEWEST);
-
-  const { appointmentId } = await seedE2eTodayAppointment(seed, {
-    clientId,
-    startsMinutesFromNow: 90,
-    endsMinutesFromNow: 135,
-  });
 
   await loginAsOwner(page, seed);
   await page.goto("/dashboard");
@@ -87,6 +84,7 @@ test.describe("on a phone", () => {
   test("all pinned notes still render, and the roster does not scroll sideways", async ({ page }) => {
     const seed = await seedE2eStudio();
     const { clientId } = await seedE2eDashboardMemoryClient(seed, { cautionNote: null });
+    // Same fixture, same reason: it already owns today's appointment.
 
     await seedPinnedNote(seed.studioId, clientId, NOTE_OLDEST);
     await seedPinnedNote(seed.studioId, clientId, NOTE_MIDDLE);
@@ -96,12 +94,6 @@ test.describe("on a phone", () => {
       clientId,
       `PINNEDLONG ${"averylongunbrokenwordthatcannotwrapnaturally".repeat(3)}`,
     );
-    await seedE2eTodayAppointment(seed, {
-      clientId,
-      startsMinutesFromNow: 90,
-      endsMinutesFromNow: 135,
-    });
-
     await loginAsOwner(page, seed);
     await page.goto("/dashboard");
 
