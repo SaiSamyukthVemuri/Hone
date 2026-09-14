@@ -470,9 +470,34 @@ describe("the status sentence never contradicts the row's own controls", () => {
     expect(unknown).not.toMatch(/has been used|not yet been used|ran out/i);
   });
 
-  it("a live invitation keeps the plain sentence", () => {
-    expect(statusMeaning("invited", { invitationRedeemed: false })).toMatch(
-      /has not yet been used/i,
+  it("a live invitation keeps the plain sentence, and claims no delivery", () => {
+    const live = statusMeaning("invited", { invitationRedeemed: false });
+    expect(live).toMatch(/has not been used yet/i);
+    // THE ROW CANNOT PROVE AN EMAIL ARRIVED. Delivery acceptance is not durable
+    // state, so no `invited` sentence may imply one — "an invitation is out"
+    // read as "it went out to them" and could not survive a refresh.
+    expect(live).not.toMatch(/\bsent\b|\bis out\b|\bdelivered\b|\bemail(ed)?\b/i);
+  });
+
+  it("NO default `invited` sentence claims the email reached anyone", () => {
+    for (const context of [
+      {},
+      { invitationRedeemed: false },
+      { invitationFactsUnknown: true },
+      { invitationElapsed: true },
+      { invitationRedeemed: true },
+    ]) {
+      expect(
+        statusMeaning("invited", context),
+        `${JSON.stringify(context)} claims delivery`,
+      ).not.toMatch(/\bsent\b|\bis out\b|\bdelivered\b|\breceived\b/i);
+    }
+    // The independently-known states stay specific — they are facts the row
+    // really does carry, unlike delivery.
+    expect(statusMeaning("invited", { invitationElapsed: true })).toMatch(/ran out/i);
+    expect(statusMeaning("invited", { invitationRedeemed: true })).toMatch(/been used/i);
+    expect(statusMeaning("invited", { invitationFactsUnknown: true })).toMatch(
+      /could not be checked/i,
     );
   });
 

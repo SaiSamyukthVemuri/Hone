@@ -1,6 +1,23 @@
 import "server-only";
 import { createHash } from "crypto";
 import { FROM_ADDRESS, resend } from "./client";
+// The taxonomy lives in a PURE module so consumers can classify these codes
+// without pulling this file — and therefore ./client and its module-scope
+// Resend initialization — into their import graph. Re-exported here so the
+// transport still names its own refusal codes.
+import {
+  localRefusal,
+  normalizeProviderRefusalCode,
+  type RefusalCode,
+} from "./send-refusals";
+export {
+  LOCAL_REFUSAL_CODES,
+  PROVIDER_REFUSAL_CODES,
+  isLocalRefusalCode,
+  localRefusal,
+  normalizeProviderRefusalCode,
+} from "./send-refusals";
+export type { LocalRefusalCode, ProviderRefusalCode, RefusalCode } from "./send-refusals";
 import {
   buildFromHeader,
   type StudioEmailIdentity,
@@ -171,14 +188,59 @@ export function waitlistIdempotencyKey(
 }
 
 /**
+ * Key identity for a send whose PAYLOAD CONTAINS A CREDENTIAL.
+ *
+ * WHY A SECOND KEY SHAPE EXISTS. `waitlistIdempotencyKey` hashes the exact
+ * payload, and that is right for every caller whose body holds no secret: the
+ * digest makes the key track the bytes automatically, so a changed subject or
+ * destination cannot silently reuse a key. But the header value is transmitted
+ * to the provider and retained there, and when the body contains a
+ * SMALL-SEARCH-SPACE credential the digest stops being opaque: every other
+ * field is deterministic and knowable, so an attacker holding the header can
+ * enumerate candidates offline, render, hash and compare until it matches. The
+ * key becomes a verifier for the secret.
+ *
+ * That is not hypothetical here. A recipient proof code is drawn from a space
+ * small enough to type, which is orders of magnitude below the 256-bit tokens
+ * in lib/portal/tokens.ts, and the attack was demonstrated against this
+ * repository's own send path before this function existed.
+ *
+ * So a credential-bearing send keys on the EVENT ALONE and no payload digest is
+ * computed. `eventScope` is REQUIRED rather than optional, because without it
+ * there is nothing left to make the key unique.
+ *
+ * THE COST, STATED. Losing the payload component means the key no longer tracks
+ * the bytes, so the caller must satisfy the corollary this module already
+ * states for every caller — the payload must be a PURE FUNCTION of the event.
+ * If it is not, two sends under one event render different bytes, and the
+ * provider answers `invalid_idempotent_request` rather than replaying. The
+ * proof path holds up its end by rendering the challenge's AUTHORISED WINDOW
+ * rather than the remaining time, which does not drift between attempts.
+ *
+ * The literal suffix cannot collide with a payload-digest key: that key ends in
+ * 64 hex characters, this one ends in a fixed non-hex word.
+ */
+export function waitlistEventOnlyIdempotencyKey(
+  namespace: WaitlistKeyNamespace,
+  studioId: string,
+  eventScope: string,
+): string {
+  return `${KEY_PREFIX[namespace]}/${studioId}/${eventScope}/no-payload-digest`;
+}
+
+/**
  * Three-way outcome. `ambiguous` is a first-class result, not a flavour of
  * failure: it is the only honest answer when the provider may or may not have
  * taken the request, and it drives distinct user-facing copy.
  */
 export type WaitlistSendOutcome =
   | { status: "accepted"; messageId: string }
-  | { status: "rejected"; code: string | null }
+  // CLOSED, and that is what makes the bare literal impossible: a code
+  // outside the union does not typecheck whatever order its properties are
+  // written in, or however many variables it is assigned through first.
+  | { status: "rejected"; code: RefusalCode | null }
   | { status: "ambiguous"; reason: "timeout" | "concurrent" | "no_message_id" };
+
 
 const SEND_TIMEOUT_MS = 15_000;
 
@@ -221,7 +283,8 @@ async function attempt(
     const result = raced as ProviderResult;
     if (!result) return { status: "ambiguous", reason: "no_message_id" };
     if (result.error) {
-      const name = result.error.name ?? null;
+      // THE ONE PLACE an untrusted provider string becomes a refusal code.
+      const name = normalizeProviderRefusalCode(result.error.name);
       if (name === CONCURRENT_ERROR) {
         // A prior attempt under this exact key is still being processed and may
         // yet succeed: ambiguous, never a clean refusal.
@@ -255,6 +318,12 @@ async function attempt(
  * replays the original response instead of sending twice. Bounded at one retry;
  * there is deliberately no loop.
  *
+ * AMBIGUITY IS NOT ERASED BY THE RETRY. Once the first attempt is ambiguous,
+ * only an ACCEPTANCE resolves it — a rejection on the retry is a fact about the
+ * retry, while the first request was never cancelled and may still have been
+ * delivered. The outcome therefore stays ambiguous, carrying the first
+ * attempt's reason.
+ *
  * A `rejected` first attempt is NOT retried: the provider gave a definite
  * answer and repeating it would only burn quota.
  */
@@ -277,6 +346,12 @@ export async function sendWaitlistEmailIdempotent(args: {
    * Omitted for studio-facing mail, which stays `Hone <hello@hone.care>`.
    */
   studioIdentity?: StudioEmailIdentity;
+  /**
+   * The payload contains a credential (a proof code), so it must NOT be hashed
+   * into the provider idempotency key. Requires `eventScope`. See
+   * `waitlistEventOnlyIdempotencyKey`.
+   */
+  payloadCarriesSecret?: boolean;
   /** Test seam. Defaults to the shared Resend client. */
   transport?: IdempotentEmailTransport | null;
 }): Promise<WaitlistSendOutcome> {
@@ -285,14 +360,25 @@ export async function sendWaitlistEmailIdempotent(args: {
       ? args.transport
       : (resend as unknown as IdempotentEmailTransport | null);
 
-  if (!transport) return { status: "rejected", code: "not_configured" };
+  if (!transport) return localRefusal("not_configured");
   if (!args.to || !args.to.includes("@")) {
-    return { status: "rejected", code: "invalid_recipient" };
+    return localRefusal("invalid_recipient");
   }
   if (!args.studioId) {
     // Refuse rather than mint an unscoped key: an unscoped key is exactly the
     // cross-tenant collision this design exists to prevent.
-    return { status: "rejected", code: "missing_tenant_scope" };
+    return localRefusal("missing_tenant_scope");
+  }
+  const eventScopeValue =
+    typeof args.eventScope === "string" && args.eventScope.length > 0
+      ? args.eventScope
+      : null;
+  if (args.payloadCarriesSecret && !eventScopeValue) {
+    // FAIL CLOSED. Falling back to the payload digest here would put the
+    // credential into the transmitted key, which is the one thing this flag
+    // exists to prevent — and it would do so silently, at exactly the call
+    // site that asked not to.
+    return localRefusal("missing_event_scope");
   }
 
   const payload: ProviderPayload = {
@@ -306,17 +392,48 @@ export async function sendWaitlistEmailIdempotent(args: {
     ...(args.studioIdentity?.replyTo ? { replyTo: args.studioIdentity.replyTo } : {}),
   };
   // Derived from THIS object — the one about to be sent — plus the tenant, so
-  // neither component can drift from what is actually transmitted.
-  const idempotencyKey = waitlistIdempotencyKey(
-    args.namespace,
-    args.studioId,
-    payload,
-    args.eventScope,
-  );
+  // neither component can drift from what is actually transmitted. A
+  // credential-bearing payload takes the event-only shape instead, so the
+  // secret never reaches the provider header.
+  const idempotencyKey = args.payloadCarriesSecret
+    ? waitlistEventOnlyIdempotencyKey(
+        args.namespace,
+        args.studioId,
+        eventScopeValue as string,
+      )
+    : waitlistIdempotencyKey(
+        args.namespace,
+        args.studioId,
+        payload,
+        args.eventScope,
+      );
 
   const first = await attempt(transport, payload, idempotencyKey);
   if (first.status !== "ambiguous") return first;
 
   // ONE bounded retry, SAME key AND same payload object.
-  return attempt(transport, payload, idempotencyKey);
+  const second = await attempt(transport, payload, idempotencyKey);
+
+  // ONCE THE FIRST ATTEMPT IS AMBIGUOUS, ONLY AN ACCEPTANCE RESOLVES IT.
+  //
+  // The retry's answer is about the RETRY. The first request was never
+  // cancelled — that is what "ambiguous" means here — so a provider rejecting
+  // the second attempt says nothing about whether the first was accepted and
+  // delivered. Returning that rejection verbatim reported a definitive refusal
+  // for a message that may already be in the recipient's inbox.
+  //
+  // Downstream that was not merely imprecise. A "rejected" outcome sets
+  // `mayInvalidateChallenge`, so a caller could retire a proof code that the
+  // first request then delivered, and the recipient would type a code the
+  // database had just invalidated.
+  //
+  // An acceptance DOES resolve it: under one idempotency key the provider
+  // replays the original response, so a confirmed acceptance on the retry is a
+  // confirmation about the first request too.
+  if (second.status === "accepted") return second;
+
+  // Otherwise the uncertainty stands, and it keeps the FIRST attempt's reason:
+  // that is where the doubt came from, and the retry's own failure mode is not
+  // what a caller needs to reason about.
+  return { status: "ambiguous", reason: first.reason };
 }

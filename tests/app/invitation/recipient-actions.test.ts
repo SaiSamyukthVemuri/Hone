@@ -129,6 +129,19 @@ vi.mock("@/lib/rate-limit/public", () => ({
     rateLimitCalls.push(slug);
     return { allowed: rateLimitAllows.allowed };
   },
+  // WAIT INTEGRATION-01. Added by the assembly, not by #686.
+  //
+  // #680 ships `limitWaitlistProofRequest` and #686 owns the only call site;
+  // they are siblings off production, so on #686 alone this export does not
+  // exist and this partial mock was complete. Once the assembly wires the
+  // limiter into `requestInvitationProofAction`, a mock without it throws
+  // "No export is defined" before any assertion in this file can run.
+  //
+  // ALLOWED BY DEFAULT, deliberately not configurable here: this file proves
+  // what crosses the ACTION BOUNDARY. The throttle's own behaviour — that a
+  // refusal mints no challenge and sends no mail — is proved against the real
+  // database in tests/db/waitlist-integration-seams.db.test.ts.
+  limitWaitlistProofRequest: async () => ({ allowed: true }),
   RATE_LIMIT_MESSAGE: "rate limited",
 }));
 

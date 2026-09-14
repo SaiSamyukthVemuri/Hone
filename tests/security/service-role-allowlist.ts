@@ -331,6 +331,17 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "remove_new_client_waitlist_entry",
   },
   {
+    // WAIT INTEGRATION-01. Added by the assembly: #683 ships the contract and
+    // #685 ships the command, and neither branch can hold the adapter that
+    // joins them, so this call site exists only here. Listing it is the
+    // deliberate, reviewable act this file's header requires.
+    path: "lib/waitlist/invite-to-book-adapter.ts",
+    purpose:
+      "WAIT-03 B4 practitioner Invite-to-book — the sole caller of admit_new_client_waitlist_entry (migration 0193), and of release_new_client_waitlist_entry for Cancel invitation.",
+    why: "The adapter resolves the studio + acting practitioner server-side via getCurrentPractitionerWithStudio() and refuses a non-owner before any command runs; the browser supplies an entry id and product scope only — never a studio_id, user_id, role, round id, claim state or allowance count. `authenticated` holds SELECT and nothing else on new_client_waitlist_entries (0185), so there is no direct-DML route: the transition goes only through admit_new_client_waitlist_entry (service_role-only), which independently re-derives membership AND owner role from (studio_id, auth user id), scopes the entry by BOTH id and studio_id so a cross-studio id is not found, takes the studio and entry locks in the canonical order, and owns the claim-then-issue compound atomically. This file performs no waitlist DML of its own, and it discards the raw token the command returns rather than surfacing it to a practitioner view.",
+    scopeGuard: "getCurrentPractitionerWithStudio",
+  },
+  {
     path: "app/calendar-feed/[token]/route.ts",
     purpose: "Public, unauthenticated token-scoped route/query.",
     why: "No session; the bearer signed/hashed token is verified (token_hash) and resolves the exact appointment/intake/portal row. Scope comes from the verified token, so service-role is required.",

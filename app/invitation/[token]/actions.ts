@@ -49,7 +49,30 @@ import { isBookableByNewClient } from "@/lib/booking/consultation";
 import { fetchPublicSlotsForDates } from "@/lib/booking/public-slot-range";
 import { horizonRangeInStudioTz } from "@/lib/booking/horizon";
 import { localDateString, localTimeString12h, utcInstantFromLocal } from "@/lib/booking/tz";
-import { limitPublicSlots, RATE_LIMIT_MESSAGE } from "@/lib/rate-limit/public";
+import {
+  limitPublicSlots,
+  limitWaitlistProofRequest,
+  RATE_LIMIT_MESSAGE,
+} from "@/lib/rate-limit/public";
+// WAIT INTEGRATION-01 — the proof-delivery binding.
+//
+// WAIT DELIVERY-01 (#680) is MERGED into this candidate at
+// e9e5fa63b7ca6a4e79f244d0548e2573811b51a6, not vendored. An earlier rebuild
+// hand-copied seven of its files because #680 and the #686 chain then overlapped
+// on nine, which made a branch merge unsafe. That overlap is now ZERO, so the
+// merge is both simpler and safer: it carries #680's own tests, and it cannot go
+// stale against the head it came from — which hand-vendoring silently did, and
+// which is exactly how the proof-request limiter below went missing.
+//
+// NOTHING HERE REIMPLEMENTS DELIVERY, and this branch is not its authority:
+// #680 remains the owner. The BINDING below is the only new code, because it is
+// the one thing neither branch could contain alone — B2/B3 mint a challenge they
+// cannot transmit, and Delivery can transmit a challenge it cannot mint.
+import {
+  sendWaitlistRecipientProofEmail,
+  type DeliveryStudio,
+} from "@/lib/waitlist/delivery/send";
+import type { BeginProofOutcome } from "@/lib/booking/waitlist-invitation";
 
 // ---------------------------------------------------------------------------
 // The capability cookie
@@ -209,6 +232,12 @@ type StudioContext = {
   /** The studio's configured public booking horizon, or null for the default.
    *  Carried because the offered-day scan is bounded by it. */
   horizonMonths: number | null;
+  /**
+   * The sender identity the proof email is sent AS. Kept separate from
+   * `presentation` on purpose: `presentation` is serialised to the browser, and
+   * these are contact addresses that have no business crossing that boundary.
+   */
+  delivery: DeliveryStudio;
   presentation: OfferPresentation;
   /**
    * P2-A. Can the PUBLIC BOOKING PATH actually accept this service for a new
@@ -368,7 +397,15 @@ async function loadStudioContext(
       // avoids the scan having to assume the default for a studio that
       // configured something else.
       .from("studios")
-      .select("slug, name, timezone, public_booking_horizon_months")
+      // The two contact columns ride along for the SAME reason the horizon
+      // does: this row is already being fetched, so reading them costs nothing,
+      // and the proof email's reply-to is resolved from them. Omitting them
+      // would not fail — `studioEmailIdentity` tolerates nulls — it would
+      // silently send a client-facing email with no studio reply path, which is
+      // the exact defect the COMMS-01A family guard exists to prevent.
+      .select(
+        "slug, name, timezone, public_booking_horizon_months, postcare_contact_email, owner_email",
+      )
       .eq("id", studioId)
       .maybeSingle(),
     admin
@@ -393,6 +430,13 @@ async function loadStudioContext(
   return {
     slug: studio.slug as string,
     horizonMonths: (studio.public_booking_horizon_months as number | null) ?? null,
+    delivery: {
+      id: studioId,
+      name: studio.name as string,
+      postcare_contact_email:
+        (studio.postcare_contact_email as string | null) ?? null,
+      owner_email: (studio.owner_email as string | null) ?? null,
+    },
     presentation: {
       studioName: studio.name as string,
       serviceName: service.name as string,
@@ -747,6 +791,41 @@ export async function requestInvitationProofAction(
   const ctx = await loadContext(rawToken);
   if (!ctx.ok) return ctx.state;
 
+  // WAIT INTEGRATION-01 — THE DELIVERY POLICY'S OWN LIMITS, ENFORCED.
+  //
+  // The gate above is the cheap pre-resolve IP throttle every public surface
+  // runs; it bounds unresolvable tokens and knows nothing about this flow. It is
+  // NOT the proof-request policy. #680 states that policy in
+  // `PROOF_REQUEST_LIMITS` (3 per invitation / 15m, 10 per IP-and-studio / 1h)
+  // and ships `limitWaitlistProofRequest` to enforce it — with ZERO callers,
+  // because the limiter lives on #680 and the only call site lives on #686, and
+  // the two are siblings off production. Neither branch can wire it; only an
+  // assembly can. Unwired, the exported "policy" was decorative and one link
+  // could be made to mail a real person without bound.
+  //
+  // IT RUNS HERE, AFTER RESOLVE AND BEFORE THE MINT. `invitationId` and
+  // `studioId` are server-resolved row ids that exist only once `loadContext`
+  // has run, and keying on the invitation id keeps the bearer token out of the
+  // key derivation entirely. Placing it before `beginRecipientProof` is the
+  // whole point: a refusal must cost no challenge, because minting one retires
+  // the previous code in the recipient's inbox.
+  //
+  // FAIL OPEN, by #680's own classified ruling: a limiter outage must not strand
+  // a prospect who has no other route to the code.
+  const proofGate = await limitWaitlistProofRequest({
+    headers: await headers(),
+    studioId: ctx.resolve.invitation.studioId,
+    invitationId: ctx.resolve.invitation.invitationId,
+  });
+  if (!proofGate.allowed) {
+    // The offer itself is intact and still resolves, so this returns the proof
+    // screen with the throttle message rather than a terminal state.
+    return offerState(rawToken, ctx.resolve, ctx.studio, {
+      kind: "unavailable",
+      retryable: true,
+    });
+  }
+
   const begun = await beginRecipientProof(rawToken);
 
   // ISSUING A NEW CHALLENGE INVALIDATES THE OLD CAPABILITY, so the cookie that
@@ -765,20 +844,97 @@ export async function requestInvitationProofAction(
   // proof form, or the `decline_unavailable` path that returns the proof screen
   // without clearing its cookie. Requesting a fresh code is the ordinary thing
   // to do from either.
-  if (begun.kind === "challenge_issued") await clearCapability();
+  // Everything that is NOT an issued challenge has no code to deliver and no
+  // capability to invalidate, so it is mapped by B3's own exhaustive mapper and
+  // never reaches the transport.
+  if (begun.kind !== "challenge_issued") {
+    return offerState(rawToken, ctx.resolve, ctx.studio, proofStageFromBegin(begun));
+  }
 
-  // DELIVERY IS NOT WIRED ON THIS BRANCH. The code is minted and stored, and
-  // `begun.rawChallenge` / `begun.proofChallengeId` are the two values the
-  // delivery layer needs -- but nothing here transmits them, and this action
-  // deliberately does not pretend otherwise. Until the delivery lane lands, the
-  // recipient sees the honest "we couldn't send it" state rather than being told
-  // to check an inbox nothing was sent to.
-  const stage: ProofStage =
-    begun.kind === "challenge_issued"
-      ? { kind: "unavailable", retryable: true }
-      : proofStageFromBegin(begun);
+  await clearCapability();
 
+  const stage = await deliverProofChallenge(
+    begun,
+    ctx.studio.delivery,
+    ctx.resolve.invitation.invitationId,
+  );
   return offerState(rawToken, ctx.resolve, ctx.studio, stage);
+}
+
+// ---------------------------------------------------------------------------
+// The proof-delivery binding
+// ---------------------------------------------------------------------------
+//
+// Module-level and given its inputs EXPLICITLY rather than closing over the
+// action's `ctx`. Both values it needs are server-resolved authority — the
+// studio it sends as, and the invitation the challenge belongs to — and passing
+// them by parameter is what makes it impossible for a future edit to reach for a
+// request-supplied one instead.
+async function deliverProofChallenge(
+  issued: Extract<BeginProofOutcome, { kind: "challenge_issued" }>,
+  studio: DeliveryStudio,
+  invitationId: string,
+): Promise<ProofStage> {
+  // BOTH INSTANTS ARE THE DATABASE'S OWN, and neither is computed here.
+  //
+  // ADJUDICATED: `issued_at` is authority returned by 0192, never derived. The
+  // accepted 0192 returns the POST-LOCK `clock_timestamp()` it also wrote into
+  // `proof_challenge_expires_at`, and B2's `instant()` validates the
+  // serialization and hands back the ORIGINAL string unchanged. An earlier
+  // revision of this binding reconstructed it as `expires_at - requested TTL`;
+  // that inversion is FORBIDDEN, as is the application clock. Both are gone.
+  //
+  // Parsing the returned strings is not deriving them: `Date` is the shape the
+  // delivery module takes, and a value that does not parse is refused below
+  // rather than replaced.
+  const issuedAt = new Date(issued.issuedAt);
+  const expiresAt = new Date(issued.expiresAt);
+  if (Number.isNaN(issuedAt.getTime()) || Number.isNaN(expiresAt.getTime())) {
+    // Unparseable authority is NOT a licence to invent one. Without both
+    // instants the advertised window cannot be stated truthfully, so nothing is
+    // sent. The challenge is spent at the database either way; requesting again
+    // mints a fresh one.
+    return { kind: "unavailable", retryable: true };
+  }
+
+  const result = await sendWaitlistRecipientProofEmail({
+    studio,
+    invitationId,
+    challengeId: issued.proofChallengeId,
+    // The STORED contact, returned by the database from the entry. The
+    // recipient supplies no address at any point in this action.
+    recipientEmail: issued.deliveryContact,
+    code: issued.rawChallenge,
+    issuedAt,
+    expiresAt,
+    // Proof gates BOTH mutations, but the code is minted per challenge and not
+    // per outcome; the copy names booking because that is what the recipient
+    // came to do.
+    action: "book",
+  });
+
+  // DISPOSITION -> STAGE, decided on `delivered`, never on a boolean.
+  //
+  // `unknown` is grouped with `yes` deliberately. Custody is ambiguous, so the
+  // code MAY be in the recipient's inbox — and under the one-shot law it is
+  // spent regardless. Showing "we couldn't send it" there would be a lie in the
+  // one direction that costs something: they would never try the code that did
+  // arrive. Showing the entry form lets a delivered code work, and requesting
+  // again is the sanctioned recovery (`mint_new_challenge`) if it did not.
+  if (result.disposition.delivered !== "no") {
+    return {
+      kind: "sent",
+      maskedContact: issued.maskedContact,
+      expiresAt: issued.expiresAt,
+    };
+  }
+  // Nothing reached the provider. `sameEventRetryAllowed` is true only for a
+  // pre-send clock disagreement, where nothing is spent; every other refusal
+  // still recovers by minting a NEW challenge, which this same button does. So
+  // the control stays live either way — what differs is whether the next press
+  // replays the event or mints a replacement, and that is Delivery's decision,
+  // not the screen's.
+  return { kind: "unavailable", retryable: true };
 }
 
 /** Exchange a typed code for a capability. */
