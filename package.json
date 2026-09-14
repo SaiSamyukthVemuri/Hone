@@ -44,6 +44,7 @@
     "@vercel/speed-insights": "^2.0.0",
     "jszip": "^3.10.1",
     "next": "15.5.22",
+    "pdf-lib": "1.17.1",
     "posthog-js": "^1.404.1",
     "posthog-node": "^5.45.2",
     "react": "^19.0.0",
