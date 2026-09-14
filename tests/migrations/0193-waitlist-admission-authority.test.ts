@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { fileForVersion, isRepoMax, versionsAbove } from "./helpers/migration-state";
+// isRepoMax / versionsAbove are deliberately NOT imported any more: 0194 now
+// sits above this migration and carries the repo-max assertion, and leaving
+// unused imports behind would fail lint.
+import { fileForVersion } from "./helpers/migration-state";
 
 // 0193 — prospect preference vs studio admission policy (WAIT-ADMIT-01).
 //
@@ -72,15 +75,13 @@ const COMMANDS: readonly [string, string][] = [
   ["public.claim_new_client_waitlist_entries_ordered", "uuid, uuid, uuid[]"],
 ];
 
-describe("0193 position in the chain", () => {
-  it("is the repository maximum", () => {
-    expect(isRepoMax(VERSION)).toBe(true);
-  });
-
-  it("has nothing above it", () => {
-    expect(versionsAbove(VERSION)).toEqual([]);
-  });
-});
+// THE REPO-MAX ASSERTION HAS MOVED TO 0194, which is the rule CLAUDE.md states:
+// only the CURRENT maximum migration's own test may assert isRepoMax, because
+// otherwise every landing migration reds an older file and the sweep gets
+// missed. tests/migrations/0194-studio-sms-sender-outbound-lookup.test.ts now
+// carries it. Nothing else in this file changed: every behavioural and security
+// assertion 0193 makes about itself is untouched, and the migration SQL is
+// byte-identical to #685.
 
 describe("transaction and lock posture", () => {
   it("opens its own transaction and arms a lock timeout inside it", () => {
