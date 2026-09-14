@@ -383,6 +383,36 @@ describe("WAIT INTEGRATION-01 — recipient journey, accepted stack", () => {
     expect(client.rows[0].name).toBe(offer.name);
     expect(client.rows[0].phone).toBe(offer.phone);
 
+    // --- 0195: APPOINTMENT, MANDATORY AUDIT AND CONVERSION, ONE TRANSACTION ---
+    //
+    // WHY THIS IS THE PROOF THAT 0195 RAN. `recordInvitationConversion` has NO
+    // caller left in the application — asserted below from source — so nothing
+    // on this path can convert an entry except the composed command itself.
+    // A converted entry after a booking is therefore 0195's signature, not a
+    // second application write.
+    const audit = await adminQuery(
+      `select id, action from public.appointment_audit where appointment_id = $1`,
+      [appts.rows[0].id],
+    );
+    expect(audit.rows, "the mandatory audit row for THIS appointment").toHaveLength(1);
+
+    const entryAfter = await adminQuery(
+      `select status, converted_at, converted_client_id
+         from public.new_client_waitlist_entries where id = $1`,
+      [offer.entryId],
+    );
+    // The EXACT invited entry converted, to the client the booking created —
+    // not merely "some entry converted".
+    expect(entryAfter.rows[0].status).toBe("converted");
+    expect(entryAfter.rows[0].converted_at).not.toBeNull();
+    expect(entryAfter.rows[0].converted_client_id).toBe(
+      (await adminQuery(`select client_id from public.appointments where id = $1`, [
+        appts.rows[0].id,
+      ])).rows[0].client_id,
+    );
+    // NO STALE INVITED STATE — the defect 0195 exists to close.
+    expect(entryAfter.rows[0].status).not.toBe("invited");
+
     // Consumed exactly once.
     expect(await invitationRow(offer.invitationId).then((r) => r.redeemed_at)).not.toBeNull();
     const again = await bookInvitationSlotAction(offer.token, chosen.start);
@@ -391,6 +421,59 @@ describe("WAIT INTEGRATION-01 — recipient journey, accepted stack", () => {
 
     // Exactly ONE proof code was ever put on the wire for this recipient.
     expect(proofSends()).toHaveLength(1);
+  });
+
+  // -------------------------------------------------------------------------
+  it("NO post-book conversion writer exists on the application path", () => {
+    // The structural half of the proof above. 0195 composes the conversion, so
+    // the old "book, then convert" second write must have no caller at all —
+    // not merely be unused on the happy path. Executable source only, so the
+    // modules' own explanations of the retired sequence cannot satisfy it.
+    const strip = (t: string) =>
+      t.replace(/\/\*[\s\S]*?\*\//g, (m) => " ".repeat(m.length))
+       .replace(/\/\/[^\n]*/g, (m) => " ".repeat(m.length));
+    const bookSrc = strip(readFileSync(`${process.cwd()}/app/book/[slug]/actions.ts`, "utf8"));
+    // The booking action reaches the COMPOSED command and never the bare
+    // conversion RPC.
+    expect(bookSrc).toContain("create_waitlist_public_appointment");
+    expect(bookSrc).not.toContain("recordInvitationConversion");
+    expect(bookSrc).not.toContain("record_new_client_waitlist_conversion");
+  });
+
+  // -------------------------------------------------------------------------
+  it("a REFUSED booking writes no appointment, no audit and no conversion", async () => {
+    // The representative real-DB refusal. A wrong-recipient client is the one
+    // the composed command must reject after the appointment half would
+    // otherwise have succeeded, so it exercises the rollback rather than an
+    // early input guard.
+    const offer = await seedOffer("refusal-trio");
+    const { loadInvitationAction, bookInvitationSlotAction } = await actions();
+    await proveWithDeliveredCode(offer);
+    const loaded = await loadInvitationAction(offer.token);
+    if (loaded.kind !== "offer") throw new Error("expected an offer");
+    const slot = loaded.days.flatMap((d) => d.slots)[0];
+    expect(slot, "the fixture must offer a bookable slot").toBeTruthy();
+
+    // Post a date OUTSIDE the offered window — refused by 0195's scope re-read.
+    const beyond = new Date(Date.parse(slot!.start) + 400 * 24 * 60 * 60 * 1000);
+    const refused = await bookInvitationSlotAction(offer.token, beyond.toISOString());
+    expect(refused.kind).not.toBe("booked");
+
+    // NOTHING was written, on any of the three tables.
+    expect(await apptCount(offer.studio.studioId)).toBe(0);
+    const audits = await adminQuery(
+      `select a.id from public.appointment_audit a where a.studio_id = $1`,
+      [offer.studio.studioId],
+    );
+    expect(audits.rows).toHaveLength(0);
+    const entry = await adminQuery(
+      `select status, converted_at, converted_client_id
+         from public.new_client_waitlist_entries where id = $1`,
+      [offer.entryId],
+    );
+    expect(entry.rows[0].status).not.toBe("converted");
+    expect(entry.rows[0].converted_at).toBeNull();
+    expect(entry.rows[0].converted_client_id).toBeNull();
   });
 
   // -------------------------------------------------------------------------
