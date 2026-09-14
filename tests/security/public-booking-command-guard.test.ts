@@ -46,9 +46,32 @@ describe("public booking route — no direct appointment creation", () => {
     expect(CODE).toMatch(/rpc\(\s*\n?\s*"create_public_appointment"/);
   });
 
+  it("commits an INVITATION booking through 0195, never through a hand-rolled pair", () => {
+    // WAIT-03. The invitation path composes appointment + audit + conversion in
+    // ONE transaction. The guard widened rather than moved: both commands are
+    // now named here, so removing either — or reintroducing a direct write
+    // beside them — still fails.
+    expect(CODE).toMatch(/rpc\(\s*\n?\s*"create_waitlist_public_appointment"/);
+
+    // AND THE SECOND CONVERSION WRITER MUST STAY GONE. This route used to
+    // record the conversion itself after the commit; 0195 owns it now, and two
+    // writers for one fact is the defect this binding removed.
+    expect(CODE).not.toContain("recordInvitationConversion(");
+    expect(CODE).not.toContain("record_new_client_waitlist_conversion");
+  });
+
   it("passes only server-prepared identifiers to the command", () => {
-    const call = CODE.slice(CODE.indexOf('"create_public_appointment"'));
-    const args = call.slice(0, call.indexOf("},") + 1);
+    // BOTH COMMANDS SHARE ONE ARGUMENT LITERAL, so this reads that literal
+    // rather than slicing forward from a call site. Slicing from the call broke
+    // the moment the arguments were hoisted to be shared — and it would have
+    // gone on "passing" while inspecting `commitArgs)` and nothing else.
+    const declared = CODE.indexOf("const commitArgs = {");
+    expect(declared, "the shared argument literal was renamed or removed").toBeGreaterThan(0);
+    const args = CODE.slice(declared, CODE.indexOf("};", declared) + 2);
+    // Non-vacuity: a slice that found no arguments would satisfy every
+    // "must not contain" below.
+    expect(args).toContain("p_service_id");
+    expect(args).toContain("p_starts_at");
     // The studio id is resolved from the slug server-side, never posted.
     expect(args).toContain("p_studio_id: studio.id");
     // No duration, end time, status, practitioner or override may be supplied.
@@ -63,6 +86,34 @@ describe("public booking route — no direct appointment creation", () => {
     ]) {
       expect(args, `must not pass ${forbidden}`).not.toContain(forbidden);
     }
+
+    // AND THE SAME LIST OVER THE 0195 CALL'S OWN LITERAL. `commitArgs` is
+    // SPREAD into it, so anything added beside the spread escaped a check that
+    // only read the shared object — which is most of the argument surface on
+    // the invitation path.
+    const waitlistLiteral = CODE.slice(CODE.indexOf('"create_waitlist_public_appointment"'));
+    const waitlistBody = waitlistLiteral.slice(0, waitlistLiteral.indexOf("})") + 2);
+    expect(waitlistBody).toContain("...commitArgs");
+    for (const forbidden of [
+      "p_duration",
+      "p_ends_at",
+      "p_status",
+      "p_practitioner",
+      "p_allow_outside",
+      "p_capacity",
+      "p_details",
+    ]) {
+      expect(waitlistBody, `0195 call must not pass ${forbidden}`).not.toContain(forbidden);
+    }
+
+    // THE ONE EXTRA ARGUMENT 0195 TAKES, and where it may come from. The entry
+    // id is the locked redemption's own answer; a browser-supplied one would
+    // name somebody else's entry, which is the single failure this parameter
+    // exists to make impossible.
+    const waitlistCall = CODE.slice(CODE.indexOf('"create_waitlist_public_appointment"'));
+    const waitlistArgs = waitlistCall.slice(0, waitlistCall.indexOf("})") + 2);
+    expect(waitlistArgs).toContain("p_entry_id: atomicEntryId");
+    expect(waitlistArgs).not.toMatch(/p_entry_id:\s*(fd|form|body|params|searchParams|input)/);
   });
 
   it("never sends a confirmation before the command has confirmed success", () => {

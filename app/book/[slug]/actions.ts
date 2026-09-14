@@ -57,9 +57,7 @@ import {
 import {
   authorizeInvitationForBooking,
   consumeInvitationForBooking,
-  recordInvitationConversion,
   type BookingAuthorization,
-  type ConversionOutcome,
 } from "@/lib/booking/waitlist-invitation";
 import {
   buildBookingMarketingConsentRow,
@@ -67,6 +65,7 @@ import {
   parseMarketingConsent,
 } from "@/lib/booking/marketing-consent";
 import { dispatchBookingConversion } from "@/lib/conversion/dispatch";
+import { normalizeWaitlistBookingResult } from "@/lib/booking/waitlist-atomic-result";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { captureServerEvent } from "@/lib/analytics/server";
 // PR #261: salted SHA-256 fingerprint helper reused for public booking
@@ -1046,24 +1045,71 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // command re-validates studio/client/service tenancy and the full public
   // availability contract under the studio lock, independently of the slot
   // re-check above.
-  const { data: rpcRows, error: rpcErr } = await admin.rpc(
-    "create_public_appointment",
-    {
-      p_studio_id: studio.id,
-      p_client_id: clientId,
-      p_service_id: serviceId,
-      p_starts_at: start.toISOString(),
-      p_cancellation_token_hash: hashAppointmentToken(appointmentToken),
-      p_notes: notes,
-      p_referral_source: referralSource,
-    },
-  );
+  //
+  // WAIT-03. AN INVITATION BOOKING COMMITS THROUGH 0195, AND ONLY THROUGH IT.
+  //
+  // `create_waitlist_public_appointment` composes this same command with the
+  // conversion record in ONE transaction, so the entry cannot end up converted
+  // behind a booking that never happened, nor booked while still reading
+  // `invited`. The application used to own that ordering — book, then record,
+  // and hope — which is why a conversion failure could only ever be logged and
+  // repaired by hand.
+  //
+  // THE ORDINARY PATH IS UNTOUCHED. A visitor with no invitation still reaches
+  // `create_public_appointment` with exactly the arguments it always had; the
+  // branch is on the server-derived `redeemedEntryId`, never on anything
+  // submitted.
+  const commitArgs = {
+    p_studio_id: studio.id,
+    p_client_id: clientId,
+    p_service_id: serviceId,
+    p_starts_at: start.toISOString(),
+    p_cancellation_token_hash: hashAppointmentToken(appointmentToken),
+    p_notes: notes,
+    p_referral_source: referralSource,
+  };
+  // The narrowing is EARNED the same way the conversion call earned it below:
+  // `redeemedEntryId` is a `let`, so a const binding is what makes the argument
+  // provably non-null without a cast.
+  const atomicEntryId = redeemedEntryId;
+  const { data: rpcRows, error: rpcErr } = atomicEntryId
+    ? await admin.rpc("create_waitlist_public_appointment", {
+        ...commitArgs,
+        // SERVER-DERIVED, from the locked redemption that just spent it. Never
+        // the submitted email, the resolved client, or queue order.
+        p_entry_id: atomicEntryId,
+      })
+    : await admin.rpc("create_public_appointment", commitArgs);
   const commandRow = Array.isArray(rpcRows) ? rpcRows[0] : rpcRows;
-  const commandResult = (commandRow?.result as string | undefined) ?? null;
+  const rawCommandResult = (commandRow?.result as string | undefined) ?? null;
+  // 0195 speaks a superset: `created_and_converted` for success, and the nested
+  // command's own refusal re-emitted under an `appointment:` prefix. Unwrapping
+  // it here keeps ONE vocabulary in play rather than two.
+  //
+  // SCOPE HONESTY: on the invitation path the refusal branches further down are
+  // unreachable — `consumedInvitationId` and `redeemedEntryId` are assigned
+  // together, so the consumed-without-booking exit returns first. The unwrapped
+  // code's observable effect today is the word in that operator log line.
+  const normalized = atomicEntryId
+    ? normalizeWaitlistBookingResult(rawCommandResult)
+    : null;
+  // THE VERDICT IS THE MAPPER'S, AND IT IS NOT RE-DERIVED FROM A STRING.
+  //
+  // An earlier revision collapsed all three non-success kinds to their `code`
+  // and then asked `commandResult === "created"`. That threw the mapper's
+  // answer away: an unrecognised bare `created`, and a nested
+  // `appointment:created`, both collapsed back to the word "created" and were
+  // saved from booking only by the command happening to return a null
+  // appointment id. Defence in depth that depends on the thing it defends
+  // against is not depth. `didCommit` reads the KIND.
+  const didCommit =
+    normalized === null ? rawCommandResult === "created" : normalized.kind === "created";
+  // The string form is still what the refusal branches and the operator log
+  // speak, so it is derived separately and never consulted for the verdict.
+  const commandResult =
+    normalized === null ? rawCommandResult : normalized.kind === "created" ? "created" : normalized.code;
   const createdId =
-    commandResult === "created" && commandRow?.appointment_id
-      ? (commandRow.appointment_id as string)
-      : null;
+    didCommit && commandRow?.appointment_id ? (commandRow.appointment_id as string) : null;
   // Authoritative row timestamp, straight from the command's own INSERT.
   const createdAtIso = (commandRow?.created_at as string | undefined) ?? null;
 
@@ -1091,8 +1137,12 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // accepted command is internally inconsistent -- exactly the case worth
   // failing closed on.
   if (consumedInvitationId && (rpcErr || !createdId)) {
+    // TRANSPORT FIRST. `commandResult` is never nullish on the atomic path — an
+    // unreadable answer normalises to the string "no_result" — so asking it
+    // first made a lost response and an empty row log the same word, and this
+    // is the one durable trace an operator has.
     return invitationConsumedWithoutBooking(
-      commandResult ?? (rpcErr ? "command_error" : "no_result"),
+      rpcErr ? "command_error" : (commandResult ?? "no_result"),
     );
   }
 
@@ -1100,7 +1150,7 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // thrown Postgres error. Each maps to copy the visitor already sees today; a
   // code we do not recognise falls through to the generic message rather than
   // leaking anything about why.
-  if (!rpcErr && commandResult && commandResult !== "created") {
+  if (!rpcErr && commandResult && !didCommit) {
     // Exactly the codes the command can emit for an unavailable time. It
     // reports every collision (overlap, buffer, block, break) as
     // `time_unavailable`, so there is no separate `buffer_conflict` to map.
@@ -1304,46 +1354,26 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // The narrowing is EARNED: `redeemedEntryId` is a `let`, so TypeScript drops
   // its narrowing inside the closure below. Binding a const here is what makes
   // the argument provably non-null without a cast or a `!`.
-  const convertedEntryId = redeemedEntryId;
-  if (convertedEntryId) {
-    // POST-COMMIT LAW. The appointment is already durable, so a conversion
-    // failure may not reach the visitor: they booked, and telling them
-    // otherwise would send them back to a link that can no longer book.
-    // `postCommit` contains an unexpected THROW; the closed refusals and the
-    // transport failure come back as values and are handled immediately below.
-    const conversion = await postCommit<ConversionOutcome>(
-      "public_booking_waitlist_conversion_threw",
-      { kind: "unavailable" },
-      () =>
-        recordInvitationConversion({
-          studioId: studio.id,
-          entryId: convertedEntryId,
-          clientId,
-        }),
-    );
-    if (conversion.kind !== "converted") {
-      // FAIL-SOFT IS NOT SILENT. This is the one durable trace that an entry
-      // needs its status repaired by hand, so it carries everything an operator
-      // needs to find all three rows -- appointment, invitation, entry -- and
-      // the command's own answer for why it refused.
-      //
-      // NO AUTOMATIC RECOVERY. The invitation is not re-redeemed, reissued or
-      // retried: it is already spent, the booking already exists, and a blind
-      // retry against a command whose refusal may be permanent (`not_invited`
-      // on an entry an operator has since removed) would loop rather than heal.
-      //
-      // SECRETS ARE ABSENT BY CONSTRUCTION. The raw token, the capability, the
-      // proof code and the recipient address are never in scope at this point
-      // in the function, let alone in this payload.
-      logInternalBookingError("public_booking_waitlist_conversion_not_recorded", {
-        appointmentId: evidenceAppointmentId,
-        studioId: evidenceStudioId,
-        invitationId: consumedInvitationId,
-        entryId: convertedEntryId,
-        code: conversion.kind,
-      });
-    }
-  }
+  // WAIT-03. THERE IS NO SECOND CONVERSION WRITER, AND THAT IS THE POINT.
+  //
+  // This is where the application used to record the conversion, AFTER the
+  // appointment had committed, with a comment explaining that the record could
+  // "only ever be late, never wrong". Late was still wrong for the operator: a
+  // refused or unreachable conversion left a booked client sitting on an
+  // `invited` entry, and the only repair was by hand from a log line.
+  //
+  // 0195 now performs appointment, mandatory audit and conversion in ONE
+  // transaction, so by the time `created` is read above, the entry is already
+  // converted. Calling `record_new_client_waitlist_conversion` again here would
+  // be a second writer for a fact that is already true — at best a no-op
+  // answering `not_invited`, at worst a second interpretation of who converted.
+  //
+  // `record_new_client_waitlist_conversion` itself is still load-bearing — 0195
+  // composes it inside the transaction. Its TypeScript wrapper
+  // `recordInvitationConversion` now has NO caller anywhere in the application;
+  // it is left in place for the integration that will own the operator-side
+  // repair path, and saying so plainly is better than implying a caller that
+  // does not exist.
 
   // AUTHORITATIVE PRACTITIONER. `commandRow.practitioner_id` is the practitioner
   // the appointment was actually assigned to, resolved inside the transaction

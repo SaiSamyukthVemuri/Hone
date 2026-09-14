@@ -95,6 +95,9 @@ const scenario = {
   clientPath: "new" as "new" | "existing" | "unique_race",
   redeemResult: "redeemed" as string,
   bookingResult: "created" as string,
+  /** What 0195 answers for an INVITATION booking. Its refusals roll the whole
+   *  transaction back, so a refusal here must leave the queue untouched. */
+  waitlistResult: "created_and_converted" as string,
   bookingError: null as { message: string; code?: string } | null,
   suppressAppointmentId: false,
   /** Transport failure from the conversion command (a PostgREST/network error). */
@@ -278,6 +281,44 @@ const admin = {
         error: null,
       };
     }
+    if (fn === "create_waitlist_public_appointment") {
+      if (scenario.bookingError) return { data: null, error: scenario.bookingError };
+      const empty = {
+        appointment_id: null,
+        created_at: null,
+        starts_at: null,
+        ends_at: null,
+        duration_minutes: null,
+        practitioner_id: null,
+      };
+      // ATOMIC, AND THE FAKE HONOURS IT. A refusal rolls everything back, so
+      // the queue must not move — that is what makes the refusal tests able to
+      // tell "nothing happened" from "booked but not converted", the very state
+      // 0195 exists to make unreachable.
+      if (scenario.waitlistResult !== "created_and_converted") {
+        return { data: [{ result: scenario.waitlistResult, ...empty }], error: null };
+      }
+      // The conversion runs INSIDE the same command, against 0192's own
+      // preconditions, so a conversion refusal takes the appointment with it.
+      const conv = recordConversion(args);
+      if (conv !== "converted") {
+        return { data: [{ result: `conversion:${conv}`, ...empty }], error: null };
+      }
+      return {
+        data: [
+          {
+            result: "created_and_converted",
+            appointment_id: scenario.suppressAppointmentId ? null : APPT_ID,
+            created_at: new Date().toISOString(),
+            starts_at: START_ISO,
+            ends_at: new Date(START.getTime() + 45 * 60_000).toISOString(),
+            duration_minutes: 45,
+            practitioner_id: null,
+          },
+        ],
+        error: null,
+      };
+    }
     if (fn === "record_new_client_waitlist_conversion") {
       if (scenario.conversionThrows) throw new TypeError("conversion round trip exploded");
       if (scenario.conversionError) return { data: null, error: scenario.conversionError };
@@ -292,7 +333,12 @@ vi.mock("@/lib/supabase/admin-server", () => ({
   createAdminClient: () => {
     // Only AFTER the booking, so the action's own client is unaffected and the
     // appointment still commits -- the precondition the law is about.
-    if (scenario.adminFactoryThrows && rpcCalls.some((c) => c.fn === "create_public_appointment")) {
+    if (
+      scenario.adminFactoryThrows &&
+      rpcCalls.some((c) =>
+        ["create_public_appointment", "create_waitlist_public_appointment"].includes(c.fn),
+      )
+    ) {
       throw new TypeError("admin client unavailable");
     }
     return admin;
@@ -384,6 +430,10 @@ function form(over: Record<string, string> = {}) {
 const invited = () => form({ invitation_token: TOKEN, invitation_capability: CAP });
 
 const conversions = () => rpcCalls.filter((c) => c.fn === "record_new_client_waitlist_conversion");
+/** Calls to the atomic command 0195 owns. */
+const atomicBookings = () => rpcCalls.filter((c) => c.fn === "create_waitlist_public_appointment");
+/** Calls to the ordinary, non-invitation booking command. */
+const ordinaryBookings = () => rpcCalls.filter((c) => c.fn === "create_public_appointment");
 const indexOfCall = (fn: string) => rpcCalls.findIndex((c) => c.fn === fn);
 
 beforeEach(() => {
@@ -400,6 +450,7 @@ beforeEach(() => {
     clientPath: "new",
     redeemResult: "redeemed",
     bookingResult: "created",
+    waitlistResult: "created_and_converted",
     bookingError: null,
     suppressAppointmentId: false,
     conversionError: null,
@@ -416,92 +467,206 @@ beforeEach(() => {
 // A + the journey. The entry must END CONVERTED.
 // ===========================================================================
 
-describe("a successful invitation booking converts the entry", () => {
-  it("JOURNEY — invited, redeemed, booked, and the entry ends CONVERTED", async () => {
-    expect(queue.status, "the fixture must start where the product does").toBe("invited");
-
-    const out = await publicBookAppointmentAction(invited());
-
-    expect(out.ok).toBe(true);
-    // The product's own question, asked of the queue rather than of a spy.
+describe("A — a successful invitation booking converts the entry, atomically", () => {
+  it("JOURNEY — invited, redeemed, booked and converted by ONE command", async () => {
+    const res = await publicBookAppointmentAction(invited());
+    expect(res.ok).toBe(true);
+    // The entry moved, and the thing that moved it was the booking command.
     expect(queue.status).toBe("converted");
     expect(queue.convertedClientId).toBe(NEW_CLIENT_ID);
-    expect(queue.convertedAt).not.toBeNull();
   });
 
-  it("A — conversion is issued EXACTLY ONCE, with studio, entry and client", async () => {
+  it("calls 0195 EXACTLY ONCE, and never the ordinary command beside it", async () => {
     await publicBookAppointmentAction(invited());
-
-    expect(conversions()).toHaveLength(1);
-    expect(conversions()[0].args).toEqual({
-      p_studio_id: STUDIO_ID,
-      p_entry_id: ENTRY_ID,
-      p_client_id: NEW_CLIENT_ID,
-    });
+    expect(atomicBookings()).toHaveLength(1);
+    // NOT "as well as". An invitation booking that also ran the ordinary
+    // command would be two appointments' worth of intent for one visitor.
+    expect(ordinaryBookings()).toHaveLength(0);
   });
 
-  it("carries the REDEMPTION's entry id, not the invitation's and not the client's", async () => {
+  it("there is NO second conversion writer", async () => {
+    // THE POINT OF THE BINDING. The application used to record the conversion
+    // itself after the commit; 0195 owns it now, and the old caller is gone.
     await publicBookAppointmentAction(invited());
+    expect(conversions()).toHaveLength(0);
+  });
 
-    const sent = conversions()[0].args.p_entry_id;
-    const redeem = rpcCalls.find((c) => c.fn === "redeem_new_client_waitlist_invitation_verified");
-    expect(redeem, "the redemption must have happened").toBeTruthy();
-    expect(sent).toBe(ENTRY_ID);
-    // Non-vacuity: these are all genuinely different values, so the assertion
-    // above could have failed.
-    expect(sent).not.toBe(INVITATION_ID);
-    expect(sent).not.toBe(NEW_CLIENT_ID);
-    expect(sent).not.toBe(STUDIO_ID);
+  it("passes authoritative studio, entry, client, service and time", async () => {
+    await publicBookAppointmentAction(invited());
+    const call = atomicBookings()[0];
+    expect(call.args.p_studio_id).toBe(STUDIO_ID);
+    expect(call.args.p_client_id).toBe(NEW_CLIENT_ID);
+    expect(call.args.p_service_id).toBe(SERVICE_ID);
+    expect(call.args.p_starts_at).toBe(START_ISO);
+    // THE REDEMPTION'S ENTRY, not the invitation's and not the client's.
+    expect(call.args.p_entry_id).toBe(ENTRY_ID);
+    expect(call.args.p_entry_id).not.toBe(INVITATION_ID);
+    expect(call.args.p_entry_id).not.toBe(NEW_CLIENT_ID);
   });
 
   it("ignores an entry id smuggled through the browser payload", async () => {
-    const other = "ffffffff-ffff-4fff-8fff-ffffffffffff";
+    const forged = "ffffffff-ffff-4fff-8fff-ffffffffffff";
     await publicBookAppointmentAction(
       form({
         invitation_token: TOKEN,
         invitation_capability: CAP,
-        entry_id: other,
-        p_entry_id: other,
+        entry_id: forged,
+        p_entry_id: forged,
+        studio_id: forged,
       }),
     );
+    const call = atomicBookings()[0];
+    expect(call.args.p_entry_id).toBe(ENTRY_ID);
+    expect(call.args.p_studio_id).toBe(STUDIO_ID);
+  });
 
-    expect(conversions()[0].args.p_entry_id).toBe(ENTRY_ID);
-    expect(queue.status).toBe("converted");
+  it("redeems BEFORE it books, and books once", async () => {
+    await publicBookAppointmentAction(invited());
+    const redeem = indexOfCall("redeem_new_client_waitlist_invitation_verified");
+    const book = indexOfCall("create_waitlist_public_appointment");
+    expect(redeem).toBeGreaterThan(-1);
+    expect(book).toBeGreaterThan(redeem);
   });
 });
 
-// ===========================================================================
-// B. ORDER. The record may only ever be late, never early.
-// ===========================================================================
+describe("B — 0195 refusals are refusals, and nothing is retried", () => {
+  // Every 0195 refusal that is NOT about the calendar. Each must fail closed:
+  // no success, no second booking attempt, no standalone conversion.
+  const INVITATION_REFUSALS = [
+    "not_redeemed",
+    "recipient_mismatch",
+    "scope_ambiguous",
+    "scope_service_not_offered",
+    "scope_date_out_of_range",
+    "scope_weekday_not_allowed",
+    "entry_not_found",
+    "client_not_found",
+    "invalid_input",
+  ];
 
-describe("B — conversion happens AFTER the appointment command returns created", () => {
-  it("the recorded call order is redeem -> create -> record", async () => {
-    await publicBookAppointmentAction(invited());
+  for (const refusal of INVITATION_REFUSALS) {
+    it(`${refusal} is never rendered as a booking`, async () => {
+      scenario.waitlistResult = refusal;
+      const res = await publicBookAppointmentAction(invited());
+      expect(res.ok, `${refusal} read as success`).toBe(false);
+      // ONE attempt. A refused invitation booking must not be retried, because
+      // the invitation is already spent and the second attempt cannot succeed.
+      expect(atomicBookings()).toHaveLength(1);
+      expect(ordinaryBookings()).toHaveLength(0);
+      expect(conversions()).toHaveLength(0);
+      // NOTHING IS RE-DRIVEN. The invitation is already spent, so re-redeeming,
+      // reissuing or releasing it would loop rather than heal — these were
+      // asserted before the binding and must stay asserted after it.
+      for (const fn of [
+        "redeem_new_client_waitlist_invitation_verified",
+        "issue_scoped_new_client_waitlist_invitation",
+        "release_new_client_waitlist_entry",
+      ]) {
+        expect(
+          rpcCalls.filter((c) => c.fn === fn).length,
+          `${fn} was driven again after ${refusal}`,
+        ).toBeLessThanOrEqual(fn.startsWith("redeem") ? 1 : 0);
+      }
+      // Rolled back: the entry did not move.
+      expect(queue.status).toBe("invited");
+    });
+  }
 
-    const redeemAt = indexOfCall("redeem_new_client_waitlist_invitation_verified");
-    const bookAt = indexOfCall("create_public_appointment");
-    const convertAt = indexOfCall("record_new_client_waitlist_conversion");
-
-    expect(redeemAt).toBeGreaterThanOrEqual(0);
-    expect(bookAt).toBeGreaterThan(redeemAt);
-    expect(convertAt).toBeGreaterThan(bookAt);
+  it("an UNRECOGNISED result fails closed rather than being waved through", async () => {
+    // A result 0195 gains later, or a vocabulary drift. It must not become a
+    // booking, and it must not be explained to the visitor as if understood.
+    for (const unknown of ["newly_invented_refusal", "created", "", "converted"]) {
+      rpcCalls.length = 0;
+      Object.assign(queue, { status: "invited", invitationRedeemed: false });
+      scenario.waitlistResult = unknown;
+      const res = await publicBookAppointmentAction(invited());
+      expect(res.ok, `${JSON.stringify(unknown)} read as success`).toBe(false);
+      expect(queue.status).toBe("invited");
+    }
   });
 
-  it("the appointment id the booking returned already exists when it records", async () => {
-    await publicBookAppointmentAction(invited());
-    // A conversion issued before the command could not have observed this.
-    const bookAt = indexOfCall("create_public_appointment");
-    const convertAt = indexOfCall("record_new_client_waitlist_conversion");
-    expect(rpcCalls.slice(0, convertAt).some((c) => c.fn === "create_public_appointment")).toBe(
-      true,
-    );
-    expect(bookAt).toBeLessThan(convertAt);
+  it("a CONVERSION refusal takes the appointment with it", async () => {
+    // The state this binding makes unreachable: booked but still `invited`.
+    // 0195 rolls the appointment back, so the visitor is not told they booked.
+    // 0195 re-emits the nested conversion's own word under a `conversion:`
+    // prefix after rolling the appointment back. Driving it directly is what
+    // tests the BINDING; setting the fixture's precondition instead did not,
+    // because the action's own redeem step satisfies it again on the way past.
+    scenario.waitlistResult = "conversion:not_redeemed";
+    const res = await publicBookAppointmentAction(invited());
+    // ASSERTED, NOT GUARDED. Wrapping these in `if (!res.ok)` meant a mapping
+    // regression that read `conversion:*` as success would pass this test with
+    // zero assertions run.
+    expect(res.ok).toBe(false);
+    expect(queue.status).toBe("invited");
+    expect(conversions()).toHaveLength(0);
+  });
+
+  it("a transport failure is not turned into a definite booking", async () => {
+    scenario.bookingError = { message: "connection reset", code: "PGRST000" };
+    const res = await publicBookAppointmentAction(invited());
+    expect(res.ok).toBe(false);
+    expect(atomicBookings()).toHaveLength(1);
+    // NO AUTOMATIC RETRY. The response was lost; booking again could double it.
+    expect(ordinaryBookings()).toHaveLength(0);
   });
 });
 
-// ===========================================================================
-// D + E. The two paths that must record NOTHING.
-// ===========================================================================
+describe("G/H — the atomic command is reachable ONLY by a proven invitation", () => {
+  it("an ordinary visitor never reaches 0195", async () => {
+    // The waitlist gate is what makes a new client need an invitation at all,
+    // so the ordinary journey is a studio the gate does not cover.
+    process.env[NEW_CLIENT_WAITLIST_SLUGS_ENV] = "some-other-studio";
+    const res = await publicBookAppointmentAction(form());
+    expect(res.ok).toBe(true);
+    // The ordinary command still books them, and the invitation command is not
+    // consulted at all — the branch is on the server-derived redemption.
+    expect(ordinaryBookings()).toHaveLength(1);
+    expect(atomicBookings()).toHaveLength(0);
+    expect(conversions()).toHaveLength(0);
+  });
+
+  it("a token WITHOUT a capability cannot reach 0195", async () => {
+    // No proof, no redemption, so no entry id — and without one the atomic
+    // command is not even a candidate.
+    const res = await publicBookAppointmentAction(form({ invitation_token: TOKEN }));
+    expect(res.ok).toBe(false);
+    expect(atomicBookings()).toHaveLength(0);
+    // AND NOT THROUGH THE ORDINARY COMMAND EITHER. Without this, "no proof
+    // books through the other command" would satisfy the test above.
+    expect(ordinaryBookings()).toHaveLength(0);
+    expect(queue.status).toBe("invited");
+  });
+
+  it("a refused redemption cannot reach 0195", async () => {
+    scenario.redeemResult = "already_redeemed";
+    const res = await publicBookAppointmentAction(invited());
+    expect(res.ok).toBe(false);
+    expect(atomicBookings()).toHaveLength(0);
+    expect(ordinaryBookings()).toHaveLength(0);
+    expect(queue.status).toBe("invited");
+  });
+});
+
+describe("the OUTER post-commit guard is still load-bearing", () => {
+  it("a throw the command binding cannot see never un-books a durable booking", async () => {
+    // RESTORED, ON THE PATH THAT STILL HAS ONE. The old version of this proof
+    // rode on the post-commit conversion call, which 0195 removed — but
+    // `postCommit` still wraps the confirmation email, the notification and the
+    // revalidate, and the invariant is unchanged: once the command says the
+    // appointment committed, nothing after it may turn that into `ok: false`.
+    //
+    // The admin client fails to CONSTRUCT, which is the one throw the command
+    // binding's own try/catch cannot catch, because the factory runs before it.
+    process.env[NEW_CLIENT_WAITLIST_SLUGS_ENV] = "some-other-studio";
+    scenario.adminFactoryThrows = true;
+
+    const out = await publicBookAppointmentAction(form());
+
+    expect(out.ok, "a post-commit throw flipped a durable booking to a failure").toBe(true);
+    expect(indexOfCall("create_public_appointment")).toBeGreaterThanOrEqual(0);
+  });
+});
 
 describe("D — ordinary public booking is untouched", () => {
   it("a non-invitation booking issues ZERO conversions", async () => {
@@ -528,159 +693,74 @@ describe("D — ordinary public booking is untouched", () => {
   });
 });
 
-describe("E — a spent invitation whose appointment failed records NOTHING", () => {
-  it.each([
-    ["a refused command", { bookingResult: "time_unavailable" }],
-    ["a transport error", { bookingError: { message: "boom", code: "08006" } }],
-    ["created with no appointment id", { suppressAppointmentId: true }],
-  ])("%s — zero conversions, and the entry stays invited", async (_label, over) => {
-    Object.assign(scenario, over);
-
-    const out = await publicBookAppointmentAction(invited());
-
-    expect(out.ok).toBe(false);
-    expect(conversions()).toHaveLength(0);
+describe("E — a spent invitation whose booking failed leaves the entry alone", () => {
+  it("a refused 0195 leaves the entry invited and records no conversion", async () => {
+    scenario.waitlistResult = "scope_weekday_not_allowed";
+    const res = await publicBookAppointmentAction(invited());
+    expect(res.ok).toBe(false);
     expect(queue.status).toBe("invited");
-    expect(queue.convertedClientId).toBeNull();
+    expect(conversions()).toHaveLength(0);
   });
 
   it("the existing invitation_consumed recovery behaviour is intact", async () => {
-    scenario.bookingResult = "time_unavailable";
-
-    const out = await publicBookAppointmentAction(invited());
-
-    expect(out.ok).toBe(false);
-    if (out.ok) throw new Error("unreachable");
-    expect(out.code).toBe("invitation_consumed");
-    expect(out.error).toContain("Please contact the studio to rebook");
-    expect(
-      logLines.some((l) => l.includes("waitlist_invitation_consumed_without_booking")),
-      "the recovery event must still be emitted",
-    ).toBe(true);
+    // The redeem committed and the booking did not, which is still possible:
+    // they are separate transactions by design, and 0195 cannot un-redeem.
+    // What changed is only WHICH command failed.
+    scenario.waitlistResult = "scope_date_out_of_range";
+    const res = await publicBookAppointmentAction(invited());
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.code).toBe("invitation_consumed");
+    // The operator evidence still names the invitation, and never a secret.
+    const joined = logLines.join("\n");
+    expect(joined).toContain(INVITATION_ID);
+    expect(joined).not.toContain(TOKEN);
+    expect(joined).not.toContain(CAP);
+    expect(joined).not.toContain(INVITED_EMAIL);
   });
 
-  it("a REFUSED redemption never reaches the conversion", async () => {
-    scenario.redeemResult = "proof_invalid";
-
-    const out = await publicBookAppointmentAction(invited());
-
-    expect(out.ok).toBe(false);
-    expect(conversions()).toHaveLength(0);
-    expect(indexOfCall("create_public_appointment")).toBe(-1);
-    expect(queue.status).toBe("invited");
+  it("`created_and_converted` with no appointment id fails closed", async () => {
+    // An internally inconsistent answer is the one case worth refusing hardest:
+    // the command claims it committed and cannot say what it committed.
+    scenario.suppressAppointmentId = true;
+    const res = await publicBookAppointmentAction(invited());
+    expect(res.ok).toBe(false);
   });
 });
 
-// ===========================================================================
-// F. POST-COMMIT FAILURE LAW.
-// ===========================================================================
-
-describe("F — a conversion failure never turns a committed booking into a failure", () => {
-  const EVENT = "public_booking_waitlist_conversion_not_recorded";
-
-  it.each([
-    ["a transport error", { conversionError: { message: "gateway down", code: "08006" } }],
-    ["an unexpected exception", { conversionThrows: true }],
-    ["an unrecognised result", { conversionResult: "some_new_code" }],
-    ["a closed refusal", { conversionResult: "not_redeemed" }],
-  ])("%s — the client still receives the successful booking", async (_label, over) => {
-    Object.assign(scenario, over);
-
-    const out = await publicBookAppointmentAction(invited());
-
-    expect(out.ok, "a durable appointment must never be reported as a failure").toBe(true);
-    if (!out.ok) throw new Error("unreachable");
-    // The full success payload survives, not a degraded one.
-    expect(out.appointmentId).toBe(APPT_ID);
-    expect(out.manageUrl).toContain("https://studio.example.test");
+describe("F — booked-but-unconverted is now unreachable, not merely logged", () => {
+  it("there is no post-commit conversion left to fail", async () => {
+    // THE WHOLE CLASS OF DEFECT THIS BINDING REMOVES. The old model committed
+    // the appointment, then recorded the conversion, then logged if that
+    // failed — leaving a booked client on an `invited` entry for an operator to
+    // repair by hand. There is no second step now, so there is nothing to
+    // half-complete.
+    await publicBookAppointmentAction(invited());
+    expect(conversions()).toHaveLength(0);
+    expect(queue.status).toBe("converted");
   });
 
-  it.each([
-    ["a transport error", { conversionError: { message: "gateway down", code: "08006" } }],
-    ["an unexpected exception", { conversionThrows: true }],
-    ["an unrecognised result", { conversionResult: "some_new_code" }],
-    ["a closed refusal", { conversionResult: "not_redeemed" }],
-  ])("%s — sanitized operational evidence is emitted", async (_label, over) => {
-    Object.assign(scenario, over);
-
-    await publicBookAppointmentAction(invited());
-
-    const evidence = logLines.filter((l) => l.includes(EVENT));
-    expect(evidence, "failing silently is not fail-soft").toHaveLength(1);
-    // Enough to locate all three rows by hand.
-    expect(evidence[0]).toContain(APPT_ID);
-    expect(evidence[0]).toContain(INVITATION_ID);
-    expect(evidence[0]).toContain(ENTRY_ID);
-    expect(evidence[0]).toContain(STUDIO_ID);
+  it("success and conversion are the SAME answer, never two", async () => {
+    // Either both happened or neither did. The fake enforces the atomicity, so
+    // a success that left the entry invited would fail here.
+    for (const result of ["created_and_converted", "not_redeemed", "recipient_mismatch"]) {
+      rpcCalls.length = 0;
+      Object.assign(queue, { status: "invited", invitationRedeemed: true, convertedClientId: null });
+      scenario.waitlistResult = result;
+      const res = await publicBookAppointmentAction(invited());
+      expect(queue.status === "converted", `${result}`).toBe(res.ok);
+    }
   });
 
   it("no secret ever reaches the log", async () => {
-    scenario.conversionError = { message: "gateway down", code: "08006" };
-
+    scenario.waitlistResult = "recipient_mismatch";
     await publicBookAppointmentAction(invited());
-
-    for (const line of logLines) {
-      expect(line, "raw invitation token").not.toContain(TOKEN);
-      expect(line, "raw capability").not.toContain(CAP);
-      expect(line, "recipient address").not.toContain(INVITED_EMAIL);
-      expect(line, "raw DB message").not.toContain("gateway down");
-    }
-    // Non-vacuity: the log is not empty, so the loop above really inspected it.
-    expect(logLines.some((l) => l.includes(EVENT))).toBe(true);
-  });
-
-  it("NO BLIND RETRY — the failed conversion is attempted once and not repeated", async () => {
-    scenario.conversionError = { message: "gateway down", code: "08006" };
-
-    await publicBookAppointmentAction(invited());
-
-    expect(conversions()).toHaveLength(1);
-    // And nothing tries to re-redeem or reissue the spent invitation.
-    expect(
-      rpcCalls.filter((c) => c.fn === "redeem_new_client_waitlist_invitation_verified"),
-    ).toHaveLength(1);
-    expect(rpcCalls.map((c) => c.fn)).not.toContain(
-      "issue_scoped_new_client_waitlist_invitation",
-    );
-    expect(rpcCalls.map((c) => c.fn)).not.toContain("release_new_client_waitlist_entry");
-  });
-
-  it("the OUTER post-commit guard is load-bearing: a throw the binding cannot see", async () => {
-    // The command binding catches its own round-trip failures, so its `try`
-    // would make the action's wrapper look unnecessary. It is not: the admin
-    // client is constructed BEFORE that try, and a factory that throws escapes
-    // the binding entirely. Without the wrapper this is an unhandled exception
-    // after a durable commit -- the booking succeeds and the visitor is told it
-    // failed.
-    scenario.adminFactoryThrows = true;
-
-    const out = await publicBookAppointmentAction(invited());
-
-    expect(out.ok, "a durable appointment must survive a throw from the factory").toBe(true);
-    if (!out.ok) throw new Error("unreachable");
-    expect(out.appointmentId).toBe(APPT_ID);
-    // Both traces: the wrapper's own, and the one naming the entry to repair.
-    expect(logLines.some((l) => l.includes("public_booking_waitlist_conversion_threw"))).toBe(
-      true,
-    );
-    expect(logLines.filter((l) => l.includes(EVENT))).toHaveLength(1);
-    // The command was never reached, so nothing was converted and nothing retried.
-    expect(conversions()).toHaveLength(0);
-    expect(queue.status).toBe("invited");
-  });
-
-  it("a SUCCESSFUL conversion is silent — the evidence log is for failures only", async () => {
-    await publicBookAppointmentAction(invited());
-
-    expect(queue.status).toBe("converted");
-    expect(logLines.filter((l) => l.includes(EVENT))).toHaveLength(0);
+    const joined = logLines.join("\n");
+    expect(joined).not.toContain(TOKEN);
+    expect(joined).not.toContain(CAP);
+    expect(joined).not.toContain(INVITED_EMAIL);
+    expect(joined).not.toContain(INVITED_HASH);
   });
 });
-
-// ===========================================================================
-// G. The client id is the RESOLVED one, on every branch that can reach a
-// booking.
-// ===========================================================================
 
 describe("G — every client resolution path converts the client it actually booked", () => {
   // ALL THREE POST `client_type=new`, because that is the only declaration an
@@ -703,11 +783,12 @@ describe("G — every client resolution path converts the client it actually boo
     // The SAME id the appointment command was given -- read from the recorded
     // call rather than from the constant, so a divergence between the two is
     // what fails.
-    const booked = rpcCalls.find((c) => c.fn === "create_public_appointment");
+    // ONE command now carries both, so "the client booked" and "the client
+    // converted" cannot diverge — they are the same argument.
+    const booked = rpcCalls.find((c) => c.fn === "create_waitlist_public_appointment");
     expect(booked?.args.p_client_id).toBe(expectedClientId);
-    expect(conversions()[0].args.p_client_id).toBe(expectedClientId);
-    expect(booked?.args.p_client_id).toBe(conversions()[0].args.p_client_id);
     expect(queue.convertedClientId).toBe(expectedClientId);
+    expect(conversions()).toHaveLength(0);
   });
 
   it("the three branches really do resolve to three different clients", () => {

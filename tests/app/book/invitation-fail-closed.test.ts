@@ -71,6 +71,11 @@ const admin = {
     if (fn === "create_public_appointment") {
       return { data: [{ result: "created", appointment_id: APPT_ID, created_at: new Date().toISOString() }], error: null };
     }
+    // WAIT-03. An INVITATION booking commits through 0195, which answers with
+    // its own success word. Nothing else about these journeys changed.
+    if (fn === "create_waitlist_public_appointment") {
+      return { data: [{ result: "created_and_converted", appointment_id: APPT_ID, created_at: new Date().toISOString() }], error: null };
+    }
     return { data: null, error: null };
   },
 };
@@ -215,7 +220,11 @@ describe("P3-A — a refused consume must leave no newly-created client row", ()
   it("POSITIVE CONTROL: an accepted consume still books and creates its client", async () => {
     const out = await publicBookAppointmentAction(form({ invitation_token: TOKEN, invitation_capability: CAP }));
     expect(out.ok).toBe(true);
-    expect(rpcCalls).toContain("create_public_appointment");
+    // NAMED PRECISELY, because "either command booked" would still pass if an
+    // invitation were routed through the ordinary one — and that is exactly the
+    // booked-but-still-invited state 0195 exists to remove.
+    expect(rpcCalls).toContain("create_waitlist_public_appointment");
+    expect(rpcCalls).not.toContain("create_public_appointment");
   });
 
   it.each(["proof_expired", "proof_invalid", "proof_required", "not_live"])(
@@ -225,6 +234,7 @@ describe("P3-A — a refused consume must leave no newly-created client row", ()
       const out = await publicBookAppointmentAction(form({ invitation_token: TOKEN, invitation_capability: CAP }));
       expect(out.ok).toBe(false);
       expect(rpcCalls).not.toContain("create_public_appointment");
+      expect(rpcCalls).not.toContain("create_waitlist_public_appointment");
       expect(clientRowsCreated(), "a refused consume must not leave a client row").toBe(0);
     },
   );

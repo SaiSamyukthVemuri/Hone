@@ -157,6 +157,23 @@ const admin = {
         error: null,
       };
     }
+    // WAIT-03. The invitation path's commit command. `scenario.bookingResult`
+    // still drives it, mapped onto 0195's vocabulary, so every scenario these
+    // tests set up behaves identically to before the binding.
+    if (fn === "create_waitlist_public_appointment") {
+      if (scenario.bookingError) return { data: null, error: scenario.bookingError };
+      const created = scenario.bookingResult === "created";
+      return {
+        data: [
+          {
+            result: created ? "created_and_converted" : `appointment:${scenario.bookingResult}`,
+            appointment_id: created && !scenario.suppressAppointmentId ? APPT_ID : null,
+            created_at: new Date().toISOString(),
+          },
+        ],
+        error: null,
+      };
+    }
     return { data: null, error: null };
   },
 };
@@ -235,7 +252,12 @@ function form(over: Record<string, string> = {}) {
 }
 
 const redeemed = () => rpcCalls.includes("redeem_new_client_waitlist_invitation_verified");
-const booked = () => rpcCalls.includes("create_public_appointment");
+/** Did a booking commit? Either command counts: an invitation books through
+ *  0195, an ordinary visitor through the original command. Naming only one
+ *  would make this read "did not book" for a journey that plainly did. */
+const APPOINTMENT_COMMANDS = ["create_public_appointment", "create_waitlist_public_appointment"];
+const bookIndex = () => rpcCalls.findIndex((c) => APPOINTMENT_COMMANDS.includes(c));
+const booked = () => bookIndex() > -1;
 
 beforeEach(() => {
   process.env[NEW_CLIENT_WAITLIST_SLUGS_ENV] = SLUG;
@@ -387,7 +409,7 @@ describe("scoped invitation — the authorised path", () => {
       form({ invitation_token: TOKEN, invitation_capability: CAP }),
     );
     const redeemAt = rpcCalls.indexOf("redeem_new_client_waitlist_invitation_verified");
-    const bookAt = rpcCalls.indexOf("create_public_appointment");
+    const bookAt = bookIndex();
     expect(redeemAt).toBeGreaterThanOrEqual(0);
     expect(bookAt).toBeGreaterThanOrEqual(0);
     expect(redeemAt).toBeLessThan(bookAt);
@@ -486,7 +508,7 @@ describe("P2-B — the flag controls admission, never an issued invitation", () 
     );
     expect(redeems).toHaveLength(1);
     expect(rpcCalls.indexOf("redeem_new_client_waitlist_invitation_verified")).toBeLessThan(
-      rpcCalls.indexOf("create_public_appointment"),
+      bookIndex(),
     );
   });
 
