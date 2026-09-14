@@ -126,13 +126,60 @@ export function splitOversizedToken(
   return chunks;
 }
 
+/**
+ * Whitespace a line may be broken at.
+ *
+ * DELIBERATELY EXCLUDES the non-breaking family -- U+00A0, U+202F NARROW
+ * NO-BREAK SPACE, U+2007 FIGURE SPACE, U+2060 WORD JOINER. Those exist
+ * precisely to say "do not break here", and French typography in particular
+ * puts a narrow no-break space inside business names. Treating one as a break
+ * opportunity both rewrites the name and breaks it where its author said not
+ * to.
+ */
+const BREAKABLE_WS =
+  /[\t\n\v\f\r \u1680\u2000-\u200A\u2028\u2029\u205F\u3000]+/;
+
+/**
+ * Split into (whitespace, word) pairs with the whitespace kept VERBATIM.
+ *
+ * `text.split(/\s+/)` and a rejoin with " " was the previous approach, and it
+ * silently rewrote the receipt: a non-breaking space became an ordinary one,
+ * a narrow no-break space became an ordinary one, and two spaces became one.
+ * That is the same defect as mapping an unsupported letter to "?" -- quietly
+ * altering text the receipt is supposed to reproduce -- just in the part of
+ * the pipeline that measures rather than the part that draws.
+ */
+function tokenizeForWrap(text: string): Array<{ ws: string; word: string }> {
+  const out: Array<{ ws: string; word: string }> = [];
+  let i = 0;
+  while (i < text.length) {
+    const wsMatch = BREAKABLE_WS.exec(text.slice(i));
+    let ws = "";
+    if (wsMatch && wsMatch.index === 0) {
+      ws = wsMatch[0];
+      i += ws.length;
+    }
+    let word = "";
+    while (i < text.length) {
+      const rest = text.slice(i);
+      const m = BREAKABLE_WS.exec(rest);
+      if (m && m.index === 0) break;
+      word += text[i];
+      i += 1;
+    }
+    if (ws || word) out.push({ ws, word });
+  }
+  return out;
+}
+
 /** Break text to fit `maxWidth`, measuring in the font that will draw it. */
 export function wrapReceiptText(text: string, font: PDFFont, size: number, maxWidth: number): string[] {
-  const words = text.split(/\s+/).filter((w) => w.length > 0);
-  if (words.length === 0) return [""];
+  const tokens = tokenizeForWrap(text).filter((t) => t.word.length > 0 || t.ws.length > 0);
+  if (tokens.length === 0) return [""];
   const lines: string[] = [];
   let line = "";
-  for (const word of words) {
+  for (const { ws, word } of tokens) {
+    if (!word) continue;
     // A token wider than the whole column can never fit beside anything, so
     // it is broken up first. Without this the `|| !line` fallback below drew
     // it anyway and the page clipped it.
@@ -140,11 +187,16 @@ export function wrapReceiptText(text: string, font: PDFFont, size: number, maxWi
       font.widthOfTextAtSize(word, size) > maxWidth
         ? splitOversizedToken(word, font, size, maxWidth)
         : [word];
-    for (const piece of pieces) {
-      const candidate = line ? `${line} ${piece}` : piece;
+    for (const [index, piece] of pieces.entries()) {
+      // The ORIGINAL whitespace, byte for byte -- not a normalised " ". Only
+      // the first piece of a split token carries it; the rest are mid-token.
+      const gap = index === 0 ? ws : "";
+      const candidate = line ? `${line}${gap}${piece}` : `${gap}${piece}`;
       if (!line || font.widthOfTextAtSize(candidate, size) <= maxWidth) {
         line = candidate;
       } else {
+        // The whitespace run IS the break, so it is consumed by it -- the one
+        // place a line break legitimately replaces a space.
         lines.push(line);
         line = piece;
       }

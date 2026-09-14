@@ -8,6 +8,7 @@ import {
   renderReceiptPdf,
   splitOversizedToken,
   graphemes,
+  wrapReceiptText,
 } from "@/lib/billing/receipt-pdf";
 import {
   UnsupportedReceiptCharacterError,
@@ -17,6 +18,7 @@ import {
 } from "@/lib/billing/receipt-fonts";
 import {
   extractPdfText,
+  pdfMappedCodePoints,
   pdfPageCount,
   pdfTextRuns,
 } from "./helpers/pdf-text";
@@ -514,5 +516,112 @@ describe("the fonts are bundled, licensed, and reach the deployment", () => {
     expect(greek.byteLength).toBeLessThan(200_000);
     // Sanity: the whole 2.1MB of faces is emphatically NOT being embedded.
     expect(ascii.byteLength).toBeLessThan(2_100_000 / 4);
+  });
+});
+
+// ===========================================================================
+// UNICODE SPACING — the same defect as "?" substitution, one function over
+// ===========================================================================
+//
+// wrapReceiptText tokenised with `text.split(/\s+/)` and rejoined with an
+// ASCII " ", so it silently rewrote the receipt: a non-breaking space became
+// an ordinary one, a narrow no-break space became an ordinary one, and two
+// spaces became one. Fixing the CHARACTER mapping while leaving the
+// WHITESPACE mapping left the same promise half-kept.
+// ===========================================================================
+
+describe("whitespace in a name is reproduced, not normalised", () => {
+  const facts = (studioName: string): ReceiptFacts => ({ ...CARD, studioName });
+
+  async function font() {
+    const { PDFDocument } = await import("pdf-lib");
+    const fontkitMod = (await import("@pdf-lib/fontkit")).default;
+    const { loadReceiptFontBytes } = await import("@/lib/billing/receipt-fonts");
+    const pdf = await PDFDocument.create();
+    pdf.registerFontkit(fontkitMod);
+    return await pdf.embedFont(loadReceiptFontBytes("sans"), { subset: true });
+  }
+
+  // NOTE ON LAYERS. pdf.js NORMALISES whitespace when it extracts text: a
+  // U+00A0 drawn into the document comes back as U+0020. Verified directly --
+  // a receipt drawn with a non-breaking space really does carry a <00A0> entry
+  // in its ToUnicode CMap while extraction reports a plain space. So these
+  // assertions read the CMap (the document's own record of what each glyph
+  // means) and the wrapper, which are the layers where preservation is
+  // actually observable. Asserting through extraction here would be asserting
+  // pdf.js's behaviour, not Hone's.
+
+  const SPACING: Array<[string, string, number]> = [
+    ["non-breaking space U+00A0", "Café\u00A0Beauté", 0x00a0],
+    ["narrow no-break space U+202F", "Café\u202FBeauté", 0x202f],
+    ["figure space U+2007", "Suite\u20072B Physio", 0x2007],
+  ];
+
+  it.each(SPACING)("%s reaches the PDF as itself", async (_label, name, cp) => {
+    const bytes = await renderReceiptPdf(buildReceiptDocument(facts(name)));
+    expect(pdfMappedCodePoints(bytes).has(cp)).toBe(true);
+  });
+
+  it("ANTI-VACUITY: an ordinary space does NOT produce those code points", async () => {
+    const bytes = await renderReceiptPdf(buildReceiptDocument(facts("Café Beauté")));
+    const mapped = pdfMappedCodePoints(bytes);
+    for (const [, , cp] of SPACING) expect(mapped.has(cp)).toBe(false);
+    // ...while the letters it does contain are mapped, so the reader works.
+    expect(mapped.has(0x00e9)).toBe(true); // é
+  });
+
+  it("the wrapper preserves whitespace runs byte for byte", async () => {
+    const f = await font();
+    // Fits on one line: nothing may be rewritten at all.
+    for (const text of [
+      "one  two three   four",
+      "Café\u00A0Beauté",
+      "Café\u202FBeauté",
+      "a\u2009b",
+    ]) {
+      expect(wrapReceiptText(text, f, 11, 10_000)).toEqual([text]);
+    }
+  });
+
+  it("a NON-BREAKING space is never used as a break opportunity", async () => {
+    const f = await font();
+    const glued = "Alpha\u00A0Beta";
+    // Wide enough for the glued pair, too narrow for it plus the next word.
+    const width = f.widthOfTextAtSize(`${glued} Gam`, 11);
+    const lines = wrapReceiptText(`${glued} Gamma`, f, 11, width);
+    expect(lines).toEqual([glued, "Gamma"]);
+    // A BREAKABLE space in the same position DOES wrap -- so the behaviour is
+    // specific to the non-breaking class, not a refusal to wrap at all.
+    const breakable = wrapReceiptText("Alpha Beta Gamma", f, 11, width);
+    expect(breakable.length).toBeGreaterThan(1);
+
+    // THE DECISIVE CASE. A column too narrow for the glued pair. Treating the
+    // NBSP as breakable would split cleanly into ["Alpha", "Beta"]; honouring
+    // it means the pair is ONE token, so it is hard-split by grapheme instead.
+    // Nothing clips either way -- the difference is whether the character's
+    // meaning was respected.
+    const tooNarrow = f.widthOfTextAtSize("Alpha", 11) * 1.1;
+    const forced = wrapReceiptText(glued, f, 11, tooNarrow);
+    expect(forced).not.toEqual(["Alpha", "Beta"]);
+    expect(forced.join("")).toBe(glued);
+    for (const l of forced) {
+      expect(f.widthOfTextAtSize(l, 11)).toBeLessThanOrEqual(tooNarrow);
+    }
+  });
+
+  it("a break consumes only the whitespace it breaks at", async () => {
+    const f = await font();
+    const text = "one  two three   four";
+    const narrow = wrapReceiptText(text, f, 11, f.widthOfTextAtSize("one  two", 11));
+    // No character is lost or invented.
+    expect(narrow.join("").replace(/\s/g, "")).toBe(text.replace(/\s/g, ""));
+    // The double space INSIDE a surviving line is still a double space.
+    expect(narrow[0]).toBe("one  two");
+  });
+
+  it("ANTI-VACUITY: the previous implementation would fail all of this", () => {
+    // Exactly what `text.split(/\s+/).join(" ")` did to a receipt.
+    expect("Café\u00A0Beauté".split(/\s+/).join(" ")).toBe("Café Beauté");
+    expect("one  two".split(/\s+/).join(" ")).toBe("one two");
   });
 });

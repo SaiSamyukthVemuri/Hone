@@ -1,3 +1,5 @@
+import { inflateSync } from "node:zlib";
+
 type PdfItem = { str: string; width?: number; transform: number[] };
 type PdfPage = { getTextContent(): Promise<{ items: PdfItem[] }> };
 type PdfDoc = { numPages: number; getPage(n: number): Promise<PdfPage> };
@@ -52,4 +54,50 @@ export async function pdfTextRuns(
     }
   }
   return runs;
+}
+
+/**
+ * The set of Unicode code points the PDF's ToUnicode CMaps map to.
+ *
+ * Needed because pdf.js NORMALISES whitespace during text extraction: a
+ * U+00A0 drawn into the document comes back as U+0020, so
+ * `extractPdfText` cannot tell a preserved non-breaking space from a rewritten
+ * one. Verified directly: a receipt drawn with U+00A0 really does carry a
+ * `<00A0>` entry in its CMap while extraction reports a plain space.
+ *
+ * This reads the CMap itself, which is the document's own record of what each
+ * glyph means, and is therefore the layer where "the character survived" is
+ * actually observable.
+ */
+export function pdfMappedCodePoints(bytes: Uint8Array | Buffer): Set<number> {
+  const buf = Buffer.from(bytes);
+  let cmaps = "";
+  let i = 0;
+  for (;;) {
+    const s = buf.indexOf("stream", i);
+    if (s < 0) break;
+    const e = buf.indexOf("endstream", s);
+    if (e < 0) break;
+    let a = s + "stream".length;
+    if (buf[a] === 0x0d) a += 1;
+    if (buf[a] === 0x0a) a += 1;
+    try {
+      const decoded = inflateSync(buf.subarray(a, e)).toString("latin1");
+      if (decoded.includes("beginbfchar") || decoded.includes("beginbfrange")) {
+        cmaps += decoded;
+      }
+    } catch {
+      /* not a Flate stream */
+    }
+    i = e + "endstream".length;
+  }
+  const out = new Set<number>();
+  // bfchar: <src> <dst>
+  for (const m of cmaps.matchAll(/<([0-9A-Fa-f]{4,})>\s*<([0-9A-Fa-f]{4,})>/g)) {
+    const dst = m[2]!;
+    for (let k = 0; k + 4 <= dst.length; k += 4) {
+      out.add(parseInt(dst.slice(k, k + 4), 16));
+    }
+  }
+  return out;
 }
