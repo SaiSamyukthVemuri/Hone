@@ -584,7 +584,7 @@ describe("dashboard hierarchy — nothing operational was removed", () => {
     expect(DASH).toMatch(/todayWorkflowByAppointment|todayWorkflow/);
     expect(DASH).toMatch(/resolveTodayIntakeAction/);
     expect(DASH).toMatch(/getBeforeTodayPreviews/);
-    expect(DASH).toMatch(/getLatestPinnedNoteByClient/);
+    expect(DASH).toMatch(/getPinnedNotesByClient/);
   });
 
   it("the dashboard page never WRITES an appointment, by any route", () => {

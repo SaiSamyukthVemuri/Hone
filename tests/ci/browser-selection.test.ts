@@ -103,7 +103,13 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     // migration-style "trip on the next one" pin: the targeted browser lane
     // has been cancelled at its ceiling before, so a spec joining this
     // selection must be a visible decision rather than a silent +1.
-    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(35);
+    // Now 36: dashboard-all-pinned-notes.spec.ts joined for the same reason —
+    // it drives the same Today roster (all pinned notes + the Chart session
+    // action). Recorded as a DECISION, per the note above: the targeted lane
+    // has a ~6 min target against a 15 min ceiling, and this adds one spec with
+    // two short cases, so the margin is not the concern here — the visibility
+    // is.
+    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(36);
   });
 
   it("ONE unattributable app file forces extended, even when another file attributes a group", () => {
