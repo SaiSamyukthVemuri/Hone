@@ -204,60 +204,11 @@ export async function startSessionAction(formData: FormData): Promise<void> {
   // absent → "Client not found in this studio." → HTTP 500). The value is
   // still not trusted: the command re-proves an active membership in this
   // studio at the SECURITY DEFINER boundary before it reads anything.
-  // ---------------------------------------------------------------------
-  // COALESCE WINDOW vs A FUTURE APPOINTMENT
-  // ---------------------------------------------------------------------
-  //
-  // `start_session` coalesces on (studio, client, PRACTITIONER, modality) for
-  // `p_coalesce_minutes` — it does NOT key on the appointment. That is right for
-  // the visit happening now: two entries for one visit are one session.
-  //
-  // It is WRONG for an appointment that has not happened yet. The dashboard now
-  // offers "Chart session" on an upcoming row, so a practitioner with a session
-  // started in the last 90 minutes would either (a) have that unlinked session
-  // silently RE-POINTED to the future appointment, or (b) be dropped into a
-  // session belonging to a DIFFERENT appointment while the upcoming one still
-  // shows as uncharted. An independent review raised (b); (a) is the same defect
-  // from the other side.
-  //
-  // DELIBERATELY SCOPED TO FUTURE APPOINTMENTS. The same reuse can happen
-  // between two PAST appointments less than 90 minutes apart; that is
-  // pre-existing, shipped behaviour and is NOT changed here — widening it would
-  // alter the completed-appointment and calendar-timeline flows that ship today.
-  // It is recorded as its own finding.
-  //
-  // Idempotency is preserved rather than traded away: a session ALREADY linked
-  // to THIS appointment is reused explicitly, which is what the visit window was
-  // providing for this case. Only the cross-appointment capture is removed.
-  let coalesceMinutes = COALESCE_MINUTES;
-  if (appointmentId && appointmentEndsAt) {
-    const endsAtMs = new Date(appointmentEndsAt).getTime();
-    if (Number.isFinite(endsAtMs) && endsAtMs > Date.now()) {
-      const { data: linked } = await supabase
-        .from("sessions")
-        .select("id")
-        .eq("studio_id", studio.id)
-        .eq("appointment_id", appointmentId)
-        .is("deleted_at", null)
-        .limit(1);
-      const existing = (linked ?? []) as Array<{ id: string }>;
-      if (existing.length > 0) {
-        // Same appointment, already started: reuse it, exactly as the visit
-        // window would have. A second click lands in the same session.
-        redirect(`/clients/${clientId}/sessions/${existing[0]!.id}`);
-      }
-      // No session for THIS appointment yet. Start one WITHOUT the visit window
-      // so the command cannot adopt another appointment's session, or claim an
-      // unlinked one that was started for something else.
-      coalesceMinutes = 0;
-    }
-  }
-
   let { data: startRows, error: startErr } = await supabase.rpc("start_session", {
     p_client_id: clientId,
     p_modality: modality as Modality,
     p_appointment_id: appointmentId,
-    p_coalesce_minutes: coalesceMinutes,
+    p_coalesce_minutes: COALESCE_MINUTES,
     p_studio_id: studio.id,
   });
 
@@ -295,9 +246,7 @@ export async function startSessionAction(formData: FormData): Promise<void> {
       p_client_id: clientId,
       p_modality: modality as Modality,
       p_appointment_id: appointmentId,
-        // Same window decision as the primary call above — the reverse-skew
-        // fallback must not reintroduce the cross-appointment capture.
-        p_coalesce_minutes: coalesceMinutes,
+      p_coalesce_minutes: COALESCE_MINUTES,
     }));
   }
 

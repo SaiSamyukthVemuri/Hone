@@ -13,7 +13,8 @@ import { loginAsOwner } from "./helpers/flows";
 //   "Not all the pinned notes show up on dashboard. If I pin multiple notes I
 //    need to see all of them."
 //
-// and the right-side action should start charting, not send her to read.
+// The second half of that report — changing the row action — was reverted for a
+// concurrency reason recorded in the PR, so this spec covers the notes only.
 //
 // THREE notes on purpose: the old roster rendered exactly one, so a two-note
 // fixture would have passed against the defect roughly half the time depending
@@ -26,13 +27,13 @@ const NOTE_OLDEST = "PINNEDONE prefers the 2pm slot";
 const NOTE_MIDDLE = "PINNEDTWO park at the rear entrance";
 const NOTE_NEWEST = "PINNEDTHREE bring the shorter cable";
 
-test("every pinned note renders, and the row action is Chart session", async ({ page }) => {
+test("every pinned note renders on the dashboard roster", async ({ page }) => {
   const seed = await seedE2eStudio();
   // This fixture ALREADY seeds a confirmed appointment today (now + 2h) and
   // returns its id. Seeding a second one for the same client collides with the
   // studio-wide no-overlap exclusion constraint, which is exactly how the first
   // run of this spec failed in CI.
-  const { clientId, appointmentId } = await seedE2eDashboardMemoryClient(seed, {
+  const { clientId } = await seedE2eDashboardMemoryClient(seed, {
     cautionNote: "Avoid the jawline",
     nextVisitNote: "Lower the energy one step",
   });
@@ -61,18 +62,7 @@ test("every pinned note renders, and the row action is Chart session", async ({ 
     expect(iOld).toBeGreaterThan(iMid);
   });
 
-  await test.step("the right-side action is Chart session, carrying this appointment id", async () => {
-    const cta = page.getByRole("link", { name: "Chart session" }).first();
-    await expect(cta).toBeVisible({ timeout: T });
-    await expect(cta).toHaveAttribute(
-      "href",
-      `/clients/${clientId}/sessions/new?appointment_id=${appointmentId}`,
-    );
-    // The retired label is gone from the live surface.
-    await expect(page.getByText("Review Before Today")).toHaveCount(0);
-  });
-
-  await test.step("Before Today preparation still renders — only the action moved", async () => {
+  await test.step("Before Today preparation renders alongside the notes", async () => {
     await expect(page.getByText(/Before today/i).first()).toBeVisible({ timeout: T });
     await expect(page.getByText("Lower the energy one step").first()).toBeVisible();
   });

@@ -143,7 +143,7 @@ function runSuite(label: string, viewport: { width: number; height: number }, is
         await expect(section.getByRole("link", { name: /Book appointment/ })).toHaveCount(1);
         // The primary action resolver still produces exactly one action link.
         const action = section.getByRole("link", {
-          name: /Chart session|Open client|Chart appointment|Continue charting|View session/,
+          name: /Review Before Today|Open client|Chart appointment|Continue charting|View session/,
         });
         await expect(action).toHaveCount(1);
         // The row body still opens the appointment route.

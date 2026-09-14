@@ -11,21 +11,22 @@ import path from "node:path";
 //  2. The right-side action should be "Chart session", not "Review Before
 //     Today".
 //
-// Point 2 is a change to the ACTION ONLY. The Before Today preparation data is
-// what Chloe reads to prepare, and it must keep rendering in the row — these
-// assertions exist so a future tidy-up cannot quietly take it away along with
-// the label.
+// POINT 2 WAS REVERTED. Routing an UPCOMING appointment at the existing
+// `sessions/new` path means calling `start_session`, whose coalescence is
+// expressed purely in time. No value of `p_coalesce_minutes` is safe: a window
+// above zero adopts another appointment's session, and a window of zero cannot
+// see the row the first of two near-simultaneous taps just inserted, so both
+// insert. That was proved against a real database, and fixing it properly needs
+// DB authority this PR does not have. Only point 1 ships here.
 // ===========================================================================
 
 const ROOT = path.resolve(__dirname, "../../..");
 const DASH = readFileSync(path.join(ROOT, "app/(app)/dashboard/page.tsx"), "utf8");
-const NEXT = readFileSync(path.join(ROOT, "lib/dashboard/next-action.ts"), "utf8");
 const QUERIES = readFileSync(path.join(ROOT, "lib/client-pinned-notes/queries.ts"), "utf8");
 
 /** Comment-stripped, so explanatory prose can neither satisfy an assertion nor
  *  break an absence check by naming the thing it explains. */
 const code = (s: string) => s.replace(/\/\/.*$/gm, " ").replace(/\/\*[\s\S]*?\*\//g, " ");
-const NEXT_CODE = code(NEXT);
 const QUERIES_CODE = code(QUERIES);
 const DASH_CODE = code(DASH);
 
@@ -54,42 +55,21 @@ describe("A — every pinned note reaches the roster", () => {
     expect(DASH).toMatch(/min-w-0/);
   });
 
-  it("applies no cap in the loader", () => {
+  it("PAGINATES rather than capping — and never truncates with .limit()", () => {
+    // An earlier revision of this test asserted the loader used no `.range(`
+    // at all. That was wrong: an unbounded select is silently capped at
+    // PostgREST's max_rows (1000), which is the same loss this fix exists to
+    // remove. Paging with a deterministic order is the fix; `.limit()` would
+    // still be a truncation.
     expect(QUERIES_CODE).not.toMatch(/\.limit\(/);
-    expect(QUERIES_CODE).not.toMatch(/\.range\(/);
+    expect(QUERIES_CODE).toMatch(/fetchAllRows</);
+    expect(QUERIES_CODE).toMatch(/\.range\(from, to\)/);
+    expect(QUERIES_CODE).toMatch(/assertDeterministicOrder\("client_pinned_notes", \["created_at", "id"\]\)/);
+    // The id tiebreak is what makes paging over repeated created_at values safe.
+    expect(QUERIES_CODE).toMatch(/\.order\("id", \{ ascending: false \}\)/);
   });
 
   it("does not disturb the client-profile pinned notes", () => {
     expect(QUERIES).toMatch(/export async function getPinnedNotesForClient/);
-  });
-});
-
-describe("B — the right-side action is Chart session", () => {
-  it("the retired literal is gone from the resolver", () => {
-    expect(NEXT_CODE).not.toMatch(/"Review Before Today"/);
-  });
-
-  it("offers Chart session on the existing appointment-linked route", () => {
-    expect(NEXT_CODE).toMatch(/"Chart session"/);
-    expect(NEXT_CODE).toMatch(/sessions\/new\?appointment_id=\$\{input\.appointmentId\}/);
-  });
-
-  it("does NOT invent a charting system", () => {
-    // The completed branch already used this route; the upcoming branch reuses
-    // it rather than adding one.
-    const uses = NEXT_CODE.match(/sessions\/new\?appointment_id=/g) ?? [];
-    expect(uses.length).toBeGreaterThanOrEqual(2);
-    expect(NEXT_CODE).not.toMatch(/\/charting|\/chart\/new|createChartingSession/);
-  });
-
-  it("BEFORE TODAY PREPARATION STILL RENDERS — only the action moved", () => {
-    expect(DASH).toMatch(/Before today/i);
-    expect(DASH).toMatch(/getBeforeTodayPreviews/);
-    expect(DASH).toMatch(/workflow &&/);
-  });
-
-  it("intake and card-on-file indicators are untouched", () => {
-    expect(DASH).toMatch(/IntakePill/);
-    expect(DASH).toMatch(/resolveCardOnFileStatus/);
   });
 });
