@@ -2,6 +2,9 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { inferStripeLivemode } from "@/lib/stripe/server";
 import { sendEmailSafely } from "@/lib/email/send-appointment";
+import { buildReceiptDocument } from "@/lib/billing/receipt-document";
+import { renderReceiptPdf } from "@/lib/billing/receipt-pdf";
+import { UnsupportedReceiptCharacterError } from "@/lib/billing/receipt-fonts";
 import {
   resolveReplyTo,
   studioClientContactEmail,
@@ -9,6 +12,7 @@ import {
 import { recordOpsAlert } from "@/lib/ops/alerts";
 import {
   buildPaymentReceiptEmail,
+  toReceiptFacts,
   chargeReasonLabel,
 } from "@/lib/email/templates/payment-receipt";
 
@@ -111,6 +115,12 @@ export type SendPaymentChargeReceiptResult =
         // a warning and the operator to reconcile by hand.
         | "sent_but_record_update_failed"
         | "not_authorized"
+        // PAY-RECEIPT-PDF. The receipt PDF could not be prepared, so NOTHING
+        // was sent. Distinct from every send_failed_* reason precisely because
+        // no provider was reached and no email left Hone: delivery is not
+        // unknown, it definitively did not happen. The claim is released, so a
+        // manual Send can try again.
+        | "receipt_pdf_unavailable"
         | "database_error";
       message: string;
       emailTo?: string;
@@ -184,6 +194,91 @@ function sanitiseSafe(s: string, max: number): string {
 // was written to preserve.
 //
 // No email is sent, re-sent, or retried here. It only reports.
+/**
+ * PAY-RECEIPT-PDF. The receipt PDF could not be prepared. Release the claim so
+ * a manual Send can retry, and send NOTHING.
+ *
+ * Why this is its own path rather than a reuse of the retryable send failure:
+ * no provider was reached, so DELIVERY IS NOT UNKNOWN. That distinction drives
+ * the operator instruction. "Reconcile with the provider before resending"
+ * would be wrong advice here -- there is nothing to reconcile, and the honest
+ * instruction is simply "try again".
+ *
+ * If the release itself fails the row is stuck at 'sending' and the UI hides
+ * Send, so that case escalates through the same reporter the send paths use,
+ * with deliveryUnknown FALSE because nothing was ever dispatched.
+ */
+async function releaseAfterPdfFailure(args: {
+  attempt: AttemptRow;
+  studioId: string;
+  admin: ReturnType<typeof createAdminClient>;
+  error: unknown;
+}): Promise<SendPaymentChargeReceiptResult> {
+  const safeError = sanitiseSafe(
+    args.error instanceof Error ? args.error.message : String(args.error),
+    200,
+  );
+  const unsupported = args.error instanceof UnsupportedReceiptCharacterError;
+  const { error: releaseErr } = await args.admin
+    .from("payment_charge_attempts")
+    .update({
+      receipt_status: null,
+      receipt_failure_code: null,
+      receipt_failure_message_safe: null,
+    })
+    .eq("id", args.attempt.id)
+    .eq("studio_id", args.studioId)
+    .eq("receipt_status", "sending");
+
+  if (releaseErr) {
+    return await reportSettlementFailure({
+      // Nothing was dispatched: this is a definitively-did-not-happen case,
+      // never an ambiguous one.
+      deliveryUnknown: false,
+      reason: "send_failed_state_not_recorded",
+      event: "payment_receipt_pdf_release_failed",
+      message:
+        "The receipt PDF could not be prepared, so NO email was sent, and Hone " +
+        "could not release receipt_status back to null. The row is stuck in " +
+        "'sending'. No client email went out; clear the row to allow a retry.",
+      attempt: args.attempt,
+      studioId: args.studioId,
+      dbError: releaseErr,
+      providerError: safeError,
+    });
+  }
+
+  logInternal("payment_receipt_pdf_failed", {
+    attemptId: args.attempt.id,
+    err: safeError,
+  });
+  await recordOpsAlert({
+    severity: "warning",
+    event: "payment_receipt_pdf_failed",
+    message:
+      "The receipt PDF could not be prepared, so no receipt email was sent. " +
+      "The charge is unaffected and the receipt can be sent again manually.",
+    studioId: args.studioId,
+    clientId: args.attempt.client_id,
+    route: "lib/billing/payment-receipt:releaseAfterPdfFailure",
+    safeDetails: { attempt_id: args.attempt.id, error: safeError },
+  });
+  return {
+    ok: false,
+    reason: "receipt_pdf_unavailable",
+    // "Try again" is the right advice for a transient render failure and the
+    // WRONG advice for an unsupported character, which will fail identically
+    // every time. Same outcome code, honest instruction.
+    message: unsupported
+      ? "Hone could not prepare the receipt PDF because the client or studio " +
+        "name contains characters it cannot render, so no receipt was sent. " +
+        "The payment is unaffected. Send the receipt manually, or contact " +
+        "support to have the name updated."
+      : "Hone could not prepare the receipt PDF, so no receipt was sent. The " +
+        "payment is unaffected. Try sending the receipt again.",
+  };
+}
+
 async function reportSettlementFailure(args: {
   event: string;
   message: string;
@@ -491,6 +586,44 @@ export async function sendPaymentChargeReceipt(args: {
     livemode: attempt.stripe_livemode,
   });
 
+  // 5b) PAY-RECEIPT-PDF. The PDF is rendered from the SAME canonical document
+  //     the email above rendered, so the attachment cannot disagree with the
+  //     body it arrives with.
+  //
+  //     ONE EMAIL OR NONE. A receipt is not release-complete without its PDF,
+  //     so a preparation failure must not send a receipt that is missing its
+  //     attachment. Nothing has reached a provider at this point, so delivery
+  //     is not ambiguous -- it definitively has not happened -- and the right
+  //     move is to release the claim and let a practitioner retry by hand.
+  let receiptPdf: Buffer;
+  let pdfFileName: string;
+  try {
+    const doc = buildReceiptDocument(
+      toReceiptFacts({
+        studioName: studio.name,
+        studioContactEmail: resolveStudioContactEmail(studio),
+        clientName: client.name,
+        chargeReasonLabel: chargeReasonLabel(attempt.charge_reason),
+        amountCents: attempt.amount_cents,
+        currencyCode: attempt.currency,
+        chargedAt: new Date(attempt.charged_at),
+        stripePaymentIntentId: attempt.stripe_payment_intent_id,
+        stripeChargeId: attempt.stripe_charge_id,
+        last4: cardLast4,
+        livemode: attempt.stripe_livemode,
+      }),
+    );
+    pdfFileName = doc.pdfFileName;
+    receiptPdf = Buffer.from(await renderReceiptPdf(doc));
+  } catch (err) {
+    return await releaseAfterPdfFailure({
+      attempt,
+      studioId: args.studioId,
+      admin,
+      error: err,
+    });
+  }
+
   const sendResult = await sendEmailSafely({
     studioIdentity: {
       displayName: studio.name,
@@ -500,6 +633,8 @@ export async function sendPaymentChargeReceipt(args: {
     subject,
     html,
     text,
+    // Exactly one attachment: the receipt the body describes.
+    attachments: [{ filename: pdfFileName, content: receiptPdf }],
   });
 
   // 5) Persist outcome.
