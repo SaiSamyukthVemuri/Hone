@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
 
-import { InvitationOutcomeNotice } from "@/components/waitlist/invite-composer";
+import {
+  InvitationOutcomeNotice,
+  type SubmittedInvitation,
+} from "@/components/waitlist/invite-outcome-boundary";
 import {
   INDETERMINATE_ADMISSION_COPY,
   INVITATION_DELIVERY_COPY,
@@ -26,8 +29,18 @@ import {
 //     it already consumed the round's allowance.
 // ===========================================================================
 
+const submittedFor = (
+  notice: ReturnType<typeof invitationNoticeFor>,
+  entryName = "Sarah",
+  entryId = "entry-1",
+): SubmittedInvitation => ({ entryId, entryName, notice });
+
 const html = (notice: ReturnType<typeof invitationNoticeFor> | null) =>
-  renderToStaticMarkup(createElement(InvitationOutcomeNotice, { notice }));
+  renderToStaticMarkup(
+    createElement(InvitationOutcomeNotice, {
+      submitted: notice ? submittedFor(notice) : null,
+    }),
+  );
 
 describe("the four distinctions stay apart", () => {
   it("committed + accepted — an invitation exists AND the provider took custody", () => {
@@ -175,19 +188,29 @@ const code = (rel: string) =>
 const COMPOSER = code("components/waitlist/invite-composer.tsx");
 const PAGE = code("app/(app)/settings/waitlist/page.tsx");
 const ACTIONS = code("app/(app)/settings/waitlist/invite-actions.ts");
+const BOUNDARY = code("components/waitlist/invite-outcome-boundary.tsx");
 
 describe("the structured result reaches the practitioner", () => {
-  it("the composer binds a result-carrying action with React's own convention", () => {
-    expect(COMPOSER).toMatch(/useActionState</);
-    expect(COMPOSER).toMatch(/resultAction \? await resultAction\(formData\)/);
-    expect(COMPOSER).toMatch(/invitationNoticeFor\(/);
-    expect(COMPOSER).toMatch(/<InvitationOutcomeNotice notice=\{notice\} \/>/);
+  it("the BOUNDARY owns the result, not the composer", () => {
+    // The composer unmounts on a committed admission; whatever it owned dies
+    // with it. These assertions exist so that cannot be reintroduced.
+    expect(BOUNDARY).toMatch(/useActionState</);
+    expect(BOUNDARY).toMatch(/invitationNoticeFor\(/);
+    expect(COMPOSER).not.toMatch(/useActionState/);
+    expect(COMPOSER).not.toMatch(/invitationNoticeFor/);
   });
 
-  it("the form submits through the result-carrying binding when one is supplied", () => {
-    expect(COMPOSER).toMatch(
-      /action=\{resultAction \? boundResultAction : \(action \?\? undefined\)\}/,
-    );
+  it("the composer submits through the boundary's action", () => {
+    expect(COMPOSER).toMatch(/const outcomeAction = useInviteOutcomeAction\(\)/);
+    expect(COMPOSER).toMatch(/action=\{outcomeAction \?\? action \?\? undefined\}/);
+  });
+
+  it("the boundary captures identity from THIS submission, before the action runs", () => {
+    const capture = BOUNDARY.search(/formData\.get\(OUTCOME_ENTRY_FIELD\)/);
+    const call = BOUNDARY.search(/await action\(formData\)/);
+    expect(capture).toBeGreaterThan(-1);
+    expect(call).toBeGreaterThan(-1);
+    expect(capture, "identity captured after the round trip").toBeLessThan(call);
   });
 
   it("the VOID binding still works — #683's contract is untouched", () => {
@@ -196,18 +219,30 @@ describe("the structured result reaches the practitioner", () => {
     expect(ACTIONS).toMatch(/export async function inviteToBookFormAction/);
   });
 
-  it("DUPLICATE SUBMISSION is refused while a send is in flight", () => {
-    // The expensive mistake: an invitation may already have committed and
-    // consumed the round's allowance while its answer was still on the wire.
-    expect(COMPOSER).toMatch(/const sendDisabled = send\.disabled \|\| unbound \|\| isPending/);
+  it("DUPLICATE SUBMISSION is refused while a send is in flight, per form", () => {
+    // Scoped to the enclosing form: inviting one prospect must not freeze every
+    // other row, which a boundary-wide pending flag would have done.
+    expect(COMPOSER).toMatch(/useFormStatus\(\)/);
+    expect(COMPOSER).toMatch(/disabled=\{disabled \|\| pending\}/);
   });
 
   it("a composer with NEITHER binding still refuses to send", () => {
-    expect(COMPOSER).toMatch(/const unbound = action === null && resultAction === null/);
+    expect(COMPOSER).toMatch(/const unbound = action === null && outcomeAction === null/);
   });
 
-  it("the waitlist page passes the TYPED action, not the void wrapper", () => {
-    expect(PAGE).toMatch(/resultAction=\{inviteToBookAction\}/);
+  it("the page mounts the boundary ABOVE the sections, and revalidation stays", () => {
+    expect(PAGE).toMatch(/<InviteOutcomeBoundary\s+action=\{inviteToBookAction\}/);
+    // The prospect name comes from SERVER state, never from a hidden form field.
+    expect(PAGE).toMatch(/entryNames=\{Object\.fromEntries\(rows\.map/);
+    // No HIDDEN field carries the name: the composer's own guard requires every
+    // hidden input to be a declared intent field, and a display name is not one.
+    expect(COMPOSER).not.toMatch(/type="hidden"[^>]*entryName/);
+    // It must enclose the section map, which is what the row lives inside.
+    const open = PAGE.search(/<InviteOutcomeBoundary/);
+    const map = PAGE.search(/visibleSections\.map\(/);
+    const close = PAGE.search(/<\/InviteOutcomeBoundary>/);
+    expect(open).toBeLessThan(map);
+    expect(map).toBeLessThan(close);
     expect(PAGE).not.toMatch(/action=\{inviteToBookFormAction\}/);
   });
 

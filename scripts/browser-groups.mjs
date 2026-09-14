@@ -144,6 +144,10 @@ export const BROWSER_GROUPS = {
       // booking page (waitlist UX for new clients, untouched booking UX for
       // existing clients, and the zero-business-write contract).
       "new-client-waitlist.spec.ts",
+      // The invitation answer must survive its own revalidation: the row
+      // moves waiting -> invited, the composer unmounts, and the delivery
+      // disposition must still be on screen. Same waitlist surface, same group.
+      "waitlist-invitation-delivery-status.spec.ts",
     ],
   },
   calendar: {

@@ -1,4 +1,5 @@
 import { InviteComposer } from "@/components/waitlist/invite-composer";
+import { InviteOutcomeBoundary } from "@/components/waitlist/invite-outcome-boundary";
 import { isBookableByNewClient } from "@/lib/booking/consultation";
 import {
   emptyDraft,
@@ -567,6 +568,17 @@ export default async function WaitlistSettingsPage({
             </p>
           )}
 
+          {/* THE SUBMISSION RESULT LIVES HERE, above every section.
+              `revalidatePath` on a committed admission moves the row to
+              `invited`, and a composer is mounted only for waiting/claimed — so
+              the composer unmounts on exactly the outcomes that carry a delivery
+              disposition. This boundary survives that, and survives the row
+              leaving the visible list altogether. */}
+
+          <InviteOutcomeBoundary
+            action={inviteToBookAction}
+            entryNames={Object.fromEntries(rows.map((r) => [r.id, r.name]))}
+          >
           {visibleSections.map(({ status, heading }) => {
             const group = bySection.get(status);
             if (!group) return null;
@@ -843,10 +855,7 @@ export default async function WaitlistSettingsPage({
                                 draft={emptyDraft()}
                                 services={bookableServices}
                                 capabilities={admissionCommandAdapter.capabilities}
-                                // The RESULT-carrying binding: the delivery
-                                // disposition is computed server-side and now
-                                // has somewhere to be shown.
-                                resultAction={inviteToBookAction}
+
                               />
                             </details>
                           )}
@@ -885,6 +894,7 @@ export default async function WaitlistSettingsPage({
               </section>
             );
           })}
+          </InviteOutcomeBoundary>
         </>
       )}
     </div>

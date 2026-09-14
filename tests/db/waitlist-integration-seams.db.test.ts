@@ -401,7 +401,23 @@ describe("the practitioner binding is a real production consumer", () => {
     // form and not a re-implementation — the `action` prop is typed as a plain
     // `(FormData) => …`, which is a server action's shape.
     expect(page).toContain("<InviteComposer");
-    expect(page).toContain("action={inviteToBookFormAction}");
+    expect(page).toContain("<InviteOutcomeBoundary");
+    expect(page).toContain("action={inviteToBookAction}");
+    expect(page).toContain('from "@/components/waitlist/invite-outcome-boundary"');
+    // THE OLD VOID BINDING MUST NOT RETURN. `revalidatePath` on a committed
+    // admission moves the row to `invited`, and a composer is mounted only for
+    // INVITE_TO_BOOK_STATUSES (waiting/claimed) — so the composer unmounts on
+    // exactly the outcomes that carry a delivery disposition. Result state owned
+    // inside it died with it; the boundary above the sections owns it instead.
+    expect(page).not.toContain("action={inviteToBookFormAction}");
+    // The boundary must ENCLOSE the section map: a notice rendered inside the
+    // row it describes would unmount with that row.
+    expect(page.indexOf("<InviteOutcomeBoundary")).toBeLessThan(
+      page.indexOf("visibleSections.map("),
+    );
+    expect(page.indexOf("visibleSections.map(")).toBeLessThan(
+      page.indexOf("</InviteOutcomeBoundary>"),
+    );
     expect(page).toContain('from "@/components/waitlist/invite-composer"');
     // Offered only where #683 says the state allows it.
     expect(page).toContain("INVITE_TO_BOOK_STATUSES.includes(row.status)");

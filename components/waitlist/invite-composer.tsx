@@ -1,6 +1,7 @@
 "use client";
 
-import { useActionState, useReducer } from "react";
+import { useReducer } from "react";
+import { useFormStatus } from "react-dom";
 
 import { isConsultationService } from "@/lib/booking/consultation";
 import { buttonClasses } from "@/components/ui/button";
@@ -33,11 +34,9 @@ import {
 } from "@/lib/waitlist/b4-invitation-draft";
 import {
   adapterMissingReason,
-  invitationNoticeFor,
   type AdapterCapabilities,
-  type InvitationNotice,
-  type InvitationOutcome,
 } from "@/lib/waitlist/invite-to-book-contract";
+import { useInviteOutcomeAction } from "@/components/waitlist/invite-outcome-boundary";
 
 // ===========================================================================
 // WAIT-03 B4 — the invitation composer
@@ -261,50 +260,32 @@ function StatefulInviteComposer(props: InviteComposerProps) {
 }
 
 /**
- * What a result-carrying send hands back. Structurally identical to the server
- * action's own result; declared here so the composer never imports a "use
- * server" module for a type.
- */
-export type InviteComposerResult =
-  | { outcome: InvitationOutcome }
-  | { outcome: null; reason: "malformed_submission" };
-
-/**
- * The structured result, rendered.
+ * Send, with duplicate-submission protection scoped to ITS OWN form.
  *
- * PURE AND EXPORTED ON PURPOSE. The composer's tests render to static markup, so
- * a status that only appeared after a real submission could not be proved.
- * Keeping the translation in `invitationNoticeFor` and the markup here makes
- * every outcome renderable — and provable — without pretending to drive a server
- * action.
- *
- * `role="status"` + `aria-live="polite"`: the practitioner's attention is on the
- * form they just submitted, and this is the answer to it. A committed invitation
- * whose email was REFUSED is exactly the case that must not pass unannounced.
+ * `useFormStatus` reads the enclosing form, so inviting Sarah does not freeze
+ * Amara's row — which a boundary-wide pending flag would have done. The guard
+ * matters because a second press while a send is in flight can commit a second
+ * admission: the first may already hold the round's allowance while its answer
+ * is still on the wire.
  */
-export function InvitationOutcomeNotice({
-  notice,
+function SendInvitationButton({
+  disabled,
+  describedBy,
 }: {
-  notice: InvitationNotice | null;
+  disabled: boolean;
+  describedBy?: string;
 }) {
-  if (!notice) return null;
-  const tone =
-    notice.tone === "success"
-      ? "border-emerald-300 bg-emerald-50 text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200"
-      : notice.tone === "warning"
-        ? "border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200"
-        : "border-rose-300 bg-rose-50 text-rose-900 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-200";
+  const { pending } = useFormStatus();
   return (
-    <div
-      role="status"
-      aria-live="polite"
-      data-testid="invite-outcome"
-      data-tone={notice.tone}
-      data-invitation-exists={notice.invitationExists ? "true" : "false"}
-      className={cx("mx-4 mb-3 rounded-md border px-3 py-2 text-sm", tone)}
+    <button
+      type="submit"
+      disabled={disabled || pending}
+      data-testid="composer-send"
+      aria-describedby={describedBy}
+      className={buttonClasses({ variant: "primary", size: "md", fullWidth: true })}
     >
-      {notice.message}
-    </div>
+      {pending ? "Sending…" : "Send invitation"}
+    </button>
   );
 }
 
@@ -343,16 +324,6 @@ export type InviteComposerProps = {
    * hands them over.
    */
   action?: InviteComposerAction | null;
-  /**
-   * The SAME send, but one that hands its structured result back.
-   *
-   * ADDITIVE; `action` is untouched. #683 types the composer's action as void
-   * deliberately and other callers rely on that. This is a second, opt-in
-   * binding for a surface that can render an answer, and when supplied it is the
-   * one used — a surface able to show the delivery disposition should not
-   * discard it.
-   */
-  resultAction?: ((formData: FormData) => Promise<InviteComposerResult>) | null;
   /** Dismissal, bound the same way. A Cancel with nothing behind it is disabled
    *  for the same reason the send is. */
   cancelAction?: InviteComposerAction | null;
@@ -375,7 +346,6 @@ export function InviteComposerView({
   services,
   capabilities = null,
   action = null,
-  resultAction = null,
   cancelAction = null,
   state,
   dispatch,
@@ -414,32 +384,23 @@ export function InviteComposerView({
   // NO BINDING MEANS NO OPERABLE SEND. The capability gate is unchanged and
   // still decides on its own; this only adds the second reason a send can be
   // impossible — nothing is listening yet.
-  // THE RESULT-CARRYING BINDING, when the surface supplies one.
+  // THE RESULT GOES UPWARD, NOT HERE.
   //
-  // React's own form-with-answer convention (useActionState) — the same shape
-  // `client-personal-notes-editor` already uses. `isPending` disables Send for
-  // the round trip: a second press while a send is in flight is the expensive
-  // mistake here, because an invitation may already have committed and consumed
-  // the round's allowance while its answer was still on the wire.
-  const [result, boundResultAction, isPending] = useActionState<
-    InviteComposerResult | null,
-    FormData
-  >(async (_prev, formData) => (resultAction ? await resultAction(formData) : null), null);
-  const notice = result
-    ? invitationNoticeFor(
-        result.outcome,
-        result.outcome === null ? result.reason : undefined,
-      )
-    : null;
+  // `revalidatePath` on a committed admission moves this row to `invited`, and
+  // this composer is only mounted for `waiting`/`claimed` — so it unmounts on
+  // exactly the outcomes that carry a delivery disposition. Owning the answer
+  // here meant the three committed cases showed nothing at all.
+  // `InviteOutcomeBoundary` sits above every section and survives that.
+  const outcomeAction = useInviteOutcomeAction();
 
-  const unbound = action === null && resultAction === null;
-  const sendDisabled = send.disabled || unbound || isPending;
+  const unbound = action === null && outcomeAction === null;
+  const sendDisabled = send.disabled || unbound;
   const sendReason =
     send.reason ?? (unbound ? adapterMissingReason("Send invitation") : undefined);
 
   return (
     <form
-      action={resultAction ? boundResultAction : (action ?? undefined)}
+      action={outcomeAction ?? action ?? undefined}
       className="flex flex-col"
       data-testid="invite-composer"
     >
@@ -447,6 +408,7 @@ export function InviteComposerView({
           questions, and it is an IDENTIFIER, not authority: the server still
           decides whether this practitioner may act on it. */}
       <input type="hidden" name={COMPOSER_FIELD_NAMES.entryId} value={entryId} />
+
       <header className="px-4 py-4">
         <h2 className="text-base font-medium text-fg">
           Invite {entryName} to book
@@ -727,16 +689,10 @@ export function InviteComposerView({
             control is the one a thumb reaches for; putting Cancel first in
             source order to get it visually left on a desktop would put it under
             the thumb on every phone. */}
-        <InvitationOutcomeNotice notice={notice} />
-        <button
-          type="submit"
+        <SendInvitationButton
           disabled={sendDisabled}
-          data-testid="composer-send"
-          aria-describedby={sendReason ? waitlistDomId(entryId, "composer-send-reason") : undefined}
-          className={buttonClasses({ variant: "primary", size: "md", fullWidth: true })}
-        >
-          Send invitation
-        </button>
+          describedBy={sendReason ? waitlistDomId(entryId, "composer-send-reason") : undefined}
+        />
         <button
           // Submits to its OWN binding, so dismissing is a real action rather
           // than a button that looks live and does nothing. Disabled while no
