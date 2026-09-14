@@ -1,11 +1,13 @@
 import { InviteComposer } from "@/components/waitlist/invite-composer";
+import { InviteOutcomeBoundary } from "@/components/waitlist/invite-outcome-boundary";
+import { WaitlistNavLink } from "@/components/waitlist/waitlist-nav-link";
 import { isBookableByNewClient } from "@/lib/booking/consultation";
 import {
   emptyDraft,
   INVITE_TO_BOOK_STATUSES,
 } from "@/lib/waitlist/b4-invitation-draft";
 import { admissionCommandAdapter } from "@/lib/waitlist/invite-to-book-adapter";
-import { inviteToBookFormAction } from "./invite-actions";
+import { inviteToBookAction } from "./invite-actions";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { localLongDate } from "@/lib/booking/tz";
@@ -559,13 +561,24 @@ export default async function WaitlistSettingsPage({
         </div>
       ) : (
         <>
+          <InviteOutcomeBoundary
+            action={inviteToBookAction}
+            entryNames={Object.fromEntries(rows.map((r) => [r.id, r.name]))}
+          >
           {focusedStatus && (
             <p className="text-sm">
-              <a href={QUEUE_PATH} className="underline">
+              <WaitlistNavLink href={QUEUE_PATH} className="underline">
                 Back to all groups
-              </a>
+              </WaitlistNavLink>
             </p>
           )}
+
+          {/* THE SUBMISSION RESULT LIVES HERE, above every section.
+              `revalidatePath` on a committed admission moves the row to
+              `invited`, and a composer is mounted only for waiting/claimed — so
+              the composer unmounts on exactly the outcomes that carry a delivery
+              disposition. This boundary survives that, and survives the row
+              leaving the visible list altogether. */}
 
           {visibleSections.map(({ status, heading }) => {
             const group = bySection.get(status);
@@ -604,13 +617,13 @@ export default async function WaitlistSettingsPage({
                     <p className="text-sm text-neutral-500">
                       That page is past the end of this group, which holds{" "}
                       {group.total}.{" "}
-                      <a
+                      <WaitlistNavLink
                         href={sectionHref(status)}
                         data-testid="waitlist-page-first"
                         className="underline"
                       >
                         Go to the first page
-                      </a>
+                      </WaitlistNavLink>
                     </p>
                   ) : group.total === 0 ? (
                     <p className="text-sm text-neutral-500">
@@ -626,13 +639,13 @@ export default async function WaitlistSettingsPage({
                     <p className="text-sm text-neutral-500">
                       Showing the {group.rows.length} longest-waiting of{" "}
                       {group.total}.{" "}
-                      <a
+                      <WaitlistNavLink
                         href={sectionHref(status)}
                         data-testid={`waitlist-section-all-${status}`}
                         className="underline"
                       >
                         Show all {group.total}
-                      </a>
+                      </WaitlistNavLink>
                     </p>
                   )
                 )}
@@ -843,7 +856,7 @@ export default async function WaitlistSettingsPage({
                                 draft={emptyDraft()}
                                 services={bookableServices}
                                 capabilities={admissionCommandAdapter.capabilities}
-                                action={inviteToBookFormAction}
+
                               />
                             </details>
                           )}
@@ -860,28 +873,29 @@ export default async function WaitlistSettingsPage({
                 {(hasPrev || hasNext) && (
                   <nav aria-label={`${heading} pages`} className="flex flex-wrap gap-2">
                     {hasPrev && (
-                      <a
+                      <WaitlistNavLink
                         href={sectionHref(status, pageNumber - 1)}
                         data-testid="waitlist-page-prev"
                         className={NAV_LINK_CLASS}
                       >
                         Previous
-                      </a>
+                      </WaitlistNavLink>
                     )}
                     {hasNext && (
-                      <a
+                      <WaitlistNavLink
                         href={sectionHref(status, pageNumber + 1)}
                         data-testid="waitlist-page-next"
                         className={NAV_LINK_CLASS}
                       >
                         Next
-                      </a>
+                      </WaitlistNavLink>
                     )}
                   </nav>
                 )}
               </section>
             );
           })}
+          </InviteOutcomeBoundary>
         </>
       )}
     </div>

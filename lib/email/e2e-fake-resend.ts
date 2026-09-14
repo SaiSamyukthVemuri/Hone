@@ -42,13 +42,18 @@ export function isE2eFakeResendEnabled(
 // reject   -> provider returns an error object (deliverWelcomeEmail -> 'failed')
 // throw    -> provider throws (network exception -> 'failed')
 // failonce -> throws the FIRST time per recipient, then succeeds (proves retry)
-export type FakeResendMode = "success" | "reject" | "throw" | "failonce";
+// hold     -> succeeds, but only after HOLD_MS. The send is genuinely IN FLIGHT
+//             for that window, which is the only way to observe what a surface
+//             does while a submission is pending. Bounded and self-releasing:
+//             no test can leave a request hanging.
+export type FakeResendMode = "success" | "reject" | "throw" | "failonce" | "hold";
 
 const KNOWN_MODES = new Set<FakeResendMode>([
   "success",
   "reject",
   "throw",
   "failonce",
+  "hold",
 ]);
 
 function asMode(value: string | undefined): FakeResendMode | null {
@@ -68,6 +73,10 @@ export function fakeResendModeFromEnv(
 // prefixed with the mode, e.g. `reject+<id>@harness.local`. A global
 // HONE_E2E_FAKE_RESEND_MODE env, when set, OVERRIDES the prefix (unit tests rely
 // on that); otherwise the recipient prefix decides, defaulting to success.
+/** How long `hold` keeps a send in flight. Long enough to observe a pending
+ *  surface, short enough that a suite never waits on it meaningfully. */
+export const HOLD_MS = 4_000;
+
 export function fakeResendModeForRecipient(
   to: string,
   env: NodeJS.ProcessEnv = process.env,
@@ -108,6 +117,12 @@ export function createFakeResendTransport(): MinimalEmailTransport {
       // studio_onboarding.welcome_email_status.
       send: async ({ to }) => {
         const mode = fakeResendModeForRecipient(to);
+        if (mode === "hold") {
+          // GENUINELY IN FLIGHT for HOLD_MS. Bounded and self-releasing: no test
+          // can leave a request hanging, and nothing outside the fake changes.
+          await new Promise((resolve) => setTimeout(resolve, HOLD_MS));
+          return { error: null };
+        }
         if (mode === "throw") {
           throw new Error("fake resend network exception");
         }

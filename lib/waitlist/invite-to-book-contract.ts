@@ -361,6 +361,113 @@ export function deliveryStateFrom(value: unknown): InvitationDeliveryState {
     : "unknown";
 }
 
+/**
+ * WHAT THE PRACTITIONER IS TOLD — the presentation of an outcome this module
+ * already computes. No new vocabulary, no new state, no second authority.
+ *
+ * THE FOUR ANSWERS THAT MUST STAY APART. A committed admission and a delivered
+ * email are different facts, and #683's adapter note recorded that collapsing
+ * them left `committed/refused` and `committed/accepted` looking identical to
+ * the practitioner:
+ *
+ *   committed + accepted  — the invitation exists; the provider took custody
+ *   committed + refused   — the invitation EXISTS; the provider did not
+ *   committed + unknown   — the invitation exists; custody is undetermined
+ *   refused / unavailable — nothing was created, or we cannot say
+ *
+ * TWO LIES ARE FORBIDDEN HERE, in both directions:
+ *   * never call provider acceptance "delivered" or "read" — nothing this side
+ *     of the wire observes either, which is why the delivery copy says
+ *     "accepted for delivery";
+ *   * never call a committed invitation uncreated because its email failed. The
+ *     admission consumed the round's allowance whatever the provider did.
+ *
+ * `tone` is advisory for the surface, never authority: `success` is reserved for
+ * the one case where BOTH facts are good, so a refused or unconfirmed delivery
+ * cannot be styled as an unqualified success.
+ */
+export type InvitationNoticeTone = "success" | "warning" | "error";
+
+export type InvitationNotice = {
+  tone: InvitationNoticeTone;
+  message: string;
+  /** True when an invitation is KNOWN to exist — the retry-safety signal. */
+  invitationExists: boolean;
+};
+
+/**
+ * A refusal the server actually gave. The invitation was NOT created.
+ *
+ * Deliberately short and shared rather than fifteen invented sentences: every
+ * code in this arm means the same thing to the practitioner — nothing exists —
+ * and the few that change what to do next are named. Inventing product copy for
+ * each code would be guessing at wording nobody approved.
+ */
+export function invitationRefusalCopy(code: DefiniteInviteToBookRefusal): string {
+  switch (code) {
+    case "already_invited":
+      return "No invitation was created: this person already has a live invitation.";
+    case "already_redeemed":
+      return "No invitation was created: this invitation has already been redeemed.";
+    case "not_owner":
+    case "not_a_member":
+      return "No invitation was created: you do not have permission to invite from this waitlist.";
+    case "not_found":
+      return "No invitation was created: this waitlist entry no longer exists.";
+    default:
+      // TRUE FOR EVERY CODE IN THIS ARM BY CONSTRUCTION — `refused` means the
+      // admission did not commit. Naming the code keeps the message honest
+      // without asserting a cause this module did not observe.
+      return `No invitation was created (${code}).`;
+  }
+}
+
+/**
+ * Map the structured result onto what to show. Pure, total, and the ONLY place
+ * this translation happens.
+ */
+export function invitationNoticeFor(
+  outcome: InvitationOutcome | null,
+  reason?: "malformed_submission",
+): InvitationNotice {
+  if (outcome === null) {
+    return {
+      tone: "error",
+      // Nothing reached the server's command, so nothing was created. Saying so
+      // plainly is safe here in a way it is NOT for `indeterminate`.
+      message:
+        reason === "malformed_submission"
+          ? "No invitation was created: the form was incomplete. Check the service and try again."
+          : "No invitation was created.",
+      invitationExists: false,
+    };
+  }
+  if (outcome.state === "committed") {
+    return {
+      // `accepted` is the only unqualified success: the invitation exists AND
+      // the provider took custody.
+      tone: outcome.delivery === "accepted" ? "success" : "warning",
+      message: INVITATION_DELIVERY_COPY[outcome.delivery],
+      invitationExists: true,
+    };
+  }
+  if (outcome.state === "refused") {
+    return {
+      tone: "error",
+      message: invitationRefusalCopy(outcome.code),
+      invitationExists: false,
+    };
+  }
+  // `indeterminate`. NOT an error tone: an invitation may exist and may already
+  // hold the round's allowance, so this must not read as a failure and must not
+  // invite a blind retry. The contract's own copy says what to do instead.
+  return {
+    tone: "warning",
+    message: INDETERMINATE_ADMISSION_COPY,
+    invitationExists: false,
+  };
+}
+
 export type EntryOutcome = { ok: true } | { ok: false; code: InviteToBookFailure };
 
 // --- 2b. THE SERVER VOCABULARY THIS CONTRACT MUST CARRY ----------------------

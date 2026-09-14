@@ -1,6 +1,7 @@
 "use client";
 
 import { useReducer } from "react";
+import { useFormStatus } from "react-dom";
 
 import { isConsultationService } from "@/lib/booking/consultation";
 import { buttonClasses } from "@/components/ui/button";
@@ -35,6 +36,7 @@ import {
   adapterMissingReason,
   type AdapterCapabilities,
 } from "@/lib/waitlist/invite-to-book-contract";
+import { useInviteOutcomeAction } from "@/components/waitlist/invite-outcome-boundary";
 
 // ===========================================================================
 // WAIT-03 B4 — the invitation composer
@@ -257,6 +259,36 @@ function StatefulInviteComposer(props: InviteComposerProps) {
   return <InviteComposerView {...props} state={state} dispatch={dispatch} />;
 }
 
+/**
+ * Send, with duplicate-submission protection scoped to ITS OWN form.
+ *
+ * `useFormStatus` reads the enclosing form, so inviting Sarah does not freeze
+ * Amara's row — which a boundary-wide pending flag would have done. The guard
+ * matters because a second press while a send is in flight can commit a second
+ * admission: the first may already hold the round's allowance while its answer
+ * is still on the wire.
+ */
+function SendInvitationButton({
+  disabled,
+  describedBy,
+}: {
+  disabled: boolean;
+  describedBy?: string;
+}) {
+  const { pending } = useFormStatus();
+  return (
+    <button
+      type="submit"
+      disabled={disabled || pending}
+      data-testid="composer-send"
+      aria-describedby={describedBy}
+      className={buttonClasses({ variant: "primary", size: "md", fullWidth: true })}
+    >
+      {pending ? "Sending…" : "Send invitation"}
+    </button>
+  );
+}
+
 export type InviteComposerProps = {
   /** Namespaces every id this composer emits, so two mounted composers cannot
    *  cross-reference each other's labels and errors. */
@@ -352,14 +384,23 @@ export function InviteComposerView({
   // NO BINDING MEANS NO OPERABLE SEND. The capability gate is unchanged and
   // still decides on its own; this only adds the second reason a send can be
   // impossible — nothing is listening yet.
-  const unbound = action === null;
+  // THE RESULT GOES UPWARD, NOT HERE.
+  //
+  // `revalidatePath` on a committed admission moves this row to `invited`, and
+  // this composer is only mounted for `waiting`/`claimed` — so it unmounts on
+  // exactly the outcomes that carry a delivery disposition. Owning the answer
+  // here meant the three committed cases showed nothing at all.
+  // `InviteOutcomeBoundary` sits above every section and survives that.
+  const outcomeAction = useInviteOutcomeAction();
+
+  const unbound = action === null && outcomeAction === null;
   const sendDisabled = send.disabled || unbound;
   const sendReason =
     send.reason ?? (unbound ? adapterMissingReason("Send invitation") : undefined);
 
   return (
     <form
-      action={action ?? undefined}
+      action={outcomeAction ?? action ?? undefined}
       className="flex flex-col"
       data-testid="invite-composer"
     >
@@ -367,6 +408,7 @@ export function InviteComposerView({
           questions, and it is an IDENTIFIER, not authority: the server still
           decides whether this practitioner may act on it. */}
       <input type="hidden" name={COMPOSER_FIELD_NAMES.entryId} value={entryId} />
+
       <header className="px-4 py-4">
         <h2 className="text-base font-medium text-fg">
           Invite {entryName} to book
@@ -647,15 +689,10 @@ export function InviteComposerView({
             control is the one a thumb reaches for; putting Cancel first in
             source order to get it visually left on a desktop would put it under
             the thumb on every phone. */}
-        <button
-          type="submit"
+        <SendInvitationButton
           disabled={sendDisabled}
-          data-testid="composer-send"
-          aria-describedby={sendReason ? waitlistDomId(entryId, "composer-send-reason") : undefined}
-          className={buttonClasses({ variant: "primary", size: "md", fullWidth: true })}
-        >
-          Send invitation
-        </button>
+          describedBy={sendReason ? waitlistDomId(entryId, "composer-send-reason") : undefined}
+        />
         <button
           // Submits to its OWN binding, so dismissing is a real action rather
           // than a button that looks live and does nothing. Disabled while no
