@@ -135,9 +135,14 @@ describe("the PDF and the email say the SAME things", () => {
     // sentence is unapproved copy however sensible it reads.
     const doc = buildReceiptDocument(CARD);
     const text = await extractPdfText(await renderReceiptPdf(doc));
+    // The allowed set is EVERY string the document supplies -- no literals of
+    // the renderer's own. The branding change swapped the fixed "Hone"
+    // wordmark and the email sign-off for two document fields, so the list
+    // tracks the document rather than the renderer.
     const allowed = [
-      "Hone", doc.headline, doc.greeting, doc.lead, doc.taxDisclaimer,
-      doc.supportLine, doc.platformNote ?? "", doc.footer,
+      doc.studioDisplayName, doc.pdfHeading, doc.pdfFooter,
+      doc.greeting, doc.lead, doc.taxDisclaimer,
+      doc.supportLine, doc.platformNote ?? "",
       doc.contact?.line ?? "",
       ...doc.detailRows.flatMap((r) => [`${r.label}:`, r.value]),
     ].join(" ");

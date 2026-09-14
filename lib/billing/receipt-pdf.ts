@@ -262,14 +262,14 @@ export async function renderReceiptPdf(doc: ReceiptDocument): Promise<Uint8Array
   // part, so a name that is fine in the body but not in the monospace column
   // cannot slip through.
   assertReceiptTextSupported([
-    { text: "Hone", role: "serifBold" },
-    { text: doc.headline, role: "serifBold" },
+    { text: doc.studioDisplayName, role: "serifBold" },
+    { text: doc.pdfHeading, role: "sansBold" },
+    { text: doc.pdfFooter, role: "sans" },
     { text: doc.greeting, role: "sans" },
     { text: doc.lead, role: "sans" },
     { text: doc.taxDisclaimer, role: "sans" },
     { text: doc.supportLine, role: "sans" },
     { text: doc.platformNote ?? "", role: "sans" },
-    { text: doc.footer, role: "sans" },
     { text: doc.contact?.line ?? "", role: "sans" },
     ...doc.detailRows.flatMap((r) => [
       { text: `${r.label}:`, role: "sansBold" as ReceiptFontRole },
@@ -304,13 +304,22 @@ export async function renderReceiptPdf(doc: ReceiptDocument): Promise<Uint8Array
     y: PAGE_HEIGHT - MARGIN,
   };
 
-  // Wordmark
-  cur.page.drawText("Hone", { x: MARGIN, y: cur.y, size: 18, font: serifBold, color: INK });
-  cur.y -= 40;
+  // THE STUDIO IS THE IDENTITY.
+  //
+  // This document is the studio's receipt to their client. It used to open
+  // with a fixed "Hone" wordmark, which put the platform's name where the
+  // practice's name belongs -- on a record the client keeps, files, and may
+  // hand to an insurer. The studio name now leads at the largest size on the
+  // page, and Hone appears once, at the bottom, as attribution.
+  //
+  // Read from `doc.studioDisplayName`, never from the "Studio" detail row: the
+  // branding must not depend on the order or labelling of a presentation array.
+  drawParagraph(pdf, cur, doc.studioDisplayName, serifBold, 24, INK, 30);
+  cur.y -= 6;
 
-  // Headline
-  drawParagraph(pdf, cur, doc.headline, serifBold, 26, INK, 32);
-  cur.y -= 8;
+  // What the document IS, in plain words, subordinate to the studio name.
+  drawParagraph(pdf, cur, doc.pdfHeading, sansBold, 13, MUTED, 20);
+  cur.y -= 14;
 
   // Greeting + lead
   drawParagraph(pdf, cur, doc.greeting, sans, 12, INK, 20);
@@ -377,7 +386,10 @@ export async function renderReceiptPdf(doc: ReceiptDocument): Promise<Uint8Array
   }
 
   cur.y -= 10;
-  drawParagraph(pdf, cur, doc.footer, sans, 9, MUTED, 13);
+  // Subordinate attribution. NOT doc.footer ("<studio> via Hone"), which is
+  // the EMAIL's sign-off and would repeat the studio name in the one place it
+  // should be quietly crediting the platform.
+  drawParagraph(pdf, cur, doc.pdfFooter, sans, 9, FAINT, 13);
 
   // Object streams off: the layout stays greppable, which is what lets the
   // tests assert on the ACTUAL bytes rather than on a render-time promise.

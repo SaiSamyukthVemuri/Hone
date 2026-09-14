@@ -43,14 +43,24 @@ export async function pdfPageCount(bytes: Uint8Array | Buffer): Promise<number> 
  */
 export async function pdfTextRuns(
   bytes: Uint8Array | Buffer,
-): Promise<Array<{ str: string; x: number; width: number }>> {
+): Promise<Array<{ str: string; x: number; y: number; width: number; size: number }>> {
   const doc = await load(bytes);
-  const runs: Array<{ str: string; x: number; width: number }> = [];
+  const runs: Array<{ str: string; x: number; y: number; width: number; size: number }> = [];
   for (let i = 1; i <= doc.numPages; i += 1) {
     const content = await (await doc.getPage(i)).getTextContent();
     for (const it of content.items) {
       if (!it.str.trim()) continue;
-      runs.push({ str: it.str, x: it.transform[4] ?? 0, width: it.width ?? 0 });
+      // transform = [a, b, c, d, e, f]; `a` carries the glyph scale, which is
+      // the drawn font size, and e/f are the position. Exposed so a test can
+      // assert VISUAL HIERARCHY -- that the studio name is the largest thing
+      // on the page -- rather than only that the text exists.
+      runs.push({
+        str: it.str,
+        x: it.transform[4] ?? 0,
+        y: it.transform[5] ?? 0,
+        width: it.width ?? 0,
+        size: Math.abs(it.transform[0] ?? 0),
+      });
     }
   }
   return runs;

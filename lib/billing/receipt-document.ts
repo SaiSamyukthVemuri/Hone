@@ -115,6 +115,33 @@ export type ReceiptDocument = {
   platformNote: string | null;
   footer: string;
   /**
+   * The studio's display name, carried EXPLICITLY.
+   *
+   * The PDF leads with it, so it needs the identity as a first-class field
+   * rather than reaching into `detailRows` to find the row labelled "Studio"
+   * and reading its value. That would couple the document's branding to the
+   * order and labelling of a presentation array -- reorder the rows, rename a
+   * label, and the receipt silently loses its identity or prints the wrong
+   * one. This is the same value the "Studio" row shows, resolved once here.
+   */
+  studioDisplayName: string;
+  /**
+   * The PDF's own heading, beneath the studio name.
+   *
+   * Distinct from `headline`, which the EMAIL uses and which still reads
+   * "Receipt" / "Receipt from X.". The PDF is a document a client keeps and
+   * may file, so it says what it is in plain words.
+   */
+  pdfHeading: string;
+  /**
+   * The PDF's footer attribution.
+   *
+   * Deliberately NOT `footer` ("<studio> via Hone"), which stays the email's.
+   * On the PDF the studio is the identity and Hone is the platform underneath
+   * it, so the attribution is subordinate and reads that way.
+   */
+  pdfFooter: string;
+  /**
    * The instant the receipt is ABOUT. Carried so the PDF can pin its metadata
    * timestamps to the payment instead of the clock, which is what makes the
    * same receipt render the same bytes every time.
@@ -278,6 +305,9 @@ export function buildReceiptDocument(facts: ReceiptFacts): ReceiptDocument {
       : REFUND_AVAILABLE_BODY_DISCLAIMER,
     platformNote: livemode ? LIVE_PLATFORM_NOTE : null,
     footer: `${studio} via Hone`,
+    studioDisplayName: studio,
+    pdfHeading: "Payment Receipt",
+    pdfFooter: "Powered by Hone",
     issuedAt: facts.paidAt,
     pdfTitle: livemode ? "Receipt" : "TEST MODE receipt",
     // No client name in the filename: it shows in mail clients, download
