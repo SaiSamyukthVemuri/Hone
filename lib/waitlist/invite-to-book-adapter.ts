@@ -269,6 +269,37 @@ const ADMIT_AUTHORITY_REFUSALS: Record<string, DefiniteInviteToBookRefusal | und
  * `unknown` -> unknown. A throw is `unknown` too, never `refused`: an exception
  * on this side is not evidence the provider declined.
  */
+/**
+ * Persist the provider outcome for one invitation send.
+ *
+ * NEVER THROWS. The command itself is total — it returns a closed code for every
+ * case including `conflict`, where a contradicting repeat is refused without
+ * writing — and any transport failure is swallowed here. Nothing about the
+ * committed invitation depends on this succeeding.
+ */
+async function recordDeliveryOutcome(
+  studioId: string,
+  invitationId: string,
+  disposition: InvitationDeliveryState,
+): Promise<void> {
+  try {
+    const admin = createAdminClient();
+    await admin.rpc("record_waitlist_invitation_delivery", {
+      p_studio_id: studioId,
+      p_invitation_id: invitationId,
+      p_disposition: disposition,
+    });
+  } catch {
+    // Structural only: no recipient, no token, no studio identity.
+    console.error(
+      JSON.stringify({
+        event: "waitlist_invitation_delivery_record_failed",
+        at: new Date().toISOString(),
+      }),
+    );
+  }
+}
+
 async function deliverInvitation(args: {
   studio: DeliveryStudio;
   invitationId: string;
@@ -461,6 +492,18 @@ class AdmissionCommandAdapter implements WaitlistInvitationAdapter {
       issuedAt: new Date(issuedAt),
       expiresAt: new Date(expiresAt),
     });
+
+    // WRITE THE OUTCOME DOWN (0196), so it survives the practitioner navigating
+    // away. Until this existed the disposition lived only in React state, and
+    // three separate findings were three different ways to unmount it.
+    //
+    // FAIL-SOFT, DELIBERATELY. The admission and the invitation have ALREADY
+    // committed; this records what the provider did with one email. If the
+    // record cannot be written, the invitation is still real and still holds the
+    // round's allowance — so a throw here would turn a bookkeeping failure into
+    // a false claim about admission truth. The disposition returned to the
+    // caller is unaffected either way.
+    await recordDeliveryOutcome(studio.id, invitationId, delivery);
 
     return { state: "committed", expiresAt, delivery };
   }
