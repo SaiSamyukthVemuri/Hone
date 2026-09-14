@@ -147,11 +147,72 @@ describe("the conversion is bound to the redeemed recipient", () => {
     }
   });
 
-  it("does not pretend to enforce a booking scope the schema cannot express", () => {
-    // new_client_waitlist_invitations records no offered service and no offered
-    // slot, so there is nothing to check against. If a future migration adds
-    // one, this assertion should be replaced by a real check — not deleted.
-    expect(CODE).not.toMatch(/offered_service_id|offered_starts_at/);
+});
+
+describe("the booking is held to the invitation's stored offer scope", () => {
+  // THIS REPLACES A FALSE ASSERTION. The previous version pinned that 0195 made
+  // NO scope claim, on the reading that the schema had no authority to check
+  // against. That reading came from 0188's CREATE TABLE; 0192 §2 ALTERs the same
+  // table and adds the scope columns. The contract below is the real one.
+
+  it("re-reads all four scope columns from 0192", () => {
+    for (const col of [
+      "scope_service_id", "scope_start_date", "scope_end_date", "scope_allowed_weekdays",
+    ]) {
+      expect(CODE).toContain(col);
+    }
+  });
+
+  it("selects the invitation by REDEEMED state, not by ordering", () => {
+    // A `latest row` heuristic would silently enforce the wrong permission.
+    expect(CODE).toMatch(/redeemed_at\s+is\s+not\s+null/i);
+    expect(CODE).not.toMatch(/order\s+by[\s\S]{0,60}\blimit\b/i);
+  });
+
+  it("refuses an ambiguous history instead of choosing a row", () => {
+    expect(CODE).toContain("'scope_ambiguous'::text");
+    expect(CODE).toMatch(/v_scope_count\s*>\s*1/);
+  });
+
+  it("treats an all-null (legacy) scope as unscoped, via the all-or-nothing CHECK", () => {
+    expect(CODE).toMatch(/v_scope_svc\s+is\s+not\s+null/i);
+  });
+
+  it("judges the day in STUDIO-LOCAL time, the same direction as 0170", () => {
+    expect(CODE).toMatch(/p_starts_at\s+at\s+time\s+zone\s+v_tz/i);
+    expect(CODE).toMatch(/v_local_start::date/i);
+    // NULL instant or timezone must refuse, not compare as in-range.
+    expect(CODE).toMatch(/v_local_date\s+is\s+null/i);
+  });
+
+  it("uses an INCLUSIVE range and 0=Sunday weekdays, only when weekdays are set", () => {
+    expect(CODE).toMatch(/v_local_date\s*<\s*v_scope_from/);
+    expect(CODE).toMatch(/v_local_date\s*>\s*v_scope_to/);
+    expect(CODE).toMatch(/extract\s*\(\s*dow\s+from\s+v_local_start\s*\)/i);
+    expect(CODE).toMatch(/v_scope_dows\s+is\s+not\s+null/i);
+  });
+
+  it("enforces scope BEFORE any appointment work, with closed codes", () => {
+    const apptCall = CODE.search(/from\s+public\.create_public_appointment\(/);
+    for (const code of [
+      "scope_service_not_offered", "scope_date_out_of_range", "scope_weekday_not_allowed",
+    ]) {
+      expect(CODE).toContain(`'${code}'::text`);
+      expect(CODE.search(new RegExp(code))).toBeLessThan(apptCall);
+    }
+  });
+
+  it("invents no exact-slot restriction and no new scope storage", () => {
+    expect(CODE).not.toMatch(/scope_starts_at|scope_slot|offered_starts_at/);
+  });
+
+  it("adds no lock for the scope read — a redeemed scope is immutable", () => {
+    // 0192 stamps scope only on rows that are still live, so the established
+    // lock policy does not change. If that ever stops being true, this
+    // assertion should be replaced by a lock and a race proof — not deleted.
+    expect(CODE).not.toMatch(
+      /from\s+public\.new_client_waitlist_invitations[\s\S]{0,200}?for\s+(update|share|no\s+key\s+update)/i,
+    );
   });
 });
 

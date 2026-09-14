@@ -78,6 +78,46 @@ async function legalSlot(f: Fixture, nth: number): Promise<string> {
   throw new Error("no legal slot");
 }
 
+/** A studio-LOCAL date, derived in SQL so no JS timezone assumption creeps in. */
+async function studioDate(f: Fixture, plusDays: number): Promise<string> {
+  const r = await q<any>(
+    `select ((now() at time zone s.timezone)::date + $2::int)::text as d
+       from public.studios s where s.id = $1`,
+    [f.studioId, plusDays],
+  );
+  return r[0].d as string;
+}
+
+/** The nth bookable candidate ON a specific studio-local date, or null. */
+async function slotOnDate(f: Fixture, date: string, nth = 0): Promise<string | null> {
+  const c = await q<any>(
+    `select c from public.public_booking_slot_candidates($1,$2::date,30) c`,
+    [f.studioId, date],
+  );
+  return c.length > nth ? (c[nth].c as string) : null;
+}
+
+/** An instant on a permitted date but at a closed hour — refused by the booking
+ *  command itself, not by scope. */
+async function closedHourOn(f: Fixture, date: string): Promise<string> {
+  const r = await q<any>(
+    `select (($2::date + time '03:00') at time zone s.timezone)::text as t
+       from public.studios s where s.id = $1`,
+    [f.studioId, date],
+  );
+  return r[0].t as string;
+}
+
+/** The studio-local weekday (0 = Sunday, matching 0192's contract) of an instant. */
+async function dowOf(f: Fixture, instant: string): Promise<number> {
+  const r = await q<any>(
+    `select extract(dow from ($2::timestamptz at time zone s.timezone))::int as d
+       from public.studios s where s.id = $1`,
+    [f.studioId, instant],
+  );
+  return r[0].d as number;
+}
+
 const tokenHash = (seed: string): string =>
   Array.from({ length: 64 }, (_, i) => "0123456789abcdef"[(seed.charCodeAt(i % seed.length) + i) % 16]).join("");
 
@@ -134,6 +174,50 @@ async function bookingClient(
     [f.studioId, email],
   );
   return { clientId: r[0].client_id as string, created: r[0].client_created_during_call as boolean };
+}
+
+/**
+ * A redeemed entry whose invitation carries an EXPLICIT offer scope. 0192 §2
+ * stores the offer server-side — scope_service_id, scope_start_date,
+ * scope_end_date, scope_allowed_weekdays — precisely so a substituted service
+ * or date cannot widen permission.
+ */
+async function redeemedScopedEntry(
+  f: Fixture,
+  label: string,
+  scope: { serviceId: string; from: string; to: string; weekdays: number[] | null },
+): Promise<{ entryId: string; email: string }> {
+  const email = `s-${label}-${f.studioId.slice(0, 8)}@example.com`;
+  const e = await q<any>(
+    `select * from public.create_practitioner_waitlist_entry($1,$2,'Prospect',$3,null,null)`,
+    [f.studioId, f.userId, email],
+  );
+  expect(e[0].result).toBe("created");
+  const a = await q<any>(
+    `select * from public.admit_new_client_waitlist_entry($1,$2,$3,$4,$5,$6,$7::smallint[],72)`,
+    [f.studioId, f.userId, e[0].entry_id, scope.serviceId, scope.from, scope.to, scope.weekdays],
+  );
+  expect(a[0].result).toBe("admitted");
+  const b = await q<any>(`select * from public.begin_waitlist_invitation_proof($1,20)`, [a[0].raw_token]);
+  const c = await q<any>(
+    `select * from public.complete_waitlist_invitation_proof($1,$2)`, [a[0].raw_token, b[0].raw_challenge],
+  );
+  const r = await q<any>(
+    `select * from public.redeem_new_client_waitlist_invitation_verified($1,$2)`,
+    [a[0].raw_token, c[0].raw_capability],
+  );
+  expect(r[0].result).toBe("redeemed");
+  return { entryId: r[0].entry_id as string, email };
+}
+
+/** A second, genuinely bookable service in the same studio. */
+async function extraService(f: Fixture, name: string): Promise<string> {
+  const r = await q<any>(
+    `insert into public.services (studio_id,name,default_duration_minutes,active,modality)
+     values ($1,$2,30,true,'consultation') returning id`,
+    [f.studioId, name],
+  );
+  return r[0].id as string;
 }
 
 const apptById = (id: string) =>
@@ -224,10 +308,13 @@ describe("0195 — one transaction: appointment, audit and conversion", () => {
     const { clientId } = await bookingClient(f, email);
     const before = await apptCount(f.studioId);
 
+    // The OFFERED service on a PERMITTED date, so scope passes and the refusal
+    // is genuinely the appointment command's. (This previously passed a bogus
+    // service id, which scope now — correctly — intercepts first.)
     const r = await q<any>(
       BOOK,
-      [f.studioId, clientId, "00000000-0000-0000-0000-000000000000",
-       await legalSlot(f, 0), tokenHash("ar"), entryId],
+      [f.studioId, clientId, f.serviceId,
+       await closedHourOn(f, await studioDate(f, 3)), tokenHash("ar"), entryId],
     );
     expect(r[0].result).toMatch(/^appointment:/);
     const e = await entryRow(entryId);
@@ -369,6 +456,171 @@ describe("0195 — the conversion is bound to the redeemed recipient", () => {
     );
     expect(r[0].result).toBe("created_and_converted");
     expect((await entryRow(entryId)).converted_client_id).toBe(first.clientId);
+  });
+});
+
+describe("0195 — the booking stays inside the invitation's stored offer scope", () => {
+  // =========================================================================
+  // 0192 §2 stores the offer on the invitation — scope_service_id,
+  // scope_start_date, scope_end_date, scope_allowed_weekdays — with the stated
+  // purpose that "a substituted URL parameter, service or date cannot widen
+  // permission: the commit path re-reads these columns". Nothing downstream
+  // re-read them, so the commit path honoured whatever the caller asked for.
+  //
+  // EVERY REFUSAL BELOW IS PAIRED WITH A POSITIVE CONTROL that books the SAME
+  // slot (or the same service) under a scope that permits it. Without that, an
+  // ordinary availability or service-eligibility refusal would masquerade as
+  // scope enforcement.
+  // =========================================================================
+
+  it("refuses a DIFFERENT otherwise-bookable service, and permits the scoped one", async () => {
+    const f = await fixture("scope-svc");
+    const other = await extraService(f, "Other Consultation");
+    const from = await studioDate(f, 2);
+    const to = await studioDate(f, 20);
+
+    // Scope names f.serviceId. The booking asks for `other`.
+    const wrong = await redeemedScopedEntry(f, "svc-wrong", {
+      serviceId: f.serviceId, from, to, weekdays: null,
+    });
+    const wc = await bookingClient(f, wrong.email);
+    const slot = await slotOnDate(f, await studioDate(f, 3));
+    expect(slot).not.toBeNull();
+
+    const before = await apptCount(f.studioId);
+    const r = await q<any>(
+      BOOK, [f.studioId, wc.clientId, other, slot, tokenHash("sv1"), wrong.entryId],
+    );
+    expect(r[0].result).toBe("scope_service_not_offered");
+    expect(await apptCount(f.studioId)).toBe(before);
+    expect((await entryRow(wrong.entryId)).status).toBe("invited");
+
+    // POSITIVE CONTROL: `other` is genuinely bookable — the same service and
+    // slot succeed when the invitation actually offers it.
+    const ok = await redeemedScopedEntry(f, "svc-ok", {
+      serviceId: other, from, to, weekdays: null,
+    });
+    const okc = await bookingClient(f, ok.email);
+    const r2 = await q<any>(
+      BOOK, [f.studioId, okc.clientId, other, slot, tokenHash("sv2"), ok.entryId],
+    );
+    expect(r2[0].result).toBe("created_and_converted");
+  });
+
+  it("refuses a date OUTSIDE the offered range, and permits the same slot inside it", async () => {
+    const f = await fixture("scope-date");
+    const target = await studioDate(f, 12);
+    const slot = await slotOnDate(f, target);
+    expect(slot).not.toBeNull();
+
+    // Range deliberately ends before the target date.
+    const outside = await redeemedScopedEntry(f, "date-out", {
+      serviceId: f.serviceId, from: await studioDate(f, 2), to: await studioDate(f, 5), weekdays: null,
+    });
+    const oc = await bookingClient(f, outside.email);
+    const before = await apptCount(f.studioId);
+    const r = await q<any>(
+      BOOK, [f.studioId, oc.clientId, f.serviceId, slot, tokenHash("dt1"), outside.entryId],
+    );
+    expect(r[0].result).toBe("scope_date_out_of_range");
+    expect(await apptCount(f.studioId)).toBe(before);
+    expect((await entryRow(outside.entryId)).status).toBe("invited");
+
+    // POSITIVE CONTROL: the very same instant books when the range covers it,
+    // so the refusal above was the RANGE and not availability.
+    const inside = await redeemedScopedEntry(f, "date-in", {
+      serviceId: f.serviceId, from: await studioDate(f, 2), to: await studioDate(f, 20), weekdays: null,
+    });
+    const ic = await bookingClient(f, inside.email);
+    const r2 = await q<any>(
+      BOOK, [f.studioId, ic.clientId, f.serviceId, slot, tokenHash("dt2"), inside.entryId],
+    );
+    expect(r2[0].result).toBe("created_and_converted");
+  });
+
+  it("refuses an EXCLUDED weekday, and permits the same slot when that weekday is allowed", async () => {
+    const f = await fixture("scope-dow");
+    const target = await studioDate(f, 9);
+    const slot = await slotOnDate(f, target);
+    expect(slot).not.toBeNull();
+    const dow = await dowOf(f, slot as string);
+    // Every weekday EXCEPT the slot's own (0 = Sunday, per 0192's contract).
+    const without = [0, 1, 2, 3, 4, 5, 6].filter((d) => d !== dow);
+    const from = await studioDate(f, 2);
+    const to = await studioDate(f, 20);
+
+    const excluded = await redeemedScopedEntry(f, "dow-no", {
+      serviceId: f.serviceId, from, to, weekdays: without,
+    });
+    const ec = await bookingClient(f, excluded.email);
+    const before = await apptCount(f.studioId);
+    const r = await q<any>(
+      BOOK, [f.studioId, ec.clientId, f.serviceId, slot, tokenHash("dw1"), excluded.entryId],
+    );
+    expect(r[0].result).toBe("scope_weekday_not_allowed");
+    expect(await apptCount(f.studioId)).toBe(before);
+    expect((await entryRow(excluded.entryId)).status).toBe("invited");
+
+    // POSITIVE CONTROL: the same slot, allowed.
+    const allowed = await redeemedScopedEntry(f, "dow-yes", {
+      serviceId: f.serviceId, from, to, weekdays: [dow],
+    });
+    const ac = await bookingClient(f, allowed.email);
+    const r2 = await q<any>(
+      BOOK, [f.studioId, ac.clientId, f.serviceId, slot, tokenHash("dw2"), allowed.entryId],
+    );
+    expect(r2[0].result).toBe("created_and_converted");
+  });
+
+  it("a refused scope writes NO appointment and NO audit, and does not convert", async () => {
+    const f = await fixture("scope-nowrite");
+    const other = await extraService(f, "Unoffered");
+    const s = await redeemedScopedEntry(f, "nowrite", {
+      serviceId: f.serviceId,
+      from: await studioDate(f, 2), to: await studioDate(f, 20), weekdays: null,
+    });
+    const c = await bookingClient(f, s.email);
+    const slot = await slotOnDate(f, await studioDate(f, 4));
+    const appts = await apptCount(f.studioId);
+    const audits = await auditCount(f.studioId);
+
+    const r = await q<any>(
+      BOOK, [f.studioId, c.clientId, other, slot, tokenHash("nw"), s.entryId],
+    );
+    expect(r[0].result).toBe("scope_service_not_offered");
+    expect(await apptCount(f.studioId)).toBe(appts);
+    expect(await auditCount(f.studioId)).toBe(audits);
+    const e = await entryRow(s.entryId);
+    expect(e.status).toBe("invited");
+    expect(e.converted_at).toBeNull();
+    expect(e.converted_client_id).toBeNull();
+  });
+
+  it("LEGACY all-null scope still books — the repair narrows nothing that was open", async () => {
+    // Invitations issued by 0188..0191 predate the scope columns and carry all
+    // four as NULL, which 0192's all-or-nothing CHECK explicitly permits. An
+    // unscoped invitation must keep booking exactly as before.
+    const f = await fixture("scope-legacy");
+    const s = await redeemedScopedEntry(f, "legacy", {
+      serviceId: f.serviceId,
+      from: await studioDate(f, 2), to: await studioDate(f, 20), weekdays: null,
+    });
+    const cleared = await q<any>(
+      `update public.new_client_waitlist_invitations
+          set scope_service_id = null, scope_start_date = null,
+              scope_end_date = null, scope_allowed_weekdays = null
+        where entry_id = $1 and studio_id = $2 and redeemed_at is not null
+        returning id`,
+      [s.entryId, f.studioId],
+    );
+    expect(cleared).toHaveLength(1);   // the legacy shape is representable
+
+    const c = await bookingClient(f, s.email);
+    const slot = await slotOnDate(f, await studioDate(f, 6));
+    const r = await q<any>(
+      BOOK, [f.studioId, c.clientId, f.serviceId, slot, tokenHash("lg"), s.entryId],
+    );
+    expect(r[0].result).toBe("created_and_converted");
   });
 });
 

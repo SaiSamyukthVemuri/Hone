@@ -158,13 +158,44 @@
 -- step 11 — and any concurrent transaction merely referencing this client — are
 -- unaffected.
 --
--- THE BOOKING SCOPE IS A SEPARATE, UNCLOSED QUESTION. The same review asked for
--- the redeemed invitation's booking scope to be enforced — that the service and
--- start time be the ones offered. `new_client_waitlist_invitations` records no
--- offered service and no offered slot (0188: id, studio_id, entry_id, token_hash,
--- issued_at, expires_at, issued_by_practitioner_id, redeemed_at, expired_at,
--- released_at, declined_at). There is no authority in the schema to check
--- against, so this command does NOT claim to enforce it and does not guess one.
+-- ---------------------------------------------------------------------------
+-- OFFER SCOPE — WHY STEP 4 EXISTS
+-- ---------------------------------------------------------------------------
+--
+-- A PREVIOUS REVISION OF THIS HEADER WAS WRONG, and the error is worth naming
+-- because it is easy to repeat. It claimed no scope authority existed, citing
+-- 0188's CREATE TABLE column list. That is not the effective schema: 0192 §2
+-- ALTERs the same table and adds `scope_service_id`, `scope_start_date`,
+-- `scope_end_date` and `scope_allowed_weekdays`. Reading the CREATE TABLE of an
+-- evolved table is not reading the table.
+--
+-- 0192 stores the offer server-side for exactly this reason, in its own words:
+-- "a substituted URL parameter, service or date cannot widen permission: the
+-- commit path re-reads these columns." Nothing re-read them. MEASURED against
+-- the stored scope on a fresh chain, an invitation scoped to one service and a
+-- date range would book: a DIFFERENT active service, a date OUTSIDE the range,
+-- and an EXCLUDED weekday — each returning 'created_and_converted'. Step 4 is
+-- that missing re-read.
+--
+-- THE SEMANTICS ARE 0192'S, NOT NEW ONES:
+--   * ALL-OR-NOTHING. `new_client_waitlist_invitations_scope_complete_check`
+--     permits all four NULL (legacy, 0188..0191) or service+start+end present.
+--     So `scope_service_id is not null` is the complete test for "scoped", and
+--     an unscoped invitation books exactly as it did before.
+--   * NULL WEEKDAYS means every day inside the range. An EMPTY array is already
+--     unrepresentable, refused by 0192's CHECK rather than read as "all days".
+--   * extract(dow), 0 = Sunday — the encoding that CHECK validates against.
+--   * The range is INCLUSIVE of both endpoints, matching `start <= end`.
+--
+-- THE DAY IS THE BOOKING'S OWN DAY. The instant is converted UTC -> studio-local
+-- with `p_starts_at at time zone <studio tz>` and truncated to a date: the same
+-- one-directional conversion `create_public_appointment` performs (0170), so the
+-- day a booking is judged against is the day it is actually on. A NULL instant
+-- or timezone refuses rather than comparing as in-range.
+--
+-- NO EXACT-SLOT RESTRICTION IS INVENTED. The invitation records a service, a
+-- range and permitted weekdays — not a slot. This enforces those three and
+-- nothing more.
 --
 -- ---------------------------------------------------------------------------
 -- WHAT WAS TESTED, AND WHAT IS NOT CLAIMED
@@ -258,9 +289,28 @@ declare
   v_conversion   text;
   v_entry_email  text;
   v_client_email text;
+  v_tz           text;
+  v_local_start  timestamp;
+  v_local_date   date;
+  v_scope_count  integer;
+  v_scope_svc    uuid;
+  v_scope_from   date;
+  v_scope_to     date;
+  v_scope_dows   smallint[];
 begin
   -- ---------------------------------------------------------------------
-  -- LOCK POLICY. Measured, not assumed — see the lock-order note below.
+  -- LOCK POLICY. Measured, not assumed — see the lock-order note in the header.
+  --
+  -- THE PREFIX THIS FUNCTION TAKES ITSELF, in this order, before the nested
+  -- command runs:
+  --
+  --   studios                     FOR NO KEY UPDATE   (PERFORM — lock only)
+  --   new_client_waitlist_entries FOR UPDATE          (SELECT INTO, FOUND checked)
+  --   clients                     FOR SHARE           (SELECT INTO, FOUND checked)
+  --
+  -- The scope read that follows takes NO lock and is not part of this prefix:
+  -- a redeemed invitation's scope is immutable, because 0192 stamps scope only
+  -- on rows that are still live. See OFFER SCOPE in the header.
   --
   -- studios FOR NO KEY UPDATE, deliberately NOT FOR UPDATE. This is the mode
   -- 0193's admit already chose for this row, and its comment states why:
@@ -283,8 +333,14 @@ begin
   -- one, raised by the UPDATE at the end. So a competing conversion blocks on
   -- the entry while holding nothing on the studio, and no cycle can form.
   --
-  -- Both statements are PERFORM, so a missing row is simply no lock; the
-  -- validation below still produces the closed refusal.
+  -- ONLY THE STUDIO LOCK IS A BARE PERFORM. An earlier revision described the
+  -- entry lock the same way — "a missing row is simply no lock" — and that was
+  -- the bug an independent review found: nothing inspected FOUND, so a missing
+  -- or cross-studio entry produced no lock AND no refusal. The entry and the
+  -- client are now read with SELECT ... INTO and each is followed by an explicit
+  -- `if not found`, so a missing row is a closed refusal rather than a silent
+  -- pass. The studio PERFORM keeps its original meaning: it exists to take the
+  -- lock, and the validation below produces every refusal.
   -- ---------------------------------------------------------------------
   -- Cheap, closed refusal BEFORE anything is locked or written. `p_entry_id` is
   -- what separates this command from ordinary booking; without it the caller
@@ -342,6 +398,94 @@ begin
       null::uuid, null::timestamptz, null::timestamptz,
       null::integer, null::uuid, null::timestamptz;
     return;
+  end if;
+
+  -- STEP 4. THE OFFER SCOPE, RE-READ FROM THE INVITATION.
+  --
+  -- 0192 §2 stores the offer server-side — scope_service_id, scope_start_date,
+  -- scope_end_date, scope_allowed_weekdays — and says why: "a substituted URL
+  -- parameter, service or date cannot widen permission: the commit path re-reads
+  -- these columns". Nothing re-read them. This is that re-read.
+  --
+  -- WHICH INVITATION, AND WHY IT IS NOT A "LATEST ROW" GUESS. The redeemed
+  -- invitation for this entry is unique by construction, not by ordering:
+  -- `new_client_waitlist_invitations_one_live_per_entry` permits ONE live row
+  -- per entry; redemption closes it and leaves the entry 'invited'; and admit
+  -- accepts only 'waiting' or 'claimed'. So an entry cannot acquire a second
+  -- invitation once one is redeemed. The count is still checked, and an
+  -- ambiguous history REFUSES rather than picking a row — a guess here would
+  -- silently enforce the wrong permission.
+  select count(*)::int into v_scope_count
+    from public.new_client_waitlist_invitations i
+   where i.entry_id = p_entry_id and i.studio_id = p_studio_id
+     and i.redeemed_at is not null;
+
+  if v_scope_count > 1 then
+    return query select 'scope_ambiguous'::text,
+      null::uuid, null::timestamptz, null::timestamptz,
+      null::integer, null::uuid, null::timestamptz;
+    return;
+  end if;
+
+  -- NO LOCK IS TAKEN HERE, AND THAT IS A MEASURED CHOICE, NOT AN OVERSIGHT.
+  -- 0192's scope stamp updates only rows that are still live (`redeemed_at is
+  -- null and expired_at is null and released_at is null and declined_at is
+  -- null`), so a REDEEMED invitation's scope cannot change underneath this
+  -- transaction through any supported path. Adding a lock object would change
+  -- the measured lock order and require re-proving it, to protect a value that
+  -- is already immutable.
+  if v_scope_count = 1 then
+    select i.scope_service_id, i.scope_start_date, i.scope_end_date, i.scope_allowed_weekdays
+      into v_scope_svc, v_scope_from, v_scope_to, v_scope_dows
+      from public.new_client_waitlist_invitations i
+     where i.entry_id = p_entry_id and i.studio_id = p_studio_id
+       and i.redeemed_at is not null;
+  end if;
+
+  -- LEGACY IS UNSCOPED, AND STAYS THAT WAY. Invitations issued by 0188..0191
+  -- predate these columns and carry all four NULL, which 0192's all-or-nothing
+  -- CHECK explicitly permits. `scope_service_id is not null` is therefore the
+  -- whole test for "this offer was scoped": the CHECK guarantees the start and
+  -- end dates travel with it. An unscoped invitation books exactly as before —
+  -- this repair narrows nothing that was already open, and widens nothing.
+  if v_scope_svc is not null then
+    if p_service_id is distinct from v_scope_svc then
+      return query select 'scope_service_not_offered'::text,
+        null::uuid, null::timestamptz, null::timestamptz,
+        null::integer, null::uuid, null::timestamptz;
+      return;
+    end if;
+
+    -- The studio row is already held at NO KEY UPDATE above, so this read is
+    -- consistent. UTC -> studio-local wall clock, then the local DATE: the same
+    -- one-directional conversion `create_public_appointment` uses (0170), so the
+    -- day a booking is judged against is the day the booking is actually on.
+    select s.timezone into v_tz from public.studios s where s.id = p_studio_id;
+    v_local_start := p_starts_at at time zone v_tz;
+    v_local_date  := v_local_start::date;
+
+    -- Fail closed: a NULL instant or timezone yields a NULL date, which must
+    -- refuse rather than compare as "not out of range". The range is INCLUSIVE
+    -- of both endpoints, matching `scope_start_date <= scope_end_date`.
+    if v_local_date is null
+       or v_local_date < v_scope_from
+       or v_local_date > v_scope_to then
+      return query select 'scope_date_out_of_range'::text,
+        null::uuid, null::timestamptz, null::timestamptz,
+        null::integer, null::uuid, null::timestamptz;
+      return;
+    end if;
+
+    -- NULL weekdays means "every day inside the range" (0192's stated
+    -- contract), so only a non-null array constrains. extract(dow) is 0=Sunday,
+    -- which is the encoding 0192's CHECK validates against.
+    if v_scope_dows is not null
+       and not (extract(dow from v_local_start)::smallint = any (v_scope_dows)) then
+      return query select 'scope_weekday_not_allowed'::text,
+        null::uuid, null::timestamptz, null::timestamptz,
+        null::integer, null::uuid, null::timestamptz;
+      return;
+    end if;
   end if;
 
   begin
