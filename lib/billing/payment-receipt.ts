@@ -4,6 +4,7 @@ import { inferStripeLivemode } from "@/lib/stripe/server";
 import { sendEmailSafely } from "@/lib/email/send-appointment";
 import { buildReceiptDocument } from "@/lib/billing/receipt-document";
 import { renderReceiptPdf } from "@/lib/billing/receipt-pdf";
+import { UnsupportedReceiptCharacterError } from "@/lib/billing/receipt-fonts";
 import {
   resolveReplyTo,
   studioClientContactEmail,
@@ -217,6 +218,7 @@ async function releaseAfterPdfFailure(args: {
     args.error instanceof Error ? args.error.message : String(args.error),
     200,
   );
+  const unsupported = args.error instanceof UnsupportedReceiptCharacterError;
   const { error: releaseErr } = await args.admin
     .from("payment_charge_attempts")
     .update({
@@ -264,9 +266,16 @@ async function releaseAfterPdfFailure(args: {
   return {
     ok: false,
     reason: "receipt_pdf_unavailable",
-    message:
-      "Hone could not prepare the receipt PDF, so no receipt was sent. The " +
-      "payment is unaffected. Try sending the receipt again.",
+    // "Try again" is the right advice for a transient render failure and the
+    // WRONG advice for an unsupported character, which will fail identically
+    // every time. Same outcome code, honest instruction.
+    message: unsupported
+      ? "Hone could not prepare the receipt PDF because the client or studio " +
+        "name contains characters it cannot render, so no receipt was sent. " +
+        "The payment is unaffected. Send the receipt manually, or contact " +
+        "support to have the name updated."
+      : "Hone could not prepare the receipt PDF, so no receipt was sent. The " +
+        "payment is unaffected. Try sending the receipt again.",
   };
 }
 

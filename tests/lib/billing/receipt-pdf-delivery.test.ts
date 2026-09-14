@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { inflateSync } from "node:zlib";
+import { extractPdfText } from "./helpers/pdf-text";
 
 // ===========================================================================
 // PAY-RECEIPT-PDF — ONE email, ONE attachment, or nothing at all
@@ -176,30 +176,6 @@ function baseline(receiptStatus: string | null = null) {
   };
 }
 
-/** Text actually drawn in the PDF, recovered from its content streams. */
-function extractPdfText(bytes: Buffer): string {
-  let decoded = "";
-  let i = 0;
-  for (;;) {
-    const s = bytes.indexOf("stream", i);
-    if (s < 0) break;
-    const e = bytes.indexOf("endstream", s);
-    if (e < 0) break;
-    let a = s + "stream".length;
-    if (bytes[a] === 0x0d) a += 1;
-    if (bytes[a] === 0x0a) a += 1;
-    try {
-      decoded += inflateSync(bytes.subarray(a, e)).toString("latin1");
-    } catch {
-      /* not a Flate stream */
-    }
-    i = e + "endstream".length;
-  }
-  return [...decoded.matchAll(/<([0-9A-Fa-f\s]*)>\s*Tj/g)]
-    .map((m) => Buffer.from(m[1]!.replace(/\s/g, ""), "hex").toString("latin1"))
-    .join("\n");
-}
-
 type Sent = {
   subject: string;
   html: string;
@@ -236,7 +212,7 @@ describe("a successful receipt is ONE email carrying ONE PDF", () => {
     // were actually handed to the transport, not on a re-render.
     await sendPaymentChargeReceipt({ attemptId: ATTEMPT, studioId: STUDIO, practitionerId: "p" });
     const sent = h.sends[0] as unknown as Sent;
-    const pdfText = extractPdfText(sent.attachments![0]!.content);
+    const pdfText = await extractPdfText(sent.attachments![0]!.content);
 
     const amount = /\$\d+\.\d\d CAD/.exec(sent.text)?.[0];
     const date = /\d{4}-\d\d-\d\d \d\d:\d\d UTC/.exec(sent.text)?.[0];
@@ -353,5 +329,81 @@ describe("the automatic/manual claim protection is unchanged", () => {
     const res = await sendPaymentChargeReceipt({ attemptId: ATTEMPT, studioId: STUDIO, practitionerId: "p" });
     expect(res).toMatchObject({ ok: false, reason: "in_flight" });
     expect(h.sends).toHaveLength(0);
+  });
+});
+
+describe("an unsupported name fails preparation — zero emails, honest advice", () => {
+  it("a name outside font coverage sends NOTHING and releases the claim", async () => {
+    // The real path, end to end: no mocked renderer. A CJK studio name is a
+    // declared coverage boundary, and the product rule is that a receipt is
+    // never sent without its PDF -- so this must send zero emails rather than
+    // a receipt that silently spells the studio "??".
+    baseline();
+    h.responses["studios:select"] = {
+      data: { id: STUDIO, name: "東京スタジオ", owner_email: "o@example.com", postcare_contact_email: null },
+      error: null,
+    };
+    const res = await sendPaymentChargeReceipt({
+      attemptId: ATTEMPT, studioId: STUDIO, practitionerId: "p",
+    });
+
+    expect(h.sends).toHaveLength(0);
+    expect(res).toMatchObject({ ok: false, reason: "receipt_pdf_unavailable" });
+
+    // Claim released, so the row is not stranded and manual Send stays live.
+    const keys = h.stmts.map((s) => s.key);
+    expect(keys).toContain("payment_charge_attempts:update:null");
+    expect(keys).not.toContain("payment_charge_attempts:update:sent");
+
+    // "Try again" would be advice that can never succeed for this cause.
+    expect(String((res as { message: string }).message)).not.toContain("Try sending the receipt again");
+    expect(String((res as { message: string }).message)).toContain("cannot render");
+  });
+
+  it("a TRANSIENT failure still says try again — the two are told apart", async () => {
+    // Anti-vacuity for the message above: the generic path must be unchanged.
+    baseline();
+    vi.doMock("@/lib/billing/receipt-pdf", () => ({
+      renderReceiptPdf: async () => {
+        throw new Error("transient render failure");
+      },
+    }));
+    vi.resetModules();
+    const { sendPaymentChargeReceipt: fresh } = await import("@/lib/billing/payment-receipt");
+    const res = await fresh({ attemptId: ATTEMPT, studioId: STUDIO, practitionerId: "p" });
+    expect(h.sends).toHaveLength(0);
+    expect(String((res as { message: string }).message)).toContain("Try sending the receipt again");
+    vi.doUnmock("@/lib/billing/receipt-pdf");
+  });
+
+  it("a SUPPORTED non-Latin name sends normally, with the name intact", async () => {
+    // The boundary must be the font's, not a blanket refusal of non-ASCII.
+    baseline();
+    h.responses["studios:select"] = {
+      data: { id: STUDIO, name: "Ωμέγα Φυσιοθεραπεία", owner_email: "o@example.com", postcare_contact_email: null },
+      error: null,
+    };
+    h.responses["clients:select"] = {
+      data: { id: CLIENT, studio_id: STUDIO, name: "Дарья Ковалёва", email: "c@example.com" },
+      error: null,
+    };
+    const res = await sendPaymentChargeReceipt({
+      attemptId: ATTEMPT, studioId: STUDIO, practitionerId: "p",
+    });
+    expect(res.ok).toBe(true);
+    expect(h.sends).toHaveLength(1);
+    const sent = h.sends[0] as unknown as Sent;
+    const text = await extractPdfText(sent.attachments![0]!.content);
+    expect(text).toContain("Ωμέγα Φυσιοθεραπεία");
+    expect(text).toContain("Дарья Ковалёва");
+  });
+
+  it("the attachment stays small enough for any mail provider", async () => {
+    baseline();
+    await sendPaymentChargeReceipt({ attemptId: ATTEMPT, studioId: STUDIO, practitionerId: "p" });
+    const att = (h.sends[0] as unknown as Sent).attachments![0]!;
+    // Resend's limit is 40MB across all attachments; this is orders of
+    // magnitude below it because the fonts are subset per receipt.
+    expect(att.content.byteLength).toBeLessThan(200_000);
   });
 });

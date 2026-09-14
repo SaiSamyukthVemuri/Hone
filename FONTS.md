@@ -354,3 +354,70 @@ NODE_OPTIONS="--require ./block-google-fonts.cjs" npm run build
 `next build` spawns, so the block covers the webpack loaders where the fetch
 actually happened. Run it against a commit that still uses `next/font/google` to
 confirm the gate itself works — it should fail there and pass here.
+
+---
+
+# Fonts — receipt PDF (server-side)
+
+**Scope:** the payment receipt PDF attached to the receipt email
+(`lib/billing/receipt-pdf.ts`). Nothing here reaches a browser; these are
+server-side rendering assets, entirely separate from the marketing web fonts
+above.
+
+## Faces
+
+`lib/billing/fonts/` — **DejaVu 2.37**, four faces:
+
+| File | Role |
+|---|---|
+| `DejaVuSans.ttf` | body text, detail values |
+| `DejaVuSans-Bold.ttf` | detail labels |
+| `DejaVuSerif-Bold.ttf` | "Hone" wordmark, headline |
+| `DejaVuSansMono.ttf` | Stripe ids in the test-mode receipt |
+
+**Licence:** Bitstream Vera, reproduced verbatim in
+`lib/billing/fonts/LICENSE.txt`. It permits redistribution, including inside a
+derived work. The file's trailing whitespace is upstream's and is preserved —
+see `.gitattributes`.
+
+## Why bundled, and why these
+
+A serverless runtime's font set is not a contract. Reading whatever the base
+image ships makes a receipt's appearance — and, with a coverage check, whether
+it renders at all — depend on an image that can change under us.
+
+They are **force-included in the deployment trace** via
+`outputFileTracingIncludes` in `next.config.ts`. Next traces server
+dependencies statically and cannot see a `readFileSync` path, so without that
+entry the fonts are absent in production while every local test passes.
+
+**No runtime downloads and no external rendering service.** Files are read from
+disk; nothing is fetched. Glyphs are **subset at embed time**, so a receipt
+carries only the glyphs it uses — ~28KB per PDF against 2.1MB of bundled faces.
+
+## Supported coverage
+
+Faithfully rendered:
+
+- Basic Latin, Latin-1 Supplement
+- Latin Extended-A and Extended-B
+- Combining Diacritical Marks (U+0300–U+036F)
+- Greek, Cyrillic
+- General Punctuation, Currency Symbols
+
+**Not covered:** CJK, Korean, most Indic scripts, emoji.
+
+## What happens outside coverage
+
+**Nothing is substituted.** An earlier implementation replaced unsupported
+characters with `?`, which silently corrupted the client and studio names a
+receipt exists to identify.
+
+A character with no glyph now raises `UnsupportedReceiptCharacterError`, and the
+sender takes the pre-provider preparation-failure path: **no PDF, no email, no
+partial receipt** — and the payment itself is untouched, with the receipt claim
+released so a practitioner can still send manually.
+
+Extending coverage to CJK means bundling a CJK face: **16MB+ per weight**
+against these four faces' 2.1MB combined. That is a deployment-size decision
+and is deliberately not made here.

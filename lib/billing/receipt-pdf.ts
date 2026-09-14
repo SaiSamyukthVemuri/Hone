@@ -1,5 +1,11 @@
-import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
+import { PDFDocument, rgb, type PDFFont, type PDFPage } from "pdf-lib";
+import fontkit from "@pdf-lib/fontkit";
 import type { ReceiptDocument } from "@/lib/billing/receipt-document";
+import {
+  assertReceiptTextSupported,
+  loadReceiptFontBytes,
+  type ReceiptFontRole,
+} from "@/lib/billing/receipt-fonts";
 
 // ===========================================================================
 // PAY-RECEIPT-PDF — the receipt as a document the client can keep
@@ -34,17 +40,35 @@ import type { ReceiptDocument } from "@/lib/billing/receipt-document";
 // is inspectable.
 //
 // ---------------------------------------------------------------------------
-// ENCODING IS A REAL FAILURE MODE, NOT A THEORETICAL ONE
+// FAITHFUL TEXT, OR NO DOCUMENT AT ALL
 // ---------------------------------------------------------------------------
 //
-// The 14 standard PDF fonts encode WinAnsi only. A studio name carrying a
-// character outside it — a CJK name, an emoji, a stray zero-width space —
-// makes pdf-lib THROW. Left unhandled that would block the receipt for a real
-// studio, so text is sanitised to a WinAnsi-safe form first: common
-// typographic characters are folded to their ASCII equivalents and anything
-// still unencodable becomes "?". A receipt with a degraded character is
-// strictly better than no receipt, and the amount, date and method — the parts
-// that carry meaning — are ASCII by construction.
+// Names are rendered exactly as they are stored. Nothing is folded, mapped, or
+// substituted: an earlier cut turned unsupported characters into "?" so the
+// renderer would not throw, which silently corrupted the client and studio
+// names the receipt exists to identify.
+//
+// Coverage comes from four bundled, licensed faces (receipt-fonts.ts) and is
+// checked BEFORE a single glyph is drawn. Anything outside it raises
+// UnsupportedReceiptCharacterError, which the sender turns into the
+// pre-provider preparation-failure path: no partial email, no corrupted PDF,
+// and the payment untouched.
+//
+// ---------------------------------------------------------------------------
+// LONG UNBROKEN TEXT MUST WRAP, NOT RUN OFF THE PAGE
+// ---------------------------------------------------------------------------
+//
+// Wrapping used to split on whitespace only and accepted an over-wide first
+// word unconditionally, so a single long token -- a long contact address, an
+// unspaced studio name -- was drawn past the margin and CLIPPED at the page
+// edge. Reproduced at 640pt of text in a 500pt column: the address ended
+// mid-word and the rest was simply gone.
+//
+// A token that does not fit is now split by GRAPHEME CLUSTER and measured
+// chunk by chunk. Clusters, not code units and not code points, because a
+// combining accent must never be separated from the letter it sits on and a
+// surrogate pair must never be halved. Nothing is scaled down: shrinking the
+// amount to make it fit would trade a layout problem for a legibility one.
 // ===========================================================================
 
 const PAGE_WIDTH = 612; // US Letter, 72dpi
@@ -58,44 +82,72 @@ const MUTED = rgb(0.42, 0.42, 0.42); // #6B6B6B
 const FAINT = rgb(0.604, 0.604, 0.604); // #9A9A9A
 const RULE = rgb(0.898, 0.886, 0.855); // #E5E2DA
 
-/** Typographic characters that have a faithful ASCII fold. */
-const FOLD: ReadonlyArray<readonly [RegExp, string]> = [
-  [/[‘’‚‛]/g, "'"],
-  [/[“”„‟]/g, '"'],
-  [/[–—−]/g, "-"],
-  [/…/g, "..."],
-  [/ /g, " "],
-  [/[​-‍﻿]/g, ""],
-];
+/**
+ * Split into grapheme clusters, so a combining mark stays with its base letter
+ * and a surrogate pair is never halved.
+ */
+export function graphemes(text: string): string[] {
+  const Seg = (
+    Intl as unknown as { Segmenter?: new (l?: string, o?: { granularity: string }) => { segment(s: string): Iterable<{ segment: string }> } }
+  ).Segmenter;
+  if (Seg) {
+    return [...new Seg("en", { granularity: "grapheme" }).segment(text)].map((s) => s.segment);
+  }
+  // Code points at minimum: still never halves a surrogate pair.
+  return [...text];
+}
 
 /**
- * WinAnsi-safe text. Never throws, never returns a character the standard
- * fonts cannot draw.
+ * Break one over-wide token into chunks that each fit `maxWidth`.
  *
- * Allowed: printable ASCII, and the Latin-1 supplement (U+00A0-U+00FF) which
- * WinAnsi encodes directly — so accented studio names survive intact.
+ * Always emits at least one cluster per chunk, so a column too narrow for even
+ * a single glyph terminates instead of looping forever. That case cannot arise
+ * at the receipt's geometry (the narrowest column is ~340pt against ~10pt
+ * clusters) but an infinite loop is not an acceptable way to find out.
  */
-export function toWinAnsiSafe(input: string): string {
-  let out = input;
-  for (const [re, to] of FOLD) out = out.replace(re, to);
-  // The `u` flag matters: without it an astral character (an emoji) is two
-  // UTF-16 code units and becomes "??" rather than a single "?".
-  return out.replace(/[^\x20-\x7E\u00A1-\u00FF]/gu, "?");
+export function splitOversizedToken(
+  token: string,
+  font: PDFFont,
+  size: number,
+  maxWidth: number,
+): string[] {
+  const chunks: string[] = [];
+  let chunk = "";
+  for (const cluster of graphemes(token)) {
+    const candidate = chunk + cluster;
+    if (chunk && font.widthOfTextAtSize(candidate, size) > maxWidth) {
+      chunks.push(chunk);
+      chunk = cluster;
+    } else {
+      chunk = candidate;
+    }
+  }
+  if (chunk) chunks.push(chunk);
+  return chunks;
 }
 
 /** Break text to fit `maxWidth`, measuring in the font that will draw it. */
-function wrap(text: string, font: PDFFont, size: number, maxWidth: number): string[] {
+export function wrapReceiptText(text: string, font: PDFFont, size: number, maxWidth: number): string[] {
   const words = text.split(/\s+/).filter((w) => w.length > 0);
   if (words.length === 0) return [""];
   const lines: string[] = [];
   let line = "";
   for (const word of words) {
-    const candidate = line ? `${line} ${word}` : word;
-    if (font.widthOfTextAtSize(candidate, size) <= maxWidth || !line) {
-      line = candidate;
-    } else {
-      lines.push(line);
-      line = word;
+    // A token wider than the whole column can never fit beside anything, so
+    // it is broken up first. Without this the `|| !line` fallback below drew
+    // it anyway and the page clipped it.
+    const pieces =
+      font.widthOfTextAtSize(word, size) > maxWidth
+        ? splitOversizedToken(word, font, size, maxWidth)
+        : [word];
+    for (const piece of pieces) {
+      const candidate = line ? `${line} ${piece}` : piece;
+      if (!line || font.widthOfTextAtSize(candidate, size) <= maxWidth) {
+        line = candidate;
+      } else {
+        lines.push(line);
+        line = piece;
+      }
     }
   }
   if (line) lines.push(line);
@@ -120,7 +172,7 @@ function drawParagraph(
   color: ReturnType<typeof rgb>,
   leading: number,
 ): void {
-  for (const line of wrap(toWinAnsiSafe(text), font, size, CONTENT_WIDTH)) {
+  for (const line of wrapReceiptText(text, font, size, CONTENT_WIDTH)) {
     ensureRoom(pdf, cur, leading);
     cur.page.drawText(line, { x: MARGIN, y: cur.y, size, font, color });
     cur.y -= leading;
@@ -135,17 +187,41 @@ function drawParagraph(
  * without its attachment.
  */
 export async function renderReceiptPdf(doc: ReceiptDocument): Promise<Uint8Array> {
+  // FAIL BEFORE DRAWING. Checked against the face that will actually draw each
+  // part, so a name that is fine in the body but not in the monospace column
+  // cannot slip through.
+  assertReceiptTextSupported([
+    { text: "Hone", role: "serifBold" },
+    { text: doc.headline, role: "serifBold" },
+    { text: doc.greeting, role: "sans" },
+    { text: doc.lead, role: "sans" },
+    { text: doc.taxDisclaimer, role: "sans" },
+    { text: doc.supportLine, role: "sans" },
+    { text: doc.platformNote ?? "", role: "sans" },
+    { text: doc.footer, role: "sans" },
+    { text: doc.contact?.line ?? "", role: "sans" },
+    ...doc.detailRows.flatMap((r) => [
+      { text: `${r.label}:`, role: "sansBold" as ReceiptFontRole },
+      { text: r.value, role: (r.monospace ? "mono" : "sans") as ReceiptFontRole },
+    ]),
+    { text: doc.pdfTitle, role: "sans" },
+    { text: doc.subject, role: "sans" },
+  ]);
+
   const pdf = await PDFDocument.create();
 
-  const sans = await pdf.embedFont(StandardFonts.Helvetica);
-  const sansBold = await pdf.embedFont(StandardFonts.HelveticaBold);
-  // The email shell uses a Georgia serif wordmark; Times is the standard-font
-  // serif and the closest available without embedding a font file.
-  const serifBold = await pdf.embedFont(StandardFonts.TimesRomanBold);
-  const mono = await pdf.embedFont(StandardFonts.Courier);
+  // Subset at embed time: only the glyphs THIS receipt uses are written into
+  // it, so bundling 2.1MB of faces does not put 2.1MB in every attachment.
+  pdf.registerFontkit(fontkit);
+  const embed = (role: ReceiptFontRole) =>
+    pdf.embedFont(loadReceiptFontBytes(role), { subset: true });
+  const sans = await embed("sans");
+  const sansBold = await embed("sansBold");
+  const serifBold = await embed("serifBold");
+  const mono = await embed("mono");
 
-  pdf.setTitle(toWinAnsiSafe(doc.pdfTitle));
-  pdf.setSubject(toWinAnsiSafe(doc.subject));
+  pdf.setTitle(doc.pdfTitle);
+  pdf.setSubject(doc.subject);
   pdf.setProducer("Hone");
   pdf.setCreator("Hone");
   // Pinned to the receipt, not the clock. See the header on determinism.
@@ -182,16 +258,16 @@ export async function renderReceiptPdf(doc: ReceiptDocument): Promise<Uint8Array
   cur.y -= 20;
 
   const labelWidth = Math.max(
-    ...doc.detailRows.map((r) => sansBold.widthOfTextAtSize(`${toWinAnsiSafe(r.label)}:`, 11)),
+    ...doc.detailRows.map((r) => sansBold.widthOfTextAtSize(`${r.label}:`, 11)),
   );
   for (const row of doc.detailRows) {
     ensureRoom(pdf, cur, 20);
-    const label = `${toWinAnsiSafe(row.label)}:`;
+    const label = `${row.label}:`;
     cur.page.drawText(label, { x: MARGIN, y: cur.y, size: 11, font: sansBold, color: INK });
     const valueFont = row.monospace ? mono : sans;
     const valueX = MARGIN + labelWidth + 8;
-    const valueLines = wrap(
-      toWinAnsiSafe(row.value),
+    const valueLines = wrapReceiptText(
+      row.value,
       valueFont,
       11,
       CONTENT_WIDTH - (labelWidth + 8),
