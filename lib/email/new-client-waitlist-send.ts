@@ -1,6 +1,6 @@
 import "server-only";
 import { createHash } from "crypto";
-import { FROM_ADDRESS, resend } from "./client";
+import { FROM_ADDRESS, resend, getResendTransport } from "./client";
 // The taxonomy lives in a PURE module so consumers can classify these codes
 // without pulling this file — and therefore ./client and its module-scope
 // Resend initialization — into their import graph. Re-exported here so the
@@ -355,10 +355,23 @@ export async function sendWaitlistEmailIdempotent(args: {
   /** Test seam. Defaults to the shared Resend client. */
   transport?: IdempotentEmailTransport | null;
 }): Promise<WaitlistSendOutcome> {
+  // THE DEFAULT TRANSPORT, AND A TEST-HARNESS DEFECT THIS CORRECTS.
+  //
+  // This defaulted straight to the real Resend client. `getResendTransport()`
+  // — the one place that substitutes the E2E fake — was never consulted on this
+  // path, so a browser run with HONE_E2E_FAKE_RESEND=1 still called real Resend
+  // with the harness's dummy key and every invitation came back "not accepted
+  // for delivery". The fake's modes, including `hold`, were unreachable here.
+  //
+  // PRODUCTION SEMANTICS ARE UNCHANGED: `getResendTransport()` returns the fake
+  // ONLY when the server-only switch is set, and that switch is refused outright
+  // in any deployed runtime. With it unset this resolves to exactly the same
+  // client as before.
   const transport =
     args.transport !== undefined
       ? args.transport
-      : (resend as unknown as IdempotentEmailTransport | null);
+      : ((getResendTransport() ??
+          (resend as unknown)) as IdempotentEmailTransport | null);
 
   if (!transport) return localRefusal("not_configured");
   if (!args.to || !args.to.includes("@")) {

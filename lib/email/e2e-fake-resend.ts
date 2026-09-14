@@ -117,6 +117,12 @@ export function createFakeResendTransport(): MinimalEmailTransport {
       // studio_onboarding.welcome_email_status.
       send: async ({ to }) => {
         const mode = fakeResendModeForRecipient(to);
+        if (mode === "hold") {
+          // GENUINELY IN FLIGHT for HOLD_MS. Bounded and self-releasing: no test
+          // can leave a request hanging, and nothing outside the fake changes.
+          await new Promise((resolve) => setTimeout(resolve, HOLD_MS));
+          return { error: null };
+        }
         if (mode === "throw") {
           throw new Error("fake resend network exception");
         }

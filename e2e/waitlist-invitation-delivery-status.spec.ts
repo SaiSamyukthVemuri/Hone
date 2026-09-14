@@ -98,7 +98,18 @@ test.describe("queue navigation cannot strand an in-flight invitation", () => {
     await invite(page, name);
 
     // --- DURING THE PENDING INTERVAL -------------------------------------
+    // DETERMINISTIC, NOT A FLICKER. The transport holds for HOLD_MS, so the
+    // pending state must still be observable well after the submission — an
+    // assertion that merely catches a momentary true would pass even if the
+    // hold never took effect, which is exactly how the previous version of this
+    // proof passed against a transport that was never consulted.
+    const submittedAt = Date.now();
     await expect(navs.first()).toHaveAttribute("data-pending", "true", { timeout: T });
+    await page.waitForTimeout(1_500);
+    await expect(
+      navs.first(),
+      "pending ended too early — the transport did not actually hold",
+    ).toHaveAttribute("data-pending", "true");
     const pendingCount = await navs.count();
     for (let i = 0; i < pendingCount; i += 1) {
       const nav = navs.nth(i);
@@ -119,8 +130,12 @@ test.describe("queue navigation cannot strand an in-flight invitation", () => {
     await expect(notice).toBeVisible({ timeout: T });
     await expect(notice).toContainText(name);
     await expect(notice).toContainText(/Invitation created/i);
-    // Navigation is operable again.
+    // Navigation is operable again, and only AFTER the held window.
     await expect(navs.first()).toHaveAttribute("data-pending", "false", { timeout: T });
+    expect(
+      Date.now() - submittedAt,
+      "settled before the hold could have elapsed",
+    ).toBeGreaterThanOrEqual(3_000);
     expect(await navs.first().getAttribute("href")).not.toBeNull();
   });
 });
