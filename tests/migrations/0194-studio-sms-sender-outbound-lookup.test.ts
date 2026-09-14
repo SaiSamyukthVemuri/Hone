@@ -1,11 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import {
-  fileForVersion,
-  isRepoMax,
-  versionsAbove,
-} from "./helpers/migration-state";
+// isRepoMax / versionsAbove are deliberately NOT imported: 0195 now sits above
+// this migration and carries the repo-max assertion. Unused imports fail lint.
+import { fileForVersion } from "./helpers/migration-state";
 
 // 0194 — COMMS-01B2: the outbound sender lookup.
 //
@@ -41,12 +39,14 @@ describe("0194 — identity and position", () => {
     expect(FILE).toBe("0194_studio_sms_sender_outbound_lookup.sql");
   });
 
-  it("is the current repository maximum", () => {
-    // Per CLAUDE.md only the CURRENT max asserts this, so a future migration
-    // does not turn this file red. Whoever adds 0195 moves it.
-    expect(isRepoMax(VERSION)).toBe(true);
-    expect(versionsAbove(VERSION)).toEqual([]);
-  });
+  // THE REPO-MAX ASSERTION HAS MOVED TO 0195. This file's own instruction was
+  // "Whoever adds 0195 moves it", and the DB assembly is where 0195 joined
+  // 0194 in one tree. Per CLAUDE.md only the CURRENT maximum migration's own
+  // test may assert isRepoMax, or every landing migration reds an older file.
+  // tests/migrations/0195-waitlist-atomic-booking-conversion.test.ts carries
+  // it. Nothing else in this file changed: every behavioural and security
+  // assertion 0194 makes about itself is untouched, and the migration SQL is
+  // byte-identical to #692's reviewed head.
 
   it("opens its own transaction and bounds the lock", () => {
     // `supabase db push` does not wrap a file in a transaction, so a bare
