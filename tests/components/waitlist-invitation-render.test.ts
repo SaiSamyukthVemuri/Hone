@@ -160,6 +160,7 @@ describe("terminal states offer nothing to press", () => {
     "revoked",
     "already_redeemed",
     "consumed_without_booking",
+    "booking_outcome_unknown",
     "unsupported_offer",
     "declined",
   ] as const) {
@@ -507,5 +508,56 @@ describe("the phone the booking engine requires", () => {
   it("does not gate an entry that HAS a stored number", () => {
     const html = render(OFFER_STATE, { selectedSlotStart: SLOT.start, typedPhone: "" });
     expect(buttonWithLabel(html, "Book this time")).not.toMatch(DISABLED_ATTR);
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe("the UNKNOWN-outcome terminal state claims neither outcome", () => {
+  const html = () =>
+    render({ kind: "closed", reason: "booking_outcome_unknown", presentation: PRESENTATION });
+
+  it("is covered by the closed-reason union and its copy table", () => {
+    // D — EXHAUSTIVENESS. `CLOSED_COPY` is a Record over the union, so deleting
+    // this entry fails the build; rendering it here proves the entry is real
+    // rather than a placeholder the screen never reaches.
+    const out = html();
+    expect(out).toContain("couldn’t confirm your booking");
+    expect(out.length).toBeGreaterThan(40);
+  });
+
+  it("does NOT say an appointment exists, and does NOT say none does", () => {
+    const out = html().toLowerCase();
+    // The two lies this state exists to avoid.
+    expect(out).not.toContain("nothing is booked");
+    expect(out).not.toContain("didn’t go through");
+    expect(out).not.toContain("is already booked");
+    expect(out).not.toContain("check your email for the confirmation");
+  });
+
+  it("does not send the recipient to book again", () => {
+    const out = html().toLowerCase();
+    for (const forbidden of [
+      "book the time for you",
+      "rebook",
+      "try another time",
+      "choose another time",
+      "try again",
+    ]) {
+      expect(out, `must not say "${forbidden}"`).not.toContain(forbidden);
+    }
+    // It says the one safe next step.
+    expect(out).toContain("contact the studio");
+    expect(out).toContain("check");
+  });
+
+  it("is NOT the same copy as consumed-without-booking", () => {
+    // Sharing copy would re-assert "nothing is booked" under a new name.
+    const consumed = render({
+      kind: "closed",
+      reason: "consumed_without_booking",
+      presentation: PRESENTATION,
+    });
+    expect(html()).not.toBe(consumed);
   });
 });

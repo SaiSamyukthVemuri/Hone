@@ -877,3 +877,100 @@ describe("the fixture enforces 0192's preconditions (so the controls above can b
     expect(queue.status).toBe("invited");
   });
 });
+
+// ===========================================================================
+// TRANSPORT AMBIGUITY — a lost response is not a rollback
+// ===========================================================================
+//
+// 0195 writes the appointment, its mandatory audit row and the conversion in
+// ONE transaction. If the response is lost, the transaction may have COMMITTED.
+// Reporting that as "spent, nothing booked" tells the recipient to contact the
+// studio for a booking they may already have, and tells the operator to create
+// a second one.
+
+describe("A — a transport failure on the atomic path is INDETERMINATE", () => {
+  it("is never reported as consumed-without-booking", async () => {
+    scenario.bookingError = { message: "connection reset", code: "PGRST000" };
+    const out = await publicBookAppointmentAction(invited());
+    expect(out.ok).toBe(false);
+    if (out.ok) throw new Error("unreachable");
+    expect(out.code).toBe("invitation_booking_indeterminate");
+    expect(out.code).not.toBe("invitation_consumed");
+  });
+
+  it("attempts the booking exactly ONCE and never falls back", async () => {
+    scenario.bookingError = { message: "connection reset" };
+    await publicBookAppointmentAction(invited());
+    // E — the no-retry negative control. A second atomic call, an ordinary
+    // fallback, or a standalone conversion would each be visible here.
+    expect(atomicBookings()).toHaveLength(1);
+    expect(ordinaryBookings()).toHaveLength(0);
+    expect(conversions()).toHaveLength(0);
+    for (const fn of [
+      "issue_scoped_new_client_waitlist_invitation",
+      "release_new_client_waitlist_entry",
+    ]) {
+      expect(rpcCalls.filter((c) => c.fn === fn)).toHaveLength(0);
+    }
+    expect(
+      rpcCalls.filter((c) => c.fn === "redeem_new_client_waitlist_invitation_verified").length,
+    ).toBeLessThanOrEqual(1);
+  });
+
+  it("logs an INDETERMINATE event, not a consumed-without-booking one", async () => {
+    scenario.bookingError = { message: "connection reset" };
+    await publicBookAppointmentAction(invited());
+    const joined = logLines.join("\n");
+    expect(joined).toContain("waitlist_invitation_booking_outcome_indeterminate");
+    expect(joined).not.toContain("waitlist_invitation_consumed_without_booking");
+    // Operator guidance: CHECK before booking, never "book the client directly".
+    expect(joined).toContain("verify_appointment_exists_before_manual_booking");
+    // Still no secrets.
+    expect(joined).not.toContain(TOKEN);
+    expect(joined).not.toContain(CAP);
+    expect(joined).not.toContain(INVITED_EMAIL);
+    expect(joined).not.toContain(INVITED_HASH);
+  });
+
+  it("F — the copy claims NEITHER outcome and never advises rebooking", async () => {
+    scenario.bookingError = { message: "connection reset" };
+    const out = await publicBookAppointmentAction(invited());
+    if (out.ok) throw new Error("unreachable");
+    const copy = out.error.toLowerCase();
+    for (const forbidden of [
+      "nothing is booked",
+      "book the time for you",
+      "rebook",
+      "try another time",
+      "choose another time",
+      "try again",
+    ]) {
+      expect(copy, `indeterminate copy must not say "${forbidden}"`).not.toContain(forbidden);
+    }
+    // It must say what IS known: the invitation is spent, and the outcome is not
+    // confirmed, so the studio has to check.
+    expect(copy).toContain("couldn't confirm");
+    expect(copy).toContain("contact the studio");
+  });
+});
+
+describe("B — a DETERMINISTIC refusal still means no booking exists", () => {
+  it("keeps consumed-without-booking, and cannot become indeterminate", async () => {
+    // The command ANSWERED. Its answer was a refusal, so the transaction rolled
+    // back and there is genuinely no appointment — a different fact from a lost
+    // response, and it keeps its own code, copy and event.
+    for (const refusal of ["scope_weekday_not_allowed", "not_redeemed", "recipient_mismatch"]) {
+      rpcCalls.length = 0;
+      logLines.length = 0;
+      Object.assign(queue, { status: "invited", invitationRedeemed: false });
+      scenario.bookingError = null;
+      scenario.waitlistResult = refusal;
+      const out = await publicBookAppointmentAction(invited());
+      expect(out.ok).toBe(false);
+      if (out.ok) throw new Error("unreachable");
+      expect(out.code, refusal).toBe("invitation_consumed");
+      expect(out.code).not.toBe("invitation_booking_indeterminate");
+      expect(logLines.join("\n")).toContain("waitlist_invitation_consumed_without_booking");
+    }
+  });
+});

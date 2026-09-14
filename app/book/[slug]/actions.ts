@@ -379,7 +379,13 @@ export type PublicBookResult =
         // P2-1. The invitation was CONSUMED and the booking then did not commit.
         // Distinct from every retryable code, because the one thing this visitor
         // must not be told is "try another time".
-        | "invitation_consumed";
+        | "invitation_consumed"
+        /**
+         * The invitation is spent and THIS SERVER CANNOT SAY whether the atomic
+         * booking committed. Structurally separate from `invitation_consumed`,
+         * which asserts no appointment exists.
+         */
+        | "invitation_booking_indeterminate";
     };
 
 export async function publicBookAppointmentAction(formData: FormData): Promise<PublicBookResult> {
@@ -766,6 +772,44 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // reissued, because release_new_client_waitlist_entry answers
   // `already_redeemed` once redeemed. The raw token and the capability are
   // secrets and are never logged.
+  /**
+   * The invitation is spent and the booking's fate is UNKNOWN.
+   *
+   * 0195 commits the appointment, its audit row and the conversion together, so
+   * a lost response does NOT mean the transaction rolled back — the appointment
+   * may already exist. Reporting that as `invitation_consumed` told the
+   * recipient nothing was booked and told the operator to book the time
+   * directly, which is how one prospect ends up holding two appointments.
+   *
+   * NOTHING IS RETRIED HERE, deliberately. Checking is safe; booking again is
+   * not, and this server cannot check without inventing a second authority.
+   */
+  const invitationBookingIndeterminate = (code: string): PublicBookResult => {
+    console.error(
+      JSON.stringify({
+        // ITS OWN EVENT NAME. Logging this under the consumed-without-booking
+        // event would put an unknown outcome in an operator queue whose name
+        // promises there is no appointment.
+        event: "waitlist_invitation_booking_outcome_indeterminate",
+        studioId: studio.id,
+        invitationId: consumedInvitationId,
+        code,
+        source: "public_booking",
+        // OPERATOR GUIDANCE, and it is not "book the client directly".
+        // VERIFY WHETHER AN APPOINTMENT EXISTS BEFORE ANY MANUAL BOOKING.
+        action: "verify_appointment_exists_before_manual_booking",
+        timestamp: new Date().toISOString(),
+      }),
+    );
+    return {
+      ok: false,
+      error:
+        "Your invitation has been used, but we couldn't confirm whether the appointment " +
+        "went through. Please don't try to book again -- contact the studio so they can check.",
+      code: "invitation_booking_indeterminate",
+    };
+  };
+
   const invitationConsumedWithoutBooking = (code: string): PublicBookResult => {
     console.error(
       JSON.stringify({
@@ -1137,13 +1181,14 @@ export async function publicBookAppointmentAction(formData: FormData): Promise<P
   // accepted command is internally inconsistent -- exactly the case worth
   // failing closed on.
   if (consumedInvitationId && (rpcErr || !createdId)) {
-    // TRANSPORT FIRST. `commandResult` is never nullish on the atomic path — an
-    // unreadable answer normalises to the string "no_result" — so asking it
-    // first made a lost response and an empty row log the same word, and this
-    // is the one durable trace an operator has.
-    return invitationConsumedWithoutBooking(
-      rpcErr ? "command_error" : (commandResult ?? "no_result"),
-    );
+    // A LOST RESPONSE IS NOT A ROLLBACK, and for an ATOMIC command the two are
+    // genuinely different states. `create_waitlist_public_appointment` may have
+    // committed the appointment, the audit row and the conversion before the
+    // answer went missing, so the honest report is "unknown", not "nothing
+    // happened". The deterministic case — the command answered, and its answer
+    // was a refusal — keeps the existing consumed-without-booking semantics.
+    if (rpcErr) return invitationBookingIndeterminate("command_error");
+    return invitationConsumedWithoutBooking(commandResult ?? "no_result");
   }
 
   // Expected business refusals come back as closed result codes, never as a

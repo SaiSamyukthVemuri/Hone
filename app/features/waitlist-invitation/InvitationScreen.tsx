@@ -230,6 +230,15 @@ const CLOSED_COPY: Record<InvitationClosedReason, { title: string; body: string 
     // time directly, which is the only route that still works.
     body: "Your invitation was used, but the appointment didn’t go through, so nothing is booked. Please contact the studio and they can book the time for you.",
   },
+  booking_outcome_unknown: {
+    title: "We couldn’t confirm your booking",
+    // ASSERTS NEITHER OUTCOME, because neither is known. It must not say
+    // "nothing is booked" (the appointment may exist), must not say one exists
+    // (it may not), and must not send anyone to rebook — a second booking for
+    // someone who already holds one is the expensive mistake here. The only
+    // honest next step is for the studio to look.
+    body: "Your invitation was used, but we couldn’t confirm whether the appointment went through. Please don’t try to book again — contact the studio and they can check whether your appointment exists.",
+  },
   unsupported_offer: {
     title: "This invitation can’t be booked online",
     // Says what is true and nothing more. It does NOT claim the studio

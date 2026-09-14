@@ -986,6 +986,24 @@ export async function bookInvitationSlotAction(
   fd.set("invitation_capability", capability);
 
   const booked = await publicBookAppointmentAction(fd);
+  // THE OUTCOME IS UNKNOWN, AND THAT IS ITS OWN TERMINAL STATE.
+  //
+  // 0195 is atomic, so a lost response may have left a committed appointment
+  // behind. Falling through to the offer would show live, selectable times to
+  // someone who may already be booked; reusing `consumed_without_booking` would
+  // tell them nothing is booked and send the studio to book the time. Both
+  // assert an outcome nobody here can establish.
+  //
+  // Terminal, because the invitation is spent either way, and the capability is
+  // dropped with it: it authorises nothing now.
+  if (!booked.ok && booked.code === "invitation_booking_indeterminate") {
+    await clearCapability();
+    return {
+      kind: "closed",
+      reason: "booking_outcome_unknown",
+      presentation: ctx.studio.presentation,
+    };
+  }
   if (!booked.ok && booked.code === "invitation_consumed") {
     // P2-A. THE OFFER IS SPENT. The redeem committed and the appointment did
     // not, so re-rendering the offer would show live, selectable times for an

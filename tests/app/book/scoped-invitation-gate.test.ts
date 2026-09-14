@@ -731,7 +731,12 @@ describe("P2-1 — the invitation is spent and the booking did not commit", () =
     expect(out.code).not.toBe("slot_taken");
   });
 
-  it("covers a TRANSPORT failure too — spent with no booking either way", async () => {
+  it("a TRANSPORT failure is INDETERMINATE, not spent-with-no-booking", async () => {
+    // THIS TEST USED TO ASSERT THE OPPOSITE, and the claim in its own name —
+    // "no booking either way" — was the defect. 0195 commits the appointment,
+    // its audit row and the conversion in ONE transaction, so a lost response
+    // may be hiding a COMMITTED booking. `invitation_consumed` states that no
+    // appointment exists, which nobody here can know.
     scenario.bookingError = { message: "connection reset" };
     const out = await publicBookAppointmentAction(
       form({ invitation_token: TOKEN, invitation_capability: CAP }),
@@ -739,7 +744,9 @@ describe("P2-1 — the invitation is spent and the booking did not commit", () =
     expect(out.ok).toBe(false);
     if (out.ok) throw new Error("unreachable");
     expect(redeemed()).toBe(true);
-    expect(out.code).toBe("invitation_consumed");
+    expect(out.code).toBe("invitation_booking_indeterminate");
+    expect(out.code).not.toBe("invitation_consumed");
+    // Still not retryable copy: "try again" is exactly what must not happen.
     expect(out.error).not.toMatch(RETRYABLE);
   });
 

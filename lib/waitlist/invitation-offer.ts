@@ -198,6 +198,25 @@ export type InvitationClosedReason =
    */
   | "consumed_without_booking"
   /**
+   * The invitation was spent and THIS SERVER CANNOT SAY whether the booking
+   * committed.
+   *
+   * DISTINCT FROM `consumed_without_booking`, and the distinction is the whole
+   * point. That reason asserts no appointment exists — it tells the recipient
+   * nothing is booked and the studio can book the time. Both statements are
+   * unsafe here.
+   *
+   * Migration 0195 writes the appointment, its audit row and the conversion in
+   * ONE transaction. When the RPC response is lost, the transaction may well
+   * have COMMITTED: the appointment can already exist. Treating a transport
+   * failure as "nothing happened" invites a second booking for a person who may
+   * already hold one.
+   *
+   * So this reason claims neither outcome. It says the state is unknown and the
+   * studio must CHECK before acting.
+   */
+  | "booking_outcome_unknown"
+  /**
    * The offer names a service the public booking path cannot accept from a new
    * client -- not a consultation, or no longer active.
    *
