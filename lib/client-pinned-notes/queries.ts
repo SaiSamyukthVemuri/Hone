@@ -16,14 +16,24 @@ export async function getPinnedNotesForClient(
   return (data ?? []) as ClientPinnedNote[];
 }
 
-// Latest pinned note per client, used for the compact dashboard roster
-// indicator. Returns a Map keyed by client_id. Clients with no notes are
-// absent from the Map.
-export async function getLatestPinnedNoteByClient(
+// ALL pinned notes per client, newest first, for the dashboard roster.
+//
+// THIS REPLACED A LATEST-ONLY MODEL, AND THE REASON IS THE PRODUCT. The previous
+// `getLatestPinnedNoteByClient` ran this same single query and then kept only the
+// first row per client, discarding the rest. A practitioner who pins three notes
+// saw one and had no way to know the others existed — pinning was silently a
+// one-slot field. Chloe reported exactly that.
+//
+// ONE studio-scoped query for every selected-day client: the grouping happens in
+// memory, so adding clients or notes never adds a roundtrip. There is no LIMIT
+// and no per-client cap — a cap here would recreate the same invisible loss in a
+// less obvious place. Clients with no notes are ABSENT from the Map, so callers
+// can keep treating "missing" as "nothing to show".
+export async function getPinnedNotesByClient(
   studioId: string,
   clientIds: ReadonlyArray<string>,
-): Promise<Map<string, ClientPinnedNote>> {
-  const out = new Map<string, ClientPinnedNote>();
+): Promise<Map<string, ClientPinnedNote[]>> {
+  const out = new Map<string, ClientPinnedNote[]>();
   if (clientIds.length === 0) return out;
 
   const supabase = await createClient();
@@ -35,8 +45,12 @@ export async function getLatestPinnedNoteByClient(
     .order("created_at", { ascending: false });
   if (error) throw new Error(`Failed to load pinned notes: ${error.message}`);
 
+  // The query is already newest-first, so pushing preserves that order within
+  // each client without a second sort.
   for (const row of (data ?? []) as ClientPinnedNote[]) {
-    if (!out.has(row.client_id)) out.set(row.client_id, row);
+    const bucket = out.get(row.client_id);
+    if (bucket) bucket.push(row);
+    else out.set(row.client_id, [row]);
   }
   return out;
 }

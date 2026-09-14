@@ -22,7 +22,7 @@ export type NextActionInput = {
 
 export type NextAction = {
   label:
-    | "Review Before Today"
+    | "Chart session"
     | "Open client"
     | "Chart appointment"
     | "Continue charting"
@@ -66,10 +66,25 @@ export function resolveNextAction(input: NextActionInput): NextAction {
     return { label: "Open client", href: clientHref, chip: null };
   }
 
-  // Upcoming: returning clients get the memory review; brand-new
-  // clients get the profile.
+  // Upcoming, returning client: the action is to CHART, not to read.
+  //
+  // This used to be "Review Before Today" pointing at the client page. Chloe
+  // asked for it to open charting instead, and the Before Today preparation
+  // itself is unaffected — it still renders in the row, which is where the
+  // reading happens. Only the right-side action moved.
+  //
+  // The route is the EXISTING appointment-linked one the completed branch above
+  // already uses. It accepts a confirmed, still-upcoming appointment: the
+  // create action validates studio, client and practitioner lineage and never
+  // gates on status, and the auto-complete helper deliberately returns early
+  // while `ends_at` is in the future. So the session links to the appointment
+  // now and the appointment completes on its own schedule.
   if (input.hasHistory) {
-    return { label: "Review Before Today", href: clientHref, chip: null };
+    return {
+      label: "Chart session",
+      href: `${clientHref}/sessions/new?appointment_id=${input.appointmentId}`,
+      chip: null,
+    };
   }
   return { label: "Open client", href: clientHref, chip: null };
 }

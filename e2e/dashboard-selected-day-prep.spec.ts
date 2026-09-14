@@ -143,7 +143,7 @@ test.describe("preparing a future day", () => {
       await expect(page.getByText("New client · No charted history yet")).toHaveCount(0);
       await expect(page.getByText("Returning client")).toHaveCount(0);
       await expect(page.getByText("Before today", { exact: true })).toHaveCount(0);
-      await expect(page.getByText("Review Before Today")).toHaveCount(0);
+      await expect(page.getByText("Chart session")).toHaveCount(0);
     });
 
     await test.step("8. the genuinely new client gets no fabricated history", async () => {
@@ -174,7 +174,7 @@ test.describe("preparing a future day", () => {
       await expect(today.getByText("Avoid the jawline")).toBeVisible();
       await expect(today.getByText("Prefers the 2pm slot")).toBeVisible();
       await expect(today.getByTestId("dashboard-memory-compact")).toBeVisible();
-      await expect(page.getByText("Review Before Today").first()).toBeVisible();
+      await expect(page.getByText("Chart session").first()).toBeVisible();
     });
 
     await test.step("10. the plan note is NOT printed twice on Today", async () => {

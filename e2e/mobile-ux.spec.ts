@@ -552,13 +552,13 @@ test("mobile: shell, core pages, calendar touch safety", async ({
 
     // PR #236: this charting entered from the CLIENT page (no
     // appointment context), so the session is unlinked and the Today
-    // row's action flips from "Open client" to "Review Before Today"
+    // row's action flips from "Open client" to "Chart session"
     // (the client now has charted history). The linked-session
     // branches (View session / Continue charting) are covered by the
     // core spec, which charts with appointment context.
     await page.goto("/dashboard");
     await expect(
-      page.getByRole("link", { name: "Review Before Today" }).first(),
+      page.getByRole("link", { name: "Chart session" }).first(),
     ).toBeVisible();
     await expectNoPageOverflow(page, "dashboard after charting");
   });

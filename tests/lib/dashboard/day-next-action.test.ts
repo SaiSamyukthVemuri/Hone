@@ -43,7 +43,9 @@ describe("NOT ASKED — the neutral action, never a fabricated absence", () => {
   it("it NEVER claims the returning-client affordance it did not establish", () => {
     for (const status of ["confirmed", "completed", "cancelled", "no_show"]) {
       const out = resolveDayNextAction({ ...base, status, history: { asked: false } });
-      expect(out.label, status).not.toBe("Review Before Today");
+      // The returning-client affordance is now "Chart session"; asserting the
+        // retired label would pass vacuously because nothing emits it any more.
+        expect(out.label, status).not.toBe("Chart session");
     }
   });
 

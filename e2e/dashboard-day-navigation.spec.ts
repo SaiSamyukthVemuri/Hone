@@ -463,7 +463,7 @@ test.describe("history is not asked, and therefore not answered, off Today", () 
         page.getByText("Remember: Lower the energy one step").first(),
       ).toBeVisible();
       await expect(page.getByText("Avoid the jawline").first()).toBeVisible();
-      await expect(page.getByText("Review Before Today").first()).toBeVisible();
+      await expect(page.getByText("Chart session").first()).toBeVisible();
     });
 
     await test.step("17. TOMORROW makes no RELATIONSHIP claim — but does carry preparation", async () => {
@@ -499,9 +499,9 @@ test.describe("history is not asked, and therefore not answered, off Today", () 
     });
 
     await test.step("18. and the primary action makes no claim either", async () => {
-      // "Review Before Today" is the RETURNING-client affordance; it must not
+      // "Chart session" is the RETURNING-client affordance; it must not
       // be offered from a question that was never asked.
-      await expect(page.getByText("Review Before Today")).toHaveCount(0);
+      await expect(page.getByText("Chart session")).toHaveCount(0);
       await expect(page.getByRole("link", { name: "Open client" }).first()).toBeVisible();
     });
   });

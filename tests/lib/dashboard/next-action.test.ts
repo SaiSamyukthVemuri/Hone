@@ -15,10 +15,36 @@ const base = {
 };
 
 describe("resolveNextAction", () => {
-  it("upcoming + returning client: Review Before Today -> client page", () => {
+  it("upcoming + returning client: Chart session -> the appointment-linked chart route", () => {
+    // WAS "Review Before Today" -> /clients/c1. Chloe asked for the right-side
+    // action to start charting; the Before Today preparation still renders in
+    // the row, so nothing was removed, only the action changed.
     expect(
       resolveNextAction({ ...base, status: "confirmed", hasHistory: true }),
-    ).toEqual({ label: "Review Before Today", href: "/clients/c1", chip: null });
+    ).toEqual({
+      label: "Chart session",
+      href: "/clients/c1/sessions/new?appointment_id=a1",
+      chip: null,
+    });
+  });
+
+  it("the retired label is gone from the resolver entirely", () => {
+    const labels = [
+      resolveNextAction({ ...base, status: "confirmed", hasHistory: true }),
+      resolveNextAction({ ...base, status: "confirmed", hasHistory: false }),
+      resolveNextAction({ ...base, status: "completed" }),
+      resolveNextAction({ ...base, status: "cancelled" }),
+      resolveNextAction({ ...base, status: "no_show" }),
+    ].map((a) => a.label);
+    expect(labels).not.toContain("Review Before Today");
+  });
+
+  it("cancelled and no-show never offer charting", () => {
+    for (const status of ["cancelled", "no_show"]) {
+      const a = resolveNextAction({ ...base, status, hasHistory: true });
+      expect(a.label, status).toBe("Open client");
+      expect(a.href, status).not.toContain("/sessions/new");
+    }
   });
 
   it("upcoming + new client: Open client", () => {

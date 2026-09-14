@@ -137,7 +137,7 @@ describe("the TODAY ACTION MATRIX — four cases, no false claim", () => {
   it("1. workflow true + prep treatment -> returning affordance", () => {
     const h = historyFor(true, true, summary({ hasTreatment: true }));
     expect(resolveDayNextAction({ ...base, history: h }).label).toBe(
-      "Review Before Today",
+      "Chart session",
     );
   });
 
@@ -153,7 +153,7 @@ describe("the TODAY ACTION MATRIX — four cases, no false claim", () => {
     const h = historyFor(true, false, summary({ hasTreatment: true }));
     expect(h).toEqual({ asked: true, hasHistory: true });
     expect(resolveDayNextAction({ ...base, history: h }).label).toBe(
-      "Review Before Today",
+      "Chart session",
     );
   });
 

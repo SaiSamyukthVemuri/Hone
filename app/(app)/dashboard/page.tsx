@@ -19,7 +19,7 @@ import {
   getActiveServices,
   getAvailabilityDefaults,
 } from "@/lib/booking/queries";
-import { getLatestPinnedNoteByClient } from "@/lib/client-pinned-notes/queries";
+import { getPinnedNotesByClient } from "@/lib/client-pinned-notes/queries";
 import {
   canNavigateNext,
   canNavigatePrevious,
@@ -379,7 +379,7 @@ export default async function DashboardPage({
   const [practitioners, pinnedByClient, intakeByClient, cardOnFileLoad] =
     await Promise.all([
       getPractitionersForStudio(studio.id),
-      getLatestPinnedNoteByClient(studio.id, selectedDayClientIds),
+      getPinnedNotesByClient(studio.id, selectedDayClientIds),
       loadIntakeStatusByClient(supabase, studio.id, selectedDayClientIds),
       // Chloe: card-on-file status beside each name. Capability is asked
       // FIRST: a studio with no card-on-file route gets `null` and pays ZERO
@@ -788,9 +788,7 @@ export default async function DashboardPage({
                 <AppointmentRow
                   appt={appt}
                   workflow={workflowByAppointment.get(appt.id) ?? null}
-                  pinnedNoteText={
-                    pinnedByClient.get(appt.client_id)?.text ?? null
-                  }
+                  pinnedNotes={pinnedByClient.get(appt.client_id) ?? null}
                   intakeStatus={intakeByClient.get(appt.client_id) ?? null}
                   linkedSession={sessionByAppointment.get(appt.id) ?? null}
                   paymentState={paymentStates.get(appt.id) ?? "unavailable"}
@@ -902,7 +900,7 @@ function DaySummary({
 function AppointmentRow({
   appt,
   workflow,
-  pinnedNoteText,
+  pinnedNotes,
   intakeStatus,
   linkedSession,
   paymentState,
@@ -917,7 +915,7 @@ function AppointmentRow({
   // The ONE derived preparation model for THIS appointment (keyed by
   // appointment id, so two same-client appointments never share a card).
   workflow: TodayWorkflowItem | null;
-  pinnedNoteText: string | null;
+  pinnedNotes: ReadonlyArray<{ id: string; text: string }> | null;
   intakeStatus: ClientIntakeForm["status"] | null;
   linkedSession: { sessionId: string; hasChartedArea: boolean } | null;
   paymentState: AppointmentPaymentState;
@@ -1129,15 +1127,29 @@ function AppointmentRow({
               )}
               <IntakePill status={intakeStatus} />
             </div>
-            {pinnedNoteText && (
-              <div
-                className="mt-1 truncate text-xs text-amber-800 dark:text-amber-300"
-                title={pinnedNoteText}
-              >
-                <span className="font-semibold uppercase tracking-wider text-[10px]">
+            {pinnedNotes && pinnedNotes.length > 0 && (
+              /* EVERY pinned note, newest first. This used to render one
+                 truncated 50-character line, so a practitioner who pinned three
+                 notes saw one and could not tell the others were there. Each
+                 note is its own row and wraps rather than truncating: a pinned
+                 note is something the practitioner chose to keep in front of
+                 themselves, so hiding its second half defeats the point.
+                 `break-words` + `min-w-0` keep long notes from forcing the
+                 roster to scroll sideways on a phone. */
+              <div className="mt-1 flex min-w-0 flex-col gap-0.5">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-400">
                   Pinned
-                </span>{" "}
-                {truncate(pinnedNoteText, 50)}
+                </span>
+                <ul className="flex min-w-0 flex-col gap-0.5">
+                  {pinnedNotes.map((note) => (
+                    <li
+                      key={note.id}
+                      className="min-w-0 whitespace-pre-wrap break-words text-xs text-amber-800 dark:text-amber-300"
+                    >
+                      {note.text}
+                    </li>
+                  ))}
+                </ul>
               </div>
             )}
             {/* PREPARATION: the facts that used to be split across the Today

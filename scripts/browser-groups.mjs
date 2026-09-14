@@ -73,6 +73,11 @@ export const BROWSER_GROUPS = {
       // see." A future day must carry real preparation — previous treatment
       // and the plan note — without claiming new-vs-returning.
       "dashboard-selected-day-prep.spec.ts",
+      // Chloe again, on production: "Not all the pinned notes show up on
+      // dashboard. If I pin multiple notes I need to see all of them." Plus
+      // the right-side action moving from reading (Review Before Today) to
+      // doing (Chart session). Same Today row, so the same group.
+      "dashboard-all-pinned-notes.spec.ts",
       "before-today-imported.spec.ts",
       // Point-of-care treatment memory on the live charting screen: the
       // newest-CHARTED-session selector, the setup fields that used to be
