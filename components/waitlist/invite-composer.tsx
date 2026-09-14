@@ -1,6 +1,6 @@
 "use client";
 
-import { useReducer } from "react";
+import { useActionState, useReducer } from "react";
 
 import { isConsultationService } from "@/lib/booking/consultation";
 import { buttonClasses } from "@/components/ui/button";
@@ -33,7 +33,10 @@ import {
 } from "@/lib/waitlist/b4-invitation-draft";
 import {
   adapterMissingReason,
+  invitationNoticeFor,
   type AdapterCapabilities,
+  type InvitationNotice,
+  type InvitationOutcome,
 } from "@/lib/waitlist/invite-to-book-contract";
 
 // ===========================================================================
@@ -257,6 +260,54 @@ function StatefulInviteComposer(props: InviteComposerProps) {
   return <InviteComposerView {...props} state={state} dispatch={dispatch} />;
 }
 
+/**
+ * What a result-carrying send hands back. Structurally identical to the server
+ * action's own result; declared here so the composer never imports a "use
+ * server" module for a type.
+ */
+export type InviteComposerResult =
+  | { outcome: InvitationOutcome }
+  | { outcome: null; reason: "malformed_submission" };
+
+/**
+ * The structured result, rendered.
+ *
+ * PURE AND EXPORTED ON PURPOSE. The composer's tests render to static markup, so
+ * a status that only appeared after a real submission could not be proved.
+ * Keeping the translation in `invitationNoticeFor` and the markup here makes
+ * every outcome renderable — and provable — without pretending to drive a server
+ * action.
+ *
+ * `role="status"` + `aria-live="polite"`: the practitioner's attention is on the
+ * form they just submitted, and this is the answer to it. A committed invitation
+ * whose email was REFUSED is exactly the case that must not pass unannounced.
+ */
+export function InvitationOutcomeNotice({
+  notice,
+}: {
+  notice: InvitationNotice | null;
+}) {
+  if (!notice) return null;
+  const tone =
+    notice.tone === "success"
+      ? "border-emerald-300 bg-emerald-50 text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200"
+      : notice.tone === "warning"
+        ? "border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200"
+        : "border-rose-300 bg-rose-50 text-rose-900 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-200";
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      data-testid="invite-outcome"
+      data-tone={notice.tone}
+      data-invitation-exists={notice.invitationExists ? "true" : "false"}
+      className={cx("mx-4 mb-3 rounded-md border px-3 py-2 text-sm", tone)}
+    >
+      {notice.message}
+    </div>
+  );
+}
+
 export type InviteComposerProps = {
   /** Namespaces every id this composer emits, so two mounted composers cannot
    *  cross-reference each other's labels and errors. */
@@ -292,6 +343,16 @@ export type InviteComposerProps = {
    * hands them over.
    */
   action?: InviteComposerAction | null;
+  /**
+   * The SAME send, but one that hands its structured result back.
+   *
+   * ADDITIVE; `action` is untouched. #683 types the composer's action as void
+   * deliberately and other callers rely on that. This is a second, opt-in
+   * binding for a surface that can render an answer, and when supplied it is the
+   * one used — a surface able to show the delivery disposition should not
+   * discard it.
+   */
+  resultAction?: ((formData: FormData) => Promise<InviteComposerResult>) | null;
   /** Dismissal, bound the same way. A Cancel with nothing behind it is disabled
    *  for the same reason the send is. */
   cancelAction?: InviteComposerAction | null;
@@ -314,6 +375,7 @@ export function InviteComposerView({
   services,
   capabilities = null,
   action = null,
+  resultAction = null,
   cancelAction = null,
   state,
   dispatch,
@@ -352,14 +414,32 @@ export function InviteComposerView({
   // NO BINDING MEANS NO OPERABLE SEND. The capability gate is unchanged and
   // still decides on its own; this only adds the second reason a send can be
   // impossible — nothing is listening yet.
-  const unbound = action === null;
-  const sendDisabled = send.disabled || unbound;
+  // THE RESULT-CARRYING BINDING, when the surface supplies one.
+  //
+  // React's own form-with-answer convention (useActionState) — the same shape
+  // `client-personal-notes-editor` already uses. `isPending` disables Send for
+  // the round trip: a second press while a send is in flight is the expensive
+  // mistake here, because an invitation may already have committed and consumed
+  // the round's allowance while its answer was still on the wire.
+  const [result, boundResultAction, isPending] = useActionState<
+    InviteComposerResult | null,
+    FormData
+  >(async (_prev, formData) => (resultAction ? await resultAction(formData) : null), null);
+  const notice = result
+    ? invitationNoticeFor(
+        result.outcome,
+        result.outcome === null ? result.reason : undefined,
+      )
+    : null;
+
+  const unbound = action === null && resultAction === null;
+  const sendDisabled = send.disabled || unbound || isPending;
   const sendReason =
     send.reason ?? (unbound ? adapterMissingReason("Send invitation") : undefined);
 
   return (
     <form
-      action={action ?? undefined}
+      action={resultAction ? boundResultAction : (action ?? undefined)}
       className="flex flex-col"
       data-testid="invite-composer"
     >
@@ -647,6 +727,7 @@ export function InviteComposerView({
             control is the one a thumb reaches for; putting Cancel first in
             source order to get it visually left on a desktop would put it under
             the thumb on every phone. */}
+        <InvitationOutcomeNotice notice={notice} />
         <button
           type="submit"
           disabled={sendDisabled}

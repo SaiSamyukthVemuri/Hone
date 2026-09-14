@@ -5,7 +5,7 @@ import {
   INVITE_TO_BOOK_STATUSES,
 } from "@/lib/waitlist/b4-invitation-draft";
 import { admissionCommandAdapter } from "@/lib/waitlist/invite-to-book-adapter";
-import { inviteToBookFormAction } from "./invite-actions";
+import { inviteToBookAction } from "./invite-actions";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { localLongDate } from "@/lib/booking/tz";
@@ -843,7 +843,10 @@ export default async function WaitlistSettingsPage({
                                 draft={emptyDraft()}
                                 services={bookableServices}
                                 capabilities={admissionCommandAdapter.capabilities}
-                                action={inviteToBookFormAction}
+                                // The RESULT-carrying binding: the delivery
+                                // disposition is computed server-side and now
+                                // has somewhere to be shown.
+                                resultAction={inviteToBookAction}
                               />
                             </details>
                           )}

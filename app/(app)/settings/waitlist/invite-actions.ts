@@ -194,13 +194,13 @@ export async function inviteToBookAction(formData: FormData): Promise<InviteActi
  * different implementation — `inviteToBookAction` keeps its typed result for
  * tests and for any future surface that can render one.
  *
- * RECORDED LIMITATION, not hidden: because the contract's action is void, the
- * DELIVERY disposition currently reaches nobody. A `committed / refused` and a
- * `committed / accepted` look identical to the practitioner — the invitation
- * appears either way, and the queue shows `invited`. That is a real product gap
- * and it belongs to whichever surface learns to render
- * `INVITATION_DELIVERY_COPY`, which #683 already exports for exactly this. The
- * truth is computed and correct here; what is missing is somewhere to show it.
+ * THAT LIMITATION IS NOW CLOSED, and this wrapper is kept only for callers that
+ * still want the void shape. The waitlist surface binds `inviteToBookAction`
+ * directly through the composer's `resultAction`, so the DELIVERY disposition
+ * reaches the practitioner: `committed / accepted`, `committed / refused` and
+ * `committed / unknown` now read differently, and a refused or indeterminate
+ * admission is distinguished from all three. The translation lives in
+ * `invitationNoticeFor`; nothing about what this action COMPUTES changed.
  */
 export async function inviteToBookFormAction(formData: FormData): Promise<void> {
   await inviteToBookAction(formData);
