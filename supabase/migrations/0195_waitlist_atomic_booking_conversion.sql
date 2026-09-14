@@ -80,18 +80,24 @@
 --
 --   1. studios                        FOR NO KEY UPDATE   (this function)
 --   2. new_client_waitlist_entries    FOR UPDATE          (this function, target row)
---   3. studios                        FOR UPDATE          <-- UPGRADE, inside
+--   3. clients                        FOR SHARE           (this function, the bound
+--                                                          recipient — see RECIPIENT
+--                                                          BINDING below)
+--   4. studios                        FOR UPDATE          <-- UPGRADE, inside
 --                                                             create_public_appointment
---   4. acquire_studio_capacity_lock   advisory            (nested)
---   5. services                       FOR UPDATE          (nested)
---   6. appointments                   FOR UPDATE          (nested, overlap scan)
---   7. new_client_waitlist_entries    FOR UPDATE          (nested, already held at 2)
---   8. new_client_waitlist_invitations FOR UPDATE         (nested, conversion)
---   9. studios                        FK KEY SHARE        (nested, entry-event
+--   5. acquire_studio_capacity_lock   advisory            (nested)
+--   6. services                       FOR UPDATE          (nested)
+--   7. appointments                   FOR UPDATE          (nested, overlap scan)
+--   8. new_client_waitlist_entries    FOR UPDATE          (nested, already held at 2)
+--   9. new_client_waitlist_invitations FOR UPDATE         (nested, conversion)
+--  10. studios                        FK KEY SHARE        (nested, entry-event
 --                                                          trigger insert; already
---                                                          covered by 3)
+--                                                          covered by 4)
+--  11. clients                        FK KEY SHARE        (nested, appointment and
+--                                                          conversion FKs; compatible
+--                                                          with the SHARE at 3)
 --
--- STEP 3 IS A LOCK UPGRADE AND THE HEADER MUST SAY SO. `create_public_appointment`
+-- STEP 4 IS A LOCK UPGRADE AND THE HEADER MUST SAY SO. `create_public_appointment`
 -- takes `studios … FOR UPDATE`, so this transaction ends up holding FOR UPDATE on
 -- a row it first took as NO KEY UPDATE. An earlier revision of this comment
 -- described the sequence as a "strict append" over "disjoint" object sets. Both
@@ -104,14 +110,61 @@
 -- KEY SHARE on the studio. FOR UPDATE blocks that; NO KEY UPDATE does not. 0193's
 -- admit chose the same mode for the same reason and says so in its own comments.
 --
--- WHY STEP 2 COMES BEFORE STEP 3. Without it the transaction would hold
--- `studios FOR UPDATE` (acquired at 3) and only then request the entry, while a
--- concurrent conversion holds that entry and waits for the KEY SHARE at 9. That
+-- WHY STEP 2 COMES BEFORE STEP 4. Without it the transaction would hold
+-- `studios FOR UPDATE` (acquired at 4) and only then request the entry, while a
+-- concurrent conversion holds that entry and waits for the KEY SHARE at 10. That
 -- cycle was MEASURED as a reproducible 40P01 before this repair. Taking the entry
 -- first inverts nothing, because conversion also reaches the entry before it ever
 -- touches the studio: its own statements are entry -> invitation, and its only
 -- studio lock is the FK one raised by the UPDATE at the end. A competing
 -- conversion therefore blocks on the entry while holding nothing on the studio.
+--
+-- ---------------------------------------------------------------------------
+-- RECIPIENT BINDING — WHY STEP 3 EXISTS
+-- ---------------------------------------------------------------------------
+--
+-- An independent review found that this command took `p_client_id` ON TRUST. It
+-- verified nothing about WHO that client was. `record_new_client_waitlist_conversion`
+-- checks only that the client EXISTS IN THE SAME STUDIO ('client_not_found') — a
+-- same-studio check is NOT a same-person check. So a caller could redeem person
+-- A's invitation, pass person B's client id, and the transaction would book B's
+-- appointment and mark A's entry converted to B. Both halves committed together,
+-- which is exactly the atomicity this migration promises — of the wrong pairing.
+--
+-- THE PREDICATE IS THE REPOSITORY'S OWN, NOT A NEW RULE. Two generated, stored
+-- columns already define normalized identity, and this command compares them:
+--
+--   new_client_waitlist_entries.email_normalized  = lower(btrim(email))     (0185)
+--   clients.normalized_email                      = lower(trim(email)),     (0032)
+--                                                   null when blank
+--
+-- `trim` IS `btrim`, so the two agree. `clients_studio_normalized_email_uniq`
+-- makes that value unique per studio, and `find_or_create_client_for_booking`
+-- resolves a booking's client by exactly this equality. Binding to it therefore
+-- preserves BOTH legitimate paths: a returning client matched on normalized
+-- email, and a brand-new client just inserted from the entry's own address.
+-- Nothing here reads a name, and nothing trusts a browser-supplied address —
+-- the entry side is the stored invitation record.
+--
+-- FAIL CLOSED. A null on either side refuses. A blank entry email normalizes to
+-- '' while a blank client email normalizes to NULL, so that pair refuses too.
+--
+-- WHY FOR SHARE, AND WHY IT IS NOT KEY SHARE. `clients.email` is not a key
+-- column, so `UPDATE clients SET email = …` takes FOR NO KEY UPDATE on the row.
+-- KEY SHARE does NOT conflict with that, and would let the bound identity change
+-- after the check and before the commit. FOR SHARE does conflict, so the row the
+-- binding was proved against cannot be re-pointed mid-transaction. It is also no
+-- stronger than needed: SHARE and KEY SHARE are compatible, so the FK checks at
+-- step 11 — and any concurrent transaction merely referencing this client — are
+-- unaffected.
+--
+-- THE BOOKING SCOPE IS A SEPARATE, UNCLOSED QUESTION. The same review asked for
+-- the redeemed invitation's booking scope to be enforced — that the service and
+-- start time be the ones offered. `new_client_waitlist_invitations` records no
+-- offered service and no offered slot (0188: id, studio_id, entry_id, token_hash,
+-- issued_at, expires_at, issued_by_practitioner_id, redeemed_at, expired_at,
+-- released_at, declined_at). There is no authority in the schema to check
+-- against, so this command does NOT claim to enforce it and does not guess one.
 --
 -- ---------------------------------------------------------------------------
 -- WHAT WAS TESTED, AND WHAT IS NOT CLAIMED
@@ -201,8 +254,10 @@ security definer
 set search_path = pg_catalog, pg_temp
 as $$
 declare
-  v_appt       record;
-  v_conversion text;
+  v_appt         record;
+  v_conversion   text;
+  v_entry_email  text;
+  v_client_email text;
 begin
   -- ---------------------------------------------------------------------
   -- LOCK POLICY. Measured, not assumed — see the lock-order note below.
@@ -231,15 +286,59 @@ begin
   -- Both statements are PERFORM, so a missing row is simply no lock; the
   -- validation below still produces the closed refusal.
   -- ---------------------------------------------------------------------
-  perform 1 from public.studios where id = p_studio_id for no key update;
-  perform 1 from public.new_client_waitlist_entries
-     where id = p_entry_id and studio_id = p_studio_id for update;
-
-  -- Cheap, closed refusal before anything is locked or written. `p_entry_id` is
+  -- Cheap, closed refusal BEFORE anything is locked or written. `p_entry_id` is
   -- what separates this command from ordinary booking; without it the caller
-  -- wanted `create_public_appointment` and should have called it.
+  -- wanted `create_public_appointment` and should have called it. This now runs
+  -- ahead of the locks: locking on a NULL id matched nothing anyway.
   if p_studio_id is null or p_client_id is null or p_entry_id is null then
     return query select 'invalid_input'::text,
+      null::uuid, null::timestamptz, null::timestamptz,
+      null::integer, null::uuid, null::timestamptz;
+    return;
+  end if;
+
+  perform 1 from public.studios where id = p_studio_id for no key update;
+
+  -- STEP 2. The entry, and its IDENTITY, are read under the lock. An earlier
+  -- revision used PERFORM here and never inspected FOUND, so a missing or
+  -- cross-studio entry produced no lock AND no refusal — the guard read as a
+  -- tenancy check while enforcing nothing. Scoping by BOTH id and studio_id
+  -- means a cross-studio entry is simply not found.
+  select e.email_normalized
+    into v_entry_email
+    from public.new_client_waitlist_entries e
+   where e.id = p_entry_id and e.studio_id = p_studio_id
+     for update;
+
+  if not found then
+    return query select 'entry_not_found'::text,
+      null::uuid, null::timestamptz, null::timestamptz,
+      null::integer, null::uuid, null::timestamptz;
+    return;
+  end if;
+
+  -- STEP 3. THE RECIPIENT BINDING. See the header: this is the check whose
+  -- absence let person A's invitation book person B's appointment. FOR SHARE,
+  -- not KEY SHARE, so a concurrent `UPDATE clients SET email = …` (which takes
+  -- FOR NO KEY UPDATE) cannot re-point this identity after the comparison.
+  select c.normalized_email
+    into v_client_email
+    from public.clients c
+   where c.id = p_client_id and c.studio_id = p_studio_id
+     for share;
+
+  if not found then
+    return query select 'client_not_found'::text,
+      null::uuid, null::timestamptz, null::timestamptz,
+      null::integer, null::uuid, null::timestamptz;
+    return;
+  end if;
+
+  -- Fail closed on either side being absent; never treat two NULLs as a match.
+  if v_entry_email is null
+     or v_client_email is null
+     or v_client_email <> v_entry_email then
+    return query select 'recipient_mismatch'::text,
       null::uuid, null::timestamptz, null::timestamptz,
       null::integer, null::uuid, null::timestamptz;
     return;

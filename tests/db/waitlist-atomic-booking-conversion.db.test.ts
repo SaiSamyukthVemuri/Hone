@@ -81,11 +81,20 @@ async function legalSlot(f: Fixture, nth: number): Promise<string> {
 const tokenHash = (seed: string): string =>
   Array.from({ length: 64 }, (_, i) => "0123456789abcdef"[(seed.charCodeAt(i % seed.length) + i) % 16]).join("");
 
-/** Drive the REAL chain to an invited + redeemed entry: admit -> proof -> redeem. */
-async function redeemedEntry(f: Fixture, label: string): Promise<string> {
+/**
+ * Drive the REAL chain to an invited + redeemed entry: admit -> proof -> redeem.
+ *
+ * Returns the entry's EMAIL as well as its id, because 0195 binds the booking
+ * client to the entry's stored address. A test that books some other client is
+ * not testing this command's happy path — it is testing the defect.
+ */
+async function redeemedEntry(
+  f: Fixture, label: string,
+): Promise<{ entryId: string; email: string }> {
+  const email = `w-${label}-${f.studioId.slice(0, 8)}@example.com`;
   const e = await q<any>(
     `select * from public.create_practitioner_waitlist_entry($1,$2,'Prospect',$3,null,null)`,
-    [f.studioId, f.userId, `w-${label}-${f.studioId.slice(0, 8)}@example.com`],
+    [f.studioId, f.userId, email],
   );
   expect(e[0].result).toBe("created");
   const from = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
@@ -106,7 +115,25 @@ async function redeemedEntry(f: Fixture, label: string): Promise<string> {
     [a[0].raw_token, c[0].raw_capability],
   );
   expect(r[0].result).toBe("redeemed");
-  return r[0].entry_id;
+  return { entryId: r[0].entry_id as string, email };
+}
+
+/**
+ * Resolve the booking client the way the booking path itself does — 0032's
+ * `find_or_create_client_for_booking`, which matches on normalized email within
+ * the studio and inserts only when there is no match. Using the repository's own
+ * resolver is what makes the binding test meaningful: it proves the EXISTING and
+ * NEW client paths both satisfy 0195, rather than hand-building a row that
+ * happens to match.
+ */
+async function bookingClient(
+  f: Fixture, email: string,
+): Promise<{ clientId: string; created: boolean }> {
+  const r = await q<any>(
+    `select * from public.find_or_create_client_for_booking($1,$2,'Prospect',null)`,
+    [f.studioId, email],
+  );
+  return { clientId: r[0].client_id as string, created: r[0].client_created_during_call as boolean };
 }
 
 const apptById = (id: string) =>
@@ -116,6 +143,9 @@ const auditFor = (id: string) =>
 const apptCount = (sid: string) =>
   q<any>(`select count(*)::int as n from public.appointments where studio_id=$1`, [sid])
     .then((r) => r[0].n);
+const auditCount = (sid: string) =>
+  q<any>(`select count(*)::int as n from public.appointment_audit where studio_id=$1`, [sid])
+    .then((r) => r[0].n);
 const entryRow = (id: string) =>
   q<any>(
     `select status, converted_at, converted_client_id from public.new_client_waitlist_entries where id=$1`, [id],
@@ -124,11 +154,12 @@ const entryRow = (id: string) =>
 describe("0195 — one transaction: appointment, audit and conversion", () => {
   it("commits all three, and the entry converts to the resolved client", async () => {
     const f = await fixture("ok");
-    const entryId = await redeemedEntry(f, "ok");
+    const { entryId, email } = await redeemedEntry(f, "ok");
+    const { clientId } = await bookingClient(f, email);
     const slot = await legalSlot(f, 0);
 
     const r = await q<any>(
-      BOOK, [f.studioId, f.clientId, f.serviceId, slot, tokenHash("ok"), entryId],
+      BOOK, [f.studioId, clientId, f.serviceId, slot, tokenHash("ok"), entryId],
     );
     expect(r[0].result).toBe("created_and_converted");
     expect(r[0].appointment_id).not.toBeNull();
@@ -136,21 +167,22 @@ describe("0195 — one transaction: appointment, audit and conversion", () => {
     // Verified by the RETURNED id, never by email or client association.
     const appt = await apptById(r[0].appointment_id as string);
     expect(appt).toHaveLength(1);
-    expect(appt[0].client_id).toBe(f.clientId);
+    expect(appt[0].client_id).toBe(clientId);
     expect((await auditFor(r[0].appointment_id as string))[0].n).toBe(1);
 
     const e = await entryRow(entryId);
     expect(e.status).toBe("converted");
     expect(e.converted_at).not.toBeNull();
-    expect(e.converted_client_id).toBe(f.clientId);
+    expect(e.converted_client_id).toBe(clientId);
   });
 
   it("a conversion refusal rolls back THIS invocation's appointment and audit", async () => {
     const f = await fixture("rollback");
-    const entryId = await redeemedEntry(f, "rollback");
+    const { entryId, email } = await redeemedEntry(f, "rollback");
+    const { clientId } = await bookingClient(f, email);
 
     const first = await q<any>(
-      BOOK, [f.studioId, f.clientId, f.serviceId, await legalSlot(f, 0), tokenHash("r1"), entryId],
+      BOOK, [f.studioId, clientId, f.serviceId, await legalSlot(f, 0), tokenHash("r1"), entryId],
     );
     expect(first[0].result).toBe("created_and_converted");
 
@@ -158,7 +190,7 @@ describe("0195 — one transaction: appointment, audit and conversion", () => {
     // The entry is terminal now, so the appointment work is reached and the
     // conversion then refuses. The caller commits the RETURNED result normally.
     const second = await q<any>(
-      BOOK, [f.studioId, f.clientId, f.serviceId, await legalSlot(f, 3), tokenHash("r2"), entryId],
+      BOOK, [f.studioId, clientId, f.serviceId, await legalSlot(f, 3), tokenHash("r2"), entryId],
     );
     expect(second[0].result).toMatch(/^conversion:/);
     expect(second[0].appointment_id).toBeNull();
@@ -166,23 +198,35 @@ describe("0195 — one transaction: appointment, audit and conversion", () => {
     expect(second[0].result).not.toMatch(/^\d{5}$/);
 
     expect(await apptCount(f.studioId)).toBe(before);
+    // SCOPED TO THIS STUDIO ON PURPOSE. An unscoped `where a.id is null` scan
+    // counts orphaned audit rows that other suites legitimately leave in the
+    // shared CI database — it passed on a fresh local chain and found 6 in CI.
+    // The claim is about THIS invocation, so the query must be too.
     const orphans = await q<any>(
-      `select count(*)::int as n from public.appointment_audit au
+      `select count(*)::int as n
+         from public.appointment_audit au
          left join public.appointments a on a.id = au.appointment_id
-        where a.id is null`,
+        where a.id is null
+          and au.studio_id = $1`,
+      [f.studioId],
     );
     expect(orphans[0].n).toBe(0);
+    // Positive control: the FIRST booking's audit row is still there, so the
+    // count above is zero because the rollback worked, not because the join or
+    // the studio filter matched nothing.
+    expect((await auditFor(first[0].appointment_id as string))[0].n).toBe(1);
     expect((await entryRow(entryId)).status).toBe("converted");
   });
 
   it("an appointment refusal converts nothing", async () => {
     const f = await fixture("apt-refuse");
-    const entryId = await redeemedEntry(f, "apt-refuse");
+    const { entryId, email } = await redeemedEntry(f, "apt-refuse");
+    const { clientId } = await bookingClient(f, email);
     const before = await apptCount(f.studioId);
 
     const r = await q<any>(
       BOOK,
-      [f.studioId, f.clientId, "00000000-0000-0000-0000-000000000000",
+      [f.studioId, clientId, "00000000-0000-0000-0000-000000000000",
        await legalSlot(f, 0), tokenHash("ar"), entryId],
     );
     expect(r[0].result).toMatch(/^appointment:/);
@@ -195,13 +239,16 @@ describe("0195 — one transaction: appointment, audit and conversion", () => {
   it("refuses an entry belonging to another studio, and books nothing", async () => {
     const a = await fixture("tenant-a");
     const b = await fixture("tenant-b");
-    const foreign = await redeemedEntry(b, "tenant-b");
+    const { entryId: foreign } = await redeemedEntry(b, "tenant-b");
+    // A client that is legitimately A's, so the refusal below is attributable to
+    // the foreign ENTRY rather than to the recipient binding.
+    const { clientId } = await bookingClient(a, `own-a-${a.studioId.slice(0, 8)}@example.com`);
     const before = await apptCount(a.studioId);
 
     const r = await q<any>(
-      BOOK, [a.studioId, a.clientId, a.serviceId, await legalSlot(a, 0), tokenHash("fx"), foreign],
+      BOOK, [a.studioId, clientId, a.serviceId, await legalSlot(a, 0), tokenHash("fx"), foreign],
     );
-    expect(r[0].result).not.toBe("created_and_converted");
+    expect(r[0].result).toBe("entry_not_found");
     expect(await apptCount(a.studioId)).toBe(before);
     expect((await entryRow(foreign)).status).toBe("invited");
   });
@@ -214,6 +261,114 @@ describe("0195 — one transaction: appointment, audit and conversion", () => {
     );
     expect(r[0].result).toBe("created");
     expect((await auditFor(r[0].appointment_id))[0].n).toBe(1);
+  });
+});
+
+describe("0195 — the conversion is bound to the redeemed recipient", () => {
+  // =========================================================================
+  // WHY THIS BLOCK EXISTS. An independent review found that the command took
+  // `p_client_id` on trust. `record_new_client_waitlist_conversion` checks only
+  // that the client exists IN THE SAME STUDIO, and a same-studio check is not a
+  // same-person check — so person A's redeemed invitation could book person B's
+  // appointment and convert A's entry to B, both committing together.
+  //
+  // Every earlier test in this file passed `f.clientId`, the seeded studio's
+  // own client, which has no email at all. They were all booking the wrong
+  // person and could never have caught this.
+  // =========================================================================
+
+  it("refuses ANOTHER client in the SAME studio, and writes nothing", async () => {
+    const f = await fixture("wrong-recipient");
+    const { entryId } = await redeemedEntry(f, "wrong-recipient");
+
+    // Person B: a real, active client of THIS studio, with a real address that
+    // is simply not the one on the invitation.
+    const other = await bookingClient(f, `someone-else-${f.studioId.slice(0, 8)}@example.com`);
+    expect(other.created).toBe(true);
+
+    const appts = await apptCount(f.studioId);
+    const audits = await auditCount(f.studioId);
+
+    const r = await q<any>(
+      BOOK, [f.studioId, other.clientId, f.serviceId, await legalSlot(f, 0), tokenHash("wr"), entryId],
+    );
+
+    expect(r[0].result).toBe("recipient_mismatch");
+    expect(r[0].appointment_id).toBeNull();
+    // Nothing from THIS invocation survived, and the entry is untouched.
+    expect(await apptCount(f.studioId)).toBe(appts);
+    expect(await auditCount(f.studioId)).toBe(audits);
+    const e = await entryRow(entryId);
+    expect(e.status).toBe("invited");
+    expect(e.converted_at).toBeNull();
+    expect(e.converted_client_id).toBeNull();
+  });
+
+  it("refuses a client from ANOTHER studio", async () => {
+    const a = await fixture("bind-a");
+    const b = await fixture("bind-b");
+    const { entryId, email } = await redeemedEntry(a, "bind-a");
+    // Same address, wrong tenant: b's client normalizes identically, so only the
+    // studio scoping can refuse it. That is the point of the case.
+    const foreignClient = await bookingClient(b, email);
+    const before = await apptCount(a.studioId);
+
+    const r = await q<any>(
+      BOOK, [a.studioId, foreignClient.clientId, a.serviceId, await legalSlot(a, 0), tokenHash("xs"), entryId],
+    );
+
+    expect(r[0].result).toBe("client_not_found");
+    expect(await apptCount(a.studioId)).toBe(before);
+    expect((await entryRow(entryId)).status).toBe("invited");
+  });
+
+  it("refuses a client whose email is absent — never matches NULL to NULL", async () => {
+    const f = await fixture("null-email");
+    const { entryId } = await redeemedEntry(f, "null-email");
+    // `seedStudio`'s client is inserted with no email, so normalized_email is
+    // NULL. Two NULLs must not read as agreement.
+    const before = await apptCount(f.studioId);
+
+    const r = await q<any>(
+      BOOK, [f.studioId, f.clientId, f.serviceId, await legalSlot(f, 0), tokenHash("ne"), entryId],
+    );
+
+    expect(r[0].result).toBe("recipient_mismatch");
+    expect(await apptCount(f.studioId)).toBe(before);
+    expect((await entryRow(entryId)).status).toBe("invited");
+  });
+
+  it("accepts the NEW-client path: the resolver created the client from the entry's address", async () => {
+    const f = await fixture("new-client");
+    const { entryId, email } = await redeemedEntry(f, "new-client");
+    const c = await bookingClient(f, email);
+    expect(c.created).toBe(true); // genuinely the new-client path
+
+    const r = await q<any>(
+      BOOK, [f.studioId, c.clientId, f.serviceId, await legalSlot(f, 0), tokenHash("nc"), entryId],
+    );
+    expect(r[0].result).toBe("created_and_converted");
+    expect((await entryRow(entryId)).converted_client_id).toBe(c.clientId);
+  });
+
+  it("accepts the EXISTING-client path: a returning client matched on normalized email", async () => {
+    const f = await fixture("existing-client");
+    const { entryId, email } = await redeemedEntry(f, "existing-client");
+
+    // The client already exists before the booking, and is matched — not
+    // re-created — even though the caller supplies a differently-cased address
+    // with surrounding whitespace. The normalization is the repository's own.
+    const first = await bookingClient(f, email);
+    expect(first.created).toBe(true);
+    const again = await bookingClient(f, `  ${email.toUpperCase()}  `);
+    expect(again.created).toBe(false);
+    expect(again.clientId).toBe(first.clientId);
+
+    const r = await q<any>(
+      BOOK, [f.studioId, again.clientId, f.serviceId, await legalSlot(f, 0), tokenHash("ec"), entryId],
+    );
+    expect(r[0].result).toBe("created_and_converted");
+    expect((await entryRow(entryId)).converted_client_id).toBe(first.clientId);
   });
 });
 
@@ -242,15 +397,16 @@ describe("0195 — concurrency", () => {
 
   it("two bookings for one redeemed entry: one converts, one refuses, ONE appointment", async () => {
     const f = await fixture("two-book");
-    const entryId = await redeemedEntry(f, "two-book");
+    const { entryId, email } = await redeemedEntry(f, "two-book");
+    const { clientId } = await bookingClient(f, email);
     const [s1, s2] = [await legalSlot(f, 0), await legalSlot(f, 3)];
     const A = await connect(); const B = await connect(); const obs = await connect();
     try {
       const pidB = (await B.query<{ pid: number }>(`select pg_backend_pid() as pid`)).rows[0].pid;
       // NO harness prefix on either side: both are studio-first commands, so an
       // entry-first prefix would be a lock neither command takes first.
-      const ra = inTx(A, (c) => c.query(BOOK, [f.studioId, f.clientId, f.serviceId, s1, tokenHash("t1"), entryId]).then((x) => x.rows[0]));
-      const rb = inTx(B, (c) => c.query(BOOK, [f.studioId, f.clientId, f.serviceId, s2, tokenHash("t2"), entryId]).then((x) => x.rows[0]));
+      const ra = inTx(A, (c) => c.query(BOOK, [f.studioId, clientId, f.serviceId, s1, tokenHash("t1"), entryId]).then((x) => x.rows[0]));
+      const rb = inTx(B, (c) => c.query(BOOK, [f.studioId, clientId, f.serviceId, s2, tokenHash("t2"), entryId]).then((x) => x.rows[0]));
       await waitUntilBlocked(pidB, 3000).catch(() => null);
       const [xa, xb] = await Promise.all([ra, rb]);
       const results = [xa, xb].map((x) => (x.ok ? (x.value as { result: string }).result : `ERR:${x.code}`));
@@ -270,7 +426,8 @@ describe("0195 — concurrency", () => {
     // conversion held the entry and wanted the studio KEY SHARE its event
     // trigger's FK requires.
     const f = await fixture("vs-conv");
-    const entryId = await redeemedEntry(f, "vs-conv");
+    const { entryId, email } = await redeemedEntry(f, "vs-conv");
+    const { clientId } = await bookingClient(f, email);
     const slot = await legalSlot(f, 0);
     const A = await connect(); const B = await connect();
     try {
@@ -280,9 +437,9 @@ describe("0195 — concurrency", () => {
       await B.query("begin");
       await B.query(`select 1 from public.new_client_waitlist_entries where id=$1 for update`, [entryId]);
 
-      const ra = inTx(A, (c) => c.query(BOOK, [f.studioId, f.clientId, f.serviceId, slot, tokenHash("vc"), entryId]).then((x) => x.rows[0]));
+      const ra = inTx(A, (c) => c.query(BOOK, [f.studioId, clientId, f.serviceId, slot, tokenHash("vc"), entryId]).then((x) => x.rows[0]));
       await waitUntilBlocked(pidA, 6000);
-      const rbRows = await B.query<{ r: string }>(CONVERT, [f.studioId, entryId, f.clientId]);
+      const rbRows = await B.query<{ r: string }>(CONVERT, [f.studioId, entryId, clientId]);
       await B.query("commit");
       const xa = await ra;
       expect(rbRows.rows[0].r).toBe("converted");
@@ -292,6 +449,72 @@ describe("0195 — concurrency", () => {
       await Promise.all([A.end(), B.end()].map((p) => p.catch(() => undefined)));
     }
     expect(await apptCount(f.studioId)).toBe(0);
+    expect((await entryRow(entryId)).status).toBe("converted");
+  });
+
+  it("Direction A: the booking holds the recipient, a concurrent email change WAITS", async () => {
+    // THE NEW LOCK IN THE ORDER. Step 3 takes the bound client FOR SHARE so the
+    // identity the binding was proved against cannot be re-pointed before the
+    // commit. KEY SHARE would NOT do this: `UPDATE clients SET email = ...`
+    // takes FOR NO KEY UPDATE, which KEY SHARE does not conflict with.
+    const f = await fixture("lock-fwd");
+    const { entryId, email } = await redeemedEntry(f, "lock-fwd");
+    const { clientId } = await bookingClient(f, email);
+    const slot = await legalSlot(f, 0);
+    const A = await connect(); const B = await connect();
+    try {
+      await A.query("set statement_timeout = 15000");
+      await A.query("begin");
+      const booked = await A.query(BOOK, [f.studioId, clientId, f.serviceId, slot, tokenHash("lf"), entryId]);
+      expect(booked.rows[0].result).toBe("created_and_converted");
+
+      const pidB = (await B.query<{ pid: number }>(`select pg_backend_pid() as pid`)).rows[0].pid;
+      await B.query("set statement_timeout = 15000");
+      await B.query("begin");
+      const changing = B.query(
+        `update public.clients set email = $2 where id = $1`,
+        [clientId, `moved-${f.studioId.slice(0, 8)}@example.com`],
+      );
+
+      // It must genuinely block, not merely finish second.
+      await waitUntilBlocked(pidB, 6000);
+
+      await A.query("commit");
+      await changing;             // proceeds only once A released
+      await B.query("commit");
+    } finally {
+      await Promise.all([A.end(), B.end()].map((p) => p.catch(() => undefined)));
+    }
+    expect((await entryRow(entryId)).status).toBe("converted");
+  });
+
+  it("Direction B: an email change holds the recipient, the booking WAITS and does not deadlock", async () => {
+    // The reverse order, because step 3 introduced a new object into the lock
+    // sequence and an untested direction is an unproven one.
+    const f = await fixture("lock-rev");
+    const { entryId, email } = await redeemedEntry(f, "lock-rev");
+    const { clientId } = await bookingClient(f, email);
+    const slot = await legalSlot(f, 0);
+    const A = await connect(); const B = await connect();
+    try {
+      await B.query("set statement_timeout = 15000");
+      await B.query("begin");
+      // A non-key UPDATE that does NOT change the bound address, so the booking
+      // is still legitimate once it is allowed to proceed.
+      await B.query(`update public.clients set name = 'Renamed' where id = $1`, [clientId]);
+
+      const pidA = (await A.query<{ pid: number }>(`select pg_backend_pid() as pid`)).rows[0].pid;
+      const ra = inTx(A, (c) =>
+        c.query(BOOK, [f.studioId, clientId, f.serviceId, slot, tokenHash("lr"), entryId]).then((x) => x.rows[0]));
+      await waitUntilBlocked(pidA, 6000);
+
+      await B.query("commit");
+      const xa = await ra;
+      expect(xa.ok).toBe(true);                       // no 40P01, no timeout
+      if (xa.ok) expect((xa.value as { result: string }).result).toBe("created_and_converted");
+    } finally {
+      await Promise.all([A.end(), B.end()].map((p) => p.catch(() => undefined)));
+    }
     expect((await entryRow(entryId)).status).toBe("converted");
   });
 });

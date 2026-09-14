@@ -91,6 +91,70 @@ describe("the measured lock policy is present and in order", () => {
   });
 });
 
+describe("the conversion is bound to the redeemed recipient", () => {
+  // An independent review found the command took p_client_id on trust: the
+  // downstream conversion checks only that the client is in the same STUDIO,
+  // which is not the same PERSON. These pin the repair in the source; the
+  // behaviour itself is proved in the .db suite.
+
+  it("compares the two generated normalized-email columns, and invents no rule", () => {
+    expect(CODE).toMatch(/e\.email_normalized/);
+    expect(CODE).toMatch(/c\.normalized_email/);
+    // No hand-rolled normalization and no name-based identity.
+    expect(CODE).not.toMatch(/lower\s*\(\s*(btrim|trim)\s*\(/i);
+    expect(CODE).not.toMatch(/\bc\.name\b/);
+  });
+
+  it("scopes BOTH the entry and the client by studio", () => {
+    expect(CODE).toMatch(
+      /from\s+public\.new_client_waitlist_entries\s+e\s+where\s+e\.id\s*=\s*p_entry_id\s+and\s+e\.studio_id\s*=\s*p_studio_id/i,
+    );
+    expect(CODE).toMatch(
+      /from\s+public\.clients\s+c\s+where\s+c\.id\s*=\s*p_client_id\s+and\s+c\.studio_id\s*=\s*p_studio_id/i,
+    );
+  });
+
+  it("inspects FOUND rather than discarding the lookup", () => {
+    // The original used PERFORM for the entry and never checked FOUND, so the
+    // guard read as a tenancy check while enforcing nothing.
+    expect(CODE).not.toMatch(/perform\s+1\s+from\s+public\.new_client_waitlist_entries/i);
+    expect((CODE.match(/if\s+not\s+found\s+then/gi) ?? []).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("takes the bound client FOR SHARE — not KEY SHARE, which would not block an email change", () => {
+    expect(CODE).toMatch(/from\s+public\.clients\s+c[\s\S]{0,160}?for\s+share;/i);
+    expect(CODE).not.toMatch(/from\s+public\.clients[\s\S]{0,160}?for\s+key\s+share/i);
+  });
+
+  it("enforces the binding BEFORE any appointment work", () => {
+    const mismatch = CODE.search(/recipient_mismatch/);
+    const apptCall = CODE.search(/from\s+public\.create_public_appointment\(/);
+    expect(mismatch).toBeGreaterThan(-1);
+    expect(apptCall).toBeGreaterThan(-1);
+    expect(mismatch).toBeLessThan(apptCall);
+  });
+
+  it("locks the client AFTER the entry, keeping one global order", () => {
+    const entryLock = CODE.search(/from\s+public\.new_client_waitlist_entries\s+e/i);
+    const clientLock = CODE.search(/from\s+public\.clients\s+c/i);
+    expect(entryLock).toBeGreaterThan(-1);
+    expect(clientLock).toBeGreaterThan(entryLock);
+  });
+
+  it("refuses through closed result codes, never raw database text", () => {
+    for (const code of ["entry_not_found", "client_not_found", "recipient_mismatch"]) {
+      expect(CODE).toContain(`'${code}'::text`);
+    }
+  });
+
+  it("does not pretend to enforce a booking scope the schema cannot express", () => {
+    // new_client_waitlist_invitations records no offered service and no offered
+    // slot, so there is nothing to check against. If a future migration adds
+    // one, this assertion should be replaced by a real check — not deleted.
+    expect(CODE).not.toMatch(/offered_service_id|offered_starts_at/);
+  });
+});
+
 describe("rollback is raised, not returned", () => {
   it("uses a private sentinel distinct from 0193's WA001", () => {
     expect(CODE).toMatch(/errcode\s*=\s*'WA002'/);
