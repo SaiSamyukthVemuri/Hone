@@ -1,5 +1,9 @@
 import { InviteComposer } from "@/components/waitlist/invite-composer";
 import { InviteOutcomeBoundary } from "@/components/waitlist/invite-outcome-boundary";
+import {
+  INVITATION_DELIVERY_COPY,
+  type InvitationDeliveryState,
+} from "@/lib/waitlist/invite-to-book-contract";
 import { WaitlistNavLink } from "@/components/waitlist/waitlist-nav-link";
 import { isBookableByNewClient } from "@/lib/booking/consultation";
 import {
@@ -429,6 +433,9 @@ export default async function WaitlistSettingsPage({
   // fact is read rather than assumed, and only for the entries that could use
   // it.
   const invitedIds = rows.filter((r) => r.status === "invited").map((r) => r.id);
+  /** Recorded provider outcome per invited entry. ABSENT means never recorded,
+   *  which is NOT the same as the observed verdict `unknown`. */
+  const deliveryByEntry = new Map<string, InvitationDeliveryState>();
   let cycleByEntry: Map<string, { elapsed: boolean; redeemed: boolean }> | null = new Map();
   if (invitedIds.length > 0) {
     // THE LIVE INVITATION IS A SCHEMA INVARIANT, NOT A CHRONOLOGY GUESS.
@@ -456,7 +463,10 @@ export default async function WaitlistSettingsPage({
     const [live, redeemed] = await Promise.all([
       supabase
         .from("new_client_waitlist_invitations")
-        .select("entry_id,expires_at")
+          // 0196 rides this EXISTING studio-scoped, RLS-governed read: the
+          // disposition belongs to this invitation, so it needs no second query,
+          // no new policy and no service-role path.
+        .select("entry_id,expires_at,delivery_disposition")
         .eq("studio_id", studio.id)
         .in("entry_id", invitedIds)
         .is("redeemed_at", null)
@@ -522,7 +532,18 @@ export default async function WaitlistSettingsPage({
       for (const inv of (live.data ?? []) as Array<{
         entry_id: string;
         expires_at: string;
+        delivery_disposition: string | null;
       }>) {
+        // NULL stays absent. `unknown` is an OBSERVED verdict — the provider was
+        // asked and the answer was unreadable. Nothing recorded means no send has
+        // reported back, and the row must not claim otherwise.
+        if (
+          inv.delivery_disposition === "accepted" ||
+          inv.delivery_disposition === "refused" ||
+          inv.delivery_disposition === "unknown"
+        ) {
+          deliveryByEntry.set(inv.entry_id, inv.delivery_disposition);
+        }
         const expiresAt = new Date(inv.expires_at).getTime();
         cycleByEntry.set(inv.entry_id, {
           // A LIVE row whose clock has passed is the only thing that may be
@@ -711,6 +732,29 @@ export default async function WaitlistSettingsPage({
                               "has not yet been used" would contradict this
                               row's own controls. Where the invitation facts are
                               loaded, the sentence is derived from them. */}
+                          {/* THE RECORDED PROVIDER OUTCOME (0196).
+                              Rendered ONLY when something was actually recorded:
+                              an absent row says nothing, because nothing has
+                              reported back. `unknown` is different — it is an
+                              observed verdict and says so. This is what survives
+                              the practitioner navigating away, which no amount of
+                              in-page state could do. */}
+                          {row.status === "invited" &&
+                            deliveryByEntry.has(row.id) && (
+                              <p
+                                data-testid="row-delivery-outcome"
+                                data-disposition={deliveryByEntry.get(row.id)}
+                                className="text-sm text-neutral-500"
+                              >
+                                {
+                                  INVITATION_DELIVERY_COPY[
+                                    deliveryByEntry.get(
+                                      row.id,
+                                    ) as InvitationDeliveryState
+                                  ]
+                                }
+                              </p>
+                            )}
                           {row.status === "invited" && (
                             <p
                               data-testid="row-status-meaning"

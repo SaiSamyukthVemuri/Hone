@@ -595,7 +595,23 @@ describe("initial invitation delivery", () => {
 
     // And the delivery helper's return type is the delivery vocabulary only, so
     // it cannot express an admission verdict even if a caller wanted one.
-    expect(code).toContain("Promise<InvitationDeliveryState>");
+    //
+    // The helper now returns `DeliveryAttempt`, because a durable record must
+    // distinguish "the provider was never reached" from "the provider answered
+    // unreadably" — see 0196. The GUARD IS UNCHANGED IN INTENT and is checked
+    // through the type instead of the bare alias: the outcome field is still the
+    // delivery vocabulary, and the shape carries no admission verdict.
+    expect(code).toContain("Promise<DeliveryAttempt>");
+    const attemptType = code.slice(
+      code.indexOf("export type DeliveryAttempt = {"),
+      code.indexOf("async function deliverInvitation"),
+    );
+    expect(attemptType).toContain("state: InvitationDeliveryState;");
+    expect(attemptType).toContain("providerAttempted: boolean;");
+    // It cannot name an admission outcome at all.
+    expect(attemptType).not.toContain("InvitationOutcome");
+    expect(attemptType).not.toContain("committed");
+    expect(attemptType).not.toContain("indeterminate");
   });
 
   it("the raw token reaches the mail constructor and NOTHING else", () => {

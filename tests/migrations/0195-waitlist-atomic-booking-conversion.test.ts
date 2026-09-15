@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { fileForVersion, isRepoMax, versionsAbove } from "./helpers/migration-state";
+import { fileForVersion } from "./helpers/migration-state";
 
 // 0195 — WAIT-03 atomic invitation booking + conversion.
 //
@@ -17,17 +17,10 @@ const SQL = readFileSync(path.join(ROOT, "supabase/migrations", FILE), "utf8");
 /** Comment-stripped, so a rule NAMED in prose never satisfies an assertion. */
 const CODE = SQL.replace(/^\s*--.*$/gm, " ");
 
-describe("0195 position in the chain", () => {
-  it("is the repository maximum", () => {
-    // Per CLAUDE.md only the CURRENT max asserts this, so a future migration
-    // does not turn this file red. Whoever adds 0196 moves it.
-    expect(isRepoMax(VERSION)).toBe(true);
-  });
-
-  it("has nothing above it", () => {
-    expect(versionsAbove(VERSION)).toEqual([]);
-  });
-});
+// THE REPO-MAX ASSERTION HAS MOVED TO 0196, exactly as the note here said it
+// should: only the CURRENT maximum's own test may assert it, or every landing
+// migration reds an older file. tests/migrations/0196-waitlist-invitation-
+// delivery-outcome.test.ts now carries it. Nothing else in this file changed.
 
 describe("transaction and lock posture", () => {
   it("opens its own transaction and bounds the lock", () => {
