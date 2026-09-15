@@ -64,6 +64,48 @@ vi.mock("next/cache", () => ({
   revalidateTag: () => {},
 }));
 
+// ---------------------------------------------------------------------------
+// THE INTERLEAVE SEAM.
+//
+// closeTreatmentPlanAction obtains its Supabase client TWICE through this
+// module: once inside verifyPlanForCurrentStudio (for the verification read),
+// then again in the action body AFTER that helper has returned and BEFORE the
+// UPDATE is issued. That second call is therefore an exact, already-existing
+// interleave point between check and write — no production seam is added for
+// the test, and nothing about the action changes.
+//
+// `run` fires on that second call, so a relationship change it makes is
+// guaranteed to land after verification succeeded and before the mutation runs.
+//
+// Discrimination is by the IMMEDIATE caller frame: getCurrentPractitionerWithStudio
+// also reaches createClient, but from lib/supabase/queries.ts, so matching the
+// whole stack would miscount. `calls` and `fired` are asserted by the test, so a
+// refactor that stops matching turns this RED instead of silently passing.
+const interleave = vi.hoisted(() => ({
+  armed: false,
+  calls: 0,
+  fired: 0,
+  run: null as null | (() => Promise<void>),
+}));
+
+vi.mock("@/lib/supabase/server", async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>();
+  return {
+    ...actual,
+    createClient: async (...args: unknown[]) => {
+      const immediate = (new Error().stack ?? "").split("\n").slice(2)[0] ?? "";
+      if (/treatment-plans-actions/.test(immediate)) {
+        interleave.calls += 1;
+        if (interleave.armed && interleave.calls === 2 && interleave.run) {
+          await interleave.run();
+          interleave.fired += 1;
+        }
+      }
+      return (actual.createClient as (...a: unknown[]) => Promise<unknown>)(...args);
+    },
+  };
+});
+
 type ActionResult = { ok: true } | { ok: false; error: string };
 type CloseAction = (fd: FormData) => Promise<ActionResult>;
 
@@ -283,6 +325,65 @@ describe("closeTreatmentPlanAction — object authority", () => {
     const after = await planRow(A.planA);
     expect(after.closed_at).toBe(first.closed_at);
     expect(after.closed_by_practitioner_id).toBe(first.closed_by_practitioner_id);
+  });
+
+  // ------------------------------------------- the mutation-side predicate
+  // P2 4011253879. Every case above is satisfied by the pre-read ALONE: delete
+  // `.eq("client_id", clientId)` from the UPDATE and they all still pass,
+  // because verifyPlanForCurrentStudio refuses the mismatch before the write is
+  // ever reached. That leaves the defence-in-depth binding unpinned — a future
+  // refactor could drop it silently.
+  //
+  // This case separates the two layers. The relationship changes AFTER
+  // verification has already succeeded, so the pre-read cannot help: only a
+  // mutation that re-binds the client can still refuse. It is deterministic,
+  // not a race — the change is injected on the action's own second
+  // createClient(), which sits between the check and the write.
+  it("TOCTOU: a plan reassigned after verification is not closed for the stale client", async () => {
+    const planId = await seedPlan(
+      A.studioId,
+      A.clientA,
+      A.practitionerId,
+      "TOCTOU PLAN",
+    );
+
+    interleave.calls = 0;
+    interleave.fired = 0;
+    interleave.armed = true;
+    interleave.run = async () => {
+      // Hands the plan to CLIENT B while the action holds a verification that
+      // said it belonged to CLIENT A.
+      await adminQuery(
+        `update public.treatment_plans set client_id = $2 where id = $1`,
+        [planId, A.clientB],
+      );
+    };
+
+    let result: ActionResult;
+    try {
+      result = await close(A.clientA, planId);
+    } finally {
+      interleave.armed = false;
+      interleave.run = null;
+    }
+
+    // The seam really fired, and really fired BETWEEN the two calls. Without
+    // this the case could pass while injecting nothing at all.
+    expect(interleave.calls).toBe(2);
+    expect(interleave.fired).toBe(1);
+
+    const after = await planRow(planId);
+    expect(after.client_id).toBe(A.clientB); // the reassignment landed
+
+    // WITH the mutation-side predicate the UPDATE matches zero rows.
+    // WITHOUT it, (id, studio_id, status='active') still matches and the plan
+    // is closed for a client that no longer owns it — which is what makes this
+    // case, and only this case, go red when the predicate is removed.
+    expect(after.status).toBe("active");
+    expect(after.closed_at).toBeNull();
+    expect(after.closed_by_practitioner_id).toBeNull();
+    expect(result.ok).toBe(false);
+    expect(revalidated).toEqual([]);
   });
 
   // -------------------------------------------------- neighbouring behaviour
