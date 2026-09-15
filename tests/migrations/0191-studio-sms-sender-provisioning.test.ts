@@ -94,19 +94,25 @@ describe("0191 — identity and position", () => {
     expect(versionsAbove(VERSION).length).toBeGreaterThan(0);
   });
 
-  it("IS APPLIED to production, and is the CURRENT hosted head", () => {
+  it("IS APPLIED to production, and hosted is at least 0191", () => {
     // COMMS-01B built the model; applying it was a separate, separately
     // authorized act, and it has now happened -- verified read-only against the
     // canonical Hone production project on 2026-09-06 and recorded in
     // migration-state.json plus the ledger's current block.
     //
-    // This block asserted the PRE-apply position (`hosted < 191`, and 0191
-    // present in `pending_migrations`). Both were true only until the apply and
-    // both are false now. 0191 takes over the CURRENT-head claim 0190's file
-    // used to hold; whoever APPLIES 0192 moves this block again and narrows it
-    // to a floor, the way 0190's just was.
+    // THE 0192-0196 HANDOFF HAPPENED, exactly as the previous revision of this
+    // block said it would: "whoever APPLIES 0192 moves this block again and
+    // narrows it to a floor, the way 0190's just was."
+    //
+    // This asserted `hosted_migration_max === '0191'`, true only while 0191 was
+    // the hosted head. 0192-0196 were applied to production on 2026-09-15 and
+    // 0196 owns that claim now. What stays here is the FLOOR -- "hosted is at
+    // least me" -- which is the durable fact about 0191 and remains true for
+    // every migration that follows. Re-asserting equality would make this file
+    // red the moment anything else applies, which is the mechanical sweep
+    // CLAUDE.md forbids.
     const state = migrationState();
-    expect(state.hosted_migration_max).toBe(VERSION);
+    expect(Number(state.hosted_migration_max)).toBeGreaterThanOrEqual(191);
     expect(state.pending_migrations).not.toContain(VERSION);
   });
 

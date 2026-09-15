@@ -14,7 +14,87 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (hosted observation dated 2026-09-06, post-0191 apply; `0192`, `0193`, `0194`, `0195` and `0196` authored and PENDING on this branch)
+## Current state (verified 2026-09-15, post-0196 apply; `0192`, `0193`, `0194`, `0195` and `0196` APPLIED)
+
+> **This block is an APPLY RECORD written by the lane that PERFORMED the apply.**
+> It records both the pre-write gates and the independently read-back result. The
+> apply itself was one `supabase db push --linked` from the reviewed release
+> worktree; no SQL was hand-copied and no migration file was modified.
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0196** (`0196_waitlist_invitation_delivery_outcome.sql`) |
+| **Repo migration max** | **0196** — derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. |
+| **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
+| **Pending migrations** | **none** — `0192`–`0196` were the last pending set. As read back on **2026-09-15**, the repository and hosted database were **at parity**. This is the ledger's own exemption: the current block is the single place permitted to state that relationship, and every other document references it rather than keeping a copy that can drift. |
+| **Next free migration** | Next free number is **0197**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** by this lane — availability is not allocation, and the derivation sees only this working tree. |
+| **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project, re-confirmed from the release worktree immediately before the write and distinct from **Hone Staging** (`ndcqadeirszuzmytvobk`). |
+| **Reviewed release head** | `6d2f302666244a79d01f96e1f40cc272030be57f` (PR #708) — CI-green and Codex-clean at that head, tree clean. |
+| **Apply timestamp** | ⚠️ **NO SERVER-GENERATED APPLY TIMESTAMP WAS CAPTURED**, so `hosted_applied_at` stays `null`. **No precise client-side window is asserted either**: the invocation was not bracketed with captured clock readings, so unlike `0190`/`0189`/`0188`/`0187` there is no start/end pair. The only client-side anchor is the **date, 2026-09-15**. |
+| **Verified applied** | **2026-09-15** — read back by read-only query immediately after the apply: `max(version)` `0196`, **195** history rows, each of `0192`–`0196` present **exactly once**. That is an observation of STATE, not of an apply instant. |
+
+### Per-migration status
+
+| Migration | Status | sha256 (gated before the write) |
+|---|---|---|
+| `0192_waitlist_recipient_proof_authority.sql` | **APPLIED** | `dc6a64100d84b9d6ddfebeba55054108dfff9b20c8896316e52b77c72545a410` |
+| `0193_waitlist_admission_authority.sql` | **APPLIED** | `5255222309f7cb3d3fe678ec1447a5a267e849373117e4212eb718594112f2a2` |
+| `0194_studio_sms_sender_outbound_lookup.sql` | **APPLIED** | `b4a40929acf4e7d291b1752ea1615aa63f1ee19120a33906b3bfa67ab6ce725b` |
+| `0195_waitlist_atomic_booking_conversion.sql` | **APPLIED** | `d08a4bdb37d5000a97e1751846404b755daac239271feca8e8bb3977ec9856c5` |
+| `0196_waitlist_invitation_delivery_outcome.sql` | **APPLIED** | `e12b13b167a733cfb0124c8a196435468f3f17713ac862cf8663120b98289397` |
+
+### Pre-write gates, re-run immediately before the apply
+
+| Gate | Result |
+|---|---|
+| Release head / tree | `6d2f3026…` exact, 0 changes |
+| Hash equality, all five | MATCH |
+| Hosted max before | **0191**, 190 history rows, 0 of 5 packet versions present |
+| **0193 blocking rows** | **0** of 28 entries |
+| **0194 blocking duplicate groups** | **0** |
+| Partial/manual packet objects | **none** |
+| Apply plan (dry run) | exactly `0192`→`0193`→`0194`→`0195`→`0196`, no `0197`, no replay |
+
+**Why the `0193` gate is not ceremonial.** `0193` adds CHECK constraints that read
+`source` — a column it does **not** create; it already existed from `0185` — while
+`joined_at_provenance` arrives defaulted to `'form'` and `created_by_practitioner_id`
+arrives `NULL`. There is **no backfill before the constraints**, so a single hosted
+entry with `source <> 'public_booking'` would have failed the apply. It measured
+zero, and it must be re-measured before any comparable apply elsewhere.
+
+### Post-apply verification — catalog and `SELECT` only, no production function invoked
+
+| Check | Result |
+|---|---|
+| History | 190 → **195** rows, exactly **+5**, each version **exactly once**, **0** duplicates, no `0197` |
+| CLI outcome | exit **0**, definite success — no ambiguity, no retry, no rollback |
+| **Object verification** | **PASS** — admission-round table; 6 invitation scope/decline columns; 2 entry provenance columns; 2 delivery columns; the admit, atomic-booking, sender-lookup, proof, decline, issue-scoped and delivery-record functions; 3 new indexes |
+| **ACL verification** | **PASS** — every new authority function is **service_role-only** (`anon` and `authenticated` hold no EXECUTE); `service_role` has **no direct table read** on `studio_sms_senders`; browser roles cannot read provider identifiers |
+| Constraint validity | **0** unvalidated CHECKs on either waitlist table; the 28 pre-existing entries still satisfy them |
+| **Unexpected drift** | **none** — entries 28 → 28, invitations 0 → 0, `ops_alerts` untouched; **no data was repaired, resolved or deleted** |
+
+### What this apply does NOT mean
+
+> **THE DATABASE IS AHEAD OF THE APPLICATION UNTIL #708 MERGES.**
+>
+> PR #708 was **still unmerged when this apply occurred** and remains unmerged. No
+> application code was deployed. This ordering is deliberate and safe: `0192`–`0196`
+> are additive, so the currently deployed application tolerates them.
+>
+> **WAIT-03 runtime is NOT in production merely because these migrations are applied.**
+>
+> **`0194` remains a DORMANT database capability.** #674's SMS runtime is separate and
+> unmerged; **no provider was activated**, and no email or SMS was sent. Willow WAIT is
+> **not enabled**. The WAIT-04 contract — SMS runtime, consent/STOP, reminders, the 48h
+> deadline, restriction rules, owner exception — is **not built**.
+
+Durable evidence outside the repository:
+`/srv/hone/handoffs/WAIT_FINAL_HOSTED_APPLY_2026-09-15.md` and
+`/srv/hone/handoffs/WAIT_FINAL_HOSTED_PREFLIGHT_2026-09-15.md`.
+
+---
+
+## Previous state (hosted observation dated 2026-09-06, post-0191 apply; `0192`, `0193`, `0194`, `0195` and `0196` authored and PENDING on this branch)
 
 > **This block is an APPLY RECORD written by a RECONCILIATION lane, not by the lane
 > that applied `0191`.** It therefore records the **verified result** of the apply and
