@@ -327,6 +327,16 @@ export type InviteComposerProps = {
   /** Dismissal, bound the same way. A Cancel with nothing behind it is disabled
    *  for the same reason the send is. */
   cancelAction?: InviteComposerAction | null;
+  /**
+   * Why the surface is withholding the send, in the practitioner's words.
+   *
+   * The composer knows about drafts and adapters; it does not know about
+   * invitation capacity, and should not. When the page withholds the send for a
+   * reason of its own, it supplies that reason here rather than leaving the
+   * generic "not connected yet" copy to explain a situation it does not
+   * describe.
+   */
+  unavailableReason?: string | null;
 };
 
 /**
@@ -347,6 +357,7 @@ export function InviteComposerView({
   capabilities = null,
   action = null,
   cancelAction = null,
+  unavailableReason = null,
   state,
   dispatch,
 }: InviteComposerProps & {
@@ -395,8 +406,10 @@ export function InviteComposerView({
 
   const unbound = action === null && outcomeAction === null;
   const sendDisabled = send.disabled || unbound;
+  // The CALLER'S reason wins when it has one: it knows why it withheld the
+  // send, and the generic adapter copy would describe a different situation.
   const sendReason =
-    send.reason ?? (unbound ? adapterMissingReason("Send invitation") : undefined);
+    unavailableReason ?? send.reason ?? (unbound ? adapterMissingReason("Send invitation") : undefined);
 
   return (
     <form

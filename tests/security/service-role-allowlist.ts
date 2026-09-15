@@ -20,6 +20,20 @@ export type ServiceRoleAllowlistEntry = {
 
 export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
   {
+    path: "app/(app)/settings/waitlist/capacity-actions.ts",
+    purpose: "Owner's invitation-capacity open/close, and the round's consumed count.",
+    why:
+      "0192 grants EXECUTE on open_/close_new_client_waitlist_admission_round and on " +
+      "waitlist_admission_round_consumed to service_role ALONE, and revokes all DML on " +
+      "studio_waitlist_admission_rounds from every browser role -- so there is no " +
+      "user-reachable path and no raw-write alternative. This module issues RPC only and " +
+      "never .from(): the ROUND ITSELF is read by page.tsx with the owner's own client " +
+      "under the owner RLS policy. Studio and actor come from " +
+      "getCurrentPractitionerWithStudio(), never from a form field, and both commands " +
+      "re-derive ownership through new_client_waitlist_resolve_owner regardless.",
+    scopeGuard: "getCurrentPractitionerWithStudio",
+  },
+  {
     path: "app/(app)/calendar/[id]/manual-fee-actions.ts",
     purpose: "Authenticated practitioner server action/query.",
     why: "Service-role write/read-through after the caller's studio is resolved via getCurrentPractitionerWithStudio(); every query is scoped to that studio.id.",

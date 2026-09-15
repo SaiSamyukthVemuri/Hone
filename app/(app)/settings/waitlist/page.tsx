@@ -1,4 +1,15 @@
 import { InviteComposer } from "@/components/waitlist/invite-composer";
+import { InvitationCapacityPanel } from "@/components/waitlist/invitation-capacity-panel";
+import {
+  canOfferInvite,
+  inviteUnavailableReason,
+  type InvitationCapacity,
+} from "@/lib/waitlist/invitation-capacity";
+import {
+  closeInvitationsFormAction,
+  readRoundConsumed,
+  startInvitingFormAction,
+} from "./capacity-actions";
 import { InviteOutcomeBoundary } from "@/components/waitlist/invite-outcome-boundary";
 import {
   INVITATION_DELIVERY_COPY,
@@ -275,6 +286,71 @@ export default async function WaitlistSettingsPage({
   // (joined_at, id) total order the index declares, so page 2 is the rows the
   // database itself puts after page 1. Nothing here re-sorts or re-ranks.
   const supabase = await createClient();
+
+  // ===========================================================================
+  // INVITATION CAPACITY — read with THIS page's client, not another one
+  // ===========================================================================
+  //
+  // ONE CLIENT. The queue above and this read share the single owner-scoped
+  // instance the page already built. A second client would be a second identity
+  // to keep in step and a second thing to mock; 0192 grants `authenticated` a
+  // COLUMN-LEVEL SELECT on this table behind the owner RLS policy
+  // `studio_waitlist_admission_rounds_owner_select`, so the owner's own session
+  // is the designed reader. Service-role would bypass that policy and move the
+  // tenant scope into application code.
+  //
+  // `studio_id` is still filtered explicitly as DEFENCE IN DEPTH — RLS is the
+  // authority, this is the belt. `closed_at is null` asks only for the open
+  // round, which the database already guarantees is at most one per studio.
+  //
+  // ONE VALUE, SHARED. The panel and the send guard must never disagree about
+  // whether a capacity is open, so both read this and neither asks again.
+  //
+  // FAILS CLOSED, NEVER TO "none". An unreadable capacity is `unknown`, which
+  // withholds the send. Reading it as "no capacity" would be the same sentence
+  // to the practitioner but a different fact, and a SECOND row -- which the
+  // one-open-round index forbids -- means something is wrong with an assumption
+  // here, not that the first row is fine to use.
+  const capacityRead = await supabase
+    .from("studio_waitlist_admission_rounds")
+    .select("id,allowance,opened_at")
+    .eq("studio_id", studio.id)
+    .is("closed_at", null)
+    .limit(2);
+
+  const capacity: InvitationCapacity = await (async () => {
+    if (capacityRead.error) return { state: "unknown" } as const;
+    const rows = capacityRead.data ?? [];
+    if (rows.length > 1) {
+      console.error(
+        JSON.stringify({
+          event: "waitlist_capacity_impossible_shape",
+          studioId: studio.id,
+          openRounds: rows.length,
+          timestamp: new Date().toISOString(),
+        }),
+      );
+      return { state: "unknown" } as const;
+    }
+    const row = rows[0];
+    if (!row) return { state: "none" } as const;
+    const allowance = Number(row.allowance);
+    if (!Number.isFinite(allowance)) return { state: "unknown" } as const;
+    // The database's own definition of "used". Null means it could not be
+    // established, which is unknown capacity -- not zero.
+    const used = await readRoundConsumed(String(row.id));
+    if (used === null) return { state: "unknown" } as const;
+    return {
+      state: "open",
+      capacity: {
+        roundId: String(row.id),
+        allowance,
+        used,
+        openedAt: String(row.opened_at),
+      },
+    } as const;
+  })();
+
   const rangeFrom = (pageNumber - 1) * SECTION_PAGE_SIZE;
   const sectionReads = await Promise.all(
     SECTIONS.map(async ({ status }) => {
@@ -557,6 +633,11 @@ export default async function WaitlistSettingsPage({
 
   return (
     <div className="flex flex-col gap-6">
+      <InvitationCapacityPanel
+        capacity={capacity}
+        startAction={startInvitingFormAction}
+        closeAction={closeInvitationsFormAction}
+      />
       <section>
         <h2 className="text-xl font-medium">Waitlist</h2>
         <p className="mt-1 text-sm text-neutral-500">
@@ -899,8 +980,17 @@ export default async function WaitlistSettingsPage({
                                 entryName={row.name}
                                 draft={emptyDraft()}
                                 services={bookableServices}
-                                capabilities={admissionCommandAdapter.capabilities}
-
+                                // NO CAPACITY, NO OFFERED SEND. The composer
+                                // still opens for inspection; what it must not
+                                // do is present Send as valid and fail only
+                                // after submission. Usability, not authority —
+                                // the command re-checks regardless.
+                                capabilities={
+                                  canOfferInvite(capacity)
+                                    ? admissionCommandAdapter.capabilities
+                                    : null
+                                }
+                                unavailableReason={inviteUnavailableReason(capacity)}
                               />
                             </details>
                           )}
