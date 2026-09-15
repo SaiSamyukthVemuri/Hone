@@ -288,13 +288,35 @@ export async function closeTreatmentPlanAction(
 ): Promise<ActionResult> {
   const planId = trimmed(formData.get("plan_id"));
   const clientId = trimmed(formData.get("client_id"));
-  if (!planId) return { ok: false, error: "Missing plan id." };
-  if (!clientId) return { ok: false, error: "Missing client id." };
 
-  const { practitioner, studio } = await getCurrentPractitionerWithStudio();
+  // P1 4010957429 — same-studio wrong-client closure.
+  //
+  // Both ids arrive from the browser. This action previously scoped the UPDATE
+  // by (id, studio_id, status='active') and used client_id for nothing but
+  // revalidatePath, so a practitioner on Client A's page could submit Client
+  // B's plan id and close Client B's active plan. Every row involved is inside
+  // the caller's own tenant, so the studio predicate admits all of them, and
+  // there is no database backstop: treatment_plans RLS is studio-scoped only,
+  // the table has no triggers, and `authenticated` holds direct UPDATE. The
+  // application predicate is the whole control.
+  //
+  // verifyPlanForCurrentStudio is the seam every OTHER plan-mutating action in
+  // this file already used; it proves plan ∈ studio AND plan.client_id equals
+  // the submitted client, and (requireActive) that the plan is still open. It
+  // also owns the missing-id checks, so they are no longer repeated here.
+  const check = await verifyPlanForCurrentStudio(planId, clientId, true);
+  if (!check.ok) return check;
+
+  const { practitioner } = await getCurrentPractitionerWithStudio();
   const supabase = await createClient();
 
-  const { error } = await supabase
+  // The pre-read is not the only guard. The mutation independently binds the
+  // whole relationship — id + authoritative studio + the VERIFIED client +
+  // still-active — so a row that changed hands between the check and the write
+  // cannot be closed, and `.select("id")` makes a zero-row outcome observable:
+  // without it the previous implementation reported success for a plan it never
+  // touched (a foreign, missing or already-closed plan all returned ok).
+  const { data, error } = await supabase
     .from("treatment_plans")
     .update({
       status: "closed",
@@ -302,10 +324,23 @@ export async function closeTreatmentPlanAction(
       closed_by_practitioner_id: practitioner.id,
     })
     .eq("id", planId)
-    .eq("studio_id", studio.id)
-    .eq("status", "active");
+    .eq("studio_id", check.studioId)
+    .eq("client_id", clientId)
+    .eq("status", "active")
+    .select("id");
   if (error) return { ok: false, error: `Failed to close plan: ${error.message}` };
+  if (!data || data.length === 0) {
+    // Nothing was closed. Reached only when the plan stopped being an open plan
+    // of this client between the check and the write; the ordinary refusals are
+    // returned by verifyPlanForCurrentStudio above with their own copy.
+    return {
+      ok: false,
+      error: "That plan changed before it could be closed. Reload and try again.",
+    };
+  }
 
+  // Only after a closure that actually happened, and only for the client the
+  // plan is proven to belong to.
   revalidatePath(`/clients/${clientId}`);
   // The attached sessions' banners need to flip from amber to neutral.
   revalidatePath(`/clients/${clientId}/sessions`);
