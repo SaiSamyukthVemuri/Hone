@@ -246,6 +246,7 @@ before assuming the diff broke something.**
 | Job | Budget |
 |---|---|
 | changed-path detection | 2 min |
+| post-merge verification (production push) | target ~5 min · **hard timeout 18 min** |
 | validate (typecheck/lint/build/unit) | 8 min |
 | db integration | 8 min |
 | targeted browser lane | target ~6 min · **hard timeout 15 min** |
@@ -283,7 +284,7 @@ before assuming the diff broke something.**
   installs the CLI from npm via Bun, and `version: 2.102.0` above is a
   grants-parity invariant — a major bump is its own ticket with its own grants
   re-verification and a fresh `db reset` proof.
-- Both workflows declare `permissions: contents: read` at the top level and every
+- All three workflows declare `permissions: contents: read` at the top level and every
   checkout sets `persist-credentials: false`. No workflow holds write
   credentials. A new workflow that genuinely needs one declares **job-level**
   `permissions:` rather than widening the top-level block.
