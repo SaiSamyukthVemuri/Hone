@@ -14,7 +14,7 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (hosted observation dated 2026-09-06, post-0191 apply; `0192`, `0193`, `0194` and `0195` authored and PENDING on this branch)
+## Current state (hosted observation dated 2026-09-06, post-0191 apply; `0192`, `0193`, `0194`, `0195` and `0196` authored and PENDING on this branch)
 
 > **This block is an APPLY RECORD written by a RECONCILIATION lane, not by the lane
 > that applied `0191`.** It therefore records the **verified result** of the apply and
@@ -85,12 +85,21 @@ pending, and carried THIS paragraph across byte-identically from #692, where `01
 the max and the sentence was true. A merge can import a true sentence into a tree that makes
 it false, and the local test run stays green for the reason stated above. It was caught by
 independent review of the assembly, not by a guard. The **Current-state table is the
-authority** for this tree's position: repo max **0195**, with `0192`, `0193`, `0194` and
-`0195` all pending.
+authority** for this tree's position: repo max **0196**, with `0192`, `0193`, `0194`,
+`0195` and `0196` all pending.
 
-**Hosted is still `0191`.** Nothing above records a hosted `0192`, `0193`, `0194` or `0195`,
-and the apply evidence for `0191` in this block is unchanged: all four are authored and
-**UNAPPLIED**.
+**AND IT HAPPENED A FIFTH TIME, IN THIS VERY PARAGRAPH.** The sentence above said `0195`
+and four pending while the table two screens up already said `0196` and five: `0196` was
+authored on the delivery-outcome branch, the table rows were updated, and this narrative was
+carried across unchanged — the exact failure the paragraph exists to describe. Caught again
+by independent review of the release assembly rather than by a guard, for the reason stated
+above: the rule reads the table ROW and never reaches this prose. **When this paragraph and
+the Current-state table disagree, the TABLE is authoritative and this prose is the defect.**
+
+**Hosted is still `0191`.** Nothing above records a hosted `0192`, `0193`, `0194`, `0195` or
+`0196`, and the apply evidence for `0191` in this block is unchanged: all five are authored
+and **UNAPPLIED**. Hosted max is a DECLARED observation, not derived from this tree, and it
+is unchanged by this repair — nothing here re-observes production.
 
 ## Previous state (verified 2026-09-04, post-0190 apply)
 
