@@ -91,6 +91,20 @@ export async function updateSession(request: NextRequest) {
     // and must clear the same anonymous-visitor gate; without this
     // entry, every "Manage appointment:" SMS link bounces to /login.
     pathname.startsWith("/manage/") ||
+    // /invitation/<token> is the WAIT-03 recipient surface: a new-client
+    // prospect opens it from an email, having never had an account, and it is
+    // the only way an issued invitation can be seen, proved, booked or
+    // declined. Without this entry EVERY recipient is bounced to the
+    // practitioner /login before the page or its actions run, which makes the
+    // whole invitation feature unreachable by the only people it is for.
+    //
+    // Reaching the page is not authorisation. The route resolves a 64-hex
+    // bearer token itself and shows nothing without it; the times are already
+    // public at /book/<slug>; and both mutations additionally require a
+    // recipient proof capability the database re-checks inside the locked
+    // command. The token path is registered in TOKEN_ROUTE_PREFIXES so it is
+    // kept out of Referer headers and scrubbed from observability payloads.
+    pathname.startsWith("/invitation/") ||
     // Client portal lives in a separate auth realm: email magic
     // links + an httpOnly cookie session (client_portal_sessions,
     // migration 0052). The portal pages handle their own session

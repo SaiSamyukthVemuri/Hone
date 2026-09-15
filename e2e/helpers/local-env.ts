@@ -99,6 +99,13 @@ export const E2E_WEB_SERVER_ENV: Record<string, string> = {
   // welcome/invitation path reads getResendTransport, so other emails are
   // unaffected. Server-only marker; the module's own guard refuses it in any
   // deployed runtime.
+  // The fake transport's MODE travels with the switch that enables it, so a spec
+  // can drive a provider REFUSAL as well as an acceptance. Same guard, same
+  // fail-closed posture: absent the "1" switch neither variable is forwarded,
+  // and the fake refuses to exist in any deployed environment regardless.
+  ...(process.env.HONE_E2E_FAKE_RESEND === "1" && process.env.HONE_E2E_FAKE_RESEND_MODE
+    ? { HONE_E2E_FAKE_RESEND_MODE: process.env.HONE_E2E_FAKE_RESEND_MODE }
+    : {}),
   ...(process.env.HONE_E2E_FAKE_RESEND === "1"
     ? { HONE_E2E_FAKE_RESEND: "1" }
     : {}),
