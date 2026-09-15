@@ -10,11 +10,29 @@
 
 ## 1. Executive verdict
 
-**No P0. No P1.** I could not construct a cross-tenant read or write, a same-tenant
-wrong-client clinical mutation, a cross-object payment action, or a service-role
-IDOR against this tree.
+> **CORRECTED 2026-09-15. This audit's original verdict was WRONG.** It is preserved
+> below verbatim, because an audit record that quietly rewrites itself as though it
+> had found the defect is worth less than one that admits it did not.
 
-The reason is structural rather than incidental. Hone does not authorize objects by
+| | |
+|---|---|
+| **ORIGINAL_AUDIT_VERDICT** | *"No P0. No P1."* — this audit, at base `8e1e5009`. **Incorrect.** |
+| **INDEPENDENT_REVIEW_CORRECTION** | Codex review of this PR found a real **P1 — 4010957429**: same-studio wrong-client treatment-plan closure. Confirmed by behavioural exploit, not by reading. |
+| **REPAIR_PR** | **#706** — `closeTreatmentPlanAction` bound to the verified client, with zero-row detection. Not repaired here; this branch stays audit evidence. |
+| **PRODUCTION_STATUS** | **RELEASED** at `18b97a89e9852c358921a86865ab4975d7a92c7f`. CI green after a failed-job-only infra rerun; Vercel production deployment confirmed built from that SHA. |
+
+### The original verdict, preserved
+
+> **No P0. No P1.** I could not construct a cross-tenant read or write, a same-tenant
+> wrong-client clinical mutation, a cross-object payment action, or a service-role
+> IDOR against this tree.
+
+**What that claim was actually worth.** The structural reasoning below is sound and
+still holds for every family this audit *enumerated*. What it could not do — and what
+the wording concealed — is say anything about a family the census never listed. The
+P1 lived in exactly such a family. See §8.0 for why the miss happened.
+
+The reason the enumerated families held is structural rather than incidental. Hone does not authorize objects by
 `id` at the application edge and hope RLS catches the rest. It pushes the whole
 relationship into a small number of database **commands**, each of which re-derives
 the actor from `auth.uid()` and re-proves the parent chain before writing. I verified
@@ -35,7 +53,10 @@ tripwire meant to keep it correct does not cover most of the surface it names.
 | Object reference points censused | **118** |
 | Service-role call sites | **202** across 96 files (264 query chains parsed) |
 | Behavioural paths tested (new) | **17**, all passing, 6 proved load-bearing by mutation |
-| P0 / P1 / P2 / P3 | **0 / 0 / 2 / 4** |
+| P0 / P1 / P2 / P3 — **as originally reported** | 0 / **0** / 2 / 4 — the P1 figure was wrong |
+| P0 / P1 / P2 / P3 — **corrected** | 0 / **1** / 2 / 4 |
+| The P1 | **4010957429**, found by independent review of this PR, **not by this audit**. Repaired in #706 and RELEASED. |
+| Still open on this branch | **2 P2** (§8) + 4 P3. Deliberately not repaired here. |
 
 ---
 
@@ -213,17 +234,65 @@ Legend: ✅ proved behaviourally in this audit · ▣ proved by an existing suit
 | intake forms | ▢ | ▢ | ▢ | ▢ | ▣ | ▢ | ▢ | ▢ |
 | storage objects | ▢ | ▢ | ▢ | ▢ | ▢ | ▢ | ▢ | ▢ |
 | calendar integrations | ▢ | ▢ | n/a | ▢ | ▢ | ▢ | ▢ | ▢ |
+| **treatment plans / stages** | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+
+✗ = **not covered at all**. This row did not exist in the original matrix, and its
+absence is the audit's central failure: treatment plans were never enumerated as an
+object family, so case C was never asked of them. The P1 was in case C of this row.
 
 ---
 
 ## 8. Findings
 
-### P0 — none
-### P1 — none
+### 8.0 — the P1 this audit MISSED (4010957429)
+
+Reported not to claim credit, but because an audit's own miss is the most useful
+thing in it.
+
+| | |
+|---|---|
+| **ID** | P1 4010957429 |
+| **Object** | `treatment_plans` |
+| **Entry point** | `closeTreatmentPlanAction`, `app/(app)/clients/[id]/treatment-plans-actions.ts` |
+| **Attack** | a practitioner on Client A's page submits Client B's same-studio `plan_id` and closes Client B's active plan |
+| **Found by** | **independent Codex review of this PR — NOT by this audit** |
+| **Status** | repaired in **#706**, RELEASED at `18b97a89` |
+
+The UPDATE was scoped `id + studio_id + status='active'` and `client_id` was used for
+nothing but `revalidatePath`. Every row involved is inside the caller's own tenant, so
+the studio predicate admitted all of them. **No database backstop existed**:
+`treatment_plans` RLS is studio-scoped only, the table has no triggers, and
+`authenticated` holds direct UPDATE — the application predicate was the whole control.
+
+**Why this audit missed it — three compounding reasons, all mine:**
+
+1. **The census never enumerated treatment plans as an object family.** §7's matrix
+   had fourteen rows and none of them was this one. A case that is never asked cannot
+   be answered, and no amount of rigour inside the other rows compensates.
+2. **I over-trusted a structural argument.** §4 establishes that the clinical surface
+   funnels through database commands that re-derive the actor and re-prove lineage.
+   That is true — and `closeTreatmentPlanAction` does not use one. It writes the table
+   directly through the RLS client. The finding sat in the gap between "most writes go
+   through commands" and "this write does not".
+3. **I read the file and stopped one function short.** §3 records that I reviewed
+   `treatment-plans-actions.ts` by reading. I saw `verifyPlanForCurrentStudio` and the
+   stage actions that use it, and inferred the family was consistent. The close action
+   is twelve lines and sits *above* that helper; it was the one caller that did not
+   use it. **Reading is not proof.** Every family marked ▢ in §7 carries this same
+   risk — that is the honest reading of those marks, and §11 should be read with the
+   P1 in mind.
+
+### P0 — none FOUND
+
+No P0 was found by this audit, and none has been reported since. Given §8.0, read that
+as "none found by a method with a known blind spot", not as "none exists" — the same
+wording that was wrong about P1 would have been equally confident about P0.
+
+### P1 — one, found by INDEPENDENT REVIEW, not by this audit (see §8.0)
 
 ---
 
-### P2-01 — the grant guard cannot see 37 of the 39 commands it exists to protect
+### P2-01 — OPEN — the grant guard cannot see 37 of the 39 commands it exists to protect
 
 | | |
 |---|---|
@@ -273,7 +342,7 @@ set of `anon`-executable non-trigger definer functions must equal a pinned allow
 
 ---
 
-### P2-02 — the 0150 revoke assertion cannot fail
+### P2-02 — OPEN — the 0150 revoke assertion cannot fail
 
 | | |
 |---|---|
@@ -317,6 +386,25 @@ minimum assert the loop array contains every function the file defines.
 | **P3-03** | `revalidatePath(\`/clients/${clientId}/sessions/${sessionId}\`)` builds a cache path from unvalidated form input | Cache-invalidation only, template-constrained to `/clients/**`; no data crosses |
 | **P3-04** | `removeClientPinnedNoteAction` deletes without a `.select("id")` row-affected check | Fails **closed** (deletes nothing); only the success message is imprecise |
 
+### FOLLOW-UP — not a finding, not claimed exploitable
+
+**`updateTreatmentPlanNotesAction`** (`app/(app)/clients/[id]/treatment-plans-actions.ts`).
+
+Its pre-read **does** prove the client relationship — it calls
+`verifyPlanForCurrentStudio(planId, clientId, true)`, which refuses
+`plan.client_id !== clientId`. Its mutation then binds only `(id, studio_id)`, so it
+does not carry the client into the write the way #706's repair now does for the close
+path.
+
+Recorded because it is the same family **one layer weaker**, and because the close
+action showed what happens when the single remaining layer is the one that is missing.
+
+**It is NOT asserted to be exploitable.** No proof of a live defect was attempted or
+obtained, and the pre-read stands between a wrong-client id and the write. Treating
+this as a vulnerability without that proof would repeat, in the opposite direction,
+the error that produced the original verdict above. It needs a separate hardening
+and review decision, not an inference from #706.
+
 ---
 
 ## 9. Missing behavioural-test inventory
@@ -326,8 +414,17 @@ client in the same studio. The deeper gap was *how*: most drive their command th
 `adminQuery` — the **service-role** connection — which bypasses RLS and never
 exercises the actor gate at all.
 
-Still untested behaviourally after this audit (▢ rows in §7), in priority order:
+Still untested behaviourally after this audit (▢ rows in §7), in priority order.
 
+**This list was itself incomplete.** It did not mention treatment plans, because §7
+did not have a row for them — the same omission that hid the P1. Corrected:
+
+0. **Treatment plans / stages — WAS MISSING FROM THIS LIST ENTIRELY.** Case C in this
+   family was the P1 (4010957429). `closeTreatmentPlanAction` now has behavioural
+   coverage in #706 (`tests/db/treatment-plan-close-authority.db.test.ts`, both layers
+   pinned by independent negative controls). The family's **other** writers — stage
+   create/update/delete, notes — still have no behavioural proof, only a shared
+   pre-read.
 1. **Payment attempts / receipts / refunds** — reviewed by reading only. The
    wrong-object substitution case (`attempt_id` from another session) deserves a real
    two-client proof, especially `sendPaymentChargeReceiptAction`.
@@ -371,10 +468,14 @@ Still untested behaviourally after this audit (▢ rows in §7), in priority ord
 
 ## 11. Areas NOT proven safe
 
-Not "suspected unsafe" — **unproven**, and honestly labelled:
+Not "suspected unsafe" — **unproven**, and honestly labelled. Read this section in
+the light of §8.0: one entry of exactly this kind turned out to contain a live P1, so
+"unproven" here should be read as *genuinely unknown*, not as *probably fine*.
 
-1. **Payments** — reviewed thoroughly by reading; no behavioural negative control
-   written. This is the largest residual.
+1. **Treatment plans / stages** — not enumerated at all by the original audit. The
+   close path is now proven (#706); the rest of the family is not.
+2. **Payments** — reviewed thoroughly by reading; no behavioural negative control
+   written. This is the largest residual **still** outstanding.
 2. **Storage plane at runtime** — path *construction* and *validation* are proved by
    unit tests; no test exercises the real storage service with a forged path.
 3. **Google Calendar / Twilio / Stripe webhook correlation** — I confirmed ids are
@@ -392,16 +493,25 @@ Not "suspected unsafe" — **unproven**, and honestly labelled:
 
 ## 12. Recommended repair order
 
-1. **P2-01** — adopt the live-ACL invariant test. The file is written and passing;
+0. **DONE — P1 4010957429**, repaired in #706 and RELEASED at `18b97a89`. Listed
+   first so the order reads correctly in hindsight; it was never in this audit's
+   original list because this audit did not find it.
+1. **Re-audit the families marked ▢ in §7, starting with the ones that write.** This
+   is now the highest-value item, ahead of the P2s: the P1 proved that "reviewed by
+   reading" and "proved" are different claims, and §7 still carries eleven ▢ rows plus
+   one ✗ row. Treatment plans should be enumerated properly, and payments are the
+   largest remaining ▢ surface that moves money.
+2. **P2-01** — adopt the live-ACL invariant test. The file is written and passing;
    it needs a decision to keep it, not new work.
-2. **P2-02** — fix or delete the inert `%s` assertion in the 0150 migration test. A
+3. **P2-02** — fix or delete the inert `%s` assertion in the 0150 migration test. A
    test that cannot fail is worse than no test: it reads as coverage.
-3. **P3-01** — add the `supersedes_note_id` parent check at the app layer for
+4. **P3-01** — add the `supersedes_note_id` parent check at the app layer for
    symmetry with every sibling path (the DB already refuses).
-4. **§9 item 1** — write the payment wrong-object behavioural control.
-5. **P3-02/03/04** — hardening only; batch them.
+5. **FOLLOW-UP** — decide on `updateTreatmentPlanNotesAction`'s mutation-side binding.
+6. **P3-02/03/04** — hardening only; batch them.
 
-Nothing here blocks a release. No runtime change is required to close P2-01 or P2-02.
+The P2s do not block a release and need no runtime change. Item 1 is not a release
+blocker either, but it is the item that would have caught the P1.
 
 ---
 
@@ -460,6 +570,15 @@ re-ran the suite clean before recording any result.
   actor by some means naming no function would be misclassified. I found none.
 - **Read-only on the app layer.** I proved the DB commands behaviourally; the
   TypeScript action layer was audited by reading, not by executing HTTP requests.
+  **This is the limit that produced the miss in §8.0.** The P1 was in the action
+  layer, in a writer that bypassed the command layer entirely. Reading found the
+  helper and the callers that used it, and missed the one caller that did not. A
+  reading-based pass over an action file is evidence about the code the reader
+  looked at, and nothing more.
+- **The census bounds everything else.** Every later phase asks its questions of the
+  families §2 enumerated. A family omitted there is invisible to the whole method,
+  and no amount of depth in the other families compensates. Treatment plans were
+  omitted; that is where the P1 was.
 - **No production, no hosted database, no real Stripe/Resend/Twilio, no real client
   data.** Local stack only, enforced by the harness's non-localhost refusal.
 - **Single-request reasoning.** No concurrency or TOCTOU attacks.
