@@ -1,3 +1,17 @@
+import { InviteComposer } from "@/components/waitlist/invite-composer";
+import { InviteOutcomeBoundary } from "@/components/waitlist/invite-outcome-boundary";
+import {
+  INVITATION_DELIVERY_COPY,
+  type InvitationDeliveryState,
+} from "@/lib/waitlist/invite-to-book-contract";
+import { WaitlistNavLink } from "@/components/waitlist/waitlist-nav-link";
+import { isBookableByNewClient } from "@/lib/booking/consultation";
+import {
+  emptyDraft,
+  INVITE_TO_BOOK_STATUSES,
+} from "@/lib/waitlist/b4-invitation-draft";
+import { admissionCommandAdapter } from "@/lib/waitlist/invite-to-book-adapter";
+import { inviteToBookAction } from "./invite-actions";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { localLongDate } from "@/lib/booking/tz";
@@ -339,6 +353,78 @@ export default async function WaitlistSettingsPage({
     : SECTIONS;
   const now = Date.now();
 
+  // WAIT INTEGRATION-01 — THE SELECTOR SHOWS EXACTLY WHAT A NEW CLIENT CAN BOOK.
+  //
+  // AN EARLIER REVISION OF THIS READ WAS WRONG, and its own comment argued for
+  // the mistake: it selected only `id, name, modality`, declined to narrow on
+  // `active`, and left the filtering to the composer on the grounds that
+  // filtering twice is how a visible list and a validation rule drift apart.
+  //
+  // The premise was false. The composer applies `isConsultationService`, which
+  // is STRICTLY WEAKER than the rule the booking path enforces: it asks only
+  // "is this a consultation", never "is it active". So an archived consultation
+  // service passed it, appeared in the selector, and was rejected later by the
+  // recipient's own booking path — the practitioner scoping an invitation to a
+  // service the invitee could never book.
+  //
+  // THE CANONICAL PREDICATE OWNS THE RULE. `isBookableByNewClient` is the same
+  // function `publicBookAppointmentAction` and the invitation route consult, and
+  // it is deliberately more than an `active` flag: it fails closed on
+  // `active !== true` and THEN asks the consultation question. Reusing it —
+  // rather than adding `.eq("active", true)` here — is what keeps this selector
+  // from becoming a second, quietly diverging opinion about eligibility. Every
+  // field the predicate reads is loaded for it, `active` included.
+  //
+  // The database remains the final authority regardless: `admit_` re-checks the
+  // service itself, so this narrowing decides what is OFFERED, never what is
+  // ALLOWED.
+  //
+  // AN UNREADABLE LIST IS AN EMPTY LIST, not a missing one. #683's contract
+  // requires an explicit concrete service, so an empty list leaves the send
+  // control refusing rather than widening — the failure must never resolve
+  // towards "any service".
+  const { data: serviceRows, error: servicesError } = await supabase
+    .from("services")
+    .select("id, name, modality, active")
+    .eq("studio_id", studio.id)
+    .order("name");
+  if (servicesError) {
+    console.error(
+      JSON.stringify({
+        event: "waitlist_composer_services_read_failed",
+        studioId: studio.id,
+        code: servicesError.code ?? "unknown",
+        timestamp: new Date().toISOString(),
+      }),
+    );
+  }
+  const bookableServices = (
+    servicesError
+      ? []
+      : ((serviceRows ?? []) as Array<{
+          id: string;
+          name: string;
+          modality: string | null;
+          active: boolean | null;
+        }>)
+  )
+    // Shaped for the predicate, then judged BY the predicate. The mapping exists
+    // only because `Pick<Service, "modality" | "name" | "active">` is what it
+    // reads; the decision itself is never re-expressed here.
+    .filter((s) =>
+      isBookableByNewClient({
+        name: s.name,
+        modality: s.modality,
+        // `Service.active` is non-nullable in the schema type, but this row came
+        // over the wire and could arrive null. `=== true` is the SAME strictness
+        // the predicate applies one line later (`active !== true` fails closed),
+        // so narrowing here cannot widen the answer — a null is ineligible under
+        // either spelling. It is a type narrowing, not a second decision.
+        active: s.active === true,
+      }),
+    )
+    .map((s) => ({ id: s.id, name: s.name, modality: s.modality ?? null }));
+
   // WHETHER AN INVITATION HAS RUN OUT IS A DATABASE FACT, NOT A GUESS.
   //
   // "Record expired" may only be offered once `expires_at` has actually
@@ -347,6 +433,9 @@ export default async function WaitlistSettingsPage({
   // fact is read rather than assumed, and only for the entries that could use
   // it.
   const invitedIds = rows.filter((r) => r.status === "invited").map((r) => r.id);
+  /** Recorded provider outcome per invited entry. ABSENT means never recorded,
+   *  which is NOT the same as the observed verdict `unknown`. */
+  const deliveryByEntry = new Map<string, InvitationDeliveryState>();
   let cycleByEntry: Map<string, { elapsed: boolean; redeemed: boolean }> | null = new Map();
   if (invitedIds.length > 0) {
     // THE LIVE INVITATION IS A SCHEMA INVARIANT, NOT A CHRONOLOGY GUESS.
@@ -374,12 +463,41 @@ export default async function WaitlistSettingsPage({
     const [live, redeemed] = await Promise.all([
       supabase
         .from("new_client_waitlist_invitations")
-        .select("entry_id,expires_at")
+          // 0196 rides this EXISTING studio-scoped, RLS-governed read: the
+          // disposition belongs to this invitation, so it needs no second query,
+          // no new policy and no service-role path.
+        .select("entry_id,expires_at,delivery_disposition")
         .eq("studio_id", studio.id)
         .in("entry_id", invitedIds)
         .is("redeemed_at", null)
         .is("expired_at", null)
-        .is("released_at", null),
+        .is("released_at", null)
+        // WAIT INTEGRATION-01 — THE PREDICATE MUST BE THE INDEX'S PREDICATE.
+        //
+        // The comment above names `..._one_live_per_entry` as the authority for
+        // "which invitation is current", and that is right — but 0192 REDEFINED
+        // that index. It is now FOUR columns:
+        //
+        //   where redeemed_at is null and expired_at is null
+        //     and released_at is null and declined_at is null
+        //
+        // This read still asked 0188/0189's THREE. That is not a stylistic gap:
+        // 0192 added `declined_at` precisely so a declined invitation stops
+        // blocking its entry, so the database considers such a row CLOSED and
+        // frees the entry for a later offer — while this page went on counting
+        // it as live. The practitioner saw a phantom live invitation on a row
+        // that was in fact available, with Cancel/Record-expired decided from a
+        // dead cycle's clock.
+        //
+        // Neither component is wrong alone, which is why only an assembly finds
+        // it: the page is correct against a pre-0192 schema, and 0192 is correct
+        // on its own. Matching the index is the fix; no privilege changes and no
+        // second opinion about liveness.
+        //
+        // MIGRATION-FIRST: this column exists because 0192 is in this candidate.
+        // Deploying this read before hosted 0192 is applied would query a column
+        // production does not have. See the PR body's deployment boundary.
+        .is("declined_at", null),
       supabase
         .from("new_client_waitlist_invitations")
         .select("entry_id")
@@ -414,7 +532,18 @@ export default async function WaitlistSettingsPage({
       for (const inv of (live.data ?? []) as Array<{
         entry_id: string;
         expires_at: string;
+        delivery_disposition: string | null;
       }>) {
+        // NULL stays absent. `unknown` is an OBSERVED verdict — the provider was
+        // asked and the answer was unreadable. Nothing recorded means no send has
+        // reported back, and the row must not claim otherwise.
+        if (
+          inv.delivery_disposition === "accepted" ||
+          inv.delivery_disposition === "refused" ||
+          inv.delivery_disposition === "unknown"
+        ) {
+          deliveryByEntry.set(inv.entry_id, inv.delivery_disposition);
+        }
         const expiresAt = new Date(inv.expires_at).getTime();
         cycleByEntry.set(inv.entry_id, {
           // A LIVE row whose clock has passed is the only thing that may be
@@ -453,13 +582,24 @@ export default async function WaitlistSettingsPage({
         </div>
       ) : (
         <>
+          <InviteOutcomeBoundary
+            action={inviteToBookAction}
+            entryNames={Object.fromEntries(rows.map((r) => [r.id, r.name]))}
+          >
           {focusedStatus && (
             <p className="text-sm">
-              <a href={QUEUE_PATH} className="underline">
+              <WaitlistNavLink href={QUEUE_PATH} className="underline">
                 Back to all groups
-              </a>
+              </WaitlistNavLink>
             </p>
           )}
+
+          {/* THE SUBMISSION RESULT LIVES HERE, above every section.
+              `revalidatePath` on a committed admission moves the row to
+              `invited`, and a composer is mounted only for waiting/claimed — so
+              the composer unmounts on exactly the outcomes that carry a delivery
+              disposition. This boundary survives that, and survives the row
+              leaving the visible list altogether. */}
 
           {visibleSections.map(({ status, heading }) => {
             const group = bySection.get(status);
@@ -498,13 +638,13 @@ export default async function WaitlistSettingsPage({
                     <p className="text-sm text-neutral-500">
                       That page is past the end of this group, which holds{" "}
                       {group.total}.{" "}
-                      <a
+                      <WaitlistNavLink
                         href={sectionHref(status)}
                         data-testid="waitlist-page-first"
                         className="underline"
                       >
                         Go to the first page
-                      </a>
+                      </WaitlistNavLink>
                     </p>
                   ) : group.total === 0 ? (
                     <p className="text-sm text-neutral-500">
@@ -520,13 +660,13 @@ export default async function WaitlistSettingsPage({
                     <p className="text-sm text-neutral-500">
                       Showing the {group.rows.length} longest-waiting of{" "}
                       {group.total}.{" "}
-                      <a
+                      <WaitlistNavLink
                         href={sectionHref(status)}
                         data-testid={`waitlist-section-all-${status}`}
                         className="underline"
                       >
                         Show all {group.total}
-                      </a>
+                      </WaitlistNavLink>
                     </p>
                   )
                 )}
@@ -592,6 +732,29 @@ export default async function WaitlistSettingsPage({
                               "has not yet been used" would contradict this
                               row's own controls. Where the invitation facts are
                               loaded, the sentence is derived from them. */}
+                          {/* THE RECORDED PROVIDER OUTCOME (0196).
+                              Rendered ONLY when something was actually recorded:
+                              an absent row says nothing, because nothing has
+                              reported back. `unknown` is different — it is an
+                              observed verdict and says so. This is what survives
+                              the practitioner navigating away, which no amount of
+                              in-page state could do. */}
+                          {row.status === "invited" &&
+                            deliveryByEntry.has(row.id) && (
+                              <p
+                                data-testid="row-delivery-outcome"
+                                data-disposition={deliveryByEntry.get(row.id)}
+                                className="text-sm text-neutral-500"
+                              >
+                                {
+                                  INVITATION_DELIVERY_COPY[
+                                    deliveryByEntry.get(
+                                      row.id,
+                                    ) as InvitationDeliveryState
+                                  ]
+                                }
+                              </p>
+                            )}
                           {row.status === "invited" && (
                             <p
                               data-testid="row-status-meaning"
@@ -711,6 +874,36 @@ export default async function WaitlistSettingsPage({
                             </form>
                           </details>
                           )}
+                          {/* WAIT INTEGRATION-01 — THE REAL INVITE-TO-BOOK PATH.
+                              #683 ships the composer and #685 ships `admit_`;
+                              they are siblings off production, so this binding
+                              exists only in the assembly. The composer is given
+                              the server action directly — its `action` prop is
+                              typed as a plain `(FormData) => …`, which IS a
+                              server action's shape — so there is no second form
+                              and no duplicated composer state here.
+
+                              OFFERED ONLY WHERE THE STATE ALLOWS IT, from
+                              #683's own `INVITE_TO_BOOK_STATUSES`. A row in any
+                              other state gets no composer at all rather than a
+                              disabled one, because the send control's own
+                              disabled state is about the DRAFT, not about
+                              whether this person can be invited. */}
+                          {INVITE_TO_BOOK_STATUSES.includes(row.status) && (
+                            <details className="mt-2">
+                              <summary className="min-h-[44px] cursor-pointer list-none rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium dark:border-neutral-700">
+                                Invite to book
+                              </summary>
+                              <InviteComposer
+                                entryId={row.id}
+                                entryName={row.name}
+                                draft={emptyDraft()}
+                                services={bookableServices}
+                                capabilities={admissionCommandAdapter.capabilities}
+
+                              />
+                            </details>
+                          )}
                         </div>
                       </li>
                     );
@@ -724,28 +917,29 @@ export default async function WaitlistSettingsPage({
                 {(hasPrev || hasNext) && (
                   <nav aria-label={`${heading} pages`} className="flex flex-wrap gap-2">
                     {hasPrev && (
-                      <a
+                      <WaitlistNavLink
                         href={sectionHref(status, pageNumber - 1)}
                         data-testid="waitlist-page-prev"
                         className={NAV_LINK_CLASS}
                       >
                         Previous
-                      </a>
+                      </WaitlistNavLink>
                     )}
                     {hasNext && (
-                      <a
+                      <WaitlistNavLink
                         href={sectionHref(status, pageNumber + 1)}
                         data-testid="waitlist-page-next"
                         className={NAV_LINK_CLASS}
                       >
                         Next
-                      </a>
+                      </WaitlistNavLink>
                     )}
                   </nav>
                 )}
               </section>
             );
           })}
+          </InviteOutcomeBoundary>
         </>
       )}
     </div>
