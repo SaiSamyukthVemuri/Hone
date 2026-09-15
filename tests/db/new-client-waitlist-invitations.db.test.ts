@@ -482,7 +482,7 @@ describe("0188 — privilege", () => {
     }
   });
 
-  it("grants authenticated exactly the nine safe columns, and NEVER token_hash", async () => {
+  it("grants authenticated exactly the eleven safe columns, and NEVER token_hash", async () => {
     const r = await adminQuery(
       `select column_name from information_schema.column_privileges
         where table_schema='public' and table_name='new_client_waitlist_invitations'
@@ -490,7 +490,30 @@ describe("0188 — privilege", () => {
         order by column_name`,
     );
     const granted = r.rows.map((x: { column_name: string }) => x.column_name);
+    // WIDENED BY 0196, DELIBERATELY, AND RECORDED HERE RATHER THAN ALLOWED.
+    //
+    // 0196 grants `authenticated` SELECT on exactly two more columns —
+    // `delivery_disposition` and `delivery_recorded_at` — so the practitioner
+    // can see what the provider did with an invitation's email after they
+    // navigate away. They are operational facts: one of three words
+    // (accepted / refused / unknown) and when it was observed.
+    //
+    // OWNER RLS STILL DECIDES WHICH ROWS. The policy
+    // `new_client_waitlist_invitations_owner_select` -> `is_studio_owner(studio_id)`
+    // is unchanged, so this widens WHAT an owner may read about their own
+    // studio's rows and nothing about WHOSE rows they are.
+    //
+    // EVERY SECRET STAYS WITHHELD: `token_hash`, all `proof_*` challenge and
+    // capability fields, the scope columns and `admission_round_id` remain
+    // ungranted — asserted positively by the complement check below.
+    //
+    // THE INVARIANT IS NOT WEAKENED. This is still an EXACT-SET equality over
+    // a sorted query: no subset match, no contains-only, no regex, no extra
+    // column tolerated. A column added later stays unreadable until someone
+    // edits this list on purpose — which is the whole point of the guard, and
+    // is exactly what it did to 0196.
     expect(granted).toEqual([
+      "delivery_disposition","delivery_recorded_at",
       "entry_id","expired_at","expires_at","id","issued_at",
       "issued_by_practitioner_id","redeemed_at","released_at","studio_id",
     ]);
