@@ -327,6 +327,58 @@ describe("closeTreatmentPlanAction — object authority", () => {
     expect(after.closed_by_practitioner_id).toBe(first.closed_by_practitioner_id);
   });
 
+  // ---------------------------------------- the verification-side predicate
+  // P2 4011409205. The ordinary substitution case above proves the close is
+  // refused, but not WHICH layer refused it: delete the client check inside
+  // verifyPlanForCurrentStudio and it still passes, because the mutation's
+  // own `.eq("client_id", clientId)` then matches zero rows and the action
+  // fails anyway. Safe either way — but it leaves LAYER A unpinned, and the
+  // practitioner silently starts getting the wrong explanation.
+  //
+  // Two things are pinned here, and they fail for different reasons:
+  //
+  //   * the EXACT refusal, which only the verification layer produces. The
+  //     zero-row path says "That plan changed before it could be closed",
+  //     which would be a lie for a pair that was never valid.
+  //   * that the refusal happened BEFORE the mutation could be authority.
+  //     closeTreatmentPlanAction obtains its own client only after the check
+  //     returns ok, so a verification refusal leaves the interleave counter at
+  //     ONE. Reaching two means the action walked past the check and was saved
+  //     downstream — which is exactly the regression this case exists to catch.
+  it("VERIFICATION LAYER: a wrong plan/client pair is refused by the check itself", async () => {
+    // A fresh plan owned by CLIENT B, so this case cannot be perturbed by the
+    // closures other cases perform.
+    const planId = await seedPlan(
+      A.studioId,
+      A.clientB,
+      A.practitionerId,
+      "LAYER A PLAN",
+    );
+
+    interleave.calls = 0;
+    interleave.fired = 0;
+
+    const result = await close(A.clientA, planId);
+
+    // The specific relationship refusal, verbatim. `attachChartEntryToPlanAction`
+    // already treats this exact string as a contract when mapping 0167's RPC
+    // refusal, so pinning it here matches existing practice rather than
+    // inventing a new one.
+    expect(result).toEqual({
+      ok: false,
+      error: "Plan does not belong to this client.",
+    });
+
+    // ONE, not two: the action returned at the check and never obtained the
+    // client it would have mutated with.
+    expect(interleave.calls).toBe(1);
+
+    const after = await planRow(planId);
+    expect(after.status).toBe("active");
+    expect(after.closed_at).toBeNull();
+    expect(revalidated).toEqual([]);
+  });
+
   // ------------------------------------------- the mutation-side predicate
   // P2 4011253879. Every case above is satisfied by the pre-read ALONE: delete
   // `.eq("client_id", clientId)` from the UPDATE and they all still pass,
