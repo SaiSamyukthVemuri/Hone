@@ -57,14 +57,37 @@ export type LinkedSession = {
   modality: string;
 };
 
+/** One row of the in-place chooser. Points at the EXISTING session route. */
+export type ChartChoice = {
+  sessionId: string;
+  /** The existing session page. No new appointment-charts route exists. */
+  href: string;
+  /** Visible label from existing facts only, e.g. "Electrolysis · 2:04 PM". */
+  label: string;
+  /**
+   * Accessible name. Carries the position — "Chart 1 of 2" — because two
+   * sessions of one modality started in the same minute produce IDENTICAL
+   * visible labels, and a screen reader would otherwise hear the same name
+   * twice with no way to tell the links apart. Position is a fact about the
+   * list, not invented clinical meaning: nothing here claims one chart is
+   * newer-and-therefore-more-relevant, only which row is which.
+   */
+  accessibleName: string;
+};
+
 export type ChartResolution =
   | { kind: "none"; label: "Start charting"; href: string }
   | { kind: "one"; label: "Open chart"; href: string; sessionId: string }
   | {
       kind: "many";
       label: "View charts";
-      href: string;
-      sessions: ReadonlyArray<LinkedSession>;
+      /**
+       * NO href. "View charts" expands a bounded chooser IN PLACE on the
+       * dashboard card; it does not navigate. There is deliberately no
+       * /clients/{id}/appointments/{id}/charts page — every destination in
+       * `choices` is the session route that already exists.
+       */
+      choices: ReadonlyArray<ChartChoice>;
     };
 
 /**
@@ -82,6 +105,38 @@ function newestFirst(a: LinkedSession, b: LinkedSession): number {
   return a.id < b.id ? 1 : -1;
 }
 
+/** "electrolysis" -> "Electrolysis". Existing fact, presentation only. */
+function modalityLabel(modality: string): string {
+  if (modality.length === 0) return modality;
+  return modality[0]!.toUpperCase() + modality.slice(1);
+}
+
+/**
+ * Local clock time in the STUDIO's zone, e.g. "2:04 PM".
+ *
+ * The studio's zone, not the viewer's: a practitioner checking the roster while
+ * travelling must read the times their day actually ran on. An unusable zone
+ * would throw inside `Intl`, so it falls back to UTC rather than taking the
+ * whole dashboard card down over a label.
+ */
+function startedTimeLabel(startedAt: string, timeZone: string): string {
+  const at = new Date(startedAt);
+  if (Number.isNaN(at.getTime())) return "";
+  try {
+    return new Intl.DateTimeFormat("en-US", {
+      hour: "numeric",
+      minute: "2-digit",
+      timeZone,
+    }).format(at);
+  } catch {
+    return new Intl.DateTimeFormat("en-US", {
+      hour: "numeric",
+      minute: "2-digit",
+      timeZone: "UTC",
+    }).format(at);
+  }
+}
+
 /**
  * Decide the ONE chart action for an appointment from its live linked sessions.
  *
@@ -89,11 +144,14 @@ function newestFirst(a: LinkedSession, b: LinkedSession): number {
  * this sorts. Passing sessions belonging to another appointment is a caller
  * bug this cannot detect, which is why the grouping step must key strictly on
  * `appointment_id` equality.
+ *
+ * `timeZone` is the studio's IANA zone, used only to render chooser labels.
  */
 export function resolveChartAction(
   clientId: string,
   appointmentId: string,
   liveSessions: ReadonlyArray<LinkedSession>,
+  timeZone = "UTC",
 ): ChartResolution {
   const clientHref = `/clients/${clientId}`;
 
@@ -126,13 +184,27 @@ export function resolveChartAction(
 
   // MORE THAN ONE, ALL LEGITIMATE. Do not choose. Every one of these is a real
   // clinical record and picking "the newest" would hide the others behind a
-  // label that claims to have opened the chart. The chooser carries the real
-  // session identities; the ordering above only decides how they are listed.
+  // label that claims to have opened the chart. The chooser expands IN PLACE
+  // and every row links to the session route that already exists — no new
+  // appointment-charts page is introduced.
+  //
+  // Identical visible labels are ALLOWED and are not disambiguated by
+  // inventing content: two electrolysis sessions started in the same minute
+  // legitimately read the same. Order and links stay deterministic, and only
+  // the accessible name carries position so the links remain distinguishable
+  // to a screen reader.
   return {
     kind: "many",
     label: "View charts",
-    href: `${clientHref}/appointments/${encodeURIComponent(appointmentId)}/charts`,
-    sessions: ordered,
+    choices: ordered.map((s, i) => {
+      const label = `${modalityLabel(s.modality)} · ${startedTimeLabel(s.startedAt, timeZone)}`;
+      return {
+        sessionId: s.id,
+        href: `${clientHref}/sessions/${s.id}`,
+        label,
+        accessibleName: `${label} — chart ${i + 1} of ${ordered.length}`,
+      };
+    }),
   };
 }
 
