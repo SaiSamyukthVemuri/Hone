@@ -145,13 +145,19 @@ function startedTimeLabel(startedAt: string, timeZone: string): string {
  * bug this cannot detect, which is why the grouping step must key strictly on
  * `appointment_id` equality.
  *
- * `timeZone` is the studio's IANA zone, used only to render chooser labels.
+ * `timeZone` is the studio's IANA zone. It is REQUIRED, not defaulted: the
+ * contract promises studio-local chooser labels, and a default silently
+ * satisfies a promise it cannot keep. A forgotten argument would have rendered
+ * UTC — "6:04 PM" against a 2:04 PM appointment reads as data, not as a bug,
+ * which is the worst failure mode available. Omission is now a compile error.
+ * An INVALID zone still falls back safely (see `startedTimeLabel`); absent and
+ * invalid are deliberately no longer the same thing.
  */
 export function resolveChartAction(
   clientId: string,
   appointmentId: string,
   liveSessions: ReadonlyArray<LinkedSession>,
-  timeZone = "UTC",
+  timeZone: string,
 ): ChartResolution {
   const clientHref = `/clients/${clientId}`;
 

@@ -14,6 +14,8 @@ import {
 // appointment-safe (finding 4008020858).
 // ===========================================================================
 
+// The default is gone: every call now states its studio zone.
+const UTC = "UTC";
 const CLIENT = "client-1";
 const APPT = "appt-A";
 const OTHER = "appt-B";
@@ -24,33 +26,33 @@ function s(id: string, startedAt: string, modality = "electrolysis"): LinkedSess
 
 describe("ZERO live sessions — begin", () => {
   it("offers Start charting", () => {
-    const r = resolveChartAction(CLIENT, APPT, []);
+    const r = resolveChartAction(CLIENT, APPT, [], UTC);
     expect(r.kind).toBe("none");
     expect(r.label).toBe("Start charting");
   });
 
   it("carries the appointment id so lineage is stamped on the new session", () => {
-    const r = resolveChartAction(CLIENT, APPT, []);
+    const r = resolveChartAction(CLIENT, APPT, [], UTC);
     expect(r.kind === "none" && r.href).toBe(
       `/clients/${CLIENT}/sessions/new?appointment_id=${APPT}`,
     );
   });
 
   it("encodes an appointment id that would otherwise break the query string", () => {
-    const r = resolveChartAction(CLIENT, "a&b=c", []);
+    const r = resolveChartAction(CLIENT, "a&b=c", [], UTC);
     expect(r.kind === "none" && r.href).toContain("appointment_id=a%26b%3Dc");
   });
 });
 
 describe("EXACTLY ONE live session — open it, by id", () => {
   it("offers Open chart", () => {
-    const r = resolveChartAction(CLIENT, APPT, [s("sess-1", "2026-09-14T10:00:00Z")]);
+    const r = resolveChartAction(CLIENT, APPT, [s("sess-1", "2026-09-14T10:00:00Z")], UTC);
     expect(r.kind).toBe("one");
     expect(r.label).toBe("Open chart");
   });
 
   it("navigates to THAT EXACT session, never back through sessions/new", () => {
-    const r = resolveChartAction(CLIENT, APPT, [s("sess-1", "2026-09-14T10:00:00Z")]);
+    const r = resolveChartAction(CLIENT, APPT, [s("sess-1", "2026-09-14T10:00:00Z")], UTC);
     if (r.kind !== "one") throw new Error(`expected one, got ${r.kind}`);
     expect(r.href).toBe(`/clients/${CLIENT}/sessions/sess-1`);
     // The load-bearing negative: an existing chart is OPENED, not re-derived
@@ -60,7 +62,7 @@ describe("EXACTLY ONE live session — open it, by id", () => {
   });
 
   it("exposes the id so the caller cannot have to re-guess it", () => {
-    const r = resolveChartAction(CLIENT, APPT, [s("sess-1", "2026-09-14T10:00:00Z")]);
+    const r = resolveChartAction(CLIENT, APPT, [s("sess-1", "2026-09-14T10:00:00Z")], UTC);
     expect(r.kind === "one" && r.sessionId).toBe("sess-1");
   });
 });
@@ -72,26 +74,26 @@ describe("MORE THAN ONE live session — refuse to choose", () => {
   ];
 
   it("offers View charts, not a silently-picked chart", () => {
-    const r = resolveChartAction(CLIENT, APPT, two);
+    const r = resolveChartAction(CLIENT, APPT, two, UTC);
     expect(r.kind).toBe("many");
     expect(r.label).toBe("View charts");
   });
 
   it("carries NO navigation href — the chooser expands in place", () => {
-    const r = resolveChartAction(CLIENT, APPT, two);
+    const r = resolveChartAction(CLIENT, APPT, two, UTC);
     // The defect this replaces: last-row-wins handed back one arbitrary id.
     // And there is deliberately no appointment-charts page to navigate to.
     expect(r).not.toHaveProperty("href");
   });
 
   it("introduces NO new appointment-charts route", () => {
-    const r = resolveChartAction(CLIENT, APPT, two);
+    const r = resolveChartAction(CLIENT, APPT, two, UTC);
     expect(r.kind === "many" && r.choices.every((c) => !c.href.includes("/appointments/"))).toBe(true);
     expect(r.kind === "many" && r.choices.every((c) => !c.href.endsWith("/charts"))).toBe(true);
   });
 
   it("links every row to the EXISTING session route", () => {
-    const r = resolveChartAction(CLIENT, APPT, two);
+    const r = resolveChartAction(CLIENT, APPT, two, UTC);
     expect(r.kind === "many" && r.choices.map((c) => c.href)).toEqual([
       `/clients/${CLIENT}/sessions/sess-new`,
       `/clients/${CLIENT}/sessions/sess-old`,
@@ -99,7 +101,7 @@ describe("MORE THAN ONE live session — refuse to choose", () => {
   });
 
   it("hands back EVERY session identity, losing none", () => {
-    const r = resolveChartAction(CLIENT, APPT, two);
+    const r = resolveChartAction(CLIENT, APPT, two, UTC);
     expect(r.kind === "many" && r.choices.map((x) => x.sessionId)).toEqual([
       "sess-new",
       "sess-old",
@@ -111,7 +113,7 @@ describe("MORE THAN ONE live session — refuse to choose", () => {
       s("a", "2026-09-14T08:00:00Z"),
       s("c", "2026-09-14T12:00:00Z"),
       s("b", "2026-09-14T10:00:00Z"),
-    ]);
+    ], UTC);
     expect(r.kind === "many" && r.choices.map((x) => x.sessionId)).toEqual(["c", "b", "a"]);
   });
 
@@ -120,8 +122,8 @@ describe("MORE THAN ONE live session — refuse to choose", () => {
     // the id tiebreak the comparator may return either order and "the newest
     // chart" stops being a stable claim between renders.
     const tie = "2026-09-14T10:00:00Z";
-    const forward = resolveChartAction(CLIENT, APPT, [s("aaa", tie), s("bbb", tie)]);
-    const reversed = resolveChartAction(CLIENT, APPT, [s("bbb", tie), s("aaa", tie)]);
+    const forward = resolveChartAction(CLIENT, APPT, [s("aaa", tie), s("bbb", tie)], UTC);
+    const reversed = resolveChartAction(CLIENT, APPT, [s("bbb", tie), s("aaa", tie)], UTC);
     expect(forward.kind === "many" && forward.choices.map((x) => x.sessionId)).toEqual([
       "bbb",
       "aaa",
@@ -135,7 +137,7 @@ describe("MORE THAN ONE live session — refuse to choose", () => {
   it("does not mutate the caller's array", () => {
     const input = [s("a", "2026-09-14T08:00:00Z"), s("b", "2026-09-14T12:00:00Z")];
     const snapshot = input.map((x) => x.id);
-    resolveChartAction(CLIENT, APPT, input);
+    resolveChartAction(CLIENT, APPT, input, UTC);
     expect(input.map((x) => x.id)).toEqual(snapshot);
   });
 
@@ -144,7 +146,7 @@ describe("MORE THAN ONE live session — refuse to choose", () => {
     const r = resolveChartAction(CLIENT, APPT, [
       s("elec", "2026-09-14T10:00:00Z", "electrolysis"),
       s("laser", "2026-09-14T11:00:00Z", "laser"),
-    ]);
+    ], UTC);
     expect(r.kind).toBe("many");
     expect(r.kind === "many" && r.choices.map((x) => x.label)).toEqual([
       "Laser · 11:00 AM",
@@ -170,11 +172,21 @@ describe("chooser labels use existing facts only", () => {
     ]);
   });
 
+  it("REQUIRES a zone — omitting it no longer silently means UTC", () => {
+    // P2 4010764268. The contract promises studio-local labels; a default
+    // satisfied that promise in name only, and "6:04 PM" against a 2:04 PM
+    // appointment reads as data rather than as a bug. Omission is now a
+    // compile error, which this asserts at the type level: the call below
+    // does not compile without a fourth argument.
+    // @ts-expect-error - timeZone is required, not defaulted
+    resolveChartAction(CLIENT, APPT, [s("a", "2026-09-14T18:04:00Z")]);
+  });
+
   it("uses the studio zone, not UTC, so the times match the day as it ran", () => {
     const utc = resolveChartAction(CLIENT, APPT, [
       s("a", "2026-09-14T18:04:00Z"),
       s("b", "2026-09-14T19:00:00Z"),
-    ]);
+    ], UTC);
     const toronto = resolveChartAction(
       CLIENT,
       APPT,
@@ -276,7 +288,7 @@ describe("grouping replaces last-row-wins", () => {
     ]);
     expect(g.has(OTHER)).toBe(false);
     // …and an absent appointment resolves to the begin branch.
-    expect(resolveChartAction(CLIENT, OTHER, g.get(OTHER) ?? []).kind).toBe("none");
+    expect(resolveChartAction(CLIENT, OTHER, g.get(OTHER) ?? [], UTC).kind).toBe("none");
   });
 });
 
@@ -287,7 +299,7 @@ describe("appointment status has NO say in which chart opens", () => {
     // lifecycle authority and is deliberately not an input here — this test
     // pins that by the resolver having no status parameter to vary.
     const one = [s("sess-1", "2026-09-14T10:00:00Z")];
-    const r = resolveChartAction(CLIENT, APPT, one);
+    const r = resolveChartAction(CLIENT, APPT, one, UTC);
     if (r.kind !== "one") throw new Error(`expected one, got ${r.kind}`);
     expect(r.label).toBe("Open chart");
     expect(r.href).toBe(`/clients/${CLIENT}/sessions/sess-1`);
@@ -298,7 +310,7 @@ describe("appointment status has NO say in which chart opens", () => {
       s("x", "2026-09-14T10:00:00Z"),
       s("y", "2026-09-14T11:00:00Z"),
     ]]) {
-      const label = resolveChartAction(CLIENT, APPT, set).label;
+      const label = resolveChartAction(CLIENT, APPT, set, UTC).label;
       expect(["Start charting", "Open chart", "View charts"]).toContain(label);
     }
   });
