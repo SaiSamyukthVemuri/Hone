@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { fileForVersion, isRepoMax, versionsAbove } from "./helpers/migration-state";
+import {
+  fileForVersion,
+  isRepoMax,
+  migrationState,
+  versionsAbove,
+} from "./helpers/migration-state";
 
 // 0196 — the recorded delivery outcome.
 //
@@ -27,6 +32,25 @@ describe("0196 position in the chain", () => {
   });
   it("has nothing above it", () => {
     expect(versionsAbove(VERSION)).toEqual([]);
+  });
+
+  it("IS APPLIED to production, and is the CURRENT hosted head", () => {
+    // 0196 OWNS THE EXACT HOSTED-HEAD CLAIM, and owning it is the point.
+    //
+    // 0192-0196 were applied to production on 2026-09-15. Before that, 0191's
+    // file asserted `hosted_migration_max === '0191'`; it now keeps only a
+    // FLOOR (`hosted >= 0191`), which is the durable fact about an older
+    // applied migration and stays true forever. Equality is a CURRENT claim, so
+    // exactly one file may hold it — and it has to be this one, because leaving
+    // it on 0191 would have made that file red the moment anything else applied,
+    // and dropping it entirely would leave the hosted head asserted nowhere.
+    //
+    // Whoever applies 0197 moves this block: narrow 0196 to a floor the way
+    // 0191 was narrowed, and let the new head take equality. That hand-off is
+    // the rule, not a courtesy.
+    const state = migrationState();
+    expect(state.hosted_migration_max).toBe(VERSION);
+    expect(state.pending_migrations).not.toContain(VERSION);
   });
 });
 
