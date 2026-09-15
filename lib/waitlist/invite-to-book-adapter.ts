@@ -272,33 +272,80 @@ const ADMIT_AUTHORITY_REFUSALS: Record<string, DefiniteInviteToBookRefusal | und
 /**
  * Persist the provider outcome for one invitation send.
  *
- * NEVER THROWS. The command itself is total — it returns a closed code for every
- * case including `conflict`, where a contradicting repeat is refused without
- * writing — and any transport failure is swallowed here. Nothing about the
- * committed invitation depends on this succeeding.
+ * NEVER THROWS, AND NEVER IGNORES A REFUSAL. The command itself is total — it
+ * returns a closed code for every case including `conflict`, where a
+ * contradicting repeat is refused without writing. On top of that, BOTH client
+ * failure shapes are handled: a resolved `{ error }` and a thrown exception.
+ *
+ * FAIL-SOFT IS THE CONTRACT, not laziness. The admission and the invitation have
+ * already committed. A persistence miss must not change what they mean, must not
+ * un-invite anyone, must not resend or reissue, must not alter the disposition
+ * returned to the caller, and must not throw through the practitioner's action.
+ * It is reported and nothing else.
  */
-async function recordDeliveryOutcome(
+/**
+ * The one failure signal for a persistence miss.
+ *
+ * STRUCTURAL ONLY: a shape and a timestamp. No recipient, no token, no proof
+ * secret, no email body, no provider payload, and no studio or invitation
+ * identity — a telemetry line about bookkeeping must not become the leak the
+ * rest of this module is careful to avoid.
+ */
+function recordFailed(shape: "rpc_error" | "threw"): void {
+  console.error(
+    JSON.stringify({
+      event: "waitlist_invitation_delivery_record_failed",
+      shape,
+      at: new Date().toISOString(),
+    }),
+  );
+}
+
+export async function recordObservedDelivery(
   studioId: string,
   invitationId: string,
-  disposition: InvitationDeliveryState,
+  attempt: DeliveryAttempt,
 ): Promise<void> {
+  // THE GATE AND THE WRITE LIVE TOGETHER, so no caller can perform one without
+  // the other. A pre-send policy refusal, an app-origin or preparation failure,
+  // or any other path the policy marks `providerAttempted: false` leaves both
+  // durable columns NULL — the contract's way of saying nothing reported back.
+  // Writing `refused` or `unknown` there would manufacture a provider verdict
+  // nobody observed, indistinguishable later from a real one.
+  if (!attempt.providerAttempted) return;
+
   try {
     const admin = createAdminClient();
-    await admin.rpc("record_waitlist_invitation_delivery", {
+    // BOTH FAILURE SHAPES ARE FAILURES. A postgres-js client REJECTS on a
+    // transport fault but RESOLVES with `{ error }` for a database refusal, and
+    // an unread `error` is the quieter of the two: the call looks like it
+    // succeeded and nothing is ever written. Awaiting without destructuring was
+    // exactly that mistake.
+    const { error } = await admin.rpc("record_waitlist_invitation_delivery", {
       p_studio_id: studioId,
       p_invitation_id: invitationId,
-      p_disposition: disposition,
+      p_disposition: attempt.state,
     });
+    if (error) {
+      recordFailed("rpc_error");
+    }
   } catch {
-    // Structural only: no recipient, no token, no studio identity.
-    console.error(
-      JSON.stringify({
-        event: "waitlist_invitation_delivery_record_failed",
-        at: new Date().toISOString(),
-      }),
-    );
+    recordFailed("threw");
   }
 }
+
+/**
+ * A delivery outcome and whether the provider was actually reached.
+ *
+ * The two are different facts and the durable record depends on the difference:
+ * a NULL disposition means no provider outcome was ever observed, while
+ * `unknown` means one was attempted and came back unreadable. Collapsing them
+ * would let a pre-send failure masquerade as an ambiguous provider verdict.
+ */
+export type DeliveryAttempt = {
+  state: InvitationDeliveryState;
+  providerAttempted: boolean;
+};
 
 async function deliverInvitation(args: {
   studio: DeliveryStudio;
@@ -307,7 +354,7 @@ async function deliverInvitation(args: {
   rawToken: string;
   issuedAt: Date;
   expiresAt: Date;
-}): Promise<InvitationDeliveryState> {
+}): Promise<DeliveryAttempt> {
   try {
     const origin = getRequiredAppOrigin();
     const result = await sendWaitlistInvitationEmail({
@@ -320,9 +367,22 @@ async function deliverInvitation(args: {
       issuedAt: args.issuedAt,
       expiresAt: args.expiresAt,
     });
-    return deliveryStateFromDisposition(result.disposition.delivered);
+    return {
+      state: deliveryStateFromDisposition(result.disposition.delivered),
+      // THE AUTHORITATIVE FLAG, CARRIED RATHER THAN INFERRED. The policy's own
+      // note says why: `delivered: "no"` says nothing arrived, NOT whether
+      // anyone was called, "and several defects came from consumers having to
+      // infer that". This consumer will not be the next one.
+      providerAttempted: result.disposition.providerAttempted,
+    };
   } catch {
-    return "unknown";
+    // NOTHING WAS OBSERVED. An exception here means no disposition came back at
+    // all, so there is no authority for claiming the provider was reached —
+    // and the exception's class or message is explicitly not such authority.
+    // The caller still SHOWS `unknown`, because from the practitioner's side the
+    // result is genuinely undetermined; it just must not be WRITTEN DOWN as an
+    // observed provider outcome.
+    return { state: "unknown", providerAttempted: false };
   }
 }
 
@@ -484,7 +544,7 @@ class AdmissionCommandAdapter implements WaitlistInvitationAdapter {
     // can never be delivered by any later process. It is passed straight into
     // #680's reviewed send path and into nothing else: not stored, not logged,
     // not returned, not attached to an error.
-    const delivery = await deliverInvitation({
+    const attempt = await deliverInvitation({
       studio,
       invitationId,
       recipientEmail,
@@ -492,6 +552,7 @@ class AdmissionCommandAdapter implements WaitlistInvitationAdapter {
       issuedAt: new Date(issuedAt),
       expiresAt: new Date(expiresAt),
     });
+    const delivery = attempt.state;
 
     // WRITE THE OUTCOME DOWN (0196), so it survives the practitioner navigating
     // away. Until this existed the disposition lived only in React state, and
@@ -503,7 +564,13 @@ class AdmissionCommandAdapter implements WaitlistInvitationAdapter {
     // round's allowance — so a throw here would turn a bookkeeping failure into
     // a false claim about admission truth. The disposition returned to the
     // caller is unaffected either way.
-    await recordDeliveryOutcome(studio.id, invitationId, delivery);
+    // ONLY AN OBSERVED PROVIDER OUTCOME IS WRITTEN DOWN. A pre-send policy
+    // refusal, an app-origin or preparation failure, or any other path the
+    // policy marks `providerAttempted: false` leaves both durable columns NULL —
+    // which is the contract's way of saying "nothing reported back". Writing
+    // `refused` or `unknown` there would manufacture a provider verdict nobody
+    // observed, and a later reader could not tell it from a real one.
+    await recordObservedDelivery(studio.id, invitationId, attempt);
 
     return { state: "committed", expiresAt, delivery };
   }
