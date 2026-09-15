@@ -26,6 +26,24 @@ const read = (rel: string): string =>
   readFileSync(path.join(REPO_ROOT, rel), "utf8");
 
 const CHARGE = read("lib/billing/session-payment-charge.ts");
+
+/**
+ * The same source with PROSE removed.
+ *
+ * These are source-grep guards, and a guard that counts code must not count a
+ * comment that happens to quote the code. PAY-RECEIPT-AUTO-01 tripped exactly
+ * that: documenting the `committedNow` discriminator meant naming the
+ * persistence check in a doc block, and the count below read 3 guard sites
+ * where the file has 2. The same leak has now been seen three times in this
+ * repo, always by SHAPE rather than by intent.
+ *
+ * Block comments go entirely; line comments only when they own the whole line,
+ * so a `//` inside a string literal on a code line is never touched.
+ */
+const CHARGE_CODE = CHARGE.replace(/\/\*[\s\S]*?\*\//g, "").replace(
+  /^[ \t]*\/\/.*$/gm,
+  "",
+);
 const count = (s: string, re: RegExp): number => (s.match(re) ?? []).length;
 
 // ---------------------------------------------------------------------------
@@ -90,11 +108,11 @@ describe("non-persistence raises a critical ops alert (operator wake-up)", () =>
 describe("callers return needs_manual_review when persistence fails, not succeeded", () => {
   it("both success callers call writeSucceededOutcome and capture the result", () => {
     // main create/confirm path + reconcileExistingPaymentIntent.
-    expect(count(CHARGE, /const persistence = await writeSucceededOutcome\(/g)).toBe(2);
+    expect(count(CHARGE_CODE, /const persistence = await writeSucceededOutcome\(/g)).toBe(2);
   });
 
   it("both callers guard on !persistence.persisted before returning success", () => {
-    expect(count(CHARGE, /if \(!persistence\.persisted\)/g)).toBe(2);
+    expect(count(CHARGE_CODE, /if \(!persistence\.persisted\)/g)).toBe(2);
   });
 
   it("the persistence-failed branch returns needs_manual_review (ok:false), never succeeded", () => {
@@ -170,11 +188,11 @@ describe("Stripe failure paths unchanged", () => {
 // ---------------------------------------------------------------------------
 describe("Stripe gates + live-mode block unchanged", () => {
   it("keeps exactly one paymentIntents.create", () => {
-    expect(count(CHARGE, /paymentIntents\.create/g)).toBe(1);
+    expect(count(CHARGE_CODE, /paymentIntents\.create/g)).toBe(1);
   });
 
   it("introduces no refunds.create / charges.create / checkout.sessions here", () => {
-    expect(count(CHARGE, /refunds\.create/g)).toBe(0);
+    expect(count(CHARGE_CODE, /refunds\.create/g)).toBe(0);
     expect(CHARGE).not.toMatch(/charges\.create/);
     expect(CHARGE).not.toMatch(/checkout\.sessions/);
   });

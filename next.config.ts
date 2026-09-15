@@ -45,6 +45,15 @@ const GLOBAL_SECURITY_HEADERS = buildGlobalSecurityHeaders({
 const TOKEN_ROUTE_PRIVACY_HEADERS = buildTokenRoutePrivacyHeaders();
 
 const nextConfig: NextConfig = {
+  // PAY-RECEIPT-PDF: the receipt PDF is drawn with four bundled, licensed
+  // DejaVu faces read from disk at render time (lib/billing/receipt-fonts.ts).
+  // Next.js traces server dependencies statically and CANNOT see a
+  // `readFileSync(join(process.cwd(), ...))` path, so without this the fonts
+  // are absent from the serverless bundle and every receipt fails preparation
+  // in production while passing locally. The licence file ships with them.
+  outputFileTracingIncludes: {
+    "/**": ["./lib/billing/fonts/**"],
+  },
   // PR #271: treatment image uploads (a server action) can be up to 15 MB
   // (TREATMENT_IMAGE_MAX_BYTES in lib/images/treatment-images.ts). The Next.js
   // default server-action body limit (~1 MB) would reject typical phone photos,

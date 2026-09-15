@@ -11,6 +11,10 @@ import {
 } from "@/lib/billing/manual-fee-eligibility";
 import { isManualFeeChargeReason } from "@/lib/billing/manual-fee-types";
 import { runSessionPaymentCharge } from "@/lib/billing/session-payment-charge";
+import {
+  autoSendReceiptAfterCharge,
+  type AutoReceiptOutcome,
+} from "@/lib/billing/auto-payment-receipt";
 import { liveChargeReasonBlockMessage } from "@/lib/billing/live-charge-reason-allowlist";
 
 // ---------------------------------------------------------------------------
@@ -238,6 +242,13 @@ export type ChargeManualFeeAttemptResult =
       outcome: "succeeded";
       stripePaymentIntentId: string;
       stripeChargeId: string | null;
+      /**
+       * PAY-RECEIPT-AUTO-01. The automatic receipt attempt, reported ALONGSIDE
+       * payment truth and never instead of it. Optional so existing callers
+       * keep compiling and behaving identically. A receipt problem never makes
+       * this charge anything other than succeeded.
+       */
+      receipt?: AutoReceiptOutcome;
     }
   | {
       ok: false;
@@ -364,11 +375,24 @@ export async function chargeManualFeeAttemptAction(
   revalidatePath("/calendar");
 
   if (result.ok) {
+    // PAY-RECEIPT-AUTO-01. Same rule as the session charge, from the same
+    // helper — a calendar fee is a card charge too, and Chloe should not have
+    // to click Send here either. `raw` is passed rather than `result` because
+    // the authorization_not_current remap above rewrites `outcome` on the
+    // FAILURE arm only; the helper wants the runner's own verdict.
+    const receipt = await autoSendReceiptAfterCharge({
+      charge: raw,
+      attemptId,
+      studioId,
+      practitionerId,
+    });
+
     return {
       ok: true,
       outcome: "succeeded",
       stripePaymentIntentId: result.stripePaymentIntentId,
       stripeChargeId: result.stripeChargeId,
+      receipt,
     };
   }
   return {

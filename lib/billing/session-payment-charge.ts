@@ -125,6 +125,25 @@ export type SessionPaymentChargeResult =
       outcome: "succeeded";
       stripePaymentIntentId: string;
       stripeChargeId: string | null;
+      /**
+       * TRUE only when THIS invocation moved the row to succeeded; FALSE when
+       * it short-circuited on a row that was already succeeded before the
+       * call.
+       *
+       * Both are `ok: true` — a replay is a legitimate no-op and the money is
+       * settled either way — but they are NOT the same event, and anything
+       * that must happen ONCE PER CHARGE (notably the automatic receipt in
+       * lib/billing/auto-payment-receipt.ts) keys off the TRANSITION, not the
+       * state.
+       *
+       * Exclusive at the DATABASE, not merely observed here: the succeeded
+       * write is a conditional UPDATE scoped to `.eq("status",
+       * "pending_stripe")`, so of two concurrent invocations exactly one gets
+       * rows back; the loser reports needs_manual_review, never a second
+       * committedNow. Both fresh sites additionally sit behind
+       * `if (!persistence.persisted) return needs_manual_review`.
+       */
+      committedNow: boolean;
     }
   | {
       ok: false;
@@ -677,6 +696,8 @@ async function reconcileExistingPaymentIntent(args: {
       outcome: "succeeded",
       stripePaymentIntentId: pi.id,
       stripeChargeId: latestCharge,
+      // This invocation performed the succeeded write.
+      committedNow: true,
     };
   }
   // PR #320: requires_action is not terminal on Stripe: cancel before failing.
@@ -794,6 +815,8 @@ export async function runSessionPaymentCharge(args: {
       outcome: "succeeded",
       stripePaymentIntentId: attemptRow.stripe_payment_intent_id ?? "",
       stripeChargeId: null,
+      // Already succeeded BEFORE this call: a replay, not a new charge.
+      committedNow: false,
     };
   }
   // Refuse retry of terminal-non-success states.
@@ -957,6 +980,8 @@ export async function runSessionPaymentCharge(args: {
       outcome: "succeeded",
       stripePaymentIntentId: claim.stripe_payment_intent_id ?? "",
       stripeChargeId: null,
+      // The claim RPC found it already succeeded: a replay, not a charge.
+      committedNow: false,
     };
   }
   // PAY-SETTLE / 0187. TERMINAL, AND BEFORE ANY STRIPE CALL.
@@ -1212,6 +1237,8 @@ export async function runSessionPaymentCharge(args: {
       outcome: "succeeded",
       stripePaymentIntentId: pi.id,
       stripeChargeId: latestCharge,
+      // This invocation performed the succeeded write.
+      committedNow: true,
     };
   }
 
