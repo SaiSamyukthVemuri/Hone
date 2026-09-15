@@ -5,11 +5,8 @@ import {
   inviteUnavailableReason,
   type InvitationCapacity,
 } from "@/lib/waitlist/invitation-capacity";
-import {
-  closeInvitationsFormAction,
-  readRoundConsumed,
-  startInvitingFormAction,
-} from "./capacity-actions";
+import { closeInvitationsFormAction, startInvitingFormAction } from "./capacity-actions";
+import { readRoundConsumed } from "@/lib/waitlist/round-consumption-server";
 import { InviteOutcomeBoundary } from "@/components/waitlist/invite-outcome-boundary";
 import {
   INVITATION_DELIVERY_COPY,

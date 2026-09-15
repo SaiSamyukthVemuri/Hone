@@ -23,9 +23,14 @@ import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { revalidatePath } from "next/cache";
 import {
   closeInvitationsAction,
-  readRoundConsumed,
+  closeInvitationsFormAction,
   startInvitingAction,
+  startInvitingFormAction,
 } from "@/app/(app)/settings/waitlist/capacity-actions";
+import {
+  coerceConsumed,
+  readRoundConsumed,
+} from "@/lib/waitlist/round-consumption-server";
 import { CAPACITY_EXHAUSTED_COPY } from "@/lib/waitlist/invitation-capacity";
 import { invitationRefusalCopy } from "@/lib/waitlist/invite-to-book-contract";
 
@@ -234,12 +239,197 @@ describe("the consumed count", () => {
     ]);
   });
 
-  it("is null — not zero — when it cannot be established", async () => {
-    // Zero would present a spent capacity as fully available.
+  it("P1 4020704225 — a NULL answer with NO error is UNKNOWN, not zero", async () => {
+    // THE EXACT CODEX CASE. The old code did
+    //     typeof data === "number" ? data : Number(data)
+    // and `Number(null)` is 0 -- so "the count could not be established" became
+    // "zero seats used", which reads as a completely empty capacity and OFFERS
+    // invitations the database may refuse. There is no error here to catch it.
+    arrangeRpc({ data: null, error: null });
+    expect(await readRoundConsumed("r1")).toBeNull();
+  });
+
+  it("accepts ONLY a non-negative integer, as 0192 declares", async () => {
+    // `waitlist_admission_round_consumed(uuid) returns integer`. Anything else
+    // is a shape this RPC does not produce, and guessing at it is how the null
+    // case became a zero.
+    for (const ok of [0, 1, 7, 100]) {
+      arrangeRpc({ data: ok });
+      expect(await readRoundConsumed("r1"), `${ok} is a legitimate count`).toBe(ok);
+    }
+    const rejected: [string, unknown][] = [
+      ["null", null],
+      ["undefined", undefined],
+      ["numeric string", "3"],
+      ["empty string", ""],
+      ["NaN", Number.NaN],
+      ["Infinity", Number.POSITIVE_INFINITY],
+      ["-Infinity", Number.NEGATIVE_INFINITY],
+      ["negative", -1],
+      ["non-integer", 1.5],
+      ["empty array", []],
+      ["array of one", [2]],
+      ["object", { count: 2 }],
+      ["boolean", true],
+    ];
+    for (const [label, data] of rejected) {
+      arrangeRpc({ data });
+      expect(await readRoundConsumed("r1"), `${label} must be UNKNOWN`).toBeNull();
+    }
+  });
+
+  it("the coercion is the thing being tested, not the transport", () => {
+    // Stated directly too, so a future refactor that moves the RPC cannot
+    // quietly take the validation with it.
+    expect(coerceConsumed(0)).toBe(0);
+    expect(coerceConsumed(4)).toBe(4);
+    for (const bad of [null, undefined, "3", Number.NaN, Infinity, -1, 1.5, [], {}, true]) {
+      expect(coerceConsumed(bad), `${JSON.stringify(bad) ?? "undefined"} must be null`).toBeNull();
+    }
+    // NEGATIVE CONTROL for the control: broad coercion would have passed the
+    // first three of these. This is what the old implementation did.
+    const oldBehaviour = (d: unknown) => (typeof d === "number" ? d : Number(d));
+    expect(oldBehaviour(null), "the defect, reproduced").toBe(0);
+    expect(oldBehaviour([]), "and its siblings").toBe(0);
+    expect(oldBehaviour("3")).toBe(3);
+  });
+
+  it("an RPC error is UNKNOWN too", async () => {
     arrangeRpc({ data: null, error: { code: "42501" } });
     expect(await readRoundConsumed("r1")).toBeNull();
-    arrangeRpc({ data: "not a number" });
-    expect(await readRoundConsumed("r1")).toBeNull();
+  });
+});
+
+describe("P1 4020704233 — the consumed reader is not a Server Action", () => {
+  const actionSrc = readFileSync(
+    join(process.cwd(), "app/(app)/settings/waitlist/capacity-actions.ts"),
+    "utf8",
+  );
+  const readerSrc = readFileSync(
+    join(process.cwd(), "lib/waitlist/round-consumption-server.ts"),
+    "utf8",
+  );
+
+  it("the action module is 'use server', so nothing service-role-reading may be exported from it", () => {
+    // Every exported async function in a "use server" module is a Server Action
+    // boundary: Next ships an id for it and the browser can invoke it. A reader
+    // that took an arbitrary round id and went straight to service-role was
+    // therefore remotely invocable with any uuid.
+    expect(actionSrc.trimStart().startsWith('"use server"')).toBe(true);
+    // NOTHING EXPORTED, and no service-role consumed call. The comment in that
+    // file names the reader to say why it is elsewhere, so the check is on
+    // EXPORTS and CALLS rather than on the word appearing at all.
+    const exported = [...actionSrc.matchAll(/^export (?:async )?function (\w+)/gm)].map(
+      (m) => m[1],
+    );
+    expect(exported, "the reader must not be exported from an action module").not.toContain(
+      "readRoundConsumed",
+    );
+    const executable = actionSrc
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("//"))
+      .join("\n");
+    expect(executable).not.toContain("waitlist_admission_round_consumed");
+    expect(executable).not.toContain("readRoundConsumed");
+    // And the exports that DO remain are the intended four.
+    expect(exported.sort()).toEqual([
+      "closeInvitationsAction",
+      "closeInvitationsFormAction",
+      "startInvitingAction",
+      "startInvitingFormAction",
+    ]);
+  });
+
+  it("the reader lives behind server-only and is NOT in a 'use server' module", () => {
+    expect(readerSrc.trimStart().startsWith('import "server-only"')).toBe(true);
+    // THE DIRECTIVE, NOT THE PHRASE. A comment in this file explains why it is
+    // not an action module, and matching the bare substring would flag that
+    // explanation. A directive is a STATEMENT on its own line, so that is what
+    // is checked.
+    const directives = readerSrc
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l === '"use server";' || l === "'use server';" || l === '"use server"');
+    expect(directives, "a server-only module must not also be an action surface").toEqual([]);
+    // It may reach service-role, because 0192 grants this function to
+    // service_role alone -- but only through the RPC, never a table.
+    expect(readerSrc).toContain("waitlist_admission_round_consumed");
+    expect(readerSrc).not.toMatch(/\.from\(/);
+  });
+
+  it("only the server-rendered page calls it, never a form", () => {
+    // The round id must come from the page's own RLS-scoped read, not from
+    // anything a browser can set.
+    const callers = ["app/(app)/settings/waitlist/page.tsx"];
+    for (const c of callers) {
+      const src = readFileSync(join(process.cwd(), c), "utf8");
+      expect(src).toContain("readRoundConsumed");
+    }
+    const panel = readFileSync(
+      join(process.cwd(), "components/waitlist/invitation-capacity-panel.tsx"),
+      "utf8",
+    );
+    expect(panel, "the client panel must not reach the reader").not.toContain(
+      "readRoundConsumed",
+    );
+    expect(panel).not.toContain("round-consumption-server");
+  });
+});
+
+describe("P2 4020704236 — open/close failures reach the owner", () => {
+  it("START returns the typed refusal through the action-state shape", async () => {
+    arrangeActor();
+    arrangeRpc({ data: [{ result: "round_already_open" }] });
+    const state = await startInvitingFormAction(null, form({ allowance: "3" }));
+    expect(state.ok).toBe(false);
+    expect(state.ok === false && state.message).toBe(
+      "You already have an invitation capacity open.",
+    );
+  });
+
+  it("CLOSE returns the typed refusal through the action-state shape", async () => {
+    arrangeActor();
+    arrangeRpc({ data: "no_round_open" });
+    const state = await closeInvitationsFormAction(null, new FormData());
+    expect(state.ok).toBe(false);
+    expect(state.ok === false && state.message).toBe(
+      "You don't have an invitation capacity open.",
+    );
+  });
+
+  it("NEGATIVE CONTROL — the wrappers no longer return void", async () => {
+    // The defect was that these discarded CapacityActionResult, so a refusal
+    // was indistinguishable from a successful no-op. A void return cannot carry
+    // a message, so the shape itself is the guard.
+    arrangeActor();
+    arrangeRpc({ data: [{ result: "opened" }] });
+    const ok = await startInvitingFormAction(null, form({ allowance: "1" }));
+    expect(ok, "a wrapper that returned void would be undefined here").toBeDefined();
+    expect(ok).toEqual({ ok: true });
+  });
+
+  it("every failure the owner can cause carries practitioner-safe copy", async () => {
+    arrangeActor();
+    const cases: [string, { data?: unknown; error?: { code?: string } }][] = [
+      ["round_already_open race", { data: [{ result: "round_already_open" }] }],
+      ["transport failure", { data: null, error: { code: "PGRST301" } }],
+      ["unexpected DB result", { data: [{ result: "something_unmapped" }] }],
+    ];
+    for (const [label, reply] of cases) {
+      arrangeRpc(reply);
+      const state = await startInvitingFormAction(null, form({ allowance: "3" }));
+      expect(state.ok, label).toBe(false);
+      const msg = state.ok === false ? state.message : "";
+      expect(msg.length, `${label} must say something`).toBeGreaterThan(20);
+      for (const leak of ["round_already_open", "PGRST301", "something_unmapped", "admission"]) {
+        expect(msg.toLowerCase(), `${label} leaked ${leak}`).not.toContain(leak.toLowerCase());
+      }
+    }
+    // The invalid allowance never reaches the database at all.
+    calls = [];
+    const bad = await startInvitingFormAction(null, form({ allowance: "0" }));
+    expect(bad.ok).toBe(false);
+    expect(calls).toHaveLength(0);
   });
 });
 

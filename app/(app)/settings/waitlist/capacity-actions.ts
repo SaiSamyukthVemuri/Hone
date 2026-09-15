@@ -143,50 +143,43 @@ export async function closeInvitationsAction(): Promise<CapacityActionResult> {
   }
 }
 
-/**
- * How many of a round's seats the DATABASE says are used.
- *
- * READ, NEVER RECOMPUTED. `waitlist_admission_round_consumed` is the canonical
- * definition -- it counts a seat as spent when an invitation is redeemed OR is
- * still live and answerable, and getting that wrong in a second place is
- * precisely the competing capacity engine this feature must not become.
- *
- * WHY THIS ONE STILL NEEDS THE ADMIN CLIENT. 0192 revokes EXECUTE on it from
- * public, anon and authenticated and grants it to `service_role` alone, so the
- * owner's own session genuinely cannot call it and there is no user-reachable
- * equivalent. Adding a grant to render a counter would widen the privilege
- * frontier for a display concern. The ROUND ITSELF is read by the page with the
- * owner's own client under the owner RLS policy; only this count comes through
- * here, and it takes a round id the caller already proved it may see.
- *
- * Returns null when the count cannot be established, which callers must treat
- * as "unknown capacity" rather than "zero used".
- */
-export async function readRoundConsumed(roundId: string): Promise<number | null> {
-  try {
-    const admin = createAdminClient();
-    const { data, error } = await admin.rpc("waitlist_admission_round_consumed", {
-      p_round_id: roundId,
-    });
-    if (error) return null;
-    const used = typeof data === "number" ? data : Number(data);
-    return Number.isFinite(used) ? used : null;
-  } catch {
-    return null;
-  }
-}
+// THE CONSUMED-COUNT READER LIVES OUTSIDE THIS MODULE, DELIBERATELY.
+//
+// This file carries "use server", so every exported async function in it is a
+// Server Action the browser can invoke by id. A reader that accepted an
+// arbitrary round id and went straight to service-role does not belong behind
+// that boundary, however narrow its answer. It now lives in
+// lib/waitlist/round-consumption-server.ts behind `import "server-only"`, and
+// the page calls it with a round id its OWN RLS-scoped read returned.
 
 /**
- * Void-returning wrappers, because a `<form action>` consumes no result.
+ * ACTION-STATE WRAPPERS — the typed result reaches the owner.
  *
- * The typed actions above keep their results for tests and for any surface that
- * can render one; these exist so the panel can bind a plain server action and
- * re-render from server state after `revalidatePath`.
+ * WHAT THESE REPLACE. The previous wrappers returned `void`, so every refusal --
+ * an allowance the parser rejected, a `round_already_open` race, a transport
+ * failure, a close the database refused -- looked exactly like a successful
+ * no-op: the page re-rendered unchanged and the owner was told nothing. A
+ * mutation that did not happen must never be indistinguishable from one that
+ * did.
+ *
+ * `useActionState` is the pattern this codebase already uses for exactly this
+ * (app/(auth)/accept-invitation/AcceptForm.tsx), so the shape is
+ * (previousState, formData) => nextState and the panel renders the message.
+ *
+ * The PREVIOUS state is deliberately ignored: each press is judged on its own,
+ * and carrying a stale refusal forward would leave an error on screen that no
+ * longer describes anything.
  */
-export async function startInvitingFormAction(formData: FormData): Promise<void> {
-  await startInvitingAction(formData);
+export async function startInvitingFormAction(
+  _prev: CapacityActionResult | null,
+  formData: FormData,
+): Promise<CapacityActionResult> {
+  return startInvitingAction(formData);
 }
 
-export async function closeInvitationsFormAction(_formData: FormData): Promise<void> {
-  await closeInvitationsAction();
+export async function closeInvitationsFormAction(
+  _prev: CapacityActionResult | null,
+  _formData: FormData,
+): Promise<CapacityActionResult> {
+  return closeInvitationsAction();
 }

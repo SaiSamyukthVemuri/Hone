@@ -1,3 +1,6 @@
+"use client";
+
+import { useActionState } from "react";
 import {
   CAPACITY_PANEL,
   ALLOWANCE_MAX,
@@ -8,7 +11,14 @@ import {
   type InvitationCapacity,
 } from "@/lib/waitlist/invitation-capacity";
 import { buttonClasses } from "@/components/ui/button";
+import type { CapacityActionResult } from "@/app/(app)/settings/waitlist/capacity-actions";
 import { fieldControlClass } from "@/components/ui/field";
+
+/** The (previousState, formData) => nextState shape `useActionState` binds. */
+export type CapacityFormAction = (
+  prev: CapacityActionResult | null,
+  formData: FormData,
+) => Promise<CapacityActionResult>;
 
 /**
  * The owner's invitation-capacity control, above the queue.
@@ -28,13 +38,47 @@ export function InvitationCapacityPanel({
   startAction,
   closeAction,
   error,
+  initialStartState = null,
+  initialCloseState = null,
 }: {
   capacity: InvitationCapacity;
-  startAction: (formData: FormData) => void | Promise<void>;
-  closeAction: (formData: FormData) => void | Promise<void>;
+  startAction: CapacityFormAction;
+  closeAction: CapacityFormAction;
+  /** A message from the server render, if any. Action results take precedence. */
   error?: string | null;
+  /**
+   * The state each form starts from.
+   *
+   * A REAL `useActionState` PARAMETER, not a test hook: the hook's second
+   * argument IS the initial state, and defaulting it to null is what "nothing
+   * pressed yet" means. It is injectable because this repo renders components
+   * through renderToStaticMarkup, which cannot press a button -- so without it
+   * the wiring between a returned refusal and the rendered error could only be
+   * asserted in two halves that never meet.
+   */
+  initialStartState?: CapacityActionResult | null;
+  initialCloseState?: CapacityActionResult | null;
 }) {
   const open = capacity.state === "open" ? capacity.capacity : null;
+
+  // ONE STATE PER FORM, because a start refusal and a close refusal are
+  // different answers and must not overwrite each other.
+  const [startState, startFormAction, startPending] = useActionState(
+    startAction,
+    initialStartState,
+  );
+  const [closeState, closeFormAction, closePending] = useActionState(
+    closeAction,
+    initialCloseState,
+  );
+
+  // THE MOST RECENT ANSWER WINS. A pressed button that refused is what the owner
+  // needs to read; the server-render message is only the fallback.
+  const actionError =
+    (startState && !startState.ok ? startState.message : null) ??
+    (closeState && !closeState.ok ? closeState.message : null) ??
+    error ??
+    null;
 
   return (
     <section
@@ -51,7 +95,7 @@ export function InvitationCapacityPanel({
               : CAPACITY_PANEL.emptyBody}
           </p>
           {capacity.state !== "unknown" && (
-            <form action={startAction} className="flex flex-col gap-2 sm:flex-row sm:items-end">
+            <form action={startFormAction} className="flex flex-col gap-2 sm:flex-row sm:items-end">
               <label className="flex flex-col gap-1.5">
                 <span className="text-xs text-neutral-500">{CAPACITY_PANEL.allowanceLabel}</span>
                 <input
@@ -68,6 +112,7 @@ export function InvitationCapacityPanel({
               <button
                 type="submit"
                 data-testid="capacity-start"
+                disabled={startPending}
                 className={buttonClasses({ variant: "primary", size: "md" })}
               >
                 {CAPACITY_PANEL.startLabel}
@@ -89,10 +134,11 @@ export function InvitationCapacityPanel({
               one when you&rsquo;re ready to invite more people.
             </p>
           )}
-          <form action={closeAction}>
+          <form action={closeFormAction}>
             <button
               type="submit"
               data-testid="capacity-close"
+              disabled={closePending}
               className={buttonClasses({ variant: "secondary", size: "md" })}
             >
               {CAPACITY_PANEL.closeLabel}
@@ -101,9 +147,11 @@ export function InvitationCapacityPanel({
         </>
       )}
 
-      {error && (
-        <p data-testid="capacity-error" className="text-sm text-danger">
-          {error}
+      {actionError && (
+        // THE REFUSAL THE OWNER JUST CAUSED. Practitioner-safe copy only -- the
+        // action layer translates every database code before it reaches here.
+        <p data-testid="capacity-error" role="alert" className="text-sm text-danger">
+          {actionError}
         </p>
       )}
     </section>

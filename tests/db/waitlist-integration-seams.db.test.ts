@@ -423,7 +423,20 @@ describe("the practitioner binding is a real production consumer", () => {
     expect(page).toContain("INVITE_TO_BOOK_STATUSES.includes(row.status)");
     // The capability gate stays load-bearing: the real adapter's capabilities
     // are passed, never a hand-written object.
-    expect(page).toContain("capabilities={admissionCommandAdapter.capabilities}");
+    //
+    // WAIT-CAPACITY-01 — THE BINDING IS NOW CAPACITY-GATED, AND THE INTENT IS
+    // UNCHANGED. The page passes `admissionCommandAdapter.capabilities` when an
+    // invitation capacity is open and `null` when it is not, so the composer
+    // stops presenting Send as valid before submission. What this guard exists
+    // to forbid -- a hand-written capabilities object standing in for the real
+    // adapter's -- is asserted directly rather than through one exact string,
+    // and the only permitted alternative is `null`, which grants nothing.
+    expect(page).toContain("admissionCommandAdapter.capabilities");
+    expect(page).toMatch(
+      /capabilities=\{\s*canOfferInvite\(capacity\)\s*\?\s*admissionCommandAdapter\.capabilities\s*:\s*null\s*\}/,
+    );
+    // NEVER A LITERAL. An inline object would be a second capability authority.
+    expect(page).not.toMatch(/capabilities=\{\s*\{/);
     // Services are handed over UNFILTERED — the composer applies the
     // consultation predicate itself, and filtering twice is how the visible
     // list and the validation rule drift apart.

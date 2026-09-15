@@ -38,6 +38,8 @@ const USER_ID = "55555555-5555-4555-8555-555555555555";
 const SLUG = "queue-studio";
 
 type QueryShape = {
+  /** WHICH client issued it. The page must build exactly one. */
+  clientId: number;
   table: string;
   columns: string;
   options: Record<string, unknown>;
@@ -53,6 +55,18 @@ type QueryShape = {
 type RpcCall = { fn: string; args: Record<string, unknown> };
 
 const queries: QueryShape[] = [];
+
+/**
+ * EVERY createClient() CALL, not merely every query.
+ *
+ * WHAT THIS REPLACES. The suite shared ONE global query log across every mock
+ * client, so "exactly one capacity query" was true of a page that built a
+ * SECOND client and issued one query from it. Counting queries could never
+ * prove the ruling -- one owner-scoped instance for the queue and the capacity
+ * read -- so each client now gets an id and every query carries the id of the
+ * client that issued it.
+ */
+const clientInstances: number[] = [];
 
 /**
  * THE FIRST ENTRIES READ, BY NAME RATHER THAN BY POSITION.
@@ -140,6 +154,7 @@ const scenario = {
 
 function reset() {
   queries.length = 0;
+  clientInstances.length = 0;
   rpcCalls.length = 0;
   revalidated.length = 0;
   consoleErrors.length = 0;
@@ -180,9 +195,14 @@ vi.mock("@/lib/supabase/queries", () => ({
 // answering a pre-baked one, so the assertions are about the query the page
 // actually issues.
 vi.mock("@/lib/supabase/server", () => ({
-  createClient: async () => ({
+  createClient: async () => {
+    // A NEW IDENTITY PER CALL. The page is supposed to build exactly one.
+    const clientId = clientInstances.length;
+    clientInstances.push(clientId);
+    return {
     from(table: string) {
       const shape: QueryShape = {
+        clientId,
         table,
         columns: "",
         options: {},
@@ -322,7 +342,8 @@ vi.mock("@/lib/supabase/server", () => ({
       };
       return builder;
     },
-  }),
+    };
+  },
 }));
 
 vi.mock("@/lib/supabase/admin-server", () => ({
@@ -828,6 +849,53 @@ describe("rendered rows", () => {
     // is how the page detects that guarantee being violated rather than
     // silently using the first row.
     expect(cap.limit).toBe(2);
+  });
+
+  it("P2 4020704242 — the page builds exactly ONE owner-scoped client", async () => {
+    // COUNTING QUERIES COULD NEVER PROVE THIS. The suite shares one query log
+    // across every mock client, so "exactly one capacity query" was equally true
+    // of a page that built a SECOND client and issued one query from it. The
+    // ruling is one owner-scoped instance for the queue AND the capacity read,
+    // so the instance is what gets counted.
+    scenario.rows = [entry()];
+    scenario.count = 1;
+    scenario.openRound = { id: "round-a", allowance: 2, opened_at: "2026-09-10T00:00:00.000Z" };
+    scenario.roundConsumed = 1;
+    await render();
+
+    expect(clientInstances, "the page must build exactly one createClient()").toHaveLength(1);
+
+    // AND BOTH READS CAME FROM IT. One instance plus a query from somewhere else
+    // would still be two authorities; every recorded query must carry the same
+    // client id.
+    const ids = new Set(queries.map((q) => q.clientId));
+    expect(ids.size, "every query must come from the one client").toBe(1);
+    expect(ids.has(0)).toBe(true);
+
+    // NON-VACUITY. If the page issued no capacity read at all, the set above
+    // would trivially be one. Both reads must actually be present.
+    expect(queries.some((q) => q.table === "new_client_waitlist_entries")).toBe(true);
+    expect(queries.some((q) => q.table === "studio_waitlist_admission_rounds")).toBe(true);
+    expect(capacityQuery().clientId).toBe(entriesQuery().clientId);
+  });
+
+  it("NEGATIVE CONTROL — a second client makes that assertion fail", async () => {
+    // Proved by construction rather than by trusting the counter: calling the
+    // mocked factory again is exactly what a page building a second client
+    // would do, and the assertion above must not survive it.
+    const { createClient } = await import("@/lib/supabase/server");
+    scenario.rows = [entry()];
+    scenario.count = 1;
+    await render();
+    expect(clientInstances).toHaveLength(1);
+
+    await createClient();
+    expect(
+      clientInstances,
+      "a second createClient() must be visible to the guard",
+    ).toHaveLength(2);
+    // The shape the guard asserts is now false, which is the point.
+    expect(clientInstances.length === 1).toBe(false);
   });
 
   it("an unreadable capacity withholds the send — it never reads as 'none'", async () => {
