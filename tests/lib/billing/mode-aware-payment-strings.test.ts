@@ -76,8 +76,39 @@ describe("legal copy unchanged (proof pins)", () => {
   });
 
   it("lawyer-approved receipt template wording is intact", () => {
-    const receipt = read("lib/email/templates/payment-receipt.ts");
-    expect(receipt).toMatch(/not a tax invoice/);
-    expect(receipt).toMatch(/not the treatment provider or merchant of record/);
+    // PAY-RECEIPT-PDF moved the approved copy from the email template into
+    // lib/billing/receipt-document.ts, so that the PDF and the email render
+    // the SAME strings rather than two hand-kept copies. The guard follows the
+    // copy to its new home.
+    const doc = read("lib/billing/receipt-document.ts");
+    expect(doc).toMatch(/not a tax invoice/);
+    expect(doc).toMatch(/not the treatment provider or merchant of record/);
+  });
+
+  it("...and survives the copy being moved again, because it checks OUTPUT", async () => {
+    // The assertion above is a source grep, and a source grep silently stops
+    // protecting anything the moment the text moves -- which is exactly what
+    // this lane did to it. This one asserts on what a client would actually
+    // read, so no future refactor can quietly defeat it.
+    const { buildReceiptDocument } = await import("@/lib/billing/receipt-document");
+    const live = buildReceiptDocument({
+      studioName: "Willow", studioContactEmail: null, clientName: "D",
+      reasonLabel: "Session payment", amountCents: 100, currencyCode: "cad",
+      paidAt: new Date("2026-01-01T00:00:00Z"), livemode: true,
+      settlement: { kind: "card", last4: "4242", stripePaymentIntentId: "pi", stripeChargeId: null },
+    });
+    expect(live.taxDisclaimer).toMatch(/not a tax invoice/);
+    expect(live.platformNote).toMatch(/not the treatment provider or merchant of record/);
+
+    // And the same words reach BOTH renderings, which is the new guarantee.
+    const { buildPaymentReceiptEmail } = await import("@/lib/email/templates/payment-receipt");
+    const email = buildPaymentReceiptEmail({
+      studioName: "Willow", studioContactEmail: null, clientName: "D",
+      chargeReasonLabel: "Session payment", amountCents: 100, currencyCode: "cad",
+      chargedAt: new Date("2026-01-01T00:00:00Z"), stripePaymentIntentId: "pi",
+      stripeChargeId: null, last4: "4242", livemode: true,
+    });
+    expect(email.text).toContain(live.taxDisclaimer);
+    expect(email.text).toContain(live.platformNote!);
   });
 });

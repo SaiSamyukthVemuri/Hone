@@ -32,6 +32,10 @@ import {
   type SendPaymentChargeReceiptResult,
 } from "@/lib/billing/payment-receipt";
 import {
+  autoSendReceiptAfterCharge,
+  type AutoReceiptOutcome,
+} from "@/lib/billing/auto-payment-receipt";
+import {
   refundPaymentChargeAttempt,
   type PaymentRefundResult,
 } from "@/lib/billing/payment-refund";
@@ -396,6 +400,13 @@ export type ExecuteSessionPaymentResult =
       outcome: "succeeded";
       stripePaymentIntentId: string;
       stripeChargeId: string | null;
+      /**
+       * PAY-RECEIPT-AUTO-01. The automatic receipt attempt, reported
+       * ALONGSIDE payment truth and never instead of it. Optional so every
+       * existing caller keeps compiling and behaving identically. A receipt
+       * problem never makes this charge anything other than succeeded.
+       */
+      receipt?: AutoReceiptOutcome;
     }
   | {
       ok: false;
@@ -522,11 +533,29 @@ export async function executeSessionPaymentChargeAction(
       event: "payment_charge_executed",
       properties: { studio_id: studioId },
     });
+
+    // PAY-RECEIPT-AUTO-01. The card is charged and the ledger is written, so
+    // the receipt now goes out without a second click. This cannot throw and
+    // cannot retry, so the success below is returned unchanged whatever the
+    // receipt does — see lib/billing/auto-payment-receipt.ts.
+    // ONE revalidatePath is enough, and it already ran above. In the App
+    // Router a server action's revalidate MARKS the path stale; the re-render
+    // happens after this handler returns, so its position in the body does not
+    // decide what the next render sees. A second call here would be a no-op
+    // dressed as a guarantee.
+    const receipt = await autoSendReceiptAfterCharge({
+      charge: result,
+      attemptId,
+      studioId,
+      practitionerId,
+    });
+
     return {
       ok: true,
       outcome: "succeeded",
       stripePaymentIntentId: result.stripePaymentIntentId,
       stripeChargeId: result.stripeChargeId,
+      receipt,
     };
   }
   return {
@@ -575,6 +604,11 @@ export type SendPaymentReceiptActionResult =
         | "studio_missing"
         | "send_failed_retryable"
         | "send_failed_terminal"
+        // PAY-RECEIPT-PDF. The receipt PDF could not be prepared, so NO email
+        // was sent and the claim was released. Nothing reached a provider, so
+        // unlike every send_failed_* case the honest advice is simply "try
+        // again" -- there is no delivery to reconcile.
+        | "receipt_pdf_unavailable"
         // The send failed AND the write recording that failure also
         // failed, so the row is stranded at receipt_status='sending'
         // and cannot be retried until an operator clears it. Distinct
