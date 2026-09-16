@@ -31,6 +31,8 @@ import {
   importLegacyWaitlistEntryAction,
   setWaitlistAvailabilityAction,
 } from "@/app/(app)/settings/waitlist/profile-actions";
+import { studioLocalDateInstant } from "@/lib/waitlist/studio-local-date";
+import { localDateString } from "@/lib/booking/tz";
 
 const STUDIO = "11111111-1111-1111-1111-111111111111";
 const ACTOR = "22222222-2222-2222-2222-222222222222";
@@ -59,10 +61,14 @@ function arrangeRpc(reply: { data?: unknown; error?: { code?: string } | null })
   } as unknown as ReturnType<typeof createAdminClient>);
 }
 
-function arrangeActor(role: "owner" | "member" = "owner", userId: string | null = ACTOR) {
+function arrangeActor(
+  role: "owner" | "member" = "owner",
+  userId: string | null = ACTOR,
+  timezone: string | null = "America/Toronto",
+) {
   vi.mocked(getCurrentPractitionerWithStudio).mockResolvedValue({
     practitioner: { role, user_id: userId },
-    studio: { id: STUDIO },
+    studio: { id: STUDIO, timezone },
   } as unknown as Awaited<ReturnType<typeof getCurrentPractitionerWithStudio>>);
 }
 
@@ -290,7 +296,12 @@ describe("legacy import", () => {
     expect(res).toEqual({ ok: true });
     expect(calls[0].name).toBe("import_legacy_waitlist_entry");
     expect(calls[0].args.p_provenance).toBe("operator_supplied");
-    expect(calls[0].args.p_joined_at).toBe("2025-03-04");
+    // NOT the bare string. Local midnight in the studio's own zone, as an
+    // explicit instant, so the database session's timezone decides nothing.
+    expect(calls[0].args.p_joined_at).toBe("2025-03-04T05:00:00.000Z");
+    expect(localDateString(new Date(String(calls[0].args.p_joined_at)), "America/Toronto")).toBe(
+      "2025-03-04",
+    );
   });
 
   it("under UNKNOWN provenance it sends NO date, even when the field is filled", async () => {
@@ -412,5 +423,194 @@ describe("source contract", () => {
     for (const forbidden of ['"studio_id"', '"p_studio_id"', '"actor_user_id"', '"user_id"']) {
       expect(src, `${forbidden} read from the form`).not.toContain(`formData, ${forbidden}`);
     }
+  });
+});
+
+// ===========================================================================
+// P2 4028093980 — AN IMPORTED DATE IS A DATE IN THE STUDIO'S DAY
+// ===========================================================================
+//
+// `p_joined_at` is `timestamptz`. A bare 'YYYY-MM-DD' lets the DATABASE
+// SESSION's timezone decide which instant it names, and that session is UTC.
+// Measured, before the repair:
+//
+//     America/Toronto  "2025-03-04" as UTC -> rendered back as 2025-03-03
+//
+// One day earlier than the practitioner typed — and `joined_at` is half of the
+// (joined_at, id) total order, so the error is not cosmetic: it moves the
+// person's position in the queue.
+describe("imported dates are converted in the studio's timezone", () => {
+  /** The contract in one line: what is stored must render back as what was typed. */
+  function roundTrips(ymd: string, tz: string): boolean {
+    const iso = studioLocalDateInstant(ymd, tz);
+    return iso !== null && localDateString(new Date(iso), tz) === ymd;
+  }
+
+  it("America/Toronto — the measured off-by-one is gone", () => {
+    const iso = studioLocalDateInstant("2025-03-04", "America/Toronto");
+    expect(iso).toBe("2025-03-04T05:00:00.000Z");
+    expect(localDateString(new Date(iso!), "America/Toronto")).toBe("2025-03-04");
+    // The defect, stated as its own assertion so it cannot quietly return: the
+    // naive reading renders the PREVIOUS day.
+    expect(localDateString(new Date("2025-03-04T00:00:00.000Z"), "America/Toronto")).toBe(
+      "2025-03-03",
+    );
+  });
+
+  it("POSITIVE-OFFSET zones — the calendar date survives AND the instant is right", () => {
+    // East of Greenwich a bare date happens to render the right calendar day,
+    // which is exactly why this case needs an instant assertion too: the naive
+    // instant is hours late and would order this row behind people who joined
+    // after them.
+    expect(studioLocalDateInstant("2025-03-04", "Australia/Sydney")).toBe(
+      "2025-03-03T13:00:00.000Z",
+    );
+    expect(studioLocalDateInstant("2025-03-04", "Asia/Kolkata")).toBe("2025-03-03T18:30:00.000Z");
+    expect(roundTrips("2025-03-04", "Australia/Sydney")).toBe(true);
+    expect(roundTrips("2025-03-04", "Asia/Kolkata")).toBe(true);
+    expect(roundTrips("2025-06-15", "Pacific/Auckland")).toBe(true);
+  });
+
+  it("DST BOUNDARY DATES round-trip, including zones with NO local midnight", () => {
+    // Ordinary spring-forward and fall-back dates, where midnight exists.
+    for (const [tz, ymd] of [
+      ["America/Toronto", "2026-03-08"],
+      ["America/Toronto", "2025-11-02"],
+      ["Australia/Sydney", "2025-10-05"],
+      ["Australia/Sydney", "2025-04-06"],
+      ["Pacific/Auckland", "2025-09-28"],
+      ["Asia/Beirut", "2025-03-30"],
+    ] as const) {
+      expect(roundTrips(ymd, tz), `${tz} ${ymd}`).toBe(true);
+    }
+
+    // AND THE HARD ONES. These zones shift AT midnight, so 00:00 does not exist
+    // on that date and a naive conversion lands on the day BEFORE. Measured:
+    //   America/Santiago 2025-09-07 00:00 -> 2025-09-06
+    //   America/Havana   2025-03-09 00:00 -> 2025-03-08
+    // The probe walks forward to the first hour of that local day that exists.
+    for (const [tz, ymd] of [
+      ["America/Santiago", "2025-09-07"],
+      ["America/Havana", "2025-03-09"],
+    ] as const) {
+      const iso = studioLocalDateInstant(ymd, tz);
+      expect(iso, `${tz} ${ymd} was refused`).not.toBeNull();
+      expect(localDateString(new Date(iso!), tz), `${tz} ${ymd}`).toBe(ymd);
+    }
+  });
+
+  it("TODAY in a positive-offset zone is not pushed into the future", () => {
+    // The command refuses a future `joined_at`. A studio in UTC+11 entering
+    // today must produce an instant already past, or a legitimate import is
+    // rejected as `joined_at_in_future`.
+    for (const tz of ["Australia/Sydney", "Pacific/Auckland", "Asia/Kolkata"]) {
+      const today = localDateString(new Date(), tz);
+      const iso = studioLocalDateInstant(today, tz);
+      expect(iso, `${tz} today`).not.toBeNull();
+      expect(localDateString(new Date(iso!), tz)).toBe(today);
+      expect(new Date(iso!).getTime()).toBeLessThanOrEqual(Date.now());
+    }
+  });
+
+  it("HISTORICAL dates round-trip, across zones whose rules have since changed", () => {
+    for (const [tz, ymd] of [
+      ["America/Toronto", "2009-05-14"],
+      ["America/Toronto", "1996-01-02"],
+      ["Australia/Sydney", "2001-09-11"],
+      ["Europe/Lisbon", "1985-07-01"],
+      ["Asia/Kolkata", "1974-11-30"],
+    ] as const) {
+      expect(roundTrips(ymd, tz), `${tz} ${ymd}`).toBe(true);
+    }
+  });
+
+  it("an INVALID studio timezone is refused, never silently read as UTC", () => {
+    // Reinterpreting as UTC is the defect itself, and it would be invisible.
+    for (const tz of ["Not/AZone", "", "UTC+5", "America/Atlantis"]) {
+      expect(studioLocalDateInstant("2025-03-04", tz), tz).toBeNull();
+    }
+    expect(studioLocalDateInstant("2025-03-04", null)).toBeNull();
+  });
+
+  it("an impossible calendar date is refused by the round trip itself", () => {
+    // No second calendar implementation: Feb 30th parses to March 2nd, which
+    // fails to render back as what was typed.
+    for (const ymd of ["2025-02-30", "2025-13-01", "2025-00-10", "2025-04-31"]) {
+      expect(studioLocalDateInstant(ymd, "America/Toronto"), ymd).toBeNull();
+    }
+  });
+
+  it("a malformed date string is refused before any conversion", () => {
+    for (const ymd of ["04/03/2025", "2025-3-4", "yesterday", "", "2025-03-04T00:00:00Z"]) {
+      expect(studioLocalDateInstant(ymd, "America/Toronto"), ymd).toBeNull();
+    }
+  });
+
+  it("the ACTION refuses rather than importing when the studio has no timezone", async () => {
+    arrangeActor("owner", ACTOR, null);
+    arrangeRpc({ data: rows("imported") });
+    const res = await importLegacyWaitlistEntryAction(
+      form({
+        name: "Ada",
+        email: "ada@example.com",
+        provenance: "operator_supplied",
+        joined_at: "2025-03-04",
+      }),
+    );
+    expect(res.ok).toBe(false);
+    // The command is never reached: a guessed instant would move someone's
+    // place in the queue.
+    expect(calls).toEqual([]);
+    expect(errors.join("\n")).toContain("unresolvable_local_date");
+  });
+
+  it("the ACTION sends a studio-local instant end to end", async () => {
+    arrangeActor("owner", ACTOR, "Australia/Sydney");
+    arrangeRpc({ data: rows("imported") });
+    await importLegacyWaitlistEntryAction(
+      form({
+        name: "Ada",
+        email: "ada@example.com",
+        provenance: "operator_supplied",
+        joined_at: "2024-12-25",
+      }),
+    );
+    const sent = String(calls[0].args.p_joined_at);
+    expect(sent).toMatch(/T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+    expect(localDateString(new Date(sent), "Australia/Sydney")).toBe("2024-12-25");
+  });
+
+  it("still sends NO date under unknown provenance, whatever the timezone", async () => {
+    arrangeActor("owner", ACTOR, "Australia/Sydney");
+    arrangeRpc({ data: rows("imported") });
+    await importLegacyWaitlistEntryAction(
+      form({
+        name: "Ada",
+        email: "ada@example.com",
+        provenance: "unknown",
+        joined_at: "2024-12-25",
+      }),
+    );
+    expect(calls[0].args.p_joined_at).toBeNull();
+  });
+
+  it("SOURCE CONTRACT — no naive Date parse is used as authority here", () => {
+    const src = readFileSync(join(process.cwd(), "lib/waitlist/studio-local-date.ts"), "utf8");
+    // `new Date("YYYY-MM-DD")` parses as UTC, which IS the defect. The only
+    // Date construction permitted here re-reads what lib/booking/tz.ts
+    // produced, never the typed string.
+    expect(src).not.toMatch(/new Date\(\s*(typed|ymd|joinedAt|localDate)/);
+    expect(src).toContain("utcInstantFromLocal");
+    expect(src).toContain("localDateString");
+    // And the action file must not have grown its own second implementation.
+    const action = readFileSync(
+      join(process.cwd(), "app/(app)/settings/waitlist/profile-actions.ts"),
+      "utf8",
+    );
+    expect(action).not.toContain("utcInstantFromLocal");
+    // ARGUMENT-TAKING constructions only. `new Date()` with no argument is the
+    // log timestamp and parses nothing; forbidding it outright would be a
+    // guard that fires on the wrong thing.
+    expect(action).not.toMatch(/new Date\([^)]+\)/);
   });
 });

@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { studioLocalDateInstant } from "@/lib/waitlist/studio-local-date";
 import { isAvailabilityPreference } from "@/lib/waitlist/join-profile";
 
 // ===========================================================================
@@ -43,7 +44,8 @@ const AUTHORITY_REFUSALS: Readonly<Record<string, string>> = {
 };
 
 async function resolveOwner(): Promise<
-  { ok: true; studioId: string; actorUserId: string } | { ok: false; message: string }
+  | { ok: true; studioId: string; actorUserId: string; timezone: string | null }
+  | { ok: false; message: string }
 > {
   try {
     const { practitioner, studio } = await getCurrentPractitionerWithStudio();
@@ -57,7 +59,14 @@ async function resolveOwner(): Promise<
     if (!actorUserId) {
       return { ok: false, message: "Only the studio owner can change the waitlist." };
     }
-    return { ok: true, studioId: studio.id, actorUserId };
+    // THE STUDIO'S OWN TIMEZONE, carried because a calendar date the operator
+    // types is a date in THEIR day, not in the server's. Read from the same
+    // server-derived studio as the tenant — never from the form.
+    const timezone =
+      typeof (studio as { timezone?: unknown }).timezone === "string"
+        ? (studio as { timezone: string }).timezone
+        : null;
+    return { ok: true, studioId: studio.id, actorUserId, timezone };
   } catch {
     return { ok: false, message: "We couldn't confirm your studio just now. Please try again." };
   }
@@ -279,17 +288,35 @@ export async function importLegacyWaitlistEntryAction(
     return { ok: false, message: "Choose whether you have a join date for this person." };
   }
 
-  // A DATE INPUT GIVES 'YYYY-MM-DD'. Sent as-is: the command's parameter is
-  // `timestamptz` and PostgreSQL resolves a bare date at midnight, which is the
-  // most conservative reading of "they joined on this day" — it never places
-  // the row LATER in the queue than the studio's own claim.
+  // CONVERTED IN THE STUDIO'S TIMEZONE, NEVER SENT BARE. See
+  // `studioLocalDateInstant` above for the measured off-by-one a bare
+  // 'YYYY-MM-DD' produces west of Greenwich.
   //
   // Under 'unknown' the field is not read at all, so a date left in the form
   // by a change of mind cannot leak into a row the studio just said it has no
   // date for.
-  const joinedAt = provenance === "operator_supplied" ? requiredText(formData, "joined_at") : null;
-  if (provenance === "operator_supplied" && !joinedAt) {
-    return { ok: false, message: "Enter the date this person joined, or choose that it is unknown." };
+  let joinedAt: string | null = null;
+  if (provenance === "operator_supplied") {
+    const typed = requiredText(formData, "joined_at");
+    if (!typed) {
+      return {
+        ok: false,
+        message: "Enter the date this person joined, or choose that it is unknown.",
+      };
+    }
+    joinedAt = studioLocalDateInstant(typed, owner.timezone);
+    if (joinedAt === null) {
+      // REFUSED, NOT GUESSED. The two reachable causes — a date that is not a
+      // real day, and a studio timezone this server cannot resolve — both mean
+      // the instant would be a guess, and a guess here silently moves someone's
+      // position in the queue.
+      logRefusal("waitlist_legacy_import_failed", owner.studioId, "unresolvable_local_date");
+      return {
+        ok: false,
+        message:
+          "That join date could not be read in your studio's time zone. Check the date, and that your studio time zone is set.",
+      };
+    }
   }
 
   const admin = createAdminClient();

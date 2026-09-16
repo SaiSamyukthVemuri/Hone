@@ -553,7 +553,7 @@ describe("the count is authoritative", () => {
     scenario.count = 140;
     const html = await render();
     expect(html).toMatch(/Waitlist entries:\s*<[^>]*>140</);
-    expect(html).toContain("Showing the 100 longest-waiting of 140.");
+    expect(html).toContain("Showing the first 100 of 140, in queue order.");
     // AND A WAY THROUGH, not just an admission. The old sentence was truthful
     // and offered nothing; the other 40 people were unreachable, and so were
     // their actions.
@@ -566,7 +566,10 @@ describe("the count is authoritative", () => {
     scenario.count = 1;
     const html = await render();
     expect(html).toMatch(/Waitlist entries:\s*<[^>]*>1</);
-    expect(html).not.toContain("longest-waiting of");
+    // STILL A NEGATIVE, AND NOW A STRONGER ONE: the page must say nothing
+    // about truncation, and must never resurrect the duration claim either.
+    expect(html).not.toContain("in queue order");
+    expect(html).not.toContain("longest-waiting");
   });
 
   it("renders an empty state when nobody is waiting", async () => {
@@ -1598,7 +1601,7 @@ describe("action visibility follows the row's lifecycle state", () => {
     // one row is rendered, and the heading still says 250.
     expect(html).toContain(">(250)<");
     expect(html).not.toContain(">(1)<");
-    expect(html).toContain("Showing the 1 longest-waiting of 250.");
+    expect(html).toContain("Showing the first 1 of 250, in queue order.");
     expect(html).toContain('href="/settings/waitlist?section=waiting"');
   });
 });
@@ -1688,7 +1691,7 @@ describe("a section past one page is navigable, not truncated", () => {
     // …the hundred-and-fiftieth is not…
     expect(html).not.toContain(">Person 150<");
     // …and the page says so, with a link rather than an apology.
-    expect(html).toContain("Showing the 100 longest-waiting of 150.");
+    expect(html).toContain("Showing the first 100 of 150, in queue order.");
     expect(html).toContain('data-testid="waitlist-section-all-claimed"');
     expect(html).toContain('href="/settings/waitlist?section=claimed"');
   });
@@ -2424,6 +2427,118 @@ describe("WAIT-04A — the two ways a person reaches the queue", () => {
       /\bwe(?:'|&#x27;)?ll contact you\b/i,
     ]) {
       expect(panel!, `forbidden forecast: ${forbidden}`).not.toMatch(forbidden);
+    }
+  });
+});
+
+// ===========================================================================
+// P2 4028093990 — THE TRUNCATION SENTENCE IS A CLAIM ABOUT THE WHOLE SET
+// ===========================================================================
+//
+// "Showing the N longest-waiting of M" asserts a DURATION ordering over every
+// row it covers. An imported row whose join date is unknown takes part in the
+// (joined_at, id) queue order — 0193 stamps the import instant precisely so it
+// has a position — while having no waiting time anyone can state. One such row
+// in the displayed set makes that sentence false for the set containing it.
+//
+// The repair is a universally true sentence rather than another provenance
+// branch: ORDER is real for every row, DURATION is not. Per-row claims stay
+// provenance-gated, because those CAN be.
+describe("WAIT-04A — truncation copy is provenance-neutral", () => {
+  /** A truncated group: fewer rows than the group's own count. */
+  function truncated(rows: Array<Record<string, unknown>>, total: number) {
+    scenario.rows = rows;
+    scenario.count = total;
+  }
+
+  it("an UNKNOWN imported row cannot coexist with a 'longest-waiting' claim", async () => {
+    truncated(
+      [
+        entry({ id: "entry-0", name: "Ada" }),
+        entry({
+          id: "entry-1",
+          name: "Grace",
+          source: "legacy_import",
+          joined_at_provenance: "unknown",
+          joined_at: "2026-09-16T12:00:00.000Z",
+        }),
+      ],
+      140,
+    );
+    const html = await render();
+
+    // The set is truncated, so the sentence IS rendered — this is not vacuous.
+    expect(html).toContain("Showing the first 2 of 140, in queue order.");
+    // And it makes no duration claim over a set that contains an unknown row.
+    expect(html).not.toContain("longest-waiting");
+    expect(html).not.toMatch(/longest|waited longest|been waiting longest/i);
+  });
+
+  it("the neutral sentence still appears when every row IS a known joiner", async () => {
+    // The repair must not be a branch that only fires for imports: the sentence
+    // is one sentence, true in both cases. A page that said "longest-waiting"
+    // whenever no unknown row happened to be on THIS page would be false as
+    // soon as one paged into view.
+    truncated(
+      Array.from({ length: 3 }, (_, i) => entry({ id: `entry-${i}`, name: `P${i}` })),
+      99,
+    );
+    const html = await render();
+    expect(html).toContain("Showing the first 3 of 99, in queue order.");
+    expect(html).not.toContain("longest-waiting");
+  });
+
+  it("PER-ROW truth is unchanged: the known row keeps its date and wait, the unknown row has neither", async () => {
+    // The set-level claim was dropped; the row-level ones were not. Losing them
+    // would be a different defect — withholding facts the page can stand behind.
+    truncated(
+      [
+        entry({ id: "entry-0", name: "Ada", joined_at: "2025-01-05T09:00:00.000Z" }),
+        entry({
+          id: "entry-1",
+          name: "Grace",
+          source: "legacy_import",
+          joined_at_provenance: "unknown",
+          joined_at: "2026-09-16T12:00:00.000Z",
+        }),
+      ],
+      140,
+    );
+    const html = await render();
+
+    const known = html.match(/<li[^>]*data-entry-id="entry-0"[\s\S]*?<\/li>/)?.[0];
+    const unknown = html.match(/<li[^>]*data-entry-id="entry-1"[\s\S]*?<\/li>/)?.[0];
+    expect(known, "the known row did not render").toBeTruthy();
+    expect(unknown, "the unknown row did not render").toBeTruthy();
+
+    expect(known!).toContain('data-testid="joined-known"');
+    expect(known!).toContain("Joined ");
+    expect(known!).toMatch(/2025/);
+
+    expect(unknown!).toContain('data-testid="joined-unknown"');
+    expect(unknown!).not.toContain("Joined ");
+    expect(unknown!).not.toMatch(/\b2026\b/);
+  });
+
+  it("an unknown row does not acquire an ordinal from the surrounding copy", async () => {
+    // "First N" is a claim about the displayed WINDOW, not about any person.
+    // Nothing in the group may hand this row a rank or a position.
+    truncated(
+      [
+        entry({
+          id: "entry-1",
+          name: "Grace",
+          source: "legacy_import",
+          joined_at_provenance: "unknown",
+        }),
+      ],
+      250,
+    );
+    const html = await render();
+    const row = html.match(/<li[^>]*data-entry-id="entry-1"[\s\S]*?<\/li>/)?.[0];
+    expect(row).toBeTruthy();
+    for (const forbidden of [/\bposition\b/i, /\brank\b/i, /\b#\d+\b/, /\b\d+(st|nd|rd|th)\b/i]) {
+      expect(row!, `ordinal leaked: ${forbidden}`).not.toMatch(forbidden);
     }
   });
 });

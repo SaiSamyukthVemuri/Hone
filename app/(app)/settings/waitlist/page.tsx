@@ -846,8 +846,23 @@ export default async function WaitlistSettingsPage({
                 ) : (
                   group.rows.length < group.total && (
                     <p className="text-sm text-neutral-500">
-                      Showing the {group.rows.length} longest-waiting of{" "}
-                      {group.total}.{" "}
+                      {/* WAIT-04A — PROVENANCE-NEUTRAL, AND DELIBERATELY SO.
+                          "The N longest-waiting" is a claim about DURATION
+                          made over the whole displayed set, and an imported
+                          row whose join date is unknown participates in this
+                          ordering while having no waiting time anyone can
+                          state. One such row makes the sentence false for the
+                          set that contains it.
+                          "In queue order" is true of every row regardless of
+                          provenance: the order is (joined_at, id) and every
+                          row has a position in it. It asserts ORDERING, which
+                          is real, rather than DURATION, which for an unknown
+                          row is not. Individual rows still show their own
+                          truthful joined date and wait where they have one —
+                          that claim is per-row and provenance-gated, and this
+                          one could not be. */}
+                      Showing the first {group.rows.length} of {group.total}, in
+                      queue order.{" "}
                       <WaitlistNavLink
                         href={sectionHref(status)}
                         data-testid={`waitlist-section-all-${status}`}
