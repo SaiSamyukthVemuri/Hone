@@ -1,3 +1,8 @@
+import { PendingButton } from "@/components/pending-button";
+import { Card } from "@/components/ui/card";
+import { EmptyState } from "@/components/ui/empty-state";
+import { PageHeader } from "@/components/ui/page-header";
+import { SectionLabel } from "@/components/ui/section-label";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
@@ -56,35 +61,32 @@ export default async function NotificationsPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <header className="flex flex-wrap items-baseline justify-between gap-3">
-        <div>
-          <h1 className="text-3xl font-semibold tracking-tight">
-            Notifications
-          </h1>
-          <p className="mt-1 text-sm text-neutral-500">
-            Operational alerts, new bookings, cancellations, and reschedules
-            across {studio.name}.
-          </p>
-        </div>
-        {unreadCount > 0 && (
-          <form action={markAllReadFormAction}>
-            <button
-              type="submit"
-              className="min-h-[44px] rounded-md border border-neutral-300 px-3 py-1.5 text-sm font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
-            >
-              Mark all read
-            </button>
-          </form>
-        )}
-      </header>
+      {/* UI-R02. Was a hand-built h1 + `text-neutral-500` description, and a
+          RAW <button> with no :active, no focus-visible and its own dark: pair
+          — the dead-click shape UI-R01 measured in 108 of 118 button files. */}
+      <PageHeader
+        title="Notifications"
+        description={`Operational alerts, new bookings, cancellations, and reschedules across ${studio.name}.`}
+        action={
+          unreadCount > 0 ? (
+            <form action={markAllReadFormAction}>
+              <PendingButton variant="secondary">Mark all read</PendingButton>
+            </form>
+          ) : null
+        }
+      />
 
       {/* Operational safety alerts (computed, always visible while unresolved),
           sorted ahead of routine notifications. */}
       {overdueAlerts.length > 0 && (
         <section aria-label="Operational alerts" className="flex flex-col gap-2">
-          <h2 className="text-xs font-medium uppercase tracking-wider text-amber-800 dark:text-amber-300">
+          {/* The section-label primitive existed with two adopters against 187
+              ad-hoc uppercase labels. Tone stays `inherit` so the amber
+              severity colour survives — the primitive owns the SHAPE, the
+              surface owns the meaning. */}
+          <SectionLabel as="h2" tone="inherit" className="text-amber-800 dark:text-amber-300">
             Operational alerts
-          </h2>
+          </SectionLabel>
           <ul className="flex flex-col gap-2" data-testid="operational-alerts">
             {overdueAlerts.map((a) => (
               <OverdueDisinfectantCard key={a.id} alert={a} />
@@ -93,17 +95,24 @@ export default async function NotificationsPage() {
         </section>
       )}
 
+      {/* COPY IS UNCHANGED, VERBATIM. The first draft of this polish reworded it
+          — dropped an Oxford comma, added "as they happen" — and
+          tests/lib/notifications/practitioner-notifications.test.ts caught it by
+          pinning "No notifications yet.". Product copy belongs to Hone; UI-R02
+          moves it into the primitive and does not rewrite it. The original
+          sentence splits at its own full stop into the two halves EmptyState
+          requires. */}
       {!hasAnything ? (
-        <div className="rounded-lg border border-dashed border-neutral-300 bg-neutral-50 px-5 py-12 text-center text-sm text-neutral-500 dark:border-neutral-700 dark:bg-neutral-900">
-          No notifications yet. Operational alerts and new bookings,
-          cancellations, and reschedules will show up here.
-        </div>
+        <EmptyState
+          title="No notifications yet."
+          description="Operational alerts and new bookings, cancellations, and reschedules will show up here."
+        />
       ) : notifications.length > 0 ? (
-        <ul className="flex flex-col divide-y divide-neutral-200 overflow-hidden rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
+        <Card as="ul" padded={false} className="flex flex-col divide-y divide-line overflow-hidden">
           {notifications.map((n) => (
             <NotificationRow key={n.id} notification={n} />
           ))}
-        </ul>
+        </Card>
       ) : null}
     </div>
   );

@@ -1,3 +1,5 @@
+import { PageHeader } from "@/components/ui/page-header";
+import { SectionLabel } from "@/components/ui/section-label";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import {
@@ -54,12 +56,10 @@ export default async function DataSettingsPage() {
   return (
     <div className="flex flex-col gap-10">
       <section className="flex flex-col gap-5">
-        <h2
-          className="font-[var(--font-fraunces)] text-3xl font-bold tracking-tight"
-          style={{ letterSpacing: "-0.025em" }}
-        >
-          Your data
-        </h2>
+        {/* UI-R02. This page spelled its heading a SECOND way — Fraunces, bold,
+            plus an inline letterSpacing override — while /notifications used
+            `text-3xl font-semibold tracking-tight`. One page, one spelling. */}
+        <PageHeader title="Your data" />
         <p className="max-w-[640px] text-base leading-relaxed text-neutral-700 dark:text-neutral-300 md:text-lg">
           {studio.name} has {fmt(clientCount)}{" "}
           {clientCount === 1 ? "client" : "clients"}, {fmt(sessionCount)}{" "}
@@ -95,9 +95,9 @@ export default async function DataSettingsPage() {
       >
         <div className="flex flex-col gap-5">
           <div>
-            <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+            <SectionLabel as="p">
               Included · {included.length} files
-            </p>
+            </SectionLabel>
             <ul className="mt-1.5 flex max-w-[600px] list-disc flex-col gap-1 pl-5 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
               {included.map(({ resource, disposition }) => (
                 <li key={resource}>
@@ -119,9 +119,9 @@ export default async function DataSettingsPage() {
           </div>
 
           <div>
-            <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+            <SectionLabel as="p">
               Not included yet · {pending.length} record types
-            </p>
+            </SectionLabel>
             <p className="mt-1.5 max-w-[620px] text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
               These are your records and they are safe in Hone, but this export
               does not carry them yet. Most important:{" "}
@@ -150,9 +150,9 @@ export default async function DataSettingsPage() {
           </div>
 
           <div>
-            <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+            <SectionLabel as="p">
               Deliberately withheld · {withheld.length}
-            </p>
+            </SectionLabel>
             <p className="mt-1.5 max-w-[620px] text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
               Private practitioner notes and warnings are kept out of this
               general export on purpose. So are login credentials, connection
