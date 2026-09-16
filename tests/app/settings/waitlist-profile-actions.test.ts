@@ -32,7 +32,7 @@ import {
   setWaitlistAvailabilityAction,
 } from "@/app/(app)/settings/waitlist/profile-actions";
 import { studioLocalDateInstant } from "@/lib/waitlist/studio-local-date";
-import { localDateString } from "@/lib/booking/tz";
+import { localDateString, localTimeString } from "@/lib/booking/tz";
 
 const STUDIO = "11111111-1111-1111-1111-111111111111";
 const ACTOR = "22222222-2222-2222-2222-222222222222";
@@ -439,40 +439,139 @@ describe("source contract", () => {
 // One day earlier than the practitioner typed — and `joined_at` is half of the
 // (joined_at, id) total order, so the error is not cosmetic: it moves the
 // person's position in the queue.
-describe("imported dates are converted in the studio's timezone", () => {
-  /** The contract in one line: what is stored must render back as what was typed. */
-  function roundTrips(ymd: string, tz: string): boolean {
-    const iso = studioLocalDateInstant(ymd, tz);
-    return iso !== null && localDateString(new Date(iso), tz) === ymd;
+
+// ===========================================================================
+// P2 4028386762 — THE EARLIEST REAL INSTANT OF A LOCAL CALENDAR DATE
+// ===========================================================================
+//
+// THE PROPERTY, and the only one that matters:
+//
+//     the returned instant renders as the requested YYYY-MM-DD in the studio's
+//     timezone, and NO EARLIER INSTANT DOES.
+//
+// The first repair sampled candidate wall-clock times and took the first that
+// landed on the right date. That is a sampling answer to a boundary question,
+// and it silently returned a LATER instant wherever a local day began off the
+// sample grid — measured against real IANA data. `joined_at` is half of the
+// (joined_at, id) queue order, so "30 minutes late" is a queue-position error,
+// not a rounding detail.
+//
+// Refining the grid would have moved the failures, not removed them:
+// Kiritimati's day begins on a 20-minute boundary. So every assertion below
+// checks the PROPERTY rather than a grid, via `isFirstInstantOf`.
+describe("the earliest real instant of a local date", () => {
+  /**
+   * The property itself, checked in one millisecond. This is the assertion the
+   * whole suite is built on — a test that only checked "renders as ymd" would
+   * pass on every instant of the day and would have passed on the defect.
+   */
+  function isFirstInstantOf(iso: string | null, ymd: string, tz: string): boolean {
+    if (iso === null) return false;
+    const t = Date.parse(iso);
+    if (!Number.isFinite(t)) return false;
+    return (
+      localDateString(new Date(t), tz) === ymd &&
+      localDateString(new Date(t - 1), tz) !== ymd
+    );
   }
 
-  it("America/Toronto — the measured off-by-one is gone", () => {
-    const iso = studioLocalDateInstant("2025-03-04", "America/Toronto");
+  function firstInstant(ymd: string, tz: string): string | null {
+    return studioLocalDateInstant(ymd, tz);
+  }
+
+  it("PARAMARIBO 1984-10-01 — the permanent regression case", () => {
+    // The zone moved from -03:30 to -03:00 at midnight, so local 00:00 never
+    // happened and the day began at local 00:30. No wall-clock string names
+    // that instant; only the transition does.
+    //
+    // The hourly probe returned 1984-10-01T04:00:00.000Z — thirty minutes
+    // after the day had already started, placing this person behind anyone
+    // imported in that half hour.
+    const tz = "America/Paramaribo";
+    const iso = firstInstant("1984-10-01", tz);
+    expect(iso).toBe("1984-10-01T03:30:00.000Z");
+    expect(localDateString(new Date(Date.parse(iso!)), tz)).toBe("1984-10-01");
+    expect(isFirstInstantOf(iso, "1984-10-01", tz)).toBe(true);
+    // Stated as its own assertion so the defect cannot return quietly.
+    expect(iso).not.toBe("1984-10-01T04:00:00.000Z");
+  });
+
+  it("FRACTIONAL and non-hour boundaries are exact, not rounded up", () => {
+    // Every one of these was wrong under the hourly probe. The expected values
+    // are the real transition instants, not a grid.
+    for (const [tz, ymd, expected] of [
+      ["America/Paramaribo", "1984-10-01", "1984-10-01T03:30:00.000Z"],
+      ["Pacific/Rarotonga", "1984-10-28", "1984-10-28T10:00:00.000Z"],
+      ["Pacific/Rarotonga", "1989-10-29", "1989-10-29T10:00:00.000Z"],
+      ["Pacific/Kiritimati", "1979-10-01", "1979-10-01T10:40:00.000Z"],
+    ] as const) {
+      expect(firstInstant(ymd, tz), `${tz} ${ymd}`).toBe(expected);
+      expect(isFirstInstantOf(expected, ymd, tz), `${tz} ${ymd} property`).toBe(true);
+    }
+  });
+
+  it("REPEATED MIDNIGHT resolves to the EARLIER occurrence", () => {
+    // Europe/Sofia fell back exactly at midnight on 1979-10-01, so local 00:00
+    // happened TWICE — at 21:00Z and again at 22:00Z. The day began at the
+    // first one.
+    //
+    // This is the case that killed the offset-correction approach: correcting
+    // the offset twice converged on 22:00Z, an hour into a day that had already
+    // started. The first-instant property caught it and turned a wrong instant
+    // into a refusal, which is how a real date came to be rejected outright.
+    const tz = "Europe/Sofia";
+    const iso = firstInstant("1979-10-01", tz);
+    expect(iso).toBe("1979-09-30T21:00:00.000Z");
+    expect(isFirstInstantOf(iso, "1979-10-01", tz)).toBe(true);
+    // Both are local midnight of the same date; only the first begins the day.
+    expect(localTimeString(new Date("1979-09-30T22:00:00.000Z"), tz)).toBe("00:00");
+    expect(localDateString(new Date("1979-09-30T22:00:00.000Z"), tz)).toBe("1979-10-01");
+    expect(iso).not.toBe("1979-09-30T22:00:00.000Z");
+  });
+
+  it("ORDINARY MIDNIGHT resolves to midnight", () => {
+    const iso = firstInstant("2025-03-04", "America/Toronto");
     expect(iso).toBe("2025-03-04T05:00:00.000Z");
-    expect(localDateString(new Date(iso!), "America/Toronto")).toBe("2025-03-04");
-    // The defect, stated as its own assertion so it cannot quietly return: the
-    // naive reading renders the PREVIOUS day.
+    expect(localTimeString(new Date(Date.parse(iso!)), "America/Toronto")).toBe("00:00");
+    expect(isFirstInstantOf(iso, "2025-03-04", "America/Toronto")).toBe(true);
+    // The defect this whole conversion exists to remove: the naive UTC reading
+    // renders the PREVIOUS day.
     expect(localDateString(new Date("2025-03-04T00:00:00.000Z"), "America/Toronto")).toBe(
       "2025-03-03",
     );
   });
 
-  it("POSITIVE-OFFSET zones — the calendar date survives AND the instant is right", () => {
-    // East of Greenwich a bare date happens to render the right calendar day,
-    // which is exactly why this case needs an instant assertion too: the naive
-    // instant is hours late and would order this row behind people who joined
-    // after them.
-    expect(studioLocalDateInstant("2025-03-04", "Australia/Sydney")).toBe(
-      "2025-03-03T13:00:00.000Z",
-    );
-    expect(studioLocalDateInstant("2025-03-04", "Asia/Kolkata")).toBe("2025-03-03T18:30:00.000Z");
-    expect(roundTrips("2025-03-04", "Australia/Sydney")).toBe(true);
-    expect(roundTrips("2025-03-04", "Asia/Kolkata")).toBe(true);
-    expect(roundTrips("2025-06-15", "Pacific/Auckland")).toBe(true);
+  it("SKIPPED MIDNIGHT resolves to the first representable instant", () => {
+    // These zones shift forward AT midnight, so the day starts at 01:00 local.
+    for (const [tz, ymd, expected] of [
+      ["America/Santiago", "2025-09-07", "2025-09-07T04:00:00.000Z"],
+      ["America/Havana", "2025-03-09", "2025-03-09T05:00:00.000Z"],
+    ] as const) {
+      const iso = firstInstant(ymd, tz);
+      expect(iso, `${tz} ${ymd}`).toBe(expected);
+      expect(localTimeString(new Date(Date.parse(iso!)), tz), `${tz} ${ymd}`).toBe("01:00");
+      expect(isFirstInstantOf(iso, ymd, tz), `${tz} ${ymd} property`).toBe(true);
+    }
   });
 
-  it("DST BOUNDARY DATES round-trip, including zones with NO local midnight", () => {
-    // Ordinary spring-forward and fall-back dates, where midnight exists.
+  it("POSITIVE and NEGATIVE UTC offsets both hold the property", () => {
+    for (const [tz, ymd] of [
+      ["Australia/Sydney", "2025-03-04"],
+      ["Pacific/Auckland", "2025-06-15"],
+      ["Asia/Kolkata", "2025-03-04"],
+      ["Asia/Kathmandu", "2025-03-04"],
+      ["America/Toronto", "2025-07-04"],
+      ["America/St_Johns", "2025-07-04"],
+      ["Pacific/Marquesas", "2025-07-04"],
+    ] as const) {
+      expect(isFirstInstantOf(firstInstant(ymd, tz), ymd, tz), `${tz} ${ymd}`).toBe(true);
+    }
+    // Non-hour offsets land off the hour, which is the point of asserting them.
+    expect(firstInstant("2025-03-04", "Asia/Kolkata")).toBe("2025-03-03T18:30:00.000Z");
+    expect(firstInstant("2025-03-04", "Asia/Kathmandu")).toBe("2025-03-03T18:15:00.000Z");
+  });
+
+  it("DST boundaries, forward and backward, hold the property", () => {
     for (const [tz, ymd] of [
       ["America/Toronto", "2026-03-08"],
       ["America/Toronto", "2025-11-02"],
@@ -480,71 +579,130 @@ describe("imported dates are converted in the studio's timezone", () => {
       ["Australia/Sydney", "2025-04-06"],
       ["Pacific/Auckland", "2025-09-28"],
       ["Asia/Beirut", "2025-03-30"],
+      ["Australia/Lord_Howe", "2025-10-05"],
+      ["Australia/Lord_Howe", "2025-04-06"],
     ] as const) {
-      expect(roundTrips(ymd, tz), `${tz} ${ymd}`).toBe(true);
-    }
-
-    // AND THE HARD ONES. These zones shift AT midnight, so 00:00 does not exist
-    // on that date and a naive conversion lands on the day BEFORE. Measured:
-    //   America/Santiago 2025-09-07 00:00 -> 2025-09-06
-    //   America/Havana   2025-03-09 00:00 -> 2025-03-08
-    // The probe walks forward to the first hour of that local day that exists.
-    for (const [tz, ymd] of [
-      ["America/Santiago", "2025-09-07"],
-      ["America/Havana", "2025-03-09"],
-    ] as const) {
-      const iso = studioLocalDateInstant(ymd, tz);
-      expect(iso, `${tz} ${ymd} was refused`).not.toBeNull();
-      expect(localDateString(new Date(iso!), tz), `${tz} ${ymd}`).toBe(ymd);
+      expect(isFirstInstantOf(firstInstant(ymd, tz), ymd, tz), `${tz} ${ymd}`).toBe(true);
     }
   });
 
-  it("TODAY in a positive-offset zone is not pushed into the future", () => {
-    // The command refuses a future `joined_at`. A studio in UTC+11 entering
-    // today must produce an instant already past, or a legitimate import is
-    // rejected as `joined_at_in_future`.
-    for (const tz of ["Australia/Sydney", "Pacific/Auckland", "Asia/Kolkata"]) {
-      const today = localDateString(new Date(), tz);
-      const iso = studioLocalDateInstant(today, tz);
-      expect(iso, `${tz} today`).not.toBeNull();
-      expect(localDateString(new Date(iso!), tz)).toBe(today);
-      expect(new Date(iso!).getTime()).toBeLessThanOrEqual(Date.now());
-    }
-  });
-
-  it("HISTORICAL dates round-trip, across zones whose rules have since changed", () => {
+  it("HISTORICAL non-hour offsets hold the property", () => {
     for (const [tz, ymd] of [
       ["America/Toronto", "2009-05-14"],
       ["America/Toronto", "1996-01-02"],
       ["Australia/Sydney", "2001-09-11"],
       ["Europe/Lisbon", "1985-07-01"],
       ["Asia/Kolkata", "1974-11-30"],
+      ["Europe/Amsterdam", "1970-05-01"],
+      ["Asia/Singapore", "1981-12-31"],
+      ["America/Paramaribo", "1975-06-01"],
     ] as const) {
-      expect(roundTrips(ymd, tz), `${tz} ${ymd}`).toBe(true);
+      expect(isFirstInstantOf(firstInstant(ymd, tz), ymd, tz), `${tz} ${ymd}`).toBe(true);
     }
   });
 
-  it("an INVALID studio timezone is refused, never silently read as UTC", () => {
-    // Reinterpreting as UTC is the defect itself, and it would be invisible.
+  it("TODAY in a positive-offset zone is never pushed into the future", () => {
+    // The command refuses a future `joined_at`, so a legitimate import must not
+    // be manufactured into one.
+    for (const tz of ["Australia/Sydney", "Pacific/Auckland", "Asia/Kathmandu"]) {
+      const today = localDateString(new Date(), tz);
+      const iso = firstInstant(today, tz);
+      expect(isFirstInstantOf(iso, today, tz), `${tz} today`).toBe(true);
+      expect(Date.parse(iso!)).toBeLessThanOrEqual(Date.now());
+    }
+  });
+
+  it("A SKIPPED LOCAL DATE is refused — there is no first instant to return", () => {
+    // Both zones crossed the date line and the calendar date never occurred
+    // locally. Returning any instant would name a day that did not happen.
+    expect(firstInstant("2011-12-30", "Pacific/Apia")).toBeNull();
+    expect(firstInstant("1994-12-31", "Pacific/Kiritimati")).toBeNull();
+  });
+
+  it("an INVALID or ABSENT timezone is refused, never read as UTC", () => {
     for (const tz of ["Not/AZone", "", "UTC+5", "America/Atlantis"]) {
-      expect(studioLocalDateInstant("2025-03-04", tz), tz).toBeNull();
+      expect(firstInstant("2025-03-04", tz), tz).toBeNull();
     }
     expect(studioLocalDateInstant("2025-03-04", null)).toBeNull();
   });
 
-  it("an impossible calendar date is refused by the round trip itself", () => {
-    // No second calendar implementation: Feb 30th parses to March 2nd, which
-    // fails to render back as what was typed.
+  it("an impossible calendar date is refused", () => {
     for (const ymd of ["2025-02-30", "2025-13-01", "2025-00-10", "2025-04-31"]) {
-      expect(studioLocalDateInstant(ymd, "America/Toronto"), ymd).toBeNull();
+      expect(firstInstant(ymd, "America/Toronto"), ymd).toBeNull();
     }
   });
 
   it("a malformed date string is refused before any conversion", () => {
     for (const ymd of ["04/03/2025", "2025-3-4", "yesterday", "", "2025-03-04T00:00:00Z"]) {
-      expect(studioLocalDateInstant(ymd, "America/Toronto"), ymd).toBeNull();
+      expect(firstInstant(ymd, "America/Toronto"), ymd).toBeNull();
     }
   });
+
+  it("SWEEP — the property holds across every zone the platform knows", () => {
+    // Not a spot check: the defect was invisible precisely because the obvious
+    // zones were fine. Sampled across zones and decades, every answer must
+    // either be the first instant or an honest refusal.
+    const zones: string[] =
+      typeof (Intl as unknown as { supportedValuesOf?: (k: string) => string[] })
+        .supportedValuesOf === "function"
+        ? (Intl as unknown as { supportedValuesOf: (k: string) => string[] }).supportedValuesOf(
+            "timeZone",
+          )
+        : ["America/Toronto", "Australia/Sydney", "America/Paramaribo"];
+    expect(zones.length).toBeGreaterThan(50);
+
+    // SAMPLED, AND SAID SO. The full set costs ~11s of Intl work, and a
+    // CPU-bound test that long starves its neighbours: it pushed an unrelated
+    // 15s booking test into a timeout when the suite ran them concurrently.
+    // Every fourth zone keeps the breadth that makes this sweep worth having,
+    // and every zone known to be hard is added back explicitly so the sampling
+    // can never drop the cases this repair exists for.
+    const HARD_ZONES = [
+      "America/Paramaribo",
+      "Pacific/Kiritimati",
+      "Pacific/Rarotonga",
+      "Europe/Sofia",
+      "America/Santiago",
+      "America/Havana",
+      "Australia/Lord_Howe",
+      "Pacific/Apia",
+    ];
+    const sampled = Array.from(
+      new Set([...zones.filter((_, i) => i % 4 === 0), ...HARD_ZONES.filter((z) => zones.includes(z))]),
+    );
+    expect(sampled.length).toBeGreaterThan(40);
+    for (const hard of HARD_ZONES) {
+      if (zones.includes(hard)) expect(sampled, `${hard} was sampled out`).toContain(hard);
+    }
+
+    const failures: string[] = [];
+    for (const tz of sampled) {
+      // The four dates that carry every hard case between them: Kiritimati's
+      // 20-minute boundary and Sofia's repeated midnight (1979-10-01),
+      // Paramaribo's skipped fractional midnight (1984-10-01), Rarotonga's
+      // half-hour boundary (1984-10-28), and an ordinary modern transition.
+      // Dates that do not exist anywhere are covered by their own test; they
+      // are excluded here only because the sweep's cost is per zone-date and
+      // this lane's budget is real.
+      for (const ymd of ["1979-10-01", "1984-10-01", "1984-10-28", "2025-03-09"]) {
+        const iso = firstInstant(ymd, tz);
+        if (iso === null) {
+          // A refusal is only honest when no instant renders as that date.
+          const base = Date.parse(`${ymd}T00:00:00.000Z`);
+          let exists = false;
+          for (let h = -14; h <= 14 && !exists; h += 1) {
+            if (localDateString(new Date(base + h * 3_600_000), tz) === ymd) exists = true;
+          }
+          if (exists) failures.push(`false refusal: ${tz} ${ymd}`);
+          continue;
+        }
+        if (!isFirstInstantOf(iso, ymd, tz)) failures.push(`not first instant: ${tz} ${ymd} ${iso}`);
+      }
+    }
+    expect(failures).toEqual([]);
+    // EXPLICIT BUDGET, well above the measured ~2.5s so a slow runner does not
+    // turn breadth into a red.
+  }, 30_000);
 
   it("the ACTION refuses rather than importing when the studio has no timezone", async () => {
     arrangeActor("owner", ACTOR, null);
@@ -558,13 +716,11 @@ describe("imported dates are converted in the studio's timezone", () => {
       }),
     );
     expect(res.ok).toBe(false);
-    // The command is never reached: a guessed instant would move someone's
-    // place in the queue.
     expect(calls).toEqual([]);
     expect(errors.join("\n")).toContain("unresolvable_local_date");
   });
 
-  it("the ACTION sends a studio-local instant end to end", async () => {
+  it("the ACTION sends the first instant end to end", async () => {
     arrangeActor("owner", ACTOR, "Australia/Sydney");
     arrangeRpc({ data: rows("imported") });
     await importLegacyWaitlistEntryAction(
@@ -576,41 +732,35 @@ describe("imported dates are converted in the studio's timezone", () => {
       }),
     );
     const sent = String(calls[0].args.p_joined_at);
-    expect(sent).toMatch(/T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
-    expect(localDateString(new Date(sent), "Australia/Sydney")).toBe("2024-12-25");
+    expect(isFirstInstantOf(sent, "2024-12-25", "Australia/Sydney")).toBe(true);
   });
 
   it("still sends NO date under unknown provenance, whatever the timezone", async () => {
     arrangeActor("owner", ACTOR, "Australia/Sydney");
     arrangeRpc({ data: rows("imported") });
     await importLegacyWaitlistEntryAction(
-      form({
-        name: "Ada",
-        email: "ada@example.com",
-        provenance: "unknown",
-        joined_at: "2024-12-25",
-      }),
+      form({ name: "Ada", email: "ada@example.com", provenance: "unknown", joined_at: "2024-12-25" }),
     );
     expect(calls[0].args.p_joined_at).toBeNull();
   });
 
-  it("SOURCE CONTRACT — no naive Date parse is used as authority here", () => {
+  it("SOURCE CONTRACT — a boundary search, not a wall-clock grid", () => {
     const src = readFileSync(join(process.cwd(), "lib/waitlist/studio-local-date.ts"), "utf8");
-    // `new Date("YYYY-MM-DD")` parses as UTC, which IS the defect. The only
-    // Date construction permitted here re-reads what lib/booking/tz.ts
-    // produced, never the typed string.
-    expect(src).not.toMatch(/new Date\(\s*(typed|ymd|joinedAt|localDate)/);
-    expect(src).toContain("utcInstantFromLocal");
+    // The existing timezone machinery, not a new dependency and not a second
+    // date implementation.
+    expect(src).toContain("@/lib/booking/tz");
+    expect(src).toContain("tzOffsetMinutes");
     expect(src).toContain("localDateString");
+    // `new Date("YYYY-MM-DD")` parses as UTC, which IS the defect.
+    expect(src).not.toMatch(/new Date\(\s*(typed|ymd|joinedAt|localDate)\s*\)/);
+    // No date library was added.
+    expect(src).not.toMatch(/from "(date-fns|luxon|dayjs|moment|@js-joda)/);
     // And the action file must not have grown its own second implementation.
     const action = readFileSync(
       join(process.cwd(), "app/(app)/settings/waitlist/profile-actions.ts"),
       "utf8",
     );
-    expect(action).not.toContain("utcInstantFromLocal");
-    // ARGUMENT-TAKING constructions only. `new Date()` with no argument is the
-    // log timestamp and parses nothing; forbidding it outright would be a
-    // guard that fires on the wrong thing.
+    expect(action).not.toContain("tzOffsetMinutes");
     expect(action).not.toMatch(/new Date\([^)]+\)/);
   });
 });
