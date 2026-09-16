@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { aclByFunction } from "@/tests/security/migration-acl";
 
 const SQL = readFileSync(
   join(process.cwd(), "supabase/migrations/0150_single_row_schedule_writers_locked.sql"),
@@ -102,17 +101,20 @@ describe("0150 — single-row schedule writers locked", () => {
     expect(grantedRoles).toEqual(["service_role"]);
   });
 
-  it("every command the migration defines is reachable by the shared ACL model", () => {
-    // Cross-check against the parser the security guard uses, so the two cannot
-    // disagree about what this migration did.
-    const acl = aclByFunction();
-    for (const fn of definedFunctions()) {
-      const a = acl.get(fn);
-      expect(a, `${fn} has no ACL recorded anywhere in the chain`).toBeDefined();
-      for (const role of ["public", "anon", "authenticated"]) {
-        expect(a!.revoked.has(role), `${fn} must revoke ${role}`).toBe(true);
-      }
-      expect(a!.granted.has("service_role"), `${fn} must grant service_role`).toBe(true);
-    }
+  it("the loop's array and the file's declarations cannot drift apart", () => {
+    // The two halves of 0150's source contract, stated as one identity. A
+    // command added to the file but not the array, or listed in the array but
+    // never defined, fails here.
+    //
+    // This test is deliberately SELF-CONTAINED. Repo-wide final-ACL truth lives
+    // in tests/db/rpc-acl-oracle.db.test.ts, which reads PostgreSQL. What the
+    // database cannot see is THIS defect: if some other migration happened to
+    // revoke the omitted command, the catalog would look correct while 0150's
+    // own contract was broken. Source is the only witness for that, and only
+    // for this file — which is why the two are not merged.
+    const loop = revokeLoopFunctions();
+    const declared = definedFunctions();
+    expect(loop).toEqual(declared);
+    expect(new Set(loop).size, "a signature appears twice in the array").toBe(loop.length);
   });
 });
