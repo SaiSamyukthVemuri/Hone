@@ -202,6 +202,12 @@ export const BROWSER_GROUPS = {
       // this mechanism is unattributable application code that already fails
       // safe to EXTENDED.
       "perceived-speed.spec.ts",
+      // UI-R01: the interaction foundations (press acknowledgement, the shared
+      // spinner, geometry stability). Sits beside perceived-speed.spec.ts for
+      // the same reason it gives above — this is the shell-wide interaction
+      // vocabulary, reachable from any application diff, so it belongs in the
+      // family that fails safe to EXTENDED rather than in `smoke`.
+      "ui-r01-interaction-foundations.spec.ts",
       "new-studio-wizard.spec.ts",
       "onboarding.spec.ts",
       "quick-import.spec.ts",

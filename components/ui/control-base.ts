@@ -97,3 +97,51 @@ export const UI_TRANSITION = "hone-transition-ui";
 /** Disabled/pending look, spelled once. 168 of 191 existing sites use opacity-50. */
 export const CONTROL_DISABLED =
   "disabled:cursor-not-allowed disabled:opacity-50";
+
+/**
+ * Press acknowledgement for a COMPACT control — a button, a pill, a tab.
+ *
+ * WHY THIS EXISTS (UI-R01)
+ * ------------------------
+ * The UI-R00 recon measured the app at production a47eca0f: `hover:` appears in
+ * 107 of the 118 files that contain a `<button>`, and `active:` in 10. Hover is
+ * solved; press is not. That single asymmetry is the whole "Hone feels dead"
+ * report — on a desktop the control looks alive until you press it, and on a
+ * phone `:hover` never fires at all, so the control is dead from first contact.
+ *
+ * `scale` is deliberate and it is the reason this is safe to apply broadly:
+ * a transform is a PAINT-time effect, so a pressed control cannot reflow its
+ * neighbours, cannot resize a row, and cannot move the page. Requirement 6
+ * (geometry stability) is satisfied by construction rather than by review.
+ *
+ * 0.98 — not lower. The brief asks for ~0.98 or <=1px of travel; below about
+ * 0.97 a 44px control reads as a bounce rather than a press, and text inside it
+ * starts to visibly resample.
+ *
+ * REDUCED MOTION drops the transform and nothing else. The acknowledgement does
+ * not disappear: every Button variant also carries an `active:` background, so
+ * the state change survives as colour+shape while the movement stops. That is
+ * the same contract PendingLink's mark already honours.
+ */
+export const CONTROL_PRESS = cx(
+  "active:scale-[0.98] motion-reduce:active:scale-100",
+  PRESS_TRANSITION,
+);
+
+/**
+ * Press acknowledgement for a CONTAINER control — a clickable row, a card, a
+ * list item, a `PendingContainerLink` body.
+ *
+ * NO TRANSFORM, on purpose. The brief says not to apply transforms blindly to
+ * complex layout/container controls, and there are two concrete reasons here:
+ *
+ *   1. Scaling a full-width row scales its text and its borders with it, which
+ *      reads as the row "breathing" rather than being pressed.
+ *   2. A transform creates a containing block for `position: fixed` descendants
+ *      and a new stacking context. Rows in this app host absolutely-positioned
+ *      scrims (PendingContainerLink) and menus; silently changing their
+ *      containing block is the kind of thing that is found later, in a bug.
+ *
+ * So a container acknowledges with its surface instead. Still no layout change.
+ */
+export const SURFACE_PRESS = cx("active:bg-surface-sunken", PRESS_TRANSITION);

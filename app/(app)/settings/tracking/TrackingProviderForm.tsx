@@ -2,6 +2,8 @@
 
 import { useState, useTransition } from "react";
 
+import { Button } from "@/components/ui/button";
+
 type Result = { ok: true; last4?: string | null } | { ok: false; error: string };
 type Action = (formData: FormData) => Promise<Result>;
 
@@ -127,23 +129,32 @@ export function TrackingProviderForm({
       </label>
 
       <div className="flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          onClick={save}
-          disabled={pending}
-          className="rounded-md bg-neutral-900 px-3 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-white dark:text-neutral-900"
-        >
-          {pending ? "Saving…" : "Save"}
-        </button>
+        {/* UI-R01 PROOF CONTROL — save.
+            Previously a raw <button> with NO hover, NO :active and NO
+            focus-visible: three of the four states this PR exists to supply
+            were simply absent, and the fourth was a width-changing
+            "Save" -> "Saving…" swap. */}
+        <Button variant="primary" size="sm" onClick={save} pending={pending}>
+          Save
+        </Button>
         {hasToken && (
-          <button
-            type="button"
+          /* UI-R01 PROOF CONTROL — destructive.
+             This is the one DELIBERATE VISUAL CHANGE in this PR. Removing a
+             provider token is destructive and was styled as an ordinary
+             neutral-bordered button, indistinguishable from Cancel. `danger`
+             is the variant the primitive already ships for "the destructive
+             confirms"; the point of a shared control layer is that
+             consequence is legible without the call site inventing a colour.
+             Still disabled while a save is in flight, so the two actions
+             cannot race. */
+          <Button
+            variant="danger"
+            size="sm"
             onClick={removeToken}
             disabled={pending}
-            className="rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium disabled:opacity-50 dark:border-neutral-700"
           >
             Remove token
-          </button>
+          </Button>
         )}
         {msg && <span className="text-xs text-emerald-700 dark:text-emerald-300">{msg}</span>}
         {err && <span className="text-xs text-red-700 dark:text-red-300">{err}</span>}
