@@ -21,6 +21,25 @@ import {
 import { admissionCommandAdapter } from "@/lib/waitlist/invite-to-book-adapter";
 import { inviteToBookAction } from "./invite-actions";
 import { createClient } from "@/lib/supabase/server";
+import {
+  AVAILABILITY_PREFERENCE_LABEL,
+  isAvailabilityPreference,
+  type AvailabilityPreference,
+} from "@/lib/waitlist/join-profile";
+import {
+  joinedAtClaim,
+  joinedAtNote,
+  mayRenderAsWait,
+  originLabel,
+  UNKNOWN_JOINED_AT_COPY,
+} from "@/lib/waitlist/entry-provenance";
+import { EntryAvailability } from "@/components/waitlist/entry-availability";
+import { AddToWaitlistPanel } from "@/components/waitlist/add-to-waitlist-panel";
+import {
+  setWaitlistAvailabilityFormAction,
+  addWaitlistEntryFormAction,
+  importLegacyWaitlistEntryFormAction,
+} from "./profile-actions";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { localLongDate } from "@/lib/booking/tz";
 // `claimWaitlistEntryAction` and `claimNextWaitlistEntriesAction` are
@@ -136,6 +155,19 @@ const SECTION_PAGE_SIZE = 100;
  *  costs the page no client JavaScript. */
 const QUEUE_PATH = "/settings/waitlist";
 
+/**
+ * One person's stated availability, as the queue renders it.
+ *
+ * `confirmedAt` travels with the value because "weekends" recorded eight
+ * months ago and "weekends" re-affirmed last week are different facts to an
+ * operator deciding who to invite, and 0193 keeps `stated_at` and
+ * `confirmed_at` apart precisely so that distinction survives.
+ */
+type StoredAvailability = {
+  preference: AvailabilityPreference;
+  confirmedAt: string | null;
+};
+
 type WaitlistRow = {
   id: string;
   name: string;
@@ -143,6 +175,13 @@ type WaitlistRow = {
   phone: string | null;
   joined_at: string;
   status: WaitlistEntryStatus;
+  // WAIT-04A. Read because `joined_at` ALONE CANNOT BE RENDERED TRUTHFULLY.
+  // 0193 stamps an imported row's `joined_at` with the import instant when
+  // nobody has a real date, and states that "no reader may render it as a
+  // wait". Without the provenance beside it this page would report that
+  // instant as the day they joined. See lib/waitlist/entry-provenance.ts.
+  source: string | null;
+  joined_at_provenance: string | null;
 };
 
 /**
@@ -363,7 +402,7 @@ export default async function WaitlistSettingsPage({
       const from = focusedStatus === status ? rangeFrom : 0;
       const query = supabase
         .from("new_client_waitlist_entries")
-        .select("id,name,email,phone,joined_at,status", {
+        .select("id,name,email,phone,joined_at,status,source,joined_at_provenance", {
           count: "exact",
           head: !listed,
         })
@@ -428,6 +467,66 @@ export default async function WaitlistSettingsPage({
     ? SECTIONS.filter(({ status }) => status === focusedStatus)
     : SECTIONS;
   const now = Date.now();
+
+  // WAIT-04A — STATED AVAILABILITY, on the page's OWN owner-scoped client.
+  //
+  // THE SAME `supabase` INSTANCE THE QUEUE USED, deliberately. 0193 grants
+  // `authenticated` column-level SELECT on the six preference columns and adds
+  // an owner-only RLS policy, so the owner's own session is the correct
+  // authority here — an admin client would bypass the policy that makes this
+  // read safe, and a SECOND client would be a second authority for one page.
+  //
+  // SCOPED TO THE ROWS ACTUALLY RENDERED. One `in` over the listed ids rather
+  // than the whole studio: the queue pages at 50 a section, and a studio with
+  // a long history would otherwise ship every preference it has ever recorded
+  // to render at most 250 of them. `studio_id` is filtered too — the RLS
+  // policy is the authority, this is the belt.
+  //
+  // A FAILED READ IS NOT "NO PREFERENCE". It leaves the map null, and a null
+  // map renders nothing at all rather than "not set" — which would be a claim
+  // about the person instead of a fact about the read.
+  const preferenceRead =
+    rows.length === 0
+      ? null
+      : await supabase
+          .from("new_client_waitlist_entry_preferences")
+          .select("entry_id,preference,confirmed_at")
+          .eq("studio_id", studio.id)
+          .in(
+            "entry_id",
+            rows.map((r) => r.id),
+          );
+
+  const preferenceByEntry: Map<string, StoredAvailability> | null = (() => {
+    if (preferenceRead === null) return new Map();
+    if (preferenceRead.error) {
+      console.error(
+        JSON.stringify({
+          event: "waitlist_preferences_load_failed",
+          studioId: studio.id,
+          code: preferenceRead.error.code ?? "unknown",
+          timestamp: new Date().toISOString(),
+        }),
+      );
+      return null;
+    }
+    const map = new Map<string, StoredAvailability>();
+    for (const row of preferenceRead.data ?? []) {
+      const entryId = (row as { entry_id?: unknown }).entry_id;
+      const preference = (row as { preference?: unknown }).preference;
+      const confirmedAt = (row as { confirmed_at?: unknown }).confirmed_at;
+      if (typeof entryId !== "string") continue;
+      // A value outside the three the CHECK permits means this build and the
+      // database disagree; rendering it would put an unknown string in front
+      // of a practitioner. Skipped, so the row reads as "not recorded yet".
+      if (!isAvailabilityPreference(preference)) continue;
+      map.set(entryId, {
+        preference,
+        confirmedAt: typeof confirmedAt === "string" ? confirmedAt : null,
+      });
+    }
+    return map;
+  })();
 
   // WAIT INTEGRATION-01 — THE SELECTOR SHOWS EXACTLY WHAT A NEW CLIENT CAN BOOK.
   //
@@ -638,6 +737,14 @@ export default async function WaitlistSettingsPage({
         startAction={startInvitingFormAction}
         closeAction={closeInvitationsFormAction}
       />
+      {/* WAIT-04A. BELOW CAPACITY, ABOVE THE QUEUE. Capacity is the decision
+          that gates inviting anyone at all, so it stays first; adding a person
+          is the next thing an operator does and belongs beside the list it
+          changes rather than buried under five sections of it. */}
+      <AddToWaitlistPanel
+        addAction={addWaitlistEntryFormAction}
+        importAction={importLegacyWaitlistEntryFormAction}
+      />
       <section>
         <h2 className="text-xl font-medium">Waitlist</h2>
         <p className="mt-1 text-sm text-neutral-500">
@@ -758,7 +865,18 @@ export default async function WaitlistSettingsPage({
                     or a phone app. */}
                 <ul className="flex flex-col gap-3">
                   {group.rows.map((row) => {
-                    const days = daysWaiting(row.joined_at, now);
+                    // WAIT-04A. THE CLAIM COMES FIRST, THEN THE NUMBER.
+                    // `daysWaiting` is computed only where a wait may be
+                    // asserted at all: an imported row whose provenance is
+                    // `unknown` carries the IMPORT INSTANT in `joined_at`, so
+                    // computing an age from it would render "0 days waiting"
+                    // for someone who has been waiting for a year.
+                    const claim = joinedAtClaim(row.joined_at_provenance, row.joined_at);
+                    const days = mayRenderAsWait(claim) ? daysWaiting(claim.joinedAt, now) : null;
+                    const claimNote = joinedAtNote(claim);
+                    const origin = originLabel(row.source);
+                    const availability =
+                      preferenceByEntry === null ? null : (preferenceByEntry.get(row.id) ?? null);
                     // PRESENTATION AVAILABILITY COMES FROM STORED STATE, never
                     // from firing a command and rendering its refusal. The RPC
                     // is still the authority — it re-derives everything — but a
@@ -801,11 +919,52 @@ export default async function WaitlistSettingsPage({
                               {row.phone}
                             </p>
                           )}
-                          <p className="text-sm text-neutral-500">
-                            Joined {localLongDate(new Date(row.joined_at), studio.timezone)}
-                            {" · "}
-                            <span className="tabular-nums">{ageLabel(days)}</span> waiting
-                          </p>
+                          {/* WAIT-04A — THE QUEUE SAYS ONLY WHAT IT CAN
+                              STAND BEHIND. Three renderings, because there are
+                              three different strengths of claim and collapsing
+                              them would state the weakest as if it were the
+                              strongest. 0193: "no reader may render it as a
+                              wait" for an unknown join date. */}
+                          {days === null ? (
+                            <p className="text-sm text-neutral-500" data-testid="joined-unknown">
+                              {UNKNOWN_JOINED_AT_COPY}
+                            </p>
+                          ) : (
+                            <p className="text-sm text-neutral-500" data-testid="joined-known">
+                              Joined {localLongDate(new Date(row.joined_at), studio.timezone)}
+                              {claimNote && (
+                                <span data-testid="joined-note"> ({claimNote})</span>
+                              )}
+                              {" · "}
+                              <span className="tabular-nums">{ageLabel(days)}</span> waiting
+                            </p>
+                          )}
+                          {origin && (
+                            <p className="text-sm text-neutral-500" data-testid="entry-origin">
+                              {origin}
+                            </p>
+                          )}
+                          <EntryAvailability
+                            entryId={row.id}
+                            entryName={row.name}
+                            availability={
+                              preferenceByEntry === null
+                                ? { kind: "unknown" }
+                                : availability === null
+                                  ? { kind: "unrecorded" }
+                                  : {
+                                      kind: "recorded",
+                                      preference: availability.preference,
+                                      confirmedAtLabel: availability.confirmedAt
+                                        ? localLongDate(
+                                            new Date(availability.confirmedAt),
+                                            studio.timezone,
+                                          )
+                                        : null,
+                                    }
+                            }
+                            action={setWaitlistAvailabilityFormAction}
+                          />
                           {/* THE ROW SAYS WHAT THE PAGE ACTUALLY KNOWS. The
                               section sentence is status-only, and for `invited`
                               that is deliberately neutral — a redeemed entry

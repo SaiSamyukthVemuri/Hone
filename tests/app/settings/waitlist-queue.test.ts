@@ -145,6 +145,11 @@ const scenario = {
   extraOpenRound: null as Record<string, unknown> | null,
   // The database's own consumed count, which the page reads and never recomputes.
   roundConsumed: 0 as number | null,
+  // WAIT-04A — STATED AVAILABILITY, as the owner's own client reads it under
+  // the 0193 owner SELECT policy. Empty is the honest default: the command that
+  // writes these shipped with no caller until this slice, so no studio has one.
+  preferences: [] as Array<Record<string, unknown>>,
+  preferencesError: null as { code: string } | null,
   // NEGATIVE CONTROL SWITCH. True makes the fake ignore the window's OFFSET and
   // answer every page with the top of the section — the read as it behaved
   // before pagination. Every assertion about reaching a later page must fail
@@ -172,6 +177,8 @@ function reset() {
     services: [],
     servicesError: null,
     sectionTotals: null,
+    preferences: [],
+    preferencesError: null,
     openRound: null,
     roundsError: null,
     extraOpenRound: null,
@@ -238,6 +245,18 @@ vi.mock("@/lib/supabase/server", () => ({
           if (scenario.roundsError) return { data: null, error: scenario.roundsError };
           const rows = [scenario.openRound, scenario.extraOpenRound].filter(Boolean);
           return { data: rows, error: null };
+        }
+
+        // WAIT-04A — ANSWERED HERE, ON THE PAGE'S OWN CLIENT, for exactly
+        // the reason the capacity read is: 0193 grants `authenticated`
+        // column-level SELECT and an owner RLS policy, so the owner's own
+        // instance is the correct authority. A harness that served this from
+        // the admin fake would be modelling a client the page does not build,
+        // and would hide an admin-client regression rather than catch it.
+        if (table === "new_client_waitlist_entry_preferences") {
+          return scenario.preferencesError
+            ? { data: null, error: scenario.preferencesError }
+            : { data: scenario.preferences, error: null };
         }
 
         if (table === "new_client_waitlist_invitations") {
@@ -402,6 +421,20 @@ function entry(overrides: Partial<Record<string, unknown>> = {}) {
     // section and renders nowhere. Waiting is the default because it is the
     // state the original waiting-only surface described.
     status: "waiting",
+    // WAIT-04A — THE FIXTURE MUST MODEL A ROW PRODUCTION CAN PRODUCE.
+    //
+    // 0193 added both columns and bound them to each other with a CHECK: only
+    // `source = 'public_booking'` may carry `joined_at_provenance = 'form'`,
+    // and the column defaults to 'form'. Every row that existed when 0193 was
+    // applied therefore reads exactly like this one.
+    //
+    // Defaulting them here rather than leaving them undefined is deliberate.
+    // Undefined resolves to the `unknown` claim, so the whole suite would have
+    // rendered "Join date unknown" for a public-form joiner — a state the
+    // database forbids — and every assertion about an ordinary row would have
+    // been made against a row that cannot exist.
+    source: "public_booking",
+    joined_at_provenance: "form",
     ...overrides,
   };
 }
@@ -493,7 +526,7 @@ describe("the query the page asks", () => {
 
   it("selects only the columns it renders — no `*`", async () => {
     await render();
-    expect(entriesQuery().columns).toBe("id,name,email,phone,joined_at,status");
+    expect(entriesQuery().columns).toBe("id,name,email,phone,joined_at,status,source,joined_at_provenance");
     expect(entriesQuery().columns).not.toContain("*");
   });
 
@@ -648,13 +681,29 @@ describe("rendered rows", () => {
     // OWNER control on the page, not a per-row action -- every row still offers
     // only Remove and Invite to book. Enumerated rather than excluded, so the
     // next unannounced control still fails here.
+    // WAIT-04A — AND AGAIN, AND ONE OF THESE IS GENUINELY PER-ROW.
+    //
+    // Two owner controls and two tabs arrive with the add/import panel, which
+    // is a page-level control like the capacity panel above it. "Record" is
+    // different and is called out deliberately: it IS a per-row control, the
+    // first added since Invite to book, and it writes the person's stated
+    // availability. It reads "Update" once something has been recorded, so
+    // both spellings are asserted below rather than only the one this fixture
+    // happens to produce.
+    //
+    // Enumerated, not excluded, exactly as before: the next unannounced
+    // control still fails here.
     expect(controls.sort()).toEqual([
+      "Add to waitlist",
       "Cancel",
       "Confirm removal",
       "Invite to book",
+      "Record",
       "Remove",
       "Send invitation",
       "Start inviting",
+      "They asked today",
+      "They were already waiting",
     ]);
     // Stated as its own claim so a future control named something else cannot
     // reintroduce claiming past the equality above.
@@ -805,6 +854,23 @@ describe("rendered rows", () => {
     let queueOnly = html.replace(
       /<section[^>]*data-testid="invitation-capacity"[\s\S]*?<\/section>/,
       "",
+    );
+    // WAIT-04A — THE ADD/IMPORT PANEL IS EXCISED FOR THE SAME REASON, AND ONLY
+    // FOR THAT REASON. It is an OWNER control: the owner adding a person the
+    // studio already knows about, and saying whether they have a join date for
+    // them. It is never rendered to a prospect, and it forecasts nothing — it
+    // describes where the row the owner is about to create will land, which is
+    // a fact about the owner's own action, not a promise to the person.
+    //
+    // It gets its own assertion below, so excising it costs no coverage, and
+    // the per-row availability control is deliberately NOT excised: it renders
+    // inside a queue row, so the forbidden vocabulary still bites on it.
+    queueOnly = queueOnly.replace(
+      /<section[^>]*data-testid="add-to-waitlist"[\s\S]*?<\/section>/,
+      "",
+    );
+    expect(queueOnly, "the add/import panel was not excised").not.toContain(
+      "add-to-waitlist",
     );
     for (const c of OWNER_CAPACITY_COPY) queueOnly = queueOnly.split(c).join("");
     expect(queueOnly, "the owner panel was not excised").not.toContain("invitation-capacity");
@@ -1759,7 +1825,7 @@ describe("a section past one page is navigable, not truncated", () => {
       ["eq", "studio_id", STUDIO_ID],
       ["eq", "status", "claimed"],
     ]);
-    expect(readFor("claimed").columns).toBe("id,name,email,phone,joined_at,status");
+    expect(readFor("claimed").columns).toBe("id,name,email,phone,joined_at,status,source,joined_at_provenance");
   });
 });
 
@@ -2098,5 +2164,266 @@ describe("the wiring underneath is untouched", () => {
     // DOES use.
     expect(src).toContain("releaseWaitlistEntryAction");
     expect(src).toContain("requeueWaitlistEntryAction");
+  });
+});
+
+// ===========================================================================
+// WAIT-04A — PROVENANCE, AVAILABILITY, AND THE TWO WAYS IN
+// ===========================================================================
+//
+// The commands these exercise shipped with migration 0193 and had ZERO callers
+// until this slice. What is proved here is the surface: that the page asks the
+// right questions with the right client, and — the part that actually matters —
+// that it never states a waiting time it cannot stand behind.
+describe("WAIT-04A — what the queue may claim about a row", () => {
+  it("a public-form joiner renders a join date AND a wait", async () => {
+    scenario.rows = [entry()];
+    scenario.count = 1;
+    const html = await render();
+
+    expect(html).toContain('data-testid="joined-known"');
+    expect(html).toContain("Joined");
+    expect(html).toMatch(/waiting/);
+    // The ordinary row carries NO caveat: annotating every form joiner would
+    // bury the two origins that genuinely need one.
+    expect(html).not.toContain('data-testid="joined-note"');
+    expect(html).not.toContain('data-testid="entry-origin"');
+  });
+
+  it("an operator-supplied date renders the wait AND says where the date came from", async () => {
+    scenario.rows = [
+      entry({
+        source: "legacy_import",
+        joined_at_provenance: "operator_supplied",
+        joined_at: "2025-03-04T09:00:00.000Z",
+      }),
+    ];
+    scenario.count = 1;
+    const html = await render();
+
+    // The studio is standing behind this date, so a wait may be computed from
+    // it — and it is a LONG one, which is exactly the fact an import exists to
+    // preserve. Asserting the note alone would pass even if the date were
+    // silently replaced by the import instant.
+    expect(html).toContain('data-testid="joined-known"');
+    expect(html).toContain("from studio records");
+    expect(html).toMatch(/2025/);
+    expect(html).toContain('data-testid="entry-origin"');
+    expect(html).toContain("From studio records");
+  });
+
+  it("an UNKNOWN join date renders no date and no wait — 0193's rule, enforced", async () => {
+    // THE IMPORT INSTANT IS IN `joined_at`, because the row needs a position in
+    // the (joined_at, id) total order. 0193: "joined_at_provenance stays
+    // 'unknown', so no reader may render it as a wait". A page that rendered it
+    // would tell the operator this person joined today and has waited zero
+    // days, about someone who has been waiting since before Hone existed.
+    scenario.rows = [
+      entry({
+        source: "legacy_import",
+        joined_at_provenance: "unknown",
+        joined_at: "2026-09-16T12:00:00.000Z",
+      }),
+    ];
+    scenario.count = 1;
+    const html = await render();
+
+    expect(html).toContain('data-testid="joined-unknown"');
+    expect(html).not.toContain('data-testid="joined-known"');
+    // SCOPED TO THE ROW. "Waiting" is also a section heading and "already
+    // waiting" is a tab label, so a page-wide word search would pass on a page
+    // that still rendered the false wait. The claim is about THIS person's
+    // card: no join date, and no elapsed time of any unit.
+    const card = html.match(/<li[^>]*data-entry-id="entry-1"[\s\S]*?<\/li>/)?.[0];
+    expect(card, "the row did not render").toBeTruthy();
+    expect(card!).not.toContain("Joined ");
+    // THE DATE ITSELF MUST BE ABSENT FROM THE CARD. A bare "N days" search
+    // cannot be used here: the invite composer inside this same row offers
+    // "Next 7 days" and "3 days" expiry presets, which are claims about the
+    // OFFER the studio is making and have nothing to do with how long this
+    // person has waited. The year of the import instant appears nowhere in
+    // those presets, so its absence is the precise, non-colliding assertion.
+    expect(card!).not.toContain("2026-09-16");
+    expect(card!).not.toMatch(/\b2026\b/);
+    expect(card!).toContain("Join date unknown");
+    // The person is still listed, still identifiable, still actionable. The
+    // rule withholds a CLAIM, never the row.
+    expect(html).toContain("Jo Smith");
+    expect(html).toContain("Invite to book");
+  });
+
+  it("DIFFERENTIAL CONTROL — the same row and date render differently by provenance alone", async () => {
+    // If the page ignored `joined_at_provenance` and rendered `joined_at`
+    // unconditionally — the behaviour before this slice — these two renders
+    // would be identical. Every assertion above would still pass on the first
+    // one, so this is the assertion that proves the provenance is READ rather
+    // than merely selected.
+    const joined_at = "2026-09-16T12:00:00.000Z";
+
+    scenario.rows = [entry({ source: "legacy_import", joined_at_provenance: "unknown", joined_at })];
+    scenario.count = 1;
+    const unknownHtml = await render();
+
+    reset();
+    scenario.rows = [entry({ joined_at })];
+    scenario.count = 1;
+    const formHtml = await render();
+
+    expect(unknownHtml).not.toEqual(formHtml);
+    expect(formHtml).toContain('data-testid="joined-known"');
+    expect(unknownHtml).toContain('data-testid="joined-unknown"');
+  });
+
+  it("an unrecognised provenance fails to UNKNOWN, never to a confident date", async () => {
+    // A value this build does not know about is precisely the case where
+    // guessing produces a confident false statement.
+    scenario.rows = [entry({ source: "legacy_import", joined_at_provenance: "from_the_future" })];
+    scenario.count = 1;
+    const html = await render();
+    expect(html).toContain('data-testid="joined-unknown"');
+  });
+
+  it("a practitioner-added row says who put them there", async () => {
+    scenario.rows = [entry({ source: "practitioner", joined_at_provenance: "operator_supplied" })];
+    scenario.count = 1;
+    const html = await render();
+    expect(html).toContain("Added by the studio");
+  });
+});
+
+describe("WAIT-04A — stated availability", () => {
+  it("reads preferences with the page's OWN client, scoped to the studio AND the listed rows", async () => {
+    // THE READ'S SHAPE IS THE GUARD, exactly as it is for the capacity read. A
+    // read that quietly lost its `in` would ship every preference the studio
+    // has ever recorded to render at most one page of them.
+    scenario.rows = [entry()];
+    scenario.count = 1;
+    await render();
+
+    const read = queries.find((q) => q.table === "new_client_waitlist_entry_preferences");
+    expect(read, "the page issued no preferences read").toBeTruthy();
+    // The SAME client instance the queue used. A second client would be a
+    // second authority for one page — the #709 ruling, restated as a test.
+    const queueRead = queries.find((q) => q.table === "new_client_waitlist_entries");
+    expect(read!.clientId).toBe(queueRead!.clientId);
+    expect(read!.columns).toBe("entry_id,preference,confirmed_at");
+    expect(read!.filters).toContainEqual(["eq", "studio_id", STUDIO_ID]);
+    expect(read!.filters.some((f) => f[0] === "in" && f[1] === "entry_id")).toBe(true);
+  });
+
+  it("asks for nothing at all when no row is listed", async () => {
+    scenario.rows = [];
+    scenario.count = 0;
+    await render();
+    expect(queries.some((q) => q.table === "new_client_waitlist_entry_preferences")).toBe(false);
+  });
+
+  it("an unrecorded preference offers the control with NOTHING pre-selected", async () => {
+    scenario.rows = [entry()];
+    scenario.count = 1;
+    const html = await render();
+
+    expect(html).toContain('data-testid="availability-unrecorded"');
+    expect(html).toContain("Availability not recorded");
+    // NO DEFAULT. A pre-selected "both" would let a distracted press write an
+    // answer the person never gave.
+    expect(html).toMatch(/<option value="" selected="">Choose/);
+    expect(html).toContain(">Record<");
+  });
+
+  it("a recorded preference renders the value and when it was last confirmed", async () => {
+    scenario.rows = [entry()];
+    scenario.count = 1;
+    scenario.preferences = [
+      {
+        entry_id: "entry-1",
+        preference: "weekends",
+        confirmed_at: "2026-09-01T09:00:00.000Z",
+      },
+    ];
+    const html = await render();
+
+    expect(html).toContain('data-testid="availability-current"');
+    expect(html).toMatch(/Available weekends/i);
+    expect(html).toContain('data-testid="availability-confirmed"');
+    // The control now UPDATES rather than records, and opens on the stored value.
+    expect(html).toContain(">Update<");
+    expect(html).toMatch(/<option value="weekends" selected="">/);
+  });
+
+  it("a preference value outside the three the CHECK permits is not rendered", async () => {
+    // This build and the database disagreeing is not a reason to put an unknown
+    // string in front of a practitioner.
+    scenario.rows = [entry()];
+    scenario.count = 1;
+    scenario.preferences = [
+      { entry_id: "entry-1", preference: "alternate tuesdays", confirmed_at: null },
+    ];
+    const html = await render();
+    expect(html).not.toContain("alternate tuesdays");
+    expect(html).toContain('data-testid="availability-unrecorded"');
+  });
+
+  it("a FAILED preferences read says nothing, rather than 'not recorded'", async () => {
+    // "Not recorded" is a claim about the PERSON. A failed read is a fact about
+    // the READ, and reporting one as the other would tell an operator this
+    // person never answered when in truth we could not look.
+    scenario.rows = [entry()];
+    scenario.count = 1;
+    scenario.preferencesError = { code: "42501" };
+    const html = await render();
+
+    expect(html).not.toContain('data-testid="availability-unrecorded"');
+    expect(html).not.toContain('data-testid="availability-current"');
+    // The queue itself is unaffected: one unreadable side-fact must not
+    // collapse the list of people.
+    expect(html).toContain("Jo Smith");
+    expect(consoleErrors.join("\n")).toContain("waitlist_preferences_load_failed");
+  });
+});
+
+describe("WAIT-04A — the two ways a person reaches the queue", () => {
+  it("offers both, and tells the owner what each does to queue position", async () => {
+    scenario.rows = [];
+    scenario.count = 0;
+    const html = await render();
+
+    expect(html).toContain('data-testid="add-to-waitlist"');
+    expect(html).toContain("They asked today");
+    expect(html).toContain("They were already waiting");
+    expect(html).toContain("back of the queue");
+  });
+
+  it("the import form makes 'I have no date' a first-class answer, not a blank field", async () => {
+    scenario.rows = [];
+    scenario.count = 0;
+    const html = await render();
+    // Only the active tab's form renders, so the import fields are reached by
+    // rendering that tab — asserted through the panel's own initial-tab prop in
+    // the component test. Here the tab control itself must exist.
+    expect(html).toContain('data-testid="add-tab-import"');
+  });
+
+  it("the owner panel forecasts NOTHING to a prospect", async () => {
+    // The promised counterpart to excising this panel from the vocabulary scan.
+    // It may say where the row the owner is creating will land; it may not
+    // forecast a wait, a rank, or when a slot will appear.
+    scenario.rows = [];
+    scenario.count = 0;
+    const html = await render();
+    const panel = html.match(
+      /<section[^>]*data-testid="add-to-waitlist"[\s\S]*?<\/section>/,
+    )?.[0];
+    expect(panel, "the panel did not render").toBeTruthy();
+    for (const forbidden of [
+      /\brank\b/i,
+      /\byour turn\b/i,
+      /\bspots? left\b/i,
+      /\bestimated\b/i,
+      /\bnext (week|month)\b/i,
+      /\bwe(?:'|&#x27;)?ll contact you\b/i,
+    ]) {
+      expect(panel!, `forbidden forecast: ${forbidden}`).not.toMatch(forbidden);
+    }
   });
 });
