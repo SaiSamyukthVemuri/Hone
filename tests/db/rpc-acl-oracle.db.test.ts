@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { adminQuery, closePool } from "./helpers/harness";
 import {
+  exposedSchemas,
   LEGACY_SERVICE_ROLE_DEBT,
   RPC_ACL_MANIFEST,
   type RolePosture,
@@ -30,6 +31,27 @@ import {
 //
 // The test asks the database what is true and compares it to a reviewed
 // manifest. It never reconstructs ACL state from migration text.
+//
+// WHAT THIS ORACLE IS THE AUTHORITY FOR, and nothing beyond it:
+//
+//   1. which SECURITY DEFINER functions are browser-exposed, across every
+//      schema PostgREST is configured to expose;
+//   2. what their ACTUAL final EXECUTE privileges are;
+//   3. whether those privileges match the reviewed manifest.
+//
+// It does NOT certify that a command authorises its caller correctly. An
+// earlier revision inferred "actor-gated" from `auth.uid()` appearing in a body
+// or in a callee's name, which is not enforcement: a function that merely
+// stamps auth.uid() into an audit column would have been certified, and a
+// function whose gate lives behind a runtime condition would have been too.
+// That claim is removed rather than weakened.
+//
+// Actor correctness is a behavioural property and is proved behaviourally, by
+// calling a command as the wrong actor and asserting the refusal —
+// tests/db/session-write-commands.db.test.ts,
+// tests/db/cross-studio-isolation.db.test.ts,
+// tests/db/session-block-electrolysis-commands.db.test.ts. Those results are
+// referenced, never converted into a textual rule here.
 
 type Row = {
   identity: string;
@@ -53,7 +75,7 @@ type Row = {
  */
 const EXPOSED_SQL = `
   select
-    format('public.%s(%s)', p.proname, pg_catalog.oidvectortypes(p.proargtypes)) as identity,
+    format('%s.%s(%s)', n.nspname, p.proname, pg_catalog.oidvectortypes(p.proargtypes)) as identity,
     (
       p.proacl is null
       or exists (
@@ -66,7 +88,7 @@ const EXPOSED_SQL = `
     has_function_privilege('service_role', p.oid, 'EXECUTE')  as service_role
   from pg_proc p
   join pg_namespace n on n.oid = p.pronamespace
-  where n.nspname = 'public'
+  where n.nspname = any($1::text[])
     and p.prokind = 'f'
     and p.prosecdef
     and pg_get_function_result(p.oid) <> 'trigger'
@@ -83,7 +105,7 @@ const EXPOSED_SQL = `
 `;
 
 async function exposed(): Promise<Row[]> {
-  const { rows } = await adminQuery(EXPOSED_SQL);
+  const { rows } = await adminQuery(EXPOSED_SQL, [exposedSchemas()]);
   return rows as Row[];
 }
 
@@ -108,11 +130,12 @@ describe("RPC ACL oracle — real migrated privileges vs the reviewed manifest",
       "select count(*)::int c from supabase_migrations.schema_migrations",
     );
     expect(rows[0].c).toBeGreaterThan(150);
-    const fns = await adminQuery(`
-      select count(*)::int c from pg_proc p
-      join pg_namespace n on n.oid = p.pronamespace
-      where n.nspname = 'public' and p.prokind = 'f' and p.prosecdef
-    `);
+    const fns = await adminQuery(
+      `select count(*)::int c from pg_proc p
+         join pg_namespace n on n.oid = p.pronamespace
+        where n.nspname = any($1::text[]) and p.prokind = 'f' and p.prosecdef`,
+      [exposedSchemas()],
+    );
     expect(fns.rows[0].c).toBeGreaterThan(150);
   });
 
@@ -125,7 +148,7 @@ describe("RPC ACL oracle — real migrated privileges vs the reviewed manifest",
       "a SECURITY DEFINER command became reachable by a browser role without a reviewed " +
         "manifest entry. Supabase's ALTER DEFAULT PRIVILEGES grants EXECUTE to anon and " +
         "authenticated at create time, so this is the default, not a choice. Decide the " +
-        "posture and record it in tests/db/helpers/rpc-acl-manifest.ts.",
+        "posture and record it in tests/db/rpc-acl-manifest.ts.",
     ).toEqual([]);
   });
 
@@ -182,7 +205,7 @@ describe("RPC ACL oracle — real migrated privileges vs the reviewed manifest",
     // overload's revoke to its sibling. `start_session` has two signatures in
     // this chain; the oracle must see two.
     const live = await exposed();
-    const starts = live.filter((r) => r.identity.startsWith("public.start_session("));
+    const starts = live.filter((r) => /(^|\.)start_session\(/.test(r.identity));
     expect(starts.length).toBe(2);
     expect(new Set(starts.map((r) => r.identity)).size).toBe(2);
     const { rows } = await adminQuery(`
@@ -190,90 +213,39 @@ describe("RPC ACL oracle — real migrated privileges vs the reviewed manifest",
       from (
         select p.proname
         from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-        where n.nspname = 'public' and p.prokind = 'f'
+        where n.nspname = any($1::text[]) and p.prokind = 'f'
         group by p.proname having count(*) > 1
       ) t
-    `);
+    `, [exposedSchemas()]);
     // If this chain ever stops carrying overloads the test above is vacuous,
     // and this says so rather than passing quietly.
     expect(rows[0].c).toBeGreaterThan(0);
   });
 
-  it("helper-mediated actor gating is still resolved, per overload", async () => {
-    // The classification the static guard existed for. Every input comes from
-    // the catalog — OID, identity, and the real body via pg_get_functiondef —
-    // so nothing is reconstructed from migration text. Only the graph closure
-    // runs here, because PostgreSQL forbids a recursive CTE reference inside a
-    // subquery and the "every overload of the callee is gated" rule needs one.
-    //
-    // The rule is deliberately conservative: a caller counts as gated only when
-    // some callee name has ALL of its overloads gated. An ambiguous name can
-    // therefore never certify a command as safe, which is the direction an
-    // overload mistake must fail in.
-    const { rows } = await adminQuery(`
-      select p.oid::int8::text as oid,
-             p.proname,
-             format('public.%s(%s)', p.proname, pg_catalog.oidvectortypes(p.proargtypes)) as identity,
-             pg_get_functiondef(p.oid) as def,
-             p.prosecdef as definer,
-             (pg_get_function_result(p.oid) = 'trigger') as is_trigger,
-             has_function_privilege('authenticated', p.oid, 'EXECUTE') as authenticated
-      from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-      where n.nspname = 'public' and p.prokind = 'f'
-    `);
-    type F = {
-      oid: string; proname: string; identity: string; def: string;
-      definer: boolean; is_trigger: boolean; authenticated: boolean;
-    };
-    const fns = rows as F[];
-    const byName = new Map<string, F[]>();
-    for (const f of fns) {
-      const bucket = byName.get(f.proname) ?? [];
-      bucket.push(f);
-      byName.set(f.proname, bucket);
-    }
+  it("the census covers every configured exposed schema, not an assumed one", async () => {
+    const schemas = exposedSchemas();
+    // The configured list is the scope. Hard-coding 'public' meant a schema
+    // exposed in configuration alone — no migration, no new function — silently
+    // left coverage.
+    expect(schemas.length).toBeGreaterThan(0);
+    expect(schemas).toContain("public");
 
-    const gated = new Set<string>(
-      fns.filter((f) => /auth\.uid\(\)/i.test(f.def)).map((f) => f.oid),
+    // Every schema in the list must really exist, or the config and the
+    // database disagree and the oracle is measuring something else.
+    const { rows } = await adminQuery(
+      `select n.nspname from pg_namespace n where n.nspname = any($1::text[])`,
+      [schemas],
     );
-    // Callee names each function mentions, computed once.
-    const mentions = new Map<string, string[]>();
-    for (const f of fns) {
-      const hit: string[] = [];
-      for (const name of byName.keys()) {
-        if (name === f.proname) continue;
-        if (new RegExp(`\\b(?:public\\.)?${name}\\s*\\(`).test(f.def)) hit.push(name);
-      }
-      mentions.set(f.oid, hit);
-    }
-    for (let changed = true; changed; ) {
-      changed = false;
-      for (const f of fns) {
-        if (gated.has(f.oid)) continue;
-        for (const name of mentions.get(f.oid) ?? []) {
-          const overloads = byName.get(name) ?? [];
-          if (overloads.length > 0 && overloads.every((o) => gated.has(o.oid))) {
-            gated.add(f.oid);
-            changed = true;
-            break;
-          }
-        }
-      }
-    }
+    const present = (rows as Array<{ nspname: string }>).map((r) => r.nspname).sort();
+    expect(present).toEqual([...schemas].sort());
 
-    const ungated = fns
-      .filter((f) => f.definer && !f.is_trigger && f.authenticated && !gated.has(f.oid))
-      .map((f) => f.identity)
-      .sort();
-    expect(
-      ungated,
-      "a browser-callable SECURITY DEFINER command whose authority reaches auth.uid() by " +
-        "no path at all — its actor would come only from its arguments.",
-    ).toEqual([]);
-
-    // Non-vacuity: the closure must actually be doing work, not marking
-    // everything gated by accident.
-    expect(gated.size).toBeGreaterThan(20);
-    expect(gated.size).toBeLessThan(fns.length);
+    // And the census query must actually be scoped to them: every identity it
+    // returns is qualified by one of the configured schemas.
+    const live = await exposed();
+    const prefixes = schemas.map((sch) => `${sch}.`);
+    const foreign = live
+      .map((r) => r.identity)
+      .filter((id) => !prefixes.some((pfx) => id.startsWith(pfx)));
+    expect(foreign).toEqual([]);
   });
 });
