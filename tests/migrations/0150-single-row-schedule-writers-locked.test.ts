@@ -63,82 +63,161 @@ describe("0150 — single-row schedule writers locked", () => {
   // is not modified; only this test changed.
   // -------------------------------------------------------------------------
 
+  // -------------------------------------------------------------------------
+  // ONE scanner, two consumers.
+  //
+  // Each revision of this helper handled one lexical state and review found the
+  // next: a commented entry counted, then a block comment, then a bracket in a
+  // literal, then nested block comments and dollar quoting. They were never
+  // separate bugs — they are the states a scanner must carry to tell CODE from
+  // COMMENT from STRING. It is written once, here, and used for both things
+  // this file asserts.
+  //
+  // It is not a SQL parser. It classifies four things and blanks the rest:
+  //   * `--` to end of line;
+  //   * `/* ... */`, WITH PostgreSQL's nesting (`/* a /* b */ c */`);
+  //   * `'...'`, including the doubled-quote escape;
+  //   * `$tag$ ... $tag$` dollar quoting.
+  //
+  // `code` is the same length as the scanned region with every comment and
+  // string body replaced by spaces, so offsets stay meaningful and a `--`, `[`
+  // or `]` inside a string or comment is structurally invisible.
+  // -------------------------------------------------------------------------
+
+  type Lexed = {
+    /** Same-length projection: non-code blanked to spaces. */
+    code: string;
+    /** Every string literal found, with its offset in the ORIGINAL source. */
+    strings: Array<{ value: string; start: number }>;
+  };
+
   /**
-   * The ACTIVE signatures inside migration 0150's single `unnest(array[...])`.
+   * `stopAtArrayClose` bounds the scan to a single bracketed expression.
    *
-   * One left-to-right scan over ONE expression, carrying the four states that
-   * decide whether a character is structural: line comment, block comment,
-   * single-quoted string, or code. Each earlier revision of this helper fixed
-   * one of those states in isolation and Codex found the next — a commented
-   * entry still counted, then a block comment, then a bracket inside a literal.
-   * They are not four bugs; they are one scanner that was missing, so it is
-   * written once here.
-   *
-   * Consequently, INSIDE THIS EXPRESSION ONLY:
-   *   - `--` to end of line contributes no signature and no bracket;
-   *   - `/* ... *\/` contributes no signature and no bracket;
-   *   - a quoted signature is consumed whole, so `[` or `]` in a type such as
-   *     `smallint[]` never moves the array depth;
-   *   - only brackets in code move the depth, so the array's end is found
-   *     correctly even when a comment contains `]`.
-   *
-   * It stops at the matching `]`. Nothing outside the expression is read, and
-   * no general SQL parsing happens: this lexes one array literal.
+   * Without it the array scan would run to EOF and meet the enclosing
+   * `do $$ ... $$` body's CLOSING delimiter with no partner after it, then
+   * report an unterminated dollar-quoted string. The array's own closing
+   * bracket is the natural stop, and stopping there also means nothing beyond
+   * the expression is ever read.
    */
-  function activeArrayLiterals(): string[] {
-    const open = SQL.indexOf("unnest(array[");
-    expect(open, "0150 must still drive its ACL from unnest(array[...])").toBeGreaterThan(-1);
-    // Exactly one, so "the array" is unambiguous.
-    expect(SQL.indexOf("unnest(array[", open + 1)).toBe(-1);
+  function lexFrom(
+    src: string,
+    from: number,
+    opts: { stopAtArrayClose?: boolean } = {},
+  ): Lexed {
+    const code: string[] = [];
+    const strings: Lexed["strings"] = [];
+    const blank = (n: number) => {
+      for (let k = 0; k < n; k += 1) code.push(" ");
+    };
+    let i = from;
+    let depth = 0;
 
-    const start = SQL.indexOf("[", open);
-    const literals: string[] = [];
-    let i = start + 1;
-    let depth = 1;
-
-    while (i < SQL.length) {
-      const two = SQL.slice(i, i + 2);
-
-      if (two === "--") {
-        const nl = SQL.indexOf("\n", i);
-        i = nl === -1 ? SQL.length : nl + 1;
+    while (i < src.length) {
+      // line comment
+      if (src.startsWith("--", i)) {
+        const nl = src.indexOf("\n", i);
+        const stop = nl === -1 ? src.length : nl;
+        blank(stop - i);
+        i = stop;
         continue;
       }
-      if (two === "/*") {
-        const close = SQL.indexOf("*/", i + 2);
-        expect(close, "unterminated block comment inside 0150's revoke array").toBeGreaterThan(-1);
-        i = close + 2;
+      // block comment, nested
+      if (src.startsWith("/*", i)) {
+        let depth = 0;
+        const begin = i;
+        while (i < src.length) {
+          if (src.startsWith("/*", i)) {
+            depth += 1;
+            i += 2;
+          } else if (src.startsWith("*/", i)) {
+            depth -= 1;
+            i += 2;
+            if (depth === 0) break;
+          } else {
+            i += 1;
+          }
+        }
+        if (depth !== 0) throw new Error("unterminated block comment in 0150");
+        blank(i - begin);
         continue;
       }
-      if (SQL[i] === "'") {
+      // dollar-quoted string
+      const dollar = /^\$([A-Za-z_]\w*)?\$/.exec(src.slice(i, i + 64));
+      if (dollar) {
+        const tag = dollar[0];
+        const begin = i;
+        const close = src.indexOf(tag, i + tag.length);
+        if (close === -1) throw new Error(`unterminated dollar-quoted string ${tag} in 0150`);
+        strings.push({ value: src.slice(i + tag.length, close), start: begin });
+        i = close + tag.length;
+        blank(i - begin);
+        continue;
+      }
+      // single-quoted string
+      if (src[i] === "'") {
+        const begin = i;
         let j = i + 1;
         let value = "";
         for (;;) {
-          expect(j, "unterminated string inside 0150's revoke array").toBeLessThan(SQL.length);
-          if (SQL[j] === "'") {
-            if (SQL[j + 1] === "'") {
-              value += "'"; // SQL's doubled-quote escape
+          if (j >= src.length) throw new Error("unterminated string literal in 0150");
+          if (src[j] === "'") {
+            if (src[j + 1] === "'") {
+              value += "'";
               j += 2;
               continue;
             }
             j += 1;
             break;
           }
-          value += SQL[j];
+          value += src[j];
           j += 1;
         }
-        literals.push(value);
+        strings.push({ value, start: begin });
+        blank(j - begin);
         i = j;
         continue;
       }
-      if (SQL[i] === "[") depth += 1;
-      else if (SQL[i] === "]") {
-        depth -= 1;
-        if (depth === 0) return literals;
+      if (opts.stopAtArrayClose) {
+        if (src[i] === "[") depth += 1;
+        else if (src[i] === "]") {
+          depth -= 1;
+          if (depth === 0) {
+            code.push(src[i]);
+            return { code: code.join(""), strings };
+          }
+        }
       }
+      code.push(src[i]);
       i += 1;
     }
-    throw new Error("0150's unnest(array[...]) is unterminated");
+    if (opts.stopAtArrayClose) throw new Error("0150's unnest(array[...]) is unterminated");
+    return { code: code.join(""), strings };
+  }
+
+  /**
+   * The ACTIVE elements of migration 0150's single `unnest(array[...])`.
+   *
+   * The array lives INSIDE the `do $$ ... $$` body, so this scans from the raw
+   * array position rather than from a whole-file projection — a projection
+   * would blank the DO body and the array with it. Depth is taken from the code
+   * projection, so only brackets in code close the array.
+   *
+   * Dollar-quoted elements are collected like any other string, so an active
+   * `$$public.f(uuid)$$` entry is SEEN rather than silently dropped.
+   */
+  function activeArrayLiterals(): string[] {
+    const open = SQL.indexOf("unnest(array[");
+    expect(open, "0150 must still drive its ACL from unnest(array[...])").toBeGreaterThan(-1);
+    expect(SQL.indexOf("unnest(array[", open + 1)).toBe(-1);
+
+    const bracket = SQL.indexOf("[", open);
+    const { code, strings } = lexFrom(SQL, bracket, { stopAtArrayClose: true });
+
+    // The scan stopped at the array's own closing bracket, so every string it
+    // collected is inside the expression by construction.
+    expect(code.endsWith("]"), "array scan did not stop at a closing bracket").toBe(true);
+    return strings.map((s) => s.value);
   }
 
   /** The signatures the revoke loop actually iterates, by function name. */
@@ -150,23 +229,19 @@ describe("0150 — single-row schedule writers locked", () => {
   }
 
   /**
-   * Every function the migration defines.
+   * Every function the migration declares, counted only where the declaration
+   * is CODE.
    *
-   * Comment handling is LINE-LOCAL by design: a `create or replace function`
-   * match is ignored when `--` precedes it on its own line. An earlier revision
-   * stripped `--` across the whole file, which would corrupt a string literal
-   * that legitimately contains a double hyphen. This looks only at the line the
-   * match starts on and rewrites nothing.
+   * Uses the same scanner over the whole file. A `--` inside a string no longer
+   * suppresses a following declaration (`select '--'; create or replace
+   * function ...` is still seen), and a declaration named inside a comment or a
+   * function body is not counted.
    */
   function definedFunctions(): string[] {
-    const out: string[] = [];
-    for (const m of SQL.matchAll(/create\s+or\s+replace\s+function\s+public\.(\w+)\s*\(/gi)) {
-      const lineStart = SQL.lastIndexOf("\n", m.index!) + 1;
-      const before = SQL.slice(lineStart, m.index!);
-      if (before.includes("--")) continue; // commented-out declaration
-      out.push(m[1]);
-    }
-    return out.sort();
+    const { code } = lexFrom(SQL, 0);
+    return [...code.matchAll(/create\s+or\s+replace\s+function\s+public\.(\w+)\s*\(/gi)]
+      .map((m) => m[1])
+      .sort();
   }
 
   it("the revoke loop covers EXACTLY the commands this migration defines", () => {
