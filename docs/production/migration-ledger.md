@@ -14,7 +14,90 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-09-16, post-0197 apply; `0197` APPLIED)
+## Current state (verified 2026-09-16, post-0198 apply; `0198` APPLIED)
+
+> **PRIVILEGE ONLY.** This apply ran ONE statement — a single **column** grant —
+> and created nothing. **PR #713 was NOT merged and no application code was
+> deployed**; #713 carries no application source at all, so its merge will deploy
+> no application change. No customer data was read, created or modified; no
+> provider was contacted; no message was sent; the controlled canary entry was
+> not touched.
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0198** (`0198_waitlist_live_invitation_read.sql`) |
+| **Repo migration max** | **0198** — `0198_waitlist_live_invitation_read.sql` (WAIT-LIVE-READ-01), derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. This row states the BRANCH-derived position; the hosted row above carries the production claim, and the Pending row below states how the two stand. |
+| **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
+| **Pending migrations** | **none** — `0198` was the entire pending set, and it was applied on **2026-09-16**, so the repository no longer sits above hosted. Repository and hosted are at parity, which is the PARITY shape rather than MIGRATION-FIRST PENDING. `0192`–`0197` remain applied and every apply record below is untouched. This row remains the ledger's own exemption: the current block is the single place permitted to state that relationship. |
+| **Next free migration** | Next free number is **0199**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. **`0198` IS NO LONGER FREE** — it is allocated to WAIT-LIVE-READ-01 (S6), authored on this branch and now applied to production. `0199` is **not claimed** by this lane and **not allocated**: availability is not allocation. |
+| **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project, confirmed from the applying worktree's `supabase/.temp/project-ref` before every hosted command and distinct from **Hone Staging** (`ndcqadeirszuzmytvobk`), which was never contacted. |
+| **Reviewed release head** | `c3182292336d2a219fc8da57bd95e1024c12598a` (PR #713) — the exact authorized head, tree clean. **Still a draft, still unmerged.** The apply was authorized at this head and performed from it; **the merge did not cause the apply, and the apply does not merge the PR.** |
+| **CLI** | `supabase` **2.102.0**, the pinned version — a grants-parity invariant, not a convenience. |
+| **Apply timestamp** | ⚠️ **NO SERVER-GENERATED APPLY TIMESTAMP WAS CAPTURED**, so `hosted_applied_at` stays `null`. **An operator-observed client-side window IS asserted**: the single `supabase db push --linked --include-all` invocation was bracketed with captured clock readings, `2026-09-16T19:36:50.688Z` – `2026-09-16T19:37:12.235Z`, **21.547 s**, read from the apply host's clock. **That window is not a server apply time and is never represented as one.** Same limitation as `0187`–`0191` and `0197`. |
+| **Verified applied** | **2026-09-16** — read back by read-only query immediately after the apply, and **re-verified read-only by this reconciliation lane before writing this block**: `max(version)` **0198**, **197** history rows, `0198` present **exactly once**, **nothing above 0198**, **zero** duplicate versions. That is an observation of STATE, not of an apply instant. |
+
+| Migration | Status | sha256 (gated before the write) |
+|---|---|---|
+| `0198_waitlist_live_invitation_read.sql` | **APPLIED** | `91072df94586e9f78536962ddc8c4c601b080b4e6237374a5315e218dbc0c792` |
+
+The hash was recomputed from the file at the authorized head and required to match
+byte-for-byte before the write. It was **recomputed again during this
+reconciliation** and still matches, and the statements recorded in production's
+own migration history were compared against the repository file and are
+character-identical.
+
+### What was applied
+
+One statement, inside its own transaction with `set local lock_timeout = '5s'`:
+
+```sql
+grant select (declined_at) on public.new_client_waitlist_invitations to authenticated;
+```
+
+No data backfill, table rewrite, function, trigger, policy, RLS change, index or
+column creation.
+
+### Why it was applied
+
+Liveness is defined by `0192`'s own index `one_live_per_entry`: `redeemed_at`,
+`expired_at`, `released_at` **and** `declined_at` all null. An authenticated owner
+could read three of those four terms; `declined_at` was granted to nobody, so the
+practitioner surface's already-correct query raised **42501** and a DECLINED
+invitation was indistinguishable from a LIVE one. **Production held a declined
+invitation at preflight, so the defect was live rather than theoretical.**
+
+`declined_at` is a lifecycle timestamp of the same class as its three granted
+siblings — not credential or authority material.
+
+### Post-apply authority verification — read-only
+
+| Check | Result |
+|---|---|
+| CLI outcome | exit **0**, exactly one migration named, no ambiguity and no retry |
+| History | 196 → **197** rows, exactly **+1**, `0198` exactly once, **0** duplicates, nothing above |
+| **Authority delta** | eleven readable columns → **twelve**: `declined_at`, `delivery_disposition`, `delivery_recorded_at`, `entry_id`, `expired_at`, `expires_at`, `id`, `issued_at`, `issued_by_practitioner_id`, `redeemed_at`, `released_at`, `studio_id` |
+| **Nothing protected leaked** | **0 of 13** — `token_hash`, every `proof_*` challenge and capability field, all four `scope_*` columns and `admission_round_id` all still ungranted |
+| **No table-wide grant** | `authenticated` **0**, `anon` **0**, `service_role` **0** — no `SELECT *`, and `anon`/`service_role` hold no privilege on the table at all |
+| **RLS unchanged** | enabled, single policy `new_client_waitlist_invitations_owner_select` → `is_studio_owner(studio_id)`. The apply widened **what** an owner may read about their own studio's rows and **nothing** about **whose** rows they are. |
+| **No data rows mutated** | entries **29**, invitations **2**, declined **1**, redeemed **1**, converted **1** — identical before and after |
+
+### What this apply does NOT mean
+
+- **PR #713 is applied, not merged.** The migration is on production; the branch
+  is still a draft. **The merge did not cause the apply.**
+- **No application was deployed.** #713 contains one migration, its tests and this
+  record — no application source — so merging it changes no runtime code. This
+  block asserts **no application SHA of its own**; the runtime pin is
+  [current-state.md](./current-state.md)'s to declare.
+- **`0199` is not allocated.** It is merely the next free number.
+
+### Rollback
+
+`revoke select (declined_at) on public.new_client_waitlist_invitations from
+authenticated;` — metadata only, instant, no data implication. It would restore
+the 42501 and with it the declined/live ambiguity.
+
+## Previous state (verified 2026-09-16, post-0197 apply; `0197` APPLIED)
 
 > **SCHEMA ONLY.** This apply added ONE function and widened no table privilege.
 > **PR #709 was NOT merged and no application code was deployed** — production
@@ -25,10 +108,10 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 | Field | Value |
 |---|---|
 | **Hosted (production) migration max** | **0197** (`0197_waitlist_consumed_count_gateway.sql`) |
-| **Repo migration max** | **0197** — derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. |
+| **Repo migration max** | **0198** — this branch authors `0198_waitlist_live_invitation_read.sql` (WAIT-LIVE-READ-01), a SINGLE column grant: `select (declined_at)` on `public.new_client_waitlist_invitations` to `authenticated`. It completes the liveness predicate the database itself uses (`one_live_per_entry`), whose fourth term was readable by nobody, so an authenticated owner hit 42501 and a declined invitation was indistinguishable from a live one. **`0198` is PENDING**: authored here, **not applied**, and not authorized for apply — that is a separate gate. Hosted remains **0197** and the apply record above is unchanged; this row states the BRANCH-derived position, not a production claim. The number was derived from PRODUCTION `5ac323117bcee88f6d166b2ba439012ce85b3ab9` (repo max 0197), not from an older stacked tree, and **when enumerated on 2026-09-16 no pushed branch, open PR or local worktree held an `0198`** — a branch pushed after that reading is not covered by it. The next free number is stated once, in its own row below. |
 | **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
-| **Pending migrations** | **none** — `0197` was applied on **2026-09-16** and the repository and hosted database are **at parity at 0197**. This row remains the ledger's own exemption: the current block is the single place permitted to state that relationship, and every other document references it rather than keeping a copy that can drift. |
-| **Next free migration** | Next free number is **0198**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** by this lane — availability is not allocation. |
+| **Pending migrations** | **`0198`** — repo `0198`, hosted `0197`, so the repository sits **one migration above hosted**: MIGRATION-FIRST PENDING, which is the ordinary pre-apply position of a migration-bearing branch and not drift. `0197` remains applied and its apply record above is untouched. This row remains the ledger's own exemption: the current block is the single place permitted to state that relationship. |
+| **Next free migration** | Next free number is **0199**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. **`0198` IS NO LONGER FREE** — it is allocated to WAIT-LIVE-READ-01 (S6) and authored on this branch, so availability and allocation have parted company here exactly as they did for `0197` one row below. `0199` is **not claimed** by this lane: availability is not allocation. |
 | **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project, confirmed from the applying worktree's `supabase/.temp/project-ref` immediately before the write and distinct from **Hone Staging** (`ndcqadeirszuzmytvobk`). |
 | **Reviewed release head** | `48225a91afaa74d854a2f13f6e81a90addca37e5` (PR #709) — CI run `35040544956` green and Codex clean at that exact head, tree clean. **Still a draft, still unmerged.** |
 | **Apply timestamp** | ⚠️ **NO SERVER-GENERATED APPLY TIMESTAMP WAS CAPTURED**, so `hosted_applied_at` stays `null`. **An operator-observed client-side window IS asserted** — unlike the 0192–0196 apply, this invocation was bracketed with captured clock readings: `2026-09-16T01:39:48.843Z` – `2026-09-16T01:40:14.124Z`, **25.281 s**, read from the apply host's clock around the CLI invocation. **That window is not a server apply time and is never represented as one.** |

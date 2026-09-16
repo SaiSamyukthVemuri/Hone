@@ -482,7 +482,7 @@ describe("0188 — privilege", () => {
     }
   });
 
-  it("grants authenticated exactly the eleven safe columns, and NEVER token_hash", async () => {
+  it("grants authenticated exactly the twelve safe columns, and NEVER token_hash", async () => {
     const r = await adminQuery(
       `select column_name from information_schema.column_privileges
         where table_schema='public' and table_name='new_client_waitlist_invitations'
@@ -512,7 +512,24 @@ describe("0188 — privilege", () => {
     // column tolerated. A column added later stays unreadable until someone
     // edits this list on purpose — which is the whole point of the guard, and
     // is exactly what it did to 0196.
+    // WIDENED AGAIN BY 0198, AND AGAIN DECLARED RATHER THAN ALLOWED.
+    //
+    // `declined_at` completes the liveness predicate the database itself uses —
+    // `one_live_per_entry` is redeemed/expired/released/declined ALL null. 0188
+    // already granted the other three terms; without the fourth an authenticated
+    // owner hit 42501 and a DECLINED invitation was indistinguishable from a
+    // LIVE one.
+    //
+    // SAME CLASS AS ITS THREE SIBLINGS: a lifecycle timestamp, not credential or
+    // authority material. `token_hash`, every `proof_*` field, the `scope_*`
+    // offer terms and `admission_round_id` stay withheld — asserted positively
+    // by the complement check below, which loses `declined_at` for the only
+    // legitimate reason: it is now granted.
+    //
+    // STILL AN EXACT SET over a sorted query: no subset, no contains-only, no
+    // regex, no tolerated extra.
     expect(granted).toEqual([
+      "declined_at",
       "delivery_disposition","delivery_recorded_at",
       "entry_id","expired_at","expires_at","id","issued_at",
       "issued_by_practitioner_id","redeemed_at","released_at","studio_id",
@@ -537,7 +554,6 @@ describe("0188 — privilege", () => {
       // browser's business either, and it must never become writable there —
       // moving an invitation between rounds would move the seat it spent.
       "admission_round_id",
-      "declined_at",
       "proof_capability_expires_at",
       "proof_capability_hash",
       "proof_challenge_attempts",

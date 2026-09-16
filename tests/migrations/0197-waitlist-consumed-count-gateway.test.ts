@@ -3,9 +3,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
   fileForVersion,
-  isRepoMax,
   migrationState,
-  versionsAbove,
 } from "./helpers/migration-state";
 
 // 0197 — the server-callable consumed-count gateway.
@@ -23,26 +21,34 @@ const SQL = readFileSync(path.join(ROOT, "supabase/migrations", FILE), "utf8");
 const CODE = SQL.replace(/^\s*--.*$/gm, " ").replace(/comment on [\s\S]*?;/gi, " ");
 
 describe("0197 position in the chain", () => {
-  it("is the repository maximum", () => {
-    // Taken over from 0196, per CLAUDE.md: only the CURRENT max asserts this.
-    expect(isRepoMax(VERSION)).toBe(true);
-  });
+  // THE REPO-MAX ASSERTION MOVED TO 0198 when that migration was authored, per
+  // CLAUDE.md: only the CURRENT maximum's own test may assert it, or every
+  // landing migration reds an older file.
+  // tests/migrations/0198-waitlist-live-invitation-read.test.ts carries it.
+  //
+  // THE HOSTED-HEAD CLAIM HAS NOW MOVED TOO, and later than the repo-max one. An
+  // earlier revision of this comment said "0198 is authored but NOT applied, so
+  // 0197 is still the current hosted head". That was true when it was written and
+  // stopped being true on 2026-09-16, when 0198 was applied to production under
+  // explicit per-change authorization -- hosted and repo are now at parity at 0198.
+  //
+  // So 0197 keeps its DURABLE claims: what it created, how it behaves, and that
+  // production is at or above it. What it no longer holds is the CURRENT
+  // hosted-head equality, which belongs to exactly one file at a time and is now
+  // 0198's.
 
-  it("has nothing above it", () => {
-    expect(versionsAbove(VERSION)).toEqual([]);
-  });
-
-  it("IS APPLIED to production, and is the CURRENT hosted head", () => {
-    // 0197 NOW OWNS THE EXACT HOSTED-HEAD CLAIM, handed off from 0196 when this
-    // migration was applied on 2026-09-16 under explicit per-change
-    // authorization. Equality is a CURRENT claim, so exactly one file may hold
-    // it: leaving it on 0196 would have made that file red the moment this one
-    // applied, and dropping it would leave the hosted head asserted nowhere.
+  it("IS APPLIED to production, and hosted has not gone backwards past it", () => {
+    // 0197 NO LONGER OWNS THE EQUALITY CLAIM. `0198` was applied on 2026-09-16,
+    // so this file keeps only a FLOOR -- `hosted >= 0197` -- which is the durable
+    // fact about an older applied migration and stays true forever.
     //
-    // Whoever applies 0198 moves this block: narrow 0197 to a floor the way
-    // 0196 and 0191 were narrowed, and let the new head take equality.
+    // That is precisely the hand-off the previous revision of this block
+    // required: "whoever applies 0198 moves this block: narrow 0197 to a floor
+    // the way 0196 and 0191 were narrowed, and let the new head take equality."
+    // Re-asserting equality here would make this file red the moment anything
+    // else applies, which is the mechanical sweep CLAUDE.md forbids.
     const state = migrationState();
-    expect(state.hosted_migration_max).toBe(VERSION);
+    expect(Number(state.hosted_migration_max)).toBeGreaterThanOrEqual(Number(VERSION));
     expect(state.pending_migrations).not.toContain(VERSION);
   });
 });
