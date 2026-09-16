@@ -28,9 +28,20 @@ describe("0196 position in the chain", () => {
   // states: only the CURRENT maximum migration's own test may assert isRepoMax,
   // because otherwise every landing migration reds an older file and the sweep
   // gets missed. tests/migrations/0197-waitlist-consumed-count-gateway.test.ts
-  // now carries it. Nothing else in this file changed -- 0196 keeps every claim
-  // it makes about itself, including the hosted-head claim below, which is still
-  // true: 0197 is authored and PENDING, not applied.
+  // now carries it.
+  //
+  // THE HOSTED-HEAD CLAIM MOVED TOO, and later than the repo-max one. An earlier
+  // revision of this comment said 0196 "keeps every claim it makes about itself,
+  // including the hosted-head claim below, which is still true: 0197 is authored
+  // and PENDING, not applied". That was true when it was written and stopped
+  // being true on 2026-09-16, when 0197 was applied to production -- hosted and
+  // repo are now at parity at 0197.
+  //
+  // So 0196 keeps its DURABLE claims: what it created, how it behaves, and that
+  // production is at or above it. What it no longer holds is the CURRENT
+  // hosted-head equality, which belongs to exactly one file at a time and is now
+  // 0197's. The assertion below already reflects that -- `hosted >= 0196`, a
+  // floor that stays true forever -- and only this prose was stale.
 
   it("IS APPLIED to production, and hosted has not gone backwards past it", () => {
     // 0196 NO LONGER OWNS THE EQUALITY CLAIM. `0197` was applied on 2026-09-16,
