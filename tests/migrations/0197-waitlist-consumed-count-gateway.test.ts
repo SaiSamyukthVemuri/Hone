@@ -3,9 +3,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
   fileForVersion,
-  isRepoMax,
   migrationState,
-  versionsAbove,
 } from "./helpers/migration-state";
 
 // 0197 — the server-callable consumed-count gateway.
@@ -23,14 +21,13 @@ const SQL = readFileSync(path.join(ROOT, "supabase/migrations", FILE), "utf8");
 const CODE = SQL.replace(/^\s*--.*$/gm, " ").replace(/comment on [\s\S]*?;/gi, " ");
 
 describe("0197 position in the chain", () => {
-  it("is the repository maximum", () => {
-    // Taken over from 0196, per CLAUDE.md: only the CURRENT max asserts this.
-    expect(isRepoMax(VERSION)).toBe(true);
-  });
-
-  it("has nothing above it", () => {
-    expect(versionsAbove(VERSION)).toEqual([]);
-  });
+  // THE REPO-MAX ASSERTION HAS MOVED TO 0198, per CLAUDE.md: only the CURRENT
+  // maximum's own test may assert it, or every landing migration reds an older
+  // file. tests/migrations/0198-waitlist-live-invitation-read.test.ts carries it.
+  //
+  // THE HOSTED-HEAD CLAIM BELOW STAYS HERE. 0198 is authored but NOT applied,
+  // so 0197 is still the current hosted head and must remain the one file
+  // asserting that equality.
 
   it("IS APPLIED to production, and is the CURRENT hosted head", () => {
     // 0197 NOW OWNS THE EXACT HOSTED-HEAD CLAIM, handed off from 0196 when this
