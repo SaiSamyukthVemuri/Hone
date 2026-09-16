@@ -4,6 +4,7 @@ import path from "node:path";
 import {
   fileForVersion,
   isRepoMax,
+  migrationState,
   versionsAbove,
 } from "./helpers/migration-state";
 
@@ -31,9 +32,26 @@ describe("0197 position in the chain", () => {
     expect(versionsAbove(VERSION)).toEqual([]);
   });
 
-  it("is AUTHORED AND PENDING — it makes no hosted claim", () => {
-    // 0196 owns the hosted-head claim and keeps it. Nothing here may say this
-    // migration has been applied, because it has not been.
+  it("IS APPLIED to production, and is the CURRENT hosted head", () => {
+    // 0197 NOW OWNS THE EXACT HOSTED-HEAD CLAIM, handed off from 0196 when this
+    // migration was applied on 2026-09-16 under explicit per-change
+    // authorization. Equality is a CURRENT claim, so exactly one file may hold
+    // it: leaving it on 0196 would have made that file red the moment this one
+    // applied, and dropping it would leave the hosted head asserted nowhere.
+    //
+    // Whoever applies 0198 moves this block: narrow 0197 to a floor the way
+    // 0196 and 0191 were narrowed, and let the new head take equality.
+    const state = migrationState();
+    expect(state.hosted_migration_max).toBe(VERSION);
+    expect(state.pending_migrations).not.toContain(VERSION);
+  });
+});
+
+describe("0197 says nothing about its own hosted status", () => {
+  it("makes no hosted claim in its own SQL", () => {
+    // The apply record is the ledger's and migration-state.json's job. A
+    // migration file that claimed to be applied would be a second, unverifiable
+    // source for that fact.
     expect(SQL).not.toMatch(/applied to production/i);
     expect(SQL).not.toMatch(/hosted (head|max)/i);
   });

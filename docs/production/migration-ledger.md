@@ -14,7 +14,62 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-09-15, post-0196 apply; `0192`, `0193`, `0194`, `0195` and `0196` APPLIED)
+## Current state (verified 2026-09-16, post-0197 apply; `0197` APPLIED)
+
+> **SCHEMA ONLY.** This apply added ONE function and widened no table privilege.
+> **PR #709 was NOT merged and no application code was deployed** — production
+> still runs `a47eca0f8ec08718aa16b8a18e95e0416778418d`, which does not call the
+> new function. No customer data was read, created or modified; no provider was
+> contacted; no message was sent; the controlled canary entry was not touched.
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0197** (`0197_waitlist_consumed_count_gateway.sql`) |
+| **Repo migration max** | **0197** — derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. |
+| **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
+| **Pending migrations** | **none** — `0197` was applied on **2026-09-16** and the repository and hosted database are **at parity at 0197**. This row remains the ledger's own exemption: the current block is the single place permitted to state that relationship, and every other document references it rather than keeping a copy that can drift. |
+| **Next free migration** | Next free number is **0198**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. It is **not claimed** by this lane — availability is not allocation. |
+| **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project, confirmed from the applying worktree's `supabase/.temp/project-ref` immediately before the write and distinct from **Hone Staging** (`ndcqadeirszuzmytvobk`). |
+| **Reviewed release head** | `48225a91afaa74d854a2f13f6e81a90addca37e5` (PR #709) — CI run `35040544956` green and Codex clean at that exact head, tree clean. **Still a draft, still unmerged.** |
+| **Apply timestamp** | ⚠️ **NO SERVER-GENERATED APPLY TIMESTAMP WAS CAPTURED**, so `hosted_applied_at` stays `null`. **An operator-observed client-side window IS asserted** — unlike the 0192–0196 apply, this invocation was bracketed with captured clock readings: `2026-09-16T01:39:48.843Z` – `2026-09-16T01:40:14.124Z`, **25.281 s**, read from the apply host's clock around the CLI invocation. **That window is not a server apply time and is never represented as one.** |
+| **Verified applied** | **2026-09-16** — read back by read-only query immediately after the apply: `max(version)` **0197**, **196** history rows, `0197` present **exactly once**, `0192`–`0196` each still **exactly once**, **nothing above 0197**, **zero** duplicate versions. That is an observation of STATE, not of an apply instant. |
+
+| Migration | Status | sha256 (gated before the write) |
+|---|---|---|
+| `0197_waitlist_consumed_count_gateway.sql` | **APPLIED** | `2018cca6cefd140227106aa97388eaecedf290df797f384d01461a8e50072ee1` |
+
+The hash was recomputed from the file at the reviewed head and required to match
+byte-for-byte before the write. **An earlier authorization carried a
+mis-transcribed 65-character hash and the apply was refused** until it was
+reissued correctly — the gate did its job.
+
+### Pre-apply gates
+
+| Gate | Result |
+|---|---|
+| Release head / tree | `48225a91…` exact, 0 changes, local = remote = PR head |
+| Production source | `a47eca0f…` exact, unchanged |
+| 0197 sha256 | **MATCH**, 64 characters, 6,475 bytes |
+| Hosted max before | **0196**, 195 history rows, `0197` absent, nothing above |
+| Pending set | **exactly `{0197}`** — the CLI's own `migration list --linked` showed `0197` local-only and every version through `0196` on both sides |
+| Gateway pre-existing | **no** — 0 name collisions |
+| Data preconditions | 0 rounds, 0 orphan round studios, 0 duplicate round ids, 0 cross-studio round links — **no backfill required** |
+
+### Post-apply authority verification
+
+| Check | Result |
+|---|---|
+| CLI outcome | exit **0**, exactly one migration named, no ambiguity and no retry |
+| History | 195 → **196** rows, exactly **+1**, `0197` exactly once, **0** duplicates |
+| **Function created** | `read_waitlist_admission_round_consumed(uuid,uuid)` → `integer`, owner `postgres` |
+| **Security** | `SECURITY DEFINER`, `search_path=pg_catalog, pg_temp` |
+| **ACL** | `postgres=X/postgres,service_role=X/postgres` — `service_role` EXECUTE **yes**; `anon`, `authenticated`, PUBLIC **no** |
+| **No widened table authority** | `service_role` SELECT on `new_client_waitlist_invitations` **false**, on `studio_waitlist_admission_rounds` **false**, **0** column grants on either |
+| **Canonical function unchanged** | `waitlist_admission_round_consumed(uuid)` still `SECURITY INVOKER`, ACL unchanged |
+| **Negative paths** | unknown studio/round pair → **NULL**; null ids → **NULL**. No count leaked. |
+| Positive live row-path | **DEFERRED** — production holds **0** admission rounds, and no fixture was created merely to prove a function. Deferred to the controlled test-studio canary. |
+
+## Previous state (verified 2026-09-15, post-0196 apply; `0192`, `0193`, `0194`, `0195` and `0196` APPLIED)
 
 > **This block is an APPLY RECORD written by the lane that PERFORMED the apply.**
 > It records both the pre-write gates and the independently read-back result. The
