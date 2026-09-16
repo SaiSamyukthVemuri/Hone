@@ -60,11 +60,19 @@ async function computedScale(control: Locator): Promise<string> {
  * layout box is untouched, which is what makes CONTROL_PRESS safe to apply
  * broadly in UI-R03. offsetWidth/offsetHeight are transform-independent, so
  * they measure the claim instead of measuring the transform.
+ *
+ * POSITION AS WELL AS SIZE, and the second half was a real hole: a reflow can
+ * MOVE a control without resizing it — a neighbour growing, a row re-wrapping,
+ * a scrollbar appearing — and a width/height-only assertion sails straight past
+ * all three. "Nothing jumped" is a claim about where the control IS, not only
+ * about how big it is, so offsetTop/offsetLeft are part of the measurement.
  */
-async function boxOf(control: Locator): Promise<{ w: number; h: number }> {
+async function boxOf(
+  control: Locator,
+): Promise<{ w: number; h: number; top: number; left: number }> {
   return control.evaluate((el) => {
     const e = el as HTMLElement;
-    return { w: e.offsetWidth, h: e.offsetHeight };
+    return { w: e.offsetWidth, h: e.offsetHeight, top: e.offsetTop, left: e.offsetLeft };
   });
 }
 
@@ -349,13 +357,34 @@ test.describe("UI-R01 press acknowledgement — 390px", () => {
     await control.scrollIntoViewIfNeeded();
     const box = await control.boundingBox();
     if (!box) throw new Error("no box");
-    // A real touch sequence: this is the interaction that had NO feedback at
-    // all before UI-R01, because :hover does not exist here.
-    await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
+    const x = box.x + box.width / 2;
+    const y = box.y + box.height / 2;
 
-    // The tap completes too fast to sample mid-press reliably, so the durable
-    // claim on touch is the one that matters for layout: the control's box is
-    // unchanged before, during and after.
+    // WHAT THIS CAN AND CANNOT OBSERVE — recorded, because review asked for
+    // the pressed state to be watched here and it could not be delivered.
+    //
+    // Tried, and both failed the same way: Playwright's `touchscreen.tap()` is
+    // atomic (down and up in one call, nothing to sample between them), and a
+    // CDP `Input.dispatchTouchEvent` touchStart held open — with and without a
+    // full touch point (id, radii, force) — never sets `:active` at all. The
+    // computed scale stays "none" for the whole hold. Chromium drives `:active`
+    // through its gesture pipeline, and a synthetic touch event does not reach
+    // it. This is a limitation of the harness, not of the control.
+    //
+    // So the touch claim is split across the two places that CAN carry it:
+    //
+    //   * HERE, what a browser can prove — the layout box does not move or
+    //     resize across a real tap, and the 44px floor holds at 390px.
+    //   * tests/components/…: that the control carries active:scale-[0.98]
+    //     with NO hover dependency, which is the property that makes touch
+    //     work; and the desktop proof above shows that class actually painting
+    //     when :active is genuinely applied.
+    //
+    // What remains unproven in a browser is narrow and worth stating plainly:
+    // that :active paints under a REAL finger on a REAL device. No synthetic
+    // input available here can establish it.
+    await page.touchscreen.tap(x, y);
+
     expect(await boxOf(control)).toEqual(restBox);
     await expect.poll(async () => computedScale(control), { timeout: 2_000 }).toBe(atRest);
 
