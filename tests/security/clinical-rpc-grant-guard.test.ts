@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import {
+  aclByFunction,
+  actorGated,
+  functionDefs,
+} from "./migration-acl";
 
 // ===========================================================================
 // Authenticated-only clinical RPCs must revoke EVERY default-granted role
@@ -225,5 +230,163 @@ describe("clinical RPC grant guard — authenticated-only commands", () => {
 
   it("create_laser_entry is NOT on the service-role-callable list", () => {
     expect(SERVICE_ROLE_CALLABLE.map((e) => e.fn)).not.toContain("create_laser_entry");
+  });
+});
+
+// ===========================================================================
+// WIDENED COVERAGE (Trust follow-up, #705 P2-01)
+// ===========================================================================
+//
+// The guard above is correct but narrow in two independent ways, and the #705
+// audit measured the cost: of the browser-callable SECURITY DEFINER commands in
+// this chain, it was enforcing the revoke rule on FIVE.
+//
+//   * CLASSIFICATION. `requiresAuthUid` matches a literal inline
+//     `if auth.uid() is null then`. Almost every command here delegates the
+//     actor check to a helper — assert_session_writable,
+//     session_actor_practitioner, is_studio_member, own_practitioner_in_studio
+//     — which is the better design and was invisible to it.
+//
+//   * DETECTION. A revoke was recognised only as
+//     `revoke execute on function public.f(...) from <role>`. The chain also
+//     writes `revoke all on function`, `revoke all privileges on function`,
+//     comma-separated role lists, and DO-blocks that loop
+//     `execute format('revoke all privileges on function %s from anon', f)`
+//     over an array of signatures (0134, 0136, 0137, 0138, 0140, 0141, 0150,
+//     0173, 0178, 0192).
+//
+// Both had to widen together: widening classification alone would report
+// correctly-revoked commands as unprotected, and widening detection alone
+// would change nothing.
+//
+// CORRECTNESS ORACLE. The parser is not trusted on its own authority. Applied
+// to this chain it must conclude that exactly three directly-callable
+// SECURITY DEFINER functions retain anon EXECUTE — is_studio_member,
+// is_studio_owner and session_is_visible. That is the same set the #705 audit
+// measured with has_function_privilege against a real migrated database. A
+// parser change that alters that answer is wrong, and says so here.
+
+/** Directly-callable definer functions that may keep anon EXECUTE, with why. */
+const ANON_CALLABLE: ReadonlyArray<{ fn: string; why: string }> = [
+  {
+    fn: "is_studio_member",
+    why: "0001 membership predicate; resolves through auth.uid(), so anon can only ever get false",
+  },
+  {
+    fn: "is_studio_owner",
+    why: "0001 ownership predicate; resolves through auth.uid(), so anon can only ever get false",
+  },
+  {
+    fn: "session_is_visible",
+    why: "0001 visibility predicate; resolves through auth.uid(), so anon can only ever get false",
+  },
+];
+
+/**
+ * Commands that predate this guard and say NOTHING about service_role — they
+ * neither revoke it nor grant it, so they inherit Supabase's default EXECUTE.
+ * Frozen here so the posture is recorded rather than silently tolerated, and
+ * so every NEW command has to declare one. Not a statement that these are
+ * correct; a statement that they are known and not growing.
+ */
+const SERVICE_ROLE_UNDECLARED_LEGACY: readonly string[] = [
+  "is_studio_member",
+  "is_studio_owner",
+  "session_is_visible",
+  "get_studio_payment_settings_display",
+  "get_appointment_payment_display",
+  "get_disputes_for_studio",
+  "get_refunds_for_appointment",
+  "get_payment_audit_for_appointment",
+  "soft_delete_session_area",
+];
+
+describe("RPC grant guard — widened to the shapes this repository actually uses", () => {
+  const defs = functionDefs();
+  const acl = aclByFunction();
+  const gated = actorGated(defs);
+
+  const definerCallable = [...defs.values()].filter((d) => d.isDefiner && !d.isTrigger);
+  const revoked = (fn: string, role: string) => acl.get(fn)?.revoked.has(role) ?? false;
+  const granted = (fn: string, role: string) => acl.get(fn)?.granted.has(role) ?? false;
+
+  /** Actor-gated commands actually exposed to browser sessions. */
+  const commands = definerCallable.filter(
+    (d) => gated.has(d.fn) && granted(d.fn, "authenticated"),
+  );
+
+  it("the parser reproduces the live-database measurement from the #705 audit", () => {
+    const keepAnon = definerCallable
+      .filter((d) => !revoked(d.fn, "anon"))
+      .map((d) => d.fn)
+      .sort();
+    expect(keepAnon).toEqual(ANON_CALLABLE.map((a) => a.fn).sort());
+  });
+
+  it("covers far more than the inline-gated set, and never less", () => {
+    // No weakening: every command the original predicate found is still here.
+    const inline = definerCallable.filter((d) => d.gatesInline).map((d) => d.fn);
+    expect(inline.length).toBeGreaterThan(0);
+    const covered = new Set(commands.map((d) => d.fn));
+    for (const fn of inline) {
+      if (SERVICE_ROLE_CALLABLE.some((s) => s.fn === fn)) continue;
+      // Internal helpers are inline-gated but deliberately NOT browser-callable
+      // (revoked from authenticated, never granted back — 0166's three). The
+      // original guard excluded them too; they are covered by the anon rule.
+      if (revoked(fn, "authenticated") && !granted(fn, "authenticated")) continue;
+      expect(covered.has(fn), `${fn} was covered by the original guard and must stay covered`).toBe(true);
+    }
+    // And strictly more: the whole point of the widening.
+    expect(commands.length).toBeGreaterThan(inline.length * 4);
+  });
+
+  it("every directly-callable SECURITY DEFINER function closes anon, or is named", () => {
+    const named = new Set(ANON_CALLABLE.map((a) => a.fn));
+    const open = definerCallable
+      .filter((d) => !revoked(d.fn, "anon") && !named.has(d.fn))
+      .map((d) => `${d.fn} (${d.file})`);
+    expect(
+      open,
+      "Supabase's ALTER DEFAULT PRIVILEGES grants EXECUTE to anon at create time, so a " +
+        "function with no anon revoke is callable from an anonymous browser session. " +
+        "Revoke it, or add it to ANON_CALLABLE with a reason.",
+    ).toEqual([]);
+  });
+
+  it("every browser-callable command revokes EXECUTE from public", () => {
+    const open = commands.filter((d) => !revoked(d.fn, "public")).map((d) => d.fn);
+    expect(open).toEqual([]);
+  });
+
+  it("every browser-callable command DECLARES a service_role posture", () => {
+    const legacy = new Set(SERVICE_ROLE_UNDECLARED_LEGACY);
+    const silent = commands
+      .filter(
+        (d) =>
+          !revoked(d.fn, "service_role") &&
+          !granted(d.fn, "service_role") &&
+          !legacy.has(d.fn),
+      )
+      .map((d) => `${d.fn} (${d.file})`);
+    expect(
+      silent,
+      "A command that neither revokes service_role nor grants it inherits the default " +
+        "EXECUTE silently — the 0164 defect. Say which one it is.",
+    ).toEqual([]);
+  });
+
+  it("the legacy service_role list is frozen, named and real", () => {
+    expect(SERVICE_ROLE_UNDECLARED_LEGACY.length).toBeLessThanOrEqual(9);
+    for (const fn of SERVICE_ROLE_UNDECLARED_LEGACY) {
+      expect(defs.has(fn), `${fn} is listed as legacy but no longer exists`).toBe(true);
+    }
+  });
+
+  it("the anon allowlist is small and every entry is justified", () => {
+    expect(ANON_CALLABLE.length).toBeLessThanOrEqual(3);
+    for (const a of ANON_CALLABLE) {
+      expect(a.why).toMatch(/auth\.uid\(\)/);
+      expect(defs.has(a.fn)).toBe(true);
+    }
   });
 });

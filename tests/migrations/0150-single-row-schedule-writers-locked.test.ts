@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { aclByFunction } from "@/tests/security/migration-acl";
 
 const SQL = readFileSync(
   join(process.cwd(), "supabase/migrations/0150_single_row_schedule_writers_locked.sql"),
@@ -44,10 +45,74 @@ describe("0150 — single-row schedule writers locked", () => {
     // No appointment/reservation mutation in the deactivation path.
     expect(SQL).not.toMatch(/update public\.appointments/);
   });
-  it("grants every command to service_role only (browser roles revoked)", () => {
+  // -------------------------------------------------------------------------
+  // ACL. (#705 P2-02.)
+  //
+  // This assertion used to read:
+  //
+  //   expect(SQL).toMatch(new RegExp(`revoke execute on function %s from ${role}`));
+  //
+  // with `%s` left unsubstituted, so it matched the literal format() TEMPLATE
+  // inside the DO-block and could never fail. It proved only that the file
+  // contains a loop of roughly that shape — never WHICH functions the loop
+  // iterates. A ninth command added to this migration and omitted from the
+  // array was undetectable, which is precisely the regression an ACL test
+  // exists to catch.
+  //
+  // The repair reads the loop's actual signature array and compares it against
+  // the functions the migration actually defines. Migration 0150 is frozen and
+  // is not modified; only this test changed.
+  // -------------------------------------------------------------------------
+
+  /** The signatures the DO-block loops over, by function name. */
+  function revokeLoopFunctions(): string[] {
+    const block = /do\s*\$\$([\s\S]*?)\$\$/i.exec(SQL);
+    expect(block, "0150 must still apply its ACL through a DO-block loop").not.toBeNull();
+    return [...block![1].matchAll(/'public\.(\w+)\s*\(/g)].map((m) => m[1]).sort();
+  }
+
+  /** Every function the migration defines. */
+  function definedFunctions(): string[] {
+    return [...SQL.matchAll(/create\s+or\s+replace\s+function\s+public\.(\w+)\s*\(/gi)]
+      .map((m) => m[1])
+      .sort();
+  }
+
+  it("the revoke loop covers EXACTLY the commands this migration defines", () => {
+    // Adding a command without adding it to the array, or listing a command the
+    // file does not define, fails here. This is the assertion the `%s` version
+    // could not make.
+    expect(revokeLoopFunctions()).toEqual(definedFunctions());
+    expect(definedFunctions()).toEqual([...COMMANDS].sort());
+  });
+
+  it("the loop revokes every browser role and grants only service_role", () => {
+    const block = /do\s*\$\$([\s\S]*?)\$\$/i.exec(SQL)![1];
     for (const role of ["public", "anon", "authenticated"]) {
-      expect(SQL).toMatch(new RegExp(`revoke execute on function %s from ${role}`));
+      expect(
+        block,
+        `the loop must revoke EXECUTE from ${role}`,
+      ).toMatch(new RegExp(`execute\\s+format\\('revoke execute on function %s from ${role}'`, "i"));
     }
-    expect(SQL).toMatch(/grant execute on function %s to service_role/);
+    expect(block).toMatch(/execute\s+format\('grant execute on function %s to service_role'/i);
+    // service_role is the ONLY role granted back.
+    const grantedRoles = [...block.matchAll(/format\('grant execute on function %s to (\w+)'/gi)].map(
+      (m) => m[1],
+    );
+    expect(grantedRoles).toEqual(["service_role"]);
+  });
+
+  it("every command the migration defines is reachable by the shared ACL model", () => {
+    // Cross-check against the parser the security guard uses, so the two cannot
+    // disagree about what this migration did.
+    const acl = aclByFunction();
+    for (const fn of definedFunctions()) {
+      const a = acl.get(fn);
+      expect(a, `${fn} has no ACL recorded anywhere in the chain`).toBeDefined();
+      for (const role of ["public", "anon", "authenticated"]) {
+        expect(a!.revoked.has(role), `${fn} must revoke ${role}`).toBe(true);
+      }
+      expect(a!.granted.has("service_role"), `${fn} must grant service_role`).toBe(true);
+    }
   });
 });
