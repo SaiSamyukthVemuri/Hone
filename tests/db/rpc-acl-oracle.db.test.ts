@@ -2,10 +2,12 @@ import { afterAll, describe, expect, it } from "vitest";
 import { adminQuery, closePool } from "./helpers/harness";
 import {
   exposedSchemas,
+  HISTORICAL_LEGACY_SERVICE_ROLE_DEBT,
   LEGACY_SERVICE_ROLE_DEBT,
   RPC_ACL_MANIFEST,
   type RolePosture,
 } from "./rpc-acl-manifest";
+import { migrationState } from "../migrations/helpers/migration-state";
 
 // ===========================================================================
 // The repo-wide ACL authority: PostgreSQL interpreting PostgreSQL
@@ -123,20 +125,28 @@ describe("RPC ACL oracle — real migrated privileges vs the reviewed manifest",
     await closePool();
   });
 
-  it("the migration chain is fully applied", async () => {
-    // Without this, every assertion below could pass against a half-built
-    // database that simply has fewer functions to disagree about.
+  it("the database is migrated to THIS branch's exact head", async () => {
+    // Everything below is a statement about a database. If that database is a
+    // few migrations short, the oracle measures a smaller function set and
+    // passes while proving nothing — so the chain is pinned exactly, not to a
+    // floor. `count > 150` was that floor and it could not tell 196 from 151.
+    //
+    // The expected head is DERIVED from the branch through the repository's
+    // canonical utility, never written down here: a hard-coded "0197" would be
+    // stale the day the next migration lands, which is the pin CONTRIBUTING.md
+    // forbids.
+    const state = migrationState();
     const { rows } = await adminQuery(
-      "select count(*)::int c from supabase_migrations.schema_migrations",
+      "select version from supabase_migrations.schema_migrations order by version",
     );
-    expect(rows[0].c).toBeGreaterThan(150);
-    const fns = await adminQuery(
-      `select count(*)::int c from pg_proc p
-         join pg_namespace n on n.oid = p.pronamespace
-        where n.nspname = any($1::text[]) and p.prokind = 'f' and p.prosecdef`,
-      [exposedSchemas()],
+    const applied = (rows as Array<{ version: string }>).map((r) => r.version);
+
+    expect(applied.at(-1), "local database is not at the repository's migration head").toBe(
+      state.repo_migration_max,
     );
-    expect(fns.rows[0].c).toBeGreaterThan(150);
+    expect(applied.length).toBe(state.versions.length);
+    // Not merely the same count: the same versions.
+    expect(applied).toEqual([...state.versions].sort());
   });
 
   it("every browser-reachable command is in the reviewed manifest", async () => {
@@ -192,12 +202,32 @@ describe("RPC ACL oracle — real migrated privileges vs the reviewed manifest",
     }
   });
 
-  it("the legacy service_role debt is frozen and cannot grow", () => {
+  it("legacy service_role debt is frozen by IDENTITY, and only ever shrinks", () => {
     // Not a claim that these are safe. A claim that they are known, that their
-    // intended posture is unaudited, and that the list is not a place to put
-    // new commands.
-    expect(LEGACY_SERVICE_ROLE_DEBT.length).toBeLessThanOrEqual(9);
-    expect(LEGACY_SERVICE_ROLE_DEBT.length).toBeGreaterThan(0);
+    // intended posture is unaudited, and that the list is not a place to put new
+    // commands.
+    //
+    // A count is not a freeze: `length <= 9` let an entry be swapped for an
+    // unrelated function while the number stayed put. Subset-of-historical is
+    // the property actually wanted — remediating a command and removing its row
+    // is always allowed; marking a NEW one as legacy is not, because legacy
+    // means it predates this guard.
+    const historical = new Set(HISTORICAL_LEGACY_SERVICE_ROLE_DEBT);
+    const introduced = LEGACY_SERVICE_ROLE_DEBT.filter((id) => !historical.has(id));
+    expect(
+      introduced,
+      "a command was marked serviceRoleLegacyDebt that is not in the historical list. " +
+        "Legacy debt predates this oracle; a newly exposed command needs a decided " +
+        "posture with a stated reason, not a debt mark.",
+    ).toEqual([]);
+    expect(LEGACY_SERVICE_ROLE_DEBT.length).toBeLessThanOrEqual(
+      HISTORICAL_LEGACY_SERVICE_ROLE_DEBT.length,
+    );
+    // Every historical identity must still be a real function, or the list is
+    // recording something that no longer exists.
+    expect(new Set(HISTORICAL_LEGACY_SERVICE_ROLE_DEBT).size).toBe(
+      HISTORICAL_LEGACY_SERVICE_ROLE_DEBT.length,
+    );
   });
 
   it("overloads are separate rows, not one collapsed identity", async () => {

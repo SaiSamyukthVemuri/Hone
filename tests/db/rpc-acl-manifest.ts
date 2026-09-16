@@ -268,13 +268,42 @@ export const LEGACY_SERVICE_ROLE_DEBT: readonly string[] = RPC_ACL_MANIFEST.filt
 ).map((e) => e.identity);
 
 /**
+ * The debt as it stood when this oracle was written, by FULL function identity.
+ *
+ * A count is not a freeze: `length <= 9` allowed an entry to be swapped for an
+ * unrelated function while the number stayed put. The live debt must be a
+ * SUBSET of this list, which makes the asymmetry deliberate — remediating a
+ * command and dropping its row is always allowed, marking a new one as
+ * "legacy" is not. Legacy means it predates the guard, and nothing created
+ * after the guard can qualify.
+ */
+export const HISTORICAL_LEGACY_SERVICE_ROLE_DEBT: readonly string[] = [
+  "public.get_appointment_payment_display(uuid, uuid)",
+  "public.get_disputes_for_studio(uuid)",
+  "public.get_payment_audit_for_appointment(uuid, uuid)",
+  "public.get_refunds_for_appointment(uuid, uuid)",
+  "public.get_studio_payment_settings_display(uuid, boolean)",
+  "public.is_studio_member(uuid)",
+  "public.is_studio_owner(uuid)",
+  "public.session_is_visible(uuid)",
+  "public.soft_delete_session_area(uuid, uuid, text)",
+];
+
+/**
  * The schemas PostgREST is configured to expose, read from supabase/config.toml.
  *
- * Deliberately a narrow reader for one key in one section, not a TOML parser:
- * it must fail loudly rather than quietly default, because a silent default is
- * exactly the failure this replaced. Reading a configured list is not the same
- * kind of act as interpreting SQL — the value is data, and this is the file
- * that owns it.
+ * No TOML parser exists in this repository's dependency tree, and adding one to
+ * read a single key would be a larger change than the thing it reads. So this
+ * stays a narrow reader for `[api] schemas` — but a narrow reader that FAILS
+ * CLOSED. It accepts exactly the shape the file uses today, a single-line array
+ * of plainly quoted identifiers, and throws on anything it cannot represent:
+ * a multi-line array, an escape sequence, an unquoted value, a nested
+ * structure, or a quoted name containing a comma.
+ *
+ * Failing closed matters more than breadth here. A reader that silently
+ * mis-splits `["a,b"]` into two schemas would UNDER-COVER the census, which is
+ * the same silent-coverage-loss defect that hard-coding 'public' produced. An
+ * exception is loud; a wrong schema list is not.
  */
 export function exposedSchemas(): string[] {
   const raw = readFileSync(join(process.cwd(), "supabase/config.toml"), "utf8");
@@ -287,17 +316,86 @@ export function exposedSchemas(): string[] {
       continue;
     }
     if (!inApi) continue;
-    const m = /^schemas\s*=\s*\[(.*)\]$/.exec(text);
-    if (!m) continue;
-    const schemas = m[1]
-      .split(",")
-      .map((s) => s.trim().replace(/^["']|["']$/g, ""))
-      .filter((s) => s.length > 0);
-    if (schemas.length === 0) break;
-    return schemas;
+    if (!/^schemas\s*=/.test(text)) continue;
+
+    const body = text.slice(text.indexOf("=") + 1).trim();
+    if (!body.startsWith("[")) {
+      throw new Error(`[api] schemas is not an inline array: ${body}`);
+    }
+    if (!body.endsWith("]")) {
+      // A multi-line array. Representable in TOML, not by this reader.
+      throw new Error(
+        "[api] schemas spans multiple lines; this reader only understands a " +
+          "single-line array. Put it on one line or use a real TOML parser.",
+      );
+    }
+    return parseInlineStringArray(body.slice(1, -1));
   }
   throw new Error(
     "supabase/config.toml has no [api] schemas list. The ACL oracle refuses to " +
       "guess which schemas are browser-exposed.",
   );
+}
+
+/**
+ * Quote-aware split of an inline array's contents. Written as a scanner rather
+ * than a `.split(",")` precisely because splitting cannot see that a comma is
+ * inside a string.
+ */
+function parseInlineStringArray(inner: string): string[] {
+  const out: string[] = [];
+  let i = 0;
+  const reject = (why: string): never => {
+    throw new Error(`[api] schemas: ${why} — refusing to guess the exposed schema set`);
+  };
+  const skipSpace = () => {
+    while (i < inner.length && /\s/.test(inner[i])) i += 1;
+  };
+
+  skipSpace();
+  if (i >= inner.length) reject("empty array");
+
+  for (;;) {
+    skipSpace();
+    const quote = inner[i];
+    if (quote !== '"' && quote !== "'") {
+      reject(`unquoted or unsupported value at offset ${i}`);
+    }
+    i += 1;
+    let value = "";
+    for (;;) {
+      if (i >= inner.length) reject("unterminated string");
+      const ch = inner[i];
+      if (ch === "\\") {
+        // Escapes change what the characters mean; this reader does not decode
+        // them, so it must not pretend to have read the value.
+        reject("escape sequence in a schema name");
+      }
+      if (ch === quote) {
+        i += 1;
+        break;
+      }
+      value += ch;
+      i += 1;
+    }
+    if (value.length === 0) reject("empty schema name");
+    if (value.includes(",")) {
+      // Unreachable through this scanner, and asserted anyway: if the scanner
+      // is ever replaced by something naive, this is the tripwire.
+      reject(`schema name contains a comma: ${JSON.stringify(value)}`);
+    }
+    if (!/^[A-Za-z_][A-Za-z0-9_$]*$/.test(value)) {
+      reject(`schema name is not a plain identifier: ${JSON.stringify(value)}`);
+    }
+    out.push(value);
+
+    skipSpace();
+    if (i >= inner.length) break;
+    if (inner[i] !== ",") reject(`expected ',' at offset ${i}`);
+    i += 1;
+    skipSpace();
+    if (i >= inner.length) break; // trailing comma
+  }
+  if (out.length === 0) reject("no schemas parsed");
+  return out;
 }
