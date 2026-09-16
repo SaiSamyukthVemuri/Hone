@@ -1,3 +1,4 @@
+import { Card } from "@/components/ui/card";
 import { PageHeader } from "@/components/ui/page-header";
 import { SectionLabel } from "@/components/ui/section-label";
 import { createClient } from "@/lib/supabase/server";
@@ -243,18 +244,31 @@ function DataCard({
   body: string;
   children: React.ReactNode;
 }) {
+  // UI-R02. This was `style={{ border: "1px solid #E5E2DA" }}` — an inline hex
+  // that no `dark:` variant can reach, so all three cards drew a warm-beige
+  // rule on a near-black ground in dark mode. #E5E2DA is Hone's MARKETING rule
+  // (13 email templates, the login and no-access pages, marketingNav), and this
+  // was the only one of 48 files under app/(app)/settings using it — alongside
+  // the only Fraunces heading in the section. Drift, not a brand decision.
+  //
+  // Card also adds a radius these cards never had: the inline border drew square
+  // corners while every other bordered surface in the app is `rounded-lg`.
+  //
+  // h2, not h3: the page's only other heading is PageHeader's h1, so `h3` skipped
+  // a level. These sections ARE the page's top-level divisions.
   return (
-    <section
+    <Card
+      as="section"
       id={anchorId}
+      padded={false}
       className="flex scroll-mt-24 flex-col gap-4 p-8"
-      style={{ border: "1px solid #E5E2DA" }}
     >
-      <h3 className="text-lg font-medium">{title}</h3>
+      <h2 className="text-lg font-medium text-fg">{title}</h2>
       <p className="max-w-[600px] text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
         {body}
       </p>
       {children}
-    </section>
+    </Card>
   );
 }
 
@@ -263,8 +277,7 @@ function DisabledButton({ label }: { label: string }) {
     <button
       type="button"
       disabled
-      className="cursor-not-allowed px-6 py-3 text-[13px] font-medium uppercase tracking-[0.15em] text-neutral-500"
-      style={{ border: "1px solid #E5E2DA", backgroundColor: "transparent" }}
+      className="cursor-not-allowed rounded-md border border-line bg-transparent px-6 py-3 text-[13px] font-medium uppercase tracking-[0.15em] text-fg-muted"
     >
       {label}
     </button>

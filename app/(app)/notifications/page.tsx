@@ -80,10 +80,10 @@ export default async function NotificationsPage() {
           sorted ahead of routine notifications. */}
       {overdueAlerts.length > 0 && (
         <section aria-label="Operational alerts" className="flex flex-col gap-2">
-          {/* The section-label primitive existed with two adopters against 187
-              ad-hoc uppercase labels. Tone stays `inherit` so the amber
-              severity colour survives — the primitive owns the SHAPE, the
-              surface owns the meaning. */}
+          {/* The section-label primitive existed with THREE importers against
+              331 ad-hoc `uppercase tracking-*` occurrences in 109 files. Tone
+              stays `inherit` so the amber severity colour survives — the
+              primitive owns the SHAPE, the surface owns the meaning. */}
           <SectionLabel as="h2" tone="inherit" className="text-amber-800 dark:text-amber-300">
             Operational alerts
           </SectionLabel>

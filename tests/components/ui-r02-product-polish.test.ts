@@ -147,3 +147,46 @@ describe("UI-R02 applied surfaces", () => {
     expect(data).not.toMatch(/text-xs font-medium uppercase tracking-wider text-neutral-500/);
   });
 });
+
+describe("UI-R02: the inline-hex border that no dark: variant could reach", () => {
+  const data = code("app/(app)/settings/data/page.tsx");
+
+  it("settings/data carries no live inline style, and no marketing hex", () => {
+    // Before UI-R02 this page set `style={{ border: "1px solid #E5E2DA" }}` on
+    // all three data cards and on the disabled delete control. An inline style
+    // cannot carry a dark-mode variant, so every one of them drew a warm-beige
+    // rule on a near-black ground. `code()` strips comments, so the surviving
+    // prose references to the old hex do not satisfy this.
+    expect(data).not.toContain("style={{");
+    expect(data).not.toContain("E5E2DA");
+  });
+
+  it("the cards are the shared surface, and the disabled control is tokened", () => {
+    expect(data).toContain("<Card");
+    expect(data).toContain("border-line");
+    expect(data).toContain("text-fg-muted");
+  });
+
+  it("the card heading no longer skips a level below PageHeader's h1", () => {
+    // PageHeader is the page's only h1; these sections are its top-level
+    // divisions, so h3 skipped h2 outright.
+    expect(data).toMatch(/<h2 className="text-lg font-medium text-fg">/);
+    expect(data).not.toContain("<h3");
+  });
+
+  it("Card accepts the anchor id Global Search resolves controls to", () => {
+    // TWO DIFFERENT CLAIMS, deliberately. The render half proves NEW capability:
+    // Card had no `id` prop before this change, so it could not have served as
+    // an anchor target at all. The source half is a REGRESSION FENCE, not a
+    // UI-R02 proof — `id={anchorId}` was already there at f3b95b02 and passes
+    // against the base file too. It is here because moving the section into
+    // Card is exactly the edit that would silently drop it, and
+    // /settings/data#export-data must keep resolving to the export card rather
+    // than the page top.
+    const html = render(
+      createElement(Card, { as: "section", id: "export-data", children: "x" }),
+    );
+    expect(html).toContain('id="export-data"');
+    expect(data).toContain("id={anchorId}");
+  });
+});

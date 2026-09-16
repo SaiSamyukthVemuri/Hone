@@ -41,6 +41,13 @@ export type CardProps = {
   /** Escape hatch for a semantic element — `section`, `ul`, `li`. */
   as?: "div" | "section" | "ul" | "li" | "article";
   "aria-label"?: string;
+  /**
+   * Anchor target. Global Search resolves an individual control ("export",
+   * "delete all studio data") to its exact card rather than the page top, so a
+   * card that is a search destination needs a stable id. Second real
+   * requirement for this prop, not speculation.
+   */
+  id?: string;
 };
 
 export function Card({
