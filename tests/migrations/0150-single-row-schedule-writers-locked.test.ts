@@ -63,16 +63,61 @@ describe("0150 — single-row schedule writers locked", () => {
   // is not modified; only this test changed.
   // -------------------------------------------------------------------------
 
-  /** The signatures the DO-block loops over, by function name. */
-  function revokeLoopFunctions(): string[] {
-    const block = /do\s*\$\$([\s\S]*?)\$\$/i.exec(SQL);
-    expect(block, "0150 must still apply its ACL through a DO-block loop").not.toBeNull();
-    return [...block![1].matchAll(/'public\.(\w+)\s*\(/g)].map((m) => m[1]).sort();
+  /**
+   * The ONE array expression this test owns: the `unnest(array[...])` list the
+   * revoke loop iterates. Sliced by bracket balance so nothing outside it — no
+   * function body, no comment elsewhere in the file, no other string literal —
+   * can influence the result.
+   */
+  function revokeArrayExpression(): string {
+    const open = SQL.indexOf("unnest(array[");
+    expect(open, "0150 must still drive its ACL from unnest(array[...])").toBeGreaterThan(-1);
+    // Exactly one, so "the array" is unambiguous.
+    expect(SQL.indexOf("unnest(array[", open + 1)).toBe(-1);
+
+    const start = SQL.indexOf("[", open);
+    let depth = 0;
+    for (let i = start; i < SQL.length; i += 1) {
+      if (SQL[i] === "[") depth += 1;
+      else if (SQL[i] === "]") {
+        depth -= 1;
+        if (depth === 0) return SQL.slice(start + 1, i);
+      }
+    }
+    throw new Error("0150's unnest(array[...]) is unterminated");
   }
 
-  /** Every function the migration defines. */
+  /**
+   * The ACTIVE signatures in that array.
+   *
+   * A commented-out entry is NOT in the revoke loop, so counting it was the
+   * same defect in a new place as the `%s` assertion this file already fixed:
+   * reading text that looks like the contract instead of the contract that
+   * executes. Commenting one line out removed a command from the loop while
+   * this test stayed green.
+   *
+   * `--` runs to end of line, and inside THIS slice — a list of quoted
+   * signatures — there is nothing else it could mean. That is the whole of the
+   * lexical handling; this test parses one array expression, never SQL.
+   */
+  function revokeLoopFunctions(): string[] {
+    const active = revokeArrayExpression()
+      .split("\n")
+      .map((line) => line.replace(/--.*$/, ""))
+      .join("\n");
+    return [...active.matchAll(/'public\.(\w+)\s*\(/g)].map((m) => m[1]).sort();
+  }
+
+  /**
+   * Every function the migration defines. Comment-stripped for the same reason
+   * and by the same rule: a commented-out `create or replace function` defines
+   * nothing, and counting it would fail this contract in the mirror direction.
+   */
   function definedFunctions(): string[] {
-    return [...SQL.matchAll(/create\s+or\s+replace\s+function\s+public\.(\w+)\s*\(/gi)]
+    const active = SQL.split("\n")
+      .map((line) => line.replace(/--.*$/, ""))
+      .join("\n");
+    return [...active.matchAll(/create\s+or\s+replace\s+function\s+public\.(\w+)\s*\(/gi)]
       .map((m) => m[1])
       .sort();
   }
