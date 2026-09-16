@@ -20,6 +20,34 @@ export type ServiceRoleAllowlistEntry = {
 
 export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
   {
+    path: "app/(app)/settings/waitlist/capacity-actions.ts",
+    purpose: "Owner's invitation-capacity open/close commands.",
+    why:
+      "0192 grants EXECUTE on open_/close_new_client_waitlist_admission_round to " +
+      "service_role ALONE, and revokes all DML on studio_waitlist_admission_rounds from " +
+      "every browser role -- so there is no user-reachable path and no raw-write " +
+      "alternative. This module issues RPC only and never .from(). Studio and actor come " +
+      "from getCurrentPractitionerWithStudio(), never from a form field, and both " +
+      "commands re-derive ownership through new_client_waitlist_resolve_owner regardless. " +
+      "The consumed-count READER is deliberately not here: this file is a \"use server\" " +
+      "module, so anything exported from it is a remotely invocable Server Action.",
+    scopeGuard: "getCurrentPractitionerWithStudio",
+  },
+  {
+    path: "lib/waitlist/round-consumption-server.ts",
+    purpose: "The canonical consumed-seat count for an already-authorized round.",
+    why:
+      "waitlist_admission_round_consumed is granted to service_role ALONE by 0192 and has " +
+      "no user-reachable equivalent; granting it to a browser role to render a counter " +
+      "would widen the privilege frontier for a display concern. This module is NOT a " +
+      "Server Action -- it carries `import \"server-only\"` so a client import is a build " +
+      "error, and it sits outside any \"use server\" file so Next mints no action id for " +
+      "it. It issues RPC only, never .from(), and takes a round id the waitlist page " +
+      "already obtained through its OWN owner/RLS-scoped read -- so the tenant decision is " +
+      "made before this is reached, and no browser-supplied id can arrive here.",
+    scopeGuard: "server-only",
+  },
+  {
     path: "app/(app)/calendar/[id]/manual-fee-actions.ts",
     purpose: "Authenticated practitioner server action/query.",
     why: "Service-role write/read-through after the caller's studio is resolved via getCurrentPractitionerWithStudio(); every query is scoped to that studio.id.",

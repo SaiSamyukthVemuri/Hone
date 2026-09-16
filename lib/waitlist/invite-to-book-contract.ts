@@ -92,6 +92,8 @@
  * contract. `AdapterCapabilities.enforcesScope` exists so that such an adapter
  * has to say so, and so the surface can refuse to imply otherwise.
  */
+import { CAPACITY_EXHAUSTED_COPY } from "@/lib/waitlist/invitation-capacity";
+
 export type BookingScope = {
   /**
    * The service the invitation is for. REQUIRED, and deliberately not nullable.
@@ -414,11 +416,30 @@ export function invitationRefusalCopy(code: DefiniteInviteToBookRefusal): string
       return "No invitation was created: you do not have permission to invite from this waitlist.";
     case "not_found":
       return "No invitation was created: this waitlist entry no longer exists.";
+
+    // THE TWO CAPACITY REFUSALS, IN THE PRACTITIONER'S LANGUAGE.
+    //
+    // `no_admission_round` reached a real practitioner verbatim — "No invitation
+    // was created (no_admission_round)" — because the default branch below
+    // interpolated the raw code. The word "admission round" is the database's
+    // name for the mechanism and means nothing to the person reading it; what
+    // they need is the action that unblocks them.
+    //
+    // These also cover the RACE the UI guard cannot: the surface hides the send
+    // when no capacity is open, but a capacity closed between render and press
+    // still lands here, and it must read the same way.
+    case "no_admission_round":
+      return "Set your invitation capacity before inviting someone to book.";
+    case "admission_round_full":
+      return CAPACITY_EXHAUSTED_COPY;
     default:
       // TRUE FOR EVERY CODE IN THIS ARM BY CONSTRUCTION — `refused` means the
       // admission did not commit. Naming the code keeps the message honest
       // without asserting a cause this module did not observe.
-      return `No invitation was created (${code}).`;
+      // NEVER THE RAW CODE. Interpolating it is what put `no_admission_round`
+      // in front of a practitioner; an unrecognised refusal says nothing useful
+      // to them and leaks internal vocabulary to anyone reading the screen.
+      return "No invitation was created. Please try again, or contact support if this continues.";
   }
 }
 

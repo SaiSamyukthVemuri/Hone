@@ -1,12 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import {
-  fileForVersion,
-  isRepoMax,
-  migrationState,
-  versionsAbove,
-} from "./helpers/migration-state";
+// isRepoMax / versionsAbove are deliberately NOT imported any more: the repo-max
+// assertion moved to 0197 (see below), and an unused import would fail lint.
+import { fileForVersion, migrationState } from "./helpers/migration-state";
 
 // 0196 — the recorded delivery outcome.
 //
@@ -26,30 +23,38 @@ const SQL = readFileSync(path.join(ROOT, "supabase/migrations", fileForVersion(V
 const CODE = SQL.replace(/^\s*--.*$/gm, " ").replace(/comment on [\s\S]*?;/gi, " ");
 
 describe("0196 position in the chain", () => {
-  it("is the repository maximum", () => {
-    // Per CLAUDE.md only the CURRENT max asserts this. Whoever adds 0197 moves it.
-    expect(isRepoMax(VERSION)).toBe(true);
-  });
-  it("has nothing above it", () => {
-    expect(versionsAbove(VERSION)).toEqual([]);
-  });
+  // THE REPO-MAX CLAIM HAS MOVED TO 0197, which is the handoff the previous
+  // comment here asked for ("whoever adds 0197 moves it") and the rule CLAUDE.md
+  // states: only the CURRENT maximum migration's own test may assert isRepoMax,
+  // because otherwise every landing migration reds an older file and the sweep
+  // gets missed. tests/migrations/0197-waitlist-consumed-count-gateway.test.ts
+  // now carries it.
+  //
+  // THE HOSTED-HEAD CLAIM MOVED TOO, and later than the repo-max one. An earlier
+  // revision of this comment said 0196 "keeps every claim it makes about itself,
+  // including the hosted-head claim below, which is still true: 0197 is authored
+  // and PENDING, not applied". That was true when it was written and stopped
+  // being true on 2026-09-16, when 0197 was applied to production -- hosted and
+  // repo are now at parity at 0197.
+  //
+  // So 0196 keeps its DURABLE claims: what it created, how it behaves, and that
+  // production is at or above it. What it no longer holds is the CURRENT
+  // hosted-head equality, which belongs to exactly one file at a time and is now
+  // 0197's. The assertion below already reflects that -- `hosted >= 0196`, a
+  // floor that stays true forever -- and only this prose was stale.
 
-  it("IS APPLIED to production, and is the CURRENT hosted head", () => {
-    // 0196 OWNS THE EXACT HOSTED-HEAD CLAIM, and owning it is the point.
+  it("IS APPLIED to production, and hosted has not gone backwards past it", () => {
+    // 0196 NO LONGER OWNS THE EQUALITY CLAIM. `0197` was applied on 2026-09-16,
+    // so this file keeps only a FLOOR — `hosted >= 0196` — which is the durable
+    // fact about an older applied migration and stays true forever.
     //
-    // 0192-0196 were applied to production on 2026-09-15. Before that, 0191's
-    // file asserted `hosted_migration_max === '0191'`; it now keeps only a
-    // FLOOR (`hosted >= 0191`), which is the durable fact about an older
-    // applied migration and stays true forever. Equality is a CURRENT claim, so
-    // exactly one file may hold it — and it has to be this one, because leaving
-    // it on 0191 would have made that file red the moment anything else applied,
-    // and dropping it entirely would leave the hosted head asserted nowhere.
-    //
-    // Whoever applies 0197 moves this block: narrow 0196 to a floor the way
-    // 0191 was narrowed, and let the new head take equality. That hand-off is
-    // the rule, not a courtesy.
+    // That is the hand-off the previous comment here required: "whoever applies
+    // 0197 moves this block: narrow 0196 to a floor the way 0191 was narrowed,
+    // and let the new head take equality." Equality is a CURRENT claim, so
+    // exactly one file may hold it, and it is now
+    // tests/migrations/0197-waitlist-consumed-count-gateway.test.ts.
     const state = migrationState();
-    expect(state.hosted_migration_max).toBe(VERSION);
+    expect(Number(state.hosted_migration_max)).toBeGreaterThanOrEqual(Number(VERSION));
     expect(state.pending_migrations).not.toContain(VERSION);
   });
 });
