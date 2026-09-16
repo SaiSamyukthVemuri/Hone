@@ -408,6 +408,79 @@ test.describe("UI-R01 reduced motion — desktop", () => {
   });
 });
 
+test.describe("UI-R01 reduced motion — pressed vs hover, in the browser", () => {
+  test("a filled control's PRESS is visibly distinct from its HOVER", async ({ page }) => {
+    // THE PROOF A SOURCE ASSERTION CANNOT GIVE.
+    //
+    // The class-level guard compares two token NAMES. This compares the two
+    // COMPUTED COLOURS the browser actually paints, in the one configuration
+    // where the bug was reachable: prefers-reduced-motion, where the tactile
+    // scale is suppressed and colour is the entire acknowledgement.
+    //
+    // Before the fix, primary pressed to the same value it hovered to, so a
+    // mouse user pressing a button they were already hovering saw nothing.
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await gotoDataSettings(page);
+
+    const control = page.getByRole("button", { name: "Export data" });
+    await expect(control).toBeVisible({ timeout: T });
+    await control.scrollIntoViewIfNeeded();
+
+    const bg = () => control.evaluate((el) => getComputedStyle(el).backgroundColor);
+    const box = await control.boundingBox();
+    if (!box) throw new Error("no box");
+    const x = box.x + box.width / 2;
+    const y = box.y + box.height / 2;
+
+    // REST
+    const rest = await bg();
+
+    // HOVER — poll, because even at 1ms the value is transitioned and reading
+    // it in the same tick samples the previous state.
+    await page.mouse.move(x, y);
+    await expect.poll(bg, { timeout: 2_000 }).not.toBe(rest);
+    const hover = await bg();
+
+    // PRESSED
+    await page.mouse.down();
+    await expect.poll(bg, { timeout: 2_000 }).not.toBe(hover);
+    const pressed = await bg();
+    await page.mouse.up();
+
+    // eslint-disable-next-line no-console
+    console.log(`REDUCED_MOTION rest=${rest} hover=${hover} pressed=${pressed}`);
+
+    // The claim, in the browser's own numbers.
+    expect(pressed).not.toBe(hover);
+    expect(pressed).not.toBe(rest);
+    expect(hover).not.toBe(rest);
+
+    // And the scale really is suppressed, so colour is carrying it alone.
+    expect(["none", "1"]).toContain(await computedScale(control));
+  });
+
+  // THE DESTRUCTIVE FAMILY — proved at class level, NOT in the browser, and the
+  // difference is recorded rather than glossed.
+  //
+  // `danger` had the identical hover==active defect and carries the identical
+  // fix (red-600 -> 700 -> 800). It is covered by the per-variant guard in
+  // tests/components/ui-r01-interaction-foundations.test.ts, which asserts the
+  // pressed token differs from the hover token for ALL FOUR families and goes
+  // red when either regresses.
+  //
+  // It is NOT covered here because the only danger Button in the app is
+  // TrackingProviderForm's "Remove token", which renders only when the server
+  // reports `tokenStatus === "active"` with a stored last-4. Saving a token
+  // through the real form does not produce that state in this harness — tried,
+  // and the control never appears — and manufacturing it would mean seeding
+  // provider credentials from a foundations spec.
+  //
+  // What the browser proof above DOES establish transfers: the token ->
+  // computed-colour pipeline works, under reduced motion, on the shared Button
+  // code path both variants use. Danger differs only in which token it names.
+  // A browser-level danger proof belongs with UI-R03's destructive family.
+});
+
 test.describe("UI-R01 press acknowledgement — 390px", () => {
   test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
 

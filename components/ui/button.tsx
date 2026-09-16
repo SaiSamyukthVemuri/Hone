@@ -30,14 +30,21 @@ export type ButtonVariant = "primary" | "secondary" | "quiet" | "danger";
 export type ButtonSize = "sm" | "md";
 
 const VARIANT: Record<ButtonVariant, string> = {
-  // Solid action. `active:` repeats the hover fill on purpose: on a touch
-  // screen :hover never fires, so the active state IS the acknowledgement.
-  primary: "bg-accent text-on-accent hover:bg-accent-hover active:bg-accent-hover",
+  // Solid action. `active:` is a DISTINCT step, not a repeat of the hover fill.
+  //
+  // It used to repeat it, with the stated reason that on a touch screen :hover
+  // never fires so the active state IS the acknowledgement. True for touch, and
+  // false for a mouse: with prefers-reduced-motion the tactile scale is
+  // suppressed, so a hovering user pressed a button whose colour was already
+  // painted and saw nothing at all. Each family now has its own third step —
+  // accent 900->800->700, danger 600->700->800 — so the press is visible on
+  // both input methods, with or without motion.
+  primary: "bg-accent text-on-accent hover:bg-accent-hover active:bg-accent-active",
   secondary:
     "border border-line-strong bg-surface text-fg hover:bg-surface-sunken active:bg-line",
   quiet: "text-fg-muted hover:bg-surface-sunken hover:text-fg active:bg-line active:text-fg",
   danger:
-    "bg-danger-solid text-on-accent hover:bg-danger-solid-hover active:bg-danger-solid-hover",
+    "bg-danger-solid text-on-accent hover:bg-danger-solid-hover active:bg-danger-solid-active",
 };
 
 const SIZE: Record<ButtonSize, string> = {

@@ -126,6 +126,31 @@ describe("UI-R01 press acknowledgement: the state the app was missing", () => {
     expect(LEAF_CONTROL_PRESS).not.toContain("active:bg-");
   });
 
+  it("EVERY Button family's PRESSED colour differs from its HOVER colour", () => {
+    // THE GUARD THAT SHOULD HAVE EXISTED. Its predecessor asserted only that an
+    // `active:bg-*` was PRESENT — a class exists — when the property is that
+    // PRESSING PRODUCES A VISIBLE CHANGE. It could not tell `active:bg-X` from
+    // `hover:bg-X`, so it passed while primary and danger both repeated their
+    // hover fill and a mouse user under prefers-reduced-motion saw nothing:
+    // the tactile scale is suppressed, and the colour was already painted.
+    //
+    // Touch was never affected — :hover does not fire there — which is exactly
+    // why the overlap survived until a reduced-motion proof looked for it.
+    for (const variant of VARIANTS) {
+      const cls = buttonClasses({ variant });
+      const hover = /hover:bg-([a-z0-9-]+)/.exec(cls)?.[1];
+      const active = /active:bg-([a-z0-9-]+)/.exec(cls)?.[1];
+      expect(hover, `variant=${variant} must have a hover colour`).toBeTruthy();
+      expect(active, `variant=${variant} must have an active colour`).toBeTruthy();
+      expect(
+        active,
+        `variant=${variant} presses to "${active}" but already hovers to "${hover}". ` +
+          `With prefers-reduced-motion the scale is suppressed, so a hovering ` +
+          `mouse user gets NO press feedback at all.`,
+      ).not.toBe(hover);
+    }
+  });
+
   it("EVERY Button family supplies the colour the leaf layer does not", () => {
     // This is the guard that makes the leaf layer safe to use: under reduced
     // motion the scale is a no-op, so the family's active colour is the ENTIRE
