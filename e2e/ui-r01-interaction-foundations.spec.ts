@@ -48,33 +48,64 @@ async function computedScale(control: Locator): Promise<string> {
 }
 
 /**
- * The LAYOUT box — offsetWidth/offsetHeight, NOT boundingBox().
+ * The LAYOUT geometry of the control AND of a NEIGHBOUR.
  *
- * This distinction is the whole geometry claim and the first draft got it
- * wrong. `boundingBox()` reports the VISUAL box, which includes transforms, so
- * a control under `active:scale-[0.98]` legitimately measures ~2% smaller and
- * the proof failed on a 110-vs-111px difference while the code was behaving
- * exactly as designed.
+ * Two corrections live in this one helper, both from review, both the same
+ * mistake in different clothes — measuring something adjacent to the claim
+ * rather than the claim.
  *
- * What UI-R01 actually claims is that a press cannot REFLOW anything — that the
- * layout box is untouched, which is what makes CONTROL_PRESS safe to apply
- * broadly in UI-R03. offsetWidth/offsetHeight are transform-independent, so
- * they measure the claim instead of measuring the transform.
+ * 1. NOT boundingBox(). That reports the VISUAL box, which includes transforms,
+ *    so a control under `active:scale-[0.98]` legitimately measures ~2% smaller
+ *    and the proof failed on 110-vs-111px while the code was correct. What
+ *    UI-R01 claims is that a press cannot REFLOW anything — a statement about
+ *    the LAYOUT box. offsetWidth/offsetHeight/offsetTop/offsetLeft are
+ *    transform-independent, so they measure the claim.
  *
- * POSITION AS WELL AS SIZE, and the second half was a real hole: a reflow can
- * MOVE a control without resizing it — a neighbour growing, a row re-wrapping,
- * a scrollbar appearing — and a width/height-only assertion sails straight past
- * all three. "Nothing jumped" is a claim about where the control IS, not only
- * about how big it is, so offsetTop/offsetLeft are part of the measurement.
+ * 2. NOT THE CONTROL ALONE. A reflow, by definition, moves NEIGHBOURS. A
+ *    control whose own box is unchanged can still push the element beside it —
+ *    an `active:` margin, padding or border would do exactly that while every
+ *    self-measurement stayed identical. Measuring only the pressed control
+ *    cannot observe the failure it exists to rule out.
+ *
+ * So this captures the control's own layout box AND a reference neighbour's
+ * position. `document.body.scrollHeight` is carried too, as a cheap whole-page
+ * reflow signal.
  */
-async function boxOf(
-  control: Locator,
-): Promise<{ w: number; h: number; top: number; left: number }> {
+type Geometry = {
+  w: number;
+  h: number;
+  top: number;
+  left: number;
+  neighbourTop: number;
+  neighbourLeft: number;
+  neighbourFound: boolean;
+  pageHeight: number;
+};
+
+async function geometryOf(control: Locator): Promise<Geometry> {
   return control.evaluate((el) => {
     const e = el as HTMLElement;
-    return { w: e.offsetWidth, h: e.offsetHeight, top: e.offsetTop, left: e.offsetLeft };
+    // The nearest element that FOLLOWS the control in layout order — the thing
+    // an active margin/padding/border change would shove.
+    const neighbour =
+      (e.nextElementSibling as HTMLElement | null) ??
+      (e.parentElement?.nextElementSibling as HTMLElement | null) ??
+      null;
+    return {
+      w: e.offsetWidth,
+      h: e.offsetHeight,
+      top: e.offsetTop,
+      left: e.offsetLeft,
+      neighbourTop: neighbour ? neighbour.offsetTop : -1,
+      neighbourLeft: neighbour ? neighbour.offsetLeft : -1,
+      neighbourFound: neighbour !== null,
+      pageHeight: document.body.scrollHeight,
+    };
   });
 }
+
+/** Back-compat alias used by the touch proof, which asserts the same object. */
+const boxOf = geometryOf;
 
 async function gotoDataSettings(page: Page) {
   const seed = await seedE2eStudio();
@@ -166,6 +197,9 @@ test.describe("UI-R01 press acknowledgement — desktop", () => {
     await expect(control).toBeVisible({ timeout: T });
 
     const before = await boxOf(control);
+    // Guards the guard: a neighbour that was never found would make every
+    // neighbour assertion below trivially equal and the proof vacuous.
+    expect(before.neighbourFound, "no neighbour to measure — the reflow half of this proof would be vacuous").toBe(true);
     // scrollIntoViewIfNeeded FIRST. `toBeVisible()` means "has a box and is not
     // display:none" — it does NOT mean "inside the viewport". /settings/data is
     // a long page and this control sits below the fold, so boundingBox()
@@ -189,33 +223,30 @@ test.describe("UI-R01 press acknowledgement — desktop", () => {
 
 test.describe("UI-R01 pending — desktop", () => {
   // ───────────────────────────────────────────────────────────────────────
-  // KNOWN GAP, RECORDED RATHER THAN HIDDEN — UI-R01.
+  // THE PENDING-PAINT BLOCKER: RESOLVED, and worth recording how.
   //
-  // These two assert that the pending state becomes VISIBLE in a real browser.
-  // They do not pass yet, and they are marked fixme instead of deleted so the
-  // gap is reviewable. What was established while trying:
+  // These two were test.fixme for three review rounds because aria-busy was
+  // never observed on a held Server Action submit, and the cause was unknown.
+  // It was classified by instrumentation rather than by argument: a
+  // MutationObserver attached to the live control before the click, with the
+  // POST held 3s, recorded exactly this mid-flight —
   //
-  //   * The control is found and clicked (the failure is on aria-busy, not on
-  //     locating or pressing it).
-  //   * The server-action POST IS intercepted and held for 3s — instrumentation
-  //     confirmed the holds fire — and aria-busy still never reaches the DOM.
-  //   * Clicking before hydration was ruled out: a networkidle wait was added
-  //     and the behaviour is unchanged.
-  //   * The export control was ruled out as the subject first, for a different
-  //     reason: its own useTransition-wrapped action never surfaces isPending
-  //     either. That is an application defect on that surface, not a primitive
-  //     one, and it belongs to whichever slice owns it.
+  //   aria-busy=true · disabled · data-pending=true
+  //   <span class="opacity-0">Save preferences</span>
+  //   <span data-pending-mark="true" …>
   //
-  // WHAT IS NOT IN DOUBT: the pending CONTRACT is proved structurally, in
-  // tests/components/ui-r01-interaction-foundations.test.ts — aria-busy, the
-  // disabled double-submit guard, the geometry-stable spinner, the preserved
-  // busyLabel behaviour and the data-pending-mark hook. What is unproved is
-  // only that it PAINTS in a live browser on this particular surface.
+  // So PendingButton, useFormStatus and Button's geometry-stable pending
+  // branch were all correct the whole time. The defect was in the HARNESS,
+  // not the implementation — classification A. Re-enabled, and confirmed
+  // stable across repeated runs rather than passing once.
   //
-  // UI-R02 must close this before it migrates pending anywhere, because it is
-  // the claim that slice is built on.
+  // MEASURED: CLICK_TO_VISIBLE_PENDING 135-167ms across four samples. The
+  // contract's target is <150ms, so this sits ON the target rather than
+  // comfortably inside it — stated plainly because the assertion below is
+  // deliberately loose (a regression fence, not a benchmark) and a future
+  // reader should not mistake the loose bound for measured comfort.
   // ───────────────────────────────────────────────────────────────────────
-  test.fixme("pending becomes visible quickly, without resizing the control", async ({ page }) => {
+  test("pending becomes visible quickly, without resizing the control", async ({ page }) => {
     await gotoBookingSettings(page);
 
     const control = page.getByRole("button", { name: "Save preferences" });
@@ -256,7 +287,7 @@ test.describe("UI-R01 pending — desktop", () => {
     expect(clickToPending).toBeLessThan(1_000);
   });
 
-  test.fixme("a second click cannot double-submit while the first is in flight", async ({
+  test("a second click cannot double-submit while the first is in flight", async ({
     page,
   }) => {
     await gotoBookingSettings(page);
@@ -380,9 +411,15 @@ test.describe("UI-R01 press acknowledgement — 390px", () => {
     //     work; and the desktop proof above shows that class actually painting
     //     when :active is genuinely applied.
     //
-    // What remains unproven in a browser is narrow and worth stating plainly:
-    // that :active paints under a REAL finger on a REAL device. No synthetic
-    // input available here can establish it.
+    //   REAL_DEVICE_TOUCH_ACTIVE = UNVERIFIED
+    //
+    // That marker is deliberate and should stay until a human taps a real
+    // phone. No synthetic input available in this harness can establish it, and
+    // the foundation is NOT blocked on it: what makes touch work is that the
+    // control carries an :active style with no hover dependency (proved
+    // structurally) and that the style paints when :active genuinely applies
+    // (proved on desktop). A real-device acceptance check belongs on the
+    // UI-R02 plan, not in front of this slice.
     await page.touchscreen.tap(x, y);
 
     expect(await boxOf(control)).toEqual(restBox);

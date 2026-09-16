@@ -116,15 +116,30 @@ describe("UI-R01 press acknowledgement: the state the app was missing", () => {
     expect(SURFACE_PRESS).toContain(PRESS_TRANSITION);
   });
 
-  it("the press transition can actually animate the transform it now applies", () => {
-    // CONTROL_PRESS scales; if globals.css does not list `transform` in the
-    // transition-property, the scale snaps instead of easing.
+  it("the press transition animates the property Tailwind ACTUALLY emits — `scale`", () => {
+    // THIS GUARD WAS VACUOUS AND REVIEW CAUGHT IT.
+    //
+    // It asserted the transition-property list contained `transform`. But
+    // Tailwind v4 compiles `active:scale-[0.98]` to the STANDALONE `scale:`
+    // property — the compiled stylesheet emits
+    //   active\:scale-\[0\.98\]:active{scale:.98}
+    // — so `transform` is not the property that needs transitioning, and
+    // deleting `scale` from the list (the exact regression this exists to
+    // catch) left the guard green. Proven by mutation before this rewrite.
+    //
+    // It now asserts the load-bearing property. `transform` is asserted too,
+    // because the list carries it deliberately for any call site that sets a
+    // transform directly — but it is no longer a stand-in for `scale`.
     const css = read("app/globals.css");
     const block = css.slice(
       css.indexOf(".hone-transition-press,"),
       css.indexOf(".hone-transition-press {"),
     );
-    expect(block).toContain("transform");
+    const props = /transition-property:([^;]*);/.exec(block)?.[1] ?? "";
+    expect(props, "no transition-property found in the shared marker block").not.toBe("");
+    const listed = props.split(",").map((x) => x.trim());
+    expect(listed).toContain("scale");
+    expect(listed).toContain("transform");
   });
 
   it("reduced motion still collapses the shared markers to 1ms, not 0", () => {
