@@ -155,7 +155,17 @@ export function Button({
         // mark is decorative; `aria-busy` on the <button> is what actually
         // announces the state, which is why the Spinner carries no label here.
         <>
-          <span aria-hidden="true" className="opacity-0">
+          {/* NOT aria-hidden. The first draft of UI-R01 put aria-hidden="true"
+              here and it contradicted the sentence directly above it: hiding
+              the label collapses the button's ACCESSIBLE NAME to empty for
+              exactly the duration it is busy, so a screen-reader user is told
+              "busy" about a control that no longer says what it is.
+
+              This is the trap pending-link.tsx already documents — it chose
+              `opacity-0` over `visibility:hidden` for this precise reason, and
+              adding aria-hidden re-created the defect that choice avoided.
+              opacity-0 alone keeps BOTH the box and the name. */}
+          <span className="opacity-0">
             {children}
           </span>
           <span

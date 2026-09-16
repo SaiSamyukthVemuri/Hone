@@ -187,6 +187,23 @@ describe("UI-R01 pending: visible, guarded, and geometry-stable", () => {
     expect(html).toMatch(/absolute inset-0/);
   });
 
+  it("KEEPS the accessible name while busy — the label is not aria-hidden", () => {
+    // Caught by review: the first draft hid the label from the a11y tree, so
+    // the button's accessible name collapsed to empty for exactly as long as it
+    // was aria-busy. "Busy" about a control that no longer says what it is.
+    //
+    // Asserting `toContain("Export data")` above does NOT catch this — the text
+    // is in the DOM either way. The property is whether it is EXPOSED, so that
+    // is what this asserts: the label span carries no aria-hidden, and the only
+    // hidden thing is the decorative mark.
+    const html = render(createElement(Button, { pending: true }, "Export data"));
+    const labelSpan = /<span class="opacity-0"[^>]*>/.exec(html)?.[0] ?? "";
+    expect(labelSpan, "the label span must exist and be plain").not.toBe("");
+    expect(labelSpan).not.toContain("aria-hidden");
+    // Exactly one aria-hidden in the pending markup: the spinner.
+    expect((html.match(/aria-hidden/g) ?? []).length).toBe(1);
+  });
+
   it("marks itself busy and disables itself, so a double submit is impossible", () => {
     const html = render(createElement(Button, { pending: true }, "Save"));
     expect(html).toContain('aria-busy="true"');
