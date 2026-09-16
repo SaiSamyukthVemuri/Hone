@@ -78,54 +78,84 @@ describe("UI-R01 press acknowledgement: the state the app was missing", () => {
 
   // ── The safety split, which is the whole point of the vocabulary ──────────
   //
-  // Review caught the earlier shape: CONTROL_PRESS carried `active:scale-[0.98]`
-  // and was intended for broad adoption across ~108 unread control files. A
-  // non-none scale establishes a containing block for position:fixed
-  // descendants and a new stacking context while pressed, so a control
-  // anchoring a popover would silently reparent it. A comment could not protect
-  // that; the API now does.
+  // Two drafts of the universal primitive were wrong in two different ways, and
+  // review caught both. `active:scale-[0.98]` created a containing block for
+  // fixed descendants AND a stacking context. `active:opacity-90` fixed the
+  // containing block and reintroduced the stacking context, because ANY opacity
+  // below 1 creates one. A background-colour change creates neither — and it is
+  // the mechanism the container treatment was already using both times.
 
-  it("THE UNIVERSAL primitive never transforms — enforced, not merely documented", () => {
-    for (const banned of ["scale", "transform", "translate", "rotate", "skew", "filter"]) {
+  it("THE UNIVERSAL primitive creates neither a containing block nor a stacking context", () => {
+    // Exhaustive over the properties that do one or both. `opacity` is on this
+    // list BECAUSE it was the second mistake: it is the one that looks harmless.
+    for (const banned of [
+      "scale",
+      "transform",
+      "translate",
+      "rotate",
+      "skew",
+      "filter",
+      "opacity",
+      "perspective",
+      "mix-blend",
+      "will-change",
+      "backdrop",
+      "contain",
+      "isolate",
+    ]) {
       expect(
         CONTROL_PRESS,
-        `CONTROL_PRESS must stay safe on ANY control; "${banned}" creates a ` +
-          `containing block for fixed descendants. Use LEAF_CONTROL_PRESS instead.`,
+        `CONTROL_PRESS is adopted BLIND across ~108 files; "${banned}" changes ` +
+          `what a descendant is positioned or painted against. Use ` +
+          `LEAF_CONTROL_PRESS if a tactile press is genuinely wanted.`,
       ).not.toContain(banned);
     }
   });
 
   it("the universal primitive still acknowledges a press, without hover", () => {
-    expect(CONTROL_PRESS).toContain("active:");
+    expect(CONTROL_PRESS).toContain("active:bg-");
     expect(CONTROL_PRESS).toContain(PRESS_TRANSITION);
   });
 
   it("pressed and DISABLED remain visually distinguishable", () => {
-    // opacity-90 (pressed) must not collide with opacity-50 (disabled), or a
-    // pressed control would read as unavailable.
-    expect(CONTROL_PRESS).toContain("opacity-90");
-    expect(CONTROL_PRESS).not.toContain("opacity-50");
+    // The press is a background change; disabled is opacity-50. Different
+    // channels entirely, so a pressed control can never read as unavailable.
+    expect(CONTROL_PRESS).toContain("active:bg-surface-sunken");
+    expect(CONTROL_PRESS).not.toContain("opacity");
     expect(CONTROL_DISABLED).toContain("opacity-50");
   });
 
   it("LEAF_CONTROL_PRESS is the ONLY shared primitive carrying a scale", () => {
     expect(LEAF_CONTROL_PRESS).toContain("active:scale-[0.98]");
-    expect(SURFACE_PRESS).not.toContain("scale");
     expect(CONTROL_PRESS).not.toContain("scale");
+    expect(SURFACE_PRESS).not.toContain("scale");
   });
 
-  it("the leaf treatment COMPOSES the universal one, so reduced motion still lands", () => {
-    // Dropping the scale under reduced motion must not drop the whole
-    // acknowledgement; the universal treatment underneath is what remains.
+  it("the leaf treatment is SCALE ONLY, so it cannot fight a variant's background", () => {
+    // `cx` is not a tailwind-merge: two competing active:bg-* utilities are
+    // resolved by CSS SOURCE ORDER, not by attribute order. If the leaf
+    // composed the universal background, every Button variant would be
+    // gambling on which colour wins its own press.
+    expect(LEAF_CONTROL_PRESS).not.toContain("active:bg-");
     expect(LEAF_CONTROL_PRESS).toContain("motion-reduce:active:scale-100");
-    expect(LEAF_CONTROL_PRESS).toContain("active:opacity-90");
   });
 
-  it("Button opts into the leaf treatment DELIBERATELY, in source", () => {
+  it("Button opts into the leaf treatment AND still carries its own press colour", () => {
     const src = code("components/ui/button.tsx");
     expect(src).toContain("LEAF_CONTROL_PRESS");
-    // And not by accidentally inheriting a transform from the universal one.
     expect(src).not.toMatch(/\bCONTROL_PRESS\b(?!_)/);
+    // Reduced motion drops the scale; the variant colour is what remains, so
+    // every variant must still carry one.
+    for (const variant of VARIANTS) {
+      expect(render(createElement(Button, { variant }, "Go"))).toMatch(/active:bg-/);
+    }
+  });
+
+  it("SURFACE_PRESS is the SAME treatment, not a second copy of the rule", () => {
+    // Collapsed deliberately: keeping two identical constants is two places for
+    // the rule to drift. The name survives because a row reads better saying
+    // SURFACE_PRESS.
+    expect(SURFACE_PRESS).toBe(CONTROL_PRESS);
   });
 
   it("guarantees reduced-motion feedback ITSELF, not via the call site", () => {
@@ -134,10 +164,10 @@ describe("UI-R01 press acknowledgement: the state the app was missing", () => {
     // elements UI-R03 will apply this to. A primitive that only works when the
     // call site remembers something is the failure mode control-base.ts exists
     // to prevent.
-    // The universal treatment is opacity-based, so it is ALREADY independent of
-    // motion — there is nothing to fall back to, because nothing was motion.
-    expect(CONTROL_PRESS).toContain("active:opacity-90");
-    expect(CONTROL_PRESS).not.toContain("opacity-50");
+    // The universal treatment is a COLOUR change, so it is already independent
+    // of motion — there is nothing to fall back to, because nothing was motion.
+    expect(CONTROL_PRESS).toContain("active:bg-surface-sunken");
+    expect(CONTROL_PRESS).not.toContain("opacity");
   });
 
   it("drops the transform under reduced motion but KEEPS an acknowledgement", () => {
