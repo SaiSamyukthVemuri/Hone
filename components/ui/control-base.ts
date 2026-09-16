@@ -118,13 +118,28 @@ export const CONTROL_DISABLED =
  * 0.97 a 44px control reads as a bounce rather than a press, and text inside it
  * starts to visibly resample.
  *
- * REDUCED MOTION drops the transform and nothing else. The acknowledgement does
- * not disappear: every Button variant also carries an `active:` background, so
- * the state change survives as colour+shape while the movement stops. That is
- * the same contract PendingLink's mark already honours.
+ * REDUCED MOTION KEEPS AN ACKNOWLEDGEMENT, AND THIS PRIMITIVE OWNS IT.
+ *
+ * The first draft dropped the transform and relied on the CALL SITE having an
+ * `active:` background — true of every Button variant, and therefore true of
+ * the only consumer that existed when it was written. Review caught what that
+ * misses: CONTROL_PRESS is an exported primitive, UI-R03 applies it to ~108
+ * files of arbitrary elements, and any of them WITHOUT an active background
+ * would give a reduced-motion user no press feedback whatsoever — the exact
+ * users least able to tolerate a control that looks untapped.
+ *
+ * That is this file's own rule, broken by its newest export: "The rule belongs
+ * in the primitive, not the call site; a call site can forget, a base string
+ * cannot." So the fallback lives here. `opacity-90` is deliberately slight —
+ * enough to read as a press, not enough to read as a disabled control (that is
+ * `opacity-50`, in CONTROL_DISABLED) — and it changes no geometry.
+ *
+ * A call site that ALSO has an active: background simply gets both, which is
+ * harmless and is what Button does today.
  */
 export const CONTROL_PRESS = cx(
-  "active:scale-[0.98] motion-reduce:active:scale-100",
+  "active:scale-[0.98]",
+  "motion-reduce:active:scale-100 motion-reduce:active:opacity-90",
   PRESS_TRANSITION,
 );
 

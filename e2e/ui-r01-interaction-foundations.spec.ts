@@ -47,10 +47,25 @@ async function computedScale(control: Locator): Promise<string> {
   return control.evaluate((el) => getComputedStyle(el).scale);
 }
 
+/**
+ * The LAYOUT box — offsetWidth/offsetHeight, NOT boundingBox().
+ *
+ * This distinction is the whole geometry claim and the first draft got it
+ * wrong. `boundingBox()` reports the VISUAL box, which includes transforms, so
+ * a control under `active:scale-[0.98]` legitimately measures ~2% smaller and
+ * the proof failed on a 110-vs-111px difference while the code was behaving
+ * exactly as designed.
+ *
+ * What UI-R01 actually claims is that a press cannot REFLOW anything — that the
+ * layout box is untouched, which is what makes CONTROL_PRESS safe to apply
+ * broadly in UI-R03. offsetWidth/offsetHeight are transform-independent, so
+ * they measure the claim instead of measuring the transform.
+ */
 async function boxOf(control: Locator): Promise<{ w: number; h: number }> {
-  const b = await control.boundingBox();
-  if (!b) throw new Error("control has no box");
-  return { w: Math.round(b.width), h: Math.round(b.height) };
+  return control.evaluate((el) => {
+    const e = el as HTMLElement;
+    return { w: e.offsetWidth, h: e.offsetHeight };
+  });
 }
 
 async function gotoDataSettings(page: Page) {
@@ -114,17 +129,20 @@ test.describe("UI-R01 press acknowledgement — desktop", () => {
 
     const startedAt = Date.now();
     await page.mouse.down();
-    // Poll for the pressed transform rather than sleeping: the measurement is
-    // "when did it become true", not "was it true after an arbitrary wait".
+    // ACK is the first frame on which the pressed style is APPLYING at all —
+    // that is what the practitioner perceives, and it is what the <100ms target
+    // is about.
     await expect
       .poll(async () => (await computedScale(control)) !== atRest, { timeout: 2_000 })
       .toBe(true);
     const clickToAck = Date.now() - startedAt;
 
-    const pressed = await computedScale(control);
-    // "none" at rest -> "0.98" pressed.
-    expect(pressed).not.toBe(atRest);
-    expect(pressed).toContain("0.98");
+    // SETTLING is a separate question, and reading it in the same breath as ACK
+    // is what broke the first draft: it sampled mid-ease and got "0.991695"
+    // while asserting "0.98". The 120ms transition is a feature; poll it out.
+    await expect
+      .poll(async () => computedScale(control), { timeout: 2_000 })
+      .toBe("0.98");
 
     await page.mouse.up();
     await expect.poll(async () => computedScale(control), { timeout: 2_000 }).toBe(atRest);

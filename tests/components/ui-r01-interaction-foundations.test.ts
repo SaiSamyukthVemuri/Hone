@@ -74,6 +74,17 @@ describe("UI-R01 press acknowledgement: the state the app was missing", () => {
     });
   }
 
+  it("guarantees reduced-motion feedback ITSELF, not via the call site", () => {
+    // Caught by review. The first draft relied on the consumer having an
+    // `active:` background — true of Button, false of the ~108 arbitrary
+    // elements UI-R03 will apply this to. A primitive that only works when the
+    // call site remembers something is the failure mode control-base.ts exists
+    // to prevent.
+    expect(CONTROL_PRESS).toContain("motion-reduce:active:opacity-90");
+    // And it must not be mistakable for the disabled look.
+    expect(CONTROL_PRESS).not.toContain("opacity-50");
+  });
+
   it("drops the transform under reduced motion but KEEPS an acknowledgement", () => {
     const html = render(createElement(Button, { variant: "primary" }, "Go"));
     // The movement stops...
