@@ -335,7 +335,10 @@ export default async function WaitlistSettingsPage({
     if (!Number.isFinite(allowance)) return { state: "unknown" } as const;
     // The database's own definition of "used". Null means it could not be
     // established, which is unknown capacity -- not zero.
-    const used = await readRoundConsumed(String(row.id));
+    // BOTH IDS FROM SERVER STATE: the studio this page is already scoped to, and
+    // the round its OWN owner/RLS-scoped read just returned. The 0197 gateway
+    // validates the pair again regardless.
+    const used = await readRoundConsumed(studio.id, String(row.id));
     if (used === null) return { state: "unknown" } as const;
     return {
       state: "open",

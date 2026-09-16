@@ -359,7 +359,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
       // have been vacuously true. This function is service_role-only by 0192,
       // which is why it is the one capacity call that legitimately reaches the
       // admin client at all.
-      if (fn === "waitlist_admission_round_consumed") {
+      if (fn === "read_waitlist_admission_round_consumed") {
         return scenario.roundConsumed === null
           ? { data: null, error: { code: "42501" } }
           : { data: scenario.roundConsumed, error: null };

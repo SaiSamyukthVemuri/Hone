@@ -1,12 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import {
-  fileForVersion,
-  isRepoMax,
-  migrationState,
-  versionsAbove,
-} from "./helpers/migration-state";
+// isRepoMax / versionsAbove are deliberately NOT imported any more: the repo-max
+// assertion moved to 0197 (see below), and an unused import would fail lint.
+import { fileForVersion, migrationState } from "./helpers/migration-state";
 
 // 0196 — the recorded delivery outcome.
 //
@@ -26,13 +23,14 @@ const SQL = readFileSync(path.join(ROOT, "supabase/migrations", fileForVersion(V
 const CODE = SQL.replace(/^\s*--.*$/gm, " ").replace(/comment on [\s\S]*?;/gi, " ");
 
 describe("0196 position in the chain", () => {
-  it("is the repository maximum", () => {
-    // Per CLAUDE.md only the CURRENT max asserts this. Whoever adds 0197 moves it.
-    expect(isRepoMax(VERSION)).toBe(true);
-  });
-  it("has nothing above it", () => {
-    expect(versionsAbove(VERSION)).toEqual([]);
-  });
+  // THE REPO-MAX CLAIM HAS MOVED TO 0197, which is the handoff the previous
+  // comment here asked for ("whoever adds 0197 moves it") and the rule CLAUDE.md
+  // states: only the CURRENT maximum migration's own test may assert isRepoMax,
+  // because otherwise every landing migration reds an older file and the sweep
+  // gets missed. tests/migrations/0197-waitlist-consumed-count-gateway.test.ts
+  // now carries it. Nothing else in this file changed -- 0196 keeps every claim
+  // it makes about itself, including the hosted-head claim below, which is still
+  // true: 0197 is authored and PENDING, not applied.
 
   it("IS APPLIED to production, and is the CURRENT hosted head", () => {
     // 0196 OWNS THE EXACT HOSTED-HEAD CLAIM, and owning it is the point.

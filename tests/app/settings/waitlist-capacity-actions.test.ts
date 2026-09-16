@@ -233,9 +233,12 @@ describe("closing an invitation capacity", () => {
 describe("the consumed count", () => {
   it("is READ from the database, never recomputed", async () => {
     arrangeRpc({ data: 2 });
-    expect(await readRoundConsumed("r1")).toBe(2);
+    expect(await readRoundConsumed(STUDIO, "r1")).toBe(2);
     expect(calls).toEqual([
-      { name: "waitlist_admission_round_consumed", args: { p_round_id: "r1" } },
+      {
+        name: "read_waitlist_admission_round_consumed",
+        args: { p_studio_id: STUDIO, p_round_id: "r1" },
+      },
     ]);
   });
 
@@ -246,7 +249,7 @@ describe("the consumed count", () => {
     // "zero seats used", which reads as a completely empty capacity and OFFERS
     // invitations the database may refuse. There is no error here to catch it.
     arrangeRpc({ data: null, error: null });
-    expect(await readRoundConsumed("r1")).toBeNull();
+    expect(await readRoundConsumed(STUDIO, "r1")).toBeNull();
   });
 
   it("accepts ONLY a non-negative integer, as 0192 declares", async () => {
@@ -255,7 +258,7 @@ describe("the consumed count", () => {
     // case became a zero.
     for (const ok of [0, 1, 7, 100]) {
       arrangeRpc({ data: ok });
-      expect(await readRoundConsumed("r1"), `${ok} is a legitimate count`).toBe(ok);
+      expect(await readRoundConsumed(STUDIO, "r1"), `${ok} is a legitimate count`).toBe(ok);
     }
     const rejected: [string, unknown][] = [
       ["null", null],
@@ -274,7 +277,7 @@ describe("the consumed count", () => {
     ];
     for (const [label, data] of rejected) {
       arrangeRpc({ data });
-      expect(await readRoundConsumed("r1"), `${label} must be UNKNOWN`).toBeNull();
+      expect(await readRoundConsumed(STUDIO, "r1"), `${label} must be UNKNOWN`).toBeNull();
     }
   });
 
@@ -296,7 +299,7 @@ describe("the consumed count", () => {
 
   it("an RPC error is UNKNOWN too", async () => {
     arrangeRpc({ data: null, error: { code: "42501" } });
-    expect(await readRoundConsumed("r1")).toBeNull();
+    expect(await readRoundConsumed(STUDIO, "r1")).toBeNull();
   });
 });
 
@@ -330,6 +333,7 @@ describe("P1 4020704233 — the consumed reader is not a Server Action", () => {
       .filter((l) => !l.trim().startsWith("//"))
       .join("\n");
     expect(executable).not.toContain("waitlist_admission_round_consumed");
+    expect(executable).not.toContain("read_waitlist_admission_round_consumed");
     expect(executable).not.toContain("readRoundConsumed");
     // And the exports that DO remain are the intended four.
     expect(exported.sort()).toEqual([
@@ -353,7 +357,11 @@ describe("P1 4020704233 — the consumed reader is not a Server Action", () => {
     expect(directives, "a server-only module must not also be an action surface").toEqual([]);
     // It may reach service-role, because 0192 grants this function to
     // service_role alone -- but only through the RPC, never a table.
-    expect(readerSrc).toContain("waitlist_admission_round_consumed");
+    // THROUGH THE 0197 GATEWAY, never 0192's invoker function directly --
+    // service_role has EXECUTE on that one but no SELECT on the table it reads,
+    // so the direct call fails 42501 every time.
+    expect(readerSrc).toContain("read_waitlist_admission_round_consumed");
+    expect(readerSrc).not.toMatch(/rpc\(\s*"waitlist_admission_round_consumed"/);
     expect(readerSrc).not.toMatch(/\.from\(/);
   });
 

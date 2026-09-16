@@ -18,17 +18,27 @@ import { createAdminClient } from "@/lib/supabase/admin-server";
 // action id for it. It is reachable only by server code that already decided
 // the caller may see this round.
 //
-// WHY SERVICE-ROLE IS STILL CORRECT HERE. 0192 revokes EXECUTE on
-// waitlist_admission_round_consumed from public, anon and authenticated and
-// grants it to service_role ALONE. There is no user-reachable equivalent, and
-// adding a grant to render a counter would widen the privilege frontier for a
-// display concern. The ROUND ITSELF is read by the page with the owner's own
-// client under the owner RLS policy; this only counts a round that read already
-// returned.
+// WHY IT GOES THROUGH 0197'S GATEWAY AND NOT 0192'S FUNCTION DIRECTLY.
 //
-// THE CALLER SUPPLIES AUTHORITY, NOT THIS FUNCTION. It takes a round id that the
-// page obtained from its OWN RLS-scoped read, so the tenant decision was made
-// before this is reached. It must never be handed an id that came from a form.
+// 0192's `waitlist_admission_round_consumed` is SECURITY INVOKER and reads
+// `new_client_waitlist_invitations`. service_role holds EXECUTE on it and,
+// deliberately, NO SELECT on that table -- so calling it from here failed with
+//
+//     42501 permission denied for table new_client_waitlist_invitations
+//
+// every single time. This helper turned that into `null`, `null` became
+// "capacity unknown", and unknown WITHHELD the send: an owner who had correctly
+// opened a capacity still could not invite. Every DB test used the admin
+// connection, which is why the suites were green throughout.
+//
+// 0197 adds a SECURITY DEFINER gateway that validates the studio/round pair and
+// DELEGATES the counting to 0192, so "used" keeps one definition and no table
+// privilege is granted to anyone.
+//
+// THE CALLER SUPPLIES BOTH IDS FROM SERVER STATE. The studio comes from the
+// authenticated page context and the round from the page's OWN owner/RLS-scoped
+// read, so the tenant decision is made before this is reached. Neither may ever
+// come from a browser form -- and the gateway validates the pair regardless.
 
 /**
  * How many of a round's seats the DATABASE says are used.
@@ -41,13 +51,19 @@ import { createAdminClient } from "@/lib/supabase/admin-server";
  * Returns null when the count cannot be ESTABLISHED, which callers must treat as
  * "unknown capacity" and never as "zero used".
  */
-export async function readRoundConsumed(roundId: string): Promise<number | null> {
+export async function readRoundConsumed(
+  studioId: string,
+  roundId: string,
+): Promise<number | null> {
   try {
     const admin = createAdminClient();
-    const { data, error } = await admin.rpc("waitlist_admission_round_consumed", {
+    const { data, error } = await admin.rpc("read_waitlist_admission_round_consumed", {
+      p_studio_id: studioId,
       p_round_id: roundId,
     });
     if (error) return null;
+    // The gateway answers NULL for a pair it cannot match, which is "no answer"
+    // and not "zero" -- `coerceConsumed` already rejects null for that reason.
     return coerceConsumed(data);
   } catch {
     return null;
