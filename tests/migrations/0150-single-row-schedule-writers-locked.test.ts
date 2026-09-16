@@ -64,62 +64,109 @@ describe("0150 — single-row schedule writers locked", () => {
   // -------------------------------------------------------------------------
 
   /**
-   * The ONE array expression this test owns: the `unnest(array[...])` list the
-   * revoke loop iterates. Sliced by bracket balance so nothing outside it — no
-   * function body, no comment elsewhere in the file, no other string literal —
-   * can influence the result.
+   * The ACTIVE signatures inside migration 0150's single `unnest(array[...])`.
+   *
+   * One left-to-right scan over ONE expression, carrying the four states that
+   * decide whether a character is structural: line comment, block comment,
+   * single-quoted string, or code. Each earlier revision of this helper fixed
+   * one of those states in isolation and Codex found the next — a commented
+   * entry still counted, then a block comment, then a bracket inside a literal.
+   * They are not four bugs; they are one scanner that was missing, so it is
+   * written once here.
+   *
+   * Consequently, INSIDE THIS EXPRESSION ONLY:
+   *   - `--` to end of line contributes no signature and no bracket;
+   *   - `/* ... *\/` contributes no signature and no bracket;
+   *   - a quoted signature is consumed whole, so `[` or `]` in a type such as
+   *     `smallint[]` never moves the array depth;
+   *   - only brackets in code move the depth, so the array's end is found
+   *     correctly even when a comment contains `]`.
+   *
+   * It stops at the matching `]`. Nothing outside the expression is read, and
+   * no general SQL parsing happens: this lexes one array literal.
    */
-  function revokeArrayExpression(): string {
+  function activeArrayLiterals(): string[] {
     const open = SQL.indexOf("unnest(array[");
     expect(open, "0150 must still drive its ACL from unnest(array[...])").toBeGreaterThan(-1);
     // Exactly one, so "the array" is unambiguous.
     expect(SQL.indexOf("unnest(array[", open + 1)).toBe(-1);
 
     const start = SQL.indexOf("[", open);
-    let depth = 0;
-    for (let i = start; i < SQL.length; i += 1) {
+    const literals: string[] = [];
+    let i = start + 1;
+    let depth = 1;
+
+    while (i < SQL.length) {
+      const two = SQL.slice(i, i + 2);
+
+      if (two === "--") {
+        const nl = SQL.indexOf("\n", i);
+        i = nl === -1 ? SQL.length : nl + 1;
+        continue;
+      }
+      if (two === "/*") {
+        const close = SQL.indexOf("*/", i + 2);
+        expect(close, "unterminated block comment inside 0150's revoke array").toBeGreaterThan(-1);
+        i = close + 2;
+        continue;
+      }
+      if (SQL[i] === "'") {
+        let j = i + 1;
+        let value = "";
+        for (;;) {
+          expect(j, "unterminated string inside 0150's revoke array").toBeLessThan(SQL.length);
+          if (SQL[j] === "'") {
+            if (SQL[j + 1] === "'") {
+              value += "'"; // SQL's doubled-quote escape
+              j += 2;
+              continue;
+            }
+            j += 1;
+            break;
+          }
+          value += SQL[j];
+          j += 1;
+        }
+        literals.push(value);
+        i = j;
+        continue;
+      }
       if (SQL[i] === "[") depth += 1;
       else if (SQL[i] === "]") {
         depth -= 1;
-        if (depth === 0) return SQL.slice(start + 1, i);
+        if (depth === 0) return literals;
       }
+      i += 1;
     }
     throw new Error("0150's unnest(array[...]) is unterminated");
   }
 
-  /**
-   * The ACTIVE signatures in that array.
-   *
-   * A commented-out entry is NOT in the revoke loop, so counting it was the
-   * same defect in a new place as the `%s` assertion this file already fixed:
-   * reading text that looks like the contract instead of the contract that
-   * executes. Commenting one line out removed a command from the loop while
-   * this test stayed green.
-   *
-   * `--` runs to end of line, and inside THIS slice — a list of quoted
-   * signatures — there is nothing else it could mean. That is the whole of the
-   * lexical handling; this test parses one array expression, never SQL.
-   */
+  /** The signatures the revoke loop actually iterates, by function name. */
   function revokeLoopFunctions(): string[] {
-    const active = revokeArrayExpression()
-      .split("\n")
-      .map((line) => line.replace(/--.*$/, ""))
-      .join("\n");
-    return [...active.matchAll(/'public\.(\w+)\s*\(/g)].map((m) => m[1]).sort();
+    return activeArrayLiterals()
+      .map((lit) => /^public\.(\w+)\s*\(/.exec(lit)?.[1])
+      .filter((n): n is string => Boolean(n))
+      .sort();
   }
 
   /**
-   * Every function the migration defines. Comment-stripped for the same reason
-   * and by the same rule: a commented-out `create or replace function` defines
-   * nothing, and counting it would fail this contract in the mirror direction.
+   * Every function the migration defines.
+   *
+   * Comment handling is LINE-LOCAL by design: a `create or replace function`
+   * match is ignored when `--` precedes it on its own line. An earlier revision
+   * stripped `--` across the whole file, which would corrupt a string literal
+   * that legitimately contains a double hyphen. This looks only at the line the
+   * match starts on and rewrites nothing.
    */
   function definedFunctions(): string[] {
-    const active = SQL.split("\n")
-      .map((line) => line.replace(/--.*$/, ""))
-      .join("\n");
-    return [...active.matchAll(/create\s+or\s+replace\s+function\s+public\.(\w+)\s*\(/gi)]
-      .map((m) => m[1])
-      .sort();
+    const out: string[] = [];
+    for (const m of SQL.matchAll(/create\s+or\s+replace\s+function\s+public\.(\w+)\s*\(/gi)) {
+      const lineStart = SQL.lastIndexOf("\n", m.index!) + 1;
+      const before = SQL.slice(lineStart, m.index!);
+      if (before.includes("--")) continue; // commented-out declaration
+      out.push(m[1]);
+    }
+    return out.sort();
   }
 
   it("the revoke loop covers EXACTLY the commands this migration defines", () => {
