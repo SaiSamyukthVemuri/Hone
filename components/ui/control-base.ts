@@ -99,81 +99,33 @@ export const CONTROL_DISABLED =
   "disabled:cursor-not-allowed disabled:opacity-50";
 
 /**
- * THE UNIVERSAL press acknowledgement — safe on ANY interactive element.
+ * THE TACTILE PRESS LAYER — opt-in, and a LAYER, not a complete treatment.
  *
- * WHY THIS EXISTS (UI-R01)
- * ------------------------
- * The UI-R00 recon measured the app at production a47eca0f: `hover:` appears in
- * 107 of the 118 files that contain a `<button>`, and `active:` in 10. Hover is
- * solved; press is not. That single asymmetry is the whole "Hone feels dead"
- * report — on a desktop the control looks alive until you press it, and on a
- * phone `:hover` never fires at all, so it is dead from first contact.
+ * WHAT IT IS FOR
+ * --------------
+ * A compact LEAF control that owns its own positioning context: a button, a
+ * pill, a segmented-control segment. It adds the physical sense of a press and
+ * nothing else.
  *
- * A BACKGROUND SHIFT, AND THE HISTORY MATTERS
- * -------------------------------------------
- * This primitive is adopted blind: UI-R03 applies it to ~108 control files it
- * does not individually read. It therefore may not change what a descendant is
- * positioned or painted against. Two drafts got that wrong, in two different
- * ways, and both were caught in review:
+ * IT IS NOT A PRESS TREATMENT BY ITSELF. Under `prefers-reduced-motion` the
+ * scale collapses to a no-op, so a control composing ONLY this has no press
+ * feedback at all for exactly the users least able to tolerate a control that
+ * looks untapped. THE CALLER MUST SUPPLY A COLOUR TREATMENT. Every Button
+ * variant does — primary/secondary/quiet/danger each carry their own
+ * `active:bg-*`, chosen for their own background — and that colour is what
+ * survives when the motion is removed. Guarded in
+ * tests/components/ui-r01-interaction-foundations.test.ts.
  *
- *   1. `active:scale-[0.98]` — a non-`none` transform establishes a CONTAINING
- *      BLOCK for `position: fixed` descendants AND a new STACKING CONTEXT.
- *   2. `active:opacity-90` — fixed the containing block and reintroduced the
- *      stacking context, because ANY opacity below 1 creates one. A z-indexed
- *      descendant that should paint above surrounding content is trapped inside
- *      the control for the duration of the press.
- *
- * A background-colour change creates NEITHER. No containing block, no stacking
- * context, no geometry change, no positioning context required. It is also not
- * a guess: it is the mechanism the container treatment below was already using,
- * for exactly these reasons — the safe answer was on the same page both times.
- *
- * REDUCED MOTION needs no special case: a colour change is a state change, not
- * motion. The shared marker collapses its duration to 1ms in app/globals.css
- * and the acknowledgement survives intact.
- *
- * A call site with its OWN `active:bg-*` (every Button variant has one) keeps
- * its own colour — see the note on LEAF_CONTROL_PRESS about why Button does not
- * compose this one.
- *
- * GUARDED: tests/components/ui-r01-interaction-foundations.test.ts asserts this
- * constant creates neither a containing block nor a stacking context — no
- * transform, scale, translate, rotate, skew, filter, opacity, perspective,
- * mix-blend or will-change. Adding one is a contract change, not a convenience.
- */
-export const CONTROL_PRESS = cx("active:bg-surface-sunken", PRESS_TRANSITION);
-
-/**
- * The TACTILE press, for a compact LEAF control that owns its own positioning
- * context — a button, a pill, a segmented-control segment.
- *
- * OPT-IN, and the opt-in IS the contract. By using this a caller states that
- * either the control has no positioned descendants, or it already establishes
- * the containing block those descendants resolve against (Button is `relative`
- * and its pending mark is `absolute inset-0` INSIDE it, so it qualifies).
- *
- * THE RESTRICTION, EXPLICITLY: while `:active`, this control IS a containing
- * block for `position: fixed` descendants and DOES form a new stacking context.
- * Do not use it on a control that anchors a fixed-position menu, popover,
- * tooltip or portal-less overlay, and do not reach for it on a row or card —
- * CONTROL_PRESS is the universal treatment for those.
+ * THE POSITIONING RESTRICTION, EXPLICITLY: while `:active`, a scaled control IS
+ * a containing block for `position: fixed` descendants and DOES form a new
+ * stacking context. Do not use it on a control that anchors a fixed-position
+ * menu, popover, tooltip or portal-less overlay.
  *
  * 0.98 — not lower. Below about 0.97 a 44px control reads as a bounce rather
  * than a press, and text inside it starts to visibly resample. A transform is
  * paint-time, so the LAYOUT box is untouched: a pressed control cannot reflow
  * its neighbours. Proved in the browser against a NEIGHBOUR's position, not
  * merely against its own box.
- *
- * SCALE ONLY — it deliberately does NOT compose CONTROL_PRESS. `cx` is not a
- * tailwind-merge: it cannot resolve two competing `active:bg-*` utilities, and
- * Tailwind decides those by CSS source order rather than by attribute order. A
- * leaf that carries its own active colour (every Button variant does) would be
- * gambling on which background wins. So the colour belongs to the caller and
- * the tactile layer stays orthogonal.
- *
- * A leaf with NO active colour of its own should compose both:
- *   cx(CONTROL_PRESS, LEAF_CONTROL_PRESS)
- * which is safe precisely because it has no competing background.
  */
 export const LEAF_CONTROL_PRESS = cx(
   "active:scale-[0.98] motion-reduce:active:scale-100",
@@ -181,16 +133,33 @@ export const LEAF_CONTROL_PRESS = cx(
 );
 
 /**
- * Container press — rows, cards, list items, a `PendingContainerLink` body.
+ * Press treatment for the NEUTRAL-SURFACE families, and ONLY those.
  *
- * COLLAPSED INTO CONTROL_PRESS (UI-R01). It used `active:bg-surface-sunken`
- * because a transform on a row scales its text and borders and reparents its
- * positioned descendants; the universal treatment now uses that same mechanism
- * for the same reasons, so keeping a second identical constant would be two
- * names for one thing — and two places for the rule to drift.
+ * COMPATIBLE: a list row, a card, a container link, a quiet/ghost control, an
+ * outlined control — anything already sitting on `surface` and carrying
+ * foreground-coloured text.
  *
- * Kept as a named alias, because a row saying SURFACE_PRESS reads better at the
- * call site than a row saying CONTROL_PRESS, and because retiring the name
- * would churn nothing useful. It is the SAME string, asserted as such.
+ * NOT COMPATIBLE, and this is why the name changed: a FILLED control. Sinking
+ * a dark button to `surface-sunken` (oklch 98.5%, near-white) underneath
+ * `text-on-accent` (#fff) is white on near-white — the label disappears for as
+ * long as the control is pressed. Those families carry their own `active:bg-*`
+ * instead; see Button's VARIANT map.
+ *
+ * THERE IS NO UNIVERSAL PRESS CLASS, AND UI-R01 STOPPED PRETENDING OTHERWISE.
+ * An earlier export named CONTROL_PRESS was retired rather than renamed. Three
+ * successive attempts to make one blind-adoptable constant each traded one
+ * requirement for another — `scale` and `opacity` both created a stacking
+ * context; a background change fixed that and broke contrast on filled
+ * controls; removing the background from the leaf layer fixed the conflict and
+ * removed reduced-motion feedback. A treatment that is safe on any element AND
+ * visible on any background has to know what it is painting on, and a constant
+ * adopted without reading the call site cannot. The name invited exactly the
+ * blind adoption that is unsafe, so it is gone.
+ *
+ * UI-R03 therefore classifies a control into a FAMILY first and applies that
+ * family's treatment — it does not apply one class to 108 files.
+ *
+ * Creates no containing block and no stacking context: a background-colour
+ * change does neither, which is why the surface families can share one string.
  */
-export const SURFACE_PRESS = CONTROL_PRESS;
+export const SURFACE_PRESS = cx("active:bg-surface-sunken", PRESS_TRANSITION);

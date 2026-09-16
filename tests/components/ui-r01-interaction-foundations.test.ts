@@ -6,7 +6,6 @@ import { readFileSync } from "node:fs";
 import { Button, buttonClasses } from "@/components/ui/button";
 import {
   CONTROL_DISABLED,
-  CONTROL_PRESS,
   LEAF_CONTROL_PRESS,
   PRESS_TRANSITION,
   SURFACE_PRESS,
@@ -76,98 +75,81 @@ describe("UI-R01 press acknowledgement: the state the app was missing", () => {
     });
   }
 
-  // ── The safety split, which is the whole point of the vocabulary ──────────
+  // ── The vocabulary, after the architecture correction ────────────────────
   //
-  // Two drafts of the universal primitive were wrong in two different ways, and
-  // review caught both. `active:scale-[0.98]` created a containing block for
-  // fixed descendants AND a stacking context. `active:opacity-90` fixed the
-  // containing block and reintroduced the stacking context, because ANY opacity
-  // below 1 creates one. A background-colour change creates neither — and it is
-  // the mechanism the container treatment was already using both times.
+  // There is NO universal press class, and these guards no longer pretend to
+  // establish one. Three attempts each traded one requirement for another —
+  // `scale` and `opacity` both created a stacking context, a background change
+  // fixed that and broke contrast on filled controls, and removing the
+  // background from the leaf layer removed reduced-motion feedback.
+  //
+  // WHAT THESE GUARDS DELIBERATELY NO LONGER CLAIM: an earlier version held a
+  // blacklist of stacking-context-creating CSS properties and called it
+  // exhaustive. It was not (clip-path, mask, container-type,
+  // view-transition-name and z-index were all absent), and more importantly a
+  // property blacklist CANNOT prove that arbitrary future CSS is safe for blind
+  // adoption. That is not a gap to widen — it is a claim to withdraw. These
+  // guards now pin the CONTRACTS WE ACTUALLY SHIP, and nothing beyond them.
 
-  it("THE UNIVERSAL primitive creates neither a containing block nor a stacking context", () => {
-    // Exhaustive over the properties that do one or both. `opacity` is on this
-    // list BECAUSE it was the second mistake: it is the one that looks harmless.
-    for (const banned of [
-      "scale",
-      "transform",
-      "translate",
-      "rotate",
-      "skew",
-      "filter",
-      "opacity",
-      "perspective",
-      "mix-blend",
-      "will-change",
-      "backdrop",
-      "contain",
-      "isolate",
-    ]) {
+  it("SURFACE_PRESS is a colour change, so it reparents and repaints nothing", () => {
+    // The shipped contract: the surface families share one string BECAUSE a
+    // background-colour change creates neither a containing block nor a
+    // stacking context. Asserted positively — this is what it IS — plus the
+    // two properties that actually bit us, which are regression fences for
+    // specific historical mistakes rather than a claim of completeness.
+    expect(SURFACE_PRESS).toContain("active:bg-surface-sunken");
+    expect(SURFACE_PRESS).toContain(PRESS_TRANSITION);
+    expect(SURFACE_PRESS).not.toContain("scale"); // the first mistake
+    expect(SURFACE_PRESS).not.toContain("opacity"); // the second mistake
+  });
+
+  it("SURFACE_PRESS does not claim to be universal, and the name that did is gone", async () => {
+    // CONTROL_PRESS was retired rather than renamed: a name reading
+    // "the press for controls" invites exactly the blind adoption that is
+    // unsafe on a filled control.
+    // The PROPERTY is that the export is gone — a module surface a call site
+    // can actually reach. The first draft of this assertion also matched a
+    // sentence in the doc comment, which `code()` strips before reading; worse,
+    // asserting prose proves only that someone wrote a sentence. The export
+    // check is the whole claim.
+    const mod = await import("@/components/ui/control-base");
+    expect(Object.keys(mod)).not.toContain("CONTROL_PRESS");
+    expect(Object.keys(mod)).toContain("SURFACE_PRESS");
+    expect(Object.keys(mod)).toContain("LEAF_CONTROL_PRESS");
+  });
+
+  it("LEAF_CONTROL_PRESS is a LAYER — scale only, no colour of its own", () => {
+    expect(LEAF_CONTROL_PRESS).toContain("active:scale-[0.98]");
+    expect(LEAF_CONTROL_PRESS).toContain("motion-reduce:active:scale-100");
+    // It must not carry a background: `cx` is not a tailwind-merge, so a colour
+    // here would compete with the family's own by CSS source order.
+    expect(LEAF_CONTROL_PRESS).not.toContain("active:bg-");
+  });
+
+  it("EVERY Button family supplies the colour the leaf layer does not", () => {
+    // This is the guard that makes the leaf layer safe to use: under reduced
+    // motion the scale is a no-op, so the family's active colour is the ENTIRE
+    // acknowledgement. A variant without one would be silent on press for
+    // reduced-motion users.
+    for (const variant of VARIANTS) {
       expect(
-        CONTROL_PRESS,
-        `CONTROL_PRESS is adopted BLIND across ~108 files; "${banned}" changes ` +
-          `what a descendant is positioned or painted against. Use ` +
-          `LEAF_CONTROL_PRESS if a tactile press is genuinely wanted.`,
-      ).not.toContain(banned);
+        render(createElement(Button, { variant }, "Go")),
+        `variant=${variant} must carry its own active: colour — it is all that ` +
+          `remains when prefers-reduced-motion drops the scale`,
+      ).toMatch(/active:bg-/);
     }
   });
 
-  it("the universal primitive still acknowledges a press, without hover", () => {
-    expect(CONTROL_PRESS).toContain("active:bg-");
-    expect(CONTROL_PRESS).toContain(PRESS_TRANSITION);
-  });
-
-  it("pressed and DISABLED remain visually distinguishable", () => {
-    // The press is a background change; disabled is opacity-50. Different
-    // channels entirely, so a pressed control can never read as unavailable.
-    expect(CONTROL_PRESS).toContain("active:bg-surface-sunken");
-    expect(CONTROL_PRESS).not.toContain("opacity");
-    expect(CONTROL_DISABLED).toContain("opacity-50");
-  });
-
-  it("LEAF_CONTROL_PRESS is the ONLY shared primitive carrying a scale", () => {
-    expect(LEAF_CONTROL_PRESS).toContain("active:scale-[0.98]");
-    expect(CONTROL_PRESS).not.toContain("scale");
-    expect(SURFACE_PRESS).not.toContain("scale");
-  });
-
-  it("the leaf treatment is SCALE ONLY, so it cannot fight a variant's background", () => {
-    // `cx` is not a tailwind-merge: two competing active:bg-* utilities are
-    // resolved by CSS SOURCE ORDER, not by attribute order. If the leaf
-    // composed the universal background, every Button variant would be
-    // gambling on which colour wins its own press.
-    expect(LEAF_CONTROL_PRESS).not.toContain("active:bg-");
-    expect(LEAF_CONTROL_PRESS).toContain("motion-reduce:active:scale-100");
-  });
-
-  it("Button opts into the leaf treatment AND still carries its own press colour", () => {
+  it("Button composes the leaf layer deliberately, not a retired universal class", () => {
     const src = code("components/ui/button.tsx");
     expect(src).toContain("LEAF_CONTROL_PRESS");
     expect(src).not.toMatch(/\bCONTROL_PRESS\b(?!_)/);
-    // Reduced motion drops the scale; the variant colour is what remains, so
-    // every variant must still carry one.
-    for (const variant of VARIANTS) {
-      expect(render(createElement(Button, { variant }, "Go"))).toMatch(/active:bg-/);
-    }
   });
 
-  it("SURFACE_PRESS is the SAME treatment, not a second copy of the rule", () => {
-    // Collapsed deliberately: keeping two identical constants is two places for
-    // the rule to drift. The name survives because a row reads better saying
-    // SURFACE_PRESS.
-    expect(SURFACE_PRESS).toBe(CONTROL_PRESS);
-  });
-
-  it("guarantees reduced-motion feedback ITSELF, not via the call site", () => {
-    // Caught by review. The first draft relied on the consumer having an
-    // `active:` background — true of Button, false of the ~108 arbitrary
-    // elements UI-R03 will apply this to. A primitive that only works when the
-    // call site remembers something is the failure mode control-base.ts exists
-    // to prevent.
-    // The universal treatment is a COLOUR change, so it is already independent
-    // of motion — there is nothing to fall back to, because nothing was motion.
-    expect(CONTROL_PRESS).toContain("active:bg-surface-sunken");
-    expect(CONTROL_PRESS).not.toContain("opacity");
+  it("pressed and DISABLED remain visually distinguishable", () => {
+    // Different channels entirely: press is colour, disabled is opacity.
+    expect(SURFACE_PRESS).not.toContain("opacity");
+    expect(CONTROL_DISABLED).toContain("opacity-50");
   });
 
   it("drops the transform under reduced motion but KEEPS an acknowledgement", () => {
@@ -179,26 +161,10 @@ describe("UI-R01 press acknowledgement: the state the app was missing", () => {
     expect(html).toMatch(/active:bg-/);
   });
 
-  for (const variant of VARIANTS) {
-    it(`variant=${variant} still carries an active: background, so motion is never the only signal`, () => {
-      expect(render(createElement(Button, { variant }, "Go"))).toMatch(/active:bg-/);
-    });
-  }
-
-  it("CONTROL_PRESS carries its own transition, so the marker is not emitted twice", () => {
-    expect(CONTROL_PRESS).toContain(PRESS_TRANSITION);
+  it("the press marker is emitted exactly once on a Button", () => {
+    expect(LEAF_CONTROL_PRESS).toContain(PRESS_TRANSITION);
     const occurrences = render(createElement(Button, {}, "Go")).split(PRESS_TRANSITION).length - 1;
     expect(occurrences).toBe(1);
-  });
-
-  it("SURFACE_PRESS never transforms — containers acknowledge with their surface", () => {
-    // A transform on a row would scale its text and borders, and would create a
-    // containing block for fixed descendants and a new stacking context. Rows
-    // in this app host absolutely-positioned scrims; that must not change.
-    expect(SURFACE_PRESS).not.toContain("scale");
-    expect(SURFACE_PRESS).not.toContain("translate");
-    expect(SURFACE_PRESS).toContain("active:");
-    expect(SURFACE_PRESS).toContain(PRESS_TRANSITION);
   });
 
   it("the press transition animates the property Tailwind ACTUALLY emits — `scale`", () => {
