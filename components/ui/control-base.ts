@@ -99,7 +99,7 @@ export const CONTROL_DISABLED =
   "disabled:cursor-not-allowed disabled:opacity-50";
 
 /**
- * Press acknowledgement for a COMPACT control — a button, a pill, a tab.
+ * THE UNIVERSAL press acknowledgement — safe on ANY control, by construction.
  *
  * WHY THIS EXISTS (UI-R01)
  * ------------------------
@@ -107,40 +107,66 @@ export const CONTROL_DISABLED =
  * 107 of the 118 files that contain a `<button>`, and `active:` in 10. Hover is
  * solved; press is not. That single asymmetry is the whole "Hone feels dead"
  * report — on a desktop the control looks alive until you press it, and on a
- * phone `:hover` never fires at all, so the control is dead from first contact.
+ * phone `:hover` never fires at all, so it is dead from first contact.
  *
- * `scale` is deliberate and it is the reason this is safe to apply broadly:
- * a transform is a PAINT-time effect, so a pressed control cannot reflow its
- * neighbours, cannot resize a row, and cannot move the page. Requirement 6
- * (geometry stability) is satisfied by construction rather than by review.
+ * NO TRANSFORM, AND THAT IS THE POINT.
+ * ------------------------------------
+ * This primitive is intended for broad adoption — UI-R03 applies it to ~108
+ * control files it has not individually read. An earlier draft used
+ * `active:scale-[0.98]` here, and review was right to refuse it: a non-`none`
+ * `scale`/`transform` establishes a CONTAINING BLOCK for `position: fixed`
+ * descendants and a NEW STACKING CONTEXT, for as long as the control is
+ * pressed. A dropdown, popover or tooltip anchored inside such a control would
+ * silently reparent on press. A comment warning future callers is not
+ * sufficient protection for a primitive whose entire purpose is to be adopted
+ * without reading each call site, so the safety is encoded in the API instead:
+ * the universal one cannot transform, and the tactile one must be opted into.
  *
- * 0.98 — not lower. The brief asks for ~0.98 or <=1px of travel; below about
- * 0.97 a 44px control reads as a bounce rather than a press, and text inside it
- * starts to visibly resample.
+ * `opacity-90` is deliberately slight — enough to read as a press, distinct
+ * from `opacity-50`, which is the DISABLED look in CONTROL_DISABLED. It changes
+ * no geometry, creates no containing block, needs no positioning context, and
+ * works identically with a mouse and a finger.
  *
- * REDUCED MOTION KEEPS AN ACKNOWLEDGEMENT, AND THIS PRIMITIVE OWNS IT.
+ * REDUCED MOTION needs no special case here: an opacity change is a state
+ * change, not motion. The shared marker collapses its duration to 1ms in
+ * app/globals.css and the acknowledgement survives intact.
  *
- * The first draft dropped the transform and relied on the CALL SITE having an
- * `active:` background — true of every Button variant, and therefore true of
- * the only consumer that existed when it was written. Review caught what that
- * misses: CONTROL_PRESS is an exported primitive, UI-R03 applies it to ~108
- * files of arbitrary elements, and any of them WITHOUT an active background
- * would give a reduced-motion user no press feedback whatsoever — the exact
- * users least able to tolerate a control that looks untapped.
- *
- * That is this file's own rule, broken by its newest export: "The rule belongs
- * in the primitive, not the call site; a call site can forget, a base string
- * cannot." So the fallback lives here. `opacity-90` is deliberately slight —
- * enough to read as a press, not enough to read as a disabled control (that is
- * `opacity-50`, in CONTROL_DISABLED) — and it changes no geometry.
- *
- * A call site that ALSO has an active: background simply gets both, which is
+ * A call site that ALSO has an `active:` background simply gets both, which is
  * harmless and is what Button does today.
+ *
+ * GUARDED: tests/components/ui-r01-interaction-foundations.test.ts asserts this
+ * constant carries no scale/transform/translate. Adding one is a contract
+ * change and must be made deliberately, not by convenience.
  */
-export const CONTROL_PRESS = cx(
-  "active:scale-[0.98]",
-  "motion-reduce:active:scale-100 motion-reduce:active:opacity-90",
-  PRESS_TRANSITION,
+export const CONTROL_PRESS = cx("active:opacity-90", PRESS_TRANSITION);
+
+/**
+ * The TACTILE press, for a compact LEAF control that owns its own positioning
+ * context — a button, a pill, a segmented-control segment.
+ *
+ * OPT-IN, and the opt-in IS the contract. By using this a caller states that
+ * either the control has no positioned descendants, or it already establishes
+ * the containing block those descendants resolve against (Button is `relative`
+ * and its pending mark is `absolute inset-0` INSIDE it, so it qualifies).
+ *
+ * THE RESTRICTION, EXPLICITLY: while `:active`, this control is a containing
+ * block for `position: fixed` descendants and forms a new stacking context. Do
+ * NOT use it on a control that anchors a fixed-position menu, popover, tooltip
+ * or portal-less overlay, and do NOT reach for it on a row, card or any
+ * container — SURFACE_PRESS exists for those.
+ *
+ * 0.98 — not lower. Below about 0.97 a 44px control reads as a bounce rather
+ * than a press, and text inside it starts to visibly resample. A transform is
+ * paint-time, so the LAYOUT box is untouched either way: a pressed control
+ * cannot reflow its neighbours. Proved in the browser against a neighbour's
+ * position, not merely against its own box.
+ *
+ * It COMPOSES the universal treatment rather than replacing it, so reduced
+ * motion — which drops the scale — still leaves a real acknowledgement behind.
+ */
+export const LEAF_CONTROL_PRESS = cx(
+  CONTROL_PRESS,
+  "active:scale-[0.98] motion-reduce:active:scale-100",
 );
 
 /**

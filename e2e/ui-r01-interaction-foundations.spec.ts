@@ -287,25 +287,61 @@ test.describe("UI-R01 pending — desktop", () => {
     expect(clickToPending).toBeLessThan(1_000);
   });
 
-  test("a second click cannot double-submit while the first is in flight", async ({
-    page,
-  }) => {
+  test("a rapid second activation does not reach the server twice", async ({ page }) => {
+    // THE PROPERTY, NOT THE PROXY.
+    //
+    // The previous version of this test was named "a second click cannot
+    // double-submit" and never clicked a second time: it clicked once, waited
+    // for aria-busy, and asserted toBeDisabled(). That proves the button is
+    // disabled. It does NOT prove that a second activation fails to reach the
+    // server — which is the only thing a practitioner is actually protected by.
+    //
+    // This counts REAL POSTs to the Server Action route, and races them
+    // deliberately: the second activation is issued BEFORE waiting for
+    // aria-busy, so React's re-render has not necessarily committed the
+    // disabled attribute yet. That window is the whole point — a guard that
+    // only works after a render is not a guard against a double-tap.
     await gotoBookingSettings(page);
     const control = page.getByRole("button", { name: "Save preferences" });
     await expect(control).toBeVisible({ timeout: T });
+    await control.scrollIntoViewIfNeeded();
 
+    let postCount = 0;
+    const postTimes: number[] = [];
     await page.route("**/settings/booking**", async (route) => {
       if (route.request().method() !== "POST") return route.fallback();
+      postCount += 1;
+      postTimes.push(Date.now());
+      // Hold the FIRST request long enough that the second activation lands
+      // while it is genuinely still in flight.
       await new Promise((r) => setTimeout(r, 3_000));
       return route.continue();
     });
 
-    await control.click();
-    await expect(control).toHaveAttribute("aria-busy", "true", { timeout: 5_000 });
+    const box = await control.boundingBox();
+    if (!box) throw new Error("no box");
+    const x = box.x + box.width / 2;
+    const y = box.y + box.height / 2;
 
-    // The guard is the DISABLED ATTRIBUTE, not a handler that politely returns
-    // early — so it holds for a keyboard activation too.
-    await expect(control).toBeDisabled();
+    // A real browser activation sequence, twice, with no auto-waiting between
+    // them — locator.click() would wait for actionability and therefore refuse
+    // to reproduce the race at all.
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.up();
+    await page.mouse.down();
+    await page.mouse.up();
+
+    // Let anything that was going to be sent, be sent.
+    await page.waitForTimeout(5_000);
+
+    // eslint-disable-next-line no-console
+    console.log(`POST_COUNT_AFTER_RAPID_DOUBLE_ACTIVATION=${postCount}`);
+    if (postTimes.length > 1) {
+      // eslint-disable-next-line no-console
+      console.log(`POST_DELTA_MS=${postTimes[1] - postTimes[0]}`);
+    }
+    expect(postCount).toBe(1);
   });
 
   test("keyboard focus is visibly indicated", async ({ page }) => {

@@ -4,7 +4,7 @@ import {
   CONTROL_COMPACT_FINE_POINTER,
   CONTROL_DISABLED,
   CONTROL_MIN_TOUCH,
-  CONTROL_PRESS,
+  LEAF_CONTROL_PRESS,
   FOCUS_RING,
   cx,
 } from "./control-base";
@@ -78,8 +78,12 @@ export function buttonClasses(options?: {
     // positioning context the overlay centres itself in. It changes nothing
     // about a resting control.
     "relative cursor-pointer rounded-md font-medium",
-    // Carries PRESS_TRANSITION itself, so the marker is not emitted twice.
-    CONTROL_PRESS,
+    // The TACTILE press, opted into deliberately. Button satisfies the leaf
+    // contract LEAF_CONTROL_PRESS documents: it is `relative` above, and its
+    // only positioned descendant is the pending mark, which is `absolute
+    // inset-0` INSIDE it and therefore already resolves against this element.
+    // It carries PRESS_TRANSITION itself, so the marker is not emitted twice.
+    LEAF_CONTROL_PRESS,
     FOCUS_RING,
     CONTROL_DISABLED,
     SIZE[size],

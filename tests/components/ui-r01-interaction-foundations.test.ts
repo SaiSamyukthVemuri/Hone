@@ -5,7 +5,9 @@ import { readFileSync } from "node:fs";
 
 import { Button, buttonClasses } from "@/components/ui/button";
 import {
+  CONTROL_DISABLED,
   CONTROL_PRESS,
+  LEAF_CONTROL_PRESS,
   PRESS_TRANSITION,
   SURFACE_PRESS,
 } from "@/components/ui/control-base";
@@ -74,14 +76,67 @@ describe("UI-R01 press acknowledgement: the state the app was missing", () => {
     });
   }
 
+  // ── The safety split, which is the whole point of the vocabulary ──────────
+  //
+  // Review caught the earlier shape: CONTROL_PRESS carried `active:scale-[0.98]`
+  // and was intended for broad adoption across ~108 unread control files. A
+  // non-none scale establishes a containing block for position:fixed
+  // descendants and a new stacking context while pressed, so a control
+  // anchoring a popover would silently reparent it. A comment could not protect
+  // that; the API now does.
+
+  it("THE UNIVERSAL primitive never transforms — enforced, not merely documented", () => {
+    for (const banned of ["scale", "transform", "translate", "rotate", "skew", "filter"]) {
+      expect(
+        CONTROL_PRESS,
+        `CONTROL_PRESS must stay safe on ANY control; "${banned}" creates a ` +
+          `containing block for fixed descendants. Use LEAF_CONTROL_PRESS instead.`,
+      ).not.toContain(banned);
+    }
+  });
+
+  it("the universal primitive still acknowledges a press, without hover", () => {
+    expect(CONTROL_PRESS).toContain("active:");
+    expect(CONTROL_PRESS).toContain(PRESS_TRANSITION);
+  });
+
+  it("pressed and DISABLED remain visually distinguishable", () => {
+    // opacity-90 (pressed) must not collide with opacity-50 (disabled), or a
+    // pressed control would read as unavailable.
+    expect(CONTROL_PRESS).toContain("opacity-90");
+    expect(CONTROL_PRESS).not.toContain("opacity-50");
+    expect(CONTROL_DISABLED).toContain("opacity-50");
+  });
+
+  it("LEAF_CONTROL_PRESS is the ONLY shared primitive carrying a scale", () => {
+    expect(LEAF_CONTROL_PRESS).toContain("active:scale-[0.98]");
+    expect(SURFACE_PRESS).not.toContain("scale");
+    expect(CONTROL_PRESS).not.toContain("scale");
+  });
+
+  it("the leaf treatment COMPOSES the universal one, so reduced motion still lands", () => {
+    // Dropping the scale under reduced motion must not drop the whole
+    // acknowledgement; the universal treatment underneath is what remains.
+    expect(LEAF_CONTROL_PRESS).toContain("motion-reduce:active:scale-100");
+    expect(LEAF_CONTROL_PRESS).toContain("active:opacity-90");
+  });
+
+  it("Button opts into the leaf treatment DELIBERATELY, in source", () => {
+    const src = code("components/ui/button.tsx");
+    expect(src).toContain("LEAF_CONTROL_PRESS");
+    // And not by accidentally inheriting a transform from the universal one.
+    expect(src).not.toMatch(/\bCONTROL_PRESS\b(?!_)/);
+  });
+
   it("guarantees reduced-motion feedback ITSELF, not via the call site", () => {
     // Caught by review. The first draft relied on the consumer having an
     // `active:` background — true of Button, false of the ~108 arbitrary
     // elements UI-R03 will apply this to. A primitive that only works when the
     // call site remembers something is the failure mode control-base.ts exists
     // to prevent.
-    expect(CONTROL_PRESS).toContain("motion-reduce:active:opacity-90");
-    // And it must not be mistakable for the disabled look.
+    // The universal treatment is opacity-based, so it is ALREADY independent of
+    // motion — there is nothing to fall back to, because nothing was motion.
+    expect(CONTROL_PRESS).toContain("active:opacity-90");
     expect(CONTROL_PRESS).not.toContain("opacity-50");
   });
 
