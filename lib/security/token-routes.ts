@@ -31,6 +31,12 @@ export const TOKEN_ROUTE_PREFIXES = [
   "/manage",
   "/intake",
   "/calendar-feed",
+  // WAIT-03 B3. The recipient's invitation link. The token in this path is a
+  // replayable bearer credential exactly like the five above: possession reaches
+  // the offer and can request a proof code. It cannot book or decline -- that
+  // needs the second secret -- but the URL is still credential material, so it
+  // gets the same no-referrer, no-index headers and the same telemetry scrubbing.
+  "/invitation",
 ] as const;
 
 export type TokenRoutePrefix = (typeof TOKEN_ROUTE_PREFIXES)[number];

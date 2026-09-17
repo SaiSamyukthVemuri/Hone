@@ -144,6 +144,15 @@ describe("every public booking log payload is PII-minimized", () => {
     // BOOK-01 P2-A, consciously approved:
     "appointmentId", // opaque UUID the studio already owns; no PII
     "errorClass", // the error's CLASS only ("TypeError"), never its message
+    // WAIT-03 conversion evidence, consciously approved. Both are opaque
+    // internal UUIDs of rows the STUDIO already owns and already sees in its
+    // own waitlist surface -- the same class as appointmentId, and the same
+    // reason: without them the "this entry needs repairing by hand" log names
+    // no entry to repair. Neither is a secret and neither identifies a person:
+    // the prospect's name, address and phone live on the entry row, not in its
+    // id, and nothing in this file can read them.
+    "invitationId", // the spent invitation (already logged by the P3-A path)
+    "entryId", // the waitlist entry whose status failed to move
   ]);
 
   // Top-level keys of the `{ ... }` object literal in a captured call.

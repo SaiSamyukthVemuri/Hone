@@ -1049,3 +1049,92 @@ describe("what is excluded, and on what grounds", () => {
     }
   });
 });
+
+// ===========================================================================
+// WAIT-ADMIT-01 (0193) — the three resources this slice created
+// ===========================================================================
+//
+// Guard 1 already fails if any of these is missing a disposition. These pin the
+// SPECIFIC verdicts, so a later edit cannot quietly re-tier them — most
+// importantly, cannot drop the field review off the one table that holds a live
+// credential.
+describe("0193 waitlist admission resources are classified deliberately", () => {
+  it("preferences are tier 1 studio-owned content, needing no field review", () => {
+    const d = EXPORT_RESOURCE_REGISTRY["new_client_waitlist_entry_preferences"];
+    expect(d.kind).toBe("pending");
+    if (d.kind !== "pending") return;
+    expect(d.ticket).toBe("TRUTH-01B");
+    // Same class as new_client_waitlist_entries, whose demand records this is a
+    // one-to-one attribute of.
+    expect(d.tier).toBe(1);
+    expect(d.fieldReviewRequired ?? false).toBe(false);
+  });
+
+  it("preference grants carry a live credential, so they are tier 2 AND field-reviewed", () => {
+    const d = EXPORT_RESOURCE_REGISTRY["new_client_waitlist_preference_grants"];
+    expect(d.kind).toBe("pending");
+    if (d.kind !== "pending") return;
+    expect(d.ticket).toBe("TRUTH-01B");
+    expect(d.tier).toBe(2);
+    // token_hash must never be emitted, raw or otherwise. Dropping this flag is
+    // the regression this assertion exists to catch.
+    expect(
+      d.fieldReviewRequired,
+      "token_hash is security material: this resource must never be queued for a raw dump",
+    ).toBe(true);
+  });
+
+  it("matches the invitation precedent it deliberately mirrors", () => {
+    const grants = EXPORT_RESOURCE_REGISTRY["new_client_waitlist_preference_grants"];
+    const invitations = EXPORT_RESOURCE_REGISTRY["new_client_waitlist_invitations"];
+    expect(grants.kind).toBe("pending");
+    expect(invitations.kind).toBe("pending");
+    if (grants.kind !== "pending" || invitations.kind !== "pending") return;
+    // Two hashed-token lifecycles for the same feature must not drift apart.
+    expect(grants.tier).toBe(invitations.tier);
+    expect(grants.fieldReviewRequired).toBe(invitations.fieldReviewRequired);
+  });
+
+  it("admission policy is tier 1 standing configuration, like availability defaults", () => {
+    const policy = EXPORT_RESOURCE_REGISTRY["studio_waitlist_admission_policy"];
+    expect(policy.kind).toBe("pending");
+    if (policy.kind !== "pending") return;
+    expect(policy.ticket).toBe("TRUTH-01B");
+    expect(policy.tier).toBe(1);
+    expect(policy.fieldReviewRequired ?? false).toBe(false);
+
+    // The class it belongs to: durable configuration the owner authored.
+    for (const sibling of ["studio_availability_default", "studio_recurring_break_rules"]) {
+      const d = EXPORT_RESOURCE_REGISTRY[sibling];
+      expect(d.kind).toBe("pending");
+      if (d.kind !== "pending") continue;
+      expect(d.tier, `${sibling} anchors the standing-configuration tier`).toBe(1);
+    }
+  });
+
+  it("is NOT lumped in with the transient per-round allowance", () => {
+    // studio_waitlist_admission_rounds holds THIS ROUND's number and is tier 2;
+    // the policy row is the durable choice behind it. The adjacent names invite
+    // exactly this conflation, so the distinction is pinned rather than assumed.
+    const rounds = EXPORT_RESOURCE_REGISTRY["studio_waitlist_admission_rounds"];
+    const policy = EXPORT_RESOURCE_REGISTRY["studio_waitlist_admission_policy"];
+    expect(rounds.kind).toBe("pending");
+    expect(policy.kind).toBe("pending");
+    if (rounds.kind !== "pending" || policy.kind !== "pending") return;
+    expect(rounds.tier).toBe(2);
+    expect(policy.tier).toBe(1);
+  });
+
+  it("adds no export payload: all three are pending, none is exported", () => {
+    for (const resource of [
+      "new_client_waitlist_entry_preferences",
+      "new_client_waitlist_preference_grants",
+      "studio_waitlist_admission_policy",
+    ]) {
+      expect(
+        EXPORT_RESOURCE_REGISTRY[resource].kind,
+        `${resource} must not join the export in WAIT-ADMIT-01`,
+      ).toBe("pending");
+    }
+  });
+});
