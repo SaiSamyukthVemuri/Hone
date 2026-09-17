@@ -172,6 +172,39 @@ describe("UI-05: no native confirm survives anywhere in the app", () => {
     expect(cfg).toMatch(/name: "prompt"/);
   });
 
+  it("the lint scopes are DISJOINT, so neither guard disarms the other", () => {
+    // This is a regression fence for real damage I caused. ESLint flat config
+    // REPLACES a rule's options rather than merging them, and the last matching
+    // object wins. The UI-05 block matches app/** and originally also covered
+    // app/(app)/financials/**, sitting after the FIN-01A block — so it replaced
+    // FIN's `no-restricted-globals` outright and silently disarmed that lane's
+    // ESM guard. A `require` under app/(app)/financials/** linted clean, and
+    // nothing said so. Codex caught it.
+    //
+    // My first repair added the dialog restrictions INTO the FIN block and
+    // fixed nothing, because FIN's block still never won for its own files.
+    // The working fix is disjoint scopes plus FIN carrying both sets.
+    //
+    // Verified by probe in five directions (FIN require, FIN confirm,
+    // lib/finance require, component confirm, shadowed local); this pins the
+    // structure those probes depend on.
+    const cfg = read("eslint.config.mjs");
+    expect(cfg, "the dialog restrictions must be declared once").toMatch(
+      /const NATIVE_DIALOG_GLOBALS = \[/,
+    );
+    // The UI-05 block must exclude the FIN scope...
+    expect(cfg, "UI-05 must not overlap the FIN scope").toMatch(
+      /ignores: \["app\/\(app\)\/financials\/\*\*"\]/,
+    );
+    // ...and the FIN block must carry BOTH sets, since it governs those files.
+    expect(cfg, "FIN keeps its ESM restrictions").toMatch(/name: "require"/);
+    expect(cfg, "FIN also gets the dialog restrictions").toMatch(
+      /\.\.\.NATIVE_DIALOG_GLOBALS,/,
+    );
+    // Two separate spreads: one in the FIN block, one in the UI-05 block.
+    expect((cfg.match(/\.\.\.NATIVE_DIALOG_GLOBALS/g) ?? []).length).toBe(2);
+  });
+
   it("THE COVERAGE CHECKER BITES — the original pathspec fails it", () => {
     // Run through filesNotCovered, the same function the test above trusts.
     // Previously this comparison was re-implemented inline, so it proved the

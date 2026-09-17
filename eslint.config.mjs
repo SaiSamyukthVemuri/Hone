@@ -9,6 +9,29 @@ const compat = new FlatCompat({
   baseDirectory: __dirname,
 });
 
+// UI-05. The native-dialog restrictions, declared once.
+//
+// These must be REPEATED into every config object that also sets
+// `no-restricted-globals` for an overlapping file set, because ESLint flat
+// config REPLACES a rule's options rather than merging them: the last matching
+// object wins outright. Sharing one array is what stops the two guards from
+// silently cancelling each other — see the note in the FIN-01A block.
+const NATIVE_DIALOG_GLOBALS = [
+  {
+    name: "confirm",
+    message:
+      "Use ConfirmDialog (components/confirm-dialog.tsx). iOS Safari can suppress a native confirm silently, so the guard returns false and the mutation never runs.",
+  },
+  {
+    name: "alert",
+    message: "Native alert() is not used in Hone surfaces; render the message in the UI.",
+  },
+  {
+    name: "prompt",
+    message: "Native prompt() is not used in Hone surfaces; use a real form control.",
+  },
+];
+
 const eslintConfig = [
   ...compat.extends("next/core-web-vitals", "next/typescript"),
   {
@@ -60,11 +83,24 @@ const eslintConfig = [
     // form rather than as the entry.
     files: ["app/(app)/financials/**/*.{ts,tsx}", "lib/finance/**/*.{ts,tsx}"],
     rules: {
+      // THE DIALOG RESTRICTIONS ARE REPEATED HERE DELIBERATELY.
+      //
+      // app/(app)/financials/** is also matched by the UI-05 block below, and
+      // ESLint flat config REPLACES a rule's options rather than merging them —
+      // the last matching object wins outright. When UI-05 first added its
+      // block it therefore DISARMED these three FIN restrictions for every file
+      // under app/(app)/financials/**, silently: `require` stopped failing lint
+      // there and nothing said so. Verified by probe (a `require` in that scope
+      // linted clean) and raised by Codex.
+      //
+      // So both sets live in both objects. Whichever object wins for a given
+      // file, that file keeps every restriction that applies to it.
       "no-restricted-globals": [
         "error",
         { name: "require", message: "FIN-01A is ESM-only: no CommonJS loader." },
         { name: "module", message: "FIN-01A is ESM-only: no CommonJS module object." },
         { name: "exports", message: "FIN-01A is ESM-only: no CommonJS exports object." },
+        ...NATIVE_DIALOG_GLOBALS,
       ],
       "no-restricted-imports": [
         "error",
@@ -124,23 +160,21 @@ const eslintConfig = [
     // native dialog and both are currently at zero bare call sites, so the rule
     // arms without a migration. `confirm` is the one this slice retired.
     files: ["app/**/*.{ts,tsx}", "components/**/*.{ts,tsx}"],
+    // NON-OVERLAPPING WITH THE FIN-01A BLOCK, and this `ignores` is the whole
+    // fix. ESLint flat config REPLACES a rule's options rather than merging
+    // them, and the LAST matching object wins. Because this block matches
+    // app/(app)/financials/** too and sits after FIN's, it replaced FIN's
+    // `no-restricted-globals` outright and silently disarmed the ESM guard
+    // there — a `require` in that scope linted clean.
+    //
+    // My first attempt at repairing that added the dialog restrictions INTO the
+    // FIN block, which fixed nothing: FIN's block still never won for its own
+    // files. Probing each direction rather than reasoning about precedence is
+    // what caught it. The scopes are now disjoint, so each file is governed by
+    // exactly one object, and the FIN block carries both sets for its files.
+    ignores: ["app/(app)/financials/**"],
     rules: {
-      "no-restricted-globals": [
-        "error",
-        {
-          name: "confirm",
-          message:
-            "Use ConfirmDialog (components/confirm-dialog.tsx). iOS Safari can suppress a native confirm silently, so the guard returns false and the mutation never runs.",
-        },
-        {
-          name: "alert",
-          message: "Native alert() is not used in Hone surfaces; render the message in the UI.",
-        },
-        {
-          name: "prompt",
-          message: "Native prompt() is not used in Hone surfaces; use a real form control.",
-        },
-      ],
+      "no-restricted-globals": ["error", ...NATIVE_DIALOG_GLOBALS],
     },
   },
 ];
