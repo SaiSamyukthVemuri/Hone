@@ -217,6 +217,10 @@ export const BROWSER_GROUPS = {
       // Same group and reasoning again — an accessibility contract on shared
       // status marks, reachable from any application diff.
       "ui02-status-text-equivalent.spec.ts",
+      // UI-03: a disabled control must expose its reason. Grouped with the other
+      // interaction-contract specs for the same reason — it measures shared
+      // control behaviour, not one workflow.
+      "ui03-blocked-reason.spec.ts",
       "new-studio-wizard.spec.ts",
       "onboarding.spec.ts",
       "quick-import.spec.ts",
