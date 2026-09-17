@@ -3,6 +3,8 @@
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
+import { Button } from "@/components/ui/button";
+
 // Non-blocking aftercare prompt at the "Done charting" boundary (Charting
 // Validation PR 1). If the session has no aftercare_and_risks_explained_at stamp,
 // clicking "Done charting" opens a warning with two choices: mark it, or
@@ -26,8 +28,25 @@ type Props = {
   label?: string;
 };
 
-const DONE_CLASS =
-  "inline-flex min-h-[44px] items-center justify-center rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200";
+// UI-R02. `DONE_CLASS` used to live here: a hand-rolled reimplementation of
+// Button variant="primary" — `bg-neutral-900 ... hover:bg-neutral-800` with its
+// own dark: pair, no `active:` and no `focus-visible:`. Four raw <button>s in
+// this file shared that shape, so the most consequential control in the charting
+// flow did not acknowledge a press at all.
+//
+// The pending state was the worse half. `markThenProceed` writes a CLINICAL
+// stamp through a server action, and the only in-flight signal was
+// `disabled:opacity-50` — a slightly faded button. Button's `pending` gives the
+// disable (which is the duplicate-submit guard, not advisory), `aria-busy`, and
+// a geometry-stable spinner that cannot resize the control mid-write.
+//
+// BEHAVIOUR IS UNCHANGED. In particular Escape still closes while the write is
+// in flight, and that is deliberate: both dialog buttons are disabled during
+// pending, so Escape and the backdrop are the only two exits. confirm-dialog.tsx
+// closes only while idle, which is right for ITS consumers; applying that rule
+// here would remove one of two exits from a control documented as never
+// blocking (emergency-safe). The stop law of this component outranks the
+// house style of another one.
 
 export function DoneChartingButton({
   sessionId,
@@ -81,9 +100,9 @@ export function DoneChartingButton({
 
   return (
     <>
-      <button type="button" onClick={onDoneClick} className={DONE_CLASS}>
+      <Button type="button" variant="primary" onClick={onDoneClick}>
         {label}
-      </button>
+      </Button>
 
       {open && (
         <div
@@ -115,22 +134,23 @@ export function DoneChartingButton({
             )}
 
             <div className="flex flex-col gap-2">
-              <button
+              <Button
                 type="button"
-                disabled={pending}
+                variant="primary"
+                pending={pending}
+                busyLabel="Marking…"
                 onClick={markThenProceed}
-                className="inline-flex min-h-[44px] items-center justify-center rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
               >
                 Mark aftercare explained
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
+                variant="secondary"
                 disabled={pending}
                 onClick={proceed}
-                className="inline-flex min-h-[44px] items-center justify-center rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
               >
                 Continue without marking
-              </button>
+              </Button>
             </div>
           </div>
         </div>

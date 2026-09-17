@@ -208,6 +208,11 @@ export const BROWSER_GROUPS = {
       // vocabulary, reachable from any application diff, so it belongs in the
       // family that fails safe to EXTENDED rather than in `smoke`.
       "ui-r01-interaction-foundations.spec.ts",
+      // UI-R02: the DANGER family's press, browser-proved on a real
+      // solid-danger control (client archive). Same group and same reasoning
+      // as the line above — it measures the shared interaction vocabulary, not
+      // one workflow, so any application diff can reach it.
+      "ui-r02-danger-press.spec.ts",
       "new-studio-wizard.spec.ts",
       "onboarding.spec.ts",
       "quick-import.spec.ts",
