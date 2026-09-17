@@ -76,7 +76,13 @@ const { renderToStaticMarkup } = await import("react-dom/server");
 // Rendering the real routes
 // ---------------------------------------------------------------------------
 
-const PAGE_MODULES = import.meta.glob("../../app/**/page.tsx");
+// `import.meta.glob` is a Vite transform, not a standard ImportMeta member, so
+// it is typed locally rather than by pulling vite/client's globals into the
+// repo's type graph for one test file.
+type GlobbedModules = Record<string, () => Promise<unknown>>;
+const PAGE_MODULES = (
+  import.meta as unknown as { glob: (pattern: string) => GlobbedModules }
+).glob("../../app/**/page.tsx");
 
 const moduleKeyFor = (path: string) =>
   path === "/" ? "../../app/page.tsx" : `../../app${path}/page.tsx`;
