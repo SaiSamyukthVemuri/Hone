@@ -5,7 +5,12 @@ import { execFileSync } from "node:child_process";
 // The commit this slice is stacked on. Reading the pre-slice file out of git
 // keeps the "unchanged visually" claim honest: the comparison uses the real
 // previous source, not a copy pasted here that would silently drift.
-const BASE_REF = "cec0234a9dbee31721df8e8978652f8b1b316cef";
+//
+// Overridable ONLY so the control test (ui02-status-proof-truth.test.ts) can
+// force the shallow-clone path and observe that it reports SKIPPED rather than
+// passing. Nothing else sets it; the default is the real commit.
+const BASE_REF =
+  process.env.UI02_BASE_REF ?? "cec0234a9dbee31721df8e8978652f8b1b316cef";
 
 // UI-02 — non-colour-only status: every status carried by a decorative mark
 // must also exist as TEXT in the accessibility tree.
@@ -133,11 +138,21 @@ describe("UI-02: the slice stayed inside its boundary", () => {
     expect(NOTIF).toContain("h-2 w-2 rounded-full bg-rose-600");
   });
 
-  it("the pinned base sets still match real history, where history exists", () => {
+  it("the pinned base sets still match real history, where history exists", (ctx) => {
     // Cross-check, so the literals above cannot drift from the commit they
-    // claim to describe. It is SKIPPED, loudly, on a shallow clone rather than
-    // passing vacuously — a test that silently does nothing in CI is worse than
-    // one that says it did nothing.
+    // claim to describe.
+    //
+    // THIS MUST NOT RETURN NORMALLY WHEN HISTORY IS MISSING. The first version
+    // caught the error, printed a warning and returned — which Vitest reports as
+    // PASS. CI's validate lane is a depth-1 checkout, so on every CI run this
+    // "historical proof" was recorded as having passed while doing nothing at
+    // all. A proof that reports success without executing is worse than no proof:
+    // it launders an absence of evidence into a green tick.
+    //
+    // ctx.skip() marks the test SKIPPED at runtime, so the distinction between
+    // "ran and agreed with history" and "could not look at history" survives
+    // into the reporter. The pinned-set assertions above are a separate test and
+    // still execute in both environments.
     let before: string;
     try {
       before = execFileSync(
@@ -146,9 +161,8 @@ describe("UI-02: the slice stayed inside its boundary", () => {
         { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
       );
     } catch {
-      // eslint-disable-next-line no-console
-      console.warn(
-        `[ui02] base ${BASE_REF.slice(0, 10)} unreachable (shallow clone) — pinned-set cross-check skipped`,
+      ctx.skip(
+        `base ${BASE_REF.slice(0, 10)} unreachable (shallow clone) — historical cross-check did NOT run`,
       );
       return;
     }
