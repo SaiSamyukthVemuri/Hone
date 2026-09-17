@@ -30,7 +30,7 @@ import type { PointOfCareMemory } from "@/lib/sessions/point-of-care-memory";
 
 function Chip({ children }: { children: React.ReactNode }) {
   return (
-    <span className="inline-flex items-center rounded-full border border-neutral-200 bg-neutral-50 px-2.5 py-0.5 text-xs text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300">
+    <span className="inline-flex items-center rounded-full border border-line bg-surface-sunken px-2.5 py-0.5 text-xs text-fg-muted">
       {children}
     </span>
   );
@@ -59,7 +59,7 @@ export function LastTreatmentMemoryCard({
   return (
     <section
       data-testid="last-treatment-memory"
-      className="flex flex-col gap-4 rounded-lg border border-neutral-200 p-5 dark:border-neutral-800"
+      className="flex flex-col gap-4 rounded-lg border border-line p-5"
     >
       {/* ---- HEADLINE: zero taps ---- */}
       <header className="flex flex-col gap-1">
@@ -159,9 +159,9 @@ export function LastTreatmentMemoryCard({
       {/* ---- WATCH / PLAN. Blue is the established treatment-memory colour. ---- */}
       {hasWatchOrPlan && (
         <div className="rounded-md border border-blue-200 bg-blue-50 px-4 py-3 dark:border-blue-900 dark:bg-blue-950/40">
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-blue-800 dark:text-blue-300">
+          <SectionLabel as="h3" tone="inherit" className="text-blue-800 dark:text-blue-300">
             Watch today
-          </h3>
+          </SectionLabel>
           <div className="mt-1.5 flex flex-col gap-1 text-sm text-blue-950 dark:text-blue-100">
             {memory.watchLines.map((line) => (
               <p key={line} className="break-words">
@@ -182,19 +182,28 @@ export function LastTreatmentMemoryCard({
       {/* ---- SETUP DETAIL: expanded by default, collapsible ---- */}
       {memory.areas.length > 0 && (
         <details open className="group">
-          <summary className="flex min-h-[44px] cursor-pointer items-center justify-between text-[11px] font-medium uppercase tracking-wider text-neutral-500">
+          <summary className="flex min-h-[44px] cursor-pointer items-center justify-between text-xs font-medium uppercase tracking-wider text-neutral-500">
             Setup used
-            <span className="text-[11px] font-normal normal-case tracking-normal text-neutral-400">
+            <span className="text-xs font-normal normal-case tracking-normal text-neutral-400">
               <span className="group-open:hidden">Show</span>
               <span className="hidden group-open:inline">Hide</span>
             </span>
           </summary>
-          <ul className="mt-2 flex flex-col gap-3">
+          {/* UI-06 item 3. Each row was its own bordered box at JSX depth 3.
+              The box carried nothing the list did not already say, so it is
+              replaced by a hairline divider and row padding — `gap-3` goes
+              with it, because a divider plus py-2.5 already does the
+              separating and keeping both produced a double gap.
+
+              `divide-line` is the semantic token, so no hand-maintained dark:
+              pair is needed. Flattening must not cost scanning: the divider is
+              what preserves it. */}
+          <ul className="mt-2 flex flex-col divide-y divide-line">
             {memory.areas.map((a) => (
               <li
                 key={a.key}
                 data-testid="last-treatment-setup-area"
-                className="rounded-md border border-neutral-200 px-3 py-2.5 dark:border-neutral-800"
+                className="py-2.5 first:pt-1"
               >
                 <p className="break-words text-sm font-medium text-neutral-900 dark:text-neutral-100">
                   {a.areaLabel}
@@ -241,7 +250,7 @@ export function LastTreatmentMemoryCard({
       {/* ---- CONSULTATION / SKIN & HAIR CONTEXT ----
           A short excerpt only. The full dated record stays behind the
           authenticated client link; long bodies are never dumped here. */}
-      <div className="border-t border-neutral-200 pt-3 dark:border-neutral-800">
+      <div className="border-t border-line pt-3">
         <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
           <SectionLabel size="caption" as="h3">Consultation &amp; skin/hair</SectionLabel>
           <Link

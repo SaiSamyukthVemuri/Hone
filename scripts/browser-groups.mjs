@@ -31,6 +31,12 @@ export const BROWSER_GROUPS = {
   sessions: {
     description: "sessions / treatment-memory charting",
     specs: [
+      // UI-06: the flattened dashboard memory cards at 390/768/1440.
+      // PATH_TO_GROUP maps /treatment[-_]?memory/i here, and these three cards
+      // ARE the treatment-memory surface, so a diff to them selects this group
+      // and runs this spec — unlike UI-04, whose /clients/** paths match no
+      // pattern at all.
+      "ui06-dashboard-chrome.spec.ts",
       "charting-usability-polish.spec.ts",
       // Budget context is a peer section of the Consultation & Skin/Hair
       // surface, so it belongs with the clinical-notes coverage.
