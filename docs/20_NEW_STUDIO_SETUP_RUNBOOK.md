@@ -38,7 +38,7 @@ Standing discipline applies to every step here: **production WRITES require the 
 ## 1a. The launch sequence at a glance
 
 Two operator writes, then everything else is the owner's. Rehearsed end to end
-(see §8).
+(see §5a).
 
 **SAM — operator-only. Laura cannot do either of these; both are refused at the
 database with `42501 insufficient_privilege`.**
@@ -262,9 +262,16 @@ capacity booking disabled. It is a deliberate, operator-configured pause.
 **Sam's `booking_paused` test-studio configuration is NOT Laura's default.** A
 new studio is created with both flags `false`, and that default was proved
 behaviourally to book normally — internally and through the public booking page.
-If a new studio ever reports `booking_paused`, someone enabled capacity; that is
-a configuration to undo, not a bug to work around, and it is not reachable by
-the studio owner.
+If a new studio ever reports `booking_paused`, someone enabled
+`practitioner_capacity_enabled`; that is a configuration to undo, not a bug to
+work around, and it is not reachable by the studio owner.
+
+**Two different things are called "capacity" — do not confuse them.** This
+section is about the two `studios` **columns** above, which only an operator can
+set. Separately, Settings -> Waitlist offers the owner an **"invitation
+capacity"** (the new-client waitlist admission round). That one is hers, it is
+not a studio flag, and it can never produce `booking_paused`. Neither is part of
+an ordinary launch.
 
 ## 5. Do-not-touch list
 
