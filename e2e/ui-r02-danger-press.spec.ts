@@ -246,6 +246,11 @@ test.describe("UI-R02 danger press", () => {
     // colours. The earlier implementation repeated the hover fill in active:,
     // so a hovering user with reduced motion pressed a button that was already
     // painted and saw nothing change.
+    // THREE distinct colours needs all THREE pairwise comparisons. Asserting
+    // only held-vs-rest and held-vs-hover leaves the rest->hover leg unproved:
+    // if `hover:` regressed to the resting token while `active:` stayed
+    // distinct, both of those still pass and the claim is false.
+    expect(hoverBg).not.toBe(restBg);
     expect(heldBg).not.toBe(restBg);
     expect(heldBg).not.toBe(hoverBg);
 

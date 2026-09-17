@@ -96,6 +96,53 @@ describe("UI-R02 Card: one surface", () => {
   });
 });
 
+describe("UI-R02 PageHeader: heading DEPTH is a property of the page, not the primitive", () => {
+  // THE REGRESSION THIS ENCODES. PageHeader hard-coded an h1. settings/layout.tsx
+  // renders <h1>Settings</h1> for EVERY settings route, so /settings/data shipped
+  // with two top-level headings and "Your data" became a peer of "Settings" in
+  // heading navigation — and its section cards were demoted h3 -> h2 on the same
+  // wrong premise. Raised by exact-head review; these keep it from returning.
+
+  it("defaults to h1 — /notifications has no ancestor heading and relies on it", () => {
+    const html = render(createElement(PageHeader, { title: "Notifications" }));
+    expect(html).toMatch(/<h1[^>]*>Notifications<\/h1>/);
+  });
+
+  it("renders the level it is given", () => {
+    const html = render(createElement(PageHeader, { title: "Your data", headingLevel: 2 }));
+    expect(html).toMatch(/<h2[^>]*>Your data<\/h2>/);
+    expect(html).not.toMatch(/<h1/);
+  });
+
+  it("the level changes the OUTLINE and not the typography", () => {
+    const asH1 = render(createElement(PageHeader, { title: "T" }));
+    const asH2 = render(createElement(PageHeader, { title: "T", headingLevel: 2 }));
+    const cls = (html: string) => /class="([^"]*)"[^>]*>T</.exec(html)?.[1];
+    expect(cls(asH2)).toBe(cls(asH1));
+    expect(cls(asH1)).toContain("text-3xl");
+  });
+
+  it("the settings layout supplies the h1 — the premise the page depends on", () => {
+    // Pinned so that if the layout's h1 ever moves, the guard below is revisited
+    // rather than silently becoming wrong in the other direction.
+    expect(code("app/(app)/settings/layout.tsx")).toMatch(/<h1[^>]*>\s*Settings\s*<\/h1>/);
+  });
+
+  it("/settings/data declares its real depth, and its sections sit below it", () => {
+    const src = code("app/(app)/settings/data/page.tsx");
+    expect(src).toContain("headingLevel={2}");
+    // h1 Settings (layout) -> h2 Your data -> h3 sections.
+    expect(src).toMatch(/<h3[^>]*>\{title\}<\/h3>/);
+    expect(src).not.toMatch(/<h2[^>]*>\{title\}<\/h2>/);
+  });
+
+  it("/notifications does NOT pass a level — nothing above it supplies one", () => {
+    const src = code("app/(app)/notifications/page.tsx");
+    expect(src).not.toContain("headingLevel");
+    expect(code("app/(app)/layout.tsx")).not.toMatch(/<h1/);
+  });
+});
+
 describe("UI-R02 EmptyState: an empty state must say what fills it", () => {
   it("renders both halves", () => {
     const html = render(
@@ -239,11 +286,17 @@ describe("UI-R02: the inline-hex border that no dark: variant could reach", () =
     expect(data).toContain("text-fg-muted");
   });
 
-  it("the card heading no longer skips a level below PageHeader's h1", () => {
-    // PageHeader is the page's only h1; these sections are its top-level
-    // divisions, so h3 skipped h2 outright.
-    expect(data).toMatch(/<h2 className="text-lg font-medium text-fg">/);
-    expect(data).not.toContain("<h3");
+  it("the card heading sits BELOW the page title, which sits below the layout's h1", () => {
+    // THIS TEST PREVIOUSLY ENFORCED THE DEFECT, which is how the defect shipped.
+    // It asserted <h2> on the premise that "PageHeader is the page's only h1" —
+    // but settings/layout.tsx renders <h1>Settings</h1> for every settings
+    // route, so the page title is an h2 and these sections are h3. Asserting a
+    // SPELLING ("h2 is present") could not tell a correct hierarchy from a
+    // broken one; asserting the CHAIN can.
+    expect(code("app/(app)/settings/layout.tsx")).toMatch(/<h1[^>]*>\s*Settings\s*<\/h1>/);
+    expect(data).toContain("headingLevel={2}");
+    expect(data).toMatch(/<h3 className="text-lg font-medium text-fg">/);
+    expect(data).not.toMatch(/<h2[^>]*>\{title\}<\/h2>/);
   });
 
   it("Card accepts the anchor id Global Search resolves controls to", () => {
