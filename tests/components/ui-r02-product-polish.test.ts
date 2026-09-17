@@ -136,10 +136,32 @@ describe("UI-R02 PageHeader: heading DEPTH is a property of the page, not the pr
     expect(src).not.toMatch(/<h2[^>]*>\{title\}<\/h2>/);
   });
 
-  it("/notifications does NOT pass a level — nothing above it supplies one", () => {
+  it("/notifications PageHeader takes the default h1 — nothing above it supplies one", () => {
     const src = code("app/(app)/notifications/page.tsx");
-    expect(src).not.toContain("headingLevel");
+    expect(src).toMatch(/<PageHeader\s+title="Notifications"/);
     expect(code("app/(app)/layout.tsx")).not.toMatch(/<h1/);
+  });
+
+  it("the notifications EMPTY STATE actually adopts the heading API", () => {
+    // An opt-in API that no call site opts into leaves the gap it was added
+    // for wide open. This is the only production EmptyState, so if it renders
+    // a <p> then heading navigation still cannot reach the empty-state title
+    // and the primitive change bought nothing. Raised at exact-head review.
+    //
+    // h2 is the right depth here, not a guess: PageHeader supplies the h1, and
+    // when this branch renders `overdueAlerts` is empty so the "Operational
+    // alerts" h2 is absent — matching the depth SectionLabel as="h2" already
+    // establishes on this page.
+    const src = code("app/(app)/notifications/page.tsx");
+    expect(src).toMatch(/headingLevel=\{2\}/);
+    const html = render(
+      createElement(EmptyState, {
+        title: "No notifications yet.",
+        description: "d",
+        headingLevel: 2,
+      }),
+    );
+    expect(html).toMatch(/<h2[^>]*>No notifications yet\.<\/h2>/);
   });
 });
 
