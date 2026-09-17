@@ -25,6 +25,42 @@ async function seedArchivedClient(page: Page): Promise<{ seed: E2eSeed; clientId
   return { seed, clientId };
 }
 
+/**
+ * Holds the server action open so the pending state is GUARANTEED observable.
+ *
+ * The first version of these tests sampled aria-busy immediately after the
+ * click and fell back to `if (state === null) return` when the action had
+ * already completed. Codex raised that as a P2 and was right: the fallback
+ * meant the pending assertion COULD SILENTLY NEVER RUN, so the test reported
+ * green while proving nothing about the very state it exists to check. A test
+ * with an escape hatch around its own claim is the same defect class as a
+ * proof that returns early and is recorded as passed.
+ *
+ * Delaying the request removes the race instead of tolerating it. Next server
+ * actions POST back to the page's own URL, so that is what is intercepted; the
+ * route is released after the assertions run.
+ */
+async function withSlowAction(
+  page: Page,
+  delayMs: number,
+  body: () => Promise<void>,
+): Promise<void> {
+  await page.route(
+    (url) => url.pathname.startsWith("/clients"),
+    async (route, request) => {
+      if (request.method() === "POST") {
+        await new Promise((r) => setTimeout(r, delayMs));
+      }
+      await route.continue();
+    },
+  );
+  try {
+    await body();
+  } finally {
+    await page.unroute((url) => url.pathname.startsWith("/clients"));
+  }
+}
+
 const editUnarchive = (page: Page) =>
   page.getByRole("button", { name: /Unarchive client|Unarchiving/ });
 const listUnarchive = (page: Page) =>
@@ -73,39 +109,42 @@ test.describe("UI-04 unarchive reports its own progress", () => {
       h: (el as HTMLElement).offsetHeight,
     }));
 
-    await btn.click();
+    await withSlowAction(page, 1_500, async () => {
+      await btn.click();
 
-    const state = await btn
-      .evaluate((el) => ({
-        busy: el.getAttribute("aria-busy") === "true",
-        disabled: (el as HTMLButtonElement).disabled,
+      // NO FALLBACK. The action is held open, so the busy state must be there.
+      // aria-busy is what announces it; the disable IS the double-submit guard.
+      await expect(btn).toHaveAttribute("aria-busy", "true", { timeout: T });
+      await expect(btn).toBeDisabled();
+
+      const during = await btn.evaluate((el) => ({
         w: (el as HTMLElement).offsetWidth,
         h: (el as HTMLElement).offsetHeight,
         text: (el.textContent ?? "").trim(),
-      }))
-      .catch(() => null);
+      }));
 
-    if (state === null) {
-      // The action completed and navigated before we could sample. The command
-      // still has to have worked, which the list test asserts in the database.
-      await expect(page).toHaveURL(/\/clients/, { timeout: T });
-      return;
-    }
+      // THIS CONTROL CHANGES WIDTH, DELIBERATELY: `busyLabel` swaps the text,
+      // and Button's geometry-stable path is the one taken when no busyLabel is
+      // supplied. HEIGHT is the guarantee that holds here, and it is the one
+      // that matters — a changing height moves everything below the control.
+      expect(during.h).toBe(before.h);
+      // The accessible name must never empty out mid-flight.
+      expect(during.text).toBe("Unarchiving…");
+    });
 
-    // The disable IS the double-submit guard; aria-busy is what announces it.
-    expect(state.busy || state.disabled).toBe(true);
-
-    // THIS CONTROL DOES CHANGE WIDTH, DELIBERATELY. `busyLabel` swaps the text
-    // ("Unarchive client" -> "Unarchiving…"), and Button's geometry-stable path
-    // is the one taken when NO busyLabel is supplied. My first version of this
-    // test asserted the full box was unchanged and failed — the assertion, not
-    // the code, was wrong: it demanded a guarantee this variant never made.
-    //
-    // HEIGHT is the guarantee that holds here, and it is the one that matters:
-    // a changing height would move everything below the control. The dense list
-    // row takes the no-busyLabel path instead, where width is stable too.
-    expect(state.h).toBe(before.h);
-    expect(state.text.length).toBeGreaterThan(0); // never a nameless control
+    // And the command still completes.
+    await expect
+      .poll(
+        async () => {
+          const rows = await sql<{ archived_at: string | null }>(
+            `select archived_at from public.clients where id = $1`,
+            [clientId],
+          );
+          return rows[0]?.archived_at;
+        },
+        { timeout: T },
+      )
+      .toBeNull();
   });
 
   test("list row: the busy state cannot change the control's box at all", async ({
@@ -122,30 +161,39 @@ test.describe("UI-04 unarchive reports its own progress", () => {
       h: (el as HTMLElement).offsetHeight,
     }));
 
-    await btn.click();
+    await withSlowAction(page, 1_500, async () => {
+      await btn.click();
+      await expect(btn).toHaveAttribute("aria-busy", "true", { timeout: T });
+      await expect(btn).toBeDisabled();
 
-    const during = await btn
-      .evaluate((el) => ({
+      // No busyLabel on this one, so BOTH axes must hold — a dense row must not
+      // reflow mid-action.
+      const during = await btn.evaluate((el) => ({
         w: (el as HTMLElement).offsetWidth,
         h: (el as HTMLElement).offsetHeight,
-        busy: el.getAttribute("aria-busy") === "true",
-        disabled: (el as HTMLButtonElement).disabled,
-      }))
-      .catch(() => null);
+      }));
+      expect(during).toEqual(before);
+    });
 
-    if (during === null) {
-      await expect(page).toHaveURL(/\/clients/, { timeout: T });
-      return;
-    }
-    expect(during.busy || during.disabled).toBe(true);
-    // No busyLabel on this one, so BOTH axes must hold — the row cannot reflow.
-    expect({ w: during.w, h: during.h }).toEqual(before);
+    // THE COMMAND, not a truthy id. A presentation slice must not break it.
+    await expect
+      .poll(
+        async () => {
+          const rows = await sql<{ archived_at: string | null }>(
+            `select archived_at from public.clients where id = $1`,
+            [clientId],
+          );
+          return rows[0]?.archived_at;
+        },
+        { timeout: T },
+      )
+      .toBeNull();
   });
 
   test("the list control relaxes to 32px only where the pointer is PRECISE", async ({
     page,
   }) => {
-    const { clientId } = await seedArchivedClient(page);
+    await seedArchivedClient(page);
     await page.goto("/clients?view=archived");
     const btn = listUnarchive(page).first();
     await expect(btn).toBeVisible({ timeout: T });
@@ -160,7 +208,12 @@ test.describe("UI-04 unarchive reports its own progress", () => {
     // actually describes. Asserting only one would let the other regress.
     const fine = await btn.evaluate((el) => (el as HTMLElement).offsetHeight);
     expect(fine).toBe(32);
-    expect(clientId).toBeTruthy();
+    // No filler assertion here. The earlier version ended with
+    // `expect(clientId).toBeTruthy()`, added only to consume an otherwise-unused
+    // variable — a fake assertion written to satisfy a linter, which Codex
+    // rightly flagged. A truthy UUID proves nothing about this control; the
+    // height above is the entire claim, and the mutation is asserted in the
+    // tests that actually perform it.
   });
 
   test("390px: the list control does not overflow the row", async ({ page }) => {

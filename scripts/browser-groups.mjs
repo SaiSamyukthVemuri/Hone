@@ -31,22 +31,6 @@ export const BROWSER_GROUPS = {
   sessions: {
     description: "sessions / treatment-memory charting",
     specs: [
-      // UI-04: unarchive pending + touch floor on both consumers of
-      // unarchiveClientAction (/clients/[id]/edit and /clients?view=archived).
-      // Filed here because this is where the other CLIENT-SURFACE specs live
-      // (client-budget-context, clinical-notes, before-today-imported), even
-      // though the group's description says charting.
-      //
-      // WORTH KNOWING: `app/(app)/clients/**` matches NO PATH_TO_GROUP pattern,
-      // so a client-only diff falls through to the unattributed EXTENDED
-      // fallback and this spec runs as part of "everything" rather than via a
-      // targeted lane. That is the situation the OWNER-CAP note below describes
-      // for the capacity page. It is left alone deliberately: adding a
-      // /clients/ pattern would NARROW coverage for every client diff from
-      // extended to one group, which is a CI-risk decision and not this slice's
-      // to make. Registering the spec still matters — without it the spec would
-      // never run in a targeted lane that IS selected by other means.
-      "ui04-unarchive-pending.spec.ts",
       "charting-usability-polish.spec.ts",
       // Budget context is a peer section of the Consultation & Skin/Hair
       // surface, so it belongs with the clinical-notes coverage.
@@ -243,6 +227,33 @@ export const BROWSER_GROUPS = {
       // Same group and reasoning again — an accessibility contract on shared
       // status marks, reachable from any application diff.
       "ui02-status-text-equivalent.spec.ts",
+      // UI-04: unarchive pending + touch floor on both consumers of
+      // unarchiveClientAction (/clients/[id]/edit, /clients?view=archived).
+      //
+      // WHY HERE AND NOT `sessions`, WHICH IS WHERE THE OTHER CLIENT-SURFACE
+      // SPECS LIVE. Two facts decided it:
+      //
+      //   1. `app/(app)/clients/**` matches NO PATH_TO_GROUP pattern, so a
+      //      client-only diff falls through to the unattributed EXTENDED
+      //      fallback — the same hole the OWNER-CAP note records for the
+      //      capacity page. This spec therefore already runs for every diff
+      //      that can actually break it, via extended, whatever group it is in.
+      //   2. `sessions` IS part of the targeted selection
+      //      (calendar + sessions + smoke) that browser-selection.test.ts pins
+      //      at 36 as a deliberate COST pin, because that lane has been
+      //      cancelled at its ceiling before.
+      //
+      // Filing it in `sessions` would therefore have charged six new cases to a
+      // hot lane for ZERO targeting benefit: a charting diff cannot break
+      // unarchive. `owner_admin` already carries quick-import.spec.ts — client
+      // records administration — and archiving a client is records admin rather
+      // than charting.
+      //
+      // I did NOT add a /clients/ path pattern to close fact 1. Today those
+      // diffs run everything, which is safe; a pattern would NARROW them from
+      // extended to one group, and that is a coverage decision for every client
+      // diff in the repository, not a presentation slice's to take in passing.
+      "ui04-unarchive-pending.spec.ts",
       "new-studio-wizard.spec.ts",
       "onboarding.spec.ts",
       "quick-import.spec.ts",
