@@ -145,7 +145,7 @@ Two notes an agent will otherwise get wrong:
   composes `CONTROL_COMPACT_FINE_POINTER` (`pointer-fine:min-h-8` = 32px), which
   is a legitimate LAW 3 opt-in but means 44px is not universal even in height.
   **Do not read this row as "the touch floor is solved."** Closing the width half
-  is what the control-geometry work is for.
+  is what UX-04 (Control Geometry) is for.
 
 ---
 
@@ -170,14 +170,20 @@ to a correctness argument already covered elsewhere; if physics is genuinely
 needed, MOTION-01's implementation becomes the acceptance criteria. **Either way
 the ruling survives its own code.**
 
-**Binding sequencing — MOTION-01 must not start before the control-geometry
-slice.** The drawer close controls are undersized today. Specifying motion
+**Binding sequencing — MOTION-01 must not start before UX-04 (Control
+Geometry).** The drawer close controls are undersized today. Specifying motion
 against a dismissal affordance already scheduled to be resized would fix the
 wrong geometry and be re-specified immediately.
 
-**Non-goals, explicitly:** no stagger, no entrance animation, no dashboard
-motion, no route-transition motion, no library installed to answer question 1,
-no migration of the other overlays.
+**Non-goals, explicitly:** no stagger, **no _decorative_ entrance animation**
+(page and content entrances stay out of scope — **the overlay's own enter
+transition is the deliverable, not a non-goal**), no dashboard motion, no
+route-transition motion, no library installed to answer question 1, no migration
+of the other overlays.
+
+*This line previously read "no entrance animation", which excluded the very thing
+MOTION-01 exists to test. The contradiction was inherited from the audit, found
+by review there, and is corrected in both documents.*
 
 The audit records two further motion *candidates*. They are **not** pilots and
 **not** scheduled; do not start them.
@@ -201,12 +207,42 @@ None of these is decided. None may be smuggled into a polish PR.
 5. Does the client-profile heading scale change?
 6. Are the inert `dark:` utilities retired? Mechanically safe, but it forecloses
    the class-based theme the token layer was built to enable.
-7. **Is the audit's proposed UI-A … UI-J sequence adopted at all, and in what
+7. **Is the proposed UX-01 … UX-11 design programme adopted at all, and in what
    order?** Adoption belongs in the canonical roadmap, not in a review document
-   and not here. Note that this proposed naming is distinct from the shipped
-   `UI-01x` and `UI-Rxx` families; the shorthand collides, and the sequence
-   should be renamed if it is ever adopted.
+   and not here. **Naming only — listing these does not schedule any of them.**
+
+   | Slice | Family |
+   |---|---|
+   | **UX-01** | Quick Wins |
+   | **UX-02** | Primitive Adoption + anti-regression |
+   | **UX-03** | Navigation Identity |
+   | **UX-04** | Control Geometry |
+   | **UX-05** | Page Hierarchy |
+   | **UX-06** | Surface Simplification |
+   | **UX-07** | Modal Quality / Astryx |
+   | **UX-08** | State Design |
+   | **UX-09** | Motion / Perceived Speed |
+   | **UX-10** | Density / Canvas |
+   | **UX-11** | Identity Return |
+
+   *The audit records this programme as `UI-A … UI-J` — ten slices. It is
+   renamed here because that shorthand collides with the shipped `UI-01x` and
+   `UI-Rxx` families (`UI-D` and `UI-G` in particular shadow `UI-01D` and
+   `UI-01G`, which are different work). The audit's `UI-J` bundled density,
+   canvas and identity-return; that is split into **UX-10** and **UX-11** here,
+   because identity-return is where the Fraunces decision (item 1) would land and
+   it should not be buried inside a density slice. Mapping: A→01, B→02, C→03,
+   D→04, E→05, F→06, G→07, H→08, I→09, J→10 + 11.*
 8. Does MOTION-01 run, and when?
+9. **Is an explicit exception to the transform/opacity-only motion rule granted
+   for the `<details>` disclosure transition?** The audit proposes
+   `interpolate-size: allow-keywords` + `::details-content` + `transition:
+   height` for the 42 `<details>` across 25 files — the highest-frequency
+   spatial break in the product. **`transition: height` animates a
+   layout-and-paint property**, which the approved motion direction forbids, and
+   the native disclosure path has no `transform`/`opacity` equivalent — so it
+   cannot be resolved by technique. Until granted, that work is **not** ordinary
+   stylesheet work.
 
 ---
 
@@ -214,7 +250,7 @@ None of these is decided. None may be smuggled into a polish PR.
 
 - Add a design dependency because a component would be convenient.
 - Introduce Fraunces into the authenticated app (item 1 above).
-- Start MOTION-01 before the control-geometry slice.
+- Start MOTION-01 before UX-04 (Control Geometry).
 - Treat the audit's proposals as approved work, or its sequence as scheduled.
 - Hand-roll a control beside an existing primitive because copying the
   neighbouring line is cheaper than importing.
