@@ -31,8 +31,11 @@ const code = (s: string) =>
 describe("the migration is read-only and minimal", () => {
   it("creates functions only — no table, column, backfill or data write", () => {
     const c = code(SQL);
-    expect(c).not.toMatch(/create table|alter table|insert into|update |delete from|drop table/i);
-    expect((c.match(/create or replace function/g) ?? []).length).toBe(2);
+    // ONE alter table — the generated column that makes the SMS destination a
+    // fact the database owns. No new table, and no DML of any kind.
+    expect((c.match(/alter table/gi) ?? []).length).toBe(1);
+    expect(c).not.toMatch(/create table|insert into|update |delete from|drop table/i);
+    expect((c.match(/create or replace function/g) ?? []).length).toBe(4);
   });
 
   it("both functions are STABLE and declare no mutation", () => {
@@ -72,7 +75,7 @@ describe("security model", () => {
   });
 
   it("pins search_path on every function", () => {
-    expect((code(SQL).match(/set search_path = pg_catalog, pg_temp/g) ?? []).length).toBe(2);
+    expect((code(SQL).match(/set search_path = pg_catalog, pg_temp/g) ?? []).length).toBe(4);
   });
 
   it("adds NO table privilege — studio_sms_senders stays closed", () => {

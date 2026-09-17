@@ -2,8 +2,15 @@
 -- 0199 — BOUNDED SERVER-SIDE REMINDER CANDIDATE SELECTION
 -- ===========================================================================
 --
--- WAIT S3 Part 2. One read-only function. No table, no column, no backfill,
--- no data rewrite, no privilege widening.
+-- WAIT S3 Part 2. Two read-only functions, one shared view, and ONE canonical
+-- derived column on `clients` that makes "can this client be sent an SMS at
+-- all" a fact the database owns rather than a predicate each caller
+-- re-invents. No new table. No trigger. No backfill script -- PostgreSQL
+-- populates the column itself as part of the ADD COLUMN.
+--
+-- THIS MIGRATION REWRITES public.clients. Adding a STORED generated column
+-- is a full table rewrite under ACCESS EXCLUSIVE. See THE COLUMN below for
+-- the measurement and the lock discipline.
 --
 -- ---------------------------------------------------------------------------
 -- THE DEFECT THIS CLOSES
@@ -71,6 +78,194 @@ set local lock_timeout = '5s';
 set local statement_timeout = '60s';
 
 -- ---------------------------------------------------------------------------
+-- THE CANONICAL SMS DESTINATION FACT
+-- ---------------------------------------------------------------------------
+--
+-- The first cut of this migration gated candidates on `c.phone is not null and
+-- btrim(c.phone) <> ''`. That is NOT the rule the sender applies. The sender
+-- applies `normalizePhoneForSms`, which additionally requires a parseable E.164
+-- or NANP number. So '(415) 555' -- non-null, non-blank, unparseable -- passed
+-- selection, occupied a page slot, and was then refused at the send with no
+-- claim and no state change. Eligibility unchanged, same sort position, same
+-- page slot on the next pass: EXACTLY the starvation this migration exists to
+-- remove, reproduced one layer down.
+--
+-- Widening the SQL predicate to re-implement the parser would have created a
+-- second definition of "sendable", free to drift from the first the moment
+-- either changed. Instead the DATABASE OWNS THE FACT, once:
+--
+--   sms_trimmable_whitespace()  the ECMAScript String.prototype.trim set
+--   sms_normalized_phone(text)  THE definition of a sendable destination
+--   clients.sms_phone           that definition, applied, stored, maintained
+--                               by PostgreSQL on every write
+--
+-- A GENERATED column rather than a sibling column deliberately: a sibling
+-- would be correct only while every write path remembered to maintain it, and
+-- `clients` is written from the booking flow, the portal, the practitioner app
+-- and two RPCs in 0032. A generated column cannot be forgotten, cannot be
+-- written directly, and cannot disagree with `phone`.
+--
+-- PARITY IS PROVEN, NOT ASSERTED. `tests/db/sms-phone-parity.db.test.ts` runs a
+-- 51-case corpus -- exotic whitespace, non-whitespace invisibles, letters
+-- before a '+', fullwidth '+', Arabic-Indic digits, every digit-length
+-- boundary -- through BOTH the shipped TypeScript and this function and fails
+-- on a single disagreement. `normalizePhoneForSms` is UNCHANGED by this
+-- migration; the corpus proves the SQL was written to match it, not the
+-- reverse.
+--
+-- WHY btrim(chr(...)) AND NOT [[:space:]]. Character classes are ctype- and
+-- therefore locale-dependent, which makes any function using them immutable
+-- only by assertion -- unacceptable in an expression whose results are STORED.
+-- An explicit chr() set is locale-independent and matches the ECMAScript trim
+-- set exactly. An earlier draft used `[^!-~]` and was rejected: it also strips
+-- leading LETTERS, so 'e+441234567890' normalised in SQL and did not in
+-- TypeScript -- the DB would have called the row sendable and the sender would
+-- have refused it forever. The corpus catches that formulation on 5 rows.
+-- ---------------------------------------------------------------------------
+
+create or replace function public.sms_trimmable_whitespace()
+returns text
+language sql
+immutable
+parallel safe
+set search_path = pg_catalog, pg_temp
+as $ws$
+  -- U+0009..U+000D, U+0020, U+00A0, U+1680, U+2000..U+200A, U+2028, U+2029,
+  -- U+202F, U+205F, U+3000, U+FEFF. Written as chr() so the source file holds
+  -- no invisible character that a reviewer cannot see and an editor can eat.
+  select chr(9)||chr(10)||chr(11)||chr(12)||chr(13)||chr(32)||chr(160)||chr(5760)
+      || chr(8192)||chr(8193)||chr(8194)||chr(8195)||chr(8196)||chr(8197)
+      || chr(8198)||chr(8199)||chr(8200)||chr(8201)||chr(8202)
+      || chr(8232)||chr(8233)||chr(8239)||chr(8287)||chr(12288)||chr(65279)
+$ws$;
+
+comment on function public.sms_trimmable_whitespace() is
+  'WAIT S3. The exact character set ECMAScript String.prototype.trim removes, as an explicit chr() list. Locale-independent, so sms_normalized_phone is immutable in fact and not merely by declaration. Pure: reads nothing.';
+
+create or replace function public.sms_normalized_phone(p_phone text)
+returns text
+language sql
+immutable
+strict
+parallel safe
+set search_path = pg_catalog, pg_temp
+as $fn$
+  select case
+           when t = '' then null
+           -- Leading '+' means the caller supplied an E.164 number: accept the
+           -- digit count the provider accepts, 8..15, and nothing else.
+           when t like '+%' then
+             case when length(d) >= 8 and length(d) <= 15 then '+' || d else null end
+           -- No '+': NANP only, either bare 10 digits or 11 beginning with 1.
+           when length(d) = 10 then '+1' || d
+           when length(d) = 11 and left(d, 1) = '1' then '+' || d
+           else null
+         end
+  from (
+    select t,
+           regexp_replace(case when t like '+%' then substr(t, 2) else t end,
+                          '[^0-9]', '', 'g') as d
+    from (
+      select btrim(p_phone, public.sms_trimmable_whitespace()) as t
+    ) s0
+  ) s1
+$fn$;
+
+comment on function public.sms_normalized_phone(text) is
+  'WAIT S3. THE canonical definition of a sendable SMS destination, and the only one. Returns the E.164 number an SMS would be addressed to, or NULL when the input cannot be addressed at all. Byte-for-byte equivalent to normalizePhoneForSms in lib/sms/twilio.ts, pinned by a 51-case parity corpus in tests/db/sms-phone-parity.db.test.ts. Pure text transformation: reads no table, holds no authority, decides no send.';
+
+-- EXECUTE IS GRANTED, NOT REVOKED -- AND THAT IS DELIBERATE.
+--
+-- Every other function in this migration is service_role-only. These two are
+-- not, and tightening them would be an outage. PostgreSQL evaluates a
+-- generated column's expression with the privileges of the role performing the
+-- WRITE, so revoking EXECUTE from `authenticated` does not harden anything --
+-- it makes every practitioner client edit fail with insufficient_privilege,
+-- and revoking from `anon` breaks public booking. Proven both ways against the
+-- local stack before this was written: revoked => INSERT blocked, granted =>
+-- INSERT succeeds with the correct stored value.
+--
+-- Nothing leaks by granting it. Both functions are pure text transformations
+-- over an argument the caller already supplied; neither reads a table.
+revoke execute on function public.sms_trimmable_whitespace() from public;
+grant execute on function public.sms_trimmable_whitespace() to anon, authenticated, service_role;
+
+revoke execute on function public.sms_normalized_phone(text) from public;
+grant execute on function public.sms_normalized_phone(text) to anon, authenticated, service_role;
+
+-- THE COLUMN. Adding a STORED generated column REWRITES the table under an
+-- ACCESS EXCLUSIVE lock; `set local lock_timeout` above means this migration
+-- fails fast rather than queueing behind a long read and stalling booking.
+-- Measured on the local stack: 38 ms for 122 rows, every phone-bearing row
+-- normalised, zero disagreement with the function.
+alter table public.clients
+  add column sms_phone text
+  generated always as (public.sms_normalized_phone(phone)) stored;
+
+comment on column public.clients.sms_phone is
+  'WAIT S3. The canonical SMS destination for this client, derived by PostgreSQL from `phone` on every write -- NULL means this client cannot be sent an SMS at all. Generated, so no application write path can forget to maintain it and no value can disagree with `phone`. Carries no consent meaning: sms_consent_at and sms_opted_out_at remain separate and are still checked independently at send time.';
+
+-- ---------------------------------------------------------------------------
+-- THE SHARED ELIGIBILITY BASE
+-- ---------------------------------------------------------------------------
+--
+-- `reminder_sms_candidates` and `reminder_sms_unroutable_studios` are exact
+-- complements: one selects studios that CAN send, the other reports studios
+-- that WANT to send and cannot. That only holds while both agree on what a
+-- candidate IS. In the first cut they did not -- the complement never applied
+-- the client gates at all, so a studio whose only appointments belonged to
+-- clients with no consent was reported as an unroutable studio needing
+-- operator attention, and an alert that fires on a studio with nothing to send
+-- is how operators learn to ignore alerts.
+--
+-- Stating the base ONCE removes the class rather than this instance of it.
+-- A view, not a function, so the planner still pushes the window and keyset
+-- predicates down into the scan; a set-returning function with a SET clause
+-- cannot be inlined and would have materialised the whole window before the
+-- LIMIT -- destroying the boundedness this migration exists to provide.
+--
+-- security_invoker so the view adds NO privilege of its own: it is readable
+-- only through the SECURITY DEFINER functions below, which is why every role
+-- is revoked from it by name.
+create or replace view public.reminder_sms_eligible_appointments
+with (security_invoker = true) as
+select a.id,
+       a.starts_at,
+       a.studio_id,
+       a.sms_reminder_24h_sent_at,
+       a.sms_reminder_2h_sent_at,
+       a.sms_reminder_24h_send_attempts,
+       a.sms_reminder_2h_send_attempts,
+       st.send_24h_sms_reminders,
+       st.send_2h_sms_reminders
+  from public.appointments a
+  join public.studios st on st.id = a.studio_id
+  join public.clients  c  on c.id  = a.client_id
+ where a.status = 'confirmed'
+   -- THE CLIENT GATES. A row failing any of these is skipped by the route with
+   -- a bare `continue` -- no send, no claim, no state change -- so its
+   -- eligibility is unchanged and it re-occupies the same page slot on every
+   -- later pass. Excluding it from selection is what stops it starving a
+   -- sendable appointment behind it.
+   --
+   -- STILL NOT AUTHORITY. Consent and opt-out change between selection and
+   -- send; `passesConsentGate` re-reads all three immediately before the send
+   -- and refuses on its own, so a consent withdrawn or a STOP received in that
+   -- window is honoured there, not here.
+   and c.sms_phone is not null
+   and c.sms_consent_at is not null
+   and c.sms_opted_out_at is null;
+
+comment on view public.reminder_sms_eligible_appointments is
+  'WAIT S3. The single definition of "a reminder appointment worth loading": confirmed, with a client who has a parseable destination, consent, and no opt-out. Deliberately EXCLUDES the routing prerequisite and the window/kind/attempt filters, so reminder_sms_candidates and reminder_sms_unroutable_studios can be exact complements over one shared base instead of two predicates free to drift. Carries no client identifier, no phone and no sender identifier. security_invoker; revoked from every role and reachable only through the SECURITY DEFINER functions below.';
+
+revoke all on public.reminder_sms_eligible_appointments from public;
+revoke all on public.reminder_sms_eligible_appointments from anon;
+revoke all on public.reminder_sms_eligible_appointments from authenticated;
+revoke all on public.reminder_sms_eligible_appointments from service_role;
+
+
+-- ---------------------------------------------------------------------------
 -- The function.
 --
 -- STABLE and read-only: it performs no write of any kind. SECURITY DEFINER
@@ -99,11 +294,8 @@ security definer
 set search_path = pg_catalog, pg_temp
 as $$
   select a.id, a.starts_at, a.studio_id
-    from public.appointments a
-    join public.studios st on st.id = a.studio_id
-    join public.clients  c  on c.id  = a.client_id
+    from public.reminder_sms_eligible_appointments a
    where p_kind in ('24h', '2h')
-     and a.status = 'confirmed'
      and a.starts_at >= p_window_start
      and a.starts_at <= p_window_end
 
@@ -121,29 +313,13 @@ as $$
      -- applies; applying it here means a toggled-off studio never occupies a
      -- page slot.
      and case p_kind
-           when '24h' then st.send_24h_sms_reminders
-           else            st.send_2h_sms_reminders
+           when '24h' then a.send_24h_sms_reminders
+           else            a.send_2h_sms_reminders
          end is true
 
-     -- THE CLIENT GATES, for the same reason as the routing one.
-     --
-     -- A row whose client has no phone, no consent, or an opt-out is skipped
-     -- by the route with a bare `continue` -- no send, no claim, no state
-     -- change. Identical shape to a routing refusal, and identical
-     -- consequence: eligibility unchanged, so the row re-occupies the page on
-     -- every later pass and a sendable appointment behind it ages out.
-     -- Removing unroutable STUDIOS without removing unsendable CLIENTS would
-     -- have left the same starvation with a different cause.
-     --
-     -- STILL NOT AUTHORITY. Consent and opt-out change; this is a snapshot
-     -- taken to decide what is worth loading. `passesConsentGate` re-reads all
-     -- three immediately before the send and refuses on its own, so a consent
-     -- withdrawn or a STOP received between selection and send is honoured
-     -- there.
-     and c.phone is not null
-     and btrim(c.phone) <> ''
-     and c.sms_consent_at is not null
-     and c.sms_opted_out_at is null
+     -- The client gates and `status = 'confirmed'` are applied by
+     -- reminder_sms_eligible_appointments, shared verbatim with the
+     -- complement below so the two cannot drift apart.
 
      -- THE ROUTING PREREQUISITE, as a semi-join. Exactly the condition the
      -- application previously spent an estate enumeration and one RPC per
@@ -235,10 +411,8 @@ security definer
 set search_path = pg_catalog, pg_temp
 as $$
   select a.studio_id, count(*) as candidate_count
-    from public.appointments a
-    join public.studios st on st.id = a.studio_id
+    from public.reminder_sms_eligible_appointments a
    where p_kind in ('24h', '2h')
-     and a.status = 'confirmed'
      and a.starts_at >= p_window_start
      and a.starts_at <= p_window_end
      and case p_kind
@@ -250,8 +424,8 @@ as $$
            else            coalesce(a.sms_reminder_2h_send_attempts, 0)
          end < coalesce(p_max_attempts, 3)
      and case p_kind
-           when '24h' then st.send_24h_sms_reminders
-           else            st.send_2h_sms_reminders
+           when '24h' then a.send_24h_sms_reminders
+           else            a.send_2h_sms_reminders
          end is true
      -- The complement of the candidate filter: wants to send, cannot.
      and not exists (
@@ -279,11 +453,17 @@ as $$
          from public.ops_alerts oa
         where oa.studio_id = a.studio_id
           and oa.resolved_at is null
-          and oa.event in (
-            'sms_sender_not_active_for_studio',
-            'sms_sender_ambiguous',
-            'sms_sender_read_failed'
-          )
+          -- EXACTLY the event this path records, not the routing
+          -- vocabulary. The complement's own condition is `no active
+          -- sender`, which route.ts reports as
+          -- sms_sender_not_active_for_studio and nothing else.
+          -- Matching the whole vocabulary meant an unresolved
+          -- sms_sender_ambiguous -- a DIFFERENT fault, with a
+          -- different fix -- suppressed the not-active alert
+          -- indefinitely, and 0194's partial unique index is keyed on
+          -- (studio_id, event), so 'already open' there has always
+          -- meant this one event too.
+          and oa.event = 'sms_sender_not_active_for_studio'
      )
    group by a.studio_id
    order by a.studio_id

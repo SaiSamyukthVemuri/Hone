@@ -53,9 +53,24 @@ describe("0199 position in the chain", () => {
 });
 
 describe("0199 is read-only and minimal", () => {
-  it("creates exactly two functions and nothing else", () => {
-    expect((CODE.match(/create or replace function/g) ?? []).length).toBe(2);
-    expect(CODE).not.toMatch(/create table|alter table|create index|drop table/i);
+  it("creates four functions, one view, and exactly one column", () => {
+    // Two read-only selection functions, plus the two that define the
+    // canonical SMS destination fact the generated column applies.
+    expect((CODE.match(/create or replace function/g) ?? []).length).toBe(4);
+    expect((CODE.match(/create or replace view/g) ?? []).length).toBe(1);
+    // ONE alter table: the generated column. No new table, no index, no drop.
+    expect((CODE.match(/alter table/gi) ?? []).length).toBe(1);
+    expect(CODE).toMatch(
+      /alter table public\.clients\s+add column sms_phone text\s+generated always as \(public\.sms_normalized_phone\(phone\)\) stored/,
+    );
+    expect(CODE).not.toMatch(/create table|create index|drop table|drop column/i);
+  });
+
+  it("derives the fact — it does not backfill it with a data write", () => {
+    // PostgreSQL populates a STORED generated column as part of ADD COLUMN.
+    // An UPDATE backfill would be a second definition of the same rule, free
+    // to disagree with the expression that maintains it afterwards.
+    expect(CODE).not.toMatch(/update public\.clients/i);
   });
 
   it("writes no data of any kind", () => {
@@ -97,8 +112,33 @@ describe("0199 privilege posture", () => {
     }
   });
 
-  it("pins search_path on both functions", () => {
-    expect((CODE.match(/set search_path = pg_catalog, pg_temp/g) ?? []).length).toBe(2);
+  it("pins search_path on every function", () => {
+    expect((CODE.match(/set search_path = pg_catalog, pg_temp/g) ?? []).length).toBe(4);
+  });
+
+  it("keeps EXECUTE on the normalisation helpers, which is required, not lax", () => {
+    // PostgreSQL evaluates a generated column's expression as the role doing
+    // the WRITE. Revoking EXECUTE from anon/authenticated does not harden
+    // anything — it makes public booking and every practitioner client edit
+    // fail with insufficient_privilege. Both helpers are pure text transforms
+    // that read no table, so granting EXECUTE discloses nothing.
+    for (const fn of ["sms_trimmable_whitespace()", "sms_normalized_phone(text)"]) {
+      expect(SQL).toContain(`revoke execute on function public.${fn} from public;`);
+      expect(SQL).toContain(
+        `grant execute on function public.${fn} to anon, authenticated, service_role;`,
+      );
+    }
+  });
+
+  it("closes the shared base view to every role", () => {
+    // The view is security_invoker and reachable only through the SECURITY
+    // DEFINER functions; it must add no readable surface of its own.
+    expect(CODE).toMatch(/with \(security_invoker = true\)/);
+    for (const role of ["public", "anon", "authenticated", "service_role"]) {
+      expect(SQL).toContain(
+        `revoke all on public.reminder_sms_eligible_appointments from ${role};`,
+      );
+    }
   });
 
   it("adds NO table privilege — 0191's closure of studio_sms_senders holds", () => {
@@ -168,10 +208,15 @@ describe("0199 removes every class of row that would occupy a page without sendi
     // Filtering studios but not clients would have left the defect with a
     // different cause.
     expect(CODE).toContain("join public.clients  c  on c.id  = a.client_id");
-    expect(CODE).toMatch(/and c\.phone is not null/);
-    expect(CODE).toMatch(/and btrim\(c\.phone\) <> ''/);
+    // The canonical DB-owned fact, NOT a re-implementation of the parser and
+    // NOT the non-null/non-blank test that let malformed phones through.
+    expect(CODE).toMatch(/and c\.sms_phone is not null/);
+    expect(CODE).not.toMatch(/btrim\(c\.phone\)/);
     expect(CODE).toMatch(/and c\.sms_consent_at is not null/);
     expect(CODE).toMatch(/and c\.sms_opted_out_at is null/);
+    // Stated ONCE, in the shared base both functions read.
+    expect((CODE.match(/and c\.sms_phone is not null/g) ?? []).length).toBe(1);
+    expect((CODE.match(/from public\.reminder_sms_eligible_appointments a/g) ?? []).length).toBe(2);
   });
 
   it("the client gates are a SNAPSHOT, not authority — the gate still re-reads", () => {
@@ -195,12 +240,13 @@ describe("0199 complement alerts ROTATE rather than repeating one prefix", () =>
     // the fix for it.
     expect(CODE).toMatch(/from public\.ops_alerts oa/);
     expect(CODE).toMatch(/oa\.resolved_at is null/);
-    for (const ev of [
-      "sms_sender_not_active_for_studio",
-      "sms_sender_ambiguous",
-      "sms_sender_read_failed",
-    ]) {
-      expect(CODE).toContain(`'${ev}'`);
+    // EXACTLY the event this path records. Matching the whole routing
+    // vocabulary meant an unresolved `sms_sender_ambiguous` — a different
+    // fault with a different fix — suppressed the not-active alert
+    // indefinitely.
+    expect(CODE).toContain("oa.event = 'sms_sender_not_active_for_studio'");
+    for (const ev of ["sms_sender_ambiguous", "sms_sender_read_failed"]) {
+      expect(CODE).not.toContain(`'${ev}'`);
     }
   });
 
