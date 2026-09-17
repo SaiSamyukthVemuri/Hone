@@ -10,6 +10,76 @@ import {
   normalizePhoneForSms,
   sendSmsSafely,
 } from "./twilio";
+import {
+  resolveStudioSmsSender,
+  studioSenderAllowsSend,
+  type StudioSenderRefusal,
+} from "./studio-sender";
+
+/**
+ * Routing refusals, in the vocabulary the ops-alert surface already uses.
+ *
+ * Reused rather than reinvented: `recordOpsAlert` takes a free-text `event`
+ * with only a length CHECK, so these ride the EXISTING alert authority. No
+ * parallel alert system is introduced, and `lib/ops/alerts.ts` is untouched.
+ */
+const SENDER_REFUSAL_REASON: Record<StudioSenderRefusal, string> = {
+  no_active_sender: "sms_sender_not_active_for_studio",
+  ambiguous_active_sender: "sms_sender_ambiguous",
+  read_failed: "sms_sender_read_failed",
+};
+
+/**
+ * A routing failure is a CONFIGURATION fault, and is reported as one.
+ *
+ * Separate from `logSmsFailure`, which reports a PROVIDER failure after an
+ * attempt was claimed and spent. Nothing was claimed here and no provider was
+ * called, so describing it as a send failure would misstate what happened and
+ * would put a provider_error field on an alert that never reached a provider.
+ *
+ * Severity is `warning`, matching the give-up alert: the studio cannot send
+ * until an operator acts, but no clinical or payment path is blocked.
+ */
+function logSmsRoutingFailure(opts: {
+  appointmentId: string;
+  smsType: SmsType;
+  studioId: string;
+  reason: string;
+}): void {
+  console.error(
+    JSON.stringify({
+      event: "sms_routing_refused",
+      appointmentId: opts.appointmentId,
+      smsType: opts.smsType,
+      reason: opts.reason,
+      timestamp: new Date().toISOString(),
+    }),
+  );
+  // Fire-and-forget; recordOpsAlert never throws to the caller.
+  void (async () => {
+    try {
+      const { recordOpsAlert } = await import("@/lib/ops/alerts");
+      await recordOpsAlert({
+        severity: "warning",
+        event: opts.reason,
+        message: `SMS ${opts.smsType} not sent: the studio has no usable sending identity.`,
+        studioId: opts.studioId,
+        appointmentId: opts.appointmentId,
+        route: "lib/sms/send-appointment",
+        safeDetails: {
+          sms_type: opts.smsType,
+          // No attempt was claimed and no provider was called, stated
+          // explicitly so an operator reading the alert is not left to infer
+          // whether a message might have gone out.
+          attempt_claimed: false,
+          provider_called: false,
+        },
+      });
+    } catch {
+      // Swallow alerting exceptions so the SMS path is never broken.
+    }
+  })();
+}
 
 // SMS send helpers used by the booking, reschedule, and reminder cron
 // paths. Each top-level function follows the strict claim-then-send-
@@ -376,6 +446,30 @@ async function sendOne(args: SendOneArgs): Promise<SmsSendResult> {
     return { ok: false, skipped: true, reason: gate.reason };
   }
 
+  // ROUTING, BEFORE THE CLAIM. Deliberately in this order.
+  //
+  // A studio with no active sender is a CONFIGURATION fault, not a delivery
+  // attempt that failed. `claimSmsSend` consumes one of the three attempts an
+  // appointment gets, so claiming first would let a misconfigured studio burn
+  // its whole budget rediscovering the same fact three times -- and then give
+  // up permanently on a message it never actually tried to send. Refusing
+  // first leaves all three attempts intact for after the configuration is
+  // fixed.
+  //
+  // It also means ZERO PROVIDER CALL: no fetch is issued, so nothing is
+  // billed and nothing is half-sent.
+  const routed = await resolveStudioSmsSender(args.admin, args.studio.id);
+  if (!studioSenderAllowsSend(routed)) {
+    const reason = SENDER_REFUSAL_REASON[routed.reason];
+    logSmsRoutingFailure({
+      appointmentId: args.appointmentId,
+      smsType: args.smsType,
+      studioId: args.studio.id,
+      reason,
+    });
+    return { ok: false, skipped: true, reason };
+  }
+
   const claimed = await claimSmsSend(args.admin, args.appointmentId, args.smsType);
   if (!claimed) {
     return { ok: false, skipped: true, reason: "not_claimed" };
@@ -391,7 +485,11 @@ async function sendOne(args: SendOneArgs): Promise<SmsSendResult> {
   try {
     const body = args.buildBody(gate.normalizedPhone);
     const to = args.to(gate.normalizedPhone);
-    const result = await sendSmsSafely({ to, body });
+    const result = await sendSmsSafely({
+      to,
+      body,
+      messagingServiceSid: routed.messagingServiceSid,
+    });
     success = result.ok;
     if (result.ok) {
       outcome = { ok: true, messageSid: result.messageSid };
