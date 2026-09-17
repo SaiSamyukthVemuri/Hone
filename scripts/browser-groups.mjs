@@ -139,6 +139,16 @@ export const BROWSER_GROUPS = {
       // 0171: the public reschedule v2 contract (policy hash, exclusion,
       // duration authority, same-time, duplicate submit, post-commit success).
       "public-reschedule-v2.spec.ts",
+      // UI-03: the reschedule submit must expose WHY it is disabled. Beside
+      // public-reschedule-v2.spec.ts because it drives the same surface.
+      //
+      // It was first filed with the shared interaction specs, on the reasoning
+      // that it proves a control contract rather than a workflow. Codex was
+      // right that this is wrong: group membership decides which TARGETED lane
+      // runs a spec, and a booking-only diff — a change to RescheduleForm
+      // itself — would not have run it. Where a spec is proved matters less
+      // than which diffs are allowed to break it unnoticed.
+      "ui03-blocked-reason.spec.ts",
       "manual-override-buffer-booking.spec.ts",
       "move-appointment-custom-time.spec.ts",
       "move-appointment-mobile-submit.spec.ts",
@@ -213,6 +223,10 @@ export const BROWSER_GROUPS = {
       // as the line above — it measures the shared interaction vocabulary, not
       // one workflow, so any application diff can reach it.
       "ui-r02-danger-press.spec.ts",
+      // UI-02: status text equivalents, proved by computed accessible name.
+      // Same group and reasoning again — an accessibility contract on shared
+      // status marks, reachable from any application diff.
+      "ui02-status-text-equivalent.spec.ts",
       "new-studio-wizard.spec.ts",
       "onboarding.spec.ts",
       "quick-import.spec.ts",
