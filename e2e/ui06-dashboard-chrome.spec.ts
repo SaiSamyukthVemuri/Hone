@@ -167,9 +167,54 @@ for (const vp of WIDTHS) {
 
       // A flatter card must not become an undifferentiated wall of text: the
       // shared section labels are what carry the grouping now that the boxes
-      // are gone, so they have to be on screen at every width.
-      const labels = card.locator("p,h2,h3,h4,span").filter({ hasText: /^[A-Z][A-Za-z ]+$/ });
-      expect(await labels.count()).toBeGreaterThan(0);
+      // are gone, so they have to be ON SCREEN at every width.
+      //
+      // THIRD VERSION OF THIS ASSERTION, and the first two were both wrong in
+      // opposite directions:
+      //
+      //   count() > 0                  too weak — passes for hidden labels,
+      //                                which is what Codex flagged
+      //   toBeVisible() on p/h2/h3/h4/span
+      //   filtered by capitalised text too strong AND imprecise — that locator
+      //                                was a heuristic for "looks like a label"
+      //                                and swept in unrelated elements that are
+      //                                legitimately hidden, so it failed on
+      //                                correct markup at all three widths
+      //
+      // The claim is about SECTION LABELS specifically, so this targets the
+      // primitive's own signature (uppercase + tracking-wider) instead of
+      // guessing from tag and capitalisation. Every label the card actually
+      // renders must be visible with a real box; the failure message names the
+      // offending element so a future failure is diagnosable rather than a
+      // second round of guessing.
+      const labels = card.locator('[class*="uppercase"][class*="tracking-wider"]');
+      const n = await labels.count();
+      expect(n, "the card must render section labels").toBeGreaterThan(0);
+
+      for (let i = 0; i < n; i += 1) {
+        const label = labels.nth(i);
+        const info = await label.evaluate((el) => {
+          const e = el as HTMLElement;
+          const cs = getComputedStyle(e);
+          const r = e.getBoundingClientRect();
+          return {
+            text: (e.textContent ?? "").trim().slice(0, 40),
+            cls: e.className,
+            display: cs.display,
+            visibility: cs.visibility,
+            w: r.width,
+            h: r.height,
+          };
+        });
+        expect(
+          info.display !== "none" && info.visibility !== "hidden",
+          `label ${i} "${info.text}" is hidden (display=${info.display} visibility=${info.visibility} class="${info.cls}")`,
+        ).toBe(true);
+        expect(
+          info.w > 0 && info.h > 0,
+          `label ${i} "${info.text}" has no area (${info.w}x${info.h})`,
+        ).toBe(true);
+      }
 
       // Rows must retain real height — flattening should not have produced
       // zero-height or overlapping rows.

@@ -142,7 +142,7 @@ describe("UI-06: the nesting is gone and scanning is preserved", () => {
 });
 
 describe("UI-06: measured against the real previous source", () => {
-  it("strictly fewer boxes and shallower nesting than the base", () => {
+  it("strictly fewer boxes and shallower nesting than the base", (ctx) => {
     // Compared against git rather than a restated count, so the claim cannot
     // drift. Skips loudly on a shallow clone, per the UI-05 proof-truth rule.
     const BASE = "origin/feat/ui05-native-confirm-retirement";
@@ -159,8 +159,16 @@ describe("UI-06: measured against the real previous source", () => {
         beforeDeepest = Math.max(beforeDeepest, ...d);
       }
     } catch {
-      // eslint-disable-next-line no-console
-      console.warn(`[ui06] ${BASE} unreachable — base comparison did NOT run`);
+      // MUST NOT RETURN NORMALLY. A bare `return` here is reported as PASS, so
+      // on any clone without this ref the "fewer boxes than the base" claim
+      // would be recorded green while doing nothing.
+      //
+      // I fixed exactly this defect in UI-02 — where a missing base made a
+      // historical proof pass without executing — and then wrote the same
+      // `catch { warn; return }` again here, two slices later. Codex caught it
+      // a second time. The UI-02 repair guarded that suite only; the HABIT
+      // travelled to a new file, which is the part worth recording.
+      ctx.skip(`base ${BASE} unreachable — the box-count comparison did NOT run`);
       return;
     }
 
