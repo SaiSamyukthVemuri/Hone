@@ -25,13 +25,13 @@ not a PR diary — per-capability evidence lives in
 |---|---|
 | **Reconciliation date** | 2026-09-17 |
 | **Production branch** | `claude/build-hone-saas-hOex7` |
-| **Current Git branch HEAD** | `e8dab8e615c40ae2b9bb8dde49d50fccd10ff443` — the PR #725 merge (UI-R02 product polish: page/surface/empty-state primitives, the danger family browser-proved). Query GitHub for the live value; documentation-only commits may have advanced it since. ⚠️ **This row moved DURING the reconciliation** — the lane opened against `6e264b57` (#710) and UI-R02 merged while it was in review, so every derived figure below was re-derived a second time against this head rather than carried over. |
-| **Last runtime-bearing application HEAD** | **`e8dab8e615c40ae2b9bb8dde49d50fccd10ff443` — the PR #725 merge, which at this reconciliation is the SAME commit as the branch head above.** They are still two facts and still two rows: the last refresh found them apart, this one finds them together, and equality today is a finding rather than a licence to collapse them. Derived mechanically, not asserted: **twenty-eight** merges landed between the previous baseline `0f07dae6` and this head. **Twenty-two** are runtime-bearing and **six** are not — `#631` (canonical docs reconciliation), `#660` (CI-HARDEN-01B), `#672` (FIN domain contract), `#675` (the 0191 apply record), `#707` (onboarding runbook) and `#714` (roadmap sync) touch no deployed path at all. Across the twenty-two, **143** deployed files changed — classified by `scripts/classify-changes.mjs`, the same map CI uses, under the same ships/does-not-ship decision `tests/docs/canonical-production-facts.test.ts` rule A3 applies. The newest merge, `#725`, is itself runtime-bearing, which is why the two rows meet here — as was true of `#710` before it, for the same reason. **This is the baseline for every behavioural claim in this document** — and see *What this reconciliation did and did not measure* for the per-capability coverage this refresh did **not** extend to those twenty-two. |
-| **Current Vercel Production deployment** | ⚠️ **NO DEPLOYMENT ID READ.** The Vercel commit status for `e8dab8e6` reports **success** (read from the GitHub combined status for that commit on **2026-09-17**, after UI-R02 merged), and that status is the whole of the evidence that a production deployment for this head succeeded — no deployment id, alias, domain alias or runtime probe was read, and none is asserted. A commit status says a build reported success, not that traffic is being served by it. |
+| **Current Git branch HEAD** | `4cff4a438f937efc68161b17dca0fb88cf3e3927` — the PR #720 merge (UI-02: unread and onboarding step state get a non-colour-only text equivalent). Query GitHub for the live value; documentation-only commits may have advanced it since. ⚠️ **This row moved TWICE DURING the reconciliation.** The lane opened against `6e264b57` (#710); `#725` merged while it was in review, then `#720` behind it. Every derived figure below was re-derived from scratch at each head rather than carried over. **That is not an anomaly — it is this row's normal condition**, and rule A5 requires it to equal the live ref exactly, so a reconciliation of this document is always racing production. Re-read the ref before trusting this cell. |
+| **Last runtime-bearing application HEAD** | **`4cff4a438f937efc68161b17dca0fb88cf3e3927` — the PR #720 merge, which at this reconciliation is the SAME commit as the branch head above.** They are still two facts and still two rows: the last refresh found them apart, this one finds them together, and equality today is a finding rather than a licence to collapse them. Derived mechanically, not asserted: **twenty-nine** merges landed between the previous baseline `0f07dae6` and this head. **Twenty-three** are runtime-bearing and **six** are not — `#631` (canonical docs reconciliation), `#660` (CI-HARDEN-01B), `#672` (FIN domain contract), `#675` (the 0191 apply record), `#707` (onboarding runbook) and `#714` (roadmap sync) touch no deployed path at all. Across the twenty-three, **144** deployed files changed — classified by `scripts/classify-changes.mjs`, the same map CI uses, under the same ships/does-not-ship decision `tests/docs/canonical-production-facts.test.ts` rule A3 applies. The newest merge, `#720`, is itself runtime-bearing, which is why the two rows meet here — as was true of `#725` and `#710` before it, for the same reason. **This is the baseline for every behavioural claim in this document** — and see *What this reconciliation did and did not measure* for the per-capability coverage this refresh did **not** extend to those twenty-three. |
+| **Current Vercel Production deployment** | ⚠️ **NO DEPLOYMENT ID READ.** The Vercel commit status for `4cff4a43` reports **success** (read from the GitHub combined status for that commit on **2026-09-17**, after `#720` merged), and that status is the whole of the evidence that a production deployment for this head succeeded — no deployment id, alias, domain alias or runtime probe was read, and none is asserted. A commit status says a build reported success, not that traffic is being served by it. |
 | **Migration state** | **This document deliberately states no migration number.** Hosted max is declared once, machine-readably, in [`migration-state.json`](./migration-state.json). Repository max, total applied and the next free number are **derived** — run `npm run migration:state`. The current reconciled position, with checksums and apply evidence, is [migration-ledger.md](./migration-ledger.md) under *Current state*. A number copied into this table is a number that goes stale on the next apply; that is how the `0160`/`0163`/`0165` divergence happened. |
 | **Database vs. application skew** | **This document asserts no parity, pending or remote-only claim of its own.** It previously declared the two states equal and the pending set empty, and went stale the moment a reviewed migration was authored above hosted — the same second-copy failure this table already avoids for migration NUMBERS. Derive the relationship with `npm run migration:state`; hosted state is declared once in [`migration-state.json`](./migration-state.json); the reconciled position with apply evidence is [migration-ledger.md](./migration-ledger.md) under *Current state*. **A repository maximum ABOVE hosted is the normal state of an authorized migration-first apply** — reviewed migration authored, production not yet advanced — and is not by itself skew. What would be skew is a **remote-only** migration (hosted above repo), which the derivation reports and the canonical guard forbids. |
 | **Production Supabase project** | The single production project. Always re-read the linked ref from `supabase/.temp/project-ref` (gitignored) and verify with `supabase migration list --linked` before trusting any number here. **No credentials are recorded in documentation.** (The project ref itself appears in at least one older repo document, so treat it as an operational identifier rather than a secret — but do not add new copies of it.) |
-| **Health** | ⚠️ **NOT RE-PROBED AT THIS RECONCILIATION.** The last probe was **2026-08-23**: `hone.care` **200** · `/login` **200** · `/dashboard` **307** (auth redirect) · `/api/health` **307**, all non-5xx, `ops_alerts` unresolved **4** (§13). Those readings describe a runtime **fifty-five merges old** — the full first-parent ancestry from `b9e0003f` to this head — and are retained as dated evidence, not as current health. |
+| **Health** | ⚠️ **NOT RE-PROBED AT THIS RECONCILIATION.** The last probe was **2026-08-23**: `hone.care` **200** · `/login` **200** · `/dashboard` **307** (auth redirect) · `/api/health` **307**, all non-5xx, `ops_alerts` unresolved **4** (§13). Those readings describe a runtime **fifty-six merges old** — the full first-parent ancestry from `b9e0003f` to this head — and are retained as dated evidence, not as current health. |
 | **Tenant posture** | **Six studios in three classes — one real-customer, one controlled test, one synthetic, three empty.** Real-customer activity is **Willow Electrolysis only**. See **§0**, which is the canonical tenant register; do not restate its counts elsewhere. ⚠️ **Every tenant count in §0 was measured 2026-08-23 and has NOT been re-measured at any reconciliation since — including this one** — see *What this reconciliation did and did not measure* below. |
 | **Next operational gate** | The **deep production / security / code audit** (still not performed against this baseline). **Chloe's human acceptance testing** remains outstanding and is **independent** — see §15. |
 
@@ -52,20 +52,21 @@ repository and the Git graph, and it re-measured **nothing** in the production d
 Vercel, or at any provider. It has been refreshed to each production head in turn —
 `8418a755` (#648), `5ad81129` (#646) and `4fee652f` (#650, #649) on 2026-08-27, then
 `0f07dae6` (#651, #653, #652, #654, #655, #656, #657, #658, #659) on 2026-08-30, then
-`6e264b57` and then, when UI-R02 landed mid-lane, `e8dab8e6` on 2026-09-17 — **the measurement boundary below is unchanged by any of those
+`6e264b57`, then `e8dab8e6` when UI-R02 landed mid-lane, then `4cff4a43` when `#720` landed behind it, all on 2026-09-17 — **the measurement boundary below is unchanged by any of those
 refreshes — production moving is not a reason to restate a figure nobody re-read.** Read the
 two lists as a boundary, not as a caveat:
 
-**Re-derived on 2026-09-17, from the repository at `e8dab8e6`** — and derived a SECOND time at
-that head after `#725` merged mid-reconciliation, rather than carried over from `6e264b57`**:**
+**Re-derived on 2026-09-17, from the repository at `4cff4a43`** — derived from scratch a THIRD
+time at this head, after `#725` and then `#720` merged mid-reconciliation, rather than carried
+over from `6e264b57` or `e8dab8e6`**:**
 
 - the production branch head, checked against the live `claude/build-hone-saas-hOex7` ref rather
   than read out of this document;
-- the full merge ancestry back to `b9e0003f` (fifty-five merges);
-- the twenty-eight merges since the previous baseline `0f07dae6`, and which of them are
-  runtime-bearing — **twenty-two are, six are not** — by changed-path analysis through
+- the full merge ancestry back to `b9e0003f` (fifty-six merges);
+- the twenty-nine merges since the previous baseline `0f07dae6`, and which of them are
+  runtime-bearing — **twenty-three are, six are not** — by changed-path analysis through
   `scripts/classify-changes.mjs`;
-- that the last of the twenty-eight is itself runtime-bearing, which is why the branch head and
+- that the last of the twenty-nine is itself runtime-bearing, which is why the branch head and
   the runtime pin name one commit at this reconciliation;
 - which production PRs referenced anywhere in this document have actually merged, by looking for
   a merge commit reachable from the production head rather than by asking GitHub for a PR state;
@@ -79,9 +80,9 @@ that head after `#725` merged mid-reconciliation, rather than carried over from 
 > ⚠️ **COVERAGE LIMIT — the spine was re-derived, the capability sections were not extended.**
 > This refresh re-derived the reconciliation header, the merge classification, the open-PR
 > relationships and the repository-derived counts. It did **not** write per-capability sections
-> for the **twenty-two** runtime-bearing merges between `0f07dae6` and `e8dab8e6`: `#647`,
+> for the **twenty-three** runtime-bearing merges between `0f07dae6` and `4cff4a43`: `#647`,
 > `#662`, `#663`, `#664`, `#670`, `#673`, `#676`, `#669`, `#667`, `#678`, `#684`, `#690`, `#696`,
-> `#697`, `#702`, `#706`, `#708`, `#709`, `#713`, `#712`, `#710`, `#725`. Their per-PR record is in
+> `#697`, `#702`, `#706`, `#708`, `#709`, `#713`, `#712`, `#710`, `#725`, `#720`. Their per-PR record is in
 > [release-changelog.md](./release-changelog.md), which this refresh did extend. **Read the
 > absence of a section below as "not yet written up here", never as "not shipped"** — the
 > converse of the rule that governs the open-PR table, and the same class of error. Sections
@@ -103,7 +104,7 @@ stamps rather than restated as current:**
 
 A figure with a 2026-08-23 stamp is **evidence of what was true on 2026-08-23**. It is not a
 claim about today, and a later reader must re-measure before treating it as one. **Twenty-five
-days and fifty-five merges now sit between that stamp and this header**, which widens the gap
+days and fifty-six merges now sit between that stamp and this header**, which widens the gap
 without changing what the figures are: dated evidence, not current readings. Nothing on that
 list was re-read on 2026-09-17, and no figure on it was edited by this refresh.
 
@@ -239,7 +240,7 @@ surfaces then made affirmative clinical statements nobody had read: *Last visit*
 Intelligence* reported every stat as a known zero, and *Before today* reported no watch or plan
 notes and a complete procedure record.
 
-At `e8dab8e6` all four check `unavailable` **before** `hasHistory`, and
+At `4cff4a43` all four check `unavailable` **before** `hasHistory`, and
 `session_blocks.caution_for_next_session` / `caution_note` — which reach the practitioner only
 through the Watch/Plan band built from that same read — are protected on both the Overview and
 Sessions tabs. Read failure now renders *clinical history could not be loaded*.
@@ -582,8 +583,8 @@ Chloe's acceptance is **not** claimed.
 > has been re-measured, and this lane is not authorised to re-measure them.**
 
 > ⚠️ **CORRECTED 2026-09-17 — this heading read *"DEPLOYED DARK. Reachable by nobody."* and that
-> is false at `e8dab8e6`.** It was true of Stage A as shipped, and stopped being true when the
-> owner waitlist surface landed in the twenty-two runtime-bearing merges since `0f07dae6`.
+> is false at `4cff4a43`.** It was true of Stage A as shipped, and stopped being true when the
+> owner waitlist surface landed in the twenty-three runtime-bearing merges since `0f07dae6`.
 > **`/settings/waitlist` is reachable by a studio owner today**, and its server actions write
 > durable rows through migration `0193`'s `create_practitioner_waitlist_entry` and
 > `import_legacy_waitlist_entry` — **without consulting the durable allowlist at all**. The
@@ -987,7 +988,7 @@ and a hand-copied count is the very drift this whole reconciliation exists to st
   what the archive does not carry.
 
 *(Counts re-derived on 2026-09-17 by counting dispositions in `lib/export/resource-registry.ts`
-at `e8dab8e6`, not carried forward (`#725` changed no registry disposition). They moved because TRUTH-01B-1 shipped — see below. They are
+at `4cff4a43`, not carried forward (neither `#725` nor `#720` changed a registry disposition). They moved because TRUTH-01B-1 shipped — see below. They are
 still stated as a shape: the registry is the authority and a hand-copied integer is the drift this
 whole reconciliation exists to stop.)*
 
@@ -1097,7 +1098,7 @@ non-card appointment settlement (§7 — 0 rows) · `/dashboard/capacity` (§10b
 measured) · WAIT-02B Stage B1 (§5b — recorded then as no studio enabled; ⚠️ **that limb is
 superseded** by the controlled-test canary in §5b and was not re-derived here). ⚠️ **This list was NOT re-derived on
 2026-09-17 and is not a current census.** Exercise is a property of production data, and nothing
-in production was read at this reconciliation; the twenty-two runtime-bearing merges since
+in production was read at this reconciliation; the twenty-three runtime-bearing merges since
 `0f07dae6` have therefore not been classified for exercise in either direction. Read this as
 three dated findings, not as "and nothing else shipped".
 

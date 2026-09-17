@@ -5,14 +5,15 @@
 production; neither document is evidence for the other.
 
 - **Reconciled:** 2026-08-27. **§15's merge derivation alone was refreshed 2026-09-17** to
-  the production head `e8dab8e6` — re-derived twice on that date, because UI-R02 (`#725`) merged
-  while the refresh was in review and moved the head off `6e264b57`. The capability statuses below
+  the production head `4cff4a43` — re-derived THREE times on that date, because UI-R02 (`#725`)
+  and then `#720` merged while the refresh was in review, moving the head off `6e264b57` and then
+  off `e8dab8e6`. The capability statuses below
   were **not** re-opened wholesale; §14's waitlist rows and the `#644` export row were corrected
   where production had falsified them.
 - **Runtime-bearing baseline:** the application HEAD recorded in
   [current-state.md](./current-state.md) *Reconciliation header* — **the single authority for
   that SHA, which is deliberately not copied here.** On **2026-09-17** the branch HEAD and the
-  runtime-bearing HEAD were again the **same commit** (at `e8dab8e6`, as they had been at `6e264b57`), which is worth stating rather than leaving
+  runtime-bearing HEAD were again the **same commit** (at `4cff4a43`, as they had been at `e8dab8e6` and `6e264b57` — the coincidence has held across three heads today, which is not a guarantee that it holds tomorrow), which is worth stating rather than leaving
   implied — but note it is a coincidence that comes and goes: they were **apart** on 2026-08-30,
   and this bullet asserted the coincidence throughout, because it said "at this reconciliation"
   and nobody re-read it when production moved. Prefer the authority to this sentence.
@@ -298,27 +299,27 @@ and equally, do not restate that dated zero as a present-tense fact: it is evide
 
 ## 15. Capabilities added since the 2026-08-23 reconciliation
 
-**Fifty-five** production merges landed between `b9e0003f` and the current branch head. **Ten**
+**Fifty-six** production merges landed between `b9e0003f` and the current branch head. **Ten**
 carry a capability that belongs in this register — **and that ten is a count of what this table
 lists, not a finding about all fifty-four.** Read the decomposition before the pairing.
 
 **Those two numbers are derived over different spans, and saying so is the point.** The
-fifty-five decompose exactly, by `git log --first-parent --merges b9e0003f..e8dab8e6`:
+fifty-six decompose exactly, by `git log --first-parent --merges b9e0003f..4cff4a43`:
 
 | Group | Merges | Capabilities |
 |---|---|---|
 | The **`#632`–`#650`** derivation span — the range this table was built over | **18** | **10** |
 | Post-`#650` performance, mobile-layout and touch-target work — `#651`, `#652`, `#653`, `#654`, `#655`, `#656`, `#657`, `#658`, `#659` | **9** | **0** |
 | Documentation, CI and test merges carried in by later production refreshes — `#631`, `#660` | **2** | **0** |
-| **Merges since `bf6f09c4`, added by the 2026-09-17 refresh — NOT CLASSIFIED for capability content** | **26** | **not derived** |
-| **Total** | **55** | **10 listed** |
+| **Merges since `bf6f09c4`, added by the 2026-09-17 refresh — NOT CLASSIFIED for capability content** | **27** | **not derived** |
+| **Total** | **56** | **10 listed** |
 
 > ⚠️ **The fourth group is an open gap, stated rather than absorbed.** The 2026-09-17 refresh
-> re-derived the *merge count* to `e8dab8e6` because the canonical guard checks it against the Git
-> graph. It did **not** decide which of those twenty-six merges carry a register capability —
+> re-derived the *merge count* to `4cff4a43` because the canonical guard checks it against the Git
+> graph. It did **not** decide which of those twenty-seven merges carry a register capability —
 > that is an editorial judgement needing per-capability evidence, and none was gathered. **Zero
-> rows below describe them, and zero rows is not the same claim as zero capabilities.** Twenty-two
-> of the twenty-six are runtime-bearing by changed-path analysis, so the honest expectation is
+> rows below describe them, and zero rows is not the same claim as zero capabilities.** Twenty-three
+> of the twenty-seven are runtime-bearing by changed-path analysis, so the honest expectation is
 > that several *do* belong here and are simply not written up yet. Their per-PR record is in
 > [release-changelog.md](./release-changelog.md); the reach of the refresh is stated in
 > [current-state.md](./current-state.md) under *What this reconciliation did and did not measure*.
@@ -340,7 +341,7 @@ level again; the authority for both values is
 [current-state.md](./current-state.md), never this sentence.
 
 Without that decomposition the pairing reads as though ten capabilities were derived over all
-fifty-five merges, which is not what was done — and a derived count moved without re-deriving
+fifty-six merges, which is not what was done — and a derived count moved without re-deriving
 the fact beneath it is precisely the defect this document exists to close. **That is not
 hypothetical here:** the headline was advanced from twenty-seven to twenty-nine while this
 derivation still reasoned through twenty-seven and omitted `#631` and `#660` entirely.
