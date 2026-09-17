@@ -1,6 +1,8 @@
 "use client";
 
 import Link, { useLinkStatus } from "next/link";
+
+import { spinnerClasses } from "@/components/ui/spinner";
 import type { ComponentProps, ReactNode } from "react";
 
 import { PRESS_TRANSITION, cx } from "./ui/control-base";
@@ -136,9 +138,11 @@ export type PendingLinkProps = Omit<LinkProps, "className" | "children"> & {
  * circle. The state change survives without motion, and it is a shape change,
  * never colour alone.
  */
-const MARK =
-  "size-4 animate-spin rounded-full border-2 border-current border-t-transparent " +
-  "motion-reduce:animate-none motion-reduce:border-t-current";
+// UI-R01: this mark was lifted into components/ui/spinner.tsx so the app has
+// ONE spinner rather than a navigation one and a control one that drift apart.
+// The string is unchanged — spinnerClasses("sm") emits exactly what this
+// constant used to, which is why no navigation proof needed editing.
+const MARK = spinnerClasses("sm");
 
 /**
  * The live region, spelled ONCE for both forms.

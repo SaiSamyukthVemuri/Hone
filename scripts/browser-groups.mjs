@@ -202,6 +202,21 @@ export const BROWSER_GROUPS = {
       // this mechanism is unattributable application code that already fails
       // safe to EXTENDED.
       "perceived-speed.spec.ts",
+      // UI-R01: the interaction foundations (press acknowledgement, the shared
+      // spinner, geometry stability). Sits beside perceived-speed.spec.ts for
+      // the same reason it gives above — this is the shell-wide interaction
+      // vocabulary, reachable from any application diff, so it belongs in the
+      // family that fails safe to EXTENDED rather than in `smoke`.
+      "ui-r01-interaction-foundations.spec.ts",
+      // UI-R02: the DANGER family's press, browser-proved on a real
+      // solid-danger control (client archive). Same group and same reasoning
+      // as the line above — it measures the shared interaction vocabulary, not
+      // one workflow, so any application diff can reach it.
+      "ui-r02-danger-press.spec.ts",
+      // UI-02: status text equivalents, proved by computed accessible name.
+      // Same group and reasoning again — an accessibility contract on shared
+      // status marks, reachable from any application diff.
+      "ui02-status-text-equivalent.spec.ts",
       "new-studio-wizard.spec.ts",
       "onboarding.spec.ts",
       "quick-import.spec.ts",

@@ -4,10 +4,11 @@ import {
   CONTROL_COMPACT_FINE_POINTER,
   CONTROL_DISABLED,
   CONTROL_MIN_TOUCH,
+  LEAF_CONTROL_PRESS,
   FOCUS_RING,
-  PRESS_TRANSITION,
   cx,
 } from "./control-base";
+import { Spinner } from "./spinner";
 
 // The Hone button primitive (UI0).
 //
@@ -29,14 +30,21 @@ export type ButtonVariant = "primary" | "secondary" | "quiet" | "danger";
 export type ButtonSize = "sm" | "md";
 
 const VARIANT: Record<ButtonVariant, string> = {
-  // Solid action. `active:` repeats the hover fill on purpose: on a touch
-  // screen :hover never fires, so the active state IS the acknowledgement.
-  primary: "bg-accent text-on-accent hover:bg-accent-hover active:bg-accent-hover",
+  // Solid action. `active:` is a DISTINCT step, not a repeat of the hover fill.
+  //
+  // It used to repeat it, with the stated reason that on a touch screen :hover
+  // never fires so the active state IS the acknowledgement. True for touch, and
+  // false for a mouse: with prefers-reduced-motion the tactile scale is
+  // suppressed, so a hovering user pressed a button whose colour was already
+  // painted and saw nothing at all. Each family now has its own third step —
+  // accent 900->800->700, danger 600->700->800 — so the press is visible on
+  // both input methods, with or without motion.
+  primary: "bg-accent text-on-accent hover:bg-accent-hover active:bg-accent-active",
   secondary:
     "border border-line-strong bg-surface text-fg hover:bg-surface-sunken active:bg-line",
   quiet: "text-fg-muted hover:bg-surface-sunken hover:text-fg active:bg-line active:text-fg",
   danger:
-    "bg-danger-solid text-on-accent hover:bg-danger-solid-hover active:bg-danger-solid-hover",
+    "bg-danger-solid text-on-accent hover:bg-danger-solid-hover active:bg-danger-solid-active",
 };
 
 const SIZE: Record<ButtonSize, string> = {
@@ -73,8 +81,16 @@ export function buttonClasses(options?: {
     // Tailwind v4's preflight leaves a <button> at `cursor: default`. Restoring
     // the pointer is also what makes iOS Safari apply :active to the control,
     // so the press acknowledgement above actually paints on a phone.
-    "cursor-pointer rounded-md font-medium",
-    PRESS_TRANSITION,
+    // `relative` is load-bearing for the pending spinner below: it is the
+    // positioning context the overlay centres itself in. It changes nothing
+    // about a resting control.
+    "relative cursor-pointer rounded-md font-medium",
+    // The TACTILE press, opted into deliberately. Button satisfies the leaf
+    // contract LEAF_CONTROL_PRESS documents: it is `relative` above, and its
+    // only positioned descendant is the pending mark, which is `absolute
+    // inset-0` INSIDE it and therefore already resolves against this element.
+    // It carries PRESS_TRANSITION itself, so the marker is not emitted twice.
+    LEAF_CONTROL_PRESS,
     FOCUS_RING,
     CONTROL_DISABLED,
     SIZE[size],
@@ -126,7 +142,53 @@ export function Button({
       data-pending={pending ? "true" : undefined}
       className={buttonClasses({ variant, size, fullWidth, className })}
     >
-      {pending && busyLabel ? busyLabel : children}
+      {pending && busyLabel ? (
+        // EXISTING CONTRACT, UNCHANGED. 16 call sites and
+        // tests/components/ui-foundations.test.ts ("pending swaps the label
+        // only when a busyLabel is supplied") depend on this exact behaviour,
+        // so UI-R01 does not touch it.
+        //
+        // It is, however, the WIDTH-CHANGING form: the recon counted 47 label
+        // swaps whose two strings differ in length, and a swap resizes the
+        // control mid-press. Prefer the spinner form below for new call sites;
+        // UI-R02+ migrates the existing ones deliberately, with proofs.
+        busyLabel
+      ) : pending ? (
+        // THE GEOMETRY-STABLE FORM, and the new default.
+        //
+        // Before UI-R01 this branch rendered `children` unchanged, so a
+        // `pending` Button with no busyLabel showed NO pending state at all
+        // beyond the disabled dimming — a dead click by the recon's definition.
+        //
+        // The mechanism is the one PendingLink already proved: keep the label
+        // in flow at `opacity-0` so the control cannot resize and its
+        // accessible name cannot collapse, and centre the mark over it. The
+        // mark is decorative; `aria-busy` on the <button> is what actually
+        // announces the state, which is why the Spinner carries no label here.
+        <>
+          {/* NOT aria-hidden. The first draft of UI-R01 put aria-hidden="true"
+              here and it contradicted the sentence directly above it: hiding
+              the label collapses the button's ACCESSIBLE NAME to empty for
+              exactly the duration it is busy, so a screen-reader user is told
+              "busy" about a control that no longer says what it is.
+
+              This is the trap pending-link.tsx already documents — it chose
+              `opacity-0` over `visibility:hidden` for this precise reason, and
+              adding aria-hidden re-created the defect that choice avoided.
+              opacity-0 alone keeps BOTH the box and the name. */}
+          <span className="opacity-0">
+            {children}
+          </span>
+          <span
+            data-pending-mark="true"
+            className="pointer-events-none absolute inset-0 m-auto flex items-center justify-center"
+          >
+            <Spinner size={size === "sm" ? "sm" : "md"} />
+          </span>
+        </>
+      ) : (
+        children
+      )}
     </button>
   );
 }

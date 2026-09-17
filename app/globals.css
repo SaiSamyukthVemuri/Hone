@@ -71,6 +71,18 @@
    * independent decisions that happen to coincide. */
   --color-accent: oklch(20.5% 0 0); /* neutral-900 */
   --color-accent-hover: oklch(26.9% 0 0); /* neutral-800 */
+  /* UI-R01. The PRESSED step, and it exists because `active:` repeating the
+   * hover fill left primary and danger with NO press feedback for a mouse user
+   * under prefers-reduced-motion: the tactile scale is suppressed and the
+   * colour had already been painted by :hover. Touch was always fine — :hover
+   * never fires there — which is why the overlap survived until a reduced-motion
+   * proof looked for it.
+   *
+   * Not an invented colour: it continues the family's own established
+   * direction by one documented step. Accent moves 900 -> 800 on hover, so
+   * pressed is 700 (the same value this file already carries as
+   * --color-status-neutral-fg). White on neutral-700 is ~10:1. */
+  --color-accent-active: oklch(37.1% 0 0); /* neutral-700 */
   --color-on-accent: #fff;
 
   /* Focus. One canonical ring colour for every focusable primitive. */
@@ -95,6 +107,11 @@
    * than a tint (components/.../DeleteSessionForm.tsx already paints red-600). */
   --color-danger-solid: oklch(57.7% 0.245 27.325); /* red-600 */
   --color-danger-solid-hover: oklch(50.5% 0.213 27.518); /* red-700 */
+  /* Danger moves DARKER on hover (600 -> 700), so its pressed step continues
+   * darker to 800 — the opposite direction from accent, because each family
+   * keeps its own progression. Still unmistakably red: destructive semantics
+   * are preserved, and white on red-800 has MORE contrast than on red-700. */
+  --color-danger-solid-active: oklch(44.4% 0.177 26.899); /* red-800 */
 }
 
 /* Interaction timing. Three steps, no more. The app currently has 512 hover
@@ -114,8 +131,21 @@
  * animation. Only these primitives opt in. */
 .hone-transition-press,
 .hone-transition-ui {
+  /* `scale` AND `transform` added by UI-R01 so CONTROL_PRESS's
+   * active:scale-[0.98] eases instead of snapping.
+   *
+   * `scale` is the load-bearing one and it was NOT obvious: Tailwind v4
+   * compiles `scale-[0.98]` to the standalone CSS `scale:` property, not to
+   * `transform: scale(...)`. Verified against the compiled stylesheet, which
+   * emits `active\:scale-\[0\.98\]:active{scale:.98}`. Listing only
+   * `transform` left the press un-transitioned while looking correct in the
+   * source. `transform` is kept for any call site that sets one directly.
+   *
+   * Both are paint-time, so neither can reflow anything. Nothing that already
+   * used these markers carries either property, so no shipped control changes
+   * appearance from this line alone. */
   transition-property: color, background-color, border-color, box-shadow,
-    opacity;
+    opacity, scale, transform;
   transition-timing-function: ease-out;
 }
 .hone-transition-press {
