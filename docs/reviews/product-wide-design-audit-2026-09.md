@@ -403,7 +403,7 @@ There is no drag-to-move.
 | emoji as UI | 26, all of them `✓ ✕ ⚠ ✗` used as text glyphs |
 | `backdrop-blur` | 8 |
 | `text-center` | 37 |
-| shadows | 41 |
+| shadows | 43 |
 | `tabular-nums` | 87 |
 
 **`[MEASURED FACT]`** The "heading + subtitle" template occurs 22 times.
@@ -504,7 +504,7 @@ cross-product reach. Each rests on the §1 facts cited.
    **18 (≈9%) acknowledge**. *(An earlier draft wrote "173 of 188", subtracting
    the pending links as if they were a subset of the plain ones. They are
    distinct JSX populations, and it omitted `PendingContainerLink` entirely.)*
-9. **44 type sizes whose duplicate spellings disagree on leading** (§1.2) — why
+9. **46 type-size class spellings whose duplicates disagree on leading** (§1.2) — why
    vertical rhythm feels subtly wrong in places nobody can point at.
 10. **960px of usable content on a 1920px screen, and no wide-screen design at all**
     (§1.8). For software whose core objects are a schedule, a roster, a ledger and
@@ -854,7 +854,7 @@ reasoning is inseparable from the three sibling cases rejected alongside it.)*
 
 | Surface | Discontinuity | CSS answer |
 |---|---|---|
-| **53 `<details>` across 27 files** | Opening a long block snaps content below it down the page — a real context break, and **the highest-frequency one in the product** | `interpolate-size: allow-keywords` + `::details-content` + `transition: height`. Native and progressive; unsupported browsers keep today's instant behaviour. **Not a motion candidate — a stylesheet change.** |
+| **53 `<details>` across 27 files** | Opening a long block snaps content below it down the page — a real context break, and **the highest-frequency one in the product** | `interpolate-size: allow-keywords` + `::details-content` + `transition: height`. Native and progressive; unsupported browsers keep today's instant behaviour. **Not a motion candidate — a stylesheet change.** **`[PRODUCT AUTHORITY REQUIRED]` — this is the one proposal in this document that does NOT conform to §3.8**, which admits only `transform` and `opacity`. Height is a layout-and-paint property and the cited standards name it as a performance cost. The native disclosure path has no transform/opacity equivalent, so this is a genuine conflict rather than an oversight: it needs an explicit, authority-backed exception to §3.8 before it is treated as ordinary CSS work. Recorded, not granted. |
 | **536 live `hover:` tokens against 24 `active:`** | On touch, nothing acknowledges a press | `active:` colour step + existing `hone-transition-press`. Already solved inside `Button`; an **adoption** problem |
 | Tab / segment active-state change | Abrupt colour swap | Colour transition on the existing 180ms token |
 | Pending → committed control states | Geometry jumps when a label swaps width | Already solved by `Button`'s geometry-stable pending form |
@@ -974,7 +974,10 @@ physics is genuinely needed, Astryx is confirmed and MOTION-01's implementation
 becomes its acceptance criteria. **Either way the ruling survives**, even if the
 pilot's code is later replaced by the adopted primitive.
 
-**Explicit non-goals.** No stagger. No entrance animation. No dashboard motion. No
+**Explicit non-goals.** No stagger. **No DECORATIVE entrance animation** — page
+and content entrances stay out of scope; the overlay's own enter transition is
+the deliverable, not a non-goal, and an earlier phrasing of this line
+contradicted question 1 by excluding it. No dashboard motion. No
 route-transition motion. No library installed to answer question 1. No migration
 of the other fourteen overlays.
 
@@ -998,9 +1001,26 @@ the wrong geometry, and would have to be re-specified immediately afterwards.
   viewports (390 / 768 / 1280 / 1440 / 1920); computed styles read via
   `getComputedStyle`; contrast resolved through a 1×1 canvas so `oklch()` values
   convert to sRGB before the WCAG ratio is computed
-- **Source counts:** produced by the census script below, not by ad-hoc greps.
-  Run it against a clean extract of the baseline and every §1 occurrence count
-  reproduces.
+- **Source counts:** produced by the census script below. **Every count the
+  script emits reproduces exactly** against a clean extract of the baseline.
+
+  *Review at `6c4758c5` correctly found that an earlier, broader promise — "every
+  §1 occurrence count reproduces" — was not true. Three §1 figures had no row.
+  Two were verified and added:* `focus:` *→* **250** *and* `font-light` *→* **1**,
+  *both reproducing the cited values exactly.*
+
+  **THE THIRD DID NOT REPRODUCE, AND IS FLAGGED RATHER THAN REWRITTEN.** §1.5 and
+  §2 cite **3,247 `border` utilities**. No source-grep definition tried against
+  the baseline yields it — `border` as a plain substring gives **3,648**,
+  `\bborder\b` gives **3,607**, non-`dark:` occurrences give **2,645**, and
+  `border-` with a suffix gives **2,586**. The original measurement's definition
+  is therefore unknown, so **no row was added and the figure was not silently
+  changed**: inventing a definition to fit a number would defeat the purpose of
+  this appendix. The border figure is the one §1 count in this document that is
+  **NOT** reproducible from the published script, and it should be re-measured or
+  its method stated before it is quoted anywhere that matters. It is not load
+  bearing for any §2 diagnosis, which rests on the border/shadow *ratio* rather
+  than the absolute count.
 
 ### The census script
 
@@ -1067,6 +1087,7 @@ row "font-medium"                     "$(n 'font-medium')"
 row "font-semibold"                   "$(n 'font-semibold')"
 row "font-bold"                       "$(n 'font-bold')"
 row "font-normal"                     "$(n 'font-normal')"
+row "font-light"                      "$(n 'font-light')"
 row "uppercase"                       "$(n 'uppercase')"
 row "distinct uppercase-label strings" "$(u '\"[^\"]*uppercase[^\"]*\"')"
 
@@ -1096,6 +1117,7 @@ row "hover: tokens (all)"             "$(n 'hover:')"
 row "dark:hover: tokens"              "$(n 'dark:hover:')"
 row "hover: tokens (live, non-dark)"  "$(ne '(^|[^:a-z-])hover:')"
 row "active: tokens"                  "$(n 'active:')"
+row "focus: tokens (all)"             "$(n 'focus:')"
 row "focus-visible: tokens"           "$(n 'focus-visible:')"
 row "ease-out"                        "$(n 'ease-out')"
 row "duration-* (class only)"         "$(ne 'duration-[0-9]+')"
