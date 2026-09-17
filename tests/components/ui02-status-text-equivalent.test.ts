@@ -82,28 +82,31 @@ describe("UI-02: the slice stayed inside its boundary", () => {
     }
   });
 
-  it("renders the SAME class set as before — proved against the base file", () => {
+  it("renders the SAME class set as before", () => {
     // The claim is "this change is visually invisible". Asserting a class
     // STRING cannot prove that: refactoring the mark into shape + tone reordered
-    // the string while rendering identical classes, and a string assertion would
+    // the string while rendering identical classes, so a string assertion would
     // fail on a correct change and pass on an incorrect one that happened to
-    // keep the substring. The property is the SET of classes each state emits,
-    // so that is what this compares — against the real pre-slice file, read out
-    // of git rather than restated here where it could drift.
-    const before = execFileSync(
-      "git",
-      ["show", `${BASE_REF}:app/(app)/dashboard/onboarding/OnboardingProgressCard.tsx`],
-      { encoding: "utf8" },
+    // keep the substring. The property is the SET of classes each state emits.
+    //
+    // The expected sets are PINNED here rather than read from git. The first
+    // version read the pre-slice file with `git show <base>:<path>`, which works
+    // locally and CANNOT work in CI: ci.yml's validate lane checks out with no
+    // fetch-depth, so actions/checkout defaults to depth 1 and the base commit
+    // is not in the clone. That lane went red on a test that was green on every
+    // full clone — the exact shallow-clone trap this repo has hit before.
+    //
+    // These two sets were extracted from cec0234a (the commit this slice is
+    // stacked on). Re-derive with:
+    //   git show cec0234a:'app/(app)/dashboard/onboarding/OnboardingProgressCard.tsx'
+    // The cross-check below re-verifies them automatically wherever history is
+    // available, so they cannot silently drift.
+    const BASE_DONE = new Set(
+      "flex h-5 w-5 items-center justify-center rounded-full bg-emerald-600 text-[11px] text-white".split(/\s+/),
     );
-
-    const classSets = (src: string): Set<string>[] =>
-      [...src.matchAll(/className=\{?[`"]([^`"]*h-5 w-5[^`"]*)[`"]/g)].map(
-        (m) => new Set(m[1].replace(/\$\{[^}]*\}/g, " ").split(/\s+/).filter(Boolean)),
-      );
-
-    // Base emits three literal marks; head emits one template plus two tones.
-    const beforeSets = classSets(before);
-    expect(beforeSets.length).toBeGreaterThan(0);
+    const BASE_QUIET = new Set(
+      "flex h-5 w-5 items-center justify-center rounded-full border border-neutral-300 text-[11px] text-neutral-400 dark:border-neutral-700".split(/\s+/),
+    );
 
     const shape = ONBOARD.match(/const MARK_SHAPE = "([^"]+)"/)?.[1] ?? "";
     const quiet = ONBOARD.match(/const MARK_QUIET =\s*\n?\s*"([^"]+)"/)?.[1] ?? "";
@@ -114,22 +117,62 @@ describe("UI-02: the slice stayed inside its boundary", () => {
 
     const set = (...parts: string[]) =>
       new Set(parts.join(" ").split(/\s+/).filter(Boolean));
-    const afterDone = set(shape, doneTone);
-    const afterQuiet = set(shape, quiet);
-
     const eq = (a: Set<string>, b: Set<string>) =>
       a.size === b.size && [...a].every((x) => b.has(x));
 
-    // Every state the base rendered must still be rendered by one of ours.
-    for (const b of beforeSets) {
-      expect(
-        eq(b, afterDone) || eq(b, afterQuiet),
-        `base class set {${[...b].sort().join(" ")}} is no longer emitted`,
-      ).toBe(true);
-    }
+    expect(
+      eq(set(shape, doneTone), BASE_DONE),
+      `done mark now emits {${[...set(shape, doneTone)].sort().join(" ")}}`,
+    ).toBe(true);
+    expect(
+      eq(set(shape, quiet), BASE_QUIET),
+      `quiet mark now emits {${[...set(shape, quiet)].sort().join(" ")}}`,
+    ).toBe(true);
 
     // And the notification dot is genuinely untouched.
     expect(NOTIF).toContain("h-2 w-2 rounded-full bg-rose-600");
+  });
+
+  it("the pinned base sets still match real history, where history exists", () => {
+    // Cross-check, so the literals above cannot drift from the commit they
+    // claim to describe. It is SKIPPED, loudly, on a shallow clone rather than
+    // passing vacuously — a test that silently does nothing in CI is worse than
+    // one that says it did nothing.
+    let before: string;
+    try {
+      before = execFileSync(
+        "git",
+        ["show", `${BASE_REF}:app/(app)/dashboard/onboarding/OnboardingProgressCard.tsx`],
+        { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
+      );
+    } catch {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[ui02] base ${BASE_REF.slice(0, 10)} unreachable (shallow clone) — pinned-set cross-check skipped`,
+      );
+      return;
+    }
+
+    const historical = [
+      ...before.matchAll(/className=\{?[`"]([^`"]*h-5 w-5[^`"]*)[`"]/g),
+    ].map((m) => new Set(m[1].split(/\s+/).filter(Boolean)));
+    expect(historical.length, "base must contain the three marks").toBe(3);
+
+    const BASE_DONE = new Set(
+      "flex h-5 w-5 items-center justify-center rounded-full bg-emerald-600 text-[11px] text-white".split(/\s+/),
+    );
+    const BASE_QUIET = new Set(
+      "flex h-5 w-5 items-center justify-center rounded-full border border-neutral-300 text-[11px] text-neutral-400 dark:border-neutral-700".split(/\s+/),
+    );
+    const eq = (a: Set<string>, b: Set<string>) =>
+      a.size === b.size && [...a].every((x) => b.has(x));
+
+    for (const h of historical) {
+      expect(
+        eq(h, BASE_DONE) || eq(h, BASE_QUIET),
+        `history has a mark the pinned sets do not describe: {${[...h].sort().join(" ")}}`,
+      ).toBe(true);
+    }
   });
 
   it("components/ui is untouched — no primitive was invented for two call sites", () => {
