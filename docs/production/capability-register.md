@@ -5,11 +5,14 @@
 production; neither document is evidence for the other.
 
 - **Reconciled:** 2026-08-27. **§15's merge derivation alone was refreshed 2026-09-17** to
-  the production head `6e264b57`; no capability status below was re-opened on that date.
+  the production head `e8dab8e6` — re-derived twice on that date, because UI-R02 (`#725`) merged
+  while the refresh was in review and moved the head off `6e264b57`. The capability statuses below
+  were **not** re-opened wholesale; §14's waitlist rows and the `#644` export row were corrected
+  where production had falsified them.
 - **Runtime-bearing baseline:** the application HEAD recorded in
   [current-state.md](./current-state.md) *Reconciliation header* — **the single authority for
   that SHA, which is deliberately not copied here.** On **2026-09-17** the branch HEAD and the
-  runtime-bearing HEAD were again the **same commit**, which is worth stating rather than leaving
+  runtime-bearing HEAD were again the **same commit** (at `e8dab8e6`, as they had been at `6e264b57`), which is worth stating rather than leaving
   implied — but note it is a coincidence that comes and goes: they were **apart** on 2026-08-30,
   and this bullet asserted the coincidence throughout, because it said "at this reconciliation"
   and nobody re-read it when production moved. Prefer the authority to this sentence.
@@ -280,7 +283,7 @@ shipped. See [current-state.md](./current-state.md) §5b.
 |---|---|---|---|---|---|---|---|---|---|
 | Waitlist | **WAIT-01 — email-delivered new-client waitlist** (PR #601) | Merged | no migration | Deployed | ✅ **ENABLED for one studio** — `NEW_CLIENT_WAITLIST_STUDIO_SLUGS` present on the Vercel **Production** target only *(names read, no value)* | ✅ pilot activated 2026-08-19; one controlled canary submission at release | ⚠️ operator-observed at release; no separate acceptance record since | `/book/willow-electrolysis` renders `newClientWaitlistEnabled: true` *(2026-08-23)*; [release record](./releases/2026-08-19-willow-new-client-waitlist.md) | Commit point is the **studio notification email**, not a row. Clearing the env var is the whole kill switch |
 | Waitlist | **WAIT-02B Stage A — durable studio-scoped waitlist** (PR #629, `48f02389`) | Merged | ✅ **0185 applied 2026-08-23**, frozen | Deployed | ⚠️ **ENABLED on the controlled test studio; Willow NOT ENABLED** — 🔴 *corrected 2026-09-17; this cell read "**NOT ENABLED anywhere**"*. `docs/roadmap/CANONICAL_ROADMAP.md` records the test studio enabled for the legacy gate and durable WAIT. The paired reading that `NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS` was **absent from Vercel Production** is dated **2026-08-23** and was not re-read; a studio being enabled implies it is no longer absent | ⚠️ **EXERCISED on the controlled test studio** — 🔴 *corrected 2026-09-17; this cell read "**never**"*. The roadmap records a **12-of-12 seam canary** on the post-`0198` head through join, invitation, booking and atomic conversion, with `POST_CANARY_CLEANUP = COMPLETE` and the converted row **deliberately retained**. The `0 rows` figures beside it *(apply verification; 2026-08-23)* are dated evidence this record supersedes, not current state | n/a — a controlled-test canary with a synthetic identity is **not** customer acceptance | migration 0185; `lib/booking/new-client-waitlist.ts`; `docs/roadmap/CANONICAL_ROADMAP.md`; env var **names** only, 2026-08-23 | **NOT dormant as a whole.** Its PUBLIC commit point is enabled for no studio; its owner surface and the test-studio path are exercised. See [current-state.md](./current-state.md) §5b and **L25** |
-| Waitlist | `join_new_client_waitlist` / `remove_new_client_waitlist_entry` (the **public** commands) | Merged | ✅ present, SECURITY DEFINER | Deployed | ❌ unreachable **from the public commit point** — no studio on the durable allowlist | ❌ never invoked | n/a | 0185 body; EXECUTE held by `postgres` and `service_role` only — `anon` and `authenticated` hold none | ⚠️ **This row is about the two 0185 commands and nothing else.** The durable TABLE is separately writable by an owner through `0193`'s `create_practitioner_waitlist_entry` / `import_legacy_waitlist_entry`; do not read this row as "the table is unreachable" |
+| Waitlist | `join_new_client_waitlist` / `remove_new_client_waitlist_entry` (the **public** commands) | Merged | ✅ present, SECURITY DEFINER | Deployed | ⚠️ **reachable on the controlled test studio; NOT at Willow** — 🔴 *corrected 2026-09-17; this cell read "unreachable from the public commit point — no studio on the durable allowlist"*, and the test studio is on the allowlist | ⚠️ **INVOKED** — 🔴 *corrected 2026-09-17; this cell read "never invoked"*. The roadmap's 12-of-12 canary ran the **public `join` seam** on the controlled test studio | n/a — controlled-test invocation is not customer activity | 0185 body; EXECUTE held by `postgres` and `service_role` only — `anon` and `authenticated` hold none; `docs/roadmap/CANONICAL_ROADMAP.md` | ⚠️ **This row is about the two 0185 commands and nothing else.** The durable TABLE is separately writable by an owner through `0193`'s `create_practitioner_waitlist_entry` / `import_legacy_waitlist_entry`. **Dormancy here is WILLOW's, not the public path's** — that narrower scope was itself wrong once |
 | Waitlist | Studio-scoped duplicate rule | Merged | ✅ generated `email_normalized` + partial unique index on `(studio_id, email_normalized) WHERE status='waiting'` | Deployed | ❌ | ⚠️ 🔴 *corrected 2026-09-17; this cell read "**no row has ever existed to test it against**"*, which the controlled canary contradicts — rows exist on the test studio. Whether the duplicate rule was itself exercised is **not derivable from the canary record**, so no finding is made either way | n/a | migration 0185 | **No global email uniqueness** — tenancy is structural |
 | Waitlist | Stage-B configuration report (**was** the Stage-A inverted build gate) | Merged (#637) | no migration | Deployed | ⚠️ **report-only — it no longer fails a build** | n/a | n/a | `scripts/check-production-env-gates.mjs` Gate 4, contract sentences 1-2 and 9 | ⚠️ **CORRECTED 2026-08-26.** This row previously read *"A Vercel production build FAILS while the durable allowlist enables any studio. No bypass and no per-studio exception."* **That is no longer true.** Stage B1 replaced the prohibition with a report; the contract's own first two sentences are *"Gate 4 is report-only. It does not fail the build solely because of `NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS`."* What guards activation now is **runtime membership of TWO allowlists** (sentence 9) — a weaker, configuration-level guarantee, recorded as such. See [known-limitations.md](./known-limitations.md) **L25** |
 | Waitlist | **WAIT-02B Stage B — durable collection enabled** | — | — | — | **NOT STARTED** | ❌ | — | — | Blocked on the public privacy disclosure for prospects, the policy's `lastUpdated` + a future `effectiveDate`, explicit studio-enablement GO, and human activation smoke |
@@ -295,27 +298,27 @@ and equally, do not restate that dated zero as a present-tense fact: it is evide
 
 ## 15. Capabilities added since the 2026-08-23 reconciliation
 
-**Fifty-four** production merges landed between `b9e0003f` and the current branch head. **Ten**
+**Fifty-five** production merges landed between `b9e0003f` and the current branch head. **Ten**
 carry a capability that belongs in this register — **and that ten is a count of what this table
 lists, not a finding about all fifty-four.** Read the decomposition before the pairing.
 
 **Those two numbers are derived over different spans, and saying so is the point.** The
-fifty-four decompose exactly, by `git log --first-parent --merges b9e0003f..6e264b57`:
+fifty-five decompose exactly, by `git log --first-parent --merges b9e0003f..e8dab8e6`:
 
 | Group | Merges | Capabilities |
 |---|---|---|
 | The **`#632`–`#650`** derivation span — the range this table was built over | **18** | **10** |
 | Post-`#650` performance, mobile-layout and touch-target work — `#651`, `#652`, `#653`, `#654`, `#655`, `#656`, `#657`, `#658`, `#659` | **9** | **0** |
 | Documentation, CI and test merges carried in by later production refreshes — `#631`, `#660` | **2** | **0** |
-| **Merges since `bf6f09c4`, added by the 2026-09-17 refresh — NOT CLASSIFIED for capability content** | **25** | **not derived** |
-| **Total** | **54** | **10 listed** |
+| **Merges since `bf6f09c4`, added by the 2026-09-17 refresh — NOT CLASSIFIED for capability content** | **26** | **not derived** |
+| **Total** | **55** | **10 listed** |
 
 > ⚠️ **The fourth group is an open gap, stated rather than absorbed.** The 2026-09-17 refresh
-> re-derived the *merge count* to `6e264b57` because the canonical guard checks it against the Git
-> graph. It did **not** decide which of those twenty-five merges carry a register capability —
+> re-derived the *merge count* to `e8dab8e6` because the canonical guard checks it against the Git
+> graph. It did **not** decide which of those twenty-six merges carry a register capability —
 > that is an editorial judgement needing per-capability evidence, and none was gathered. **Zero
-> rows below describe them, and zero rows is not the same claim as zero capabilities.** Twenty-one
-> of the twenty-five are runtime-bearing by changed-path analysis, so the honest expectation is
+> rows below describe them, and zero rows is not the same claim as zero capabilities.** Twenty-two
+> of the twenty-six are runtime-bearing by changed-path analysis, so the honest expectation is
 > that several *do* belong here and are simply not written up yet. Their per-PR record is in
 > [release-changelog.md](./release-changelog.md); the reach of the refresh is stated in
 > [current-state.md](./current-state.md) under *What this reconciliation did and did not measure*.
@@ -337,7 +340,7 @@ level again; the authority for both values is
 [current-state.md](./current-state.md), never this sentence.
 
 Without that decomposition the pairing reads as though ten capabilities were derived over all
-fifty-four merges, which is not what was done — and a derived count moved without re-deriving
+fifty-five merges, which is not what was done — and a derived count moved without re-deriving
 the fact beneath it is precisely the defect this document exists to close. **That is not
 hypothetical here:** the headline was advanced from twenty-seven to twenty-nine while this
 derivation still reasoned through twenty-seven and omitted `#631` and `#660` entirely.
