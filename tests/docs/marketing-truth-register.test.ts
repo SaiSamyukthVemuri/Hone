@@ -161,11 +161,35 @@ describe("truth register: provenance is declared, not assumed", () => {
     ).toMatch(/^[0-9a-f]{40}$/);
   });
 
+  // Both checks below need real history. CI's validate lane clones at depth 1,
+  // where an ANCESTOR commit is simply absent — `git cat-file -e` returns 128
+  // and `merge-base` cannot answer. That is not a stale register, it is a
+  // truncated clone, and failing on it would be a false red.
+  //
+  // The first version of this guard gated only the ancestry check on
+  // shallowness and let the existence check run unconditionally. It passed
+  // locally on a full clone and failed in CI on the first push, with
+  // "declares head a946a983…, which is not a commit in this repository" — the
+  // register was fine; the clone had no such object. Both are gated now.
+  //
+  // This repo has been bitten by the converse too: history-derived docs rules
+  // that silently never executed in CI. So the skip is an explicit, visible
+  // assertion about the clone rather than an early `return` that looks green.
+  const shallowClone = (): boolean =>
+    spawnSync("git", ["rev-parse", "--is-shallow-repository"], {
+      cwd: ROOT,
+      encoding: "utf8",
+    }).stdout?.trim() === "true";
+
   it("the declared head is a commit that actually exists in this repository", () => {
-    // Review caught that shape alone is no guard: 40 arbitrary hex characters
-    // passed both this and the stale-head check, so a fabricated provenance
-    // line defeated the staleness signal the register exists to provide.
     const sha = declaredHead();
+    if (shallowClone()) {
+      expect(
+        sha,
+        "shallow clone: object presence is not checkable here",
+      ).toMatch(/^[0-9a-f]{40}$/);
+      return;
+    }
     const { status } = spawnSync("git", ["cat-file", "-e", `${sha}^{commit}`], {
       cwd: ROOT,
       encoding: "utf8",
@@ -177,21 +201,13 @@ describe("truth register: provenance is declared, not assumed", () => {
   });
 
   it("the declared head is an ancestor of the branch under test", () => {
-    // A real commit that is NOT in this branch's history would mean the register
-    // was verified against something this code never descended from.
-    //
-    // CI's validate lane clones at depth 1, so the history needed to answer this
-    // is often absent. A shallow clone must not turn this into a false red - the
-    // assertion is skipped explicitly, and says so, rather than silently passing.
-    const shallow = spawnSync("git", ["rev-parse", "--is-shallow-repository"], {
-      cwd: ROOT,
-      encoding: "utf8",
-    }).stdout?.trim();
-    if (shallow === "true") {
-      expect(shallow, "shallow clone: ancestry not checkable here").toBe("true");
+    const sha = declaredHead();
+    if (shallowClone()) {
+      expect(sha, "shallow clone: ancestry is not checkable here").toMatch(
+        /^[0-9a-f]{40}$/,
+      );
       return;
     }
-    const sha = declaredHead();
     const { status } = spawnSync(
       "git",
       ["merge-base", "--is-ancestor", sha, "HEAD"],
