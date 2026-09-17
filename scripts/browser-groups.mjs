@@ -31,6 +31,22 @@ export const BROWSER_GROUPS = {
   sessions: {
     description: "sessions / treatment-memory charting",
     specs: [
+      // UI-04: unarchive pending + touch floor on both consumers of
+      // unarchiveClientAction (/clients/[id]/edit and /clients?view=archived).
+      // Filed here because this is where the other CLIENT-SURFACE specs live
+      // (client-budget-context, clinical-notes, before-today-imported), even
+      // though the group's description says charting.
+      //
+      // WORTH KNOWING: `app/(app)/clients/**` matches NO PATH_TO_GROUP pattern,
+      // so a client-only diff falls through to the unattributed EXTENDED
+      // fallback and this spec runs as part of "everything" rather than via a
+      // targeted lane. That is the situation the OWNER-CAP note below describes
+      // for the capacity page. It is left alone deliberately: adding a
+      // /clients/ pattern would NARROW coverage for every client diff from
+      // extended to one group, which is a CI-risk decision and not this slice's
+      // to make. Registering the spec still matters — without it the spec would
+      // never run in a targeted lane that IS selected by other means.
+      "ui04-unarchive-pending.spec.ts",
       "charting-usability-polish.spec.ts",
       // Budget context is a peer section of the Consultation & Skin/Hair
       // surface, so it belongs with the clinical-notes coverage.
@@ -139,6 +155,16 @@ export const BROWSER_GROUPS = {
       // 0171: the public reschedule v2 contract (policy hash, exclusion,
       // duration authority, same-time, duplicate submit, post-commit success).
       "public-reschedule-v2.spec.ts",
+      // UI-03: the reschedule submit must expose WHY it is disabled. Beside
+      // public-reschedule-v2.spec.ts because it drives the same surface.
+      //
+      // It was first filed with the shared interaction specs, on the reasoning
+      // that it proves a control contract rather than a workflow. Codex was
+      // right that this is wrong: group membership decides which TARGETED lane
+      // runs a spec, and a booking-only diff — a change to RescheduleForm
+      // itself — would not have run it. Where a spec is proved matters less
+      // than which diffs are allowed to break it unnoticed.
+      "ui03-blocked-reason.spec.ts",
       "manual-override-buffer-booking.spec.ts",
       "move-appointment-custom-time.spec.ts",
       "move-appointment-mobile-submit.spec.ts",
@@ -217,12 +243,6 @@ export const BROWSER_GROUPS = {
       // Same group and reasoning again — an accessibility contract on shared
       // status marks, reachable from any application diff.
       "ui02-status-text-equivalent.spec.ts",
-      // UI-03: a disabled control must expose its reason. Grouped with the other
-      // interaction-contract specs for the same reason — it measures shared
-      // control behaviour, not one workflow.
-      "ui03-blocked-reason.spec.ts",
-      // UI-04: unarchive pending + touch floor on both consumers of one action.
-      "ui04-unarchive-pending.spec.ts",
       "new-studio-wizard.spec.ts",
       "onboarding.spec.ts",
       "quick-import.spec.ts",

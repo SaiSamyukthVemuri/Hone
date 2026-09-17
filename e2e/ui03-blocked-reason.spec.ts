@@ -92,6 +92,27 @@ test.describe("UI-03 the reschedule submit explains itself", () => {
     await expect(btn).toBeVisible({ timeout: T });
     await expect(page.locator(HINT)).toHaveCount(1);
 
+    // THE HINT IS ACTUALLY BELOW THE BUTTON, asserted geometrically.
+    //
+    // Codex raised this as a P2 and was right: "removing it does not move the
+    // button" plus "the page gets shorter" is satisfied by a hint placed
+    // almost anywhere that follows the control in layout — including somewhere
+    // unrelated further down the page. Neither assertion pins the ADJACENCY the
+    // design argument rests on, and the whole reason for the placement was that
+    // the hint must not sit above the control.
+    const order = await btn.evaluate((el) => {
+      const b = (el as HTMLElement).getBoundingClientRect();
+      const hint = document.getElementById("reschedule-submit-blocked");
+      if (!hint) return null;
+      const h = hint.getBoundingClientRect();
+      return { buttonBottom: b.bottom, hintTop: h.top, gap: h.top - b.bottom };
+    });
+    expect(order, "hint must exist for the ordering check").not.toBeNull();
+    // Below, not merely elsewhere...
+    expect(order!.hintTop).toBeGreaterThanOrEqual(order!.buttonBottom);
+    // ...and adjacent to it, not stranded at the far end of the form.
+    expect(order!.gap).toBeLessThan(48);
+
     // ISOLATES THIS SLICE'S CONTRIBUTION AND NOTHING ELSE.
     //
     // The first version of this test measured the button, clicked a slot, and
@@ -122,6 +143,8 @@ test.describe("UI-03 the reschedule submit explains itself", () => {
     });
 
     expect(delta.found, "the hint must be present to measure").toBe(true);
+
+
     // The button itself must not move or resize...
     expect({ ...delta.after, page: 0 }).toEqual({ ...delta.before, page: 0 });
     // ...and the page gets SHORTER, which is the proof the hint occupied space

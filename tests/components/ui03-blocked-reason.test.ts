@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 
+// The REAL predicate, imported from the component that ships it. The first
+// version of the enumeration below re-implemented both the old and the new
+// expression by hand, which proved my transcription equalled itself and said
+// nothing about the shipped code. Codex raised that as a P2 and was right.
+import { rescheduleBlockedReason } from "@/app/reschedule/[token]/RescheduleForm";
+
 // UI-03 — a disabled control must say why.
 //
 // The reschedule submit is gated by two independent conditions and exposed
@@ -24,30 +30,58 @@ const FORM = code("app/reschedule/[token]/RescheduleForm.tsx");
 
 describe("UI-03: the reason is derived from the gate, not restated beside it", () => {
   it("blockedReason is the single source, and the button consumes it", () => {
-    expect(FORM).toMatch(/const blockedReason: string \| null = !picked/);
+    expect(FORM).toMatch(/const blockedReason = rescheduleBlockedReason\(\{/);
+    expect(FORM).toMatch(/export function rescheduleBlockedReason\(/);
     expect(FORM).toMatch(/disabled=\{blockedReason !== null \|\| submitting\}/);
   });
 
-  it("THE GATE IS UNCHANGED — no condition was added, removed or loosened", () => {
-    // blockedReason !== null  <=>  !picked || (requiresAcknowledgement && !acknowledged)
-    // Enumerated over every combination of the three inputs, so this is a proof
-    // of equivalence rather than a reading of the source. If a future edit makes
-    // the hint and the gate disagree, one of these 8 rows fails.
-    const before = (p: boolean, r: boolean, a: boolean, s: boolean) =>
-      !p || s || (r && !a);
-    const after = (p: boolean, r: boolean, a: boolean, s: boolean) => {
-      const blockedReason = !p ? "pick" : r && !a ? "ack" : null;
-      return blockedReason !== null || s;
-    };
+  it("THE GATE IS UNCHANGED — proved against the SHIPPED predicate", () => {
+    // `before` is the expression this slice replaced, transcribed once from the
+    // original source. `after` calls the REAL exported predicate — so the
+    // comparison is between history and shipped code, not between two copies
+    // I wrote. Enumerated over every combination of the three inputs plus
+    // `submitting`, which the button ORs in separately.
+    const before = (p: boolean, r: boolean, a: boolean, s2: boolean) =>
+      !p || s2 || (r && !a);
+    const after = (p: boolean, r: boolean, a: boolean, s2: boolean) =>
+      rescheduleBlockedReason({
+        picked: p,
+        requiresAcknowledgement: r,
+        acknowledged: a,
+      }) !== null || s2;
+
     const bools = [false, true];
     for (const p of bools)
       for (const r of bools)
         for (const a of bools)
-          for (const s of bools)
+          for (const s2 of bools)
             expect(
-              after(p, r, a, s),
-              `picked=${p} requiresAck=${r} acknowledged=${a} submitting=${s}`,
-            ).toBe(before(p, r, a, s));
+              after(p, r, a, s2),
+              `picked=${p} requiresAck=${r} acknowledged=${a} submitting=${s2}`,
+            ).toBe(before(p, r, a, s2));
+  });
+
+  it("the predicate returns the RIGHT reason, not merely a non-null one", () => {
+    // Equivalence above only constrains blocked-vs-not. Without this, returning
+    // the policy message when no time is picked would still pass.
+    expect(
+      rescheduleBlockedReason({ picked: false, requiresAcknowledgement: false, acknowledged: false }),
+    ).toBe("Pick a time first.");
+    expect(
+      rescheduleBlockedReason({ picked: true, requiresAcknowledgement: true, acknowledged: false }),
+    ).toBe("Please review and acknowledge the appointment policies before rescheduling.");
+    expect(
+      rescheduleBlockedReason({ picked: true, requiresAcknowledgement: true, acknowledged: true }),
+    ).toBeNull();
+    // No policy text at the studio: acknowledgement is irrelevant.
+    expect(
+      rescheduleBlockedReason({ picked: true, requiresAcknowledgement: false, acknowledged: false }),
+    ).toBeNull();
+    // "no time picked" outranks the policy gate, so the client is told the
+    // first thing they must actually do.
+    expect(
+      rescheduleBlockedReason({ picked: false, requiresAcknowledgement: true, acknowledged: false }),
+    ).toBe("Pick a time first.");
   });
 
   it("reuses the copy that already existed — no new product wording", () => {
