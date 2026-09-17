@@ -13,7 +13,7 @@ type Row = {
 const ROWS: Row[] = [
   { label: "Today · 2:00 PM", value: "Upper lip + chin · 30 min", emphasis: true },
   { label: "Last treatment · 3 weeks ago", value: "Blend · Upper lip" },
-  { label: "Setup", value: "Blend · 27 MHz · Energy 3 · Probe F3 · Lot L-204" },
+  { label: "Setup", value: "Blend · 27.12 MHz · Energy 3 · Probe F3 · Lot L-204" },
   { label: "Client response (last recorded)", value: "Tolerated well · mild erythema, settled" },
   { label: "Watch", value: "Sensitive along the jawline" },
   { label: "For next visit", value: "Increase spacing · confirm numbing" },

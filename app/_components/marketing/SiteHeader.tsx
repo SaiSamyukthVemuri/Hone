@@ -9,11 +9,26 @@ import { MK_FONT_DISPLAY } from "./tokens";
 // Desktop shows the Product dropdown (anchored to its trigger, closes on
 // select/route/outside/Escape), the remaining nav links, and the walkthrough
 // CTA. Below lg, the accessible MobileNav dialog takes over.
+//
+// SKIP LINK (WCAG 2.4.1 Bypass Blocks). The header is sticky and repeats on
+// every marketing page, so a keyboard or screen-reader user previously had to
+// tab through the whole nav on each navigation to reach the content. The link
+// is the first focusable element in the DOM, visually hidden until focused,
+// and targets `#main-content`, which every marketing main landmark now
+// carries. It deliberately uses a plain anchor, not next/link: the target is
+// already on the page, so a router navigation is the wrong primitive and would
+// not move focus.
 export function SiteHeader() {
   const rest = PRIMARY_NAV.filter((i) => i.label !== "Product");
 
   return (
     <header className="sticky top-0 z-40 border-b border-[color:var(--color-hairline)] bg-paper/95">
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-3 focus:z-50 focus:rounded-[8px] focus:bg-ink focus:px-4 focus:py-2 focus:text-[0.9375rem] focus:font-semibold focus:text-paper focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-mineral)] focus-visible:ring-offset-2"
+      >
+        Skip to main content
+      </a>
       <Container>
         <div className="flex h-16 items-center justify-between">
           <Link

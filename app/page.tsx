@@ -54,12 +54,19 @@ const TRUST_POINTS: { title: string; body: string }[] = [
   { title: "No AI training on your records", body: "Hone does not train AI models on practitioner or client records." },
   { title: "Payments handled by Stripe", body: "Card details go straight to Stripe; Hone never stores full card numbers. Payments are enabled during guided onboarding." },
   // TRUTH-01A. This said "Export your full studio history any time". The
-  // export is a named subset - clients, sessions, charting, appointments,
-  // plans, clinical notes, record-keeping logs - and it does not yet carry
-  // treatment photos, intake forms, signed consents, the service menu or
-  // payment records. The claim is now the one the product can keep, and the
-  // scope is stated rather than implied. lib/export/resource-registry.ts is
-  // the authority on what is and is not included.
+  // export is a named subset, and the rendered copy now states that rather
+  // than implying completeness. lib/export/resource-registry.ts is the
+  // authority on what is and is not included.
+  //
+  // MARKETING-01b: this comment used to list "signed consents, the service
+  // menu" among the things the export does NOT carry. Both export today
+  // (client_consent_signatures and services are `exported` in the registry),
+  // so the list was stale in the direction that matters - it would talk a
+  // future author OUT of a true claim. What is still withheld, verified in the
+  // registry: treatment photos and intake forms (both `pending`), and payment
+  // records. Also still `pending`, and the one to watch: session_blocks and
+  // session_block_areas, so the per-area structure that is the differentiator
+  // does NOT leave in the export today. Do not imply otherwise.
   { title: "Data export", body: "Download your clients, sessions, charting, appointments, treatment plans and record-keeping logs as CSV, any time. The export names in writing what it does and does not yet include." },
 ];
 
@@ -67,7 +74,7 @@ export default function HomePage() {
   return (
     <MarketingSurface>
       <SiteHeader />
-      <main className="overflow-x-hidden">
+      <main id="main-content" className="overflow-x-hidden">
         {/* Hero */}
         <Container className="grid items-start gap-12 pb-16 pt-14 lg:grid-cols-[1.05fr_0.95fr] lg:gap-16 lg:pb-24 lg:pt-20">
           <div>

@@ -3,6 +3,15 @@ import { BrowserFrame } from "../ProductFrame";
 // Coded, static calendar-day preview (anonymized demo data) for the
 // booking/calendar feature page. Not animated. Represents the real
 // LIVE_FOR_ALL_ONBOARDED calendar; no invented analytics.
+//
+// NO VIEW-STATE LABEL. This preview previously carried a "Day view" caption
+// beside the date. The calendar's own toggle offers exactly Week and Month
+// (app/(app)/calendar/ViewToggle.tsx), and the single-day column exists only
+// under `md:hidden` (CalendarMobileDayView.tsx) - so on the desktop browser
+// frame this preview depicts, that caption named a state a visitor cannot
+// select. A caption is not worth implying an affordance that is not there, and
+// the alternative (a count of the day's appointments) would be the invented
+// analytic the line above forbids. The date heading carries the context alone.
 
 type Slot = {
   time: string;
@@ -25,7 +34,6 @@ export function CalendarPreview() {
       <div className="px-5 pb-5 pt-4 sm:px-6">
         <div className="flex items-baseline justify-between">
           <p className="text-[0.9375rem] font-semibold text-ink">Today · Tuesday</p>
-          <p className="text-[0.8125rem] text-muted">Day view</p>
         </div>
         <ul className="mt-4 space-y-1.5">
           {SLOTS.map((s) => (

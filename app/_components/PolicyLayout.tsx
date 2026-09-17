@@ -7,6 +7,12 @@ import { MARKETING_PALETTE as PALETTE } from "@/app/_components/marketingNav";
 // Shared shell for /privacy and /terms. Same header + footer as the
 // marketing surfaces; content area uses Fraunces for headings, Inter for
 // body, max-width about 65ch for readability.
+//
+// LANDMARKS (MARKETING-01b). The outer element used to be <main>, which put
+// the header's <nav> and the footer's <contentinfo> INSIDE the main landmark
+// and made "skip to main content" meaningless here - the whole page was main.
+// The shell is now a plain <div>; only the policy <article> is wrapped in
+// <main id="main-content">, matching every other marketing page.
 export function PolicyLayout({
   title,
   effectiveDate,
@@ -19,7 +25,7 @@ export function PolicyLayout({
   children: ReactNode;
 }) {
   return (
-    <main
+    <div
       style={{
         backgroundColor: PALETTE.bg,
         color: PALETTE.ink,
@@ -28,6 +34,7 @@ export function PolicyLayout({
       className="min-h-screen font-[var(--font-inter)]"
     >
       <MarketingHeader />
+      <main id="main-content">
       <article className="px-6 py-16 md:px-12 md:py-24 lg:px-16">
         <div className="mx-auto max-w-[65ch] flex flex-col gap-6">
           <header className="flex flex-col gap-2">
@@ -54,13 +61,14 @@ export function PolicyLayout({
           </div>
         </div>
       </article>
+      </main>
       <MarketingFooter />
       {/* PR #142. PolicyLayout wraps the privacy + terms pages.
           Both are safe marketing routes (no bearer token in URL),
           so SafeAnalytics mounts here. Token routes never use
           PolicyLayout. */}
       <SafeAnalytics />
-    </main>
+    </div>
   );
 }
 
