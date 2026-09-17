@@ -114,6 +114,78 @@ describe("UI-R02 EmptyState: an empty state must say what fills it", () => {
     expect(src).not.toMatch(/description\?: ReactNode;/);
   });
 
+  // ── headingLevel: the title can join the document outline ──────────────
+  //
+  // The gap this closes was INTERNAL to UI-R02, not imported from Astryx:
+  // PageHeader already renders a real <h1>, while EmptyState rendered its
+  // title as a <p>, so an empty state was invisible to heading navigation on a
+  // page whose sibling primitive was not.
+
+  it("headingLevel=2 renders a real h2", () => {
+    const html = render(
+      createElement(EmptyState, { title: "Nothing here", description: "d", headingLevel: 2 }),
+    );
+    expect(html).toMatch(/<h2[^>]*>Nothing here<\/h2>/);
+  });
+
+  it("headingLevel=3 renders a real h3", () => {
+    const html = render(
+      createElement(EmptyState, { title: "Nothing here", description: "d", headingLevel: 3 }),
+    );
+    expect(html).toMatch(/<h3[^>]*>Nothing here<\/h3>/);
+  });
+
+  it("OMITTING headingLevel preserves the non-heading <p> exactly", () => {
+    // The compatibility half: adding the prop must not restructure the outline
+    // of a call site that never opted in.
+    const html = render(createElement(EmptyState, { title: "Nothing here", description: "d" }));
+    expect(html).toMatch(/<p[^>]*>Nothing here<\/p>/);
+    expect(html).not.toMatch(/<h[1-6]/);
+  });
+
+  it("the level changes the OUTLINE and not the typography", () => {
+    // A caller opting into semantics must not be handed a visual change. Both
+    // forms carry the identical class string.
+    const asP = render(createElement(EmptyState, { title: "T", description: "d" }));
+    const asH2 = render(createElement(EmptyState, { title: "T", description: "d", headingLevel: 2 }));
+    const cls = (html: string) => /class="([^"]*)"[^>]*>T</.exec(html)?.[1];
+    expect(cls(asH2)).toBe(cls(asP));
+    expect(cls(asP)).toContain("text-sm font-medium text-fg");
+  });
+
+  it("h1 and malformed levels are unrepresentable — the TYPE is the guard", () => {
+    // Not a runtime check: PageHeader owns the page's single h1, so an empty
+    // state must not be able to claim one. Pinning the union keeps that true.
+    const src = read("components/ui/empty-state.tsx");
+    expect(src).toMatch(/headingLevel\?: 2 \| 3 \| 4 \| 5 \| 6;/);
+    expect(src).not.toMatch(/headingLevel\?: number/);
+  });
+
+  it("does NOT announce itself — no default live region", () => {
+    // An empty state is usually a resting state, not a mid-session change.
+    // role="status" would give every caller announcement semantics none opted
+    // into; a surface that needs one must prove that requirement itself.
+    const html = render(
+      createElement(EmptyState, { title: "a", description: "b", headingLevel: 2 }),
+    );
+    expect(html).not.toContain('role="status"');
+    expect(html).not.toContain("aria-live");
+  });
+
+  it("stays server-safe and dependency-free after the change", () => {
+    const src = code("components/ui/empty-state.tsx");
+    expect(src).not.toMatch(/^\s*["']use client["']/m);
+    for (const hook of ["useState", "useEffect", "useRef", "useTransition"]) {
+      expect(src).not.toContain(hook);
+    }
+    expect(src).not.toMatch(/window\.|document\.|navigator\./);
+    // Only React types and Hone's own cx.
+    const imports = src.match(/^import .*$/gm) ?? [];
+    expect(imports).toHaveLength(2);
+    expect(imports.join(" ")).toContain('from "react"');
+    expect(imports.join(" ")).toContain('from "./control-base"');
+  });
+
   it("reads as an absence, and carries no hand-written dark: pair", () => {
     const html = render(createElement(EmptyState, { title: "a", description: "b" }));
     expect(html).toContain("border-dashed");
