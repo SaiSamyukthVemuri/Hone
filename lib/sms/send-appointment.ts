@@ -23,6 +23,34 @@ import {
  * with only a length CHECK, so these ride the EXISTING alert authority. No
  * parallel alert system is introduced, and `lib/ops/alerts.ts` is untouched.
  */
+/**
+ * TRANSIENT resolution failure is retried IN PROCESS, before giving up.
+ *
+ * WHY THIS EXISTS AT ALL. Confirmation SMS are ONE-SHOT. `app/book/[slug]/
+ * actions.ts` sends inside `postCommit` and `app/(app)/calendar/actions.ts`
+ * awaits once; neither requeues, and the reminder cron covers ONLY
+ * `reminder_24h` / `reminder_2h`, never confirmation. So a momentary DB blip
+ * while resolving the sender would permanently lose a confirmation for a
+ * studio that is correctly configured and has consumed no attempt.
+ *
+ * WHY RETRYING HERE IS FREE. Resolution happens BEFORE `claimSmsSend`, so a
+ * retry costs no part of the three-attempt budget and reaches no provider. The
+ * only cost is a few hundred milliseconds on an already-failing path.
+ *
+ * WHY ONLY `read_failed`. `no_active_sender` and `ambiguous_active_sender` are
+ * CONFIGURATION facts: retrying them just asks the same question and gets the
+ * same answer more slowly. Only an unreadable answer can differ on a second
+ * look.
+ *
+ * WHY NOT A QUEUE. A durable retry queue would need its own table, migration
+ * and delivery semantics — a different unit. This is the smallest thing that
+ * genuinely helps the callers that exist today, and it deliberately does NOT
+ * claim retryability in the return type, because nothing downstream would
+ * reschedule it.
+ */
+const SENDER_RESOLVE_ATTEMPTS = 3;
+const SENDER_RESOLVE_BACKOFF_MS = [60, 180] as const;
+
 const SENDER_REFUSAL_REASON: Record<StudioSenderRefusal, string> = {
   no_active_sender: "sms_sender_not_active_for_studio",
   ambiguous_active_sender: "sms_sender_ambiguous",
@@ -40,11 +68,18 @@ const SENDER_REFUSAL_REASON: Record<StudioSenderRefusal, string> = {
  * Severity is `warning`, matching the give-up alert: the studio cannot send
  * until an operator acts, but no clinical or payment path is blocked.
  */
+/** Small local sleep; no dependency, and trivially fake-timer friendly. */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function logSmsRoutingFailure(opts: {
   appointmentId: string;
   smsType: SmsType;
   studioId: string;
   reason: string;
+  /** True only for `read_failed`, i.e. unreadable rather than unconfigured. */
+  transient: boolean;
 }): void {
   console.error(
     JSON.stringify({
@@ -52,6 +87,7 @@ function logSmsRoutingFailure(opts: {
       appointmentId: opts.appointmentId,
       smsType: opts.smsType,
       reason: opts.reason,
+      transient: opts.transient,
       timestamp: new Date().toISOString(),
     }),
   );
@@ -73,6 +109,12 @@ function logSmsRoutingFailure(opts: {
           // whether a message might have gone out.
           attempt_claimed: false,
           provider_called: false,
+          // TRANSIENT means the sender could not be READ, after retries -- the
+          // studio may well be configured correctly. TERMINAL means the
+          // configuration itself is the problem. The operator action differs,
+          // so the alert says which.
+          transient: opts.transient,
+          resolve_attempts: opts.transient ? SENDER_RESOLVE_ATTEMPTS : 1,
         },
       });
     } catch {
@@ -458,7 +500,20 @@ async function sendOne(args: SendOneArgs): Promise<SmsSendResult> {
   //
   // It also means ZERO PROVIDER CALL: no fetch is issued, so nothing is
   // billed and nothing is half-sent.
-  const routed = await resolveStudioSmsSender(args.admin, args.studio.id);
+  // Bounded retry on TRANSIENT unreadability only. Fail-closed is untouched:
+  // the loop can only end in a resolved sender or a refusal, never in a send.
+  let routed = await resolveStudioSmsSender(args.admin, args.studio.id);
+  for (
+    let attempt = 1;
+    attempt < SENDER_RESOLVE_ATTEMPTS &&
+    !studioSenderAllowsSend(routed) &&
+    routed.reason === "read_failed";
+    attempt += 1
+  ) {
+    await sleep(SENDER_RESOLVE_BACKOFF_MS[attempt - 1] ?? 0);
+    routed = await resolveStudioSmsSender(args.admin, args.studio.id);
+  }
+
   if (!studioSenderAllowsSend(routed)) {
     const reason = SENDER_REFUSAL_REASON[routed.reason];
     logSmsRoutingFailure({
@@ -466,6 +521,7 @@ async function sendOne(args: SendOneArgs): Promise<SmsSendResult> {
       smsType: args.smsType,
       studioId: args.studio.id,
       reason,
+      transient: routed.reason === "read_failed",
     });
     return { ok: false, skipped: true, reason };
   }
