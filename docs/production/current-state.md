@@ -548,16 +548,36 @@ accepting brand-new consultations, because each new client consumes capacity alr
 - Default OFF, exact-slug match only. Clearing the env var is the entire kill switch.
 - Release record: [releases/2026-08-19-willow-new-client-waitlist.md](./releases/2026-08-19-willow-new-client-waitlist.md).
 
-### WAIT-02B Stage A — the durable waitlist. DEPLOYED DARK. Reachable by nobody.
+### WAIT-02B Stage A — the durable waitlist. PUBLIC PATH DARK; the OWNER path is reachable.
 
 **Implemented · merged (PR #629, `48f02389`) · DB applied (migration 0185) · deployed ·
-NOT ENABLED · NOT production exercised.** Human acceptance is **not applicable** at this stage.
+public commit point NOT ENABLED · NOT production exercised.** Human acceptance is **not
+applicable** at this stage.
 
-- The durable table `new_client_waitlist_entries` and both commands
+> ⚠️ **CORRECTED 2026-09-17 — this heading read *"DEPLOYED DARK. Reachable by nobody."* and that
+> is false at `6e264b57`.** It was true of Stage A as shipped, and stopped being true when the
+> owner waitlist surface landed in the twenty-one runtime-bearing merges since `0f07dae6`.
+> **`/settings/waitlist` is reachable by a studio owner today**, and its server actions write
+> durable rows through migration `0193`'s `create_practitioner_waitlist_entry` and
+> `import_legacy_waitlist_entry` — **without consulting the durable allowlist at all**. The
+> action checks `practitioner.role !== "owner"` and then calls those commands with a
+> service-role client; the allowlist governs the **public** commit point and nothing else.
+> **A privacy reviewer must not read this section as "the table cannot collect data."** It can,
+> by the owner's own hand. What remains disabled is *public* self-service joining.
+>
+> Both command families are `service_role`-only at the database (`0185` grants
+> `join_new_client_waitlist` / `remove_new_client_waitlist_entry` to `service_role`; `0193`
+> grants the two owner commands to `service_role`), so neither is reachable by `anon` or
+> `authenticated` directly. Reachability is decided by which **server** surface calls them, and
+> that is what changed.
+
+- The durable table `new_client_waitlist_entries` and both **public** commands
   (`join_new_client_waitlist`, `remove_new_client_waitlist_entry`) **exist in production
   schema**. Migration 0185 is applied and frozen — evidence in
   [migration-ledger.md](./migration-ledger.md).
-- **The table held 0 rows when last measured.** It held 0 at apply verification and **0 on
+- **The table held 0 rows when last measured** — and note that the owner path above is a
+  second way it could have gained rows since, which did not exist when the figure was taken.
+  It held 0 at apply verification and **0 on
   2026-08-23** *(read-only query)*, and **has not been re-measured since**. ⚠️ That is evidence
   for 2026-08-23 and **not** a claim about today: it does not prove the table is empty now, nor
   that no prospect entry has been created since.
@@ -718,8 +738,19 @@ reinterpreted**: `intake_reminder_7d_*` / `intake_reminder_3d_*`, their partial 
 application simply stops writing them.
 
 **SMS is pilot scale only**, env-gated on `TWILIO_*` with a per-studio toggle and per-client
-consent, STOP/HELP handled. Broad-SaaS SMS (A2P/10DLC registration, sender strategy, rate
-limiting) is **not built**.
+consent, STOP/HELP handled. Broad-SaaS SMS (A2P/10DLC registration, rate limiting) is **not
+built**.
+
+> ⚠️ **CORRECTED 2026-09-17 — "sender strategy" has been withdrawn from that list.** The
+> sentence read *"Broad-SaaS SMS (A2P/10DLC registration, **sender strategy**, rate limiting) is
+> not built"*, and a per-studio sender strategy **is** built and deployed inside this baseline:
+> `#673` shipped migration `0191`, the `studio_sms_senders` table and the per-studio
+> provisioning orchestration (a claim that cannot buy two numbers), and `#676` added adoption of
+> a sender a studio already owns, read-then-refuse. **What is NOT wired is the send path** —
+> routing a studio's outbound messages through its own sender is `#674`, which has **not**
+> merged and is declared open above. So the remaining gap is **send-path wiring, A2P/10DLC and
+> rate limiting**, not the absence of a strategy. This is the one §8 claim this refresh
+> re-opened; the rest of the section was not re-derived — see the COVERAGE LIMIT above.
 
 Marketing conversion tracking is deployed but **inert per studio** — no studio has configured
 a provider token, and configuring one is an enablement step, not a default.
