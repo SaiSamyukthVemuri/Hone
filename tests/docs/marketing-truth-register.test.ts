@@ -59,6 +59,22 @@ function declaredHead(): string {
   return m ? m[1] : "";
 }
 
+/**
+ * The production head the register says it last COMPARED itself against.
+ *
+ * Distinct from the build head on purpose. Production moves for reasons that
+ * have nothing to do with marketing copy, and bumping the build head each time
+ * would claim a re-derivation nobody performed — which is the exact defect this
+ * register exists to prevent. So the two are recorded separately: what §0 was
+ * derived at, and how far production has run since.
+ */
+function checkedProductionHead(): string {
+  const m = REGISTER.match(
+    /Production head at last check \| `([0-9a-f]{40})`/,
+  );
+  return m ? m[1] : "";
+}
+
 const PRODUCTION_BRANCH = "claude/build-hone-saas-hOex7";
 
 const SOURCES = publicMarketingSources();
@@ -211,6 +227,34 @@ describe("truth register: provenance is declared, not assumed", () => {
         `origin/${PRODUCTION_BRANCH}`,
       ]),
       `the register declares head ${declaredHead()}, which is not an ancestor of origin/${PRODUCTION_BRANCH}`,
+    ).toBe(true);
+  });
+
+  it("the build head is not ahead of the production head it was compared against", () => {
+    // The register records two heads: what §0 was derived at, and how far
+    // production had run when that was last checked. The first must never be
+    // ahead of the second, or the register is classifying code production has
+    // not got.
+    expect(
+      checkedProductionHead(),
+      "the register must record the production head it was last compared against",
+    ).toMatch(/^[0-9a-f]{40}$/);
+    if (!headObjectPresent()) return;
+    if (!gitOk(["cat-file", "-e", `${checkedProductionHead()}^{commit}`])) {
+      expect(
+        shallowClone(),
+        `the register names production head ${checkedProductionHead()}, which is not a commit here and this clone is NOT shallow`,
+      ).toBe(true);
+      return;
+    }
+    expect(
+      gitOk([
+        "merge-base",
+        "--is-ancestor",
+        declaredHead(),
+        checkedProductionHead(),
+      ]),
+      `the register's build head ${declaredHead()} is not an ancestor of the production head it claims to have been checked against, ${checkedProductionHead()}`,
     ).toBe(true);
   });
 

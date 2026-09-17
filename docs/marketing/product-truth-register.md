@@ -15,6 +15,7 @@ every page and in `lib/marketing/content.ts`.
 |---|---|
 | Built against production head | `a946a983ac9b8da379bc869e21b32a5a3d50e548` |
 | Head resolved | `git rev-parse origin/claude/build-hone-saas-hOex7`, 2026-09-17 |
+| Production head at last check | `4cff4a438f937efc68161b17dca0fb88cf3e3927` (2026-09-17) — see below |
 | Repository migration max | **0198** (derived — `npm run migration:state -- --json`) |
 | Hosted migration max | **0198** (declared — `docs/production/migration-state.json`) |
 | Repo/hosted parity | yes |
@@ -29,6 +30,20 @@ section disagree, **§0 wins**, and where §0 and code disagree, **code wins**.
 **A database capability is not a public product capability.** Every row in §0 was
 re-derived from application code at the head above, not from a table definition and not
 from this register's own earlier revision.
+
+**Production has advanced past the build head, and nothing this register rests on moved.**
+The build head is not bumped to `4cff4a43` here, because bumping it would claim a
+re-derivation that was not performed. What was performed is narrower and is mechanical:
+`git diff --name-only a946a983..4cff4a43` touches **18 deployed files**, every one of them
+an authenticated-app surface (`app/(app)/**`) or a shared UI primitive
+(`components/ui/**`, `components/pending-*.tsx`, `app/globals.css`). It touches **zero**
+files under `lib/`, **zero** under `app/_components/marketing/` or `lib/marketing/`, **zero**
+public route files, and **no migration**. No file §0 cites as evidence — `lib/sessions/
+before-today.ts`, `components/before-today-card.tsx`, `app/(app)/clients/[id]/page.tsx`,
+`lib/dashboard/missing-records-assistant.ts`, `lib/record-keeping/**`,
+`lib/export/resource-registry.ts`, `app/features/charting-records/page.tsx` — is in that
+set. §0 therefore still classifies the code production is running. A change that DOES touch
+one of those files is a change that must re-derive §0 and move the build head together.
 
 ## Classification labels (internal only)
 
