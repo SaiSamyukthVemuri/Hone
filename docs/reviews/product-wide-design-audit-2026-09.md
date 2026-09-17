@@ -109,15 +109,20 @@ version that was first committed, and the review — not CI — is what made it 
 **`[MEASURED FACT]`** Import counts at the baseline SHA, against the hand-rolled
 population each primitive was built to replace:
 
-| Primitive | Files importing it | Competing population |
-|---|---|---|
-| `components/ui/button` | **10** | **469** raw `<button>` elements |
-| `components/ui/control-base` | 8 | 872 `hover:` tokens (536 live, 333 `dark:`) / 250 `focus:` |
-| `components/ui/field` | **3** | **259** `<input>`, 48 `<select>`, 52 `<textarea>` |
-| `components/ui/section-label` | **3** | **132 distinct spellings** of the small-caps label |
-| `components/ui/status-pill` | **1** | **84 distinct pill spellings** |
-| `components/ui/skeleton` | **1** | 4 `animate-pulse` |
-| `components/ui/spinner` | 1 | 3 `animate-spin` |
+**Units matter, and the first draft mixed them.** "Files importing" is not
+comparable to "elements rendered". Both are given; the **call-site column is
+the adoption fraction**, the file column only shows how narrowly each primitive
+has spread.
+
+| Primitive | Files importing | Call sites (`<Name`) | Competing population | Adoption |
+|---|---|---|---|---|
+| `components/ui/button` | 10 | **16** | **469** raw `<button>` elements | **3%** |
+| `components/ui/control-base` | 8 | n/a (exports constants, not a component) | 872 `hover:` tokens (536 live, 333 `dark:`) / 250 `focus:` | n/a |
+| `components/ui/field` | 3 | **49** `<Field` (+14 `<FieldLabel`, 33 `<FieldLine`, 4 `<FieldSection`) | **259** `<input>`, 48 `<select>`, 52 `<textarea>` | **~13%** of raw form controls |
+| `components/ui/section-label` | 3 | not separately counted | **132 distinct spellings** of the small-caps label | not computable in matching units |
+| `components/ui/status-pill` | 1 | **4** | 84 **distinct hand-rolled pill spellings** (a spelling count, not a site count — the rendered-pill population was not counted) | not computable in matching units |
+| `components/ui/skeleton` | 1 | 7 `<Skeleton` | 4 `animate-pulse` | — |
+| `components/ui/spinner` | 1 | not separately counted | 3 `animate-spin` | — |
 
 `control-base.ts` records its own founding census: 5,534 `className` usages
 resolving to 2,008 distinct literal class strings; 236 button call sites spelled
@@ -127,7 +132,10 @@ this baseline are **132**, up from the 68 that file documents.
 
 ## 1.2 Typography
 
-**`[MEASURED FACT]`** **44 distinct type sizes** across `app/` and `components/`.
+**`[MEASURED FACT]`** **46 distinct type-size class spellings** across `app/` and
+`components/`. *(Spellings, not rendered sizes — `text-sm`, `text-[14px]` and
+`text-[0.875rem]` are three spellings of one size. An earlier draft said "44
+distinct type sizes", which was both the wrong figure and the wrong noun.)*
 Eleven are off-ramp arbitrary values used more than 30 times each. The same size
 is spelled up to three ways:
 
@@ -228,9 +236,9 @@ current-section state, visual or semantic.
 
 ## 1.5 Surfaces and density
 
-**`[MEASURED FACT]`** 1,190 rounded corners (`rounded-md` ×760, `rounded-lg` ×215,
+**`[MEASURED FACT]`** **1,197** rounded corners (`rounded-md` ×760, `rounded-lg` ×215,
 `rounded-full` ×175, plus arbitrary `[12px]`, `[8px]`, `[5px]`, `[10px]`, `[6px]`)
-against **41 shadows** and **3,247 `border` utilities** in the whole app.
+against **43 shadow utilities** and **3,247 `border` utilities** in the whole app.
 
 **`[MEASURED FACT]`** The literal string
 `"rounded-lg border border-neutral-200 p-5 dark:border-neutral-800"` appears
@@ -289,9 +297,10 @@ which mixed the numerator's unit (caller sites) with the denominator's
 **`[DESIGN DIAGNOSIS]`** The correction sharpens the diagnosis rather than
 softening it. Hone already has **one correct alert-dialog**, and 3 of 17 overlay
 sites reach it — the same "excellent primitive, almost no adoption" shape as
-`Button` (10 of 469) and `StatusPill` (1 of 84) in §1.1. The overlay problem is
-therefore **adoption and coverage**, not absence: `confirm-dialog` covers the
-*alert* case only, and nothing covers the drawer/sheet case at all.
+`Button` (**16 call sites against 469 raw `<button>` elements — 3%**) in §1.1.
+The overlay problem is therefore **adoption and coverage**, not absence:
+`confirm-dialog` covers the *alert* case only, and nothing covers the
+drawer/sheet case at all.
 
 Counting all 15 implementations, `confirm-dialog` included:
 
@@ -332,7 +341,7 @@ no focus management. The most completely managed overlay in the repository is
 | Signal | Count |
 |---|---|
 | `loading.tsx` route boundaries in the whole app | **0** |
-| `<Suspense>` | 2 |
+| `<Suspense>` boundaries | **1** (`dashboard/page.tsx:853`) |
 | `error.tsx` | 1 (the entire `(app)` group) |
 | `not-found.tsx` | 0 |
 | `<PendingLink>` | **15** |
@@ -342,7 +351,7 @@ no focus management. The most completely managed overlay in the repository is
 | `focus-visible:` | 34 |
 | `focus:` (fires on mouse click too) | **250** |
 | `ease-out` in the entire app | **3** |
-| explicit `duration-*` | 2 |
+| explicit `duration-*` utilities | **1** (`marketing/MobileNav.tsx:91`) |
 | `"use client"` files | **158 of 297 (53%)** |
 
 **`[MEASURED FACT]`** Empty-state copy carries at least six distinct sentences for
@@ -352,8 +361,21 @@ charted yet" / "Not charted yet".
 
 ## 1.8 Responsive
 
-**`[MEASURED FACT]`** `<main className="mx-auto max-w-5xl …">` measures **1024px
-content width at 1280, 1440 and 1920 viewports alike**.
+**`[MEASURED FACT]` — re-measured at head `7a7d593a`.** `<main className="mx-auto
+max-w-5xl px-5 py-8 md:px-8 md:py-10">` under Tailwind's `border-box` sizing:
+
+| Viewport | Border box | Padding | **Usable content** |
+|---|---|---|---|
+| 390 | 390 | 20 + 20 | **350px** |
+| 768 | 768 | 32 + 32 | **704px** |
+| 1280 | 1024 | 32 + 32 | **960px** |
+| 1440 | 1024 | 32 + 32 | **960px** |
+| 1920 | 1024 | 32 + 32 | **960px** |
+
+An earlier draft reported **1024px of content**. That was the element's *border
+box* read straight from `getBoundingClientRect()`; the `md:px-8` padding sits
+inside it. The usable column is **960px — exactly 50% of a 1920px screen**, so
+the finding is slightly worse than first stated, not better.
 
 **`[MEASURED FACT]`** Responsive utilities across 297 files: `sm:` 177, `md:` 128,
 `lg:` 81, **`xl:` 0, `2xl:` 0**.
@@ -423,7 +445,7 @@ no spring library.
 **`[DESIGN DIAGNOSIS]`** The brief anticipated excess: rounded cards, badges,
 gradients, meaningless icons, emoji, decorative microcopy. **The measurements
 invert that expectation.** Hone has zero gradients, seven SVGs in the entire
-product, 41 shadows, and no illustration filler (§1.9).
+product, 43 shadow utilities, and no illustration filler (§1.9).
 
 Hone does not read as AI-generated because it is gaudy. It reads as AI-generated
 because it is **under-decided**: a monochrome, icon-less, motion-less field of
@@ -484,7 +506,7 @@ cross-product reach. Each rests on the §1 facts cited.
    distinct JSX populations, and it omitted `PendingContainerLink` entirely.)*
 9. **44 type sizes whose duplicate spellings disagree on leading** (§1.2) — why
    vertical rhythm feels subtly wrong in places nobody can point at.
-10. **1024px of content on a 1920px screen, and no wide-screen design at all**
+10. **960px of usable content on a 1920px screen, and no wide-screen design at all**
     (§1.8). For software whose core objects are a schedule, a roster, a ledger and
     a log, this is a direct cost — and the marketing site uses the practitioner's
     monitor better than the product does.
@@ -497,8 +519,8 @@ cross-product reach. Each rests on the §1 facts cited.
 |---|---|---|
 | Typography | **INCONSISTENT** | §1.2 |
 | Spacing | **GOOD, drifting** | `gap-2`/`gap-3`, `px-3`/`py-2` genuinely dominate — a rhythm exists. It erodes at half-steps (`gap-1.5` ×191, `py-1.5` ×124), putting the app on a 2pt rather than 4pt grid. **Not worth a new token; worth a composition rule.** |
-| Surfaces | **OVERBUILT + MISSING** | §1.5 — 1,190 corners, a 23× literal card string, no `Card` primitive |
-| Controls | **MISSING in practice** | §1.1 — excellent design, ~5% adoption |
+| Surfaces | **OVERBUILT + MISSING** | §1.5 — 1,197 corners, a 23× literal card string, no `Card` primitive |
+| Controls | **MISSING in practice** | §1.1 — excellent design; `Button` at 16 call sites against 469 raw `<button>` (3%) |
 | Navigation | **INCONSISTENT + MISSING** | §1.4 — seven dialects, no global current state |
 | Forms | **MISSING** | §1.1 — 359 raw form controls, `Field` in 3 files |
 | Tables | **MISSING** | §1.8 — none outside `/admin` |
@@ -590,7 +612,7 @@ Three commitments, none decorative. The proposal is not to *add* identity but to
 let in the identity Hone already owns.
 
 1. **Type carries hierarchy. Line carries structure. Boxes carry almost nothing.**
-   Hone is already hairline-delimited (3,247 borders, 41 shadows — §1.5). Make it
+   Hone is already hairline-delimited (3,247 borders, 43 shadows — §1.5). Make it
    deliberate: a rule plus a weight change should do the work a `rounded-lg border
    p-5` card does today. A container earns its border only when it groups the
    otherwise-ambiguous, or is independently actionable. The proof Hone can already
@@ -641,8 +663,22 @@ and no surface work on a page whose heading scale is about to move underneath it
 | **UI-I** | Motion / perceived-speed | Motion should express a composition that has settled |
 | **UI-J** | Density & canvas, then Identity-return | Both need product authority (§5). Identity-return is last not because it matters least — it may matter most — but because Fraunces lands best on resolved hierarchy |
 
-**UI-G is the only slice with no dependency on the UI-B → UI-C → UI-D → UI-E →
-UI-F spine.** Everything else is serial deliberately.
+**`[PROPOSED TRANSFORMATION]` — corrected at head `7a7d593a`.** An earlier draft
+called UI-G "the only slice with no dependency on the UI-B → UI-C → UI-D → UI-E
+→ UI-F spine". **That contradicted this document's own constraints.** §6.4 makes
+MOTION-01 a precondition for UI-G's sheet work, and MOTION-01 must not start
+before UI-D. So UI-G inherits a UI-D dependency transitively and is **not**
+dependency-free.
+
+The accurate statement is split by portion:
+
+- **UI-G's Dialog/AlertDialog portion** (focus trap, restore, Escape, scroll
+  lock — the correctness debt) has **no dependency on the spine** and may run in
+  parallel with UI-E/UI-F. This is the part that must not slip behind cosmetics.
+- **UI-G's BottomSheet portion** depends on MOTION-01, which depends on UI-D.
+  It cannot precede them.
+
+Everything else is serial deliberately.
 
 ## 4.3 Quick wins — **`[PROPOSED TRANSFORMATION]`**
 
@@ -683,7 +719,7 @@ UI-F spine.** Everything else is serial deliberately.
 | MODAL-QUALITY | Overlays pop into existence, leak Tab, drop focus to `<body>` | Overlays arrive from where they were summoned and restore what they interrupted |
 | STATE-DESIGN | 46 dashed boxes, six sentences for one fact | Absence looks intentional and says one thing |
 | MOTION / SPEED | 536 live hover tokens against 24 press tokens | Every press acknowledged; nothing animates that happens a hundred times a day |
-| DENSITY & CANVAS | 1024px of content on a 1920px monitor | The practitioner's screen is used; a ledger is scannable by column |
+| DENSITY & CANVAS | 960px of usable content on a 1920px monitor — half the screen | The practitioner's screen is used; a ledger is scannable by column |
 | IDENTITY-RETURN | The typeface greets clients and goes quiet for the practitioner | Recognisably Hone on every screen, from type and spacing alone |
 
 ---
@@ -758,8 +794,9 @@ reasoning is inseparable from the three sibling cases rejected alongside it.)*
 `AppointmentPreviewDrawer`, `DragActionChooser`, plus `TreatmentImagesManager`,
 `DoneChartingButton`, `quick-checkout-modal`.
 
-- **Current discontinuity** `[MEASURED FACT]`: 4 of 15 overlays carry any
-  transition (§1.6). `AppointmentPreviewDrawer` is a right-edge panel
+- **Current discontinuity** `[MEASURED FACT]`: **only 2 of 15 overlays transition
+  their container at all** (§1.6), and both are `MobileNav` — so **no overlay in
+  the practitioner app transitions on open or close**. `AppointmentPreviewDrawer` is a right-edge panel
   (`max-w-sm`, 384px — on a 390px phone it covers the day being read) that
   materialises fully formed in place. Nothing says it came from the right edge,
   so nothing says it returns there — which is `[DESIGN DIAGNOSIS]` precisely why
@@ -961,8 +998,129 @@ the wrong geometry, and would have to be re-specified immediately afterwards.
   viewports (390 / 768 / 1280 / 1440 / 1920); computed styles read via
   `getComputedStyle`; contrast resolved through a 1×1 canvas so `oklch()` values
   convert to sRGB before the WCAG ratio is computed
-- **Source counts:** `grep`/`find` over the baseline `app/` and `components/`
-  trees; every figure in §1 is reproducible from that tree alone
+- **Source counts:** produced by the census script below, not by ad-hoc greps.
+  Run it against a clean extract of the baseline and every §1 occurrence count
+  reproduces.
+
+### The census script
+
+**`[MEASURED FACT]`** §1's counts were originally hand-grepped one at a time,
+which is how the over-count modes in §0 got in. They are now the output of one
+script, so a reader can re-derive them rather than trust them — and so a future
+audit at a later SHA can diff against this one.
+
+Running it surfaced three further disagreements with the prose that no reviewer
+had flagged (rounded corners 1,190 → **1,197**; shadows 41 → **43**; type-size
+spellings 44 → **46**, and they are *spellings*, not sizes). Those are corrected
+above. Writing the script also exposed a bug in its own first draft: matching a
+call site as `<Button[^A-Za-z]` silently undercounts, because `grep` works
+line-by-line and a component opened as `<Button` with its props on the following
+line has no trailing character to match. The published form uses
+`<Button([^A-Za-z]|$)`, which restores 6 → 16.
+
+```bash
+#!/usr/bin/env bash
+# Reproducible census for docs/reviews/product-wide-design-audit-2026-09.md §1.
+#
+# Run against a clean checkout of the audit baseline:
+#   git archive 6e264b57 | tar -x -C <dir> && cd <dir> && bash census.sh
+#
+# Every figure is an OCCURRENCE count over app/ and components/ unless the label
+# says "files". Occurrence counts are not affordance counts — see §0.
+set -u
+SRC=(app components)
+INC=(--include=*.tsx)
+n()  { grep -rho "$1" "${SRC[@]}" "${INC[@]}" 2>/dev/null | wc -l; }
+ne() { grep -rhoE "$1" "${SRC[@]}" "${INC[@]}" 2>/dev/null | wc -l; }
+f()  { grep -rl "$1" "${SRC[@]}" "${INC[@]}" 2>/dev/null | wc -l; }
+u()  { grep -rhoE "$1" "${SRC[@]}" "${INC[@]}" 2>/dev/null | sort -u | wc -l; }
+row() { printf '%-46s %6s\n' "$1" "$2"; }
+
+echo "===== FILES ====="
+row "tsx files"                       "$(find "${SRC[@]}" -name '*.tsx' | wc -l)"
+row "tsx lines"                       "$(find "${SRC[@]}" -name '*.tsx' -exec cat {} + | wc -l)"
+row "'use client' files"              "$(f '\"use client\"')"
+
+echo "===== 1.1 PRIMITIVE ADOPTION ====="
+row "files importing ui/button"       "$(f 'components/ui/button\"')"
+row "files importing ui/field"        "$(f 'components/ui/field\"')"
+row "files importing ui/status-pill"  "$(f 'components/ui/status-pill\"')"
+row "files importing ui/section-label" "$(f 'components/ui/section-label\"')"
+row "files importing ui/skeleton"     "$(f 'components/ui/skeleton\"')"
+row "files importing ui/control-base" "$(f 'components/ui/control-base\"')"
+row "<Button call sites (exact)"      "$(ne '<Button([^A-Za-z]|$)')"
+row "<Field call sites (exact)"       "$(ne '<Field([^A-Za-z]|$)')"
+row "<StatusPill call sites"          "$(n '<StatusPill')"
+row "<Skeleton call sites"            "$(n '<Skeleton')"
+row "raw <button"                     "$(n '<button')"
+row "raw <input"                      "$(n '<input')"
+row "raw <select"                     "$(n '<select')"
+row "raw <textarea"                   "$(n '<textarea')"
+
+echo "===== 1.2 TYPOGRAPHY ====="
+row "distinct text-* sizes"           "$(u 'text-(xs|sm|base|lg|xl|[2-7]xl|\[[0-9.]+(px|rem)\])')"
+row "text-sm"                         "$(n 'text-sm')"
+row "text-xs"                         "$(n 'text-xs')"
+row "text-base"                       "$(n 'text-base')"
+row "text-[11px]"                     "$(n 'text-\[11px\]')"
+row "font-medium"                     "$(n 'font-medium')"
+row "font-semibold"                   "$(n 'font-semibold')"
+row "font-bold"                       "$(n 'font-bold')"
+row "font-normal"                     "$(n 'font-normal')"
+row "uppercase"                       "$(n 'uppercase')"
+row "distinct uppercase-label strings" "$(u '\"[^\"]*uppercase[^\"]*\"')"
+
+echo "===== 1.5 SURFACES ====="
+row "rounded-* (all)"                 "$(ne 'rounded-[a-z0-9\[]')"
+row "rounded-md"                      "$(n 'rounded-md')"
+row "rounded-lg"                      "$(n 'rounded-lg')"
+row "rounded-full"                    "$(n 'rounded-full')"
+row "rounded-[5px]"                   "$(n 'rounded-\[5px\]')"
+row "shadow-*"                        "$(ne 'shadow-[a-z0-9\[]')"
+row "border-dashed"                   "$(n 'border-dashed')"
+row "distinct rounded-full+px pills"   "$(u '\"[^\"]*rounded-full[^\"]*px-[^\"]*\"')"
+
+echo "===== 1.6 OVERLAYS ====="
+row "files with aria-modal|role=dialog" "$(grep -rlE 'aria-modal|role=\"dialog\"' "${SRC[@]}" "${INC[@]}" | wc -l)"
+row "files importing confirm-dialog"  "$(grep -rl 'confirm-dialog' "${SRC[@]}" "${INC[@]}" | grep -vc 'components/confirm-dialog.tsx')"
+
+echo "===== 1.7 STATES / MOTION ====="
+row "loading.tsx files"               "$(find app -name 'loading.tsx' | wc -l)"
+row "error.tsx files"                 "$(find app -name 'error.tsx' | wc -l)"
+row "not-found.tsx files"             "$(find app -name 'not-found.tsx' | wc -l)"
+row "<Suspense (code only)"           "$(grep -rn '<Suspense' "${SRC[@]}" "${INC[@]}" | grep -vc '//')"
+row "<Link"                           "$(n '<Link')"
+row "<PendingLink"                    "$(n '<PendingLink')"
+row "<PendingContainerLink"           "$(n '<PendingContainerLink')"
+row "hover: tokens (all)"             "$(n 'hover:')"
+row "dark:hover: tokens"              "$(n 'dark:hover:')"
+row "hover: tokens (live, non-dark)"  "$(ne '(^|[^:a-z-])hover:')"
+row "active: tokens"                  "$(n 'active:')"
+row "focus-visible: tokens"           "$(n 'focus-visible:')"
+row "ease-out"                        "$(n 'ease-out')"
+row "duration-* (class only)"         "$(ne 'duration-[0-9]+')"
+row "dark: tokens (all)"              "$(n 'dark:')"
+row "files containing dark:"          "$(f 'dark:')"
+
+echo "===== 1.8 RESPONSIVE ====="
+row "sm:"                             "$(ne '\bsm:')"
+row "md:"                             "$(ne '\bmd:')"
+row "lg:"                             "$(ne '\blg:')"
+row "xl:"                             "$(ne '\bxl:')"
+row "2xl:"                            "$(ne '\b2xl:')"
+row "<table"                          "$(n '<table')"
+row "<details"                        "$(n '<details')"
+
+echo "===== 1.9 ANTI-SLOP ====="
+row "gradients"                       "$(ne 'bg-(gradient|linear)-to-')"
+row "inline <svg"                      "$(n '<svg')"
+row "backdrop-blur"                   "$(n 'backdrop-blur')"
+row "text-center"                     "$(n 'text-center')"
+row "tabular-nums"                    "$(n 'tabular-nums')"
+
+echo "===== 1.10 IDENTITY ====="
+row "files referencing font-fraunces" "$(grep -rl 'font-fraunces\|--font-fraunces' "${SRC[@]}" "${INC[@]}" | wc -l)"
+```
 
 ### Known-red at this baseline, and NOT caused by this document
 
