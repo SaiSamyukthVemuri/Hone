@@ -213,6 +213,10 @@ export const BROWSER_GROUPS = {
       // as the line above — it measures the shared interaction vocabulary, not
       // one workflow, so any application diff can reach it.
       "ui-r02-danger-press.spec.ts",
+      // UI-02: status text equivalents, proved by computed accessible name.
+      // Same group and reasoning again — an accessibility contract on shared
+      // status marks, reachable from any application diff.
+      "ui02-status-text-equivalent.spec.ts",
       "new-studio-wizard.spec.ts",
       "onboarding.spec.ts",
       "quick-import.spec.ts",

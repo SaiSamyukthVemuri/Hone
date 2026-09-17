@@ -171,11 +171,26 @@ function NotificationRow({
     >
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
         <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+          {/* UI-02 (non-colour-only status). Unread was signalled by exactly two
+              things, and BOTH were invisible to assistive technology: this
+              `aria-hidden` dot, and the row's amber background tint. Nothing in
+              the row said "unread" in words — the only occurrence of the word in
+              this file was a code comment. A screen-reader user could not tell a
+              read notification from an unread one at all.
+
+              The dot stays exactly as it is: its presence/absence is already a
+              non-colour visual cue, so sighted and colour-blind users are served.
+              What was missing was the text equivalent, and the row sits inside a
+              Link, so this text also joins that link's accessible name — it reads
+              "Unread. <title>" rather than just "<title>". */}
           {isUnread && (
-            <span
-              aria-hidden
-              className="mr-2 inline-block h-2 w-2 rounded-full bg-rose-600 align-middle"
-            />
+            <>
+              <span className="sr-only">Unread. </span>
+              <span
+                aria-hidden
+                className="mr-2 inline-block h-2 w-2 rounded-full bg-rose-600 align-middle"
+              />
+            </>
           )}
           {notification.title}
         </p>
