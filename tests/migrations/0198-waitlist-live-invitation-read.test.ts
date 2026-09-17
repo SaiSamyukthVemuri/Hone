@@ -21,12 +21,13 @@ const SQL = readFileSync(path.join(ROOT, "supabase/migrations", fileForVersion(V
 const CODE = SQL.replace(/^\s*--.*$/gm, " ").replace(/comment on [\s\S]*?;/gi, " ");
 
 describe("0198 position in the chain", () => {
-  it("is the repository maximum", () => {
-    // Taken over from 0197, per CLAUDE.md: only the CURRENT max asserts this.
-    expect(isRepoMax(VERSION)).toBe(true);
-  });
-  it("has nothing above it", () => {
-    expect(versionsAbove(VERSION)).toEqual([]);
+  it("is no longer the repository maximum — 0199 is", () => {
+    // HANDED OFF, per CLAUDE.md: only the CURRENT max may assert `isRepoMax`,
+    // and 0199 now holds it. Leaving the claim here would have made this file
+    // red the moment 0199 was authored, which is exactly what happened and is
+    // why this block moved rather than being deleted.
+    expect(isRepoMax(VERSION)).toBe(false);
+    expect(versionsAbove(VERSION)).toEqual(["0199"]);
   });
 
   it("IS APPLIED to production, and is the CURRENT hosted head", () => {
@@ -53,18 +54,18 @@ describe("0198 position in the chain", () => {
     expect(state.pending_migrations).not.toContain(VERSION);
   });
 
-  it("leaves NOTHING pending — repo and hosted are at PARITY at 0198", () => {
-    // The reconciliation's own assertion, and the reason this file changed after
-    // the apply. Before it, this branch was the ordinary MIGRATION-FIRST PENDING
-    // shape: repo one above hosted, `0198` named as the pending suffix. After
-    // it, the pending set is empty and the two numbers are the same one.
+  it("is the HOSTED head while 0199 is authored and PENDING", () => {
+    // Back to the ordinary MIGRATION-FIRST PENDING shape this file described
+    // before the 0198 apply: repo one above hosted, with the new number named
+    // as the pending suffix.
     //
-    // 0199 is merely the next FREE number. It is not allocated, and nothing here
-    // claims it.
+    // 0198 KEEPS the hosted-head claim above, because it remains the applied
+    // head — 0199 is authored here and deliberately NOT applied. The equality
+    // block moves only when 0199 is applied under its own authorization.
     const state = migrationState();
-    expect(state.pending_migrations).toEqual([]);
-    expect(state.repo_equals_hosted).toBe(true);
-    expect(state.next_free_migration).toBe("0199");
+    expect(state.pending_migrations).toEqual(["0199"]);
+    expect(state.repo_equals_hosted).toBe(false);
+    expect(state.next_free_migration).toBe("0200");
   });
 });
 

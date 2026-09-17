@@ -1,14 +1,7 @@
 import { NextResponse } from "next/server";
 import { keysetFilter } from "@/lib/cron/reminder-keyset";
-import {
-  partitionRoutableStudios,
-  refusalsToReport,
-  truncationProven,
-  type StudioRoutability,
-} from "@/lib/cron/reminder-routable-studios";
-import { resolveStudioSmsSender, studioSenderAllowsSend } from "@/lib/sms/studio-sender";
+import { truncationProven } from "@/lib/cron/reminder-routable-studios";
 import { SENDER_REFUSAL_REASON } from "@/lib/sms/send-appointment";
-import { assertDeterministicOrder, fetchAllRows } from "@/lib/export/paginate";
 import type { SmsType } from "@/lib/types/database";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { isAuthorizedCronRequest } from "@/lib/cron/auth";
@@ -84,50 +77,90 @@ const REMINDER_PAGE_SIZE = 50;
  */
 const MAX_SCAN_ROWS = 500;
 
-/**
- * The studios that could send this window's reminders at all.
- *
- * BOUNDED BY STUDIO COUNT, NOT BY BACKLOG. An earlier version enumerated
- * studios by scanning every eligible appointment in the window in 500-row
- * pages before any SMS work began. That defeated the per-run bound the pass
- * exists to honour: a large enough backlog could exhaust the cron's runtime
- * budget before it sent a single routable reminder — and capping that scan
- * would have reintroduced starvation, because a capped prefix of one broken
- * studio's rows yields no routable studios at all.
- *
- * Reading `studios` directly removes the coupling entirely. The set is small,
- * the query is one narrow column, and it is the same toggle the per-row gate
- * already consults — so a studio with the window's SMS toggle off is skipped
- * before a single appointment is read.
- */
-async function toggledStudioIds(studioToggle: string): Promise<string[]> {
-  const admin = createAdminClient();
 
-  // PAGED, BECAUSE POSTGREST SILENTLY CAPS AT `max_rows` (1000).
-  //
-  // An unpaged select returns the first 1000 and says nothing. The studios
-  // beyond that cap would never be resolved, never appear in `onlyStudioIds`,
-  // and therefore lose every reminder on every invocation WITHOUT even
-  // producing a routing alert — the alert only fires for studios this function
-  // returned. That is the silent-loss failure this whole lane exists to
-  // remove, reappearing one layer up.
-  //
-  // `fetchAllRows` is the repository's existing instrument for exactly this
-  // and is all-or-nothing: a failure on page 7 fails the read rather than
-  // returning six pages as if they were the table. `id` is the ordering and
-  // the tiebreak, so pagination cannot duplicate one studio onto two pages
-  // while dropping another.
-  assertDeterministicOrder("studios", ["id"]);
-  const { data, error } = await fetchAllRows<{ id: string }>((from, to) =>
-    admin
-      .from("studios")
-      .select("id")
-      .eq(studioToggle, true)
-      .order("id", { ascending: true })
-      .range(from, to),
-  );
+/**
+ * One bounded page of routable candidates, from migration 0199.
+ *
+ * Two steps, and the second is what keeps the request small: the function
+ * returns only ids and ordering keys, so the hydrating read carries at most
+ * `pageSize` uuids — never the estate. It also returns NO sender identifier,
+ * deliberately, so nothing here can become send authority.
+ */
+/**
+ * Studios that want to send this window and cannot — for ALERTING only.
+ *
+ * Never used to decide anything: it does not gate, filter or authorise. It
+ * exists so that excluding a studio from selection cannot also exclude it from
+ * the operator's view.
+ */
+async function unroutableStudiosWithCandidates(opts: {
+  kind: "24h" | "2h";
+  windowStartIso: string;
+  windowEndIso: string;
+}): Promise<Array<{ studio_id: string; candidate_count: number }>> {
+  const admin = createAdminClient();
+  const { data, error } = await admin.rpc("reminder_sms_unroutable_studios", {
+    p_kind: opts.kind,
+    p_window_start: opts.windowStartIso,
+    p_window_end: opts.windowEndIso,
+    p_limit: UNROUTABLE_ALERT_LIMIT,
+    p_max_attempts: MAX_ATTEMPTS,
+  });
   if (error) throw new Error(error.message);
-  return (data ?? []).map((r) => r.id);
+  return (data ?? []) as Array<{ studio_id: string; candidate_count: number }>;
+}
+
+async function loadRoutableCandidatePage(opts: {
+  kind: "24h" | "2h";
+  windowStartIso: string;
+  windowEndIso: string;
+  after: { startsAt: string; id: string } | null;
+  pageSize: number;
+}): Promise<Joined[]> {
+  const admin = createAdminClient();
+  const { data: picked, error: pickErr } = await admin.rpc(
+    "reminder_sms_candidates",
+    {
+      p_kind: opts.kind,
+      p_window_start: opts.windowStartIso,
+      p_window_end: opts.windowEndIso,
+      p_after_starts_at: opts.after?.startsAt ?? null,
+      p_after_id: opts.after?.id ?? null,
+      p_limit: opts.pageSize,
+      p_max_attempts: MAX_ATTEMPTS,
+    },
+  );
+  if (pickErr) throw new Error(pickErr.message);
+
+  const ids = ((picked ?? []) as Array<{ appointment_id: string }>).map(
+    (r) => r.appointment_id,
+  );
+  if (ids.length === 0) return [];
+
+  const { data, error } = await admin
+    .from("appointments")
+    .select(
+      "*, service:services(name, default_duration_minutes, pre_care_instructions), studio:studios(*), client:clients(name, email, phone, sms_consent_at, sms_opted_out_at), practitioner:practitioners!appointments_practitioner_same_studio_fk(display_name, email)",
+    )
+    .in("id", ids)
+    .order("starts_at", { ascending: true })
+    .order("id", { ascending: true });
+  if (error) throw new Error(error.message);
+
+  return ((data ?? []) as unknown as Array<
+    Appointment & {
+      service: Joined["service"] | Joined["service"][] | null;
+      studio: Studio | Studio[] | null;
+      client: Joined["client"] | Joined["client"][] | null;
+      practitioner: Joined["practitioner"] | Joined["practitioner"][] | null;
+    }
+  >).map((row) => ({
+    ...(row as Appointment),
+    service: pickRel(row.service),
+    studio: pickRel(row.studio),
+    client: pickRel(row.client),
+    practitioner: pickRel(row.practitioner),
+  })) as Joined[];
 }
 
 /**
@@ -180,6 +213,9 @@ function logStudioRoutingRefusal(opts: {
     }
   })();
 }
+
+/** How many unroutable studios one pass alerts about. Bounded like the page. */
+const UNROUTABLE_ALERT_LIMIT = 50;
 
 /** Routing refusals — free of the send budget, by reason, from the helper. */
 const ROUTING_REFUSAL_REASONS: ReadonlySet<string> = new Set([
@@ -235,14 +271,6 @@ async function loadAppointmentsForWindow(opts: {
    */
   after?: { startsAt: string; id: string } | null;
   pageSize?: number;
-  /**
-   * Restrict selection to these studios.
-   *
-   * This is the fairness mechanism: a studio with no usable sender contributes
-   * NO candidate rows, so it cannot occupy the page regardless of how many
-   * appointments it has or how early they sort.
-   */
-  onlyStudioIds?: ReadonlyArray<string> | null;
 }): Promise<Joined[]> {
   const admin = createAdminClient();
   let q = admin
@@ -263,7 +291,6 @@ async function loadAppointmentsForWindow(opts: {
 
   const keyset = keysetFilter(opts.after ?? null);
   if (keyset) q = q.or(keyset);
-  if (opts.onlyStudioIds) q = q.in("studio_id", opts.onlyStudioIds as string[]);
 
   const { data, error } = await q.limit(opts.pageSize ?? PER_RUN_LIMIT);
   if (error) throw new Error(error.message);
@@ -656,51 +683,43 @@ async function sendSmsReminderPass(opts: {
   };
   const smsAppOrigin = getRequiredAppOrigin();
 
-  // FAIRNESS: resolve each candidate studio ONCE, then select only from the
-  // studios that can actually send. An unroutable studio contributes no rows,
-  // so it cannot occupy the page — the starvation has no surface left.
-  const studioIds = await toggledStudioIds(studioToggle);
-  const resolutions: StudioRoutability[] = [];
-  for (const studioId of studioIds) {
-    const r = await resolveStudioSmsSender(admin, studioId);
-    resolutions.push(
-      studioSenderAllowsSend(r)
-        ? { studioId, routable: true }
-        : { studioId, routable: false, reason: SENDER_REFUSAL_REASON[r.reason] },
-    );
-  }
-
-  // REPORT BEFORE EXCLUDING.
+  // THE SIGNAL THE FILTER WOULD OTHERWISE SWALLOW.
   //
-  // Filtering an unroutable studio out of selection means its rows never reach
-  // `sendOne`, which is the ONLY path that records the durable `sms_sender_*`
-  // alert. Without this, the fairness repair would trade starvation for
-  // SILENCE: a studio with a missing, ambiguous or unreadable sender would lose
-  // every reminder while producing no operator signal at all — strictly worse,
-  // because a starving studio at least alerted on the rows it did reach.
-  //
-  // Once per studio per pass, not once per row, and 0194's partial unique index
-  // collapses repeats into one open alert per (studio, event) — the dedupe an
-  // earlier repair taught the recorder to report as expected rather than failed.
-  const smsTypeForPass: SmsType =
-    opts.kind === "24h" ? "reminder_24h" : "reminder_2h";
-  for (const refusal of refusalsToReport(resolutions)) {
+  // Server-side filtering is what makes the pass fair and bounded, and on its
+  // own it makes unroutable studios INVISIBLE: their rows never reach the send
+  // helper, which is the only path that reports a routing refusal. So the
+  // filter's complement is read explicitly — studios that HAVE candidates this
+  // window and CANNOT send — and reported once each, before any send work.
+  // Bounded by the same ceiling as the candidate page.
+  for (const row of await unroutableStudiosWithCandidates({
+    kind: opts.kind,
+    windowStartIso: opts.windowStartIso,
+    windowEndIso: opts.windowEndIso,
+  })) {
     logStudioRoutingRefusal({
-      studioId: refusal.studioId,
-      smsType: smsTypeForPass,
-      reason: refusal.reason,
+      studioId: row.studio_id,
+      smsType: opts.kind === "24h" ? "reminder_24h" : "reminder_2h",
+      // The pass cannot know WHICH refusal the resolver would give without
+      // asking per studio, which is the estate enumeration this removed. The
+      // condition it CAN prove is that no active sender row exists, which is
+      // exactly `no_active_sender`.
+      reason: "sms_sender_not_active_for_studio",
     });
   }
 
-  const { routable, unroutable } = partitionRoutableStudios(resolutions);
-
-  // Nothing can send this pass. Not an error — an unprovisioned estate is a
-  // configuration fact, and every refusal above has already been reported.
-  if (routable.length === 0) {
-    stats.skipped += unroutable.length;
-    return stats;
-  }
-
+  // CANDIDATE SELECTION IS SERVER-SIDE (migration 0199).
+  //
+  // The database answers "which appointments in this window belong to a studio
+  // that presently satisfies the routing prerequisite", bounded, keyset-paged,
+  // newest-first. The application no longer enumerates the estate, no longer
+  // issues one resolver round trip per studio, and no longer carries a list of
+  // studio uuids through a request URL.
+  //
+  // BEING RETURNED IS NOT PERMISSION TO SEND. Every row still passes the
+  // unchanged send law below: consent/toggle/STOP, then re-resolve that
+  // studio's sender, then refuse on anything except exactly one usable sender,
+  // and only then claim. A studio whose routing changes between selection and
+  // send is refused there, fail-closed.
   // Keyset cursor over (starts_at, id); see the batch-starvation note above.
   let cursor: { startsAt: string; id: string } | null = null;
   let sendWork = 0;
@@ -709,17 +728,15 @@ async function sendSmsReminderPass(opts: {
   let exhausted = false;
 
   pages: while (sendWork < PER_RUN_LIMIT && scanned < MAX_SCAN_ROWS) {
-    const page = await loadAppointmentsForWindow({
-      startIso: opts.windowStartIso,
-      endIso: opts.windowEndIso,
-      notSentColumn: sentColumn,
-      attemptsColumn,
+    // +1 LOOKAHEAD. A full page is NOT proof that more candidates existed: a
+    // set of exactly REMINDER_PAGE_SIZE rows fills the page and ends.
+    // Truncation may only be claimed when a further row was actually seen.
+    const page = await loadRoutableCandidatePage({
+      kind: opts.kind,
+      windowStartIso: opts.windowStartIso,
+      windowEndIso: opts.windowEndIso,
       after: cursor,
-      // +1 LOOKAHEAD. A full page is NOT proof that more candidates existed:
-      // a set of exactly REMINDER_PAGE_SIZE rows fills the page and ends.
-      // Truncation may only be claimed when a further row was actually seen.
       pageSize: REMINDER_PAGE_SIZE + 1,
-      onlyStudioIds: routable,
     });
     const hasMore = truncationProven({
       returned: page.length,
