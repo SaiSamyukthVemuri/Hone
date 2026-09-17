@@ -23,23 +23,27 @@ not a PR diary — per-capability evidence lives in
 
 | Field | Value |
 |---|---|
-| **Reconciliation date** | 2026-08-30 |
+| **Reconciliation date** | 2026-09-17 |
 | **Production branch** | `claude/build-hone-saas-hOex7` |
-| **Current Git branch HEAD** | `bf6f09c4a987e0e251f414bdf5dfc520c5d02d42` — the PR #660 merge (CI-HARDEN-01B: every action pinned to a vetted SHA, `contents: read`, checkout token no longer persisted). Query GitHub for the live value; documentation-only commits may have advanced it since. |
-| **Last runtime-bearing application HEAD** | **`0f07dae68efe06d493421af715cb0b7234153de9` — the PR #659 merge, and DELIBERATELY NOT the branch head above.** Derived mechanically, not asserted: the **nine** merges from the previous baseline `4fee652f` through `#659` (`#651`, `#653`, `#652`, `#654`, `#655`, `#656`, `#657`, `#658`, `#659`) change **21** deployed files across `app/`, `components/` and `lib/` — classified by `scripts/classify-changes.mjs`, the same map CI uses. Every one of those nine is runtime-bearing. The **two** merges since (`#631` canonical docs reconciliation, `#660` CI-HARDEN-01B) change **13** files — documentation, CI workflows and tests — and **not one deployed file**, so the branch advanced while the runtime baseline did not. **This is the baseline for every behavioural claim in this document.** |
-| **Current Vercel Production deployment** | ⚠️ **NO DEPLOYMENT ID READ.** The Vercel commit status for `0f07dae6` reports **success**, and that status is the whole of the evidence that a production deployment for this head succeeded — no deployment id, alias or runtime probe was read, and none is asserted. |
+| **Current Git branch HEAD** | `6e264b571c5d2b21358ca95b9ae058835ce2c9b1` — the PR #710 merge (UI-R01 interaction foundations: press acknowledgement, a shared spinner, the pending button). Query GitHub for the live value; documentation-only commits may have advanced it since. |
+| **Last runtime-bearing application HEAD** | **`6e264b571c5d2b21358ca95b9ae058835ce2c9b1` — the PR #710 merge, which at this reconciliation is the SAME commit as the branch head above.** They are still two facts and still two rows: the last refresh found them apart, this one finds them together, and equality today is a finding rather than a licence to collapse them. Derived mechanically, not asserted: **twenty-seven** merges landed between the previous baseline `0f07dae6` and this head. **Twenty-one** are runtime-bearing and **six** are not — `#631` (canonical docs reconciliation), `#660` (CI-HARDEN-01B), `#672` (FIN domain contract), `#675` (the 0191 apply record), `#707` (onboarding runbook) and `#714` (roadmap sync) touch no deployed path at all. Across the twenty-one, **136** deployed files changed — classified by `scripts/classify-changes.mjs`, the same map CI uses, under the same ships/does-not-ship decision `tests/docs/canonical-production-facts.test.ts` rule A3 applies. The newest merge, `#710`, is itself runtime-bearing, which is why the two rows meet here. **This is the baseline for every behavioural claim in this document** — and see *What this reconciliation did and did not measure* for the per-capability coverage this refresh did **not** extend to those twenty-one. |
+| **Current Vercel Production deployment** | ⚠️ **NO DEPLOYMENT ID READ.** The Vercel commit status for `6e264b57` reports **success** (read from the GitHub combined status for that commit on **2026-09-17**), and that status is the whole of the evidence that a production deployment for this head succeeded — no deployment id, alias, domain alias or runtime probe was read, and none is asserted. A commit status says a build reported success, not that traffic is being served by it. |
 | **Migration state** | **This document deliberately states no migration number.** Hosted max is declared once, machine-readably, in [`migration-state.json`](./migration-state.json). Repository max, total applied and the next free number are **derived** — run `npm run migration:state`. The current reconciled position, with checksums and apply evidence, is [migration-ledger.md](./migration-ledger.md) under *Current state*. A number copied into this table is a number that goes stale on the next apply; that is how the `0160`/`0163`/`0165` divergence happened. |
 | **Database vs. application skew** | **This document asserts no parity, pending or remote-only claim of its own.** It previously declared the two states equal and the pending set empty, and went stale the moment a reviewed migration was authored above hosted — the same second-copy failure this table already avoids for migration NUMBERS. Derive the relationship with `npm run migration:state`; hosted state is declared once in [`migration-state.json`](./migration-state.json); the reconciled position with apply evidence is [migration-ledger.md](./migration-ledger.md) under *Current state*. **A repository maximum ABOVE hosted is the normal state of an authorized migration-first apply** — reviewed migration authored, production not yet advanced — and is not by itself skew. What would be skew is a **remote-only** migration (hosted above repo), which the derivation reports and the canonical guard forbids. |
 | **Production Supabase project** | The single production project. Always re-read the linked ref from `supabase/.temp/project-ref` (gitignored) and verify with `supabase migration list --linked` before trusting any number here. **No credentials are recorded in documentation.** (The project ref itself appears in at least one older repo document, so treat it as an operational identifier rather than a secret — but do not add new copies of it.) |
-| **Health** | ⚠️ **NOT RE-PROBED AT THIS RECONCILIATION.** The last probe was **2026-08-23**: `hone.care` **200** · `/login` **200** · `/dashboard` **307** (auth redirect) · `/api/health` **307**, all non-5xx, `ops_alerts` unresolved **4** (§13). Those readings describe a runtime **twenty-seven merges old** and are retained as dated evidence, not as current health. |
-| **Tenant posture** | **Six studios in three classes — one real-customer, one controlled test, one synthetic, three empty.** Real-customer activity is **Willow Electrolysis only**. See **§0**, which is the canonical tenant register; do not restate its counts elsewhere. ⚠️ **Every tenant count in §0 was measured 2026-08-23 and was NOT re-measured on 2026-08-26** — see *What this reconciliation did and did not measure* below. |
+| **Health** | ⚠️ **NOT RE-PROBED AT THIS RECONCILIATION.** The last probe was **2026-08-23**: `hone.care` **200** · `/login` **200** · `/dashboard` **307** (auth redirect) · `/api/health` **307**, all non-5xx, `ops_alerts` unresolved **4** (§13). Those readings describe a runtime **fifty-four merges old** — the full first-parent ancestry from `b9e0003f` to this head — and are retained as dated evidence, not as current health. |
+| **Tenant posture** | **Six studios in three classes — one real-customer, one controlled test, one synthetic, three empty.** Real-customer activity is **Willow Electrolysis only**. See **§0**, which is the canonical tenant register; do not restate its counts elsewhere. ⚠️ **Every tenant count in §0 was measured 2026-08-23 and has NOT been re-measured at any reconciliation since — including this one** — see *What this reconciliation did and did not measure* below. |
 | **Next operational gate** | The **deep production / security / code audit** (still not performed against this baseline). **Chloe's human acceptance testing** remains outstanding and is **independent** — see §15. |
 
 ### Immediately preceding runtime baseline
 
-`4fee652fe67f9fdc06b7d5e719cdb73d5e6d294b` — the PR #649 merge (UI-01D, Client Profile tab
-acknowledgement), the baseline this document carried before the 2026-08-30 refresh. Its code
-remains live because the nine merges above were built on top of it.
+`0f07dae68efe06d493421af715cb0b7234153de9` — the PR #659 merge (PERF-02C, the client-profile
+overview clinical wave), the baseline this document carried before the 2026-09-17 refresh. Its
+code remains live because the twenty-one runtime-bearing merges above were built on top of it.
+
+The baseline before *that* was `4fee652fe67f9fdc06b7d5e719cdb73d5e6d294b` — the PR #649 merge
+(UI-01D, Client Profile tab acknowledgement). Both are retained so the chain of baselines can be
+walked without consulting an earlier revision of this file.
 
 ### What this reconciliation did and did not measure
 
@@ -47,22 +51,43 @@ remains live because the nine merges above were built on top of it.
 repository and the Git graph, and it re-measured **nothing** in the production database, at
 Vercel, or at any provider. It has been refreshed to each production head in turn —
 `8418a755` (#648), `5ad81129` (#646) and `4fee652f` (#650, #649) on 2026-08-27, then
-`0f07dae6` (#651, #653, #652, #654, #655, #656, #657, #658, #659) on 2026-08-30 — **the
-measurement boundary below is unchanged by any of those refreshes — production moving is not
-a reason to restate a figure nobody re-read.** Read the two lists as a boundary, not as a
-caveat:
+`0f07dae6` (#651, #653, #652, #654, #655, #656, #657, #658, #659) on 2026-08-30, then
+`6e264b57` on 2026-09-17 — **the measurement boundary below is unchanged by any of those
+refreshes — production moving is not a reason to restate a figure nobody re-read.** Read the
+two lists as a boundary, not as a caveat:
 
-**Re-derived on 2026-08-30, from the repository at `bf6f09c4`:**
+**Re-derived on 2026-09-17, from the repository at `6e264b57`:**
 
-- the production branch head and the full merge ancestry back to `b9e0003f` (twenty-nine merges);
-- the nine merges since the previous baseline `4fee652f`, and that **all nine are
-  runtime-bearing** (none is documentation-only), by changed-path analysis;
-- which of those merges are runtime-bearing, by changed-path analysis;
+- the production branch head, checked against the live `claude/build-hone-saas-hOex7` ref rather
+  than read out of this document;
+- the full merge ancestry back to `b9e0003f` (fifty-four merges);
+- the twenty-seven merges since the previous baseline `0f07dae6`, and which of them are
+  runtime-bearing — **twenty-one are, six are not** — by changed-path analysis through
+  `scripts/classify-changes.mjs`;
+- that the last of the twenty-seven is itself runtime-bearing, which is why the branch head and
+  the runtime pin name one commit at this reconciliation;
+- which production PRs referenced anywhere in this document have actually merged, by looking for
+  a merge commit reachable from the production head rather than by asking GitHub for a PR state;
 - repository migration max, total, next free number and pending set (`npm run migration:state`);
 - hosted migration max as **declared** in [`migration-state.json`](./migration-state.json);
-- every capability status below that rests on merged source, migrations or tests.
+- the export registry's disposition counts in §12, re-counted from
+  `lib/export/resource-registry.ts` rather than carried forward;
+- every capability status below that rests on merged source, migrations or tests **and that this
+  refresh actually re-read** — see the coverage limit immediately below.
 
-**NOT measured on 2026-08-30, and therefore carried forward with their original 2026-08-23
+> ⚠️ **COVERAGE LIMIT — the spine was re-derived, the capability sections were not extended.**
+> This refresh re-derived the reconciliation header, the merge classification, the open-PR
+> relationships and the repository-derived counts. It did **not** write per-capability sections
+> for the **twenty-one** runtime-bearing merges between `0f07dae6` and `6e264b57`: `#647`,
+> `#662`, `#663`, `#664`, `#670`, `#673`, `#676`, `#669`, `#667`, `#678`, `#684`, `#690`, `#696`,
+> `#697`, `#702`, `#706`, `#708`, `#709`, `#713`, `#712`, `#710`. Their per-PR record is in
+> [release-changelog.md](./release-changelog.md), which this refresh did extend. **Read the
+> absence of a section below as "not yet written up here", never as "not shipped"** — the
+> converse of the rule that governs the open-PR table, and the same class of error. Sections
+> **§12** and **§16** were corrected where `#647` made a standing claim false; no other section
+> was re-opened.
+
+**NOT measured on 2026-09-17, and therefore carried forward with their original 2026-08-23
 stamps rather than restated as current:**
 
 - every per-studio row count in §0, and every derived figure that depends on them;
@@ -76,16 +101,42 @@ stamps rather than restated as current:**
   production latency claim is made anywhere in this document.
 
 A figure with a 2026-08-23 stamp is **evidence of what was true on 2026-08-23**. It is not a
-claim about today, and a later reader must re-measure before treating it as one.
+claim about today, and a later reader must re-measure before treating it as one. **Twenty-five
+days and fifty-four merges now sit between that stamp and this header**, which widens the gap
+without changing what the figures are: dated evidence, not current readings. Nothing on that
+list was re-read on 2026-09-17, and no figure on it was edited by this refresh.
 
 ### Open pull requests are not production
 
 **No open PR is described as shipped anywhere in this document.** At this reconciliation:
 
+> ⚠️ **The previous revision of this table was wrong in the other direction, and that is worth
+> recording rather than quietly deleting.** It declared **`#647`** (TRUTH-01B-1) **OPEN and a
+> DRAFT** — in the very commit that merged `#647` into production. A shipped PR sitting in the
+> open table is the same falsehood as an open PR called shipped, and production moving produces
+> it by default. It survived because the rule that catches it needs real Git history and CI
+> clones with `fetch-depth: 1`, so the check **skips in CI** and only fails locally, under
+> `npm run verify:prepush` or `npm run verify:changed`. **Green CI is not evidence that this
+> table is true.** `#647` is now recorded where it belongs: merged, in
+> [release-changelog.md](./release-changelog.md), and its effect on the export is in §12.
+
+**Which PRs get a row, stated so the selection is not mistaken for the whole set.** A row is
+written when an open PR **extends a capability this document already describes as shipped**, so
+a reader could otherwise take the description below for coverage of it. Open PRs that build
+tooling, tests or CI, and open PRs stacked on another open PR (which cannot reach production
+without their base), are deliberately **not** listed. That is a selection rule, not a census —
+derive the complete set with
+`gh pr list --state open --base claude/build-hone-saas-hOex7`.
+
 | PR | State | Why it is not production |
 |---|---|---|
-| **TRUTH-01B-1** — the first export-payload slice | **IN DEVELOPMENT**, no PR merged (carried by draft #647) | The registry and the disclosure landed in TRUTH-01A; **the export payload is byte-for-byte unchanged**, so nothing here is live. See §12. |
-| **#647** — TRUTH-01B-1, the joinable archive | **OPEN**, and a **DRAFT** | Parked. `#648` records it as untouched. Nothing here is live. |
+| **#666** — FIN-01A Slice 2, an owner Business domain and delivered-money truth | **OPEN**, not merged | §10b describes FIN-01A **Slice 1** only. Slice 2 is not an ancestor of the production head, so no part of it is live. |
+| **#674** — COMMS-01B2, send a studio's messages from that studio's own number | **OPEN**, not merged | §8 describes the sender provisioning that merged (`#673`, `#676`). Routing the send path through the studio's own number has **not** merged. |
+| **#677** — let an operator fix the two webhooks adoption refuses to touch | **OPEN**, not merged | The adoption path in §8 is deliberately read-then-refuse. The operator repair for the webhooks it will not touch is unmerged; nothing here is live. |
+| **#704** — CHART-SESSION-01, an inert zero/one/many chart resolver | **OPEN**, and a **DRAFT** | Groundwork only by its own statement — no DB, CTA withheld. Nothing reaches a practitioner and nothing here is live. See §1. |
+| **#705** — IDOR/BOLA object-authorization audit | **OPEN**, and a **DRAFT** | An audit report, not a change. §16 still records the deep audit as **not performed against this baseline**, and this PR does not close it. |
+| **#711** — close the grant-guard blind spots (`#705` P2-01, P2-02) | **OPEN**, and a **DRAFT** | Tests for the two coverage gaps `#705` raised. Unmerged, so neither gap is closed in production. |
+| **#715** — WAIT S3 Part 1, a fail-closed studio sender resolver | **OPEN**, and a **DRAFT** | Its own title says S3 is **NOT** complete and the send path is **NOT** rewired. Nothing in §5b or §8 rests on it. |
 
 > **No head SHA is recorded for an open PR, deliberately.** An open branch's head moves whenever
 > it is pushed to, so a SHA written here is stale the moment it is useful — the same defect this
@@ -187,7 +238,7 @@ surfaces then made affirmative clinical statements nobody had read: *Last visit*
 Intelligence* reported every stat as a known zero, and *Before today* reported no watch or plan
 notes and a complete procedure record.
 
-At `0f07dae6` all four check `unavailable` **before** `hasHistory`, and
+At `6e264b57` all four check `unavailable` **before** `hasHistory`, and
 `session_blocks.caution_for_next_session` / `caution_note` — which reach the practitioner only
 through the Watch/Plan band built from that same read — are protected on both the Overview and
 Sessions tabs. Read failure now renders *clinical history could not be loaded*.
@@ -851,19 +902,47 @@ recorded here as a shape rather than as three exact integers** — the registry 
 and a hand-copied count is the very drift this whole reconciliation exists to stop:
 
 - **exported** — in the ZIP, with its file, headers, in-scope columns and row-count verification
-  stated. Roughly **sixteen** resources.
-- **excluded** — a decision on the record with its reason. Roughly **eighteen**.
+  stated. Roughly **twenty** resources.
+- **excluded** — a decision on the record with its reason. Roughly **seventeen**.
 - **pending** — studio-owned, **not** exported, and nobody pretending otherwise. Roughly
-  **fifty-nine**, each carrying a ticket (`TRUTH-01B`, or `TRUTH-01C` for a small tail) and a
+  **sixty**, each carrying a ticket (`TRUTH-01B`, or `TRUTH-01C` for a small tail) and a
   tier. The Data settings page and the in-ZIP manifest **render this list**, so an owner is told
   what the archive does not carry.
 
-> ⚠️ **The export PAYLOAD is byte-for-byte unchanged.** TRUTH-01A added no file, no table and no
-> column. `tests/app/settings/data/export-emission-parity.test.ts` builds a real archive and
-> pins every header row against base `a1639a84` column-for-column. **The export is still
-> partial.** What changed is that its incompleteness is now declared, tested and shown to the
-> owner instead of being invisible. **TRUTH-01B is what changes the payload, and it is not
-> shipped.**
+*(Counts re-derived on 2026-09-17 by counting dispositions in `lib/export/resource-registry.ts`
+at `6e264b57`, not carried forward. They moved because TRUTH-01B-1 shipped — see below. They are
+still stated as a shape: the registry is the authority and a hand-copied integer is the drift this
+whole reconciliation exists to stop.)*
+
+<!-- canonical-facts:ignore-start reason=quotes-the-superseded-truth-01b-unshipped-claim -->
+> ⚠️ **SUPERSEDED BY `#647`, AND PRESERVED SO THE CORRECTION IS VISIBLE.** Through the 2026-08-30
+> reconciliation this block read: *"The export PAYLOAD is byte-for-byte unchanged. TRUTH-01A added
+> no file, no table and no column … **TRUTH-01B is what changes the payload, and it is not
+> shipped.**"* Every clause of that was true of **TRUTH-01A**. The last one stopped being true of
+> production on **2026-08-30**, when `#647` merged at `1d6d7c48`; the sentence was left standing
+> for eighteen days because the same commit that shipped `#647` also declared it open above.
+<!-- canonical-facts:ignore-end -->
+
+> ✅ **The export payload HAS changed, and TRUTH-01B-1 is what changed it.** `#647` (merge
+> `1d6d7c48`) is an ancestor of the production head. It added **five files** —
+> `services.csv`, `client_consent_signatures.csv`, `probe_lots.csv`, `service_practitioners.csv`
+> and `treatment_goals.csv` — and **twenty-seven columns** across seven existing CSVs, using only
+> data already in the database and only the registry / executed-SELECT / provenance / emission
+> machinery that shipped with TRUTH-01A. **No schema, no migration, no RPC, no object-storage and
+> no policy change.** Two column-level facts are worth carrying because they are the ones a reader
+> would otherwise get wrong: `deleted_at` now reaches `electrolysis_entries.csv` and
+> `laser_entries.csv`, so a soft-deleted charting entry is no longer indistinguishable from a live
+> one — rows are still **not** dropped; and `sessions` gained `appointment_id` and
+> `treatment_plan_id`, without which the exported sessions, appointments and treatment-plan files
+> could not be joined to one another at all.
+>
+> **TRUTH-01A's own parity claim is unchanged and still means what it said** — TRUTH-01A added no
+> file and no column. `tests/app/settings/data/export-emission-parity.test.ts` still builds a real
+> archive and pins every emitted header row column-for-column; what it pins is the payload as
+> `#647` left it, so the base it names is no longer the `a1639a84` that TRUTH-01A was measured
+> against. **The export is still partial** — roughly sixty resources remain `pending`, and the
+> Data settings page and in-ZIP manifest still render that list. **TRUTH-01B is not finished**;
+> its first slice shipped.
 
 **Two withdrawals are recorded rather than glossed.** The application-source reachability
 analyser TRUTH-01A originally carried was **withdrawn** as insufficiently robust, and nothing
@@ -916,9 +995,13 @@ the durable waitlist that is no longer accurate: Stage B1 replaced the build-tim
 with a report-only gate, so what keeps it dormant is now **runtime allowlist membership**, and
 it takes two allowlists rather than one. It is dormant by configuration, not by structure.)*
 
-**Shipped since the previous reconciliation, and NOT production-exercised:** non-card
-appointment settlement (§7 — 0 rows) · `/dashboard/capacity` (§10b — no usage measured) ·
-WAIT-02B Stage B1 (§5b — no studio enabled).
+**Shipped and NOT production-exercised, as classified at the 2026-08-30 reconciliation:**
+non-card appointment settlement (§7 — 0 rows) · `/dashboard/capacity` (§10b — no usage
+measured) · WAIT-02B Stage B1 (§5b — no studio enabled). ⚠️ **This list was NOT re-derived on
+2026-09-17 and is not a current census.** Exercise is a property of production data, and nothing
+in production was read at this reconciliation; the twenty-one runtime-bearing merges since
+`0f07dae6` have therefore not been classified for exercise in either direction. Read this as
+three dated findings, not as "and nothing else shipped".
 
 **Retired by product decision (2026-07-29), enforced by migration 0159:** signed / finalized
 clinical records · signed-record corrections and amendments · practitioner-facing Finalize and
@@ -960,9 +1043,11 @@ independent dimensions, and only an explicit statement from Chloe closes the sec
    the audit.
 2. **The deep production / security / code audit.** Still not performed against this baseline.
    This remains the next substantive engineering and governance work.
-3. **TRUTH-01B — change the export payload.** TRUTH-01A made the gap declared and testable;
-   roughly fifty-nine studio-owned resources are still unexported and each carries a ticket.
-   See §12.
+3. **TRUTH-01B — finish changing the export payload.** TRUTH-01A made the gap declared and
+   testable and **TRUTH-01B-1 has shipped** (`#647`, merge `1d6d7c48`): five new files and
+   twenty-seven columns, no schema and no migration. Roughly **sixty** studio-owned resources
+   are still unexported, each carrying a ticket. What remains is the rest of TRUTH-01B, not its
+   first slice. See §12.
 4. **Broader second-studio and multi-practitioner rollout** — only after the audit and explicit
    authorization.
 5. **WAIT-02B Stage B2 (activation)** — requires an explicit per-studio operator GO and human

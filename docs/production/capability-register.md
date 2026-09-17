@@ -4,12 +4,16 @@
 [current-state.md](./current-state.md). Where the two disagree, re-verify both against
 production; neither document is evidence for the other.
 
-- **Reconciled:** 2026-08-27
+- **Reconciled:** 2026-08-27. **§15's merge derivation alone was refreshed 2026-09-17** to
+  the production head `6e264b57`; no capability status below was re-opened on that date.
 - **Runtime-bearing baseline:** the application HEAD recorded in
   [current-state.md](./current-state.md) *Reconciliation header* — **the single authority for
-  that SHA, which is deliberately not copied here.** At this reconciliation the branch HEAD and
-  the runtime-bearing HEAD are the **same commit**, which is unusual enough to state rather than
-  leave implied. *(⚠️ **Corrected 2026-08-27.** This bullet used to name the PR and its runtime
+  that SHA, which is deliberately not copied here.** On **2026-09-17** the branch HEAD and the
+  runtime-bearing HEAD were again the **same commit**, which is worth stating rather than leaving
+  implied — but note it is a coincidence that comes and goes: they were **apart** on 2026-08-30,
+  and this bullet asserted the coincidence throughout, because it said "at this reconciliation"
+  and nobody re-read it when production moved. Prefer the authority to this sentence.
+  *(⚠️ **Corrected 2026-08-27.** This bullet used to name the PR and its runtime
   file count — "PR #644, TRUTH-01A, which changes eight runtime files" — and went stale across
   two production moves while the SHA beside it was correctly referenced rather than copied. The
   **identifier** was not the only thing that could rot: any restated particular can. Only the
@@ -287,18 +291,30 @@ and equally, do not restate that dated zero as a present-tense fact: it is evide
 
 ## 15. Capabilities added since the 2026-08-23 reconciliation
 
-**Twenty-nine** production merges landed between `b9e0003f` and the current branch head. **Ten**
-carry a capability that belongs in this register.
+**Fifty-four** production merges landed between `b9e0003f` and the current branch head. **Ten**
+carry a capability that belongs in this register — **and that ten is a count of what this table
+lists, not a finding about all fifty-four.** Read the decomposition before the pairing.
 
 **Those two numbers are derived over different spans, and saying so is the point.** The
-twenty-nine decompose exactly, by `git log --first-parent --merges b9e0003f..bf6f09c4`:
+fifty-four decompose exactly, by `git log --first-parent --merges b9e0003f..6e264b57`:
 
 | Group | Merges | Capabilities |
 |---|---|---|
 | The **`#632`–`#650`** derivation span — the range this table was built over | **18** | **10** |
 | Post-`#650` performance, mobile-layout and touch-target work — `#651`, `#652`, `#653`, `#654`, `#655`, `#656`, `#657`, `#658`, `#659` | **9** | **0** |
 | Documentation, CI and test merges carried in by later production refreshes — `#631`, `#660` | **2** | **0** |
-| **Total** | **29** | **10** |
+| **Merges since `bf6f09c4`, added by the 2026-09-17 refresh — NOT CLASSIFIED for capability content** | **25** | **not derived** |
+| **Total** | **54** | **10 listed** |
+
+> ⚠️ **The fourth group is an open gap, stated rather than absorbed.** The 2026-09-17 refresh
+> re-derived the *merge count* to `6e264b57` because the canonical guard checks it against the Git
+> graph. It did **not** decide which of those twenty-five merges carry a register capability —
+> that is an editorial judgement needing per-capability evidence, and none was gathered. **Zero
+> rows below describe them, and zero rows is not the same claim as zero capabilities.** Twenty-one
+> of the twenty-five are runtime-bearing by changed-path analysis, so the honest expectation is
+> that several *do* belong here and are simply not written up yet. Their per-PR record is in
+> [release-changelog.md](./release-changelog.md); the reach of the refresh is stated in
+> [current-state.md](./current-state.md) under *What this reconciliation did and did not measure*.
 
 The **nine** post-`#650` merges were re-examined by changed-path analysis on **2026-08-30** and
 add **no new capability**: they are performance, mobile-layout and touch-target work, plus one
@@ -306,16 +322,18 @@ correction (`#652`) to a capability already listed here and one behaviour rework
 an onboarding capability already covered, whose residual gap is recorded as **L31** rather than
 as a new capability.
 
-The **two** remaining merges are the ones the count gained when the branch head advanced past
-`#659`, and they were classified the same way rather than assumed. **`#631`** is the canonical
-docs reconciliation: documentation and `tests/docs/**` only. **`#660`** is CI-HARDEN-01B:
-`.github/workflows/**`, `tests/ci/**`, `CLAUDE.md` and `docs/03_SECURITY_AND_PRIVACY.md`.
-Between them they touch **no** `app/`, `lib/`, `components/` or `supabase/` path, so neither
-adds a capability and neither moves the runtime baseline — which is why
-[current-state.md](./current-state.md) pins a runtime-bearing HEAD *behind* the branch head.
+The **two** merges in the third group are the ones the count gained when the branch head advanced
+past `#659`, and they were classified the same way rather than assumed. **`#631`** is the
+canonical docs reconciliation: documentation and `tests/docs/**` only. **`#660`** is
+CI-HARDEN-01B: `.github/workflows/**`, `tests/ci/**`, `CLAUDE.md` and
+`docs/03_SECURITY_AND_PRIVACY.md`. Between them they touch **no** `app/`, `lib/`, `components/`
+or `supabase/` path, so neither adds a capability and neither moved the baseline — which is why
+the 2026-08-30 refresh recorded a pin *behind* the branch head. The 2026-09-17 refresh finds them
+level again; the authority for both values is
+[current-state.md](./current-state.md), never this sentence.
 
 Without that decomposition the pairing reads as though ten capabilities were derived over all
-twenty-nine merges, which is not what was done — and a derived count moved without re-deriving
+fifty-four merges, which is not what was done — and a derived count moved without re-deriving
 the fact beneath it is precisely the defect this document exists to close. **That is not
 hypothetical here:** the headline was advanced from twenty-seven to twenty-nine while this
 derivation still reasoned through twenty-seven and omitted `#631` and `#660` entirely.
