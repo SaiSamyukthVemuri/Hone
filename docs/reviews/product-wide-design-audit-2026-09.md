@@ -215,8 +215,30 @@ shape is used for **both** non-interactive status display and interactive action
 
 ## 1.6 Overlays
 
-**`[MEASURED FACT]`** 15 hand-rolled overlays carrying `aria-modal` or
-`role="dialog"`. No overlay primitive exists.
+**`[MEASURED FACT]`** 15 overlay implementations carry `aria-modal` or
+`role="dialog"`.
+
+**`[MEASURED FACT]` — corrected after Codex review at head `f3a6d9ba`.** One of the
+15 is **not** hand-rolled. `components/confirm-dialog.tsx` is a genuine reusable,
+presentational alert-dialog abstraction with **three callers**
+(`IntakeReviewForm`, `AppointmentLifecycleActions`,
+`components/appointment/mark-complete-control`). It owns `role="alertdialog"` +
+`aria-modal` + `aria-labelledby`/`describedby`, initial focus, focus restoration
+to the opener, a Tab/Shift+Tab trap that parks focus on the panel when every
+control is disabled mid-submit, Escape **only while idle** (so it never abandons
+an in-flight request), backdrop mousedown only while idle, and ≥44px touch
+targets on every button. The first draft of this audit counted it as a
+hand-rolled implementation and asserted that no overlay primitive exists. **Both
+were wrong.**
+
+**`[DESIGN DIAGNOSIS]`** The correction sharpens the diagnosis rather than
+softening it. Hone already has **one correct alert-dialog**, reached by 3 of 15
+overlay sites — the same "excellent primitive, almost no adoption" shape as
+`Button` (10 of 469) and `StatusPill` (1 of 84) in §1.1. The overlay problem is
+therefore **adoption and coverage**, not absence: `confirm-dialog` covers the
+*alert* case only, and nothing covers the drawer/sheet case at all.
+
+Counting all 15 implementations, `confirm-dialog` included:
 
 | Capability | Overlays with it |
 |---|---|
@@ -226,6 +248,14 @@ shape is used for **both** non-interactive status display and interactive action
 | Initial focus moved into the dialog | **5 / 15** |
 | Background scroll lock | **3 / 15** |
 | Any enter/exit transition | **4 / 15** |
+
+The four that manage focus completely are `confirm-dialog`,
+`MoveAppointmentDialog`, `OnboardingModal` and `marketing/MobileNav`. Of those,
+**only `confirm-dialog` is reusable**; the other three are bespoke and solve the
+problem once each for themselves. So the correct reading of this table is not
+"11 authors got it wrong" but "**11 overlay sites never reached the one
+abstraction that already got it right, and for the drawer/sheet case there was
+nothing to reach.**"
 
 `app/(app)/calendar/PostcareSendButton.tsx` renders `role="dialog"
 aria-modal="true"` over a `fixed inset-0` backdrop with no keyboard dismissal and
@@ -368,8 +398,11 @@ cross-product reach. Each rests on the §1 facts cited.
    Hone's brand face speaks to clients and falls silent for the person who lives
    in the product all day — and the one time it speaks, it arrives after hydration
    in grey.
-6. **Eleven of fifteen overlays are structurally broken** (§1.6). The public
-   marketing site handles focus better than the clinical software.
+6. **Eleven of fifteen overlay sites never reached the abstraction that already
+   solved this** (§1.6). Hone owns a correct reusable alert-dialog
+   (`confirm-dialog`, 3 callers); 11 sites hand-roll focus handling anyway and
+   get it wrong, and the drawer/sheet case has no abstraction at all. Same
+   adoption shape as defect 1.
 7. **No motion vocabulary, and touch gets nothing** (§1.7). 848 affordances give a
    mouse user feedback and a touch user none between finger-down and landing.
 8. **No loading vocabulary** (§1.7). With zero `loading.tsx`, 173 of 188 links
@@ -553,7 +586,8 @@ UI-F spine.** Everything else is serial deliberately.
 
 | Candidate | Proposed verdict | Evidence |
 |---|---|---|
-| **Dialog / AlertDialog** | **ADOPT** | §1.6 — 15 overlays, 11 without focus trap or restore, 1 without Escape |
+| **AlertDialog** | **DO NOT ADOPT — extend `confirm-dialog` instead** | §1.6 (corrected). Hone already owns a correct, reusable alert-dialog with 3 callers, and it encodes two Hone-specific rulings a generic component will not have: Escape and backdrop dismissal are **idle-only**, so a confirmation cannot abandon an in-flight mutation, and the trap parks focus on the panel when every control is disabled mid-submit. Replacing it would discard those. The work is extending its reach from 3 sites, not importing a substitute |
+| **Dialog** (non-alert modal) | **ADOPT** | §1.6 — the general modal case `confirm-dialog` does not cover (it is alert-shaped: title, description, confirm/cancel). `PostcareSendButton`, `TreatmentImagesManager` and `quick-checkout-modal` are content modals with no reusable home |
 | **BottomSheet** | **ADOPT** | Five calendar drawers are desktop right-edge drawers reused unchanged on phones, with no transition and no scroll lock. **Conditional on the MOTION-01 ruling (§6.4).** |
 | **DropdownMenu** | **ADOPT, narrow** | Only two true menus exist. Low volume — adopt for correctness, not reach |
 | **Tabs / SegmentedControl** | **ADOPT — strongest evidence of any candidate** | §1.4 — seven dialects, seven heights, three under the floor, one inverted. This is the previously-approved fourth candidate and the census now justifies it more than anything else |
@@ -599,7 +633,15 @@ of these may be smuggled into a polish PR.
    block is a patient-safety regression, not a style one (§3.3).
 5. **Does the client-profile heading scale change?** 1,733 lines, two competing
    heading systems, the densest clinical surface in the app.
-6. **Are the ~1,100 inert `dark:` utilities retired?** Mechanically safe to remove,
+6. **Are the inert `dark:` utilities retired?** **`[MEASURED FACT]` — corrected
+   after Codex review.** The census is **3,529 `dark:` occurrences across 196 of
+   the 297 `.tsx` files** — reproducible as
+   `grep -rho 'dark:' app components --include='*.tsx' | wc -l` against the
+   baseline tree. An earlier draft of this section said "~1,100", which was a
+   misattribution: that figure is `globals.css`'s count of **status-colour**
+   utilities, not dark-variant ones. Since this item exists to size a cleanup
+   decision, the wrong number understated the migration by roughly 3×.
+   Mechanically safe to remove,
    but it forecloses the class-based theme the token layer was designed to enable
    (§3.6). Real cleanliness payoff either way.
 7. **Is the UI-A … UI-J sequence adopted at all, and in what order?** §4.2 is a
@@ -629,7 +671,11 @@ proof sits on motion.
 
 ## 6.2 Classification
 
-### MOTION_CANDIDATE — 2
+### MOTION_CANDIDATE — 3
+
+*(Candidate 3 — the same-day appointment move — was added after Codex review
+corrected an overbroad rejection. It is specified in §6.3 rather than here,
+because its reasoning is inseparable from what was rejected alongside it.)*
 
 **Candidate 1 — Overlay / drawer enter and exit, and its dismissal gesture.**
 *Surfaces:* `QuickBookDrawer`, `QuickBlockDrawer`, `TimedBlockEditDrawer`,
@@ -705,7 +751,7 @@ proof sits on motion.
 
 | Candidate | Why rejected |
 |---|---|
-| **Move-appointment "teleport"** | See §6.3 |
+| **Move-appointment "teleport"** — **cross-day and off-screen moves only** | See §6.3. The **same-day** sub-case is *not* rejected; it is a genuine candidate, ranked 3 |
 | Day navigation (`?day=`), week↔month switch, route changes | Frequent, and the actual defect is *no pending acknowledgement* (§1.7). Animating a route change makes a slow navigation feel slower. Fix perceived speed; do not decorate it |
 | Client-profile tab switch | Done tens of times a day. Emil's rule: remove or drastically reduce. The existing pending treatment is already correct |
 | `NowLine` | A clock hand advancing a pixel a minute. Continuous, unwatched, invisible |
@@ -726,20 +772,51 @@ evidence.**
    may land on any future date, commonly outside the visible week. There is no
    on-screen target to animate toward, and motion toward a target that does not
    exist shows nothing.
-2. **The node does not survive the commit.** Confirmation runs through
-   `router.refresh()`, which destroys and recreates the server-rendered tree. No
-   CSS transition can bridge two distinct DOM nodes; the only mechanisms that
-   could are a View Transition (not enabled — `next.config.ts` declares no
-   `experimental.viewTransition`) or a layout-animation engine, which reintroduces
-   the dependency question for a case that fails point 1 anyway.
-3. **It is the wrong diagnosis.** The practitioner's actual problem after a move is
-   *"where did it go, and did it land where I meant?"* That is an **orientation**
-   problem, not a spatial-continuity one. The fix is telling them where it landed
-   and offering to navigate there.
+2. **It is often the wrong diagnosis.** The practitioner's problem after a move to
+   another week is *"where did it go, and did it land where I meant?"* That is an
+   **orientation** problem, not a spatial-continuity one. The fix is telling them
+   where it landed and offering to navigate there.
 
-**Reclassified to STATE-DESIGN (family 7).** Recording this rejection matters as
-much as the selection: it is the case where the intuitive answer and the evidence
-disagree.
+### The rejection was OVERBROAD — corrected after Codex review at head `f3a6d9ba`
+
+**`[MEASURED FACT]`** The first draft also claimed *"the node does not survive the
+commit — `router.refresh()` destroys and recreates the server-rendered tree."*
+**That is wrong, and it wrongly ruled out node-based animation for the one case
+that supports it.** `router.refresh()` re-renders and reconciles; it does not
+inherently discard client DOM. Verified against the baseline tree:
+
+- `app/(app)/calendar/page.tsx` renders `days.map((date) => <DayColumn key={date} …>)`
+  — the column is keyed by **date**.
+- `app/(app)/calendar/DayColumn.tsx` renders each appointment as
+  `<button key={a.id} … style={{ top, height }}>` — identity is the appointment
+  id and **position is an inline style, not a remount**.
+
+**`[DESIGN DIAGNOSIS]`** So the candidate splits into three cases that behave
+differently and must be judged separately:
+
+| Case | What happens to the node | Verdict |
+|---|---|---|
+| **Same-day move** (time changes, date does not) | Same `DayColumn` (key unchanged), same button (key `a.id`); only `top` changes. **The node persists and moves.** Destination is on screen by construction | **MOTION_CANDIDATE.** FLIP-able with no engine — the same WAAPI technique as candidate 2. Ranked **3** |
+| **Cross-day, still inside the visible week** | `DayColumn` key changes, so the node unmounts from one column and mounts in another; both positions are on screen | Possible, but needs a shared-element/View-Transition approach rather than a FLIP. **Not pursued** — cost is disproportionate to a sub-case |
+| **Off-screen** (another week, or outside `HOUR_START…HOUR_END`, where `DayColumn` returns `null`) | Nothing to animate toward | **NO_MOTION.** Rejection stands |
+
+**`[DESIGN DIAGNOSIS]`** The orientation fix in point 2 remains the right answer
+for the cross-day and off-screen cases, so **STATE-DESIGN (family 7) still owns
+those**. The same-day case is now a third genuine motion candidate.
+
+**Why MOTION-01 is still the drawer, not the same-day move.** The same-day case is
+real but strictly narrower than candidate 1: it is one sub-case of one action, it
+introduces no new technique beyond the FLIP that candidate 2 already establishes,
+and — decisively — it **cannot answer the question MOTION-01 exists to answer**,
+because it involves no gesture and therefore tests nothing about whether Hone needs
+a motion engine (§6.1). It should be picked up by whichever slice implements the
+FLIP technique, not by the pilot.
+
+**Recording this correction matters as much as the original rejection.** The
+intuitive answer ("animate the appointment to its new slot") was too generous, the
+first correction ("never — the node dies") was too harsh, and only the case split
+is true. A reviewer who reads just the headline would have inherited whichever
+error came first.
 
 ## 6.4 MOTION-01 — the recommended pilot
 
