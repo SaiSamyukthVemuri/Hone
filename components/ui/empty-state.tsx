@@ -38,6 +38,27 @@ export type EmptyStateProps = {
   description: ReactNode;
   /** An optional way out — usually the action that creates the first item. */
   action?: ReactNode;
+  /**
+   * Renders the title as a REAL HEADING at this level, so an empty state joins
+   * the document outline instead of being invisible to heading navigation.
+   *
+   * WHY THIS IS OPT-IN. Omitted is the default and keeps the current
+   * non-heading `<p>`, so adding this prop cannot silently restructure the
+   * outline of a call site that never asked for it.
+   *
+   * WHY NO h1. PageHeader already renders the page's single `h1`, and the one
+   * EmptyState call site today (notifications) sits on a page that uses it. An
+   * empty state claiming `h1` would compete with the page title, so the type
+   * makes that unrepresentable rather than merely discouraged.
+   *
+   * WHY NO role="status". An empty state is not inherently a live-region
+   * event: it is usually the page's resting state, not a change announced
+   * mid-session. Defaulting to a live region would give every caller
+   * announcement semantics none of them opted into. A surface that genuinely
+   * needs one — a list that empties in place — should establish that with its
+   * own proof rather than inherit it here.
+   */
+  headingLevel?: 2 | 3 | 4 | 5 | 6;
   className?: string;
 };
 
@@ -45,8 +66,13 @@ export function EmptyState({
   title,
   description,
   action,
+  headingLevel,
   className,
 }: EmptyStateProps) {
+  // Card's `as: Tag` idiom, applied to a heading level: React renders a
+  // lowercase string as an intrinsic element, so no h2..h6 lookup table is
+  // needed and the union stays exhaustive by construction.
+  const Title = headingLevel ? (`h${headingLevel}` as const) : "p";
   return (
     <div
       className={cx(
@@ -57,7 +83,10 @@ export function EmptyState({
         className,
       )}
     >
-      <p className="text-sm font-medium text-fg">{title}</p>
+      {/* SAME CLASSES EITHER WAY, deliberately. The level changes the DOCUMENT
+          OUTLINE and nothing else — a caller opting into semantics must not be
+          handed a typography change it did not ask for. */}
+      <Title className="text-sm font-medium text-fg">{title}</Title>
       <p className="max-w-[48ch] text-sm leading-relaxed text-fg-muted">
         {description}
       </p>

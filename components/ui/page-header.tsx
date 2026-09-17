@@ -39,6 +39,18 @@ export type PageHeaderProps = {
    * no surface that legitimately needed two.
    */
   action?: ReactNode;
+  /**
+   * The heading level for the title. **Defaults to 1** — a page header is
+   * normally the page's one top-level heading, and /notifications relies on
+   * that (no ancestor layout there renders an h1).
+   *
+   * IT IS NOT ALWAYS 1, AND ASSUMING SO SHIPPED A REGRESSION. `settings/layout.tsx`
+   * renders `<h1>Settings</h1>` for every settings route, so a hard-coded h1
+   * here gave /settings/data TWO top-level headings and made "Your data" a peer
+   * of "Settings" in heading navigation. A page that already sits under a
+   * heading passes its real depth instead.
+   */
+  headingLevel?: 1 | 2 | 3 | 4 | 5 | 6;
   className?: string;
 };
 
@@ -46,8 +58,12 @@ export function PageHeader({
   title,
   description,
   action,
+  headingLevel = 1,
   className,
 }: PageHeaderProps) {
+  // Card's `as: Tag` idiom. Same classes at every level: the level changes the
+  // DOCUMENT OUTLINE, never the visual size.
+  const Title = `h${headingLevel}` as const;
   return (
     <header
       className={cx(
@@ -56,7 +72,7 @@ export function PageHeader({
       )}
     >
       <div className="min-w-0">
-        <h1 className="text-3xl font-semibold tracking-tight text-fg">{title}</h1>
+        <Title className="text-3xl font-semibold tracking-tight text-fg">{title}</Title>
         {description ? (
           <p className="mt-1 max-w-[65ch] text-sm leading-relaxed text-fg-muted">
             {description}
