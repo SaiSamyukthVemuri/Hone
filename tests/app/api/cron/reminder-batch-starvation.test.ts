@@ -663,10 +663,18 @@ describe("P2-B — a full page is not proof of truncation", () => {
     expect(c).toContain("page.slice(0, REMINDER_PAGE_SIZE)");
   });
 
-  it("exhaustion is claimed only when the lookahead was ABSENT", () => {
+  it("records exhaustion from the lookahead BEFORE any ceiling break", () => {
+    // Updated with the P2-3 repair. The old shape acted on `hasMore` only at
+    // the BOTTOM of the page loop, so an early `break pages` at the scan
+    // ceiling jumped over it — the exactly-500 case then emitted a ceiling
+    // alert the +1 query had already disproved. The assignment must therefore
+    // come BEFORE the row loop that can break out.
     const c = code();
-    expect(c).toMatch(/if \(!hasMore\) \{/);
-    expect(c).toContain("exhausted = true;");
+    expect(c).toContain("if (!hasMore) exhausted = true;");
+    const assignAt = c.indexOf("if (!hasMore) exhausted = true;");
+    const rowLoopAt = c.indexOf("for (const appt of rows)");
+    expect(assignAt).toBeGreaterThan(-1);
+    expect(rowLoopAt).toBeGreaterThan(assignAt);
   });
 });
 
@@ -739,7 +747,7 @@ describe("the real route selects only from routable studios", () => {
 
   it("resolves each candidate studio ONCE, outside the row loop", () => {
     const c = code();
-    expect(c).toContain("const studioIds = await candidateStudioIds({");
+    expect(c).toContain("const studioIds = await toggledStudioIds(studioToggle);");
     expect(c).toMatch(/for \(const studioId of studioIds\) \{/);
     expect(c).toContain("partitionRoutableStudios(resolutions)");
     // The resolve must NOT be inside the per-row loop.
@@ -747,6 +755,93 @@ describe("the real route selects only from routable studios", () => {
     const rowLoopAt = c.indexOf("for (const appt of rows)");
     expect(resolveAt).toBeGreaterThan(-1);
     expect(rowLoopAt).toBeGreaterThan(resolveAt);
+  });
+
+  it("enumerates studios from the STUDIOS table, bounded by studio count", () => {
+    // P2-2. The earlier version scanned every eligible appointment in the
+    // window in 500-row pages before any send, which defeated the per-run
+    // bound — and capping THAT scan would have reintroduced starvation,
+    // because a capped prefix of one broken studio yields no routable studios.
+    const c = code();
+    expect(c).toContain('.from("studios")');
+    expect(c).toContain(".eq(studioToggle, true)");
+    // The unbounded appointment-scan enumeration is gone.
+    expect(c).not.toContain("candidateStudioIds");
+    expect(c).not.toContain("STUDIO_SCAN_PAGE_SIZE");
+  });
+
+  it("REPORTS an unroutable studio before excluding it", () => {
+    // P2-1. Filtering an unroutable studio out of selection means its rows
+    // never reach sendOne, the only path that records the durable alert. That
+    // would trade starvation for SILENCE — strictly worse, since a starving
+    // studio at least alerted on the rows it did reach.
+    const c = code();
+    expect(c).toContain("logStudioRoutingRefusal({");
+    expect(c).toContain("sms_routing_studio_excluded");
+    expect(c).toContain("excluded_from_selection: true");
+    // The report must happen in the resolve loop, before selection uses
+    // `routable`.
+    const reportAt = c.indexOf("logStudioRoutingRefusal({");
+    const selectAt = c.indexOf("onlyStudioIds: routable");
+    expect(reportAt).toBeGreaterThan(-1);
+    expect(selectAt).toBeGreaterThan(reportAt);
+  });
+
+  it("reports EVERY unroutable studio, by behaviour not by grep", async () => {
+    // Three source guards in this lane failed to prove reachability — a call
+    // wrapped in `if (false && …)` leaves the string in place. The decision is
+    // therefore a pure function, and this tests its RETURN VALUE.
+    const { refusalsToReport } = await import(
+      "@/lib/cron/reminder-routable-studios"
+    );
+    expect(
+      refusalsToReport([
+        { studioId: "a", routable: false, reason: "sms_sender_not_active_for_studio" },
+        { studioId: "b", routable: true },
+        { studioId: "c", routable: false, reason: "sms_sender_ambiguous" },
+      ]),
+    ).toEqual([
+      { studioId: "a", reason: "sms_sender_not_active_for_studio" },
+      { studioId: "c", reason: "sms_sender_ambiguous" },
+    ]);
+  });
+
+  it("reports each unroutable studio ONCE, never per row", async () => {
+    const { refusalsToReport } = await import(
+      "@/lib/cron/reminder-routable-studios"
+    );
+    const dupes = Array.from({ length: 50 }, () => ({
+      studioId: "broken",
+      routable: false,
+      reason: "sms_sender_read_failed",
+    }));
+    expect(refusalsToReport(dupes)).toHaveLength(1);
+  });
+
+  it("an all-routable estate reports nothing", async () => {
+    const { refusalsToReport } = await import(
+      "@/lib/cron/reminder-routable-studios"
+    );
+    expect(
+      refusalsToReport([
+        { studioId: "a", routable: true },
+        { studioId: "b", routable: true },
+      ]),
+    ).toEqual([]);
+  });
+
+  it("the route CONSUMES that decision rather than re-deciding", () => {
+    const c = code();
+    expect(c).toMatch(/for \(const refusal of refusalsToReport\(resolutions\)\)/);
+    expect(c).toContain("logStudioRoutingRefusal({");
+  });
+
+  it("the studio-level alert reuses the shipped vocabulary, inventing none", () => {
+    const c = code();
+    expect(c).toContain("SENDER_REFUSAL_REASON[r.reason]");
+    expect(c).toContain("recordOpsAlert");
+    // No fourth reason word.
+    expect(c).not.toMatch(/sms_sender_[a-z_]*(?<!not_active_for_studio)(?<!ambiguous)(?<!read_failed)"/);
   });
 
   it("short-circuits when NO studio can send", () => {

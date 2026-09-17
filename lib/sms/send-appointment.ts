@@ -71,7 +71,7 @@ const RETRIES_TRANSIENT_RESOLUTION: ReadonlySet<SmsType> = new Set([
   "confirmation",
 ]);
 
-const SENDER_REFUSAL_REASON: Record<StudioSenderRefusal, string> = {
+export const SENDER_REFUSAL_REASON: Record<StudioSenderRefusal, string> = {
   no_active_sender: "sms_sender_not_active_for_studio",
   ambiguous_active_sender: "sms_sender_ambiguous",
   read_failed: "sms_sender_read_failed",

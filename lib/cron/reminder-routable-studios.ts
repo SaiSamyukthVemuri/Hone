@@ -49,8 +49,18 @@
 // becomes unroutable between enumeration and send is still refused at the
 // authority, fail-closed, exactly as before.
 
-/** One studio's resolution outcome, reduced to the only question asked here. */
-export type StudioRoutability = { studioId: string; routable: boolean };
+/**
+ * One studio's resolution outcome.
+ *
+ * `reason` is carried for the unroutable case so the operator signal can name
+ * WHY — missing, ambiguous or unreadable are different faults with different
+ * fixes.
+ */
+export type StudioRoutability = {
+  studioId: string;
+  routable: boolean;
+  reason?: string;
+};
 
 export type RoutablePartition = {
   /** Studios whose sender resolved. Only these contribute candidate rows. */
@@ -100,4 +110,33 @@ export function truncationProven(opts: {
   limit: number;
 }): boolean {
   return opts.returned > opts.limit;
+}
+
+/**
+ * The studios whose exclusion must be REPORTED before selection drops them.
+ *
+ * Exported and pure so this is provable by behaviour rather than by a grep.
+ * Three separate negative controls in this lane showed a source-string guard
+ * cannot prove reachability: wrapping a call in `if (false && …)` leaves every
+ * string in place and the guard green. A function's return value cannot be
+ * faked that way.
+ *
+ * The rule it encodes: filtering an unroutable studio out of selection means
+ * its rows never reach the send helper, which is the only path that records the
+ * durable alert. Reporting here is what stops the fairness repair from trading
+ * starvation for SILENCE — strictly worse, because a starving studio at least
+ * alerted on the rows it did reach.
+ */
+export function refusalsToReport(
+  results: ReadonlyArray<StudioRoutability>,
+): Array<{ studioId: string; reason: string }> {
+  const seen = new Set<string>();
+  const out: Array<{ studioId: string; reason: string }> = [];
+  for (const r of results) {
+    if (r.routable) continue;
+    if (seen.has(r.studioId)) continue;
+    seen.add(r.studioId);
+    out.push({ studioId: r.studioId, reason: r.reason ?? "sms_sender_read_failed" });
+  }
+  return out;
 }

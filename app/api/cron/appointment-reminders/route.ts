@@ -2,10 +2,13 @@ import { NextResponse } from "next/server";
 import { keysetFilter } from "@/lib/cron/reminder-keyset";
 import {
   partitionRoutableStudios,
+  refusalsToReport,
   truncationProven,
   type StudioRoutability,
 } from "@/lib/cron/reminder-routable-studios";
 import { resolveStudioSmsSender, studioSenderAllowsSend } from "@/lib/sms/studio-sender";
+import { SENDER_REFUSAL_REASON } from "@/lib/sms/send-appointment";
+import type { SmsType } from "@/lib/types/database";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { isAuthorizedCronRequest } from "@/lib/cron/auth";
 import {
@@ -81,55 +84,81 @@ const REMINDER_PAGE_SIZE = 50;
 const MAX_SCAN_ROWS = 500;
 
 /**
- * Enumerate the DISTINCT studios among this window's eligible candidates.
+ * The studios that could send this window's reminders at all.
  *
- * One narrow column, so the payload is a uuid per row rather than a joined
- * appointment. Paged so the enumeration itself is not a fixed first page —
- * the whole point is that no studio can be hidden behind another studio's
- * rows.
+ * BOUNDED BY STUDIO COUNT, NOT BY BACKLOG. An earlier version enumerated
+ * studios by scanning every eligible appointment in the window in 500-row
+ * pages before any SMS work began. That defeated the per-run bound the pass
+ * exists to honour: a large enough backlog could exhaust the cron's runtime
+ * budget before it sent a single routable reminder — and capping that scan
+ * would have reintroduced starvation, because a capped prefix of one broken
+ * studio's rows yields no routable studios at all.
+ *
+ * Reading `studios` directly removes the coupling entirely. The set is small,
+ * the query is one narrow column, and it is the same toggle the per-row gate
+ * already consults — so a studio with the window's SMS toggle off is skipped
+ * before a single appointment is read.
  */
-async function candidateStudioIds(opts: {
-  startIso: string;
-  endIso: string;
-  notSentColumn: SentColumn;
-  attemptsColumn: AttemptsColumn;
-}): Promise<string[]> {
+async function toggledStudioIds(studioToggle: string): Promise<string[]> {
   const admin = createAdminClient();
-  const seen = new Set<string>();
-  let after: { startsAt: string; id: string } | null = null;
-
-  for (;;) {
-    let q = admin
-      .from("appointments")
-      .select("id, starts_at, studio_id")
-      .eq("status", "confirmed")
-      .is(opts.notSentColumn, null)
-      .lt(opts.attemptsColumn, MAX_ATTEMPTS)
-      .gte("starts_at", opts.startIso)
-      .lte("starts_at", opts.endIso)
-      .order("starts_at", { ascending: true })
-      .order("id", { ascending: true });
-    const keyset = keysetFilter(after);
-    if (keyset) q = q.or(keyset);
-
-    const { data, error } = await q.limit(STUDIO_SCAN_PAGE_SIZE);
-    if (error) throw new Error(error.message);
-    const rows = (data ?? []) as Array<{
-      id: string;
-      starts_at: string;
-      studio_id: string;
-    }>;
-    if (rows.length === 0) break;
-    for (const r of rows) seen.add(r.studio_id);
-    const last = rows[rows.length - 1]!;
-    after = { startsAt: last.starts_at, id: last.id };
-    if (rows.length < STUDIO_SCAN_PAGE_SIZE) break;
-  }
-  return [...seen];
+  const { data, error } = await admin
+    .from("studios")
+    .select("id")
+    .eq(studioToggle, true);
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as Array<{ id: string }>).map((r) => r.id);
 }
 
-/** Page size for the narrow studio-enumeration read. */
-const STUDIO_SCAN_PAGE_SIZE = 500;
+/**
+ * Report that a STUDIO cannot send, once per pass.
+ *
+ * Separate from the per-row `logSmsRoutingFailure` in the send helper: nothing
+ * was claimed, no provider was called, and no particular appointment is being
+ * described — this is a studio-level configuration fault, discovered while
+ * deciding which studios are worth selecting rows for.
+ *
+ * It rides the same alert authority and the same three-word vocabulary, so
+ * 0194's partial unique index on (studio_id, event) collapses repeats into one
+ * OPEN alert per studio and the repeat is reported as a dedupe rather than a
+ * failure.
+ */
+function logStudioRoutingRefusal(opts: {
+  studioId: string;
+  smsType: SmsType;
+  reason: string;
+}): void {
+  console.error(
+    JSON.stringify({
+      event: "sms_routing_studio_excluded",
+      studioId: opts.studioId,
+      smsType: opts.smsType,
+      reason: opts.reason,
+      timestamp: new Date().toISOString(),
+    }),
+  );
+  void (async () => {
+    try {
+      const { recordOpsAlert } = await import("@/lib/ops/alerts");
+      await recordOpsAlert({
+        severity: "warning",
+        event: opts.reason,
+        message: `SMS reminders (${opts.smsType}) cannot be sent: the studio has no usable sending identity.`,
+        studioId: opts.studioId,
+        route: "app/api/cron/appointment-reminders",
+        safeDetails: {
+          sms_type: opts.smsType,
+          // Stated so an operator is not left inferring whether anything went
+          // out, or whether the studio burned part of its attempt budget.
+          attempt_claimed: false,
+          provider_called: false,
+          excluded_from_selection: true,
+        },
+      });
+    } catch {
+      // Never break the cron over alerting.
+    }
+  })();
+}
 
 /** Routing refusals — free of the send budget, by reason, from the helper. */
 const ROUTING_REFUSAL_REASONS: ReadonlySet<string> = new Set([
@@ -609,22 +638,43 @@ async function sendSmsReminderPass(opts: {
   // FAIRNESS: resolve each candidate studio ONCE, then select only from the
   // studios that can actually send. An unroutable studio contributes no rows,
   // so it cannot occupy the page — the starvation has no surface left.
-  const studioIds = await candidateStudioIds({
-    startIso: opts.windowStartIso,
-    endIso: opts.windowEndIso,
-    notSentColumn: sentColumn,
-    attemptsColumn,
-  });
+  const studioIds = await toggledStudioIds(studioToggle);
   const resolutions: StudioRoutability[] = [];
   for (const studioId of studioIds) {
     const r = await resolveStudioSmsSender(admin, studioId);
-    resolutions.push({ studioId, routable: studioSenderAllowsSend(r) });
+    resolutions.push(
+      studioSenderAllowsSend(r)
+        ? { studioId, routable: true }
+        : { studioId, routable: false, reason: SENDER_REFUSAL_REASON[r.reason] },
+    );
   }
+
+  // REPORT BEFORE EXCLUDING.
+  //
+  // Filtering an unroutable studio out of selection means its rows never reach
+  // `sendOne`, which is the ONLY path that records the durable `sms_sender_*`
+  // alert. Without this, the fairness repair would trade starvation for
+  // SILENCE: a studio with a missing, ambiguous or unreadable sender would lose
+  // every reminder while producing no operator signal at all — strictly worse,
+  // because a starving studio at least alerted on the rows it did reach.
+  //
+  // Once per studio per pass, not once per row, and 0194's partial unique index
+  // collapses repeats into one open alert per (studio, event) — the dedupe an
+  // earlier repair taught the recorder to report as expected rather than failed.
+  const smsTypeForPass: SmsType =
+    opts.kind === "24h" ? "reminder_24h" : "reminder_2h";
+  for (const refusal of refusalsToReport(resolutions)) {
+    logStudioRoutingRefusal({
+      studioId: refusal.studioId,
+      smsType: smsTypeForPass,
+      reason: refusal.reason,
+    });
+  }
+
   const { routable, unroutable } = partitionRoutableStudios(resolutions);
 
-  // Nothing can send this pass. Not an error: an entirely unprovisioned estate
-  // is a configuration fact, and it is reported by the send helper's own
-  // refusal path the moment any studio is provisioned.
+  // Nothing can send this pass. Not an error — an unprovisioned estate is a
+  // configuration fact, and every refusal above has already been reported.
   if (routable.length === 0) {
     stats.skipped += unroutable.length;
     return stats;
@@ -659,6 +709,16 @@ async function sendSmsReminderPass(opts: {
       exhausted = true;
       break;
     }
+    // PROVEN EXHAUSTION IS RECORDED HERE, NOT AT THE BOTTOM.
+    //
+    // The `+1` lookahead already answered "is there another candidate?" for
+    // this page. Waiting until after the row loop to act on it lost the answer
+    // whenever the loop exited early: on an exactly-500 set the tenth page
+    // processes row 500, trips the scan ceiling, and `break pages` jumps over
+    // the `if (!hasMore)` block — so the pass emitted
+    // `reminder_scan_ceiling_reached` and claimed later candidates existed
+    // when the query had just proved they did not.
+    if (!hasMore) exhausted = true;
 
     for (const appt of rows) {
       // Advance the cursor BEFORE any `continue`, so a skipped row can never be
@@ -784,12 +844,7 @@ async function sendSmsReminderPass(opts: {
       if (scanned >= MAX_SCAN_ROWS) break pages;
     }
 
-    if (!hasMore) {
-      // PROVEN exhaustion: the lookahead row was absent, so this really was
-      // the end of the candidate set — not merely a full page.
-      exhausted = true;
-      break;
-    }
+    if (!hasMore) break; // already recorded as exhausted above
   }
 
   // TRUTHFUL EVIDENCE WHEN THE CEILING BITES.
