@@ -27,10 +27,39 @@ const SCHEDULE = code("components/treatment-schedule-editor.tsx");
 const PORTAL = code("components/portal-messages-card.tsx");
 
 describe("UI-05: no native confirm survives anywhere in the app", () => {
-  it("app/ and components/ contain ZERO live window.confirm calls", () => {
+  it("app/ and components/ contain ZERO live native confirm calls", () => {
     // Repo-wide, not just the two files touched — otherwise a third could
     // appear tomorrow and this slice would still read as complete. Comments
     // mentioning the old API are allowed; a call is not.
+    //
+    // QUALIFIED *AND* UNQUALIFIED. The first version of this sweep matched only
+    // `window.confirm(`, so a bare `confirm("…")` — the same global, reached
+    // without the receiver — would have walked straight through a test whose
+    // entire claim is "zero native confirm anywhere". Codex raised that as a P2
+    // and was right: the fence was narrower than its own name.
+    //
+    // The unqualified pattern deliberately excludes a preceding word character,
+    // `.` or `$`, so `onConfirm(`, `handleConfirm(` and `dialog.confirm(` are
+    // not false positives; `globalThis`/`self` receivers are matched explicitly.
+    // SHADOWING IS REAL, and the first widened version of this sweep tripped on
+    // it immediately: app/(app)/calendar/PostcareSendButton.tsx declares
+    // `function confirm()` of its own, so every bare `confirm()` in that file
+    // resolves to the LOCAL binding and has nothing to do with the native
+    // global. Flagging it would have been a false positive on correct code —
+    // the opposite error to the one Codex caught, and just as wrong.
+    //
+    // So a file that declares its own `confirm` is exempt from the bare-call
+    // check; the qualified receivers are still checked there, because
+    // `window.confirm(` is unambiguous regardless of local bindings.
+    const DECLARES_OWN = /(?:function\s+confirm\s*\(|(?:const|let|var)\s+confirm\s*=)/;
+
+    const QUALIFIED: Array<[string, RegExp]> = [
+      ["window.confirm", /\bwindow\s*\.\s*confirm\s*\(/],
+      ["globalThis.confirm", /\bglobalThis\s*\.\s*confirm\s*\(/],
+      ["self.confirm", /\bself\s*\.\s*confirm\s*\(/],
+    ];
+    const BARE = /(?<![\w.$])confirm\s*\(/;
+
     const hits = execSync(
       "git ls-files 'app/**/*.tsx' 'components/**/*.tsx'",
       { encoding: "utf8" },
@@ -39,9 +68,40 @@ describe("UI-05: no native confirm survives anywhere in the app", () => {
       .filter(Boolean)
       .flatMap((f) => {
         const stripped = code(f);
-        return stripped.includes("window.confirm(") ? [f] : [];
+        const matched = QUALIFIED.filter(([, re]) => re.test(stripped)).map(([n]) => n);
+        if (!DECLARES_OWN.test(stripped) && BARE.test(stripped)) {
+          matched.push("bare confirm()");
+        }
+        return matched.length ? [`${f} (${matched.join(", ")})`] : [];
       });
-    expect(hits, `native confirm still called in: ${hits.join(", ")}`).toEqual([]);
+    expect(hits, `native confirm still called in: ${hits.join(" | ")}`).toEqual([]);
+  });
+
+  it("the sweep's own patterns actually MATCH — proved on synthetic inputs", () => {
+    // A negative-only sweep passes just as well when its regexes are broken.
+    // These pin that each form is caught and that the near-miss identifiers are
+    // not, which is the half a green repo cannot demonstrate.
+    const bare = /(?<![\w.$])confirm\s*\(/;
+    const declares = /(?:function\s+confirm\s*\(|(?:const|let|var)\s+confirm\s*=)/;
+
+    // TRUE POSITIVES — the forms that must be caught.
+    expect(bare.test('if (!confirm("go?")) return;')).toBe(true);
+    expect(bare.test("confirm ('spaced')")).toBe(true);
+    expect(/\bwindow\s*\.\s*confirm\s*\(/.test("window . confirm(1)")).toBe(true);
+
+    // NEAR MISSES — identifiers that merely contain the word.
+    expect(bare.test("onConfirm()")).toBe(false);
+    expect(bare.test("handleConfirm()")).toBe(false);
+    expect(bare.test("dialog.confirm()")).toBe(false);
+
+    // SHADOWING — a file declaring its own `confirm` is exempt from the bare
+    // check. Both halves asserted: the declaration is recognised, and the
+    // bare pattern alone would otherwise have matched its call sites.
+    const shadowed = 'function confirm() { run(); }\nonClick={() => confirm()}';
+    expect(declares.test(shadowed)).toBe(true);
+    expect(bare.test(shadowed)).toBe(true); // why the exemption is needed
+    expect(declares.test('if (!confirm("go?")) return;')).toBe(false);
+    expect(declares.test("const confirm = () => {}")).toBe(true);
   });
 });
 
@@ -109,7 +169,26 @@ describe("UI-05: both surfaces use the shipped dialog with its real contract", (
       expect(src).not.toMatch(/role="alertdialog"/);
       expect(src).not.toMatch(/aria-modal/);
     }
+    // NOT a global count pin. The earlier version asserted
+    // `Object.keys(pkg.dependencies).length === 21`, which breaks this
+    // slice's test on ANY legitimate dependency addition anywhere in the
+    // repository — a false failure with nothing to do with confirm dialogs.
+    // Codex flagged it as a P3 and the reasoning generalises: a slice test
+    // should assert what the slice forbids, not a repo-wide total.
     const pkg = JSON.parse(read("package.json")) as { dependencies: Record<string, string> };
-    expect(Object.keys(pkg.dependencies).length).toBe(21);
+    const deps = Object.keys(pkg.dependencies);
+    for (const banned of [
+      "framer-motion",
+      "motion",
+      "lucide-react",
+      "clsx",
+      "tailwind-merge",
+      "@astryxdesign/core",
+      "@radix-ui/react-dialog",
+      "@headlessui/react",
+      "sweetalert2",
+    ]) {
+      expect(deps, `${banned} must not be a dependency`).not.toContain(banned);
+    }
   });
 });
