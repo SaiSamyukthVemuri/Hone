@@ -20,6 +20,13 @@ export type ServiceRoleAllowlistEntry = {
 
 export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
   {
+    path: "app/(app)/settings/waitlist/profile-actions.ts",
+    purpose:
+      "WAIT-04A owner surface — the sole caller of set_waitlist_entry_availability, create_practitioner_waitlist_entry and import_legacy_waitlist_entry (all migration 0193).",
+    why: "All three commands are `security definer` and EXECUTE on each is granted to service_role ALONE — revoked by name from public, anon, authenticated AND service_role first, so no browser role can reach them and this module is the only application path. The action resolves the studio and the acting practitioner server-side via getCurrentPractitionerWithStudio() and passes the server-derived studio.id + practitioner.user_id; the browser supplies a preference, a name, an email, a phone, a provenance and a date, and never a studio_id, user_id or role. Each command independently re-derives membership AND owner role from (studio_id, user_id) through new_client_waitlist_resolve_owner, and set_waitlist_entry_availability additionally scopes the entry by BOTH id and studio_id so a cross-studio id is simply not found. `authenticated` holds SELECT and nothing else on new_client_waitlist_entries (0185) and column-SELECT only on new_client_waitlist_entry_preferences (0193), so there is no direct-DML alternative to any of this. This file performs no waitlist DML of its own and reads no table through the admin client.",
+    scopeGuard: "getCurrentPractitionerWithStudio",
+  },
+  {
     path: "app/(app)/settings/waitlist/capacity-actions.ts",
     purpose: "Owner's invitation-capacity open/close commands.",
     why:
