@@ -101,6 +101,7 @@ as $$
   select a.id, a.starts_at, a.studio_id
     from public.appointments a
     join public.studios st on st.id = a.studio_id
+    join public.clients  c  on c.id  = a.client_id
    where p_kind in ('24h', '2h')
      and a.status = 'confirmed'
      and a.starts_at >= p_window_start
@@ -123,6 +124,26 @@ as $$
            when '24h' then st.send_24h_sms_reminders
            else            st.send_2h_sms_reminders
          end is true
+
+     -- THE CLIENT GATES, for the same reason as the routing one.
+     --
+     -- A row whose client has no phone, no consent, or an opt-out is skipped
+     -- by the route with a bare `continue` -- no send, no claim, no state
+     -- change. Identical shape to a routing refusal, and identical
+     -- consequence: eligibility unchanged, so the row re-occupies the page on
+     -- every later pass and a sendable appointment behind it ages out.
+     -- Removing unroutable STUDIOS without removing unsendable CLIENTS would
+     -- have left the same starvation with a different cause.
+     --
+     -- STILL NOT AUTHORITY. Consent and opt-out change; this is a snapshot
+     -- taken to decide what is worth loading. `passesConsentGate` re-reads all
+     -- three immediately before the send and refuses on its own, so a consent
+     -- withdrawn or a STOP received between selection and send is honoured
+     -- there.
+     and c.phone is not null
+     and btrim(c.phone) <> ''
+     and c.sms_consent_at is not null
+     and c.sms_opted_out_at is null
 
      -- THE ROUTING PREREQUISITE, as a semi-join. Exactly the condition the
      -- application previously spent an estate enumeration and one RPC per
@@ -238,6 +259,31 @@ as $$
          from public.studio_sms_senders s
         where s.studio_id = a.studio_id
           and s.status = 'active'
+     )
+
+     -- ROTATE PAST WHAT IS ALREADY REPORTED.
+     --
+     -- A stable order plus a bound returns the SAME first 50 studios on every
+     -- invocation, so studios beyond that prefix would never reach the alert
+     -- and would stay invisible -- precisely the failure this complement
+     -- exists to prevent, reproduced inside the fix for it.
+     --
+     -- Excluding studios that already hold an OPEN routing alert makes the set
+     -- DRAIN: each run surfaces studios not yet reported, and 0194s partial
+     -- unique index on (studio_id, event) where resolved_at is null uses the
+     -- same predicate, so "already reported" here means exactly what "already
+     -- open" means there. Resolving an alert re-arms the studio, which is the
+     -- intended operator loop.
+     and not exists (
+       select 1
+         from public.ops_alerts oa
+        where oa.studio_id = a.studio_id
+          and oa.resolved_at is null
+          and oa.event in (
+            'sms_sender_not_active_for_studio',
+            'sms_sender_ambiguous',
+            'sms_sender_read_failed'
+          )
      )
    group by a.studio_id
    order by a.studio_id

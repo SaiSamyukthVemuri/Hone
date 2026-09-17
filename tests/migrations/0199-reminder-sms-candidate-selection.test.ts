@@ -160,3 +160,70 @@ describe("0199 is bounded and deterministic", () => {
     expect(CODE).not.toMatch(/execute\s+format|quote_ident/i);
   });
 });
+
+describe("0199 removes every class of row that would occupy a page without sending", () => {
+  it("excludes clients with no phone, no consent, or an opt-out", () => {
+    // Same starvation shape as a routing refusal: the route `continue`s these
+    // without changing sent/attempt state, so they re-occupy the page forever.
+    // Filtering studios but not clients would have left the defect with a
+    // different cause.
+    expect(CODE).toContain("join public.clients  c  on c.id  = a.client_id");
+    expect(CODE).toMatch(/and c\.phone is not null/);
+    expect(CODE).toMatch(/and btrim\(c\.phone\) <> ''/);
+    expect(CODE).toMatch(/and c\.sms_consent_at is not null/);
+    expect(CODE).toMatch(/and c\.sms_opted_out_at is null/);
+  });
+
+  it("the client gates are a SNAPSHOT, not authority — the gate still re-reads", () => {
+    const send = readFileSync(
+      path.join(ROOT, "lib/sms/send-appointment.ts"),
+      "utf8",
+    ).replace(/\/\/.*$/gm, " ");
+    // Consent and opt-out change; selection only decides what is worth
+    // loading. The live gate is what refuses.
+    expect(send).toContain("passesConsentGate({");
+    expect(send).toMatch(/sms_opted_out_at/);
+    expect(send).toMatch(/sms_consent_at/);
+  });
+});
+
+describe("0199 complement alerts ROTATE rather than repeating one prefix", () => {
+  it("excludes studios that already hold an OPEN routing alert", () => {
+    // A stable order plus a bound would return the same first 50 studios on
+    // every run, so studios past that prefix would never be reported — the
+    // exact invisibility the complement exists to prevent, reproduced inside
+    // the fix for it.
+    expect(CODE).toMatch(/from public\.ops_alerts oa/);
+    expect(CODE).toMatch(/oa\.resolved_at is null/);
+    for (const ev of [
+      "sms_sender_not_active_for_studio",
+      "sms_sender_ambiguous",
+      "sms_sender_read_failed",
+    ]) {
+      expect(CODE).toContain(`'${ev}'`);
+    }
+  });
+
+  it("uses the SAME predicate as 0194's dedupe index, so the two agree", () => {
+    const idx = readFileSync(
+      path.join(ROOT, "supabase/migrations/0194_studio_sms_sender_outbound_lookup.sql"),
+      "utf8",
+    );
+    // 0194: unique (studio_id, event) where resolved_at is null.
+    expect(idx).toContain("ops_alerts_sms_routing_open_uniq");
+    expect(idx).toContain("where resolved_at is null");
+    // 0199 excludes on exactly that condition, so "already reported" here and
+    // "already open" there are the same set. Resolving re-arms the studio.
+    expect(CODE).toMatch(/oa\.resolved_at is null/);
+  });
+
+  it("the complement still reads ops_alerts ONLY to decide what to report", () => {
+    // It must not gate sending, selection, or anything else.
+    const route = readFileSync(
+      path.join(ROOT, "app/api/cron/appointment-reminders/route.ts"),
+      "utf8",
+    ).replace(/\/\/.*$/gm, " ");
+    expect(route).toMatch(/unroutableStudiosWithCandidates/);
+    expect(route).not.toMatch(/unroutableStudiosWithCandidates[^;]*onlyStudioIds/);
+  });
+});
