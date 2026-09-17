@@ -221,6 +221,8 @@ export const BROWSER_GROUPS = {
       // interaction-contract specs for the same reason — it measures shared
       // control behaviour, not one workflow.
       "ui03-blocked-reason.spec.ts",
+      // UI-04: unarchive pending + touch floor on both consumers of one action.
+      "ui04-unarchive-pending.spec.ts",
       "new-studio-wizard.spec.ts",
       "onboarding.spec.ts",
       "quick-import.spec.ts",
