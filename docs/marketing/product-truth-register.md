@@ -220,6 +220,47 @@ the safe direction: a local fixture never touched production at all.
 Actual Hone application."* is **true** and ships; the internal sentence about which tenant
 supplied the data is what must change.
 
+#### The rulings above, in machine-readable form
+
+`tests/docs/marketing-truth-register.test.ts` enforces §0.4 by reading **this block** — it
+holds no second copy of the list. That is deliberate. The first version of the guard kept
+its own hard-coded patterns, claimed to enforce §0.4, and did not match the canonical
+sentence §0.4 rejects: *"Edits kept as history, not written over"* could have shipped with
+every assertion green. A ruling and its enforcement cannot live in two documents that are
+free to disagree. **Add a wording here and the guard enforces it on the next run; there is
+nowhere else to add it.**
+
+Each rule is `<ruling id> | <JavaScript regular expression>`, split at the **first** pipe
+(so a rule's own alternation pipes need no escaping), matched **case-insensitively** against
+every sentence the public site renders and against every string literal it ships. `#` opens
+a comment line.
+
+```forbidden-public-wording
+# N1 — the UNSCOPED edit-history claim. The scoped form is true and ships; what
+# must never appear is a promise that reads as covering the treatment record.
+N1 | edits kept as history
+N1 | not written over
+N1 | changes are preserved rather than replaced
+N1 | every change is (tracked|recorded|kept|preserved)
+N1 | complete audit trail
+N1 | full (edit )?history of every (change|edit)
+N1 | nothing is ever overwritten
+N1 | never overwritten
+N1 | (corrections|edits|changes) are (recorded|kept|preserved|retained),? (not|never) (written over|overwritten|replaced)
+N1 | (treatment|clinical|session) records? (keeps?|retains?|holds?|preserves?|has|have) (its|their|an|a|the )?(own )?(?:[\w-]+ ){0,3}(edit|change|revision) history
+# N2 — which tenant supplied the film's data. The public label "Demo data.
+# Actual Hone application." is true and ships; naming a source tenant does not.
+N2 | synthetic[- ]twin
+N2 | captured from (our|the) (production|live) (tenant|studio)
+```
+
+The last two N1 rules exist because the copy deck states the claim more strongly than the
+homepage line this register was first written against — *"Corrections are recorded, not
+written over. A treatment record keeps its edit history."* Every clause of that is rejected:
+`update_block_with_entry` (0166) issues plain `UPDATE`s that retain no prior value, so a
+treatment record does **not** keep its edit history, and a correction to a charted value
+**is** written over.
+
 ### 0.5 NEEDS_EXTERNAL_DECISION
 
 Code is not the blocker on any of these.

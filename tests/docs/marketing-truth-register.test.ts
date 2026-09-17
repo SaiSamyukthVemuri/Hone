@@ -1,9 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { migrationState } from "../migrations/helpers/migration-state";
 import { MARKETING_PAGES } from "@/lib/marketing/content";
+import {
+  REPO_ROOT,
+  claimsBySource,
+  collectClaims,
+  forbiddenWordings,
+  judgeAppendOnlyClaim,
+  publicMarketingSources,
+  publicRouteFiles,
+} from "./helpers/marketing-scan";
 
 // MARKETING-01a. Governance guard for docs/marketing/product-truth-register.md.
 //
@@ -28,9 +37,19 @@ import { MARKETING_PAGES } from "@/lib/marketing/content";
 //
 // It does NOT assert anything about public copy wording beyond (3). Copy is
 // MARKETING-01's business; this PR is internal truth governance only.
+//
+// HOW (3) IS DONE, AND WHY IT LOOKS LIKE THIS
+// -------------------------------------------
+// The surface it scans and the way it reads copy both live in
+// `helpers/marketing-scan.ts`, which carries the full history of why. In short:
+// the file list is DERIVED (from MARKETING_PAGES, then by following imports),
+// because four separate holes came from a hand-kept list; and copy is read with
+// the TypeScript parser, because every regex approximation of JSX and string
+// syntax bred the next hole. The rules themselves are read out of the register,
+// because a ruling and its enforcement must not be two documents that are free
+// to disagree.
 
-const ROOT = join(__dirname, "../..");
-const read = (rel: string) => readFileSync(join(ROOT, rel), "utf8");
+const read = (rel: string) => readFileSync(join(REPO_ROOT, rel), "utf8");
 
 const REGISTER = read("docs/marketing/product-truth-register.md");
 
@@ -40,228 +59,99 @@ function declaredHead(): string {
   return m ? m[1] : "";
 }
 
-const MARKETING_ROUTES = [
-  "app/page.tsx",
-  "app/pricing/page.tsx",
-  "app/demo/page.tsx",
-  "app/electrolysis-software/page.tsx",
-  "app/features/treatment-memory/page.tsx",
-  "app/features/charting-records/page.tsx",
-  "app/features/booking-calendar/page.tsx",
-  "app/resources/page.tsx",
-  "app/resources/electrolysis-treatment-record-checklist/page.tsx",
-  "app/resources/moving-an-electrolysis-practice-from-paper-records/page.tsx",
-] as const;
+const PRODUCTION_BRANCH = "claude/build-hone-saas-hOex7";
 
-/**
- * Everything a visitor reads, not just the route files.
- *
- * This was a hand-maintained list, on the reasoning that a new route should have
- * to be added deliberately. Review broke that reasoning twice: first the three
- * `app/resources/` routes were missing, then - after those were added - the
- * SHARED COMPONENTS every one of those routes renders. `SiteFooter.tsx` alone
- * authors "Operated from Canada."; swapping that literal for a prohibited claim
- * left the guard green, because imports are not followed and the file was not
- * listed.
- *
- * A list that must be remembered is a list that will be forgotten, and it fails
- * in the direction that matters: the guard reports clean on copy it never
- * opened. Component coverage is therefore DERIVED from the directory, so a new
- * shared component is scanned the day it is added.
- *
- * Routes stay explicit - a new public route is a deliberate act, and a short
- * list of them is genuinely reviewable - but a test below pins that list against
- * the live MARKETING_PAGES registry so it cannot silently fall behind either.
- */
-function marketingComponentFiles(): string[] {
-  const roots = ["app/_components/marketing", "app/_components/marketing/visuals"];
-  const out: string[] = [];
-  for (const rel of roots) {
-    for (const f of readdirSync(join(ROOT, rel))) {
-      if (f.endsWith(".tsx") || f.endsWith(".ts")) out.push(`${rel}/${f}`);
-    }
-  }
-  return out;
-}
-
-const MARKETING_SOURCES: string[] = [
-  ...MARKETING_ROUTES,
-  ...marketingComponentFiles(),
-  "app/_components/PolicyLayout.tsx",
-  "app/_components/DemoForm.tsx",
-  "lib/marketing/content.ts",
-  // Article titles, descriptions and author render, and also feed the sitemap
-  // and Article JSON-LD.
-  "lib/marketing/resources.ts",
-];
-
-/**
- * Remove comments by SCANNING, not by regex order.
- *
- * The first version stripped block comments then line comments, which broke on
- * `lib/marketing/content.ts`: it carries `next/*` inside a line comment, and a
- * regex reads that as a block-comment opener, so the lazy match ran to the next
- * `*\/` and deleted 1,403 characters of real code including CANONICAL_HOST and
- * all of POSITIONING. The scan then reported the file clean because it could no
- * longer see the file.
- *
- * Swapping the order fixed that case and broke a different one, which review
- * caught: in a legitimate block comment whose body contains a line starting with
- * `//`, line-first stripping eats that line INCLUDING the block's closing
- * `*\/`, after which the block rule consumes real source up to the next
- * terminator. Either order is wrong on some valid input, because neither knows
- * what it is already inside.
- *
- * So this walks the source once, tracking whether it is in a line comment, a
- * block comment, a string, or a template literal. Comment bodies are replaced
- * with spaces (preserving offsets and newlines); everything else is kept
- * verbatim. A `//` or `/*` inside a string is not a comment, and a quote inside
- * a comment does not open a string - which is exactly what the regexes could not
- * express.
- */
-function stripComments(src: string): string {
-  let out = "";
-  let i = 0;
-  const n = src.length;
-  type Mode = "code" | "line" | "block" | "single" | "double" | "template";
-  let mode: Mode = "code";
-
-  while (i < n) {
-    const c = src[i];
-    const c2 = src[i + 1];
-
-    if (mode === "code") {
-      if (c === "/" && c2 === "/") { mode = "line"; out += "  "; i += 2; continue; }
-      if (c === "/" && c2 === "*") { mode = "block"; out += "  "; i += 2; continue; }
-      if (c === "'") { mode = "single"; out += c; i += 1; continue; }
-      if (c === '"') { mode = "double"; out += c; i += 1; continue; }
-      if (c === "`") { mode = "template"; out += c; i += 1; continue; }
-      out += c; i += 1; continue;
-    }
-
-    if (mode === "line") {
-      if (c === "\n") { mode = "code"; out += "\n"; i += 1; continue; }
-      out += " "; i += 1; continue;
-    }
-
-    if (mode === "block") {
-      if (c === "*" && c2 === "/") { mode = "code"; out += "  "; i += 2; continue; }
-      out += c === "\n" ? "\n" : " "; i += 1; continue;
-    }
-
-    // Inside a string or template: copy verbatim, honour escapes, and only the
-    // matching terminator closes it.
-    if (c === "\\") { out += src.slice(i, i + 2); i += 2; continue; }
-    if (mode === "single" && c === "'") { mode = "code"; out += c; i += 1; continue; }
-    if (mode === "double" && c === '"') { mode = "code"; out += c; i += 1; continue; }
-    if (mode === "template" && c === "`") { mode = "code"; out += c; i += 1; continue; }
-    out += c; i += 1; continue;
-  }
-  return out;
-}
-
-/**
- * Every span of authored copy in a source file, whichever form it was written
- * in. Review flagged that scanning only double-quoted literals let raw JSX text,
- * single-quoted strings and template literals carry a banned claim untouched -
- * `<p>Every record has an append-only edit history.</p>` was invisible to the
- * guard. All four forms are extracted here so a future author's choice of
- * quoting cannot decide whether the claim is audited.
- */
-function copySegments(src: string): string[] {
-  const code = stripComments(src);
-  const segs: string[] = [];
-  for (const re of [/"((?:[^"\\]|\\.)*)"/g, /'((?:[^'\\]|\\.)*)'/g, /`((?:[^`\\]|\\.)*)`/g]) {
-    for (const m of code.matchAll(re)) segs.push(m[1]);
-  }
-  // JSX text, flattened across INLINE markup.
-  //
-  // Splitting at every tag boundary judged a fragment instead of the sentence a
-  // visitor reads. Review's example:
-  //
-  //   <p>Every treatment record has <strong>an append-only edit history for
-  //   sterile items</strong></p>
-  //
-  // The <strong> fragment names a supported record type and contains no
-  // overreach term, so it passed - while the rendered sentence promises history
-  // for every treatment record, which is exactly the claim §0.4 N1 rejects.
-  //
-  // So inline elements are dissolved before text runs are read, and only
-  // BLOCK-level boundaries still separate one claim from the next. That keeps a
-  // sentence whole without gluing two unrelated paragraphs together.
-  const INLINE = "a|abbr|b|br|code|em|i|mark|s|small|span|strong|sub|sup|time|u";
-  const flattened = code
-    .replace(new RegExp(`</?(?:${INLINE})(?:\\s[^<>]*)?/?>`, "gi"), " ")
-    // A JSX expression holding a plain string literal is INLINED, not dropped.
-    // Dropping it re-created the split-claim hole one level down:
-    //
-    //   <p>Every treatment record has {"an append-only edit history for
-    //   sterile items"}</p>
-    //
-    // left "Every treatment record has" in one segment and the literal in
-    // another - and the literal, scanned alone, names a supported record type
-    // and carries no overreach term, so it passed. Inlining keeps the sentence
-    // a visitor actually reads intact.
-    .replace(/\{\s*(['"])((?:[^'"\\]|\\.)*)\1\s*\}/g, " $2 ")
-    // Any remaining expression is a value this scan cannot resolve; blank it so
-    // it cannot glue two sentences together.
-    .replace(/\{[^{}]*\}/g, " ");
-  for (const m of flattened.matchAll(/>([^<>]+)</g)) {
-    const t = m[1].replace(/\s+/g, " ").trim();
-    if (t && /[A-Za-z]/.test(t)) segs.push(t);
-  }
-  return segs;
-}
-
-const MARKETING_COPY = MARKETING_SOURCES.map((f) => stripComments(read(f)))
-  .join("\n")
-  .replace(/\s+/g, " ");
+const SOURCES = publicMarketingSources();
+const CLAIMS = claimsBySource(SOURCES);
+/** Every claim on the public surface, as one corpus. */
+const MARKETING_COPY = CLAIMS.map((c) => c.claim).join(" ¶ ");
+const FORBIDDEN = forbiddenWordings(REGISTER);
 
 describe("the scan covers what a visitor actually reads", () => {
-  it("the route list matches the live MARKETING_PAGES registry", () => {
+  it("scans the route file behind every indexable path in the registry", () => {
     // MARKETING_PAGES drives the sitemap, per-page metadata and the middleware
     // public-route allowlist, so it is the registry of record for what is
-    // public. Pinning against it means a new indexable route cannot be added
-    // without this list noticing — which is the failure that happened twice by
-    // hand.
-    const registryRoutes = MARKETING_PAGES.filter((p) => p.indexable)
-      .map((p) => p.path)
-      // The two policy pages own their own shell (PolicyLayout), which is
-      // scanned directly rather than as a route file.
-      .filter((path) => path !== "/privacy" && path !== "/terms");
-
-    const scannedRoutes = MARKETING_ROUTES.map((f) =>
-      f === "app/page.tsx"
-        ? "/"
-        : "/" + f.replace(/^app\//, "").replace(/\/page\.tsx$/, ""),
-    );
-
-    for (const path of registryRoutes) {
-      expect(
-        scannedRoutes,
-        `${path} is an indexable marketing route but is not scanned for forbidden claims`,
-      ).toContain(path);
-    }
+    // public. The route list is now DERIVED from it rather than pinned against
+    // it: a new indexable route is scanned because it is in the registry, not
+    // because somebody remembered to add it here too.
+    const indexable = MARKETING_PAGES.filter((p) => p.indexable);
+    expect(publicRouteFiles()).toHaveLength(indexable.length);
+    for (const route of publicRouteFiles()) expect(SOURCES).toContain(route);
   });
 
-  it("scans the shared components those routes render", () => {
-    // Derived from the directory, so this asserts the derivation WORKED rather
-    // than re-listing it. SiteFooter is named explicitly because it is the file
-    // review used to demonstrate the hole.
-    expect(MARKETING_SOURCES).toContain(
+  it("scans the policy ROUTES, not only the shell they share", () => {
+    // These two were explicitly filtered out, on the reasoning that scanning
+    // PolicyLayout covered them. It does not: PolicyLayout is the wrapper, and
+    // the entire policy text is `children`, authored in the route files.
+    expect(SOURCES).toContain("app/privacy/page.tsx");
+    expect(SOURCES).toContain("app/terms/page.tsx");
+  });
+
+  it("scans the shared components and copy modules those routes render", () => {
+    // Derived by following imports, so this asserts the derivation REACHED the
+    // files review used to demonstrate each hole — the shared footer whose
+    // "Operated from Canada." is authored outside any page, the resource copy
+    // module the article routes render their titles from, and the policy header
+    // and footer, which are different components from the marketing ones.
+    for (const file of [
       "app/_components/marketing/SiteFooter.tsx",
-    );
-    expect(MARKETING_SOURCES.length).toBeGreaterThan(MARKETING_ROUTES.length);
+      "app/_components/marketing/SiteHeader.tsx",
+      "app/_components/MarketingHeader.tsx",
+      "app/_components/MarketingFooter.tsx",
+      "app/_components/PolicyLayout.tsx",
+      "lib/marketing/content.ts",
+      "lib/marketing/resources.ts",
+    ]) {
+      expect(SOURCES).toContain(file);
+    }
+    expect(SOURCES.length).toBeGreaterThan(publicRouteFiles().length);
   });
 
-  it("the copy it reads includes copy authored in a shared component", () => {
+  it("reads copy authored in a shared component", () => {
     // A live string that exists only in SiteFooter. If this disappears the
     // derivation has silently stopped reaching components.
     expect(MARKETING_COPY).toMatch(/Operated from Canada/);
   });
+
+  it("reads the BODY of each policy route", () => {
+    // Live strings authored inside app/privacy/page.tsx and app/terms/page.tsx
+    // respectively — neither is reachable by scanning PolicyLayout.
+    expect(MARKETING_COPY).toMatch(/TLS encryption for data in transit/);
+    expect(MARKETING_COPY).toMatch(/Hone is provided as a software-as-a-service/);
+  });
 });
 
 describe("truth register: provenance is declared, not assumed", () => {
+  // WHAT A SHALLOW CLONE CAN AND CANNOT PROVE
+  // -----------------------------------------
+  // CI's validate lane checks out at depth 1. An ANCESTOR commit is simply not
+  // an object there: `git cat-file -e` returns 128 and `merge-base` cannot
+  // answer. That is not a stale register, it is a truncated clone, and failing
+  // on it is a false red — the first version of this guard did exactly that and
+  // reported "declares head a946a983…, which is not a commit in this
+  // repository" on a register that was correct.
+  //
+  // The fix is NOT to soften the check to a shape match everywhere. Absence is
+  // excused only where absence is EXPLAINED: the tests below establish whether
+  // the object is present, and if it is not, the clone being shallow is
+  // asserted as the reason. In a full clone — every developer machine,
+  // `verify:prepush`, any lane that fetches history — absence is a hard
+  // failure, and the ancestry checks below are strictly stronger than the ones
+  // this guard shipped with.
+  //
+  // This repo has been bitten by the converse too: history-derived docs rules
+  // that silently never executed in CI. So the skip is an explicit, visible
+  // assertion about the clone rather than an early `return` that looks green.
+  const git = (args: string[]) =>
+    spawnSync("git", args, { cwd: REPO_ROOT, encoding: "utf8" });
+  const gitOk = (args: string[]) => git(args).status === 0;
+
+  const shallowClone = (): boolean =>
+    git(["rev-parse", "--is-shallow-repository"]).stdout?.trim() === "true";
+
+  const headObjectPresent = (): boolean =>
+    gitOk(["cat-file", "-e", `${declaredHead()}^{commit}`]);
+
   it("names the production head it was built against, as a full SHA", () => {
     expect(
       declaredHead(),
@@ -269,62 +159,72 @@ describe("truth register: provenance is declared, not assumed", () => {
     ).toMatch(/^[0-9a-f]{40}$/);
   });
 
-  // Both checks below need real history. CI's validate lane clones at depth 1,
-  // where an ANCESTOR commit is simply absent — `git cat-file -e` returns 128
-  // and `merge-base` cannot answer. That is not a stale register, it is a
-  // truncated clone, and failing on it would be a false red.
-  //
-  // The first version of this guard gated only the ancestry check on
-  // shallowness and let the existence check run unconditionally. It passed
-  // locally on a full clone and failed in CI on the first push, with
-  // "declares head a946a983…, which is not a commit in this repository" — the
-  // register was fine; the clone had no such object. Both are gated now.
-  //
-  // This repo has been bitten by the converse too: history-derived docs rules
-  // that silently never executed in CI. So the skip is an explicit, visible
-  // assertion about the clone rather than an early `return` that looks green.
-  const shallowClone = (): boolean =>
-    spawnSync("git", ["rev-parse", "--is-shallow-repository"], {
-      cwd: ROOT,
-      encoding: "utf8",
-    }).stdout?.trim() === "true";
+  it("records HOW that head was resolved, naming the production branch", () => {
+    // A bare SHA is a number somebody typed. The row has to say which ref it
+    // came from, so the declaration is a derivation record rather than an
+    // assertion — and so a reader can re-run it.
+    expect(
+      REGISTER,
+      `the provenance table must name ${PRODUCTION_BRANCH} as the ref the head was resolved from`,
+    ).toMatch(
+      new RegExp(`Head resolved \\|[^|\\n]*${PRODUCTION_BRANCH.replace("/", "\\/")}`),
+    );
+  });
 
   it("the declared head is a commit that actually exists in this repository", () => {
-    const sha = declaredHead();
-    if (shallowClone()) {
-      expect(
-        sha,
-        "shallow clone: object presence is not checkable here",
-      ).toMatch(/^[0-9a-f]{40}$/);
-      return;
-    }
-    const { status } = spawnSync("git", ["cat-file", "-e", `${sha}^{commit}`], {
-      cwd: ROOT,
-      encoding: "utf8",
-    });
+    if (headObjectPresent()) return;
+    // The object is not here. That is acceptable ONLY because the clone cannot
+    // hold it — which is a fact about the checkout, asserted, not assumed.
     expect(
-      status,
-      `the register declares head ${sha}, which is not a commit in this repository`,
-    ).toBe(0);
+      shallowClone(),
+      `the register declares head ${declaredHead()}, which is not a commit in this repository ` +
+        "and this clone is NOT shallow — the declared provenance is wrong, not truncated",
+    ).toBe(true);
   });
 
   it("the declared head is an ancestor of the branch under test", () => {
-    const sha = declaredHead();
-    if (shallowClone()) {
-      expect(sha, "shallow clone: ancestry is not checkable here").toMatch(
-        /^[0-9a-f]{40}$/,
-      );
+    if (!headObjectPresent()) {
+      expect(
+        shallowClone(),
+        "ancestry is unprovable here and the clone is not shallow",
+      ).toBe(true);
       return;
     }
-    const { status } = spawnSync(
-      "git",
-      ["merge-base", "--is-ancestor", sha, "HEAD"],
-      { cwd: ROOT, encoding: "utf8" },
-    );
     expect(
-      status,
-      `the register declares head ${sha}, which is not an ancestor of HEAD`,
-    ).toBe(0);
+      gitOk(["merge-base", "--is-ancestor", declaredHead(), "HEAD"]),
+      `the register declares head ${declaredHead()}, which is not an ancestor of HEAD`,
+    ).toBe(true);
+  });
+
+  it("the declared head is an ancestor of production, where production is fetched", () => {
+    // Stronger than ancestry-of-HEAD, and newly enforced: it catches a head
+    // that exists on this branch but was never on the production line. Gated on
+    // the ref being present, because a depth-1 PR checkout has no remote
+    // branches at all.
+    if (!headObjectPresent()) return;
+    if (!gitOk(["rev-parse", "--verify", `origin/${PRODUCTION_BRANCH}`])) return;
+    expect(
+      gitOk([
+        "merge-base",
+        "--is-ancestor",
+        declaredHead(),
+        `origin/${PRODUCTION_BRANCH}`,
+      ]),
+      `the register declares head ${declaredHead()}, which is not an ancestor of origin/${PRODUCTION_BRANCH}`,
+    ).toBe(true);
+  });
+
+  it("a well-formed but fabricated head is rejected by the object check", () => {
+    // Negative control for the check above. Review's objection to the original
+    // was that it accepted any 40 hex characters, so a fabricated SHA passed
+    // both it and the staleness check. This proves the difference: the shape
+    // test accepts this value and the object test does not.
+    const fabricated = `${"0".repeat(39)}1`;
+    expect(fabricated).toMatch(/^[0-9a-f]{40}$/);
+    expect(
+      gitOk(["cat-file", "-e", `${fabricated}^{commit}`]),
+      "a non-existent commit passed `git cat-file -e`; the existence check proves nothing",
+    ).toBe(false);
   });
 
   it("does not still claim the superseded head", () => {
@@ -399,31 +299,35 @@ describe("truth register: the operative section is present and well-formed", () 
 });
 
 describe("NOT_CURRENTLY_SUPPORTABLE claims stay out of public copy", () => {
-  // N1. An UNSCOPED edit-history claim. The scoped form shipped on
-  // /features/charting-records is true — migration 0086 writes a trigger-based,
-  // tamper-proof trail for sterile items, disinfectants, exposure incidents,
-  // the aftercare mark and session_blocks.probe_lot_number. What is NOT true is
-  // the general form: editing any other charted clinical value runs through
-  // update_block_with_entry (0166) as a plain UPDATE that keeps no prior value.
-  it("no unscoped 'every change is tracked' / 'complete audit trail' claim", () => {
-    for (const banned of [
-      // The register's OWN N1 wording came first. Review caught that the guard
-      // claimed to enforce §0.4 while not matching the exact sentence §0.4
-      // rejects - the canonical rejected claim could have shipped green.
-      /edits kept as history/i,
-      /not written over/i,
-      /changes are preserved rather than replaced/i,
-      // and the paraphrases that mean the same thing
-      /every change is (tracked|recorded|kept|preserved)/i,
-      /complete audit trail/i,
-      /full (edit )?history of every (change|edit)/i,
-      /nothing is ever overwritten/i,
-      /never overwritten/i,
+  it("the rules come from §0.4 itself, and include its canonical wordings", () => {
+    // Review's objection was that the guard hard-coded a list, claimed to
+    // enforce §0.4, and did not match the exact sentence §0.4 rejects. The list
+    // now lives in the register; these assertions prove the block was parsed
+    // and that the two wordings the ruling turns on are in it.
+    expect(FORBIDDEN.length).toBeGreaterThan(0);
+    expect(FORBIDDEN.map((r) => r.id)).toContain("N1");
+    expect(FORBIDDEN.map((r) => r.id)).toContain("N2");
+    for (const canonical of [
+      "Edits kept as history, not written over",
+      "Corrections are recorded, not written over.",
+      "A treatment record keeps its edit history.",
     ]) {
       expect(
-        MARKETING_COPY,
-        `forbidden by truth register §0.4 N1: ${banned}`,
-      ).not.toMatch(banned);
+        FORBIDDEN.some((r) => r.pattern.test(canonical)),
+        `§0.4 rejects "${canonical}" but no rule in the register's forbidden-public-wording block matches it`,
+      ).toBe(true);
+    }
+  });
+
+  it("no public claim matches a wording §0.4 rejects", () => {
+    for (const rule of FORBIDDEN) {
+      const offenders = CLAIMS.filter((c) => rule.pattern.test(c.claim)).map(
+        (c) => `${c.file}: "${c.claim}"`,
+      );
+      expect(
+        offenders,
+        `forbidden by truth register §0.4 ${rule.id} — /${rule.source}/`,
+      ).toEqual([]);
     }
   });
 
@@ -431,61 +335,176 @@ describe("NOT_CURRENTLY_SUPPORTABLE claims stay out of public copy", () => {
     // §0.4 N1: migration 0086's trigger-written trail covers sterile items,
     // disinfectants, exposure incidents, the aftercare mark, and
     // session_blocks.probe_lot_number - THAT COLUMN ONLY. Every other charted
-    // value is a plain UPDATE that keeps no prior value.
-    //
-    // Two review findings shaped this check.
-    //
-    // (a) It used to scan only double-quoted literals, so the same claim in raw
-    //     JSX text, a single-quoted string or a template literal was invisible.
-    //     copySegments() now yields all four forms.
-    //
-    // (b) The old scope regex accepted any of lot|sterile|disinfectant|log|note,
-    //     which "Every charting log has an append-only edit history" satisfies
-    //     while promising exactly what the product cannot keep - and which bare
-    //     "a lot" or "noteworthy" satisfied by accident. It now requires an
-    //     explicit supported noun phrase AND rejects any segment that widens the
-    //     promise to treatment records or to edits in general.
-    const SUPPORTED =
-      /\b(sterile[- ]item|sterile items|disinfectant|exposure incident|probe lot|lot number|record[- ]keeping)\b/i;
-    const OVERREACH =
-      /\b(every (record|change|edit|treatment|field)|all (records|changes|edits|treatments)|treatment record|charting|chart(ed)? (value|field)|session|clinical)\b/i;
-
+    // value is a plain UPDATE that keeps no prior value. So the claim must name
+    // a covered record type AND must not widen the promise back out.
     let checked = 0;
-    for (const file of MARKETING_SOURCES) {
-      for (const seg of copySegments(read(file))) {
-        if (!/append-only/i.test(seg)) continue;
-        checked += 1;
-        expect(
-          seg,
-          `${file}: an append-only claim must name an audited record type (sterile items, disinfectants, exposure incidents, probe lots, record-keeping). Offending copy: "${seg}"`,
-        ).toMatch(SUPPORTED);
-        expect(
-          seg,
-          `${file}: this append-only claim also extends the promise beyond the audited records, which §0.4 N1 rejects. Offending copy: "${seg}"`,
-        ).not.toMatch(OVERREACH);
-      }
+    for (const { file, claim } of CLAIMS) {
+      const verdict = judgeAppendOnlyClaim(claim);
+      if (verdict.kind === "not-a-claim") continue;
+      checked += 1;
+      expect(
+        verdict.kind,
+        verdict.kind === "unscoped"
+          ? `${file}: an append-only claim must name an audited record type (sterile items, disinfectants, exposure incidents, probe lots, record-keeping). Offending copy: "${claim}"`
+          : `${file}: this append-only claim extends the promise beyond the audited records via "${
+              verdict.kind === "overreaching" ? verdict.matched : ""
+            }", which §0.4 N1 rejects. Offending copy: "${claim}"`,
+      ).toBe("ok");
     }
-    // Guard the guard: zero segments would pass by vacuity, and "no append-only
+    // Guard the guard: zero claims would pass by vacuity, and "no append-only
     // claim anywhere" is a different state, owned by the overcorrection block.
     expect(
       checked,
       "no append-only copy found; see the overcorrection block",
     ).toBeGreaterThan(0);
   });
+});
 
-  // N2. The film's capture provenance. The public label is fine and ships; what
-  // must never appear is a claim about WHICH tenant supplied the data, because
-  // the deck's assertion about that was disproven (§0.7).
-  it("no public copy asserts the capture tenant", () => {
-    for (const banned of [
-      /synthetic[- ]twin/i,
-      /captured from (our|the) (production|live) (tenant|studio)/i,
+describe("negative controls: the guard bites", () => {
+  // Every control feeds copy through the SAME scanner the real surface goes
+  // through. Each one is a claim that must be REJECTED, so a future
+  // simplification that quietly stops reading a surface or a syntax fails here
+  // instead of reporting the site clean.
+  const rulesHitBy = (src: string, name = "control.tsx") => {
+    const claims = collectClaims(src, name);
+    return FORBIDDEN.filter((r) => claims.some((c) => r.pattern.test(c)));
+  };
+  /** The real file, with a forbidden claim added — does the guard see it? */
+  const realFileWith = (file: string, injected: string) =>
+    rulesHitBy(`${read(file)}\n${injected}\n`, file);
+
+  const JSX_SPLIT_CLAIM =
+    'export function __Control() {\n  return <p>Edits kept as <em>history</em>, not written over.</p>;\n}';
+  const LITERAL_CLAIM =
+    'export const __CONTROL = "Edits kept as history, not written over";';
+
+  it("rejects the register's own N1 wording", () => {
+    expect(rulesHitBy(LITERAL_CLAIM).map((r) => r.id)).toContain("N1");
+  });
+
+  it("rejects the stronger deck wording the homepage line came from", () => {
+    const deck =
+      'export const __CONTROL = "Corrections are recorded, not written over. A treatment record keeps its edit history.";';
+    expect(rulesHitBy(deck).map((r) => r.id)).toContain("N1");
+    // and each sentence independently, so neither rule is carrying the other
+    expect(
+      rulesHitBy('export const __C = "A treatment record keeps its edit history.";')
+        .length,
+    ).toBeGreaterThan(0);
+    expect(
+      rulesHitBy('export const __C = "Corrections are recorded, not written over.";')
+        .length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("rejects a claim split across JSX children", () => {
+    // The rendered sentence is what a visitor reads; the inline <em> is not a
+    // boundary. Scanning the fragments separately was how this passed before.
+    expect(rulesHitBy(JSX_SPLIT_CLAIM).map((r) => r.id)).toContain("N1");
+  });
+
+  it("rejects a claim split by a JSX expression, whichever quote it uses", () => {
+    for (const expression of [
+      '{"an append-only edit history for sterile items"}',
+      "{'an append-only edit history for sterile items'}",
+      '{"an append-only edit history for sterile items that\'s permanent"}',
+      "{'an append-only edit history for \"sterile items\"'}",
     ]) {
+      const src = `export function __C() {\n  return <p>Every treatment record has ${expression}</p>;\n}`;
+      const claims = collectClaims(src, "control.tsx");
+      const sentence = claims.find((c) => /^Every treatment record has /.test(c));
       expect(
-        MARKETING_COPY,
-        `forbidden by truth register §0.4 N2: ${banned}`,
-      ).not.toMatch(banned);
+        sentence,
+        `the expression ${expression} was not inlined into its sentence`,
+      ).toBeTruthy();
+      expect(judgeAppendOnlyClaim(sentence!).kind).toBe("overreaching");
     }
+  });
+
+  it("rejects forbidden wording in a resource article route and its copy module", () => {
+    for (const file of [
+      "app/resources/electrolysis-treatment-record-checklist/page.tsx",
+      "app/resources/moving-an-electrolysis-practice-from-paper-records/page.tsx",
+      "lib/marketing/resources.ts",
+    ]) {
+      expect(SOURCES, `${file} is not in the scanned surface`).toContain(file);
+      expect(
+        realFileWith(file, LITERAL_CLAIM).length,
+        `a forbidden claim added to ${file} was not detected`,
+      ).toBeGreaterThan(0);
+    }
+  });
+
+  it("rejects forbidden wording in shared header and footer copy", () => {
+    for (const file of [
+      "app/_components/marketing/SiteFooter.tsx",
+      "app/_components/marketing/SiteHeader.tsx",
+      "app/_components/MarketingHeader.tsx",
+      "app/_components/MarketingFooter.tsx",
+    ]) {
+      expect(SOURCES, `${file} is not in the scanned surface`).toContain(file);
+      expect(
+        realFileWith(file, JSX_SPLIT_CLAIM).length,
+        `a forbidden claim added to ${file} was not detected`,
+      ).toBeGreaterThan(0);
+    }
+  });
+
+  it("rejects forbidden wording in the privacy and terms bodies", () => {
+    for (const file of ["app/privacy/page.tsx", "app/terms/page.tsx"]) {
+      expect(SOURCES, `${file} is not in the scanned surface`).toContain(file);
+      expect(
+        realFileWith(file, JSX_SPLIT_CLAIM).length,
+        `a forbidden claim added to ${file} was not detected`,
+      ).toBeGreaterThan(0);
+    }
+  });
+
+  it("sees copy the old comment-stripping order would have eaten", () => {
+    // Both regex orders were wrong on some valid input. The parser has no
+    // order: a comment is a comment and a string is a string.
+    expect(
+      rulesHitBy('/* explanation\n// example */\nexport const __C = "complete audit trail";')
+        .length,
+      "a block comment containing a // line hid the copy after it",
+    ).toBeGreaterThan(0);
+    expect(
+      rulesHitBy('// see next/*\nexport const __C = "nothing is ever overwritten";')
+        .length,
+      "a line comment containing next/* hid the copy after it",
+    ).toBeGreaterThan(0);
+  });
+
+  it("judges scope, not the presence of a keyword", () => {
+    // The old scope regex accepted any of lot|sterile|disinfectant|log|note, so
+    // "charting log" satisfied it while promising what the product cannot keep,
+    // and bare "a lot"/"noteworthy" satisfied it by accident. Both are now
+    // rejected for naming no covered record type at all.
+    for (const unscoped of [
+      "Every charting log has an append-only edit history",
+      "Every record has an append-only edit history",
+      "a lot of noteworthy things have an append-only edit history",
+    ]) {
+      expect(judgeAppendOnlyClaim(unscoped).kind, unscoped).toBe("unscoped");
+    }
+    // Naming a covered type is not enough on its own: a claim that also widens
+    // the promise back out is rejected for the widening.
+    expect(
+      judgeAppendOnlyClaim(
+        "Every treatment record has an append-only edit history for sterile items",
+      ).kind,
+    ).toBe("overreaching");
+  });
+
+  it("leaves the supported, scoped wording green", () => {
+    // The overcorrection counterpart: the shipped line must survive every rule
+    // above. If a tightening makes a true claim unsayable, it fails here.
+    const shipped =
+      "Trace a probe lot to the areas that recorded it, and keep sterile-item and disinfectant logs with lot numbers, expiry, and replace-by dates, with an append-only edit history.";
+    expect(judgeAppendOnlyClaim(shipped).kind).toBe("ok");
+    expect(
+      FORBIDDEN.filter((r) => r.pattern.test(shipped)).map((r) => r.source),
+    ).toEqual([]);
   });
 });
 

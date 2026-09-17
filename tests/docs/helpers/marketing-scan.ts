@@ -1,0 +1,483 @@
+/**
+ * The public marketing surface, DERIVED — and the copy on it, PARSED.
+ *
+ * WHY THIS MODULE EXISTS
+ * ----------------------
+ * `tests/docs/marketing-truth-register.test.ts` enforces that claims the truth
+ * register classifies NOT_CURRENTLY_SUPPORTABLE never reach public copy. That
+ * guard is only as good as two things: the set of files it opens, and its
+ * ability to read a claim the way a visitor reads it. Review broke both,
+ * repeatedly, and always in the same direction — the guard reported clean on
+ * copy it had never looked at.
+ *
+ * THE SURFACE was a hand-maintained list. It missed the three `app/resources/`
+ * routes; once those were added it missed `lib/marketing/resources.ts`, whose
+ * titles they render; once that was added it missed the shared components every
+ * page mounts (`SiteFooter` authors "Operated from Canada."); and it explicitly
+ * filtered OUT `/privacy` and `/terms` on the reasoning that scanning
+ * `PolicyLayout` covered them — it does not, it covers the wrapper, not the
+ * `children` where the entire policy text lives. Four holes, one cause: a list
+ * that must be remembered is a list that will be forgotten.
+ *
+ * So the surface is no longer written down. Route files are derived from
+ * `MARKETING_PAGES` — the registry that already drives the sitemap, per-page
+ * metadata and the middleware public-route allowlist — and everything those
+ * routes render is derived by following their imports. A new public page, a new
+ * shared component, or a new copy module is scanned the day it is reachable,
+ * with nobody needing to notice.
+ *
+ * THE READING was a stack of regexes over file text. Each fix bred the next
+ * hole: scanning only double-quoted literals missed raw JSX text, single quotes
+ * and template literals; splitting JSX at every tag boundary judged
+ * `<strong>an append-only edit history for sterile items</strong>` on its own
+ * and passed it, while the rendered sentence "Every treatment record has …"
+ * promised exactly what §0.4 N1 rejects; inlining `{"…"}` closed that one level
+ * down and then failed when the literal contained the opposite quote character;
+ * and comment-stripping by regex ORDER was wrong on some valid input whichever
+ * order it chose.
+ *
+ * None of those are bugs in a particular pattern. They are what happens when a
+ * grammar is approximated by patterns. So copy is read with the TypeScript
+ * parser instead: the AST knows what a comment is, what a string is, which
+ * quote closes which literal, and where a JSX element ends. Every one of the
+ * holes above is unrepresentable here rather than patched.
+ */
+import ts from "typescript";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join, relative, resolve } from "node:path";
+import { MARKETING_PAGES } from "@/lib/marketing/content";
+
+export const REPO_ROOT = resolve(__dirname, "../../..");
+
+const readSource = (rel: string) => readFileSync(join(REPO_ROOT, rel), "utf8");
+
+// ---------------------------------------------------------------------------
+// 1. The surface: which files a visitor's page is built from
+// ---------------------------------------------------------------------------
+
+/**
+ * The route file behind each indexable public path.
+ *
+ * `MARKETING_PAGES` is the registry of record for what is public — it drives
+ * `SITEMAP_PATHS`, the per-page metadata and the middleware allowlist — so
+ * deriving from it means a new indexable route cannot be added without this
+ * scan picking it up. `/privacy` and `/terms` are ordinary members here; they
+ * were previously filtered out, which is precisely how the whole of both policy
+ * texts went unscanned.
+ */
+export function publicRouteFiles(): string[] {
+  return MARKETING_PAGES.filter((p) => p.indexable).map((p) => {
+    const rel =
+      p.path === "/" ? "app/page.tsx" : `app${p.path}/page.tsx`;
+    if (!existsSync(join(REPO_ROOT, rel))) {
+      throw new Error(
+        `MARKETING_PAGES declares ${p.path} indexable, but ${rel} does not exist — ` +
+          "the public-copy scan cannot open the page it is supposed to govern",
+      );
+    }
+    return rel;
+  });
+}
+
+/** Resolve a first-party import specifier to a repo-relative file, or null. */
+function resolveFirstParty(spec: string, fromRel: string): string | null {
+  let base: string;
+  if (spec.startsWith("@/")) base = join(REPO_ROOT, spec.slice(2));
+  else if (spec.startsWith(".")) base = join(REPO_ROOT, dirname(fromRel), spec);
+  else return null; // a package, or `server-only` — not our copy
+  for (const ext of [".tsx", ".ts", "/index.tsx", "/index.ts"]) {
+    if (existsSync(base + ext)) return relative(REPO_ROOT, base + ext);
+  }
+  if (/\.tsx?$/.test(base) && existsSync(base)) return relative(REPO_ROOT, base);
+  return null;
+}
+
+function importSpecifiers(sf: ts.SourceFile): string[] {
+  const out: string[] = [];
+  const visit = (n: ts.Node) => {
+    if (ts.isImportDeclaration(n) && ts.isStringLiteral(n.moduleSpecifier)) {
+      out.push(n.moduleSpecifier.text);
+    }
+    if (
+      ts.isExportDeclaration(n) &&
+      n.moduleSpecifier &&
+      ts.isStringLiteral(n.moduleSpecifier)
+    ) {
+      out.push(n.moduleSpecifier.text);
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return out;
+}
+
+/**
+ * Every first-party file a public route is built from, transitively.
+ *
+ * This is the honest universe: if a module is reachable from a public page it
+ * ships to that page, so copy authored in it is public copy. An unresolvable
+ * relative/aliased specifier is a hard error rather than a silent omission —
+ * "we could not follow this import" is exactly the failure that must not read
+ * as "there was nothing there".
+ */
+export function publicMarketingSources(): string[] {
+  const seen = new Set<string>();
+  const walk = (rel: string) => {
+    if (seen.has(rel)) return;
+    seen.add(rel);
+    const sf = ts.createSourceFile(
+      rel,
+      readSource(rel),
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.TSX,
+    );
+    for (const spec of importSpecifiers(sf)) {
+      const resolved = resolveFirstParty(spec, rel);
+      if (resolved) {
+        if (/\.tsx?$/.test(resolved)) walk(resolved);
+        continue;
+      }
+      if (spec.startsWith("@/") || spec.startsWith(".")) {
+        throw new Error(
+          `${rel} imports "${spec}", which resolves to no first-party file — ` +
+            "the public-copy scan would silently skip whatever it holds",
+        );
+      }
+    }
+  };
+  for (const route of publicRouteFiles()) walk(route);
+  return [...seen].sort();
+}
+
+// ---------------------------------------------------------------------------
+// 2. The reading: claims, as a visitor receives them
+// ---------------------------------------------------------------------------
+
+const NAMED_ENTITIES: Record<string, string> = {
+  "&apos;": "'",
+  "&quot;": '"',
+  "&amp;": "&",
+  "&lt;": "<",
+  "&gt;": ">",
+  "&nbsp;": " ",
+  "&mdash;": "—",
+  "&ndash;": "–",
+  "&hellip;": "…",
+  "&rsquo;": "’",
+  "&lsquo;": "‘",
+  "&ldquo;": "“",
+  "&rdquo;": "”",
+  "&middot;": "·",
+  "&times;": "×",
+};
+
+function decodeEntities(text: string): string {
+  return text.replace(/&(?:#\d+|#x[0-9a-fA-F]+|[a-zA-Z]+);/g, (m) => {
+    const named = NAMED_ENTITIES[m.toLowerCase()];
+    if (named) return named;
+    const dec = /^&#(\d+);$/.exec(m);
+    if (dec) return String.fromCodePoint(Number(dec[1]));
+    const hex = /^&#x([0-9a-fA-F]+);$/i.exec(m);
+    if (hex) return String.fromCodePoint(parseInt(hex[1], 16));
+    return m;
+  });
+}
+
+const normalise = (text: string) => decodeEntities(text).replace(/\s+/g, " ").trim();
+
+/**
+ * Attributes that carry no copy. Everything else — `alt`, `title`,
+ * `aria-label`, `placeholder`, and any prop a component names — is treated as
+ * copy, because a component prop is how most of this site's sentences are
+ * actually authored.
+ */
+const NON_COPY_ATTRIBUTES = new Set(
+  [
+    "className", "class", "style", "id", "key", "href", "src", "srcSet",
+    "xmlns", "viewBox", "d", "fill", "stroke", "strokeWidth", "strokeLinecap",
+    "strokeLinejoin", "transform", "points", "cx", "cy", "r", "x", "y", "x1",
+    "x2", "y1", "y2", "rx", "ry", "width", "height", "offset", "stopColor",
+    "gradientUnits", "patternUnits", "preserveAspectRatio", "rel", "target",
+    "type", "htmlFor", "tabIndex", "lang", "dir", "loading", "decoding",
+    "fetchPriority", "method", "action", "autoComplete", "inputMode",
+    "pattern", "charSet", "httpEquiv", "property", "itemProp", "itemType",
+    "as", "crossOrigin", "referrerPolicy", "opacity", "fillOpacity",
+    "strokeOpacity", "clipPath", "mask", "filter", "vectorEffect",
+    "shapeRendering", "fontFamily", "fontSize", "fontWeight", "textAnchor",
+    "dominantBaseline", "letterSpacing", "color", "media", "sizes", "name",
+    "role", "path",
+  ].map((a) => a.toLowerCase()),
+);
+
+type JsxContainer = ts.JsxElement | ts.JsxFragment | ts.JsxSelfClosingElement;
+
+const isJsxContainer = (n: ts.Node): n is JsxContainer =>
+  ts.isJsxElement(n) || ts.isJsxFragment(n) || ts.isJsxSelfClosingElement(n);
+
+const jsxChildren = (n: JsxContainer): readonly ts.JsxChild[] =>
+  ts.isJsxSelfClosingElement(n) ? [] : n.children;
+
+/**
+ * The text of a `{…}` expression, when the expression IS authored text.
+ *
+ * `{"an append-only edit history"}` is a sentence fragment a visitor reads, so
+ * it belongs to the surrounding sentence. The parser settles which quote closes
+ * the literal, so an apostrophe inside a double-quoted literal — the case that
+ * defeated the regex — is simply not a special case here.
+ *
+ * Anything else (`{cond ? a : b}`, `{feature.body}`) is a value this scan
+ * cannot resolve. It contributes a separator, never text: gluing an unresolved
+ * value's own literals into the sentence would let an unscoped claim borrow a
+ * qualifier it never renders next to.
+ */
+function authoredExpressionText(expr: ts.JsxExpression): string | null {
+  const e = expr.expression;
+  if (!e) return null;
+  if (ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e)) return e.text;
+  if (ts.isTemplateExpression(e)) {
+    return [e.head.text, ...e.templateSpans.map((s) => s.literal.text)].join(" ");
+  }
+  return null;
+}
+
+/**
+ * Every claim in one source file: the sentences its JSX renders, plus every
+ * authored string literal.
+ *
+ * SENTENCE ASSEMBLY. A container whose children mix text with elements is a
+ * paragraph — its element children are inline markup and are dissolved INTO the
+ * sentence. A container whose children are only elements is a layout — each
+ * child starts its own claim. That one structural rule replaces the tag
+ * allow-lists that kept being incomplete, and it is the rule that makes
+ * `<p>Every treatment record has <strong>an append-only edit history for
+ * sterile items</strong></p>` one claim rather than two.
+ *
+ * Comments never appear. The parser removes them by construction, so the
+ * comment-stripping order bug — line-first eats a block terminator, block-first
+ * eats real code after a `next/ *` inside a line comment — has no expression
+ * here at all.
+ */
+export function collectClaims(src: string, fileName = "input.tsx"): string[] {
+  const sf = ts.createSourceFile(
+    fileName,
+    src,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX,
+  );
+
+  const claims: string[] = [];
+  const push = (text: string) => {
+    const value = normalise(text);
+    if (value && /[A-Za-z]/.test(value)) claims.push(value);
+  };
+
+  // Containers already folded into a claim, so the file-wide sweep below does
+  // not emit them a second time as roots of their own.
+  const consumed = new Set<ts.Node>();
+
+  /**
+   * Fold a whole subtree's text into the sentence being built.
+   *
+   * Nothing is padded. JSX text nodes already carry the spacing the browser
+   * renders, so concatenating verbatim reproduces the sentence a visitor reads
+   * — `Edits kept as <em>history</em>, not written over.` comes back with its
+   * comma attached, and `hist<em>ory</em>` comes back as one word rather than
+   * two. An unresolved expression is the one thing that DOES contribute a
+   * space: it stands for text this scan cannot see, and must not fuse the
+   * words on either side of it into a claim nobody wrote.
+   */
+  const flattenInto = (node: JsxContainer): string => {
+    consumed.add(node);
+    let text = "";
+    for (const child of jsxChildren(node)) {
+      if (ts.isJsxText(child)) {
+        text += decodeEntities(child.text);
+      } else if (ts.isJsxExpression(child)) {
+        text += authoredExpressionText(child) ?? " ";
+      } else if (isJsxContainer(child)) {
+        text += flattenInto(child);
+      }
+    }
+    return text;
+  };
+
+  const emit = (node: JsxContainer) => {
+    consumed.add(node);
+    const children = jsxChildren(node);
+    const bearsText = children.some(
+      (c) =>
+        (ts.isJsxText(c) && /[A-Za-z]/.test(decodeEntities(c.text))) ||
+        (ts.isJsxExpression(c) &&
+          /[A-Za-z]/.test(authoredExpressionText(c) ?? "")),
+    );
+
+    let buffer = "";
+    const flush = () => {
+      push(buffer);
+      buffer = "";
+    };
+
+    for (const child of children) {
+      if (ts.isJsxText(child)) {
+        buffer += decodeEntities(child.text);
+        continue;
+      }
+      if (ts.isJsxExpression(child)) {
+        buffer += authoredExpressionText(child) ?? " ";
+        // An unresolved expression may still CONTAIN JSX (`{items.map(…)}`).
+        // It is left for the file-wide sweep, which will emit it as its own
+        // claim root.
+        continue;
+      }
+      if (isJsxContainer(child)) {
+        if (bearsText) buffer += flattenInto(child);
+        else {
+          flush();
+          emit(child);
+        }
+      }
+    }
+    flush();
+  };
+
+  const isNonCopyAttributeValue = (node: ts.Node): boolean => {
+    const parent = node.parent;
+    if (!parent || !ts.isJsxAttribute(parent)) return false;
+    const name = ts.isIdentifier(parent.name)
+      ? parent.name.text
+      : parent.name.getText(sf);
+    return NON_COPY_ATTRIBUTES.has(name.toLowerCase());
+  };
+
+  const isModuleSpecifier = (node: ts.Node): boolean => {
+    const parent = node.parent;
+    return Boolean(
+      parent &&
+        ((ts.isImportDeclaration(parent) && parent.moduleSpecifier === node) ||
+          (ts.isExportDeclaration(parent) && parent.moduleSpecifier === node) ||
+          ts.isExternalModuleReference(parent) ||
+          ts.isImportTypeNode(parent)),
+    );
+  };
+
+  const sweep = (node: ts.Node) => {
+    if (isJsxContainer(node) && !consumed.has(node)) emit(node);
+
+    if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
+      if (!isModuleSpecifier(node) && !isNonCopyAttributeValue(node)) {
+        push(node.text);
+      }
+    } else if (ts.isTemplateExpression(node)) {
+      push(
+        [node.head.text, ...node.templateSpans.map((s) => s.literal.text)].join(
+          " ",
+        ),
+      );
+    }
+
+    ts.forEachChild(node, sweep);
+  };
+  sweep(sf);
+
+  return claims;
+}
+
+/** Claims across a whole set of repo-relative sources, tagged with their file. */
+export function claimsBySource(
+  sources: string[],
+): Array<{ file: string; claim: string }> {
+  const out: Array<{ file: string; claim: string }> = [];
+  for (const file of sources) {
+    for (const claim of collectClaims(readSource(file), file)) {
+      out.push({ file, claim });
+    }
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// 3. The rules: parsed FROM the register, not kept in parallel with it
+// ---------------------------------------------------------------------------
+
+export type ForbiddenWording = {
+  readonly id: string;
+  readonly source: string;
+  readonly pattern: RegExp;
+};
+
+/**
+ * The wordings §0.4 forbids, read out of the register itself.
+ *
+ * Review's objection to the earlier version was exact and correct: the guard
+ * hard-coded a list of patterns, claimed to enforce §0.4, and did not match the
+ * canonical sentence §0.4 actually rejects — so the register's own rejected
+ * wording could have shipped green. A ruling and its enforcement cannot be two
+ * documents. The register now carries a fenced `forbidden-public-wording`
+ * block, and this is the only place the guard learns what is banned.
+ */
+export function forbiddenWordings(register: string): ForbiddenWording[] {
+  const block = /```forbidden-public-wording\n([\s\S]*?)```/.exec(register);
+  if (!block) {
+    throw new Error(
+      "the truth register carries no machine-readable `forbidden-public-wording` " +
+        "block; §0.4's ruling would not be enforced by anything",
+    );
+  }
+  const rules: ForbiddenWording[] = [];
+  for (const raw of block[1].split("\n")) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) continue;
+    const split = line.indexOf("|");
+    if (split < 0) {
+      throw new Error(
+        `malformed forbidden-wording rule (expected "<id> | <regex>"): ${line}`,
+      );
+    }
+    const id = line.slice(0, split).trim();
+    const source = line.slice(split + 1).trim();
+    if (!id || !source) {
+      throw new Error(`malformed forbidden-wording rule: ${line}`);
+    }
+    rules.push({ id, source, pattern: new RegExp(source, "i") });
+  }
+  if (rules.length === 0) {
+    throw new Error("the forbidden-public-wording block declares no rules");
+  }
+  return rules;
+}
+
+// ---------------------------------------------------------------------------
+// 4. The scoped-claim ruling (§0.4 N1)
+// ---------------------------------------------------------------------------
+
+/**
+ * §0.4 N1. Migration 0086's trigger-written trail covers sterile items,
+ * disinfectants, exposure incidents, the aftercare mark and
+ * `session_blocks.probe_lot_number` — THAT COLUMN ONLY. Every other charted
+ * value is a plain UPDATE through `update_block_with_entry` (0166) that keeps
+ * no prior value.
+ *
+ * So an append-only claim must name one of the audited record types, and must
+ * not widen the promise back out to treatment records or to edits in general.
+ */
+export const SUPPORTED_APPEND_ONLY_SCOPE =
+  /\b(sterile[- ]item|sterile items|disinfectant|exposure incident|probe lot|lot number|record[- ]keeping)\b/i;
+
+export const APPEND_ONLY_OVERREACH =
+  /\b(every (record|change|edit|treatment|field)|all (records|changes|edits|treatments)|treatment record|charting|chart(ed)? (value|field)|session|clinical)\b/i;
+
+export type AppendOnlyVerdict =
+  | { readonly kind: "not-a-claim" }
+  | { readonly kind: "ok" }
+  | { readonly kind: "unscoped" }
+  | { readonly kind: "overreaching"; readonly matched: string };
+
+export function judgeAppendOnlyClaim(claim: string): AppendOnlyVerdict {
+  if (!/append-only/i.test(claim)) return { kind: "not-a-claim" };
+  if (!SUPPORTED_APPEND_ONLY_SCOPE.test(claim)) return { kind: "unscoped" };
+  const over = APPEND_ONLY_OVERREACH.exec(claim);
+  if (over) return { kind: "overreaching", matched: over[0] };
+  return { kind: "ok" };
+}
