@@ -181,6 +181,13 @@ describe("P2-1 — a persistently unroutable studio does not spam errors", () =>
     const spy = vi.spyOn(console, "error").mockImplementation((m) => {
       logs.push(String(m));
     });
+    // P2-A moved the dedupe line to the INFO channel; capture both so this
+    // test keeps asserting "reported, and not as a failure" rather than
+    // accidentally asserting which channel carried it. The channel split
+    // itself is proved in the P2-A suite below.
+    vi.spyOn(console, "info").mockImplementation((m) => {
+      logs.push(String(m));
+    });
     vi.spyOn(console, "log").mockImplementation((m) => {
       logs.push(String(m));
     });
@@ -312,5 +319,189 @@ describe("P2-3 — the deployment contract cannot be misread", () => {
     expect(envExample()).toContain("TWILIO_MESSAGING_SERVICE_SID=");
     expect(doc()).toContain("TWILIO_ACCOUNT_SID");
     expect(doc()).toContain("TWILIO_AUTH_TOKEN");
+  });
+});
+
+// --- P2-A ------------------------------------------------------------------
+
+describe("P2-A — an expected dedupe must not use the ERROR channel", () => {
+  /** Captures each console channel separately so severity is observable. */
+  function channels() {
+    const err: string[] = [];
+    const info: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((m) => {
+      err.push(String(m));
+    });
+    vi.spyOn(console, "info").mockImplementation((m) => {
+      info.push(String(m));
+    });
+    return { err, info };
+  }
+
+  async function alertsWithInsertError(code: string) {
+    vi.doMock("@/lib/supabase/admin-server", () => ({
+      createAdminClient: () => ({
+        from: () => ({
+          insert: async () => ({ error: { code, message: "x" } }),
+        }),
+      }),
+    }));
+    vi.resetModules();
+    return import("@/lib/ops/alerts");
+  }
+
+  afterEach(() => {
+    vi.doUnmock("@/lib/supabase/admin-server");
+    vi.resetModules();
+  });
+
+  it("emits the dedupe at INFO, never at ERROR", async () => {
+    const c = channels();
+    const alerts = await alertsWithInsertError("23505");
+    const outcome = await alerts.recordOpsAlert({
+      severity: "warning",
+      event: "sms_sender_not_active_for_studio",
+      message: "no usable sending identity",
+      studioId: STUDIO_ID,
+      safeDetails: {},
+    });
+
+    expect(outcome).toEqual({ recorded: false, reason: "deduped" });
+    expect(c.info.join("\n")).toContain("ops_alert_deduped");
+    // THE POINT: a persistently unroutable studio must not raise the observed
+    // error rate on every cron pass.
+    expect(c.err.join("\n")).not.toContain("ops_alert_deduped");
+  });
+
+  it("keeps a GENUINE insert failure on the ERROR channel", async () => {
+    const c = channels();
+    const alerts = await alertsWithInsertError("42501");
+    const outcome = await alerts.recordOpsAlert({
+      severity: "warning",
+      event: "sms_sender_read_failed",
+      message: "unreadable",
+      studioId: STUDIO_ID,
+      safeDetails: {},
+    });
+
+    expect(outcome).toEqual({ recorded: false, reason: "insert_failed" });
+    expect(c.err.join("\n")).toContain("ops_alert_insert_failed");
+    expect(c.info.join("\n")).not.toContain("ops_alert_insert_failed");
+  });
+
+  it("does not SUPPRESS the dedupe — it is still structured telemetry", async () => {
+    const c = channels();
+    const alerts = await alertsWithInsertError("23505");
+    await alerts.recordOpsAlert({
+      severity: "warning",
+      event: "sms_sender_ambiguous",
+      message: "two active senders",
+      studioId: STUDIO_ID,
+      safeDetails: {},
+    });
+    const line = c.info.find((l) => l.includes("ops_alert_deduped"));
+    expect(line).toBeDefined();
+    const parsed = JSON.parse(line!);
+    expect(parsed.origin_event).toBe("sms_sender_ambiguous");
+    expect(parsed.studio_id).toBe(STUDIO_ID);
+    expect(parsed.timestamp).toBeTruthy();
+  });
+
+  it("leaves every OTHER structured line on the error channel", async () => {
+    // The level parameter defaults to "error", so no existing call site moved.
+    const src = readFileSync(path.join(ROOT, "lib/ops/alerts.ts"), "utf8");
+    const code = src.replace(/\/\/.*$/gm, " ").replace(/\/\*[\s\S]*?\*\//g, " ");
+    expect(code).toContain('level: ConsoleLogLevel = "error"');
+    // Exactly one call site opts into info.
+    expect(code.match(/"info",/g) ?? []).toHaveLength(1);
+  });
+});
+
+// --- P2-B ------------------------------------------------------------------
+
+describe("P2-B — only ONE-SHOT sends pay for the transient retry", () => {
+  it("confirmation still performs the bounded retries", async () => {
+    const s = scriptedAdmin([{ data: null, error: { message: "down" } }]);
+    await sendBookingConfirmationSmsToClient(args(s.admin));
+    expect(s.resolveCount()).toBe(3);
+  });
+
+  it("reminder_24h looks ONCE and fails closed for this pass", async () => {
+    const { send24hReminderSmsToClient } = await import(
+      "@/lib/sms/send-appointment"
+    );
+    const s = scriptedAdmin([{ data: null, error: { message: "down" } }]);
+    const r = await send24hReminderSmsToClient(args(s.admin));
+    // No 3x sleep/RPC loop multiplied across a reminder sweep.
+    expect(s.resolveCount()).toBe(1);
+    expect(r).toEqual({
+      ok: false,
+      skipped: true,
+      reason: "sms_sender_read_failed",
+    });
+  });
+
+  it("reminder_2h looks ONCE too", async () => {
+    const { send2hReminderSmsToClient } = await import(
+      "@/lib/sms/send-appointment"
+    );
+    const s = scriptedAdmin([{ data: null, error: { message: "down" } }]);
+    const r = await send2hReminderSmsToClient(args(s.admin));
+    expect(s.resolveCount()).toBe(1);
+    expect(r.ok).toBe(false);
+  });
+
+  it("a reminder sweep does not multiply the backoff per row", async () => {
+    // 10 unroutable rows: with the old shared retry this was 30 RPCs and
+    // ~2.4s of sleep on a cron runner. It must now be 10 RPCs and no sleep.
+    const { send24hReminderSmsToClient } = await import(
+      "@/lib/sms/send-appointment"
+    );
+    let rpcs = 0;
+    const admin = {
+      rpc: async (name: string) => {
+        if (name === "resolve_active_studio_sms_sender") {
+          rpcs += 1;
+          return { data: null, error: { message: "down" } };
+        }
+        return { data: null, error: null };
+      },
+    } as unknown as SupabaseClient;
+
+    const started = Date.now();
+    for (let i = 0; i < 10; i += 1) {
+      await send24hReminderSmsToClient(args(admin));
+    }
+    expect(rpcs).toBe(10);
+    // Generous ceiling; the point is that no per-row backoff accumulated.
+    expect(Date.now() - started).toBeLessThan(400);
+  });
+
+  it("EVERY kind still makes zero provider calls and zero claims", async () => {
+    const mod = await import("@/lib/sms/send-appointment");
+    const senders = [
+      mod.sendBookingConfirmationSmsToClient,
+      mod.send24hReminderSmsToClient,
+      mod.send2hReminderSmsToClient,
+    ];
+    for (const fn of senders) {
+      const s = scriptedAdmin([{ data: null, error: { message: "down" } }]);
+      const r = await fn(args(s.admin));
+      expect(r.ok).toBe(false);
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(
+        s.rpc.mock.calls.filter((c) => c[0] === "claim_sms_send"),
+      ).toHaveLength(0);
+    }
+  });
+
+  it("reminders still SEND normally when the sender resolves", async () => {
+    const { send24hReminderSmsToClient } = await import(
+      "@/lib/sms/send-appointment"
+    );
+    const s = scriptedAdmin([{ data: [{ messaging_service_sid: SID }] }]);
+    const r = await send24hReminderSmsToClient(args(s.admin));
+    expect(r.ok).toBe(true);
+    expect(s.resolveCount()).toBe(1);
   });
 });

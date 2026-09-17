@@ -47,9 +47,29 @@ import {
  * genuinely helps the callers that exist today, and it deliberately does NOT
  * claim retryability in the return type, because nothing downstream would
  * reschedule it.
+ *
+ * WHY CONFIRMATION ONLY. The retry exists because a one-shot send has no second
+ * chance. Reminders DO have one: `reminder_24h` and `reminder_2h` are composed
+ * by the appointment-reminders cron, which re-scans on its next pass, and a
+ * routing refusal claims no attempt — so the row is reconsidered intact, for
+ * free, without holding a runner. Applying the backoff to them would multiply a
+ * per-row sleep across an entire reminder sweep to buy a retry the cron already
+ * provides on a better schedule. Reminders therefore fail closed for THIS pass
+ * and are naturally reconsidered by the next one.
  */
 const SENDER_RESOLVE_ATTEMPTS = 3;
 const SENDER_RESOLVE_BACKOFF_MS = [60, 180] as const;
+
+/**
+ * The sms kinds whose caller has NO second chance.
+ *
+ * `confirmation` only: `app/book/[slug]/actions.ts` sends inside `postCommit`
+ * and `app/(app)/calendar/actions.ts` awaits once; neither requeues, and the
+ * cron never composes a confirmation.
+ */
+const RETRIES_TRANSIENT_RESOLUTION: ReadonlySet<SmsType> = new Set([
+  "confirmation",
+]);
 
 const SENDER_REFUSAL_REASON: Record<StudioSenderRefusal, string> = {
   no_active_sender: "sms_sender_not_active_for_studio",
@@ -80,6 +100,8 @@ function logSmsRoutingFailure(opts: {
   reason: string;
   /** True only for `read_failed`, i.e. unreadable rather than unconfigured. */
   transient: boolean;
+  /** How many resolution looks this send actually took. */
+  resolveAttempts: number;
 }): void {
   console.error(
     JSON.stringify({
@@ -114,7 +136,7 @@ function logSmsRoutingFailure(opts: {
           // configuration itself is the problem. The operator action differs,
           // so the alert says which.
           transient: opts.transient,
-          resolve_attempts: opts.transient ? SENDER_RESOLVE_ATTEMPTS : 1,
+          resolve_attempts: opts.resolveAttempts,
         },
       });
     } catch {
@@ -502,10 +524,13 @@ async function sendOne(args: SendOneArgs): Promise<SmsSendResult> {
   // billed and nothing is half-sent.
   // Bounded retry on TRANSIENT unreadability only. Fail-closed is untouched:
   // the loop can only end in a resolved sender or a refusal, never in a send.
+  const maxResolveAttempts = RETRIES_TRANSIENT_RESOLUTION.has(args.smsType)
+    ? SENDER_RESOLVE_ATTEMPTS
+    : 1;
   let routed = await resolveStudioSmsSender(args.admin, args.studio.id);
   for (
     let attempt = 1;
-    attempt < SENDER_RESOLVE_ATTEMPTS &&
+    attempt < maxResolveAttempts &&
     !studioSenderAllowsSend(routed) &&
     routed.reason === "read_failed";
     attempt += 1
@@ -522,6 +547,8 @@ async function sendOne(args: SendOneArgs): Promise<SmsSendResult> {
       studioId: args.studio.id,
       reason,
       transient: routed.reason === "read_failed",
+      resolveAttempts:
+        routed.reason === "read_failed" ? maxResolveAttempts : 1,
     });
     return { ok: false, skipped: true, reason };
   }
