@@ -505,3 +505,142 @@ describe("P2-B — only ONE-SHOT sends pay for the transient retry", () => {
     expect(s.resolveCount()).toBe(1);
   });
 });
+
+// --- resolver attempt accounting -------------------------------------------
+
+describe("resolve_attempts reports the MEASURED call count", () => {
+  /**
+   * Reads `resolve_attempts` off the structured refusal line, which is what an
+   * operator actually sees. Asserting the telemetry rather than only the stub
+   * call count is the point: the defect was a REPORTING one, and a test that
+   * only counted RPCs would have stayed green through it.
+   */
+  async function refusalTelemetry(
+    send: (a: ReturnType<typeof args>) => Promise<unknown>,
+    script: Array<{ data: unknown; error?: unknown }>,
+  ) {
+    const lines: string[] = [];
+    const err = vi.spyOn(console, "error").mockImplementation((m) => {
+      lines.push(String(m));
+    });
+    const info = vi.spyOn(console, "info").mockImplementation((m) => {
+      lines.push(String(m));
+    });
+    const s = scriptedAdmin(script);
+    await send(args(s.admin));
+    const parsed = lines
+      .map((l) => {
+        try {
+          return JSON.parse(l);
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean);
+    // The SYNCHRONOUS refusal line. The durable ops_alert is written
+    // fire-and-forget, so it is not guaranteed to have been emitted yet; this
+    // line always has been.
+    const refusal = parsed.find((o) => o.event === "sms_routing_refused");
+    err.mockRestore();
+    info.mockRestore();
+    return {
+      resolverCalls: s.resolveCount(),
+      reported: refusal?.resolveAttempts,
+      reason: refusal?.reason,
+    };
+  }
+
+  it("A — immediate no_active_sender: 1 call, reports 1", async () => {
+    const r = await refusalTelemetry(sendBookingConfirmationSmsToClient, [
+      { data: [] },
+    ]);
+    expect(r.resolverCalls).toBe(1);
+    expect(r.reported).toBe(1);
+    expect(r.reason).toBe("sms_sender_not_active_for_studio");
+  });
+
+  it("B — read_failed then no_active_sender: 2 calls, reports 2", async () => {
+    // The exact case the derived logic got wrong: it reported 1.
+    const r = await refusalTelemetry(sendBookingConfirmationSmsToClient, [
+      { data: null, error: { message: "blip" } },
+      { data: [] },
+    ]);
+    expect(r.resolverCalls).toBe(2);
+    expect(r.reported).toBe(2);
+    expect(r.reason).toBe("sms_sender_not_active_for_studio");
+  });
+
+  it("C — read_failed, read_failed, ambiguous: 3 calls, reports 3", async () => {
+    const r = await refusalTelemetry(sendBookingConfirmationSmsToClient, [
+      { data: null, error: { message: "blip" } },
+      { data: null, error: { message: "blip" } },
+      {
+        data: [
+          { messaging_service_sid: "MGa0000000000000000000000000000" },
+          { messaging_service_sid: "MGb0000000000000000000000000000" },
+        ],
+      },
+    ]);
+    expect(r.resolverCalls).toBe(3);
+    expect(r.reported).toBe(3);
+    expect(r.reason).toBe("sms_sender_ambiguous");
+  });
+
+  it("D — persistent confirmation read_failed: hits the ceiling, reports it", async () => {
+    const r = await refusalTelemetry(sendBookingConfirmationSmsToClient, [
+      { data: null, error: { message: "down" } },
+    ]);
+    expect(r.resolverCalls).toBe(3);
+    expect(r.reported).toBe(3);
+    expect(r.reported).toBe(r.resolverCalls);
+  });
+
+  it("E — reminder_24h read_failed: 1 call, reports 1", async () => {
+    const mod = await import("@/lib/sms/send-appointment");
+    const r = await refusalTelemetry(mod.send24hReminderSmsToClient, [
+      { data: null, error: { message: "down" } },
+    ]);
+    expect(r.resolverCalls).toBe(1);
+    expect(r.reported).toBe(1);
+  });
+
+  it("F — reminder_2h read_failed: 1 call, reports 1", async () => {
+    const mod = await import("@/lib/sms/send-appointment");
+    const r = await refusalTelemetry(mod.send2hReminderSmsToClient, [
+      { data: null, error: { message: "down" } },
+    ]);
+    expect(r.resolverCalls).toBe(1);
+    expect(r.reported).toBe(1);
+  });
+
+  it("the reported count ALWAYS equals the calls actually made", async () => {
+    const scripts: Array<Array<{ data: unknown; error?: unknown }>> = [
+      [{ data: [] }],
+      [{ data: null, error: { message: "x" } }, { data: [] }],
+      [{ data: "malformed" as unknown }],
+      [{ data: null, error: { message: "x" } }],
+    ];
+    for (const script of scripts) {
+      const r = await refusalTelemetry(sendBookingConfirmationSmsToClient, script);
+      expect(r.reported, JSON.stringify(script)).toBe(r.resolverCalls);
+    }
+  });
+
+  it("is never inferred from the reason — transient and count are independent", async () => {
+    // A transient-looking FINAL reason with one call, and a terminal final
+    // reason with several, both report truthfully.
+    const oneCallTransient = await refusalTelemetry(
+      (await import("@/lib/sms/send-appointment")).send2hReminderSmsToClient,
+      [{ data: null, error: { message: "x" } }],
+    );
+    expect(oneCallTransient.reason).toBe("sms_sender_read_failed");
+    expect(oneCallTransient.reported).toBe(1);
+
+    const manyCallsTerminal = await refusalTelemetry(
+      sendBookingConfirmationSmsToClient,
+      [{ data: null, error: { message: "x" } }, { data: [] }],
+    );
+    expect(manyCallsTerminal.reason).toBe("sms_sender_not_active_for_studio");
+    expect(manyCallsTerminal.reported).toBe(2);
+  });
+});

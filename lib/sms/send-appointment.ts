@@ -110,6 +110,10 @@ function logSmsRoutingFailure(opts: {
       smsType: opts.smsType,
       reason: opts.reason,
       transient: opts.transient,
+      // The measured resolver-call count, on the SYNCHRONOUS line too: the
+      // durable ops_alert is written fire-and-forget, so this is the record
+      // that always exists even if the alert insert never lands.
+      resolveAttempts: opts.resolveAttempts,
       timestamp: new Date().toISOString(),
     }),
   );
@@ -527,16 +531,37 @@ async function sendOne(args: SendOneArgs): Promise<SmsSendResult> {
   const maxResolveAttempts = RETRIES_TRANSIENT_RESOLUTION.has(args.smsType)
     ? SENDER_RESOLVE_ATTEMPTS
     : 1;
-  let routed = await resolveStudioSmsSender(args.admin, args.studio.id);
-  for (
-    let attempt = 1;
-    attempt < maxResolveAttempts &&
+
+  // COUNT THE CALLS, DO NOT INFER THEM.
+  //
+  // This counter is incremented exactly once per `resolveStudioSmsSender`
+  // invocation, and is the ONLY thing telemetry reports.
+  //
+  // The earlier version derived the count from the FINAL reason —
+  // `read_failed ? ceiling : 1` — which is wrong whenever the outcome CHANGES
+  // between looks. `read_failed -> no_active_sender` really made two calls but
+  // reported one, and `read_failed -> read_failed -> ambiguous` really made
+  // three but reported one. Both are the cases an operator most needs to see
+  // accurately, because a refusal that took several looks says something
+  // different about the database than one that took a single look.
+  //
+  // Attempt count is a FACT about what happened. It must never be re-derived
+  // from the reason, from whether the reason is transient, or from
+  // retryability.
+  let resolveAttempts = 0;
+  const resolveOnce = async () => {
+    resolveAttempts += 1;
+    return resolveStudioSmsSender(args.admin, args.studio.id);
+  };
+
+  let routed = await resolveOnce();
+  while (
+    resolveAttempts < maxResolveAttempts &&
     !studioSenderAllowsSend(routed) &&
-    routed.reason === "read_failed";
-    attempt += 1
+    routed.reason === "read_failed"
   ) {
-    await sleep(SENDER_RESOLVE_BACKOFF_MS[attempt - 1] ?? 0);
-    routed = await resolveStudioSmsSender(args.admin, args.studio.id);
+    await sleep(SENDER_RESOLVE_BACKOFF_MS[resolveAttempts - 1] ?? 0);
+    routed = await resolveOnce();
   }
 
   if (!studioSenderAllowsSend(routed)) {
@@ -547,8 +572,8 @@ async function sendOne(args: SendOneArgs): Promise<SmsSendResult> {
       studioId: args.studio.id,
       reason,
       transient: routed.reason === "read_failed",
-      resolveAttempts:
-        routed.reason === "read_failed" ? maxResolveAttempts : 1,
+      // The measured count, never a value inferred from the final reason.
+      resolveAttempts,
     });
     return { ok: false, skipped: true, reason };
   }
