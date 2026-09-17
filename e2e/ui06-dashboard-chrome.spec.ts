@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
-import { seedE2eStudio, seedE2eDashboardMemoryClient } from "./helpers/seed";
+import { randomUUID } from "node:crypto";
+import { seedE2eStudio, seedE2eDashboardMemoryClient, sql } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
 
 // UI-06 — the flattened memory cards, proved at three widths.
@@ -22,16 +23,62 @@ const WIDTHS = [
   { name: "laptop", width: 1440, height: 900 },
 ] as const;
 
+/**
+ * The shared memory seed creates exactly ONE treated area, so a divider test
+ * guarded on "at least two rows" could never run — and on the first pass it
+ * SKIPPED, silently taking the slice's central claim with it. A visibly
+ * skipped assertion is better than a falsely passing one, but it still proved
+ * nothing about whether flattening cost scanning.
+ *
+ * So a second area is seeded here rather than in the shared helper, which
+ * other specs depend on. Mirrors the helper's own inserts with a different
+ * area and side.
+ */
+async function addSecondArea(studioId: string, clientId: string): Promise<void> {
+  const rows = await sql<{ id: string }>(
+    `select s.id from public.sessions s
+      where s.client_id = $1 and s.studio_id = $2
+      order by s.started_at desc limit 1`,
+    [clientId, studioId],
+  );
+  const sessionId = rows[0]?.id;
+  if (!sessionId) throw new Error("fixture: no prior session to attach a second area to");
+
+  const blockId = randomUUID();
+  await sql(
+    `insert into public.session_blocks
+       (id, studio_id, session_id, sort_order, primary_area, side, mode, apilus_modality,
+        energy_level, minutes_performed, machine_frequency, probe_label,
+        caution_for_next_session, caution_note)
+     values ($1,$2,$3,2,'Chin','right','thermolysis','Synchro',
+        7, 15, '27.12 MHz', 'Ballet · Gold · Two-piece · F3 Short', false, null)`,
+    [blockId, studioId, sessionId],
+  );
+  await sql(
+    `insert into public.session_block_areas (id, studio_id, session_block_id, area, laterality, display_order)
+     values ($1,$2,$3,'Chin','right',0)`,
+    [randomUUID(), studioId, blockId],
+  );
+  await sql(
+    `insert into public.electrolysis_entries
+       (id, session_id, block_id, area, areas, mode, energy_level, minutes_performed,
+        machine_frequency, hairs_treated)
+     values ($1,$2,$3,'Chin',array['Chin']::text[],'thermo',7,15,'27.12 MHz',30)`,
+    [randomUUID(), sessionId, blockId],
+  );
+}
+
 async function openDashboardMemory(page: Page) {
   const seed = await seedE2eStudio();
   // A caution note is required by the seed helper, and it is also what makes
   // the BLUE callout render — the surface whose fourth label spelling this
   // slice reconciled. Seeding without one would have proved the flattening on
   // a card missing the very region under test.
-  await seedE2eDashboardMemoryClient(seed, {
+  const { clientId } = await seedE2eDashboardMemoryClient(seed, {
     cautionNote: "E2E caution: watch the upper lip for reactive erythema.",
     nextVisitNote: "E2E next visit: drop to 3.5s dwell if reaction persists.",
   });
+  await addSecondArea(seed.studioId, clientId);
   await loginAsOwner(page, seed);
   await page.goto("/dashboard");
   const toggle = page.getByTestId("dashboard-memory-toggle").first();
@@ -58,22 +105,57 @@ for (const vp of WIDTHS) {
     test("flattened rows are still separated by a PAINTED divider", async ({ page }) => {
       await openDashboardMemory(page);
       const rows = page.getByTestId("prep-setup-area");
-      const n = await rows.count();
-      test.skip(n < 2, "needs at least two rows to observe separation");
+      await expect(rows.first()).toBeVisible({ timeout: 20_000 });
+      // ASSERTED, not skipped. Two areas are seeded above precisely so this
+      // claim always runs; fewer than two now means the FIXTURE broke, which
+      // must fail rather than quietly excuse the assertion.
+      expect(
+        await rows.count(),
+        "fixture must seed two areas so separation is observable",
+      ).toBeGreaterThanOrEqual(2);
 
-      // Asserting the computed border, not the class: a tokened divider that
+      // Asserting the COMPUTED border, not the class: a tokened divider that
       // failed to resolve would still carry `divide-line` in the class list
       // while painting nothing, and scanning would be gone.
-      const painted = await rows.nth(1).evaluate((el) => {
-        const cs = getComputedStyle(el as HTMLElement);
-        return {
-          width: parseFloat(cs.borderTopWidth || "0"),
-          colour: cs.borderTopColor,
+      //
+      // EDGE-AGNOSTIC, and that correction matters. The first version measured
+      // `borderTopWidth` on the second row and failed with 0 at every width —
+      // which I nearly read as "the flattening removed the separation". It had
+      // not: Tailwind v4's `divide-y` compiles to
+      //   .divide-y > :not(:last-child) { border-bottom-width: 1px }
+      // so the separator lives on the BOTTOM of every row except the last, and
+      // border-top is legitimately 0. Checking the compiled CSS rather than
+      // trusting the assertion stopped me changing working code.
+      //
+      // So this asks the real question — is there a painted horizontal rule
+      // BETWEEN two rows — and accepts it on either edge, which also means the
+      // test survives Tailwind changing which edge it uses.
+      const painted = await rows.first().evaluate((el) => {
+        const row = el as HTMLElement;
+        const next = row.nextElementSibling as HTMLElement | null;
+        const read = (e: HTMLElement) => {
+          const cs = getComputedStyle(e);
+          return {
+            top: parseFloat(cs.borderTopWidth || "0"),
+            bottom: parseFloat(cs.borderBottomWidth || "0"),
+            topColour: cs.borderTopColor,
+            bottomColour: cs.borderBottomColor,
+          };
         };
+        return { first: read(row), second: next ? read(next) : null };
       });
-      expect(painted.width, "divider has no width").toBeGreaterThan(0);
-      expect(painted.colour).not.toBe("rgba(0, 0, 0, 0)");
-      expect(painted.colour).not.toBe("transparent");
+      expect(painted.second, "needs a second row to separate from").not.toBeNull();
+
+      const bottomOfFirst = painted.first.bottom;
+      const topOfSecond = painted.second!.top;
+      expect(
+        Math.max(bottomOfFirst, topOfSecond),
+        `no painted rule between rows (bottom=${bottomOfFirst}, top=${topOfSecond})`,
+      ).toBeGreaterThan(0);
+
+      const colour = bottomOfFirst > 0 ? painted.first.bottomColour : painted.second!.topColour;
+      expect(colour).not.toBe("rgba(0, 0, 0, 0)");
+      expect(colour).not.toBe("transparent");
     });
 
     test("sections stay distinguishable — labels visible, rows not collapsed", async ({
