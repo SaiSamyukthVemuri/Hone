@@ -155,8 +155,33 @@ describe("reminder route stays bounded per run (PR OPS-01)", () => {
     expect(ROUTE).toMatch(/const PER_RUN_LIMIT = 50;/);
   });
 
-  it("actually applies the cap to the window query (not just declares it)", () => {
-    expect(ROUTE_CODE).toMatch(/\.limit\(PER_RUN_LIMIT\)/);
+  it("actually applies the cap to the work done (not just declares it)", () => {
+    // UPDATED BY THE FAIRNESS REPAIR, and the reason is recorded rather than
+    // the assertion quietly relaxed.
+    //
+    // The cap used to be `.limit(PER_RUN_LIMIT)` on a single fixed page. That
+    // page was the bug: routing-refused rows left `sent_at` null and
+    // `send_attempts` at zero, so the same unroutable prefix filled every pass
+    // and a routable suffix was never loaded. The pass now pages, and the cap
+    // moved from "rows fetched" to "SEND WORK performed" — which is the thing
+    // it was always meant to bound.
+    //
+    // This is STRICTER than the old form, not looser: it requires the cap to
+    // gate the loop AND to break out of it, so a declaration alone still
+    // cannot satisfy it.
+    expect(ROUTE_CODE).toMatch(/sendWork < PER_RUN_LIMIT/);
+    expect(ROUTE_CODE).toMatch(/if \(sendWork >= PER_RUN_LIMIT\) break pages;/);
+    // And a routing refusal must not consume that budget, or the cap would be
+    // spent on work that never happened.
+    expect(ROUTE_CODE).toMatch(/if \(!routingRefused\) sendWork \+= 1;/);
+  });
+
+  it("bounds every page query by a NAMED constant, never an ad-hoc number", () => {
+    // The window query's own bound is still explicit; it is simply the page
+    // size now rather than the per-run cap.
+    expect(ROUTE_CODE).toMatch(/const REMINDER_PAGE_SIZE = 50;/);
+    expect(ROUTE_CODE).toMatch(/pageSize: REMINDER_PAGE_SIZE \+ 1/);
+    expect(ROUTE_CODE).toMatch(/const MAX_SCAN_ROWS = 500;/);
   });
 
   it("the only numeric-literal limits are single-row lookups, never the window cap", () => {

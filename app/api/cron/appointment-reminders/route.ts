@@ -1,5 +1,11 @@
 import { NextResponse } from "next/server";
 import { keysetFilter } from "@/lib/cron/reminder-keyset";
+import {
+  partitionRoutableStudios,
+  truncationProven,
+  type StudioRoutability,
+} from "@/lib/cron/reminder-routable-studios";
+import { resolveStudioSmsSender, studioSenderAllowsSend } from "@/lib/sms/studio-sender";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { isAuthorizedCronRequest } from "@/lib/cron/auth";
 import {
@@ -74,6 +80,57 @@ const REMINDER_PAGE_SIZE = 50;
  */
 const MAX_SCAN_ROWS = 500;
 
+/**
+ * Enumerate the DISTINCT studios among this window's eligible candidates.
+ *
+ * One narrow column, so the payload is a uuid per row rather than a joined
+ * appointment. Paged so the enumeration itself is not a fixed first page —
+ * the whole point is that no studio can be hidden behind another studio's
+ * rows.
+ */
+async function candidateStudioIds(opts: {
+  startIso: string;
+  endIso: string;
+  notSentColumn: SentColumn;
+  attemptsColumn: AttemptsColumn;
+}): Promise<string[]> {
+  const admin = createAdminClient();
+  const seen = new Set<string>();
+  let after: { startsAt: string; id: string } | null = null;
+
+  for (;;) {
+    let q = admin
+      .from("appointments")
+      .select("id, starts_at, studio_id")
+      .eq("status", "confirmed")
+      .is(opts.notSentColumn, null)
+      .lt(opts.attemptsColumn, MAX_ATTEMPTS)
+      .gte("starts_at", opts.startIso)
+      .lte("starts_at", opts.endIso)
+      .order("starts_at", { ascending: true })
+      .order("id", { ascending: true });
+    const keyset = keysetFilter(after);
+    if (keyset) q = q.or(keyset);
+
+    const { data, error } = await q.limit(STUDIO_SCAN_PAGE_SIZE);
+    if (error) throw new Error(error.message);
+    const rows = (data ?? []) as Array<{
+      id: string;
+      starts_at: string;
+      studio_id: string;
+    }>;
+    if (rows.length === 0) break;
+    for (const r of rows) seen.add(r.studio_id);
+    const last = rows[rows.length - 1]!;
+    after = { startsAt: last.starts_at, id: last.id };
+    if (rows.length < STUDIO_SCAN_PAGE_SIZE) break;
+  }
+  return [...seen];
+}
+
+/** Page size for the narrow studio-enumeration read. */
+const STUDIO_SCAN_PAGE_SIZE = 500;
+
 /** Routing refusals — free of the send budget, by reason, from the helper. */
 const ROUTING_REFUSAL_REASONS: ReadonlySet<string> = new Set([
   "sms_sender_not_active_for_studio",
@@ -128,6 +185,14 @@ async function loadAppointmentsForWindow(opts: {
    */
   after?: { startsAt: string; id: string } | null;
   pageSize?: number;
+  /**
+   * Restrict selection to these studios.
+   *
+   * This is the fairness mechanism: a studio with no usable sender contributes
+   * NO candidate rows, so it cannot occupy the page regardless of how many
+   * appointments it has or how early they sort.
+   */
+  onlyStudioIds?: ReadonlyArray<string> | null;
 }): Promise<Joined[]> {
   const admin = createAdminClient();
   let q = admin
@@ -148,6 +213,7 @@ async function loadAppointmentsForWindow(opts: {
 
   const keyset = keysetFilter(opts.after ?? null);
   if (keyset) q = q.or(keyset);
+  if (opts.onlyStudioIds) q = q.in("studio_id", opts.onlyStudioIds as string[]);
 
   const { data, error } = await q.limit(opts.pageSize ?? PER_RUN_LIMIT);
   if (error) throw new Error(error.message);
@@ -540,6 +606,30 @@ async function sendSmsReminderPass(opts: {
   };
   const smsAppOrigin = getRequiredAppOrigin();
 
+  // FAIRNESS: resolve each candidate studio ONCE, then select only from the
+  // studios that can actually send. An unroutable studio contributes no rows,
+  // so it cannot occupy the page — the starvation has no surface left.
+  const studioIds = await candidateStudioIds({
+    startIso: opts.windowStartIso,
+    endIso: opts.windowEndIso,
+    notSentColumn: sentColumn,
+    attemptsColumn,
+  });
+  const resolutions: StudioRoutability[] = [];
+  for (const studioId of studioIds) {
+    const r = await resolveStudioSmsSender(admin, studioId);
+    resolutions.push({ studioId, routable: studioSenderAllowsSend(r) });
+  }
+  const { routable, unroutable } = partitionRoutableStudios(resolutions);
+
+  // Nothing can send this pass. Not an error: an entirely unprovisioned estate
+  // is a configuration fact, and it is reported by the send helper's own
+  // refusal path the moment any studio is provisioned.
+  if (routable.length === 0) {
+    stats.skipped += unroutable.length;
+    return stats;
+  }
+
   // Keyset cursor over (starts_at, id); see the batch-starvation note above.
   let cursor: { startsAt: string; id: string } | null = null;
   let sendWork = 0;
@@ -554,14 +644,23 @@ async function sendSmsReminderPass(opts: {
       notSentColumn: sentColumn,
       attemptsColumn,
       after: cursor,
-      pageSize: REMINDER_PAGE_SIZE,
+      // +1 LOOKAHEAD. A full page is NOT proof that more candidates existed:
+      // a set of exactly REMINDER_PAGE_SIZE rows fills the page and ends.
+      // Truncation may only be claimed when a further row was actually seen.
+      pageSize: REMINDER_PAGE_SIZE + 1,
+      onlyStudioIds: routable,
     });
-    if (page.length === 0) {
+    const hasMore = truncationProven({
+      returned: page.length,
+      limit: REMINDER_PAGE_SIZE,
+    });
+    const rows = page.slice(0, REMINDER_PAGE_SIZE);
+    if (rows.length === 0) {
       exhausted = true;
       break;
     }
 
-    for (const appt of page) {
+    for (const appt of rows) {
       // Advance the cursor BEFORE any `continue`, so a skipped row can never be
       // re-fetched on the next page — which would be an infinite loop, not
       // merely a wasted read.
@@ -685,7 +784,9 @@ async function sendSmsReminderPass(opts: {
       if (scanned >= MAX_SCAN_ROWS) break pages;
     }
 
-    if (page.length < REMINDER_PAGE_SIZE) {
+    if (!hasMore) {
+      // PROVEN exhaustion: the lookahead row was absent, so this really was
+      // the end of the candidate set — not merely a full page.
       exhausted = true;
       break;
     }

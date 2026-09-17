@@ -21,6 +21,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // asserted.
 // ===========================================================================
 
+/** The shipped route's source, comment-stripped. Module scope: several
+ *  describes assert against it. */
+function routeSrc(): string {
+  const { readFileSync } = require("node:fs") as typeof import("node:fs");
+  const path = require("node:path") as typeof import("node:path");
+  return readFileSync(
+    path.resolve(__dirname, "../../../../app/api/cron/appointment-reminders/route.ts"),
+    "utf8",
+  );
+}
+function code(): string {
+  return routeSrc().replace(/\/\/.*$/gm, " ").replace(/\/\*[\s\S]*?\*\//g, " ");
+}
+
 const WINDOW_START = "2026-10-01T00:00:00.000Z";
 const WINDOW_END = "2026-10-02T00:00:00.000Z";
 
@@ -362,16 +376,6 @@ describe("the real cron route actually pages", () => {
   // The fixture above models the behaviour. This asserts the shipped code has
   // the structure that behaviour depends on, so the model cannot stay green
   // while the route regresses to a single fixed page.
-  const src = () => {
-    const { readFileSync } = require("node:fs") as typeof import("node:fs");
-    const path = require("node:path") as typeof import("node:path");
-    return readFileSync(
-      path.resolve(__dirname, "../../../../app/api/cron/appointment-reminders/route.ts"),
-      "utf8",
-    );
-  };
-  const code = () =>
-    src().replace(/\/\/.*$/gm, " ").replace(/\/\*[\s\S]*?\*\//g, " ");
 
   it("uses a KEYSET cursor, never OFFSET", async () => {
     // BEHAVIOURAL, not a grep. A negative control proved a string guard here
@@ -431,7 +435,7 @@ describe("the real cron route actually pages", () => {
 
   it("advances the cursor BEFORE any continue, so a page cannot repeat", () => {
     const c = code();
-    const loopStart = c.indexOf("for (const appt of page)");
+    const loopStart = c.indexOf("for (const appt of rows)");
     const cursorSet = c.indexOf("cursor = { startsAt: appt.starts_at, id: appt.id }");
     const firstContinue = c.indexOf("continue;", loopStart);
     expect(loopStart).toBeGreaterThan(-1);
@@ -439,10 +443,350 @@ describe("the real cron route actually pages", () => {
     expect(cursorSet).toBeLessThan(firstContinue);
   });
 
-  it("adds NO migration and does not touch the sender authority law", () => {
+  it("does not BYPASS the sender authority, and reads no env sender", () => {
+    // Updated deliberately, and the reason is recorded rather than quietly
+    // swapped: the first version asserted the route never NAMES
+    // `resolveStudioSmsSender`. The fairness repair makes the route resolve
+    // each candidate studio once, for SELECTION — so naming it is now correct
+    // and the old assertion encoded an assumption, not the invariant.
+    //
+    // The real invariant is unchanged and is what this now asserts: selection
+    // may narrow which rows are loaded, but it may never decide that a send is
+    // permitted. Every row still goes through the send helper, which
+    // re-resolves and re-refuses on its own — so a studio that becomes
+    // unroutable between enumeration and send is still refused, fail-closed.
     const c = code();
-    // The routing law itself lives in lib/sms and is untouched by this repair.
-    expect(c).not.toContain("resolveStudioSmsSender");
+    expect(c).toContain("resolveStudioSmsSender");          // selection only
+    expect(c).toContain("studioSenderAllowsSend");
+    // The send still goes through the helper; the route never posts directly.
+    expect(c).toMatch(/send24hReminderSmsToClient|send2hReminderSmsToClient/);
+    expect(c).not.toContain("sendSmsSafely");
+    // And no environment sender anywhere.
     expect(c).not.toContain("TWILIO_MESSAGING_SERVICE_SID");
+    expect(c).not.toContain("TWILIO_FROM_NUMBER");
+  });
+});
+
+// ===========================================================================
+// P2-A — FAIRNESS MUST SURVIVE ACROSS CRON RUNS
+//
+// Keyset paging fixed ONE invocation and moved the boundary from 50 to
+// MAX_SCAN_ROWS: every later invocation still started from the beginning, so a
+// large enough unroutable prefix hid a routable suffix forever.
+//
+// The repair removes unroutable rows from SELECTION, so there is nothing to
+// page past and no persisted cursor is needed. These tests model that: a run
+// enumerates candidate studios, resolves each once, and selects only from the
+// routable ones.
+// ===========================================================================
+
+type Studio = { id: string; routable: boolean };
+
+function runFairPass(
+  rows: Array<Row & { studio_id: string }>,
+  studios: Studio[],
+  state: { sent: Set<string> },
+  opts: { perRun?: number; pageSize?: number } = {},
+): { reached: string[]; sent: string[]; studiosResolved: string[] } {
+  const PER_RUN = opts.perRun ?? 50;
+  const PAGE = opts.pageSize ?? 50;
+
+  // 1 enumerate distinct candidate studios, 2 resolve each ONCE
+  const candidateStudios = [
+    ...new Set(rows.filter((r) => !state.sent.has(r.id)).map((r) => r.studio_id)),
+  ];
+  const resolved = candidateStudios.map((id) => ({
+    studioId: id,
+    routable: studios.find((s) => s.id === id)?.routable ?? false,
+  }));
+  const routable = resolved.filter((r) => r.routable).map((r) => r.studioId);
+
+  // 3 select ONLY from studios that can send
+  const eligible = rows
+    .filter((r) => !state.sent.has(r.id))
+    .filter((r) => routable.includes(r.studio_id))
+    .sort((a, b) =>
+      a.starts_at === b.starts_at
+        ? a.id.localeCompare(b.id)
+        : a.starts_at.localeCompare(b.starts_at),
+    )
+    .slice(0, Math.min(PER_RUN, PAGE));
+
+  const reached = eligible.map((r) => r.id);
+  for (const r of eligible) state.sent.add(r.id);
+  return {
+    reached,
+    sent: reached,
+    studiosResolved: candidateStudios,
+  };
+}
+
+describe("P2-A — cross-run fairness", () => {
+  /** 600 permanently-refused rows, then one routable row beyond them. */
+  function bigEstate() {
+    const rows: Array<Row & { studio_id: string }> = [];
+    for (let i = 0; i < 600; i += 1) {
+      rows.push({
+        id: `bad-${String(i).padStart(4, "0")}`,
+        starts_at: new Date(Date.parse(WINDOW_START) + i * 1000).toISOString(),
+        studio_id: "studio-broken",
+        routable: false,
+      });
+    }
+    rows.push({
+      id: "good-001",
+      starts_at: new Date(Date.parse(WINDOW_START) + 900 * 1000).toISOString(),
+      studio_id: "studio-healthy",
+      routable: true,
+    });
+    return rows;
+  }
+  const studios: Studio[] = [
+    { id: "studio-broken", routable: false },
+    { id: "studio-healthy", routable: true },
+  ];
+
+  it("reaches the routable row on the FIRST run, past 600 refused rows", () => {
+    // 600 > MAX_SCAN_ROWS (500). Under the previous keyset-only repair this
+    // suffix was unreachable on every run.
+    const state = { sent: new Set<string>() };
+    const run = runFairPass(bigEstate(), studios, state);
+    expect(run.sent).toEqual(["good-001"]);
+  });
+
+  it("resolves each candidate studio ONCE, not once per row", () => {
+    const run = runFairPass(bigEstate(), studios, { sent: new Set() });
+    expect(run.studiosResolved).toEqual(["studio-broken", "studio-healthy"]);
+    expect(run.studiosResolved).toHaveLength(2);
+  });
+
+  it("repeated runs eventually process an entire routable suffix", () => {
+    // 600 refused + 120 routable: more routable rows than one run's cap.
+    const rows = bigEstate();
+    for (let i = 0; i < 120; i += 1) {
+      rows.push({
+        id: `ok-${String(i).padStart(3, "0")}`,
+        starts_at: new Date(Date.parse(WINDOW_START) + (1000 + i) * 1000).toISOString(),
+        studio_id: "studio-healthy",
+        routable: true,
+      });
+    }
+    const state = { sent: new Set<string>() };
+    let runs = 0;
+    while (runs < 20) {
+      const r = runFairPass(rows, studios, state);
+      runs += 1;
+      if (r.sent.length === 0) break;
+    }
+    const routableIds = rows.filter((r) => r.routable).map((r) => r.id);
+    for (const id of routableIds) expect(state.sent.has(id)).toBe(true);
+    // And the refused rows were never sent, however many runs happened.
+    for (const r of rows.filter((x) => !x.routable)) {
+      expect(state.sent.has(r.id)).toBe(false);
+    }
+  });
+
+  it("a refused row staying refused NEVER blocks progress", () => {
+    const rows = bigEstate();
+    const state = { sent: new Set<string>() };
+    runFairPass(rows, studios, state);
+    // Refused rows are untouched: sent_at null, attempts 0, still eligible.
+    // The next run is unaffected by them.
+    const second = runFairPass(rows, studios, state);
+    expect(second.sent).toEqual([]); // nothing routable left, not blocked
+  });
+
+  it("no duplicate send across runs", () => {
+    const rows = bigEstate();
+    const state = { sent: new Set<string>() };
+    const a = runFairPass(rows, studios, state);
+    const b = runFairPass(rows, studios, state);
+    expect(a.sent).toEqual(["good-001"]);
+    expect(b.sent).toEqual([]);
+    expect([...state.sent]).toHaveLength(1);
+  });
+
+  it("a studio becoming routable later is picked up without any stored cursor", () => {
+    const rows = bigEstate();
+    const state = { sent: new Set<string>() };
+    runFairPass(rows, studios, state); // good-001 sent
+    // The broken studio is provisioned between runs.
+    const fixed: Studio[] = [
+      { id: "studio-broken", routable: true },
+      { id: "studio-healthy", routable: true },
+    ];
+    const after = runFairPass(rows, fixed, state, { perRun: 50 });
+    expect(after.sent.length).toBe(50);
+    expect(after.sent.every((id) => id.startsWith("bad-"))).toBe(true);
+  });
+
+  it("24h and 2h windows are independent", () => {
+    // Separate state per window: a send in one must not mark the other.
+    const rows = bigEstate();
+    const s24 = { sent: new Set<string>() };
+    const s2 = { sent: new Set<string>() };
+    runFairPass(rows, studios, s24);
+    expect(s24.sent.has("good-001")).toBe(true);
+    expect(s2.sent.has("good-001")).toBe(false);
+    const r2 = runFairPass(rows, studios, s2);
+    expect(r2.sent).toEqual(["good-001"]);
+  });
+});
+
+// ===========================================================================
+// P2-B — TRUNCATION MUST MEAN ACTUAL TRUNCATION
+// ===========================================================================
+
+describe("P2-B — a full page is not proof of truncation", () => {
+  it("499 rows: exhausted, no ceiling warning", async () => {
+    const { truncationProven } = await import("@/lib/cron/reminder-routable-studios");
+    // The query asks for limit+1 and gets 499.
+    expect(truncationProven({ returned: 499, limit: 500 })).toBe(false);
+  });
+
+  it("EXACTLY 500 rows: exhausted, no ceiling warning", async () => {
+    const { truncationProven } = await import("@/lib/cron/reminder-routable-studios");
+    // The defect: a full page read as proof that more existed.
+    expect(truncationProven({ returned: 500, limit: 500 })).toBe(false);
+  });
+
+  it("501 rows: the extra candidate is PROVEN, so truncation is truthful", async () => {
+    const { truncationProven } = await import("@/lib/cron/reminder-routable-studios");
+    expect(truncationProven({ returned: 501, limit: 500 })).toBe(true);
+  });
+
+  it("the route asks for limit + 1 so the lookahead row can exist at all", () => {
+    const c = code();
+    expect(c).toContain("pageSize: REMINDER_PAGE_SIZE + 1");
+    expect(c).toContain("truncationProven({");
+    // And it processes only the page, never the lookahead row.
+    expect(c).toContain("page.slice(0, REMINDER_PAGE_SIZE)");
+  });
+
+  it("exhaustion is claimed only when the lookahead was ABSENT", () => {
+    const c = code();
+    expect(c).toMatch(/if \(!hasMore\) \{/);
+    expect(c).toContain("exhausted = true;");
+  });
+});
+
+// ===========================================================================
+// NEGATIVE CONTROLS for P2-A / P2-B
+// ===========================================================================
+
+describe("negative controls", () => {
+  it("A — selecting WITHOUT the routable filter starves the suffix", () => {
+    // Model the pre-repair selection: no studio filter, fixed page.
+    const rows = (() => {
+      const r: Array<Row & { studio_id: string }> = [];
+      for (let i = 0; i < 600; i += 1) {
+        r.push({
+          id: `bad-${String(i).padStart(4, "0")}`,
+          starts_at: new Date(Date.parse(WINDOW_START) + i * 1000).toISOString(),
+          studio_id: "studio-broken",
+          routable: false,
+        });
+      }
+      r.push({
+        id: "good-001",
+        starts_at: new Date(Date.parse(WINDOW_START) + 900 * 1000).toISOString(),
+        studio_id: "studio-healthy",
+        routable: true,
+      });
+      return r;
+    })();
+
+    const unfiltered = rows
+      .sort((a, b) => a.starts_at.localeCompare(b.starts_at))
+      .slice(0, 500);
+    // 500-row scan ceiling never reaches it — the defect this repair removes.
+    expect(unfiltered.map((r) => r.id)).not.toContain("good-001");
+
+    // With the filter, it is the FIRST row selected.
+    const fair = runFairPass(rows, [
+      { id: "studio-broken", routable: false },
+      { id: "studio-healthy", routable: true },
+    ], { sent: new Set() });
+    expect(fair.sent).toEqual(["good-001"]);
+  });
+
+  it("B — treating a full page as truncation breaks the exactly-500 case", async () => {
+    const { truncationProven } = await import("@/lib/cron/reminder-routable-studios");
+    const naive = (returned: number, limit: number) => returned >= limit;
+    // The naive rule cries truncation on a complete set…
+    expect(naive(500, 500)).toBe(true);
+    // …where the lookahead rule correctly does not.
+    expect(truncationProven({ returned: 500, limit: 500 })).toBe(false);
+  });
+});
+
+// ===========================================================================
+// The SHIPPED route implements the fairness mechanism
+//
+// The cross-run tests above exercise a MODEL of the selection. A negative
+// control proved that is not sufficient on its own: disabling the studio
+// filter in the real route left every model test green, because the model
+// always applies it. These bind the proof to the shipped code.
+// ===========================================================================
+
+describe("the real route selects only from routable studios", () => {
+  it("passes the routable set into the query, not null", () => {
+    const c = code();
+    expect(c).toContain("onlyStudioIds: routable");
+    // …and the loader must actually apply it.
+    expect(c).toContain('q = q.in("studio_id", opts.onlyStudioIds as string[])');
+  });
+
+  it("resolves each candidate studio ONCE, outside the row loop", () => {
+    const c = code();
+    expect(c).toContain("const studioIds = await candidateStudioIds({");
+    expect(c).toMatch(/for \(const studioId of studioIds\) \{/);
+    expect(c).toContain("partitionRoutableStudios(resolutions)");
+    // The resolve must NOT be inside the per-row loop.
+    const resolveAt = c.indexOf("resolveStudioSmsSender(admin, studioId)");
+    const rowLoopAt = c.indexOf("for (const appt of rows)");
+    expect(resolveAt).toBeGreaterThan(-1);
+    expect(rowLoopAt).toBeGreaterThan(resolveAt);
+  });
+
+  it("short-circuits when NO studio can send", () => {
+    expect(code()).toMatch(/if \(routable\.length === 0\) \{/);
+  });
+
+  it("still sends through the helper, so the authority re-refuses per row", () => {
+    // Selection narrows what is LOADED. It never decides that a send is
+    // permitted: a studio that becomes unroutable between enumeration and send
+    // is still refused, fail-closed, by the helper.
+    const c = code();
+    expect(c).toMatch(/send24hReminderSmsToClient|send2hReminderSmsToClient/);
+    expect(c).toContain("ROUTING_REFUSAL_REASONS");
+  });
+});
+
+describe("partitionRoutableStudios, behaviourally", () => {
+  it("splits and dedupes, preserving order", async () => {
+    const { partitionRoutableStudios } = await import(
+      "@/lib/cron/reminder-routable-studios"
+    );
+    const r = partitionRoutableStudios([
+      { studioId: "a", routable: false },
+      { studioId: "b", routable: true },
+      { studioId: "a", routable: false },
+      { studioId: "c", routable: true },
+    ]);
+    expect(r.routable).toEqual(["b", "c"]);
+    expect(r.unroutable).toEqual(["a"]);
+  });
+
+  it("an all-unroutable estate yields no routable studios", async () => {
+    const { partitionRoutableStudios } = await import(
+      "@/lib/cron/reminder-routable-studios"
+    );
+    const r = partitionRoutableStudios([
+      { studioId: "x", routable: false },
+      { studioId: "y", routable: false },
+    ]);
+    expect(r.routable).toEqual([]);
+    expect(r.unroutable).toEqual(["x", "y"]);
   });
 });
