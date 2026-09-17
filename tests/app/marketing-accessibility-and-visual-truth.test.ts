@@ -77,35 +77,69 @@ describe("visual truth: a value inside a product preview is a product claim", ()
 });
 
 describe("landmarks: the content is reachable past the nav", () => {
+  const SKIP = stripComments(read("app/_components/marketing/SkipLink.tsx"));
   const HEADER = stripComments(read("app/_components/marketing/SiteHeader.tsx"));
+  const POLICY_SHELL = stripComments(read("app/_components/PolicyLayout.tsx"));
 
-  it("the shared header opens with a skip link to #main-content", () => {
-    expect(HEADER).toMatch(/href="#main-content"/);
-    expect(HEADER).toMatch(/Skip to main content/);
+  /**
+   * The skip link as ONE element, not three independent tokens.
+   *
+   * The first version asserted `href="#main-content"`, the label, and the
+   * sr-only classes as separate source-wide matches. Review pointed out that
+   * changing the `<a>` to a `<div>` while keeping its attributes and text, or
+   * parking the tokens in an unused string, satisfied all three while the
+   * bypass no longer worked. This binds them to a single anchor tag.
+   */
+  const SKIP_ANCHOR =
+    /<a\s[^>]*href="#main-content"[^>]*>\s*Skip to main content\s*<\/a>/;
+
+  it("is a real anchor carrying both the target and the label", () => {
+    expect(
+      SKIP,
+      "the skip link must be one <a href=\"#main-content\">Skip to main content</a>",
+    ).toMatch(SKIP_ANCHOR);
   });
 
-  it("the skip link is hidden until focused, not hidden outright", () => {
+  it("is hidden until focused, not hidden outright", () => {
     // `sr-only` alone would make it permanently invisible to sighted keyboard
     // users, who are most of the people it helps.
-    expect(HEADER).toMatch(/sr-only\s+focus:not-sr-only/);
+    const anchor = SKIP.match(SKIP_ANCHOR)?.[0] ?? "";
+    expect(anchor).toMatch(/sr-only/);
+    expect(anchor).toMatch(/focus:not-sr-only/);
   });
 
-  it("the skip link is the first focusable element in the header", () => {
-    const skip = HEADER.indexOf('href="#main-content"');
+  it("is the first focusable element on the shell surface", () => {
+    const skip = HEADER.indexOf("<SkipLink");
     const firstLink = HEADER.indexOf("<Link");
-    expect(skip).toBeGreaterThan(-1);
+    expect(skip, "SiteHeader does not render the skip link").toBeGreaterThan(-1);
     expect(
       skip,
       "a nav link precedes the skip link, so tabbing reaches the nav first",
     ).toBeLessThan(firstLink);
   });
 
-  it("every shell page gives the skip link somewhere to land", () => {
+  it("is the first focusable element on the policy surface too", () => {
+    // The defect review found: /privacy and /terms gained a #main-content
+    // target while only SiteHeader had the link, so on those two routes the
+    // bypass target was unreachable.
+    const skip = POLICY_SHELL.indexOf("<SkipLink");
+    const header = POLICY_SHELL.indexOf("<MarketingHeader");
+    expect(skip, "PolicyLayout does not render the skip link").toBeGreaterThan(-1);
+    expect(
+      skip,
+      "the policy header renders before the skip link",
+    ).toBeLessThan(header);
+  });
+
+  it("every surface that renders the link also defines the target", () => {
     for (const page of SHELL_PAGES) {
       expect(stripComments(read(page)), `${page}: <main> has no id="main-content"`).toMatch(
         /<main id="main-content"/,
       );
     }
+    expect(POLICY_SHELL, "PolicyLayout has no #main-content target").toMatch(
+      /<main id="main-content">/,
+    );
   });
 });
 

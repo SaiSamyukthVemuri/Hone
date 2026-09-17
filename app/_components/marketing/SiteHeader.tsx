@@ -2,6 +2,7 @@ import Link from "next/link";
 import { PRIMARY_NAV, WALKTHROUGH, ANALYTICS_EVENTS } from "@/lib/marketing/content";
 import { Container } from "./primitives";
 import { MobileNav } from "./MobileNav";
+import { SkipLink } from "./SkipLink";
 import { ProductMenu } from "./ProductMenu";
 import { MK_FONT_DISPLAY } from "./tokens";
 
@@ -23,12 +24,7 @@ export function SiteHeader() {
 
   return (
     <header className="sticky top-0 z-40 border-b border-[color:var(--color-hairline)] bg-paper/95">
-      <a
-        href="#main-content"
-        className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-3 focus:z-50 focus:rounded-[8px] focus:bg-ink focus:px-4 focus:py-2 focus:text-[0.9375rem] focus:font-semibold focus:text-paper focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-mineral)] focus-visible:ring-offset-2"
-      >
-        Skip to main content
-      </a>
+      <SkipLink />
       <Container>
         <div className="flex h-16 items-center justify-between">
           <Link

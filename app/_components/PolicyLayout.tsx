@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { MarketingHeader } from "@/app/_components/MarketingHeader";
 import { MarketingFooter } from "@/app/_components/MarketingFooter";
+import { SkipLink } from "@/app/_components/marketing/SkipLink";
 import { SafeAnalytics } from "@/app/_components/SafeAnalytics";
 import { MARKETING_PALETTE as PALETTE } from "@/app/_components/marketingNav";
 
@@ -33,6 +34,7 @@ export function PolicyLayout({
       }}
       className="min-h-screen font-[var(--font-inter)]"
     >
+      <SkipLink />
       <MarketingHeader />
       <main id="main-content">
       <article className="px-6 py-16 md:px-12 md:py-24 lg:px-16">
