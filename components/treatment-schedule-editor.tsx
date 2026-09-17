@@ -21,6 +21,8 @@
 //   "Estimated total"   , derived from stages, displayed with "about"
 
 import { useState, useTransition } from "react";
+
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import type {
   TreatmentPlanStage,
   TreatmentPlanStageHowOftenUnit,
@@ -240,14 +242,30 @@ function StageRow({
   onEdit: () => void;
 }) {
   const [error, setError] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
   const [pending, startTransition] = useTransition();
 
+  // UI-05. This was `window.confirm()`, and confirm-dialog.tsx's own docblock
+  // explains why that is not merely a styling problem: iOS Safari can SUPPRESS
+  // a native confirm silently. When it does, the guard returns false and the
+  // removal simply never happens — a practitioner taps Remove, sees nothing,
+  // and has no way to tell whether Hone refused or ignored them. Two other
+  // surfaces in this repo already migrated away for exactly that reason and
+  // recorded it in their comments.
+  //
+  // ConfirmDialog is the shipped replacement and carries what a native dialog
+  // cannot: role="alertdialog", a focus trap, focus restored to the opener,
+  // Escape that closes ONLY while idle so an in-flight removal is never
+  // abandoned, and an error region that keeps the dialog open so the message
+  // can actually be read.
+  //
+  // The mutation is unchanged and still owned here; the dialog is presentation.
   function handleDelete() {
-    if (
-      !window.confirm(`Remove ${stage.name ?? `Stage ${index + 1}`}?`)
-    ) {
-      return;
-    }
+    setError(null);
+    setConfirming(true);
+  }
+
+  function runDelete() {
     setError(null);
     const fd = new FormData();
     fd.set("stage_id", stage.id);
@@ -255,7 +273,13 @@ function StageRow({
     fd.set("client_id", clientId);
     startTransition(async () => {
       const r = await deleteAction(fd);
-      if (!r.ok) setError(r.error);
+      if (r.ok) {
+        setConfirming(false);
+      } else {
+        // Stay open so the failure is readable and retryable, per the dialog's
+        // error contract.
+        setError(r.error);
+      }
     });
   }
 
@@ -327,11 +351,32 @@ function StageRow({
           {stage.notes}
         </p>
       )}
-      {error && (
+      {/* `!confirming` so a failure is not rendered TWICE — once inside the
+          dialog and once behind it. The dialog owns the message while it is
+          open; this row owns it afterwards. Same guard the mark-complete
+          consumer uses. */}
+      {error && !confirming && (
         <p className="text-[11px] text-red-700 dark:text-red-400" role="alert">
           {error}
         </p>
       )}
+
+      {/* Inside the row, so the dialog unmounts with the stage it removes. */}
+      <ConfirmDialog
+        open={confirming}
+        title={`Remove ${label}?`}
+        description="This removes the stage from the treatment plan. Sessions already recorded against it are not deleted."
+        confirmLabel="Remove stage"
+        busyLabel="Removing…"
+        tone="danger"
+        pending={pending}
+        error={confirming ? error : null}
+        onConfirm={runDelete}
+        onCancel={() => {
+          setConfirming(false);
+          setError(null);
+        }}
+      />
     </div>
   );
 }
