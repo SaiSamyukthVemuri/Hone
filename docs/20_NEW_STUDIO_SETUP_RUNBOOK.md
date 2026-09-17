@@ -53,8 +53,10 @@ launch.** Do not enable any of them to "make onboarding work".
 
 **LAURA — self-service, in the app, after acceptance.**
 
-3. **Accept the invitation** (§2.3) — mandatory; nothing below is reachable
-   until she does.
+3. **Accept the invitation** (§2.3) — mandatory for a brand-new owner, and
+   nothing below is reachable until she does. (An invited person who already
+   practises in another Hone studio can be auto-linked at sign-in instead; §2.3
+   says when.)
 4. Create **at least one active service** — and, for public booking, at least
    one active **consultation** service (see below).
 5. Configure **weekly availability**.
@@ -117,7 +119,7 @@ values ('<STUDIO_ID>', '<OWNER EMAIL>', 'owner', '<OWNER DISPLAY NAME>')
 returning id, studio_id, email, role, status;
 ```
 
-### 2.3 Owner first sign-in, then **ACCEPT THE INVITATION** (two steps, both mandatory)
+### 2.3 Owner first sign-in, then **ACCEPT THE INVITATION** (for a new owner, two steps)
 
 **Signing in does NOT create ownership.** Earlier revisions of this section said
 the practitioner row "is created by the application at sign-in" and then asked
@@ -151,7 +153,25 @@ studio access and **cannot begin any of the §2.4 configuration.** If she stops
 here, this is the first thing to check — not the invitation row, and not
 `handle_new_user()`.
 
-Only after acceptance, verify (read-only):
+> **When step 2 is skipped, and why that is not a contradiction.** Acceptance is
+> demanded only when there is nothing valid to carry forward. If the invited
+> person ALREADY holds a Hone membership whose **terms and privacy acceptance
+> are both at the current version**, `reconcile_my_pending_invitation()` copies
+> those four exact values onto the new membership, creates it, and returns
+> `linked` during sign-in — no acceptance screen, and consent still never
+> fabricated, because nothing fresh is stamped
+> (`supabase/migrations/0141_onboarding_invitation_reconciliation.sql`,
+> the `link_invited_membership` branch). Explicit acceptance is required when
+> that evidence is **absent or stale**, and also when the person's existing row
+> in THIS studio is inactive — reactivation needs its own consent.
+>
+> **For a brand-new owner like Laura the answer is always "acceptance
+> required"**, because she holds no prior membership to copy from. That is the
+> case this runbook is written for, so treat step 2 as mandatory here. Expect to
+> skip it only when onboarding someone who already practises in another Hone
+> studio.
+
+Only after the membership exists — by either route — verify (read-only):
 
 > Invite-only posture (PR #253): Hone is invite-only. Self-serve signup and public studio creation do NOT exist (no `/signup` route, no signup CTA; `studios` has no INSERT policy; a practitioner is only provisioned from a matching `pending_invitations` row — at sign-in, by the application under migration 0141; `handle_new_user` itself is now a NO-OP). The owner's first sign-in MUST use the exact invited email — an uninvited sign-in creates an `auth.users` row but no studio/practitioner and is gated to `/no-access` (a friendly "No studio access yet" page with Sign out + Contact Hone), never the app shell or any studio data. So the §2.2 invitation row is a prerequisite for §2.3; if Laura lands on `/no-access`, the email she used does not match a pending invitation.
 
