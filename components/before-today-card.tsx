@@ -1,4 +1,5 @@
 import { ClinicalUnavailableNotice } from "@/components/clinical-unavailable-notice";
+import { SectionLabel } from "@/components/ui/section-label";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import type { BeforeToday } from "@/lib/sessions/before-today";
 import {
@@ -19,14 +20,6 @@ import {
 // chips; the client response (tolerance, reaction, reaction notes)
 // has its own section; record reminders stay last. Recorded-history
 // wording only; long notes wrap; nothing is invented.
-
-function SectionLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <h3 className="text-[11px] font-medium uppercase tracking-wider text-neutral-500">
-      {children}
-    </h3>
-  );
-}
 
 function Chip({ children }: { children: React.ReactNode }) {
   return (
@@ -79,7 +72,7 @@ export function BeforeTodayCard({
                   used below: the only reminders that survive an unavailable
                   clinical read are the client-record ones, and reusing that
                   label would imply the procedure record had been checked. */}
-              <SectionLabel>Client record reminders</SectionLabel>
+              <SectionLabel size="caption" as="h3">Client record reminders</SectionLabel>
               <ul className="mt-1 list-disc pl-5 text-sm text-neutral-700 dark:text-neutral-300">
                 {briefing.reminders.map((r) => (
                   <li key={r} className="break-words">
@@ -131,7 +124,7 @@ export function BeforeTodayCard({
           {/* 2. Last treatment snapshot: date, areas, modality, setup. */}
           {last && (
             <div>
-              <SectionLabel>Last treatment</SectionLabel>
+              <SectionLabel size="caption" as="h3">Last treatment</SectionLabel>
               {/* PR #268 (chart parts): name the treatment area being recalled,
                   with an "Area not recorded" fallback for legacy entries. */}
               <p className="mt-1 text-sm">
@@ -173,7 +166,7 @@ export function BeforeTodayCard({
 
           {/* 3. Client response, last recorded. */}
           <div>
-            <SectionLabel>Client response (last recorded)</SectionLabel>
+            <SectionLabel size="caption" as="h3">Client response (last recorded)</SectionLabel>
             {response.hasAny ? (
               <>
                 <div className="mt-1.5 flex flex-wrap gap-1.5">
@@ -197,7 +190,7 @@ export function BeforeTodayCard({
 
           {/* 4. Record reminders: clear, not alarming. */}
           <div>
-            <SectionLabel>Record reminders</SectionLabel>
+            <SectionLabel size="caption" as="h3">Record reminders</SectionLabel>
             {briefing.reminders.length === 0 ? (
               <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
                 Procedure record looks complete based on recorded fields.
@@ -223,7 +216,7 @@ export function BeforeTodayCard({
           charting. No edit/void/merge/convert actions. */}
       {importedMemory?.hasItems && (
         <div className="rounded-md border border-amber-200 bg-amber-50/60 px-4 py-3 dark:border-amber-900 dark:bg-amber-950/30">
-          <SectionLabel>Imported treatment memory</SectionLabel>
+          <SectionLabel size="caption" as="h3">Imported treatment memory</SectionLabel>
           <p className="mt-1 text-xs text-neutral-500">
             History imported from paper, Jane, or a spreadsheet.{" "}
             {IMPORTED_PROVENANCE_NOTE}

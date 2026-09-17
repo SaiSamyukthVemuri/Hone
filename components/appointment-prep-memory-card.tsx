@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { SectionLabel } from "@/components/ui/section-label";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import {
   NO_LAST_SESSION_NOTES_COPY,
@@ -44,14 +45,6 @@ function Chip({ children }: { children: React.ReactNode }) {
     <span className="inline-flex items-center rounded-full border border-neutral-200 bg-neutral-50 px-2.5 py-0.5 text-xs text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300">
       {children}
     </span>
-  );
-}
-
-function SectionLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <h3 className="text-[11px] font-medium uppercase tracking-wider text-neutral-500">
-      {children}
-    </h3>
   );
 }
 
@@ -216,7 +209,7 @@ export function AppointmentPrepMemoryCard({
       {/* ---- AREAS TREATED, with laterality ---- */}
       {hasBlockDetail ? (
         <div>
-          <SectionLabel>Areas treated</SectionLabel>
+          <SectionLabel size="caption" as="h3">Areas treated</SectionLabel>
           <p
             data-testid="prep-areas"
             className="mt-1 break-words text-sm font-medium text-neutral-900 dark:text-neutral-100"
@@ -270,7 +263,7 @@ export function AppointmentPrepMemoryCard({
         data-testid="prep-notes"
         className="border-t border-neutral-200 pt-3 dark:border-neutral-800"
       >
-        <SectionLabel>Last session notes</SectionLabel>
+        <SectionLabel size="caption" as="h3">Last session notes</SectionLabel>
         {notes.hasAny ? (
           <div className="mt-1.5 flex flex-col gap-3">
             {notes.forNextVisit && (
@@ -346,7 +339,7 @@ export function AppointmentPrepMemoryCard({
               setup below. This is the result, not the recipe. ---- */}
       {hasBlockDetail && (
         <div className="border-t border-neutral-200 pt-3 dark:border-neutral-800">
-          <SectionLabel>What happened</SectionLabel>
+          <SectionLabel size="caption" as="h3">What happened</SectionLabel>
           <ul className="mt-1.5 flex flex-col gap-2">
             {memory.areas.map((area) => (
               <li

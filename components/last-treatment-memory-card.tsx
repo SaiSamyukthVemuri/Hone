@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { SectionLabel } from "@/components/ui/section-label";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import { ClinicalDate } from "@/components/clinical-date";
 import type { PointOfCareMemory } from "@/lib/sessions/point-of-care-memory";
@@ -32,14 +33,6 @@ function Chip({ children }: { children: React.ReactNode }) {
     <span className="inline-flex items-center rounded-full border border-neutral-200 bg-neutral-50 px-2.5 py-0.5 text-xs text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300">
       {children}
     </span>
-  );
-}
-
-function SectionLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <h3 className="text-[11px] font-medium uppercase tracking-wider text-neutral-500">
-      {children}
-    </h3>
   );
 }
 
@@ -118,7 +111,7 @@ export function LastTreatmentMemoryCard({
         <>
       {/* ---- AREAS TREATED, with laterality ---- */}
       <div>
-        <SectionLabel>Areas treated</SectionLabel>
+        <SectionLabel size="caption" as="h3">Areas treated</SectionLabel>
         <p
           data-testid="last-treatment-areas"
           className="mt-1 break-words text-sm font-medium text-neutral-900 dark:text-neutral-100"
@@ -133,7 +126,7 @@ export function LastTreatmentMemoryCard({
 
       {/* ---- CLIENT RESPONSE + TOLERANCE ---- */}
       <div>
-        <SectionLabel>Response &amp; tolerance</SectionLabel>
+        <SectionLabel size="caption" as="h3">Response &amp; tolerance</SectionLabel>
         {responseAreas.length > 0 ? (
           <ul className="mt-1 flex flex-col gap-1.5">
             {responseAreas.map((a) => (
@@ -250,7 +243,7 @@ export function LastTreatmentMemoryCard({
           authenticated client link; long bodies are never dumped here. */}
       <div className="border-t border-neutral-200 pt-3 dark:border-neutral-800">
         <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-          <SectionLabel>Consultation &amp; skin/hair</SectionLabel>
+          <SectionLabel size="caption" as="h3">Consultation &amp; skin/hair</SectionLabel>
           <Link
             href={notesHref}
             className="text-xs font-medium text-neutral-700 hover:underline dark:text-neutral-300"
