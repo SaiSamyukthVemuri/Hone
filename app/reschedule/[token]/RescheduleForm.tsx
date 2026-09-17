@@ -98,6 +98,39 @@ function horizonInStudio(
 
 // Ties the disabled submit to its reason. One constant so the id on the <p> and
 // the aria-describedby on the button cannot drift apart.
+/**
+ * Why the reschedule submit is blocked, or null when nothing blocks it.
+ *
+ * EXPORTED SO THE PROOF CAN RUN THE REAL THING. The equivalence test first
+ * re-implemented both the old and new expressions by hand and enumerated them,
+ * which Codex correctly flagged as proving my transcription equals itself
+ * rather than proving the shipped predicate is right. A hand-copied predicate
+ * in a test is a second implementation that can drift silently from the first.
+ *
+ * Pure and dependency-free on purpose: it takes booleans, not the component's
+ * state, so the test can exhaust its input space without rendering anything.
+ * `picked` is passed as a boolean rather than the Slot so this stays free of
+ * the form's types.
+ *
+ * The strings are the ones `submit()` already used; see the note at the call
+ * site for why they were unreachable.
+ */
+export function rescheduleBlockedReason({
+  picked,
+  requiresAcknowledgement,
+  acknowledged,
+}: {
+  picked: boolean;
+  requiresAcknowledgement: boolean;
+  acknowledged: boolean;
+}): string | null {
+  if (!picked) return "Pick a time first.";
+  if (requiresAcknowledgement && !acknowledged) {
+    return "Please review and acknowledge the appointment policies before rescheduling.";
+  }
+  return null;
+}
+
 const BLOCKED_HINT_ID = "reschedule-submit-blocked";
 
 export function RescheduleForm({
@@ -206,11 +239,11 @@ export function RescheduleForm({
   //
   // NOT a change to reschedule authority: the guards in `submit()` stay as
   // defence in depth and the server action re-validates, exactly as before.
-  const blockedReason: string | null = !picked
-    ? "Pick a time first."
-    : requiresAcknowledgement && !acknowledged
-      ? "Please review and acknowledge the appointment policies before rescheduling."
-      : null;
+  const blockedReason = rescheduleBlockedReason({
+    picked: picked !== null,
+    requiresAcknowledgement,
+    acknowledged,
+  });
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
