@@ -58,6 +58,10 @@ const MARKETING_SOURCES = [
   "app/resources/electrolysis-treatment-record-checklist/page.tsx",
   "app/resources/moving-an-electrolysis-practice-from-paper-records/page.tsx",
   "lib/marketing/content.ts",
+  // Article titles, descriptions and author all render, and also feed the
+  // sitemap and Article JSON-LD. Review caught that a claim placed here reaches
+  // three public surfaces without passing any of the bans below.
+  "lib/marketing/resources.ts",
 ] as const;
 
 /**
@@ -139,11 +143,29 @@ function copySegments(src: string): string[] {
   for (const re of [/"((?:[^"\\]|\\.)*)"/g, /'((?:[^'\\]|\\.)*)'/g, /`((?:[^`\\]|\\.)*)`/g]) {
     for (const m of code.matchAll(re)) segs.push(m[1]);
   }
-  // JSX text nodes: the run between a closing `>` and the next `<`, with
-  // {expressions} dropped. Keeps only runs containing a letter, so indentation
-  // and punctuation noise do not become "copy".
-  for (const m of code.matchAll(/>([^<>{}]+)</g)) {
-    const t = m[1].trim();
+  // JSX text, flattened across INLINE markup.
+  //
+  // Splitting at every tag boundary judged a fragment instead of the sentence a
+  // visitor reads. Review's example:
+  //
+  //   <p>Every treatment record has <strong>an append-only edit history for
+  //   sterile items</strong></p>
+  //
+  // The <strong> fragment names a supported record type and contains no
+  // overreach term, so it passed - while the rendered sentence promises history
+  // for every treatment record, which is exactly the claim §0.4 N1 rejects.
+  //
+  // So inline elements are dissolved before text runs are read, and only
+  // BLOCK-level boundaries still separate one claim from the next. That keeps a
+  // sentence whole without gluing two unrelated paragraphs together.
+  const INLINE = "a|abbr|b|br|code|em|i|mark|s|small|span|strong|sub|sup|time|u";
+  const flattened = code
+    .replace(new RegExp(`</?(?:${INLINE})(?:\\s[^<>]*)?/?>`, "gi"), " ")
+    // Drop {expressions} so an interpolated value does not split the sentence
+    // either; their own string literals are already scanned above.
+    .replace(/\{[^{}]*\}/g, " ");
+  for (const m of flattened.matchAll(/>([^<>]+)</g)) {
+    const t = m[1].replace(/\s+/g, " ").trim();
     if (t && /[A-Za-z]/.test(t)) segs.push(t);
   }
   return segs;
