@@ -238,7 +238,7 @@ current-section state, visual or semantic.
 
 **`[MEASURED FACT]`** **1,197** rounded corners (`rounded-md` ×760, `rounded-lg` ×215,
 `rounded-full` ×175, plus arbitrary `[12px]`, `[8px]`, `[5px]`, `[10px]`, `[6px]`)
-against **43 shadow utilities** and **3,247 `border` utilities** in the whole app.
+against **43 shadow utilities** and **3,607 `border` utilities** in the whole app. *(Border re-measured at `1c52b7f8` after review found the previous **3,247** unreproducible under any definition tried. The stated definition is now `grep -rhoE '\bborder\b'` over `app/` and `components/` `*.tsx` — every `border` class token, bare or modified — and it is emitted by the census script. Shadows keep the script's existing `shadow-[a-z0-9\[]` definition, which reproduces 43 exactly; bare `shadow` adds ~6 and does not move the ratio.)*
 
 **`[MEASURED FACT]`** The literal string
 `"rounded-lg border border-neutral-200 p-5 dark:border-neutral-800"` appears
@@ -612,7 +612,7 @@ Three commitments, none decorative. The proposal is not to *add* identity but to
 let in the identity Hone already owns.
 
 1. **Type carries hierarchy. Line carries structure. Boxes carry almost nothing.**
-   Hone is already hairline-delimited (3,247 borders, 43 shadows — §1.5). Make it
+   Hone is already hairline-delimited (**3,607** borders, 43 shadows — §1.5). Make it
    deliberate: a rule plus a weight change should do the work a `rounded-lg border
    p-5` card does today. A container earns its border only when it groups the
    otherwise-ambiguous, or is independently actionable. The proof Hone can already
@@ -758,6 +758,16 @@ of these may be smuggled into a polish PR.
 7. **Is the UI-A … UI-J sequence adopted at all, and in what order?** §4.2 is a
    recommendation. Adoption belongs in the canonical roadmap, not in this file.
 8. **Does MOTION-01 run, and when?** See §6.
+9. **Is an explicit exception to §3.8 granted for the `<details>` disclosure
+   transition?** §4's `CSS_ONLY` table proposes `interpolate-size:
+   allow-keywords` + `::details-content` + `transition: height` for the 53
+   `<details>` across 27 files — the highest-frequency spatial break in the
+   product. **`transition: height` animates a layout-and-paint property, which
+   §3.8 forbids**; the native disclosure path has no `transform`/`opacity`
+   equivalent, so this cannot be resolved by technique. Raised at `1c52b7f8`:
+   the exception was previously noted only inside that table row, where an
+   implementer consulting **this list** for blockers would miss it. Until it is
+   granted, that row is **not** ordinary stylesheet work.
 
 ---
 
@@ -1009,18 +1019,19 @@ the wrong geometry, and would have to be re-specified immediately afterwards.
   Two were verified and added:* `focus:` *→* **250** *and* `font-light` *→* **1**,
   *both reproducing the cited values exactly.*
 
-  **THE THIRD DID NOT REPRODUCE, AND IS FLAGGED RATHER THAN REWRITTEN.** §1.5 and
-  §2 cite **3,247 `border` utilities**. No source-grep definition tried against
-  the baseline yields it — `border` as a plain substring gives **3,648**,
-  `\bborder\b` gives **3,607**, non-`dark:` occurrences give **2,645**, and
-  `border-` with a suffix gives **2,586**. The original measurement's definition
-  is therefore unknown, so **no row was added and the figure was not silently
-  changed**: inventing a definition to fit a number would defeat the purpose of
-  this appendix. The border figure is the one §1 count in this document that is
-  **NOT** reproducible from the published script, and it should be re-measured or
-  its method stated before it is quoted anywhere that matters. It is not load
-  bearing for any §2 diagnosis, which rests on the border/shadow *ratio* rather
-  than the absolute count.
+  **THE THIRD WAS RE-MEASURED.** §1.5 and §2 cited **3,247 `border` utilities**,
+  which no definition reproduces — plain substring **3,648**, `\bborder\b`
+  **3,607**, non-`dark:` **2,645**, `border-` with a suffix **2,622**. An earlier
+  revision of this appendix merely *flagged* that and argued the figure was not
+  load bearing because §2 uses the border/shadow ratio. **Review at `1c52b7f8`
+  correctly rejected that**: a ratio still needs a reproducible numerator, §4.0
+  argues from the absolute pair, and §0 promises every §1 count reproduces.
+
+  So it was re-measured under a **stated** definition rather than defended:
+  **3,607**, from `grep -rhoE '\bborder\b'` over `app/` and `components/`
+  `*.tsx` — every `border` class token, bare or modified — now emitted by the
+  script. §1.5 and §4.0 were updated to match. The ratio argument is unaffected
+  in direction and slightly strengthened: **3,607 : 43**.
 
 ### The census script
 
@@ -1098,6 +1109,7 @@ row "rounded-lg"                      "$(n 'rounded-lg')"
 row "rounded-full"                    "$(n 'rounded-full')"
 row "rounded-[5px]"                   "$(n 'rounded-\[5px\]')"
 row "shadow-*"                        "$(ne 'shadow-[a-z0-9\[]')"
+row "border tokens (bare + modified)" "$(ne '\bborder\b')"
 row "border-dashed"                   "$(n 'border-dashed')"
 row "distinct rounded-full+px pills"   "$(u '\"[^\"]*rounded-full[^\"]*px-[^\"]*\"')"
 
