@@ -207,9 +207,16 @@ None of these is decided. None may be smuggled into a polish PR.
 5. Does the client-profile heading scale change?
 6. Are the inert `dark:` utilities retired? Mechanically safe, but it forecloses
    the class-based theme the token layer was built to enable.
-7. **Is the proposed UX-01 … UX-11 design programme adopted at all, and in what
-   order?** Adoption belongs in the canonical roadmap, not in a review document
-   and not here. **Naming only — listing these does not schedule any of them.**
+7. **Is the rest of the UX-02 … UX-11 programme adopted, and in what order?**
+   **UX-01 Quick Wins is AUTHORIZED** (recorded in the canonical roadmap §23.6,
+   to proceed once its prebuild is reconciled against current production).
+   **UX-02 … UX-11 remain PROPOSED and NOT SCHEDULED**, and carry no
+   implementation authority.
+
+   **Appearing in this sequence never authorizes a stage.** A later slice does
+   not become startable because the one before it shipped; each needs its own
+   acceptance, recorded in the roadmap. Adoption belongs there, not in a review
+   document and not here.
 
    | Slice | Family |
    |---|---|
