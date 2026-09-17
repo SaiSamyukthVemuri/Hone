@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { migrationState } from "../migrations/helpers/migration-state";
 
@@ -32,6 +33,12 @@ const read = (rel: string) => readFileSync(join(ROOT, rel), "utf8");
 
 const REGISTER = read("docs/marketing/product-truth-register.md");
 
+/** The production head the register declares it was verified against. */
+function declaredHead(): string {
+  const m = REGISTER.match(/Built against production head \| `([0-9a-f]{40})`/);
+  return m ? m[1] : "";
+}
+
 // The public marketing surface, as source. Kept as a list rather than a glob so
 // a new marketing route has to be added here deliberately — a guard that
 // silently stops covering a new page is the failure mode this repo has already
@@ -44,31 +51,102 @@ const MARKETING_SOURCES = [
   "app/features/treatment-memory/page.tsx",
   "app/features/charting-records/page.tsx",
   "app/features/booking-calendar/page.tsx",
+  // Review caught these three missing: they are MarketingSurface routes like
+  // any other, so a banned claim could have shipped on them without ever
+  // reaching MARKETING_COPY.
+  "app/resources/page.tsx",
+  "app/resources/electrolysis-treatment-record-checklist/page.tsx",
+  "app/resources/moving-an-electrolysis-practice-from-paper-records/page.tsx",
   "lib/marketing/content.ts",
 ] as const;
 
-/** Strip source comments so scans read RENDERED copy, not the explanatory prose
- *  around it. The register itself is quoted in comments in several of these
- *  files, and a comment explaining why a claim is forbidden must not trip the
- *  guard that forbids it.
+/**
+ * Remove comments by SCANNING, not by regex order.
  *
- *  ORDER MATTERS, and getting it wrong silently blinds the guard.
- *  `lib/marketing/content.ts` contains, inside an ordinary line comment:
+ * The first version stripped block comments then line comments, which broke on
+ * `lib/marketing/content.ts`: it carries `next/*` inside a line comment, and a
+ * regex reads that as a block-comment opener, so the lazy match ran to the next
+ * `*\/` and deleted 1,403 characters of real code including CANONICAL_HOST and
+ * all of POSITIONING. The scan then reported the file clean because it could no
+ * longer see the file.
  *
- *      // This module is intentionally framework-agnostic (no next/* imports) …
+ * Swapping the order fixed that case and broke a different one, which review
+ * caught: in a legitimate block comment whose body contains a line starting with
+ * `//`, line-first stripping eats that line INCLUDING the block's closing
+ * `*\/`, after which the block rule consumes real source up to the next
+ * terminator. Either order is wrong on some valid input, because neither knows
+ * what it is already inside.
  *
- *  That `next/*` is a block-comment OPENER as far as a regex is concerned. Strip
- *  block comments first and the lazy match runs from there to the next `*\/` —
- *  the JSDoc on `PricingPlan.priceLabel`, ~1,400 characters later — taking
- *  CANONICAL_HOST, all of POSITIONING, WALKTHROUGH and the pricing block with
- *  it. The scan then reports a clean file because it can no longer see the file.
- *  Measured: 1,403 characters of real code lost.
- *
- *  Stripping LINE comments first removes the phantom opener with its line, and
- *  the block strip is then safe. The shipped marketing guards do not hit this
- *  because none of them reads content.ts; this one does, deliberately. */
-function stripComments(s: string): string {
-  return s.replace(/^\s*\/\/.*$/gm, " ").replace(/\/\*[\s\S]*?\*\//g, " ");
+ * So this walks the source once, tracking whether it is in a line comment, a
+ * block comment, a string, or a template literal. Comment bodies are replaced
+ * with spaces (preserving offsets and newlines); everything else is kept
+ * verbatim. A `//` or `/*` inside a string is not a comment, and a quote inside
+ * a comment does not open a string - which is exactly what the regexes could not
+ * express.
+ */
+function stripComments(src: string): string {
+  let out = "";
+  let i = 0;
+  const n = src.length;
+  type Mode = "code" | "line" | "block" | "single" | "double" | "template";
+  let mode: Mode = "code";
+
+  while (i < n) {
+    const c = src[i];
+    const c2 = src[i + 1];
+
+    if (mode === "code") {
+      if (c === "/" && c2 === "/") { mode = "line"; out += "  "; i += 2; continue; }
+      if (c === "/" && c2 === "*") { mode = "block"; out += "  "; i += 2; continue; }
+      if (c === "'") { mode = "single"; out += c; i += 1; continue; }
+      if (c === '"') { mode = "double"; out += c; i += 1; continue; }
+      if (c === "`") { mode = "template"; out += c; i += 1; continue; }
+      out += c; i += 1; continue;
+    }
+
+    if (mode === "line") {
+      if (c === "\n") { mode = "code"; out += "\n"; i += 1; continue; }
+      out += " "; i += 1; continue;
+    }
+
+    if (mode === "block") {
+      if (c === "*" && c2 === "/") { mode = "code"; out += "  "; i += 2; continue; }
+      out += c === "\n" ? "\n" : " "; i += 1; continue;
+    }
+
+    // Inside a string or template: copy verbatim, honour escapes, and only the
+    // matching terminator closes it.
+    if (c === "\\") { out += src.slice(i, i + 2); i += 2; continue; }
+    if (mode === "single" && c === "'") { mode = "code"; out += c; i += 1; continue; }
+    if (mode === "double" && c === '"') { mode = "code"; out += c; i += 1; continue; }
+    if (mode === "template" && c === "`") { mode = "code"; out += c; i += 1; continue; }
+    out += c; i += 1; continue;
+  }
+  return out;
+}
+
+/**
+ * Every span of authored copy in a source file, whichever form it was written
+ * in. Review flagged that scanning only double-quoted literals let raw JSX text,
+ * single-quoted strings and template literals carry a banned claim untouched -
+ * `<p>Every record has an append-only edit history.</p>` was invisible to the
+ * guard. All four forms are extracted here so a future author's choice of
+ * quoting cannot decide whether the claim is audited.
+ */
+function copySegments(src: string): string[] {
+  const code = stripComments(src);
+  const segs: string[] = [];
+  for (const re of [/"((?:[^"\\]|\\.)*)"/g, /'((?:[^'\\]|\\.)*)'/g, /`((?:[^`\\]|\\.)*)`/g]) {
+    for (const m of code.matchAll(re)) segs.push(m[1]);
+  }
+  // JSX text nodes: the run between a closing `>` and the next `<`, with
+  // {expressions} dropped. Keeps only runs containing a letter, so indentation
+  // and punctuation noise do not become "copy".
+  for (const m of code.matchAll(/>([^<>{}]+)</g)) {
+    const t = m[1].trim();
+    if (t && /[A-Za-z]/.test(t)) segs.push(t);
+  }
+  return segs;
 }
 
 const MARKETING_COPY = MARKETING_SOURCES.map((f) => stripComments(read(f)))
@@ -77,13 +155,52 @@ const MARKETING_COPY = MARKETING_SOURCES.map((f) => stripComments(read(f)))
 
 describe("truth register: provenance is declared, not assumed", () => {
   it("names the production head it was built against, as a full SHA", () => {
-    const m = REGISTER.match(
-      /Built against production head \| `([0-9a-f]{40})`/,
+    expect(
+      declaredHead(),
+      "the register must declare the 40-character production head it was verified against",
+    ).toMatch(/^[0-9a-f]{40}$/);
+  });
+
+  it("the declared head is a commit that actually exists in this repository", () => {
+    // Review caught that shape alone is no guard: 40 arbitrary hex characters
+    // passed both this and the stale-head check, so a fabricated provenance
+    // line defeated the staleness signal the register exists to provide.
+    const sha = declaredHead();
+    const { status } = spawnSync("git", ["cat-file", "-e", `${sha}^{commit}`], {
+      cwd: ROOT,
+      encoding: "utf8",
+    });
+    expect(
+      status,
+      `the register declares head ${sha}, which is not a commit in this repository`,
+    ).toBe(0);
+  });
+
+  it("the declared head is an ancestor of the branch under test", () => {
+    // A real commit that is NOT in this branch's history would mean the register
+    // was verified against something this code never descended from.
+    //
+    // CI's validate lane clones at depth 1, so the history needed to answer this
+    // is often absent. A shallow clone must not turn this into a false red - the
+    // assertion is skipped explicitly, and says so, rather than silently passing.
+    const shallow = spawnSync("git", ["rev-parse", "--is-shallow-repository"], {
+      cwd: ROOT,
+      encoding: "utf8",
+    }).stdout?.trim();
+    if (shallow === "true") {
+      expect(shallow, "shallow clone: ancestry not checkable here").toBe("true");
+      return;
+    }
+    const sha = declaredHead();
+    const { status } = spawnSync(
+      "git",
+      ["merge-base", "--is-ancestor", sha, "HEAD"],
+      { cwd: ROOT, encoding: "utf8" },
     );
     expect(
-      m,
-      "the register must declare the 40-character production head it was verified against",
-    ).not.toBeNull();
+      status,
+      `the register declares head ${sha}, which is not an ancestor of HEAD`,
+    ).toBe(0);
   });
 
   it("does not still claim the superseded head", () => {
@@ -166,10 +283,18 @@ describe("NOT_CURRENTLY_SUPPORTABLE claims stay out of public copy", () => {
   // update_block_with_entry (0166) as a plain UPDATE that keeps no prior value.
   it("no unscoped 'every change is tracked' / 'complete audit trail' claim", () => {
     for (const banned of [
-      /every change is (tracked|recorded|kept)/i,
+      // The register's OWN N1 wording came first. Review caught that the guard
+      // claimed to enforce §0.4 while not matching the exact sentence §0.4
+      // rejects - the canonical rejected claim could have shipped green.
+      /edits kept as history/i,
+      /not written over/i,
+      /changes are preserved rather than replaced/i,
+      // and the paraphrases that mean the same thing
+      /every change is (tracked|recorded|kept|preserved)/i,
       /complete audit trail/i,
       /full (edit )?history of every (change|edit)/i,
       /nothing is ever overwritten/i,
+      /never overwritten/i,
     ]) {
       expect(
         MARKETING_COPY,
@@ -178,41 +303,49 @@ describe("NOT_CURRENTLY_SUPPORTABLE claims stay out of public copy", () => {
     }
   });
 
-  it("the append-only claim, where it appears, stays scoped to logs", () => {
-    // This is the surface-split ruling in §0.4 N1, made mechanical.
+  it("the append-only claim, where it appears, names an audited record type", () => {
+    // §0.4 N1: migration 0086's trigger-written trail covers sterile items,
+    // disinfectants, exposure incidents, the aftercare mark, and
+    // session_blocks.probe_lot_number - THAT COLUMN ONLY. Every other charted
+    // value is a plain UPDATE that keeps no prior value.
     //
-    // It must be checked against the STRING LITERAL that carries the claim, not
-    // against a "sentence" of the surrounding source. An earlier draft of this
-    // guard split the concatenated source on sentence boundaries, and a mutation
-    // that replaced the scoped body with the unscoped "Everything you record is
-    // kept with an append-only edit history." still PASSED — because the chunk
-    // also swept in the neighbouring `title: "Traceability and logs"`, and the
-    // word "logs" satisfied the scope check from a claim it had nothing to do
-    // with. Proximity has to be measured inside one claim.
-    const SCOPE = /lot|sterile|disinfectant|log\b|logs\b|note|incident/i;
+    // Two review findings shaped this check.
+    //
+    // (a) It used to scan only double-quoted literals, so the same claim in raw
+    //     JSX text, a single-quoted string or a template literal was invisible.
+    //     copySegments() now yields all four forms.
+    //
+    // (b) The old scope regex accepted any of lot|sterile|disinfectant|log|note,
+    //     which "Every charting log has an append-only edit history" satisfies
+    //     while promising exactly what the product cannot keep - and which bare
+    //     "a lot" or "noteworthy" satisfied by accident. It now requires an
+    //     explicit supported noun phrase AND rejects any segment that widens the
+    //     promise to treatment records or to edits in general.
+    const SUPPORTED =
+      /\b(sterile[- ]item|sterile items|disinfectant|exposure incident|probe lot|lot number|record[- ]keeping)\b/i;
+    const OVERREACH =
+      /\b(every (record|change|edit|treatment|field)|all (records|changes|edits|treatments)|treatment record|charting|chart(ed)? (value|field)|session|clinical)\b/i;
+
     let checked = 0;
     for (const file of MARKETING_SOURCES) {
-      const src = stripComments(read(file));
-      // Double-quoted string literals, which is how every copy body in this
-      // codebase is written. Escaped quotes are handled; newlines are not, and
-      // do not occur inside these literals.
-      for (const m of src.matchAll(/"((?:[^"\\]|\\.)*)"/g)) {
-        const literal = m[1];
-        if (!/append-only/i.test(literal)) continue;
+      for (const seg of copySegments(read(file))) {
+        if (!/append-only/i.test(seg)) continue;
         checked += 1;
         expect(
-          literal,
-          `${file}: an append-only claim must name its own scope (lots / sterile items / disinfectants / logs / notes / incidents) inside the SAME string. Offending literal: "${literal}"`,
-        ).toMatch(SCOPE);
+          seg,
+          `${file}: an append-only claim must name an audited record type (sterile items, disinfectants, exposure incidents, probe lots, record-keeping). Offending copy: "${seg}"`,
+        ).toMatch(SUPPORTED);
+        expect(
+          seg,
+          `${file}: this append-only claim also extends the promise beyond the audited records, which §0.4 N1 rejects. Offending copy: "${seg}"`,
+        ).not.toMatch(OVERREACH);
       }
     }
-    // Guard the guard: if the phrase disappears entirely this test would pass
-    // by vacuity, and "no append-only claim anywhere" is a different (and also
-    // wrong) state. The overcorrection block below owns that, so here we only
-    // record that the scan had something to look at.
+    // Guard the guard: zero segments would pass by vacuity, and "no append-only
+    // claim anywhere" is a different state, owned by the overcorrection block.
     expect(
       checked,
-      "no append-only literal found in marketing copy; see the overcorrection block",
+      "no append-only copy found; see the overcorrection block",
     ).toBeGreaterThan(0);
   });
 
