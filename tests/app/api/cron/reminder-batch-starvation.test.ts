@@ -388,8 +388,17 @@ describe("the real cron route actually pages", () => {
     expect(keysetFilter({ startsAt: "2026-10-01T00:00:00.000Z", id: "abc" })).toBe(
       "starts_at.gt.2026-10-01T00:00:00.000Z,and(starts_at.eq.2026-10-01T00:00:00.000Z,id.gt.abc)",
     );
-    // OFFSET is unsafe when eligibility changes under the run.
-    expect(code()).not.toMatch(/\.range\(|offset/i);
+    // OFFSET is unsafe when eligibility changes under the run — but the rule
+    // is about the APPOINTMENT candidate query, not the whole file. The
+    // studios read legitimately uses `.range()` via `fetchAllRows`, because
+    // that set does not shift under the read the way eligibility does.
+    const c = code();
+    const loaderStart = c.indexOf("async function loadAppointmentsForWindow");
+    const loaderEnd = c.indexOf("async function", loaderStart + 10);
+    const loaderBody = c.slice(loaderStart, loaderEnd > -1 ? loaderEnd : undefined);
+    expect(loaderStart).toBeGreaterThan(-1);
+    expect(loaderBody).not.toMatch(/\.range\(|offset/i);
+    expect(loaderBody).toContain("keysetFilter");
   });
 
   it("the keyset predicate is WIRED, not merely defined", async () => {
@@ -755,6 +764,53 @@ describe("the real route selects only from routable studios", () => {
     const rowLoopAt = c.indexOf("for (const appt of rows)");
     expect(resolveAt).toBeGreaterThan(-1);
     expect(rowLoopAt).toBeGreaterThan(resolveAt);
+  });
+
+  it("PAGES the studios read — PostgREST silently caps at max_rows", () => {
+    // An unpaged select returns the first 1000 and says nothing. Studios past
+    // the cap would never be resolved, never enter `onlyStudioIds`, and lose
+    // every reminder on every run WITHOUT producing a routing alert — the
+    // alert only fires for studios this function returned. Silent loss, one
+    // layer up from the one this lane removed.
+    const c = code();
+    expect(c).toContain("fetchAllRows<{ id: string }>");
+    expect(c).toContain('assertDeterministicOrder("studios", ["id"])');
+    expect(c).toContain('.order("id", { ascending: true })');
+    expect(c).toContain(".range(from, to)");
+    // The unpaged form must be gone.
+    expect(c).not.toMatch(/\.from\("studios"\)\s*\.select\("id"\)\s*\.eq\(studioToggle, true\);/);
+  });
+
+  it("the paged read is ALL-OR-NOTHING, never a partial studio set", async () => {
+    // Behavioural: a mid-read failure must not return the pages already
+    // fetched, or the pass would treat a truncated estate as complete.
+    const { fetchAllRows } = await import("@/lib/export/paginate");
+    let call = 0;
+    const res = await fetchAllRows<{ id: string }>(async () => {
+      call += 1;
+      if (call === 1) {
+        return { data: Array.from({ length: 1000 }, (_, i) => ({ id: `s${i}` })), error: null };
+      }
+      return { data: null, error: { message: "boom" } };
+    });
+    expect(res.data).toBeNull();
+    expect(res.error).toBeTruthy();
+  });
+
+  it("reads BEYOND the 1000-row cap when more studios exist", async () => {
+    const { fetchAllRows } = await import("@/lib/export/paginate");
+    let call = 0;
+    const res = await fetchAllRows<{ id: string }>(async () => {
+      call += 1;
+      if (call === 1) {
+        return { data: Array.from({ length: 1000 }, (_, i) => ({ id: `a${i}` })), error: null };
+      }
+      if (call === 2) return { data: [{ id: "beyond-the-cap" }], error: null };
+      return { data: [], error: null };
+    });
+    expect(res.error).toBeNull();
+    expect(res.data).toHaveLength(1001);
+    expect(res.data!.map((r) => r.id)).toContain("beyond-the-cap");
   });
 
   it("enumerates studios from the STUDIOS table, bounded by studio count", () => {

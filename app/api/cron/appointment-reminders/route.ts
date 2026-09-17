@@ -8,6 +8,7 @@ import {
 } from "@/lib/cron/reminder-routable-studios";
 import { resolveStudioSmsSender, studioSenderAllowsSend } from "@/lib/sms/studio-sender";
 import { SENDER_REFUSAL_REASON } from "@/lib/sms/send-appointment";
+import { assertDeterministicOrder, fetchAllRows } from "@/lib/export/paginate";
 import type { SmsType } from "@/lib/types/database";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { isAuthorizedCronRequest } from "@/lib/cron/auth";
@@ -101,12 +102,32 @@ const MAX_SCAN_ROWS = 500;
  */
 async function toggledStudioIds(studioToggle: string): Promise<string[]> {
   const admin = createAdminClient();
-  const { data, error } = await admin
-    .from("studios")
-    .select("id")
-    .eq(studioToggle, true);
+
+  // PAGED, BECAUSE POSTGREST SILENTLY CAPS AT `max_rows` (1000).
+  //
+  // An unpaged select returns the first 1000 and says nothing. The studios
+  // beyond that cap would never be resolved, never appear in `onlyStudioIds`,
+  // and therefore lose every reminder on every invocation WITHOUT even
+  // producing a routing alert — the alert only fires for studios this function
+  // returned. That is the silent-loss failure this whole lane exists to
+  // remove, reappearing one layer up.
+  //
+  // `fetchAllRows` is the repository's existing instrument for exactly this
+  // and is all-or-nothing: a failure on page 7 fails the read rather than
+  // returning six pages as if they were the table. `id` is the ordering and
+  // the tiebreak, so pagination cannot duplicate one studio onto two pages
+  // while dropping another.
+  assertDeterministicOrder("studios", ["id"]);
+  const { data, error } = await fetchAllRows<{ id: string }>((from, to) =>
+    admin
+      .from("studios")
+      .select("id")
+      .eq(studioToggle, true)
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
   if (error) throw new Error(error.message);
-  return ((data ?? []) as Array<{ id: string }>).map((r) => r.id);
+  return (data ?? []).map((r) => r.id);
 }
 
 /**
