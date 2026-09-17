@@ -29,24 +29,43 @@ const PORTAL = code("components/portal-messages-card.tsx");
 // invisible. The slice originally claimed there were TWO; there were three.
 const TAGS = code("components/client-tags-card.tsx");
 
-/**
- * The files the sweep covers.
- *
- * The original pathspec — `'app/**' + '/*.tsx'` and the same for components —
- * looked repo-wide and was not: in a git pathspec that form requires at least
- * one intervening directory, so it matched 236 of 300 files and silently
- * skipped every TOP-LEVEL one: app/page.tsx, app/layout.tsx, and the whole of
- * components/*.tsx.
- *
- * That included BOTH files this slice fixed. treatment-schedule-editor.tsx and
- * portal-messages-card.tsx are top-level in components/, so the fence whose
- * entire claim is "zero native confirm anywhere" was green while never reading
- * its own subjects. It passed because the 236 files it did read genuinely had
- * none — a true answer reached without examining the evidence.
- *
- * Codex raised it. The coverage test below makes the omission impossible to
- * reintroduce quietly.
- */
+// ---------------------------------------------------------------------------
+// ONE DEFINITION OF EACH ORACLE, used by the real sweep AND by its controls.
+//
+// Findings 4, 5 and 6 on this file were all the same defect at different
+// removes: the coverage check built its expectation from the expression under
+// test; the negative control re-implemented the coverage comparison inline;
+// the synthetic control re-declared the regexes. Each "control" was a COPY of
+// the thing it claimed to verify, so each would have agreed with a broken
+// implementation.
+//
+// Patching them one at a time just moved the shape, so the plumbing is
+// restructured instead: the patterns and both checkers are declared exactly
+// once here, and every test below — real, synthetic and negative — calls these.
+// A control can no longer silently disagree with what ships, because there is
+// nothing else for it to call.
+// ---------------------------------------------------------------------------
+
+/** A file declaring its own `confirm` shadows the global; bare calls there are local. */
+const DECLARES_OWN = /(?:function\s+confirm\s*\(|(?:const|let|var)\s+confirm\s*=)/;
+
+const QUALIFIED: Array<[string, RegExp]> = [
+  ["window.confirm", /\bwindow\s*\.\s*confirm\s*\(/],
+  ["globalThis.confirm", /\bglobalThis\s*\.\s*confirm\s*\(/],
+  ["self.confirm", /\bself\s*\.\s*confirm\s*\(/],
+];
+
+/** Excludes a preceding word char, `.` or `$`, so onConfirm/handleConfirm/dialog.confirm are not hits. */
+const BARE = /(?<![\w.$])confirm\s*\(/;
+
+/** THE matcher. Returns the forms found in one file's comment-stripped source. */
+function nativeConfirmForms(src: string): string[] {
+  const found = QUALIFIED.filter(([, re]) => re.test(src)).map(([n]) => n);
+  if (!DECLARES_OWN.test(src) && BARE.test(src)) found.push("bare confirm()");
+  return found;
+}
+
+/** Every .ts/.tsx under app/ and components/, from git. */
 function sweptFiles(): string[] {
   return execSync("git ls-files '*.tsx' '*.ts'", { encoding: "utf8" })
     .split("\n")
@@ -54,56 +73,60 @@ function sweptFiles(): string[] {
     .filter((f) => f.startsWith("app/") || f.startsWith("components/"));
 }
 
+/** Every .ts/.tsx under those roots, from the DISK — an independent oracle. */
+function walkedFiles(exts = /\.tsx?$/): string[] {
+  const out: string[] = [];
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = `${dir}/${entry.name}`;
+      if (entry.isDirectory()) walk(full);
+      else if (exts.test(entry.name)) out.push(full);
+    }
+  };
+  walk("app");
+  walk("components");
+  return out;
+}
+
+/** THE coverage checker: which on-disk files a candidate list fails to cover. */
+function filesNotCovered(candidate: string[], exts?: RegExp): string[] {
+  const have = new Set(candidate);
+  return walkedFiles(exts).filter((f) => !have.has(f));
+}
+
 describe("UI-05: no native confirm survives anywhere in the app", () => {
   it("app/ and components/ contain ZERO live native confirm calls", () => {
-    // Repo-wide, not just the two files touched — otherwise a third could
-    // appear tomorrow and this slice would still read as complete. Comments
-    // mentioning the old API are allowed; a call is not.
-    //
-    // QUALIFIED *AND* UNQUALIFIED. The first version of this sweep matched only
-    // `window.confirm(`, so a bare `confirm("…")` — the same global, reached
-    // without the receiver — would have walked straight through a test whose
-    // entire claim is "zero native confirm anywhere". Codex raised that as a P2
-    // and was right: the fence was narrower than its own name.
-    //
-    // The unqualified pattern deliberately excludes a preceding word character,
-    // `.` or `$`, so `onConfirm(`, `handleConfirm(` and `dialog.confirm(` are
-    // not false positives; `globalThis`/`self` receivers are matched explicitly.
-    // SHADOWING IS REAL, and the first widened version of this sweep tripped on
-    // it immediately: app/(app)/calendar/PostcareSendButton.tsx declares
-    // `function confirm()` of its own, so every bare `confirm()` in that file
-    // resolves to the LOCAL binding and has nothing to do with the native
-    // global. Flagging it would have been a false positive on correct code —
-    // the opposite error to the one Codex caught, and just as wrong.
-    //
-    // So a file that declares its own `confirm` is exempt from the bare-call
-    // check; the qualified receivers are still checked there, because
-    // `window.confirm(` is unambiguous regardless of local bindings.
-    const DECLARES_OWN = /(?:function\s+confirm\s*\(|(?:const|let|var)\s+confirm\s*=)/;
-
-    const QUALIFIED: Array<[string, RegExp]> = [
-      ["window.confirm", /\bwindow\s*\.\s*confirm\s*\(/],
-      ["globalThis.confirm", /\bglobalThis\s*\.\s*confirm\s*\(/],
-      ["self.confirm", /\bself\s*\.\s*confirm\s*\(/],
-    ];
-    const BARE = /(?<![\w.$])confirm\s*\(/;
-
-    const hits = sweptFiles()
-      .flatMap((f) => {
-        const stripped = code(f);
-        const matched = QUALIFIED.filter(([, re]) => re.test(stripped)).map(([n]) => n);
-        if (!DECLARES_OWN.test(stripped) && BARE.test(stripped)) {
-          matched.push("bare confirm()");
-        }
-        return matched.length ? [`${f} (${matched.join(", ")})`] : [];
-      });
+    const hits = sweptFiles().flatMap((f) => {
+      const forms = nativeConfirmForms(code(f));
+      return forms.length ? [`${f} (${forms.join(", ")})`] : [];
+    });
     expect(hits, `native confirm still called in: ${hits.join(" | ")}`).toEqual([]);
   });
 
-  it("the sweep COVERS the files this slice fixed, and the whole surface", () => {
-    // Without this, a pathspec that quietly stops matching turns the assertion
-    // above into a tautology: zero hits across zero relevant files, reported
-    // green. The original pathspec did exactly that.
+  it("the matcher MATCHES — synthetic inputs, through the shipped matcher", () => {
+    // Calls nativeConfirmForms, not a re-declared copy of its regexes. A
+    // negative-only sweep passes just as well when its patterns are broken,
+    // and a green repository cannot demonstrate that half.
+    expect(nativeConfirmForms('if (!confirm("go?")) return;')).toContain("bare confirm()");
+    expect(nativeConfirmForms("confirm ('spaced')")).toContain("bare confirm()");
+    expect(nativeConfirmForms("window . confirm(1)")).toContain("window.confirm");
+    expect(nativeConfirmForms("globalThis.confirm(1)")).toContain("globalThis.confirm");
+
+    // Near misses: identifiers that merely contain the word.
+    expect(nativeConfirmForms("onConfirm()")).toEqual([]);
+    expect(nativeConfirmForms("handleConfirm()")).toEqual([]);
+    expect(nativeConfirmForms("dialog.confirm()")).toEqual([]);
+
+    // Shadowing: exempt from the bare check, and the exemption is load-bearing
+    // because the bare pattern WOULD otherwise match these call sites.
+    const shadowed = 'function confirm() { run(); }\nonClick={() => confirm()}';
+    expect(nativeConfirmForms(shadowed)).toEqual([]);
+    expect(BARE.test(shadowed), "why the exemption exists").toBe(true);
+    // ...but a QUALIFIED call in such a file is still unambiguous and caught.
+    expect(nativeConfirmForms(`${shadowed}\nwindow.confirm("x")`)).toContain("window.confirm");
+  });
+
+  it("the sweep COVERS its own subjects and the whole surface on disk", () => {
     const swept = sweptFiles();
     for (const subject of [
       "components/treatment-schedule-editor.tsx",
@@ -112,106 +135,37 @@ describe("UI-05: no native confirm survives anywhere in the app", () => {
     ]) {
       expect(swept, `the sweep must actually read ${subject}`).toContain(subject);
     }
-    // Top-level files were the entire blind spot.
     expect(swept).toContain("app/layout.tsx");
     expect(swept).toContain("app/page.tsx");
 
-    // THE ORACLE IS DERIVED INDEPENDENTLY, which is the whole point.
-    //
-    // The first version of this check built its expected list with the SAME
-    // `git ls-files` expression as sweptFiles(), so it compared the function to
-    // a copy of itself and would have agreed with any pathspec, including the
-    // broken one it exists to catch. Codex raised it, and it is the same defect
-    // as the UI-03 enumeration that proved my transcription equalled itself —
-    // a tautology wearing the shape of a proof.
-    //
-    // So the oracle walks the FILESYSTEM instead. Two unrelated mechanisms:
-    // git's index versus readdir. A pathspec that silently stops matching now
-    // disagrees with the disk and fails.
-    const walked: string[] = [];
-    const walk = (dir: string) => {
-      for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        const full = `${dir}/${entry.name}`;
-        if (entry.isDirectory()) {
-          walk(full);
-        } else if (/\.tsx?$/.test(entry.name)) {
-          walked.push(full);
-        }
-      }
-    };
-    walk("app");
-    walk("components");
-
-    const sweptSet = new Set(swept);
-    const unseen = walked.filter((f) => !sweptSet.has(f));
+    const unseen = filesNotCovered(swept);
     expect(
       unseen,
-      `the sweep does not read ${unseen.length} file(s) present on disk: ${unseen.slice(0, 8).join(", ")}`,
+      `the sweep does not read ${unseen.length} file(s) on disk: ${unseen.slice(0, 8).join(", ")}`,
     ).toEqual([]);
-
-    // And a floor, so a pathspec collapsing to almost nothing is caught even
-    // if the walk were somehow to collapse with it.
     expect(swept.length).toBeGreaterThan(280);
   });
 
-  it("the independent oracle would CATCH the original broken pathspec", () => {
-    // Negative control for the check above. The pathspec that shipped is
-    // re-run here and must disagree with the filesystem — otherwise the
-    // coverage test proves nothing and the bug could return unnoticed.
+  it("THE COVERAGE CHECKER BITES — the original pathspec fails it", () => {
+    // Run through filesNotCovered, the same function the test above trusts.
+    // Previously this comparison was re-implemented inline, so it proved the
+    // broken pathspec lossy by its own copy of the logic rather than by the
+    // checker that ships.
     const broken = execSync("git ls-files 'app/**/*.tsx' 'components/**/*.tsx'", {
       encoding: "utf8",
     })
       .split("\n")
       .filter(Boolean);
 
-    const walked: string[] = [];
-    const walk = (dir: string) => {
-      for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        const full = `${dir}/${entry.name}`;
-        if (entry.isDirectory()) walk(full);
-        else if (/\.tsx$/.test(entry.name)) walked.push(full);
-      }
-    };
-    walk("app");
-    walk("components");
-
-    const brokenSet = new Set(broken);
-    const missedByBroken = walked.filter((f) => !brokenSet.has(f));
-    expect(
-      missedByBroken.length,
-      "the original pathspec must be demonstrably lossy",
-    ).toBeGreaterThan(0);
-    // And specifically: it missed the files this slice fixed.
-    expect(missedByBroken).toContain("components/treatment-schedule-editor.tsx");
-    expect(missedByBroken).toContain("components/portal-messages-card.tsx");
-    expect(missedByBroken).toContain("components/client-tags-card.tsx");
-  });
-
-  it("the sweep's own patterns actually MATCH — proved on synthetic inputs", () => {
-    // A negative-only sweep passes just as well when its regexes are broken.
-    // These pin that each form is caught and that the near-miss identifiers are
-    // not, which is the half a green repo cannot demonstrate.
-    const bare = /(?<![\w.$])confirm\s*\(/;
-    const declares = /(?:function\s+confirm\s*\(|(?:const|let|var)\s+confirm\s*=)/;
-
-    // TRUE POSITIVES — the forms that must be caught.
-    expect(bare.test('if (!confirm("go?")) return;')).toBe(true);
-    expect(bare.test("confirm ('spaced')")).toBe(true);
-    expect(/\bwindow\s*\.\s*confirm\s*\(/.test("window . confirm(1)")).toBe(true);
-
-    // NEAR MISSES — identifiers that merely contain the word.
-    expect(bare.test("onConfirm()")).toBe(false);
-    expect(bare.test("handleConfirm()")).toBe(false);
-    expect(bare.test("dialog.confirm()")).toBe(false);
-
-    // SHADOWING — a file declaring its own `confirm` is exempt from the bare
-    // check. Both halves asserted: the declaration is recognised, and the
-    // bare pattern alone would otherwise have matched its call sites.
-    const shadowed = 'function confirm() { run(); }\nonClick={() => confirm()}';
-    expect(declares.test(shadowed)).toBe(true);
-    expect(bare.test(shadowed)).toBe(true); // why the exemption is needed
-    expect(declares.test('if (!confirm("go?")) return;')).toBe(false);
-    expect(declares.test("const confirm = () => {}")).toBe(true);
+    const missed = filesNotCovered(broken, /\.tsx$/);
+    expect(missed.length, "the original pathspec must be demonstrably lossy").toBeGreaterThan(0);
+    for (const subject of [
+      "components/treatment-schedule-editor.tsx",
+      "components/portal-messages-card.tsx",
+      "components/client-tags-card.tsx",
+    ]) {
+      expect(missed, `the broken pathspec missed ${subject}`).toContain(subject);
+    }
   });
 });
 
