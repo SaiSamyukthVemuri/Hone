@@ -218,6 +218,61 @@ const isJsxContainer = (n: ts.Node): n is JsxContainer =>
 const jsxChildren = (n: JsxContainer): readonly ts.JsxChild[] =>
   ts.isJsxSelfClosingElement(n) ? [] : n.children;
 
+/** The tag as written: "p", "Strong", or null for a fragment. */
+function tagOf(node: JsxContainer): string | null {
+  if (ts.isJsxFragment(node)) return null;
+  const opening = ts.isJsxElement(node) ? node.openingElement : node;
+  return opening.tagName.getText();
+}
+
+/**
+ * HTML elements whose content model is PHRASING ONLY — they cannot legally
+ * contain a block, so whatever is inside one of them is a single sentence.
+ *
+ * This is a closed set from the HTML spec, not a judgement call, and it is what
+ * makes `<p><span>Every treatment record has</span><strong> an append-only edit
+ * history for sterile items</strong></p>` one claim. An earlier version asked
+ * instead whether the container had text of its own, which read that `<p>` as
+ * layout because every child happened to be an element — and split the sentence
+ * exactly where the unsupported promise and its qualifier fell either side of
+ * the boundary.
+ */
+const PHRASING_ONLY_CONTAINERS = new Set([
+  "p", "h1", "h2", "h3", "h4", "h5", "h6", "li", "dt", "dd", "td", "th",
+  "caption", "figcaption", "legend", "summary", "label", "button", "option",
+  "pre", "address",
+]);
+
+/** Elements that are themselves phrasing content — inline markup. */
+const PHRASING_CONTENT = new Set([
+  "a", "abbr", "b", "bdi", "bdo", "br", "cite", "code", "data", "dfn", "em",
+  "i", "img", "kbd", "mark", "picture", "q", "ruby", "rp", "rt", "s", "samp",
+  "small", "span", "strong", "sub", "sup", "time", "u", "var", "wbr",
+]);
+
+/**
+ * True when nothing inside this container can start a new block — so its whole
+ * subtree reads as one sentence even though the container itself is a `<div>`
+ * or a component. A capitalised component counts as a possible block: `<Layout>
+ * <P>one</P><P>two</P></Layout>` must stay two claims, not become one.
+ */
+function subtreeIsAllPhrasing(node: JsxContainer): boolean {
+  let allPhrasing = true;
+  const visit = (n: ts.Node) => {
+    if (!allPhrasing) return;
+    if (isJsxContainer(n) && n !== node) {
+      const tag = tagOf(n);
+      if (!tag || !PHRASING_CONTENT.has(tag)) {
+        allPhrasing = false;
+        return;
+      }
+    }
+    ts.forEachChild(n, visit);
+  };
+  ts.forEachChild(node, visit);
+  return allPhrasing;
+}
+
 /**
  * The text of a `{…}` expression, when the expression IS authored text.
  *
@@ -313,6 +368,22 @@ export function collectClaims(src: string, fileName = "input.tsx"): string[] {
           /[A-Za-z]/.test(authoredExpressionText(c) ?? "")),
     );
 
+    // Three independent reasons to read this container as ONE sentence. The
+    // first two are structural facts about HTML; the third catches a component
+    // used as inline markup inside authored text, which no tag list can know.
+    const tag = tagOf(node);
+    const isSentence =
+      (tag !== null && PHRASING_ONLY_CONTAINERS.has(tag)) ||
+      subtreeIsAllPhrasing(node) ||
+      bearsText;
+
+    if (isSentence) {
+      push(flattenInto(node));
+      return;
+    }
+
+    // Layout. Each element child starts its own claim; loose text between them
+    // is a claim of its own rather than glue between two unrelated sentences.
     let buffer = "";
     const flush = () => {
       push(buffer);
@@ -332,11 +403,8 @@ export function collectClaims(src: string, fileName = "input.tsx"): string[] {
         continue;
       }
       if (isJsxContainer(child)) {
-        if (bearsText) buffer += flattenInto(child);
-        else {
-          flush();
-          emit(child);
-        }
+        flush();
+        emit(child);
       }
     }
     flush();
@@ -459,8 +527,27 @@ export function forbiddenWordings(register: string): ForbiddenWording[] {
  * value is a plain UPDATE through `update_block_with_entry` (0166) that keeps
  * no prior value.
  *
- * So an append-only claim must name one of the audited record types, and must
- * not widen the promise back out to treatment records or to edits in general.
+ * WHY THIS IS AN ALLOW-LIST
+ * -------------------------
+ * It was a deny-list: name a supported record type, and avoid an enumerated set
+ * of widening terms. Review broke it with a conjunction — *"Energy settings and
+ * sterile items have an append-only edit history"* passes, because `sterile
+ * items` satisfies the scope and neither `energy` nor `settings` is in the
+ * widening list, while energy edits keep no prior value at all. That is not a
+ * missing term. No enumeration of the unsupported nouns can be complete, because
+ * the unsupported set is every charted field the product has or will have.
+ *
+ * So the question is inverted: public copy may make an append-only claim only in
+ * a wording §0.4 has sanctioned, and the sanctioned wordings live in the
+ * register. Anything else is rejected whatever it says. That is deliberately
+ * brittle — rephrasing a claim about what is audited SHOULD require going back
+ * to the authority that classified it, which is the whole premise of §0.
+ *
+ * The two patterns below no longer gate public copy. They gate the ALLOW-LIST:
+ * a sanctioned wording must still name a covered record type and must not
+ * contain an obvious widening. They catch a careless register entry, not a
+ * clever one — the register is a human ruling, and this cannot check the
+ * classification, only its shape.
  */
 export const SUPPORTED_APPEND_ONLY_SCOPE =
   /\b(sterile[- ]item|sterile items|disinfectant|exposure incident|probe lot|lot number|record[- ]keeping)\b/i;
@@ -468,16 +555,58 @@ export const SUPPORTED_APPEND_ONLY_SCOPE =
 export const APPEND_ONLY_OVERREACH =
   /\b(every (record|change|edit|treatment|field)|all (records|changes|edits|treatments)|treatment record|charting|chart(ed)? (value|field)|session|clinical)\b/i;
 
+/** "append-only" and "append only" are the same promise to a reader. */
+export const APPEND_ONLY_TRIGGER = /append[-\s]only/i;
+
+export type SanctionedWording = { readonly id: string; readonly text: string };
+
+/**
+ * The append-only wordings §0.4 sanctions, read out of the register.
+ *
+ * Literal sentences, not patterns: a pattern would reintroduce exactly the
+ * looseness this replaces.
+ */
+export function sanctionedAppendOnlyWordings(register: string): SanctionedWording[] {
+  const block = /```supportable-append-only-wording\n([\s\S]*?)```/.exec(register);
+  if (!block) {
+    throw new Error(
+      "the truth register carries no machine-readable " +
+        "`supportable-append-only-wording` block; every append-only claim would " +
+        "be rejected and §0.4's supportable form could not ship",
+    );
+  }
+  const out: SanctionedWording[] = [];
+  for (const raw of block[1].split("\n")) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) continue;
+    const split = line.indexOf("|");
+    if (split < 0) {
+      throw new Error(
+        `malformed sanctioned-wording entry (expected "<id> | <sentence>"): ${line}`,
+      );
+    }
+    const id = line.slice(0, split).trim();
+    const text = normalise(line.slice(split + 1));
+    if (!id || !text) throw new Error(`malformed sanctioned-wording entry: ${line}`);
+    out.push({ id, text });
+  }
+  if (out.length === 0) {
+    throw new Error("the supportable-append-only-wording block sanctions nothing");
+  }
+  return out;
+}
+
 export type AppendOnlyVerdict =
   | { readonly kind: "not-a-claim" }
-  | { readonly kind: "ok" }
-  | { readonly kind: "unscoped" }
-  | { readonly kind: "overreaching"; readonly matched: string };
+  | { readonly kind: "sanctioned"; readonly id: string }
+  | { readonly kind: "unsanctioned" };
 
-export function judgeAppendOnlyClaim(claim: string): AppendOnlyVerdict {
-  if (!/append-only/i.test(claim)) return { kind: "not-a-claim" };
-  if (!SUPPORTED_APPEND_ONLY_SCOPE.test(claim)) return { kind: "unscoped" };
-  const over = APPEND_ONLY_OVERREACH.exec(claim);
-  if (over) return { kind: "overreaching", matched: over[0] };
-  return { kind: "ok" };
+export function judgeAppendOnlyClaim(
+  claim: string,
+  sanctioned: readonly SanctionedWording[],
+): AppendOnlyVerdict {
+  if (!APPEND_ONLY_TRIGGER.test(claim)) return { kind: "not-a-claim" };
+  const normalised = normalise(claim);
+  const hit = sanctioned.find((s) => s.text === normalised);
+  return hit ? { kind: "sanctioned", id: hit.id } : { kind: "unsanctioned" };
 }

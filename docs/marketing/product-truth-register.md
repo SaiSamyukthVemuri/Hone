@@ -276,6 +276,41 @@ written over. A treatment record keeps its edit history."* Every clause of that 
 treatment record does **not** keep its edit history, and a correction to a charted value
 **is** written over.
 
+#### Where an append-only claim IS supportable — the sanctioned wordings
+
+The guard used to allow any sentence that named a covered record type and avoided a list of
+widening words. That is unsound, and review demonstrated it with a conjunction: *"Energy
+settings and sterile items have an append-only edit history"* passed, because `sterile
+items` satisfied the scope and neither `energy` nor `settings` was on the widening list —
+while energy edits keep no prior value at all. **That is not a missing word.** No
+enumeration of the unsupported nouns can ever be complete, because the unsupported set is
+every charted field the product has or will later have.
+
+So the question is inverted. Public copy may make an append-only claim **only in one of the
+exact wordings below**, and anything else is rejected whatever it says.
+
+This is deliberately brittle. Rephrasing a claim about what is audited should require
+coming back to the document that classified it, with the evidence — that is the entire
+premise of §0. A copy change that reds this guard is not a guard that needs loosening; it
+is a claim that needs re-classifying here first.
+
+```supportable-append-only-wording
+# <ruling id> | <the exact sentence>, split at the first pipe and compared after
+# whitespace normalisation. Everything a visitor reads is compared; a claim that
+# is not one of these is rejected even if it looks narrower.
+A1 | Trace a probe lot to the areas that recorded it, and keep sterile-item and disinfectant logs with lot numbers, expiry, and replace-by dates, with an append-only edit history.
+```
+
+A1 is the `/features/charting-records` line §0.4 rules `VERIFIED_WITH_QUALIFIER — KEEP`: it
+is scoped to traceability and to the sterile-item and disinfectant logs, which is exactly
+what 0086's trigger trail covers.
+
+**What this block cannot do.** It cannot check that a sentence added to it is *true* — that
+is the classification work §0 exists for, done by a person against code. The guard checks
+the shape of each entry (it must name a covered record type, and must not contain an
+obvious widening like *every record* or *treatment record*), which catches a careless entry
+and not a clever one. Adding a line here is a ruling, and is reviewed as one.
+
 ### 0.5 NEEDS_EXTERNAL_DECISION
 
 Code is not the blocker on any of these.

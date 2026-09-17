@@ -12,6 +12,10 @@ import {
   judgeAppendOnlyClaim,
   publicMarketingSources,
   publicRouteFiles,
+  sanctionedAppendOnlyWordings,
+  APPEND_ONLY_OVERREACH,
+  APPEND_ONLY_TRIGGER,
+  SUPPORTED_APPEND_ONLY_SCOPE,
 } from "./helpers/marketing-scan";
 
 // MARKETING-01a. Governance guard for docs/marketing/product-truth-register.md.
@@ -82,6 +86,7 @@ const CLAIMS = claimsBySource(SOURCES);
 /** Every claim on the public surface, as one corpus. */
 const MARKETING_COPY = CLAIMS.map((c) => c.claim).join(" ¶ ");
 const FORBIDDEN = forbiddenWordings(REGISTER);
+const SANCTIONED = sanctionedAppendOnlyWordings(REGISTER);
 
 describe("the scan covers what a visitor actually reads", () => {
   it("scans the route file behind every indexable path in the registry", () => {
@@ -375,25 +380,29 @@ describe("NOT_CURRENTLY_SUPPORTABLE claims stay out of public copy", () => {
     }
   });
 
-  it("the append-only claim, where it appears, names an audited record type", () => {
+  it("every append-only claim on the site is one §0.4 has sanctioned", () => {
     // §0.4 N1: migration 0086's trigger-written trail covers sterile items,
     // disinfectants, exposure incidents, the aftercare mark, and
     // session_blocks.probe_lot_number - THAT COLUMN ONLY. Every other charted
-    // value is a plain UPDATE that keeps no prior value. So the claim must name
-    // a covered record type AND must not widen the promise back out.
+    // value is a plain UPDATE that keeps no prior value.
+    //
+    // This used to ask whether the claim named a covered record type and
+    // avoided a list of widening words. Review broke that with a conjunction:
+    // "Energy settings and sterile items have an append-only edit history"
+    // satisfied both halves while promising history for a field that keeps
+    // none. That is not a missing word - no deny-list of the unsupported nouns
+    // can be complete, because the unsupported set is every charted field the
+    // product has or will have. So the register sanctions exact wordings and
+    // everything else is rejected.
     let checked = 0;
     for (const { file, claim } of CLAIMS) {
-      const verdict = judgeAppendOnlyClaim(claim);
+      const verdict = judgeAppendOnlyClaim(claim, SANCTIONED);
       if (verdict.kind === "not-a-claim") continue;
       checked += 1;
       expect(
         verdict.kind,
-        verdict.kind === "unscoped"
-          ? `${file}: an append-only claim must name an audited record type (sterile items, disinfectants, exposure incidents, probe lots, record-keeping). Offending copy: "${claim}"`
-          : `${file}: this append-only claim extends the promise beyond the audited records via "${
-              verdict.kind === "overreaching" ? verdict.matched : ""
-            }", which §0.4 N1 rejects. Offending copy: "${claim}"`,
-      ).toBe("ok");
+        `${file}: this append-only claim is not one §0.4 sanctions. Re-word it to a sanctioned line, or classify it in the register's supportable-append-only-wording block first. Offending copy: "${claim}"`,
+      ).toBe("sanctioned");
     }
     // Guard the guard: zero claims would pass by vacuity, and "no append-only
     // claim anywhere" is a different state, owned by the overcorrection block.
@@ -401,6 +410,37 @@ describe("NOT_CURRENTLY_SUPPORTABLE claims stay out of public copy", () => {
       checked,
       "no append-only copy found; see the overcorrection block",
     ).toBeGreaterThan(0);
+  });
+
+  it("each sanctioned wording is itself scoped, and is actually shipped", () => {
+    // A guard on the guard. It cannot check that a sanctioned sentence is TRUE
+    // - that is the classification work §0 exists for, done by a person against
+    // code - but an entry that names no covered record type, or that plainly
+    // widens the promise, is a careless entry and fails here.
+    expect(SANCTIONED.length).toBeGreaterThan(0);
+    for (const wording of SANCTIONED) {
+      expect(
+        wording.text,
+        `${wording.id} is sanctioned but names no covered record type`,
+      ).toMatch(SUPPORTED_APPEND_ONLY_SCOPE);
+      expect(
+        wording.text,
+        `${wording.id} is sanctioned but widens the promise beyond the audited records`,
+      ).not.toMatch(APPEND_ONLY_OVERREACH);
+      expect(
+        wording.text,
+        `${wording.id} sits in the append-only block but makes no append-only claim`,
+      ).toMatch(APPEND_ONLY_TRIGGER);
+    }
+    // A sanctioned wording nobody ships is a ruling with no subject, and lets
+    // the block drift away from the copy it governs.
+    const shipped = CLAIMS.map((c) => c.claim.replace(/\s+/g, " ").trim());
+    for (const wording of SANCTIONED) {
+      expect(
+        shipped.includes(wording.text),
+        `${wording.id} is sanctioned but appears nowhere in public copy`,
+      ).toBe(true);
+    }
   });
 });
 
@@ -461,8 +501,69 @@ describe("negative controls: the guard bites", () => {
         sentence,
         `the expression ${expression} was not inlined into its sentence`,
       ).toBeTruthy();
-      expect(judgeAppendOnlyClaim(sentence!).kind).toBe("overreaching");
+      expect(judgeAppendOnlyClaim(sentence!, SANCTIONED).kind).toBe("unsanctioned");
     }
+  });
+
+  it("reads a sentence made only of inline elements as one sentence", () => {
+    // Review's counter-example to the first structural rule. The container has
+    // no text of its own, so "does it bear text" read <p> as layout and split
+    // the sentence exactly where the unsupported promise and its qualifier fell
+    // either side of the boundary. <p> cannot legally hold a block, so its
+    // whole subtree is one sentence - a fact about HTML, not a heuristic.
+    const src =
+      "export function __C() {\n  return <p><span>Every treatment record has</span><strong> an append-only edit history for sterile items</strong></p>;\n}";
+    const claims = collectClaims(src, "control.tsx");
+    expect(claims).toContain(
+      "Every treatment record has an append-only edit history for sterile items",
+    );
+    expect(
+      rulesHitBy(src).map((r) => r.id),
+      "the rejoined sentence is not caught by any §0.4 rule",
+    ).toContain("N1");
+  });
+
+  it("reads an inline-only div as one sentence, and a component list as many", () => {
+    // The same question one level out. A container holding only phrasing
+    // elements is a sentence however it is tagged; a container holding
+    // components is layout, and gluing a policy page's paragraphs together
+    // would manufacture claims nobody wrote.
+    const inlineDiv =
+      "export function __C() {\n  return <div><span>Every treatment record has</span><strong> an append-only edit history for sterile items</strong></div>;\n}";
+    expect(collectClaims(inlineDiv, "control.tsx")).toContain(
+      "Every treatment record has an append-only edit history for sterile items",
+    );
+
+    const componentList =
+      "export function __C() {\n  return <Layout><P>An append-only edit history for sterile items.</P><P>Every treatment record is editable.</P></Layout>;\n}";
+    const claims = collectClaims(componentList, "control.tsx");
+    expect(claims).toContain("An append-only edit history for sterile items.");
+    expect(claims).toContain("Every treatment record is editable.");
+    expect(
+      claims.some((c) => /sterile items\.\s*Every treatment record/.test(c)),
+      "two sibling paragraphs were glued into one claim",
+    ).toBe(false);
+  });
+
+  it("rejects an unsupported field conjoined to a supported one", () => {
+    // Review's counter-example to the deny-list. `sterile items` satisfied the
+    // scope and neither `energy` nor `settings` was a listed widening term,
+    // while energy edits keep no prior value at all.
+    const conjunction =
+      "Energy settings and sterile items have an append-only edit history";
+    expect(SUPPORTED_APPEND_ONLY_SCOPE.test(conjunction)).toBe(true);
+    expect(APPEND_ONLY_OVERREACH.test(conjunction)).toBe(false);
+    expect(
+      judgeAppendOnlyClaim(conjunction, SANCTIONED).kind,
+      "a deny-list would have passed this; the allow-list must not",
+    ).toBe("unsanctioned");
+  });
+
+  it("rejects an append-only claim written without the hyphen", () => {
+    expect(
+      judgeAppendOnlyClaim("Energy settings have an append only edit history", SANCTIONED)
+        .kind,
+    ).toBe("unsanctioned");
   });
 
   it("rejects forbidden wording in a resource article route and its copy module", () => {
@@ -519,33 +620,32 @@ describe("negative controls: the guard bites", () => {
     ).toBeGreaterThan(0);
   });
 
-  it("judges scope, not the presence of a keyword", () => {
+  it("rejects every near-miss wording, however it is phrased", () => {
     // The old scope regex accepted any of lot|sterile|disinfectant|log|note, so
     // "charting log" satisfied it while promising what the product cannot keep,
-    // and bare "a lot"/"noteworthy" satisfied it by accident. Both are now
-    // rejected for naming no covered record type at all.
-    for (const unscoped of [
+    // and bare "a lot"/"noteworthy" satisfied it by accident. None of these is
+    // in the sanctioned list, so the reason each is rejected is now the same
+    // one: §0.4 has not classified it.
+    for (const rejected of [
       "Every charting log has an append-only edit history",
       "Every record has an append-only edit history",
       "a lot of noteworthy things have an append-only edit history",
+      "Every treatment record has an append-only edit history for sterile items",
+      "Sterile items have an append-only edit history",
+      "Energy settings and sterile items have an append-only edit history",
     ]) {
-      expect(judgeAppendOnlyClaim(unscoped).kind, unscoped).toBe("unscoped");
+      expect(judgeAppendOnlyClaim(rejected, SANCTIONED).kind, rejected).toBe(
+        "unsanctioned",
+      );
     }
-    // Naming a covered type is not enough on its own: a claim that also widens
-    // the promise back out is rejected for the widening.
-    expect(
-      judgeAppendOnlyClaim(
-        "Every treatment record has an append-only edit history for sterile items",
-      ).kind,
-    ).toBe("overreaching");
   });
 
-  it("leaves the supported, scoped wording green", () => {
+  it("leaves the supported, sanctioned wording green", () => {
     // The overcorrection counterpart: the shipped line must survive every rule
     // above. If a tightening makes a true claim unsayable, it fails here.
     const shipped =
       "Trace a probe lot to the areas that recorded it, and keep sterile-item and disinfectant logs with lot numbers, expiry, and replace-by dates, with an append-only edit history.";
-    expect(judgeAppendOnlyClaim(shipped).kind).toBe("ok");
+    expect(judgeAppendOnlyClaim(shipped, SANCTIONED).kind).toBe("sanctioned");
     expect(
       FORBIDDEN.filter((r) => r.pattern.test(shipped)).map((r) => r.source),
     ).toEqual([]);
