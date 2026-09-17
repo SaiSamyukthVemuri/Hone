@@ -68,8 +68,12 @@ wrongly.
 
 4. **Every control acknowledges immediately.** A press is confirmed before its
    result arrives. A control that has been activated must never look idle.
-5. **Every interactive target meets the touch floor, on every pointer.** The floor
-   travels with the control, not with the page.
+5. **Every interactive target meets the touch floor wherever the pointer is not
+   known to be fine.** The floor travels with the control, not with the page. A
+   fine pointer may earn a compact target by **explicit opt-in**, never by
+   default — which is LAW 3 applied, not an exception to this one. *An earlier
+   draft said "on every pointer"; that contradicted both LAW 3 and the shipped
+   `sm` size, and is corrected here.*
 6. **Focus must be visible and must survive.** Keyboard focus is always rendered,
    and rendering must not depend on colour the user's system may override.
 7. **A user-facing refusal names the condition, never the internal code.** The
@@ -91,8 +95,9 @@ wrongly.
 **Motion**
 
 12. **Motion is earned.** It must communicate **state** or **spatial continuity**.
-    Ordinary state change is CSS. No entrance decoration, no staggered cards, no
-    motion on high-frequency practitioner actions unless it carries meaning.
+    No entrance decoration, no staggered cards, no motion on high-frequency
+    practitioner actions unless it carries meaning. *Which mechanism expresses it
+    is a CONTRACT decision, not part of this law.*
 13. **Reduced motion preserves complete comprehension.** Reduced means gentler,
     never absent: the state change still happens, and nothing becomes
     unintelligible because motion was removed.
@@ -116,14 +121,16 @@ beside them.
 
 | # | Mechanism | Satisfies |
 |---|---|---|
-| 1 | `components/ui/control-base.ts` — `CONTROL_MIN_TOUCH` (`inline-flex … min-h-[44px]`), `FOCUS_RING` | LAW 5, 6 |
-| 2 | `components/ui/button.tsx` — `Button`, `buttonClasses`. **Pending is a prop**, not a separate component: it sets `aria-busy` and `data-pending` and swaps `busyLabel` without changing geometry | LAW 4 |
+| 1 | `components/ui/control-base.ts` — `CONTROL_MIN_TOUCH` (`inline-flex … min-h-[44px]`), `FOCUS_RING`, `CONTROL_COMPACT_FINE_POINTER` (`pointer-fine:min-h-8`) | LAW 6; **LAW 5 partially** — see below |
+| 2 | `components/ui/button.tsx` — `Button`, `buttonClasses`. `pending` is a **prop**: it disables the control, sets `aria-busy` and `data-pending`, and — **only when `busyLabel` is supplied** — swaps the visible label | LAW 4 |
+| 2b | `components/pending-button.tsx` — `PendingButton`, the **server-action leaf**: `useFormStatus()` + `type="submit"`, wrapping `Button`. **Omit `busyLabel`** for the geometry-stable spinner, which is the recommended default | LAW 4 |
 | 3 | `components/ui/section-label.tsx` — `SectionLabel` | LAW 1 |
 | 4 | `components/ui/status-pill.tsx` — `StatusPill`; primitive owns shape, caller owns meaning | LAW 9 |
 | 5 | `components/ui/field.tsx` | LAW 4, 6 |
 | 6 | `components/ui/skeleton.tsx` | LAW 4, 13 |
 | 7 | `components/confirm-dialog.tsx` — `ConfirmDialog` | LAW 4, 7 |
 | 8 | `app/globals.css` duration scale — `--hone-duration-press: 120ms`, `--hone-duration-ui: 180ms`, `--hone-duration-overlay: 240ms` | LAW 12, 14 |
+| 8b | **Ordinary state change is expressed in CSS transitions**, and no animation library is installed. This is the current mechanism for LAW 12, not the law itself | LAW 12 |
 | 9 | `pointer-fine:` for density; `focus-visible:` not `focus:`; `outline-hidden` not `outline-none` | LAW 3, 6 |
 | 10 | `dark:` is remapped to a `.dark` class that is never applied — automatic dark mode is **off by pilot decision** | LAW 16 |
 
@@ -132,9 +139,13 @@ Two notes an agent will otherwise get wrong:
 - **`--hone-duration-overlay` is declared and unspent.** It is reserved for the
   drawer/sheet primitive so overlay timing is decided once. Spend it; do not
   introduce a second overlay duration.
-- **`CONTROL_MIN_TOUCH` carries a height floor and no width floor.** A square
-  icon control can satisfy it and still be too narrow. Width is the open half of
-  the geometry problem.
+- **Contract 1 satisfies LAW 5 only partially, and is marked so deliberately.**
+  `CONTROL_MIN_TOUCH` guarantees **height and not width**, so a square icon
+  control can satisfy it and still be too narrow; and `buttonClasses`' `sm` size
+  composes `CONTROL_COMPACT_FINE_POINTER` (`pointer-fine:min-h-8` = 32px), which
+  is a legitimate LAW 3 opt-in but means 44px is not universal even in height.
+  **Do not read this row as "the touch floor is solved."** Closing the width half
+  is what the control-geometry work is for.
 
 ---
 
