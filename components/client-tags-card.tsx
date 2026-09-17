@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useTransition } from "react";
+
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import type { ClientTag } from "@/lib/types/database";
 
 type Props = {
@@ -15,6 +17,10 @@ export function ClientTagsCard({ clientId, tags, addAction, removeAction }: Prop
   const [label, setLabel] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  // WHICH tag the confirmation is for. A native confirm carried this in its
+  // call stack; a mounted dialog has to be told, and runRemove refuses to fire
+  // without it.
+  const [removeTarget, setRemoveTarget] = useState<string | null>(null);
 
   function submitAdd() {
     const trimmed = label.trim();
@@ -34,8 +40,24 @@ export function ClientTagsCard({ clientId, tags, addAction, removeAction }: Prop
     });
   }
 
+  // UI-05. This was an UNQUALIFIED `confirm("Remove this tag?")` — the same
+  // native global, reached without its receiver, which is why the slice's first
+  // sweep never saw it. Two separate blind spots hid it: the pattern matched
+  // only `window.confirm(`, and the pathspec skipped every top-level file in
+  // components/. It is a fourth instance, not a third, and this slice claimed
+  // there were two.
+  //
+  // Same reasoning as the other three: iOS Safari can suppress a native confirm
+  // silently, and when it does the guard returns false and the tag is never
+  // removed — indistinguishable to the practitioner from Hone ignoring them.
   function submitRemove(tagId: string) {
-    if (!confirm("Remove this tag?")) return;
+    setError(null);
+    setRemoveTarget(tagId);
+  }
+
+  function runRemove() {
+    if (!removeTarget) return;
+    const tagId = removeTarget;
     const fd = new FormData();
     fd.set("client_id", clientId);
     fd.set("tag_id", tagId);
@@ -43,7 +65,9 @@ export function ClientTagsCard({ clientId, tags, addAction, removeAction }: Prop
     startTransition(async () => {
       try {
         await removeAction(fd);
+        setRemoveTarget(null);
       } catch (err) {
+        // Dialog stays open so the failure is read and retryable.
         setError(err instanceof Error ? err.message : "Failed to remove tag.");
       }
     });
@@ -131,7 +155,27 @@ export function ClientTagsCard({ clientId, tags, addAction, removeAction }: Prop
           </button>
         </div>
       )}
-      {error && <p className="mt-2 text-xs text-red-700">{error}</p>}
+      {/* `!removeTarget` so a failure is not rendered twice — the dialog owns
+          the message while open, the card owns it afterwards. */}
+      {error && !removeTarget && (
+        <p className="mt-2 text-xs text-red-700">{error}</p>
+      )}
+
+      <ConfirmDialog
+        open={removeTarget !== null}
+        title="Remove this tag?"
+        description="The tag is removed from this client. Other clients keep theirs."
+        confirmLabel="Remove tag"
+        busyLabel="Removing…"
+        tone="danger"
+        pending={pending}
+        error={removeTarget ? error : null}
+        onConfirm={runRemove}
+        onCancel={() => {
+          setRemoveTarget(null);
+          setError(null);
+        }}
+      />
     </section>
   );
 }

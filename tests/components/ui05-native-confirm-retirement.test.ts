@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { execSync } from "node:child_process";
 
-// UI-05 — the last two native confirm() dialogs, retired.
+// UI-05 — every remaining native confirm() dialog, retired.
 //
 // WHY THIS IS NOT A STYLING SLICE. confirm-dialog.tsx's own docblock records
 // that iOS Safari can SUPPRESS a native confirm silently. When it does, the
@@ -25,6 +25,34 @@ const code = (p: string) =>
 
 const SCHEDULE = code("components/treatment-schedule-editor.tsx");
 const PORTAL = code("components/portal-messages-card.tsx");
+// Found only after the sweep was widened — see sweptFiles() for why it was
+// invisible. The slice originally claimed there were TWO; there were three.
+const TAGS = code("components/client-tags-card.tsx");
+
+/**
+ * The files the sweep covers.
+ *
+ * The original pathspec — `'app/**' + '/*.tsx'` and the same for components —
+ * looked repo-wide and was not: in a git pathspec that form requires at least
+ * one intervening directory, so it matched 236 of 300 files and silently
+ * skipped every TOP-LEVEL one: app/page.tsx, app/layout.tsx, and the whole of
+ * components/*.tsx.
+ *
+ * That included BOTH files this slice fixed. treatment-schedule-editor.tsx and
+ * portal-messages-card.tsx are top-level in components/, so the fence whose
+ * entire claim is "zero native confirm anywhere" was green while never reading
+ * its own subjects. It passed because the 236 files it did read genuinely had
+ * none — a true answer reached without examining the evidence.
+ *
+ * Codex raised it. The coverage test below makes the omission impossible to
+ * reintroduce quietly.
+ */
+function sweptFiles(): string[] {
+  return execSync("git ls-files '*.tsx' '*.ts'", { encoding: "utf8" })
+    .split("\n")
+    .filter(Boolean)
+    .filter((f) => f.startsWith("app/") || f.startsWith("components/"));
+}
 
 describe("UI-05: no native confirm survives anywhere in the app", () => {
   it("app/ and components/ contain ZERO live native confirm calls", () => {
@@ -60,12 +88,7 @@ describe("UI-05: no native confirm survives anywhere in the app", () => {
     ];
     const BARE = /(?<![\w.$])confirm\s*\(/;
 
-    const hits = execSync(
-      "git ls-files 'app/**/*.tsx' 'components/**/*.tsx'",
-      { encoding: "utf8" },
-    )
-      .split("\n")
-      .filter(Boolean)
+    const hits = sweptFiles()
       .flatMap((f) => {
         const stripped = code(f);
         const matched = QUALIFIED.filter(([, re]) => re.test(stripped)).map(([n]) => n);
@@ -75,6 +98,32 @@ describe("UI-05: no native confirm survives anywhere in the app", () => {
         return matched.length ? [`${f} (${matched.join(", ")})`] : [];
       });
     expect(hits, `native confirm still called in: ${hits.join(" | ")}`).toEqual([]);
+  });
+
+  it("the sweep COVERS the files this slice fixed, and the whole surface", () => {
+    // Without this, a pathspec that quietly stops matching turns the assertion
+    // above into a tautology: zero hits across zero relevant files, reported
+    // green. The original pathspec did exactly that.
+    const swept = sweptFiles();
+    for (const subject of [
+      "components/treatment-schedule-editor.tsx",
+      "components/portal-messages-card.tsx",
+      "components/client-tags-card.tsx",
+    ]) {
+      expect(swept, `the sweep must actually read ${subject}`).toContain(subject);
+    }
+    // Top-level files were the entire blind spot.
+    expect(swept).toContain("app/layout.tsx");
+    expect(swept).toContain("app/page.tsx");
+
+    // And the list is the FULL surface, derived from git rather than a number
+    // restated here where it could drift.
+    const all = execSync("git ls-files '*.tsx' '*.ts'", { encoding: "utf8" })
+      .split("\n")
+      .filter(Boolean)
+      .filter((f) => f.startsWith("app/") || f.startsWith("components/"));
+    expect(swept.length).toBe(all.length);
+    expect(swept.length).toBeGreaterThan(280);
   });
 
   it("the sweep's own patterns actually MATCH — proved on synthetic inputs", () => {
@@ -110,6 +159,7 @@ describe("UI-05: both surfaces use the shipped dialog with its real contract", (
     for (const [name, src] of [
       ["schedule", SCHEDULE],
       ["portal", PORTAL],
+      ["tags", TAGS],
     ] as const) {
       expect(src, `${name} imports the dialog`).toContain(
         'from "@/components/confirm-dialog"',
@@ -151,6 +201,19 @@ describe("UI-05: both surfaces use the shipped dialog with its real contract", (
     expect(PORTAL).toMatch(/open=\{archiveTarget !== null\}/);
     expect(PORTAL).toMatch(/if \(!archiveTarget\) return;/);
     expect(PORTAL).toMatch(/fd\.set\("message_id", archiveTarget\)/);
+  });
+
+  it("the tags card tracks WHICH tag, and refuses to fire without one", () => {
+    // Same defect class as the portal card: a native confirm knew its target
+    // from the call stack, a mounted dialog must be told. Losing this guard
+    // would remove whatever id happened to be last.
+    expect(TAGS).toMatch(/const \[removeTarget, setRemoveTarget\]/);
+    expect(TAGS).toMatch(/open=\{removeTarget !== null\}/);
+    expect(TAGS).toMatch(/if \(!removeTarget\) return;/);
+    expect(TAGS).toMatch(/error=\{removeTarget \? error : null\}/);
+    expect(TAGS).toMatch(/\{error && !removeTarget && \(/);
+    expect(TAGS).toMatch(/await removeAction\(fd\)/);
+    expect(TAGS).toMatch(/fd\.set\("tag_id", tagId\)/);
   });
 
   it("no mutation contract changed — same actions, same FormData fields", () => {
