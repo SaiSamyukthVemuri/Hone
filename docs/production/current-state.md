@@ -39,7 +39,7 @@ not a PR diary — per-capability evidence lives in
 
 `0f07dae68efe06d493421af715cb0b7234153de9` — the PR #659 merge (PERF-02C, the client-profile
 overview clinical wave), the baseline this document carried before the 2026-09-17 refresh. Its
-code remains live because the twenty-one runtime-bearing merges above were built on top of it.
+code remains live because the twenty-three runtime-bearing merges above were built on top of it.
 
 The baseline before *that* was `4fee652fe67f9fdc06b7d5e719cdb73d5e6d294b` — the PR #649 merge
 (UI-01D, Client Profile tab acknowledgement). Both are retained so the chain of baselines can be
