@@ -1029,11 +1029,18 @@ live manual no-show / late-cancellation fees · public-booking card collection �
 practitioner selection and assignment.
 
 **Dormant** (deployed but not acting): all Google Calendar sync phases · practitioner capacity
-at Willow · onboarding v2 at Willow · **the durable new-client waitlist (WAIT-02B) on every
-studio** — see §5b. *(The parenthetical above previously read "structurally unable to act". For
-the durable waitlist that is no longer accurate: Stage B1 replaced the build-time prohibition
-with a report-only gate, so what keeps it dormant is now **runtime allowlist membership**, and
-it takes two allowlists rather than one. It is dormant by configuration, not by structure.)*
+at Willow · onboarding v2 at Willow · **the durable new-client waitlist's PUBLIC commit point
+(WAIT-02B) on every studio** — see §5b.
+
+> ⚠️ **CORRECTED 2026-09-17, and this entry has now been wrong twice in the same place.** It
+> first read *"structurally unable to act"*; that was corrected once already, to *"what keeps it
+> dormant is **runtime allowlist membership**, and it takes two allowlists rather than one."*
+> **That correction is itself now false**, for the reason §5b records: the allowlist governs the
+> **public** commit point and nothing else, and the owner surface at `/settings/waitlist` writes
+> durable rows without consulting it. So the durable waitlist is **not** dormant as a whole —
+> only its public path is. Listing the capability flatly under *Dormant* is what made the owner
+> path invisible here as well as in §5b. **Read the dormancy as scoped to public self-service
+> joining**, which is genuinely enabled for no studio.
 
 **Shipped and NOT production-exercised, as classified at the 2026-08-30 reconciliation:**
 non-card appointment settlement (§7 — 0 rows) · `/dashboard/capacity` (§10b — no usage
@@ -1050,7 +1057,10 @@ cannot be enabled by any role. See
 [../decisions/clinical-finalization-retired.md](../decisions/clinical-finalization-retired.md).
 
 **Not built:** deposits / packages / partial payments · broad self-serve live payments ·
-inbound-busy and two-way calendar · broad-SaaS SMS · self-serve studio creation.
+inbound-busy and two-way calendar · broad-SaaS SMS · self-serve studio creation. *(On
+broad-SaaS SMS, read §8 before inferring too much: A2P/10DLC registration and rate limiting are
+genuinely absent, but a **per-studio sender strategy is built and deployed** — what is unwired
+is the send path.)*
 
 **Deferred by product decision (2026-07-27):** the direct new-client consultation booking route.
 
