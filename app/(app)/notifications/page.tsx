@@ -104,6 +104,11 @@ export default async function NotificationsPage() {
           requires. */}
       {!hasAnything ? (
         <EmptyState
+          // h2: the page's h1 is PageHeader's "Notifications", and when this
+          // renders `overdueAlerts` is empty so the "Operational alerts" h2
+          // above is absent — this title is the only content heading under it.
+          // Matches the depth `SectionLabel as="h2"` already establishes here.
+          headingLevel={2}
           title="No notifications yet."
           description="Operational alerts and new bookings, cancellations, and reschedules will show up here."
         />
