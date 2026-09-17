@@ -15,6 +15,7 @@ every page and in `lib/marketing/content.ts`.
 |---|---|
 | Built against production head | `a946a983ac9b8da379bc869e21b32a5a3d50e548` |
 | Head resolved | `git rev-parse origin/claude/build-hone-saas-hOex7`, 2026-09-17 |
+| Production head at last check | `4cff4a438f937efc68161b17dca0fb88cf3e3927` (2026-09-17) — see below |
 | Repository migration max | **0198** (derived — `npm run migration:state -- --json`) |
 | Hosted migration max | **0198** (declared — `docs/production/migration-state.json`) |
 | Repo/hosted parity | yes |
@@ -29,6 +30,20 @@ section disagree, **§0 wins**, and where §0 and code disagree, **code wins**.
 **A database capability is not a public product capability.** Every row in §0 was
 re-derived from application code at the head above, not from a table definition and not
 from this register's own earlier revision.
+
+**Production has advanced past the build head, and nothing this register rests on moved.**
+The build head is not bumped to `4cff4a43` here, because bumping it would claim a
+re-derivation that was not performed. What was performed is narrower and is mechanical:
+`git diff --name-only a946a983..4cff4a43` touches **18 deployed files**, every one of them
+an authenticated-app surface (`app/(app)/**`) or a shared UI primitive
+(`components/ui/**`, `components/pending-*.tsx`, `app/globals.css`). It touches **zero**
+files under `lib/`, **zero** under `app/_components/marketing/` or `lib/marketing/`, **zero**
+public route files, and **no migration**. No file §0 cites as evidence — `lib/sessions/
+before-today.ts`, `components/before-today-card.tsx`, `app/(app)/clients/[id]/page.tsx`,
+`lib/dashboard/missing-records-assistant.ts`, `lib/record-keeping/**`,
+`lib/export/resource-registry.ts`, `app/features/charting-records/page.tsx` — is in that
+set. §0 therefore still classifies the code production is running. A change that DOES touch
+one of those files is a change that must re-derive §0 and move the build head together.
 
 ## Classification labels (internal only)
 
@@ -219,6 +234,47 @@ the safe direction: a local fixture never touched production at all.
 **Ruling.** Correct the deck's provenance sentence. The public-facing label *"Demo data.
 Actual Hone application."* is **true** and ships; the internal sentence about which tenant
 supplied the data is what must change.
+
+#### The rulings above, in machine-readable form
+
+`tests/docs/marketing-truth-register.test.ts` enforces §0.4 by reading **this block** — it
+holds no second copy of the list. That is deliberate. The first version of the guard kept
+its own hard-coded patterns, claimed to enforce §0.4, and did not match the canonical
+sentence §0.4 rejects: *"Edits kept as history, not written over"* could have shipped with
+every assertion green. A ruling and its enforcement cannot live in two documents that are
+free to disagree. **Add a wording here and the guard enforces it on the next run; there is
+nowhere else to add it.**
+
+Each rule is `<ruling id> | <JavaScript regular expression>`, split at the **first** pipe
+(so a rule's own alternation pipes need no escaping), matched **case-insensitively** against
+every sentence the public site renders and against every string literal it ships. `#` opens
+a comment line.
+
+```forbidden-public-wording
+# N1 — the UNSCOPED edit-history claim. The scoped form is true and ships; what
+# must never appear is a promise that reads as covering the treatment record.
+N1 | edits kept as history
+N1 | not written over
+N1 | changes are preserved rather than replaced
+N1 | every change is (tracked|recorded|kept|preserved)
+N1 | complete audit trail
+N1 | full (edit )?history of every (change|edit)
+N1 | nothing is ever overwritten
+N1 | never overwritten
+N1 | (corrections|edits|changes) are (recorded|kept|preserved|retained),? (not|never) (written over|overwritten|replaced)
+N1 | (treatment|clinical|session) records? (keeps?|retains?|holds?|preserves?|has|have) (its|their|an|a|the )?(own )?(?:[\w-]+ ){0,3}(edit|change|revision) history
+# N2 — which tenant supplied the film's data. The public label "Demo data.
+# Actual Hone application." is true and ships; naming a source tenant does not.
+N2 | synthetic[- ]twin
+N2 | captured from (our|the) (production|live) (tenant|studio)
+```
+
+The last two N1 rules exist because the copy deck states the claim more strongly than the
+homepage line this register was first written against — *"Corrections are recorded, not
+written over. A treatment record keeps its edit history."* Every clause of that is rejected:
+`update_block_with_entry` (0166) issues plain `UPDATE`s that retain no prior value, so a
+treatment record does **not** keep its edit history, and a correction to a charted value
+**is** written over.
 
 ### 0.5 NEEDS_EXTERNAL_DECISION
 
