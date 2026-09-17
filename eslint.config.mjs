@@ -85,6 +85,64 @@ const eslintConfig = [
       ],
     },
   },
+  {
+    // UI-05. Native browser dialogs are not allowed in practitioner or client
+    // surfaces. This is the SCOPE-AWARE half of that guard, and it exists
+    // because a regex one cannot be.
+    //
+    // WHY A LINT RULE AND NOT (only) A TEST. The slice's source sweep asks
+    // "does this file contain a call that looks native", and a bare `confirm(`
+    // is ambiguous: a file may declare `function confirm()` of its own, as
+    // app/(app)/calendar/PostcareSendButton.tsx does, and every bare call in it
+    // is then a LOCAL call. The sweep exempts such files WHOLESALE, which means
+    // a genuinely native receiver-less call inside one would be missed. Codex
+    // raised exactly that, and it is not fixable with a pattern: resolving a
+    // name to its binding needs a scope analysis.
+    //
+    // ESLint already has one. `no-restricted-globals` fires only when the
+    // identifier resolves to the GLOBAL, so a local declaration shadows it
+    // correctly and no exemption heuristic is needed. Same mechanism, same
+    // rule, same file-scoping style the FIN-01A block above uses.
+    //
+    // TWO INDEPENDENT MECHANISMS, deliberately. The rule reasons about scope
+    // but only over files ESLint lints; the sweep reads every .ts/.tsx under
+    // these roots from disk, including any the lint config ever stops covering.
+    // Neither is a superset of the other, which is the point — the earlier
+    // rounds of this slice went wrong precisely because a "control" shared its
+    // mechanism with the thing it checked.
+    //
+    // WHAT THIS DOES NOT REJECT, stated because an unstated gap reads as
+    // coverage:
+    //
+    //   * `window.confirm(...)`, `globalThis.confirm(...)`, `self.confirm(...)`
+    //     — member expressions, not global identifier references, so this rule
+    //     does not see them. The source sweep does, and that is the division.
+    //   * a dialog reached through an alias (`const c = window.confirm`).
+    //     Neither mechanism catches that today.
+    //
+    // `alert` and `prompt` are included because they are the same class of
+    // native dialog and both are currently at zero bare call sites, so the rule
+    // arms without a migration. `confirm` is the one this slice retired.
+    files: ["app/**/*.{ts,tsx}", "components/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-globals": [
+        "error",
+        {
+          name: "confirm",
+          message:
+            "Use ConfirmDialog (components/confirm-dialog.tsx). iOS Safari can suppress a native confirm silently, so the guard returns false and the mutation never runs.",
+        },
+        {
+          name: "alert",
+          message: "Native alert() is not used in Hone surfaces; render the message in the UI.",
+        },
+        {
+          name: "prompt",
+          message: "Native prompt() is not used in Hone surfaces; use a real form control.",
+        },
+      ],
+    },
+  },
 ];
 
 export default eslintConfig;

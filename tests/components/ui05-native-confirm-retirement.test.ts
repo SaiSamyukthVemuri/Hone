@@ -146,6 +146,32 @@ describe("UI-05: no native confirm survives anywhere in the app", () => {
     expect(swept.length).toBeGreaterThan(280);
   });
 
+  it("the SCOPE-AWARE half of the guard is configured", () => {
+    // The sweep cannot resolve a name to its binding, so it exempts any file
+    // declaring its own `confirm` wholesale — meaning a genuinely native
+    // receiver-less call inside such a file would be missed. That gap is not
+    // fixable with a pattern, and Codex raised it.
+    //
+    // ESLint's no-restricted-globals fires only when the identifier resolves to
+    // the GLOBAL, so a local declaration shadows it correctly. This asserts the
+    // rule EXISTS and is scoped to these roots; the rule itself is proved by
+    // `npm run lint` in CI, and its two directions were verified against real
+    // fixtures (a bare call is rejected; a shadowed local is not).
+    //
+    // Asserting the presence of the OTHER mechanism is not a duplicated oracle:
+    // the two are deliberately independent. The rule reasons about scope but
+    // only over files ESLint lints; the sweep reads every file on disk. Neither
+    // is a superset, which is why both exist.
+    const cfg = read("eslint.config.mjs");
+    expect(cfg).toMatch(/files: \["app\/\*\*\/\*\.\{ts,tsx\}", "components\/\*\*\/\*\.\{ts,tsx\}"\]/);
+    expect(cfg).toMatch(/name: "confirm"/);
+    expect(cfg).toMatch(/Use ConfirmDialog/);
+    // alert/prompt are the same class and were at zero call sites, so the rule
+    // arms for them without a migration.
+    expect(cfg).toMatch(/name: "alert"/);
+    expect(cfg).toMatch(/name: "prompt"/);
+  });
+
   it("THE COVERAGE CHECKER BITES — the original pathspec fails it", () => {
     // Run through filesNotCovered, the same function the test above trusts.
     // Previously this comparison was re-implemented inline, so it proved the
