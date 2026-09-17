@@ -238,7 +238,7 @@ current-section state, visual or semantic.
 
 **`[MEASURED FACT]`** **1,197** rounded corners (`rounded-md` ×760, `rounded-lg` ×215,
 `rounded-full` ×175, plus arbitrary `[12px]`, `[8px]`, `[5px]`, `[10px]`, `[6px]`)
-against **43 shadow utilities** and **3,607 `border` utilities** in the whole app. *(Border re-measured at `1c52b7f8` after review found the previous **3,247** unreproducible under any definition tried. The stated definition is now `grep -rhoE '\bborder\b'` over `app/` and `components/` `*.tsx` — every `border` class token, bare or modified — and it is emitted by the census script. Shadows keep the script's existing `shadow-[a-z0-9\[]` definition, which reproduces 43 exactly; bare `shadow` adds ~6 and does not move the ratio.)*
+against **43 shadow utilities** and **2,622 `border` utilities** in the whole app. *(Both sides now use the SAME definition — a suffixed Tailwind utility token, `grep -rhoE 'border-[a-z0-9\[]'` and `'shadow-[a-z0-9\[]'` over `app/` and `components/` `*.tsx` — and both are emitted by the census script. Two earlier figures were wrong: **3,247** reproduced under no definition at all, and its replacement **3,607** used `\bborder\b`, which review at `0bd6f2f1` showed counts CSS property syntax (`border: "1px solid …"`, 47 occurrences) and comment prose (21) as if they were utilities, and was not like-for-like with the shadow side. Bare `border` as a quoted class token adds a further ~920 real utilities that this definition excludes, so the density claim is conservative, not inflated.)*
 
 **`[MEASURED FACT]`** The literal string
 `"rounded-lg border border-neutral-200 p-5 dark:border-neutral-800"` appears
@@ -612,7 +612,7 @@ Three commitments, none decorative. The proposal is not to *add* identity but to
 let in the identity Hone already owns.
 
 1. **Type carries hierarchy. Line carries structure. Boxes carry almost nothing.**
-   Hone is already hairline-delimited (**3,607** borders, 43 shadows — §1.5). Make it
+   Hone is already hairline-delimited (**2,622** borders, 43 shadows — §1.5). Make it
    deliberate: a rule plus a weight change should do the work a `rounded-lg border
    p-5` card does today. A container earns its border only when it groups the
    otherwise-ambiguous, or is independently actionable. The proof Hone can already
@@ -761,7 +761,7 @@ of these may be smuggled into a polish PR.
 9. **Is an explicit exception to §3.8 granted for the `<details>` disclosure
    transition?** §4's `CSS_ONLY` table proposes `interpolate-size:
    allow-keywords` + `::details-content` + `transition: height` for the 53
-   `<details>` across 27 files — the highest-frequency spatial break in the
+   `<details>` across 25 files — the highest-frequency spatial break in the
    product. **`transition: height` animates a layout-and-paint property, which
    §3.8 forbids**; the native disclosure path has no `transform`/`opacity`
    equivalent, so this cannot be resolved by technique. Raised at `1c52b7f8`:
@@ -864,7 +864,7 @@ reasoning is inseparable from the three sibling cases rejected alongside it.)*
 
 | Surface | Discontinuity | CSS answer |
 |---|---|---|
-| **53 `<details>` across 27 files** | Opening a long block snaps content below it down the page — a real context break, and **the highest-frequency one in the product** | `interpolate-size: allow-keywords` + `::details-content` + `transition: height`. Native and progressive; unsupported browsers keep today's instant behaviour. **Not a motion candidate — a stylesheet change.** **`[PRODUCT AUTHORITY REQUIRED]` — this is the one proposal in this document that does NOT conform to §3.8**, which admits only `transform` and `opacity`. Height is a layout-and-paint property and the cited standards name it as a performance cost. The native disclosure path has no transform/opacity equivalent, so this is a genuine conflict rather than an oversight: it needs an explicit, authority-backed exception to §3.8 before it is treated as ordinary CSS work. Recorded, not granted. |
+| **42 `<details>` across 25 files** | Opening a long block snaps content below it down the page — a real context break, and **the highest-frequency one in the product** | `interpolate-size: allow-keywords` + `::details-content` + `transition: height`. Native and progressive; unsupported browsers keep today's instant behaviour. **Not a motion candidate — a stylesheet change.** **`[PRODUCT AUTHORITY REQUIRED]` — this is the one proposal in this document that does NOT conform to §3.8**, which admits only `transform` and `opacity`. Height is a layout-and-paint property and the cited standards name it as a performance cost. The native disclosure path has no transform/opacity equivalent, so this is a genuine conflict rather than an oversight: it needs an explicit, authority-backed exception to §3.8 before it is treated as ordinary CSS work. Recorded, not granted. |
 | **536 live `hover:` tokens against 24 `active:`** | On touch, nothing acknowledges a press | `active:` colour step + existing `hone-transition-press`. Already solved inside `Button`; an **adoption** problem |
 | Tab / segment active-state change | Abrupt colour swap | Colour transition on the existing 180ms token |
 | Pending → committed control states | Geometry jumps when a label swaps width | Already solved by `Button`'s geometry-stable pending form |
@@ -1019,19 +1019,24 @@ the wrong geometry, and would have to be re-specified immediately afterwards.
   Two were verified and added:* `focus:` *→* **250** *and* `font-light` *→* **1**,
   *both reproducing the cited values exactly.*
 
-  **THE THIRD WAS RE-MEASURED.** §1.5 and §2 cited **3,247 `border` utilities**,
-  which no definition reproduces — plain substring **3,648**, `\bborder\b`
-  **3,607**, non-`dark:` **2,645**, `border-` with a suffix **2,622**. An earlier
-  revision of this appendix merely *flagged* that and argued the figure was not
-  load bearing because §2 uses the border/shadow ratio. **Review at `1c52b7f8`
-  correctly rejected that**: a ratio still needs a reproducible numerator, §4.0
-  argues from the absolute pair, and §0 promises every §1 count reproduces.
+  **THE THIRD TOOK THREE ATTEMPTS, AND THE RECORD OF THAT IS THE POINT.**
 
-  So it was re-measured under a **stated** definition rather than defended:
-  **3,607**, from `grep -rhoE '\bborder\b'` over `app/` and `components/`
-  `*.tsx` — every `border` class token, bare or modified — now emitted by the
-  script. §1.5 and §4.0 were updated to match. The ratio argument is unaffected
-  in direction and slightly strengthened: **3,607 : 43**.
+  §1.5 originally cited **3,247 `border` utilities**, which reproduces under no
+  definition at all. A first repair merely *flagged* it and argued it was not
+  load bearing because §2 uses a ratio; **review at `1c52b7f8` rejected that** —
+  a ratio needs a reproducible numerator, §4.0 argues from the absolute pair, and
+  §0 promises every §1 count reproduces. A second repair re-measured it as
+  **3,607** via `\bborder\b`; **review at `0bd6f2f1` rejected that too**, and
+  correctly: that pattern counts CSS property syntax (`border: "1px solid …"`,
+  **47** occurrences) and comment prose (**21**) as though they were utilities,
+  and it was not like-for-like with a shadow side that counts only suffixed
+  tokens.
+
+  The figure now standing is **2,622**, from `grep -rhoE 'border-[a-z0-9\[]'` —
+  **the same shape as the shadow row**, so the ratio compares like with like.
+  Bare `border` as a quoted class token adds a further **~920** genuine
+  utilities that this definition deliberately excludes, which makes the density
+  claim conservative. Direction unchanged throughout: **2,622 : 43**.
 
 ### The census script
 
@@ -1109,7 +1114,7 @@ row "rounded-lg"                      "$(n 'rounded-lg')"
 row "rounded-full"                    "$(n 'rounded-full')"
 row "rounded-[5px]"                   "$(n 'rounded-\[5px\]')"
 row "shadow-*"                        "$(ne 'shadow-[a-z0-9\[]')"
-row "border tokens (bare + modified)" "$(ne '\bborder\b')"
+row "border-* utilities"              "$(ne 'border-[a-z0-9\[]')"
 row "border-dashed"                   "$(n 'border-dashed')"
 row "distinct rounded-full+px pills"   "$(u '\"[^\"]*rounded-full[^\"]*px-[^\"]*\"')"
 
@@ -1143,7 +1148,7 @@ row "lg:"                             "$(ne '\blg:')"
 row "xl:"                             "$(ne '\bxl:')"
 row "2xl:"                            "$(ne '\b2xl:')"
 row "<table"                          "$(n '<table')"
-row "<details"                        "$(n '<details')"
+row "<details (JSX only, prose excluded)" "$(grep -rn '<details' "${SRC[@]}" "${INC[@]}" 2>/dev/null | grep -vE ':[0-9]+:[[:space:]]*(//|\*|/\*)' | grep -oh '<details' | wc -l)"
 
 echo "===== 1.9 ANTI-SLOP ====="
 row "gradients"                       "$(ne 'bg-(gradient|linear)-to-')"
