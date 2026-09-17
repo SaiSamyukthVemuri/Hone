@@ -27,7 +27,7 @@ Standing discipline applies to every step here: **production WRITES require the 
 | Timezone | America/Toronto | IANA name; drives booking slots, reminders, dashboard weeks, procedure-record date filters. Default is America/Toronto; set explicitly anyway |
 | Booking slug | lauraelectrolysis | studios.slug, UNIQUE; becomes hone.care/book/<slug>; lowercase, no spaces; cannot collide with willow's |
 | Address / contact basics | optional | studios.address, booking_description; can be filled in-app later (Settings -> Studio / Booking) |
-| Services to seed | e.g. "Electrolysis 30 min" | created in-app via Settings -> Services after first login; collect names, durations, prices |
+| Services to seed | e.g. "New Client Consultation" + "Electrolysis 30 min" | created in-app via Settings -> Services after first login; collect names, durations, prices. **Include a consultation** — a new client cannot book publicly without one (§1a) |
 | Default appointment duration | 60 (default) | studios.default_appointment_duration_minutes; in-app later |
 | Buffer minutes | 15 (default) | studios.buffer_minutes; snapshotted into every appointment's blocked range |
 | Default machine frequency | 13.56 MHz / 27.12 MHz / unknown | practitioners.default_machine_frequency is STICKY-LEARNED from charting (PR #203); do not set by SQL; it seeds itself after her first charted treatment area |
@@ -55,13 +55,29 @@ launch.** Do not enable any of them to "make onboarding work".
 
 3. **Accept the invitation** (§2.3) — mandatory; nothing below is reachable
    until she does.
-4. Create **at least one active service**.
+4. Create **at least one active service** — and, for public booking, at least
+   one active **consultation** service (see below).
 5. Configure **weekly availability**.
 6. Then ordinary operation: create clients, book internally and publicly, chart
    and reopen sessions, complete appointments, and edit studio settings.
 
 **Minimum first-booking readiness: one active service + valid availability.**
 Both are hers to set; neither needs the operator.
+
+**A new client booking PUBLICLY needs one thing more: an active CONSULTATION
+service.** `isBookableByNewClient` (`lib/booking/consultation.ts`) admits a
+service only when it is this studio's, `active`, **and** a consultation —
+`services.modality = 'consultation'`, or, where modality was never set, a
+service *name* containing "consultation". The public action enforces it
+server-side, so the rule cannot be dressed around in the UI.
+
+A studio whose catalogue is ordinary treatments therefore books normally
+**internally** while its public page tells every new visitor *"Online
+consultation booking is not set up yet. Please contact <studio>."* On day one
+every visitor is a new client, so this presents as a broken booking page rather
+than as missing configuration. Note that the §1 example service
+("Electrolysis 30 min") does **not** satisfy the rule on its own — collect a
+consultation service alongside it.
 
 ## 2. Setup checklist
 
@@ -155,6 +171,9 @@ where studio_id = '<STUDIO_ID>';
 
 1. **Settings -> Studio**: confirm name, timezone; add address/booking description if desired.
 2. **Settings -> Services**: create the collected services (name, duration, price; pre-care instructions optional).
+   **At least one must be a consultation** (`modality = 'consultation'`, or a
+   name containing "consultation") or the public page cannot take a new-client
+   booking at all — see §1a.
 3. **Settings -> Availability**: set her weekly open days/hours. Until this is set the booking page shows no slots, which is correct, not broken.
    **Shape matters.** In ordinary (non-capacity) mode, availability is
    **studio-wide**: `studio_availability_default.practitioner_id IS NULL`. A
