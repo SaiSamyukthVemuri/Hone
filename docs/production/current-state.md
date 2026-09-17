@@ -713,6 +713,16 @@ enforceability. Hone's documentation does not claim signatures are legally bindi
   *(as of 2026-08-23, read-only query)*.
 - **Receipts** are live. **Refunds** are deployed but have **zero production rows on this
   baseline**. **Disputes** are **alert-only** — 0 have occurred.
+  > ⚠️ **"Receipts are live" is true but now under-describes what a client receives.** `#702`
+  > (merge `67023c60`) shipped inside this baseline and made the successful-card receipt
+  > **automatic**, sent as Hone email with a **studio-branded PDF attached**, built from one
+  > canonical receipt document. That is a change in what production sends to a *client*, and §7
+  > does not otherwise record it. Per the COVERAGE LIMIT above, this refresh did **not** write
+  > the capability up — its per-PR record is in
+  > [release-changelog.md](./release-changelog.md), and the roadmap notes manual receipt remains
+  > the recovery path with webhook / cash / e-transfer follow-ons separate. **No claim is made
+  > here about production exercise of the automatic path**, which would need a read this lane did
+  > not take.
 - **Live manual no-show / late-cancellation fees are HELD** by a server-side allow-list;
   only `session_payment` charges live. Willow's 3 test-mode charge attempts all succeeded;
   the **per-reason** split of those test-mode charges was **not re-measured** at this
