@@ -116,6 +116,24 @@ describe("0199 privilege posture", () => {
     expect((CODE.match(/set search_path = pg_catalog, pg_temp/g) ?? []).length).toBe(4);
   });
 
+  it("uses no collation-dependent character class anywhere in normalisation", () => {
+    // A bracket RANGE is resolved through the database's collation, so on a
+    // non-C collation `[^0-9]` is not guaranteed to be exactly the ten ASCII
+    // digits JavaScript removes -- and a parity corpus can only ever exercise
+    // the collation it happens to run under, so it cannot catch this. The
+    // enumeration has no ordering semantics and is the same set everywhere.
+    //
+    // Same reason `[[:space:]]` was rejected for the trim set in favour of an
+    // explicit chr() list: a STORED generated column must not depend on a
+    // property of the cluster it was written on.
+    expect(CODE).toContain("'[^0123456789]'");
+    expect(CODE).not.toMatch(/\[\^?0-9\]/);
+    expect(CODE).not.toContain("[[:space:]]");
+    expect(CODE).not.toContain("[[:digit:]]");
+    // And the trim set is still enumerated, not a class.
+    expect(CODE).toMatch(/btrim\(p_phone, public\.sms_trimmable_whitespace\(\)\)/);
+  });
+
   it("keeps EXECUTE on the normalisation helpers, which is required, not lax", () => {
     // PostgreSQL evaluates a generated column's expression as the role doing
     // the WRITE. Revoking EXECUTE from anon/authenticated does not harden

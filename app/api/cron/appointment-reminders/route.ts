@@ -180,7 +180,7 @@ function logStudioRoutingRefusal(opts: {
   studioId: string;
   smsType: SmsType;
   reason: string;
-}): void {
+}): Promise<void> {
   console.error(
     JSON.stringify({
       event: "sms_routing_studio_excluded",
@@ -190,7 +190,21 @@ function logStudioRoutingRefusal(opts: {
       timestamp: new Date().toISOString(),
     }),
   );
-  void (async () => {
+  // AWAITED, NOT DETACHED.
+  //
+  // `reminder_sms_unroutable_studios` uses OPEN ops_alerts rows as its rotation
+  // cursor: a studio already reported is excluded so the next pass surfaces
+  // studios that have not been. Fire-and-forget broke that. On a pass whose
+  // studios are ALL unroutable there is no send work left to keep the
+  // invocation alive, so a serverless runtime is free to freeze it while this
+  // task is still importing the module or inserting the row. The durable alert
+  // never lands, the cursor never advances, and the next run selects the same
+  // first 50 studios again -- studios past that prefix never reported at all,
+  // which is precisely the invisibility the complement exists to prevent.
+  //
+  // The batch is bounded by UNROUTABLE_ALERT_LIMIT, and every failure is still
+  // swallowed, so awaiting costs a bounded wait and can never break the cron.
+  return (async () => {
     try {
       const { recordOpsAlert } = await import("@/lib/ops/alerts");
       await recordOpsAlert({
@@ -691,12 +705,15 @@ async function sendSmsReminderPass(opts: {
   // filter's complement is read explicitly — studios that HAVE candidates this
   // window and CANNOT send — and reported once each, before any send work.
   // Bounded by the same ceiling as the candidate page.
+  // Collected, then awaited together: the rotation cursor must be durable
+  // before this pass can end. Bounded by UNROUTABLE_ALERT_LIMIT.
+  const routingAlerts: Array<Promise<void>> = [];
   for (const row of await unroutableStudiosWithCandidates({
     kind: opts.kind,
     windowStartIso: opts.windowStartIso,
     windowEndIso: opts.windowEndIso,
   })) {
-    logStudioRoutingRefusal({
+    routingAlerts.push(logStudioRoutingRefusal({
       studioId: row.studio_id,
       smsType: opts.kind === "24h" ? "reminder_24h" : "reminder_2h",
       // The pass cannot know WHICH refusal the resolver would give without
@@ -704,8 +721,9 @@ async function sendSmsReminderPass(opts: {
       // condition it CAN prove is that no active sender row exists, which is
       // exactly `no_active_sender`.
       reason: "sms_sender_not_active_for_studio",
-    });
+    }));
   }
+  await Promise.all(routingAlerts);
 
   // CANDIDATE SELECTION IS SERVER-SIDE (migration 0199).
   //
@@ -891,7 +909,11 @@ async function sendSmsReminderPass(opts: {
   // candidates, and a pass that cannot tell an operator which one happened is
   // reporting a clean run it did not have.
   if (scanCeilingHit && !exhausted) {
-    void (async () => {
+    // AWAITED for the same reason the routing alerts are: a detached task can
+    // be frozen with the invocation before the durable row is written, and an
+    // operator who is never told the ceiling bit reads the pass as a clean
+    // run. Not flagged in review -- the same defect class, one instance over.
+    await (async () => {
       try {
         const { recordOpsAlert } = await import("@/lib/ops/alerts");
         await recordOpsAlert({

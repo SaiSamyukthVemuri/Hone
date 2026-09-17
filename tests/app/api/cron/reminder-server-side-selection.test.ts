@@ -213,3 +213,32 @@ describe("excluded studios still reach the operator", () => {
     expect(code(ROUTE)).toContain("const UNROUTABLE_ALERT_LIMIT = 50;");
   });
 });
+
+describe("the rotation cursor is durable before the pass ends", () => {
+  // COMMENT-STRIPPED. A negative control that commented the await out left
+  // every assertion green, because `// await Promise.all(routingAlerts);`
+  // still contains the string being searched for. Prose is not code.
+  const ROUTE = code(
+    readFileSync(
+      path.join(ROOT, "app/api/cron/appointment-reminders/route.ts"),
+      "utf8",
+    ),
+  );
+
+  it("awaits the routing alert batch instead of detaching it", () => {
+    // reminder_sms_unroutable_studios uses OPEN ops_alerts rows as its rotation
+    // cursor. Fire-and-forget broke that: on a pass whose studios are ALL
+    // unroutable there is no send work to keep the invocation alive, so a
+    // serverless runtime may freeze it before the durable row lands. The cursor
+    // then never advances and the same first 50 studios are selected forever --
+    // the invisibility the complement exists to prevent.
+    expect(ROUTE).toContain("await Promise.all(routingAlerts)");
+    expect(ROUTE).toMatch(/routingAlerts\.push\(logStudioRoutingRefusal\(/);
+    // The helper must hand back a promise for that await to mean anything.
+    expect(ROUTE).toMatch(/}\): Promise<void> \{/);
+    // And NO alert in this route may be detached: every one of them is either
+    // a rotation cursor the next pass reads, or operator evidence that a pass
+    // completed something less than it appears to have.
+    expect(ROUTE).not.toContain("void (async () => {");
+  });
+});

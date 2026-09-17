@@ -163,8 +163,15 @@ as $fn$
          end
   from (
     select t,
+           -- ENUMERATED, NOT A RANGE. A bracket RANGE like [^0-9] is resolved
+           -- through the database's collation, so on a non-C collation it is
+           -- not guaranteed to mean exactly the ten ASCII digits that
+           -- JavaScript's \D removes -- and a corpus can only ever exercise
+           -- the collation it happens to run under. An explicit enumeration
+           -- has no ordering semantics at all, so it is the same set on every
+           -- collation. Same reasoning as the chr() trim set above.
            regexp_replace(case when t like '+%' then substr(t, 2) else t end,
-                          '[^0-9]', '', 'g') as d
+                          '[^0123456789]', '', 'g') as d
     from (
       select btrim(p_phone, public.sms_trimmable_whitespace()) as t
     ) s0
