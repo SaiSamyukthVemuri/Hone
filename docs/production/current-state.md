@@ -551,8 +551,34 @@ accepting brand-new consultations, because each new client consumes capacity alr
 ### WAIT-02B Stage A — the durable waitlist. PUBLIC PATH DARK; the OWNER path is reachable.
 
 **Implemented · merged (PR #629, `48f02389`) · DB applied (migration 0185) · deployed ·
-public commit point NOT ENABLED · NOT production exercised.** Human acceptance is **not
-applicable** at this stage.
+public commit point NOT ENABLED at Willow · EXERCISED on the controlled test studio.**
+Chloe's acceptance is **not** claimed.
+
+> 🔴 **CORRECTED 2026-09-17 — THE TWO STATUS WORDS ABOVE PREVIOUSLY READ *"public commit point
+> NOT ENABLED · NOT production exercised"*, AND BOTH WERE FALSE FOR PRODUCTION AS A WHOLE.**
+> The evidence was in this repository the whole time and this reconciliation did not consult it:
+> [`docs/roadmap/CANONICAL_ROADMAP.md`](../roadmap/CANONICAL_ROADMAP.md), synchronized into the
+> repo by `#714` **inside this baseline**, records that **the controlled test studio is enabled
+> for the legacy gate and for durable WAIT**, and that a **12-of-12 seam canary passed** on the
+> post-`0198` head — public join, capacity, invitation, delivery, recipient proof, scoped slots,
+> booking and atomic waitlist conversion. It further records **`POST_CANARY_CLEANUP = COMPLETE`
+> with the converted entry, redeemed invitation and resulting appointment DELIBERATELY LEFT IN
+> PLACE**, so "the database records that the canary happened".
+>
+> **What that changes here.** The durable path has been exercised in production, on one tenant.
+> `new_client_waitlist_entries` is therefore expected to hold rows. Willow's durable gate is
+> **deliberately OFF** and Willow's public booking still serves WAIT-01 — that part stands.
+>
+> **What it does NOT change.** This is a controlled-test exercise with a synthetic identity and
+> **no provider send**. It is evidence the journey works; it is **not** customer activity, **not**
+> Willow enablement and **not** Chloe's acceptance. Per §0's rule, controlled-test activity is
+> never presented as real-customer activity.
+>
+> ⚠️ **Read the two bullets below as DATED EVIDENCE THAT THIS RECORD NOW SUPERSEDES**, not as
+> current state. They are preserved rather than rewritten because that is this document's rule
+> for measurements, and because the contrast is the point: a 2026-08-23 reading survived
+> twenty-five days and a production canary without anyone re-reading it. **Neither figure below
+> has been re-measured, and this lane is not authorised to re-measure them.**
 
 > ⚠️ **CORRECTED 2026-09-17 — this heading read *"DEPLOYED DARK. Reachable by nobody."* and that
 > is false at `6e264b57`.** It was true of Stage A as shipped, and stopped being true when the
@@ -588,9 +614,14 @@ applicable** at this stage.
   The second half compounded it, because the allowlist absence that would license that inference
   is **also** only verified to 2026-08-23. A table existing is not data being collected; a dated
   zero is not a present-tense one.
-- **`NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS` is absent from the Vercel Production
-  environment** *(verified 2026-08-23, variable names only)*. **No studio is enabled. Willow is
-  not enabled.** Willow's public booking page continues to serve the WAIT-01 behaviour above.
+- **`NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS` was absent from the Vercel Production
+  environment** *(verified 2026-08-23, variable names only)*. ⚠️ **That reading is superseded by
+  the canary record above and was NOT re-read at this reconciliation.** A controlled test studio
+  enabled for the durable gate implies this variable is no longer absent; the honest statement is
+  that nobody has looked since 2026-08-23. **Willow is not enabled** — that limb is corroborated
+  independently by the roadmap's *"Willow durable WAIT is deliberately OFF"*. Willow's public
+  booking page continues to serve the WAIT-01 behaviour above. The sentence *"No studio is
+  enabled"* stood here and is **withdrawn**: at least one studio is.
 - **The application code shipped FIRST and DARK** — the reverse of the migration-first ordering
   used for 0183/0184. That was deliberate: WAIT-01 is already live, so shipping the durable path
   on the existing flag would have moved a live studio's commit point with no operator GO in
@@ -1029,8 +1060,8 @@ live manual no-show / late-cancellation fees · public-booking card collection �
 practitioner selection and assignment.
 
 **Dormant** (deployed but not acting): all Google Calendar sync phases · practitioner capacity
-at Willow · onboarding v2 at Willow · **the durable new-client waitlist's PUBLIC commit point
-(WAIT-02B) on every studio** — see §5b.
+at Willow · onboarding v2 at Willow · **the durable new-client waitlist (WAIT-02B) AT WILLOW** —
+see §5b.
 
 > ⚠️ **CORRECTED 2026-09-17, and this entry has now been wrong twice in the same place.** It
 > first read *"structurally unable to act"*; that was corrected once already, to *"what keeps it
@@ -1039,12 +1070,17 @@ at Willow · onboarding v2 at Willow · **the durable new-client waitlist's PUBL
 > **public** commit point and nothing else, and the owner surface at `/settings/waitlist` writes
 > durable rows without consulting it. So the durable waitlist is **not** dormant as a whole —
 > only its public path is. Listing the capability flatly under *Dormant* is what made the owner
-> path invisible here as well as in §5b. **Read the dormancy as scoped to public self-service
-> joining**, which is genuinely enabled for no studio.
+> path invisible here as well as in §5b. **And a first attempt at this very correction, made
+> earlier on 2026-09-17, scoped the dormancy to "the PUBLIC commit point on every studio" — also
+> false**, because the controlled test studio's public join is precisely one of the twelve seams
+> the canary exercised. The dormancy that survives every piece of evidence is **Willow's**:
+> Willow's durable gate is deliberately OFF and its public booking still serves WAIT-01.
+> **Anything broader than "at Willow" has now been wrong three times in this entry.**
 
 **Shipped and NOT production-exercised, as classified at the 2026-08-30 reconciliation:**
 non-card appointment settlement (§7 — 0 rows) · `/dashboard/capacity` (§10b — no usage
-measured) · WAIT-02B Stage B1 (§5b — no studio enabled). ⚠️ **This list was NOT re-derived on
+measured) · WAIT-02B Stage B1 (§5b — recorded then as no studio enabled; ⚠️ **that limb is
+superseded** by the controlled-test canary in §5b and was not re-derived here). ⚠️ **This list was NOT re-derived on
 2026-09-17 and is not a current census.** Exercise is a property of production data, and nothing
 in production was read at this reconciliation; the twenty-one runtime-bearing merges since
 `0f07dae6` have therefore not been classified for exercise in either direction. Read this as
