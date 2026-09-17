@@ -64,6 +64,42 @@ Every substantive claim carries one of five classifications:
 The harness measures real class strings through the real stylesheet. It does not
 measure real pages with real data, and nothing here should be read as if it did.
 
+### How to read a number in this document
+
+**`[MEASURED FACT]`** Successive Codex reviews found that several figures in the
+first drafts were produced by **file-level token greps** that are systematically
+generous. Four over-count modes were confirmed and corrected:
+
+1. **Prose counted as code** — `PostcareEditingHelpers` was scored as having
+   Escape handling because a comment reads "Escape just the prompt".
+2. **Identifiers counted as CSS** — React's `startTransition` matched a grep for
+   `transition`.
+3. **File presence read as feature presence** — any `transition` *anywhere in a
+   dialog file* was scored as an overlay entrance transition, when it was an
+   internal button or image hover.
+4. **Inert variants counted as live** — 333 of 872 `hover:` tokens are
+   `dark:hover:`, and the dark variant is never applied (§3.6).
+
+A fifth error was arithmetic rather than measurement: **subtracting one token
+population from another** (872 − 24; 188 − 15) as though the two counted paired
+elements.
+
+Every figure named in a Codex finding has been re-derived at element level and
+corrected in place, with the superseded number shown rather than removed. **But
+the same method produced figures nobody challenged.** Treat a count in §1 as
+follows: geometry, type metrics and contrast come from the browser harness and
+are element-level; *distinct-spelling* counts and *import* counts are exact;
+raw utility-token counts (`hover:`, `border`, `rounded-`, `uppercase`) are
+**occurrence counts, not affordance counts**, and should be read as orders of
+magnitude that establish a ratio — never subtracted from one another, and never
+converted into a migration size without an element-level recount first.
+
+**`[DESIGN DIAGNOSIS]`** None of the corrections reversed a conclusion. They
+changed magnitudes and sharpened scope; the diagnosis in §2 rests on ratios and
+on element-level browser measurements, both of which survived. That is worth
+stating plainly rather than burying: the document is now more accurate than the
+version that was first committed, and the review — not CI — is what made it so.
+
 ---
 
 # §1 MEASURED FACT
@@ -76,7 +112,7 @@ population each primitive was built to replace:
 | Primitive | Files importing it | Competing population |
 |---|---|---|
 | `components/ui/button` | **10** | **469** raw `<button>` elements |
-| `components/ui/control-base` | 8 | 872 `hover:` / 250 `focus:` hand-rolled |
+| `components/ui/control-base` | 8 | 872 `hover:` tokens (536 live, 333 `dark:`) / 250 `focus:` |
 | `components/ui/field` | **3** | **259** `<input>`, 48 `<select>`, 52 `<textarea>` |
 | `components/ui/section-label` | **3** | **132 distinct spellings** of the small-caps label |
 | `components/ui/status-pill` | **1** | **84 distinct pill spellings** |
@@ -177,7 +213,12 @@ views of this page", measured:
 | Financials | rounded rect, active = solid accent fill; the only one using the UI0 tokens | 44px |
 | Client profile | bare text, colour-only active | 44px |
 
-`rounded-[5px]` occurs nowhere else in the product.
+**`[MEASURED FACT]` — corrected at head `04d1057b`.** `rounded-[5px]` occurs
+**4 times in 2 files**: `ViewToggle.tsx:60,61` and
+`QuickBookDrawer.tsx:728,741` (its client-source tabs). An earlier draft said
+it "occurs nowhere else in the product", which was false and understated the
+cleanup: aligning only the Calendar and Clients toggles leaves the same
+off-system radius on QuickBook.
 
 **`[MEASURED FACT]`** `aria-current` appears in 10 files. **`app/(app)/layout.tsx`
 — the global primary navigation — is not one of them.** The app shell carries no
@@ -256,12 +297,20 @@ Counting all 15 implementations, `confirm-dialog` included:
 
 | Capability | Overlays with it |
 |---|---|
-| Escape to dismiss | 14 / 15 — **`PostcareSendButton` has none** |
+| Escape to dismiss | **13 / 15** — `PostcareSendButton` **and** `PostcareEditingHelpers` have none |
 | Focus trap (Tab containment) | **4 / 15** |
 | Focus restored to trigger on close | **4 / 15** |
 | Initial focus moved into the dialog | **5 / 15** |
 | Background scroll lock | **3 / 15** |
-| Any enter/exit transition | **4 / 15** |
+| Overlay container enter/exit transition | **2 / 15** — only `marketing/MobileNav` (`transition-opacity duration-200` on the container) and `_components/MobileNav` (inline `opacity 200ms ease-out`) |
+
+**`[MEASURED FACT]` — both rows corrected at head `04d1057b`.** The earlier
+figures (14/15 Escape, 4/15 transition) came from file-level greps that
+counted evidence they should not have: a prose comment ("Escape just the
+prompt" in `PostcareEditingHelpers`, whose only `onKeyDown` is on a textarea),
+React's `startTransition` identifier, and internal control/image transitions
+inside a dialog rather than on the overlay itself. Both rows are now
+element-level.
 
 The four that manage focus completely are `confirm-dialog`,
 `MoveAppointmentDialog`, `OnboardingModal` and `marketing/MobileNav`. Of those,
@@ -288,8 +337,8 @@ no focus management. The most completely managed overlay in the repository is
 | `not-found.tsx` | 0 |
 | `<PendingLink>` | **15** |
 | plain `<Link>` | **188** |
-| `hover:` utilities | **872** |
-| `active:` utilities | **24** |
+| `hover:` tokens | **872** — of which **333 are `dark:hover:` and inert**, so **536 live** |
+| `active:` tokens | **24** (none are `dark:`) |
 | `focus-visible:` | 34 |
 | `focus:` (fires on mouse click too) | **250** |
 | `ease-out` in the entire app | **3** |
@@ -412,15 +461,27 @@ cross-product reach. Each rests on the §1 facts cited.
    Hone's brand face speaks to clients and falls silent for the person who lives
    in the product all day — and the one time it speaks, it arrives after hydration
    in grey.
-6. **Eleven of fifteen overlay sites never reached the abstraction that already
+6. **Eleven of seventeen overlay sites never reached the abstraction that already
    solved this** (§1.6). Hone owns a correct reusable alert-dialog
    (`confirm-dialog`, 3 callers); 11 sites hand-roll focus handling anyway and
    get it wrong, and the drawer/sheet case has no abstraction at all. Same
    adoption shape as defect 1.
-7. **No motion vocabulary, and touch gets nothing** (§1.7). 848 affordances give a
-   mouse user feedback and a touch user none between finger-down and landing.
-8. **No loading vocabulary** (§1.7). With zero `loading.tsx`, 173 of 188 links
-   acknowledge a click only once the destination has fully rendered.
+7. **No motion vocabulary, and touch gets nothing** (§1.7). **536 live `hover:`
+   tokens against 24 `active:`** — a 22:1 ratio. On a phone `:hover` never
+   fires, so the overwhelming majority of Hone's hover affordances give a
+   touch user nothing between finger-down and landing. *(An earlier draft said
+   "848 affordances", derived as 872 − 24. That arithmetic was invalid: it
+   subtracted one class-token count from another across non-paired
+   populations, and 333 of the 872 `hover:` tokens are `dark:hover:`, which
+   are inert because the dark variant is never applied — §3.6. The ratio,
+   not the difference, is the finding.)*
+8. **No loading vocabulary** (§1.7). With zero `loading.tsx`, the **188 plain
+   `<Link>` elements acknowledge a click only once the destination has fully
+   rendered.** Pending-capable links are a separate population — 15
+   `<PendingLink>` plus 3 `<PendingContainerLink>` — so of ~206 link elements,
+   **18 (≈9%) acknowledge**. *(An earlier draft wrote "173 of 188", subtracting
+   the pending links as if they were a subset of the plain ones. They are
+   distinct JSX populations, and it omitted `PendingContainerLink` entirely.)*
 9. **44 type sizes whose duplicate spellings disagree on leading** (§1.2) — why
    vertical rhythm feels subtly wrong in places nobody can point at.
 10. **1024px of content on a 1920px screen, and no wide-screen design at all**
@@ -590,8 +651,8 @@ UI-F spine.** Everything else is serial deliberately.
 | 1 | Fix the dashboard day-nav active state | Corrects an inverted affordance on the most-visited surface, and an AA failure |
 | 2 | Give the global nav a current-section state | The top-level "where am I?" is currently unanswered on every page |
 | 3 | Move dashboard "Book appointment" and Records "Print / Export" onto `Button` | Removes the 10px same-row clash; two flagship actions reach the floor; demonstrates the primitive |
-| 4 | Add Escape + initial focus to `PostcareSendButton` | It is currently a modal a keyboard user cannot dismiss |
-| 5 | Delete `rounded-[5px]`; align Calendar and Clients toggles | Two near-duplicates become one; removes an off-system radius |
+| 4 | Add Escape + initial focus to `PostcareSendButton` **and `PostcareEditingHelpers`** | Both are currently modals a keyboard user cannot dismiss |
+| 5 | Delete all 4 `rounded-[5px]` uses (`ViewToggle` ×2, `QuickBookDrawer` ×2); align Calendar and Clients toggles | Two near-duplicates become one, and the off-system radius leaves the product entirely rather than surviving on QuickBook's tabs |
 | 6 | Replace the 15px and 14px arbitrary clusters with ramp classes | Removes the dual-leading defect in the largest off-ramp cluster |
 | 7 | `loading.tsx` on the three slowest routes | Turns a blank interval into an acknowledged one; no visual redesign |
 | 8 | Promote `SectionLabel` into the three byte-identical private copies `control-base.ts` already names | Proves adoption on files that already agreed on the design |
@@ -602,7 +663,7 @@ UI-F spine.** Everything else is serial deliberately.
 |---|---|---|
 | **AlertDialog** | **DO NOT ADOPT — extend `confirm-dialog` instead** | §1.6 (corrected). Hone already owns a correct, reusable alert-dialog with 3 callers, and it encodes two Hone-specific rulings a generic component will not have: Escape and backdrop dismissal are **idle-only**, so a confirmation cannot abandon an in-flight mutation, and the trap parks focus on the panel when every control is disabled mid-submit. Replacing it would discard those. The work is extending its reach from 3 sites, not importing a substitute |
 | **Dialog** (non-alert modal) | **ADOPT** | §1.6 — the general modal case `confirm-dialog` does not cover (it is alert-shaped: title, description, confirm/cancel). `PostcareSendButton`, `TreatmentImagesManager` and `quick-checkout-modal` are content modals with no reusable home |
-| **BottomSheet** | **ADOPT** | Five calendar drawers are desktop right-edge drawers reused unchanged on phones, with no transition and no scroll lock. **Conditional on the MOTION-01 ruling (§6.4).** |
+| **BottomSheet** | **ADOPT** | **Four** calendar overlays are desktop right-edge drawers (`items-stretch justify-end`) reused unchanged on phones, with no container transition and no scroll lock: `QuickBookDrawer`, `QuickBlockDrawer`, `TimedBlockEditDrawer`, `AppointmentPreviewDrawer`. `DragActionChooser` is a centred chooser and `MoveAppointmentDialog` is **already** `items-end … sm:items-center` — a bottom sheet on phone and centred on desktop, i.e. Hone has done the right mobile treatment once, by hand, in one place. **Conditional on the MOTION-01 ruling (§6.4).** |
 | **DropdownMenu** | **ADOPT, narrow** | Only two true menus exist. Low volume — adopt for correctness, not reach |
 | **Tabs / SegmentedControl** | **ADOPT — strongest evidence of any candidate** | §1.4 — seven dialects, seven heights, three under the floor, one inverted. This is the previously-approved fourth candidate and the census now justifies it more than anything else |
 | Button | **DO NOT ADOPT** | Hone's is better-reasoned and encodes Hone-specific rulings (§3.1). The problem is adoption, not design |
@@ -621,7 +682,7 @@ UI-F spine.** Everything else is serial deliberately.
 | SURFACE-SIMPLIFICATION | A stack of independently generated rectangles — 32 on one page | A continuous document with hairlines where meaning changes |
 | MODAL-QUALITY | Overlays pop into existence, leak Tab, drop focus to `<body>` | Overlays arrive from where they were summoned and restore what they interrupted |
 | STATE-DESIGN | 46 dashed boxes, six sentences for one fact | Absence looks intentional and says one thing |
-| MOTION / SPEED | 872 hover states, 24 press states | Every press acknowledged; nothing animates that happens a hundred times a day |
+| MOTION / SPEED | 536 live hover tokens against 24 press tokens | Every press acknowledged; nothing animates that happens a hundred times a day |
 | DENSITY & CANVAS | 1024px of content on a 1920px monitor | The practitioner's screen is used; a ledger is scannable by column |
 | IDENTITY-RETURN | The typeface greets clients and goes quiet for the practitioner | Recognisably Hone on every screen, from type and spacing alone |
 
@@ -757,7 +818,7 @@ reasoning is inseparable from the three sibling cases rejected alongside it.)*
 | Surface | Discontinuity | CSS answer |
 |---|---|---|
 | **53 `<details>` across 27 files** | Opening a long block snaps content below it down the page — a real context break, and **the highest-frequency one in the product** | `interpolate-size: allow-keywords` + `::details-content` + `transition: height`. Native and progressive; unsupported browsers keep today's instant behaviour. **Not a motion candidate — a stylesheet change.** |
-| **848 hover-only affordances** | On touch, nothing acknowledges a press | `active:` colour step + existing `hone-transition-press`. Already solved inside `Button`; an **adoption** problem |
+| **536 live `hover:` tokens against 24 `active:`** | On touch, nothing acknowledges a press | `active:` colour step + existing `hone-transition-press`. Already solved inside `Button`; an **adoption** problem |
 | Tab / segment active-state change | Abrupt colour swap | Colour transition on the existing 180ms token |
 | Pending → committed control states | Geometry jumps when a label swaps width | Already solved by `Button`'s geometry-stable pending form |
 | Skeletons, focus ring | — | `.hone-skeleton` and `FOCUS_RING` exist |
