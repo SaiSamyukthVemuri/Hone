@@ -914,14 +914,23 @@ at `6e264b57`, not carried forward. They moved because TRUTH-01B-1 shipped — s
 still stated as a shape: the registry is the authority and a hand-copied integer is the drift this
 whole reconciliation exists to stop.)*
 
-<!-- canonical-facts:ignore-start reason=quotes-the-superseded-truth-01b-unshipped-claim -->
 > ⚠️ **SUPERSEDED BY `#647`, AND PRESERVED SO THE CORRECTION IS VISIBLE.** Through the 2026-08-30
-> reconciliation this block read: *"The export PAYLOAD is byte-for-byte unchanged. TRUTH-01A added
-> no file, no table and no column … **TRUTH-01B is what changes the payload, and it is not
-> shipped.**"* Every clause of that was true of **TRUTH-01A**. The last one stopped being true of
-> production on **2026-08-30**, when `#647` merged at `1d6d7c48`; the sentence was left standing
-> for eighteen days because the same commit that shipped `#647` also declared it open above.
+> reconciliation this block read, verbatim:
+
+<!-- canonical-facts:ignore-start reason=quotes-the-superseded-truth-01b-unshipped-claim -->
+> > ⚠️ **The export PAYLOAD is byte-for-byte unchanged.** TRUTH-01A added no file, no table and no
+> > column. `tests/app/settings/data/export-emission-parity.test.ts` builds a real archive and
+> > pins every header row against base `a1639a84` column-for-column. **The export is still
+> > partial.** What changed is that its incompleteness is now declared, tested and shown to the
+> > owner instead of being invisible. **TRUTH-01B is what changes the payload, and it is not
+> > shipped.**
 <!-- canonical-facts:ignore-end -->
+
+> Every clause of that was true of **TRUTH-01A**. The last one stopped being true of production on
+> **2026-08-30**, when `#647` merged at `1d6d7c48`; the sentence was left standing for eighteen
+> days because the same commit that shipped `#647` also declared it open above. **The exempted
+> span is the quotation and nothing else** — this paragraph sits outside the markers and is
+> guarded like any other current claim.
 
 > ✅ **The export payload HAS changed, and TRUTH-01B-1 is what changed it.** `#647` (merge
 > `1d6d7c48`) is an ancestor of the production head. It added **five files** —
