@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { execSync } from "node:child_process";
 
 // UI-05 — every remaining native confirm() dialog, retired.
@@ -116,14 +116,75 @@ describe("UI-05: no native confirm survives anywhere in the app", () => {
     expect(swept).toContain("app/layout.tsx");
     expect(swept).toContain("app/page.tsx");
 
-    // And the list is the FULL surface, derived from git rather than a number
-    // restated here where it could drift.
-    const all = execSync("git ls-files '*.tsx' '*.ts'", { encoding: "utf8" })
-      .split("\n")
-      .filter(Boolean)
-      .filter((f) => f.startsWith("app/") || f.startsWith("components/"));
-    expect(swept.length).toBe(all.length);
+    // THE ORACLE IS DERIVED INDEPENDENTLY, which is the whole point.
+    //
+    // The first version of this check built its expected list with the SAME
+    // `git ls-files` expression as sweptFiles(), so it compared the function to
+    // a copy of itself and would have agreed with any pathspec, including the
+    // broken one it exists to catch. Codex raised it, and it is the same defect
+    // as the UI-03 enumeration that proved my transcription equalled itself —
+    // a tautology wearing the shape of a proof.
+    //
+    // So the oracle walks the FILESYSTEM instead. Two unrelated mechanisms:
+    // git's index versus readdir. A pathspec that silently stops matching now
+    // disagrees with the disk and fails.
+    const walked: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = `${dir}/${entry.name}`;
+        if (entry.isDirectory()) {
+          walk(full);
+        } else if (/\.tsx?$/.test(entry.name)) {
+          walked.push(full);
+        }
+      }
+    };
+    walk("app");
+    walk("components");
+
+    const sweptSet = new Set(swept);
+    const unseen = walked.filter((f) => !sweptSet.has(f));
+    expect(
+      unseen,
+      `the sweep does not read ${unseen.length} file(s) present on disk: ${unseen.slice(0, 8).join(", ")}`,
+    ).toEqual([]);
+
+    // And a floor, so a pathspec collapsing to almost nothing is caught even
+    // if the walk were somehow to collapse with it.
     expect(swept.length).toBeGreaterThan(280);
+  });
+
+  it("the independent oracle would CATCH the original broken pathspec", () => {
+    // Negative control for the check above. The pathspec that shipped is
+    // re-run here and must disagree with the filesystem — otherwise the
+    // coverage test proves nothing and the bug could return unnoticed.
+    const broken = execSync("git ls-files 'app/**/*.tsx' 'components/**/*.tsx'", {
+      encoding: "utf8",
+    })
+      .split("\n")
+      .filter(Boolean);
+
+    const walked: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = `${dir}/${entry.name}`;
+        if (entry.isDirectory()) walk(full);
+        else if (/\.tsx$/.test(entry.name)) walked.push(full);
+      }
+    };
+    walk("app");
+    walk("components");
+
+    const brokenSet = new Set(broken);
+    const missedByBroken = walked.filter((f) => !brokenSet.has(f));
+    expect(
+      missedByBroken.length,
+      "the original pathspec must be demonstrably lossy",
+    ).toBeGreaterThan(0);
+    // And specifically: it missed the files this slice fixed.
+    expect(missedByBroken).toContain("components/treatment-schedule-editor.tsx");
+    expect(missedByBroken).toContain("components/portal-messages-card.tsx");
+    expect(missedByBroken).toContain("components/client-tags-card.tsx");
   });
 
   it("the sweep's own patterns actually MATCH — proved on synthetic inputs", () => {
