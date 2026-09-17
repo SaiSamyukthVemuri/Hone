@@ -13,9 +13,6 @@ restated here. **That audit is evidence and proposal. It is not authority.**
 Nothing in it becomes a rule by being written down; it becomes a rule by
 appearing here as a LAW, or in the canonical roadmap as scheduled work.
 
-> The audit document lands with PR #726. Until that merges, the link above
-> resolves only on that branch.
-
 ---
 
 ## North star
@@ -101,8 +98,9 @@ wrongly.
 13. **Reduced motion preserves complete comprehension.** Reduced means gentler,
     never absent: the state change still happens, and nothing becomes
     unintelligible because motion was removed.
-14. **Timing is decided once, centrally.** Durations come from the shared scale;
-    a surface does not invent its own.
+14. **Interaction timing is consistent across the product, and decided once.** A
+    surface does not invent its own timing. *Which scale or API carries that
+    consistency is a CONTRACT decision — see contract 8 — not part of this law.*
 
 **System**
 
@@ -129,7 +127,7 @@ beside them.
 | 5 | `components/ui/field.tsx` | LAW 4, 6 |
 | 6 | `components/ui/skeleton.tsx` | LAW 4, 13 |
 | 7 | `components/confirm-dialog.tsx` — `ConfirmDialog` | LAW 4, 7 |
-| 8 | `app/globals.css` duration scale — `--hone-duration-press: 120ms`, `--hone-duration-ui: 180ms`, `--hone-duration-overlay: 240ms` | LAW 12, 14 |
+| 8 | `app/globals.css` duration scale — `--hone-duration-press: 120ms`, `--hone-duration-ui: 180ms`, `--hone-duration-overlay: 240ms` | LAW 14 |
 | 8b | **Ordinary state change is expressed in CSS transitions**, and no animation library is installed. This is the current mechanism for LAW 12, not the law itself | LAW 12 |
 | 9 | `pointer-fine:` for density; `focus-visible:` not `focus:`; `outline-hidden` not `outline-none` | LAW 3, 6 |
 | 10 | `dark:` is remapped to a `.dark` class that is never applied — automatic dark mode is **off by pilot decision** | LAW 16 |
@@ -145,7 +143,7 @@ Two notes an agent will otherwise get wrong:
   composes `CONTROL_COMPACT_FINE_POINTER` (`pointer-fine:min-h-8` = 32px), which
   is a legitimate LAW 3 opt-in but means 44px is not universal even in height.
   **Do not read this row as "the touch floor is solved."** Closing the width half
-  is what UX-04 (Control Geometry) is for.
+  is the unresolved control-geometry debt — proposed as UX-04, not scheduled.
 
 ---
 
@@ -170,8 +168,10 @@ to a correctness argument already covered elsewhere; if physics is genuinely
 needed, MOTION-01's implementation becomes the acceptance criteria. **Either way
 the ruling survives its own code.**
 
-**Binding sequencing — MOTION-01 must not start before UX-04 (Control
-Geometry).** The drawer close controls are undersized today. Specifying motion
+**Binding sequencing — MOTION-01 must not start until the control-geometry debt
+on the drawer's dismissal affordance is resolved.** *(That work is **proposed**
+as UX-04 and is **not scheduled** — see authority item 7. The prerequisite is the
+unresolved geometry, not a slice on a plan.)* The drawer close controls are undersized today. Specifying motion
 against a dismissal affordance already scheduled to be resized would fix the
 wrong geometry and be re-specified immediately.
 
@@ -250,7 +250,7 @@ None of these is decided. None may be smuggled into a polish PR.
 
 - Add a design dependency because a component would be convenient.
 - Introduce Fraunces into the authenticated app (item 1 above).
-- Start MOTION-01 before UX-04 (Control Geometry).
+- Start MOTION-01 while the drawer's control geometry is still unresolved.
 - Treat the audit's proposals as approved work, or its sequence as scheduled.
 - Hand-roll a control beside an existing primitive because copying the
   neighbouring line is cheaper than importing.
