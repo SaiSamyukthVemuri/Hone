@@ -18,34 +18,43 @@ const ACTIONABLE: ReadonlyArray<OnboardingStepState["key"]> = [
   "payments",
 ];
 
+// UI-02 (non-colour-only status). Each step's state — done, skipped, not
+// started — was carried ONLY by this mark, and the mark was `aria-hidden`. The
+// card's own `aria-label="Studio setup progress"` and its "N of M complete"
+// summary describe the WHOLE card; neither says anything about an individual
+// step. A screen-reader user therefore heard a bare list of step titles with no
+// way to tell which were finished.
+//
+// The visual is unchanged on purpose. The glyphs (✓ / – / ·) are already a
+// non-colour cue, so a sighted user — including a colour-blind one — can
+// distinguish the states. The only thing missing was the text equivalent in the
+// accessibility tree, so that is the only thing added: `sr-only` text, the
+// convention this repo already uses in 21 places.
+//
+// `line-through` on a done step's title is likewise a visual-only cue, and it is
+// the same state this label now names, so it needs nothing of its own.
+const MARK_LABEL: Record<OnboardingStepState["status"], string> = {
+  done: "Done",
+  skipped: "Skipped",
+  todo: "Not started",
+};
+
+const MARK_SHAPE = "flex h-5 w-5 items-center justify-center rounded-full text-[11px]";
+const MARK_QUIET =
+  "border border-neutral-300 text-neutral-400 dark:border-neutral-700";
+
 function Mark({ status }: { status: OnboardingStepState["status"] }) {
-  if (status === "done") {
-    return (
-      <span
-        className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-600 text-[11px] text-white"
-        aria-hidden
-      >
-        ✓
-      </span>
-    );
-  }
-  if (status === "skipped") {
-    return (
-      <span
-        className="flex h-5 w-5 items-center justify-center rounded-full border border-neutral-300 text-[11px] text-neutral-400 dark:border-neutral-700"
-        aria-hidden
-      >
-        –
-      </span>
-    );
-  }
+  // Glyph and colour stay exactly as shipped; only the name is new.
+  const glyph = status === "done" ? "✓" : status === "skipped" ? "–" : "·";
+  const tone =
+    status === "done" ? "bg-emerald-600 text-white" : MARK_QUIET;
   return (
-    <span
-      className="flex h-5 w-5 items-center justify-center rounded-full border border-neutral-300 text-[11px] text-neutral-400 dark:border-neutral-700"
-      aria-hidden
-    >
-      ·
-    </span>
+    <>
+      <span className="sr-only">{MARK_LABEL[status] ?? "Not started"}:</span>
+      <span aria-hidden className={`${MARK_SHAPE} ${tone}`}>
+        {glyph}
+      </span>
+    </>
   );
 }
 
