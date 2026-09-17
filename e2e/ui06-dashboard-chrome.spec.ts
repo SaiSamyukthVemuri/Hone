@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Locator, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { seedE2eStudio, seedE2eDashboardMemoryClient, sql } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
@@ -86,6 +86,62 @@ async function openDashboardMemory(page: Page) {
   return seed;
 }
 
+/**
+ * The section labels this slice's grouping claim actually depends on.
+ *
+ * WHY EXACT TEXT AND NOT A CLASS MATCH. The previous version asserted that
+ * every element matching `[class*="uppercase"][class*="tracking-wider"]` was
+ * visible — which proves nothing about PRESENCE. Five unrelated elements in
+ * this card share that signature ("Last treatment" twice, "Watch today",
+ * "Show", and the unmigrated h2/h4 headings), so "Areas treated" could vanish
+ * entirely and the assertion would still pass on the distractors. Codex was
+ * right; the operator was right to reject the head.
+ *
+ * "Areas treated" is additionally rendered by last-treatment-memory-card, so
+ * the report is scoped to the prep card rather than the page.
+ */
+const REQUIRED_LABELS = ["Areas treated", "Last session notes", "What happened"] as const;
+
+/** Every label-signature element in the card, with exact text and real visibility. */
+async function labelReport(
+  card: Locator,
+): Promise<Array<{ text: string; visible: boolean; w: number; h: number }>> {
+  return card.evaluate((root: Element) =>
+    Array.from(
+      root.querySelectorAll('[class*="uppercase"][class*="tracking-wider"]'),
+    ).map((el) => {
+      const e = el as HTMLElement;
+      const cs = getComputedStyle(e);
+      const r = e.getBoundingClientRect();
+      return {
+        text: (e.textContent ?? "").trim(),
+        visible:
+          cs.display !== "none" &&
+          cs.visibility !== "hidden" &&
+          r.width > 0 &&
+          r.height > 0,
+        w: r.width,
+        h: r.height,
+      };
+    }),
+  );
+}
+
+/** Which required labels are absent or invisible. Empty array = the claim holds. */
+function missingRequired(
+  report: Array<{ text: string; visible: boolean }>,
+): string[] {
+  const out: string[] = [];
+  for (const want of REQUIRED_LABELS) {
+    const exact = report.filter(
+      (r) => r.text.toLowerCase() === want.toLowerCase(),
+    );
+    if (exact.length === 0) out.push(`${want}: ABSENT`);
+    else if (!exact.some((r) => r.visible)) out.push(`${want}: present but HIDDEN`);
+  }
+  return out;
+}
+
 for (const vp of WIDTHS) {
   test.describe(`UI-06 at ${vp.name} (${vp.width}px)`, () => {
     test.use({ viewport: { width: vp.width, height: vp.height } });
@@ -165,55 +221,51 @@ for (const vp of WIDTHS) {
       const card = page.getByTestId("appointment-prep-memory").first();
       await expect(card).toBeVisible({ timeout: 20_000 });
 
-      // A flatter card must not become an undifferentiated wall of text: the
-      // shared section labels are what carry the grouping now that the boxes
-      // are gone, so they have to be ON SCREEN at every width.
+      // EACH REQUIRED LABEL, INDEPENDENTLY, BY EXACT TEXT.
       //
-      // THIRD VERSION OF THIS ASSERTION, and the first two were both wrong in
-      // opposite directions:
-      //
-      //   count() > 0                  too weak — passes for hidden labels,
-      //                                which is what Codex flagged
-      //   toBeVisible() on p/h2/h3/h4/span
-      //   filtered by capitalised text too strong AND imprecise — that locator
-      //                                was a heuristic for "looks like a label"
-      //                                and swept in unrelated elements that are
-      //                                legitimately hidden, so it failed on
-      //                                correct markup at all three widths
-      //
-      // The claim is about SECTION LABELS specifically, so this targets the
-      // primitive's own signature (uppercase + tracking-wider) instead of
-      // guessing from tag and capitalisation. Every label the card actually
-      // renders must be visible with a real box; the failure message names the
-      // offending element so a future failure is diagnosable rather than a
-      // second round of guessing.
-      const labels = card.locator('[class*="uppercase"][class*="tracking-wider"]');
-      const n = await labels.count();
-      expect(n, "the card must render section labels").toBeGreaterThan(0);
+      // The claim is that typography still carries the grouping now the boxes
+      // are gone, so the three shared labels have to be present AND visible —
+      // not merely that something label-shaped is visible somewhere.
+      const report = await labelReport(card);
+      const missing = missingRequired(report);
+      expect(
+        missing,
+        `required labels not satisfied: ${missing.join(" | ")} — saw: ${report.map((r) => `"${r.text}"${r.visible ? "" : "(hidden)"}`).join(", ")}`,
+      ).toEqual([]);
 
-      for (let i = 0; i < n; i += 1) {
-        const label = labels.nth(i);
-        const info = await label.evaluate((el) => {
-          const e = el as HTMLElement;
-          const cs = getComputedStyle(e);
-          const r = e.getBoundingClientRect();
-          return {
-            text: (e.textContent ?? "").trim().slice(0, 40),
-            cls: e.className,
-            display: cs.display,
-            visibility: cs.visibility,
-            w: r.width,
-            h: r.height,
-          };
-        });
+      // AND THE DISTRACTORS MUST NOT BE ABLE TO STAND IN. These share the class
+      // signature and are deliberately NOT in the required set; proving they
+      // are present alongside shows the exact-text match is doing real work
+      // rather than the locator happening to match only what I wanted.
+      //
+      // The distractor names here are MEASURED, not guessed. My first version
+      // asserted a distractor called "show"; the real element is a <summary>
+      // whose textContent concatenates its heading and both toggle spans into
+      // "setup usedshowhide". Guessing a string instead of reading one is the
+      // same habit this whole slice keeps tripping over, so the brittle
+      // concatenation is not pinned — only the two stable distractors are named,
+      // plus a count that survives that summary's text changing.
+      const seen = report.map((r) => r.text.toLowerCase());
+      const requiredLower = REQUIRED_LABELS.map((l) => l.toLowerCase());
+
+      for (const distractor of ["last treatment", "watch today"]) {
         expect(
-          info.display !== "none" && info.visibility !== "hidden",
-          `label ${i} "${info.text}" is hidden (display=${info.display} visibility=${info.visibility} class="${info.cls}")`,
-        ).toBe(true);
+          seen,
+          `expected distractor "${distractor}" present but NOT counted as required — saw: ${seen.join(", ")}`,
+        ).toContain(distractor);
+      }
+
+      const nonRequired = seen.filter((t) => !requiredLower.includes(t));
+      expect(
+        nonRequired.length,
+        `the locator must match unrelated labels too, or this proof is not discriminating — saw: ${seen.join(", ")}`,
+      ).toBeGreaterThanOrEqual(3);
+
+      for (const want of REQUIRED_LABELS) {
         expect(
-          info.w > 0 && info.h > 0,
-          `label ${i} "${info.text}" has no area (${info.w}x${info.h})`,
-        ).toBe(true);
+          seen.filter((t) => t === want.toLowerCase()).length,
+          `"${want}" must be matched by exact text in this card`,
+        ).toBeGreaterThan(0);
       }
 
       // Rows must retain real height — flattening should not have produced
@@ -250,5 +302,69 @@ test.describe("UI-06 motion", () => {
       }).length;
     });
     expect(moving, `${moving} element(s) in the card animate`).toBe(0);
+  });
+});
+
+test.describe("UI-06 label proof: negative control", () => {
+  test("hiding ONE required label turns the proof RED, and only for that label", async ({
+    page,
+  }) => {
+    await openDashboardMemory(page);
+    const card = page.getByTestId("appointment-prep-memory").first();
+    await expect(card).toBeVisible({ timeout: 20_000 });
+
+    // Baseline: the claim holds.
+    expect(missingRequired(await labelReport(card))).toEqual([]);
+
+    // Hide EXACTLY ONE required label, leaving every unrelated matching
+    // element — "Last treatment", "Watch today", "Show" — untouched. This is
+    // the mutation the previous assertion could not detect: it would have
+    // stayed green on the surviving distractors.
+    const hidden = await card.evaluate((root) => {
+      const el = Array.from(
+        root.querySelectorAll('[class*="uppercase"][class*="tracking-wider"]'),
+      ).find((e) => (e.textContent ?? "").trim().toLowerCase() === "areas treated");
+      if (!el) return null;
+      (el as HTMLElement).style.display = "none";
+      return (el.textContent ?? "").trim();
+    });
+    expect(hidden, "fixture: the label to hide must exist").toBe("Areas treated");
+
+    const after = missingRequired(await labelReport(card));
+
+    // RED, and specifically about the label that was hidden...
+    expect(after.some((m) => m.startsWith("Areas treated"))).toBe(true);
+    // ...and NOT about the ones left alone, so the control is specific rather
+    // than merely failing.
+    expect(after.some((m) => m.startsWith("Last session notes"))).toBe(false);
+    expect(after.some((m) => m.startsWith("What happened"))).toBe(false);
+
+    // The distractors are still on screen, which is the whole point: their
+    // presence must not rescue the assertion.
+    // PRESENCE AND VISIBILITY ARE DIFFERENT THINGS, which is the entire subject
+    // of this repair and which I then conflated one more time here: `display:
+    // none` HIDES the element, it does not remove it, so its text is still in
+    // the report. My first version asserted the text had disappeared and failed
+    // on correct behaviour — `missingRequired` had already classified it
+    // correctly as "present but HIDDEN", which is why every assertion above
+    // passed.
+    //
+    // So this asserts the property that actually changed: still in the DOM,
+    // no longer visible, while the other two stay visible.
+    const after2 = await labelReport(card);
+    const byText = (t: string) =>
+      after2.find((r) => r.text.toLowerCase() === t);
+
+    const areas = byText("areas treated");
+    expect(areas, "the hidden label is still in the DOM").toBeTruthy();
+    expect(areas!.visible, "but it must no longer be visible").toBe(false);
+
+    expect(byText("last session notes")?.visible, "untouched label stays visible").toBe(true);
+    expect(byText("what happened")?.visible, "untouched label stays visible").toBe(true);
+
+    // The distractors are still on screen, which is the whole point: their
+    // presence must not rescue the assertion.
+    expect(byText("last treatment")?.visible).toBe(true);
+    expect(byText("watch today")?.visible).toBe(true);
   });
 });
