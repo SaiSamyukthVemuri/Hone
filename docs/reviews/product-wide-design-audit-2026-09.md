@@ -231,9 +231,23 @@ targets on every button. The first draft of this audit counted it as a
 hand-rolled implementation and asserted that no overlay primitive exists. **Both
 were wrong.**
 
+**`[MEASURED FACT]` — units, stated explicitly.** The two natural denominators
+differ and must not be mixed:
+
+| Unit | Count | Composition |
+|---|---|---|
+| **Overlay implementations** | **15** | 14 bespoke + **1** reusable definition (`confirm-dialog`) |
+| **Rendered overlay sites** | **17** | 14 bespoke sites + **3** `ConfirmDialog` caller sites |
+| Sites with no focus management | **11** | the 14 bespoke minus the 3 bespoke ones that do it correctly — the same 11 in either unit, because every bespoke implementation is exactly one site |
+
+So: **1 of 15 implementations is reusable**, and **3 of 17 rendered overlay sites
+reach it**. An earlier draft of this correction wrote "3 of 15 overlay sites",
+which mixed the numerator's unit (caller sites) with the denominator's
+(implementations) and overstated adoption.
+
 **`[DESIGN DIAGNOSIS]`** The correction sharpens the diagnosis rather than
-softening it. Hone already has **one correct alert-dialog**, reached by 3 of 15
-overlay sites — the same "excellent primitive, almost no adoption" shape as
+softening it. Hone already has **one correct alert-dialog**, and 3 of 17 overlay
+sites reach it — the same "excellent primitive, almost no adoption" shape as
 `Button` (10 of 469) and `StatusPill` (1 of 84) in §1.1. The overlay problem is
 therefore **adoption and coverage**, not absence: `confirm-dialog` covers the
 *alert* case only, and nothing covers the drawer/sheet case at all.
@@ -673,9 +687,10 @@ proof sits on motion.
 
 ### MOTION_CANDIDATE — 3
 
-*(Candidate 3 — the same-day appointment move — was added after Codex review
-corrected an overbroad rejection. It is specified in §6.3 rather than here,
-because its reasoning is inseparable from what was rejected alongside it.)*
+*(Candidate 3 — the **bounded** same-day appointment move, where both the old and
+new start fall inside visible grid hours — was added after Codex review corrected
+an overbroad rejection. It is specified in §6.3 rather than here, because its
+reasoning is inseparable from the three sibling cases rejected alongside it.)*
 
 **Candidate 1 — Overlay / drawer enter and exit, and its dismissal gesture.**
 *Surfaces:* `QuickBookDrawer`, `QuickBlockDrawer`, `TimedBlockEditDrawer`,
@@ -751,7 +766,7 @@ because its reasoning is inseparable from what was rejected alongside it.)*
 
 | Candidate | Why rejected |
 |---|---|
-| **Move-appointment "teleport"** — **cross-day and off-screen moves only** | See §6.3. The **same-day** sub-case is *not* rejected; it is a genuine candidate, ranked 3 |
+| **Move-appointment "teleport"** — cross-day, another week, and any move landing outside `HOUR_START…HOUR_END` | See §6.3. The **same-day, both-ends-within-visible-hours** sub-case is *not* rejected; it is a genuine candidate, ranked 3 |
 | Day navigation (`?day=`), week↔month switch, route changes | Frequent, and the actual defect is *no pending acknowledgement* (§1.7). Animating a route change makes a slow navigation feel slower. Fix perceived speed; do not decorate it |
 | Client-profile tab switch | Done tens of times a day. Emil's rule: remove or drastically reduce. The existing pending treatment is already correct |
 | `NowLine` | A clock hand advancing a pixel a minute. Continuous, unwatched, invisible |
@@ -791,18 +806,30 @@ inherently discard client DOM. Verified against the baseline tree:
   `<button key={a.id} … style={{ top, height }}>` — identity is the appointment
   id and **position is an inline style, not a remount**.
 
-**`[DESIGN DIAGNOSIS]`** So the candidate splits into three cases that behave
+**`[MEASURED FACT]`** A same-day move is **not** guaranteed to stay on screen. The
+owner-only custom-time mode renders `<input type="time" step={900}>` with **no
+`min` or `max`**, and its own helper text says *"Custom time can be outside
+regular operating hours."* The grid runs `HOUR_START = 6` to `HOUR_END = 23`, and
+`DayColumn` returns `null` for any appointment starting outside that band. So an
+owner can move an appointment to 02:00 on the same day and the keyed button is
+**removed**, not repositioned.
+
+**`[DESIGN DIAGNOSIS]`** So the candidate splits into four cases that behave
 differently and must be judged separately:
 
 | Case | What happens to the node | Verdict |
 |---|---|---|
-| **Same-day move** (time changes, date does not) | Same `DayColumn` (key unchanged), same button (key `a.id`); only `top` changes. **The node persists and moves.** Destination is on screen by construction | **MOTION_CANDIDATE.** FLIP-able with no engine — the same WAAPI technique as candidate 2. Ranked **3** |
+| **Same-day move where BOTH the old and new start fall inside `HOUR_START…HOUR_END` (06:00–23:00)** | Same `DayColumn` (key unchanged), same button (key `a.id`); only `top` changes. **The node persists and moves** | **MOTION_CANDIDATE.** FLIP-able with no engine — the same WAAPI technique as candidate 2. Ranked **3** |
+| **Same-day move that lands outside visible hours** | `DayColumn.tsx` returns `null` when `startMinutesFromGridTop` is `< 0` or `>= VISIBLE_MINUTES`, so the keyed button is **removed, not moved** | **NO_MOTION.** The node does not survive, and there is no destination to move to |
 | **Cross-day, still inside the visible week** | `DayColumn` key changes, so the node unmounts from one column and mounts in another; both positions are on screen | Possible, but needs a shared-element/View-Transition approach rather than a FLIP. **Not pursued** — cost is disproportionate to a sub-case |
-| **Off-screen** (another week, or outside `HOUR_START…HOUR_END`, where `DayColumn` returns `null`) | Nothing to animate toward | **NO_MOTION.** Rejection stands |
+| **Another week entirely** | Not rendered at all | **NO_MOTION.** Nothing to animate toward; rejection stands |
 
 **`[DESIGN DIAGNOSIS]`** The orientation fix in point 2 remains the right answer
-for the cross-day and off-screen cases, so **STATE-DESIGN (family 7) still owns
-those**. The same-day case is now a third genuine motion candidate.
+for every case except the first, so **STATE-DESIGN (family 7) still owns those**.
+Only the bounded same-day case is a genuine motion candidate, and the bound is
+part of the candidate: a FLIP implementation must check that both the old and new
+positions render before animating, and fall back to the orientation treatment
+when either does not.
 
 **Why MOTION-01 is still the drawer, not the same-day move.** The same-day case is
 real but strictly narrower than candidate 1: it is one sub-case of one action, it
