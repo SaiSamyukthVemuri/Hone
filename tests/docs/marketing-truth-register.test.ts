@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { migrationState } from "../migrations/helpers/migration-state";
+import { MARKETING_PAGES } from "@/lib/marketing/content";
 
 // MARKETING-01a. Governance guard for docs/marketing/product-truth-register.md.
 //
@@ -39,11 +40,7 @@ function declaredHead(): string {
   return m ? m[1] : "";
 }
 
-// The public marketing surface, as source. Kept as a list rather than a glob so
-// a new marketing route has to be added here deliberately — a guard that
-// silently stops covering a new page is the failure mode this repo has already
-// paid for once.
-const MARKETING_SOURCES = [
+const MARKETING_ROUTES = [
   "app/page.tsx",
   "app/pricing/page.tsx",
   "app/demo/page.tsx",
@@ -51,18 +48,52 @@ const MARKETING_SOURCES = [
   "app/features/treatment-memory/page.tsx",
   "app/features/charting-records/page.tsx",
   "app/features/booking-calendar/page.tsx",
-  // Review caught these three missing: they are MarketingSurface routes like
-  // any other, so a banned claim could have shipped on them without ever
-  // reaching MARKETING_COPY.
   "app/resources/page.tsx",
   "app/resources/electrolysis-treatment-record-checklist/page.tsx",
   "app/resources/moving-an-electrolysis-practice-from-paper-records/page.tsx",
-  "lib/marketing/content.ts",
-  // Article titles, descriptions and author all render, and also feed the
-  // sitemap and Article JSON-LD. Review caught that a claim placed here reaches
-  // three public surfaces without passing any of the bans below.
-  "lib/marketing/resources.ts",
 ] as const;
+
+/**
+ * Everything a visitor reads, not just the route files.
+ *
+ * This was a hand-maintained list, on the reasoning that a new route should have
+ * to be added deliberately. Review broke that reasoning twice: first the three
+ * `app/resources/` routes were missing, then - after those were added - the
+ * SHARED COMPONENTS every one of those routes renders. `SiteFooter.tsx` alone
+ * authors "Operated from Canada."; swapping that literal for a prohibited claim
+ * left the guard green, because imports are not followed and the file was not
+ * listed.
+ *
+ * A list that must be remembered is a list that will be forgotten, and it fails
+ * in the direction that matters: the guard reports clean on copy it never
+ * opened. Component coverage is therefore DERIVED from the directory, so a new
+ * shared component is scanned the day it is added.
+ *
+ * Routes stay explicit - a new public route is a deliberate act, and a short
+ * list of them is genuinely reviewable - but a test below pins that list against
+ * the live MARKETING_PAGES registry so it cannot silently fall behind either.
+ */
+function marketingComponentFiles(): string[] {
+  const roots = ["app/_components/marketing", "app/_components/marketing/visuals"];
+  const out: string[] = [];
+  for (const rel of roots) {
+    for (const f of readdirSync(join(ROOT, rel))) {
+      if (f.endsWith(".tsx") || f.endsWith(".ts")) out.push(`${rel}/${f}`);
+    }
+  }
+  return out;
+}
+
+const MARKETING_SOURCES: string[] = [
+  ...MARKETING_ROUTES,
+  ...marketingComponentFiles(),
+  "app/_components/PolicyLayout.tsx",
+  "app/_components/DemoForm.tsx",
+  "lib/marketing/content.ts",
+  // Article titles, descriptions and author render, and also feed the sitemap
+  // and Article JSON-LD.
+  "lib/marketing/resources.ts",
+];
 
 /**
  * Remove comments by SCANNING, not by regex order.
@@ -161,8 +192,19 @@ function copySegments(src: string): string[] {
   const INLINE = "a|abbr|b|br|code|em|i|mark|s|small|span|strong|sub|sup|time|u";
   const flattened = code
     .replace(new RegExp(`</?(?:${INLINE})(?:\\s[^<>]*)?/?>`, "gi"), " ")
-    // Drop {expressions} so an interpolated value does not split the sentence
-    // either; their own string literals are already scanned above.
+    // A JSX expression holding a plain string literal is INLINED, not dropped.
+    // Dropping it re-created the split-claim hole one level down:
+    //
+    //   <p>Every treatment record has {"an append-only edit history for
+    //   sterile items"}</p>
+    //
+    // left "Every treatment record has" in one segment and the literal in
+    // another - and the literal, scanned alone, names a supported record type
+    // and carries no overreach term, so it passed. Inlining keeps the sentence
+    // a visitor actually reads intact.
+    .replace(/\{\s*(['"])((?:[^'"\\]|\\.)*)\1\s*\}/g, " $2 ")
+    // Any remaining expression is a value this scan cannot resolve; blank it so
+    // it cannot glue two sentences together.
     .replace(/\{[^{}]*\}/g, " ");
   for (const m of flattened.matchAll(/>([^<>]+)</g)) {
     const t = m[1].replace(/\s+/g, " ").trim();
@@ -174,6 +216,50 @@ function copySegments(src: string): string[] {
 const MARKETING_COPY = MARKETING_SOURCES.map((f) => stripComments(read(f)))
   .join("\n")
   .replace(/\s+/g, " ");
+
+describe("the scan covers what a visitor actually reads", () => {
+  it("the route list matches the live MARKETING_PAGES registry", () => {
+    // MARKETING_PAGES drives the sitemap, per-page metadata and the middleware
+    // public-route allowlist, so it is the registry of record for what is
+    // public. Pinning against it means a new indexable route cannot be added
+    // without this list noticing — which is the failure that happened twice by
+    // hand.
+    const registryRoutes = MARKETING_PAGES.filter((p) => p.indexable)
+      .map((p) => p.path)
+      // The two policy pages own their own shell (PolicyLayout), which is
+      // scanned directly rather than as a route file.
+      .filter((path) => path !== "/privacy" && path !== "/terms");
+
+    const scannedRoutes = MARKETING_ROUTES.map((f) =>
+      f === "app/page.tsx"
+        ? "/"
+        : "/" + f.replace(/^app\//, "").replace(/\/page\.tsx$/, ""),
+    );
+
+    for (const path of registryRoutes) {
+      expect(
+        scannedRoutes,
+        `${path} is an indexable marketing route but is not scanned for forbidden claims`,
+      ).toContain(path);
+    }
+  });
+
+  it("scans the shared components those routes render", () => {
+    // Derived from the directory, so this asserts the derivation WORKED rather
+    // than re-listing it. SiteFooter is named explicitly because it is the file
+    // review used to demonstrate the hole.
+    expect(MARKETING_SOURCES).toContain(
+      "app/_components/marketing/SiteFooter.tsx",
+    );
+    expect(MARKETING_SOURCES.length).toBeGreaterThan(MARKETING_ROUTES.length);
+  });
+
+  it("the copy it reads includes copy authored in a shared component", () => {
+    // A live string that exists only in SiteFooter. If this disappears the
+    // derivation has silently stopped reaching components.
+    expect(MARKETING_COPY).toMatch(/Operated from Canada/);
+  });
+});
 
 describe("truth register: provenance is declared, not assumed", () => {
   it("names the production head it was built against, as a full SHA", () => {
