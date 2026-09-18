@@ -125,6 +125,31 @@ describe("SESSION-START-01: geometry is stable on press", () => {
     expect(PICKER).toMatch(/\{isChosen \? <Spinner size="sm" \/> : null\}/);
   });
 
+  it("the description stays IN FLOW while pending — the card cannot shrink", () => {
+    // The defect this replaced: swapping the description for "Starting
+    // session…" shortened the card wherever the description wrapped and
+    // the pending text did not — single-column 390px being the obvious case.
+    // opacity-0 keeps the box, so the height is the description's height in
+    // both states.
+    expect(PICKER).toMatch(/className=\{isChosen \? "opacity-0" : undefined\}>\{description\}/);
+    // NEGATIVE CONTROL: the swap must not come back. This is the assertion
+    // that would have caught the original implementation.
+    expect(PICKER).not.toMatch(/isChosen \? "Starting session…" : description/);
+  });
+
+  it("the hidden half is the OVERLAY, never the description", () => {
+    // Button records the trap: aria-hidden on the held text collapses the
+    // control's accessible name to empty for exactly as long as it is busy,
+    // so a screen-reader user is told "busy" about a control that no longer
+    // says what it is. The overlay is the decoration; aria-busy announces.
+    expect(PICKER).toMatch(/aria-hidden="true" className="absolute inset-0/);
+    // Matching the description's WHOLE tag is the assertion: if an aria-hidden
+    // attribute were added to it, this exact shape would stop matching.
+    expect(PICKER).toMatch(
+      /<span className=\{isChosen \? "opacity-0" : undefined\}>\{description\}<\/span>/,
+    );
+  });
+
   it("NEGATIVE CONTROL: the slot is not itself conditional", () => {
     // `{isChosen && <span className="size-4">…}` would pass a test that only
     // checked "a spinner appears", while reflowing the card on every press.

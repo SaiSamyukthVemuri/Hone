@@ -124,6 +124,56 @@ test.describe("SESSION-START-01 — pressing a modality is acknowledged", () => 
     await page.waitForURL(/\/sessions\/[0-9a-f-]{36}/i, { timeout: T });
   });
 
+  test("at 390px, where the cards stack, neither card changes size", async ({ page }) => {
+    // THE CASE THE FIRST VERSION OF THIS FILE MISSED.
+    //
+    // The desktop test above passes against an implementation that swaps the
+    // description for "Starting session…", because at two columns the
+    // description happens to fit on one line either way. At 390px the grid
+    // collapses to ONE column, the description wraps, and the pending text does
+    // not — so the chosen card shortens and the sibling slides up under the
+    // thumb, mid-treatment, on the narrowest surface.
+    //
+    // Codex raised exactly that as a P2 against the first implementation. This
+    // case is why the description is now held in flow at opacity-0 rather than
+    // replaced.
+    await page.setViewportSize({ width: 390, height: 844 });
+    await openPicker(page);
+
+    const electro = page.locator('[data-modality="electrolysis"]');
+    const laser = page.locator('[data-modality="laser"]');
+    await expect(electro).toBeVisible({ timeout: T });
+
+    const topOf = (m: string) =>
+      page
+        .locator(`[data-modality="${m}"]`)
+        .evaluate((el) => Math.round(el.getBoundingClientRect().top));
+
+    const electroBefore = await box(page, "electrolysis");
+    const laserBefore = await box(page, "laser");
+    const laserTopBefore = await topOf("laser");
+
+    await withSlowAction(page, 3_000, async () => {
+      await electro.click();
+      await expect(electro).toHaveAttribute("aria-busy", "true", { timeout: T });
+
+      const electroDuring = await box(page, "electrolysis");
+      const laserDuring = await box(page, "laser");
+      expect(electroDuring.h).toBe(electroBefore.h);
+      expect(electroDuring.w).toBe(electroBefore.w);
+      expect(laserDuring.h).toBe(laserBefore.h);
+
+      // THE ASSERTION THIS CASE EXISTS FOR. In one column the failure mode is
+      // not the card resizing in place — it is the card ABOVE shrinking and
+      // pulling this one upward under the practitioner's thumb. Comparing the
+      // sibling's top edge before and during is what measures that; asserting
+      // only that a number came back would prove nothing at all.
+      expect(await topOf("laser")).toBe(laserTopBefore);
+    });
+
+    await page.waitForURL(/\/sessions\/[0-9a-f-]{36}/i, { timeout: T });
+  });
+
   test("the card is keyboard-reachable and shows its focus", async ({ page }) => {
     await openPicker(page);
     const electro = page.locator('[data-modality="electrolysis"]');

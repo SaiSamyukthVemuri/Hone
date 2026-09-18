@@ -137,8 +137,31 @@ function ModalityCard({
           {isChosen ? <Spinner size="sm" /> : null}
         </span>
       </span>
-      <span className="text-sm text-neutral-500">
-        {isChosen ? "Starting session…" : description}
+      {/* THE DESCRIPTION NEVER LEAVES THE FLOW.
+          An earlier revision swapped this text for "Starting session…" and
+          claimed geometry stability on the strength of the reserved spinner
+          slot above. That only stabilised the TITLE row. At 390px the cards
+          stack single-column and this description wraps to two lines while
+          "Starting session…" fits on one, so the chosen card SHRANK and the
+          sibling moved up underneath it — the exact failure the slot exists
+          to prevent.
+
+          The fix is the mechanism Button and PendingLink already document:
+          hold the real text in flow at opacity-0 so the box cannot resize,
+          and overlay the pending words on top of it.
+
+          The description is NOT aria-hidden. Button records why: hiding it
+          collapses the control's accessible name to empty for exactly the
+          duration it is busy, telling a screen-reader user "busy" about a
+          control that no longer says what it is. The OVERLAY is the hidden
+          one — it is a visual cue, and aria-busy is what announces. */}
+      <span className="relative block w-full text-sm text-neutral-500">
+        <span className={isChosen ? "opacity-0" : undefined}>{description}</span>
+        {isChosen && (
+          <span aria-hidden="true" className="absolute inset-0 flex items-start">
+            Starting session…
+          </span>
+        )}
       </span>
     </button>
   );
