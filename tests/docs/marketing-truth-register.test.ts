@@ -14,6 +14,7 @@ import {
   publicRouteFiles,
   sanctionedAppendOnlyWordings,
   citedEvidenceFiles,
+  isWatched,
   unreconstructableSentences,
   unreconstructableIn,
   APPEND_ONLY_OVERREACH,
@@ -183,12 +184,12 @@ describe("truth register: provenance is declared, not assumed", () => {
    * starts resting on a new file starts watching it. Production may run ahead
    * freely — it may not run over the evidence without §0 being re-derived.
    */
-  const WATCHED = new Set([...SOURCES, ...citedEvidenceFiles(REGISTER)]);
+  const WATCHED = [...SOURCES, ...citedEvidenceFiles(REGISTER)];
   const evidenceTouchedBetween = (from: string, to: string): string[] =>
     git(["diff", "--name-only", `${from}..${to}`])
       .stdout.split("\n")
       .map((l) => l.trim())
-      .filter((f) => f && WATCHED.has(f));
+      .filter((f) => f && isWatched(f, WATCHED));
 
   it("names the production head it was built against, as a full SHA", () => {
     expect(
@@ -725,6 +726,58 @@ describe("negative controls: the guard bites", () => {
     // The pass-through shape must stay green: the container contributes no
     // prose, so whatever the value holds IS the whole sentence.
     expect(unreconstructableIn(renderer("<p>{it.body}</p>"))).toEqual([]);
+  });
+
+  it("pairs prose with a hole across inline markup, and through a template", () => {
+    // Direct children were not enough. Wrapping either half in ordinary inline
+    // markup separated them, and a template literal handed over its static
+    // fragments while swallowing the substitution - so the static half set the
+    // scope and the value passed on its own as a sanctioned sentence.
+    const cases: Array<[string, string]> = [
+      [
+        "scope wrapped in <strong>",
+        "<p><strong>Every treatment record</strong> includes {it.body}</p>",
+      ],
+      [
+        "hole wrapped in <span>",
+        "<p>Every treatment record includes <span>{it.body}</span></p>",
+      ],
+      [
+        "template substitution",
+        "<p>{`Every treatment record has ${it.body}`}</p>",
+      ],
+      [
+        "both halves wrapped",
+        "<p><em>All edits</em> are kept in <span>{it.body}</span></p>",
+      ],
+    ];
+    for (const [name, body] of cases) {
+      const src = `export function __C({ items }) {\n  return <div>{items.map((it) => (\n    ${body}\n  ))}</div>;\n}`;
+      expect(unreconstructableIn(src, "sections.tsx"), name).toHaveLength(1);
+    }
+  });
+
+  it("watches a cited directory by prefix, not by equality", () => {
+    // `git diff --name-only` returns `lib/record-keeping/expiry.ts`, never the
+    // bare directory, so reducing a `lib/record-keeping/**` citation to
+    // `lib/record-keeping` and comparing for equality watched nothing.
+    const cited = citedEvidenceFiles(REGISTER);
+    const dirs = cited.filter((c) => c.endsWith("/"));
+    expect(dirs.length, "§0 cites directory globs; none survived").toBeGreaterThan(0);
+    for (const dir of dirs) {
+      expect(
+        isWatched(`${dir}some-new-file.ts`, cited),
+        `${dir} does not match its own descendants`,
+      ).toBe(true);
+    }
+    // A bare top-level directory is prose, not evidence: §0 says "across
+    // `app/` + `lib/`", and watching whole trees would red on every production
+    // merge - the failure this guard exists to avoid.
+    for (const coarse of ["app/", "lib/", "components/"]) {
+      expect(cited, `${coarse} is too coarse to be evidence`).not.toContain(coarse);
+    }
+    expect(isWatched("components/ui/button.tsx", cited)).toBe(false);
+    expect(isWatched("components/before-today-card.tsx", cited)).toBe(true);
   });
 
   it("leaves the live prose-beside-a-value cases sayable", () => {
