@@ -71,7 +71,7 @@ export default function ElectrolysisSoftwarePage() {
           { name: "Electrolysis software", path: "/electrolysis-software" },
         ]}
       />
-      <main className="overflow-x-hidden">
+      <main id="main-content" className="overflow-x-hidden">
         {/* Hero */}
         <Container className="grid items-start gap-12 pb-16 pt-8 lg:grid-cols-[1.05fr_0.95fr] lg:gap-16 lg:pb-20 lg:pt-10">
           <Reveal immediate>

@@ -6,7 +6,7 @@ import { ProductFrame } from "../ProductFrame";
 
 const ROWS: { label: string; value: string }[] = [
   { label: "Area", value: "Upper lip · midline" },
-  { label: "Mode", value: "Blend · 27 MHz · Energy 3" },
+  { label: "Mode", value: "Blend · 27.12 MHz · Energy 3" },
   { label: "Probe", value: "F3 · Lot L-204" },
   { label: "Minutes", value: "18" },
   { label: "Tolerance", value: "Tolerated well" },
