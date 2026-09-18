@@ -97,9 +97,20 @@ function nativeConfirmForms(src: string, fileName = "subject.tsx"): string[] {
       };
       if (ts.isSourceFile(n) || ts.isBlock(n) || ts.isModuleBlock(n)) n.statements.forEach(declaredIn);
       if (ts.isFunctionLike(n)) {
+        // Parameters bind in EVERY function-like, methods included.
         for (const param of n.parameters ?? [])
           if (ts.isIdentifier(param.name) && param.name.text === "confirm") hit = true;
-        if (n.name && ts.isIdentifier(n.name) && n.name.text === "confirm") hit = true;
+        // A NAME, though, only binds for constructs whose name is actually in
+        // scope: a function declaration, and a named function expression
+        // (which binds its own name inside its body). A METHOD's name is a
+        // property key, not a lexical binding — `{ confirm() { confirm(x) } }`
+        // calls the global, and treating the key as a binding hid exactly that.
+        if (
+          (ts.isFunctionDeclaration(n) || ts.isFunctionExpression(n)) &&
+          n.name?.text === "confirm"
+        ) {
+          hit = true;
+        }
       }
       if (hit) return true;
     }
@@ -201,6 +212,19 @@ describe("UI-05: no native confirm survives anywhere in the app", () => {
     expect(nativeConfirmForms("function outer(){ function confirm(){ run(); } confirm(); }")).toEqual([]);
     expect(nativeConfirmForms("function f(confirm){ confirm(); }")).toEqual([]);
     expect(nativeConfirmForms('import { confirm } from "./x";\nconfirm();')).toEqual([]);
+
+    // A METHOD NAMED `confirm` IS NOT A LEXICAL BINDING. Raised by Codex
+    // against the first AST revision: `ts.isFunctionLike` is true for a
+    // MethodDeclaration, so its PROPERTY name was being treated as a binding
+    // inside its own body. The call below resolves to the browser global.
+    expect(nativeConfirmForms('const x = { confirm() { confirm("Remove?"); } };')).toContain(
+      "bare confirm()",
+    );
+    expect(nativeConfirmForms('class C { confirm() { confirm("Remove?"); } }')).toContain(
+      "bare confirm()",
+    );
+    // ...whereas a NAMED FUNCTION EXPRESSION does bind its own name in its body.
+    expect(nativeConfirmForms("const f = function confirm() { confirm(); };")).toEqual([]);
   });
 
   it("MIXED local and global scopes — a sibling binding does not silence a native call", () => {
