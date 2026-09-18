@@ -351,9 +351,7 @@ type AuthoredExpression = {
   readonly complete: boolean;
 };
 
-function authoredExpressionText(expr: ts.JsxExpression): AuthoredExpression | null {
-  const e = expr.expression;
-  if (!e) return null;
+function readExpression(e: ts.Expression): AuthoredExpression | null {
   if (ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e)) {
     return { text: e.text, complete: true };
   }
@@ -363,7 +361,28 @@ function authoredExpressionText(expr: ts.JsxExpression): AuthoredExpression | nu
       complete: e.templateSpans.length === 0,
     };
   }
+  if (ts.isParenthesizedExpression(e)) return readExpression(e.expression);
+  // Concatenation is authoring, not computation: `{"…an append-" + "only edit
+  // history"}` renders one sentence, and scanning the two literals separately
+  // meant neither half tripped a rule while the rendered claim did. Joined with
+  // NO separator, because that is what `+` does — the hyphen has to survive.
+  if (
+    ts.isBinaryExpression(e) &&
+    e.operatorToken.kind === ts.SyntaxKind.PlusToken
+  ) {
+    const left = readExpression(e.left);
+    const right = readExpression(e.right);
+    if (!left && !right) return null;
+    return {
+      text: `${left?.text ?? " "}${right?.text ?? " "}`,
+      complete: Boolean(left?.complete && right?.complete),
+    };
+  }
   return null;
+}
+
+function authoredExpressionText(expr: ts.JsxExpression): AuthoredExpression | null {
+  return expr.expression ? readExpression(expr.expression) : null;
 }
 
 /**
@@ -595,9 +614,18 @@ export function citedEvidenceFiles(register: string): string[] {
       .replace(/\/{2,}/g, "/")
       .replace(/\/$/, "");
     if (!/^[\w./@()[\]-]+$/.test(candidate)) continue;
-    if (!existsSync(join(REPO_ROOT, candidate))) continue;
 
-    if (glob || isDirectory(candidate)) {
+    // EXISTENCE IS NOT THE TEST. Filtering citations through the working tree
+    // dropped exactly the change the staleness check must catch: when
+    // production deletes or renames a cited file, it is absent from a branch
+    // carrying that change, so the old path fell out of the watch set and the
+    // deletion `git diff` reports could never match anything. A citation is
+    // therefore classified by SHAPE — a known source extension makes it a file,
+    // whatever the working tree currently holds.
+    const looksLikeFile = /\.(tsx?|jsx?|mjs|cjs|sql|md|json|css)$/.test(candidate);
+    if (!glob && !looksLikeFile && !isDirectory(candidate)) continue;
+
+    if (glob || (!looksLikeFile && isDirectory(candidate))) {
       // A bare top-level directory is prose, not evidence. §0 says things like
       // "zero calls to billingPortal across `app/` + `lib/`" — treating that as
       // a watch root would red on essentially every production merge, which is
