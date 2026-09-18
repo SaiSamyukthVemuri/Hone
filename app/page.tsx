@@ -64,9 +64,17 @@ const TRUST_POINTS: { title: string; body: string }[] = [
   // so the list was stale in the direction that matters - it would talk a
   // future author OUT of a true claim. What is still withheld, verified in the
   // registry: treatment photos and intake forms (both `pending`), and payment
-  // records. Also still `pending`, and the one to watch: session_blocks and
-  // session_block_areas, so the per-area structure that is the differentiator
-  // does NOT leave in the export today. Do not imply otherwise.
+  // records.
+  //
+  // The per-area structure is subtler, and this comment had it wrong. It is
+  // NOT absent from the export: electrolysis_entries.csv already carries
+  // denormalized session_blocks fields and a `block_areas` column built by
+  // joining session_block_areas into one label. What `pending` means for those
+  // two resources is that neither leaves as a file of its own — and the
+  // registry states the consequence plainly, that the joined label "is lossy
+  // and cannot be parsed back into rows". So the honest claim is partial and
+  // lossy, not withheld. Do not say the structure does not leave, and do not
+  // say it exports either.
   { title: "Data export", body: "Download your clients, sessions, charting, appointments, treatment plans and record-keeping logs as CSV, any time. The export names in writing what it does and does not yet include." },
 ];
 

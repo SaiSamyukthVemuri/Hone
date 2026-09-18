@@ -479,12 +479,40 @@ describe("visual truth: the export scope the homepage states is the scope the re
     expect(kindOf("client_intake_forms")).toBe("pending");
   });
 
-  it("the per-area treatment structure still does not leave in the export", () => {
-    // The differentiator the marketing site sells hardest. If either of these
-    // flips to `exported`, the homepage copy and this comment both understate
-    // the product and should be revisited.
+  it("the per-area structure leaves PARTIALLY, folded into one lossy column", () => {
+    // The differentiator the site sells hardest, and the claim this guard had
+    // wrong. `pending` on these two does NOT mean their data stays behind: it
+    // means neither leaves as a file of its own. The per-area values are
+    // already in electrolysis_entries.csv, denormalized, with the areas joined
+    // into a single `block_areas` label.
+    //
+    // So the tracked fact is the actual emission, not the resource kind. If a
+    // future change gives either resource its own file, or drops the folded
+    // column, the homepage's comment stops being true and fails here.
     expect(kindOf("session_blocks")).toBe("pending");
     expect(kindOf("session_block_areas")).toBe("pending");
+
+    const entries = (
+      EXPORT_RESOURCE_REGISTRY as Record<
+        string,
+        { kind: string; csvHeaders?: readonly string[] }
+      >
+    ).electrolysis_entries;
+    expect(entries?.kind).toBe("exported");
+    expect(
+      entries?.csvHeaders,
+      "the per-area label is no longer emitted, so the homepage comment's 'partial and lossy' is wrong",
+    ).toContain("block_areas");
+    for (const denormalized of ["block_primary_area", "block_side"]) {
+      expect(entries?.csvHeaders).toContain(denormalized);
+    }
+
+    // And the registry must keep SAYING it is lossy — that word is what makes
+    // "partial" honest rather than a softening.
+    const areas = (
+      EXPORT_RESOURCE_REGISTRY as Record<string, { reason?: string }>
+    ).session_block_areas;
+    expect(areas?.reason ?? "").toMatch(/lossy/i);
   });
 
   it("the homepage states that the export names its own limits", async () => {
