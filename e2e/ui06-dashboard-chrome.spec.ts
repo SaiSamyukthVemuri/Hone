@@ -102,34 +102,109 @@ async function openDashboardMemory(page: Page) {
  */
 const REQUIRED_LABELS = ["Areas treated", "Last session notes", "What happened"] as const;
 
-/** Every label-signature element in the card, with exact text and real visibility. */
+/**
+ * Every label-signature element in the card, with exact text and real visibility.
+ *
+ * WHAT "VISIBLE" HAD TO BECOME, AND WHY IT TOOK THREE PASSES
+ * ----------------------------------------------------------
+ * Pass 1 counted matches, so a hidden label was satisfied by a visible
+ * distractor. Pass 2 added display / visibility / geometry. Codex then found
+ * pass 2 still green under `opacity: 0` and `text-transparent`: both leave the
+ * element displayed, visible, and fully boxed, while painting nothing at all.
+ *
+ * MEASURED in Chromium on this card rather than assumed — both readings
+ * changed the implementation:
+ *
+ *   normal label            color oklch(0.556 0 0)  opacity 1  checkVisibility true
+ *   color: transparent      color rgba(0, 0, 0, 0)  opacity 1  checkVisibility TRUE
+ *   .text-transparent       color rgba(0, 0, 0, 0)  opacity 1  checkVisibility TRUE
+ *   self    opacity: 0      color oklch(0.556 0 0)  opacity 0  checkVisibility false
+ *   ANCESTOR opacity: 0     color oklch(0.556 0 0)  opacity 1  checkVisibility false
+ *
+ * 1. Reading `getComputedStyle(el).opacity` is NOT sufficient. Opacity is not
+ *    inherited as a computed value, so an ancestor at `opacity: 0` leaves the
+ *    label itself computing `1` while nothing is painted. The element-local
+ *    read — the obvious fix, and the one literally suggested — would have
+ *    closed the self case and left the ancestor case open.
+ *    `checkVisibility({ opacityProperty: true })` returns false for BOTH.
+ * 2. `checkVisibility` is blind to transparent TEXT: it reports true for
+ *    `color: transparent`. So the colour alpha must be checked separately.
+ *    Note the two colour syntaxes above — the healthy value is `oklch(...)`,
+ *    not `rgb(...)`, so an alpha parser that only understood `rgba()` would
+ *    read every real label as opaque by accident and every transparent one
+ *    correctly, which looks like it works.
+ *
+ * Hence the conjunction below. None of the three legs is redundant: each
+ * catches a regression the other two report as visible.
+ */
 async function labelReport(
   card: Locator,
-): Promise<Array<{ text: string; visible: boolean; w: number; h: number }>> {
-  return card.evaluate((root: Element) =>
-    Array.from(
+): Promise<Array<{ text: string; visible: boolean; reason: string; w: number; h: number }>> {
+  return card.evaluate((root: Element) => {
+    // Alpha out of any CSS colour syntax Chromium may emit. Handles the modern
+    // slash form (`oklch(0.5 0 0 / 0.4)`), the legacy comma form
+    // (`rgba(0, 0, 0, 0)`), the `transparent` keyword, and percentage alphas.
+    const alphaOf = (colour: string): number => {
+      const s = colour.trim().toLowerCase();
+      if (s === "transparent") return 0;
+      const slash = s.match(/\/\s*([0-9.]+%?)\s*\)$/);
+      if (slash) {
+        const raw = slash[1];
+        return raw.endsWith("%") ? parseFloat(raw) / 100 : parseFloat(raw);
+      }
+      const fn = s.match(/^[a-z]+\(([^)]*)\)$/);
+      if (fn) {
+        const parts = fn[1].split(",").map((x) => x.trim());
+        if (parts.length === 4) {
+          const raw = parts[3];
+          return raw.endsWith("%") ? parseFloat(raw) / 100 : parseFloat(raw);
+        }
+      }
+      return 1;
+    };
+
+    return Array.from(
       root.querySelectorAll('[class*="uppercase"][class*="tracking-wider"]'),
     ).map((el) => {
       const e = el as HTMLElement;
       const cs = getComputedStyle(e);
       const r = e.getBoundingClientRect();
+
+      // Asserted, not feature-detected into a silent fallback. A fallback path
+      // that never executes is unproved code; if this ever disappears the
+      // proof must fail loudly rather than quietly weaken its own oracle.
+      const supported = typeof e.checkVisibility === "function";
+      const painted = supported
+        ? e.checkVisibility({
+            opacityProperty: true,
+            visibilityProperty: true,
+            contentVisibilityAuto: true,
+          })
+        : false;
+
+      const alpha = alphaOf(cs.color);
+      const boxed = r.width > 0 && r.height > 0;
+
+      const why: string[] = [];
+      if (!supported) why.push("checkVisibility UNSUPPORTED");
+      if (!painted) why.push(`unpainted (display ${cs.display}, visibility ${cs.visibility}, own opacity ${cs.opacity})`);
+      if (!boxed) why.push(`zero box ${Math.round(r.width)}x${Math.round(r.height)}`);
+      if (alpha === 0) why.push(`transparent text (${cs.color})`);
+
       return {
         text: (e.textContent ?? "").trim(),
-        visible:
-          cs.display !== "none" &&
-          cs.visibility !== "hidden" &&
-          r.width > 0 &&
-          r.height > 0,
+        visible: supported && painted && boxed && alpha > 0,
+        reason: why.join("; "),
         w: r.width,
         h: r.height,
       };
-    }),
-  );
+    });
+  });
 }
 
 /** Which required labels are absent or invisible. Empty array = the claim holds. */
 function missingRequired(
-  report: Array<{ text: string; visible: boolean }>,
+  report: Array<{ text: string; visible: boolean; reason?: string }>,
 ): string[] {
   const out: string[] = [];
   for (const want of REQUIRED_LABELS) {
@@ -137,7 +212,10 @@ function missingRequired(
       (r) => r.text.toLowerCase() === want.toLowerCase(),
     );
     if (exact.length === 0) out.push(`${want}: ABSENT`);
-    else if (!exact.some((r) => r.visible)) out.push(`${want}: present but HIDDEN`);
+    else if (!exact.some((r) => r.visible)) {
+      const why = exact.map((r) => r.reason).filter(Boolean).join(" | ");
+      out.push(`${want}: present but NOT PAINTED${why ? ` — ${why}` : ""}`);
+    }
   }
   return out;
 }
@@ -306,65 +384,214 @@ test.describe("UI-06 motion", () => {
 });
 
 test.describe("UI-06 label proof: negative control", () => {
-  test("hiding ONE required label turns the proof RED, and only for that label", async ({
+  /**
+   * FOUR ways to unpaint a label, each of which an earlier version of this
+   * proof reported as visible.
+   *
+   * `display: none` was the first control. Codex then showed it was not
+   * discriminating enough: `opacity: 0` and `text-transparent` both leave the
+   * element displayed, visible and fully boxed, so the proof stayed green
+   * while the practitioner saw nothing. The ancestor case is included
+   * separately and deliberately — it is the one an element-local
+   * `getComputedStyle(el).opacity` check cannot see, because opacity is not
+   * inherited as a computed value and the label keeps computing `1`.
+   *
+   * The ancestor mutation wraps the label in a NEW single-purpose element
+   * rather than dimming its real parent, so the affected subtree is exactly
+   * one label and "red for that label only" stays provable rather than being
+   * an artifact of which siblings happened to share a container.
+   */
+  /**
+   * `mustSay` / `mustNotSay` pin WHICH LEG of the oracle fires, not merely
+   * that the mutation was noticed. Without them the control proves only that
+   * something went red, and a future refactor could delete the leg that
+   * actually matters while the control stayed green on a coincidental catch.
+   *
+   * MEASURED reasons, one per mutation:
+   *   display          unpainted (display none, ...); zero box 0x0
+   *   self-opacity     unpainted (display block, ..., own opacity 0)
+   *   ancestor-opacity unpainted (display block, ..., own opacity 1)
+   *   transparent-text transparent text (rgba(0, 0, 0, 0))
+   *
+   * The last two rows are the whole argument for this repair's shape:
+   *   - the ancestor case is caught with the label's OWN opacity still 1, so
+   *     an element-local `getComputedStyle(el).opacity` check would MISS it;
+   *   - the transparent case is caught WITHOUT "unpainted" appearing at all,
+   *     so `checkVisibility` is blind to it and the colour-alpha leg is
+   *     genuinely load-bearing rather than defensive padding.
+   */
+  const MUTATIONS = [
+    { name: "display:none", kind: "display", mustSay: ["unpainted", "display none"], mustNotSay: [] },
+    {
+      name: "opacity:0 on the label itself",
+      kind: "self-opacity",
+      mustSay: ["unpainted", "own opacity 0"],
+      mustNotSay: [],
+    },
+    {
+      name: "opacity:0 on an ANCESTOR (label still computes opacity 1)",
+      kind: "ancestor-opacity",
+      // "own opacity 1" is the discriminating half: it proves this case is
+      // caught DESPITE the element-local read looking healthy.
+      mustSay: ["unpainted", "own opacity 1"],
+      mustNotSay: [],
+    },
+    {
+      name: "text-transparent (painted box, unpainted glyphs)",
+      kind: "transparent-text",
+      mustSay: ["transparent text"],
+      // checkVisibility reports this element as visible, so if "unpainted"
+      // ever appears here the mutation has stopped exercising the alpha leg.
+      mustNotSay: ["unpainted"],
+    },
+  ] as const;
+
+  test("each way of unpainting ONE required label turns the proof RED, and only for that label", async ({
     page,
   }) => {
     await openDashboardMemory(page);
     const card = page.getByTestId("appointment-prep-memory").first();
     await expect(card).toBeVisible({ timeout: 20_000 });
 
-    // Baseline: the claim holds.
-    expect(missingRequired(await labelReport(card))).toEqual([]);
+    const TARGET = "areas treated";
 
-    // Hide EXACTLY ONE required label, leaving every unrelated matching
-    // element — "Last treatment", "Watch today", "Show" — untouched. This is
-    // the mutation the previous assertion could not detect: it would have
-    // stayed green on the surviving distractors.
-    const hidden = await card.evaluate((root) => {
-      const el = Array.from(
-        root.querySelectorAll('[class*="uppercase"][class*="tracking-wider"]'),
-      ).find((e) => (e.textContent ?? "").trim().toLowerCase() === "areas treated");
-      if (!el) return null;
-      (el as HTMLElement).style.display = "none";
-      return (el.textContent ?? "").trim();
-    });
-    expect(hidden, "fixture: the label to hide must exist").toBe("Areas treated");
+    for (const mutation of MUTATIONS) {
+      // Baseline holds before every mutation — which also proves the PREVIOUS
+      // iteration's restore actually reverted, rather than leaving the card
+      // progressively dismantled and the later cases passing for free.
+      expect(
+        missingRequired(await labelReport(card)),
+        `baseline must hold before "${mutation.name}"`,
+      ).toEqual([]);
 
-    const after = missingRequired(await labelReport(card));
+      const applied = await card.evaluate(
+        (root: Element, kind: string) => {
+          const el = Array.from(
+            root.querySelectorAll('[class*="uppercase"][class*="tracking-wider"]'),
+          ).find((e) => (e.textContent ?? "").trim().toLowerCase() === "areas treated") as
+            | HTMLElement
+            | undefined;
+          if (!el) return null;
+          if (kind === "display") el.style.display = "none";
+          else if (kind === "self-opacity") el.style.opacity = "0";
+          else if (kind === "transparent-text") el.classList.add("text-transparent");
+          else if (kind === "ancestor-opacity") {
+            const wrap = document.createElement("div");
+            wrap.setAttribute("data-e2e-dim-wrapper", "1");
+            wrap.style.opacity = "0";
+            el.parentElement?.insertBefore(wrap, el);
+            wrap.appendChild(el);
+          }
+          const cs = getComputedStyle(el);
+          return {
+            text: (el.textContent ?? "").trim(),
+            // Recorded so the ancestor case is demonstrably the ancestor case:
+            // the label's OWN opacity must still read 1 here.
+            ownOpacity: cs.opacity,
+            ownColour: cs.color,
+          };
+        },
+        mutation.kind,
+      );
+      expect(applied, `fixture: the label to unpaint must exist (${mutation.name})`).toBeTruthy();
+      expect(applied!.text).toBe("Areas treated");
 
-    // RED, and specifically about the label that was hidden...
-    expect(after.some((m) => m.startsWith("Areas treated"))).toBe(true);
-    // ...and NOT about the ones left alone, so the control is specific rather
-    // than merely failing.
-    expect(after.some((m) => m.startsWith("Last session notes"))).toBe(false);
-    expect(after.some((m) => m.startsWith("What happened"))).toBe(false);
+      if (mutation.kind === "ancestor-opacity") {
+        // The distinguishing fact. If this ever reads "0" the mutation stopped
+        // exercising the ancestor path and the case silently became a
+        // duplicate of the self-opacity one.
+        expect(
+          applied!.ownOpacity,
+          "ancestor case must leave the label's OWN computed opacity at 1",
+        ).toBe("1");
+      }
+      if (mutation.kind === "transparent-text") {
+        // Likewise: proves the class resolved in the compiled bundle rather
+        // than being a no-op that made the test pass by accident.
+        expect(
+          applied!.ownColour,
+          "text-transparent must actually resolve to a zero-alpha colour",
+        ).toBe("rgba(0, 0, 0, 0)");
+      }
 
-    // The distractors are still on screen, which is the whole point: their
-    // presence must not rescue the assertion.
-    // PRESENCE AND VISIBILITY ARE DIFFERENT THINGS, which is the entire subject
-    // of this repair and which I then conflated one more time here: `display:
-    // none` HIDES the element, it does not remove it, so its text is still in
-    // the report. My first version asserted the text had disappeared and failed
-    // on correct behaviour — `missingRequired` had already classified it
-    // correctly as "present but HIDDEN", which is why every assertion above
-    // passed.
-    //
-    // So this asserts the property that actually changed: still in the DOM,
-    // no longer visible, while the other two stay visible.
-    const after2 = await labelReport(card);
-    const byText = (t: string) =>
-      after2.find((r) => r.text.toLowerCase() === t);
+      const after = missingRequired(await labelReport(card));
 
-    const areas = byText("areas treated");
-    expect(areas, "the hidden label is still in the DOM").toBeTruthy();
-    expect(areas!.visible, "but it must no longer be visible").toBe(false);
+      // RED, and specifically about the label that was unpainted...
+      expect(
+        after.some((m) => m.startsWith("Areas treated")),
+        `"${mutation.name}" must be detected — saw: ${JSON.stringify(after)}`,
+      ).toBe(true);
+      // ...and NOT about the ones left alone, so the control is specific
+      // rather than merely failing.
+      expect(after.some((m) => m.startsWith("Last session notes"))).toBe(false);
+      expect(after.some((m) => m.startsWith("What happened"))).toBe(false);
 
-    expect(byText("last session notes")?.visible, "untouched label stays visible").toBe(true);
-    expect(byText("what happened")?.visible, "untouched label stays visible").toBe(true);
+      // PRESENCE AND VISIBILITY ARE DIFFERENT THINGS, which is the whole
+      // subject of this repair and which I conflated once inside it: none of
+      // these four mutations REMOVES the element, so its text is still in the
+      // report. My first control asserted the text had disappeared and failed
+      // on correct behaviour. What changed is paintedness, so that is what is
+      // asserted.
+      const report = await labelReport(card);
+      const byText = (t: string) => report.find((r) => r.text.toLowerCase() === t);
 
-    // The distractors are still on screen, which is the whole point: their
-    // presence must not rescue the assertion.
-    expect(byText("last treatment")?.visible).toBe(true);
-    expect(byText("watch today")?.visible).toBe(true);
+      const target = byText(TARGET);
+      expect(target, "the unpainted label is still in the DOM").toBeTruthy();
+      expect(
+        target!.visible,
+        `but it must not count as visible — reason: ${target!.reason}`,
+      ).toBe(false);
+      // The reason must name the mechanism, so a future failure says WHICH leg
+      // of the oracle fired rather than just "not visible".
+      expect(target!.reason, `${mutation.name} must be explained`).not.toBe("");
+      for (const phrase of mutation.mustSay) {
+        expect(
+          target!.reason,
+          `"${mutation.name}" must be caught by the leg that says "${phrase}" — reason was: ${target!.reason}`,
+        ).toContain(phrase);
+      }
+      for (const phrase of mutation.mustNotSay) {
+        expect(
+          target!.reason,
+          `"${mutation.name}" must NOT be caught via "${phrase}" — that leg is blind to it, so this would mean the control stopped testing what it claims. Reason was: ${target!.reason}`,
+        ).not.toContain(phrase);
+      }
+
+      expect(byText("last session notes")?.visible, "untouched label stays visible").toBe(true);
+      expect(byText("what happened")?.visible, "untouched label stays visible").toBe(true);
+
+      // The distractors are still on screen, which is the whole point: their
+      // presence must not rescue the assertion. Names MEASURED, not guessed —
+      // my first version asserted a distractor called "show"; the real element
+      // is a <summary> whose text concatenates to "setup usedshowhide".
+      expect(byText("last treatment")?.visible).toBe(true);
+      expect(byText("watch today")?.visible).toBe(true);
+
+      // Restore, and let the next iteration's baseline assertion prove it.
+      await card.evaluate((root: Element, kind: string) => {
+        const el = Array.from(
+          root.querySelectorAll('[class*="uppercase"][class*="tracking-wider"]'),
+        ).find((e) => (e.textContent ?? "").trim().toLowerCase() === "areas treated") as
+          | HTMLElement
+          | undefined;
+        if (!el) return;
+        if (kind === "display") el.style.display = "";
+        else if (kind === "self-opacity") el.style.opacity = "";
+        else if (kind === "transparent-text") el.classList.remove("text-transparent");
+        else if (kind === "ancestor-opacity") {
+          const wrap = el.closest("[data-e2e-dim-wrapper]") as HTMLElement | null;
+          if (wrap?.parentElement) {
+            wrap.parentElement.insertBefore(el, wrap);
+            wrap.remove();
+          }
+        }
+      }, mutation.kind);
+    }
+
+    // And the card is intact at the end, so the loop left nothing behind.
+    expect(
+      missingRequired(await labelReport(card)),
+      "all mutations must be reverted",
+    ).toEqual([]);
   });
 });
