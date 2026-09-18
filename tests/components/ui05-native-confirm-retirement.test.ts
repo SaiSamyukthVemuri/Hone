@@ -84,6 +84,8 @@ type Repairs = {
   staticBlockIsItsOwnVarScope: boolean;
   /** `window["confirm"](...)` is the same call as `window.confirm(...)`. */
   computedGlobalAccessDetected: boolean;
+  /** `(window.confirm)(...)` and `(x as T)(...)` are the same call as `x(...)`. */
+  transparentCalleeWrappersUnwrapped: boolean;
 };
 
 /**
@@ -103,6 +105,7 @@ const SHIPPED: Repairs = {
   ambientDeclarationsBindNothing: true,
   staticBlockIsItsOwnVarScope: true,
   computedGlobalAccessDetected: true,
+  transparentCalleeWrappersUnwrapped: true,
 };
 
 function nativeConfirmForms(
@@ -262,9 +265,39 @@ function nativeConfirmForms(
     return found;
   }
 
+  /**
+   * Strip wrappers that are TRANSPARENT AT RUNTIME.
+   *
+   * `(window.confirm)("Remove?")` puts a ParenthesizedExpression where the
+   * callee is expected, so neither the property-access nor the element-access
+   * branch fired and the call was invisible.
+   *
+   * The finding named parentheses. `as` / `satisfies` / non-null `!` /
+   * `<T>x` fail in EXACTLY the same way and for the same reason — they are
+   * erased, so the call at runtime is identical — so unwrapping only the
+   * parentheses would leave four spellings of one defect open. Loops, so
+   * `((window.confirm))` and `(window.confirm as any)!` are handled too.
+   *
+   * This does NOT follow identifiers. An alias (`const c = window.confirm`)
+   * still needs dataflow and is deliberately out of scope, same as the
+   * dynamic-property case.
+   */
+  const unwrapCallee = (e: ts.Expression): ts.Expression => {
+    if (!repairs.transparentCalleeWrappersUnwrapped) return e;
+    let cur: ts.Expression = e;
+    for (;;) {
+      if (ts.isParenthesizedExpression(cur)) cur = cur.expression;
+      else if (ts.isAsExpression(cur)) cur = cur.expression;
+      else if (ts.isSatisfiesExpression(cur)) cur = cur.expression;
+      else if (ts.isNonNullExpression(cur)) cur = cur.expression;
+      else if (ts.isTypeAssertionExpression(cur)) cur = cur.expression;
+      else return cur;
+    }
+  };
+
   const visit = (node: ts.Node): void => {
     if (ts.isCallExpression(node)) {
-      const callee = node.expression;
+      const callee = unwrapCallee(node.expression);
       if (ts.isIdentifier(callee) && callee.text === "confirm" && !bindsConfirm(node)) {
         found.add("bare confirm()");
       }
@@ -668,6 +701,43 @@ describe("UI-05: no native confirm survives anywhere in the app", () => {
     expect(nativeConfirmForms(computed), "shipped: caught").toContain("window.confirm");
   });
 
+  it("TRANSPARENT callee wrappers are unwrapped — parens, as, satisfies, non-null", () => {
+    // Codex, at e18bdeaa. A ParenthesizedExpression sits where the callee is
+    // expected, so neither the property-access nor the element-access branch
+    // fired. The finding named parentheses; `as` / `satisfies` / `!` are erased
+    // in exactly the same way, so fixing only parentheses would have left four
+    // spellings of one defect open.
+    expect(nativeConfirmForms('(window.confirm)("Remove?")')).toContain("window.confirm");
+    expect(nativeConfirmForms('(window["confirm"])("Remove?")')).toContain("window.confirm");
+    expect(nativeConfirmForms('((globalThis.confirm))("Remove?")')).toContain("globalThis.confirm");
+    expect(nativeConfirmForms('(self.confirm)("Remove?")')).toContain("self.confirm");
+    // The bare form was equally wrapped-and-missed.
+    expect(nativeConfirmForms('(confirm)("Remove?")')).toContain("bare confirm()");
+    expect(nativeConfirmForms('((confirm))("Remove?")')).toContain("bare confirm()");
+    // Erased type wrappers, and a stack of them.
+    expect(nativeConfirmForms('(window.confirm as any)("Remove?")')).toContain("window.confirm");
+    expect(nativeConfirmForms('window.confirm!("Remove?")')).toContain("window.confirm");
+    expect(nativeConfirmForms('((window.confirm as any)!)("Remove?")')).toContain("window.confirm");
+    expect(
+      nativeConfirmForms('(confirm satisfies (s: string) => boolean)("Remove?")'),
+    ).toContain("bare confirm()");
+
+    // SCOPE IS STILL RESPECTED — unwrapping must not turn every parenthesised
+    // call into a global one.
+    expect(
+      nativeConfirmForms('const confirm = local;\nexport function r() { (confirm)("x"); }'),
+      "a real binding still shadows through parentheses",
+    ).toEqual([]);
+    // ...and it does not fire on a non-global receiver or another property.
+    expect(nativeConfirmForms('(dialog.confirm)("x")'), "non-global receiver").toEqual([]);
+    expect(nativeConfirmForms('(window.alert)("x")'), "different property").toEqual([]);
+    // Aliasing still needs dataflow and is deliberately NOT chased.
+    expect(
+      nativeConfirmForms('const c = window.confirm;\nc("x")'),
+      "an alias is out of scope — that needs dataflow",
+    ).toEqual([]);
+  });
+
   it("EVERY repair toggle is load-bearing — no repair is dead code", () => {
     // A STANDING non-vacuity proof, dependency-injected rather than a one-off
     // mutation run. For each repair there must exist an input whose
@@ -688,6 +758,7 @@ describe("UI-05: no native confirm survives anywhere in the app", () => {
       staticBlockIsItsOwnVarScope:
         'class C { static { var confirm = l; } }\nfunction r() { confirm("x"); }',
       computedGlobalAccessDetected: 'window["confirm"]("x")',
+      transparentCalleeWrappersUnwrapped: '(window.confirm)("x")',
     };
 
     const keys = Object.keys(SHIPPED) as Array<keyof Repairs>;
