@@ -43,7 +43,7 @@
  * holes above is unrepresentable here rather than patched.
  */
 import ts from "typescript";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { MARKETING_PAGES } from "@/lib/marketing/content";
 
@@ -277,6 +277,34 @@ const PHRASING_CONTENT = new Set([
  * or a component. A capitalised component counts as a possible block: `<Layout>
  * <P>one</P><P>two</P></Layout>` must stay two claims, not become one.
  */
+/**
+ * Does this container read as ONE sentence?
+ *
+ * Three independent reasons, and the first two are structural facts about HTML
+ * rather than judgement calls. The third catches a component used as inline
+ * markup inside authored text, which no tag list can know.
+ *
+ * Shared with the unreconstructable-sentence detector below, deliberately: the
+ * two must agree on where a sentence begins and ends, or a hole and the prose
+ * that sets its scope end up in different units and the pairing is missed —
+ * which is exactly how wrapping either half in a `<span>` slipped past.
+ */
+export function isSentenceContainer(node: JsxContainer): boolean {
+  const children = jsxChildren(node);
+  const bearsText = children.some(
+    (c) =>
+      (ts.isJsxText(c) && /[A-Za-z]/.test(decodeEntities(c.text))) ||
+      (ts.isJsxExpression(c) &&
+        /[A-Za-z]/.test(authoredExpressionText(c)?.text ?? "")),
+  );
+  const tag = tagOf(node);
+  return (
+    (tag !== null && PHRASING_ONLY_CONTAINERS.has(tag)) ||
+    subtreeIsAllPhrasing(node) ||
+    bearsText
+  );
+}
+
 function subtreeIsAllPhrasing(node: JsxContainer): boolean {
   let allPhrasing = true;
   const visit = (n: ts.Node) => {
@@ -307,12 +335,33 @@ function subtreeIsAllPhrasing(node: JsxContainer): boolean {
  * value's own literals into the sentence would let an unscoped claim borrow a
  * qualifier it never renders next to.
  */
-function authoredExpressionText(expr: ts.JsxExpression): string | null {
+type AuthoredExpression = {
+  /** The text this expression contributes to the sentence. */
+  readonly text: string;
+  /**
+   * Whether that text is the WHOLE of what the expression renders.
+   *
+   * A template literal with substitutions is only partly readable: `{`Every
+   * treatment record has ${it.body}`}` gives up "Every treatment record has"
+   * and swallows the rest. Reporting that as fully authored let the static half
+   * set a scope while the value behind `it.body` passed on its own as a
+   * sanctioned sentence — so the static fragments are still used as text, and
+   * the expression still counts as a hole.
+   */
+  readonly complete: boolean;
+};
+
+function authoredExpressionText(expr: ts.JsxExpression): AuthoredExpression | null {
   const e = expr.expression;
   if (!e) return null;
-  if (ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e)) return e.text;
+  if (ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e)) {
+    return { text: e.text, complete: true };
+  }
   if (ts.isTemplateExpression(e)) {
-    return [e.head.text, ...e.templateSpans.map((s) => s.literal.text)].join(" ");
+    return {
+      text: [e.head.text, ...e.templateSpans.map((s) => s.literal.text)].join(" "),
+      complete: e.templateSpans.length === 0,
+    };
   }
   return null;
 }
@@ -371,7 +420,7 @@ export function collectClaims(src: string, fileName = "input.tsx"): string[] {
       if (ts.isJsxText(child)) {
         text += decodeEntities(child.text);
       } else if (ts.isJsxExpression(child)) {
-        text += authoredExpressionText(child) ?? " ";
+        text += authoredExpressionText(child)?.text ?? " ";
       } else if (isJsxContainer(child)) {
         text += flattenInto(child);
       }
@@ -382,21 +431,7 @@ export function collectClaims(src: string, fileName = "input.tsx"): string[] {
   const emit = (node: JsxContainer) => {
     consumed.add(node);
     const children = jsxChildren(node);
-    const bearsText = children.some(
-      (c) =>
-        (ts.isJsxText(c) && /[A-Za-z]/.test(decodeEntities(c.text))) ||
-        (ts.isJsxExpression(c) &&
-          /[A-Za-z]/.test(authoredExpressionText(c) ?? "")),
-    );
-
-    // Three independent reasons to read this container as ONE sentence. The
-    // first two are structural facts about HTML; the third catches a component
-    // used as inline markup inside authored text, which no tag list can know.
-    const tag = tagOf(node);
-    const isSentence =
-      (tag !== null && PHRASING_ONLY_CONTAINERS.has(tag)) ||
-      subtreeIsAllPhrasing(node) ||
-      bearsText;
+    const isSentence = isSentenceContainer(node);
 
     if (isSentence) {
       push(flattenInto(node));
@@ -417,7 +452,7 @@ export function collectClaims(src: string, fileName = "input.tsx"): string[] {
         continue;
       }
       if (ts.isJsxExpression(child)) {
-        buffer += authoredExpressionText(child) ?? " ";
+        buffer += authoredExpressionText(child)?.text ?? " ";
         // An unresolved expression may still CONTAIN JSX (`{items.map(…)}`).
         // It is left for the file-wide sweep, which will emit it as its own
         // claim root.
@@ -554,15 +589,52 @@ export function citedEvidenceFiles(register: string): string[] {
     // Citations wrap lines in the source table, so a path can arrive with a
     // newline inside it; the register also cites directory globs.
     const token = m[1].replace(/\s+/g, "");
-    const candidates = token.endsWith("/**")
-      ? [token.slice(0, -3)]
-      : [token.replace(/[:#].*$/, "")];
-    for (const c of candidates) {
-      if (!/^[\w./@()[\]-]+$/.test(c)) continue;
-      if (existsSync(join(REPO_ROOT, c))) out.add(c);
+    const glob = token.endsWith("/**");
+    const candidate = (glob ? token.slice(0, -3) : token)
+      .replace(/[:#].*$/, "")
+      .replace(/\/{2,}/g, "/")
+      .replace(/\/$/, "");
+    if (!/^[\w./@()[\]-]+$/.test(candidate)) continue;
+    if (!existsSync(join(REPO_ROOT, candidate))) continue;
+
+    if (glob || isDirectory(candidate)) {
+      // A bare top-level directory is prose, not evidence. §0 says things like
+      // "zero calls to billingPortal across `app/` + `lib/`" — treating that as
+      // a watch root would red on essentially every production merge, which is
+      // the failure this guard was built to avoid. A citation has to name
+      // something narrower than a whole tree to count as evidence for a row.
+      if (!candidate.includes("/")) continue;
+      // Trailing slash marks a prefix match: `git diff --name-only` returns
+      // `lib/record-keeping/expiry.ts`, never the bare directory, so reducing
+      // `lib/record-keeping/**` to `lib/record-keeping` and comparing for
+      // equality watched nothing at all.
+      out.add(`${candidate}/`);
+      continue;
     }
+    out.add(candidate);
   }
   return [...out].sort();
+}
+
+const isDirectory = (rel: string): boolean => {
+  try {
+    return statSync(join(REPO_ROOT, rel)).isDirectory();
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Does a changed path fall under anything watched?
+ *
+ * Entries ending in `/` are directories and match by prefix; everything else is
+ * an exact file. Equality alone silently watched no directory citation.
+ */
+export function isWatched(path: string, watched: Iterable<string>): boolean {
+  for (const w of watched) {
+    if (w.endsWith("/") ? path.startsWith(w) : path === w) return true;
+  }
+  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -715,30 +787,57 @@ export function unreconstructableIn(
     ts.ScriptKind.TSX,
   );
   const out: UnreconstructableSentence[] = [];
+
+  /**
+   * Everything under this sentence, flattened the way a visitor receives it,
+   * plus every expression that cannot be read.
+   *
+   * Direct children were not enough. Wrapping either half in ordinary inline
+   * markup separated them — `<p><strong>Every treatment record</strong>
+   * includes {it.body}</p>` left "includes" as the only direct prose, and
+   * `<p>… <span>{it.body}</span></p>` left the hole in a child with no prose at
+   * all. The prose and the hole have to be paired across the whole sentence,
+   * exactly as `collectClaims` already flattens it.
+   */
+  const readSentence = (node: JsxContainer) => {
+    let prose = "";
+    const holes: ts.Expression[] = [];
+    const walk = (n: JsxContainer) => {
+      for (const child of jsxChildren(n)) {
+        if (ts.isJsxText(child)) {
+          prose += decodeEntities(child.text);
+        } else if (ts.isJsxExpression(child)) {
+          const authored = authoredExpressionText(child);
+          prose += authored?.text ?? " ";
+          // A template with substitutions gives up its static fragments and
+          // swallows the rest, so it is BOTH text and a hole.
+          if ((!authored || !authored.complete) && child.expression) {
+            holes.push(child.expression);
+          }
+        } else if (isJsxContainer(child)) {
+          walk(child);
+        }
+      }
+    };
+    walk(node);
+    return { prose: normalise(prose), holes };
+  };
+
   const visit = (n: ts.Node) => {
-    if (ts.isJsxElement(n) || ts.isJsxFragment(n)) {
-      const holes = n.children.filter(
-        (c): c is ts.JsxExpression =>
-          ts.isJsxExpression(c) &&
-          c.expression !== undefined &&
-          authoredExpressionText(c) === null,
-      );
+    if (isJsxContainer(n) && isSentenceContainer(n)) {
+      const { prose, holes } = readSentence(n);
       if (holes.length > 0) {
-        const prose = normalise(
-          n.children
-            .filter(ts.isJsxText)
-            .map((c) => decodeEntities(c.text))
-            .join(" "),
-        );
         const folded = foldForMatching(prose);
         if (SCOPE_SETTING_PROSE.test(folded) || APPEND_ONLY_TRIGGER.test(folded)) {
           out.push({
             file,
             prose,
-            expression: holes[0].expression!.getText().slice(0, 80),
+            expression: holes[0].getText().slice(0, 80),
           });
         }
       }
+      // A sentence is the unit; do not also report the inline markup inside it.
+      return;
     }
     ts.forEachChild(n, visit);
   };
