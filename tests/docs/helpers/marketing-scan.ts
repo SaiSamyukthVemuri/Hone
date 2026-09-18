@@ -231,6 +231,12 @@ const NON_COPY_ATTRIBUTES = new Set(
   ].map((a) => a.toLowerCase()),
 );
 
+/** Is this attribute one of the technical ones that never carries copy? */
+function isNonCopyAttribute(attr: ts.JsxAttribute): boolean {
+  const name = ts.isIdentifier(attr.name) ? attr.name.text : attr.name.getText();
+  return NON_COPY_ATTRIBUTES.has(name.toLowerCase());
+}
+
 type JsxContainer = ts.JsxElement | ts.JsxFragment | ts.JsxSelfClosingElement;
 
 const isJsxContainer = (n: ts.Node): n is JsxContainer =>
@@ -487,11 +493,7 @@ export function collectClaims(src: string, fileName = "input.tsx"): string[] {
 
   const isNonCopyAttributeValue = (node: ts.Node): boolean => {
     const parent = node.parent;
-    if (!parent || !ts.isJsxAttribute(parent)) return false;
-    const name = ts.isIdentifier(parent.name)
-      ? parent.name.text
-      : parent.name.getText(sf);
-    return NON_COPY_ATTRIBUTES.has(name.toLowerCase());
+    return Boolean(parent && ts.isJsxAttribute(parent) && isNonCopyAttribute(parent));
   };
 
   const isModuleSpecifier = (node: ts.Node): boolean => {
@@ -507,6 +509,22 @@ export function collectClaims(src: string, fileName = "input.tsx"): string[] {
 
   const sweep = (node: ts.Node) => {
     if (isJsxContainer(node) && !consumed.has(node)) emit(node);
+
+    // A prop is where most of this site's sentences are authored, so copy
+    // assembled inside one has to be reassembled too. `<Card title={"…append-"
+    // + "only edit history"} />` emitted its two fragments independently and
+    // neither tripped a rule, while the component rendered the joined claim.
+    if (
+      ts.isJsxAttribute(node) &&
+      node.initializer &&
+      ts.isJsxExpression(node.initializer) &&
+      !isNonCopyAttribute(node)
+    ) {
+      const authored = node.initializer.expression
+        ? readExpression(node.initializer.expression)
+        : null;
+      if (authored) push(authored.text);
+    }
 
     if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
       if (!isModuleSpecifier(node) && !isNonCopyAttributeValue(node)) {
@@ -622,10 +640,17 @@ export function citedEvidenceFiles(register: string): string[] {
     // deletion `git diff` reports could never match anything. A citation is
     // therefore classified by SHAPE — a known source extension makes it a file,
     // whatever the working tree currently holds.
+    //
+    // Shape is how a DELETED path stays watched; the working tree is still
+    // consulted as an ADDITIONAL way in, never as a filter. §0's V13 row cites
+    // `.env.local.example`, whose extension no list will ever guess — dropping
+    // it would stop watching the file that row rests on.
     const looksLikeFile = /\.(tsx?|jsx?|mjs|cjs|sql|md|json|css)$/.test(candidate);
-    if (!glob && !looksLikeFile && !isDirectory(candidate)) continue;
+    const isDir = isDirectory(candidate);
+    const isExistingFile = !isDir && existsSync(join(REPO_ROOT, candidate));
+    if (!glob && !looksLikeFile && !isDir && !isExistingFile) continue;
 
-    if (glob || (!looksLikeFile && isDirectory(candidate))) {
+    if (glob || (!looksLikeFile && isDir)) {
       // A bare top-level directory is prose, not evidence. §0 says things like
       // "zero calls to billingPortal across `app/` + `lib/`" — treating that as
       // a watch root would red on essentially every production merge, which is
@@ -851,20 +876,47 @@ export function unreconstructableIn(
     return { prose: normalise(prose), holes };
   };
 
+  const report = (prose: string, hole: ts.Node) => {
+    const folded = foldForMatching(prose);
+    if (SCOPE_SETTING_PROSE.test(folded) || APPEND_ONLY_TRIGGER.test(folded)) {
+      out.push({ file, prose, expression: hole.getText().slice(0, 80) });
+    }
+  };
+
+  /**
+   * A prop can set a scope around a hole too.
+   *
+   * `<Card title={"Every treatment record has " + it.body} />` is the same
+   * laundering one level over: the static half sets the scope, the value
+   * supplies the promise, and nothing that looks only at JSX CHILDREN sees it.
+   */
+  const visitAttributes = (n: ts.Node) => {
+    if (
+      ts.isJsxAttribute(n) &&
+      n.initializer &&
+      ts.isJsxExpression(n.initializer) &&
+      n.initializer.expression &&
+      !isNonCopyAttribute(n)
+    ) {
+      const authored = readExpression(n.initializer.expression);
+      if (!authored || !authored.complete) {
+        report(normalise(authored?.text ?? ""), n.initializer.expression);
+      }
+    }
+  };
+
   const visit = (n: ts.Node) => {
+    visitAttributes(n);
     if (isJsxContainer(n) && isSentenceContainer(n)) {
       const { prose, holes } = readSentence(n);
-      if (holes.length > 0) {
-        const folded = foldForMatching(prose);
-        if (SCOPE_SETTING_PROSE.test(folded) || APPEND_ONLY_TRIGGER.test(folded)) {
-          out.push({
-            file,
-            prose,
-            expression: holes[0].getText().slice(0, 80),
-          });
-        }
-      }
-      // A sentence is the unit; do not also report the inline markup inside it.
+      if (holes.length > 0) report(prose, holes[0]);
+      // A sentence is the unit for CHILDREN, but its descendants' attributes
+      // still have to be checked.
+      const descend = (x: ts.Node) => {
+        visitAttributes(x);
+        ts.forEachChild(x, descend);
+      };
+      ts.forEachChild(n, descend);
       return;
     }
     ts.forEachChild(n, visit);

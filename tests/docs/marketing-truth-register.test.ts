@@ -771,6 +771,38 @@ describe("negative controls: the guard bites", () => {
     expect(unreconstructableIn(mixed, "sections.tsx")).toHaveLength(1);
   });
 
+  it("reads copy assembled inside a prop", () => {
+    // A prop is where most of this site's sentences are authored. Concatenation
+    // inside one emitted its fragments independently, so neither tripped a rule
+    // while the component rendered the joined claim.
+    const src =
+      'export function __C() {\n  return <Card title={"Every treatment record has an append-" + "only edit history"} />;\n}';
+    expect(collectClaims(src, "control.tsx")).toContain(
+      "Every treatment record has an append-only edit history",
+    );
+    // and a prop that sets a scope around an unreadable value is the same
+    // laundering one level over
+    const laundered =
+      'export function __C({ it }) {\n  return <Card title={"Every treatment record has " + it.body} />;\n}';
+    expect(unreconstructableIn(laundered, "sections.tsx")).toHaveLength(1);
+    // a technical prop is still not copy
+    expect(
+      unreconstructableIn(
+        'export function __C({ it }) {\n  return <a href={"/x/" + it.slug}>go</a>;\n}',
+      ),
+    ).toEqual([]);
+  });
+
+  it("keeps watching a cited file whose extension no list would guess", () => {
+    // §0's V13 row cites `.env.local.example`. Shape-based classification alone
+    // dropped it, which stopped watching the file that row rests on.
+    const cited = citedEvidenceFiles(REGISTER);
+    expect(cited, ".env.local.example is cited by §0 but is not watched").toContain(
+      ".env.local.example",
+    );
+    expect(cited).toContain("package.json");
+  });
+
   it("pairs prose with a hole across inline markup, and through a template", () => {
     // Direct children were not enough. Wrapping either half in ordinary inline
     // markup separated them, and a template literal handed over its static
