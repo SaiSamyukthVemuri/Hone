@@ -644,3 +644,41 @@ describe("resolve_attempts reports the MEASURED call count", () => {
     expect(manyCallsTerminal.reported).toBe(2);
   });
 });
+
+describe("the routing refusal alert is durable before the caller resumes", () => {
+  it("does not resolve the send until the ops alert has actually been written", async () => {
+    // THE ONLY DURABLE RECORD. A routing refusal claims no attempt and stamps
+    // no column, so if this alert is lost nothing in the database will ever
+    // show that the studio is misconfigured -- the client simply got no
+    // message. A one-shot confirmation is refused inside a request the
+    // booking, calendar or reschedule caller awaits, and a detached task is
+    // not part of that promise: a serverless runtime is free to freeze the
+    // invocation the moment sendOne returns.
+    //
+    // Behavioural, not a grep: the mocked alert only sets the flag after it
+    // yields, so the flag is true when the send resolves ONLY if the send
+    // awaited it. Under the previous `void (async () => ...)` this was false.
+    let alertCompleted = false;
+    vi.resetModules();
+    vi.doMock("@/lib/ops/alerts", () => ({
+      recordOpsAlert: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        alertCompleted = true;
+        return { outcome: "recorded" };
+      },
+    }));
+    try {
+      const { sendBookingConfirmationSmsToClient: send } = await import(
+        "@/lib/sms/send-appointment"
+      );
+      const s = scriptedAdmin([{ data: null, error: { message: "down" } }]);
+      const result = await send(args(s.admin));
+
+      expect(result.ok).toBe(false);
+      expect(alertCompleted).toBe(true);
+    } finally {
+      vi.doUnmock("@/lib/ops/alerts");
+      vi.resetModules();
+    }
+  });
+});

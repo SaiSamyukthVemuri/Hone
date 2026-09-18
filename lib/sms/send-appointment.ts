@@ -102,7 +102,7 @@ function logSmsRoutingFailure(opts: {
   transient: boolean;
   /** How many resolution looks this send actually took. */
   resolveAttempts: number;
-}): void {
+}): Promise<void> {
   console.error(
     JSON.stringify({
       event: "sms_routing_refused",
@@ -110,15 +110,28 @@ function logSmsRoutingFailure(opts: {
       smsType: opts.smsType,
       reason: opts.reason,
       transient: opts.transient,
-      // The measured resolver-call count, on the SYNCHRONOUS line too: the
-      // durable ops_alert is written fire-and-forget, so this is the record
-      // that always exists even if the alert insert never lands.
+      // The measured resolver-call count, on the synchronous line as well as
+      // in the durable alert: stdout survives a failed insert, and the two
+      // must never disagree about how many looks the send actually took.
       resolveAttempts: opts.resolveAttempts,
       timestamp: new Date().toISOString(),
     }),
   );
-  // Fire-and-forget; recordOpsAlert never throws to the caller.
-  void (async () => {
+  // AWAITED BY THE CALLER, NOT DETACHED.
+  //
+  // This alert is the ONLY durable record that a studio is misconfigured: the
+  // refusal claims no attempt and stamps no column, so nothing else in the
+  // database will ever show it happened. A one-shot confirmation is refused
+  // inside a request the booking, calendar or reschedule caller awaits, and a
+  // detached task is not part of that promise -- a serverless runtime is free
+  // to freeze the invocation the moment `sendOne` returns, and the operator is
+  // never told why their client got no message.
+  //
+  // recordOpsAlert still never throws to the caller, so awaiting costs one
+  // bounded insert and cannot break the SMS path. Matches the reminder cron,
+  // where the same detachment also let the complement's rotation cursor go
+  // missing.
+  return (async () => {
     try {
       const { recordOpsAlert } = await import("@/lib/ops/alerts");
       await recordOpsAlert({
@@ -566,7 +579,7 @@ async function sendOne(args: SendOneArgs): Promise<SmsSendResult> {
 
   if (!studioSenderAllowsSend(routed)) {
     const reason = SENDER_REFUSAL_REASON[routed.reason];
-    logSmsRoutingFailure({
+    await logSmsRoutingFailure({
       appointmentId: args.appointmentId,
       smsType: args.smsType,
       studioId: args.studio.id,
