@@ -43,32 +43,54 @@ type SignOutTraffic = {
   pageErrors: string[];
 };
 
-// Console noise this LOCAL lane emits no matter what the app does: the Vercel
-// analytics scripts exist only on a Vercel deployment (a 404, then a MIME
-// refusal for the 404 body), and PostHog is deliberately tokenless here, so its
-// ingest calls 404/429.
+// Console noise this LOCAL lane emits no matter what the app does. It arrives
+// in two shapes, so it is suppressed by two different mechanisms — and NEVER by
+// a loose substring, which could swallow a genuine application error whose
+// message merely mentioned one of these names.
 //
-// They are excluded BY ORIGIN — the URL the message came from — and not by
-// matching their wording. A loose substring like /404/ would also swallow a
-// genuine application error, which is the failure mode this spec exists to
-// avoid; an origin check cannot, because application errors do not come from
-// these hosts.
-const THIRD_PARTY_TELEMETRY = /\/_vercel\/|\/ingest(\/|$|\?)|posthog/i;
+//  1. RESOURCE failures. The Vercel analytics scripts exist only on a Vercel
+//     deployment, and PostHog is deliberately tokenless here, so their requests
+//     404/429. The browser attributes these to the FAILING URL, so they are
+//     suppressed by ORIGIN — a property the application cannot accidentally
+//     acquire.
+//
+//  2. Messages logged BY a third-party bundle running inside the page. These
+//     carry the app's own URL, so there is no origin to attribute them by.
+//     Each is pinned as an ANCHORED, emitter-specific pattern: a message must
+//     BEGIN with the third party's own prefix to be suppressed.
+//
+// And the suppressed messages are PRINTED in the observation line either way,
+// so nothing this filter drops can hide from the evidence.
+const TELEMETRY_ORIGIN = /\/_vercel\/|\/ingest(\/|$|\?)|posthog\.com/i;
 
-function applicationConsoleErrors(errors: ConsoleError[]): string[] {
-  return errors
-    .filter(
-      (e) =>
-        !THIRD_PARTY_TELEMETRY.test(e.url) && !THIRD_PARTY_TELEMETRY.test(e.text),
-    )
-    .map((e) => `${e.text} @ ${e.url || "(no origin)"}`);
+const TELEMETRY_EMITTER = [
+  // posthog-js logs this from the application bundle when no token is set.
+  /^\[PostHog\.js\] /,
+  // Chrome attributes a MIME refusal to the document, naming the refused
+  // script inside the message; the path is pinned so only a _vercel asset
+  // matches.
+  /^Refused to execute script from '[^']*\/_vercel\/[^']*'/,
+];
+
+function isTelemetryNoise(e: ConsoleError): boolean {
+  return (
+    TELEMETRY_ORIGIN.test(e.url) ||
+    TELEMETRY_EMITTER.some((pattern) => pattern.test(e.text))
+  );
 }
 
-// FACT 3 instrument. A Next Server Action submission is a POST carrying the
-// `next-action` header (post-hydration) or, on the progressive-enhancement
-// path, a form body naming the action id. Anything else on the wire — RSC
-// GETs, analytics, the /login document — is not a logout submission and is not
-// counted, which is what lets this spec assert "EXACTLY ONE".
+function render(e: ConsoleError): string {
+  return `${e.text} @ ${e.url || "(no origin)"}`;
+}
+
+function applicationConsoleErrors(errors: ConsoleError[]): string[] {
+  return errors.filter((e) => !isTelemetryNoise(e)).map(render);
+}
+
+function suppressedTelemetryErrors(errors: ConsoleError[]): string[] {
+  return errors.filter(isTelemetryNoise).map(render);
+}
+
 function recordSignOutTraffic(page: Page): SignOutTraffic {
   const traffic: SignOutTraffic = {
     actionPosts: [],
@@ -276,10 +298,9 @@ function describeObservation(o: SignOutObservation): string {
     `application console errors: ${JSON.stringify(
       applicationConsoleErrors(o.traffic.consoleErrors),
     )}`,
-    `(third-party telemetry noise suppressed: ${
-      o.traffic.consoleErrors.length -
-      applicationConsoleErrors(o.traffic.consoleErrors).length
-    })`,
+    `suppressed third-party telemetry: ${JSON.stringify(
+      suppressedTelemetryErrors(o.traffic.consoleErrors),
+    )}`,
     `page errors: ${JSON.stringify(o.traffic.pageErrors)}`,
   ].join(" | ");
 }
