@@ -79,6 +79,35 @@ export function publicRouteFiles(): string[] {
   });
 }
 
+/**
+ * The layouts and templates Next.js wraps a route in.
+ *
+ * These are applied by CONVENTION, not by import: `app/layout.tsx` renders
+ * around every marketing page and nothing in the route file mentions it, so
+ * following imports from `page.tsx` never reaches it. A prohibited claim added
+ * there would ship on all twelve routes with this guard green — the same
+ * "copy the scan never opened" failure as the hand-kept list, arriving through
+ * a different door.
+ *
+ * Walks from the route's own directory up to `app/`, which is how Next resolves
+ * the chain, and picks up `template.*` alongside `layout.*`.
+ */
+function layoutChainFor(routeFile: string): string[] {
+  const out: string[] = [];
+  let dir = dirname(routeFile);
+  for (;;) {
+    for (const base of ["layout", "template"]) {
+      for (const ext of [".tsx", ".ts"]) {
+        const rel = `${dir}/${base}${ext}`;
+        if (existsSync(join(REPO_ROOT, rel))) out.push(rel);
+      }
+    }
+    if (dir === "app" || dir === "." || dir === "") break;
+    dir = dirname(dir);
+  }
+  return out;
+}
+
 /** Resolve a first-party import specifier to a repo-relative file, or null. */
 function resolveFirstParty(spec: string, fromRel: string): string | null {
   let base: string;
@@ -88,7 +117,11 @@ function resolveFirstParty(spec: string, fromRel: string): string | null {
   for (const ext of [".tsx", ".ts", "/index.tsx", "/index.ts"]) {
     if (existsSync(base + ext)) return relative(REPO_ROOT, base + ext);
   }
-  if (/\.tsx?$/.test(base) && existsSync(base)) return relative(REPO_ROOT, base);
+  // Any existing first-party file counts as RESOLVED, including a stylesheet or
+  // an asset. Only `.ts`/`.tsx` are walked for copy, but resolving them here is
+  // what distinguishes "this import holds no copy" from "this import could not
+  // be followed" — and only the second is a hole worth failing on.
+  if (existsSync(base)) return relative(REPO_ROOT, base);
   return null;
 }
 
@@ -146,7 +179,11 @@ export function publicMarketingSources(): string[] {
       }
     }
   };
-  for (const route of publicRouteFiles()) walk(route);
+  for (const route of publicRouteFiles()) {
+    walk(route);
+    // Applied by convention, so they are seeded as roots rather than found.
+    for (const wrapper of layoutChainFor(route)) walk(wrapper);
+  }
   return [...seen].sort();
 }
 
@@ -655,7 +692,12 @@ export function citedEvidenceFiles(register: string): string[] {
     const isDir = isDirectory(candidate);
     const exists = existsSync(join(REPO_ROOT, candidate));
     const lastSegment = candidate.split("/").pop() ?? "";
-    const dotted = /^\.?[\w-]+(?:\.[\w-]+)+$/.test(lastSegment);
+    // A leading dot is enough on its own — `.env`, `.npmrc`, `.gitignore` are
+    // whole filenames. Without the first alternative the optional dot was
+    // consumed and a SECOND component was then required, so an ordinary dotfile
+    // failed the shape test and a deleted one fell out of the watch set again.
+    // Anything else needs a dot INSIDE it to count as a filename.
+    const dotted = /^(?:\.[\w-]+(?:\.[\w-]+)*|[\w-]+(?:\.[\w-]+)+)$/.test(lastSegment);
     const looksLikeFile =
       dotted &&
       (candidate.includes("/") || lastSegment.startsWith(".") || (exists && !isDir));
