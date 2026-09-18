@@ -32,6 +32,78 @@ const NATIVE_DIALOG_GLOBALS = [
   },
 ];
 
+// UI-05 ARCHITECTURE RE-ENTRY. The receiver-qualified half of the same
+// restriction.
+//
+// `no-restricted-globals` fires only on a GLOBAL IDENTIFIER REFERENCE, so
+// `window.confirm(...)` is invisible to it — a member expression is not an
+// identifier reference. `no-restricted-properties` is the rule that sees those,
+// and measurement (see the architecture review) showed it already covers far
+// more than the dotted form:
+//
+//   window.confirm(x)              dotted
+//   window["confirm"](x)           computed, string literal
+//   window[`confirm`](x)           computed, no-substitution template
+//   (window.confirm)(x)            parenthesised — ESTree has NO paren node,
+//                                  so the wrapper simply does not exist here
+//   (window.confirm as any)(x)     erased type wrapper
+//   window.confirm!(x)             non-null assertion
+//   (<typeof window.confirm>w.c)(x) angle-bracket assertion
+//
+// Every one of those cost a hand-written repair round in the retired resolver.
+// None of them needs code here.
+const NATIVE_DIALOG_RECEIVERS = ["window", "globalThis", "self"];
+
+const NATIVE_DIALOG_PROPERTIES = NATIVE_DIALOG_RECEIVERS.flatMap((object) => [
+  {
+    object,
+    property: "confirm",
+    message:
+      `Use ConfirmDialog (components/confirm-dialog.tsx). iOS Safari can suppress ${object}.confirm silently, so the guard returns false and the mutation never runs.`,
+  },
+  {
+    object,
+    property: "alert",
+    message: `Native ${object}.alert() is not used in Hone surfaces; render the message in the UI.`,
+  },
+  {
+    object,
+    property: "prompt",
+    message: `Native ${object}.prompt() is not used in Hone surfaces; use a real form control.`,
+  },
+]);
+
+// THE ONE CLASS ESLINT'S SCOPE ANALYSER CANNOT DECIDE FOR US.
+//
+// `declare const confirm` and `import { type confirm }` DO create a variable in
+// ESLint's scope, so `no-restricted-globals` correctly believes the name is
+// shadowed — but both are ERASED at runtime, so the call still reaches the
+// browser global. The retired resolver tried to decide erasure semantically and
+// took two findings doing it.
+//
+// This does not decide erasure. It FORBIDS THE ERASED SHADOW ITSELF: a tracked
+// product file may not introduce a type-only or ambient binding named after a
+// native dialog. That needs no resolution, and it is strictly stronger than
+// judging whether such a declaration shadows.
+//
+// The selectors are narrow on purpose. `ImportDefaultSpecifier[local.name=...]`
+// alone would also reject a legitimate VALUE default import, which measurement
+// confirmed; gating on `ImportDeclaration[importKind="type"]` distinguishes them.
+const NATIVE_DIALOG_NAMES = ["confirm", "alert", "prompt"];
+
+const NATIVE_DIALOG_ERASED_SHADOWS = NATIVE_DIALOG_NAMES.flatMap((name) => {
+  const why =
+    `An ambient or type-only \`${name}\` is erased at runtime, so it cannot shadow the browser global — a later bare \`${name}(...)\` would still open a native dialog. Name the local binding something else.`;
+  return [
+    { selector: `VariableDeclaration[declare=true] > VariableDeclarator[id.name="${name}"]`, message: why },
+    { selector: `TSDeclareFunction[id.name="${name}"]`, message: why },
+    { selector: `TSModuleDeclaration VariableDeclarator[id.name="${name}"]`, message: why },
+    { selector: `ImportDeclaration[importKind="type"] ImportSpecifier[local.name="${name}"]`, message: why },
+    { selector: `ImportSpecifier[importKind="type"][local.name="${name}"]`, message: why },
+    { selector: `ImportDeclaration[importKind="type"] ImportDefaultSpecifier[local.name="${name}"]`, message: why },
+  ];
+});
+
 const eslintConfig = [
   ...compat.extends("next/core-web-vitals", "next/typescript"),
   {
@@ -111,6 +183,18 @@ const eslintConfig = [
           ],
         },
       ],
+      // BOTH SETS, SAME REASON AS no-restricted-globals ABOVE — and this key
+      // is the one my own architecture note initially got wrong. I told review
+      // that `no-restricted-properties` was "a different rule key, so it cannot
+      // replace FIN's options". FIN SETS THIS KEY TOO, so it can, and a probe
+      // reproduced the disarm: with the UI-05 block matching this subtree and
+      // carrying only the dialog set, `process.getBuiltinModule` linted clean
+      // under app/(app)/financials/**.
+      //
+      // Repetition — not flat-config merging, which does not exist — is what
+      // keeps both guards armed for these files. lib/finance/** additionally
+      // depends on it: the UI-05 block does not match that path at all, so
+      // these repeated entries are its ONLY dialog coverage.
       "no-restricted-properties": [
         "error",
         {
@@ -118,7 +202,9 @@ const eslintConfig = [
           property: "getBuiltinModule",
           message: "FIN-01A is ESM-only: no runtime acquisition of the module loader.",
         },
+        ...NATIVE_DIALOG_PROPERTIES,
       ],
+      "no-restricted-syntax": ["error", ...NATIVE_DIALOG_ERASED_SHADOWS],
     },
   },
   {
@@ -175,6 +261,8 @@ const eslintConfig = [
     ignores: ["app/(app)/financials/**"],
     rules: {
       "no-restricted-globals": ["error", ...NATIVE_DIALOG_GLOBALS],
+      "no-restricted-properties": ["error", ...NATIVE_DIALOG_PROPERTIES],
+      "no-restricted-syntax": ["error", ...NATIVE_DIALOG_ERASED_SHADOWS],
     },
   },
 ];
