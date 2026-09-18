@@ -52,6 +52,27 @@ surface and with §0's own backticked citations, and a non-empty intersection fa
 on the EVIDENCE moving, not on production moving — production runs ahead of this register
 constantly and must not red every branch that touches marketing copy.
 
+> **MARKETING-01a-FOLLOWUP — where that comparison does NOT run.** A depth-1 PR checkout
+> has no remote branches, so `origin/claude/build-hone-saas-hOex7` is absent and the
+> live-production comparison cannot run in CI's `validate` lane. Nightly's checkout is
+> depth-1 too, so it runs **nowhere in CI** — only on a developer machine and in
+> `npm run verify:prepush`, which CLAUDE.md §1 requires before every push.
+>
+> The test asserts that skip rather than returning green in silence: absence of the ref is
+> only excused when the clone is shallow, and in a full clone an unfetched production ref is
+> a hard failure.
+>
+> Arming it in CI needs a fetch step in `.github/workflows/ci.yml`. Two things make that its
+> own change rather than a line in this one. A workflow edit puts the PR carrying it into
+> the **full matrix** (`scripts/classify-changes.mjs`), and a *deep* fetch would also arm
+> `tests/docs/canonical-production-facts.test.ts`'s history-derived rules, which have never
+> executed in CI and currently fail on every branch off production while
+> `docs/production/current-state.md` is stale — three failures this lane does not own. A
+> narrow `git fetch --depth=1 origin <production-branch>` avoids the second problem (the
+> clone stays shallow, so those rules stay dormant) while still giving the two trees
+> `git diff --name-only A B` needs. That is the recommended shape, and it is an operator
+> decision about repo-wide CI.
+
 ## Classification labels (internal only)
 
 | Label | Meaning |

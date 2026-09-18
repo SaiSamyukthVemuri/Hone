@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { migrationState } from "../migrations/helpers/migration-state";
@@ -292,7 +292,26 @@ describe("truth register: provenance is declared, not assumed", () => {
     // canonical-production-facts came to carry three permanent failures. So the
     // check is on the DIFF, not the distance. Production may run ahead freely;
     // it may not run over the evidence without the register being re-derived.
-    if (!gitOk(["rev-parse", "--verify", `origin/${PRODUCTION_BRANCH}`])) return;
+    if (!gitOk(["rev-parse", "--verify", `origin/${PRODUCTION_BRANCH}`])) {
+      // WHERE THIS RUNS, AND WHERE IT DOES NOT. A depth-1 PR checkout has no
+      // remote branches at all, so this comparison cannot run in CI's validate
+      // lane - nor in nightly, whose checkout is also depth-1. It runs on every
+      // developer machine and in `npm run verify:prepush`, which CLAUDE.md
+      // requires before every push.
+      //
+      // That gap is REAL and is not papered over: arming it needs a fetch step
+      // in `.github/workflows/ci.yml`, which is a workflow change, which puts
+      // any PR carrying it into the full matrix. That is an operator decision
+      // about repo-wide CI, not something a docs lane should take on its own,
+      // so the skip asserts its own reason rather than returning green in
+      // silence. See MARKETING-01a-FOLLOWUP in the register.
+      expect(
+        shallowClone(),
+        `origin/${PRODUCTION_BRANCH} is not fetched and this clone is NOT shallow — ` +
+          "fetch it, or the live-production comparison silently does not run",
+      ).toBe(true);
+      return;
+    }
     const checked = checkedProductionHead();
     if (!gitOk(["cat-file", "-e", `${checked}^{commit}`])) {
       expect(
@@ -728,6 +747,30 @@ describe("negative controls: the guard bites", () => {
     expect(unreconstructableIn(renderer("<p>{it.body}</p>"))).toEqual([]);
   });
 
+  it("reads copy assembled by concatenation as one sentence", () => {
+    // `+` is authoring, not computation. Scanning the two literals separately
+    // meant neither half tripped a rule while the rendered sentence did - and
+    // the hyphen is exactly where a claim can be split, so the join must not
+    // insert a separator.
+    const src =
+      'export function __C() {\n  return <p>{"Every treatment record has an append-" + "only edit history"}</p>;\n}';
+    const claims = collectClaims(src, "control.tsx");
+    expect(claims).toContain(
+      "Every treatment record has an append-only edit history",
+    );
+    expect(
+      judgeAppendOnlyClaim(
+        "Every treatment record has an append-only edit history",
+        SANCTIONED,
+      ).kind,
+    ).toBe("unsanctioned");
+    // A concatenation with an unreadable operand keeps its authored fragments
+    // AND stays a hole.
+    const mixed =
+      'export function __C({ it }) {\n  return <p>{"Every treatment record has " + it.body}</p>;\n}';
+    expect(unreconstructableIn(mixed, "sections.tsx")).toHaveLength(1);
+  });
+
   it("pairs prose with a hole across inline markup, and through a template", () => {
     // Direct children were not enough. Wrapping either half in ordinary inline
     // markup separated them, and a template literal handed over its static
@@ -754,6 +797,40 @@ describe("negative controls: the guard bites", () => {
     for (const [name, body] of cases) {
       const src = `export function __C({ items }) {\n  return <div>{items.map((it) => (\n    ${body}\n  ))}</div>;\n}`;
       expect(unreconstructableIn(src, "sections.tsx"), name).toHaveLength(1);
+    }
+  });
+
+  it("keeps watching a cited path that production deleted or renamed", () => {
+    // Filtering citations through the working tree dropped exactly the change
+    // this must catch: a file §0 cites, deleted upstream, is absent from the
+    // branch carrying that deletion, so it fell out of the watch set and the
+    // deletion `git diff` reports matched nothing. Classification is by SHAPE
+    // now, so a cited path stays watched whether or not it exists today.
+    const invented = "lib/record-keeping/a-file-that-does-not-exist.ts";
+    expect(existsSync(join(REPO_ROOT, invented))).toBe(false);
+    const cited = citedEvidenceFiles(
+      REGISTER.replace(
+        "`lib/record-keeping/expiry.ts`",
+        `\`${invented}\``,
+      ),
+    );
+    expect(
+      cited,
+      "a cited file that no longer exists was dropped from the watch set",
+    ).toContain(invented);
+  });
+
+  it("rejects prose tokens that are not paths at all", () => {
+    // The counterweight: dropping the existence filter must not let §0's prose
+    // - column names, status labels, enum values - into the watch set.
+    const cited = citedEvidenceFiles(REGISTER);
+    for (const token of [
+      "probe_lot_number",
+      "VERIFIED_CURRENT",
+      "apilus_modality",
+      "machine_frequency",
+    ]) {
+      expect(cited, `${token} is prose, not a path`).not.toContain(token);
     }
   });
 
