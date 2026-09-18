@@ -13,6 +13,9 @@ import {
   publicMarketingSources,
   publicRouteFiles,
   sanctionedAppendOnlyWordings,
+  citedEvidenceFiles,
+  unreconstructableSentences,
+  unreconstructableIn,
   APPEND_ONLY_OVERREACH,
   APPEND_ONLY_TRIGGER,
   SUPPORTED_APPEND_ONLY_SCOPE,
@@ -173,6 +176,20 @@ describe("truth register: provenance is declared, not assumed", () => {
   const headObjectPresent = (): boolean =>
     gitOk(["cat-file", "-e", `${declaredHead()}^{commit}`]);
 
+  /**
+   * Files the register rests on that changed across a range.
+   *
+   * The watch set is the public surface plus §0's OWN citations, so a row that
+   * starts resting on a new file starts watching it. Production may run ahead
+   * freely — it may not run over the evidence without §0 being re-derived.
+   */
+  const WATCHED = new Set([...SOURCES, ...citedEvidenceFiles(REGISTER)]);
+  const evidenceTouchedBetween = (from: string, to: string): string[] =>
+    git(["diff", "--name-only", `${from}..${to}`])
+      .stdout.split("\n")
+      .map((l) => l.trim())
+      .filter((f) => f && WATCHED.has(f));
+
   it("names the production head it was built against, as a full SHA", () => {
     expect(
       declaredHead(),
@@ -261,6 +278,75 @@ describe("truth register: provenance is declared, not assumed", () => {
       ]),
       `the register's build head ${declaredHead()} is not an ancestor of the production head it claims to have been checked against, ${checkedProductionHead()}`,
     ).toBe(true);
+  });
+
+  it("nothing the register rests on has changed since the head it was checked against", () => {
+    // Review's objection was exact: the row records a HISTORICAL value, and
+    // ancestry to it says nothing about where production is now. Production
+    // could move past it — over the very files §0 cites — and this guard would
+    // stay green indefinitely.
+    //
+    // Requiring the row to EQUAL the live production ref would be the wrong
+    // repair: it reds every branch the moment anything merges, which is how
+    // canonical-production-facts came to carry three permanent failures. So the
+    // check is on the DIFF, not the distance. Production may run ahead freely;
+    // it may not run over the evidence without the register being re-derived.
+    if (!gitOk(["rev-parse", "--verify", `origin/${PRODUCTION_BRANCH}`])) return;
+    const checked = checkedProductionHead();
+    if (!gitOk(["cat-file", "-e", `${checked}^{commit}`])) {
+      expect(
+        shallowClone(),
+        `the register names production head ${checked}, which is not a commit here and this clone is NOT shallow`,
+      ).toBe(true);
+      return;
+    }
+    const live = git(["rev-parse", `origin/${PRODUCTION_BRANCH}`]).stdout.trim();
+    const touched = evidenceTouchedBetween(checked, live);
+    expect(
+      touched,
+      `production has moved from ${checked} to ${live} and has changed ${touched.length} file(s) this register rests on. ` +
+        "§0 must be re-derived against the new head and the provenance rows updated in the same change — " +
+        "the classification no longer describes the code production runs",
+    ).toEqual([]);
+  });
+
+  it("the same comparison re-proves the register's own claim, and is not vacuous", () => {
+    // The check above is silent whenever production happens to sit exactly on
+    // the checked head, which is the common case on a fresh branch and would
+    // make it look armed while testing nothing. These two run unconditionally.
+    if (!gitOk(["rev-parse", "--verify", `origin/${PRODUCTION_BRANCH}`])) return;
+    if (!headObjectPresent()) return;
+
+    // 1. The register's prose says production has advanced past the BUILD head
+    //    without touching anything §0 cites. That is now re-derived, not read.
+    expect(
+      evidenceTouchedBetween(declaredHead(), `origin/${PRODUCTION_BRANCH}`),
+      "the register claims nothing it rests on moved since the build head; the diff disagrees",
+    ).toEqual([]);
+
+    // 2. A range that DID touch the evidence must come back non-empty, or the
+    //    comparison above is passing because it can never see anything.
+    const before = "a1639a84e33c0aed618c41ab63f589f7cb33678a";
+    const after = "25c066abaaa8a64e16952371ec4db28c85904d2c";
+    if (!gitOk(["cat-file", "-e", `${before}^{commit}`])) return;
+    expect(
+      evidenceTouchedBetween(before, after).length,
+      "a production range that changed app/page.tsx and lib/export/resource-registry.ts registered as touching no evidence",
+    ).toBeGreaterThan(0);
+  });
+
+  it("the evidence it watches is derived from the register's own citations", () => {
+    // Guard the guard above: if the citation scrape silently returned nothing,
+    // the diff check would pass on any production move at all.
+    const cited = citedEvidenceFiles(REGISTER);
+    expect(cited.length, "no §0 evidence citation resolved to a real file").toBeGreaterThan(5);
+    for (const file of [
+      "lib/sessions/before-today.ts",
+      "lib/dashboard/missing-records-assistant.ts",
+      "app/features/charting-records/page.tsx",
+    ]) {
+      expect(cited, `${file} is cited by §0 but is not watched`).toContain(file);
+    }
   });
 
   it("a well-formed but fabricated head is rejected by the object check", () => {
@@ -410,6 +496,24 @@ describe("NOT_CURRENTLY_SUPPORTABLE claims stay out of public copy", () => {
       checked,
       "no append-only copy found; see the overcorrection block",
     ).toBeGreaterThan(0);
+  });
+
+  it("no public sentence sets a scope around a value this scan cannot read", () => {
+    // Review's case: `<p>Every treatment record includes {it.body}</p>` in a
+    // SHARED renderer. `it.body` is a prop on a .map callback, so its values
+    // live in whichever page passes `items` - no same-file resolution reaches
+    // them. The literal then passes on its own as a sanctioned wording, the
+    // prose passes as a claim with no trigger, and a visitor reads the two
+    // joined into a promise neither half made.
+    //
+    // Nothing static can reconstruct that sentence, so the ambiguity is
+    // forbidden rather than resolved. Copy either says the whole thing in one
+    // place, or holds the whole thing in one value.
+    const offenders = unreconstructableSentences(SOURCES);
+    expect(
+      offenders.map((o) => `${o.file}: "${o.prose}" around {${o.expression}}`),
+      "a sentence sets scope around a value this scan cannot resolve, so what a visitor reads cannot be judged. Inline the whole sentence, or move all of it into the value",
+    ).toEqual([]);
   });
 
   it("each sanctioned wording is itself scoped, and is actually shipped", () => {
@@ -564,6 +668,77 @@ describe("negative controls: the guard bites", () => {
       judgeAppendOnlyClaim("Energy settings have an append only edit history", SANCTIONED)
         .kind,
     ).toBe("unsanctioned");
+  });
+
+  it("reads a typographic hyphen as a hyphen", () => {
+    // `append‑only` with U+2011, and its &#8209; entity, are the same promise to
+    // a reader. As an ASCII-only trigger they were classified "not-a-claim",
+    // which sent them past the allow-list AND past the forbidden patterns.
+    for (const dash of ["‐", "‑", "‒", "–", "—", "−"]) {
+      expect(
+        judgeAppendOnlyClaim(
+          `Energy settings have an append${dash}only edit history`,
+          SANCTIONED,
+        ).kind,
+        `U+${dash.codePointAt(0)!.toString(16)} was not read as a hyphen`,
+      ).toBe("unsanctioned");
+    }
+    // and through the JSX entity, end to end
+    const src =
+      'export function __C() {\n  return <p>Energy settings have an append&#8209;only edit history</p>;\n}';
+    const claims = collectClaims(src, "control.tsx");
+    const claim = claims.find((c) => /Energy settings/.test(c));
+    expect(claim, "the entity claim was not extracted").toBeTruthy();
+    expect(judgeAppendOnlyClaim(claim!, SANCTIONED).kind).toBe("unsanctioned");
+    // The sanctioned wording must still be sanctioned when spelled with U+2011.
+    const sanctionedWithNbHyphen = SANCTIONED[0].text.replace(
+      "append-only",
+      "append‑only",
+    );
+    expect(judgeAppendOnlyClaim(sanctionedWithNbHyphen, SANCTIONED).kind).toBe(
+      "sanctioned",
+    );
+  });
+
+  it("flags prose that sets a scope around an unreadable value", () => {
+    // Review's exact counter-example, run through the real detector.
+    const renderer = (body: string) =>
+      `export function __C({ items }) {\n  return <div>{items.map((it) => (\n    ${body}\n  ))}</div>;\n}`;
+
+    const laundered = unreconstructableIn(
+      renderer("<p>Every treatment record includes {it.body}</p>"),
+      "sections.tsx",
+    );
+    expect(
+      laundered.map((o) => o.prose),
+      "the shared renderer laundered a scope around an unresolvable value",
+    ).toEqual(["Every treatment record includes"]);
+
+    // An append-only promise with a hole in it is unreconstructable by
+    // definition, whatever the surrounding words are.
+    expect(
+      unreconstructableIn(
+        renderer("<p>An append-only edit history for {it.scope}</p>"),
+      ),
+    ).toHaveLength(1);
+
+    // The pass-through shape must stay green: the container contributes no
+    // prose, so whatever the value holds IS the whole sentence.
+    expect(unreconstructableIn(renderer("<p>{it.body}</p>"))).toEqual([]);
+  });
+
+  it("leaves the live prose-beside-a-value cases sayable", () => {
+    // Four containers on the shipped site mix prose with a value. None sets a
+    // scope; if the rule were "no prose beside a hole" they would all have to be
+    // rewritten, which is an overcorrection with no defect behind it.
+    for (const live of [
+      "export const C = () => (<p>© {year} Hone. {POSITIONING.category}.</p>);",
+      "export const C = () => (<p>For {plan.seats}</p>);",
+      "export const C = () => (<p>Guide · {a.readingTime}</p>);",
+      "export const C = () => (<Lede>Operational guides from {RESOURCE_AUTHOR}, the people building Hone, on keeping good treatment records and moving a practice off paper.</Lede>);",
+    ]) {
+      expect(unreconstructableIn(live), live.slice(0, 60)).toEqual([]);
+    }
   });
 
   it("rejects forbidden wording in a resource article route and its copy module", () => {

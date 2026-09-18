@@ -15,7 +15,7 @@ every page and in `lib/marketing/content.ts`.
 |---|---|
 | Built against production head | `a946a983ac9b8da379bc869e21b32a5a3d50e548` |
 | Head resolved | `git rev-parse origin/claude/build-hone-saas-hOex7`, 2026-09-17 |
-| Production head at last check | `4cff4a438f937efc68161b17dca0fb88cf3e3927` (2026-09-17) — see below |
+| Production head at last check | `673080bcbc55681bcf315d82fbc654c8bff667c3` (2026-09-18) — see below |
 | Repository migration max | **0198** (derived — `npm run migration:state -- --json`) |
 | Hosted migration max | **0198** (declared — `docs/production/migration-state.json`) |
 | Repo/hosted parity | yes |
@@ -32,18 +32,25 @@ re-derived from application code at the head above, not from a table definition 
 from this register's own earlier revision.
 
 **Production has advanced past the build head, and nothing this register rests on moved.**
-The build head is not bumped to `4cff4a43` here, because bumping it would claim a
+The build head is not bumped to `673080bc` here, because bumping it would claim a
 re-derivation that was not performed. What was performed is narrower and is mechanical:
-`git diff --name-only a946a983..4cff4a43` touches **18 deployed files**, every one of them
-an authenticated-app surface (`app/(app)/**`) or a shared UI primitive
-(`components/ui/**`, `components/pending-*.tsx`, `app/globals.css`). It touches **zero**
-files under `lib/`, **zero** under `app/_components/marketing/` or `lib/marketing/`, **zero**
-public route files, and **no migration**. No file §0 cites as evidence — `lib/sessions/
+`git diff --name-only a946a983..673080bc` touches **21 deployed files** — **11**
+authenticated-app surfaces under `app/(app)/**`, **8** shared UI primitives under
+`components/`, `app/globals.css`, and one token-route form
+(`app/reschedule/[token]/RescheduleForm.tsx`). It touches **zero** files under `lib/`,
+**zero** under `app/_components/marketing/` or `lib/marketing/`, **zero** public marketing
+route files, and **no migration**. No file §0 cites as evidence — `lib/sessions/
 before-today.ts`, `components/before-today-card.tsx`, `app/(app)/clients/[id]/page.tsx`,
 `lib/dashboard/missing-records-assistant.ts`, `lib/record-keeping/**`,
 `lib/export/resource-registry.ts`, `app/features/charting-records/page.tsx` — is in that
 set. §0 therefore still classifies the code production is running. A change that DOES touch
 one of those files is a change that must re-derive §0 and move the build head together.
+
+**This paragraph is no longer trusted prose.** `tests/docs/marketing-truth-register.test.ts`
+re-derives it: the diff between the two heads above is intersected with the public marketing
+surface and with §0's own backticked citations, and a non-empty intersection fails. It fails
+on the EVIDENCE moving, not on production moving — production runs ahead of this register
+constantly and must not red every branch that touches marketing copy.
 
 ## Classification labels (internal only)
 

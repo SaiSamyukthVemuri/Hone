@@ -187,6 +187,27 @@ function decodeEntities(text: string): string {
 const normalise = (text: string) => decodeEntities(text).replace(/\s+/g, " ").trim();
 
 /**
+ * Fold every dash a browser renders as a hyphen down to an ASCII one, for
+ * MATCHING only — the claim text itself keeps what the author wrote.
+ *
+ * `append‑only` with U+2011 (or its `&#8209;` entity, which decodes to the same
+ * character) reads identically to a visitor and was invisible to an ASCII-only
+ * pattern, so an unsupported sentence slipped past both the sanctioned-wording
+ * allow-list and the forbidden patterns. Non-breaking and thin spaces fold too:
+ * `\s` already covers U+00A0, but U+2009 and friends are not whitespace to
+ * every engine and would have split a word the same way.
+ */
+export const foldForMatching = (text: string) =>
+  text
+    // U+2010 hyphen through U+2015 horizontal bar, U+2212 minus, and the
+    // small/fullwidth forms. All render as a hyphen.
+    .replace(/[\u2010-\u2015\u2212\ufe58\ufe63\uff0d]/g, "-")
+    // U+00A0 no-break space, U+2000-U+200A, U+202F, U+205F, U+3000.
+    .replace(/[\u00a0\u2000-\u200a\u202f\u205f\u3000]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+/**
  * Attributes that carry no copy. Everything else — `alt`, `title`,
  * `aria-label`, `placeholder`, and any prop a component names — is treated as
  * copy, because a component prop is how most of this site's sentences are
@@ -516,6 +537,34 @@ export function forbiddenWordings(register: string): ForbiddenWording[] {
   return rules;
 }
 
+/**
+ * Every repository file §0 cites as evidence for a classification.
+ *
+ * Taken from the register's own backticked citations rather than a second list,
+ * so a row that starts resting on a new file starts watching that file. These
+ * are what "production has advanced and nothing this register rests on moved"
+ * is a claim ABOUT — without them the staleness row is a date, not a check.
+ */
+export function citedEvidenceFiles(register: string): string[] {
+  const operative = register.slice(
+    register.indexOf("## 0. v2.2 copy-deck claim classification"),
+  );
+  const out = new Set<string>();
+  for (const m of operative.matchAll(/`([^`\n]+)`/g)) {
+    // Citations wrap lines in the source table, so a path can arrive with a
+    // newline inside it; the register also cites directory globs.
+    const token = m[1].replace(/\s+/g, "");
+    const candidates = token.endsWith("/**")
+      ? [token.slice(0, -3)]
+      : [token.replace(/[:#].*$/, "")];
+    for (const c of candidates) {
+      if (!/^[\w./@()[\]-]+$/.test(c)) continue;
+      if (existsSync(join(REPO_ROOT, c))) out.add(c);
+    }
+  }
+  return [...out].sort();
+}
+
 // ---------------------------------------------------------------------------
 // 4. The scoped-claim ruling (§0.4 N1)
 // ---------------------------------------------------------------------------
@@ -605,8 +654,100 @@ export function judgeAppendOnlyClaim(
   claim: string,
   sanctioned: readonly SanctionedWording[],
 ): AppendOnlyVerdict {
-  if (!APPEND_ONLY_TRIGGER.test(claim)) return { kind: "not-a-claim" };
-  const normalised = normalise(claim);
-  const hit = sanctioned.find((s) => s.text === normalised);
+  // Folded on both sides: `append‑only` with a non-breaking hyphen is the same
+  // promise to a reader, and used to be classified `not-a-claim` — which sent
+  // it past the allow-list AND past the forbidden patterns.
+  const folded = foldForMatching(normalise(claim));
+  if (!APPEND_ONLY_TRIGGER.test(folded)) return { kind: "not-a-claim" };
+  const hit = sanctioned.find((s) => foldForMatching(s.text) === folded);
   return hit ? { kind: "sanctioned", id: hit.id } : { kind: "unsanctioned" };
+}
+
+// ---------------------------------------------------------------------------
+// 5. Sentences this scan cannot reconstruct
+// ---------------------------------------------------------------------------
+
+/**
+ * Scope-setting prose — words that change what a value dropped beside them
+ * promises.
+ *
+ * Deliberately narrower than `APPEND_ONLY_OVERREACH`, which exists to judge a
+ * WHOLE claim. This one judges a FRAGMENT sitting next to a hole, so it matches
+ * only quantified scope ("every treatment record", "all edits") and the
+ * record-keeps-history construction. `/resources` says *"on keeping good
+ * treatment records and moving a practice off paper"* next to an unresolved
+ * author name; that is true, harmless, and must stay sayable.
+ */
+export const SCOPE_SETTING_PROSE =
+  /\b(every|all|each|any)\s+(?:[\w-]+\s+){0,2}(treatment\s+records?|clinical\s+records?|records?|changes?|edits?|fields?|sessions?|charts?)\b|\b(treatment|clinical|session)\s+records?\s+(keeps?|retains?|holds?|preserves?|has|have)\b/i;
+
+export type UnreconstructableSentence = {
+  readonly file: string;
+  readonly prose: string;
+  readonly expression: string;
+};
+
+/**
+ * JSX containers that mix authored prose with a value this scan cannot resolve.
+ *
+ * Review's case: `<p>Every treatment record includes {it.body}</p>`. The
+ * expression is a prop on a `.map` callback in a SHARED renderer — `it.body`'s
+ * values live in whichever page passes `items`, so no amount of same-file
+ * resolution reaches them. The literal is then scanned on its own, matches the
+ * sanctioned wording, and passes; the prose becomes a separate claim with no
+ * append-only trigger and passes too. A visitor reads the two joined together.
+ *
+ * Nothing static can reconstruct that sentence, so the guard forbids the
+ * ambiguity instead of pretending to resolve it: prose that SETS SCOPE may not
+ * sit next to a hole, and a sentence that is itself half an append-only promise
+ * may not have a hole in it at all. Copy either says the whole thing in one
+ * place, or holds the whole thing in one value.
+ */
+export function unreconstructableIn(
+  src: string,
+  file = "input.tsx",
+): UnreconstructableSentence[] {
+  const sf = ts.createSourceFile(
+    file,
+    src,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX,
+  );
+  const out: UnreconstructableSentence[] = [];
+  const visit = (n: ts.Node) => {
+    if (ts.isJsxElement(n) || ts.isJsxFragment(n)) {
+      const holes = n.children.filter(
+        (c): c is ts.JsxExpression =>
+          ts.isJsxExpression(c) &&
+          c.expression !== undefined &&
+          authoredExpressionText(c) === null,
+      );
+      if (holes.length > 0) {
+        const prose = normalise(
+          n.children
+            .filter(ts.isJsxText)
+            .map((c) => decodeEntities(c.text))
+            .join(" "),
+        );
+        const folded = foldForMatching(prose);
+        if (SCOPE_SETTING_PROSE.test(folded) || APPEND_ONLY_TRIGGER.test(folded)) {
+          out.push({
+            file,
+            prose,
+            expression: holes[0].expression!.getText().slice(0, 80),
+          });
+        }
+      }
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return out;
+}
+
+export function unreconstructableSentences(
+  sources: string[],
+): UnreconstructableSentence[] {
+  return sources.flatMap((file) => unreconstructableIn(readSource(file), file));
 }

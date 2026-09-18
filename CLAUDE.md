@@ -27,6 +27,21 @@ restated here**. Follow it.
 
 ---
 
+## Design — the product contract
+
+[DESIGN.md](./DESIGN.md) is canonical for design decisions and is **not restated
+here**. Follow it. It is subordinate to ENGINEERING_STANDARDS.md; where they
+disagree, the standards win.
+
+It distinguishes **LAW** (durable design outcomes, always binding) from
+**CONTRACT** (the current mechanism satisfying a law, replaceable), **PILOT**
+(bounded experiments with a stated question) and **PRODUCT AUTHORITY REQUIRED**
+(undecided — propose, never implement). The supporting measurements live in
+`docs/reviews/product-wide-design-audit-2026-09.md`, which is **evidence and
+proposal, never authority**.
+
+---
+
 ## 1. The delivery sequence — verify the COMMITTED tree, not the working tree
 
 **"Typecheck passed" is a claim about your working tree, not about what you pushed.**
