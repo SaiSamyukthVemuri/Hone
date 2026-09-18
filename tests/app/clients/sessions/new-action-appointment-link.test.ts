@@ -144,7 +144,7 @@ describe("startSessionAction lineage + safety contract for appointment_id", () =
     // call. An arbitrary expression, a different function, or a value reaching
     // `studio` from anywhere else all still fail this.
     expect(SOURCE).toMatch(
-      /const\s*\{[^}]*studio[^}]*\}\s*=\s*await\s+(?:timed\(\s*"[^"]+",\s*\(\)\s*=>\s*)?getCurrentPractitionerWithStudio\(\)/,
+      /const\s*\{[^}]*studio[^}]*\}\s*=\s*await\s+(?:timed\(\s*"[^"]+",\s*\(\)\s*=>\s*getCurrentPractitionerWithStudio\(\)\s*,?\s*\)|getCurrentPractitionerWithStudio\(\))\s*;/,
     );
     // The wrapper, when present, must be the timing primitive and nothing else.
     if (/timed\(\s*"session-start\.identity"/.test(SOURCE)) {
