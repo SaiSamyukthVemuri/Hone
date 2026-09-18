@@ -322,7 +322,29 @@ const PATH_TO_GROUP = [
   { group: "intake", patterns: [/intake/i] },
   { group: "portal", patterns: [/portal/i, /pinned[-_]?note/i, /personal[-_]?note/i] },
   { group: "booking", patterns: [/booking/i, /appointments?/i, /reschedule/i, /\bbook\b/i, /treatment-plans/i] },
-  { group: "sessions", patterns: [/sessions?\//i, /charting/i, /electrolysis/i, /laser/i, /session[-_]?block/i, /probe/i, /observation[-_]?chip/i, /treatment[-_]?memory/i, /clinical[-_]?note/i] },
+  // UI-06. `appointment-prep-memory-card` is matched by the BOOKING rule's
+  // /appointments?/i purely because of its filename, and by nothing here — so a
+  // diff touching it selected `booking` + `smoke` and never ran
+  // ui06-dashboard-chrome.spec.ts, which lives in `sessions` and exists to
+  // prove that card. Registering a spec in a group is only half the job; the
+  // CHANGED PATH has to select that group. Same hole the OWNER-CAP note below
+  // records for the capacity page, and the third time this class has been
+  // caught in this stack.
+  //
+  // The pattern is ANCHORED TO THE CARD rather than a bare /prep[-_]?memory/i,
+  // following the OWNER-CAP precedent in this file. A loose pattern would also
+  // capture app/(app)/dashboard/prep-memory-actions.ts and
+  // lib/sessions/appointment-prep-memory.ts, and the first of those currently
+  // falls through to EXTENDED — so a loose rule would NARROW that file's
+  // coverage from everything to one group. Additive only: the card already
+  // selected `booking`, and now also selects `sessions`.
+  //
+  // Its sibling last-treatment-memory-card already reaches `sessions` via
+  // /treatment[-_]?memory/i. before-today-card still matches no rule and keeps
+  // its EXTENDED fail-safe; that is pre-existing behaviour for an
+  // unattributable path, and narrowing it would reduce coverage, so it is
+  // reported rather than changed here.
+  { group: "sessions", patterns: [/sessions?\//i, /charting/i, /electrolysis/i, /laser/i, /session[-_]?block/i, /probe/i, /observation[-_]?chip/i, /treatment[-_]?memory/i, /clinical[-_]?note/i, /appointment[-_]?prep[-_]?memory[-_]?card/i] },
   { group: "calendar", patterns: [/calendar/i, /\bservices?\b/i, /disinfectant/i] },
   // OWNER-CAP Slice 1. Registering the SPEC in the group above is only half the
   // job: selection maps CHANGED PATHS to groups, and the capacity page matched

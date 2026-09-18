@@ -2,6 +2,15 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 
+// Relative + @ts-expect-error, matching tests/ci/browser-selection.test.ts,
+// which is the repo's established convention for these .mjs utilities.
+//
+// Worth recording: vitest resolved the `@/` alias form happily and ran 15 green
+// tests, while `tsc` rejected it (TS7016). A passing test run is not evidence
+// the typecheck gate passes — two different resolvers, two different answers.
+// @ts-expect-error - .mjs utilities ship without type declarations
+import { selectBrowserGroups, specsForGroups } from "../../scripts/browser-groups.mjs";
+
 // UI-06 — systemic visual noise on the dashboard memory family.
 //
 // THE DESIGN PROBLEM, measured rather than asserted: these three cards each
@@ -208,5 +217,110 @@ describe("UI-06: measured against the real previous source", () => {
       expect(src, `${f} must not gain a transition`).not.toMatch(/\btransition-/);
       expect(src, `${f} must not gain an animation`).not.toMatch(/\banimate-/);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CI TARGETING. Registering a spec in a group is only half the job: the CHANGED
+// PATH has to select that group, or the spec never runs in a targeted lane.
+//
+// ui06-dashboard-chrome.spec.ts lives in `sessions` and exists to prove three
+// cards. Before this fix those three paths resolved THREE different ways:
+//
+//   appointment-prep-memory-card.tsx  -> booking + smoke   (filename matched
+//                                        /appointments?/i and nothing else)
+//   last-treatment-memory-card.tsx    -> sessions + smoke  (correct already)
+//   before-today-card.tsx             -> EXTENDED fallback (matches no rule)
+//
+// So the spec was unreachable from the very card it was written for. Third time
+// this class has been caught in this stack.
+//
+// These assertions call the REAL planner — selectBrowserGroups and
+// specsForGroups — not a re-implementation of the matching, because a
+// duplicated oracle agrees with a broken subject.
+// ---------------------------------------------------------------------------
+describe("UI-06: the planner actually selects this spec for its own subjects", () => {
+  const SPEC = "ui06-dashboard-chrome.spec.ts";
+
+  /** Does a diff touching these files run the UI-06 spec? */
+  const selection = (files: string[]) => {
+    const r = selectBrowserGroups(files);
+    const specs = specsForGroups(r.groups);
+    return {
+      groups: r.groups as string[],
+      extended: specs === null,
+      runsSpec: specs === null ? true : specs.includes(SPEC),
+    };
+  };
+
+  it("CASE 1 — a change to the prep card alone selects this spec, targeted", () => {
+    const s = selection(["components/appointment-prep-memory-card.tsx"]);
+    expect(s.extended, "must be TARGETED, not the extended fallback").toBe(false);
+    expect(s.groups, `groups were ${JSON.stringify(s.groups)}`).toContain("sessions");
+    expect(s.runsSpec).toBe(true);
+  });
+
+  it("CASE 2 — an unrelated component does not select it via THIS rule", () => {
+    // client-tags-card matches no PATH_TO_GROUP rule, so it takes the
+    // pre-existing EXTENDED fail-safe and runs everything. That is not this
+    // rule selecting it spuriously, and the distinction matters: the assertion
+    // is that the NEW pattern does not match unrelated files.
+    const s = selection(["components/client-tags-card.tsx"]);
+    expect(s.groups).toEqual(["__extended__"]);
+
+    // The pattern's specificity, proved on files that merely look similar.
+    const actions = selection(["app/(app)/dashboard/prep-memory-actions.ts"]);
+    expect(
+      actions.groups,
+      "a loose /prep-memory/ pattern would have NARROWED this file from extended to one group",
+    ).toEqual(["__extended__"]);
+  });
+
+  it("CASE 3 — the siblings this spec also proves still behave as before", () => {
+    const last = selection(["components/last-treatment-memory-card.tsx"]);
+    expect(last.extended).toBe(false);
+    expect(last.groups).toContain("sessions");
+    expect(last.runsSpec).toBe(true);
+
+    // before-today-card matches no rule and keeps its EXTENDED fail-safe. It is
+    // reported rather than changed: narrowing it to one group would REDUCE its
+    // coverage, which is a decision beyond this slice.
+    const before = selection(["components/before-today-card.tsx"]);
+    expect(before.groups).toEqual(["__extended__"]);
+    expect(before.runsSpec, "reached via the fail-safe, not via targeting").toBe(true);
+  });
+
+  it("CASE 4 — targeting is real, not the extended fallback in disguise", () => {
+    // If CASE 1 were passing only because everything runs, this would fail.
+    const s = selection(["components/appointment-prep-memory-card.tsx"]);
+    expect(s.groups).not.toContain("__extended__");
+    expect(s.extended).toBe(false);
+
+    // And docs-only still needs no browser at all, so the planner has not been
+    // coarsened into selecting something for everything.
+    const docs = selection(["docs/00_PRODUCT_OVERVIEW.md"]);
+    expect(docs.groups).toEqual([]);
+    expect(docs.runsSpec).toBe(false);
+  });
+
+  it("NEGATIVE CONTROL — the new pattern is what does the work", () => {
+    // A near-miss filename differing only in the segment the pattern matches:
+    // "memo" instead of "memory". It still hits the booking rule via
+    // /appointments?/i, exactly as the real card did BEFORE this fix, and must
+    // NOT reach `sessions` — which is precisely the broken state the P2
+    // described. Run through the real planner, so this cannot pass by agreeing
+    // with a copy of the matcher.
+    const nearMiss = selection(["components/appointment-prep-memo-card.tsx"]);
+    expect(nearMiss.groups).toContain("booking");
+    expect(
+      nearMiss.groups,
+      "without the new pattern the prep card reached booking only — the bug",
+    ).not.toContain("sessions");
+    expect(nearMiss.runsSpec, "and so the UI-06 spec would not run").toBe(false);
+
+    // The real card differs only by that segment and DOES reach sessions.
+    const real = selection(["components/appointment-prep-memory-card.tsx"]);
+    expect(real.groups).toContain("sessions");
+    expect(real.runsSpec).toBe(true);
   });
 });
