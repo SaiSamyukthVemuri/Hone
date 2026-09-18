@@ -34,17 +34,42 @@ describe("0199 position in the chain", () => {
     expect(versionsAbove(VERSION)).toEqual([]);
   });
 
-  it("is AUTHORED and PENDING — it is NOT applied to production", () => {
-    // The ordinary migration-first shape. 0198 keeps the hosted-head claim
-    // because it remains the applied head; this file claims only that it is
-    // the repository head and awaits its own apply authorization.
+  it("IS APPLIED to production, and is the CURRENT hosted head", () => {
+    // 0199 NOW OWNS THE EXACT HOSTED-HEAD CLAIM, handed off from 0198 when this
+    // migration was applied to production on 2026-09-18 under explicit
+    // per-change authorization, from the reviewed #716 head. That apply took
+    // the chain to PARITY: repo and hosted are both 0199, nothing pending.
     //
-    // Whoever applies 0199 moves the equality block: narrow 0198 to a floor
-    // the way 0197, 0196 and 0191 were narrowed, and let this file take it.
+    // An earlier revision of this block said 0198 kept the hosted-head claim
+    // "because this file is authored and NOT applied". That was true when it
+    // was written and stopped being true when the apply landed. 0198 was
+    // correspondingly narrowed to a floor, the way 0197, 0196 and 0191 were.
+    //
+    // Whoever applies 0200 moves this block: narrow 0199 to a floor the same
+    // way, and let the new head take equality. Re-asserting equality on an
+    // older file is the mechanical sweep CLAUDE.md forbids.
     const state = migrationState();
-    expect(state.pending_migrations).toEqual([VERSION]);
-    expect(state.hosted_migration_max).toBe("0198");
-    expect(state.repo_equals_hosted).toBe(false);
+    expect(state.hosted_migration_max).toBe(VERSION);
+    expect(state.pending_migrations).not.toContain(VERSION);
+    expect(state.pending_migrations).toEqual([]);
+    expect(state.repo_equals_hosted).toBe(true);
+  });
+
+  it("is recorded in the ledger's CURRENT block under its COMPLETE sha256, as APPLIED", () => {
+    // A truncated or mis-transcribed hash is not a record — the 0197 apply was
+    // refused once for exactly that. The equality claim and the current block
+    // move together, so this assertion moved off 0198 with it.
+    const ledger = readFileSync(path.join(ROOT, "docs/production/migration-ledger.md"), "utf8");
+    expect(ledger, "the ledger must carry 0199's COMPLETE sha256").toContain(
+      "9561024b06311526ea04e91b81a006abd8dd92c89296cb761887e34a6d04fca5",
+    );
+    expect(ledger, "the ledger's current block must record 0199 as APPLIED").toMatch(
+      // Anchored by SECTION, not by a character count: the match must sit between
+      // "## Current state" and the first "## Previous state", so a future apply
+      // that lengthens the block cannot silently slide this assertion out of it,
+      // and a stale record in a preserved section can never satisfy it.
+      /## Current state(?:(?!## Previous state)[\s\S])*?0199_reminder_sms_candidate_selection\.sql`? \| \*\*APPLIED\*\*/,
+    );
   });
 
   it("does not claim the next free number for anything", () => {

@@ -14,7 +14,99 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-09-16, post-0198 apply; `0198` APPLIED)
+## Current state (verified 2026-09-18, post-0199 apply; `0199` APPLIED)
+
+> **SCHEMA CHANGE, NOT PRIVILEGE ONLY.** This apply created two `IMMUTABLE`
+> normalisers, two `STABLE` `SECURITY DEFINER` selection functions, one
+> `security_invoker` view, and **one `STORED` generated column on
+> `public.clients`, which rewrote that table under `ACCESS EXCLUSIVE`**.
+> **No table, index, trigger, policy or RLS change, and no DML backfill** —
+> PostgreSQL populated the generated column itself as part of the `ADD COLUMN`.
+> **PR #716 was NOT merged and no application code was deployed.** No customer
+> data was created, modified or deleted; **no provider was contacted and no
+> message was sent**; `studio_sms_senders` remains empty and no sender was
+> provisioned.
+
+| Field | Value |
+|---|---|
+| **Hosted (production) migration max** | **0199** (`0199_reminder_sms_candidate_selection.sql`) |
+| **Repo migration max** | **0199** — `0199_reminder_sms_candidate_selection.sql` (WAIT S3), derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. This row states the BRANCH-derived position; the hosted row above carries the production claim, and the Pending row below states how the two stand. |
+| **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
+| **Pending migrations** | **none** — `0199` was the entire pending set, and it was applied on **2026-09-18**, so the repository no longer sits above hosted. Repository and hosted are at parity, which is the PARITY shape rather than MIGRATION-FIRST PENDING. `0192`–`0198` remain applied and every apply record below is untouched. This row remains the ledger's own exemption: the current block is the single place permitted to state that relationship. |
+| **Next free migration** | Next free number is **0200**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. **`0199` IS NO LONGER FREE** — it is allocated to WAIT S3 candidate selection, authored on this branch and now applied to production. `0200` is **not claimed** by this lane and **not allocated**: availability is not allocation, and it must be re-censused immediately before anyone authors against it. |
+| **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project, confirmed from the applying worktree's `supabase/.temp/project-ref` before every hosted command and distinct from **Hone Staging** (`ndcqadeirszuzmytvobk`), which was never contacted. |
+| **Reviewed release head** | `0b6e5f6f47e67fec0bb895b05064cdd7b73c9a3f` (PR #716) — the exact authorized head, tree clean, applied from a throwaway worktree checked out at that commit. **A draft and unmerged at the moment of the apply.** The apply was authorized at this head and performed from it; **the merge did not cause the apply, and the apply does not merge the PR.** |
+| **Production application SHA at apply time** | `b1d4badba085ecfee36e81ee9719d26fa0cc4ddc` — the runtime pin, unchanged by this apply. It carries WAIT S3 **Part 1** (the resolver, PR #715) and **not** Part 2; the routing rewire is still unmerged. |
+| **CLI** | `supabase` **2.102.0**, the pinned version — a grants-parity invariant, not a convenience. |
+| **Apply timestamp** | ⚠️ **NO SERVER-GENERATED APPLY TIMESTAMP WAS CAPTURED**, so `hosted_applied_at` stays `null`. **An operator-observed client-side window IS asserted**: the single `supabase db push --linked` invocation was bracketed with captured clock readings, `2026-09-18T11:19:12.148Z` – `2026-09-18T11:19:35.142Z`, **22.994 s**, read from the apply host's clock. **That window is not a server apply time and is never represented as one.** Same limitation as `0187`–`0191`, `0197` and `0198`. |
+| **Verified applied** | **2026-09-18** — read back by read-only query immediately after the apply: `max(version)` **0199**, **198** history rows, `0199` present **exactly once**, **nothing above 0199**, **zero** duplicate versions. That is an observation of STATE, not of an apply instant. |
+
+| Migration | Status | sha256 (gated before the write) |
+|---|---|---|
+| `0199_reminder_sms_candidate_selection.sql` | **APPLIED** | `9561024b06311526ea04e91b81a006abd8dd92c89296cb761887e34a6d04fca5` |
+
+The hash was recomputed from the file at the authorized head and required to match
+byte-for-byte before the write, and the dry run was required to name `0199` and
+nothing else. **No `--include-all`** — exactly one migration was pending and the
+CLI named exactly one.
+
+### What was applied
+
+One transaction, opening its own `begin;` with `set local lock_timeout = '5s'`
+and `set local statement_timeout = '60s'`:
+
+- `public.sms_trimmable_whitespace()` and `public.sms_normalized_phone(text)` —
+  both `IMMUTABLE`, `parallel safe`, `search_path` pinned to `pg_catalog, pg_temp`.
+- `alter table public.clients add column sms_phone text generated always as
+  (public.sms_normalized_phone(phone)) stored;` — **a full table rewrite under
+  `ACCESS EXCLUSIVE`**.
+- `public.reminder_sms_eligible_appointments` — a `security_invoker` view,
+  revoked from every role by name.
+- `public.reminder_sms_candidates(...)` and
+  `public.reminder_sms_unroutable_studios(...)` — `STABLE`, `SECURITY DEFINER`,
+  `search_path` pinned, **`service_role` only**.
+
+No DML backfill ran; PostgreSQL populated `sms_phone` during the `ADD COLUMN`.
+
+### Why it was applied
+
+A routing refusal is deliberately free — nothing sent, no attempt claimed — so an
+unroutable row's eligibility is unchanged and it re-occupies the same page slot on
+every later pass. A fixed page was therefore filled forever by the same unroutable
+prefix. The predicate "this appointment's studio can send" is a join, and the join
+now lives in the database, so the application asks one bounded question and
+receives one bounded page.
+
+### Post-apply verification — read-only
+
+| Check | Result |
+|---|---|
+| CLI outcome | exit **0**, exactly one migration named, no ambiguity and **no retry** |
+| History | 197 → **198** rows, exactly **+1**, `0199` exactly once, **0** duplicates, nothing above |
+| **Generated column** | `sms_phone` present, `attgenerated` = **`s`** (STORED), type `text`, expression **`sms_normalized_phone(phone)`** |
+| **No data mutated** | `clients` **135** rows before and after; **81** rows with a phone before and after |
+| **Derivation correct** | **81** of 81 phone-bearing rows normalised to a sendable destination; **0** disagreements against `sms_normalized_phone(phone)`; **0** rows with a phone but no sendable destination |
+| **Normalisation behaviour** | `'+14155550123'` → `+14155550123`; `'(415) 555-0123'` → `+14155550123`; `'(415) 555'`, `'abc'`, `'   '` and `null` → **NULL** |
+| **Function posture** | helpers **IMMUTABLE**, selection functions **STABLE** + `SECURITY DEFINER`; all four pin `search_path=pg_catalog, pg_temp` |
+| **Execute grants** | `reminder_sms_candidates` and `reminder_sms_unroutable_studios`: `anon` **false**, `authenticated` **false**, `service_role` **true**. Production's default ACL grants EXECUTE to all three at create time, so all three were revoked **by name** — the `0129`/`0164` trap, closed. The two pure normalisers are deliberately executable by all three; neither reads a table. |
+| **View posture** | `relkind` **`v`**, `security_invoker=true`, `SELECT` **false** for `anon`, `authenticated` **and** `service_role` |
+| **Table integrity after rewrite** | RLS still **enabled**, **3** policies, **8** constraints, **33** inbound FKs, **5** indexes all **valid**; `authenticated` retains `SELECT`/`INSERT`/`UPDATE`. Heap compacted 144 kB → **120 kB**, as a rewrite does. |
+| **Schema delta** | public functions 484 → **488** (exactly the four created); public tables **96**, unchanged — **no table was created** |
+| **No lock left behind** | **0** exclusive locks on `clients`, **0** transactions older than 5 s, **0** idle-in-transaction |
+| **No message sent** | **0** reminder SMS in the apply window; lifetime totals **129** (24h) and **126** (2h) unchanged; `studio_sms_senders` **0 rows** — no sender provisioned, no provider contacted |
+
+### What this apply does NOT mean
+
+- **PR #716 is applied, not merged.** The migration is on production; the branch
+  was a draft at the moment of the apply. **The merge did not cause the apply.**
+- **No application was deployed by the apply.** The runtime pin stayed
+  `b1d4badb`, which carries WAIT S3 Part 1 only.
+- **SMS routing is not live.** `studio_sms_senders` was measured at **0 rows**
+  on **2026-09-18**, so on that evidence Part 2 cannot send until it merges *and*
+  a sender is provisioned. Provisioning is a separate, unauthorised gate.
+
+
+## Previous state (verified 2026-09-16, post-0198 apply; `0198` APPLIED)
 
 > **PRIVILEGE ONLY.** This apply ran ONE statement — a single **column** grant —
 > and created nothing. **PR #713 was NOT merged and no application code was
