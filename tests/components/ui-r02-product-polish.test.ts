@@ -96,6 +96,75 @@ describe("UI-R02 Card: one surface", () => {
   });
 });
 
+describe("UI-R02 PageHeader: heading DEPTH is a property of the page, not the primitive", () => {
+  // THE REGRESSION THIS ENCODES. PageHeader hard-coded an h1. settings/layout.tsx
+  // renders <h1>Settings</h1> for EVERY settings route, so /settings/data shipped
+  // with two top-level headings and "Your data" became a peer of "Settings" in
+  // heading navigation — and its section cards were demoted h3 -> h2 on the same
+  // wrong premise. Raised by exact-head review; these keep it from returning.
+
+  it("defaults to h1 — /notifications has no ancestor heading and relies on it", () => {
+    const html = render(createElement(PageHeader, { title: "Notifications" }));
+    expect(html).toMatch(/<h1[^>]*>Notifications<\/h1>/);
+  });
+
+  it("renders the level it is given", () => {
+    const html = render(createElement(PageHeader, { title: "Your data", headingLevel: 2 }));
+    expect(html).toMatch(/<h2[^>]*>Your data<\/h2>/);
+    expect(html).not.toMatch(/<h1/);
+  });
+
+  it("the level changes the OUTLINE and not the typography", () => {
+    const asH1 = render(createElement(PageHeader, { title: "T" }));
+    const asH2 = render(createElement(PageHeader, { title: "T", headingLevel: 2 }));
+    const cls = (html: string) => /class="([^"]*)"[^>]*>T</.exec(html)?.[1];
+    expect(cls(asH2)).toBe(cls(asH1));
+    expect(cls(asH1)).toContain("text-3xl");
+  });
+
+  it("the settings layout supplies the h1 — the premise the page depends on", () => {
+    // Pinned so that if the layout's h1 ever moves, the guard below is revisited
+    // rather than silently becoming wrong in the other direction.
+    expect(code("app/(app)/settings/layout.tsx")).toMatch(/<h1[^>]*>\s*Settings\s*<\/h1>/);
+  });
+
+  it("/settings/data declares its real depth, and its sections sit below it", () => {
+    const src = code("app/(app)/settings/data/page.tsx");
+    expect(src).toContain("headingLevel={2}");
+    // h1 Settings (layout) -> h2 Your data -> h3 sections.
+    expect(src).toMatch(/<h3[^>]*>\{title\}<\/h3>/);
+    expect(src).not.toMatch(/<h2[^>]*>\{title\}<\/h2>/);
+  });
+
+  it("/notifications PageHeader takes the default h1 — nothing above it supplies one", () => {
+    const src = code("app/(app)/notifications/page.tsx");
+    expect(src).toMatch(/<PageHeader\s+title="Notifications"/);
+    expect(code("app/(app)/layout.tsx")).not.toMatch(/<h1/);
+  });
+
+  it("the notifications EMPTY STATE actually adopts the heading API", () => {
+    // An opt-in API that no call site opts into leaves the gap it was added
+    // for wide open. This is the only production EmptyState, so if it renders
+    // a <p> then heading navigation still cannot reach the empty-state title
+    // and the primitive change bought nothing. Raised at exact-head review.
+    //
+    // h2 is the right depth here, not a guess: PageHeader supplies the h1, and
+    // when this branch renders `overdueAlerts` is empty so the "Operational
+    // alerts" h2 is absent — matching the depth SectionLabel as="h2" already
+    // establishes on this page.
+    const src = code("app/(app)/notifications/page.tsx");
+    expect(src).toMatch(/headingLevel=\{2\}/);
+    const html = render(
+      createElement(EmptyState, {
+        title: "No notifications yet.",
+        description: "d",
+        headingLevel: 2,
+      }),
+    );
+    expect(html).toMatch(/<h2[^>]*>No notifications yet\.<\/h2>/);
+  });
+});
+
 describe("UI-R02 EmptyState: an empty state must say what fills it", () => {
   it("renders both halves", () => {
     const html = render(
@@ -112,6 +181,78 @@ describe("UI-R02 EmptyState: an empty state must say what fills it", () => {
     const src = read("components/ui/empty-state.tsx");
     expect(src).toMatch(/description: ReactNode;/);
     expect(src).not.toMatch(/description\?: ReactNode;/);
+  });
+
+  // ── headingLevel: the title can join the document outline ──────────────
+  //
+  // The gap this closes was INTERNAL to UI-R02, not imported from Astryx:
+  // PageHeader already renders a real <h1>, while EmptyState rendered its
+  // title as a <p>, so an empty state was invisible to heading navigation on a
+  // page whose sibling primitive was not.
+
+  it("headingLevel=2 renders a real h2", () => {
+    const html = render(
+      createElement(EmptyState, { title: "Nothing here", description: "d", headingLevel: 2 }),
+    );
+    expect(html).toMatch(/<h2[^>]*>Nothing here<\/h2>/);
+  });
+
+  it("headingLevel=3 renders a real h3", () => {
+    const html = render(
+      createElement(EmptyState, { title: "Nothing here", description: "d", headingLevel: 3 }),
+    );
+    expect(html).toMatch(/<h3[^>]*>Nothing here<\/h3>/);
+  });
+
+  it("OMITTING headingLevel preserves the non-heading <p> exactly", () => {
+    // The compatibility half: adding the prop must not restructure the outline
+    // of a call site that never opted in.
+    const html = render(createElement(EmptyState, { title: "Nothing here", description: "d" }));
+    expect(html).toMatch(/<p[^>]*>Nothing here<\/p>/);
+    expect(html).not.toMatch(/<h[1-6]/);
+  });
+
+  it("the level changes the OUTLINE and not the typography", () => {
+    // A caller opting into semantics must not be handed a visual change. Both
+    // forms carry the identical class string.
+    const asP = render(createElement(EmptyState, { title: "T", description: "d" }));
+    const asH2 = render(createElement(EmptyState, { title: "T", description: "d", headingLevel: 2 }));
+    const cls = (html: string) => /class="([^"]*)"[^>]*>T</.exec(html)?.[1];
+    expect(cls(asH2)).toBe(cls(asP));
+    expect(cls(asP)).toContain("text-sm font-medium text-fg");
+  });
+
+  it("h1 and malformed levels are unrepresentable — the TYPE is the guard", () => {
+    // Not a runtime check: PageHeader owns the page's single h1, so an empty
+    // state must not be able to claim one. Pinning the union keeps that true.
+    const src = read("components/ui/empty-state.tsx");
+    expect(src).toMatch(/headingLevel\?: 2 \| 3 \| 4 \| 5 \| 6;/);
+    expect(src).not.toMatch(/headingLevel\?: number/);
+  });
+
+  it("does NOT announce itself — no default live region", () => {
+    // An empty state is usually a resting state, not a mid-session change.
+    // role="status" would give every caller announcement semantics none opted
+    // into; a surface that needs one must prove that requirement itself.
+    const html = render(
+      createElement(EmptyState, { title: "a", description: "b", headingLevel: 2 }),
+    );
+    expect(html).not.toContain('role="status"');
+    expect(html).not.toContain("aria-live");
+  });
+
+  it("stays server-safe and dependency-free after the change", () => {
+    const src = code("components/ui/empty-state.tsx");
+    expect(src).not.toMatch(/^\s*["']use client["']/m);
+    for (const hook of ["useState", "useEffect", "useRef", "useTransition"]) {
+      expect(src).not.toContain(hook);
+    }
+    expect(src).not.toMatch(/window\.|document\.|navigator\./);
+    // Only React types and Hone's own cx.
+    const imports = src.match(/^import .*$/gm) ?? [];
+    expect(imports).toHaveLength(2);
+    expect(imports.join(" ")).toContain('from "react"');
+    expect(imports.join(" ")).toContain('from "./control-base"');
   });
 
   it("reads as an absence, and carries no hand-written dark: pair", () => {
@@ -167,11 +308,17 @@ describe("UI-R02: the inline-hex border that no dark: variant could reach", () =
     expect(data).toContain("text-fg-muted");
   });
 
-  it("the card heading no longer skips a level below PageHeader's h1", () => {
-    // PageHeader is the page's only h1; these sections are its top-level
-    // divisions, so h3 skipped h2 outright.
-    expect(data).toMatch(/<h2 className="text-lg font-medium text-fg">/);
-    expect(data).not.toContain("<h3");
+  it("the card heading sits BELOW the page title, which sits below the layout's h1", () => {
+    // THIS TEST PREVIOUSLY ENFORCED THE DEFECT, which is how the defect shipped.
+    // It asserted <h2> on the premise that "PageHeader is the page's only h1" —
+    // but settings/layout.tsx renders <h1>Settings</h1> for every settings
+    // route, so the page title is an h2 and these sections are h3. Asserting a
+    // SPELLING ("h2 is present") could not tell a correct hierarchy from a
+    // broken one; asserting the CHAIN can.
+    expect(code("app/(app)/settings/layout.tsx")).toMatch(/<h1[^>]*>\s*Settings\s*<\/h1>/);
+    expect(data).toContain("headingLevel={2}");
+    expect(data).toMatch(/<h3 className="text-lg font-medium text-fg">/);
+    expect(data).not.toMatch(/<h2[^>]*>\{title\}<\/h2>/);
   });
 
   it("Card accepts the anchor id Global Search resolves controls to", () => {
