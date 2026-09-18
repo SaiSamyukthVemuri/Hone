@@ -41,6 +41,10 @@ export const BROWSER_GROUPS = {
       "custom-area-commit.spec.ts",
       "galvanic-intensity-retirement.spec.ts",
       "multi-area-charting.spec.ts",
+      // SESSION-START-01 slice 2A measurement rig. Skips itself unless
+      // HONE_PERF_TIMING=1, so it adds no runtime to the lane — but every spec
+      // on disk must map to a group, and this one drives a sessions journey.
+      "session-start-01-latency-measure.spec.ts",
       "multi-area-charting-release.spec.ts",
       "observation-chips-loading.spec.ts",
       "observation-chips-save-cycle.spec.ts",

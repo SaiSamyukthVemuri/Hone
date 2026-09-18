@@ -1,4 +1,5 @@
 import { sendPostcareToClient } from "@/lib/email/send-appointment";
+import { timed } from "@/lib/observability/perf-timing";
 import type { Studio } from "@/lib/types/database";
 
 // Postcare auto-send (migration 0110). When a studio opts into
@@ -197,20 +198,27 @@ export async function autoSendPostcareOnComplete(
     // Forwarded byte-for-byte; re-deriving it would break the token.
     const claimToken = claim.claimed_at;
 
-    const result = await send({
-      clientName: client?.name ?? "",
-      clientEmail: client!.email as string,
-      studio: studio as unknown as Studio,
-      practitionerName: performer?.display_name ?? null,
-      serviceName: service?.name ?? null,
-      startsAt: appt.starts_at ? new Date(appt.starts_at as string) : null,
-      aftercareText: (studio.postcare_aftercare_text as string | null) ?? null,
-      warningSignsText: (studio.postcare_warning_signs_text as string | null) ?? null,
-      productRecommendationsText:
-        (studio.postcare_product_recommendations_text as string | null) ?? null,
-      reviewUrl: (studio.postcare_review_url as string | null) ?? null,
-      reviewPromptText: (studio.postcare_review_prompt_text as string | null) ?? null,
-    });
+    // SESSION-START-01. This is the OUTBOUND PROVIDER CALL, and on the
+    // linked-appointment path the practitioner is waiting behind it: the
+    // session-start action awaits this whole helper before redirect(). Timed
+    // separately from the enclosing mark-complete so the two are not conflated.
+    const result = await timed("session-start.postcare", () =>
+      send({
+        clientName: client?.name ?? "",
+        clientEmail: client!.email as string,
+        studio: studio as unknown as Studio,
+        practitionerName: performer?.display_name ?? null,
+        serviceName: service?.name ?? null,
+        startsAt: appt.starts_at ? new Date(appt.starts_at as string) : null,
+        aftercareText: (studio.postcare_aftercare_text as string | null) ?? null,
+        warningSignsText: (studio.postcare_warning_signs_text as string | null) ?? null,
+        productRecommendationsText:
+          (studio.postcare_product_recommendations_text as string | null) ?? null,
+        reviewUrl: (studio.postcare_review_url as string | null) ?? null,
+        reviewPromptText:
+          (studio.postcare_review_prompt_text as string | null) ?? null,
+      }),
+    );
 
     if (!result.ok) {
       // Record the failure honestly (safe generic last_error, never raw

@@ -109,7 +109,11 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     // has a ~6 min target against a 15 min ceiling, and this adds one spec with
     // two short cases, so the margin is not the concern here — the visibility
     // is.
-    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(36);
+    // Now 37: SESSION-START-01 slice 2A's measurement rig joined `sessions`
+    // because it drives that journey. RECORDED AS A DECISION per the note above,
+    // with the cost explicitly ZERO: the spec skips itself unless
+    // HONE_PERF_TIMING=1, so the lane gains a selection entry and no runtime.
+    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(37);
   });
 
   it("ONE unattributable app file forces extended, even when another file attributes a group", () => {
