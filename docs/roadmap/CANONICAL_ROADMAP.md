@@ -2173,7 +2173,21 @@ This is the sole maintained product-priority list. Sam’s Work Plan v3 ordering
 | 6 | Visual Treatment Memory | VISUAL-01 / 02 / 03 (§14.9) | Post-WAIT product experiment; no vgpu dependency before VISUAL-02 proof (§21). |
 | 7 | Business decisions still open | Paid consults; consult value-add (§17.7) | Chloe decides; not build items. |
 | 8 | Open product decision | WAIT-INTAKE-01 interest/readiness level (§0.7, §14.6.1) | Decide before the richer WAIT intake binds: add as a structured select or explicitly drop. |
-| 9 | **Product-wide design programme** | **UX-01 Quick Wins — AUTHORIZED**; UX-02…UX-11 — **PROPOSED / NOT SCHEDULED** | `ACCEPTED_PRIORITY` for **UX-01 only**, to proceed once its prebuild is reconciled against current production. UX-02…UX-11 are `PROPOSED_DESIGN` and carry **no implementation authority**: **appearing in the sequence never authorizes a stage** — each needs its own acceptance. MOTION-01 stays a **PILOT, not adopted**, and keeps its sequencing constraint. Contract and open questions: `DESIGN.md`. No dates and no PR numbers are allocated here; the row-1 production-slot rule below applies unchanged. |
+
+**Product-wide design programme — authorized, and deliberately UNRANKED.**
+`ACCEPTED_PRIORITY`: **UX-01 Quick Wins is AUTHORIZED**, to proceed once its
+prebuild is reconciled against current production. It is recorded outside the
+numbered rows **on purpose** — the numbered list is ordered and rows 2–8 carry
+explicit `THEN`/`After` sequencing, so a row number would assert a rank against
+those items that **has not been decided**. UX-01's position relative to rows 2–8
+is **unordered**; only the row-1 rule below applies to it.
+
+UX-02 … UX-11 are `PROPOSED_DESIGN`: **PROPOSED / NOT SCHEDULED**, carrying **no
+implementation authority**. **Appearing in the sequence never authorizes a
+stage** — each needs its own acceptance recorded here. MOTION-01 remains a
+**PILOT, not adopted**, and keeps its sequencing constraint. The contract and the
+open design questions live in `DESIGN.md` (§0.4). No dates and no implementation
+PR numbers are allocated by this entry.
 
 **Rules that hold across the list. **
 

@@ -190,6 +190,22 @@ The audit records two further motion *candidates*. They are **not** pilots and
 
 ---
 
+## Authorized work
+
+**UX-01 Quick Wins is AUTHORIZED**, to proceed once its prebuild is reconciled
+against current production. Its home is the canonical roadmap §23.6; this is a
+pointer, not a second register.
+
+It is stated **here rather than below** because the next section is defined as
+*not decided* — recording a decided item inside it would tell an agent both that
+UX-01 may proceed and that it may not.
+
+Nothing else in the UX programme is authorized. **UX-02 … UX-11 are PROPOSED and
+NOT SCHEDULED**, and MOTION-01 remains a **PILOT, not adopted**, with its
+sequencing constraint intact.
+
+---
+
 ## `[PRODUCT AUTHORITY REQUIRED]` — open, and not an agent's call
 
 None of these is decided. None may be smuggled into a polish PR.
@@ -207,16 +223,12 @@ None of these is decided. None may be smuggled into a polish PR.
 5. Does the client-profile heading scale change?
 6. Are the inert `dark:` utilities retired? Mechanically safe, but it forecloses
    the class-based theme the token layer was built to enable.
-7. **Is the rest of the UX-02 … UX-11 programme adopted, and in what order?**
-   **UX-01 Quick Wins is AUTHORIZED** (recorded in the canonical roadmap §23.6,
-   to proceed once its prebuild is reconciled against current production).
-   **UX-02 … UX-11 remain PROPOSED and NOT SCHEDULED**, and carry no
-   implementation authority.
-
-   **Appearing in this sequence never authorizes a stage.** A later slice does
-   not become startable because the one before it shipped; each needs its own
-   acceptance, recorded in the roadmap. Adoption belongs there, not in a review
-   document and not here.
+7. **Is any of UX-02 … UX-11 adopted, and in what order?** They remain
+   **PROPOSED and NOT SCHEDULED**, carrying no implementation authority.
+   **Appearing in the sequence never authorizes a stage** — a later slice does not
+   become startable because the one before it shipped. Adoption belongs in the
+   canonical roadmap, not in a review document and not here. *(UX-01 is **not**
+   part of this question — it is authorized; see "Authorized work" above.)*
 
    | Slice | Family |
    |---|---|
