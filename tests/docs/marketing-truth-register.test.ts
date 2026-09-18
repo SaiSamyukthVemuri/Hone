@@ -132,6 +132,15 @@ describe("the scan covers what a visitor actually reads", () => {
     expect(SOURCES.length).toBeGreaterThan(publicRouteFiles().length);
   });
 
+  it("scans the layouts Next.js applies by convention, not by import", () => {
+    // `app/layout.tsx` renders around every marketing page and nothing in a
+    // route file mentions it, so following imports from `page.tsx` never
+    // reached it. A prohibited claim added there would have shipped on all
+    // twelve routes with this guard green - the same "copy the scan never
+    // opened" failure as the hand-kept list, through a different door.
+    expect(SOURCES).toContain("app/layout.tsx");
+  });
+
   it("reads copy authored in a shared component", () => {
     // A live string that exists only in SiteFooter. If this disappears the
     // derivation has silently stopped reaching components.
@@ -805,15 +814,20 @@ describe("negative controls: the guard bites", () => {
     );
     expect(cited).toContain("package.json");
 
-    const deleted = ".env.local.example.gone";
-    expect(existsSync(join(REPO_ROOT, deleted))).toBe(false);
-    const afterDeletion = citedEvidenceFiles(
-      REGISTER.replace("`.env.local.example`", `\`${deleted}\``),
-    );
-    expect(
-      afterDeletion,
-      "a cited dotfile that production deleted fell out of the watch set, so its deletion could never be reported",
-    ).toContain(deleted);
+    // Both a multi-component name and a plain one-component dotfile. The first
+    // shape regex consumed the leading dot and then REQUIRED another component,
+    // so `.env`, `.npmrc` and `.gitignore` failed it - and a deleted one fell
+    // out of the watch set exactly as before.
+    for (const deleted of [".env.local.example.gone", ".npmrc", ".gitignore-gone"]) {
+      expect(existsSync(join(REPO_ROOT, deleted))).toBe(false);
+      const afterDeletion = citedEvidenceFiles(
+        REGISTER.replace("`.env.local.example`", `\`${deleted}\``),
+      );
+      expect(
+        afterDeletion,
+        `${deleted}: a cited dotfile that production deleted fell out of the watch set, so its deletion could never be reported`,
+      ).toContain(deleted);
+    }
   });
 
   it("pairs prose with a hole across inline markup, and through a template", () => {
