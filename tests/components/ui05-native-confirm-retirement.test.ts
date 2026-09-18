@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { execSync } from "node:child_process";
+import ts from "typescript";
 
 // UI-05 — every remaining native confirm() dialog, retired.
 //
@@ -46,23 +47,94 @@ const TAGS = code("components/client-tags-card.tsx");
 // nothing else for it to call.
 // ---------------------------------------------------------------------------
 
-/** A file declaring its own `confirm` shadows the global; bare calls there are local. */
-const DECLARES_OWN = /(?:function\s+confirm\s*\(|(?:const|let|var)\s+confirm\s*=)/;
+const GLOBAL_RECEIVERS = new Set(["window", "globalThis", "self"]);
 
-const QUALIFIED: Array<[string, RegExp]> = [
-  ["window.confirm", /\bwindow\s*\.\s*confirm\s*\(/],
-  ["globalThis.confirm", /\bglobalThis\s*\.\s*confirm\s*\(/],
-  ["self.confirm", /\bself\s*\.\s*confirm\s*\(/],
-];
+/**
+ * THE matcher — now LEXICAL, not textual. Returns the native-confirm forms in
+ * one file's source.
+ *
+ * WHY THIS IS AN AST WALK AND NOT A PATTERN. The previous matcher exempted any
+ * file that declared its own `confirm` ANYWHERE, wholesale. Codex showed that a
+ * single unrelated binding in one scope therefore silenced a genuinely global
+ * call in another:
+ *
+ *   function helper() { const confirm = local; confirm(); }
+ *   function remove()  { confirm("Remove?"); }   // <- native, and MISSED
+ *
+ * The blanket exemption existed because a pattern cannot tell a call from a
+ * declaration: `function confirm(` matches a bare-call regex, so without the
+ * exemption every shadowing file flagged itself. An AST has no such problem —
+ * a FunctionDeclaration is not a CallExpression — so the exemption is no longer
+ * needed at all, and the gap it created goes with it.
+ *
+ * Resolution walks ENCLOSING scopes only: declarations in a sibling function do
+ * not shadow. That is what makes the mixed-scope case above resolve to the
+ * global and be reported.
+ */
+function nativeConfirmForms(src: string, fileName = "subject.tsx"): string[] {
+  const sf = ts.createSourceFile(fileName, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const found = new Set<string>();
 
-/** Excludes a preceding word char, `.` or `$`, so onConfirm/handleConfirm/dialog.confirm are not hits. */
-const BARE = /(?<![\w.$])confirm\s*\(/;
+  const bindsConfirm = (node: ts.Node): boolean => {
+    for (let n: ts.Node | undefined = node.parent; n; n = n.parent) {
+      let hit = false;
+      const declaredIn = (d: ts.Statement) => {
+        if (ts.isVariableStatement(d)) {
+          for (const v of d.declarationList.declarations)
+            if (ts.isIdentifier(v.name) && v.name.text === "confirm") hit = true;
+        } else if (
+          (ts.isFunctionDeclaration(d) || ts.isClassDeclaration(d)) &&
+          d.name?.text === "confirm"
+        ) {
+          hit = true;
+        } else if (ts.isImportDeclaration(d)) {
+          const clause = d.importClause;
+          if (clause?.name?.text === "confirm") hit = true;
+          const bindings = clause?.namedBindings;
+          if (bindings && ts.isNamedImports(bindings))
+            for (const el of bindings.elements) if (el.name.text === "confirm") hit = true;
+        }
+      };
+      if (ts.isSourceFile(n) || ts.isBlock(n) || ts.isModuleBlock(n)) n.statements.forEach(declaredIn);
+      if (ts.isFunctionLike(n)) {
+        for (const param of n.parameters ?? [])
+          if (ts.isIdentifier(param.name) && param.name.text === "confirm") hit = true;
+        if (n.name && ts.isIdentifier(n.name) && n.name.text === "confirm") hit = true;
+      }
+      if (hit) return true;
+    }
+    return false;
+  };
 
-/** THE matcher. Returns the forms found in one file's comment-stripped source. */
-function nativeConfirmForms(src: string): string[] {
-  const found = QUALIFIED.filter(([, re]) => re.test(src)).map(([n]) => n);
-  if (!DECLARES_OWN.test(src) && BARE.test(src)) found.push("bare confirm()");
-  return found;
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node)) {
+      const callee = node.expression;
+      if (ts.isIdentifier(callee) && callee.text === "confirm" && !bindsConfirm(node)) {
+        found.add("bare confirm()");
+      }
+      if (
+        ts.isPropertyAccessExpression(callee) &&
+        callee.name.text === "confirm" &&
+        ts.isIdentifier(callee.expression) &&
+        GLOBAL_RECEIVERS.has(callee.expression.text)
+      ) {
+        found.add(`${callee.expression.text}.confirm`);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return [...found];
+}
+
+/**
+ * The RETIRED file-wide rule, kept ONLY so a control can show the new matcher
+ * catches what it missed. Never used by the sweep.
+ */
+function fileWideExemptionForms(src: string): string[] {
+  const declaresOwn = /(?:function\s+confirm\s*\(|(?:const|let|var)\s+confirm\s*=)/;
+  const bare = /(?<![\w.$])confirm\s*\(/;
+  return !declaresOwn.test(src) && bare.test(src) ? ["bare confirm()"] : [];
 }
 
 /** Every .ts/.tsx under app/ and components/, from git. */
@@ -117,13 +189,46 @@ describe("UI-05: no native confirm survives anywhere in the app", () => {
     expect(nativeConfirmForms("handleConfirm()")).toEqual([]);
     expect(nativeConfirmForms("dialog.confirm()")).toEqual([]);
 
-    // Shadowing: exempt from the bare check, and the exemption is load-bearing
-    // because the bare pattern WOULD otherwise match these call sites.
-    const shadowed = 'function confirm() { run(); }\nonClick={() => confirm()}';
+    // Shadowing, resolved lexically rather than exempted wholesale.
+    const shadowed = 'function confirm() { run(); }\nconst onClick = () => confirm();';
     expect(nativeConfirmForms(shadowed)).toEqual([]);
-    expect(BARE.test(shadowed), "why the exemption exists").toBe(true);
-    // ...but a QUALIFIED call in such a file is still unambiguous and caught.
+    // A declaration is not a call, so the bare form no longer needs an exemption.
+    expect(nativeConfirmForms("function confirm() { run(); }")).toEqual([]);
+    // ...and a QUALIFIED call in such a file is still unambiguous and caught.
     expect(nativeConfirmForms(`${shadowed}\nwindow.confirm("x")`)).toContain("window.confirm");
+
+    // Shadowing binds in every form a scope can introduce it.
+    expect(nativeConfirmForms("function outer(){ function confirm(){ run(); } confirm(); }")).toEqual([]);
+    expect(nativeConfirmForms("function f(confirm){ confirm(); }")).toEqual([]);
+    expect(nativeConfirmForms('import { confirm } from "./x";\nconfirm();')).toEqual([]);
+  });
+
+  it("MIXED local and global scopes — a sibling binding does not silence a native call", () => {
+    // Codex's finding, as an executable control. An unrelated `confirm` binding
+    // in one function must not exempt a genuinely global call in another.
+    const mixed =
+      'function helper() { const confirm = local; confirm(); }\n' +
+      'function remove() { confirm("Remove?"); }';
+    expect(nativeConfirmForms(mixed)).toContain("bare confirm()");
+
+    // The same call with NO binding anywhere is also caught — so the control
+    // above is about scope, not about the call being detectable at all.
+    expect(nativeConfirmForms('function remove() { confirm("Remove?"); }')).toContain(
+      "bare confirm()",
+    );
+  });
+
+  it("THE MIXED-SCOPE CONTROL BITES — the retired file-wide rule fails it", () => {
+    // Without this, the test above could pass against a matcher that never had
+    // the defect, and would prove nothing about the repair. The retired rule is
+    // run on the same input and must MISS it.
+    const mixed =
+      'function helper() { const confirm = local; confirm(); }\n' +
+      'function remove() { confirm("Remove?"); }';
+    expect(fileWideExemptionForms(mixed), "the old rule must miss this").toEqual([]);
+    expect(nativeConfirmForms(mixed), "the shipped matcher must catch it").toContain(
+      "bare confirm()",
+    );
   });
 
   it("the sweep COVERS its own subjects and the whole surface on disk", () => {
