@@ -139,6 +139,16 @@ export const BROWSER_GROUPS = {
       // 0171: the public reschedule v2 contract (policy hash, exclusion,
       // duration authority, same-time, duplicate submit, post-commit success).
       "public-reschedule-v2.spec.ts",
+      // UI-03: the reschedule submit must expose WHY it is disabled. Beside
+      // public-reschedule-v2.spec.ts because it drives the same surface.
+      //
+      // It was first filed with the shared interaction specs, on the reasoning
+      // that it proves a control contract rather than a workflow. Codex was
+      // right that this is wrong: group membership decides which TARGETED lane
+      // runs a spec, and a booking-only diff — a change to RescheduleForm
+      // itself — would not have run it. Where a spec is proved matters less
+      // than which diffs are allowed to break it unnoticed.
+      "ui03-blocked-reason.spec.ts",
       "manual-override-buffer-booking.spec.ts",
       "move-appointment-custom-time.spec.ts",
       "move-appointment-mobile-submit.spec.ts",
@@ -202,6 +212,48 @@ export const BROWSER_GROUPS = {
       // this mechanism is unattributable application code that already fails
       // safe to EXTENDED.
       "perceived-speed.spec.ts",
+      // UI-R01: the interaction foundations (press acknowledgement, the shared
+      // spinner, geometry stability). Sits beside perceived-speed.spec.ts for
+      // the same reason it gives above — this is the shell-wide interaction
+      // vocabulary, reachable from any application diff, so it belongs in the
+      // family that fails safe to EXTENDED rather than in `smoke`.
+      "ui-r01-interaction-foundations.spec.ts",
+      // UI-R02: the DANGER family's press, browser-proved on a real
+      // solid-danger control (client archive). Same group and same reasoning
+      // as the line above — it measures the shared interaction vocabulary, not
+      // one workflow, so any application diff can reach it.
+      "ui-r02-danger-press.spec.ts",
+      // UI-02: status text equivalents, proved by computed accessible name.
+      // Same group and reasoning again — an accessibility contract on shared
+      // status marks, reachable from any application diff.
+      "ui02-status-text-equivalent.spec.ts",
+      // UI-04: unarchive pending + touch floor on both consumers of
+      // unarchiveClientAction (/clients/[id]/edit, /clients?view=archived).
+      //
+      // WHY HERE AND NOT `sessions`, WHICH IS WHERE THE OTHER CLIENT-SURFACE
+      // SPECS LIVE. Two facts decided it:
+      //
+      //   1. `app/(app)/clients/**` matches NO PATH_TO_GROUP pattern, so a
+      //      client-only diff falls through to the unattributed EXTENDED
+      //      fallback — the same hole the OWNER-CAP note records for the
+      //      capacity page. This spec therefore already runs for every diff
+      //      that can actually break it, via extended, whatever group it is in.
+      //   2. `sessions` IS part of the targeted selection
+      //      (calendar + sessions + smoke) that browser-selection.test.ts pins
+      //      at 36 as a deliberate COST pin, because that lane has been
+      //      cancelled at its ceiling before.
+      //
+      // Filing it in `sessions` would therefore have charged six new cases to a
+      // hot lane for ZERO targeting benefit: a charting diff cannot break
+      // unarchive. `owner_admin` already carries quick-import.spec.ts — client
+      // records administration — and archiving a client is records admin rather
+      // than charting.
+      //
+      // I did NOT add a /clients/ path pattern to close fact 1. Today those
+      // diffs run everything, which is safe; a pattern would NARROW them from
+      // extended to one group, and that is a coverage decision for every client
+      // diff in the repository, not a presentation slice's to take in passing.
+      "ui04-unarchive-pending.spec.ts",
       "new-studio-wizard.spec.ts",
       "onboarding.spec.ts",
       "quick-import.spec.ts",

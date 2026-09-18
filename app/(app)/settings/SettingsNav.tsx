@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { PendingLink } from "@/components/pending-link";
 import { usePathname, useRouter } from "next/navigation";
 
