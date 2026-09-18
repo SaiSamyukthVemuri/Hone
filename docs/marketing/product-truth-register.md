@@ -67,11 +67,22 @@ constantly and must not red every branch that touches marketing copy.
 > the **full matrix** (`scripts/classify-changes.mjs`), and a *deep* fetch would also arm
 > `tests/docs/canonical-production-facts.test.ts`'s history-derived rules, which have never
 > executed in CI and currently fail on every branch off production while
-> `docs/production/current-state.md` is stale — three failures this lane does not own. A
-> narrow `git fetch --depth=1 origin <production-branch>` avoids the second problem (the
-> clone stays shallow, so those rules stay dormant) while still giving the two trees
-> `git diff --name-only A B` needs. That is the recommended shape, and it is an operator
-> decision about repo-wide CI.
+> `docs/production/current-state.md` is stale — three failures this lane does not own.
+>
+> **BOTH endpoints have to be fetched, not just the tip.** An earlier draft of this note
+> recommended fetching only the production branch; review showed that does not arm anything.
+> `git diff --name-only A B` needs both TREES, and in a depth-1 checkout the *recorded*
+> comparison head is just as absent as the live one — the test would reach the object check,
+> accept the missing commit because the clone is shallow, and return without comparing. The
+> working shape is therefore two shallow fetches:
+>
+> ```
+> git fetch --depth=1 origin claude/build-hone-saas-hOex7
+> git fetch --depth=1 origin <the Production head at last check SHA>
+> ```
+>
+> Both keep the clone shallow, so `canonical-production-facts`' rules stay dormant, while
+> giving the diff the two trees it needs. It remains an operator decision about repo-wide CI.
 
 ## Classification labels (internal only)
 
