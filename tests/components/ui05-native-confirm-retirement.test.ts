@@ -71,7 +71,36 @@ const GLOBAL_RECEIVERS = new Set(["window", "globalThis", "self"]);
  * not shadow. That is what makes the mixed-scope case above resolve to the
  * global and be reported.
  */
-function nativeConfirmForms(src: string, fileName = "subject.tsx"): string[] {
+type Repairs = {
+  /** A method's NAME is a property key, not a lexical binding. */
+  methodNameIsNotABinding: boolean;
+  /** `import type ...` / `import { type x }` introduce a TYPE, not a value. */
+  typeOnlyImportIsNotAValue: boolean;
+  /** `var` hoists to the enclosing FUNCTION, not to the block it sits in. */
+  varHoistsToFunction: boolean;
+};
+
+/**
+ * The shipped semantics. Every repair on.
+ *
+ * The toggles exist for ONE reason: a negative control must be able to switch a
+ * single repair off and show the case goes undetected. Running the control
+ * against a hand-copied "pre-repair" function would let the copy drift from the
+ * thing it claims to falsify — the same defect this file already fixed once,
+ * when a coverage oracle compared the sweep to a copy of itself. One definition,
+ * one switch.
+ */
+const SHIPPED: Repairs = {
+  methodNameIsNotABinding: true,
+  typeOnlyImportIsNotAValue: true,
+  varHoistsToFunction: true,
+};
+
+function nativeConfirmForms(
+  src: string,
+  fileName = "subject.tsx",
+  repairs: Repairs = SHIPPED,
+): string[] {
   const sf = ts.createSourceFile(fileName, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const found = new Set<string>();
 
@@ -89,10 +118,21 @@ function nativeConfirmForms(src: string, fileName = "subject.tsx"): string[] {
           hit = true;
         } else if (ts.isImportDeclaration(d)) {
           const clause = d.importClause;
-          if (clause?.name?.text === "confirm") hit = true;
-          const bindings = clause?.namedBindings;
-          if (bindings && ts.isNamedImports(bindings))
-            for (const el of bindings.elements) if (el.name.text === "confirm") hit = true;
+          // A TYPE-ONLY import introduces a TYPE, and a type binds nothing at
+          // runtime — `import { type confirm } from "./types"` leaves a later
+          // bare `confirm()` resolving to the browser global. Both spellings
+          // count: the whole clause (`import type { confirm }`) and the single
+          // specifier (`import { type confirm }`).
+          const clauseIsTypeOnly = repairs.typeOnlyImportIsNotAValue && clause?.isTypeOnly === true;
+          if (clause && !clauseIsTypeOnly) {
+            if (clause.name?.text === "confirm") hit = true;
+            const bindings = clause.namedBindings;
+            if (bindings && ts.isNamedImports(bindings))
+              for (const el of bindings.elements) {
+                const specIsTypeOnly = repairs.typeOnlyImportIsNotAValue && el.isTypeOnly;
+                if (!specIsTypeOnly && el.name.text === "confirm") hit = true;
+              }
+          }
         }
       };
       if (ts.isSourceFile(n) || ts.isBlock(n) || ts.isModuleBlock(n)) n.statements.forEach(declaredIn);
@@ -105,17 +145,67 @@ function nativeConfirmForms(src: string, fileName = "subject.tsx"): string[] {
         // (which binds its own name inside its body). A METHOD's name is a
         // property key, not a lexical binding — `{ confirm() { confirm(x) } }`
         // calls the global, and treating the key as a binding hid exactly that.
-        if (
-          (ts.isFunctionDeclaration(n) || ts.isFunctionExpression(n)) &&
-          n.name?.text === "confirm"
-        ) {
+        const nameBinds = repairs.methodNameIsNotABinding
+          ? ts.isFunctionDeclaration(n) || ts.isFunctionExpression(n)
+          : true;
+        const nameNode = (n as ts.FunctionLikeDeclaration).name;
+        if (nameBinds && nameNode && ts.isIdentifier(nameNode) && nameNode.text === "confirm") {
           hit = true;
         }
+      }
+      // `var` HOISTS. It binds throughout the nearest enclosing function
+      // regardless of which block it is written in, so the statement walk above
+      // — which only reads the statements of each enclosing block — cannot see
+      // it. `function f() { { var confirm = x; } confirm("Remove?"); }` binds,
+      // and classifying that call as the browser global was the third defect.
+      if (
+        repairs.varHoistsToFunction &&
+        (ts.isSourceFile(n) || ts.isModuleBlock(n) || ts.isFunctionLike(n)) &&
+        hoistedVarBindsConfirm(n)
+      ) {
+        hit = true;
       }
       if (hit) return true;
     }
     return false;
   };
+
+  /**
+   * Does a `var confirm` hoist to THIS scope?
+   *
+   * Descends through blocks and statements but stops at any nested function or
+   * module block, because a `var` there hoists to IT, not here. That boundary is
+   * what preserves the earlier mixed-scope repair: a sibling function's `var`
+   * must still not silence a genuinely global call.
+   *
+   * `let` and `const` are deliberately excluded — they are block-scoped and are
+   * already resolved correctly by the statement walk.
+   */
+  function hoistedVarBindsConfirm(scope: ts.Node): boolean {
+    let found = false;
+    const fromList = (list: ts.VariableDeclarationList) => {
+      if ((list.flags & ts.NodeFlags.BlockScoped) !== 0) return;
+      for (const v of list.declarations)
+        if (ts.isIdentifier(v.name) && v.name.text === "confirm") found = true;
+    };
+    const scan = (node: ts.Node): void => {
+      if (found) return;
+      if (node !== scope && (ts.isFunctionLike(node) || ts.isModuleBlock(node))) return;
+      if (ts.isVariableStatement(node)) fromList(node.declarationList);
+      // `for (var confirm = 0; ;)` — a for-initializer list is not wrapped in a
+      // VariableStatement, so it needs naming separately.
+      if (
+        (ts.isForStatement(node) || ts.isForInStatement(node) || ts.isForOfStatement(node)) &&
+        node.initializer &&
+        ts.isVariableDeclarationList(node.initializer)
+      ) {
+        fromList(node.initializer);
+      }
+      ts.forEachChild(node, scan);
+    };
+    scan(scope);
+    return found;
+  }
 
   const visit = (node: ts.Node): void => {
     if (ts.isCallExpression(node)) {
@@ -253,6 +343,114 @@ describe("UI-05: no native confirm survives anywhere in the app", () => {
     expect(nativeConfirmForms(mixed), "the shipped matcher must catch it").toContain(
       "bare confirm()",
     );
+  });
+
+  it("TYPE-ONLY imports bind no value — a later bare call is still the global", () => {
+    // Codex, at d356ed84. A type import is erased at runtime, so it cannot
+    // shadow anything. Both spellings had been treated as value bindings, which
+    // SILENCED a genuine native confirm — a false negative, the dangerous
+    // direction for a guard whose whole job is to find them.
+    const specifier =
+      'import { type confirm } from "./types";\n' +
+      'export function remove() { confirm("Remove?"); }';
+    expect(nativeConfirmForms(specifier)).toContain("bare confirm()");
+
+    const clause =
+      'import type { confirm } from "./types";\n' +
+      'export function remove() { confirm("Remove?"); }';
+    expect(nativeConfirmForms(clause)).toContain("bare confirm()");
+
+    const defaultType =
+      'import type confirm from "./types";\n' +
+      'export function remove() { confirm("Remove?"); }';
+    expect(nativeConfirmForms(defaultType)).toContain("bare confirm()");
+
+    // ...and the repair must not over-correct: a VALUE import still binds, and
+    // a mixed clause binds only the value specifier.
+    const value =
+      'import { confirm } from "./ui";\n' +
+      'export function remove() { confirm("Remove?"); }';
+    expect(nativeConfirmForms(value), "a value import must still shadow").toEqual([]);
+
+    const mixed =
+      'import { type Other, confirm } from "./ui";\n' +
+      'export function remove() { confirm("Remove?"); }';
+    expect(nativeConfirmForms(mixed), "the value half of a mixed clause binds").toEqual([]);
+  });
+
+  it("`var` HOISTS to the enclosing function, not to the block it is written in", () => {
+    // Codex, at d356ed84. The statement walk only read each enclosing block's
+    // own statements, so a `var` nested one block deeper was invisible and the
+    // later call was reported as the browser global — a FALSE POSITIVE here,
+    // the opposite direction from the two findings above.
+    const hoisted = 'export function remove() { { var confirm = local; } confirm("Remove?"); }';
+    expect(nativeConfirmForms(hoisted), "var binds throughout the function").toEqual([]);
+
+    // A for-initializer list is not wrapped in a VariableStatement.
+    const forVar =
+      'export function remove() { for (var confirm = 0; ; ) break; confirm("Remove?"); }';
+    expect(nativeConfirmForms(forVar), "a for-initializer var hoists too").toEqual([]);
+
+    // THE DISCRIMINATING HALF. `let` is block-scoped, so the same shape with
+    // `let` must still be reported. Without this the test above would also pass
+    // against a matcher that simply treats any nested declaration as a binding,
+    // which would be a different bug rather than hoisting.
+    const blockScoped =
+      'export function remove() { { let confirm = local; } confirm("Remove?"); }';
+    expect(nativeConfirmForms(blockScoped), "let must NOT leak out of its block").toContain(
+      "bare confirm()",
+    );
+    const constScoped =
+      'export function remove() { { const confirm = local; } confirm("Remove?"); }';
+    expect(nativeConfirmForms(constScoped), "const must NOT leak either").toContain(
+      "bare confirm()",
+    );
+
+    // ...and the earlier mixed-scope repair still holds: a SIBLING function's
+    // var hoists to that function, not to this one.
+    const sibling =
+      'function helper() { { var confirm = local; } }\n' +
+      'export function remove() { confirm("Remove?"); }';
+    expect(nativeConfirmForms(sibling), "a sibling function's var must not leak").toContain(
+      "bare confirm()",
+    );
+  });
+
+  it("THE THREE FRESH REPAIRS BITE — each switched off misses its own case", () => {
+    // Negative controls, one per finding, run against the SAME definition with
+    // a single repair disabled. A test that only asserts the repaired behaviour
+    // would pass just as well against a matcher that never had the defect.
+    //
+    // Note the two DIRECTIONS, which is the point of reading the semantics
+    // rather than making things red: findings 1 and 2 were false NEGATIVES (a
+    // real native confirm silenced); finding 3 was a false POSITIVE (a properly
+    // bound call reported as global).
+
+    const method = 'const x = { confirm() { confirm("Remove?"); } };';
+    expect(
+      nativeConfirmForms(method, "subject.tsx", { ...SHIPPED, methodNameIsNotABinding: false }),
+      "pre-repair: a method name was read as a binding, silencing the call",
+    ).toEqual([]);
+    expect(nativeConfirmForms(method), "shipped: caught").toContain("bare confirm()");
+
+    const typeOnly =
+      'import { type confirm } from "./types";\n' +
+      'export function remove() { confirm("Remove?"); }';
+    expect(
+      nativeConfirmForms(typeOnly, "subject.tsx", {
+        ...SHIPPED,
+        typeOnlyImportIsNotAValue: false,
+      }),
+      "pre-repair: a type-only import was read as a value, silencing the call",
+    ).toEqual([]);
+    expect(nativeConfirmForms(typeOnly), "shipped: caught").toContain("bare confirm()");
+
+    const hoisted = 'export function remove() { { var confirm = local; } confirm("Remove?"); }';
+    expect(
+      nativeConfirmForms(hoisted, "subject.tsx", { ...SHIPPED, varHoistsToFunction: false }),
+      "pre-repair: a hoisted var was invisible, so a BOUND call was reported as global",
+    ).toContain("bare confirm()");
+    expect(nativeConfirmForms(hoisted), "shipped: correctly bound").toEqual([]);
   });
 
   it("the sweep COVERS its own subjects and the whole surface on disk", () => {
