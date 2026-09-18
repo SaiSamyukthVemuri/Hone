@@ -254,6 +254,15 @@ export const BROWSER_GROUPS = {
       // extended to one group, and that is a coverage decision for every client
       // diff in the repository, not a presentation slice's to take in passing.
       "ui04-unarchive-pending.spec.ts",
+      // SIGNOUT-01: the authenticated Sign out path on BOTH shells (desktop
+      // AccountMenu, phone MobileMenu), proved by real session destruction in
+      // auth.sessions rather than by a pathname. Same group and same reasoning
+      // as invite-only.spec.ts and authenticated-route-error-containment.spec.ts
+      // above — this is the shell/auth-gate family. Deliberately NOT in
+      // `smoke`: that group runs on every targeted PR and its size is a pinned
+      // cost, and any diff that can reach this mechanism is unattributable
+      // application code which already fails safe to EXTENDED.
+      "signout-session-destruction.spec.ts",
       "new-studio-wizard.spec.ts",
       "onboarding.spec.ts",
       "quick-import.spec.ts",
