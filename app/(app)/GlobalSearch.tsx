@@ -1,8 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { globalSearchAction } from "./global-search-actions";
+import { cx } from "@/components/ui/control-base";
+import { spinnerClasses } from "@/components/ui/spinner";
 import {
   groupResults,
   SEARCH_MIN_CHARS,
@@ -69,6 +72,102 @@ export function GlobalSearch({ variant }: { variant: "desktop" | "mobile" }) {
     setQuery("");
   };
 
+  // ---- NAV-ACK-01 · DESIGN.md contract 2d -----------------------------------
+  //
+  // Same defect and same repair as MobileMenu: `close()` unmounts `panel`, and
+  // with it the <Link> that `useLinkStatus` would have to live inside, so
+  // contract 2c cannot speak here. The acknowledgement is hosted on the
+  // variant's own persistent control instead. `close()` keeps clearing `query`
+  // exactly as before.
+  //
+  // Not lifted into a shared primitive on purpose — see MobileMenu.tsx.
+  const router = useRouter();
+  const [navPending, startNav] = useTransition();
+  const [navLabel, setNavLabel] = useState<string | null>(null);
+  const navLockRef = useRef(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const desktopInputRef = useRef<HTMLInputElement>(null);
+  // The desktop input OPENS the panel on focus, so restoring focus to it after
+  // a navigation would re-open the panel we just closed. One-shot, and only
+  // armed when focus actually has to move, so an already-focused input cannot
+  // leave it set for a later genuine focus.
+  const suppressOpenRef = useRef(false);
+
+  useEffect(() => {
+    if (!navPending) navLockRef.current = false;
+  }, [navPending]);
+
+  function navigate(
+    e: React.MouseEvent<HTMLAnchorElement>,
+    href: string,
+    label: string,
+  ) {
+    if (
+      e.defaultPrevented ||
+      e.button !== 0 ||
+      e.metaKey ||
+      e.ctrlKey ||
+      e.shiftKey ||
+      e.altKey
+    ) {
+      return;
+    }
+    if (navLockRef.current) {
+      e.preventDefault();
+      return;
+    }
+    e.preventDefault();
+    setNavLabel(label);
+    close();
+    const restore: HTMLElement | null =
+      variant === "desktop" ? desktopInputRef.current : triggerRef.current;
+    if (restore && document.activeElement !== restore) {
+      if (variant === "desktop") suppressOpenRef.current = true;
+      restore.focus();
+    }
+    // THE CURRENT-PAGE TAP. React holds a transition pending until it COMMITS,
+    // and a push to the URL we are already on never produces one — measured:
+    // the mark stayed up for a full 30s timeout. That is exactly how a
+    // permanent busy state happens, so the no-op is detected by comparing the
+    // resolved target with the current location, which is exact rather than a
+    // guess about router behaviour.
+    //
+    // The panel still closes (the PR #229 contract), focus has already moved,
+    // and nothing is armed: there is no navigation to acknowledge, and painting
+    // progress for a navigation that is not happening is the thing PERF-UX-01
+    // forbids.
+    const target = new URL(href, window.location.href);
+    if (
+      target.pathname === window.location.pathname &&
+      target.search === window.location.search
+    ) {
+      return;
+    }
+    navLockRef.current = true;
+    startNav(() => {
+      router.push(href);
+    });
+  }
+
+  // The mark and the live region, spelled once for both variants.
+  const navMark = navPending ? (
+    <span
+      data-nav-pending="true"
+      aria-hidden="true"
+      className={cx(
+        "pointer-events-none absolute right-3 top-1/2 -translate-y-1/2",
+        spinnerClasses("sm"),
+      )}
+    />
+  ) : null;
+  // Mounted at all times, empty at rest; the mark is aria-hidden so this is the
+  // only voice.
+  const navStatus = (
+    <span role="status" className="sr-only">
+      {navPending && navLabel ? `Opening ${navLabel}…` : ""}
+    </span>
+  );
+
   const groups = groupResults(results);
   const panel = open && (
     <div
@@ -130,7 +229,7 @@ export function GlobalSearch({ variant }: { variant: "desktop" | "mobile" }) {
               <Link
                 key={result.id}
                 href={result.href}
-                onClick={close}
+                onClick={(e) => navigate(e, result.href, result.title)}
                 className="flex min-h-[44px] flex-col justify-center rounded-md px-3 py-1.5 hover:bg-neutral-100 dark:hover:bg-neutral-900"
               >
                 <span className="flex items-baseline justify-between gap-2">
@@ -168,7 +267,14 @@ export function GlobalSearch({ variant }: { variant: "desktop" | "mobile" }) {
         <input
           type="search"
           value={query}
-          onFocus={() => setOpen(true)}
+          ref={desktopInputRef}
+          onFocus={() => {
+            if (suppressOpenRef.current) {
+              suppressOpenRef.current = false;
+              return;
+            }
+            setOpen(true);
+          }}
           onChange={(e) => {
             setQuery(e.target.value);
             setOpen(true);
@@ -177,6 +283,8 @@ export function GlobalSearch({ variant }: { variant: "desktop" | "mobile" }) {
           aria-label="Search Hone"
           className="min-h-[40px] w-full rounded-md border border-neutral-300 bg-transparent px-3 py-1.5 text-sm outline-none placeholder:text-neutral-400 focus:border-neutral-900 dark:border-neutral-700 dark:focus:border-neutral-100"
         />
+        {navMark}
+        {navStatus}
         {panel}
       </div>
     );
@@ -185,6 +293,7 @@ export function GlobalSearch({ variant }: { variant: "desktop" | "mobile" }) {
   return (
     <div ref={rootRef} className="relative">
       <button
+        ref={triggerRef}
         type="button"
         aria-label="Search Hone"
         aria-expanded={open}
@@ -202,12 +311,23 @@ export function GlobalSearch({ variant }: { variant: "desktop" | "mobile" }) {
           stroke="currentColor"
           strokeWidth="1.8"
           strokeLinecap="round"
-          className="h-5 w-5"
+          className={cx("h-5 w-5", navPending && "opacity-0")}
         >
           <circle cx="11" cy="11" r="7" />
           <path d="m20 20-3.5-3.5" />
         </svg>
+        {navPending && (
+          <span
+            data-nav-pending="true"
+            aria-hidden="true"
+            className={cx(
+              "pointer-events-none absolute inset-0 m-auto",
+              spinnerClasses("sm"),
+            )}
+          />
+        )}
       </button>
+      {navStatus}
       {panel}
     </div>
   );

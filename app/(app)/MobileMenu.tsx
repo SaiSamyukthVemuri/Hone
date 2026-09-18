@@ -1,8 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { signOut } from "./dashboard/actions";
+import { cx, PRESS_TRANSITION } from "@/components/ui/control-base";
+import { spinnerClasses } from "@/components/ui/spinner";
 
 // PR #229: compact mobile menu, now a small client component instead
 // of PR #228's <details>/<summary>. The authenticated layout
@@ -56,20 +59,131 @@ export function MobileMenu({
 
   const close = () => setOpen(false);
 
+  // ---- NAV-ACK-01 · DESIGN.md contract 2d -----------------------------------
+  //
+  // WHY NOT `PendingLink` HERE. `useLinkStatus` must run inside the <Link> that
+  // owns the navigation (components/pending-link.tsx). The panel above is
+  // `{open && ...}` and every link closes it, so that subtree is unmounted by
+  // the same click that starts the navigation: contract 2c can paint nothing at
+  // all here, and would do so SILENTLY — it compiles and ships.
+  //
+  // So the acknowledgement is hosted on the trigger, which lives OUTSIDE the
+  // `open` guard and therefore survives. The panel still closes exactly as it
+  // did (the PR #229 contract above, including the current-page link).
+  //
+  // Deliberately spelled out here and in GlobalSearch rather than lifted into a
+  // shared primitive: a product-wide navigation vocabulary is UX-03, which is
+  // NOT adopted. Two named surfaces, two local copies, by decision.
+  const router = useRouter();
+  const [navPending, startNav] = useTransition();
+  const [navLabel, setNavLabel] = useState<string | null>(null);
+  const navLockRef = useRef(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+
+  // The lock is released on the pending EDGE, never by a timer. React settles a
+  // transition on success, on failure and on a same-route no-op alike, so there
+  // is no path that leaves the acknowledgement armed — which is what makes the
+  // current-page tap safe without predicting whether a route change will occur.
+  useEffect(() => {
+    if (!navPending) navLockRef.current = false;
+  }, [navPending]);
+
+  function navigate(
+    e: React.MouseEvent<HTMLAnchorElement>,
+    href: string,
+    label: string,
+  ) {
+    // Ordinary link semantics belong to the browser. Anything that is not a
+    // plain primary-button press — open in new tab/window, download, context
+    // menu — must reach the real `href` untouched. That is why these stay
+    // <Link>s with a real href and an intercepted click, and not buttons.
+    if (
+      e.defaultPrevented ||
+      e.button !== 0 ||
+      e.metaKey ||
+      e.ctrlKey ||
+      e.shiftKey ||
+      e.altKey
+    ) {
+      return;
+    }
+    // One navigation per activation. The panel unmounts on the first press, so
+    // the only way to press twice is a double-tap delivering two clicks before
+    // React commits — which `navPending` cannot catch, because it does not turn
+    // true until the next render. A ref can.
+    if (navLockRef.current) {
+      e.preventDefault();
+      return;
+    }
+    e.preventDefault();
+    setNavLabel(label);
+    close();
+    // Focus moves BEFORE the panel unmounts, so it is never left on a detached
+    // node and never falls to <body>. The trigger is always mounted.
+    triggerRef.current?.focus();
+    // THE CURRENT-PAGE TAP. React holds a transition pending until it COMMITS,
+    // and a push to the URL we are already on never produces one — measured:
+    // the mark stayed up for a full 30s timeout. That is exactly how a
+    // permanent busy state happens, so the no-op is detected by comparing the
+    // resolved target with the current location, which is exact rather than a
+    // guess about router behaviour.
+    //
+    // The panel still closes (the PR #229 contract), focus has already moved,
+    // and nothing is armed: there is no navigation to acknowledge, and painting
+    // progress for a navigation that is not happening is the thing PERF-UX-01
+    // forbids.
+    const target = new URL(href, window.location.href);
+    if (
+      target.pathname === window.location.pathname &&
+      target.search === window.location.search
+    ) {
+      return;
+    }
+    navLockRef.current = true;
+    startNav(() => {
+      router.push(href);
+    });
+  }
+
   return (
     // `lg:hidden`, matching the three header-mode classes in layout.tsx: the
     // compact shell owns every width below 1024px, where five primary items
     // plus search/bell/account could not fit on one line.
     <div ref={rootRef} className="relative lg:hidden">
       <button
+        ref={triggerRef}
         type="button"
         aria-label="Open navigation menu"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        className="flex min-h-[44px] cursor-pointer select-none items-center gap-2 rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium dark:border-neutral-700"
+        // `relative` is owned here: the mark is absolutely positioned so the
+        // trigger cannot change width mid-navigation.
+        className="relative flex min-h-[44px] cursor-pointer select-none items-center gap-2 rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium dark:border-neutral-700"
       >
-        Menu
+        {/* `opacity-0`, not `hidden`: the box is kept so the control cannot
+            resize, and the accessible name is `aria-label` above, so it does
+            not depend on this text either way. */}
+        <span className={cx(PRESS_TRANSITION, navPending && "opacity-0")}>
+          Menu
+        </span>
+        {navPending && (
+          <span
+            data-nav-pending="true"
+            aria-hidden="true"
+            className={cx(
+              "pointer-events-none absolute inset-0 m-auto",
+              spinnerClasses("sm"),
+            )}
+          />
+        )}
       </button>
+      {/* MOUNTED AT ALL TIMES, empty at rest; only the TEXT changes. A
+          role="status" inserted already containing its message is not reliably
+          announced. The mark above is aria-hidden, so this is the ONE voice —
+          no double announcement. */}
+      <span role="status" className="sr-only">
+        {navPending && navLabel ? `Opening ${navLabel}…` : ""}
+      </span>
       {open && (
         <nav
           aria-label="Mobile navigation"
@@ -119,7 +233,7 @@ export function MobileMenu({
             <Link
               key={item.href}
               href={item.href}
-              onClick={close}
+              onClick={(e) => navigate(e, item.href, item.label)}
               className="flex min-h-[44px] items-center rounded-md px-3 py-2 hover:bg-neutral-100 dark:hover:bg-neutral-900"
             >
               {item.label}
@@ -142,7 +256,7 @@ export function MobileMenu({
               <Link
                 key={item.href}
                 href={item.href}
-                onClick={close}
+                onClick={(e) => navigate(e, item.href, item.label)}
                 className="flex min-h-[44px] items-center rounded-md px-3 py-2 hover:bg-neutral-100 dark:hover:bg-neutral-900"
               >
                 {item.label}
