@@ -78,6 +78,12 @@ type Repairs = {
   typeOnlyImportIsNotAValue: boolean;
   /** `var` hoists to the enclosing FUNCTION, not to the block it sits in. */
   varHoistsToFunction: boolean;
+  /** `declare`d / ambient declarations emit no runtime binding. */
+  ambientDeclarationsBindNothing: boolean;
+  /** A class `static {}` block is its own `var` scope. */
+  staticBlockIsItsOwnVarScope: boolean;
+  /** `window["confirm"](...)` is the same call as `window.confirm(...)`. */
+  computedGlobalAccessDetected: boolean;
 };
 
 /**
@@ -94,6 +100,9 @@ const SHIPPED: Repairs = {
   methodNameIsNotABinding: true,
   typeOnlyImportIsNotAValue: true,
   varHoistsToFunction: true,
+  ambientDeclarationsBindNothing: true,
+  staticBlockIsItsOwnVarScope: true,
+  computedGlobalAccessDetected: true,
 };
 
 function nativeConfirmForms(
@@ -104,10 +113,36 @@ function nativeConfirmForms(
   const sf = ts.createSourceFile(fileName, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const found = new Set<string>();
 
+  /**
+   * Does this declaration emit NOTHING at runtime?
+   *
+   * `declare const confirm: (s: string) => boolean` is a promise about a value
+   * that already exists — in the browser's case, the native global itself. It
+   * introduces no binding of its own, so treating it as a shadow silenced a
+   * genuinely native call: the false-negative direction again.
+   *
+   * Two spellings, on different nodes. The `declare` keyword may sit on the
+   * declaration, or on an enclosing `declare global` / `declare module` block
+   * whose members are ambient without carrying the keyword themselves.
+   */
+  const hasDeclareKeyword = (n: ts.Node): boolean =>
+    ts.canHaveModifiers(n) &&
+    (ts.getModifiers(n) ?? []).some((m) => m.kind === ts.SyntaxKind.DeclareKeyword);
+
+  const isErasedDeclaration = (d: ts.Node): boolean => {
+    if (!repairs.ambientDeclarationsBindNothing) return false;
+    if (hasDeclareKeyword(d)) return true;
+    for (let up: ts.Node | undefined = d.parent; up; up = up.parent)
+      if (ts.isModuleDeclaration(up) && hasDeclareKeyword(up)) return true;
+    return false;
+  };
+
   const bindsConfirm = (node: ts.Node): boolean => {
     for (let n: ts.Node | undefined = node.parent; n; n = n.parent) {
       let hit = false;
       const declaredIn = (d: ts.Statement) => {
+        // An ambient declaration is erased; it cannot shadow anything.
+        if (isErasedDeclaration(d)) return;
         if (ts.isVariableStatement(d)) {
           for (const v of d.declarationList.declarations)
             if (ts.isIdentifier(v.name) && v.name.text === "confirm") hit = true;
@@ -160,7 +195,13 @@ function nativeConfirmForms(
       // and classifying that call as the browser global was the third defect.
       if (
         repairs.varHoistsToFunction &&
-        (ts.isSourceFile(n) || ts.isModuleBlock(n) || ts.isFunctionLike(n)) &&
+        (ts.isSourceFile(n) ||
+          ts.isModuleBlock(n) ||
+          ts.isFunctionLike(n) ||
+          // A static block IS a var scope, so a `var` written inside one does
+          // bind for calls inside it. The boundary below is what stops it
+          // leaking OUT.
+          ts.isClassStaticBlockDeclaration(n)) &&
         hoistedVarBindsConfirm(n)
       ) {
         hit = true;
@@ -185,12 +226,26 @@ function nativeConfirmForms(
     let found = false;
     const fromList = (list: ts.VariableDeclarationList) => {
       if ((list.flags & ts.NodeFlags.BlockScoped) !== 0) return;
+      // `declare var confirm` hoists nothing — there is no runtime variable.
+      if (list.parent && isErasedDeclaration(list.parent)) return;
       for (const v of list.declarations)
         if (ts.isIdentifier(v.name) && v.name.text === "confirm") found = true;
     };
     const scan = (node: ts.Node): void => {
       if (found) return;
-      if (node !== scope && (ts.isFunctionLike(node) || ts.isModuleBlock(node))) return;
+      // A nested function, module block, or class STATIC BLOCK is its own var
+      // scope: a `var` in there hoists to IT, not here. `ts.isFunctionLike` is
+      // FALSE for a ClassStaticBlockDeclaration, so without naming it
+      // explicitly a `var` inside `class C { static { var confirm = x } }`
+      // leaked all the way out to module scope and silenced later calls.
+      if (
+        node !== scope &&
+        (ts.isFunctionLike(node) ||
+          ts.isModuleBlock(node) ||
+          (repairs.staticBlockIsItsOwnVarScope && ts.isClassStaticBlockDeclaration(node)))
+      ) {
+        return;
+      }
       if (ts.isVariableStatement(node)) fromList(node.declarationList);
       // `for (var confirm = 0; ;)` — a for-initializer list is not wrapped in a
       // VariableStatement, so it needs naming separately.
@@ -220,6 +275,29 @@ function nativeConfirmForms(
         GLOBAL_RECEIVERS.has(callee.expression.text)
       ) {
         found.add(`${callee.expression.text}.confirm`);
+      }
+      // `window["confirm"](...)` is the SAME call as `window.confirm(...)`, and
+      // an element access is a different node kind, so it was invisible.
+      //
+      // STATICALLY-KNOWN NAMES ONLY, deliberately. A string literal — or a
+      // no-substitution template literal, which the AST also gives a plain
+      // `.text` — names the property unambiguously. `window[name](...)` and
+      // `window[k](...)` do NOT: deciding those needs dataflow, and guessing
+      // would make the guard report calls it cannot actually prove. The scope
+      // of this repair is "spelled differently", not "computed at runtime".
+      if (
+        repairs.computedGlobalAccessDetected &&
+        ts.isElementAccessExpression(callee) &&
+        ts.isIdentifier(callee.expression) &&
+        GLOBAL_RECEIVERS.has(callee.expression.text)
+      ) {
+        const arg = callee.argumentExpression;
+        const staticName = ts.isStringLiteral(arg)
+          ? arg.text
+          : ts.isNoSubstitutionTemplateLiteral(arg)
+            ? arg.text
+            : undefined;
+        if (staticName === "confirm") found.add(`${callee.expression.text}.confirm`);
       }
     }
     ts.forEachChild(node, visit);
@@ -451,6 +529,188 @@ describe("UI-05: no native confirm survives anywhere in the app", () => {
       "pre-repair: a hoisted var was invisible, so a BOUND call was reported as global",
     ).toContain("bare confirm()");
     expect(nativeConfirmForms(hoisted), "shipped: correctly bound").toEqual([]);
+  });
+
+  it("AMBIENT declarations bind nothing at runtime, so the call is still native", () => {
+    // Codex, at 479fab25. `declare const confirm` is a PROMISE that a value
+    // exists — in the browser it describes the native global itself. It emits
+    // no binding, so counting it as a shadow silenced a real native call.
+    const ambientConst =
+      'declare const confirm: (s: string) => boolean;\n' +
+      'export function remove() { confirm("Remove?"); }';
+    expect(nativeConfirmForms(ambientConst)).toContain("bare confirm()");
+
+    const ambientFn =
+      'declare function confirm(s: string): boolean;\n' +
+      'export function remove() { confirm("Remove?"); }';
+    expect(nativeConfirmForms(ambientFn)).toContain("bare confirm()");
+
+    const ambientVar =
+      'declare var confirm: (s: string) => boolean;\n' +
+      'export function remove() { confirm("Remove?"); }';
+    expect(nativeConfirmForms(ambientVar)).toContain("bare confirm()");
+
+    // The keyword can sit on an ENCLOSING block instead, whose members are
+    // ambient without carrying it themselves.
+    const ambientGlobal =
+      'declare global { var confirm: (s: string) => boolean; }\n' +
+      'export function remove() { confirm("Remove?"); }';
+    expect(nativeConfirmForms(ambientGlobal)).toContain("bare confirm()");
+
+    const ambientModule =
+      'declare module "x" { const confirm: (s: string) => boolean; }\n' +
+      'export function remove() { confirm("Remove?"); }';
+    expect(nativeConfirmForms(ambientModule)).toContain("bare confirm()");
+
+    // GENUINE RUNTIME BINDINGS ARE PRESERVED — the repair must not turn into
+    // "nothing shadows any more", which would be the opposite failure.
+    expect(
+      nativeConfirmForms('const confirm = local;\nexport function remove() { confirm("Remove?"); }'),
+      "a real const still shadows",
+    ).toEqual([]);
+    expect(
+      nativeConfirmForms('function confirm() {}\nexport function remove() { confirm("Remove?"); }'),
+      "a real function declaration still shadows",
+    ).toEqual([]);
+    expect(
+      nativeConfirmForms(
+        'declare const other: string;\nconst confirm = local;\n' +
+          'export function remove() { confirm("Remove?"); }',
+      ),
+      "an unrelated ambient declaration does not disturb a real binding",
+    ).toEqual([]);
+  });
+
+  it("a class STATIC BLOCK is its own var scope — its var does not leak out", () => {
+    // Codex, at 479fab25. `ts.isFunctionLike` is FALSE for a
+    // ClassStaticBlockDeclaration, so the hoisting scan walked straight through
+    // it and a `var` inside leaked to module scope, silencing later calls.
+    const leaked =
+      'class C { static { var confirm = local; } }\n' +
+      'function remove() { confirm("Remove?"); }';
+    expect(nativeConfirmForms(leaked)).toContain("bare confirm()");
+
+    // INSIDE the static block it genuinely does bind — a static block is a var
+    // scope, not a hole. Without this the repair could be "static blocks are
+    // ignored entirely", which is a different bug.
+    const inside = 'class C { static { var confirm = local; confirm("Remove?"); } }';
+    expect(nativeConfirmForms(inside), "a static block's own var binds inside it").toEqual([]);
+
+    // ...and ordinary function hoisting is untouched.
+    expect(
+      nativeConfirmForms('export function remove() { { var confirm = local; } confirm("Remove?"); }'),
+      "a function-scoped var still hoists",
+    ).toEqual([]);
+    expect(
+      nativeConfirmForms('export function remove() { { let confirm = local; } confirm("Remove?"); }'),
+      "let still does not leak out of its block",
+    ).toContain("bare confirm()");
+  });
+
+  it("COMPUTED native access is the same call — but only when the name is static", () => {
+    // Codex, at 479fab25. An element access is a different node kind from a
+    // property access, so `window["confirm"](...)` was invisible.
+    expect(nativeConfirmForms('window["confirm"]("Remove?")')).toContain("window.confirm");
+    expect(nativeConfirmForms('globalThis["confirm"]("Remove?")')).toContain("globalThis.confirm");
+    expect(nativeConfirmForms('self["confirm"]("Remove?")')).toContain("self.confirm");
+    // A no-substitution template literal names the property just as statically.
+    expect(nativeConfirmForms('window[`confirm`]("Remove?")')).toContain("window.confirm");
+
+    // NOT BROADENED INTO DYNAMIC-PROPERTY GUESSING. Deciding these needs
+    // dataflow, and guessing would make the guard report calls it cannot prove.
+    expect(nativeConfirmForms('window[name]("Remove?")'), "dynamic name").toEqual([]);
+    expect(
+      nativeConfirmForms('const k = "confirm";\nwindow[k]("Remove?")'),
+      "statically KNOWABLE but not statically SPELLED — deliberately not chased",
+    ).toEqual([]);
+    expect(nativeConfirmForms('window[`con${x}firm`]("Remove?")'), "interpolated").toEqual([]);
+
+    // ...and it does not fire on some other property.
+    expect(nativeConfirmForms('window["alert"]("hi")'), "a different property").toEqual([]);
+    expect(nativeConfirmForms('dialog["confirm"]("hi")'), "a non-global receiver").toEqual([]);
+  });
+
+  it("THE THREE NEWEST REPAIRS BITE — each switched off misses its own case", () => {
+    // Same discipline as the round before: one definition, one switch, so a
+    // control cannot drift from the thing it falsifies. No checkout cycles.
+    const ambient =
+      'declare const confirm: (s: string) => boolean;\n' +
+      'export function remove() { confirm("Remove?"); }';
+    expect(
+      nativeConfirmForms(ambient, "subject.tsx", {
+        ...SHIPPED,
+        ambientDeclarationsBindNothing: false,
+      }),
+      "pre-repair: an ambient declaration was read as a binding, silencing the call",
+    ).toEqual([]);
+    expect(nativeConfirmForms(ambient), "shipped: caught").toContain("bare confirm()");
+
+    const staticBlock =
+      'class C { static { var confirm = local; } }\n' +
+      'function remove() { confirm("Remove?"); }';
+    expect(
+      nativeConfirmForms(staticBlock, "subject.tsx", {
+        ...SHIPPED,
+        staticBlockIsItsOwnVarScope: false,
+      }),
+      "pre-repair: a static-block var leaked to module scope, silencing the call",
+    ).toEqual([]);
+    expect(nativeConfirmForms(staticBlock), "shipped: caught").toContain("bare confirm()");
+
+    const computed = 'window["confirm"]("Remove?")';
+    expect(
+      nativeConfirmForms(computed, "subject.tsx", {
+        ...SHIPPED,
+        computedGlobalAccessDetected: false,
+      }),
+      "pre-repair: a computed access was a different node kind, so invisible",
+    ).toEqual([]);
+    expect(nativeConfirmForms(computed), "shipped: caught").toContain("window.confirm");
+  });
+
+  it("EVERY repair toggle is load-bearing — no repair is dead code", () => {
+    // A STANDING non-vacuity proof, dependency-injected rather than a one-off
+    // mutation run. For each repair there must exist an input whose
+    // classification CHANGES when only that repair is switched off. A toggle
+    // that changes nothing is either unimplemented or unreachable, and a
+    // control written against it would prove nothing while looking thorough.
+    //
+    // This is stronger than mutating the file and re-running, because it is an
+    // assertion that stays in the suite: it re-proves itself on every run, and
+    // it cannot be left behind by a restore that did not take.
+    const PROBES: Record<keyof Repairs, string> = {
+      methodNameIsNotABinding: 'const x = { confirm() { confirm("Remove?"); } };',
+      typeOnlyImportIsNotAValue:
+        'import { type confirm } from "./t";\nfunction r() { confirm("x"); }',
+      varHoistsToFunction: 'function r() { { var confirm = l; } confirm("x"); }',
+      ambientDeclarationsBindNothing:
+        'declare const confirm: (s: string) => boolean;\nfunction r() { confirm("x"); }',
+      staticBlockIsItsOwnVarScope:
+        'class C { static { var confirm = l; } }\nfunction r() { confirm("x"); }',
+      computedGlobalAccessDetected: 'window["confirm"]("x")',
+    };
+
+    const keys = Object.keys(SHIPPED) as Array<keyof Repairs>;
+    // COMPLETENESS: adding a repair without a probe fails HERE, rather than the
+    // new repair silently going unproved. This is the guard I wish the earlier
+    // rounds had had — each finding arrived as a new semantic the classifier
+    // did not cover, and nothing forced a control to exist for it.
+    expect(
+      Object.keys(PROBES).sort(),
+      "every repair needs a probe, and every probe a repair",
+    ).toEqual([...keys].sort());
+
+    // And every repair must ship ON.
+    for (const key of keys) expect(SHIPPED[key], `${key} must ship enabled`).toBe(true);
+
+    for (const key of keys) {
+      const on = nativeConfirmForms(PROBES[key], "subject.tsx", SHIPPED);
+      const off = nativeConfirmForms(PROBES[key], "subject.tsx", { ...SHIPPED, [key]: false });
+      expect(
+        JSON.stringify(off),
+        `repair "${key}" changes nothing when disabled — dead code, or the probe no longer exercises it`,
+      ).not.toEqual(JSON.stringify(on));
+    }
   });
 
   it("the sweep COVERS its own subjects and the whole surface on disk", () => {
