@@ -194,8 +194,14 @@ describe("truth register: provenance is declared, not assumed", () => {
    * freely — it may not run over the evidence without §0 being re-derived.
    */
   const WATCHED = [...SOURCES, ...citedEvidenceFiles(REGISTER)];
+  // `--no-renames` is load-bearing. With rename detection on — Git's default —
+  // a 100% rename emits ONLY the destination path, so renaming a cited file
+  // away produced a diff in which the cited path never appears and the filter
+  // found no evidence change. Turning detection off makes a rename what it
+  // physically is here: a delete of the old path and an add of the new one, so
+  // the citation the register actually names is the one that shows up.
   const evidenceTouchedBetween = (from: string, to: string): string[] =>
-    git(["diff", "--name-only", `${from}..${to}`])
+    git(["diff", "--no-renames", "--name-only", `${from}..${to}`])
       .stdout.split("\n")
       .map((l) => l.trim())
       .filter((f) => f && isWatched(f, WATCHED));
@@ -362,6 +368,39 @@ describe("truth register: provenance is declared, not assumed", () => {
       evidenceTouchedBetween(before, after).length,
       "a production range that changed app/page.tsx and lib/export/resource-registry.ts registered as touching no evidence",
     ).toBeGreaterThan(0);
+  });
+
+  it("a renamed cited file still shows up as an evidence change", () => {
+    // Git's default rename detection emits only the DESTINATION path, so
+    // renaming a cited file away produced a diff in which the cited path never
+    // appeared and the comparison reported no evidence change. Proved on a real
+    // rename in this repository's history: `app/_fonts/` arrived by renaming
+    // files, and with detection ON the old paths vanish from the listing.
+    if (!headObjectPresent()) return;
+    const renameCommit = git([
+      "log",
+      "--diff-filter=R",
+      "--format=%H",
+      "-1",
+      "--find-renames",
+      declaredHead(),
+    ]).stdout.trim();
+    if (!renameCommit) return;
+    const withDetection = git([
+      "diff",
+      "--name-only",
+      `${renameCommit}~1..${renameCommit}`,
+    ]).stdout.trim().split("\n").filter(Boolean);
+    const withoutDetection = git([
+      "diff",
+      "--no-renames",
+      "--name-only",
+      `${renameCommit}~1..${renameCommit}`,
+    ]).stdout.trim().split("\n").filter(Boolean);
+    expect(
+      withoutDetection.length,
+      `${renameCommit} is a rename commit, but --no-renames listed no more paths than rename detection did; the flag is not doing what this guard relies on`,
+    ).toBeGreaterThan(withDetection.length);
   });
 
   it("the evidence it watches is derived from the register's own citations", () => {
@@ -827,6 +866,41 @@ describe("negative controls: the guard bites", () => {
         afterDeletion,
         `${deleted}: a cited dotfile that production deleted fell out of the watch set, so its deletion could never be reported`,
       ).toContain(deleted);
+    }
+  });
+
+  it("rejects a value spliced into the middle of authored words", () => {
+    // The trigger is assembled ACROSS the hole, so nothing that reads the
+    // visible half can see it: the fragment sets no scope and carries no
+    // complete `append-only`, yet one branch renders an unsanctioned claim.
+    // Rejected on structure, not content.
+    for (const expression of [
+      '{"Energy settings have an append-" + (enabled ? "only edit history" : "")}',
+      '{"Every treatment record has " + it.body}',
+      '{"Corrections are recorded, not " + verb}',
+    ]) {
+      const src = `export function __C({ it, enabled, verb }) {\n  return <p>${expression}</p>;\n}`;
+      expect(unreconstructableIn(src, "sections.tsx"), expression).toHaveLength(1);
+    }
+    // and the same splice inside a prop
+    expect(
+      unreconstructableIn(
+        'export function __C({ enabled }) {\n  return <Card title={"Energy settings have an append-" + (enabled ? "only edit history" : "")} />;\n}',
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("does not call an identifier being built a spliced sentence", () => {
+    // The counterweight. `footer-group-${slug}` is an id under construction,
+    // not a sentence with a value dropped into it, and the live footer builds
+    // one on every group. The discriminator is that authored copy is
+    // multi-word; an identifier fragment is one token.
+    for (const live of [
+      "export const C = () => (<nav aria-labelledby={`footer-group-${slugify(g.title)}`}><p/></nav>);",
+      "export const C = () => (<p id={`footer-group-${slugify(g.title)}`}>Product</p>);",
+      "export const C = () => (<a href={`/resources/${a.slug}`}>Read</a>);",
+    ]) {
+      expect(unreconstructableIn(live), live.slice(0, 50)).toEqual([]);
     }
   });
 

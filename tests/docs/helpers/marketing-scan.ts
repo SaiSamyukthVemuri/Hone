@@ -909,6 +909,7 @@ export function unreconstructableIn(
   const readSentence = (node: JsxContainer) => {
     let prose = "";
     const holes: ts.Expression[] = [];
+    const spliced: ts.Expression[] = [];
     const walk = (n: JsxContainer) => {
       for (const child of jsxChildren(n)) {
         if (ts.isJsxText(child)) {
@@ -920,6 +921,7 @@ export function unreconstructableIn(
           // swallows the rest, so it is BOTH text and a hole.
           if ((!authored || !authored.complete) && child.expression) {
             holes.push(child.expression);
+            if (splicesIntoWords(authored)) spliced.push(child.expression);
           }
         } else if (isJsxContainer(child)) {
           walk(child);
@@ -927,7 +929,7 @@ export function unreconstructableIn(
       }
     };
     walk(node);
-    return { prose: normalise(prose), holes };
+    return { prose: normalise(prose), holes, spliced };
   };
 
   const report = (prose: string, hole: ts.Node) => {
@@ -936,6 +938,26 @@ export function unreconstructableIn(
       out.push({ file, prose, expression: hole.getText().slice(0, 80) });
     }
   };
+
+  /**
+   * An expression that SPLICES a value into the middle of authored words.
+   *
+   * `{"Energy settings have an append-" + (enabled ? "only edit history" : "")}`
+   * defeats every check that reads the readable half alone: the fragment sets
+   * no scope and carries no complete `append-only`, yet one branch renders an
+   * unsanctioned claim. The trigger is assembled ACROSS the hole, so no amount
+   * of pattern-matching on the visible part can see it.
+   *
+   * It is rejected on structure rather than content: authored words plus an
+   * unreadable operand, inside one expression, cannot be judged. That is
+   * narrower than "any incomplete expression" on purpose — `{`footer-group-${…}`}`
+   * is an identifier being built, not a sentence being spliced, and a container
+   * that renders `text {value}` as separate children is not splicing either.
+   * The discriminator is that the readable part is MULTI-WORD, which is what
+   * authored copy is and what an identifier fragment is not.
+   */
+  const splicesIntoWords = (authored: AuthoredExpression | null): boolean =>
+    Boolean(authored && !authored.complete && /[A-Za-z]\s+\S*[A-Za-z]/.test(authored.text));
 
   /**
    * A prop can set a scope around a hole too.
@@ -953,7 +975,13 @@ export function unreconstructableIn(
       !isNonCopyAttribute(n)
     ) {
       const authored = readExpression(n.initializer.expression);
-      if (!authored || !authored.complete) {
+      if (splicesIntoWords(authored)) {
+        out.push({
+          file,
+          prose: normalise(authored!.text),
+          expression: n.initializer.expression.getText().slice(0, 80),
+        });
+      } else if (!authored || !authored.complete) {
         report(normalise(authored?.text ?? ""), n.initializer.expression);
       }
     }
@@ -962,8 +990,14 @@ export function unreconstructableIn(
   const visit = (n: ts.Node) => {
     visitAttributes(n);
     if (isJsxContainer(n) && isSentenceContainer(n)) {
-      const { prose, holes } = readSentence(n);
-      if (holes.length > 0) report(prose, holes[0]);
+      const { prose, holes, spliced } = readSentence(n);
+      // A splice cannot be judged at all, so it is reported on structure. A
+      // plain hole is reported only when the prose around it sets a scope.
+      if (spliced.length > 0) {
+        out.push({ file, prose, expression: spliced[0].getText().slice(0, 80) });
+      } else if (holes.length > 0) {
+        report(prose, holes[0]);
+      }
       // A sentence is the unit for CHILDREN, but its descendants' attributes
       // still have to be checked.
       const descend = (x: ts.Node) => {
