@@ -148,10 +148,35 @@ export function MobileMenu({
                 {item.label}
               </Link>
             ))}
+            {/* SIGNOUT-01. There is deliberately NO onClick={close} on this
+                button, and its absence is load-bearing.
+
+                React flushes a discrete click update synchronously, so closing
+                the menu from this button's own handler detached the <form>
+                while the click was still propagating — before the submit
+                button's activation behaviour ran. The browser then cancelled
+                the submission against a disconnected form ("Form submission
+                canceled because the form is not connected"), so React's action
+                interception never fired and the Server Action never dispatched.
+                The panel vanished, which made the press LOOK like it worked,
+                while the session, the refresh token and the auth cookie all
+                stayed alive.
+
+                Nothing needs to close this menu. signOut() ends the session
+                server-side and redirects to /login, which replaces the whole
+                authenticated shell — this component with it. Let the real
+                logout remove the menu; do not race it.
+
+                The ordinary links above keep onClick={close} because they
+                navigate WITHIN the authenticated shell, which persists, so
+                they must dismiss the panel themselves.
+
+                Proved by e2e/signout-session-destruction.spec.ts on both
+                surfaces, pointer and keyboard; pinned in
+                tests/app/mobile-ux.test.ts. */}
             <form action={signOut}>
               <button
                 type="submit"
-                onClick={close}
                 className="flex min-h-[44px] w-full items-center rounded-md px-3 py-2 text-left hover:bg-neutral-100 dark:hover:bg-neutral-900"
               >
                 Sign out

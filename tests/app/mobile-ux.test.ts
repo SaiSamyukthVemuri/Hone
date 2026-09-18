@@ -161,6 +161,65 @@ describe("desktop account dropdown (PR #231)", () => {
   });
 });
 
+// SIGNOUT-01. An authenticated practitioner pressed "Sign out" and stayed
+// signed in: the submit button's own onClick closed the menu, React flushed
+// that discrete update synchronously, and the <form> was detached before the
+// button's activation behaviour ran — so the browser cancelled the submission
+// and the Server Action never dispatched.
+//
+// The behaviour is proved in the browser by
+// e2e/signout-session-destruction.spec.ts, which drives a real logout on both
+// surfaces and reads auth.sessions / auth.refresh_tokens. These pins keep the
+// load-bearing SOURCE property from being reintroduced in the fast lane.
+describe("SIGNOUT-01: the Sign out submit path never unmounts its own form", () => {
+  function signOutForm(name: string, source: string): string {
+    const open = source.indexOf("<form action={signOut}>");
+    expect(open, `${name}: the Sign out form exists`).toBeGreaterThan(-1);
+    const close = source.indexOf("</form>", open);
+    expect(close, `${name}: the Sign out form is closed`).toBeGreaterThan(open);
+    return source.slice(open, close);
+  }
+
+  for (const [name, source] of [
+    ["MobileMenu.tsx", MENU],
+    ["AccountMenu.tsx", ACCOUNT],
+  ] as const) {
+    it(`${name}: the Sign out button carries no click handler of its own`, () => {
+      const form = signOutForm(name, source);
+      expect(form).toContain("Sign out");
+      expect(form).toContain('type="submit"');
+      // THE DEFECT, in one assertion. Any onClick on this submit path closes
+      // the menu during the click, detaches the form before its activation
+      // behaviour runs, and the logout never dispatches.
+      expect(
+        form,
+        "a click handler here unmounts the form mid-click and cancels the submission",
+      ).not.toMatch(/onClick/);
+    });
+
+    it(`${name}: ordinary links still dismiss the panel themselves`, () => {
+      // Deliberately NOT pinned to one spelling of the handler: the point is
+      // that a link inside a panel that survives the navigation must dismiss
+      // it, not which function does the dismissing.
+      const links = source.match(/<Link\b[\s\S]*?>/g) ?? [];
+      expect(links.length, `${name}: the panel still renders links`).toBeGreaterThan(0);
+      for (const link of links) {
+        expect(
+          link,
+          `${name}: a <Link> with no onClick would leave the panel open`,
+        ).toMatch(/onClick=/);
+      }
+    });
+  }
+
+  it("logout authority stays server-side, with Supabase semantics unchanged", () => {
+    const ACTIONS = read("app/(app)/dashboard/actions.ts");
+    expect(ACTIONS).toMatch(/"use server"/);
+    expect(ACTIONS).toMatch(/await supabase\.auth\.signOut\(\)/);
+    expect(ACTIONS).toMatch(/redirect\("\/login"\)/);
+  });
+});
+
 // The separate Daily Prep Brief card is RETIRED: it re-rendered every
 // appointment a second time on the same screen. Its preparation facts now live
 // once, inside the Today appointment card.
