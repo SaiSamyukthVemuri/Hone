@@ -794,13 +794,26 @@ describe("negative controls: the guard bites", () => {
   });
 
   it("keeps watching a cited file whose extension no list would guess", () => {
-    // §0's V13 row cites `.env.local.example`. Shape-based classification alone
-    // dropped it, which stopped watching the file that row rests on.
+    // §0's V13 row cites `.env.local.example`. An extension list dropped it;
+    // falling back to "does it exist" dropped it again the moment production
+    // deleted it, which is exactly the change the comparison must report. Both
+    // halves are pinned here: it is watched today, AND it stays watched when
+    // the citation names something no longer on disk.
     const cited = citedEvidenceFiles(REGISTER);
     expect(cited, ".env.local.example is cited by §0 but is not watched").toContain(
       ".env.local.example",
     );
     expect(cited).toContain("package.json");
+
+    const deleted = ".env.local.example.gone";
+    expect(existsSync(join(REPO_ROOT, deleted))).toBe(false);
+    const afterDeletion = citedEvidenceFiles(
+      REGISTER.replace("`.env.local.example`", `\`${deleted}\``),
+    );
+    expect(
+      afterDeletion,
+      "a cited dotfile that production deleted fell out of the watch set, so its deletion could never be reported",
+    ).toContain(deleted);
   });
 
   it("pairs prose with a hole across inline markup, and through a template", () => {

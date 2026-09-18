@@ -641,14 +641,26 @@ export function citedEvidenceFiles(register: string): string[] {
     // therefore classified by SHAPE — a known source extension makes it a file,
     // whatever the working tree currently holds.
     //
-    // Shape is how a DELETED path stays watched; the working tree is still
-    // consulted as an ADDITIONAL way in, never as a filter. §0's V13 row cites
-    // `.env.local.example`, whose extension no list will ever guess — dropping
-    // it would stop watching the file that row rests on.
-    const looksLikeFile = /\.(tsx?|jsx?|mjs|cjs|sql|md|json|css)$/.test(candidate);
+    // Shape is how a DELETED path stays watched, and it cannot lean on an
+    // extension list. §0's V13 row cites `.env.local.example`; a list of known
+    // extensions drops it, and falling back to "does it exist" drops it again
+    // the moment production deletes it — which is exactly the change the
+    // comparison must report. So a FILE is recognised by the shape of its last
+    // segment: a dotted name. That covers `expiry.ts`, `package.json` and
+    // `.env.local.example` alike, and it survives deletion.
+    //
+    // The qualifier keeps §0's prose out. A dotted token with no path around it
+    // could equally be a version or a measurement — `v2.2`, `13.56` — so a bare
+    // dotted name counts only when it is a dotfile or actually exists.
     const isDir = isDirectory(candidate);
-    const isExistingFile = !isDir && existsSync(join(REPO_ROOT, candidate));
-    if (!glob && !looksLikeFile && !isDir && !isExistingFile) continue;
+    const exists = existsSync(join(REPO_ROOT, candidate));
+    const lastSegment = candidate.split("/").pop() ?? "";
+    const dotted = /^\.?[\w-]+(?:\.[\w-]+)+$/.test(lastSegment);
+    const looksLikeFile =
+      dotted &&
+      (candidate.includes("/") || lastSegment.startsWith(".") || (exists && !isDir));
+
+    if (!glob && !looksLikeFile && !isDir) continue;
 
     if (glob || (!looksLikeFile && isDir)) {
       // A bare top-level directory is prose, not evidence. §0 says things like
