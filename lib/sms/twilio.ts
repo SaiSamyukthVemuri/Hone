@@ -102,6 +102,17 @@ export type SendSmsResult =
 type SendSmsParams = {
   to: string;
   body: string;
+  /**
+   * The STUDIO's own messaging service, resolved by the caller.
+   *
+   * REQUIRED, and deliberately not defaulted. This module is provider-only: it
+   * does not know what a studio is, never reads the database, and must not be
+   * able to invent a sender. If it could fall back to an environment value,
+   * every studio would send from one shared platform identity again — which is
+   * the defect this parameter exists to close. A caller that cannot resolve a
+   * studio's sender must not call this function at all.
+   */
+  messagingServiceSid: string;
 };
 
 const TWILIO_API_BASE = "https://api.twilio.com/2010-04-01";
@@ -117,8 +128,11 @@ const TWILIO_SEND_TIMEOUT_MS = 15_000;
  *     either returns ok:false with retryable:false. The caller's job
  *     is to surface this once on startup (settings → launch) rather
  *     than blow up booking.
- *   - Uses TWILIO_MESSAGING_SERVICE_SID when set; otherwise falls
- *     back to TWILIO_FROM_NUMBER. Missing both also returns ok:false.
+ *   - The SENDER is supplied by the caller as `messagingServiceSid`, which
+ *     is the studio's own resolved identity. This module NEVER reads
+ *     TWILIO_MESSAGING_SERVICE_SID or TWILIO_FROM_NUMBER: a routing failure
+ *     must not be rescued by a platform-wide sender. A blank value returns
+ *     ok:false rather than posting a malformed request.
  *
  * Logging discipline:
  *   - Auth Token is never logged.
@@ -140,9 +154,17 @@ export async function sendSmsSafely(
     };
   }
 
-  const messagingServiceSid = process.env.TWILIO_MESSAGING_SERVICE_SID;
-  const fromNumber = process.env.TWILIO_FROM_NUMBER;
-  if (!messagingServiceSid && !fromNumber) {
+  // NO ENVIRONMENT SENDER. `TWILIO_MESSAGING_SERVICE_SID` and
+  // `TWILIO_FROM_NUMBER` are no longer read here, and must never be: a routing
+  // failure upstream must not be rescued by a platform-wide identity. The two
+  // keys remain in CI and the local e2e harness as TEST fixtures, and remain
+  // documented, but they are no longer sender AUTHORITY for runtime.
+  //
+  // Defensive rather than decorative: the type makes this required, but an
+  // untyped or JS caller could still pass a blank string, and a blank sender
+  // would reach Twilio as a malformed request rather than as a refusal.
+  const messagingServiceSid = params.messagingServiceSid;
+  if (typeof messagingServiceSid !== "string" || messagingServiceSid.trim() === "") {
     return {
       ok: false,
       error: "twilio_missing_sender",
@@ -153,11 +175,7 @@ export async function sendSmsSafely(
   const formBody = new URLSearchParams();
   formBody.set("To", params.to);
   formBody.set("Body", params.body);
-  if (messagingServiceSid) {
-    formBody.set("MessagingServiceSid", messagingServiceSid);
-  } else if (fromNumber) {
-    formBody.set("From", fromNumber);
-  }
+  formBody.set("MessagingServiceSid", messagingServiceSid);
 
   const url = `${TWILIO_API_BASE}/Accounts/${encodeURIComponent(
     accountSid,

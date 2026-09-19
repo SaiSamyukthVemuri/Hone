@@ -43,6 +43,26 @@ import {
 
 export type AlertSeverity = "info" | "warning" | "critical";
 
+/**
+ * What the durable write actually did.
+ *
+ * ADDITIVE: `recordOpsAlert` still resolves for every existing caller, and all
+ * of them ignore this value and are unaffected.
+ *
+ * It exists because a UNIQUE violation on a dedupe index is NOT a failure — it
+ * means the condition is ALREADY REPORTED. Migration 0194 ships
+ * `ops_alerts_sms_routing_open_uniq` over `(studio_id, event) where
+ * resolved_at is null`, and its own comment states the rule: "A 23505 from
+ * this index means ALREADY REPORTED, not a failure." A caller that cannot
+ * tell the two apart reports an alerting fault that did not happen.
+ */
+export type OpsAlertOutcome =
+  | { recorded: true }
+  | { recorded: false; reason: "deduped" | "insert_failed" | "threw" };
+
+/** PostgreSQL unique_violation. */
+const PG_UNIQUE_VIOLATION = "23505";
+
 export type OpsAlertInput = {
   severity: AlertSeverity;
   // Short kebab/underscore identifier; e.g. "manual_fee_needs_manual_review".
@@ -87,13 +107,32 @@ function truncate(str: string, max: number): string {
   return str.slice(0, max - 14) + "...[truncated]";
 }
 
-function structuredConsoleLog(payload: Record<string, unknown>): void {
+/**
+ * Which console channel a structured line goes to.
+ *
+ * DEFAULTS TO "error", so every existing call site is byte-for-byte unchanged.
+ * The parameter exists for ONE case: an EXPECTED outcome must not be written to
+ * the error channel. A dedupe is the alerting system working correctly, and
+ * emitting it as an error means a persistently unroutable studio raises the
+ * observed error rate on every cron pass — which is the same misleading signal
+ * the 23505 branch was added to remove, just moved one layer out.
+ *
+ * Observability is NOT reduced: the line is still emitted, still structured,
+ * still carries the same fields. Only its severity changes.
+ */
+type ConsoleLogLevel = "error" | "info";
+
+function structuredConsoleLog(
+  payload: Record<string, unknown>,
+  level: ConsoleLogLevel = "error",
+): void {
+  const write = level === "info" ? console.info : console.error;
   try {
-    console.error(JSON.stringify(payload));
+    write(JSON.stringify(payload));
   } catch {
     // Last-resort fallback if JSON.stringify itself throws (cyclic
     // structure). We never let the alerting helper escalate.
-    console.error("ops_alert_serialize_failed", payload.event ?? "unknown");
+    write("ops_alert_serialize_failed", payload.event ?? "unknown");
   }
 }
 
@@ -103,7 +142,9 @@ function structuredConsoleLog(payload: Record<string, unknown>): void {
 // invokes it after the durable write attempt.
 
 // Main entry point.
-export async function recordOpsAlert(input: OpsAlertInput): Promise<void> {
+export async function recordOpsAlert(
+  input: OpsAlertInput,
+): Promise<OpsAlertOutcome> {
   // Sanitize first so the structured log uses the redacted detail
   // shape too. The redactor never throws.
   const redacted = redactSafeDetails(input.safeDetails);
@@ -136,6 +177,7 @@ export async function recordOpsAlert(input: OpsAlertInput): Promise<void> {
   });
 
   // Durable row insert. Service-role admin client only.
+  let outcome: OpsAlertOutcome = { recorded: false, reason: "insert_failed" };
   try {
     const admin = createAdminClient();
     const { error } = await admin.from("ops_alerts").insert({
@@ -152,13 +194,40 @@ export async function recordOpsAlert(input: OpsAlertInput): Promise<void> {
       safe_details: redacted,
     });
     if (error) {
-      structuredConsoleLog({
-        event: "ops_alert_insert_failed",
-        origin_event: input.event,
-        code: error.code,
-        err_message: error.message,
-        timestamp: new Date().toISOString(),
-      });
+      // ALREADY REPORTED IS NOT A FAILURE.
+      //
+      // A dedupe index doing its job must not be logged as an error. Without
+      // this branch, a studio that stays unroutable makes the reminder cron
+      // re-report the same open condition on every pass, and each one lands in
+      // the logs as `ops_alert_insert_failed` — error spam that hides real
+      // alerting faults and misleads whoever is reading.
+      //
+      // Reported at INFO with its own event name so the dedupe is visible and
+      // countable, rather than silent.
+      if (error.code === PG_UNIQUE_VIOLATION) {
+        structuredConsoleLog(
+          {
+            event: "ops_alert_deduped",
+            origin_event: input.event,
+            studio_id: input.studioId ?? null,
+            timestamp: new Date().toISOString(),
+          },
+          // INFO: this is the expected outcome, not a fault.
+          "info",
+        );
+        outcome = { recorded: false, reason: "deduped" };
+      } else {
+        structuredConsoleLog({
+          event: "ops_alert_insert_failed",
+          origin_event: input.event,
+          code: error.code,
+          err_message: error.message,
+          timestamp: new Date().toISOString(),
+        });
+        outcome = { recorded: false, reason: "insert_failed" };
+      }
+    } else {
+      outcome = { recorded: true };
     }
   } catch (err) {
     structuredConsoleLog({
@@ -167,6 +236,7 @@ export async function recordOpsAlert(input: OpsAlertInput): Promise<void> {
       err_message: err instanceof Error ? err.message : String(err),
       timestamp: new Date().toISOString(),
     });
+    outcome = { recorded: false, reason: "threw" };
   }
 
   // PR #193: operator email for CRITICAL alerts only, AFTER the
@@ -199,4 +269,6 @@ export async function recordOpsAlert(input: OpsAlertInput): Promise<void> {
       });
     }
   }
+
+  return outcome;
 }

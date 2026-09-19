@@ -1,4 +1,8 @@
 import { NextResponse } from "next/server";
+import { keysetFilter } from "@/lib/cron/reminder-keyset";
+import { truncationProven } from "@/lib/cron/reminder-routable-studios";
+import { SENDER_REFUSAL_REASON } from "@/lib/sms/send-appointment";
+import type { SmsType } from "@/lib/types/database";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { isAuthorizedCronRequest } from "@/lib/cron/auth";
 import {
@@ -31,6 +35,208 @@ import { reminderWindowIso } from "@/lib/cron/reminder-schedule";
 import { recordReminderRunSuccess } from "@/lib/cron/reminder-heartbeat";
 
 const PER_RUN_LIMIT = 50;
+
+// ---------------------------------------------------------------------------
+// BATCH STARVATION, AND WHY PAGING IS THE FIX
+// ---------------------------------------------------------------------------
+//
+// A routing refusal is deliberately free: it sends nothing, claims no attempt,
+// and leaves the sent column null. Correct per row — and it means the row's
+// ELIGIBILITY IS UNCHANGED, so it sorts into exactly the same position on the
+// next pass.
+//
+// With a single fixed first page of 50 ordered by starts_at, fifty earlier
+// unroutable rows are therefore re-selected every pass, forever, and a later
+// ROUTABLE row is never loaded at all — its reminder window closes while the
+// cron reports a clean run. Provider-failed rows do not do this, because the
+// claim increments `send_attempts` until they exceed MAX_ATTEMPTS and drop out
+// of the filter. Routing refusals never touch that counter, which is exactly
+// what makes them starving rather than self-limiting.
+//
+// So the pass PAGES FORWARD past refused candidates, and the two bounds that
+// matter are kept separate:
+//
+//   SEND WORK   — rows that actually reached the send helper for a real
+//                 attempt. Still capped at PER_RUN_LIMIT, so provider and
+//                 claim load is exactly what it was before.
+//   SCAN WORK   — rows merely examined and skipped. Capped independently, so a
+//                 wholly unroutable estate cannot spin.
+//
+// A routing refusal costs SCAN budget and NOT send budget. That is the whole
+// repair: the pass keeps looking until it has done its bounded amount of real
+// work, rather than stopping because the first fifty candidates were unusable.
+const REMINDER_PAGE_SIZE = 50;
+
+/**
+ * Hard ceiling on rows EXAMINED in one pass.
+ *
+ * Explicit, and it must never masquerade as full coverage: reaching it emits a
+ * truthful ops alert naming how far the pass got, because "we scanned 500 rows
+ * and stopped" and "we reached the end of the candidates" are different facts
+ * and an operator must be able to tell them apart.
+ */
+const MAX_SCAN_ROWS = 500;
+
+
+/**
+ * One bounded page of routable candidates, from migration 0199.
+ *
+ * Two steps, and the second is what keeps the request small: the function
+ * returns only ids and ordering keys, so the hydrating read carries at most
+ * `pageSize` uuids — never the estate. It also returns NO sender identifier,
+ * deliberately, so nothing here can become send authority.
+ */
+/**
+ * Studios that want to send this window and cannot — for ALERTING only.
+ *
+ * Never used to decide anything: it does not gate, filter or authorise. It
+ * exists so that excluding a studio from selection cannot also exclude it from
+ * the operator's view.
+ */
+async function unroutableStudiosWithCandidates(opts: {
+  kind: "24h" | "2h";
+  windowStartIso: string;
+  windowEndIso: string;
+}): Promise<Array<{ studio_id: string; candidate_count: number }>> {
+  const admin = createAdminClient();
+  const { data, error } = await admin.rpc("reminder_sms_unroutable_studios", {
+    p_kind: opts.kind,
+    p_window_start: opts.windowStartIso,
+    p_window_end: opts.windowEndIso,
+    p_limit: UNROUTABLE_ALERT_LIMIT,
+    p_max_attempts: MAX_ATTEMPTS,
+  });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as Array<{ studio_id: string; candidate_count: number }>;
+}
+
+async function loadRoutableCandidatePage(opts: {
+  kind: "24h" | "2h";
+  windowStartIso: string;
+  windowEndIso: string;
+  after: { startsAt: string; id: string } | null;
+  pageSize: number;
+}): Promise<Joined[]> {
+  const admin = createAdminClient();
+  const { data: picked, error: pickErr } = await admin.rpc(
+    "reminder_sms_candidates",
+    {
+      p_kind: opts.kind,
+      p_window_start: opts.windowStartIso,
+      p_window_end: opts.windowEndIso,
+      p_after_starts_at: opts.after?.startsAt ?? null,
+      p_after_id: opts.after?.id ?? null,
+      p_limit: opts.pageSize,
+      p_max_attempts: MAX_ATTEMPTS,
+    },
+  );
+  if (pickErr) throw new Error(pickErr.message);
+
+  const ids = ((picked ?? []) as Array<{ appointment_id: string }>).map(
+    (r) => r.appointment_id,
+  );
+  if (ids.length === 0) return [];
+
+  const { data, error } = await admin
+    .from("appointments")
+    .select(
+      "*, service:services(name, default_duration_minutes, pre_care_instructions), studio:studios(*), client:clients(name, email, phone, sms_consent_at, sms_opted_out_at), practitioner:practitioners!appointments_practitioner_same_studio_fk(display_name, email)",
+    )
+    .in("id", ids)
+    .order("starts_at", { ascending: true })
+    .order("id", { ascending: true });
+  if (error) throw new Error(error.message);
+
+  return ((data ?? []) as unknown as Array<
+    Appointment & {
+      service: Joined["service"] | Joined["service"][] | null;
+      studio: Studio | Studio[] | null;
+      client: Joined["client"] | Joined["client"][] | null;
+      practitioner: Joined["practitioner"] | Joined["practitioner"][] | null;
+    }
+  >).map((row) => ({
+    ...(row as Appointment),
+    service: pickRel(row.service),
+    studio: pickRel(row.studio),
+    client: pickRel(row.client),
+    practitioner: pickRel(row.practitioner),
+  })) as Joined[];
+}
+
+/**
+ * Report that a STUDIO cannot send, once per pass.
+ *
+ * Separate from the per-row `logSmsRoutingFailure` in the send helper: nothing
+ * was claimed, no provider was called, and no particular appointment is being
+ * described — this is a studio-level configuration fault, discovered while
+ * deciding which studios are worth selecting rows for.
+ *
+ * It rides the same alert authority and the same three-word vocabulary, so
+ * 0194's partial unique index on (studio_id, event) collapses repeats into one
+ * OPEN alert per studio and the repeat is reported as a dedupe rather than a
+ * failure.
+ */
+function logStudioRoutingRefusal(opts: {
+  studioId: string;
+  smsType: SmsType;
+  reason: string;
+}): Promise<void> {
+  console.error(
+    JSON.stringify({
+      event: "sms_routing_studio_excluded",
+      studioId: opts.studioId,
+      smsType: opts.smsType,
+      reason: opts.reason,
+      timestamp: new Date().toISOString(),
+    }),
+  );
+  // AWAITED, NOT DETACHED.
+  //
+  // `reminder_sms_unroutable_studios` uses OPEN ops_alerts rows as its rotation
+  // cursor: a studio already reported is excluded so the next pass surfaces
+  // studios that have not been. Fire-and-forget broke that. On a pass whose
+  // studios are ALL unroutable there is no send work left to keep the
+  // invocation alive, so a serverless runtime is free to freeze it while this
+  // task is still importing the module or inserting the row. The durable alert
+  // never lands, the cursor never advances, and the next run selects the same
+  // first 50 studios again -- studios past that prefix never reported at all,
+  // which is precisely the invisibility the complement exists to prevent.
+  //
+  // The batch is bounded by UNROUTABLE_ALERT_LIMIT, and every failure is still
+  // swallowed, so awaiting costs a bounded wait and can never break the cron.
+  return (async () => {
+    try {
+      const { recordOpsAlert } = await import("@/lib/ops/alerts");
+      await recordOpsAlert({
+        severity: "warning",
+        event: opts.reason,
+        message: `SMS reminders (${opts.smsType}) cannot be sent: the studio has no usable sending identity.`,
+        studioId: opts.studioId,
+        route: "app/api/cron/appointment-reminders",
+        safeDetails: {
+          sms_type: opts.smsType,
+          // Stated so an operator is not left inferring whether anything went
+          // out, or whether the studio burned part of its attempt budget.
+          attempt_claimed: false,
+          provider_called: false,
+          excluded_from_selection: true,
+        },
+      });
+    } catch {
+      // Never break the cron over alerting.
+    }
+  })();
+}
+
+/** How many unroutable studios one pass alerts about. Bounded like the page. */
+const UNROUTABLE_ALERT_LIMIT = 50;
+
+/** Routing refusals — free of the send budget, by reason, from the helper. */
+const ROUTING_REFUSAL_REASONS: ReadonlySet<string> = new Set([
+  "sms_sender_not_active_for_studio",
+  "sms_sender_ambiguous",
+  "sms_sender_read_failed",
+]);
 const MAX_ATTEMPTS = 3;
 
 type Joined = Appointment & {
@@ -68,9 +274,20 @@ async function loadAppointmentsForWindow(opts: {
   endIso: string;
   notSentColumn: SentColumn;
   attemptsColumn: AttemptsColumn;
+  /**
+   * KEYSET cursor, exclusive: return only rows ordered after this one.
+   *
+   * Deliberately NOT `OFFSET`. Eligibility changes underneath a paging run —
+   * a row sends and stamps its sent column, another is cancelled — so an
+   * offset silently SKIPS rows when the prefix shrinks. A keyset on the same
+   * (starts_at, id) the query orders by cannot: it names a position in the
+   * ordering, not a count of rows that preceded it.
+   */
+  after?: { startsAt: string; id: string } | null;
+  pageSize?: number;
 }): Promise<Joined[]> {
   const admin = createAdminClient();
-  const { data, error } = await admin
+  let q = admin
     .from("appointments")
     .select(
       "*, service:services(name, default_duration_minutes, pre_care_instructions), studio:studios(*), client:clients(name, email, phone, sms_consent_at, sms_opted_out_at), practitioner:practitioners!appointments_practitioner_same_studio_fk(display_name, email)",
@@ -80,8 +297,16 @@ async function loadAppointmentsForWindow(opts: {
     .lt(opts.attemptsColumn, MAX_ATTEMPTS)
     .gte("starts_at", opts.startIso)
     .lte("starts_at", opts.endIso)
+    // `id` is the tiebreak, so (starts_at, id) is a TOTAL order. Without it two
+    // appointments sharing a start have no defined order and a keyset cursor
+    // could re-emit one and skip the other.
     .order("starts_at", { ascending: true })
-    .limit(PER_RUN_LIMIT);
+    .order("id", { ascending: true });
+
+  const keyset = keysetFilter(opts.after ?? null);
+  if (keyset) q = q.or(keyset);
+
+  const { data, error } = await q.limit(opts.pageSize ?? PER_RUN_LIMIT);
   if (error) throw new Error(error.message);
 
   return ((data ?? []) as unknown as Array<
@@ -462,13 +687,6 @@ async function sendSmsReminderPass(opts: {
   const studioToggle =
     opts.kind === "24h" ? "send_24h_sms_reminders" : "send_2h_sms_reminders";
 
-  const appts = await loadAppointmentsForWindow({
-    startIso: opts.windowStartIso,
-    endIso: opts.windowEndIso,
-    notSentColumn: sentColumn,
-    attemptsColumn,
-  });
-
   const admin = createAdminClient();
   const stats: SmsRunStats = {
     attempted: 0,
@@ -479,106 +697,243 @@ async function sendSmsReminderPass(opts: {
   };
   const smsAppOrigin = getRequiredAppOrigin();
 
-  for (const appt of appts) {
-    if (!appt.studio) continue;
-    if (!(appt.studio as unknown as Record<string, boolean>)[studioToggle]) {
-      // Studio toggle is off: skip without an attempt counter bump.
-      // We do not call into the SMS helper because the gate inside it
-      // would just return skipped; saving the DB roundtrip on every
-      // pass is meaningful at scale.
-      continue;
-    }
-    if (!appt.client) continue;
-    // Hard prerequisites for the SMS helper. Skipping early avoids a
-    // claim roundtrip when there is no point.
-    if (!appt.client.phone) continue;
-    if (!appt.client.sms_consent_at) continue;
-    if (appt.client.sms_opted_out_at) continue;
+  // THE SIGNAL THE FILTER WOULD OTHERWISE SWALLOW.
+  //
+  // Server-side filtering is what makes the pass fair and bounded, and on its
+  // own it makes unroutable studios INVISIBLE: their rows never reach the send
+  // helper, which is the only path that reports a routing refusal. So the
+  // filter's complement is read explicitly — studios that HAVE candidates this
+  // window and CANNOT send — and reported once each, before any send work.
+  // Bounded by the same ceiling as the candidate page.
+  // Collected, then awaited together: the rotation cursor must be durable
+  // before this pass can end. Bounded by UNROUTABLE_ALERT_LIMIT.
+  const routingAlerts: Array<Promise<void>> = [];
+  for (const row of await unroutableStudiosWithCandidates({
+    kind: opts.kind,
+    windowStartIso: opts.windowStartIso,
+    windowEndIso: opts.windowEndIso,
+  })) {
+    routingAlerts.push(logStudioRoutingRefusal({
+      studioId: row.studio_id,
+      smsType: opts.kind === "24h" ? "reminder_24h" : "reminder_2h",
+      // The pass cannot know WHICH refusal the resolver would give without
+      // asking per studio, which is the estate enumeration this removed. The
+      // condition it CAN prove is that no active sender row exists, which is
+      // exactly `no_active_sender`.
+      reason: "sms_sender_not_active_for_studio",
+    }));
+  }
+  await Promise.all(routingAlerts);
 
-    // PR #258: same cancellation-race re-check as the email pass, never SMS a
-    // reminder for an appointment cancelled/no-showed after the window query.
-    const { data: freshSms } = await admin
-      .from("appointments")
-      .select("status")
-      .eq("id", appt.id)
-      .maybeSingle();
-    if (!freshSms || freshSms.status !== "confirmed") {
-      stats.skipped += 1;
-      continue;
-    }
+  // CANDIDATE SELECTION IS SERVER-SIDE (migration 0199).
+  //
+  // The database answers "which appointments in this window belong to a studio
+  // that presently satisfies the routing prerequisite", bounded, keyset-paged,
+  // newest-first. The application no longer enumerates the estate, no longer
+  // issues one resolver round trip per studio, and no longer carries a list of
+  // studio uuids through a request URL.
+  //
+  // BEING RETURNED IS NOT PERMISSION TO SEND. Every row still passes the
+  // unchanged send law below: consent/toggle/STOP, then re-resolve that
+  // studio's sender, then refuse on anything except exactly one usable sender,
+  // and only then claim. A studio whose routing changes between selection and
+  // send is refused there, fail-closed.
+  // Keyset cursor over (starts_at, id); see the batch-starvation note above.
+  let cursor: { startsAt: string; id: string } | null = null;
+  let sendWork = 0;
+  let scanned = 0;
+  let scanCeilingHit = false;
+  let exhausted = false;
 
-    // INTAKE CTA, composed into this one SMS. Reaching here already means
-    // this window's SMS toggle is on and the client has a phone, consent and
-    // no opt-out, so enabling send_intake_reminders can never open a new SMS
-    // channel on its own. There is deliberately NO standalone intake SMS: if
-    // the window's SMS toggle is off this pass already skipped the row, so the
-    // single claim_sms_send slot below still owns the window outright.
-    //
-    // The read is LIVE and its own query - never the email pass's result -
-    // and it fails safe: a read error yields null, so the appointment SMS
-    // still goes out without the CTA.
-    const smsIntake =
-      appt.studio.send_intake_reminders !== false
-        ? await readLatestIntake(admin, appt.studio.id, appt.client_id)
-        : null;
-    const smsIntakeUrl =
-      smsIntake?.status === "in_progress"
-        ? generateIntakeLinkUrl(smsIntake.id, smsAppOrigin)
-        : null;
-
-    // PR #260/#264: appointment tokens are hash-only at rest (the raw
-    // cancellation_token column was dropped in PR #264). Mint the stateless
-    // HMAC token so the SMS manage link resolves (/manage accepts it). Null
-    // only if minting fails (unparseable start); the SMS template then drops
-    // the manage line and still sends the moment-only reminder.
-    let manageToken: string | null;
-    try {
-      manageToken = generateCancellationToken(appt.id, new Date(appt.starts_at));
-    } catch {
-      manageToken = null;
-    }
-    const manageUrl = manageToken
-      ? `${smsAppOrigin}/manage/${manageToken}`
-      : null;
-
-    const sendFn =
-      opts.kind === "24h"
-        ? send24hReminderSmsToClient
-        : send2hReminderSmsToClient;
-    const result = await sendFn({
-      admin,
-      appointmentId: appt.id,
-      startsAt: new Date(appt.starts_at),
-      timezone: appt.studio.timezone,
-      studio: appt.studio,
-      client: {
-        phone: appt.client.phone,
-        sms_consent_at: appt.client.sms_consent_at,
-        sms_opted_out_at: appt.client.sms_opted_out_at,
-      },
-      manageUrl,
-      intakeUrl: smsIntakeUrl,
+  pages: while (sendWork < PER_RUN_LIMIT && scanned < MAX_SCAN_ROWS) {
+    // +1 LOOKAHEAD. A full page is NOT proof that more candidates existed: a
+    // set of exactly REMINDER_PAGE_SIZE rows fills the page and ends.
+    // Truncation may only be claimed when a further row was actually seen.
+    const page = await loadRoutableCandidatePage({
+      kind: opts.kind,
+      windowStartIso: opts.windowStartIso,
+      windowEndIso: opts.windowEndIso,
+      after: cursor,
+      pageSize: REMINDER_PAGE_SIZE + 1,
     });
-    if (result.ok) {
-      stats.attempted += 1;
-      stats.succeeded += 1;
-      // Stamp intake-link metadata ONLY when the SMS that actually sent
-      // carried the link. A plain appointment SMS must never look like an
-      // intake link was issued, and the email pass's own stamp is separate.
-      if (smsIntakeUrl && smsIntake) {
-        await stampIntakeLinkIssued(admin, smsIntake.id, { emailed: false });
-        stats.intakeCtaIncluded += 1;
-      }
-    } else if (result.skipped) {
-      // Helper-level skip (toggle race, claim collision, gate miss).
-      // We do not count these as attempted because no Twilio call
-      // was made; the operator wants attempted/succeeded/failed to
-      // reflect actual Twilio invocations.
-      stats.skipped += 1;
-    } else {
-      stats.attempted += 1;
-      stats.failed += 1;
+    const hasMore = truncationProven({
+      returned: page.length,
+      limit: REMINDER_PAGE_SIZE,
+    });
+    const rows = page.slice(0, REMINDER_PAGE_SIZE);
+    if (rows.length === 0) {
+      exhausted = true;
+      break;
     }
+    // PROVEN EXHAUSTION IS RECORDED HERE, NOT AT THE BOTTOM.
+    //
+    // The `+1` lookahead already answered "is there another candidate?" for
+    // this page. Waiting until after the row loop to act on it lost the answer
+    // whenever the loop exited early: on an exactly-500 set the tenth page
+    // processes row 500, trips the scan ceiling, and `break pages` jumps over
+    // the `if (!hasMore)` block — so the pass emitted
+    // `reminder_scan_ceiling_reached` and claimed later candidates existed
+    // when the query had just proved they did not.
+    if (!hasMore) exhausted = true;
+
+    for (const appt of rows) {
+      // Advance the cursor BEFORE any `continue`, so a skipped row can never be
+      // re-fetched on the next page — which would be an infinite loop, not
+      // merely a wasted read.
+      cursor = { startsAt: appt.starts_at, id: appt.id };
+      scanned += 1;
+      if (scanned >= MAX_SCAN_ROWS) scanCeilingHit = true;
+
+      if (!appt.studio) continue;
+      if (!(appt.studio as unknown as Record<string, boolean>)[studioToggle]) {
+        // Studio toggle is off: skip without an attempt counter bump.
+        // We do not call into the SMS helper because the gate inside it
+        // would just return skipped; saving the DB roundtrip on every
+        // pass is meaningful at scale.
+        continue;
+      }
+      if (!appt.client) continue;
+      // Hard prerequisites for the SMS helper. Skipping early avoids a
+      // claim roundtrip when there is no point.
+      if (!appt.client.phone) continue;
+      if (!appt.client.sms_consent_at) continue;
+      if (appt.client.sms_opted_out_at) continue;
+
+      // PR #258: same cancellation-race re-check as the email pass, never SMS a
+      // reminder for an appointment cancelled/no-showed after the window query.
+      const { data: freshSms } = await admin
+        .from("appointments")
+        .select("status")
+        .eq("id", appt.id)
+        .maybeSingle();
+      if (!freshSms || freshSms.status !== "confirmed") {
+        stats.skipped += 1;
+        continue;
+      }
+
+      // INTAKE CTA, composed into this one SMS. Reaching here already means
+      // this window's SMS toggle is on and the client has a phone, consent and
+      // no opt-out, so enabling send_intake_reminders can never open a new SMS
+      // channel on its own. There is deliberately NO standalone intake SMS: if
+      // the window's SMS toggle is off this pass already skipped the row, so the
+      // single claim_sms_send slot below still owns the window outright.
+      //
+      // The read is LIVE and its own query - never the email pass's result -
+      // and it fails safe: a read error yields null, so the appointment SMS
+      // still goes out without the CTA.
+      const smsIntake =
+        appt.studio.send_intake_reminders !== false
+          ? await readLatestIntake(admin, appt.studio.id, appt.client_id)
+          : null;
+      const smsIntakeUrl =
+        smsIntake?.status === "in_progress"
+          ? generateIntakeLinkUrl(smsIntake.id, smsAppOrigin)
+          : null;
+
+      // PR #260/#264: appointment tokens are hash-only at rest (the raw
+      // cancellation_token column was dropped in PR #264). Mint the stateless
+      // HMAC token so the SMS manage link resolves (/manage accepts it). Null
+      // only if minting fails (unparseable start); the SMS template then drops
+      // the manage line and still sends the moment-only reminder.
+      let manageToken: string | null;
+      try {
+        manageToken = generateCancellationToken(appt.id, new Date(appt.starts_at));
+      } catch {
+        manageToken = null;
+      }
+      const manageUrl = manageToken
+        ? `${smsAppOrigin}/manage/${manageToken}`
+        : null;
+
+      const sendFn =
+        opts.kind === "24h"
+          ? send24hReminderSmsToClient
+          : send2hReminderSmsToClient;
+      const result = await sendFn({
+        admin,
+        appointmentId: appt.id,
+        startsAt: new Date(appt.starts_at),
+        timezone: appt.studio.timezone,
+        studio: appt.studio,
+        client: {
+          phone: appt.client.phone,
+          sms_consent_at: appt.client.sms_consent_at,
+          sms_opted_out_at: appt.client.sms_opted_out_at,
+        },
+        manageUrl,
+        intakeUrl: smsIntakeUrl,
+      });
+      if (result.ok) {
+        stats.attempted += 1;
+        stats.succeeded += 1;
+        // Stamp intake-link metadata ONLY when the SMS that actually sent
+        // carried the link. A plain appointment SMS must never look like an
+        // intake link was issued, and the email pass's own stamp is separate.
+        if (smsIntakeUrl && smsIntake) {
+          await stampIntakeLinkIssued(admin, smsIntake.id, { emailed: false });
+          stats.intakeCtaIncluded += 1;
+        }
+      } else if (result.skipped) {
+        // Helper-level skip (toggle race, claim collision, gate miss).
+        // We do not count these as attempted because no Twilio call
+        // was made; the operator wants attempted/succeeded/failed to
+        // reflect actual Twilio invocations.
+        stats.skipped += 1;
+      } else {
+        stats.attempted += 1;
+        stats.failed += 1;
+      }
+
+      // SEND BUDGET ACCOUNTING. A ROUTING REFUSAL IS FREE.
+      //
+      // This is the repair. A refusal did no provider work and claimed no
+      // attempt, so charging it against the send budget is what let fifty
+      // unroutable rows consume an entire pass. It costs scan budget only,
+      // and the pass keeps paging until it has done its bounded amount of
+      // REAL work.
+      const routingRefused =
+        !result.ok &&
+        result.skipped === true &&
+        ROUTING_REFUSAL_REASONS.has(result.reason);
+      if (!routingRefused) sendWork += 1;
+      if (sendWork >= PER_RUN_LIMIT) break pages;
+      if (scanned >= MAX_SCAN_ROWS) break pages;
+    }
+
+    if (!hasMore) break; // already recorded as exhausted above
+  }
+
+  // TRUTHFUL EVIDENCE WHEN THE CEILING BITES.
+  //
+  // Stopping at the scan ceiling is NOT the same as reaching the end of the
+  // candidates, and a pass that cannot tell an operator which one happened is
+  // reporting a clean run it did not have.
+  if (scanCeilingHit && !exhausted) {
+    // AWAITED for the same reason the routing alerts are: a detached task can
+    // be frozen with the invocation before the durable row is written, and an
+    // operator who is never told the ceiling bit reads the pass as a clean
+    // run. Not flagged in review -- the same defect class, one instance over.
+    await (async () => {
+      try {
+        const { recordOpsAlert } = await import("@/lib/ops/alerts");
+        await recordOpsAlert({
+          severity: "warning",
+          event: "reminder_scan_ceiling_reached",
+          message:
+            `SMS reminder pass (${opts.kind}) stopped at the ${MAX_SCAN_ROWS}-row scan ceiling; later eligible rows were NOT examined.`,
+          route: "app/api/cron/appointment-reminders",
+          safeDetails: {
+            kind: opts.kind,
+            scanned,
+            send_work: sendWork,
+            scan_ceiling: MAX_SCAN_ROWS,
+            candidates_exhausted: false,
+          },
+        });
+      } catch {
+        // Never break the cron over alerting.
+      }
+    })();
   }
 
   return stats;
