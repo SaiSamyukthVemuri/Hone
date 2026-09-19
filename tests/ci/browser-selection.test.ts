@@ -124,10 +124,16 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     //
     // Now 38: SESSION-START-01's modality-acknowledgement proof joined
     // `sessions` because /clients/[id]/sessions/new is a sessions route.
-    // RECORDED AS A DECISION, per the note above. Three short cases, and they
-    // prove the one thing source cannot: the cards do not change size while the
-    // action is in flight. The lane's ~6 min target against a 15 min ceiling is
-    // not the constraint here; the visibility is.
+    // RECORDED AS A DECISION, per the note above. Cost: EIGHT executed cases
+    // (seven test() declarations, one of which loops over desktop and 390px),
+    // at roughly 4-8s each — the three that hold the server action are the slow
+    // ones by design. That is well under a minute against a ~6 min target and a
+    // 15 min ceiling, so the margin is not the concern; the visibility is.
+    //
+    // The count was prose-only and said "three" through several revisions of
+    // this slice while the file already ran seven. A cost pin whose NUMBER is
+    // asserted and whose DESCRIPTION is not will drift exactly this way, so the
+    // description is now stated in terms a reader can check against the file.
     expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(38);
   });
 

@@ -163,6 +163,65 @@ test.describe("SESSION-START-01 — pressing a modality is acknowledged", () => 
     await page.waitForURL(/\/sessions\/[0-9a-f-]{36}/i, { timeout: T });
   });
 
+  // THE MIRROR CASE, AND IT IS NOT REDUNDANT.
+  //
+  // Every other press in this file is Electrolysis — the FIRST button in the
+  // form. That cannot distinguish "the acknowledgement names the button that
+  // was PRESSED" from "the acknowledgement names the FIRST button", because on
+  // this page both readings paint an identical screen. The entire design rests
+  // on the browser submitting only the pressed button's `name`/`value` and
+  // `useFormStatus().data` reporting that, so the discriminating evidence is a
+  // press of the SECOND card and nothing else in this file supplies it.
+  //
+  // A failure here would be worse than the defect this slice closed. A card
+  // that announces the wrong modality is not an absent acknowledgement, it is
+  // a CONFIDENT LIE: the screen says Electrolysis is starting while the server
+  // starts a laser session. "Truthful" is the load-bearing word in the claim,
+  // so it is asserted at both ends — what the screen said, and what the
+  // session actually became.
+  test("pressing Laser acknowledges LASER, and the session really is laser", async ({
+    page,
+  }) => {
+    await openPicker(page);
+
+    const electro = page.locator('[data-modality="electrolysis"]');
+    const laser = page.locator('[data-modality="laser"]');
+    await expect(laser).toBeVisible({ timeout: T });
+
+    await withSlowAction(page, 3_000, async () => {
+      await laser.click();
+
+      // The pressed card is the one that speaks.
+      await expect(laser).toHaveAttribute("aria-busy", "true", { timeout: T });
+      await expect(laser).toBeDisabled();
+
+      // THE DISCRIMINATING ASSERTION. If `data.get("modality")` reported the
+      // first button rather than the pressed one, this is the line that goes
+      // red — and it is the only line in this file that can.
+      await expect(electro).not.toHaveAttribute("aria-busy", "true");
+      await expect(electro).toBeDisabled();
+
+      // The visual cue moved WITH the voice rather than staying on the card it
+      // happens to be written beside.
+      await expect(
+        laser.locator('span[aria-hidden="true"]', { hasText: "Starting session" }),
+      ).toBeVisible();
+      await expect(
+        electro.locator('span[aria-hidden="true"]', { hasText: "Starting session" }),
+      ).toHaveCount(0);
+    });
+
+    await page.waitForURL(/\/sessions\/[0-9a-f-]{36}/i, { timeout: T });
+
+    // ...AND IT TOLD THE TRUTH. The charting page branches on session.modality
+    // and renders the laser entry form — which is NOT inside the consultation
+    // <details>, so "Fluence" is on screen rather than behind a disclosure.
+    // Asserting the OUTCOME closes the loop the aria-busy assertions open: the
+    // card that said Laser produced a laser session, not a laser-coloured
+    // screen over an electrolysis row.
+    await expect(page.getByText("Fluence").first()).toBeVisible({ timeout: T });
+  });
+
   test("at 390px, where the cards stack, neither card changes size", async ({ page }) => {
     // THE CASE THE FIRST VERSION OF THIS FILE MISSED.
     //
