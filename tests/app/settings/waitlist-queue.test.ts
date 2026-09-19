@@ -1488,6 +1488,76 @@ describe("action visibility follows the row's lifecycle state", () => {
     expect(html).toContain("has been used");
   });
 
+  it("WAIT-P1-EXIT — that row is no longer a dead end: it offers Close", async () => {
+    // THE REGRESSION TEST FOR THE DEAD END, AT THE SURFACE.
+    //
+    // Before 0200 this row rendered with NO lifecycle control at all, under
+    // "this entry stays here until the booking is recorded" — which was true
+    // and permanent, because release, expire, requeue and remove all refuse a
+    // redeemed entry. `close_unbooked_new_client_waitlist_invitation` is the
+    // exit, and it is the ONLY control this row may show.
+    scenario.rows = [entry({ id: "e-stuck", status: "invited" })];
+    scenario.count = 1;
+    scenario.liveInvitations = [];
+    scenario.redeemedInvitations = [{ entry_id: "e-stuck" }];
+    const html = await render();
+    expect(actionsFor(html)).toEqual(["close"]);
+    expect(html).toContain("Close without booking");
+    // The sentence beside it must not contradict the control next to it.
+    expect(html).not.toContain("stays here until");
+    expect(html).toContain("no booking has been recorded");
+  });
+
+  it("WAIT-P1-EXIT — a CLOSED entry cannot go back on the waitlist", async () => {
+    // 0200 answers `already_redeemed` for a requeue of an entry holding a
+    // redeemed invitation, because returning it to the active set would let one
+    // entry acquire a SECOND redeemed invitation. A control that can only fail
+    // is not offered, and the remedy is named instead.
+    //
+    // THE WIRING THIS PROVES is that the page reads invitation facts for
+    // `released` rows at all — deciding this from status alone is impossible,
+    // because a released entry that was merely set aside IS requeueable.
+    scenario.rows = [entry({ id: "e-closed", status: "released" })];
+    scenario.count = 1;
+    scenario.liveInvitations = [];
+    scenario.redeemedInvitations = [{ entry_id: "e-closed" }];
+    const html = await render();
+    expect(actionsFor(html)).toEqual([]);
+    // AND THE ROW SAYS SO, rather than leaving the missing control to imply it.
+    // The default `released` sentence promises "Return them to it to put them
+    // back in line" — a promise this row cannot keep, which is the label-promise
+    // rule applied to prose.
+    // SCOPED TO THE ROW, NOT THE PAGE. The section heading carries the generic
+    // `released` description, exactly as the `invited` section carries a
+    // generic one that per-row context refines — an earlier revision of this
+    // assertion read the heading and reported the row.
+    const row = html.slice(
+      html.indexOf('data-entry-id="e-closed"'),
+      html.indexOf("</li>", html.indexOf('data-entry-id="e-closed"')),
+    );
+    expect(row).toContain("used their invitation without booking");
+    expect(row, "the ROW still promises a return the command refuses").not.toMatch(
+      /back in line/i,
+    );
+    // AND THE LIFECYCLE STILL TERMINATES. Removal is its own disclosure and
+    // carries no action test id, so it is asserted by its own copy.
+    expect(html).toMatch(/Remove/);
+  });
+
+  it("WAIT-P1-EXIT — an ORDINARY released row is untouched by that rule", async () => {
+    // NON-VACUITY. Set-aside-without-redemption is the far commoner way to
+    // reach `released`, and it must still offer Return to waitlist.
+    scenario.rows = [entry({ id: "e-setaside", status: "released" })];
+    scenario.count = 1;
+    scenario.liveInvitations = [];
+    scenario.redeemedInvitations = [];
+    const html = await render();
+    expect(actionsFor(html)).toEqual(["requeue"]);
+    expect(html).not.toContain("used their invitation without booking");
+    // The plain sentence is what it keeps, and the control backs it up.
+    expect(html).toContain("Return them to it to put them back in line");
+  });
+
   it("a FAILED invitation read withholds the control and SAYS it could not check", async () => {
     // The wrong answer here is silence that reads as "still live". Unknown is
     // not the same as not-elapsed, and the sentence has to say which it is.
@@ -1505,17 +1575,20 @@ describe("action visibility follows the row's lifecycle state", () => {
     expect(html).not.toContain("either way");
   });
 
-  it("the invitation window is read ONLY when some row is invited", async () => {
+  it("the invitation window is read ONLY for rows whose controls depend on it", async () => {
+    // WIDENED BY 0200, AND STILL BOUNDED. `released` rows joined `invited` ones
+    // because requeue's availability now depends on whether this entry's
+    // invitation was used — but `waiting`, `claimed`, `converted` and `removed`
+    // still trigger nothing, which is what keeps this a per-page read rather
+    // than a per-row one.
     scenario.rows = [entry({ status: "waiting" })];
     scenario.count = 1;
     await render();
-    // ONE read per section, and no invitation read at all because no row is
-    // invited.
     expect(queries.filter((q) => q.table === "new_client_waitlist_invitations")).toHaveLength(0);
     expect(queries.filter((q) => q.table === "new_client_waitlist_entries")).toHaveLength(5);
   });
 
-  it("and IS read when one is", async () => {
+  it("and IS read when a row is invited", async () => {
     // Non-vacuity for the assertion above.
     scenario.rows = [entry({ id: "e-inv", status: "invited" })];
     scenario.count = 1;
@@ -1523,6 +1596,17 @@ describe("action visibility follows the row's lifecycle state", () => {
     // TWO invitation reads: the live-cycle predicate and the redeemed one.
     // Identity comes from the 0189 unique index, never from ordering — so
     // neither read carries an `order`.
+    const inv = queries.filter((q) => q.table === "new_client_waitlist_invitations");
+    expect(inv).toHaveLength(2);
+    for (const q of inv) expect(q.orders).toEqual([]);
+  });
+
+  it("and when a row is released — the same two reads, not a third", async () => {
+    // WAIT-P1-EXIT rides the EXISTING queries: one `.in()` list widened, no new
+    // round trip, no new policy, and still no ordering of any kind.
+    scenario.rows = [entry({ id: "e-rel", status: "released" })];
+    scenario.count = 1;
+    await render();
     const inv = queries.filter((q) => q.table === "new_client_waitlist_invitations");
     expect(inv).toHaveLength(2);
     for (const q of inv) expect(q.orders).toEqual([]);

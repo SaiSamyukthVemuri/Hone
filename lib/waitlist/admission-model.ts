@@ -501,5 +501,26 @@ export function statusMeaning(
     }
     return "Their invitation is active and has not been used yet.";
   }
+  // WAIT-P1-EXIT. `released` NOW HAS A SECOND MEANING, AND THE DEFAULT PROMISES
+  // SOMETHING IT CANNOT KEEP FOR IT.
+  //
+  // STATUS_MEANING.released says "Return them to it to put them back in line."
+  // That is true of a set-aside entry and FALSE of one whose used invitation
+  // was closed: 0200 refuses to requeue an entry holding a redeemed invitation,
+  // so the row would read as a promise beside a control that is not there.
+  //
+  // This is the label-promise rule applied to the sentence rather than the
+  // button — the same defect as "Return to waitlist" on a control that lands
+  // the entry in `released`, and it has to be caught in the same place: one
+  // function, derived alongside the availability verdict so the two cannot
+  // drift.
+  if (status === "released") {
+    if (context.invitationFactsUnknown) {
+      return "Off the waitlist for now. Whether their invitation was used could not be checked just now.";
+    }
+    if (context.invitationRedeemed) {
+      return "They used their invitation without booking. This entry cannot go back on the waitlist — remove it, and they can join again themselves.";
+    }
+  }
   return STATUS_MEANING[status];
 }

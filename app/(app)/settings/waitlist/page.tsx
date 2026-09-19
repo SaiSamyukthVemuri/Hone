@@ -1028,12 +1028,20 @@ export default async function WaitlistSettingsPage({
                                 }
                               </p>
                             )}
-                          {row.status === "invited" && (
+                          {/* WAIT-P1-EXIT ADDED `released` HERE, AND THE
+                              ADDITION IS A CORRECTION, NOT AN EXTRA.
+                              `STATUS_MEANING.released` promises "Return them to
+                              it to put them back in line" — true of a set-aside
+                              entry and FALSE of one whose used invitation was
+                              closed, because 0200 refuses that requeue. The row
+                              was therefore promising, in prose, exactly what
+                              the missing control could not deliver. */}
+                          {(row.status === "invited" || row.status === "released") && (
                             <p
                               data-testid="row-status-meaning"
                               className="text-sm text-neutral-500"
                             >
-                              {statusMeaning("invited", {
+                              {statusMeaning(row.status, {
                                 invitationElapsed: elapsed,
                                 invitationRedeemed: redeemed,
                                 invitationFactsUnknown: cycleByEntry === null,

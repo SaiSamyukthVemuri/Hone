@@ -514,10 +514,44 @@ describe("the status sentence never contradicts the row's own controls", () => {
   });
 
   it("every other status is unchanged by context", () => {
+    // `released` JOINED `invited` AT 0200, and for the same reason: its default
+    // sentence promises "Return them to it to put them back in line", which a
+    // closed cycle cannot keep. Every OTHER status still ignores context
+    // entirely — that is what keeps this a targeted refinement rather than a
+    // surface that re-describes every row from whatever it happens to know.
     for (const s of WAITLIST_ENTRY_STATUSES) {
-      if (s === "invited") continue;
+      if (s === "invited" || s === "released") continue;
       expect(statusMeaning(s, { invitationRedeemed: true }), s).toBe(STATUS_MEANING[s]);
+      expect(statusMeaning(s, { invitationFactsUnknown: true }), s).toBe(STATUS_MEANING[s]);
     }
+  });
+
+  it("a released row with NO redemption keeps the plain sentence", () => {
+    // NON-VACUITY for the branch above: set-aside is the common case and its
+    // copy must be untouched.
+    expect(statusMeaning("released", { invitationRedeemed: false })).toBe(
+      STATUS_MEANING.released,
+    );
+    expect(statusMeaning("released")).toBe(STATUS_MEANING.released);
+  });
+
+  it("a CLOSED released row stops promising a return, and names the remedy", () => {
+    const line = statusMeaning("released", { invitationRedeemed: true });
+    expect(line).not.toBe(STATUS_MEANING.released);
+    expect(line, "the row still promises a return the command refuses").not.toMatch(
+      /back in line|return them/i,
+    );
+    expect(line).toMatch(/remove/i);
+    // It agrees with the control beside it, which is the whole point.
+    expect(actionAvailability("requeue", "released", { invitationRedeemed: true }).available).toBe(
+      false,
+    );
+  });
+
+  it("and an UNREADABLE invitation says so rather than promising either way", () => {
+    const line = statusMeaning("released", { invitationFactsUnknown: true });
+    expect(line).toMatch(/could not be checked/i);
+    expect(line).not.toMatch(/back in line/i);
   });
 });
 
