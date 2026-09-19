@@ -232,8 +232,21 @@ describe("I — the dead end is real on THIS schema, and stays real", () => {
       `select result from public.issue_new_client_waitlist_invitation($1,$2,$3,72)`,
       [f.studioId, p.entryId, f.userId],
     );
-    expect(again[0].result).not.toBe("issued");
+    // NAMES THE CODE, BECAUSE `not.toBe("issued")` WOULD BE VACUOUS HERE.
+    // 0192's success word is `invited`, not `issued` — so a negative assertion
+    // against a word the command cannot return passes against a SUCCESSFUL
+    // issuance, which is the opposite of what this test claims to prove.
+    // Issuance accepts only a `claimed` entry, and this one is `invited`.
+    expect(again[0].result).toBe("not_claimed");
     expect(await statusOf(p.entryId)).toBe("invited");
+    expect(
+      (
+        await q<{ c: number }>(`select count(*)::int as c from ${IN_T} where entry_id = $1`, [
+          p.entryId,
+        ])
+      )[0].c,
+      "a second invitation row was created",
+    ).toBe(1);
   });
 });
 
@@ -799,7 +812,9 @@ describe("K — the exit is ONE-WAY, because five consumers depend on that", () 
       `select result from public.issue_new_client_waitlist_invitation($1,$2,$3,72)`,
       [f.studioId, p.entryId, f.userId],
     );
-    expect(issued[0].result).not.toBe("issued");
+    // 0192's success word is `invited`; `issued` is a word it cannot return, so
+    // asserting against that would pass on a successful issuance.
+    expect(issued[0].result).toBe("not_claimed");
 
     const count = await q<{ c: number }>(
       `select count(*)::int as c from ${IN_T}
