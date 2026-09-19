@@ -976,6 +976,21 @@ describe("canonical production docs: WAIT-02B's durable waitlist is recorded as 
       /waitlist[^.\n]{0,60}\bdormant and enabled for nobody\b/i,
       /\bNO STUDIO ENABLED\b/,
       /durable[^\n]{0,80}\bNOT STARTED\b/i,
+      // The same claim as a SWITCH rather than a state. Codex #740, third
+      // round: the roadmap said "Willow durable WAIT is deliberately OFF" in
+      // its own CURRENT SNAPSHOT, and an operator planning from that row would
+      // have re-performed a cutover that had already happened.
+      // PRESENT-TENSE STANDING CLAIMS ONLY. A first draft of this matched any
+      // "durable WAIT ... OFF" and produced two false positives that are worth
+      // recording, because both are shapes a stale-wording guard must tolerate:
+      //   * a genuine PAST observation -- "the navigation disappeared while
+      //     durable WAIT was intentionally OFF" -- which is true history; and
+      //   * a CONDITIONAL -- "navigation can disappear when the durable flag is
+      //     off" -- which describes a behaviour, not a current state.
+      // Neither asserts that the flag is off now, and banning them would push
+      // real history out of the document to satisfy a regex.
+      /durable\s+WAIT\s+(?:is|remains|stays)\s+(?:deliberately\s+|intentionally\s+)?OFF\b/i,
+      /Willow[^.\n]{0,40}durable[^.\n]{0,40}\b(?:is|remains|stays)\s+(?:deliberately\s+|intentionally\s+)?off\b/i,
       /\bNOT ENABLED anywhere\b/i,
       // EVERY CONJUGATION, not one. Codex #740 P2: the list previously held
       // only "is enabled", so `known-limitations.md` sat green while its L25
@@ -990,7 +1005,16 @@ describe("canonical production docs: WAIT-02B's durable waitlist is recorded as 
       /Stage B2[^.\n]{0,40}\b(?:has not been granted|remains blocked|is ungranted)\b/i,
       /durable[^.\n]{0,60}\b0 rows\b/i,
     ];
-    for (const [name, doc] of NO_CURRENT_MAX_DOCS) {
+    // THE ROADMAP IS IN SCOPE FOR THIS RULE, THOUGH NOT FOR THE MIGRATION-NUMBER
+    // RULES ABOVE. It is not a production-state document, so it is correctly
+    // absent from NO_CURRENT_MAX_DOCS — but it IS what operators and the
+    // migration allocator plan from, and it carried the disproved posture in its
+    // own "CURRENT SNAPSHOT" for three weeks while every guard stayed green.
+    const SCANNED = [
+      ...NO_CURRENT_MAX_DOCS,
+      ["docs/roadmap/CANONICAL_ROADMAP.md", read("docs/roadmap/CANONICAL_ROADMAP.md")],
+    ] as const;
+    for (const [name, doc] of SCANNED) {
       const prose = currentProse(doc);
       for (const shape of STALE) {
         expect(
