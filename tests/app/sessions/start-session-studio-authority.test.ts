@@ -41,7 +41,12 @@ describe("startSessionAction — explicit studio authority", () => {
     expect(startSessionRpcCall()).toMatch(/p_studio_id\s*:\s*studio\.id/);
     // …and that binding exists because the action resolved it server-side.
     expect(CODE).toMatch(
-      /const\s*\{[^}]*studio[^}]*\}\s*=\s*await\s+getCurrentPractitionerWithStudio\(\)/,
+      // SESSION-START-01 2A: the resolution may sit inside a perf-timing wrapper,
+    // and the STATEMENT TERMINATOR is load-bearing — see below.
+    // which returns its callback's result untouched. The PROPERTY is unchanged —
+    // `studio` must still come from an awaited getCurrentPractitionerWithStudio().
+    // A different function, or a value from the form, still fails this.
+    /const\s*\{[^}]*studio[^}]*\}\s*=\s*await\s+(?:timed\(\s*"[^"]+",\s*\(\)\s*=>\s*getCurrentPractitionerWithStudio\(\)\s*,?\s*\)|getCurrentPractitionerWithStudio\(\))\s*;/,
     );
   });
 
