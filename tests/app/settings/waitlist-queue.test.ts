@@ -1554,8 +1554,41 @@ describe("action visibility follows the row's lifecycle state", () => {
     const html = await render();
     expect(actionsFor(html)).toEqual(["requeue"]);
     expect(html).not.toContain("used their invitation without booking");
-    // The plain sentence is what it keeps, and the control backs it up.
+    // The instruction is what it keeps, and the control backs it up.
     expect(html).toContain("Return them to it to put them back in line");
+  });
+
+  it("WAIT-P1-EXIT — the Released SECTION never instructs, because it is mixed", async () => {
+    // THE REVIEW FINDING THIS PINS. The section description is rendered
+    // unconditionally above the group, and that group can now hold BOTH a
+    // set-aside entry (which can be returned) and a closed one (which cannot).
+    // It used to say "Return them to it to put them back in line", so the
+    // section instructed owners to do exactly what the row beneath it said was
+    // impossible.
+    scenario.rows = [
+      entry({ id: "e-plain", status: "released", name: "Plain Person" }),
+      entry({ id: "e-shut", status: "released", name: "Shut Person" }),
+    ];
+    scenario.count = 2;
+    scenario.liveInvitations = [];
+    scenario.redeemedInvitations = [{ entry_id: "e-shut" }];
+    const html = await render();
+
+    // The section heading and its description carry no instruction at all.
+    const head = html.slice(
+      html.indexOf('data-testid="waitlist-section-released"'),
+      html.indexOf("<ul"),
+    );
+    expect(head, "the section still instructs, above a group it cannot speak for").not.toMatch(
+      /back in line|return them/i,
+    );
+
+    // Each ROW still says the right thing for itself.
+    const rowOf = (id: string) =>
+      html.slice(html.indexOf(`data-entry-id="${id}"`), html.indexOf("</li>", html.indexOf(`data-entry-id="${id}"`)));
+    expect(rowOf("e-plain")).toMatch(/back in line/i);
+    expect(rowOf("e-shut")).toMatch(/used their invitation without booking/i);
+    expect(rowOf("e-shut")).not.toMatch(/back in line/i);
   });
 
   it("a FAILED invitation read withholds the control and SAYS it could not check", async () => {

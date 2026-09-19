@@ -105,7 +105,14 @@ export const STATUS_MEANING: Record<WaitlistEntryStatus, string> = {
   invited: "An invitation has been created for them.",
   converted: "They booked. This entry is closed.",
   expired: "The invitation ran out before it was used.",
-  released: "Off the waitlist for now. Return them to it to put them back in line.",
+  // NEUTRAL, AND FOR THE SAME REASON `invited` IS. This sentence is rendered as
+  // the SECTION description, above a group that can now hold two different
+  // kinds of released entry: one set aside, which can be returned to the
+  // waitlist, and one whose used invitation was closed, which cannot. An
+  // instruction here is therefore wrong for half the section whenever both are
+  // present, and it contradicted the row's own sentence directly beneath it.
+  // The instruction moved to `statusMeaning`, where the facts are known.
+  released: "Off the waitlist for now.",
   removed: "Taken off the waitlist by the studio. Terminal.",
 };
 
@@ -533,6 +540,10 @@ export function statusMeaning(
     if (context.invitationRedeemed) {
       return "They used their invitation without booking. This entry cannot go back on the waitlist — remove it, and they can join again themselves.";
     }
+    // THE ORDINARY CASE, AND THE INSTRUCTION LIVES HERE NOW rather than in the
+    // status default above: a set-aside entry genuinely can be returned, and
+    // this is the only place that knows this row is one.
+    return "Off the waitlist for now. Return them to it to put them back in line.";
   }
   return STATUS_MEANING[status];
 }

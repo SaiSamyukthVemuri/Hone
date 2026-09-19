@@ -526,13 +526,31 @@ describe("the status sentence never contradicts the row's own controls", () => {
     }
   });
 
-  it("a released row with NO redemption keeps the plain sentence", () => {
-    // NON-VACUITY for the branch above: set-aside is the common case and its
-    // copy must be untouched.
-    expect(statusMeaning("released", { invitationRedeemed: false })).toBe(
+  it("a released row with NO redemption still says it can be returned", () => {
+    // NON-VACUITY for the branch above: set-aside is the common case and it
+    // genuinely can go back on the waitlist.
+    for (const ctx of [{ invitationRedeemed: false }, {}]) {
+      expect(statusMeaning("released", ctx)).toMatch(/back in line/i);
+    }
+  });
+
+  it("the released SECTION default is NEUTRAL, so it cannot contradict a row", () => {
+    // THE REVIEW FINDING THIS PINS. `STATUS_MEANING.released` is rendered as the
+    // section description above a group that can hold BOTH kinds of released
+    // entry — one that can be returned and one that cannot. It used to carry
+    // "Return them to it to put them back in line", so the section instructed
+    // owners to do the very thing the row beneath it said was impossible.
+    //
+    // Same rule `invited` already follows: the no-context default asserts
+    // nothing that per-row context could contradict.
+    expect(STATUS_MEANING.released).not.toMatch(/back in line|return them/i);
+    expect(STATUS_MEANING.released).not.toMatch(/cannot/i);
+    // …and it is still distinguishable from `removed`, which it must be.
+    expect(STATUS_MEANING.released).not.toBe(STATUS_MEANING.removed);
+    // The instruction did not vanish — it moved to where the facts are.
+    expect(statusMeaning("released", { invitationRedeemed: false })).not.toBe(
       STATUS_MEANING.released,
     );
-    expect(statusMeaning("released")).toBe(STATUS_MEANING.released);
   });
 
   it("a CLOSED released row stops promising a return, and names the remedy", () => {
