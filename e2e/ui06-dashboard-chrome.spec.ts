@@ -226,14 +226,68 @@ for (const vp of WIDTHS) {
 
     test("no horizontal overflow after flattening", async ({ page }) => {
       await openDashboardMemory(page);
-      // The whole point of a flatter composition is that it fits better, not
-      // worse. A flattened row that overflows would be a regression, not polish.
-      const overflow = await page.evaluate(
-        () =>
-          document.documentElement.scrollWidth -
-          document.documentElement.clientWidth,
-      );
-      expect(overflow, `${vp.name} scrolls sideways by ${overflow}px`).toBeLessThanOrEqual(0);
+      // WAIT FOR THE SUBJECT BEFORE MEASURING IT. `openDashboardMemory` clicks
+      // the disclosure and returns while its server action is still in flight.
+      // Without this the width was read off the loading shell — and that was
+      // not a theoretical risk. Instrumenting this exact line recorded
+      //
+      //     PROBE phone / tablet / laptop:  cardVisible=false  rows=0
+      //
+      // at all three viewports while the assertion still PASSED. The two
+      // sibling tests in this block already waited; this one was the outlier.
+      const card = page.getByTestId("appointment-prep-memory").first();
+      await expect(card).toBeVisible({ timeout: 20_000 });
+      const seededRows = page.getByTestId("prep-setup-area");
+      await expect(seededRows.first()).toBeVisible({ timeout: 20_000 });
+      expect(
+        await seededRows.count(),
+        "fixture must seed two areas so the flattened rows are actually on screen",
+      ).toBeGreaterThanOrEqual(2);
+
+      // TWO MEASUREMENTS, because the document-level one CANNOT FAIL HERE and
+      // on its own is a proof that cannot report the defect it names.
+      //
+      // Measured: injecting a live 3000px-wide child into the card moved
+      // `documentElement.scrollWidth - clientWidth` by exactly 0 at all three
+      // viewports. The dashboard roster that WRAPS this card
+      // (app/(app)/dashboard/page.tsx — `<ul class="… overflow-hidden">`)
+      // absorbs any width silently, so page-level scroll can never observe a
+      // row that does not fit. The regression this test exists to catch is
+      // therefore CLIPPING, not page scroll: a flattened row too wide for its
+      // container is hidden, not scrolled to.
+      //
+      // So assert both — the page still must not scroll sideways, AND nothing
+      // in or around the card may be clipped horizontally. `clientWidth > 0`
+      // skips inline boxes, whose scrollWidth and clientWidth are both 0.
+      const result = await page.evaluate(() => {
+        const doc =
+          document.documentElement.scrollWidth - document.documentElement.clientWidth;
+        const subject = document.querySelector('[data-testid="appointment-prep-memory"]');
+        const clipped: string[] = [];
+        if (subject) {
+          const nodes: Element[] = [subject, ...Array.from(subject.querySelectorAll("*"))];
+          // Ancestors too: the element that actually clips is the roster list
+          // outside this card, so walking only the subtree would miss it.
+          let up = subject.parentElement;
+          while (up && up !== document.body) {
+            nodes.push(up);
+            up = up.parentElement;
+          }
+          for (const el of nodes) {
+            if (el.clientWidth > 0 && el.scrollWidth > el.clientWidth + 1) {
+              clipped.push(
+                `${el.tagName}.${String(el.className).slice(0, 48)} ${el.scrollWidth}>${el.clientWidth}`,
+              );
+            }
+          }
+        }
+        return { doc, clipped };
+      });
+      expect(result.doc, `${vp.name} scrolls sideways by ${result.doc}px`).toBeLessThanOrEqual(0);
+      expect(
+        result.clipped,
+        `${vp.name} horizontally clipped: ${result.clipped.join(" | ")}`,
+      ).toEqual([]);
     });
 
     test("flattened rows are still separated by a PAINTED divider", async ({ page }) => {
