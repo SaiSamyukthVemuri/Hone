@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { PendingLink } from "@/components/pending-link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useState, useTransition } from "react";
 import { PRESS_TRANSITION, cx } from "./ui/control-base";
@@ -39,6 +39,13 @@ const TABS: ReadonlyArray<{ value: ProfileTab; label: string }> = [
  * link — and that owns navigation state — would weaken a guard with a real
  * stated purpose. The tab bar keeps its own copy instead, and the two stay in
  * step because both are pinned by their own tests.
+ *
+ * RESP-CLIENT-INTAKE-01 narrows that statement rather than contradicting it.
+ * This file now DOES import `PendingLink` — but only for the Treatment Photos
+ * control, which is a genuine `<Link>` and therefore exactly what the primitive
+ * is for. The copy below still serves the seven tab `<button>`s, which are not
+ * links, and nothing about the primitive was widened to reach them. The split
+ * is now: links use the shipped leaf, buttons use the local copy.
  *
  * A ring drawn in `border`, not a box-shadow: forced-colors mode (Windows High
  * Contrast) forces `box-shadow: none` and would erase a shadow-drawn mark,
@@ -129,12 +136,20 @@ export function ProfileTabBar({ active }: Props) {
           (/clients/[id]/images). Surface it as a tab-level link instead of
           burying it under Health & Forms. Mobile: a link under the section
           select; md+: a tab-styled link at the end of the row. */}
-      <Link
+      {/* RESP-CLIENT-INTAKE-01 RANK 5 (1 of 2 — the mobile form).
+          This was the one control in this bar that stayed silent while its
+          seven siblings spoke: measured under a held navigation, the tab
+          BUTTONS acknowledged on all four channels and this link changed by
+          nothing at all. It is a real <Link>, so the shipped navigation leaf
+          is the right mechanism — the local copy below stays for the buttons,
+          which are not links and own their own transition. */}
+      <PendingLink
         href={`${pathname}/images`}
+        pendingLabel="Opening treatment photos…"
         className="mt-2 inline-flex items-center min-h-[44px] min-w-[44px] text-sm font-medium text-neutral-600 underline md:hidden dark:text-neutral-300"
       >
         Treatment Photos →
-      </Link>
+      </PendingLink>
       {/* md+: the underlined tab row, unchanged from PR #233 (it fits
           in one row on tablet/desktop and never scrolls there). */}
       <div className="hidden gap-x-5 overflow-x-auto whitespace-nowrap [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden md:flex md:gap-x-6">
@@ -203,12 +218,17 @@ export function ProfileTabBar({ active }: Props) {
             </button>
           );
         })}
-        <Link
+        {/* RESP-CLIENT-INTAKE-01 RANK 5 (2 of 2 — the md+ form). `relative`
+            is already on this control and PendingLink adds its own; the
+            duplicate is harmless and the class is kept so the tab-styled
+            geometry is unchanged from PR #233. */}
+        <PendingLink
           href={`${pathname}/images`}
+          pendingLabel="Opening treatment photos…"
           className="relative min-h-[44px] px-1 pb-3 pt-2 text-sm font-medium text-neutral-500 transition hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
         >
           Treatment Photos
-        </Link>
+        </PendingLink>
       </div>
       {/* MOUNTED AT ALL TIMES; only its TEXT changes.
           A polite live region has to exist before its content changes — a

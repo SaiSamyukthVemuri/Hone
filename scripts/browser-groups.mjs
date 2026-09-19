@@ -227,6 +227,15 @@ export const BROWSER_GROUPS = {
       // this mechanism is unattributable application code that already fails
       // safe to EXTENDED.
       "perceived-speed.spec.ts",
+      // RESP-CLIENT-INTAKE-01: the same primitive as the line above, adopted on
+      // the clinical navigation controls (Client Profile -> Log session /
+      // previous session / intake / photos, Intake -> client) and the two raw
+      // <a> controls converted to soft navigations. Grouped HERE and not in
+      // `sessions`, for the reason perceived-speed gives: the claim under test
+      // is the shared pending-navigation vocabulary, which any application diff
+      // can reach, so it belongs in the family that fails safe to EXTENDED.
+      // Its destinations happen to be clinical, but its subject is the shell.
+      "resp-client-intake-01-nav-ack.spec.ts",
       // UI-R01: the interaction foundations (press acknowledgement, the shared
       // spinner, geometry stability). Sits beside perceived-speed.spec.ts for
       // the same reason it gives above — this is the shell-wide interaction
