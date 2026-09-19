@@ -1371,23 +1371,36 @@ function primaryNav(page: Page): Locator {
 }
 
 /**
- * The TAP's own held request, with the speculative one subtracted.
+ * WHERE THE NON-VACUITY OF THESE TESTS ACTUALLY COMES FROM.
  *
- * These tests use `holdPrefetch`, and that makes the bare `gate.held()` check
- * that serves the `blockPrefetch` tests too weak here: `held` counts the
- * speculative fetch as well, so it is already non-zero before anything is
- * pressed. Asserting it alone would pass on a tap that issued no request at
- * all — precisely the failure this helper exists to catch.
+ * Under `holdPrefetch` a request counter cannot carry it, and it is worth
+ * saying why rather than leaving the next reader to re-derive it.
  *
- * The difference is the real claim: at least one NON-prefetch request for this
- * destination is in flight and this test is what is holding it.
+ * The obvious strengthening — "held minus prefetchesHeld > 0", i.e. the tap
+ * issued its OWN request — is WRONG HERE, and would fail against a perfectly
+ * healthy product. Next stores a prefetch in the router cache as a lazily
+ * created entry whose `data` is a PROMISE, and
+ * `getOrCreatePrefetchCacheEntry` returns that existing entry when one is
+ * still valid (next/dist/client/components/router-reducer/prefetch-cache-
+ * utils.js). The entry is in the cache from the moment the prefetch STARTS,
+ * not when it resolves — so a click during a held prefetch reuses that
+ * in-flight promise and issues no second request at all. `held` and
+ * `prefetchesHeld` are then equal, by design, on a navigation that is
+ * genuinely pending.
+ *
+ * So the anti-vacuity claim is made from what is observable instead, and every
+ * test below asserts all four together:
+ *
+ *   1. something for this destination is in flight and THIS TEST is holding it
+ *      (`held() > 0` and `prefetchesHeld() > 0`);
+ *   2. the destination does not exist yet;
+ *   3. the URL has not moved — the transition has not committed;
+ *   4. releasing the gate lands it.
+ *
+ * (2) and (3), asserted WHILE the mark is on screen, are what a cached or
+ * already-committed navigation cannot satisfy: if nothing were pending the
+ * destination would already be rendered. A counter alone proves neither.
  */
-function tapHolds(gate: {
-  held: () => number;
-  prefetchesHeld: () => number;
-}): number {
-  return gate.held() - gate.prefetchesHeld();
-}
 
 test.describe("NAV-ACK-02 primary navigation — desktop", () => {
   test("the Records tab acknowledges before the destination exists, and navigates once", async ({
@@ -1445,8 +1458,11 @@ test.describe("NAV-ACK-02 primary navigation — desktop", () => {
 
     await test.step("acknowledged before the destination exists", async () => {
       await expect(tapAcknowledgement(tab)).toBeVisible({ timeout: T });
-      // Anti-vacuity: if nothing was held, the window never opened.
-      expect(tapHolds(gate)).toBeGreaterThan(0);
+      // Anti-vacuity, limb 1 of 4 — see the note above the describe block.
+      // A counter alone cannot carry this under `holdPrefetch`; limbs 2 and 3
+      // (destination absent, URL unmoved) are asserted a few lines down, and
+      // limb 4 (it lands on release) in the next step.
+      expect(gate.held()).toBeGreaterThan(0);
       expect(gate.prefetchesHeld()).toBeGreaterThan(0);
 
       // This is what a segment change does with no route boundary: the OLD
@@ -1533,7 +1549,15 @@ test.describe("NAV-ACK-02 primary navigation — desktop", () => {
     await page.keyboard.press("Enter");
 
     await expect(tapAcknowledgement(tab)).toBeVisible({ timeout: T });
-    expect(tapHolds(gate)).toBeGreaterThan(0);
+    expect(gate.held()).toBeGreaterThan(0);
+    expect(gate.prefetchesHeld()).toBeGreaterThan(0);
+    // Limbs 2 and 3: the destination does not exist and the URL has not moved,
+    // asserted WHILE the mark is on screen. This is the half a counter cannot
+    // carry — a cached navigation would already have committed here.
+    await expect(
+      page.getByRole("heading", { level: 1, name: "Clients" }),
+    ).toHaveCount(0);
+    expect(new URL(page.url()).pathname).toBe("/dashboard");
     await expect(tab.locator('[role="status"]')).toHaveText("Opening Clients…");
     // Focus is not stolen by the mark: the anchor still owns it.
     await expect(tab).toBeFocused();
@@ -1597,7 +1621,13 @@ test.describe("NAV-ACK-02 primary navigation — 390px compact shell", () => {
 
     await test.step("the bell dims, and neither it nor its icon moves", async () => {
       await expect(tapAcknowledgement(bell)).toBeVisible({ timeout: T });
-      expect(tapHolds(gate)).toBeGreaterThan(0);
+      expect(gate.held()).toBeGreaterThan(0);
+      expect(gate.prefetchesHeld()).toBeGreaterThan(0);
+      // Limbs 2 and 3, while the mark is on screen.
+      await expect(
+        page.getByRole("heading", { level: 1, name: "Notifications" }),
+      ).toHaveCount(0);
+      expect(new URL(page.url()).pathname).toBe("/records");
 
       // Dimmed, never blanked. The label form would have faded the icon out.
       await expect(icon).toBeVisible();
@@ -1636,7 +1666,13 @@ test.describe("NAV-ACK-02 primary navigation — 390px compact shell", () => {
     await wordmark.click();
 
     await expect(tapAcknowledgement(wordmark)).toBeVisible({ timeout: T });
-    expect(tapHolds(gate)).toBeGreaterThan(0);
+    expect(gate.held()).toBeGreaterThan(0);
+    expect(gate.prefetchesHeld()).toBeGreaterThan(0);
+    // Limbs 2 and 3, while the mark is on screen.
+    await expect(
+      page.getByRole("heading", { level: 1, name: "Dashboard" }),
+    ).toHaveCount(0);
+    expect(new URL(page.url()).pathname).toBe("/records");
     await expect(wordmark.locator('[role="status"]')).toHaveText(
       "Opening Dashboard…",
     );
@@ -1678,7 +1714,13 @@ test.describe("NAV-ACK-02 reduced motion — desktop", () => {
     // still on screen and the live region still speaks.
     const mark = tapAcknowledgement(tab);
     await expect(mark).toBeVisible({ timeout: T });
-    expect(tapHolds(gate)).toBeGreaterThan(0);
+    expect(gate.held()).toBeGreaterThan(0);
+    expect(gate.prefetchesHeld()).toBeGreaterThan(0);
+    // Limbs 2 and 3, while the mark is on screen.
+    await expect(
+      page.getByRole("heading", { level: 1, name: "Calendar" }),
+    ).toHaveCount(0);
+    expect(new URL(page.url()).pathname).toBe("/dashboard");
     await expect(tab.locator('[role="status"]')).toHaveText("Opening Calendar…");
     expect(await tab.boundingBox()).toEqual(resting);
 
