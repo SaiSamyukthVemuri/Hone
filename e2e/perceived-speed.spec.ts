@@ -1426,6 +1426,20 @@ test.describe("NAV-ACK-02 primary navigation — desktop", () => {
       // cannot shove its siblings under a moving thumb.
       expect(await tab.boundingBox()).toEqual(resting);
 
+      // ONLY THE PRESSED CONTROL SPEAKS, and this slice is where that claim
+      // gets expensive: seven anchors now read navigation state, six of them
+      // in one row. `useLinkStatus` reports the <Link> that OWNS the
+      // navigation, not the router's global state — if it were global, the
+      // whole nav row would light up on every press and the acknowledgement
+      // would stop meaning "the thing you touched". One mark, app-wide.
+      await expect(page.locator("[data-link-pending]")).toHaveCount(1);
+      await expect(
+        tapAcknowledgement(page.getByTestId("nav-dashboard")),
+      ).toHaveCount(0);
+      await expect(
+        tapAcknowledgement(page.getByTestId("nav-wordmark")),
+      ).toHaveCount(0);
+
       // The accessible name survives the fade — `opacity-0`, not `hidden`.
       await expect(tab).toHaveAccessibleName(/Records/i);
 
