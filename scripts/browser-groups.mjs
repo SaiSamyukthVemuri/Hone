@@ -47,6 +47,10 @@ export const BROWSER_GROUPS = {
       "custom-area-commit.spec.ts",
       "galvanic-intensity-retirement.spec.ts",
       "multi-area-charting.spec.ts",
+      // SESSION-START-01. /clients/[id]/sessions/new IS a sessions route, so
+      // this is its group. Filing it elsewhere to dodge the targeted-lane cost
+      // pin would be misfiling to avoid a decision the pin exists to surface.
+      "session-start-01-modality-ack.spec.ts",
       "multi-area-charting-release.spec.ts",
       "observation-chips-loading.spec.ts",
       "observation-chips-save-cycle.spec.ts",

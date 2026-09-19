@@ -18,7 +18,7 @@ import {
   AreaSummaries,
   FromLastVisitForToday,
 } from "@/components/last-session-summary";
-import { startSessionAction } from "./actions";
+import { ModalityPicker } from "./ModalityPicker";
 
 // PR #156 (migration 0068). Sanity match for ?appointment_id=. Empty,
 // missing, or malformed values fall through to "no appointment in
@@ -177,53 +177,7 @@ export default async function NewSessionPage({
         </section>
       )}
 
-      <div className="grid gap-4 md:grid-cols-2">
-        <ModalityCard
-          clientId={id}
-          modality="electrolysis"
-          title="Electrolysis"
-          description="Area, probe, mode, intensity, duration."
-          appointmentId={appointmentId}
-        />
-        <ModalityCard
-          clientId={id}
-          modality="laser"
-          title="Laser"
-          description="Zone, fluence, pulse width, spot size."
-          appointmentId={appointmentId}
-        />
-      </div>
+      <ModalityPicker clientId={id} appointmentId={appointmentId} />
     </div>
-  );
-}
-
-function ModalityCard({
-  clientId,
-  modality,
-  title,
-  description,
-  appointmentId,
-}: {
-  clientId: string;
-  modality: "electrolysis" | "laser";
-  title: string;
-  description: string;
-  appointmentId: string | null;
-}) {
-  return (
-    <form action={startSessionAction}>
-      <input type="hidden" name="client_id" value={clientId} />
-      <input type="hidden" name="modality" value={modality} />
-      {appointmentId && (
-        <input type="hidden" name="appointment_id" value={appointmentId} />
-      )}
-      <button
-        type="submit"
-        className="flex w-full flex-col items-start gap-2 rounded-lg border border-neutral-200 bg-white px-5 py-6 text-left transition hover:border-neutral-900 hover:bg-neutral-50 dark:border-neutral-800 dark:bg-neutral-950 dark:hover:border-neutral-100 dark:hover:bg-neutral-900"
-      >
-        <span className="text-lg font-medium">{title}</span>
-        <span className="text-sm text-neutral-500">{description}</span>
-      </button>
-    </form>
   );
 }
