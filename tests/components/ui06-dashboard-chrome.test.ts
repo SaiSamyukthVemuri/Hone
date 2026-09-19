@@ -154,7 +154,18 @@ describe("UI-06: measured against the real previous source", () => {
   it("strictly fewer boxes and shallower nesting than the base", (ctx) => {
     // Compared against git rather than a restated count, so the claim cannot
     // drift. Skips loudly on a shallow clone, per the UI-05 proof-truth rule.
-    const BASE = "origin/feat/ui05-native-confirm-retirement";
+    //
+    // RE-POINTED AT PRODUCTION during the UI-05 reconciliation. This named
+    // `origin/feat/ui05-native-confirm-retirement` — #727's base while UI-05
+    // was still open. That branch is now MERGED, so it is deletable at any
+    // moment, and the moment it goes away this comparison stops running and
+    // reports itself green-by-skip: precisely the failure the catch block
+    // below exists to prevent. A base ref must outlive the PR that created it.
+    //
+    // Safe because it is the SAME baseline, proved by blob hash rather than
+    // assumed: all three files are byte-identical at the old merge-base, at
+    // UI-05's merged head, and at production — production never touched them.
+    const BASE = "origin/claude/build-hone-saas-hOex7";
     let beforeBoxes = 0;
     let beforeDeepest = 0;
     try {

@@ -1030,3 +1030,302 @@ test.describe("UI-01E navigation touch floor — 390px", () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// NAV-ACK-01 — acknowledgement that OUTLIVES the control that started it.
+// DESIGN.md contract 2d. Owner product ruling 2026-09-18 (NOT UX-01, NOT UX-03).
+//
+// Everything above this line proves contract 2c: the mark is painted ON the
+// tapped control, which is correct because that control survives its own press.
+//
+// MobileMenu and GlobalSearch are the case where it does not. Both render their
+// links inside a panel gated on `open`, and both close on activation by
+// deliberate, documented contract — MobileMenu.tsx records that PR #229 exists
+// to close "on every link tap (including the current page's link)". So the
+// anchor is destroyed by the same click that starts the navigation, and
+// `useLinkStatus` dies with it.
+//
+// THE LOAD-BEARING ASSERTION IS THEREFORE:  PANEL GONE + MARK STILL VISIBLE.
+// Asserting only "a mark appears" would pass against the rejected patch, which
+// paints for one frame and vanishes. Every proof below checks the panel is gone
+// FIRST, and only then looks for the acknowledgement.
+// ---------------------------------------------------------------------------
+
+/** The mark NAV-ACK paints on the retained root. */
+function shellAcknowledgement(page: Page): Locator {
+  return page.locator("[data-nav-pending]");
+}
+
+async function activeElementIsNotBody(page: Page): Promise<string> {
+  return page.evaluate(() => {
+    const el = document.activeElement;
+    if (!el) return "NULL";
+    if (el === document.body) return "BODY";
+    return `${el.tagName}:${el.getAttribute("aria-label") ?? el.textContent?.trim().slice(0, 30) ?? ""}`;
+  });
+}
+
+test.describe("NAV-ACK-01 MobileMenu — 390px", () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+
+  test("the menu closes, and the acknowledgement stays on the trigger until the navigation lands", async ({
+    page,
+  }) => {
+    const seed = await seedE2eStudio();
+    await loginAsOwner(page, seed);
+
+    // Installed before the shell renders, so Records is never prefetched and
+    // the tap must issue the cold request this gate holds open.
+    const gate = await holdNavigation(
+      page,
+      (url) => url.pathname.startsWith("/records"),
+      { holdPrefetch: true },
+    );
+
+    await page.goto("/dashboard");
+
+    const trigger = page.getByRole("button", { name: "Open navigation menu" });
+    await expect(trigger).toBeVisible({ timeout: T });
+
+    const root = trigger.locator("..");
+    const liveRegion = root.locator('[role="status"]');
+    // Mounted before anything is pending, and silent.
+    await expect(liveRegion).toBeAttached();
+    await expect(liveRegion).toHaveText("");
+    await expect(shellAcknowledgement(page)).toHaveCount(0);
+
+    // Geometry is captured at rest so the mark can be proved not to move it.
+    const resting = await trigger.boundingBox();
+    expect(resting).not.toBeNull();
+
+    await trigger.click();
+    const panel = page.getByRole("navigation", { name: "Mobile navigation" });
+    await expect(panel).toBeVisible();
+
+    const records = panel.getByRole("link", { name: "Records" });
+    await expect(records).toBeVisible();
+    const historyBefore = await page.evaluate(() => window.history.length);
+    await records.click();
+
+    // 1. THE PANEL IS GONE. Asserted FIRST — this is what makes the next
+    //    assertion load-bearing rather than decorative.
+    await expect(panel).toHaveCount(0);
+
+    // 2. AND THE ACKNOWLEDGEMENT IS STILL THERE.
+    await expect(shellAcknowledgement(page)).toBeVisible({ timeout: T });
+    expect(gate.held()).toBeGreaterThan(0);
+
+    // 3. It says what was requested, once, and never an outcome.
+    await expect(liveRegion).toHaveText("Opening Records…");
+
+    // 4. Focus did not fall to <body> when the panel unmounted.
+    expect(await activeElementIsNotBody(page)).not.toBe("BODY");
+
+    // 5. The trigger did not resize under the mark.
+    expect(await trigger.boundingBox()).toEqual(resting);
+
+    // 6. We are still on the old page: nothing has committed yet.
+    expect(new URL(page.url()).pathname).toBe("/dashboard");
+
+    gate.release();
+
+    await expect(
+      page.getByRole("heading", { level: 1, name: /Record Keeping/i }),
+    ).toBeVisible({ timeout: T });
+    await expect(shellAcknowledgement(page)).toHaveCount(0);
+    await expect(liveRegion).toHaveText("");
+
+    // 7. EXACTLY ONE NAVIGATION HAPPENED.
+    //
+    //    Counted from session history, not from requests. Under `holdPrefetch`
+    //    the tap REUSES the speculative request rather than issuing its own —
+    //    measured — so counting non-prefetch RSC requests reports 0 for a
+    //    navigation that plainly occurred, and counting gate hits would pin
+    //    Next's prefetch-reuse behaviour rather than ours. A second push would
+    //    add a second entry whichever way the request was served.
+    //
+    //    The structural half is assertion 1: the panel is GONE, so the link
+    //    that could fire again no longer exists. `navLockRef` covers the
+    //    remaining window — two clicks in one tick, before React commits — and
+    //    that is pinned in tests/components/nav-ack-01-shell-handoff.test.ts.
+    expect(await page.evaluate(() => window.history.length)).toBe(
+      historyBefore + 1,
+    );
+  });
+
+  test("the current-page tap closes the menu and leaves nothing pending", async ({
+    page,
+  }) => {
+    const seed = await seedE2eStudio();
+    await loginAsOwner(page, seed);
+    await page.goto("/dashboard");
+
+    const trigger = page.getByRole("button", { name: "Open navigation menu" });
+    await expect(trigger).toBeVisible({ timeout: T });
+    const liveRegion = trigger.locator("..").locator('[role="status"]');
+
+    await trigger.click();
+    const panel = page.getByRole("navigation", { name: "Mobile navigation" });
+    await expect(panel).toBeVisible();
+
+    // The link for the page we are already on. There is no route change to
+    // wait for, so a mechanism that waited for one would strand here forever.
+    await panel.getByRole("link", { name: "Dashboard" }).click();
+
+    // The documented PR #229 behaviour is preserved: it closes anyway.
+    await expect(panel).toHaveCount(0);
+
+    // And the acknowledgement clears itself, because the transition settles on
+    // a no-op exactly as it does on a commit.
+    await expect(shellAcknowledgement(page)).toHaveCount(0, { timeout: T });
+    await expect(liveRegion).toHaveText("");
+    expect(new URL(page.url()).pathname).toBe("/dashboard");
+    expect(await activeElementIsNotBody(page)).not.toBe("BODY");
+  });
+});
+
+test.describe("NAV-ACK-01 GlobalSearch — 390px", () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+
+  test("choosing a result closes the panel and keeps the acknowledgement on the trigger", async ({
+    page,
+  }) => {
+    const seed = await seedE2eStudio();
+    const client = await seedE2eDashboardClient(seed, { label: "Navack Mobile" });
+    await loginAsOwner(page, seed);
+
+    const gate = await holdNavigation(
+      page,
+      (url) => url.pathname.startsWith("/clients/"),
+      { holdPrefetch: true },
+    );
+
+    await page.goto("/dashboard");
+
+    const trigger = page.getByRole("button", { name: "Search Hone" });
+    await expect(trigger).toBeVisible({ timeout: T });
+    const liveRegion = trigger.locator("..").locator('[role="status"]');
+    await expect(liveRegion).toBeAttached();
+    await expect(liveRegion).toHaveText("");
+
+    await trigger.click();
+    const field = page.getByRole("searchbox", { name: "Search Hone" });
+    await field.fill(client.name);
+
+    const result = page.getByRole("link", { name: new RegExp(client.name) }).first();
+    await expect(result).toBeVisible({ timeout: T });
+    await result.click();
+
+    // The panel — and the query it held — are gone.
+    await expect(field).toHaveCount(0);
+    // The acknowledgement is not.
+    await expect(shellAcknowledgement(page)).toBeVisible({ timeout: T });
+    expect(gate.held()).toBeGreaterThan(0);
+    await expect(liveRegion).toHaveText(new RegExp(`^Opening .*${client.name}`));
+    expect(await activeElementIsNotBody(page)).not.toBe("BODY");
+
+    gate.release();
+    await expect(
+      page.getByRole("heading", { level: 1, name: client.name }),
+    ).toBeVisible({ timeout: T });
+    await expect(shellAcknowledgement(page)).toHaveCount(0);
+    await expect(liveRegion).toHaveText("");
+  });
+});
+
+test.describe("NAV-ACK-01 GlobalSearch — desktop", () => {
+  test("the same lifecycle, with focus returned to the input and the panel not re-opened", async ({
+    page,
+  }) => {
+    const seed = await seedE2eStudio();
+    const client = await seedE2eDashboardClient(seed, { label: "Navack Desktop" });
+    await loginAsOwner(page, seed);
+
+    const gate = await holdNavigation(
+      page,
+      (url) => url.pathname.startsWith("/clients/"),
+      { holdPrefetch: true },
+    );
+
+    await page.goto("/dashboard");
+
+    const field = page.getByRole("searchbox", { name: "Search Hone" });
+    await expect(field).toBeVisible({ timeout: T });
+    const liveRegion = field.locator("..").locator('[role="status"]');
+    await expect(liveRegion).toHaveText("");
+
+    await field.click();
+    await field.fill(client.name);
+
+    const result = page.getByRole("link", { name: new RegExp(client.name) }).first();
+    await expect(result).toBeVisible({ timeout: T });
+    await result.click();
+
+    // The dropdown is gone…
+    await expect(result).toHaveCount(0);
+    // …and did NOT re-open when focus was restored to the input that opens on
+    // focus. That suppression is one-shot and this is what proves it.
+    await expect(shellAcknowledgement(page)).toBeVisible({ timeout: T });
+    expect(gate.held()).toBeGreaterThan(0);
+    expect(await activeElementIsNotBody(page)).not.toBe("BODY");
+    await expect(
+      page.getByRole("link", { name: new RegExp(client.name) }),
+    ).toHaveCount(0);
+
+    gate.release();
+    await expect(
+      page.getByRole("heading", { level: 1, name: client.name }),
+    ).toBeVisible({ timeout: T });
+    await expect(shellAcknowledgement(page)).toHaveCount(0);
+  });
+});
+
+// NAV-ACK-01 · the anchored destination, on the page it targets.
+//
+// Codex P2 on #731. lib/search/navigation-registry.ts ships 34 anchored
+// entries, so "already on this pathname" does NOT mean "nothing to do". The
+// same-route guard runs AFTER preventDefault(), so treating an anchor jump as
+// a no-op made the press do literally nothing: panel closed, no scroll, no URL
+// change. This is the browser proof that it navigates — and, just as
+// deliberately, that it is NOT acknowledged, because an in-page jump commits
+// synchronously and has no pending interval to paint.
+test.describe("NAV-ACK-01 GlobalSearch anchor — desktop", () => {
+  test("an anchor on the CURRENT page still moves, and fabricates no progress", async ({
+    page,
+  }) => {
+    const seed = await seedE2eStudio();
+    await loginAsOwner(page, seed);
+
+    await page.goto("/settings/booking");
+    await expect(page).toHaveURL(/\/settings\/booking$/, { timeout: T });
+
+    const field = page.getByRole("searchbox", { name: "Search Hone" });
+    await expect(field).toBeVisible({ timeout: T });
+    await field.fill("buffer");
+
+    const result = page
+      .getByRole("link", { name: /Time between appointments/ })
+      .first();
+    await expect(result).toBeVisible({ timeout: T });
+    await result.click();
+
+    // THE REGRESSION, as a user would meet it: the URL must carry the anchor.
+    await expect(page).toHaveURL(/\/settings\/booking#buffer$/, { timeout: T });
+
+    // The panel still closes, exactly as for any other activation.
+    await expect(field).toHaveValue("");
+
+    // And nothing is armed — there is no navigation interval to acknowledge.
+    await expect(shellAcknowledgement(page)).toHaveCount(0);
+
+    // The control the entry names is actually on screen.
+    const anchored = page.locator("#buffer");
+    await expect(anchored).toBeVisible({ timeout: T });
+    expect(
+      await anchored.evaluate((el) => {
+        const r = el.getBoundingClientRect();
+        return r.top >= 0 && r.top <= window.innerHeight;
+      }),
+    ).toBe(true);
+  });
+});

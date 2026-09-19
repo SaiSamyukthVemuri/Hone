@@ -7,6 +7,7 @@ import { ConfirmDialog } from "@/components/confirm-dialog";
 import type { PortalMessageForPractitioner } from "@/lib/portal-messages/queries";
 import type { PortalMessageReplyForPractitioner } from "@/lib/portal-messages/replies-queries";
 import { FormattedDateTime } from "@/components/formatted-date-time";
+import { useReturnFocus } from "@/components/use-return-focus";
 
 const SUBJECT_MAX = 160;
 const BODY_MAX = 5000;
@@ -92,6 +93,13 @@ export function PortalMessagesCard({
   // implicitly in its call stack; a mounted dialog has to be told.
   const [archiveTarget, setArchiveTarget] = useState<string | null>(null);
 
+  // The destructive-action focus contract, shared with the tags card and the
+  // schedule editor. See components/use-return-focus.ts: the opener here is
+  // the row's Archive button, and a successful archive moves the row into the
+  // archived list, which renders `onArchive={null}`.
+  const { anchorRef: headingRef, arm: armHeadingFocus } =
+    useReturnFocus<HTMLHeadingElement>(archiveTarget);
+
   function submit() {
     const trimSubject = subject.trim();
     const trimBody = body.trim();
@@ -153,6 +161,7 @@ export function PortalMessagesCard({
     startArchiveTransition(async () => {
       const r = await archiveAction(fd);
       if (r.ok) {
+        armHeadingFocus();
         setArchiveTarget(null);
       } else {
         setArchiveError(r.error);
@@ -167,7 +176,13 @@ export function PortalMessagesCard({
     <section className="flex flex-col gap-4 rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-500">
+          <h2
+            ref={headingRef}
+            // Programmatic focus target only: -1 keeps it out of the Tab order,
+            // and `outline-hidden` (not `outline-none`) per DESIGN.md LAW 3/6.
+            tabIndex={-1}
+            className="text-sm font-medium uppercase tracking-wider text-neutral-500 outline-hidden"
+          >
             Portal messages
             {unseenReplyCount > 0 && (
               <span

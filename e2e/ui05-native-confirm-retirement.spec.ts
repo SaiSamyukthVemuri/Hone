@@ -103,6 +103,68 @@ test.describe("UI-05 archiving a portal message uses the shipped dialog", () => 
       .not.toBeNull();
   });
 
+  // P2-02 (Codex, exact head 3ef45f70). ConfirmDialog restores focus to the
+  // element that was active when it opened. On a SUCCESSFUL archive that
+  // element is the row's Archive button, and the row moves from the active list
+  // into the archived list — which renders `onArchive={null}`, so the button is
+  // unmounted. Restoring to it then calls focus() on a detached node, which
+  // does nothing, and a keyboard or screen-reader user is dropped on <body> at
+  // the top of the document.
+  //
+  // Cancel is deliberately the control case: nothing moves, the opener still
+  // exists, and the primitive's own restoration is correct and must stay.
+  test("a successful archive leaves focus on a surviving element, not on <body>", async ({
+    page,
+  }) => {
+    const { clientId, subject } = await seedPortalMessage(page);
+    await expect(page.getByText(subject)).toBeVisible({ timeout: T });
+
+    await page.getByRole("button", { name: "Archive" }).first().click();
+    const dialog = page.getByRole("alertdialog");
+    await expect(dialog).toBeVisible({ timeout: T });
+    await dialog.getByRole("button", { name: "Archive message" }).click();
+
+    await expect
+      .poll(async () => archivedAtFor(clientId), { timeout: T })
+      .not.toBeNull();
+    await expect(dialog).toHaveCount(0, { timeout: T });
+
+    const focus = await page.evaluate(() => {
+      const el = document.activeElement;
+      if (!el) return { tag: "NULL", connected: false };
+      return {
+        tag: el.tagName,
+        connected: el.isConnected,
+        label: el.getAttribute("aria-label") ?? el.textContent?.trim().slice(0, 40) ?? "",
+      };
+    });
+
+    expect(focus.tag, "focus must not fall to <body> after the row moves").not.toBe("BODY");
+    expect(focus.connected, "focus must be on an element still in the document").toBe(true);
+  });
+
+  test("cancelling still returns focus to the Archive button that opened the dialog", async ({
+    page,
+  }) => {
+    const { subject } = await seedPortalMessage(page);
+    await expect(page.getByText(subject)).toBeVisible({ timeout: T });
+
+    await page.getByRole("button", { name: "Archive" }).first().click();
+    const dialog = page.getByRole("alertdialog");
+    await expect(dialog).toBeVisible({ timeout: T });
+    await dialog.getByRole("button", { name: "Cancel" }).click();
+    await expect(dialog).toHaveCount(0, { timeout: T });
+
+    // The row never moved, so the primitive's opener restoration is correct
+    // here and must not be traded away by the success-path repair.
+    const focused = await page.evaluate(() => {
+      const el = document.activeElement as HTMLElement | null;
+      return el ? { tag: el.tagName, text: el.textContent?.trim() ?? "" } : null;
+    });
+    expect(focused?.tag).toBe("BUTTON");
+    expect(focused?.text).toContain("Archive");
+  });
+
   test("on a 390px viewport the dialog fits without horizontal scroll", async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     const { subject } = await seedPortalMessage(page);
@@ -117,3 +179,105 @@ test.describe("UI-05 archiving a portal message uses the shipped dialog", () => 
     expect(overflow).toBeLessThanOrEqual(0);
   });
 });
+
+// P2-01 (Codex, exact head c110d9b2). The treatment-schedule editor mounts its
+// ConfirmDialog INSIDE the stage row ("so the dialog unmounts with the stage it
+// removes"), so on a successful removal the dialog's own unmount cleanup runs
+// and restores focus to the Remove button — which went away with the row.
+//
+// Two LEGACY stages are seeded, not the fixed clinical set: `isFixedStageSet`
+// suppresses Remove entirely for the three fixed names, so a fixed-stage plan
+// cannot exercise this path at all.
+async function seedLegacyPlanWithStages(
+  page: Page,
+): Promise<{ seed: E2eSeed; clientId: string; planName: string }> {
+  const seed = await seedE2eStudio();
+  const { clientId } = await seedE2eClient(seed);
+  const planName = `E2E legacy plan ${seed.runId}`;
+
+  const [{ id: planId }] = await sql<{ id: string }>(
+    `insert into public.treatment_plans
+       (studio_id, client_id, name, status)
+     values ($1, $2, $3, 'active') returning id`,
+    [seed.studioId, clientId, planName],
+  );
+
+  for (const [i, name] of [`Upper lip ${seed.runId}`, `Chin ${seed.runId}`].entries()) {
+    await sql(
+      `insert into public.treatment_plan_stages
+         (plan_id, studio_id, sort_order, name, how_often_unit,
+          visit_length_minutes, stage_length_value, stage_length_unit)
+       values ($1, $2, $3, $4, 'weekly', 30, 6, 'weeks')`,
+      [planId, seed.studioId, i, name],
+    );
+  }
+
+  await loginAsOwner(page, seed);
+  await page.goto(`/clients/${clientId}?tab=treatment`);
+  return { seed, clientId, planName };
+}
+
+test.describe("UI-05 removing a plan stage uses the shipped dialog", () => {
+  test("a successful stage removal leaves focus on a surviving element, not on <body>", async ({
+    page,
+  }) => {
+    const { planName } = await seedLegacyPlanWithStages(page);
+    await expect(page.getByText(planName)).toBeVisible({ timeout: T });
+
+    const remove = page.getByRole("button", { name: "Remove" }).first();
+    await expect(remove).toBeVisible({ timeout: T });
+    await remove.click();
+
+    const dialog = page.getByRole("alertdialog");
+    await expect(dialog).toBeVisible({ timeout: T });
+    await dialog.getByRole("button", { name: "Remove stage" }).click();
+    await expect(dialog).toHaveCount(0, { timeout: T });
+
+    const focus = await page.evaluate(() => {
+      const el = document.activeElement;
+      if (!el) return { tag: "NULL", connected: false };
+      return { tag: el.tagName, connected: el.isConnected };
+    });
+    expect(focus.tag, "focus must not fall to <body> after the row unmounts").not.toBe("BODY");
+    expect(focus.connected, "focus must be on an element still in the document").toBe(true);
+  });
+
+  test("cancelling a stage removal still returns focus to its Remove button", async ({
+    page,
+  }) => {
+    const { planName } = await seedLegacyPlanWithStages(page);
+    await expect(page.getByText(planName)).toBeVisible({ timeout: T });
+
+    const remove = page.getByRole("button", { name: "Remove" }).first();
+    await remove.click();
+    const dialog = page.getByRole("alertdialog");
+    await expect(dialog).toBeVisible({ timeout: T });
+    await dialog.getByRole("button", { name: "Cancel" }).click();
+    await expect(dialog).toHaveCount(0, { timeout: T });
+
+    // The row survives a cancel, so the primitive's restoration is correct here
+    // and the success-path repair must not trade it away.
+    const focused = await page.evaluate(() => {
+      const el = document.activeElement as HTMLElement | null;
+      return el ? { tag: el.tagName, text: el.textContent?.trim() ?? "" } : null;
+    });
+    expect(focused?.tag).toBe("BUTTON");
+    expect(focused?.text).toBe("Remove");
+  });
+});
+
+// P3 (Codex, exact head c110d9b2) — the tags card carries the SAME
+// detached-opener class, and it is fixed with the same shared hook. There is
+// deliberately NO browser proof for it, because there is nothing to drive:
+// `ClientTagsCard` has ZERO JSX mount sites in the app. It was removed from the
+// client profile per pilot feedback (Chloe asked repeatedly for pinned notes as
+// the practitioner-memory surface), and the note at
+// app/(app)/clients/[id]/page.tsx records that the tag data and the
+// addClientTagAction / removeClientTagAction server actions are intentionally
+// preserved so the card can be re-surfaced later.
+//
+// A Playwright test for an unmountable component could only ever fail, so the
+// claim is pinned in tests/components/ui05-native-confirm-retirement.test.ts
+// instead: the card uses the shared hook, and the census asserts it is still
+// unmounted. If anyone re-surfaces it, that census assertion is the thing that
+// should send them here to add the browser proof.

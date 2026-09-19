@@ -283,7 +283,32 @@ export const BROWSER_GROUPS = {
   },
   responsive: {
     description: "cross-cutting responsive behaviour",
-    specs: ["mobile-ux.spec.ts"],
+    specs: [
+      "mobile-ux.spec.ts",
+      // SIGNOUT-01: the authenticated Sign out path on BOTH shells, proved by
+      // real session destruction in auth.sessions rather than by a pathname.
+      //
+      // WHY HERE AND NOT `owner_admin`, WHERE THE REST OF THE SHELL/AUTH-GATE
+      // FAMILY LIVES (invite-only, authenticated-route-error-containment).
+      // Because SELECTION, not taxonomy, decides whether a proof ever runs:
+      //
+      //   * `app/(app)/MobileMenu.tsx` matches the /mobile/i rule below, so a
+      //     MobileMenu-only diff IS attributed, the extended fallback does not
+      //     fire, and it selects `responsive` + `smoke`. Filed under
+      //     `owner_admin`, this spec would have been SKIPPED for a diff to one
+      //     of the two components it exists to protect.
+      //   * `app/(app)/AccountMenu.tsx` and `app/(app)/dashboard/actions.ts`
+      //     match no rule, so they fall through to EXTENDED and run it anyway.
+      //
+      // Filing it here covers both directions with no new path rule. The
+      // alternative — an exact AccountMenu path rule — would NARROW that file
+      // from extended to one group, which is a coverage REDUCTION and the same
+      // trade the ui04 note above declines to make for /clients/.
+      //
+      // Deliberately still not in `smoke`: that group runs on every targeted PR
+      // and its size is a pinned cost.
+      "signout-session-destruction.spec.ts",
+    ],
   },
   google: {
     description: "Google Calendar surfaces (fake Google)",

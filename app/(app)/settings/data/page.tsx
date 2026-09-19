@@ -60,7 +60,7 @@ export default async function DataSettingsPage() {
         {/* UI-R02. This page spelled its heading a SECOND way — Fraunces, bold,
             plus an inline letterSpacing override — while /notifications used
             `text-3xl font-semibold tracking-tight`. One page, one spelling. */}
-        <PageHeader title="Your data" />
+        <PageHeader title="Your data" headingLevel={2} />
         <p className="max-w-[640px] text-base leading-relaxed text-neutral-700 dark:text-neutral-300 md:text-lg">
           {studio.name} has {fmt(clientCount)}{" "}
           {clientCount === 1 ? "client" : "clients"}, {fmt(sessionCount)}{" "}
@@ -254,8 +254,11 @@ function DataCard({
   // Card also adds a radius these cards never had: the inline border drew square
   // corners while every other bordered surface in the app is `rounded-lg`.
   //
-  // h2, not h3: the page's only other heading is PageHeader's h1, so `h3` skipped
-  // a level. These sections ARE the page's top-level divisions.
+  // h3, restored. An earlier revision demoted these to h2 on the premise that
+  // "the page's only other heading is PageHeader's h1" — which was WRONG:
+  // settings/layout.tsx renders <h1>Settings</h1> for every settings route. The
+  // real hierarchy is h1 Settings -> h2 Your data -> h3 these sections, so h2
+  // here would sit at the same depth as the page's own title.
   return (
     <Card
       as="section"
@@ -263,7 +266,7 @@ function DataCard({
       padded={false}
       className="flex scroll-mt-24 flex-col gap-4 p-8"
     >
-      <h2 className="text-lg font-medium text-fg">{title}</h2>
+      <h3 className="text-lg font-medium text-fg">{title}</h3>
       <p className="max-w-[600px] text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
         {body}
       </p>

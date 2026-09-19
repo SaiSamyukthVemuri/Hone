@@ -38,6 +38,35 @@ async function computedBg(control: Locator): Promise<string> {
   return control.evaluate((el) => getComputedStyle(el).backgroundColor);
 }
 
+/**
+ * The SETTLED computed background — a colour, not a moment.
+ *
+ * THIS EXISTS BECAUSE ITS ABSENCE MADE THE HEADLINE PROOF VACUOUS, and that was
+ * caught by mutation rather than by reading. `submit.hover().then(() =>
+ * computedBg(submit))` reads DURING the rest->hover transition and returns an
+ * interpolated frame, not the destination colour. Comparing that frame against
+ * a later read of the pressed state then differs for TIMING reasons whether or
+ * not the two colours actually differ — so the test passed with `active:`
+ * mutated to repeat `hover:`, which is the precise defect it exists to catch.
+ * The mutation was confirmed to reach the compiled stylesheet
+ * (`active\:bg-danger-solid-hover:active{...}`), so the fault was the
+ * measurement, not the build.
+ *
+ * Polling until two consecutive reads agree is what turns the reading into the
+ * destination value. Same family of trap as the UI-R01 spec's `expect.poll`
+ * note and as this file's own `pollWhileHeld`.
+ */
+async function settledBg(control: Locator): Promise<string> {
+  let prev = await computedBg(control);
+  for (let i = 0; i < 40; i += 1) {
+    await control.page().waitForTimeout(25);
+    const next = await computedBg(control);
+    if (next === prev) return next;
+    prev = next;
+  }
+  return prev;
+}
+
 /** Layout box, transform-independent. See the UI-R01 spec for why not boundingBox(). */
 async function layoutBox(control: Locator) {
   return control.evaluate((el) => {
@@ -199,14 +228,29 @@ test.describe("UI-R02 danger press", () => {
     const box = await layoutBox(submit);
     expect(box.h).toBeGreaterThanOrEqual(44);
 
-    const restBg = await computedBg(submit);
-    const hoverBg = await submit.hover().then(() => computedBg(submit));
-    const heldBg = await measureWhileHeld(page, submit, () => computedBg(submit));
+    const restBg = await settledBg(submit);
+    await submit.hover();
+    const hoverBg = await settledBg(submit);
+    // Poll for a value that DIFFERS from the settled hover colour. When the
+    // press paints no new colour — the defect — this runs to its deadline and
+    // returns the hover colour, so the assertion below fails. A single read
+    // could not tell "pressed to a new colour" from "sampled mid-transition".
+    const heldBg = await pollWhileHeld(
+      page,
+      submit,
+      () => computedBg(submit),
+      (v) => v !== hoverBg,
+    );
 
     // This is the assertion UI-R01 could not make in a browser: three DISTINCT
     // colours. The earlier implementation repeated the hover fill in active:,
     // so a hovering user with reduced motion pressed a button that was already
     // painted and saw nothing change.
+    // THREE distinct colours needs all THREE pairwise comparisons. Asserting
+    // only held-vs-rest and held-vs-hover leaves the rest->hover leg unproved:
+    // if `hover:` regressed to the resting token while `active:` stayed
+    // distinct, both of those still pass and the claim is false.
+    expect(hoverBg).not.toBe(restBg);
     expect(heldBg).not.toBe(restBg);
     expect(heldBg).not.toBe(hoverBg);
 
