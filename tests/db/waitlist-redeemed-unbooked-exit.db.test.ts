@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { Client } from "pg";
+import { randomUUID } from "node:crypto";
 import { adminQuery, asRole, closePool, resolveLocalDbUrl, seedStudio } from "./helpers/harness";
 import {
   eventIdSet,
@@ -86,11 +87,23 @@ async function legalSlot(f: Fixture, nth: number): Promise<string> {
   throw new Error("no legal slot");
 }
 
-const tokenHash = (seed: string): string =>
-  Array.from(
-    { length: 64 },
-    (_, i) => "0123456789abcdef"[(seed.charCodeAt(i % seed.length) + i) % 16],
-  ).join("");
+/**
+ * A cancellation-token hash that CANNOT collide with another file's.
+ *
+ * THE DEFECT THIS REPLACES, observed in CI. The neighbouring 0195 suite derives
+ * its hashes from a short seed with
+ * `"0123456789abcdef"[(seed.charCodeAt(i % seed.length) + i) % 16]`, and a
+ * two-character seed only ever contributes two characters of entropy — so this
+ * file's `"rb"` produced a digest byte-identical to that file's `"r2"`, and
+ * `appointments_cancellation_token_hash_uniq` failed in the OTHER suite. The db
+ * lane shares one database across files, so a weak generator is a cross-file
+ * hazard rather than a local one.
+ *
+ * `randomUUID()` gives 32 hex characters; two of them give the 64 the CHECK
+ * requires, from a source with no seed to collide on.
+ */
+const tokenHash = (): string =>
+  (randomUUID() + randomUUID()).replace(/-/g, "").slice(0, 64).padEnd(64, "0");
 
 type Prospect = { entryId: string; email: string; rawToken: string };
 
@@ -312,7 +325,7 @@ describe("B — redeemed AND booked cannot use this escape hatch", () => {
       client[0].client_id,
       f.serviceId,
       await legalSlot(f, 0),
-      tokenHash("bk"),
+      tokenHash(),
       p.entryId,
     ]);
     // 0195's own word for the composed outcome: the appointment AND the
@@ -343,7 +356,7 @@ describe("B — redeemed AND booked cannot use this escape hatch", () => {
     // recorded and the entry stays exactly where it was.
     const appt = await q<{ result: string }>(
       `select * from public.create_public_appointment($1,$2,$3,$4::timestamptz,$5,null,null)`,
-      [f.studioId, client[0].client_id, f.serviceId, await legalSlot(f, 0), tokenHash("st")],
+      [f.studioId, client[0].client_id, f.serviceId, await legalSlot(f, 0), tokenHash()],
     );
     expect(appt[0].result).toBe("created");
     expect(await statusOf(p.entryId)).toBe("invited");
@@ -366,7 +379,7 @@ describe("B — redeemed AND booked cannot use this escape hatch", () => {
     );
     const appt = await q<{ result: string; appointment_id: string }>(
       `select * from public.create_public_appointment($1,$2,$3,$4::timestamptz,$5,null,null)`,
-      [f.studioId, client[0].client_id, f.serviceId, await legalSlot(f, 0), tokenHash("cx")],
+      [f.studioId, client[0].client_id, f.serviceId, await legalSlot(f, 0), tokenHash()],
     );
     expect(appt[0].result).toBe("created");
     await q(
@@ -386,7 +399,7 @@ describe("B — redeemed AND booked cannot use this escape hatch", () => {
     );
     const appt = await q<{ result: string }>(
       `select * from public.create_public_appointment($1,$2,$3,$4::timestamptz,$5,null,null)`,
-      [f.studioId, client[0].client_id, f.serviceId, await legalSlot(f, 0), tokenHash("hi")],
+      [f.studioId, client[0].client_id, f.serviceId, await legalSlot(f, 0), tokenHash()],
     );
     expect(appt[0].result).toBe("created");
     await redeem(p); // redemption happens AFTER the appointment was created
@@ -569,7 +582,7 @@ describe("F — a booking race cannot produce both a booking and an exit", () =>
         client[0].client_id,
         f.serviceId,
         slot,
-        tokenHash("re"),
+        tokenHash(),
         p.entryId,
       ]);
       await expectBlockedOn(pid, "the booking did not park on the entry mutex the exit holds");
@@ -619,7 +632,7 @@ describe("F — a booking race cannot produce both a booking and an exit", () =>
         client[0].client_id,
         f.serviceId,
         slot,
-        tokenHash("rb"),
+        tokenHash(),
         p.entryId,
       ]);
       expect(booked.rows[0].result).toBe("created_and_converted");
@@ -819,33 +832,29 @@ describe("K — the exit is ONE-WAY, because five consumers depend on that", () 
       )[0].r,
     ).toBe("requeued");
 
-    // Route 2: expired without redemption. The TTL is spent by the clock, which
-    // is the only thing that may produce `expired`.
-    const b = await invitedProspect(f, "n2");
-    await q(
-      `update ${IN_T} set expires_at = issued_at + interval '1 hour',
-                          issued_at  = issued_at
-        where entry_id = $1`,
-      [b.entryId],
-    );
-    await q(
-      `update ${IN_T} set expires_at = now() - interval '1 minute' where entry_id = $1`,
-      [b.entryId],
-    ).catch(() => undefined);
-    const expired = await q<{ r: string }>(
-      `select public.expire_new_client_waitlist_invitation($1,$2,$3) as r`,
-      [f.studioId, b.entryId, f.userId],
-    );
-    if (expired[0].r === "expired") {
-      expect(
-        (
-          await q<{ r: string }>(
-            `select public.requeue_new_client_waitlist_entry($1,$2,$3) as r`,
-            [f.studioId, b.entryId, f.userId],
-          )
-        )[0].r,
-      ).toBe("requeued");
-    }
+    // Route 2: `invited`. Requeue has ALWAYS refused this state, and the word
+    // it refuses with is part of its contract — two shipped DB tests assert
+    // `not_requeueable` there by name. The guard must not change it, which is
+    // why it is scoped to the statuses requeue would otherwise accept.
+    const b = await redeemedUnbooked(f, "n2");
+    expect(
+      (
+        await q<{ r: string }>(`select public.requeue_new_client_waitlist_entry($1,$2,$3) as r`, [
+          f.studioId,
+          b.entryId,
+          f.userId,
+        ])
+      )[0].r,
+      "the guard changed an EXISTING refusal's vocabulary",
+    ).toBe("not_requeueable");
+
+    // The `expired` arm of the guard is deliberately untested here and
+    // deliberately present: `expire_new_client_waitlist_invitation` refuses a
+    // redeemed entry, so no supported path reaches `expired` carrying a
+    // redemption. Producing one would mean disabling the invitations
+    // append-only trigger mid-suite — a table-wide ALTER that the db lane runs
+    // files in parallel around, and a flake class this file will not introduce
+    // for an arm that cannot fire.
   });
 
   it("requeue keeps its own duplicate handling, untouched", async () => {
@@ -926,7 +935,7 @@ describe("J — the close record is evidence, and the command is service_role on
          select studio_id, entry_id, $2, now() + interval '1 hour',
                 issued_by_practitioner_id, now()
            from ${IN_T} where entry_id = $1`,
-        [p.entryId, tokenHash("uq2")],
+        [p.entryId, tokenHash()],
       );
       } catch (e) {
       code = (e as { code?: string }).code;

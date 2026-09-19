@@ -605,11 +605,29 @@ begin
   -- this entry back would let it acquire a SECOND redeemed invitation, and five
   -- shipped consumers read "any redeemed invitation for this entry" as "the
   -- current one". Unreachable before 0200 and reachable only through it.
+  --
+  -- SCOPED TO THE STATUSES REQUEUE WOULD OTHERWISE ACCEPT, WHICH IS NOT A
+  -- DETAIL. An earlier revision tested the redemption alone and answered
+  -- `already_redeemed` for an `invited` entry too -- a state requeue has ALWAYS
+  -- refused, with `not_requeueable`, and which two shipped DB tests assert that
+  -- word for by name. Changing an existing refusal's vocabulary is a change to
+  -- this command's contract; refusing a state it used to accept is not. So the
+  -- guard fires ONLY where the UPDATE below would otherwise have succeeded, and
+  -- every pre-existing answer is returned unchanged, character for character.
+  --
+  -- THE `expired` ARM IS DEFENSIVE AND CURRENTLY UNREACHABLE.
+  -- `expire_new_client_waitlist_invitation` refuses a redeemed entry, so today
+  -- only `released` can carry a redemption here -- and only by way of 0200's own
+  -- close. It is written anyway so a later slice that makes `expired` reachable
+  -- with a redemption finds this door already shut rather than silently open.
   if exists (
     select 1
-      from public.new_client_waitlist_invitations i
-     where i.entry_id    = p_entry_id
-       and i.studio_id   = p_studio_id
+      from public.new_client_waitlist_entries e
+      join public.new_client_waitlist_invitations i
+        on i.entry_id = e.id and i.studio_id = e.studio_id
+     where e.id          = p_entry_id
+       and e.studio_id   = p_studio_id
+       and e.status      in ('released','expired')
        and i.redeemed_at is not null)
   then
     return 'already_redeemed';

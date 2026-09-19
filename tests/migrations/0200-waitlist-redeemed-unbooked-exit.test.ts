@@ -194,10 +194,21 @@ describe("0200 does not weaken any shipped exit", () => {
     }
 
     // It accepts no MORE states than before — the guard adds a refusal, so the
-    // accepted set is unchanged.
-    expect([...fn.matchAll(/status in \('[a-z',]+'\)/g)].map((m) => m[0])).toEqual([
+    // accepted set is unchanged. And the guard is SCOPED to exactly that set,
+    // which is what keeps every pre-existing refusal's word intact: an
+    // `invited` entry still answers `not_requeueable`, as two shipped DB tests
+    // assert by name.
+    const statusSets = [...fn.matchAll(/status\s+in \('[a-z',]+'\)/g)].map((m) =>
+      m[0].replace(/\s+/g, " "),
+    );
+    expect(statusSets).toEqual([
+      "status in ('released','expired')",
       "status in ('released','expired')",
     ]);
+    const guard = fn.slice(0, fn.indexOf("return 'already_redeemed'"));
+    expect(guard, "the guard is not scoped to the states requeue accepts").toMatch(
+      /e\.status\s+in \('released','expired'\)/,
+    );
   });
 
   it("restates requeue's grant contract rather than leaving it implied", () => {
