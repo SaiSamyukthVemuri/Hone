@@ -414,6 +414,75 @@ describe("B — redeemed AND booked cannot use this escape hatch", () => {
     expect(await close(f, p.entryId)).toBe("already_booked");
   });
 
+  it("RACE: an email edit cannot slip a different identity into the repair", async () => {
+    // THE SECOND P1 REVIEW FINDING. The aggregate that resolves the stranded
+    // booking's client took NO lock, and
+    // `record_new_client_waitlist_conversion` checks only studio membership —
+    // not the recipient binding. So an owner editing that client's email
+    // concurrently with Close could have the match made on the OLD normalised
+    // address and the conversion recorded AFTER the edit committed, converting
+    // the entry to a client that no longer satisfies the binding at all.
+    //
+    // 0195 prevents exactly this by reading the matched client FOR SHARE; the
+    // repair path now does the same and re-compares under that lock.
+    const f = await fixture("client-edit");
+    const p = await redeemedUnbooked(f, "ce");
+    const client = await q<{ client_id: string }>(
+      `select * from public.find_or_create_client_for_booking($1,$2,'Prospect',null)`,
+      [f.studioId, p.email],
+    );
+    const appt = await q<{ result: string }>(
+      `select * from public.create_public_appointment($1,$2,$3,$4::timestamptz,$5,null,null)`,
+      [f.studioId, client[0].client_id, f.serviceId, await legalSlot(f, 0), tokenHash()],
+    );
+    expect(appt[0].result).toBe("created");
+
+    const s1 = new Client({ connectionString: resolveLocalDbUrl() });
+    const s2 = new Client({ connectionString: resolveLocalDbUrl() });
+    await s1.connect();
+    await s2.connect();
+    let closeResult: string | undefined;
+    try {
+      // S1 re-points the identity and HOLDS it. `UPDATE clients` takes
+      // FOR NO KEY UPDATE, which conflicts with the repair's FOR SHARE.
+      await s1.query("begin");
+      await s1.query(`update public.clients set email = $2 where id = $1`, [
+        client[0].client_id,
+        `moved-${f.studioId.slice(0, 8)}@example.com`,
+      ]);
+
+      const pid = (await s2.query("select pg_backend_pid() as pid")).rows[0].pid as number;
+      await s2.query("begin");
+      const closing = s2.query(CLOSE, [f.studioId, p.entryId, f.userId]);
+      await expectBlockedOn(
+        pid,
+        "the repair did not park on the client identity it was about to convert to",
+      );
+
+      await s1.query("commit");
+      closeResult = (await closing).rows[0].r as string;
+      await s2.query("commit");
+    } finally {
+      await s1.query("rollback").catch(() => undefined);
+      await s2.query("rollback").catch(() => undefined);
+      await s1.end();
+      await s2.end();
+    }
+
+    // The identity it matched is no longer this prospect's, so it refuses
+    // rather than converting to a client that fails the binding.
+    expect(closeResult).toBe("booking_unresolved");
+    const entry = await q<{ status: string; converted_client_id: string | null }>(
+      `select status, converted_client_id::text from ${EN_T} where id = $1`,
+      [p.entryId],
+    );
+    expect(entry[0].status, "the entry was converted across a re-pointed identity").toBe(
+      "invited",
+    );
+    expect(entry[0].converted_client_id).toBeNull();
+    expect((await inviteEvidence(p.entryId)).closed_at).toBeNull();
+  });
+
   it("the repair binds to the entry's OWN recipient, never to a neighbour", async () => {
     // The conversion target is resolved on the same recipient binding 0195
     // enforces — the entry's normalised address — so another client's

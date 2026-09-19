@@ -498,6 +498,21 @@ describe("0200 answers the states it refuses with distinguishable words", () => 
     // owns it, and this file re-implements none of it.
     expect(body).toMatch(/record_new_client_waitlist_conversion\(/);
     expect(body).toMatch(/return 'converted_instead'/);
+    // THE MATCHED IDENTITY IS LOCKED AND RE-COMPARED BEFORE IT IS USED.
+    // The aggregate takes no lock, and the conversion command checks only
+    // studio membership — so without this, an email edit committing in between
+    // converts the entry to a client that no longer satisfies the binding.
+    // 0195 Step 3's idiom, on the same table, for the same reason.
+    const repairBlock = body.slice(body.indexOf("if v_booked_count = 1"));
+    const guarded = repairBlock.slice(0, repairBlock.indexOf("record_new_client_waitlist_conversion"));
+    expect(guarded, "the matched client is not locked before the conversion").toMatch(
+      /from public\.clients c[\s\S]{0,200}for share/,
+    );
+    expect(guarded, "the binding is not re-compared under that lock").toMatch(
+      /v_client_email <> v_entry_email/,
+    );
+    expect(guarded, "a re-pointed identity is not refused").toMatch(/return 'booking_unresolved'/);
+
     // AMBIGUITY REFUSES RATHER THAN GUESSING which client to convert to.
     expect(body).toMatch(/v_booked_count > 1/);
     expect(body).toMatch(/return 'booking_unresolved'/);

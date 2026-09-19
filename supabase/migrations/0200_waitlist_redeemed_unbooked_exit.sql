@@ -372,6 +372,7 @@ declare
   v_hit         uuid;
   v_booked_count integer;
   v_booked_client uuid;
+  v_client_email text;
   v_conversion  text;
 begin
   -- 1. AUTHORITY, re-derived from (studio, actor) by the same shared resolver
@@ -538,12 +539,51 @@ begin
   end if;
 
   if v_booked_count = 1 then
+    -- LOCK THE IDENTITY BEFORE ACTING ON IT, AND RE-READ THE BINDING UNDER THAT
+    -- LOCK. This is 0195's Step 3, for the same reason, on the same table.
+    --
+    -- THE RACE IT CLOSES, which the first revision of this repair had. The
+    -- aggregate above takes NO lock, and
+    -- `record_new_client_waitlist_conversion` checks only that the client
+    -- belongs to this studio -- it does not re-check the recipient binding. So
+    -- an owner editing this client's email concurrently with Close could have
+    -- the match made on the OLD normalised address and the conversion recorded
+    -- after the edit committed, converting the entry to a client that no longer
+    -- satisfies the binding at all.
+    --
+    -- FOR SHARE, NOT KEY SHARE: a concurrent `UPDATE clients SET email = ...`
+    -- takes FOR NO KEY UPDATE, which conflicts with SHARE and not with KEY
+    -- SHARE. So this either waits for that edit and then re-reads the NEW
+    -- address -- and refuses -- or holds the identity still until this
+    -- transaction ends. Either way the comparison below cannot be outrun.
+    --
+    -- LOCK ORDER IS UNCHANGED AND STILL ACYCLIC. The entry is taken before the
+    -- client here exactly as 0195 takes it before its own client lock, so the
+    -- entry remains the single serialisation point and no cycle can form.
+    select c.normalized_email
+      into v_client_email
+      from public.clients c
+     where c.id = v_booked_client and c.studio_id = p_studio_id
+       for share;
+
+    -- FAIL CLOSED ON EITHER SIDE BEING ABSENT; never treat two NULLs as a
+    -- match. `booking_unresolved` is the honest answer: an appointment exists
+    -- and the conversion could not be recorded, and its copy asks for a retry
+    -- rather than naming an operation nobody can perform.
+    if not found
+       or v_client_email is null
+       or v_entry_email is null
+       or v_client_email <> v_entry_email then
+      return 'booking_unresolved';
+    end if;
+
     -- COMPOSE, DO NOT DUPLICATE -- 0195's rule, for the same command. Every
     -- precondition this callee checks is already true and already held under
     -- this transaction's locks: the entry is `invited`, its invitation carries
-    -- `redeemed_at`, and the client is in this studio. A refusal is therefore
-    -- unreachable; it is still inspected, because a command that reported a
-    -- transition it did not make is the defect this whole file is about.
+    -- `redeemed_at`, and the client is in this studio AND still bound to this
+    -- recipient. A refusal is therefore unreachable; it is still inspected,
+    -- because a command that reported a transition it did not make is the
+    -- defect this whole file is about.
     v_conversion := public.record_new_client_waitlist_conversion(
       p_studio_id, p_entry_id, v_booked_client
     );
