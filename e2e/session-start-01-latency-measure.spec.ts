@@ -63,14 +63,34 @@ test.skip(
 async function recordFirstUsefulContent(page: import("@playwright/test").Page, label: string) {
   const heading = page.getByRole("heading", { name: /session$/i }).first();
   await expect(heading).toBeVisible({ timeout: T });
+
+  // THE ACTION-DRIVEN LANDING IS A SOFT NAVIGATION, SO IT HAS NO TIMING ENTRY.
+  //
+  // `redirect()` inside a Server Action is followed by the App Router client
+  // side: the browser fetches an RSC payload and swaps the tree. It creates NO
+  // PerformanceNavigationTiming entry, so `getEntriesByType("navigation")[0]`
+  // at this point still describes the PICKER document the journey started on.
+  // Reading it here produced a number that looked like the chart's cost, did
+  // not move when the chart's server work changed by ~90ms, and would have been
+  // reported as "first useful content did not improve". It was measuring a
+  // different page.
+  //
+  // So the chart document is measured by loading it DIRECTLY, which is a real
+  // navigation with a real timing entry. `nav_url` is logged so the document
+  // under measurement is identifiable in the evidence rather than assumed.
+  const chartUrl = page.url();
+  await page.goto(chartUrl);
+  await expect(heading).toBeVisible({ timeout: T });
+
   const nav = await page.evaluate(() => {
     const n = performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined;
     if (!n) return null;
     return {
-      request_to_response_end_ms: Math.round(n.responseEnd - n.requestStart),
+      nav_url: n.name,
       ttfb_ms: Math.round(n.responseStart - n.requestStart),
-      dom_content_loaded_ms: Math.round(n.domContentLoadedEventEnd - n.startTime),
+      request_to_response_end_ms: Math.round(n.responseEnd - n.requestStart),
       dom_interactive_ms: Math.round(n.domInteractive - n.startTime),
+      dom_content_loaded_ms: Math.round(n.domContentLoadedEventEnd - n.startTime),
     };
   });
   console.log(`[FUC] ${JSON.stringify({ scenario: label, ...(nav ?? {}) })}`);
