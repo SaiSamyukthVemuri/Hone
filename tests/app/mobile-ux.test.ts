@@ -112,7 +112,24 @@ describe("app shell: responsive navigation", () => {
 
   it("the wordmark is an accessible Dashboard link (PR #230)", () => {
     expect(LAYOUT).toMatch(/aria-label="Go to Dashboard"/);
-    expect(LAYOUT).toMatch(/href="\/dashboard"[\s\S]{0,200}Hone/);
+    // NAV-ACK-02: bound to the ELEMENT, not to a character distance.
+    //
+    // This previously asserted `href="/dashboard"[\s\S]{0,200}Hone` — a fixed
+    // proximity window between the href and the label. Giving the wordmark its
+    // acknowledgement added two attributes inside that window and the guard
+    // failed on a change that does exactly what the guard asks for, while
+    // saying only "no match". A distance is not the property anyone wants
+    // pinned; the anchor is.
+    //
+    // Located by its own accessible name and then read WHOLE, so an added
+    // attribute can never break it — and removing the href, or emptying the
+    // wordmark, still does.
+    const wordmark = LAYOUT.match(
+      /<(\w+)[^>]*aria-label="Go to Dashboard"[^>]*>([\s\S]*?)<\/\1>/,
+    );
+    expect(wordmark).not.toBeNull();
+    expect(wordmark![0]).toMatch(/href="\/dashboard"/);
+    expect(wordmark![2].trim()).toBe("Hone");
   });
 
   it("the notifications bell carries the destination and the unread count", () => {
