@@ -512,6 +512,39 @@ test.describe("RESP-CLIENT-INTAKE-01: mobile and reduced motion", () => {
     expect(navigations).toBe(1);
   });
 
+  // THE STRUCTURE THIS SLICE CHANGED IN THE TAB BAR, PINNED.
+  //
+  // Adopting the primitive on Treatment Photos means the section-switcher <nav>
+  // now hosts THREE `role="status"` regions where it used to host one: its own,
+  // plus one inside each of the two forms of the link. That broke a shipped
+  // assertion in e2e/perceived-speed.spec.ts, which matched regions by
+  // descendant and hit a strict-mode violation once there were three.
+  //
+  // The repair there was to scope to the bar's OWN region — a direct child of
+  // the <nav>, where each link's region is nested inside its <a>. That is only
+  // sound while the structure actually holds, so it is asserted here rather
+  // than left as a claim in a comment on the other file.
+  test("the section switcher owns exactly one live region, and the links nest theirs", async ({
+    page,
+  }) => {
+    const { seed, clientId } = await seedFixture();
+    await loginAsOwner(page, seed);
+    await page.goto(`/clients/${clientId}`);
+
+    const nav = page.getByRole("navigation", {
+      name: "Client profile sections",
+    });
+    await expect(nav).toBeVisible();
+
+    // One direct child — the switcher's own voice.
+    await expect(nav.locator(':scope > [role="status"]')).toHaveCount(1);
+    // Three in total: the switcher's, plus the mobile and md+ photo links'.
+    await expect(nav.locator('[role="status"]')).toHaveCount(3);
+    // Every one of them silent at rest, so none contributes to any control's
+    // accessible name until there is genuinely something to say.
+    await expect(nav.locator('[role="status"]:not(:empty)')).toHaveCount(0);
+  });
+
   // The mark must survive `prefers-reduced-motion`. The primitive drops only
   // the ROTATION and keeps the ring, so the state change stays a SHAPE change
   // and never colour alone — an acknowledgement that vanished under reduced
