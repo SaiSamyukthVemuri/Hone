@@ -4,12 +4,20 @@
 [current-state.md](./current-state.md). Where the two disagree, re-verify both against
 production; neither document is evidence for the other.
 
-- **Reconciled:** 2026-08-27
+- **Reconciled:** 2026-08-27. **§15's merge derivation alone was refreshed 2026-09-19** to
+  the production head `d0123ec3` on **2026-09-19**. Eleven merges landed while the refresh was in
+  review, so rather than chase each one the lane was **held** until the release train quietened
+  and the derivation was then run once, from scratch, at this head. The capability statuses below
+  were **not** re-opened wholesale; §14's waitlist rows and the `#644` export row were corrected
+  where production had falsified them.
 - **Runtime-bearing baseline:** the application HEAD recorded in
   [current-state.md](./current-state.md) *Reconciliation header* — **the single authority for
-  that SHA, which is deliberately not copied here.** At this reconciliation the branch HEAD and
-  the runtime-bearing HEAD are the **same commit**, which is unusual enough to state rather than
-  leave implied. *(⚠️ **Corrected 2026-08-27.** This bullet used to name the PR and its runtime
+  that SHA, which is deliberately not copied here.** On **2026-09-19** the branch HEAD and the
+  runtime-bearing HEAD were again the **same commit** (at `d0123ec3`, as at `4cff4a43`, `e8dab8e6` and `6e264b57` before it — the coincidence has now held across four heads, which is still not a guarantee that it holds next time), which is worth stating rather than leaving
+  implied — but note it is a coincidence that comes and goes: they were **apart** on 2026-08-30,
+  and this bullet asserted the coincidence throughout, because it said "at this reconciliation"
+  and nobody re-read it when production moved. Prefer the authority to this sentence.
+  *(⚠️ **Corrected 2026-08-27.** This bullet used to name the PR and its runtime
   file count — "PR #644, TRUTH-01A, which changes eight runtime files" — and went stale across
   two production moves while the SHA beside it was correctly referenced rather than copied. The
   **identifier** was not the only thing that could rot: any restated particular can. Only the
@@ -192,7 +200,7 @@ document ever promised one. Reasoning, retained legacy artifact and the reintrod
 |---|---|---|---|---|---|---|---|---|---|
 | Email | Transactional email via Resend (confirmation, reminder, postcare, portal) | Merged | ✅ applied | Deployed | Enabled | ✅ | ✅ | appointment email tracking columns | Fail-soft — never blocks an appointment action |
 | Email | Postcare auto-send on completion (0110) | Merged | ✅ applied | Deployed | **Default OFF (`manual`)** | ⚠️ opt-in per studio | — | `studios.postcare_delivery_mode` default `manual` | Skipped if the Resend key or postcare text is missing |
-| SMS | Twilio SMS with opt-in + STOP/HELP | Merged | ✅ applied (0049, 0062) | Deployed | Env-gated on `TWILIO_*`, per-studio toggle, per-client consent | ⚠️ pilot scale only | ✅ | studio SMS toggles | **Broad-SaaS SMS not built** — no A2P/10DLC registration, no per-studio sender strategy, no rate limiting |
+| SMS | Twilio SMS with opt-in + STOP/HELP | Merged | ✅ applied (0049, 0062) | Deployed | Env-gated on `TWILIO_*`, per-studio toggle, per-client consent | ⚠️ pilot scale only | ✅ | studio SMS toggles | **Broad-SaaS SMS not built** — no A2P/10DLC registration, no rate limiting. ⚠️ **Corrected 2026-09-19: "no per-studio sender strategy" is withdrawn.** `#673` shipped migration `0191`, the `studio_sms_senders` table and the per-studio provisioning orchestration, and `#676` added adoption of an already-owned sender. The strategy exists and is deployed. What is **not** wired is the SEND PATH: routing a studio's outbound messages through its own sender has **not** merged and is declared open in [current-state.md](./current-state.md) — that declaration is the one place an open PR number is recorded, deliberately. Remaining gap = send-path wiring + A2P/10DLC + rate limiting |
 | Marketing | Per-studio conversion tracking + encrypted provider token (0106/0107) | Merged | ✅ applied | Deployed | **Inert per studio** until a token is configured | ❌ no studio has configured a provider token | — | `studio_tracking_providers` | Token configuration is an **enablement** step, not a default |
 
 ## 9. Google Calendar
@@ -266,39 +274,65 @@ currently dormant.** Do not describe it as active, syncing, or enabled.
 ## 14. New-client waitlist (admission control)
 
 Two capabilities, two stages. **Do not collapse them into one status.** WAIT-01 is live and its
-commit point is an email. WAIT-02B Stage A is deployed and reachable by nobody.
+commit point is an email. WAIT-02B Stage A is deployed and — ⚠️ **corrected on 2026-09-17 and again on 2026-09-19** — **enabled and
+exercised on the controlled test studio, and dark only AT WILLOW.** Its **owner** surface is
+reachable: `/settings/waitlist` writes durable rows through `0193`'s owner commands without
+consulting the durable allowlist. Its **public** commit point is enabled at the test studio too,
+whose 12-of-12 canary invoked the public `join` seam. This line first read *"deployed and
+reachable by nobody"*, then — in the first repair — *"its public commit point is enabled for no
+studio"*, and **both were false**. Willow's durable gate is deliberately OFF and its public
+booking still serves WAIT-01; that is the only dormancy that has survived every piece of
+evidence. See [current-state.md](./current-state.md) §5b.
 
 | Domain | Capability | Code state | DB state | Deployment | Enablement | Production exercise | Human acceptance | Evidence | Limitations / next gate |
 |---|---|---|---|---|---|---|---|---|---|
 | Waitlist | **WAIT-01 — email-delivered new-client waitlist** (PR #601) | Merged | no migration | Deployed | ✅ **ENABLED for one studio** — `NEW_CLIENT_WAITLIST_STUDIO_SLUGS` present on the Vercel **Production** target only *(names read, no value)* | ✅ pilot activated 2026-08-19; one controlled canary submission at release | ⚠️ operator-observed at release; no separate acceptance record since | `/book/willow-electrolysis` renders `newClientWaitlistEnabled: true` *(2026-08-23)*; [release record](./releases/2026-08-19-willow-new-client-waitlist.md) | Commit point is the **studio notification email**, not a row. Clearing the env var is the whole kill switch |
-| Waitlist | **WAIT-02B Stage A — durable studio-scoped waitlist** (PR #629, `48f02389`) | Merged | ✅ **0185 applied 2026-08-23**, frozen | Deployed | ❌ **NOT ENABLED anywhere** — `NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS` **absent from Vercel Production**; **Willow not enabled** | ❌ **never** — `new_client_waitlist_entries` = **0 rows** at apply verification and **0 when last measured** *(2026-08-23)* | n/a at this stage | migration 0185; `lib/booking/new-client-waitlist.ts`; env var **names** only | **DORMANT.** A table existing is not data being collected. See **L25** |
-| Waitlist | `join_new_client_waitlist` / `remove_new_client_waitlist_entry` | Merged | ✅ present, SECURITY DEFINER | Deployed | ❌ unreachable — no studio on the durable allowlist | ❌ never invoked | n/a | 0185 body; EXECUTE held by `postgres` and `service_role` only — `anon` and `authenticated` hold none | — |
-| Waitlist | Studio-scoped duplicate rule | Merged | ✅ generated `email_normalized` + partial unique index on `(studio_id, email_normalized) WHERE status='waiting'` | Deployed | ❌ | ❌ no row has ever existed to test it against | n/a | migration 0185 | **No global email uniqueness** — tenancy is structural |
+| Waitlist | **WAIT-02B Stage A — durable studio-scoped waitlist** (PR #629, `48f02389`) | Merged | ✅ **0185 applied 2026-08-23**, frozen | Deployed | ⚠️ **ENABLED on the controlled test studio; Willow NOT ENABLED** — 🔴 *corrected 2026-09-19; this cell read "**NOT ENABLED anywhere**"*. `docs/roadmap/CANONICAL_ROADMAP.md` records the test studio enabled for the legacy gate and durable WAIT. The paired reading that `NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS` was **absent from Vercel Production** is dated **2026-08-23** and was not re-read; a studio being enabled implies it is no longer absent | ⚠️ **EXERCISED on the controlled test studio** — 🔴 *corrected 2026-09-19; this cell read "**never**"*. The roadmap records a **12-of-12 seam canary** on the post-`0198` head through join, invitation, booking and atomic conversion, with `POST_CANARY_CLEANUP = COMPLETE` and the converted row **deliberately retained**. The `0 rows` figures beside it *(apply verification; 2026-08-23)* are dated evidence this record supersedes, not current state | n/a — a controlled-test canary with a synthetic identity is **not** customer acceptance | migration 0185; `lib/booking/new-client-waitlist.ts`; `docs/roadmap/CANONICAL_ROADMAP.md`; env var **names** only, 2026-08-23 | **NOT dormant as a whole, and NOT dormant on its public path either.** 🔴 *This cell said "its PUBLIC commit point is enabled for no studio" — wrong for the same reason the cells beside it were: the canary invoked the public `join` seam on the controlled test studio.* **The dormancy is WILLOW's**: Willow's durable gate is deliberately OFF and its public booking still serves WAIT-01. Every scope broader than Willow has now been falsified. See [current-state.md](./current-state.md) §5b and **L25** |
+| Waitlist | `join_new_client_waitlist` / `remove_new_client_waitlist_entry` (the **public** commands) | Merged | ✅ present, SECURITY DEFINER | Deployed | ⚠️ **reachable on the controlled test studio; NOT at Willow** — 🔴 *corrected 2026-09-19; this cell read "unreachable from the public commit point — no studio on the durable allowlist"*, and the test studio is on the allowlist | ⚠️ **INVOKED** — 🔴 *corrected 2026-09-19; this cell read "never invoked"*. The roadmap's 12-of-12 canary ran the **public `join` seam** on the controlled test studio | n/a — controlled-test invocation is not customer activity | 0185 body; EXECUTE held by `postgres` and `service_role` only — `anon` and `authenticated` hold none; `docs/roadmap/CANONICAL_ROADMAP.md` | ⚠️ **This row is about the two 0185 commands and nothing else.** The durable TABLE is separately writable by an owner through `0193`'s `create_practitioner_waitlist_entry` / `import_legacy_waitlist_entry`. **Dormancy here is WILLOW's, not the public path's** — that narrower scope was itself wrong once |
+| Waitlist | Studio-scoped duplicate rule | Merged | ✅ generated `email_normalized` + partial unique index on `(studio_id, email_normalized) WHERE status='waiting'` | Deployed | ❌ | ⚠️ 🔴 *corrected 2026-09-19; this cell read "**no row has ever existed to test it against**"*, which the controlled canary contradicts — rows exist on the test studio. Whether the duplicate rule was itself exercised is **not derivable from the canary record**, so no finding is made either way | n/a | migration 0185 | **No global email uniqueness** — tenancy is structural |
 | Waitlist | Stage-B configuration report (**was** the Stage-A inverted build gate) | Merged (#637) | no migration | Deployed | ⚠️ **report-only — it no longer fails a build** | n/a | n/a | `scripts/check-production-env-gates.mjs` Gate 4, contract sentences 1-2 and 9 | ⚠️ **CORRECTED 2026-08-26.** This row previously read *"A Vercel production build FAILS while the durable allowlist enables any studio. No bypass and no per-studio exception."* **That is no longer true.** Stage B1 replaced the prohibition with a report; the contract's own first two sentences are *"Gate 4 is report-only. It does not fail the build solely because of `NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS`."* What guards activation now is **runtime membership of TWO allowlists** (sentence 9) — a weaker, configuration-level guarantee, recorded as such. See [known-limitations.md](./known-limitations.md) **L25** |
 | Waitlist | **WAIT-02B Stage B — durable collection enabled** | — | — | — | **NOT STARTED** | ❌ | — | — | Blocked on the public privacy disclosure for prospects, the policy's `lastUpdated` + a future `effectiveDate`, explicit studio-enablement GO, and human activation smoke |
 
 **Overall new-client waitlist posture: WAIT-01 enabled and exercised at one studio; WAIT-02B
-Stage A DB applied + deployed + DORMANT, with zero rows *when last measured 2026-08-23*; Stage B
-not started.** Never describe the durable waitlist as live, enabled, active, or collecting —
-and equally, do not restate that dated zero as a present-tense fact: it is evidence for
-2026-08-23, not for today.
+Stage A DB applied + deployed, ENABLED AND EXERCISED ON THE CONTROLLED TEST STUDIO and DORMANT
+AT WILLOW; Stage B not started.** 🔴 **Corrected 2026-09-19 — this summary said flatly
+`DORMANT` with zero rows, contradicting the Stage A row above it in this same section.** The
+roadmap's 12-of-12 canary invoked the public `join` seam on the test studio, so the dormancy is
+**Willow's** and nothing broader; every wider scope has been falsified.
+
+Never describe **Willow's** durable path as live, enabled, active or collecting — that remains
+true and is the claim this rule was written to protect. Equally, do not restate the
+`0 rows` figure as a present-tense fact: it is evidence for **2026-08-23**, superseded by the
+canary record, and never re-measured. Controlled-test exercise is **not** customer activity.
 
 ---
 
 ## 15. Capabilities added since the 2026-08-23 reconciliation
 
-**Twenty-nine** production merges landed between `b9e0003f` and the current branch head. **Ten**
-carry a capability that belongs in this register.
+**Sixty-five** production merges landed between `b9e0003f` and the current branch head. **Ten**
+carry a capability that belongs in this register — **and that ten is a count of what this table
+lists, not a finding about all sixty-five.** Read the decomposition before the pairing.
 
 **Those two numbers are derived over different spans, and saying so is the point.** The
-twenty-nine decompose exactly, by `git log --first-parent --merges b9e0003f..bf6f09c4`:
+sixty-five decompose exactly, by `git log --first-parent --merges b9e0003f..d0123ec3`:
 
 | Group | Merges | Capabilities |
 |---|---|---|
 | The **`#632`–`#650`** derivation span — the range this table was built over | **18** | **10** |
 | Post-`#650` performance, mobile-layout and touch-target work — `#651`, `#652`, `#653`, `#654`, `#655`, `#656`, `#657`, `#658`, `#659` | **9** | **0** |
 | Documentation, CI and test merges carried in by later production refreshes — `#631`, `#660` | **2** | **0** |
-| **Total** | **29** | **10** |
+| **Merges since `bf6f09c4`, added by the 2026-09-19 refresh — NOT CLASSIFIED for capability content** | **36** | **not derived** |
+| **Total** | **65** | **10 listed** |
+
+> ⚠️ **The fourth group is an open gap, stated rather than absorbed.** The 2026-09-19 refresh
+> re-derived the *merge count* to `d0123ec3` because the canonical guard checks it against the Git
+> graph. It did **not** decide which of those thirty-six merges carry a register capability —
+> that is an editorial judgement needing per-capability evidence, and none was gathered. **Zero
+> rows below describe them, and zero rows is not the same claim as zero capabilities.** Twenty-eight
+> of the thirty-six are runtime-bearing by changed-path analysis, so the honest expectation is
+> that several *do* belong here and are simply not written up yet. Their per-PR record is in
+> [release-changelog.md](./release-changelog.md); the reach of the refresh is stated in
+> [current-state.md](./current-state.md) under *What this reconciliation did and did not measure*.
 
 The **nine** post-`#650` merges were re-examined by changed-path analysis on **2026-08-30** and
 add **no new capability**: they are performance, mobile-layout and touch-target work, plus one
@@ -306,16 +340,18 @@ correction (`#652`) to a capability already listed here and one behaviour rework
 an onboarding capability already covered, whose residual gap is recorded as **L31** rather than
 as a new capability.
 
-The **two** remaining merges are the ones the count gained when the branch head advanced past
-`#659`, and they were classified the same way rather than assumed. **`#631`** is the canonical
-docs reconciliation: documentation and `tests/docs/**` only. **`#660`** is CI-HARDEN-01B:
-`.github/workflows/**`, `tests/ci/**`, `CLAUDE.md` and `docs/03_SECURITY_AND_PRIVACY.md`.
-Between them they touch **no** `app/`, `lib/`, `components/` or `supabase/` path, so neither
-adds a capability and neither moves the runtime baseline — which is why
-[current-state.md](./current-state.md) pins a runtime-bearing HEAD *behind* the branch head.
+The **two** merges in the third group are the ones the count gained when the branch head advanced
+past `#659`, and they were classified the same way rather than assumed. **`#631`** is the
+canonical docs reconciliation: documentation and `tests/docs/**` only. **`#660`** is
+CI-HARDEN-01B: `.github/workflows/**`, `tests/ci/**`, `CLAUDE.md` and
+`docs/03_SECURITY_AND_PRIVACY.md`. Between them they touch **no** `app/`, `lib/`, `components/`
+or `supabase/` path, so neither adds a capability and neither moved the baseline — which is why
+the 2026-08-30 refresh recorded a pin *behind* the branch head. The 2026-09-19 refresh finds them
+level again; the authority for both values is
+[current-state.md](./current-state.md), never this sentence.
 
 Without that decomposition the pairing reads as though ten capabilities were derived over all
-twenty-nine merges, which is not what was done — and a derived count moved without re-deriving
+sixty-five merges, which is not what was done — and a derived count moved without re-deriving
 the fact beneath it is precisely the defect this document exists to close. **That is not
 hypothetical here:** the headline was advanced from twenty-seven to twenty-nine while this
 derivation still reasoned through twenty-seven and omitted `#631` and `#660` entirely.
@@ -332,10 +368,10 @@ the bullet corrected at the top of this file.)*
 |---|---|---|---|
 | **Intake reminders at 24h / 2h** | #632 · **0186** | **DB applied · deployed · enabled by default** | 0186 adds exactly one column — `studios.send_intake_reminders`, boolean NOT NULL DEFAULT TRUE — plus a comment. No function, index, policy, constraint, trigger, and **no DML anywhere in the file**. The 0098 7d/3d columns, partial indexes and both `claim_email_send` / `record_email_result` branches **remain intact and are historical**; the application simply stops writing them. |
 | **Non-card appointment settlement** | #636 · **0187** | **DB applied · deployed · enabled · NOT production-exercised** | `public.appointment_settlements` **held 0 rows when last measured** — created empty, backfilled nothing *(post-apply verification 2026-08-24; not re-measured 2026-08-26)*. The structural guarantee is an **absence**: `method` has no `card` and no `hone` member, so an attestation that a card was charged is *unrepresentable*. Verified ACL: `authenticated` SELECT-only; `anon` and `service_role` FALSE on all eight verbs including `MAINTAIN`. |
-| **WAIT-02B Stage B1** | #637 · none | **Deployed · NO STUDIO ENABLED · NOT exercised** | `app/privacy/page.tsx` covers **Prospective clients** (`effectiveDate` May 22 2026, `lastUpdated` August 24 2026). Gate 4 of `scripts/check-production-env-gates.mjs` is now **report-only** — its pinned contract says so in its first two sentences. Activation requires **two** allowlists, not one. |
+| **WAIT-02B Stage B1** | #637 · none | **Deployed · ENABLED on the controlled test studio · NOT ENABLED at Willow · EXERCISED on the test studio** — 🔴 *corrected 2026-09-19; this cell read "NO STUDIO ENABLED · NOT exercised"* | `app/privacy/page.tsx` covers **Prospective clients** (`effectiveDate` May 22 2026, `lastUpdated` August 24 2026). Gate 4 of `scripts/check-production-env-gates.mjs` is now **report-only** — its pinned contract says so in its first two sentences. Activation requires **two** allowlists, not one. |
 | **Owner practice capacity** | #638, #641, #645 · none | **Deployed · enabled for owners · NOT exercised** | `app/(app)/dashboard/capacity/page.tsx` checks `practitioner.role !== "owner"` **before any capacity read is issued** and refuses **in place** rather than redirecting. Nine browser tests prove owner reach, practitioner refusal, and that rebooking links land on the right client. Nav visibility (#645) is presentation only. |
 | **Clinical read truth** | #642 · none | **Deployed · enabled for all studios** | Four client-profile surfaces now check `unavailable` **before** `hasHistory`, so a failed `session_blocks` read renders *could not be loaded* instead of *no history*. `caution_for_next_session` / `caution_note` protected on both tabs. Recorded non-change: `attachStructuredAreas` still throws — loud, not a false absence. |
-| **Export completeness accountability** | #644 · none | **Deployed · enabled** | `lib/export/resource-registry.ts` is the one place a disposition is decided; a missing decision is a **build failure**; schema authority is `information_schema`, not parsed SQL. **The payload is byte-for-byte unchanged** — pinned column-for-column against base `a1639a84`. Roughly fifty-nine studio-owned resources remain **pending**, each ticketed. |
+| **Export completeness accountability** | #644 · none | **Deployed · enabled** | `lib/export/resource-registry.ts` is the one place a disposition is decided; a missing decision is a **build failure**; schema authority is `information_schema`, not parsed SQL. **TRUTH-01A left the payload byte-for-byte unchanged** — pinned column-for-column against base `a1639a84` — and that remains true **of TRUTH-01A**. ⚠️ **Corrected 2026-09-19: it is no longer true of PRODUCTION.** `#647` (TRUTH-01B-1, merge `1d6d7c48`) shipped inside this baseline and changed the payload: five new files and twenty-seven columns, no schema and no migration. Pending is now roughly **sixty**, re-counted from `lib/export/resource-registry.ts` at `6e264b57`. This row previously carried the pre-`#647` figures while [current-state.md](./current-state.md) §12 carried the corrected ones — two canonical documents disagreeing about the same fact, which is the defect the canonical guard exists to prevent. |
 | **Dashboard clinical read truth (F2)** | #648 · none | **Deployed · enabled for all studios** | The Dashboard *Before today* pipeline's four reads destructured `data` alone — `error` did not appear in `lib/dashboard/before-today-previews.ts`. All four now pass one wrapper retaining PostgREST `error` **and** a rejected invocation, classified into two independent facts: `clinicalUnavailable` (three clinical reads) and `clientRecordUnavailable` (the clients read). `compactBeforeToday` checks `unavailable` **before** `hasHistory`. **Explicit non-claim carried forward:** `DASHBOARD_RETURNING_AS_NEW = NOT_PROVEN`. **F3** (recency/tie authority) is a separate confirmed **P2, open**; **F4** latent and deferred; **HIST-01A** untouched. |
 | **Financials temporal truth** | #650 · none | **Deployed · owner-only · NOT production-exercised** | Slice 1's `Still to happen` counted `status = 'confirmed'` alone, and **status cannot say whether something is ahead** — nothing writes a terminal status when an appointment elapses, so a past-but-unclosed visit reported as upcoming indefinitely. The entire widening is `.select("status")` → `.select("status, starts_at")`: one table still, no price/payment/settlement/charge/refund/Stripe column, owner gate still first. `confirmed` splits into **Still to happen** and **Past, still confirmed**. **The new line is a fact about the RECORD, not the visit** — *missed*, *no-show*, *completed* and *needs action* are deliberately absent. Its production figures (29 past-and-confirmed, oldest 2026-05-17) are **#650's own read-only audit, 2026-08-27**, not re-measured here. |
 | **Client Profile tab acknowledgement (UI-01D)** | #649 · none | **Deployed · enabled for all studios** | Tapping a tab greyed out the tab just tapped **and the five untapped**, while the tab being *left* stayed lit and kept `aria-current="page"` — the control said *unavailable* where it meant *loading*, about the wrong tabs. The tapped tab now carries `aria-busy="true"`, a centred mark and a live region; `aria-current` still moves only on commit; **no tab is disabled mid-flight**. That also fixed a real keyboard defect — a browser blurs an element the moment it is disabled, so **Enter on a tab dropped focus to `<body>`**. Stale pending is **impossible by derivation** (`pending ? requested : null`), not cleaned up: no timer, listener or abort bookkeeping, and **no new navigation machinery**. One runtime file. |
@@ -352,8 +388,8 @@ not satisfy it, so *ready* now means the intake will actually present a consent.
 |---|---|---|
 | Deployed + enabled + production-exercised + in routine operator use | ~21 | booking, charting core, portal, intake, consent, photos, live session payments, record keeping, **whole-session copy** |
 | Deployed + enabled + **human acceptance pending** | 8 | Phase A charting (unified box, galvanic retirement, 0.733 precision, pulse relabel, notes sizing), whole-session copy *(now also production-exercised — the two are independent)*, numbing notes, probe-lot linkage |
-| Deployed + **DB applied** + **never production-exercised** | 7 | refunds (current baseline), disputes, public-booking card collection, probe-lot linkage, **the durable new-client waitlist (WAIT-02B)**, **non-card appointment settlement (0187 — 0 rows)**, **`/dashboard/capacity` (no usage measured)**. **Whole-session copy has left this bucket** — 24 production operations |
-| Deployed + **dormant** (flag off / no worker / no eligible tenant) | 8 | all Google Calendar sync phases, capacity on Willow, onboarding v2 on Willow, **the durable new-client waitlist on every studio** *(dormant by allowlist configuration since Stage B1 — no longer by a build-time prohibition; see §14)* |
+| Deployed + **DB applied** + **never production-exercised** | 6 | refunds (current baseline), disputes, public-booking card collection, probe-lot linkage, **non-card appointment settlement (0187 — 0 rows)**, **`/dashboard/capacity` (no usage measured)**. **Whole-session copy left this bucket** — 24 production operations. 🔴 **The durable new-client waitlist (WAIT-02B) left it too, corrected 2026-09-19**: the roadmap records a 12-of-12 seam canary on the controlled test studio, so *never exercised* is false. The count falls 7 → 6 |
+| Deployed + **dormant** (flag off / no worker / no eligible tenant) | 8 | all Google Calendar sync phases, capacity on Willow, onboarding v2 on Willow, **the durable new-client waitlist AT WILLOW** *(🔴 corrected 2026-09-19 — this read "on every studio", which the controlled-test canary falsifies; the dormancy is Willow's alone, and the allowlist governs only the public commit point. See §14 and [current-state.md](./current-state.md) §5b)* |
 | **Held** behind a deliberate server-side gate | 3 | live manual fees, public-booking card collection, public practitioner assignment |
 | **Deferred** by product decision | 1 | direct new-client consultation booking route *(distinct from the WAIT-01 waitlist, which is live at Willow — see §14)* |
 | **RETIRED** by product decision (terminal; DB-enforced) | 5 | signed/finalized clinical records (0119), signed-record corrections/amendments (0120), amendment-path observability (PR #402), `clinical_audit_events`, finalized-photo content immutability — see §3 |
