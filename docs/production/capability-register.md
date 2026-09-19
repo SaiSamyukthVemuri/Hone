@@ -265,16 +265,22 @@ currently dormant.** Do not describe it as active, syncing, or enabled.
 
 ## 14. New-client waitlist (admission control)
 
-Two capabilities, two stages. **Do not collapse them into one status.** WAIT-01 is live and its
-commit point is an email. **WAIT-02B Stage A is deployed and ENABLED for one studio**
-*(corrected 2026-09-19; this read “deployed and reachable by nobody”).*
+Two capabilities, two stages. **Do not collapse them into one status.**
+**WAIT-01 is the FALLBACK commit point** — a studio notification email — and it applies to every
+waitlisted studio **not** named in the durable allowlist. ⚠️ **It is NOT Willow's commit point any
+more** *(corrected 2026-09-19; this section said WAIT-01 was live with an email commit point, and
+described Stage A as deployed and reachable by nobody).* `app/book/[slug]/waitlist-actions.ts:562`
+selects the durable branch whenever both allowlists match, so for Willow the email is a
+notification and the row is the record. **WAIT-02B Stage A is deployed and ENABLED for one
+studio.** Getting this backwards gives an operator the wrong commit point *and* the wrong kill
+switch.
 
 | Domain | Capability | Code state | DB state | Deployment | Enablement | Production exercise | Human acceptance | Evidence | Limitations / next gate |
 |---|---|---|---|---|---|---|---|---|---|
 | Waitlist | **WAIT-01 — email-delivered new-client waitlist** (PR #601) | Merged | no migration | Deployed | ✅ **ENABLED for one studio** — `NEW_CLIENT_WAITLIST_STUDIO_SLUGS` present on the Vercel **Production** target only *(names read, no value)* | ✅ pilot activated 2026-08-19; one controlled canary submission at release | ⚠️ operator-observed at release; no separate acceptance record since | `/book/willow-electrolysis` renders `newClientWaitlistEnabled: true` *(2026-08-23)*; [release record](./releases/2026-08-19-willow-new-client-waitlist.md) | Commit point is the **studio notification email**, not a row. Clearing the env var is the whole kill switch |
 | Waitlist | **WAIT-02B Stage A — durable studio-scoped waitlist** (PR #629, `48f02389`) | Merged | ✅ **0185 applied 2026-08-23**, frozen | Deployed | ✅ **ENABLED for one studio** — `willow-electrolysis`, established structurally from committed rows rather than by reading the Sensitive allowlist value | ✅ **joining only** — `new_client_waitlist_entries` = **31 rows** measured *(2026-09-19, read-only hosted query)*, 28 of them Willow; **zero invitations have ever been issued on that studio** | ❌ **not accepted** — owner device acceptance outstanding | migration 0185; `lib/booking/new-client-waitlist.ts`; `source='public_booking'` row evidence (0193 CHECK) | **ACTIVATED 2026-09-19 correction.** This row previously recorded the capability as enabled for no studio, with a zero row count, and dormant; production had disproved all three since 2026-08-25. Collecting is not the same as exercised, and exercised is not accepted. See **L25** |
 | Waitlist | `join_new_client_waitlist` / `remove_new_client_waitlist_entry` | Merged | ✅ present, SECURITY DEFINER | Deployed | ✅ reachable — one studio on the durable allowlist *(corrected 2026-09-19; this cell denied it)* | ✅ invoked — **31 rows** measured 2026-09-19 | ❌ not accepted | 0185 body; EXECUTE held by `postgres` and `service_role` only — `anon` and `authenticated` hold none | — |
-| Waitlist | Studio-scoped duplicate rule | Merged | ✅ generated `email_normalized` + partial unique index on `(studio_id, email_normalized) WHERE status='waiting'` | Deployed | ❌ | ❌ no row has ever existed to test it against | n/a | migration 0185 | **No global email uniqueness** — tenancy is structural |
+| Waitlist | Studio-scoped duplicate rule | Merged | ✅ generated `email_normalized` + partial unique index on `(studio_id, email_normalized) WHERE status='waiting'` | Deployed | ✅ reachable | ⚠️ **UNOBSERVED** — 31 rows exist *(2026-09-19)*, but **no duplicate collision has been observed**, so the rule's enforcement is untested in production. *(Corrected 2026-09-19; this cell said no row had ever existed to test against, which the row above now contradicts. Rows existing is not the same as a collision occurring.)* | n/a | migration 0185 | **No global email uniqueness** — tenancy is structural |
 | Waitlist | Stage-B configuration report (**was** the Stage-A inverted build gate) | Merged (#637) | no migration | Deployed | ⚠️ **report-only — it no longer fails a build** | n/a | n/a | `scripts/check-production-env-gates.mjs` Gate 4, contract sentences 1-2 and 9 | ⚠️ **CORRECTED 2026-08-26.** This row previously read *"A Vercel production build FAILS while the durable allowlist enables any studio. No bypass and no per-studio exception."* **That is no longer true.** Stage B1 replaced the prohibition with a report; the contract's own first two sentences are *"Gate 4 is report-only. It does not fail the build solely because of `NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS`."* What guards activation now is **runtime membership of TWO allowlists** (sentence 9) — a weaker, configuration-level guarantee, recorded as such. See [known-limitations.md](./known-limitations.md) **L25** |
 | Waitlist | **WAIT-02B Stage B — durable collection enabled** | — | — | — | ✅ **TAKEN** *(corrected 2026-09-19; this cell said the stage had not begun)* | ✅ collecting | ❌ not accepted | — | The privacy disclosure shipped in Stage B1. Activation followed, on or before **2026-08-25**. What is missing is its **governance record** — no release record, ledger entry or activation-smoke result exists in this repository, and whether a smoke was run off-repository is not established either way. See **L25** |
 
@@ -287,8 +293,10 @@ waitlist as live, enabled, active, or collecting.* Production had disproved all 
 **The instruction now runs the other way: never describe it as dormant, dark or empty.**
 The original lesson survives unchanged and is why this is rewritten rather than deleted — do not
 restate a dated measurement as a present-tense fact. A dated 31 is no more a standing fact than
-the dated 0 was. And enabled is still not **exercised**: zero invitations have ever been issued
-on that studio, and nothing here is acceptance.
+the dated 0 was. And enabled is **exercised only as far as joining** — the phrasing
+`current-state.md` uses. Zero invitations have ever been issued on that studio, so every stage
+after the join is unexercised, and none of it is acceptance. **Do not round that down to
+“unexercised”**: the durable join path is live and taking real prospects.
 
 ---
 
