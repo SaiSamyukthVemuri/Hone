@@ -21,6 +21,8 @@
 //   "Estimated total"   , derived from stages, displayed with "about"
 
 import { useState, useTransition } from "react";
+import { useRef, type RefObject } from "react";
+import { useReturnFocus } from "@/components/use-return-focus";
 
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import type {
@@ -128,10 +130,22 @@ export function TreatmentScheduleEditor({
   // free-form editor below.
   const fixedMode = isFixedStageSet(stages);
 
+  // The dialog here is mounted INSIDE the stage row, so the row owns the open
+  // state the handoff must key on — but the row's own controls are exactly what
+  // the revalidation replaces. The editor therefore owns the ANCHOR and hands
+  // the ref down; the row does the arming. See components/use-return-focus.ts.
+  const scheduleLabelRef = useRef<HTMLParagraphElement>(null);
+
   return (
     <div className="flex flex-col gap-3 border-t border-neutral-200 pt-3 dark:border-neutral-800">
       <div className="flex items-baseline justify-between gap-2">
-        <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+        <p
+          ref={scheduleLabelRef}
+          // Programmatic focus target only; -1 keeps it out of the Tab order,
+          // and `outline-hidden` (not `outline-none`) per DESIGN.md LAW 3/6.
+          tabIndex={-1}
+          className="text-xs font-medium uppercase tracking-wider text-neutral-500 outline-hidden"
+        >
           Treatment schedule
         </p>
         {stages.length > 0 && (
@@ -182,6 +196,7 @@ export function TreatmentScheduleEditor({
                   planId={planId}
                   clientId={clientId}
                   deleteAction={deleteStageAction}
+                  anchorRef={scheduleLabelRef}
                   onEdit={() => setOpenMode({ kind: "edit", stage })}
                 />
               )}
@@ -230,6 +245,7 @@ function StageRow({
   planId,
   clientId,
   deleteAction,
+  anchorRef,
   onEdit,
 }: {
   index: number;
@@ -239,11 +255,19 @@ function StageRow({
   planId: string;
   clientId: string;
   deleteAction: TreatmentScheduleAction;
+  anchorRef: RefObject<HTMLParagraphElement | null>;
   onEdit: () => void;
 }) {
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [pending, startTransition] = useTransition();
+
+  // Keyed on this row's dialog open state, anchored on the editor's section
+  // label, which outlives the revalidation that replaces this row's controls.
+  const { arm: armScheduleFocus } = useReturnFocus<HTMLParagraphElement>(
+    confirming,
+    anchorRef,
+  );
 
   // UI-05. This was `window.confirm()`, and confirm-dialog.tsx's own docblock
   // explains why that is not merely a styling problem: iOS Safari can SUPPRESS
@@ -274,6 +298,9 @@ function StageRow({
     startTransition(async () => {
       const r = await deleteAction(fd);
       if (r.ok) {
+        // Success only. Cancel and failure keep the primitive's opener
+        // restoration, because there the opener node is not replaced.
+        armScheduleFocus();
         setConfirming(false);
       } else {
         // Stay open so the failure is readable and retryable, per the dialog's

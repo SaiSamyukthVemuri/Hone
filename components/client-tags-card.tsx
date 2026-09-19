@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { useReturnFocus } from "@/components/use-return-focus";
 import type { ClientTag } from "@/lib/types/database";
 
 type Props = {
@@ -21,6 +22,12 @@ export function ClientTagsCard({ clientId, tags, addAction, removeAction }: Prop
   // call stack; a mounted dialog has to be told, and runRemove refuses to fire
   // without it.
   const [removeTarget, setRemoveTarget] = useState<string | null>(null);
+
+  // Same destructive-action focus contract as the other two UI-05 surfaces:
+  // the opener is the tag's own Remove control, and a successful removal takes
+  // it off the screen. See components/use-return-focus.ts.
+  const { anchorRef: headingRef, arm: armHeadingFocus } =
+    useReturnFocus<HTMLHeadingElement>(removeTarget);
 
   function submitAdd() {
     const trimmed = label.trim();
@@ -65,6 +72,9 @@ export function ClientTagsCard({ clientId, tags, addAction, removeAction }: Prop
     startTransition(async () => {
       try {
         await removeAction(fd);
+        // Success only — the catch below leaves the dialog open and the
+        // opener on screen, where the primitive's restoration is correct.
+        armHeadingFocus();
         setRemoveTarget(null);
       } catch (err) {
         // Dialog stays open so the failure is read and retryable.
@@ -76,7 +86,13 @@ export function ClientTagsCard({ clientId, tags, addAction, removeAction }: Prop
   return (
     <section className="rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
       <div className="flex flex-wrap items-baseline justify-between gap-3">
-        <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-500">
+        <h2
+          ref={headingRef}
+          // Programmatic focus target only; -1 keeps it out of the Tab order,
+          // and `outline-hidden` (not `outline-none`) per DESIGN.md LAW 3/6.
+          tabIndex={-1}
+          className="text-sm font-medium uppercase tracking-wider text-neutral-500 outline-hidden"
+        >
           Tags
         </h2>
         {!adding && (

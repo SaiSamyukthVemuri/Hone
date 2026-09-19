@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import type { PortalMessageForPractitioner } from "@/lib/portal-messages/queries";
 import type { PortalMessageReplyForPractitioner } from "@/lib/portal-messages/replies-queries";
 import { FormattedDateTime } from "@/components/formatted-date-time";
+import { useReturnFocus } from "@/components/use-return-focus";
 
 const SUBJECT_MAX = 160;
 const BODY_MAX = 5000;
@@ -92,28 +93,12 @@ export function PortalMessagesCard({
   // implicitly in its call stack; a mounted dialog has to be told.
   const [archiveTarget, setArchiveTarget] = useState<string | null>(null);
 
-  // P2-02. ConfirmDialog restores focus to whatever was active when it opened —
-  // correct for every outcome EXCEPT a successful archive, where the opener is
-  // the row's own Archive button and the row moves into the archived list,
-  // which renders `onArchive={null}`. The button is unmounted, restoring to it
-  // calls focus() on a detached node, and the user lands on <body> at the top
-  // of the document.
-  //
-  // So the success path — and ONLY the success path — hands focus to the card
-  // heading, which always survives. Cancel and failure keep the primitive's
-  // restoration untouched, because there the opener is still on screen and
-  // moving focus away from it would be the worse behaviour.
-  const headingRef = useRef<HTMLHeadingElement>(null);
-  const focusHeadingRef = useRef(false);
-
-  // Runs AFTER the dialog's own cleanup: a child effect cleanup is flushed
-  // before the parent effect, so this lands last and wins.
-  useEffect(() => {
-    if (archiveTarget !== null) return;
-    if (!focusHeadingRef.current) return;
-    focusHeadingRef.current = false;
-    headingRef.current?.focus();
-  }, [archiveTarget]);
+  // The destructive-action focus contract, shared with the tags card and the
+  // schedule editor. See components/use-return-focus.ts: the opener here is
+  // the row's Archive button, and a successful archive moves the row into the
+  // archived list, which renders `onArchive={null}`.
+  const { anchorRef: headingRef, arm: armHeadingFocus } =
+    useReturnFocus<HTMLHeadingElement>(archiveTarget);
 
   function submit() {
     const trimSubject = subject.trim();
@@ -176,7 +161,7 @@ export function PortalMessagesCard({
     startArchiveTransition(async () => {
       const r = await archiveAction(fd);
       if (r.ok) {
-        focusHeadingRef.current = true;
+        armHeadingFocus();
         setArchiveTarget(null);
       } else {
         setArchiveError(r.error);

@@ -95,11 +95,32 @@ const staticPropertyName = (node) => {
 // window`, `import type { window }`) does not shadow anything at runtime, so
 // the call still reaches the real global. Treat it as global, which mirrors the
 // reasoning already recorded for NATIVE_DIALOG_ERASED_SHADOWS below.
+// An ambient CONTEXT, including one inherited from an enclosing `declare global
+// { ... }` or `declare module`. A `var` written inside such a block carries no
+// `declare` modifier of its own — the modifier is on the enclosing
+// TSModuleDeclaration — so checking only the immediate parent cannot see it.
+//
+// This currently changes no verdict: measured across ten `declare global`
+// fixtures, typescript-eslint does not register those augmentations in the
+// file's scope chain, so the receiver comes out UNRESOLVED and is already
+// treated as global. That is the right answer for the wrong reason, and it
+// would silently invert if that scope-manager behaviour ever changed. Making
+// the intent explicit is what stops a future flip from reading as correct.
+const inAmbientContext = (node) => {
+  for (let n = node; n; n = n.parent) {
+    if (n.declare === true) return true;
+    if (n.type === "TSModuleDeclaration" && (n.global === true || n.declare === true)) {
+      return true;
+    }
+  }
+  return false;
+};
+
 const isErasedDef = (def) => {
   const parent = def.parent;
-  if (parent && parent.type === "VariableDeclaration" && parent.declare) return true;
   if (parent && parent.type === "ImportDeclaration" && parent.importKind === "type") return true;
-  if (def.node && def.node.declare) return true;
+  if (parent && inAmbientContext(parent)) return true;
+  if (def.node && inAmbientContext(def.node)) return true;
   return false;
 };
 

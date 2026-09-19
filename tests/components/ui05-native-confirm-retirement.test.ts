@@ -266,6 +266,55 @@ describe("UI-05: ESLint is the enforcement authority for native dialogs", () => 
     expect(erased.caught, "an ambient `declare` shadow must not exempt").toBe(true);
   }, 120_000);
 
+  it("ambient globals from an enclosing `declare global` are classified correctly", async () => {
+    // Raised at exact head c110d9b2. Investigated and NOT reproduced: across
+    // these fixtures the shipped rule already returns the right verdict for
+    // every one. The reason is that typescript-eslint does not register a
+    // `declare global` augmentation in the file's scope chain, so the receiver
+    // comes out unresolved and is treated as the global.
+    //
+    // That is the right answer arriving for an incidental reason, so the
+    // erasure helper now recognises an enclosing ambient context explicitly
+    // (changing no verdict below), and these cases are pinned so a future
+    // scope-manager change cannot silently invert them.
+    const cases: Array<[string, string, boolean]> = [
+      [
+        "declare global var self -> BANNED",
+        'declare global { var self: { confirm: (m: string) => boolean } }\nexport function r(){ return self.confirm("x"); }\nexport {};',
+        true,
+      ],
+      [
+        "declare global interface Window -> BANNED",
+        'declare global { interface Window { confirm: (m: string) => boolean } }\nexport function r(){ return window.confirm("x"); }\nexport {};',
+        true,
+      ],
+      [
+        "module-level declare const self (erased) -> BANNED",
+        'declare const self: { confirm: (m: string) => boolean };\nexport function r(){ return self.confirm("x"); }',
+        true,
+      ],
+      [
+        "local param self IN A FILE THAT ALSO HAS declare global -> LEGAL",
+        'declare global { var self: { confirm: (m: string) => boolean } }\ntype D = { confirm: (m: string) => boolean };\nexport function q(self: D){ return self.confirm("x"); }\nexport {};',
+        false,
+      ],
+      [
+        "plain local param self -> LEGAL",
+        'type D = { confirm: (m: string) => boolean };\nexport function r(self: D){ return self.confirm("x"); }',
+        false,
+      ],
+    ];
+
+    const wrong: string[] = [];
+    for (const [label, source, shouldBan] of cases) {
+      const v = await lintThroughRealConfig(source);
+      if (v.caught !== shouldBan) wrong.push(`${label} (got caught=${v.caught})`);
+    }
+    // Discriminating in BOTH directions: a rule that banned everything and a
+    // rule that banned nothing each fail this list.
+    expect(wrong, `misclassified: ${wrong.join(" | ")}`).toEqual([]);
+  }, 120_000);
+
   it("the two OPEN defects of the retired resolver are caught by the replacement", async () => {
     // These are the reproducers from the two P2 threads at `75b16f20`. They
     // were NOT repaired in the resolver — the resolver was retired instead —
@@ -506,6 +555,82 @@ describe("UI-05: the sweep is a CENSUS/BACKSTOP, not a semantic authority", () =
   });
 });
 
+describe("UI-05: the destructive-action focus contract", () => {
+  const HOOK = read("components/use-return-focus.ts");
+  const SURFACES = [
+    ["portal-messages-card.tsx", PORTAL],
+    ["client-tags-card.tsx", TAGS],
+    ["treatment-schedule-editor.tsx", SCHEDULE],
+  ] as const;
+
+  it("all three surfaces use ONE shared hook, not three local copies", () => {
+    for (const [name, src] of SURFACES) {
+      expect(src, `${name}: imports the shared hook`).toContain(
+        'from "@/components/use-return-focus"',
+      );
+      expect(src, `${name}: arms the handoff`).toMatch(/useReturnFocus</);
+    }
+  });
+
+  it("the handoff is keyed on the DIALOG's open state, not on a list length", () => {
+    // Measured, not assumed: after a successful stage removal the row does NOT
+    // unmount — revalidation replaces the button's DOM node, so a list-length
+    // key never fires and the opener is detached while a lookalike is on
+    // screen. Keying on the dialog's own open state is the thing that works.
+    expect(PORTAL).toMatch(/useReturnFocus<[^>]+>\(archiveTarget\)/);
+    expect(TAGS).toMatch(/useReturnFocus<[^>]+>\(removeTarget\)/);
+    expect(SCHEDULE).toMatch(/useReturnFocus<[^>]+>\(\s*confirming,/);
+    expect(HOOK, "the hook documents why a list length is the wrong key").toContain(
+      "does NOT unmount",
+    );
+  });
+
+  it("only the SUCCESS path arms it — cancel and failure keep the primitive's restoration", () => {
+    // If arming moved to the cancel path, ConfirmDialog's opener restoration
+    // would be overridden where it is correct, which is the opposite defect.
+    for (const [name, src] of SURFACES) {
+      const armed = [...src.matchAll(/arm[A-Za-z]*Focus\(\)/g)];
+      expect(armed.length, `${name}: arms exactly once`).toBe(1);
+    }
+    expect(PORTAL).toMatch(/if \(r\.ok\) \{\s*armHeadingFocus\(\);/);
+    expect(SCHEDULE).toMatch(/if \(r\.ok\) \{[\s\S]{0,200}?armScheduleFocus\(\);/);
+  });
+
+  it("every anchor is a programmatic-only target that outlives the action", () => {
+    for (const [name, src] of SURFACES) {
+      const at = src.indexOf("tabIndex={-1}");
+      expect(at, `${name}: anchor is out of the Tab order`).toBeGreaterThan(-1);
+      // Scoped to the ANCHOR's own element, not the whole file: these cards
+      // carry unrelated inputs that legitimately use `outline-none` today.
+      const element = src.slice(at, at + 400);
+      expect(element, `${name}: anchor uses outline-hidden`).toContain("outline-hidden");
+      // DESIGN.md LAW 3/6: `outline-hidden`, never `outline-none`.
+      expect(
+        element.replace(/\/\/[^\n]*/g, ""),
+        `${name}: anchor never outline-none`,
+      ).not.toContain("outline-none");
+    }
+  });
+
+  it("P3 evidence: ClientTagsCard is fixed but genuinely unmounted", () => {
+    // The finding is real as code and unreachable as product, so it is fixed
+    // with the shared hook and NOT given a browser proof. This is the census
+    // that keeps that statement honest: if the card is ever re-surfaced, this
+    // fails and whoever re-surfaced it owes the e2e proof.
+    // `git grep -l` exits 1 when there are no matches, which is the expected
+    // state here, so the miss is caught rather than thrown.
+    let mounts = "";
+    try {
+      mounts = execSync("git grep -l -- '<ClientTagsCard' app components", {
+        encoding: "utf8",
+      }).trim();
+    } catch {
+      mounts = "";
+    }
+    expect(mounts, "ClientTagsCard is mounted somewhere — add the browser proof").toBe("");
+  });
+});
+
 describe("UI-05: both surfaces use the shipped dialog with its real contract", () => {
   it("each mounts ConfirmDialog with danger tone and a busy label", () => {
     for (const [name, src] of [
@@ -541,12 +666,18 @@ describe("UI-05: both surfaces use the shipped dialog with its real contract", (
   });
 
   it("success closes the dialog; failure does not", () => {
-    expect(SCHEDULE).toMatch(/if \(r\.ok\) \{\s*setConfirming\(false\);/);
+    // The focus handoff sits between the branch and the close on the success
+    // path; the claim under test — success closes, failure does not — is
+    // unchanged.
+    expect(SCHEDULE).toMatch(
+      /if \(r\.ok\) \{[\s\S]{0,240}?setConfirming\(false\);/,
+    );
+    expect(SCHEDULE).toMatch(/\} else \{[\s\S]{0,200}?setError\(r\.error\);/);
     // P2-02 added a focus handoff on the success branch only. The claim under
     // test is unchanged — success closes the dialog, failure does not — so the
     // pin allows that one statement between the branch and the close.
     expect(PORTAL).toMatch(
-      /if \(r\.ok\) \{\s*(?:focusHeadingRef\.current = true;\s*)?setArchiveTarget\(null\);/,
+      /if \(r\.ok\) \{[\s\S]{0,240}?setArchiveTarget\(null\);/,
     );
     // And the failure branch still must NOT close it.
     expect(PORTAL).toMatch(/\} else \{\s*setArchiveError\(r\.error\);\s*\}/);
