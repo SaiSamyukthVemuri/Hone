@@ -120,6 +120,11 @@ export const BROWSER_GROUPS = {
   portal: {
     description: "client portal and tokenised links",
     specs: [
+      // UI-05: archiving a portal message now opens the shipped ConfirmDialog
+      // instead of window.confirm. Filed in `portal` because PATH_TO_GROUP maps
+      // /portal/i here, so a diff to the portal-messages card actually runs it —
+      // the targeting lesson from #721.
+      "ui05-native-confirm-retirement.spec.ts",
       "appointment-token-hash.spec.ts",
       // B7 / 0176: the only browser proof that a policy edited between render
       // and submit is refused, re-presented, and requires a SECOND consent.
