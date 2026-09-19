@@ -216,4 +216,29 @@ test.describe("SESSION-START-01 latency measurement", () => {
     // postcare DB join and the transport ATTEMPT — never real provider
     // latency. That boundary is stated in the handoff rather than papered over.
   });
+
+  // SCENARIO D EXISTS BECAUSE INSTRUMENTING A READ IS NOT MEASURING IT.
+  //
+  // `session-chart.treatment-counts` is laser-only: the wave calls
+  // getLaserTreatmentCountsForClient just when session.modality === "laser".
+  // Scenarios A, B and C all press Electrolysis, so after that span was added
+  // the campaign still reported it as NOT RUN — complete instrumentation, and
+  // still no number for one of the eight reads. A per-read table with a hole in
+  // it cannot support a claim about the SLOWEST read, because the missing one
+  // could be it.
+  //
+  // Same journey as A, one button different, so the laser branch of the wave is
+  // exercised and attributable.
+  test("scenario D — LASER session, so the laser-only read in the wave runs", async ({
+    page,
+  }) => {
+    const seed = await seedE2eStudio();
+    const { clientId } = await seedE2eClient(seed);
+    await loginAsOwner(page, seed);
+
+    await page.goto(`/clients/${clientId}/sessions/new`);
+    await page.getByRole("button", { name: /laser/i }).click();
+    await page.waitForURL(/\/sessions\/[0-9a-f-]{36}/i, { timeout: T });
+    await recordFirstUsefulContent(page, "D");
+  });
 });
