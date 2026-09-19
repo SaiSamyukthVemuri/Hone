@@ -1,0 +1,309 @@
+name: post-merge
+
+# CI-COST-01. The production branch's post-merge lane.
+#
+# WHAT THIS REPLACED
+#
+# ci.yml used to run on `push` to claude/build-hone-saas-hOex7 as well as on
+# pull_request. That looked like a risk-based second opinion. It was not: on a
+# push the changed-file step ran
+#
+#     git show --name-only --pretty=format: "$GITHUB_SHA"
+#
+# and on a MERGE commit that prints a COMBINED diff, which for a clean merge is
+# EMPTY. scripts/classify-changes.mjs then saw zero files and did the right
+# thing with them - `full_matrix_required=true`, tier T3, "no detectable diff:
+# failing safe to the highest tier". So EVERY post-merge run executed the whole
+# matrix, including four extended browser shards, payment, google, mobile and
+# the full DB chain, no matter what the merge actually contained. The run logs
+# say so themselves: "selection reason: no detectable diff: failing safe to
+# extended coverage".
+#
+# MEASURED (37 post-merge runs, 2026-08-25 -> 2026-09-09; 30 paired with the
+# exact-head PR run that preceded them):
+#
+#   * 30/30 post-merge runs ran four extended browser shards.
+#   * 29/30 merge commits had a tree BIT-IDENTICAL to the PR head that had
+#     already tested green - git rev-parse <merge>^{tree} == <head>^{tree}.
+#     Re-running the matrix over an identical tree cannot produce new evidence.
+#   * post-merge cost 2075.9 runner-minutes (avg 69.2/merge) against 1405.4
+#     for the PR runs themselves (avg 46.8) - the duplicate was the more
+#     expensive half of the bill.
+#   * 2 post-merge runs failed. Neither was a real defect:
+#       - #684: browser shard 3, 1 failed / 92 passed, on a tree bit-identical
+#         to the PR head that had just passed the same spec; the log is full of
+#         `ECONNRESET` proxying to Sentry.
+#       - #669: `db integration` never reached a test - the Supabase container
+#         could not bind 0.0.0.0:54324, "address already in use".
+#     True positives in the window: ZERO. False alarms: two.
+#
+# WHAT THIS KEEPS
+#
+# One class of evidence genuinely belongs after the merge and nowhere else:
+# SEMANTIC MERGE SKEW - a tree that no pull-request run ever saw. It is real but
+# rare here: 1 of the 30 sampled merges (#669) landed with a base that had moved
+# 41 commits since its last PR run, because "require branches to be up to date"
+# is not enforced. What breaks in that situation is not a browser flow; it is
+# types, exports, build, and the repository's own counting guards - two lanes
+# each adding an e2e spec break a docs-drift count that neither PR could see.
+#
+# So this lane is exactly the static/unit half: typecheck, lint, build, the full
+# vitest suite (which carries tests/source-guards, tests/docs, tests/migrations,
+# tests/ci and tests/security), a leftover-conflict-marker scan, the Stripe
+# gates, the migration extension-qualification scan, and a derivation of
+# migration state - which detects duplicate and malformed migration PREFIXES,
+# and nothing about the SQL inside them. It does NOT re-run browser shards, DB integration, payment,
+# google or mobile: nothing in the measured window shows those producing
+# post-merge evidence a PR run had not already produced.
+#
+# WHAT THIS GIVES UP, STATED PLAINLY
+#
+# Two gates ran on every production push only as a side effect of the defect
+# above - the empty diff forced the full matrix, which dragged in ci.yml's
+# db-integration job, which is the sole home of `check:db-types` and
+# `check:fresh-managed`. Both need a live local Supabase stack (the first shells
+# out to `supabase gen types typescript --local`), so neither can join a
+# Docker-free lane; and neither appears in nightly.yml either. After this change
+# they run on PULL REQUESTS that touch database paths, and nowhere else.
+#
+# The exposure is therefore narrow but real: a types/schema drift created by two
+# independently-green PRs, landing in the window before someone runs the full
+# matrix. It is NOT closed here, because closing it means restarting the whole
+# Supabase stack after every merge - which is the 6.2-minute lane this change
+# removed on the evidence that it produced nothing in 37 runs. Adding those two
+# gates to nightly.yml is the cheap follow-up and is deliberately left as its
+# own change rather than smuggled into a cost PR.
+#
+# The complete matrix is not lost. It runs nightly at 07:00 UTC and on demand -
+# see .github/workflows/nightly.yml, which is unchanged by CI-COST-01.
+#
+# Secrets:
+#   * NONE. Dummy/test env values only, identical in shape to ci.yml's validate
+#     lane. No supabase db push. No deploy. No production credentials.
+
+on:
+  push:
+    branches:
+      - claude/build-hone-saas-hOex7
+  # Re-verification path. Without this the only way to re-run the lane is to
+  # re-run the recorded run, which pins you to the commit it was created for.
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "Why this post-merge verification is being re-run"
+        required: false
+        default: "manual post-merge re-verification"
+
+# CI-HARDEN-01B. Least privilege, asserted rather than assumed.
+#
+# This workflow does not use GITHUB_TOKEN, read a secret, push a commit, tag,
+# comment, or call a GitHub write API: it checks out, builds and tests. Read is
+# the whole requirement. Verified rather than assumed - see the guard in
+# tests/ci/ci-config.test.ts, which reads EVERY file under .github/workflows and
+# asserts it over step text with comment lines stripped, because this block's
+# own rationale names GITHUB_TOKEN.
+#
+# A future workflow that genuinely writes to GitHub declares its own JOB-LEVEL
+# `permissions:` rather than widening this one.
+permissions:
+  contents: read
+
+# Keyed to the COMMIT, not the branch.
+#
+# The first draft keyed this to github.ref and argued that a newer tree contains
+# the older one. That is true of TREES and false of the thing this lane exists to
+# produce: per-merge attribution. Two merges inside the same ~5 minute window
+# would have left the first one silently unverified, and because this job is
+# deliberately not a required check, a cancellation here is indistinguishable
+# from a run that never happened - there is no notification path, and
+# `contents: read` means the lane cannot file one.
+#
+# Per-SHA means each merge is still verified exactly once, while a re-push of the
+# SAME commit still supersedes itself. Nothing is unbounded: one run per merge.
+concurrency:
+  group: hone-post-merge-${{ github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  post-merge-verify:
+    # Deliberately NOT named like any branch-protection required check. The
+    # required contexts - "changed-path detection", "typecheck / lint / build /
+    # test / safety gates", "db integration (local supabase)" and "browser e2e
+    # (local stack)" - are produced by ci.yml on pull_request, which is where
+    # they gate a merge. Reusing one of those names here would put a same-named
+    # context on the production branch that means something different.
+    name: post-merge verification (production branch)
+    runs-on: ubuntu-latest
+    # Target ~5 min: the equivalent work (ci.yml's `validate`) took mean 4.2,
+    # p90 4.7, max 4.8 min across the 30 post-merge runs this lane replaces.
+    #
+    # Ceiling 18, NOT the 12 this first carried. 12 was lower than the 15
+    # `validate` already declares for strictly LESS work, which is the exact
+    # mistake CLAUDE.md section 4 records four separate times - a ceiling set
+    # from a clean sample while setup cost is the thing that actually varies.
+    # The sample above cannot see that: ci.yml:196-206 records `npm ci` ALONE
+    # taking 7.1 minutes on one runner WITH the npm cache already warm, which
+    # killed an 8-minute ceiling with zero assertions failed. 18 clears that
+    # outlier plus this lane's full step list. Targets and hard timeouts are
+    # separate numbers.
+    timeout-minutes: 18
+
+    # Dummy / test-safe env values, matching ci.yml's validate lane. The build
+    # and unit harness do not need real Supabase / Stripe / Resend / Twilio /
+    # cron credentials to compile or run. Every value is shaped to pass the
+    # in-app validators (STRIPE_SECRET_KEY must start with sk_test_ or sk_live_;
+    # pk_test_ for publishable; whsec_ prefix for the webhook secret). Nothing
+    # here is a real secret.
+    env:
+      NEXT_PUBLIC_APP_ORIGIN: "http://localhost:3000"
+      NEXT_PUBLIC_SUPABASE_URL: "https://example.supabase.co"
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: "dummy-anon-key"
+      SUPABASE_SERVICE_ROLE_KEY: "dummy-service-role-key"
+      RESEND_API_KEY: "re_dummy_resend_key"
+      TWILIO_ACCOUNT_SID: "AC00000000000000000000000000000000"
+      TWILIO_AUTH_TOKEN: "dummy-twilio-token"
+      TWILIO_FROM_NUMBER: "+15555550100"
+      STRIPE_SECRET_KEY: "sk_test_dummy"
+      NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: "pk_test_dummy"
+      STRIPE_WEBHOOK_SECRET: "whsec_dummy"
+      STRIPE_ALLOW_LIVE_MODE: "false"
+      CRON_SECRET: "dummy-cron-secret"
+      APPOINTMENT_SIGNING_SECRET: "dummy-appointment-signing-secret"
+      INTAKE_SIGNING_SECRET: "dummy-intake-signing-secret"
+      PORTAL_FINGERPRINT_SALT: "dummy-portal-fingerprint-salt-for-ci"
+      ADMIN_EMAILS: "ci@example.com"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        # CI-HARDEN-01B. The checkout credential is not left behind for the rest
+        # of the job. Nothing here needs it: no push, no tag, no comment, no
+        # write API. A usable token sitting on disk for the remainder of the run
+        # buys nothing and widens what a compromised later step could reach.
+        #
+        # NOT redundant with the action default: persist-credentials still
+        # defaults to TRUE in actions/checkout v7.0.1, verified in its action.yml
+        # at this exact SHA.
+        with:
+          persist-credentials: false
+          # DEPTH 2, and the 2 is load-bearing in BOTH directions.
+          #
+          # Not 0. `tests/docs/canonical-production-facts.test.ts` computes
+          # `SHALLOW = git rev-parse --is-shallow-repository` and SKIPS its
+          # history-derived rules (A1/A2/A3/A5/X4/X6 and Rule F's converse) when
+          # the clone is shallow. ci.yml's `validate` checkout sets no
+          # fetch-depth, so it is depth 1 and those rules have NEVER executed in
+          # CI. A full clone here would arm them for the first time - and A5
+          # compares the SHA recorded in docs/production/current-state.md against
+          # the branch tip, which on a post-merge run IS the merge that just
+          # landed, a SHA no committed document can contain. The lane would have
+          # been red on its first run and every run after, for a reason that has
+          # nothing to do with the merge.
+          #
+          # Not 1 either: depth 1 has no first parent, so the diff below cannot
+          # be taken. Depth 2 reaches the merge and its first parent, which is
+          # exactly the question this lane asks - and `--is-shallow-repository`
+          # still reports true, so the A-rules stay skipped exactly as they are
+          # in `validate`. Verified against a real depth-2 clone of this branch.
+          fetch-depth: 2
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          # No .nvmrc and no engines.node in package.json today. Pin to Node 20
+          # (LTS), matching ci.yml and nightly.yml.
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Report what landed
+        # Diagnostic only, never a gate. Prints the first-parent diff of the
+        # merge - the question that actually means something on a merge commit,
+        # and the one the old push lane could not answer.
+        run: |
+          set -euo pipefail
+          echo "commit  : ${{ github.sha }}"
+          echo "--- files this commit changed relative to the production branch ---"
+          git show --name-only --first-parent --pretty=format: "${{ github.sha }}" | sed '/^$/d'
+
+      # -----------------------------------------------------------------
+      # CHEAP DETERMINISTIC SCANS FIRST.
+      #
+      # These four are Docker-free, take seconds, and include the ONLY check
+      # this lane adds over ci.yml's `validate`. In the first draft they sat
+      # last, behind `next build` and the 13.7k-test suite, with the default
+      # fail-fast - so any flake upstream (the measured window has two: a Sentry
+      # ECONNRESET and a Supabase port bind) aborted the job before the lane's
+      # own contribution ever ran. A merge that landed a duplicate migration
+      # number would have been reported as "unit tests failed".
+      # -----------------------------------------------------------------
+      - name: Migration state derivation
+        # Numbering sanity for the merged tree. scripts/migration-state.mjs
+        # rejects duplicate and malformed PREFIXES - the one migration failure a
+        # pair of independently-green PRs can create between them, by each
+        # claiming the same next free number.
+        #
+        # Scope, stated precisely because the first draft overclaimed it: this
+        # is a FILENAME scan (readdirSync + /^(\d{4})_([a-z0-9_]+)\.sql$/). It
+        # never opens a .sql file, so it does NOT prove the merged 0001->NNNN
+        # chain still applies. Nothing on this lane does; see the header.
+        run: npm run migration:state
+
+      - name: Migration extension-qualification check
+        # Fresh-managed-project fence: every pgcrypto/uuid-ossp call in
+        # supabase/migrations must be extensions.<fn>-qualified so the chain
+        # applies on a FRESH managed project. Deterministic static scan.
+        run: npm run check:migration-extensions
+
+      - name: Stripe / payment safety grep gates
+        run: npm run check:stripe-gates
+
+      - name: Leftover conflict markers
+        # `git show --check`, NOT `git diff --check HEAD`.
+        #
+        # The first draft used `git diff --check HEAD`, which compares the
+        # WORKING TREE to HEAD. On a fresh CI checkout the tree IS HEAD, so it
+        # exits 0 in silence and can never see a COMMITTED conflict marker -
+        # proved on a throwaway repo: `git diff --check HEAD` exit 0, silent;
+        # `git show --check` exit 2 with three "leftover conflict marker" lines.
+        # A merge commit is the single most likely place for a marker to land in
+        # a file neither tsc nor eslint parses (.sql, .md, a JSON fixture),
+        # which is squarely the "tree no PR run ever saw" class this lane owns.
+        #
+        # --first-parent for the same reason the diff above uses it: a merge's
+        # default combined diff is empty, so a bare `git show --check` on a
+        # merge would be just as vacuous as what it replaced.
+        run: git show --check --first-parent "${{ github.sha }}"
+
+      # -----------------------------------------------------------------
+      # Then the expensive half.
+      # -----------------------------------------------------------------
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        # OFFLINE-FONT GATE, identical to ci.yml's validate lane. The preload
+        # refuses any request to fonts.googleapis.com / fonts.gstatic.com at
+        # node:http/node:https, so a build that reaches for Google Fonts FAILS
+        # HERE instead of succeeding on a network-enabled runner and failing
+        # wherever the network is restricted. See scripts/block-google-fonts.cjs
+        # and FONTS.md.
+        run: npm run build
+        env:
+          NODE_OPTIONS: --require ./scripts/block-google-fonts.cjs
+
+      - name: Unit tests
+        # The whole vitest suite, which is where merge skew actually surfaces:
+        # tests/source-guards, tests/docs (the counting guards two lanes can
+        # break independently), tests/migrations, tests/ci and tests/security.
+        # tests/db/** is excluded by vitest.config.ts and stays a nightly lane.
+        #
+        # Unconditional, including on a docs-only merge: ci.yml's validate is
+        # SKIPPED entirely when a PR is docs_only, so for that class of change
+        # this is the only run the docs counting guards ever get.
+        run: npm test
