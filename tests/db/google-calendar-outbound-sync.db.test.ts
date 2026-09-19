@@ -321,14 +321,49 @@ describe("claim_calendar_sync_op", () => {
     expect(lease).toBeLessThan(6 * 60_000);
   });
 
-  it("respects priority ASC, then next_attempt_at, then created_at", async () => {
+  it("priority ASC, then next_attempt_at, then created_at, governs WHICH rows are claimed", async () => {
+    // THIS ASSERTS SELECTION, NOT THE RETURNED ROW SEQUENCE, and the distinction
+    // is the whole point of the repair.
+    //
+    // The RPC is `with claimable as (select ... order by priority asc,
+    // next_attempt_at asc, created_at asc ... limit v_limit) update ... from
+    // claimable ... returning ...`. The ORDER BY decides WHICH rows survive the
+    // LIMIT — that is the real contract, and it is what this test now proves.
+    // It does NOT decide the order the rows come back in: PostgreSQL gives
+    // `update ... returning` no ordering guarantee, so the returned sequence is
+    // plan-dependent.
+    //
+    // The previous revision asserted the returned SEQUENCE equalled
+    // [p50, p100, p200]. That passed for a long time and then failed in CI on a
+    // run whose only changes were documentation, returning the rows in
+    // insertion order instead — the signature of an unordered RETURNING, not of
+    // a regression. It was a weak proof: it could fail while the RPC was
+    // perfectly correct, and it never actually proved that priority decided
+    // selection, because claiming all three rows tests no boundary at all.
+    //
+    // Claiming TWO of three now makes priority load-bearing: the two best
+    // priorities must be taken and the worst must be left behind. No caller
+    // depends on the returned order — lib/google-calendar/sync/worker-runtime.ts
+    // maps the batch and processes it — so nothing is left unproven by dropping
+    // the sequence assertion.
     const a = await seedStudio("clmOrd");
     const conn = await seedConnection(a);
     const p200 = await insertOutbox(a, conn, { priority: 200 });
     const p50 = await insertOutbox(a, conn, { priority: 50 });
     const p100 = await insertOutbox(a, conn, { priority: 100 });
-    const r = await claim(3);
-    expect(r.rows.map((x: Record<string, unknown>) => x.id)).toEqual([p50, p100, p200]);
+
+    const first = await claim(2);
+    const firstIds = first.rows.map((x: Record<string, unknown>) => x.id as string);
+    expect(firstIds).toHaveLength(2);
+    // The two BEST priorities are taken, in whatever order they are returned.
+    expect(new Set(firstIds)).toEqual(new Set([p50, p100]));
+    // And the worst priority LOSES the limit — the assertion that would have
+    // caught a broken or missing ORDER BY, which the old sequence check could not.
+    expect(firstIds).not.toContain(p200);
+
+    // Only then does the lowest-priority row become claimable.
+    const second = await claim(1);
+    expect(second.rows.map((x: Record<string, unknown>) => x.id)).toEqual([p200]);
   });
 
   it("caps the batch at 25", async () => {

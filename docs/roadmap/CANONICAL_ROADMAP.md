@@ -209,6 +209,7 @@ The detailed contract lives in the section named below. Summaries, feedback reco
 | Convergence and release discipline | §§7–8 | Existing thresholds and human production boundary remain binding. |
 | Publication and measurement | §0.5; §20 | One working edition, derived publications and five operating measures. |
 | Developer-platform adoption | §§16.6–16.8; supporting order §23.7 | One tooling backlog; dated canary evidence in §3.7. Product priority and authority re-entry remain separate. |
+| **Design contract and design evidence** | **`DESIGN.md`** (binding contract); `docs/reviews/product-wide-design-audit-2026-09.md` (canonical evidence) | `DESIGN.md` is canonical for design decisions, subordinate to ENGINEERING_STANDARDS.md, and linked from CLAUDE.md. It classifies every statement **LAW** / **CONTRACT** / **PILOT** / **PRODUCT AUTHORITY REQUIRED**. The audit is **evidence and proposal, never authority** — nothing in it becomes a rule by being measured. Design product-authority questions stay open exactly as `DESIGN.md` records them; this index does not re-decide them. |
 
 <a id="hone_s_0_5"></a>
 ## 0.5 Change control and publication
@@ -2172,6 +2173,21 @@ This is the sole maintained product-priority list. Sam’s Work Plan v3 ordering
 | 6 | Visual Treatment Memory | VISUAL-01 / 02 / 03 (§14.9) | Post-WAIT product experiment; no vgpu dependency before VISUAL-02 proof (§21). |
 | 7 | Business decisions still open | Paid consults; consult value-add (§17.7) | Chloe decides; not build items. |
 | 8 | Open product decision | WAIT-INTAKE-01 interest/readiness level (§0.7, §14.6.1) | Decide before the richer WAIT intake binds: add as a structured select or explicitly drop. |
+
+**Product-wide design programme — authorized, and deliberately UNRANKED.**
+`ACCEPTED_PRIORITY`: **UX-01 Quick Wins is AUTHORIZED**, to proceed once its
+prebuild is reconciled against current production. It is recorded outside the
+numbered rows **on purpose** — the numbered list is ordered and rows 2–8 carry
+explicit `THEN`/`After` sequencing, so a row number would assert a rank against
+those items that **has not been decided**. UX-01's position relative to rows 2–8
+is **unordered**; only the row-1 rule below applies to it.
+
+UX-02 … UX-11 are `PROPOSED_DESIGN`: **PROPOSED / NOT SCHEDULED**, carrying **no
+implementation authority**. **Appearing in the sequence never authorizes a
+stage** — each needs its own acceptance recorded here. MOTION-01 remains a
+**PILOT, not adopted**, and keeps its sequencing constraint. The contract and the
+open design questions live in `DESIGN.md` (§0.4). No dates and no implementation
+PR numbers are allocated by this entry.
 
 **Rules that hold across the list. **
 
