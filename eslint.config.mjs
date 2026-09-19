@@ -54,24 +54,101 @@ const NATIVE_DIALOG_GLOBALS = [
 // None of them needs code here.
 const NATIVE_DIALOG_RECEIVERS = ["window", "globalThis", "self"];
 
-const NATIVE_DIALOG_PROPERTIES = NATIVE_DIALOG_RECEIVERS.flatMap((object) => [
-  {
-    object,
-    property: "confirm",
-    message:
-      `Use ConfirmDialog (components/confirm-dialog.tsx). iOS Safari can suppress ${object}.confirm silently, so the guard returns false and the mutation never runs.`,
+// P2-02 on #723 (Codex, exact head 3ef45f70). `no-restricted-properties`
+// matches a member expression by the OBJECT'S SPELLING and never resolves it,
+// so it rejected a legitimate local receiver that merely happens to be named
+// `window`, `globalThis` or `self` — reproduced with
+// `function f(self: DialogAdapter) { return self.confirm("ok") }`, which linted
+// as an error. That both blocks unrelated product code and weakens the guard's
+// own claim that legitimate bindings stay legal.
+//
+// ESLint core cannot express "this receiver is THE global", so this is the
+// smallest thing that can: a local rule that does the same job and asks the
+// scope analyser the one question core skips. It is declared inline — no new
+// package, no new file — and it REPLACES the dialog entries in
+// `no-restricted-properties` rather than sitting beside them, because two
+// mechanisms firing on the same node would double-report.
+//
+// It still sees every wrapper form the retired resolver needed hand-written
+// repairs for, because each one leaves the MemberExpression itself intact in
+// the AST: dotted, computed string literal, computed no-substitution template,
+// parenthesised (ESTree has no paren node), `as any`, and non-null assertion.
+const NATIVE_DIALOG_PROPERTY_NAMES = ["confirm", "alert", "prompt"];
+
+const staticPropertyName = (node) => {
+  if (!node.computed) {
+    return node.property.type === "Identifier" ? node.property.name : null;
+  }
+  const p = node.property;
+  if (p.type === "Literal" && typeof p.value === "string") return p.value;
+  if (
+    p.type === "TemplateLiteral" &&
+    p.quasis.length === 1 &&
+    p.expressions.length === 0
+  ) {
+    return p.quasis[0].value.cooked;
+  }
+  return null;
+};
+
+// A binding whose every definition is ERASED at compile time (`declare const
+// window`, `import type { window }`) does not shadow anything at runtime, so
+// the call still reaches the real global. Treat it as global, which mirrors the
+// reasoning already recorded for NATIVE_DIALOG_ERASED_SHADOWS below.
+const isErasedDef = (def) => {
+  const parent = def.parent;
+  if (parent && parent.type === "VariableDeclaration" && parent.declare) return true;
+  if (parent && parent.type === "ImportDeclaration" && parent.importKind === "type") return true;
+  if (def.node && def.node.declare) return true;
+  return false;
+};
+
+const resolvesToGlobal = (scope, name) => {
+  for (let s = scope; s; s = s.upper) {
+    const variable = s.set.get(name);
+    if (!variable) continue;
+    // No definitions at all = the environment-provided global.
+    if (variable.defs.length === 0) return true;
+    return variable.defs.every(isErasedDef);
+  }
+  return true; // never bound anywhere = global
+};
+
+const nativeDialogPlugin = {
+  rules: {
+    "no-native-dialog-receiver": {
+      meta: {
+        type: "problem",
+        schema: [],
+        messages: {
+          confirm:
+            "Use ConfirmDialog (components/confirm-dialog.tsx). iOS Safari can suppress {{object}}.confirm silently, so the guard returns false and the mutation never runs.",
+          alert:
+            "Native {{object}}.alert() is not used in Hone surfaces; render the message in the UI.",
+          prompt:
+            "Native {{object}}.prompt() is not used in Hone surfaces; use a real form control.",
+        },
+      },
+      create(context) {
+        const source = context.sourceCode ?? context.getSourceCode();
+        return {
+          MemberExpression(node) {
+            if (node.object.type !== "Identifier") return;
+            const object = node.object.name;
+            if (!NATIVE_DIALOG_RECEIVERS.includes(object)) return;
+            const property = staticPropertyName(node);
+            if (!property || !NATIVE_DIALOG_PROPERTY_NAMES.includes(property)) return;
+            const scope = source.getScope ? source.getScope(node) : context.getScope();
+            if (!resolvesToGlobal(scope, object)) return;
+            context.report({ node, messageId: property, data: { object } });
+          },
+        };
+      },
+    },
   },
-  {
-    object,
-    property: "alert",
-    message: `Native ${object}.alert() is not used in Hone surfaces; render the message in the UI.`,
-  },
-  {
-    object,
-    property: "prompt",
-    message: `Native ${object}.prompt() is not used in Hone surfaces; use a real form control.`,
-  },
-]);
+};
+
+
 
 // THE ONE CLASS ESLINT'S SCOPE ANALYSER CANNOT DECIDE FOR US.
 //
@@ -154,6 +231,7 @@ const eslintConfig = [
     // are others, and they are uncovered — so this is stated as one rejected
     // form rather than as the entry.
     files: ["app/(app)/financials/**/*.{ts,tsx}", "lib/finance/**/*.{ts,tsx}"],
+    plugins: { "hone-dialog": nativeDialogPlugin },
     rules: {
       // THE DIALOG RESTRICTIONS ARE REPEATED HERE DELIBERATELY.
       //
@@ -202,8 +280,8 @@ const eslintConfig = [
           property: "getBuiltinModule",
           message: "FIN-01A is ESM-only: no runtime acquisition of the module loader.",
         },
-        ...NATIVE_DIALOG_PROPERTIES,
       ],
+      "hone-dialog/no-native-dialog-receiver": "error",
       "no-restricted-syntax": ["error", ...NATIVE_DIALOG_ERASED_SHADOWS],
     },
   },
@@ -259,9 +337,10 @@ const eslintConfig = [
     // what caught it. The scopes are now disjoint, so each file is governed by
     // exactly one object, and the FIN block carries both sets for its files.
     ignores: ["app/(app)/financials/**"],
+    plugins: { "hone-dialog": nativeDialogPlugin },
     rules: {
       "no-restricted-globals": ["error", ...NATIVE_DIALOG_GLOBALS],
-      "no-restricted-properties": ["error", ...NATIVE_DIALOG_PROPERTIES],
+      "hone-dialog/no-native-dialog-receiver": "error",
       "no-restricted-syntax": ["error", ...NATIVE_DIALOG_ERASED_SHADOWS],
     },
   },

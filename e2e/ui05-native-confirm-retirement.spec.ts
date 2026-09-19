@@ -103,6 +103,68 @@ test.describe("UI-05 archiving a portal message uses the shipped dialog", () => 
       .not.toBeNull();
   });
 
+  // P2-02 (Codex, exact head 3ef45f70). ConfirmDialog restores focus to the
+  // element that was active when it opened. On a SUCCESSFUL archive that
+  // element is the row's Archive button, and the row moves from the active list
+  // into the archived list — which renders `onArchive={null}`, so the button is
+  // unmounted. Restoring to it then calls focus() on a detached node, which
+  // does nothing, and a keyboard or screen-reader user is dropped on <body> at
+  // the top of the document.
+  //
+  // Cancel is deliberately the control case: nothing moves, the opener still
+  // exists, and the primitive's own restoration is correct and must stay.
+  test("a successful archive leaves focus on a surviving element, not on <body>", async ({
+    page,
+  }) => {
+    const { clientId, subject } = await seedPortalMessage(page);
+    await expect(page.getByText(subject)).toBeVisible({ timeout: T });
+
+    await page.getByRole("button", { name: "Archive" }).first().click();
+    const dialog = page.getByRole("alertdialog");
+    await expect(dialog).toBeVisible({ timeout: T });
+    await dialog.getByRole("button", { name: "Archive message" }).click();
+
+    await expect
+      .poll(async () => archivedAtFor(clientId), { timeout: T })
+      .not.toBeNull();
+    await expect(dialog).toHaveCount(0, { timeout: T });
+
+    const focus = await page.evaluate(() => {
+      const el = document.activeElement;
+      if (!el) return { tag: "NULL", connected: false };
+      return {
+        tag: el.tagName,
+        connected: el.isConnected,
+        label: el.getAttribute("aria-label") ?? el.textContent?.trim().slice(0, 40) ?? "",
+      };
+    });
+
+    expect(focus.tag, "focus must not fall to <body> after the row moves").not.toBe("BODY");
+    expect(focus.connected, "focus must be on an element still in the document").toBe(true);
+  });
+
+  test("cancelling still returns focus to the Archive button that opened the dialog", async ({
+    page,
+  }) => {
+    const { subject } = await seedPortalMessage(page);
+    await expect(page.getByText(subject)).toBeVisible({ timeout: T });
+
+    await page.getByRole("button", { name: "Archive" }).first().click();
+    const dialog = page.getByRole("alertdialog");
+    await expect(dialog).toBeVisible({ timeout: T });
+    await dialog.getByRole("button", { name: "Cancel" }).click();
+    await expect(dialog).toHaveCount(0, { timeout: T });
+
+    // The row never moved, so the primitive's opener restoration is correct
+    // here and must not be traded away by the success-path repair.
+    const focused = await page.evaluate(() => {
+      const el = document.activeElement as HTMLElement | null;
+      return el ? { tag: el.tagName, text: el.textContent?.trim() ?? "" } : null;
+    });
+    expect(focused?.tag).toBe("BUTTON");
+    expect(focused?.text).toContain("Archive");
+  });
+
   test("on a 390px viewport the dialog fits without horizontal scroll", async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     const { subject } = await seedPortalMessage(page);

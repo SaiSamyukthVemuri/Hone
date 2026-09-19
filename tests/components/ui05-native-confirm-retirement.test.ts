@@ -109,10 +109,16 @@ function filesNotCovered(candidate: string[], exts?: RegExp): string[] {
 // and there is no second parser mode for this file to select wrongly.
 // ---------------------------------------------------------------------------
 
+// P2-01's repair moved the RECEIVER half of the ban off `no-restricted-properties`
+// and onto a scope-aware local rule, because core matched the receiver by
+// spelling and rejected a legitimate local `self`/`window`/`globalThis`. The
+// verdict helper must know that rule id, or every member-expression form reads
+// as "not caught" for a purely cosmetic reason.
 const DIALOG_RULES = new Set([
   "no-restricted-globals",
   "no-restricted-properties",
   "no-restricted-syntax",
+  "hone-dialog/no-native-dialog-receiver",
 ]);
 
 let eslintInstance: ESLint | null = null;
@@ -130,7 +136,13 @@ async function lintThroughRealConfig(
   const mine = msgs.filter((m) => m.ruleId && DIALOG_RULES.has(m.ruleId));
   return {
     caught: mine.length > 0,
-    rules: [...new Set(mine.map((m) => m.ruleId!.replace("no-restricted-", "")))].sort(),
+    rules: [
+      ...new Set(
+        mine.map((m) =>
+          m.ruleId!.replace("hone-dialog/no-native-dialog-receiver", "properties").replace("no-restricted-", ""),
+        ),
+      ),
+    ].sort(),
     // A parse failure would make "caught"/"not caught" meaningless either way,
     // so it is surfaced rather than folded into the verdict.
     fatal: fatal ? fatal.message : null,
@@ -144,6 +156,19 @@ async function effectiveRules(filePath: string): Promise<Record<string, unknown[
   };
   return cfg.rules ?? {};
 }
+
+/**
+ * Is a rule armed at ERROR for this path? P2-01 moved the receiver half of the
+ * ban onto a local scope-aware rule, which carries no option objects, so
+ * `optionsOf` cannot express "armed" for it.
+ */
+const ruleIsError = (rules: Record<string, unknown[]>, key: string): boolean => {
+  const entry = rules[key] as unknown;
+  const severity = Array.isArray(entry) ? entry[0] : entry;
+  return severity === 2 || severity === "error";
+};
+
+const RECEIVER_RULE = "hone-dialog/no-native-dialog-receiver";
 
 /** The option objects a rule carries for a path, minus the severity. */
 const optionsOf = (rules: Record<string, unknown[]>, key: string): Array<Record<string, unknown>> =>
@@ -182,6 +207,13 @@ const LEGITIMATE_BINDINGS: Array<[string, string, string?]> = [
   ["L7  similar names", 'export function r(onConfirm: () => void, handleConfirm: () => void){ onConfirm(); handleConfirm(); }'],
   ["L8  ConfirmDialog usage", 'import { ConfirmDialog } from "@/components/confirm-dialog";\nexport const C = ConfirmDialog;'],
   ["L9  renamed local", 'import { confirm as ask } from "./ui";\nexport function r(){ return ask("x"); }'],
+  // P2-01 (Codex, exact head 3ef45f70). Core `no-restricted-properties` matched
+  // the RECEIVER by spelling, so a local binding that merely happens to be
+  // called `self`, `window` or `globalThis` was rejected. Each of these three
+  // was a reproduced false positive before the scope-aware rule replaced it.
+  ["L10 local receiver named self", 'type D = { confirm: (s: string) => boolean };\nexport function r(self: D){ return self.confirm("x"); }'],
+  ["L11 local receiver named window", 'type D = { confirm: (s: string) => boolean };\nexport function r(window: D){ return window.confirm("x"); }'],
+  ["L12 local receiver named globalThis", 'type D = { confirm: (s: string) => boolean };\nexport function r(globalThis: D){ return globalThis.confirm("x"); }'],
 ];
 
 describe("UI-05: ESLint is the enforcement authority for native dialogs", () => {
@@ -199,7 +231,7 @@ describe("UI-05: ESLint is the enforcement authority for native dialogs", () => 
     expect(NATIVE_FORMS.length, "the ruling measured 17 native forms").toBe(17);
   }, 120_000);
 
-  it("every legitimate binding stays legal — 0/9 flagged", async () => {
+  it("every legitimate binding stays legal — 0/12 flagged", async () => {
     const flagged: string[] = [];
     for (const [label, source, filePath] of LEGITIMATE_BINDINGS) {
       const v = await lintThroughRealConfig(source, filePath);
@@ -208,7 +240,30 @@ describe("UI-05: ESLint is the enforcement authority for native dialogs", () => 
     // The requirement that keeps this mechanism honest: a guard that rejects
     // `const confirm = …` would be trading one defect for another.
     expect(flagged, `legitimate bindings wrongly rejected: ${flagged.join(" | ")}`).toEqual([]);
-    expect(LEGITIMATE_BINDINGS.length, "the ruling measured 9 legitimate forms").toBe(9);
+    expect(LEGITIMATE_BINDINGS.length, "9 from the ruling + 3 P2-01 receivers").toBe(12);
+  }, 120_000);
+
+  it("the receiver ban discriminates scope, not spelling — P2-01", async () => {
+    // The pair that must not collapse into one answer. Same property, same
+    // spelling, opposite verdicts, decided only by what the receiver RESOLVES
+    // to. A mechanism that gets both right cannot be matching text.
+    const localReceiver = await lintThroughRealConfig(
+      'type D = { confirm: (s: string) => boolean };\nexport function r(self: D){ return self.confirm("x"); }',
+    );
+    expect(localReceiver.caught, "a local `self` is not the global").toBe(false);
+
+    const realGlobal = await lintThroughRealConfig(
+      'export function r(){ return self.confirm("x"); }',
+    );
+    expect(realGlobal.caught, "the real global `self` is still banned").toBe(true);
+
+    // An ERASED shadow is not a shadow at runtime, so it must NOT buy an
+    // exemption — the call still reaches the browser global. Same reasoning
+    // already recorded for the bare-name erased-shadow selectors.
+    const erased = await lintThroughRealConfig(
+      'declare const window: { confirm: (s: string) => boolean };\nexport function r(){ return window.confirm("x"); }',
+    );
+    expect(erased.caught, "an ambient `declare` shadow must not exempt").toBe(true);
   }, 120_000);
 
   it("the two OPEN defects of the retired resolver are caught by the replacement", async () => {
@@ -258,8 +313,10 @@ describe("UI-05: ESLint is the enforcement authority for native dialogs", () => 
     const syntax = optionsOf(rules, "no-restricted-syntax");
 
     expect(globals, "bare dialog globals").toEqual(expect.arrayContaining(["confirm", "alert", "prompt"]));
-    for (const receiver of ["window", "globalThis", "self"])
-      expect(props, `${receiver}.confirm`).toContain(`${receiver}.confirm`);
+    // The RECEIVER half is the scope-aware rule since P2-01; core's
+    // `no-restricted-properties` matched a local `self`/`window` by spelling.
+    expect(ruleIsError(rules, RECEIVER_RULE), "receiver rule armed").toBe(true);
+    expect(props, "the receiver ban no longer rides on core").not.toContain("window.confirm");
     expect(syntax.length, "erased-shadow selectors").toBeGreaterThan(0);
   }, 120_000);
 
@@ -290,8 +347,10 @@ describe("UI-05: ESLint is the enforcement authority for native dialogs", () => 
 
       // 2. native confirm is forbidden here too
       expect(globals, `${finPath}: bare confirm forbidden`).toContain("confirm");
-      for (const receiver of ["window", "globalThis", "self"])
-        expect(props, `${finPath}: ${receiver}.confirm forbidden`).toContain(`${receiver}.confirm`);
+      expect(
+        ruleIsError(rules, RECEIVER_RULE),
+        `${finPath}: receiver rule armed`,
+      ).toBe(true);
       expect(syntax.length, `${finPath}: erased-shadow selectors present`).toBeGreaterThan(0);
     }
   }, 120_000);
@@ -330,17 +389,27 @@ describe("UI-05: ESLint is the enforcement authority for native dialogs", () => 
     const cfg = read("eslint.config.mjs");
     for (const [name, expected] of [
       ["NATIVE_DIALOG_GLOBALS", 2],
-      ["NATIVE_DIALOG_PROPERTIES", 2],
       ["NATIVE_DIALOG_ERASED_SHADOWS", 2],
     ] as const) {
       const spreads = (cfg.match(new RegExp(`\\.\\.\\.${name}`, "g")) ?? []).length;
       expect(spreads, `${name} must be spread into both blocks, found ${spreads}`).toBe(expected);
     }
+    // The receiver half is no longer an options array, so its "both blocks"
+    // fact is the plugin registration plus the rule entry — same claim, same
+    // count, expressed in the shape the new mechanism actually has.
+    for (const [needle, expected] of [
+      ['"hone-dialog": nativeDialogPlugin', 2],
+      [`"${RECEIVER_RULE}": "error"`, 2],
+    ] as const) {
+      const hits = cfg.split(needle).length - 1;
+      expect(hits, `${needle} must appear in both blocks, found ${hits}`).toBe(expected);
+    }
     // Declared once each, so the two spreads cannot drift apart.
     for (const name of [
       "NATIVE_DIALOG_GLOBALS",
-      "NATIVE_DIALOG_PROPERTIES",
       "NATIVE_DIALOG_ERASED_SHADOWS",
+      // The receiver half, declared once for the same anti-drift reason.
+      "nativeDialogPlugin",
     ]) {
       expect((cfg.match(new RegExp(`const ${name} =`, "g")) ?? []).length, `${name} declared once`).toBe(1);
     }
@@ -386,7 +455,7 @@ describe("UI-05: the sweep is a CENSUS/BACKSTOP, not a semantic authority", () =
       const props = optionsOf(rules, "no-restricted-properties").map(
         (o) => `${o.object}.${o.property}`,
       );
-      if (!globals.includes("confirm") || !props.includes("window.confirm")) ungoverned.push(f);
+      if (!globals.includes("confirm") || !ruleIsError(rules, RECEIVER_RULE)) ungoverned.push(f);
     }
     expect(
       ungoverned,
@@ -473,7 +542,14 @@ describe("UI-05: both surfaces use the shipped dialog with its real contract", (
 
   it("success closes the dialog; failure does not", () => {
     expect(SCHEDULE).toMatch(/if \(r\.ok\) \{\s*setConfirming\(false\);/);
-    expect(PORTAL).toMatch(/if \(r\.ok\) \{\s*setArchiveTarget\(null\);/);
+    // P2-02 added a focus handoff on the success branch only. The claim under
+    // test is unchanged — success closes the dialog, failure does not — so the
+    // pin allows that one statement between the branch and the close.
+    expect(PORTAL).toMatch(
+      /if \(r\.ok\) \{\s*(?:focusHeadingRef\.current = true;\s*)?setArchiveTarget\(null\);/,
+    );
+    // And the failure branch still must NOT close it.
+    expect(PORTAL).toMatch(/\} else \{\s*setArchiveError\(r\.error\);\s*\}/);
   });
 
   it("the portal card tracks WHICH message, which confirm() carried implicitly", () => {

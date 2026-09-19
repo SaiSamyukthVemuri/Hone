@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/confirm-dialog";
@@ -92,6 +92,29 @@ export function PortalMessagesCard({
   // implicitly in its call stack; a mounted dialog has to be told.
   const [archiveTarget, setArchiveTarget] = useState<string | null>(null);
 
+  // P2-02. ConfirmDialog restores focus to whatever was active when it opened —
+  // correct for every outcome EXCEPT a successful archive, where the opener is
+  // the row's own Archive button and the row moves into the archived list,
+  // which renders `onArchive={null}`. The button is unmounted, restoring to it
+  // calls focus() on a detached node, and the user lands on <body> at the top
+  // of the document.
+  //
+  // So the success path — and ONLY the success path — hands focus to the card
+  // heading, which always survives. Cancel and failure keep the primitive's
+  // restoration untouched, because there the opener is still on screen and
+  // moving focus away from it would be the worse behaviour.
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const focusHeadingRef = useRef(false);
+
+  // Runs AFTER the dialog's own cleanup: a child effect cleanup is flushed
+  // before the parent effect, so this lands last and wins.
+  useEffect(() => {
+    if (archiveTarget !== null) return;
+    if (!focusHeadingRef.current) return;
+    focusHeadingRef.current = false;
+    headingRef.current?.focus();
+  }, [archiveTarget]);
+
   function submit() {
     const trimSubject = subject.trim();
     const trimBody = body.trim();
@@ -153,6 +176,7 @@ export function PortalMessagesCard({
     startArchiveTransition(async () => {
       const r = await archiveAction(fd);
       if (r.ok) {
+        focusHeadingRef.current = true;
         setArchiveTarget(null);
       } else {
         setArchiveError(r.error);
@@ -167,7 +191,13 @@ export function PortalMessagesCard({
     <section className="flex flex-col gap-4 rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-500">
+          <h2
+            ref={headingRef}
+            // Programmatic focus target only: -1 keeps it out of the Tab order,
+            // and `outline-hidden` (not `outline-none`) per DESIGN.md LAW 3/6.
+            tabIndex={-1}
+            className="text-sm font-medium uppercase tracking-wider text-neutral-500 outline-hidden"
+          >
             Portal messages
             {unseenReplyCount > 0 && (
               <span
