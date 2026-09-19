@@ -1376,20 +1376,35 @@ function primaryNav(page: Page): Locator {
  * Under `holdPrefetch` a request counter cannot carry it, and it is worth
  * saying why rather than leaving the next reader to re-derive it.
  *
- * The obvious strengthening — "held minus prefetchesHeld > 0", i.e. the tap
- * issued its OWN request — is WRONG HERE, and would fail against a perfectly
- * healthy product. Next stores a prefetch in the router cache as a lazily
- * created entry whose `data` is a PROMISE, and
- * `getOrCreatePrefetchCacheEntry` returns that existing entry when one is
- * still valid (next/dist/client/components/router-reducer/prefetch-cache-
- * utils.js). The entry is in the cache from the moment the prefetch STARTS,
- * not when it resolves — so a click during a held prefetch reuses that
- * in-flight promise and issues no second request at all. `held` and
- * `prefetchesHeld` are then equal, by design, on a navigation that is
- * genuinely pending.
+ * WHAT THE ROUTER ACTUALLY DOES ON A CLICK DURING A HELD PREFETCH. An earlier
+ * revision of this comment asserted that the click "issues no second request
+ * at all". That is WRONG, it contradicted a passing assertion 100 lines below
+ * it, and a reviewer reasoned from it to a finding the run disproves. Both
+ * things happen, not one:
  *
- * So the anti-vacuity claim is made from what is observable instead, and every
- * test below asserts all four together:
+ *   1. The prefetch entry is REUSED. Next stores a prefetch as a lazily
+ *      created router-cache entry whose `data` is a PROMISE, and
+ *      `getOrCreatePrefetchCacheEntry` returns that entry while it is still
+ *      valid (router-reducer/prefetch-cache-utils.js). It is in the cache from
+ *      the moment the prefetch STARTS, so the click does not re-issue it.
+ *   2. AND the navigation still makes its OWN request. `<Link>` prefetches
+ *      with `PrefetchKind.AUTO`, which for a dynamic authenticated route —
+ *      every destination here — returns a tree with DYNAMIC HOLES. The
+ *      navigate reducer then calls `fetchServerResponse` to fill them
+ *      (router-reducer/reducers/navigate-reducer.js:285-302: "The prefetched
+ *      tree has dynamic holes in it. We initiate a dynamic request to fill
+ *      them in."). That request carries `RSC: 1` and NOT
+ *      `next-router-prefetch: 1`.
+ *
+ * So on these destinations `held` EXCEEDS `prefetchesHeld`, and the
+ * non-prefetch navigation count is exactly ONE — which is what the "exactly
+ * one navigation was made" steps assert, and what they measured passing at
+ * 7fdbc9cf. Fact (2) is what makes a duplicate push visible as a second
+ * request; fact (1) is why the prefetch must be held rather than aborted.
+ *
+ * The anti-vacuity claim is nonetheless made from what is OBSERVABLE rather
+ * than from a counter, because no count can distinguish "pending" from
+ * "already committed". Every test below asserts all four together:
  *
  *   1. something for this destination is in flight and THIS TEST is holding it
  *      (`held() > 0` and `prefetchesHeld() > 0`);
@@ -1510,7 +1525,12 @@ test.describe("NAV-ACK-02 primary navigation — desktop", () => {
     await test.step("exactly one navigation was made", async () => {
       // PendingLink registers no click handler and starts no navigation; it
       // only reads Next's own state. A mechanism that pushed as well would
-      // show up here as two.
+      // show up here as TWO.
+      //
+      // ONE, not zero: the counted request is the navigate reducer's dynamic
+      // request that fills the AUTO prefetch's dynamic holes (see the note
+      // above this describe block). It carries `RSC: 1` and no
+      // `next-router-prefetch: 1`, which is exactly what this listener admits.
       expect(recordsRequests).toBe(1);
     });
   });
@@ -1565,6 +1585,9 @@ test.describe("NAV-ACK-02 primary navigation — desktop", () => {
     gate.release();
     await expect(page).toHaveURL(/\/clients$/, { timeout: T });
     await expect(page.locator("[data-link-pending]")).toHaveCount(0);
+    // ONE, for the same reason as the Records step above: the AUTO prefetch's
+    // dynamic-hole fill is a non-prefetch RSC request, and a second push would
+    // read as two.
     expect(clientsRequests).toBe(1);
   });
 });
