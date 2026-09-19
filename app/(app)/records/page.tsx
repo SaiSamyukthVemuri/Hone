@@ -107,11 +107,27 @@ const AUDIT_ACTION_LABELS: Record<RecordKeepingAuditEvent["action"], string> = {
   probe_lot_updated: "Probe lot number updated",
 };
 
+// The audit trail is append-only and written exclusively by database triggers,
+// so "No history recorded yet." is a CLINICAL CLAIM: it states that nothing was
+// ever done to this record. It may therefore only be printed when the read that
+// would have found events actually ran. `unavailable` is checked FIRST and wins
+// over the empty branch for exactly that reason — see AuditHistoryByRecord in
+// lib/record-keeping/queries.ts.
 function AuditHistoryList({
   events,
+  unavailable = false,
 }: {
   events: RecordKeepingAuditEvent[] | undefined;
+  unavailable?: boolean;
 }) {
+  if (unavailable) {
+    return (
+      <p className="text-xs text-amber-700 dark:text-amber-500">
+        History could not be loaded. Refresh to try again; this does not mean no
+        history was recorded.
+      </p>
+    );
+  }
   if (!events || events.length === 0) {
     return <p className="text-xs text-neutral-500">No history recorded yet.</p>;
   }
@@ -148,9 +164,11 @@ function AuditHistoryList({
 function RowTools({
   editForm,
   events,
+  historyUnavailable = false,
 }: {
   editForm: React.ReactNode;
   events: RecordKeepingAuditEvent[] | undefined;
+  historyUnavailable?: boolean;
 }) {
   return (
     <div className="mt-1 flex flex-col gap-1">
@@ -167,7 +185,7 @@ function RowTools({
           History
         </summary>
         <div className="mt-2">
-          <AuditHistoryList events={events} />
+          <AuditHistoryList events={events} unavailable={historyUnavailable} />
         </div>
       </details>
     </div>
@@ -498,7 +516,8 @@ async function SterileItemsSection({
                       action={updateSterileItemRecordAction}
                     />
                   }
-                  events={audit.get(r.id)}
+                  events={audit.byRecord.get(r.id)}
+                  historyUnavailable={audit.unavailableRecordIds.has(r.id)}
                 />
               </li>
               );
@@ -628,7 +647,8 @@ async function DisinfectantsSection({
                       currentPractitionerId={currentPractitionerId}
                     />
                   }
-                  events={audit.get(r.id)}
+                  events={audit.byRecord.get(r.id)}
+                  historyUnavailable={audit.unavailableRecordIds.has(r.id)}
                 />
               </li>
               );
@@ -752,7 +772,8 @@ async function ExposureIncidentsSection({
                       staff={staff}
                     />
                   }
-                  events={audit.get(r.id)}
+                  events={audit.byRecord.get(r.id)}
+                  historyUnavailable={audit.unavailableRecordIds.has(r.id)}
                 />
               </li>
             ))}
@@ -983,13 +1004,21 @@ async function ClientProcedureRecordsSection({
                   </ul>
                 )}
               </div>
-              {(audit.get(r.sessionId)?.length ?? 0) > 0 && (
+              {/* The disclosure is shown when there is history to show OR when
+                  we could not find out. Hiding it on an unreadable history
+                  would be the same clinical lie as printing "no history", told
+                  by omission instead of in words. */}
+              {((audit.byRecord.get(r.sessionId)?.length ?? 0) > 0 ||
+                audit.unavailableRecordIds.has(r.sessionId)) && (
                 <details>
                   <summary className="cursor-pointer text-xs text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100">
                     History
                   </summary>
                   <div className="mt-2">
-                    <AuditHistoryList events={audit.get(r.sessionId)} />
+                    <AuditHistoryList
+                      events={audit.byRecord.get(r.sessionId)}
+                      unavailable={audit.unavailableRecordIds.has(r.sessionId)}
+                    />
                   </div>
                 </details>
               )}
