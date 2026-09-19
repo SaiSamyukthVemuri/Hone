@@ -109,13 +109,26 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     // has a ~6 min target against a 15 min ceiling, and this adds one spec with
     // two short cases, so the margin is not the concern here — the visibility
     // is.
-    // Now 37: SESSION-START-01's modality-acknowledgement proof joined
+    // Now 37: ui06-dashboard-chrome.spec.ts joined `sessions`, and unlike the
+    // UI-04 spec — which was deliberately kept OUT of this selection because
+    // app/(app)/clients/** matches no PATH_TO_GROUP pattern and so gained no
+    // targeting from membership — this one earns its place: PATH_TO_GROUP maps
+    // /treatment[-_]?memory/i to `sessions`, and the three cards it proves ARE
+    // the treatment-memory surface. A diff to them selects this group, so the
+    // spec runs in the lane that can actually break it.
+    //
+    // RECORDED AS A DECISION, per the note above. Cost: 10 cases (three
+    // viewports x three assertions, plus one motion check) at roughly 4-5s
+    // each, so about 45s against a ~6 min target and a 15 min ceiling. The
+    // margin is not the concern; the visibility is.
+    //
+    // Now 38: SESSION-START-01's modality-acknowledgement proof joined
     // `sessions` because /clients/[id]/sessions/new is a sessions route.
     // RECORDED AS A DECISION, per the note above. Three short cases, and they
     // prove the one thing source cannot: the cards do not change size while the
     // action is in flight. The lane's ~6 min target against a 15 min ceiling is
     // not the constraint here; the visibility is.
-    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(37);
+    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(38);
   });
 
   it("ONE unattributable app file forces extended, even when another file attributes a group", () => {
