@@ -1329,3 +1329,304 @@ test.describe("NAV-ACK-01 GlobalSearch anchor — desktop", () => {
     ).toBe(true);
   });
 });
+
+/**
+ * NAV-ACK-02 — the PRIMARY navigation.
+ *
+ * NAV-ACK-01 shipped the acknowledgement contract and adopted it in the mobile
+ * menu, global search and account menu. `app/(app)/layout.tsx` — the seven
+ * highest-frequency anchors in the product — kept plain `next/link`. This is
+ * the browser proof for those seven.
+ *
+ * WHY THE TWO SHELLS ARE DRIVEN SEPARATELY, AND BY DIFFERENT CONTROLS.
+ * The horizontal tab row is `hidden … lg:flex` (PR #228): on a phone it does
+ * not exist, and a 390px run that located `nav-records` would assert nothing
+ * and pass forever. The compact shell's always-visible controls are the
+ * WORDMARK and the BELL, so that is what the phone test drives. Getting this
+ * wrong is the standing trap on this file — the calendar-toolbar block above
+ * records the same one.
+ */
+
+/** The primary nav's own landmark, so a test binds to it and not to a position. */
+function primaryNav(page: Page): Locator {
+  return page.getByRole("navigation", { name: "Primary navigation" });
+}
+
+test.describe("NAV-ACK-02 primary navigation — desktop", () => {
+  test("the Records tab acknowledges before the destination exists, and navigates once", async ({
+    page,
+  }) => {
+    const seed = await seedE2eStudio();
+    await loginAsOwner(page, seed);
+
+    // Count what actually reaches the network: the acknowledgement must not
+    // start a navigation of its own, and must not double one.
+    let recordsRequests = 0;
+    page.on("request", (req) => {
+      const url = new URL(req.url());
+      if (
+        url.pathname === "/records" &&
+        req.headers()["next-router-prefetch"] !== "1"
+      ) {
+        recordsRequests += 1;
+      }
+    });
+
+    const gate = await holdNavigation(page, (url) => url.pathname === "/records", {
+      blockPrefetch: true,
+    });
+
+    await page.goto("/dashboard");
+
+    const tab = page.getByTestId("nav-records");
+    const dashboardHeading = page.getByRole("heading", {
+      level: 1,
+      name: "Dashboard",
+    });
+    const destination = page.getByRole("heading", {
+      level: 1,
+      name: "Record Keeping",
+    });
+
+    await expect(primaryNav(page)).toBeVisible({ timeout: T });
+    await expect(tab).toBeVisible();
+    await expect(dashboardHeading).toBeVisible();
+    const dashboardUrl = page.url();
+
+    // The live region is mounted and EMPTY before anything is pending. A
+    // status node inserted already carrying its message is not reliably
+    // announced; pending-link.tsx records that bug shipping once.
+    const liveRegion = tab.locator('[role="status"]');
+    await expect(liveRegion).toBeAttached();
+    await expect(liveRegion).toHaveText("");
+    await expect(tapAcknowledgement(tab)).toHaveCount(0);
+
+    const resting = await tab.boundingBox();
+    expect(resting).not.toBeNull();
+
+    await tab.click();
+
+    await test.step("acknowledged before the destination exists", async () => {
+      await expect(tapAcknowledgement(tab)).toBeVisible({ timeout: T });
+      // Anti-vacuity: if nothing was held, the window never opened.
+      expect(gate.held()).toBeGreaterThan(0);
+      expect(gate.prefetchesBlocked()).toBeGreaterThan(0);
+
+      // This is what a segment change does with no route boundary: the OLD
+      // page is still mounted and fully painted. That is exactly why the
+      // control the finger is on is the only thing that can speak.
+      await expect(dashboardHeading).toBeVisible();
+      await expect(destination).toHaveCount(0);
+
+      // The request is described. Never an outcome.
+      await expect(liveRegion).toHaveText("Opening Records…");
+
+      // NO LAYOUT SHIFT. The mark is absolutely positioned inside an anchor
+      // the primitive makes `relative`, so the tab cannot change width and
+      // cannot shove its siblings under a moving thumb.
+      expect(await tab.boundingBox()).toEqual(resting);
+
+      // The accessible name survives the fade — `opacity-0`, not `hidden`.
+      await expect(tab).toHaveAccessibleName(/Records/i);
+
+      // Nothing has committed, so the URL has not moved.
+      expect(page.url()).toBe(dashboardUrl);
+    });
+
+    await test.step("release -> it lands, and every mark clears", async () => {
+      gate.release();
+      await expect(destination).toBeVisible({ timeout: T });
+      expect(new URL(page.url()).pathname).toBe("/records");
+      await expect(page.locator("[data-link-pending]")).toHaveCount(0);
+    });
+
+    await test.step("exactly one navigation was made", async () => {
+      // PendingLink registers no click handler and starts no navigation; it
+      // only reads Next's own state. A mechanism that pushed as well would
+      // show up here as two.
+      expect(recordsRequests).toBe(1);
+    });
+  });
+
+  test("Enter on the focused tab is acknowledged, and still navigates once", async ({
+    page,
+  }) => {
+    // An acknowledgement built on a click handler would be silent here, and one
+    // built on an overlay that swallowed events would break activation
+    // outright. These are still real anchors: they take focus, Enter activates
+    // them, and the same mark appears.
+    const seed = await seedE2eStudio();
+    await loginAsOwner(page, seed);
+
+    let clientsRequests = 0;
+    page.on("request", (req) => {
+      const url = new URL(req.url());
+      if (
+        url.pathname === "/clients" &&
+        req.headers()["next-router-prefetch"] !== "1"
+      ) {
+        clientsRequests += 1;
+      }
+    });
+
+    const gate = await holdNavigation(page, (url) => url.pathname === "/clients", {
+      blockPrefetch: true,
+    });
+
+    await page.goto("/dashboard");
+    const tab = page.getByTestId("nav-clients");
+    await expect(tab).toBeVisible({ timeout: T });
+
+    await tab.focus();
+    await expect(tab).toBeFocused();
+    await page.keyboard.press("Enter");
+
+    await expect(tapAcknowledgement(tab)).toBeVisible({ timeout: T });
+    expect(gate.held()).toBeGreaterThan(0);
+    await expect(tab.locator('[role="status"]')).toHaveText("Opening Clients…");
+    // Focus is not stolen by the mark: the anchor still owns it.
+    await expect(tab).toBeFocused();
+
+    gate.release();
+    await expect(page).toHaveURL(/\/clients$/, { timeout: T });
+    await expect(page.locator("[data-link-pending]")).toHaveCount(0);
+    expect(clientsRequests).toBe(1);
+  });
+});
+
+test.describe("NAV-ACK-02 primary navigation — 390px compact shell", () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+
+  test("the tab row is absent; the wordmark and the bell are what acknowledge", async ({
+    page,
+  }) => {
+    const seed = await seedE2eStudio();
+    await loginAsOwner(page, seed);
+
+    const gate = await holdNavigation(
+      page,
+      (url) => url.pathname === "/notifications",
+      { blockPrefetch: true },
+    );
+
+    await page.goto("/records");
+    await expect(
+      page.getByRole("heading", { level: 1, name: "Record Keeping" }),
+    ).toBeVisible({ timeout: T });
+
+    await test.step("the mode boundary is unchanged — the tab row does not render here", async () => {
+      // If this ever becomes visible at 390px, the assertions below are
+      // testing a different shell than the one a practitioner uses on a phone.
+      await expect(primaryNav(page)).toBeHidden();
+    });
+
+    const bell = page.getByTestId("nav-notifications");
+    const icon = bell.locator("svg");
+    await expect(bell).toBeVisible();
+
+    // THE CONTAINER FORM'S WHOLE CLAIM: it adds nothing to the flow of the
+    // control it acknowledges. Measure the anchor AND its icon child, because
+    // the label form would have collapsed exactly this into one wrapper.
+    const bellAtRest = await bell.boundingBox();
+    const iconAtRest = await icon.boundingBox();
+    expect(bellAtRest).not.toBeNull();
+    expect(iconAtRest).not.toBeNull();
+    // The bell is a 44px touch target; the acknowledgement must not shrink it.
+    expect(bellAtRest!.height).toBeGreaterThanOrEqual(44);
+    expect(bellAtRest!.width).toBeGreaterThanOrEqual(44);
+
+    await bell.click();
+
+    await test.step("the bell dims, and neither it nor its icon moves", async () => {
+      await expect(tapAcknowledgement(bell)).toBeVisible({ timeout: T });
+      expect(gate.held()).toBeGreaterThan(0);
+
+      // Dimmed, never blanked. The label form would have faded the icon out.
+      await expect(icon).toBeVisible();
+      expect(await bell.boundingBox()).toEqual(bellAtRest);
+      expect(await icon.boundingBox()).toEqual(iconAtRest);
+
+      await expect(bell.locator('[role="status"]')).toHaveText(
+        "Opening Notifications…",
+      );
+      // The count is part of the accessible name and must survive.
+      await expect(bell).toHaveAccessibleName(/Notifications/i);
+    });
+
+    await test.step("release -> it lands and clears", async () => {
+      gate.release();
+      await expect(page).toHaveURL(/\/notifications$/, { timeout: T });
+      await expect(page.locator("[data-link-pending]")).toHaveCount(0);
+    });
+  });
+
+  test("the wordmark is the always-visible way home, and it acknowledges", async ({
+    page,
+  }) => {
+    const seed = await seedE2eStudio();
+    await loginAsOwner(page, seed);
+
+    const gate = await holdNavigation(page, (url) => url.pathname === "/dashboard", {
+      blockPrefetch: true,
+    });
+
+    await page.goto("/records");
+    const wordmark = page.getByTestId("nav-wordmark");
+    await expect(wordmark).toBeVisible({ timeout: T });
+    const resting = await wordmark.boundingBox();
+
+    await wordmark.click();
+
+    await expect(tapAcknowledgement(wordmark)).toBeVisible({ timeout: T });
+    expect(gate.held()).toBeGreaterThan(0);
+    await expect(wordmark.locator('[role="status"]')).toHaveText(
+      "Opening Dashboard…",
+    );
+    // The wordmark sits beside the menu trigger; a control that grew on press
+    // would shove it sideways.
+    expect(await wordmark.boundingBox()).toEqual(resting);
+    await expect(wordmark).toHaveAccessibleName("Go to Dashboard");
+
+    gate.release();
+    await expect(page).toHaveURL(/\/dashboard$/, { timeout: T });
+    await expect(page.locator("[data-link-pending]")).toHaveCount(0);
+  });
+});
+
+test.describe("NAV-ACK-02 reduced motion — desktop", () => {
+  test("the mark still appears when the rotation is removed", async ({ page }) => {
+    // emulateMedia rather than a `test.use({ reducedMotion })` fixture: that
+    // fixture is not in this Playwright version's options type, and typecheck
+    // is part of the gate. Without it the assertion reads the HOST's setting
+    // and proves nothing.
+    await page.emulateMedia({ reducedMotion: "reduce" });
+
+    const seed = await seedE2eStudio();
+    await loginAsOwner(page, seed);
+
+    const gate = await holdNavigation(page, (url) => url.pathname === "/calendar", {
+      blockPrefetch: true,
+    });
+
+    await page.goto("/dashboard");
+    const tab = page.getByTestId("nav-calendar");
+    await expect(tab).toBeVisible({ timeout: T });
+    const resting = await tab.boundingBox();
+
+    await tab.click();
+
+    // The state change is a SHAPE, never colour alone and never motion alone:
+    // reduced motion drops the rotation and keeps the ring, so the mark is
+    // still on screen and the live region still speaks.
+    const mark = tapAcknowledgement(tab);
+    await expect(mark).toBeVisible({ timeout: T });
+    expect(gate.held()).toBeGreaterThan(0);
+    await expect(tab.locator('[role="status"]')).toHaveText("Opening Calendar…");
+    await expect(mark).toHaveClass(/motion-reduce:animate-none/);
+    expect(await tab.boundingBox()).toEqual(resting);
+
+    gate.release();
+    await expect(page).toHaveURL(/\/calendar$/, { timeout: T });
+    await expect(page.locator("[data-link-pending]")).toHaveCount(0);
+  });
+});
