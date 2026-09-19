@@ -33,14 +33,13 @@ This section previously carried a "(through 2026-07-27)" heading while containin
 
 **Coverage gap, stated rather than hidden:** this table covers PRs **#357–#479**, **#601**,
 **#629**, **#630**, and — added by the 2026-08-26 reconciliation and kept current through each
-production refresh since — **every** first-parent merge in `b9e0003f..4cff4a43`, all
-**56** of them (**#632–#725**, plus **#631**, whose number sits below that floor but whose merge
-does not — see below). ⚠️ **The highest NUMBER and the last MERGE have now diverged, coincided
-and diverged again within one day** — at `6e264b57` the bound was `#714` while `#710` was last;
-`#725` then merged and was both; `#720` then merged behind it, so the bound stays **`#725`**
-while the last merge is **`#720`**. **The coincidence was accident, never rule.** The ordering
-note below is what governs, and `#631` remains the standing proof that number order and merge
-order are different things. Roughly 150 merges between #479 and #601
+production refresh since — **every** first-parent merge in `b9e0003f..d0123ec3`, all
+**65** of them (**#632–#734**, plus **#631**, whose number sits below that floor but whose merge
+does not — see below). ⚠️ **The highest NUMBER and the last MERGE have diverged, coincided and
+diverged again repeatedly across this reconciliation** — `#714`/`#710`, then `#725` being both,
+then `#725`/`#720`. At this head the bound reads **`#734`** while the last merge is **`#731`**. **The
+coincidence was always accident, never rule.** The ordering note below is what governs, and
+`#631` remains the standing proof that number order and merge order are different things. Roughly 150 merges between #479 and #601
 — including migrations 0159–0184 — still have **no row here**. Those releases are recorded in
 [migration-ledger.md](./migration-ledger.md) and in the git history; they were deliberately
 **not** backfilled, because the scope of both reconciliations was current truth rather than
@@ -48,11 +47,11 @@ historical completeness. Do not read a missing row as "not shipped".
 
 **The block is complete, not sampled — and completeness is over the GIT RANGE, not over a
 span of PR numbers.** It was enumerated mechanically
-(`git log --merges --first-parent b9e0003f..4cff4a43`, 56 merges) rather than recalled, so the
+(`git log --merges --first-parent b9e0003f..d0123ec3`, 65 merges) rather than recalled, so the
 current state can be reconstructed from shipped history without a gap. Each row records whether
 the merge was **runtime-bearing**, decided by changed-path analysis rather than by the PR title.
 
-**NOT EVERY MERGE SUBJECT SAYS "Merge pull request".** Two of the fifty-six landed with a
+**NOT EVERY MERGE SUBJECT SAYS "Merge pull request".** Two of the sixty-five landed with a
 squash-style subject — `fix(dashboard): … (#697)` and `fix(probes): … (#696)` — so a scan keyed
 on the merge-commit wording alone misses them. They are merge commits on the first-parent chain
 like any other, they carry rows below like any other, and the count includes them.
@@ -66,7 +65,16 @@ enumeration of `b9e0003f..bf6f09c4` while omitting `#631` entirely.
 
 | PR | Migration | Status | What shipped | Notes |
 |---|---|---|---|---|
-| **#720** | none | **Runtime-bearing** | **UI-02 — non-colour-only status.** Unread state and the onboarding step indicator gain a text equivalent, so status is not carried by colour alone | Merged `4cff4a438f937efc68161b17dca0fb88cf3e3927`. **This merge is the runtime-bearing baseline recorded in [current-state.md](./current-state.md)** at the 2026-09-17 reconciliation, having displaced `#725`, which had itself displaced `#710`, both on the same day. Eight files, two deployed — `app/(app)/dashboard/onboarding/OnboardingProgressCard.tsx` and `app/(app)/notifications/page.tsx`. No migration |
+| **#731** | none | **Runtime-bearing** | **NAV-ACK-01** — the press acknowledges even when the panel that held it is gone | Merged `d0123ec37c686cb39401b774fe0912ccdbe411de`. **This merge is the runtime-bearing baseline recorded in [current-state.md](./current-state.md)** at the 2026-09-19 reconciliation. Six files, two deployed — `app/(app)/GlobalSearch.tsx` and `app/(app)/MobileMenu.tsx`. No migration |
+| **#734** | none | **Runtime-bearing** | **SIGNOUT-01** — the account and mobile menus dispatch sign-out correctly | Merged `5b3bf81bd951da16404405879cc6a4821fd67fc7`. Seven files, two deployed — `app/(app)/AccountMenu.tsx` and `app/(app)/MobileMenu.tsx`. No migration |
+| **#733** | none | **Tests only — NOT runtime-bearing** | **Calendar claim-order proof** — a database test pinning claim ordering | Merged `f979c93e183ae2cdcda51eea80ff7aca48810bc1`. One file under `tests/db/`. Proves behaviour; changes none |
+| **#715** | none | **Runtime-bearing** | **WAIT S3 Part 1** — a fail-closed studio sender **resolver** only | Merged `b1d4badba085ecfee36e81ee9719d26fa0cc4ddc`. Two files, one deployed — `lib/sms/studio-sender.ts`. ⚠️ **Part 1 resolves a studio's sender; it does NOT rewire the send path.** Its own title says S3 is not complete. The send-path rewiring is Part 2, which has **not** merged — so §8's position stands: the per-studio sender strategy is built, the send path is not. No migration |
+| **#729** | none | **Documentation only — NOT runtime-bearing** | **UX-01 recorded as authorized**, and the design contract registered in the roadmap index | Merged `619185a9ad5fcd318562f014dbd5fc92c7c91f7b`. Two files — `DESIGN.md` and `docs/roadmap/`. Allocates no dates and no implementation PR numbers, and re-decides no open design question |
+| **#722** | none | **Runtime-bearing** | **UI-04** — unarchive reports its own progress on both surfaces | Merged `673080bcbc55681bcf315d82fbc654c8bff667c3`. Seven files, two deployed — `app/(app)/clients/ArchivedClientsList.tsx` and `app/(app)/clients/[id]/edit/page.tsx`. No migration |
+| **#728** | none | **Documentation only — NOT runtime-bearing** | **`DESIGN.md`** — the design contract distilled from the audit, linked from `CLAUDE.md` | Merged `ddf1b183b5f9c905937a920f7afbf59854ffc19a`. Two files, `CLAUDE.md` and `DESIGN.md`. Carries no production-state claim |
+| **#726** | none | **Documentation only — NOT runtime-bearing** | **Product-wide anti-slop design audit** — evidence, explicitly not approval | Merged `ad0fb7784153e822d5dd7d11e6ab953c29a9a8f3`. One file under `docs/reviews/`. States in its own text that **no production database was queried** and that it is authoritative only for its baseline SHA — evidence, never authority |
+| **#721** | none | **Runtime-bearing** | **UI-03** — a disabled reschedule submit says what it wants | Merged `a2ea857fdb34cc0029d99941996139272c724522`. Six files, one deployed — `app/reschedule/[token]/RescheduleForm.tsx`. No migration |
+| **#720** | none | **Runtime-bearing** | **UI-02 — non-colour-only status.** Unread state and the onboarding step indicator gain a text equivalent, so status is not carried by colour alone | Merged `4cff4a438f937efc68161b17dca0fb88cf3e3927`. **This merge WAS the runtime-bearing baseline** for part of 2026-09-17, having displaced `#725`, which had itself displaced `#710`; `#731` holds it at the 2026-09-19 reconciliation. Eight files, two deployed — `app/(app)/dashboard/onboarding/OnboardingProgressCard.tsx` and `app/(app)/notifications/page.tsx`. No migration |
 | **#725** | none | **Runtime-bearing** | **UI-R02 — product polish.** Page, surface and empty-state primitives, and the danger control family proved in the browser | Merged `e8dab8e615c40ae2b9bb8dde49d50fccd10ff443`. **This merge WAS the runtime-bearing baseline** for part of 2026-09-17, having displaced `#710`; `#720` displaced it the same day. Thirteen files, seven deployed: `components/ui/card.tsx` plus the new `components/ui/empty-state.tsx` and `components/ui/page-header.tsx`, and four `app/(app)/` surfaces — `app/(app)/clients/[id]/edit/ArchiveClientControl.tsx`, `app/(app)/clients/[id]/sessions/[sessionId]/DoneChartingButton.tsx`, `app/(app)/notifications/page.tsx`, `app/(app)/settings/data/page.tsx`. No migration |
 | **#710** | none | **Runtime-bearing** | **UI-R01 — interaction foundations.** Press acknowledgement as a control-family property, a shared spinner, and a pending button/link pair, applied across the settings surfaces | Merged `6e264b571c5d2b21358ca95b9ae058835ce2c9b1`. **This merge is the runtime-bearing baseline recorded in [current-state.md](./current-state.md)** at the 2026-09-17 reconciliation. Sixteen files, ten of them deployed, across `app/`, `components/` and `components/ui/`. No migration |
 | **#707** | none | **Documentation only — NOT runtime-bearing** | **New-studio onboarding runbook** — signing in is not accepting; the onboarding sequence corrected | Merged `768ef4bddf2b511c9988ba9d81884009c538b568`. One file, `docs/20_NEW_STUDIO_SETUP_RUNBOOK.md`. Advanced the branch HEAD without changing anything Hone does. No migration |
