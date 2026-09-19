@@ -37,6 +37,47 @@ function waveBlock(): string {
   return SOURCE.slice(start, close + 3);
 }
 
+/**
+ * The wave's top-level elements, split on depth-0 commas with string literals
+ * respected. Derived from the source so no expectation in this file is a
+ * hand-maintained count.
+ */
+function waveElements(): string[] {
+  const wave = waveBlock();
+  const open = wave.indexOf("Promise.all([") + "Promise.all([".length;
+  const body = wave.slice(open, wave.lastIndexOf("]"));
+  const parts: string[] = [];
+  let depth = 0;
+  let quote: string | null = null;
+  let cur = "";
+  for (let i = 0; i < body.length; i += 1) {
+    const c = body[i];
+    if (quote) {
+      cur += c;
+      if (c === "\\") {
+        cur += body[i + 1] ?? "";
+        i += 1;
+      } else if (c === quote) quote = null;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === "`") {
+      quote = c;
+      cur += c;
+    } else if ("([{".includes(c)) {
+      depth += 1;
+      cur += c;
+    } else if (")]}".includes(c)) {
+      depth -= 1;
+      cur += c;
+    } else if (c === "," && depth === 0) {
+      parts.push(cur);
+      cur = "";
+    } else cur += c;
+  }
+  if (cur.trim()) parts.push(cur);
+  return parts.filter((p) => p.trim().length > 0);
+}
+
 const THE_EIGHT = [
   "getRecentEntryForClient",
   "getLaserTreatmentCountsForClient",
@@ -115,16 +156,33 @@ describe("SESSION-START-01 2A: the eight independent reads are issued together",
     }
   });
 
-  it("NEGATIVE CONTROL: the span list above is not a subset of the wave", () => {
-    // The previous version of this guard passed while missing two reads, so the
-    // guard now proves it enumerates EVERY element rather than merely some.
-    // One timed() call per element, and the count is read from the wave itself.
-    const wave = waveBlock();
-    const timedSpans = [...wave.matchAll(/timed\(\s*"([^"]+)"/g)].map((m) => m[1]);
+  it("NEGATIVE CONTROL: EVERY element of the wave carries a span, per element", () => {
+    // COUNTING SPANS IS NOT THE SAME CLAIM AS "EVERY READ HAS ONE", and the
+    // first version of this control got that wrong: it asserted the number of
+    // distinct spans was 8. A ninth element added with no timed() leaves the
+    // span count at 8, so that control passed on exactly the regression it was
+    // written to catch — the same subset-vs-all mistake as the six-entry list
+    // above, one level up.
+    //
+    // So the expectation is derived from the wave itself and checked PER
+    // ELEMENT. Nothing here is hand-maintained: add a read and this fails until
+    // it carries its own span, whatever the total happens to be.
+    const elements = waveElements();
+    expect(elements.length, "the wave must still have elements to check").toBeGreaterThan(0);
+
+    const untimed = elements
+      .map((e, i) => ({ i, e: e.trim() }))
+      .filter(({ e }) => !/timed\(\s*"[^"]+"/.test(e));
     expect(
-      new Set(timedSpans).size,
-      `every element of the wave must carry its own span — saw ${timedSpans.join(", ")}`,
-    ).toBe(8);
+      untimed.map(({ i, e }) => `#${i}: ${e.slice(0, 60)}`),
+      "every element of the wave must carry its own timed() span",
+    ).toEqual([]);
+
+    const spans = elements.flatMap((e) => [...e.matchAll(/timed\(\s*"([^"]+)"/g)].map((m) => m[1]));
+    expect(
+      new Set(spans).size,
+      `one DISTINCT span per element — saw ${spans.join(", ")}`,
+    ).toBe(elements.length);
   });
 });
 
