@@ -227,6 +227,17 @@ const PAGE_PATH = path.resolve(
   "../../../../app/(app)/clients/[id]/sessions/new/page.tsx",
 );
 const PAGE_SOURCE = readFileSync(PAGE_PATH, "utf8");
+// SESSION-START-01 moved the two per-card <form>s into ONE client picker, so
+// the appointment_id carrier moved with them. The guard below follows the
+// carrier rather than being deleted: dropping it would retire a pin that
+// exists to stop a refactor silently leaving the FK null.
+const PICKER_SOURCE = readFileSync(
+  path.resolve(
+    __dirname,
+    "../../../../app/(app)/clients/[id]/sessions/new/ModalityPicker.tsx",
+  ),
+  "utf8",
+);
 
 describe("new-session page carries appointment_id from search params", () => {
   it("accepts an optional appointment_id search parameter", () => {
@@ -238,15 +249,18 @@ describe("new-session page carries appointment_id from search params", () => {
     expect(PAGE_SOURCE).toMatch(/UUID_RE\.test\(/);
   });
 
-  it("renders a hidden appointment_id input on the modality forms", () => {
-    expect(PAGE_SOURCE).toMatch(
+  it("renders a hidden appointment_id input in the modality picker", () => {
+    expect(PICKER_SOURCE).toMatch(
       /<input[^>]*type="hidden"[^>]*name="appointment_id"[^>]*\/>/,
     );
+    // The page must hand the value to the picker, or the carrier is broken
+    // one level up and the input above would render an undefined value.
+    expect(PAGE_SOURCE).toMatch(/<ModalityPicker[^>]*appointmentId=\{appointmentId\}/);
   });
 
   it("does not render the hidden input when no appointment id is present", () => {
     // Conditional render: {appointmentId && <input ... />}
-    expect(PAGE_SOURCE).toMatch(/\{appointmentId && \(/);
+    expect(PICKER_SOURCE).toMatch(/\{appointmentId && \(/);
   });
 });
 
