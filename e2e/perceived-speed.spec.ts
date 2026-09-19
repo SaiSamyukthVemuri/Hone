@@ -1520,8 +1520,15 @@ test.describe("NAV-ACK-02 primary navigation — 390px compact shell", () => {
       await expect(primaryNav(page)).toBeHidden();
     });
 
-    const bell = page.getByTestId("nav-notifications");
+    // THE BELL IS IN THE DOM TWICE, and a bare getByTestId would resolve to
+    // both and fail strict mode. `<NotificationsBell>` renders once in the
+    // desktop group (`hidden … lg:flex`) and once in the mobile group
+    // (`flex … lg:hidden`) — PR #229, and tests/app/mobile-ux.test.ts pins the
+    // count at exactly 2. CSS decides which one a practitioner can touch, so
+    // the proof has to bind to the one that is actually on screen.
+    const bell = page.locator('[data-testid="nav-notifications"]:visible');
     const icon = bell.locator("svg");
+    await expect(bell).toHaveCount(1);
     await expect(bell).toBeVisible();
 
     // THE CONTAINER FORM'S WHOLE CLAIM: it adds nothing to the flow of the
@@ -1622,8 +1629,24 @@ test.describe("NAV-ACK-02 reduced motion — desktop", () => {
     await expect(mark).toBeVisible({ timeout: T });
     expect(gate.held()).toBeGreaterThan(0);
     await expect(tab.locator('[role="status"]')).toHaveText("Opening Calendar…");
-    await expect(mark).toHaveClass(/motion-reduce:animate-none/);
     expect(await tab.boundingBox()).toEqual(resting);
+
+    // COMPUTED, not the class list. `motion-reduce:animate-none` is in the
+    // className whether or not the media query matches, so asserting the class
+    // would pass with the emulation removed and prove nothing about reduced
+    // motion. Read what the media query actually changed.
+    await expect
+      .poll(() => mark.evaluate((el) => getComputedStyle(el).animationName))
+      .toBe("none");
+    // And the ring is CLOSED rather than left as a broken quarter-circle —
+    // the still frame has to read as a deliberate glyph. `border-t-transparent`
+    // is overridden by `motion-reduce:border-t-current`, so the top border
+    // resolves to the same colour as the rest.
+    const borders = await mark.evaluate((el) => {
+      const s = getComputedStyle(el);
+      return { top: s.borderTopColor, right: s.borderRightColor };
+    });
+    expect(borders.top).toBe(borders.right);
 
     gate.release();
     await expect(page).toHaveURL(/\/calendar$/, { timeout: T });
