@@ -105,7 +105,14 @@ export const STATUS_MEANING: Record<WaitlistEntryStatus, string> = {
   invited: "An invitation has been created for them.",
   converted: "They booked. This entry is closed.",
   expired: "The invitation ran out before it was used.",
-  released: "Off the waitlist for now. Return them to it to put them back in line.",
+  // NEUTRAL, AND FOR THE SAME REASON `invited` IS. This sentence is rendered as
+  // the SECTION description, above a group that can now hold two different
+  // kinds of released entry: one set aside, which can be returned to the
+  // waitlist, and one whose used invitation was closed, which cannot. An
+  // instruction here is therefore wrong for half the section whenever both are
+  // present, and it contradicted the row's own sentence directly beneath it.
+  // The instruction moved to `statusMeaning`, where the facts are known.
+  released: "Off the waitlist for now.",
   removed: "Taken off the waitlist by the studio. Terminal.",
 };
 
@@ -117,6 +124,7 @@ export const ADMISSION_ACTIONS = [
   "release",
   "requeue",
   "remove",
+  "close",
 ] as const;
 
 export type AdmissionAction = (typeof ADMISSION_ACTIONS)[number];
@@ -134,6 +142,12 @@ export const ACTION_LABEL: Record<AdmissionAction, string> = {
   release: "Release",
   requeue: "Return to waitlist",
   remove: "Remove from waitlist",
+  // WAIT-P1-EXIT. The verb is "close", not "cancel": by the time this control
+  // is offered the invitation has ALREADY been used, so there is nothing left
+  // to cancel — what is being ended is a cycle that reached someone and
+  // produced no booking. "without booking" is the whole reason the control
+  // exists and is the fact the operator is acting on.
+  close: "Close without booking",
 };
 
 /**
@@ -154,6 +168,12 @@ export const ACTION_RESULT_STATUS: Record<AdmissionAction, WaitlistEntryStatus> 
   release: "released",
   requeue: "waiting",
   remove: "removed",
+  // 0200 `close_unbooked_new_client_waitlist_invitation`:
+  //   update ... set status = 'released', released_at = v_decision_at
+  // The SAME landing state as release, reached from the one lifecycle position
+  // release refuses. Two controls sharing a landing state is permitted; sharing
+  // a LABEL is not, and these two do not.
+  close: "released",
 };
 
 /**
@@ -189,6 +209,23 @@ const RELEASE_LABEL: Partial<Record<WaitlistEntryStatus, string>> = {
 const ACTION_HELP: Partial<Record<string, string>> = {
   "release:claimed":
     "Move this person out of Ready to invite. You can return them to the waitlist later.",
+  // THE VERB SAYS WHAT ENDS; THIS SAYS WHAT FOLLOWS -- and the first version of
+  // it promised the one thing this command makes impossible.
+  //
+  // It read "...moves them to Released, where you can return them to the
+  // waitlist or remove them." Whenever this help is shown the invitation is
+  // REDEEMED, so after Close the requeue guard answers `already_redeemed` and
+  // the control is withheld. The sentence was therefore misstating an
+  // IRREVERSIBLE consequence in the moment before the operator committed to it
+  // -- the worst possible place for a label to over-promise, and the same
+  // defect as "Return to waitlist" on a control that lands in `released`.
+  //
+  // IT ALSO DISCLOSES THE OTHER OUTCOME. If an appointment from this cycle
+  // already exists, 0200 records the missing conversion instead of closing. An
+  // operator who presses this must know both things can happen before they
+  // press it, not after.
+  "close:invited":
+    "They opened this invitation and never booked. This ends it and moves them to Released, where you can remove them — they cannot be put back on the waitlist, though they can join again themselves. If an appointment from this invitation already exists, their booking is recorded instead.",
 };
 
 /** Help text for a control, or null where the verb speaks for itself. */
@@ -348,6 +385,34 @@ export function actionAvailability(
       return { available: true };
 
     case "requeue":
+      // WAIT-P1-EXIT NARROWED THIS, AND THE NARROWING IS NOT COSMETIC.
+      //
+      // 0200 refuses to requeue an entry holding a REDEEMED invitation, with
+      // `already_redeemed`. Returning it to the active set would let ONE entry
+      // acquire a SECOND redeemed invitation, and five shipped consumers read
+      // "any redeemed invitation for this entry" as "the current one" — the
+      // booking command would answer `scope_ambiguous` and the prospect could
+      // never book again.
+      //
+      // Before 0200 no requeueable entry could hold a redeemed invitation at
+      // all, because release and expire both refuse one. So this branch
+      // describes exactly the state `close` creates, and nothing older.
+      if (status === "released" && context.invitationFactsUnknown) {
+        // FAIL CLOSED, as release and close both do. An unread invitation might
+        // be redeemed, and the command would then answer `already_redeemed`.
+        return {
+          available: false,
+          reason:
+            "This entry's invitation could not be checked just now, so it cannot be returned to the waitlist safely. Try again shortly.",
+        };
+      }
+      if (status === "released" && context.invitationRedeemed) {
+        return {
+          available: false,
+          reason:
+            "They already used an invitation, so this entry cannot go back on the waitlist. Remove it — they can join again themselves.",
+        };
+      }
       if (status === "released" || status === "expired") return { available: true };
       if (status === "waiting") {
         return { available: false, reason: "They are already in the queue." };
@@ -356,6 +421,50 @@ export function actionAvailability(
         available: false,
         reason: `Release the invitation first, then return them to the queue.`,
       };
+
+    case "close":
+      // WAIT-P1-EXIT. THE ONLY CONTROL OFFERED ON A REDEEMED-BUT-UNBOOKED ROW,
+      // and it is offered on NOTHING ELSE.
+      //
+      // This is the exact inverse of the release rule above. Release is
+      // withheld once the invitation has been used, because
+      // `release_new_client_waitlist_entry` can then only answer
+      // `already_redeemed`. So is expire, so is requeue, and so is remove —
+      // which left this row with no control at all and a sentence saying it
+      // would stay put until a booking was recorded. That is the dead end this
+      // action closes.
+      //
+      // `close_unbooked_new_client_waitlist_invitation` refuses everything the
+      // other five accept: an unredeemed invitation is `not_redeemed`, a
+      // converted entry is `already_booked`, and any other state is
+      // `not_invited`. Availability is derived from the same two facts the
+      // command decides on, so the control is never rendered where it would be
+      // refused.
+      if (status !== "invited") {
+        return {
+          available: false,
+          reason: `There is no used invitation to close — this entry is ${label}.`,
+        };
+      }
+      if (context.invitationFactsUnknown) {
+        // FAIL CLOSED, the same way release does. An unread invitation might
+        // never have been used, and the command answers `not_redeemed` for one
+        // that was not.
+        return {
+          available: false,
+          reason:
+            "This invitation could not be checked just now, so it cannot be closed safely. Try again shortly.",
+        };
+      }
+      if (!context.invitationRedeemed) {
+        return {
+          available: false,
+          // Names the control by what it SAYS on this row, exactly as the
+          // expire branch does — an `invited` row offers "Cancel invitation".
+          reason: `This invitation has not been used yet. Use “${actionLabel("release", status)}” to end it early.`,
+        };
+      }
+      return { available: true };
 
     case "remove":
       // NOT while the entry is held or invited. `remove_new_client_waitlist_entry`
@@ -397,12 +506,44 @@ export function statusMeaning(
       return "An invitation exists. Its current state could not be checked just now.";
     }
     if (context.invitationRedeemed) {
-      return "The invitation has been used. This entry stays here until the booking is recorded.";
+      // WAIT-P1-EXIT CORRECTED THIS SENTENCE, AND THE CORRECTION IS THE POINT.
+      // It used to end "this entry stays here until the booking is recorded",
+      // which described the dead end as though it were the design: if the
+      // booking never came, nothing the operator could do would move the row.
+      // Now `close` is offered right beside this line, so a sentence claiming
+      // the entry is stuck would contradict the control next to it — the same
+      // drift the release copy was repaired for.
+      return "The invitation has been used, but no booking has been recorded yet.";
     }
     if (context.invitationElapsed) {
       return "The invitation ran out and has not been recorded as expired yet.";
     }
     return "Their invitation is active and has not been used yet.";
+  }
+  // WAIT-P1-EXIT. `released` NOW HAS A SECOND MEANING, AND THE DEFAULT PROMISES
+  // SOMETHING IT CANNOT KEEP FOR IT.
+  //
+  // STATUS_MEANING.released says "Return them to it to put them back in line."
+  // That is true of a set-aside entry and FALSE of one whose used invitation
+  // was closed: 0200 refuses to requeue an entry holding a redeemed invitation,
+  // so the row would read as a promise beside a control that is not there.
+  //
+  // This is the label-promise rule applied to the sentence rather than the
+  // button — the same defect as "Return to waitlist" on a control that lands
+  // the entry in `released`, and it has to be caught in the same place: one
+  // function, derived alongside the availability verdict so the two cannot
+  // drift.
+  if (status === "released") {
+    if (context.invitationFactsUnknown) {
+      return "Off the waitlist for now. Whether their invitation was used could not be checked just now.";
+    }
+    if (context.invitationRedeemed) {
+      return "They used their invitation without booking. This entry cannot go back on the waitlist — remove it, and they can join again themselves.";
+    }
+    // THE ORDINARY CASE, AND THE INSTRUCTION LIVES HERE NOW rather than in the
+    // status default above: a set-aside entry genuinely can be returned, and
+    // this is the only place that knows this row is one.
+    return "Off the waitlist for now. Return them to it to put them back in line.";
   }
   return STATUS_MEANING[status];
 }

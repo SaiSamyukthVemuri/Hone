@@ -199,3 +199,118 @@ test.describe("delivery status survives revalidation", () => {
     await expect(notice).not.toContainText(first);
   });
 });
+
+// ===========================================================================
+// WAIT-P1-EXIT — THE REDEEMED-BUT-UNBOOKED JOURNEY, END TO END
+// ===========================================================================
+//
+// THE STATE THIS PROVES AN EXIT FROM. Redemption stamps the invitation and
+// leaves the entry at `invited`. Before migration 0200 that row rendered with
+// NO lifecycle control at all — release and expire answer `already_redeemed`,
+// remove answers `release_required`, requeue answers `not_requeueable` — under
+// a sentence saying it would stay there until a booking was recorded. Forever,
+// if the booking never came.
+//
+// WHY THE REDEMPTION IS SEEDED AND THE REST IS NOT. The raw token exists only
+// in the single return value of the issuing command and is stored nowhere — by
+// design, since 0188 keeps the SHA-256 digest alone. A browser cannot obtain
+// it, so the prospect's half is stamped directly, exactly as `redeem` would
+// leave it. Everything the OPERATOR does is driven through the real surface:
+// the invitation is sent through the real composer, and the exit is a real
+// click on a real Server Action. The browser supplies one entry id; the studio,
+// the actor and the authority are re-derived server-side.
+// ===========================================================================
+
+test.describe("a redeemed invitation that never became a booking has an exit", () => {
+  test("the operator closes it, and the row stops promising a return", async ({ page }) => {
+    const seed = await seedE2eStudio();
+    await openAdmissionRound(seed);
+    const name = `Ghosted ${seed.runId.slice(0, 6)}`;
+    const entryId = await seedWaitingEntry(seed, name, `gh-${seed.runId}@harness.local`);
+
+    await loginAsOwner(page, seed);
+    await page.goto("/settings/waitlist");
+    await expect(page.getByText(name, { exact: false }).first()).toBeVisible({ timeout: T });
+
+    // THE INVITATION GOES OUT THROUGH THE REAL COMPOSER.
+    await invite(page, name);
+    await expect(
+      page.locator('[data-testid="invite-outcome"]'),
+      "the invitation did not commit",
+    ).toBeVisible({ timeout: T });
+
+    // THE PROSPECT OPENS IT AND DOES NOTHING ELSE. Stamped rather than clicked:
+    // see the note above. The append-only trigger permits setting a terminal
+    // stamp that was null, and refuses rewriting one — so this is the same
+    // write `redeem` performs, not a bypass of a guard.
+    const stamped = await sql<{ id: string }>(
+      `update public.new_client_waitlist_invitations
+          set redeemed_at = now()
+        where entry_id = $1 and studio_id = $2
+          and redeemed_at is null and expired_at is null
+          and released_at is null and declined_at is null
+        returning id`,
+      [entryId, seed.studioId],
+    );
+    expect(stamped.length, "no live invitation to redeem — the fixture is wrong").toBe(1);
+
+    await page.reload();
+    const row = page.locator(`li[data-entry-id="${entryId}"]`);
+    await expect(row, "the entry left the queue").toBeVisible({ timeout: T });
+    await expect(row).toHaveAttribute("data-entry-status", "invited");
+
+    // THE DEAD END, AS THE SURFACE SEES IT: the two controls an invited row
+    // normally carries are both withheld, because both commands could only
+    // answer `already_redeemed`.
+    await expect(row.locator('[data-testid="waitlist-action-release"]')).toHaveCount(0);
+    await expect(row.locator('[data-testid="waitlist-action-expire"]')).toHaveCount(0);
+
+    // AND THE EXIT IS THERE. One control, and it says what it does.
+    const close = row.locator('[data-testid="waitlist-action-close"]');
+    await expect(close, "the redeemed row still has no exit").toBeVisible({ timeout: T });
+    await expect(close).toHaveText(/Close without booking/i);
+    await expect(row.locator('[data-testid="row-status-meaning"]')).toContainText(
+      /no booking has been recorded/i,
+    );
+
+    await close.click();
+
+    // THE ENTRY MOVED, through the command, in one transaction.
+    const moved = page.locator(`li[data-entry-id="${entryId}"]`);
+    await expect(moved).toHaveAttribute("data-entry-status", "released", { timeout: T });
+
+    // THE ROW NO LONGER PROMISES A RETURN IT CANNOT MAKE. 0200 refuses to
+    // requeue an entry holding a redeemed invitation, so the control is absent
+    // AND the sentence says why rather than leaving the absence to imply it.
+    await expect(moved.locator('[data-testid="waitlist-action-requeue"]')).toHaveCount(0);
+    await expect(moved.locator('[data-testid="row-status-meaning"]')).toContainText(
+      /used their invitation without booking/i,
+    );
+    await expect(moved.locator('[data-testid="row-status-meaning"]')).not.toContainText(
+      /back in line/i,
+    );
+
+    // AND THE LIFECYCLE STILL TERMINATES — removal is reachable, which it was
+    // not while the entry was stuck at `invited`.
+    await expect(moved.locator("details > summary")).toContainText(/Remove/i);
+
+    // THE DATABASE AGREES WITH THE SCREEN, which is the half a rendering
+    // assertion cannot reach: the cycle is closed, the redemption is preserved,
+    // and no second terminal outcome was stamped on the invitation.
+    const inv = await sql<{
+      redeemed_at: string | null;
+      closed_at: string | null;
+      closed_by_practitioner_id: string | null;
+      released_at: string | null;
+    }>(
+      `select redeemed_at, closed_at, closed_by_practitioner_id, released_at
+         from public.new_client_waitlist_invitations where entry_id = $1`,
+      [entryId],
+    );
+    expect(inv.length).toBe(1);
+    expect(inv[0]!.redeemed_at, "the redemption was overwritten").not.toBeNull();
+    expect(inv[0]!.closed_at, "the cycle was not recorded as closed").not.toBeNull();
+    expect(inv[0]!.closed_by_practitioner_id, "the close has no actor").not.toBeNull();
+    expect(inv[0]!.released_at, "a second terminal outcome was stamped").toBeNull();
+  });
+});

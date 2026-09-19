@@ -32,7 +32,7 @@ import {
 // at all. It reaches no server action, so it left with the WAIT-03 B4 prototype
 // to `feat/wait03-b4-admission-prototype` (draft PR #683) and is proved there.
 // Nothing below may import it; the assertion that ADMISSION_ACTIONS is exactly
-// the five wired commands is what keeps that from drifting back in silently.
+// the six wired commands is what keeps that from drifting back in silently.
 
 const MIGRATION = readFileSync(
   join(process.cwd(), "supabase/migrations/0188_new_client_waitlist_invitations.sql"),
@@ -77,17 +77,24 @@ describe("the vocabulary is the DATABASE's, derived not copied", () => {
 });
 
 describe("the model offers only actions a studio can actually perform", () => {
-  it("is exactly the five wired lifecycle commands", () => {
+  it("is exactly the six wired lifecycle commands", () => {
     // THE INVARIANT THE MODULE SPLIT EXISTS TO CREATE. Inviting mints a token
     // that must reach a real recipient, so it has no server action and cannot
     // be offered. Keeping it out of this list is what makes that unreachable
     // rather than merely unrendered.
+    //
+    // `close` (WAIT-P1-EXIT) joins the list because it satisfies the SAME bar
+    // and for the same reason: `close_unbooked_new_client_waitlist_invitation`
+    // ships in migration 0200 and reaches it through
+    // `closeUnbookedWaitlistInvitationAction`. An action that did not would not
+    // belong here.
     expect([...ADMISSION_ACTIONS]).toEqual([
       "claim",
       "expire",
       "release",
       "requeue",
       "remove",
+      "close",
     ]);
     for (const unwired of ["invite", "reinvite"]) {
       expect(ADMISSION_ACTIONS as ReadonlyArray<string>).not.toContain(unwired);
@@ -507,9 +514,244 @@ describe("the status sentence never contradicts the row's own controls", () => {
   });
 
   it("every other status is unchanged by context", () => {
+    // `released` JOINED `invited` AT 0200, and for the same reason: its default
+    // sentence promises "Return them to it to put them back in line", which a
+    // closed cycle cannot keep. Every OTHER status still ignores context
+    // entirely — that is what keeps this a targeted refinement rather than a
+    // surface that re-describes every row from whatever it happens to know.
     for (const s of WAITLIST_ENTRY_STATUSES) {
-      if (s === "invited") continue;
+      if (s === "invited" || s === "released") continue;
       expect(statusMeaning(s, { invitationRedeemed: true }), s).toBe(STATUS_MEANING[s]);
+      expect(statusMeaning(s, { invitationFactsUnknown: true }), s).toBe(STATUS_MEANING[s]);
     }
+  });
+
+  it("a released row with NO redemption still says it can be returned", () => {
+    // NON-VACUITY for the branch above: set-aside is the common case and it
+    // genuinely can go back on the waitlist.
+    for (const ctx of [{ invitationRedeemed: false }, {}]) {
+      expect(statusMeaning("released", ctx)).toMatch(/back in line/i);
+    }
+  });
+
+  it("the released SECTION default is NEUTRAL, so it cannot contradict a row", () => {
+    // THE REVIEW FINDING THIS PINS. `STATUS_MEANING.released` is rendered as the
+    // section description above a group that can hold BOTH kinds of released
+    // entry — one that can be returned and one that cannot. It used to carry
+    // "Return them to it to put them back in line", so the section instructed
+    // owners to do the very thing the row beneath it said was impossible.
+    //
+    // Same rule `invited` already follows: the no-context default asserts
+    // nothing that per-row context could contradict.
+    expect(STATUS_MEANING.released).not.toMatch(/back in line|return them/i);
+    expect(STATUS_MEANING.released).not.toMatch(/cannot/i);
+    // …and it is still distinguishable from `removed`, which it must be.
+    expect(STATUS_MEANING.released).not.toBe(STATUS_MEANING.removed);
+    // The instruction did not vanish — it moved to where the facts are.
+    expect(statusMeaning("released", { invitationRedeemed: false })).not.toBe(
+      STATUS_MEANING.released,
+    );
+  });
+
+  it("a CLOSED released row stops promising a return, and names the remedy", () => {
+    const line = statusMeaning("released", { invitationRedeemed: true });
+    expect(line).not.toBe(STATUS_MEANING.released);
+    expect(line, "the row still promises a return the command refuses").not.toMatch(
+      /back in line|return them/i,
+    );
+    expect(line).toMatch(/remove/i);
+    // It agrees with the control beside it, which is the whole point.
+    expect(actionAvailability("requeue", "released", { invitationRedeemed: true }).available).toBe(
+      false,
+    );
+  });
+
+  it("and an UNREADABLE invitation says so rather than promising either way", () => {
+    const line = statusMeaning("released", { invitationFactsUnknown: true });
+    expect(line).toMatch(/could not be checked/i);
+    expect(line).not.toMatch(/back in line/i);
+  });
+});
+
+// ===========================================================================
+// WAIT-P1-EXIT — THE ONE CONTROL A REDEEMED-BUT-UNBOOKED ROW MAY OFFER
+// ===========================================================================
+//
+// THE DEAD END THIS CLOSES, stated as the model sees it. Redemption leaves the
+// entry at `invited`, and on that row release, expire, requeue and remove are
+// ALL withheld — correctly, because each of their commands can only refuse. So
+// before this action the surface rendered a row with no control at all and a
+// sentence saying it would stay there until a booking was recorded.
+// ===========================================================================
+
+const REDEEMED = { invitationRedeemed: true } as const;
+const LIVE = { invitationRedeemed: false } as const;
+const UNKNOWN = { invitationFactsUnknown: true } as const;
+
+describe("close — availability is the exact complement of release", () => {
+  it("the redeemed, invited row HAS a control now, and it is this one", () => {
+    // THE REGRESSION TEST FOR THE DEAD END ITSELF. If `close` ever stops being
+    // available here, the surface is back to offering nothing.
+    const offered = ADMISSION_ACTIONS.filter(
+      (a) => actionAvailability(a, "invited", REDEEMED).available,
+    );
+    expect(offered).toEqual(["close"]);
+  });
+
+  it("and on a LIVE invitation the model offers release, never close", () => {
+    expect(actionAvailability("close", "invited", LIVE).available).toBe(false);
+    expect(actionAvailability("release", "invited", LIVE).available).toBe(true);
+  });
+
+  it("release and close are never BOTH available on the same row", () => {
+    // They land the entry in the same state, so offering both would be two
+    // buttons for one outcome with different preconditions — exactly the "two
+    // names for one act" 0189 refused when it stopped expire serving as cancel.
+    for (const status of WAITLIST_ENTRY_STATUSES) {
+      for (const context of [REDEEMED, LIVE, UNKNOWN, {}]) {
+        const both =
+          actionAvailability("close", status, context).available &&
+          actionAvailability("release", status, context).available;
+        expect(both, `${status} offers both release and close`).toBe(false);
+      }
+    }
+  });
+
+  it("is withheld on every status except `invited`", () => {
+    for (const status of WAITLIST_ENTRY_STATUSES) {
+      if (status === "invited") continue;
+      const verdict = actionAvailability("close", status, REDEEMED);
+      expect(verdict.available, status).toBe(false);
+      expect(verdict.available === false && verdict.reason.length > 0, status).toBe(true);
+    }
+  });
+
+  it("FAILS CLOSED when the invitation could not be read", () => {
+    // Unknown is not "not redeemed". An unread invitation might never have been
+    // used, and the command answers `not_redeemed` for one that was not —
+    // offering a control that cannot succeed is what deriving availability from
+    // stored state exists to prevent.
+    const verdict = actionAvailability("close", "invited", {
+      invitationFactsUnknown: true,
+      invitationRedeemed: true,
+    });
+    expect(verdict.available).toBe(false);
+    expect(verdict.available === false && verdict.reason).toMatch(/could not be checked/i);
+  });
+
+  it("points an un-redeemed row at the control that row actually shows", () => {
+    // Naming "Release" would send an owner looking for a button that is not
+    // there: an `invited` row renders release as "Cancel invitation".
+    const verdict = actionAvailability("close", "invited", LIVE);
+    expect(verdict.available).toBe(false);
+    const reason = verdict.available === false ? verdict.reason : "";
+    expect(reason).toContain(actionLabel("release", "invited"));
+    expect(reason).not.toMatch(/\bRelease\b/);
+  });
+});
+
+describe("close — the label may only promise what the command delivers", () => {
+  it("lands the entry in `released`, and says so beside the button", () => {
+    // 0200: `set status = 'released', released_at = v_decision_at`.
+    expect(ACTION_RESULT_STATUS.close).toBe("released");
+    const help = actionHelp("close", "invited");
+    expect(help, "close has no consequence sentence").not.toBeNull();
+    expect(help).toMatch(/Released/);
+  });
+
+  it("NEVER promises a return to the waitlist — the consequence is irreversible", () => {
+    // THE REGRESSION TEST FOR A REVIEW FINDING. This help used to end "...where
+    // you can return them to the waitlist or remove them". Whenever it is shown
+    // the invitation is REDEEMED, so after Close the requeue guard answers
+    // `already_redeemed` and the control is withheld — the sentence misstated an
+    // irreversible consequence in the moment before the operator committed to it.
+    const help = actionHelp("close", "invited") ?? "";
+    // NO POSITIVE PROMISE, in any of the shapes this copy has worn.
+    for (const promise of [
+      /return them to the waitlist/i,
+      /can (return|put) them back/i,
+      /you can return them/i,
+    ]) {
+      expect(help, `the help still promises: ${promise}`).not.toMatch(promise);
+    }
+    // AND IT STATES THE NEGATIVE OUTRIGHT, rather than leaving it to silence.
+    expect(help).toMatch(/cannot be put back on the waitlist/i);
+    // And it says what IS available instead.
+    expect(help).toMatch(/remove/i);
+    expect(help).toMatch(/join again/i);
+    // The copy and the model must agree: requeue really is withheld after this.
+    expect(
+      actionAvailability("requeue", ACTION_RESULT_STATUS.close, REDEEMED).available,
+      "the help is honest only while requeue is actually withheld",
+    ).toBe(false);
+  });
+
+  it("discloses the OTHER outcome before the operator commits to it", () => {
+    // 0200 records a missing conversion when an appointment from this cycle
+    // already exists, and answers `converted_instead`. A control whose outcome
+    // can be "their booking was recorded" must say so before it is pressed.
+    expect(actionHelp("close", "invited") ?? "").toMatch(/booking is recorded/i);
+  });
+
+  it("never promises a return to the waitlist, which takes a second control", () => {
+    expect(ACTION_LABEL.close).not.toMatch(/waitlist/i);
+    expect(actionLabel("close", "invited")).toBe(ACTION_LABEL.close);
+    expect(ACTION_RESULT_STATUS.close).not.toBe("waiting");
+    expect(ACTION_RESULT_STATUS.requeue).toBe("waiting");
+  });
+
+  it("does not say `cancel`, because there is nothing left to cancel", () => {
+    // By the time this control appears the invitation has already been used.
+    expect(ACTION_LABEL.close.toLowerCase()).not.toContain("cancel");
+    expect(ACTION_LABEL.close).not.toBe(actionLabel("release", "invited"));
+  });
+});
+
+describe("close — the sentence beside it agrees with it", () => {
+  it("the redeemed status line no longer claims the entry is stuck", () => {
+    // It used to end "this entry stays here until the booking is recorded",
+    // which described the dead end as though it were the design.
+    const line = statusMeaning("invited", REDEEMED);
+    expect(line).toMatch(/been used/i);
+    expect(line).not.toMatch(/stays here/i);
+    expect(line).toMatch(/no booking has been recorded/i);
+  });
+
+  it("and it still says nothing about delivery, which the row cannot prove", () => {
+    expect(statusMeaning("invited", REDEEMED)).not.toMatch(/sent|arriv|deliver|email/i);
+  });
+});
+
+describe("close — the exit is one-way, and the surface says so before the command does", () => {
+  it("requeue is withheld on a released entry whose invitation was used", () => {
+    // 0200 answers `already_redeemed` there, because returning the entry to the
+    // active set would let it acquire a SECOND redeemed invitation — which the
+    // booking command reads as `scope_ambiguous`. Offering a control that can
+    // only refuse is what deriving availability from stored state prevents.
+    const verdict = actionAvailability("requeue", "released", REDEEMED);
+    expect(verdict.available).toBe(false);
+    const reason = verdict.available === false ? verdict.reason : "";
+    expect(reason).toMatch(/already used an invitation/i);
+    // AND IT NAMES THE REMEDY, like every other refusal on this surface.
+    expect(reason).toMatch(/remove/i);
+  });
+
+  it("and remove IS offered there, so the lifecycle still terminates", () => {
+    // The whole point: withholding requeue must not recreate a dead end.
+    expect(actionAvailability("remove", "released", REDEEMED).available).toBe(true);
+  });
+
+  it("an ORDINARY released entry is still requeueable — the narrowing is not a ban", () => {
+    // NON-VACUITY. Set-aside-without-redemption is the far commoner way to
+    // reach `released`, and it is untouched.
+    expect(actionAvailability("requeue", "released", LIVE).available).toBe(true);
+    expect(actionAvailability("requeue", "released", {}).available).toBe(true);
+    expect(actionAvailability("requeue", "expired", REDEEMED).available).toBe(true);
+  });
+
+  it("FAILS CLOSED on a released entry whose invitation could not be read", () => {
+    const verdict = actionAvailability("requeue", "released", UNKNOWN);
+    expect(verdict.available).toBe(false);
+    expect(verdict.available === false && verdict.reason).toMatch(/could not be checked/i);
   });
 });

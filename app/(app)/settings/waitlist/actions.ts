@@ -183,7 +183,18 @@ const AUTHORITY_REFUSALS = {
 async function runEntryLifecycleCommand(options: {
   rpc: string;
   entryId: string;
-  successCode: string;
+  /**
+   * The code, or codes, that mean the command DID what it was asked to.
+   *
+   * WHY MORE THAN ONE, AND WHY IT IS STILL AN ALLOWLIST. WAIT-P1-EXIT's close
+   * resolves a stuck entry in one of two truthful ways: it closes an unbooked
+   * cycle, or -- finding an appointment the pre-0195 flow left stranded -- it
+   * records the missing conversion. Both moved the entry; neither is a refusal.
+   * Every other caller passes a single string and is unchanged, and success is
+   * still compared as an exact STRING against a closed list, never inferred
+   * from the absence of an error.
+   */
+  successCode: string | readonly string[];
   event: string;
   refusals: Readonly<Record<string, string>>;
   genericError: string;
@@ -207,7 +218,11 @@ async function runEntryLifecycleCommand(options: {
     p_actor_user_id: actorUserId,
   });
 
-  if (error || data !== options.successCode) {
+  const succeeded =
+    typeof options.successCode === "string"
+      ? [options.successCode]
+      : options.successCode;
+  if (error || typeof data !== "string" || !succeeded.includes(data)) {
     const outcome = error?.code ?? (typeof data === "string" ? data : "unknown");
     console.error(
       JSON.stringify({
@@ -330,6 +345,12 @@ type RequeueEntryResult =
   | "requeued"
   | "already_active"
   | "not_requeueable"
+  // 0200 (WAIT-P1-EXIT). A spent cycle does not go back in the queue: returning
+  // an entry that already holds a REDEEMED invitation to the active set would
+  // let one entry acquire a second redeemed invitation, which the booking
+  // command reads as `scope_ambiguous`. Unreachable before 0200, because
+  // nothing could put a redeemed entry into `released` or `expired`.
+  | "already_redeemed"
   | OwnerResolutionResult;
 
 const REQUEUE_REFUSALS: Readonly<
@@ -337,6 +358,11 @@ const REQUEUE_REFUSALS: Readonly<
 > = {
   already_active: "That person is already on the waitlist again under the same email.",
   not_requeueable: "Only a released or expired entry can be returned to the queue.",
+  // NAMES THE REMEDY, like every other refusal on this surface. Removal accepts
+  // `released`, and the public form accepts them again once this entry leaves
+  // the active set.
+  already_redeemed:
+    "They already used an invitation, so this entry cannot go back on the waitlist. Remove it — they can join again themselves.",
   ...AUTHORITY_REFUSALS,
 };
 
@@ -348,6 +374,88 @@ export async function requeueWaitlistEntryAction(formData: FormData): Promise<vo
     event: "waitlist_requeue_failed",
     refusals: REQUEUE_REFUSALS,
     genericError: "Could not return that entry to the queue. Please try again.",
+  });
+}
+
+// --- CLOSE A USED INVITATION THAT NEVER BECAME A BOOKING ---------------------
+// WAIT-P1-EXIT, migration 0200:
+//   `closed` | `not_found` | `not_invited` | `not_redeemed` | `already_booked`
+//   | `booking_exists` | `already_closed` + owner codes.
+//
+// THIS IS THE ONE EXIT FROM THE STATE THE OTHER FOUR REFUSE. Redemption stamps
+// the invitation and LEAVES the entry at `invited`, so a prospect who opens
+// their link and never books sits in a position where release and expire both
+// answer `already_redeemed`, remove answers `release_required`, and requeue
+// answers `not_requeueable`. None of those commands is weakened to accommodate
+// it; this one acts only there.
+//
+// EVERY REFUSAL NAMES A COMMAND THAT WORKS, which is what stops this from
+// creating a second dead end:
+//   not_redeemed   -> Cancel invitation (release), or Record expired
+//   already_booked -> nothing to do; the booking is recorded
+//   already_closed -> it is already done, and the row has already moved
+//
+// TWO OUTCOMES MOVE THE ENTRY, AND BOTH ARE SUCCESS.
+//
+// `booking_exists` USED TO BE A REFUSAL HERE, and review was right to reject
+// it: it told the owner to record the booking, and nothing in the product
+// invokes `record_new_client_waitlist_conversion` -- `recordInvitationConversion`
+// has no caller anywhere. The entry stayed `invited`, pressing Close again
+// returned the same refusal, and the dead end this slice removes came straight
+// back wearing a different word.
+//
+// 0200 now records that conversion itself, in the same transaction, and answers
+// `converted_instead`. The refusal is gone because the repair exists.
+type CloseUnbookedInvitationResult =
+  | "closed"
+  | "converted_instead"
+  | "not_found"
+  | "not_invited"
+  | "not_redeemed"
+  | "already_booked"
+  | "booking_unresolved"
+  | "already_closed"
+  | OwnerResolutionResult;
+
+const CLOSE_REFUSALS: Readonly<
+  Record<
+    Exclude<
+      CloseUnbookedInvitationResult,
+      "closed" | "converted_instead" | "invalid_input"
+    >,
+    string
+  >
+> = {
+  not_found: "That waitlist entry no longer exists.",
+  not_invited: "There is no used invitation on that entry to close.",
+  not_redeemed:
+    "That invitation has not been used yet. Cancel it instead to end it early.",
+  already_booked: "They have already booked, so there is nothing to close.",
+  // NAMES NO OPERATION, BECAUSE THERE IS NONE TO NAME. This is unreachable
+  // while `clients_studio_normalized_email_uniq` exists: the command found an
+  // appointment from this cycle and could not record the conversion for it. It
+  // says what is true and asks for a retry rather than sending the owner after
+  // a control that does not exist -- the defect the old `booking_exists` copy
+  // had.
+  booking_unresolved:
+    "There is already an appointment for this person, and it could not be recorded automatically. Refresh and try again.",
+  already_closed: "That invitation has already been closed.",
+  ...AUTHORITY_REFUSALS,
+};
+
+export async function closeUnbookedWaitlistInvitationAction(
+  formData: FormData,
+): Promise<void> {
+  await runEntryLifecycleCommand({
+    rpc: "close_unbooked_new_client_waitlist_invitation",
+    entryId: requiredEntryId(formData),
+    // BOTH MOVE THE ENTRY OUT OF THE STUCK STATE. `converted_instead` is the
+    // stranded-appointment repair, not a refusal, and treating it as one would
+    // report an error after a committed conversion.
+    successCode: ["closed", "converted_instead"],
+    event: "waitlist_close_unbooked_failed",
+    refusals: CLOSE_REFUSALS,
+    genericError: "Could not close that invitation. Please try again.",
   });
 }
 

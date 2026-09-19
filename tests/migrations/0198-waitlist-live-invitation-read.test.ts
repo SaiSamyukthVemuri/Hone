@@ -21,50 +21,46 @@ const SQL = readFileSync(path.join(ROOT, "supabase/migrations", fileForVersion(V
 const CODE = SQL.replace(/^\s*--.*$/gm, " ").replace(/comment on [\s\S]*?;/gi, " ");
 
 describe("0198 position in the chain", () => {
-  it("is the repository maximum", () => {
-    // Taken over from 0197, per CLAUDE.md: only the CURRENT max asserts this.
-    expect(isRepoMax(VERSION)).toBe(true);
-  });
-  it("has nothing above it", () => {
-    expect(versionsAbove(VERSION)).toEqual([]);
+  it("is no longer the repository maximum — 0200 is", () => {
+    // HANDED OFF, per CLAUDE.md: only the CURRENT max may assert `isRepoMax`.
+    // It moved from here to 0199 when that was authored, and from 0199 to 0200
+    // (WAIT-P1-EXIT) when this branch authored it. Leaving the claim here would
+    // have made this file red the moment anything landed above it, which is
+    // exactly what happened and is why this block moved rather than being
+    // deleted.
+    //
+    // THE LIST IS DERIVED, NOT ENUMERATED BY HAND. `versionsAbove` reads the
+    // migrations directory, so the assertion below is the one place a future
+    // migration has to be acknowledged in this file — and it is a per-file
+    // hand-off, not the eighteen-file sweep CLAUDE.md records.
+    expect(isRepoMax(VERSION)).toBe(false);
+    expect(versionsAbove(VERSION)).toEqual(["0199", "0200"]);
   });
 
-  it("IS APPLIED to production, and is the CURRENT hosted head", () => {
-    // 0198 NOW OWNS THE EXACT HOSTED-HEAD CLAIM, handed off from 0197 when this
-    // migration was applied to production on 2026-09-16 under explicit
-    // per-change authorization: one column grant, `select (declined_at)`,
-    // verified read-only against the canonical Hone production project and
-    // recorded in docs/production/migration-state.json plus the ledger's
-    // current block.
+  it("IS APPLIED to production, and hosted has not gone backwards past it", () => {
+    // 0198 NO LONGER OWNS THE EQUALITY CLAIM. `0199` was applied on 2026-09-18,
+    // so this file keeps only a FLOOR -- `hosted >= 0198` -- which is the durable
+    // fact about an older applied migration and stays true forever.
     //
-    // An earlier revision of this file said 0197 kept the hosted-head claim
-    // "because 0198 is authored and NOT applied". That was true when it was
-    // written and stopped being true when the apply landed.
-    //
-    // Equality is a CURRENT claim, so exactly one file may hold it: leaving it
-    // on 0197 would have made that file red the moment this one applied, and
-    // dropping it would leave the hosted head asserted nowhere. 0197 was
-    // correspondingly narrowed to a floor, the way 0196 and 0191 were.
-    //
-    // Whoever applies 0199 moves this block: narrow 0198 to a floor the way
-    // 0197, 0196 and 0191 were narrowed, and let the new head take equality.
+    // That is precisely the hand-off the previous revision of this block
+    // required: "whoever applies 0199 moves this block: narrow 0198 to a floor
+    // the way 0197, 0196 and 0191 were narrowed, and let the new head take
+    // equality." Re-asserting equality here would make this file red the moment
+    // anything else applies, which is the mechanical sweep CLAUDE.md forbids.
     const state = migrationState();
-    expect(state.hosted_migration_max).toBe(VERSION);
+    expect(Number(state.hosted_migration_max)).toBeGreaterThanOrEqual(Number(VERSION));
     expect(state.pending_migrations).not.toContain(VERSION);
   });
 
-  it("leaves NOTHING pending — repo and hosted are at PARITY at 0198", () => {
-    // The reconciliation's own assertion, and the reason this file changed after
-    // the apply. Before it, this branch was the ordinary MIGRATION-FIRST PENDING
-    // shape: repo one above hosted, `0198` named as the pending suffix. After
-    // it, the pending set is empty and the two numbers are the same one.
-    //
-    // 0199 is merely the next FREE number. It is not allocated, and nothing here
-    // claims it.
+  it("is below the hosted head, with 0199 applied above it", () => {
+    // The MIGRATION-FIRST PENDING shape this block previously described ENDED
+    // on 2026-09-18, when 0199 was applied and took the chain back to PARITY.
+    // 0198 keeps only what stays true forever: something is applied above it,
+    // and it is itself no longer pending. The exact hosted-head equality and
+    // the next-free claim belong to 0199's own file now.
     const state = migrationState();
-    expect(state.pending_migrations).toEqual([]);
-    expect(state.repo_equals_hosted).toBe(true);
-    expect(state.next_free_migration).toBe("0199");
+    expect(Number(state.hosted_migration_max)).toBeGreaterThan(Number(VERSION));
+    expect(state.pending_migrations).not.toContain(VERSION);
   });
 });
 
@@ -96,8 +92,12 @@ describe("0198 is APPLIED, and therefore FROZEN", () => {
     expect(ledger, "the ledger must carry 0198's COMPLETE sha256").toContain(
       "91072df94586e9f78536962ddc8c4c601b080b4e6237374a5315e218dbc0c792",
     );
-    expect(ledger, "the ledger's current block must record 0198 as APPLIED").toMatch(
-      /## Current state[\s\S]{0,4000}0198_waitlist_live_invitation_read\.sql`? \| \*\*APPLIED\*\*/,
+    // THE CURRENT-BLOCK CLAIM MOVED TO 0199 with the 0199 apply on 2026-09-18.
+    // 0198's record is now a PRESERVED "## Previous state" section — historical
+    // apply records are never rewritten — so what stays true is that the ledger
+    // records 0198 as APPLIED, not that it does so in the current block.
+    expect(ledger, "the ledger must still record 0198 as APPLIED").toMatch(
+      /0198_waitlist_live_invitation_read\.sql`? \| \*\*APPLIED\*\*/,
     );
   });
 });
