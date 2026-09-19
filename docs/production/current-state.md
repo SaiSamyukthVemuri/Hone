@@ -646,10 +646,23 @@ Chloe's acceptance is **not** claimed.
   the exact failure the gate exists to prevent.
 - **The public privacy policy is unchanged.**
 
-### WAIT-02B Stage B1 — disclosure shipped, activation still ungranted. SHIPPED · NOT ACTIVATED.
+### WAIT-02B Stage B1 — disclosure shipped. ACTIVATED ON THE CONTROLLED TEST STUDIO; NOT ACTIVATED AT WILLOW.
 
-**Implemented · merged (PR #637, `1013a97b`) · deployed · NO STUDIO ENABLED · NOT production
-exercised.** **No migration.** Merging it enabled nothing, for anybody.
+**Implemented · merged (PR #637, `1013a97b`) · deployed · ENABLED ON THE CONTROLLED TEST
+STUDIO · NOT ENABLED AT WILLOW · EXERCISED on the test studio.** **No migration.**
+
+> 🔴 **CORRECTED 2026-09-19. This block read `SHIPPED · NOT ACTIVATED`, `NO STUDIO ENABLED ·
+> NOT production exercised`, and *"Merging it enabled nothing, for anybody."*** Merging B1
+> indeed enabled nothing by itself — that part was and remains true. **What became false is the
+> standing claim that no studio was ever subsequently activated**: the roadmap records the
+> controlled test studio enabled for durable WAIT and a 12-of-12 seam canary through the public
+> `join`. **Willow remains unactivated**, which is the limb that survives.
+>
+> ⚠️ **This is the third pass over this section, and the second time I believed the class was
+> swept.** The premise — "the durable waitlist is off everywhere" — was written into **eleven**
+> places across two documents. Fixing the ones that were pointed at, twice, still left more. If
+> you are reading a waitlist status word anywhere in this repository, **check its scope**: only
+> *at Willow* has survived every piece of evidence.
 
 Stage B1 changed **two** things, and the difference between them matters:
 
@@ -677,10 +690,13 @@ durable variable selects the **commit point** for a studio that is *already* on 
 waitlist; it cannot by itself put a studio onto one. An empty durable allowlist leaves every
 studio on the non-durable (WAIT-01, email) path.
 
-**Current posture: NOT ACTIVATED.** `NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS` was **absent from
-the Vercel Production environment** when last read *(2026-08-23, variable names only)* and was
-**not re-read on 2026-08-26** — so absence is carried forward as dated evidence, not re-asserted.
-**Willow is not enabled on the durable path** and continues to serve WAIT-01.
+**Current posture: NOT ACTIVATED AT WILLOW; activated on the controlled test studio.**
+`NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS` was **absent from the Vercel Production environment**
+when last read *(2026-08-23, variable names only)* and has **not been re-read since** — so
+absence is carried forward as dated evidence, not re-asserted, and the canary record means a
+studio has since been enabled, which implies that reading is superseded. **Willow is not enabled
+on the durable path** and continues to serve WAIT-01 — that limb is corroborated independently
+by the roadmap's *"Willow durable WAIT is deliberately OFF"*.
 
 **Stage B2 — activation — has not been granted and remains blocked.** It requires an explicit
 per-studio operator GO and human activation smoke. Tracked as **L25** in
