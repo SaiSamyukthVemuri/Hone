@@ -114,6 +114,22 @@ describe("SESSION-START-01: what the practitioner sees on press", () => {
     // NEGATIVE CONTROL: no local pending state to leak or reset.
     expect(PICKER).not.toContain("useState");
   });
+
+  it("hydration is signalled from the CLIENT snapshot, and the server says false", () => {
+    // Why this is a source assertion and not only a browser one: if the server
+    // snapshot ever returned `true`, `data-hydrated` would be present in the
+    // SSR HTML, the e2e precondition that waits for it would pass instantly,
+    // and every acknowledgement case in this slice would go back to racing
+    // hydration — silently, and while still green.
+    //
+    // useSyncExternalStore's third argument IS the server snapshot. Pinning
+    // the pair is what keeps the browser precondition non-vacuous.
+    expect(PICKER).toMatch(/useSyncExternalStore\(\s*subscribeToNothing,\s*\(\) => true,\s*\(\) => false,\s*\)/);
+    expect(PICKER).toMatch(/data-hydrated=\{hydrated \? "true" : undefined\}/);
+    // And it must stay OFF the button: the attribute marks the island, not a
+    // control, so a future edit cannot turn it into a second pending signal.
+    expect(PICKER).not.toMatch(/<button[\s\S]{0,400}?data-hydrated/);
+  });
 });
 
 describe("SESSION-START-01: geometry is stable on press", () => {

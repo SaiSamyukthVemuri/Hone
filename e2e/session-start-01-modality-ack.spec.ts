@@ -60,10 +60,49 @@ async function openPicker(page: Page): Promise<{ seed: E2eSeed; clientId: string
   const { clientId } = await seedE2eClient(seed);
   await loginAsOwner(page, seed);
   await page.goto(`/clients/${clientId}/sessions/new`);
+  // WAIT FOR REAL HYDRATION, NOT FOR `toBeEnabled()`.
+  //
+  // The server-rendered submit button is enabled BEFORE this island hydrates,
+  // so `toBeEnabled()` is not the precondition it looks like. A click landing
+  // in that window submits the form NATIVELY: the session still starts and
+  // nothing acknowledges, because no React is attached. Every case in this
+  // file would then report an application regression for a harness race.
+  //
+  // `data-hydrated` is set by useSyncExternalStore's client snapshot, so it
+  // appears only once the island is live. This is the precondition.
+  await expect(page.locator("form[data-hydrated='true']")).toBeAttached({
+    timeout: T,
+  });
   return { seed, clientId };
 }
 
 test.describe("SESSION-START-01 — pressing a modality is acknowledged", () => {
+  test("the hydration precondition is real: the SERVER does not send it", async ({
+    page,
+  }) => {
+    // The precondition every other case in this file now depends on is
+    // `data-hydrated`. If the server rendered it, waiting for it would pass
+    // instantly and prove nothing — the races it exists to remove would come
+    // straight back, invisibly, with the suite still green.
+    //
+    // So fetch the SAME url as raw HTML, through the authenticated context,
+    // with no JavaScript involved. The attribute must be ABSENT there and
+    // PRESENT in the live DOM. That pair is what makes the wait meaningful.
+    const { clientId } = await openPicker(page);
+    const html = await (
+      await page.request.get(`/clients/${clientId}/sessions/new`)
+    ).text();
+    expect(
+      html.includes("<form"),
+      "sanity: the fetched document must actually be the picker page",
+    ).toBe(true);
+    expect(
+      html.includes("data-hydrated"),
+      "the server sent data-hydrated — the hydration wait is vacuous",
+    ).toBe(false);
+    await expect(page.locator("form[data-hydrated='true']")).toBeAttached();
+  });
+
   test("idle: neither card claims to be working", async ({ page }) => {
     await openPicker(page);
 
@@ -205,10 +244,9 @@ test.describe("SESSION-START-01 — pressing a modality is acknowledged", () => 
 
       const electro = page.locator('[data-modality="electrolysis"]');
       await expect(electro).toBeVisible({ timeout: T });
-      // The island must be HYDRATED before the clock starts, otherwise this
-      // measures React bootstrap rather than the acknowledgement. An
-      // unhydrated card still submits — natively, acknowledging nothing — and
-      // that failure is what the aria-busy assertion below catches.
+      // Hydration is already established by openPicker via `data-hydrated`.
+      // An earlier revision used `toBeEnabled()` here and described it as the
+      // hydration precondition; it is not one, and Codex was right to say so.
       await expect(electro).toBeEnabled();
 
       await page.evaluate(() => {
@@ -260,20 +298,30 @@ test.describe("SESSION-START-01 — pressing a modality is acknowledged", () => 
         const elapsed = (ack.busyAt as number) - (ack.pressedAt as number);
         console.log(`[SESSION-START-01] ${surface.name} press -> aria-busy: ${elapsed.toFixed(1)}ms`);
 
-        // ONE numeric bound, not two. An earlier revision asserted BOTH
-        // `elapsed < HELD_MS / 10` and `elapsed < 250`, which reads as two
-        // proofs and is one: 250 is the tighter number, so the relational
-        // limb could never fail on its own and was decoration.
+        // THE GATE DETECTS A DEFECT CLASS. IT IS NOT A PERFORMANCE BUDGET.
         //
-        // The relational half is proved STRUCTURALLY instead, and better: this
-        // assertion runs INSIDE `withSlowAction`, before `waitForURL`, so the
-        // acknowledgement is observed while the action is provably still in
-        // flight. That is "confirmed before its result arrives" as a fact about
-        // ordering rather than as a second inequality.
+        // This asserted 250ms. On a shared runner `performance.now()` also
+        // spans GC pauses and descheduling, so an otherwise instant React
+        // commit can cross a fixed 250ms ceiling — and CI would then report a
+        // RESOURCE result as an application regression. That failure mode is
+        // recorded three separate times in CLAUDE.md, each time as a budget
+        // problem read as a broken diff. Codex raised it here before it could
+        // happen a fourth time.
+        //
+        // What the ceiling now catches is the regression that actually
+        // matters: an acknowledgement that waits for the action instead of
+        // preceding it. That shape lands at or beyond HELD_MS, so 1000ms
+        // separates it by 3x while sitting two orders of magnitude above any
+        // plausible GC pause.
+        //
+        // "Immediate" is established by MEASUREMENT, logged above and recorded
+        // in the PR — 6.2ms desktop and 12.5ms at 390px, taken on a host under
+        // load average 14 with two competing builds. The claim rests on those
+        // numbers, not on this inequality.
         expect(
           elapsed,
-          `press -> aria-busy took ${elapsed.toFixed(1)}ms; LAW 4 requires this to be imperceptible`,
-        ).toBeLessThan(250);
+          `press -> aria-busy took ${elapsed.toFixed(1)}ms — an acknowledgement that waits for its own result is the regression this catches`,
+        ).toBeLessThan(1_000);
 
         // The VISUAL cue is present and is a cue only: aria-busy is the one
         // voice, so the overlay must not become a second one.

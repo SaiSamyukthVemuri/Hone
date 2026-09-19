@@ -40,6 +40,7 @@
 // stuck pending. Nothing here needs a manual reset.
 
 import { useFormStatus } from "react-dom";
+import { useSyncExternalStore } from "react";
 import { Spinner } from "@/components/ui/spinner";
 import {
   cx,
@@ -67,6 +68,37 @@ const MODALITIES: ReadonlyArray<{
   },
 ];
 
+// HYDRATION, MADE OBSERVABLE — a correctness affordance, not a convenience.
+//
+// A server-rendered `<button type="submit">` is ENABLED before this island
+// hydrates. A press landing in that window performs the browser's NATIVE form
+// submission: the action still runs, the session still starts, and NOTHING
+// acknowledges, because no React is attached yet. That window is real on a
+// cold, loaded client.
+//
+// Its consequence for EVIDENCE is worse than its consequence for users. A
+// proof that clicks inside that window sees no `aria-busy` and reports an
+// APPLICATION REGRESSION for what is actually a harness race — turning a
+// working mechanism red and sending someone to debug the wrong thing. Codex
+// raised exactly this: `toBeEnabled()` was standing in for a hydration signal
+// it cannot provide.
+//
+// `useSyncExternalStore` is the React-sanctioned detector: the SERVER snapshot
+// during SSR and the CLIENT snapshot after hydration, with no extra render and
+// no `useState` — so the "one form, useFormStatus, no useState" design this
+// file documents stays true. The server snapshot must stay `false`; a unit
+// guard pins the pair, because an always-true snapshot would put the attribute
+// in the SSR HTML and make the browser precondition silently vacuous.
+const subscribeToNothing = () => () => {};
+
+function useHydrated(): boolean {
+  return useSyncExternalStore(
+    subscribeToNothing,
+    () => true,
+    () => false,
+  );
+}
+
 export function ModalityPicker({
   clientId,
   appointmentId,
@@ -74,8 +106,13 @@ export function ModalityPicker({
   clientId: string;
   appointmentId: string | null;
 }) {
+  const hydrated = useHydrated();
   return (
-    <form action={startSessionAction} className="grid gap-4 md:grid-cols-2">
+    <form
+      action={startSessionAction}
+      className="grid gap-4 md:grid-cols-2"
+      data-hydrated={hydrated ? "true" : undefined}
+    >
       {/* Shared by both cards — previously duplicated once per form. */}
       <input type="hidden" name="client_id" value={clientId} />
       {appointmentId && (
