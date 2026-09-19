@@ -991,6 +991,12 @@ describe("canonical production docs: WAIT-02B's durable waitlist is recorded as 
       // real history out of the document to satisfy a regex.
       /durable\s+WAIT\s+(?:is|remains|stays)\s+(?:deliberately\s+|intentionally\s+)?OFF\b/i,
       /Willow[^.\n]{0,40}durable[^.\n]{0,40}\b(?:is|remains|stays)\s+(?:deliberately\s+|intentionally\s+)?off\b/i,
+      // ADJECTIVE FORM, where OFF modifies "durable" instead of following the
+      // verb: "Willow remains legacy-enabled and durable-OFF". Codex #740,
+      // fourth round, found this after the narrowing above -- the hole was
+      // real, and it sat in an active roadmap row. Still anchored on a
+      // present-tense verb, so "was durable-OFF" stays legal history.
+      /\b(?:is|remains|stays)\b[^.\n]{0,60}\bdurable[-\u2011\s]?OFF\b/i,
       /\bNOT ENABLED anywhere\b/i,
       // EVERY CONJUGATION, not one. Codex #740 P2: the list previously held
       // only "is enabled", so `known-limitations.md` sat green while its L25
