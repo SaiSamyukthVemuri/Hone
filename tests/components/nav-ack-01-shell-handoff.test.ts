@@ -89,6 +89,28 @@ describe("NAV-ACK-01 · the acknowledgement host outlives the panel", () => {
       // The acknowledgement is gated on navPending, never on open.
       expect(code).toContain('data-nav-pending="true"');
       expect(code).not.toMatch(/open\s*&&[\s\S]{0,400}data-nav-pending/);
+
+      // THE LIVE REGION TOO. This test's name has always claimed "and the live
+      // region", but only the VISUAL mark above was ever pinned. Moving just
+      // the sr-only region inside the panel leaves the spinner correct and
+      // unmounts the ONE voice along with the panel — the navigation is then
+      // acknowledged to a screen reader by nothing at all. That is contract
+      // 2d's exact failure mode (it compiles, it ships, it announces silently
+      // nothing), and it passed this file until NAV-ACK-01 was refreshed onto
+      // SIGNOUT-01 and the gap was found by mutation.
+      //
+      // Structural, not textual: on BOTH surfaces the region is emitted before
+      // the panel is introduced (`{open && (` in MobileMenu, `const panel =
+      // open && (` in GlobalSearch), so "outside the guard" is exactly "before
+      // the first guard".
+      const status = code.search(/<span\s+role="status"/);
+      const guard = code.search(/(?:\{|=)\s*open\s*&&/);
+      expect(status, `${name}: the live region exists`).toBeGreaterThan(-1);
+      expect(guard, `${name}: the panel is gated on open`).toBeGreaterThan(-1);
+      expect(
+        status,
+        `${name}: role="status" must render OUTSIDE the open guard, or the acknowledgement dies with the panel`,
+      ).toBeLessThan(guard);
     });
 
     it(`${name}: role="status" is mounted unconditionally, empty at rest`, () => {
