@@ -240,6 +240,37 @@ navigation vocabulary, and no licence to convert the product's other links.
 Generalising this mechanism is UX-03's decision to make, and it has not been
 made.
 
+**SESSION-START-01 is AUTHORIZED** — also a **bounded LAW 4 repair**, by owner
+product ruling of 2026-09-18 ("session start responsiveness first"), and also
+**outside** the UX programme for the same reason NAV-ACK-01 is: UX-01's
+reconciled content does not reach this surface.
+
+Its scope is `/clients/[id]/sessions/new` and the charting page it leads to,
+in two slices:
+
+- the **modality press acknowledgement** — the controls acknowledged nothing at
+  all, because the page carried no client island;
+- the **measured latency** of the destination, taken from instrumentation
+  rather than from source shape.
+
+Its mechanism is **contract 2b's vocabulary** — `useFormStatus`, the
+geometry-stable spinner slot, `aria-busy` as the single voice — but **not
+`PendingButton` itself**, and that exception is bounded and deliberate.
+`PendingButton` reports `pending` for the whole form, which is correct for a
+form with one submit. The modality picker is one form with **two** submit
+buttons carrying `name="modality"`, where the requirement is that the pressed
+card announces and its sibling only locks. `useFormStatus().data` answers
+*which* button was pressed; a `pending` boolean cannot. **This is not a licence
+to hand-roll `useFormStatus` elsewhere** — anywhere a form has a single submit,
+2b remains the leaf.
+
+**SESSION-START-01 creates no new authority.** It does not detach any outbound
+send from a request path, move any authority or clinical validation off the
+critical path, adopt streaming or a route `loading.tsx`, or widen contract 2d.
+Postcare specifically remains on the session-start path: its durability recon
+returned **HOLD**, and detaching it is a separate decision with a separate
+proof.
+
 ---
 
 ## `[PRODUCT AUTHORITY REQUIRED]` — open, and not an agent's call
