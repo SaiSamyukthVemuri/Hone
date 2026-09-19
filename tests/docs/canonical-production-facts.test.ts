@@ -959,7 +959,23 @@ describe("canonical production docs: WAIT-02B's durable waitlist is recorded as 
     // frozen region first, so a superseded claim preserved inside an auditable
     // ignore block is untouched by this rule.
     const STALE: RegExp[] = [
+      // THE CLAIM CLASS, NOT ONE PHRASING. Codex #740, second round: the list
+      // below previously held only "durable … waitlist … is dormant/dark", and
+      // the canonical set was carrying the same disproved posture in at least
+      // six other wordings — "reachable by nobody", "unreachable", "NO STUDIO
+      // ENABLED", "enabled for nobody", "NOT STARTED", and the durable waitlist
+      // sitting inside a Dormant list. A blacklist that matches one phrasing is
+      // a guard against one sentence, not against the claim.
+      //
+      // SCOPED TO THE SUBJECT so unrelated capabilities keep their own honest
+      // "unreachable" and "not started" — clinical finalization, whole-session
+      // copy and the retired corrections backend are all legitimately those.
       /durable[^.\n]{0,40}waitlist[^.\n]{0,40}\bis\s+(?:dormant|dark)\b/i,
+      /durable[^.\n]{0,60}\b(?:reachable by nobody|unreachable|enabled for nobody)\b/i,
+      /\b(?:reachable by nobody|enabled for nobody)[^.\n]{0,60}(?:durable|waitlist)/i,
+      /waitlist[^.\n]{0,60}\bdormant and enabled for nobody\b/i,
+      /\bNO STUDIO ENABLED\b/,
+      /durable[^\n]{0,80}\bNOT STARTED\b/i,
       /\bNOT ENABLED anywhere\b/i,
       // EVERY CONJUGATION, not one. Codex #740 P2: the list previously held
       // only "is enabled", so `known-limitations.md` sat green while its L25

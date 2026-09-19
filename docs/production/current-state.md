@@ -504,8 +504,8 @@ ACTIVATED for `willow-electrolysis` · production exercised.** Owner device acce
 **still outstanding** and is not implied by any row below.
 
 > ⚠️ **CORRECTED 2026-09-19 (WAIT-DOCS-RECON).** Every bullet in this subsection previously
-> recorded the durable waitlist as deployed-dark and enabled for nobody. Production had
-> disproved that for roughly three weeks. The superseded text is preserved verbatim in the
+> described the durable path as deployed-but-dark, switched on for no studio at all. Production
+> had disproved that for roughly three weeks. The superseded text is preserved verbatim in the
 > frozen block at the end of this subsection rather than deleted.
 
 - The durable table `new_client_waitlist_entries` and both commands
@@ -954,15 +954,19 @@ live manual no-show / late-cancellation fees · public-booking card collection �
 practitioner selection and assignment.
 
 **Dormant** (deployed but not acting): all Google Calendar sync phases · practitioner capacity
-at Willow · onboarding v2 at Willow · **the durable new-client waitlist (WAIT-02B) on every
-studio** — see §5b. *(The parenthetical above previously read "structurally unable to act". For
-the durable waitlist that is no longer accurate: Stage B1 replaced the build-time prohibition
-with a report-only gate, so what keeps it dormant is now **runtime allowlist membership**, and
-it takes two allowlists rather than one. It is dormant by configuration, not by structure.)*
+at Willow · onboarding v2 at Willow. ⚠️ **CORRECTED 2026-09-19 — the durable new-client waitlist
+(WAIT-02B) HAS LEFT THIS LIST.** It was recorded here as dormant *on every studio*; it is
+enabled for `willow-electrolysis` and collecting, **31 rows measured 2026-09-19** — see §5b.
+*(The reasoning that kept it here was sound and is worth preserving: Stage B1 replaced the
+build-time prohibition with a report-only gate, so what governed activation became **runtime
+allowlist membership** across two allowlists. That is configuration rather than structure — and
+configuration is exactly what changed, unobserved, on or before 2026-08-25.)*
 
 **Shipped since the previous reconciliation, and NOT production-exercised:** non-card
-appointment settlement (§7 — 0 rows) · `/dashboard/capacity` (§10b — no usage measured) ·
-WAIT-02B Stage B1 (§5b — no studio enabled).
+appointment settlement (§7 — 0 rows) · `/dashboard/capacity` (§10b — no usage measured).
+⚠️ **CORRECTED 2026-09-19 — WAIT-02B Stage B1 HAS LEFT THIS LIST**; it was recorded here as
+having none. One studio is enabled and joining is exercised (§5b). It is still
+**not accepted**, and no invitation has ever been issued on that studio.
 
 **Retired by product decision (2026-07-29), enforced by migration 0159:** signed / finalized
 clinical records · signed-record corrections and amendments · practitioner-facing Finalize and
