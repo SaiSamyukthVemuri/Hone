@@ -108,12 +108,13 @@
 -- release and expire both refuse one. It constrains exactly the state this
 -- migration creates and nothing else.
 --
--- THE LOCK IS LOAD-BEARING, NOT TIDINESS. An unlocked pre-check is defeated by
--- the very command it guards against: a requeue that reads `invited`, falls
--- through, then blocks inside its own UPDATE and re-evaluates against a
--- just-committed `released` row will move that row to `waiting`. Section 5
--- states the reproduction; the DB suite drives it with two real sessions and a
--- negative control that removes the lock and watches the proof go red.
+-- THE EXCLUSION IS ON THE WRITE, NOT IN A PRE-CHECK, and that distinction is
+-- the whole of it. An unlocked pre-check is defeated by the very command it
+-- guards against: under READ COMMITTED a close committing BETWEEN the guard's
+-- statement and the UPDATE's is invisible to the first and visible to the
+-- second, so the guard declines to fire and the write resurrects the entry.
+-- Measured, with that window forced open: `requeued`, entry `waiting`.
+-- Section 5 states it; the DB suite proves the corrected shape refuses.
 --
 -- The operator is not stranded: `remove` accepts `released` and is the coherent
 -- terminal exit, and the person can rejoin through the public form because
@@ -660,42 +661,14 @@ security definer
 set search_path = pg_catalog, pg_temp
 as $$
 declare
-  v_actor  uuid;
-  v_code   text;
-  v_hit    uuid;
-  v_status text;
+  v_actor uuid;
+  v_code  text;
+  v_hit   uuid;
 begin
   select r.practitioner_id, r.code into v_actor, v_code
     from public.new_client_waitlist_resolve_owner(p_studio_id, p_actor_user_id) r;
   if v_code <> 'ok' then return v_code; end if;
   if p_entry_id is null then return 'invalid_input'; end if;
-
-  -- 0200. THE ENTRY MUTEX, TAKEN BEFORE THIS COMMAND DECIDES ANYTHING.
-  --
-  -- THE RACE THIS CLOSES, and it was a real one: the redeemed guard below used
-  -- to be an UNLOCKED pre-check. Overlap a close and a requeue on the same
-  -- redeemed `invited` entry and the requeue read `invited`, fell through the
-  -- guard (which is scoped to the states requeue accepts), then BLOCKED on the
-  -- close's row lock inside its own UPDATE. Close committed `released`; the
-  -- UPDATE re-evaluated its predicate under READ COMMITTED against the NEWLY
-  -- committed row, matched `status in ('released','expired')`, and moved the
-  -- entry to `waiting` -- resurrecting the exact entry the close had just
-  -- retired, and handing it a route to a SECOND redeemed invitation.
-  --
-  -- A pre-check cannot be made safe by reordering it; it has to stop being a
-  -- pre-check. The lock is taken FIRST, so a concurrent close is either wholly
-  -- before this decision (and the guard sees `released` + redeemed, and
-  -- refuses) or wholly after it. Every other waitlist command that touches this
-  -- entry -- release, expire, close, conversion, and 0195's booking -- already
-  -- takes this same lock first, so no lock order changes and no cycle appears.
-  --
-  -- A MISSING ROW IS NOT AN ERROR HERE. `v_status` stays null, the guard cannot
-  -- fire, the UPDATE matches nothing, and the answer is `not_requeueable` --
-  -- byte for byte what this command said before.
-  select e.status into v_status
-    from public.new_client_waitlist_entries e
-   where e.id = p_entry_id and e.studio_id = p_studio_id
-     for update;
 
   -- 0200. A SPENT CYCLE DOES NOT GO BACK IN THE QUEUE. See the header: putting
   -- this entry back would let it acquire a SECOND redeemed invitation, and five
@@ -716,17 +689,6 @@ begin
   -- only `released` can carry a redemption here -- and only by way of 0200's own
   -- close. It is written anyway so a later slice that makes `expired` reachable
   -- with a redemption finds this door already shut rather than silently open.
-  if v_status in ('released','expired')
-     and exists (
-       select 1
-         from public.new_client_waitlist_invitations i
-        where i.entry_id    = p_entry_id
-          and i.studio_id   = p_studio_id
-          and i.redeemed_at is not null)
-  then
-    return 'already_redeemed';
-  end if;
-
   -- 0188'S BODY, UNCHANGED FROM HERE DOWN.
   --
   -- REQUEUE IS THE ONLY COMMAND THAT RE-ENTERS THE ACTIVE DUPLICATE INDEX, so
@@ -746,13 +708,34 @@ begin
            released_at                = null
      where id = p_entry_id and studio_id = p_studio_id
        and status in ('released','expired')
-       -- THE SAME EXCLUSION, RESTATED ON THE STATEMENT THAT ACTUALLY WRITES.
-       -- Defence in depth, and the doctrine 0188 and 0192 both apply to this
-       -- table: a guarded read beside an unguarded write is the asymmetry that
-       -- produced every stranding defect in this lifecycle. Under the entry
-       -- mutex taken above this predicate can never be the reason the UPDATE
-       -- matches nothing -- the guard has already returned -- so
-       -- `not_requeueable` below stays truthful for every reachable case.
+       -- THE EXCLUSION LIVES ON THE STATEMENT THAT WRITES, AND NOWHERE ELSE.
+       -- This is the decision; everything around it only reports it.
+       --
+       -- THE DEFECT THIS SHAPE EXISTS TO CLOSE. The first draft put the
+       -- exclusion in an UNLOCKED pre-check ahead of this UPDATE. Under READ
+       -- COMMITTED each statement takes its own snapshot, so a close committing
+       -- BETWEEN the two was invisible to the guard and visible to the write:
+       -- the guard saw `invited` and declined to fire, the UPDATE saw
+       -- `released` and matched, and the entry the close had just retired came
+       -- back as `waiting` -- with a route to a SECOND redeemed invitation and
+       -- from there to the `scope_ambiguous` booking failure. REPRODUCED
+       -- end to end, with that window forced open, before this was written.
+       --
+       -- One statement has no such window: the predicate and the write are the
+       -- same decision. `redeemed_at` is write-once, set by a transaction that
+       -- committed long before this one began, and no path can clear it -- so
+       -- this subquery cannot flip underneath the statement that reads it.
+       --
+       -- AND NO LOCK IS TAKEN, DELIBERATELY. 0188's own comment on this command
+       -- already rules that its collision test must be HANDLED, NOT
+       -- PRE-CHECKED; and tests/db/waitlist-invitation-wall-clock measured the
+       -- schedule that follows -- requeue is "excluded by its own predicate,
+       -- not parked by a lock", so while a terminal transition is uncommitted
+       -- every other session still sees `invited`, this predicate matches zero
+       -- rows, and the statement returns WITHOUT EVER WAITING. Adding a row
+       -- lock here would make an operator's requeue park behind an unrelated
+       -- release, change a concurrency contract that suite pins, and buy
+       -- nothing this predicate does not already give.
        and not exists (
          select 1
            from public.new_client_waitlist_invitations i
@@ -765,8 +748,33 @@ begin
       return 'already_active';
   end;
 
-  if v_hit is null then return 'not_requeueable'; end if;
-  return 'requeued';
+  if v_hit is not null then return 'requeued'; end if;
+
+  -- 0200. THE REFUSAL IS NAMED AFTER THE FACT, NEVER BEFORE IT.
+  --
+  -- The UPDATE above already refused; this only chooses which true word to
+  -- report. A stale read here cannot let anything through, because nothing
+  -- downstream depends on it -- which is exactly why it is safe to read without
+  -- a lock, and why the earlier draft's PRE-check was not.
+  --
+  -- SCOPED TO THE STATES REQUEUE ACCEPTS, so an `invited` entry still answers
+  -- `not_requeueable` -- the word two shipped DB tests pin by name, and a word
+  -- that describes it correctly: requeue has always refused `invited`, and not
+  -- because of anything to do with redemption.
+  if exists (
+    select 1
+      from public.new_client_waitlist_entries e
+      join public.new_client_waitlist_invitations i
+        on i.entry_id = e.id and i.studio_id = e.studio_id
+     where e.id          = p_entry_id
+       and e.studio_id   = p_studio_id
+       and e.status      in ('released','expired')
+       and i.redeemed_at is not null)
+  then
+    return 'already_redeemed';
+  end if;
+
+  return 'not_requeueable';
 end;
 $$;
 

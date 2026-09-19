@@ -205,18 +205,14 @@ describe("0200 does not weaken any shipped exit", () => {
       "status in ('released','expired')",
       "status in ('released','expired')",
     ]);
-    // SCOPED TO THE ACCEPTED STATES, AND FROM A VALUE READ UNDER THE LOCK.
-    // Both halves matter: the scope is what keeps `invited` answering
-    // `not_requeueable`, and reading it under the lock is what stops a
-    // concurrent close from changing the answer after the decision.
-    const guard = fn.slice(0, fn.indexOf("return 'already_redeemed'"));
-    expect(guard, "the guard is not scoped to the states requeue accepts").toMatch(
-      /v_status in \('released','expired'\)/,
+    // THE REFUSAL IS SCOPED TO THE STATES REQUEUE ACCEPTS, which is what keeps
+    // `invited` answering `not_requeueable` — the word two shipped DB tests pin
+    // by name, and the right word: requeue has always refused `invited`, for
+    // reasons that have nothing to do with redemption.
+    const named = fn.slice(fn.indexOf("if v_hit is not null then return 'requeued'"));
+    expect(named, "the refusal is not scoped to the states requeue accepts").toMatch(
+      /e\.status\s+in \('released','expired'\)/,
     );
-    expect(
-      guard.indexOf("v_status in ('released','expired')"),
-      "the guard reads the status before the row is locked",
-    ).toBeGreaterThan(guard.indexOf("for update"));
   });
 
   it("restates requeue's grant contract rather than leaving it implied", () => {
@@ -512,31 +508,41 @@ describe("0200 answers the states it refuses with distinguishable words", () => 
     );
   });
 
-  it("requeue decides UNDER the entry mutex, not from an unlocked pre-check", () => {
-    // THE P1 REVIEW FINDING. An unlocked guard is defeated by the command it
-    // guards against: a requeue that reads `invited`, falls through, then blocks
-    // inside its own UPDATE re-evaluates against a just-committed `released` row
-    // and resurrects the entry.
+  it("requeue's redeemed exclusion lives ON THE WRITE, not in a pre-check", () => {
+    // THE P1 REVIEW FINDING. An unlocked pre-check is defeated by the command it
+    // guards against: under READ COMMITTED a close committing BETWEEN the guard
+    // statement and the UPDATE is invisible to the first and visible to the
+    // second, so the guard declines to fire and the write resurrects the entry.
+    // Reproduced end to end, with that window forced open, before the repair.
     const body = CODE.slice(CODE.indexOf("function public.requeue_new_client_waitlist_entry"));
     const fn = body.slice(0, body.indexOf("$$;"));
 
-    const lock = fn.indexOf("for update");
-    const guard = fn.indexOf("return 'already_redeemed'");
     const write = fn.indexOf("update public.new_client_waitlist_entries");
-    expect(lock, "requeue takes no row lock at all").toBeGreaterThan(0);
-    expect(guard, "requeue has no redeemed guard").toBeGreaterThan(lock);
-    expect(write, "the write does not follow the guard").toBeGreaterThan(guard);
-
-    // The lock is on THIS entry, scoped by both id and studio.
-    const lockStmt = fn.slice(fn.lastIndexOf("select", lock), fn.indexOf(";", lock));
-    expect(lockStmt).toMatch(/new_client_waitlist_entries/);
-    expect(lockStmt).toMatch(/e\.id = p_entry_id and e\.studio_id = p_studio_id/);
-
-    // AND THE EXCLUSION IS RESTATED ON THE WRITE, so a guarded read can never
-    // sit beside an unguarded write.
+    expect(write, "requeue no longer writes the entry").toBeGreaterThan(0);
     const upd = fn.slice(write, fn.indexOf("returning id into v_hit", write));
-    expect(upd, "the UPDATE does not re-state the redeemed exclusion").toMatch(
+    expect(upd, "the redeemed exclusion is not on the statement that writes").toMatch(
       /not exists[\s\S]{0,240}redeemed_at is not null/,
+    );
+
+    // NOTHING DECIDES BEFORE THE WRITE. Any `redeemed_at` test ahead of the
+    // UPDATE is exactly the pre-check that was reproduced as defective.
+    expect(
+      fn.slice(0, write),
+      "a redeemed pre-check is back ahead of the write",
+    ).not.toMatch(/redeemed_at/);
+
+    // AND NO ROW LOCK IS TAKEN. `waitlist-invitation-wall-clock` measured that
+    // requeue is "excluded by its own predicate, not parked by a lock", and
+    // 0188's own comment rules this class of test must be HANDLED, NOT
+    // PRE-CHECKED. A lock here would change a concurrency contract that suite
+    // pins, and buy nothing this predicate does not already give.
+    expect(fn, "requeue started taking a row lock").not.toMatch(/for update/);
+
+    // The refusal is named AFTER the write, from the same authority.
+    const after = fn.slice(fn.indexOf("if v_hit is not null then return 'requeued'"));
+    expect(after).toMatch(/return 'already_redeemed'/);
+    expect(after.indexOf("return 'not_requeueable'")).toBeGreaterThan(
+      after.indexOf("return 'already_redeemed'"),
     );
   });
 });

@@ -931,68 +931,78 @@ describe("K — the exit is ONE-WAY, because five consumers depend on that", () 
   });
 
   it("RACE: a requeue overlapping a close cannot resurrect the entry", async () => {
-    // THE P1 REVIEW FINDING, REPRODUCED AS A TEST.
+    // THE P1 REVIEW FINDING, AND THE SHAPE THAT CLOSES IT.
     //
-    // The guard was an UNLOCKED pre-check. Overlap a close and a requeue on the
-    // same redeemed `invited` entry and the requeue read `invited`, fell
-    // through the guard (which is scoped to the states requeue accepts), then
-    // BLOCKED inside its own UPDATE on the close's row lock. Close committed
-    // `released`; the UPDATE re-evaluated its predicate under READ COMMITTED
-    // against the newly committed row, matched `status in ('released','expired')`
-    // and moved the entry to `waiting` — resurrecting the entry the close had
-    // just retired and handing it a route to a SECOND redeemed invitation.
+    // THE DEFECT, REPRODUCED before the repair: the redeemed exclusion sat in an
+    // UNLOCKED PRE-CHECK ahead of requeue's UPDATE. Under READ COMMITTED each
+    // statement takes its own snapshot, so a close committing BETWEEN the two
+    // was invisible to the guard and visible to the write — guard saw
+    // `invited` and declined to fire, UPDATE saw `released` and matched, and
+    // the entry came back as `waiting`. With that window forced open the
+    // measured result was `requeued`, entry `waiting`: RESURRECTED.
     //
-    // THE ORDER IS THE POINT: the requeue must START while the entry is still
-    // `invited`, or it is not this race at all.
+    // THE REPAIR MOVES THE EXCLUSION ONTO THE WRITE, so predicate and write are
+    // one statement and the window does not exist. No row lock is taken, on
+    // purpose: `waitlist-invitation-wall-clock` measured that requeue is
+    // "excluded by its own predicate, not parked by a lock", and 0188's own
+    // comment rules this class of test must be HANDLED, NOT PRE-CHECKED.
+    //
+    // SO THIS TEST ASSERTS THE SCHEDULE THAT ACTUALLY EXISTS: requeue does not
+    // wait, it cannot see the state that would authorise it, and it writes
+    // nothing either way.
     const f = await fixture("race-requeue");
     const p = await redeemedUnbooked(f, "rq");
 
     const s1 = new Client({ connectionString: resolveLocalDbUrl() });
-    const s2 = new Client({ connectionString: resolveLocalDbUrl() });
     await s1.connect();
-    await s2.connect();
-    let requeueResult: string | undefined;
+    let duringClose: string | undefined;
     try {
       await s1.query("begin");
       const closed = await s1.query(CLOSE, [f.studioId, p.entryId, f.userId]);
       expect(closed.rows[0].r).toBe("closed");
 
-      // S2 begins its requeue while S1 is UNCOMMITTED, so S2's own snapshot
-      // still shows `invited` — the precondition of the defect.
-      const pid = (await s2.query("select pg_backend_pid() as pid")).rows[0].pid as number;
-      await s2.query("begin");
+      // A SECOND SESSION, WHILE THE CLOSE IS UNCOMMITTED. Everyone else still
+      // sees `invited`, so requeue's own predicate matches nothing and it
+      // returns without waiting — which is why this call does not deadlock the
+      // test rather than why it is safe.
+      duringClose = (
+        await q<{ r: string }>(`select public.requeue_new_client_waitlist_entry($1,$2,$3) as r`, [
+          f.studioId,
+          p.entryId,
+          f.userId,
+        ])
+      )[0].r;
       expect(
-        (
-          await s2.query(`select status from ${EN_T} where id = $1`, [p.entryId])
-        ).rows[0].status,
-        "S2 does not see the pre-close state, so this is not the race under test",
+        await statusOf(p.entryId),
+        "the uncommitted close was visible to another session",
       ).toBe("invited");
 
-      const requeue = s2.query(`select public.requeue_new_client_waitlist_entry($1,$2,$3) as r`, [
-        f.studioId,
-        p.entryId,
-        f.userId,
-      ]);
-      await expectBlockedOn(pid, "the requeue did not park on the entry mutex the close holds");
-
       await s1.query("commit");
-      requeueResult = (await requeue).rows[0].r as string;
-      await s2.query("commit");
     } finally {
       await s1.query("rollback").catch(() => undefined);
-      await s2.query("rollback").catch(() => undefined);
       await s1.end();
-      await s2.end();
     }
 
-    expect(requeueResult, "the requeue was allowed through after the close").toBe(
-      "already_redeemed",
-    );
+    expect(duringClose, "requeue acted on a state it could not see").toBe("not_requeueable");
     expect(
       await statusOf(p.entryId),
       "the entry was RESURRECTED — the one-way rule was bypassed",
     ).toBe("released");
-    // And the resurrection route stays shut: nothing can re-invite it.
+
+    // AND ONCE THE CLOSE IS VISIBLE, the refusal is named truthfully rather
+    // than falling through to the generic one.
+    expect(
+      (
+        await q<{ r: string }>(`select public.requeue_new_client_waitlist_entry($1,$2,$3) as r`, [
+          f.studioId,
+          p.entryId,
+          f.userId,
+        ])
+      )[0].r,
+    ).toBe("already_redeemed");
+    expect(await statusOf(p.entryId)).toBe("released");
+
+    // The resurrection route stays shut: nothing can re-invite it.
     expect(
       (
         await q<{ result: string }>(
@@ -1001,6 +1011,37 @@ describe("K — the exit is ONE-WAY, because five consumers depend on that", () 
         )
       )[0].result,
     ).toBe("not_claimed");
+  });
+
+  it("RACE: the redeemed exclusion is on the WRITE, so one statement decides", async () => {
+    // THE DISCRIMINATING HALF. The test above shows the outcome; this shows
+    // WHERE the refusal comes from — the UPDATE itself, not a read before it.
+    //
+    // Both rows requeue's predicate accepts are exercised against a redeemed
+    // entry, and the write must refuse each. A pre-check could be stale here; a
+    // predicate on the write cannot, because `redeemed_at` is write-once and
+    // was committed long before this statement began.
+    const f = await fixture("atomic-refusal");
+    const p = await redeemedUnbooked(f, "ar");
+    expect(await close(f, p.entryId)).toBe("closed");
+
+    // Drive the UPDATE directly, with the command's own predicate, and require
+    // it to match nothing. If the exclusion ever moves off the write, this
+    // matches one row and the one-way rule is gone.
+    const moved = await q<{ id: string }>(
+      `update ${EN_T}
+          set status = 'waiting', claimed_at = null, claimed_by_practitioner_id = null,
+              invited_at = null, expired_at = null, released_at = null
+        where id = $1 and studio_id = $2
+          and status in ('released','expired')
+          and not exists (
+            select 1 from ${IN_T} i
+             where i.entry_id = $1 and i.studio_id = $2 and i.redeemed_at is not null)
+      returning id`,
+      [p.entryId, f.studioId],
+    );
+    expect(moved, "the write's own predicate admitted a redeemed entry").toHaveLength(0);
+    expect(await statusOf(p.entryId)).toBe("released");
   });
 
   it("RACE: a close overlapping a requeue is decided the same way in reverse", async () => {
