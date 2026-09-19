@@ -1,0 +1,847 @@
+import { afterAll, describe, expect, it } from "vitest";
+import { Client } from "pg";
+import { adminQuery, asRole, closePool, resolveLocalDbUrl, seedStudio } from "./helpers/harness";
+import {
+  eventIdSet,
+  expectBlockedOn,
+  expectExactlyOneNewEvent,
+  newEventsSince,
+  readStoredInstant,
+} from "./helpers/waitlist-concurrency";
+
+// ===========================================================================
+// 0200 — WAIT-P1-EXIT: THE REDEEMED-BUT-UNBOOKED ESCAPE HATCH
+// ===========================================================================
+//
+// THE STATE UNDER TEST. Redemption stamps the invitation and LEAVES the entry
+// at `invited`; only a recorded conversion moves it. So a prospect who opens
+// their invitation and never books sits at `invited` with a redeemed
+// invitation — and section I below proves, on this schema, that all four
+// shipped exits still refuse exactly there. That refusal set is the dead end,
+// and it is asserted rather than described, so this file goes red if any of
+// those commands is ever quietly weakened to accommodate the state instead.
+//
+// WHAT THIS FILE IS NOT. It is not a second opinion about redemption, booking
+// or capacity. Every fixture drives the REAL chain — create entry, admit,
+// prove, redeem, and where a booking is needed, `create_waitlist_public_
+// appointment` — so a state this suite reaches is a state the product can
+// reach.
+// ===========================================================================
+
+const q = async <T>(text: string, params: unknown[] = []): Promise<T[]> =>
+  (await adminQuery(text, params)).rows as T[];
+
+const CLOSE = `select public.close_unbooked_new_client_waitlist_invitation($1,$2,$3) as r`;
+const BOOK = `select * from public.create_waitlist_public_appointment($1,$2,$3,$4::timestamptz,$5,$6,null,null)`;
+const CONVERT = `select public.record_new_client_waitlist_conversion($1,$2,$3) as r`;
+
+const EN_T = "public.new_client_waitlist_entries";
+const IN_T = "public.new_client_waitlist_invitations";
+
+afterAll(async () => {
+  await closePool();
+});
+
+type Fixture = { studioId: string; userId: string; serviceId: string; roundId: string };
+
+/** A studio that can actually take a public booking: active service + open week. */
+async function fixture(label: string): Promise<Fixture> {
+  const s = await seedStudio(`p1exit-${label}`);
+  const svc = await q<{ id: string }>(
+    `insert into public.services (studio_id,name,default_duration_minutes,active,modality)
+     values ($1,'Consultation',30,true,'consultation') returning id`,
+    [s.studioId],
+  );
+  for (let d = 0; d < 7; d += 1) {
+    await q(
+      `insert into public.studio_availability_default
+         (studio_id,day_of_week,is_open,open_time,close_time,practitioner_id)
+       values ($1,$2,true,'08:00','20:00',null)`,
+      [s.studioId, d],
+    );
+  }
+  const r = await q<{ result: string; round_id: string }>(
+    `select * from public.open_new_client_waitlist_admission_round($1,$2,20)`,
+    [s.studioId, s.userId],
+  );
+  expect(r[0].result).toBe("opened");
+  return {
+    studioId: s.studioId,
+    userId: s.userId,
+    serviceId: svc[0].id,
+    roundId: r[0].round_id,
+  };
+}
+
+/** A legal slot, taken from the booking path's own candidate generator. */
+async function legalSlot(f: Fixture, nth: number): Promise<string> {
+  for (let day = 2; day < 30; day += 1) {
+    const when = new Date(Date.now() + day * 86_400_000).toISOString().slice(0, 10);
+    const cands = await q<{ c: string }>(
+      `select c from public.public_booking_slot_candidates($1,$2::date,30) c`,
+      [f.studioId, when],
+    );
+    if (cands.length > nth) return cands[nth].c;
+  }
+  throw new Error("no legal slot");
+}
+
+const tokenHash = (seed: string): string =>
+  Array.from(
+    { length: 64 },
+    (_, i) => "0123456789abcdef"[(seed.charCodeAt(i % seed.length) + i) % 16],
+  ).join("");
+
+type Prospect = { entryId: string; email: string; rawToken: string };
+
+/** An entry with a LIVE, un-redeemed invitation, via the real admission chain. */
+async function invitedProspect(f: Fixture, label: string): Promise<Prospect> {
+  const email = `p-${label}-${f.studioId.slice(0, 8)}@example.com`;
+  const e = await q<{ result: string; entry_id: string }>(
+    `select * from public.create_practitioner_waitlist_entry($1,$2,'Prospect',$3,null,null)`,
+    [f.studioId, f.userId, email],
+  );
+  expect(e[0].result).toBe("created");
+  const from = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
+  const to = new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10);
+  const a = await q<{ result: string; raw_token: string }>(
+    `select * from public.admit_new_client_waitlist_entry($1,$2,$3,$4,$5,$6,null,72)`,
+    [f.studioId, f.userId, e[0].entry_id, f.serviceId, from, to],
+  );
+  expect(a[0].result).toBe("admitted");
+  return { entryId: e[0].entry_id, email, rawToken: a[0].raw_token };
+}
+
+/** Drive that prospect through proof + redemption — the real recipient path. */
+async function redeem(p: Prospect): Promise<void> {
+  const b = await q<{ raw_challenge: string }>(
+    `select * from public.begin_waitlist_invitation_proof($1,20)`,
+    [p.rawToken],
+  );
+  const c = await q<{ raw_capability: string }>(
+    `select * from public.complete_waitlist_invitation_proof($1,$2)`,
+    [p.rawToken, b[0].raw_challenge],
+  );
+  const r = await q<{ result: string }>(
+    `select * from public.redeem_new_client_waitlist_invitation_verified($1,$2)`,
+    [p.rawToken, c[0].raw_capability],
+  );
+  expect(r[0].result, "the fixture failed to reach the state under test").toBe("redeemed");
+}
+
+/** THE state this slice exists for: redeemed, still `invited`, never booked. */
+async function redeemedUnbooked(f: Fixture, label: string): Promise<Prospect> {
+  const p = await invitedProspect(f, label);
+  await redeem(p);
+  expect(await statusOf(p.entryId)).toBe("invited");
+  return p;
+}
+
+const statusOf = async (entryId: string): Promise<string> =>
+  (await q<{ status: string }>(`select status from ${EN_T} where id = $1`, [entryId]))[0].status;
+
+const close = async (f: Fixture, entryId: string, actor = f.userId): Promise<string> =>
+  (await q<{ r: string }>(CLOSE, [f.studioId, entryId, actor]))[0].r;
+
+/** The invitation row's close + redemption evidence, at full precision. */
+async function inviteEvidence(entryId: string) {
+  const r = await q<{
+    redeemed_at: string | null;
+    closed_at: string | null;
+    closed_by: string | null;
+    released_at: string | null;
+    expired_at: string | null;
+    declined_at: string | null;
+  }>(
+    `select to_char(redeemed_at,'YYYY-MM-DD"T"HH24:MI:SS.USOF') as redeemed_at,
+            to_char(closed_at,  'YYYY-MM-DD"T"HH24:MI:SS.USOF') as closed_at,
+            closed_by_practitioner_id::text                     as closed_by,
+            to_char(released_at,'YYYY-MM-DD"T"HH24:MI:SS.USOF') as released_at,
+            to_char(expired_at, 'YYYY-MM-DD"T"HH24:MI:SS.USOF') as expired_at,
+            to_char(declined_at,'YYYY-MM-DD"T"HH24:MI:SS.USOF') as declined_at
+       from ${IN_T} where entry_id = $1`,
+    [entryId],
+  );
+  expect(r, "expected exactly one invitation for this entry").toHaveLength(1);
+  return r[0];
+}
+
+/** Seats consumed in a round, read through the server's own gateway (0197). */
+const consumed = async (f: Fixture): Promise<number> =>
+  (
+    await q<{ c: number }>(
+      `select public.read_waitlist_admission_round_consumed($1,$2) as c`,
+      [f.studioId, f.roundId],
+    )
+  )[0].c;
+
+// ---------------------------------------------------------------------------
+describe("I — the dead end is real on THIS schema, and stays real", () => {
+  // THIS RUNS FIRST ON PURPOSE. Every other assertion in the file is only
+  // interesting if the four shipped exits genuinely refuse here. If one of them
+  // is ever relaxed, this goes red before anything else — which is the signal
+  // that the new command has become a second way to do an existing job.
+  it("release, expire, remove and requeue all refuse a redeemed, unbooked entry", async () => {
+    const f = await fixture("deadend");
+    const p = await redeemedUnbooked(f, "de");
+
+    const release = await q<{ r: string }>(
+      `select public.release_new_client_waitlist_entry($1,$2,$3) as r`,
+      [f.studioId, p.entryId, f.userId],
+    );
+    const expire = await q<{ r: string }>(
+      `select public.expire_new_client_waitlist_invitation($1,$2,$3) as r`,
+      [f.studioId, p.entryId, f.userId],
+    );
+    const remove = await q<{ r: string }>(
+      `select public.remove_new_client_waitlist_entry($1,$2,$3) as r`,
+      [f.studioId, p.entryId, f.userId],
+    );
+    const requeue = await q<{ r: string }>(
+      `select public.requeue_new_client_waitlist_entry($1,$2,$3) as r`,
+      [f.studioId, p.entryId, f.userId],
+    );
+
+    expect(release[0].r).toBe("already_redeemed");
+    expect(expire[0].r).toBe("already_redeemed");
+    expect(remove[0].r).toBe("release_required");
+    expect(requeue[0].r).toBe("not_requeueable");
+    expect(
+      await statusOf(p.entryId),
+      "one of the four exits moved the entry — the dead end has changed shape",
+    ).toBe("invited");
+  });
+
+  it("and no fresh invitation can be issued to move it either", async () => {
+    const f = await fixture("deadend2");
+    const p = await redeemedUnbooked(f, "de2");
+    const again = await q<{ result: string }>(
+      `select result from public.issue_new_client_waitlist_invitation($1,$2,$3,72)`,
+      [f.studioId, p.entryId, f.userId],
+    );
+    expect(again[0].result).not.toBe("issued");
+    expect(await statusOf(p.entryId)).toBe("invited");
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe("A — the exit itself", () => {
+  it("closes the cycle, releases the entry, and records who did it", async () => {
+    const f = await fixture("happy");
+    const p = await redeemedUnbooked(f, "h");
+    const before = await eventIdSet(p.entryId);
+    const redeemedAtBefore = (await inviteEvidence(p.entryId)).redeemed_at;
+
+    expect(await close(f, p.entryId)).toBe("closed");
+
+    expect(await statusOf(p.entryId)).toBe("released");
+
+    const ev = await inviteEvidence(p.entryId);
+    expect(ev.closed_at, "the cycle was not stamped closed").not.toBeNull();
+    expect(ev.closed_by, "the close has no actor").not.toBeNull();
+    // THE REDEMPTION IS PRESERVED, NOT OVERWRITTEN. The seat it consumed and the
+    // fact the prospect opened the link are both history, and history is not
+    // edited by an exit.
+    expect(ev.redeemed_at).toBe(redeemedAtBefore);
+    // NO SECOND TERMINAL OUTCOME. `..._one_outcome_check` permits at most one of
+    // redeemed / expired / released / declined, and this command writes none of
+    // them.
+    expect(ev.released_at).toBeNull();
+    expect(ev.expired_at).toBeNull();
+    expect(ev.declined_at).toBeNull();
+
+    // ONE CLOCK READ: the entry's release and the invitation's close are the
+    // same instant, compared by PostgreSQL at microsecond precision.
+    const entryReleased = await readStoredInstant(
+      `select released_at from ${EN_T} where id = $1`,
+      [p.entryId],
+    );
+    expect(
+      entryReleased,
+      "the entry and the invitation disagree about when the cycle was closed",
+    ).toBe(ev.closed_at);
+
+    // EXACTLY ONE lifecycle event, and it is the transition that was made.
+    await expectExactlyOneNewEvent(p.entryId, before, "invited", "released");
+  });
+
+  it("the actor recorded is the practitioner who acted, not the one who claimed", async () => {
+    const f = await fixture("actor");
+    const p = await redeemedUnbooked(f, "ac");
+    // A SECOND OWNER in the same studio. The entry's claim evidence points at
+    // the first; the close must point at whoever actually pressed it.
+    const second = await q<{ id: string; user_id: string }>(
+      `with u as (
+         insert into auth.users (id, email, aud, role)
+         values (gen_random_uuid(), 'second-' || $2 || '@harness.local', 'authenticated','authenticated')
+         returning id
+       )
+       insert into public.practitioners (studio_id, user_id, display_name, email, role, active)
+       select $1, u.id, 'Second Owner', 'second-' || $2 || '@harness.local', 'owner', true from u
+       returning id, user_id`,
+      [f.studioId, f.studioId.slice(0, 8)],
+    );
+
+    expect(await close(f, p.entryId, second[0].user_id)).toBe("closed");
+    expect((await inviteEvidence(p.entryId)).closed_by).toBe(second[0].id);
+  });
+
+  it("the token stays permanently unusable, as it already was", async () => {
+    const f = await fixture("token");
+    const p = await redeemedUnbooked(f, "tk");
+    expect(await close(f, p.entryId)).toBe("closed");
+    const again = await q<{ result: string }>(
+      `select result from public.redeem_new_client_waitlist_invitation($1)`,
+      [p.rawToken],
+    );
+    expect(again[0].result).toBe("invalid_token");
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe("B — redeemed AND booked cannot use this escape hatch", () => {
+  it("a converted entry answers already_booked and nothing is written", async () => {
+    const f = await fixture("booked");
+    const p = await redeemedUnbooked(f, "bk");
+    const client = await q<{ client_id: string }>(
+      `select * from public.find_or_create_client_for_booking($1,$2,'Prospect',null)`,
+      [f.studioId, p.email],
+    );
+    const booked = await q<{ result: string }>(BOOK, [
+      f.studioId,
+      client[0].client_id,
+      f.serviceId,
+      await legalSlot(f, 0),
+      tokenHash("bk"),
+      p.entryId,
+    ]);
+    expect(booked[0].result).toBe("created");
+    expect(await statusOf(p.entryId)).toBe("converted");
+
+    const before = await eventIdSet(p.entryId);
+    expect(await close(f, p.entryId)).toBe("already_booked");
+
+    expect(await statusOf(p.entryId)).toBe("converted");
+    expect((await inviteEvidence(p.entryId)).closed_at).toBeNull();
+    expect(await newEventsSince(p.entryId, before)).toHaveLength(0);
+  });
+
+  it("an appointment booked after redemption without a conversion refuses too", async () => {
+    // THE PRE-0195 SHAPE. Before the atomic command the flow was three
+    // transactions, and a process death between the appointment and the
+    // conversion left a durable appointment behind an entry still reading
+    // `invited`. Closing that would hide a real booking behind a released row.
+    const f = await fixture("stranded");
+    const p = await redeemedUnbooked(f, "st");
+    const client = await q<{ client_id: string }>(
+      `select * from public.find_or_create_client_for_booking($1,$2,'Prospect',null)`,
+      [f.studioId, p.email],
+    );
+    // The ORDINARY booking command — no waitlist entry, so no conversion is
+    // recorded and the entry stays exactly where it was.
+    const appt = await q<{ result: string }>(
+      `select * from public.create_public_appointment($1,$2,$3,$4::timestamptz,$5,null,null)`,
+      [f.studioId, client[0].client_id, f.serviceId, await legalSlot(f, 0), tokenHash("st")],
+    );
+    expect(appt[0].result).toBe("created");
+    expect(await statusOf(p.entryId)).toBe("invited");
+
+    expect(await close(f, p.entryId)).toBe("booking_exists");
+    expect((await inviteEvidence(p.entryId)).closed_at).toBeNull();
+
+    // AND THE REFUSAL IS NOT A NEW DEAD END. The command it points at accepts
+    // exactly this state.
+    const conv = await q<{ r: string }>(CONVERT, [f.studioId, p.entryId, client[0].client_id]);
+    expect(conv[0].r).toBe("converted");
+  });
+
+  it("a CANCELLED appointment strands nothing, so the exit still works", async () => {
+    const f = await fixture("cancelled");
+    const p = await redeemedUnbooked(f, "cx");
+    const client = await q<{ client_id: string }>(
+      `select * from public.find_or_create_client_for_booking($1,$2,'Prospect',null)`,
+      [f.studioId, p.email],
+    );
+    const appt = await q<{ result: string; appointment_id: string }>(
+      `select * from public.create_public_appointment($1,$2,$3,$4::timestamptz,$5,null,null)`,
+      [f.studioId, client[0].client_id, f.serviceId, await legalSlot(f, 0), tokenHash("cx")],
+    );
+    expect(appt[0].result).toBe("created");
+    await q(
+      `update public.appointments set status = 'cancelled', cancelled_at = now() where id = $1`,
+      [appt[0].appointment_id],
+    );
+    expect(await close(f, p.entryId)).toBe("closed");
+  });
+
+  it("an appointment from BEFORE this cycle's redemption does not block the exit", async () => {
+    // A prospect's unrelated history is not evidence about this invitation.
+    const f = await fixture("history");
+    const p = await invitedProspect(f, "hi");
+    const client = await q<{ client_id: string }>(
+      `select * from public.find_or_create_client_for_booking($1,$2,'Prospect',null)`,
+      [f.studioId, p.email],
+    );
+    const appt = await q<{ result: string }>(
+      `select * from public.create_public_appointment($1,$2,$3,$4::timestamptz,$5,null,null)`,
+      [f.studioId, client[0].client_id, f.serviceId, await legalSlot(f, 0), tokenHash("hi")],
+    );
+    expect(appt[0].result).toBe("created");
+    await redeem(p); // redemption happens AFTER the appointment was created
+    expect(await close(f, p.entryId)).toBe("closed");
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe("C — an unredeemed invitation does not use this escape hatch", () => {
+  it("answers not_redeemed, writes nothing, and leaves release working", async () => {
+    const f = await fixture("unredeemed");
+    const p = await invitedProspect(f, "un");
+    const before = await eventIdSet(p.entryId);
+
+    expect(await close(f, p.entryId)).toBe("not_redeemed");
+
+    expect(await statusOf(p.entryId)).toBe("invited");
+    const ev = await inviteEvidence(p.entryId);
+    expect(ev.closed_at).toBeNull();
+    expect(ev.redeemed_at).toBeNull();
+    expect(ev.released_at).toBeNull();
+    expect(await newEventsSince(p.entryId, before)).toHaveLength(0);
+
+    // THE COMMAND THAT OWNS THIS STATE IS UNCHANGED AND STILL WORKS.
+    const rel = await q<{ r: string }>(
+      `select public.release_new_client_waitlist_entry($1,$2,$3) as r`,
+      [f.studioId, p.entryId, f.userId],
+    );
+    expect(rel[0].r).toBe("released");
+  });
+
+  it("a waiting entry, never invited, answers not_invited", async () => {
+    const f = await fixture("waiting");
+    const e = await q<{ entry_id: string }>(
+      `select * from public.create_practitioner_waitlist_entry($1,$2,'Prospect',$3,null,null)`,
+      [f.studioId, f.userId, `w-${f.studioId.slice(0, 8)}@example.com`],
+    );
+    expect(await close(f, e[0].entry_id)).toBe("not_invited");
+    expect(await statusOf(e[0].entry_id)).toBe("waiting");
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe("D — a cross-studio or cross-entry request refuses", () => {
+  it("another studio's entry id is not found, and is not touched", async () => {
+    const mine = await fixture("tenant-a");
+    const theirs = await fixture("tenant-b");
+    const victim = await redeemedUnbooked(theirs, "vt");
+
+    // MY studio, MY owner, THEIR entry id.
+    const r = await q<{ r: string }>(CLOSE, [mine.studioId, victim.entryId, mine.userId]);
+    expect(r[0].r).toBe("not_found");
+
+    expect(await statusOf(victim.entryId)).toBe("invited");
+    expect((await inviteEvidence(victim.entryId)).closed_at).toBeNull();
+  });
+
+  it("an actor from another studio is not a member here", async () => {
+    const mine = await fixture("actor-a");
+    const theirs = await fixture("actor-b");
+    const p = await redeemedUnbooked(mine, "xa");
+
+    const r = await q<{ r: string }>(CLOSE, [mine.studioId, p.entryId, theirs.userId]);
+    expect(r[0].r).toBe("not_a_member");
+    expect(await statusOf(p.entryId)).toBe("invited");
+  });
+
+  it("a non-owner member of this studio is refused", async () => {
+    const f = await fixture("role");
+    const p = await redeemedUnbooked(f, "rl");
+    const member = await q<{ user_id: string }>(
+      `with u as (
+         insert into auth.users (id, email, aud, role)
+         values (gen_random_uuid(), 'member-' || $2 || '@harness.local','authenticated','authenticated')
+         returning id
+       )
+       insert into public.practitioners (studio_id, user_id, display_name, email, role, active)
+       select $1, u.id, 'Member', 'member-' || $2 || '@harness.local', 'practitioner', true from u
+       returning user_id`,
+      [f.studioId, f.studioId.slice(0, 8)],
+    );
+    const r = await q<{ r: string }>(CLOSE, [f.studioId, p.entryId, member[0].user_id]);
+    expect(r[0].r).toBe("not_owner");
+    expect(await statusOf(p.entryId)).toBe("invited");
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe("E — double submit is safe", () => {
+  it("the second call answers already_closed and changes nothing", async () => {
+    const f = await fixture("retry");
+    const p = await redeemedUnbooked(f, "rt");
+
+    expect(await close(f, p.entryId)).toBe("closed");
+    const afterFirst = await inviteEvidence(p.entryId);
+    const before = await eventIdSet(p.entryId);
+
+    expect(await close(f, p.entryId)).toBe("already_closed");
+    expect(await close(f, p.entryId)).toBe("already_closed");
+
+    expect(
+      await inviteEvidence(p.entryId),
+      "a retry rewrote the close it was supposed to recognise",
+    ).toEqual(afterFirst);
+    expect(await statusOf(p.entryId)).toBe("released");
+    expect(
+      await newEventsSince(p.entryId, before),
+      "a retry appended a second lifecycle event",
+    ).toHaveLength(0);
+  });
+
+  it("a release this command did NOT perform is not reported as its own retry", async () => {
+    // THE EXACT-INSTANT TEST, NEGATIVELY. An ordinary release also lands the
+    // entry in `released`; answering `already_closed` there would claim an act
+    // this command never performed.
+    const f = await fixture("foreign-release");
+    const p = await invitedProspect(f, "fr");
+    const rel = await q<{ r: string }>(
+      `select public.release_new_client_waitlist_entry($1,$2,$3) as r`,
+      [f.studioId, p.entryId, f.userId],
+    );
+    expect(rel[0].r).toBe("released");
+    expect(await close(f, p.entryId)).toBe("not_invited");
+  });
+
+  it("a LATER cycle's ordinary expiry is not reported as the earlier close", async () => {
+    // The ambiguity a naive "some invitation here was closed once" test would
+    // have: close -> requeue -> claim -> invite -> expire leaves a closed row
+    // behind an entry whose CURRENT cycle expired.
+    const f = await fixture("later-cycle");
+    const p = await redeemedUnbooked(f, "lc");
+    expect(await close(f, p.entryId)).toBe("closed");
+    expect(
+      (
+        await q<{ r: string }>(`select public.requeue_new_client_waitlist_entry($1,$2,$3) as r`, [
+          f.studioId,
+          p.entryId,
+          f.userId,
+        ])
+      )[0].r,
+    ).toBe("requeued");
+    expect(
+      (
+        await q<{ r: string }>(`select public.claim_new_client_waitlist_entry($1,$2,$3) as r`, [
+          f.studioId,
+          p.entryId,
+          f.userId,
+        ])
+      )[0].r,
+    ).toBe("claimed");
+    const issued = await q<{ result: string }>(
+      `select result from public.issue_new_client_waitlist_invitation($1,$2,$3,1)`,
+      [f.studioId, p.entryId, f.userId],
+    );
+    expect(issued[0].result).toBe("issued");
+
+    // The new cycle is LIVE and un-redeemed, so this command is not its owner.
+    expect(await close(f, p.entryId)).toBe("not_redeemed");
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe("F — a booking race cannot produce both a booking and an exit", () => {
+  it("exit first: the booking refuses and NO appointment commits", async () => {
+    const f = await fixture("race-exit");
+    const p = await redeemedUnbooked(f, "re");
+    const client = await q<{ client_id: string }>(
+      `select * from public.find_or_create_client_for_booking($1,$2,'Prospect',null)`,
+      [f.studioId, p.email],
+    );
+    const slot = await legalSlot(f, 0);
+
+    // SESSION 1 opens, takes the entry mutex by running the exit, and HOLDS the
+    // transaction open. Session 2's booking must then park on that lock.
+    const s1 = new Client({ connectionString: resolveLocalDbUrl() });
+    const s2 = new Client({ connectionString: resolveLocalDbUrl() });
+    await s1.connect();
+    await s2.connect();
+    try {
+      await s1.query("begin");
+      const exited = await s1.query(CLOSE, [f.studioId, p.entryId, f.userId]);
+      expect(exited.rows[0].r).toBe("closed");
+
+      const pid = (await s2.query("select pg_backend_pid() as pid")).rows[0].pid as number;
+      await s2.query("begin");
+      const booking = s2.query(BOOK, [
+        f.studioId,
+        client[0].client_id,
+        f.serviceId,
+        slot,
+        tokenHash("re"),
+        p.entryId,
+      ]);
+      await expectBlockedOn(pid, "the booking did not park on the entry mutex the exit holds");
+
+      await s1.query("commit");
+      const booked = await booking;
+      await s2.query("commit");
+
+      // The conversion could not find an `invited` entry, so 0195 raised its
+      // private WA002 and unwound the appointment inserts with it.
+      expect(booked.rows[0].result).not.toBe("created");
+    } finally {
+      await s1.query("rollback").catch(() => undefined);
+      await s2.query("rollback").catch(() => undefined);
+      await s1.end();
+      await s2.end();
+    }
+
+    expect(await statusOf(p.entryId)).toBe("released");
+    const appts = await q<{ c: number }>(
+      `select count(*)::int as c from public.appointments
+        where studio_id = $1 and client_id = $2 and status <> 'cancelled'`,
+      [f.studioId, client[0].client_id],
+    );
+    expect(appts[0].c, "an appointment survived a refused booking").toBe(0);
+  });
+
+  it("booking first: the exit refuses and the appointment stands", async () => {
+    const f = await fixture("race-book");
+    const p = await redeemedUnbooked(f, "rb");
+    const client = await q<{ client_id: string }>(
+      `select * from public.find_or_create_client_for_booking($1,$2,'Prospect',null)`,
+      [f.studioId, p.email],
+    );
+    const slot = await legalSlot(f, 0);
+
+    const s1 = new Client({ connectionString: resolveLocalDbUrl() });
+    const s2 = new Client({ connectionString: resolveLocalDbUrl() });
+    await s1.connect();
+    await s2.connect();
+    let closeResult: string | undefined;
+    try {
+      await s1.query("begin");
+      const booked = await s1.query(BOOK, [
+        f.studioId,
+        client[0].client_id,
+        f.serviceId,
+        slot,
+        tokenHash("rb"),
+        p.entryId,
+      ]);
+      expect(booked.rows[0].result).toBe("created");
+
+      const pid = (await s2.query("select pg_backend_pid() as pid")).rows[0].pid as number;
+      await s2.query("begin");
+      const exiting = s2.query(CLOSE, [f.studioId, p.entryId, f.userId]);
+      await expectBlockedOn(pid, "the exit did not park on the entry mutex the booking holds");
+
+      await s1.query("commit");
+      closeResult = (await exiting).rows[0].r as string;
+      await s2.query("commit");
+    } finally {
+      await s1.query("rollback").catch(() => undefined);
+      await s2.query("rollback").catch(() => undefined);
+      await s1.end();
+      await s2.end();
+    }
+
+    expect(closeResult).toBe("already_booked");
+    expect(await statusOf(p.entryId)).toBe("converted");
+    expect((await inviteEvidence(p.entryId)).closed_at).toBeNull();
+    const appts = await q<{ c: number }>(
+      `select count(*)::int as c from public.appointments
+        where studio_id = $1 and client_id = $2 and status <> 'cancelled'`,
+      [f.studioId, client[0].client_id],
+    );
+    expect(appts[0].c, "the committed appointment was lost").toBe(1);
+  });
+
+  it("two concurrent exits produce one close and one already_closed", async () => {
+    const f = await fixture("race-double");
+    const p = await redeemedUnbooked(f, "rd");
+
+    const s1 = new Client({ connectionString: resolveLocalDbUrl() });
+    const s2 = new Client({ connectionString: resolveLocalDbUrl() });
+    await s1.connect();
+    await s2.connect();
+    let first: string | undefined;
+    let second: string | undefined;
+    try {
+      await s1.query("begin");
+      first = (await s1.query(CLOSE, [f.studioId, p.entryId, f.userId])).rows[0].r as string;
+
+      const pid = (await s2.query("select pg_backend_pid() as pid")).rows[0].pid as number;
+      await s2.query("begin");
+      const other = s2.query(CLOSE, [f.studioId, p.entryId, f.userId]);
+      await expectBlockedOn(pid, "the second exit did not park on the entry mutex");
+
+      await s1.query("commit");
+      second = (await other).rows[0].r as string;
+      await s2.query("commit");
+    } finally {
+      await s1.query("rollback").catch(() => undefined);
+      await s2.query("rollback").catch(() => undefined);
+      await s1.end();
+      await s2.end();
+    }
+
+    expect([first, second].sort()).toEqual(["already_closed", "closed"]);
+    const events = await q<{ c: number }>(
+      `select count(*)::int as c from public.new_client_waitlist_entry_events
+        where entry_id = $1 and from_status = 'invited' and to_status = 'released'`,
+      [p.entryId],
+    );
+    expect(events[0].c, "two exits both moved the entry").toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe("G — the admission seat is not recycled, which is 0192's ruling", () => {
+  it("the round's consumed count is identical before and after the exit", async () => {
+    const f = await fixture("capacity");
+    const p = await redeemedUnbooked(f, "cp");
+    const before = await consumed(f);
+    expect(before, "redemption should already have spent a seat").toBe(1);
+
+    expect(await close(f, p.entryId)).toBe("closed");
+
+    expect(
+      await consumed(f),
+      "the exit recycled an admission seat — 0192 rules a redeemed seat is spent " +
+        "and is not recycled even when an appointment is later cancelled",
+    ).toBe(before);
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe("H — queue priority and provenance are not rewritten", () => {
+  it("joined_at, source and identity survive the exit, and requeue keeps the order", async () => {
+    const f = await fixture("order");
+    const first = await redeemedUnbooked(f, "o1");
+
+    const snapshot = async (entryId: string) =>
+      (
+        await q<Record<string, string>>(
+          `select to_char(joined_at,'YYYY-MM-DD"T"HH24:MI:SS.USOF') as joined_at,
+                  source, name, email, email_normalized
+             from ${EN_T} where id = $1`,
+          [entryId],
+        )
+      )[0];
+
+    const before = await snapshot(first.entryId);
+    expect(await close(f, first.entryId)).toBe("closed");
+    expect(
+      await snapshot(first.entryId),
+      "the exit rewrote provenance it does not own",
+    ).toEqual(before);
+
+    // And the ordinary return path still works from where the exit left them.
+    const requeued = await q<{ r: string }>(
+      `select public.requeue_new_client_waitlist_entry($1,$2,$3) as r`,
+      [f.studioId, first.entryId, f.userId],
+    );
+    expect(requeued[0].r).toBe("requeued");
+    expect(await snapshot(first.entryId)).toEqual(before);
+    expect(await statusOf(first.entryId)).toBe("waiting");
+  });
+
+  it("and remove is reachable afterwards, which it was not before", async () => {
+    const f = await fixture("removable");
+    const p = await redeemedUnbooked(f, "rm");
+    expect(await close(f, p.entryId)).toBe("closed");
+    const removed = await q<{ r: string }>(
+      `select public.remove_new_client_waitlist_entry($1,$2,$3) as r`,
+      [f.studioId, p.entryId, f.userId],
+    );
+    expect(removed[0].r).toBe("removed");
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe("J — the close record is evidence, and the command is service_role only", () => {
+  it("closed_at cannot be rewritten, cleared, or re-attributed", async () => {
+    const f = await fixture("appendonly");
+    const p = await redeemedUnbooked(f, "ap");
+    expect(await close(f, p.entryId)).toBe("closed");
+    const before = await inviteEvidence(p.entryId);
+
+    for (const sql of [
+      `update ${IN_T} set closed_at = now() where entry_id = $1`,
+      `update ${IN_T} set closed_at = null, closed_by_practitioner_id = null where entry_id = $1`,
+      `update ${IN_T} set closed_by_practitioner_id = gen_random_uuid() where entry_id = $1`,
+    ]) {
+      let code: string | undefined;
+      try {
+        await adminQuery(sql, [p.entryId]);
+      } catch (e) {
+        code = (e as { code?: string }).code;
+      }
+      expect(code, `an operator close was rewritable by: ${sql}`).toBeDefined();
+    }
+    expect(await inviteEvidence(p.entryId)).toEqual(before);
+  });
+
+  it("a close on an UNREDEEMED invitation is unrepresentable", async () => {
+    const f = await fixture("evidence");
+    const p = await invitedProspect(f, "ev");
+    let code: string | undefined;
+    try {
+      await adminQuery(
+        `update ${IN_T} set closed_at = now(), closed_by_practitioner_id =
+           (select id from public.practitioners where studio_id = $2 limit 1)
+          where entry_id = $1`,
+        [p.entryId, f.studioId],
+      );
+    } catch (e) {
+      code = (e as { code?: string }).code;
+    }
+    expect(code, "a live invitation could be closed without being redeemed").toBe("23514");
+  });
+
+  it("two open redeemed cycles per entry are unrepresentable", async () => {
+    const f = await fixture("unique");
+    const p = await redeemedUnbooked(f, "uq");
+    let code: string | undefined;
+    try {
+      await adminQuery(
+        `insert into ${IN_T} (studio_id, entry_id, token_hash, expires_at,
+                              issued_by_practitioner_id, redeemed_at)
+         select studio_id, entry_id, $2, now() + interval '1 hour',
+                issued_by_practitioner_id, now()
+           from ${IN_T} where entry_id = $1`,
+        [p.entryId, tokenHash("uq2")],
+      );
+      } catch (e) {
+      code = (e as { code?: string }).code;
+    }
+    expect(code, "a second open redeemed cycle was accepted").toBe("23505");
+  });
+
+  it("neither anon nor authenticated may execute the command", async () => {
+    for (const role of ["anon", "authenticated"] as const) {
+      const denied = await asRole(role, async (query) => {
+        try {
+          await query(CLOSE, [
+            "00000000-0000-0000-0000-000000000000",
+            "00000000-0000-0000-0000-000000000000",
+            "00000000-0000-0000-0000-000000000000",
+          ]);
+          return null;
+        } catch (e) {
+          return (e as { code?: string }).code ?? "unknown";
+        }
+      });
+      expect(denied, `${role} holds EXECUTE on the exit command`).toBe("42501");
+    }
+  });
+
+  it("service_role may execute it — the server path is not broken by the revokes", async () => {
+    const f = await fixture("grant");
+    const p = await redeemedUnbooked(f, "gr");
+    const result = await asRole("service_role", async (query) => {
+      const r = await query(CLOSE, [f.studioId, p.entryId, f.userId]);
+      return r.rows[0].r as string;
+    });
+    expect(result).toBe("closed");
+  });
+});

@@ -32,7 +32,7 @@ import {
 // at all. It reaches no server action, so it left with the WAIT-03 B4 prototype
 // to `feat/wait03-b4-admission-prototype` (draft PR #683) and is proved there.
 // Nothing below may import it; the assertion that ADMISSION_ACTIONS is exactly
-// the five wired commands is what keeps that from drifting back in silently.
+// the six wired commands is what keeps that from drifting back in silently.
 
 const MIGRATION = readFileSync(
   join(process.cwd(), "supabase/migrations/0188_new_client_waitlist_invitations.sql"),
@@ -77,17 +77,24 @@ describe("the vocabulary is the DATABASE's, derived not copied", () => {
 });
 
 describe("the model offers only actions a studio can actually perform", () => {
-  it("is exactly the five wired lifecycle commands", () => {
+  it("is exactly the six wired lifecycle commands", () => {
     // THE INVARIANT THE MODULE SPLIT EXISTS TO CREATE. Inviting mints a token
     // that must reach a real recipient, so it has no server action and cannot
     // be offered. Keeping it out of this list is what makes that unreachable
     // rather than merely unrendered.
+    //
+    // `close` (WAIT-P1-EXIT) joins the list because it satisfies the SAME bar
+    // and for the same reason: `close_unbooked_new_client_waitlist_invitation`
+    // ships in migration 0200 and reaches it through
+    // `closeUnbookedWaitlistInvitationAction`. An action that did not would not
+    // belong here.
     expect([...ADMISSION_ACTIONS]).toEqual([
       "claim",
       "expire",
       "release",
       "requeue",
       "remove",
+      "close",
     ]);
     for (const unwired of ["invite", "reinvite"]) {
       expect(ADMISSION_ACTIONS as ReadonlyArray<string>).not.toContain(unwired);
@@ -511,5 +518,120 @@ describe("the status sentence never contradicts the row's own controls", () => {
       if (s === "invited") continue;
       expect(statusMeaning(s, { invitationRedeemed: true }), s).toBe(STATUS_MEANING[s]);
     }
+  });
+});
+
+// ===========================================================================
+// WAIT-P1-EXIT — THE ONE CONTROL A REDEEMED-BUT-UNBOOKED ROW MAY OFFER
+// ===========================================================================
+//
+// THE DEAD END THIS CLOSES, stated as the model sees it. Redemption leaves the
+// entry at `invited`, and on that row release, expire, requeue and remove are
+// ALL withheld — correctly, because each of their commands can only refuse. So
+// before this action the surface rendered a row with no control at all and a
+// sentence saying it would stay there until a booking was recorded.
+// ===========================================================================
+
+const REDEEMED = { invitationRedeemed: true } as const;
+const LIVE = { invitationRedeemed: false } as const;
+const UNKNOWN = { invitationFactsUnknown: true } as const;
+
+describe("close — availability is the exact complement of release", () => {
+  it("the redeemed, invited row HAS a control now, and it is this one", () => {
+    // THE REGRESSION TEST FOR THE DEAD END ITSELF. If `close` ever stops being
+    // available here, the surface is back to offering nothing.
+    const offered = ADMISSION_ACTIONS.filter(
+      (a) => actionAvailability(a, "invited", REDEEMED).available,
+    );
+    expect(offered).toEqual(["close"]);
+  });
+
+  it("and on a LIVE invitation the model offers release, never close", () => {
+    expect(actionAvailability("close", "invited", LIVE).available).toBe(false);
+    expect(actionAvailability("release", "invited", LIVE).available).toBe(true);
+  });
+
+  it("release and close are never BOTH available on the same row", () => {
+    // They land the entry in the same state, so offering both would be two
+    // buttons for one outcome with different preconditions — exactly the "two
+    // names for one act" 0189 refused when it stopped expire serving as cancel.
+    for (const status of WAITLIST_ENTRY_STATUSES) {
+      for (const context of [REDEEMED, LIVE, UNKNOWN, {}]) {
+        const both =
+          actionAvailability("close", status, context).available &&
+          actionAvailability("release", status, context).available;
+        expect(both, `${status} offers both release and close`).toBe(false);
+      }
+    }
+  });
+
+  it("is withheld on every status except `invited`", () => {
+    for (const status of WAITLIST_ENTRY_STATUSES) {
+      if (status === "invited") continue;
+      const verdict = actionAvailability("close", status, REDEEMED);
+      expect(verdict.available, status).toBe(false);
+      expect(verdict.available === false && verdict.reason.length > 0, status).toBe(true);
+    }
+  });
+
+  it("FAILS CLOSED when the invitation could not be read", () => {
+    // Unknown is not "not redeemed". An unread invitation might never have been
+    // used, and the command answers `not_redeemed` for one that was not —
+    // offering a control that cannot succeed is what deriving availability from
+    // stored state exists to prevent.
+    const verdict = actionAvailability("close", "invited", {
+      invitationFactsUnknown: true,
+      invitationRedeemed: true,
+    });
+    expect(verdict.available).toBe(false);
+    expect(verdict.available === false && verdict.reason).toMatch(/could not be checked/i);
+  });
+
+  it("points an un-redeemed row at the control that row actually shows", () => {
+    // Naming "Release" would send an owner looking for a button that is not
+    // there: an `invited` row renders release as "Cancel invitation".
+    const verdict = actionAvailability("close", "invited", LIVE);
+    expect(verdict.available).toBe(false);
+    const reason = verdict.available === false ? verdict.reason : "";
+    expect(reason).toContain(actionLabel("release", "invited"));
+    expect(reason).not.toMatch(/\bRelease\b/);
+  });
+});
+
+describe("close — the label may only promise what the command delivers", () => {
+  it("lands the entry in `released`, and says so beside the button", () => {
+    // 0200: `set status = 'released', released_at = v_decision_at`.
+    expect(ACTION_RESULT_STATUS.close).toBe("released");
+    const help = actionHelp("close", "invited");
+    expect(help, "close has no consequence sentence").not.toBeNull();
+    expect(help).toMatch(/Released/);
+  });
+
+  it("never promises a return to the waitlist, which takes a second control", () => {
+    expect(ACTION_LABEL.close).not.toMatch(/waitlist/i);
+    expect(actionLabel("close", "invited")).toBe(ACTION_LABEL.close);
+    expect(ACTION_RESULT_STATUS.close).not.toBe("waiting");
+    expect(ACTION_RESULT_STATUS.requeue).toBe("waiting");
+  });
+
+  it("does not say `cancel`, because there is nothing left to cancel", () => {
+    // By the time this control appears the invitation has already been used.
+    expect(ACTION_LABEL.close.toLowerCase()).not.toContain("cancel");
+    expect(ACTION_LABEL.close).not.toBe(actionLabel("release", "invited"));
+  });
+});
+
+describe("close — the sentence beside it agrees with it", () => {
+  it("the redeemed status line no longer claims the entry is stuck", () => {
+    // It used to end "this entry stays here until the booking is recorded",
+    // which described the dead end as though it were the design.
+    const line = statusMeaning("invited", REDEEMED);
+    expect(line).toMatch(/been used/i);
+    expect(line).not.toMatch(/stays here/i);
+    expect(line).toMatch(/no booking has been recorded/i);
+  });
+
+  it("and it still says nothing about delivery, which the row cannot prove", () => {
+    expect(statusMeaning("invited", REDEEMED)).not.toMatch(/sent|arriv|deliver|email/i);
   });
 });

@@ -47,6 +47,7 @@ import { localLongDate } from "@/lib/booking/tz";
 // their commands — this surface simply no longer offers claiming. See the
 // CLAIMING IS INTERNAL note below.
 import {
+  closeUnbookedWaitlistInvitationAction,
   expireWaitlistInvitationAction,
   releaseWaitlistEntryAction,
   removeWaitlistEntryAction,
@@ -227,6 +228,9 @@ const ACTION_FORMS: Partial<
 > = {
   release: releaseWaitlistEntryAction,
   requeue: requeueWaitlistEntryAction,
+  // WAIT-P1-EXIT. The only control a redeemed-but-unbooked row can offer; the
+  // admission model decides when, and it is the exact complement of release.
+  close: closeUnbookedWaitlistInvitationAction,
 };
 
 function DenialCard({ children }: { children: React.ReactNode }) {
@@ -1029,7 +1033,20 @@ export default async function WaitlistSettingsPage({
                               transition, not a practitioner's job — the model
                               still rules on it and the command is untouched,
                               but nothing here asks for it. */}
-                          {(["release", "expire", "requeue"] as AdmissionAction[]).map(
+                          {(
+                            [
+                              "release",
+                              // WAIT-P1-EXIT. Listed immediately after release
+                              // because the two are mutually exclusive by
+                              // construction: release is withheld once the
+                              // invitation has been used and close is offered
+                              // only then, so an `invited` row shows exactly
+                              // one of them and never both.
+                              "close",
+                              "expire",
+                              "requeue",
+                            ] as AdmissionAction[]
+                          ).map(
                             (action) => {
                               const verdict = actionAvailability(action, row.status, {
                                 invitationElapsed: elapsed,

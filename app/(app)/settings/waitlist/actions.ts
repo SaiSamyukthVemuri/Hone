@@ -351,6 +351,65 @@ export async function requeueWaitlistEntryAction(formData: FormData): Promise<vo
   });
 }
 
+// --- CLOSE A USED INVITATION THAT NEVER BECAME A BOOKING ---------------------
+// WAIT-P1-EXIT, migration 0200:
+//   `closed` | `not_found` | `not_invited` | `not_redeemed` | `already_booked`
+//   | `booking_exists` | `already_closed` + owner codes.
+//
+// THIS IS THE ONE EXIT FROM THE STATE THE OTHER FOUR REFUSE. Redemption stamps
+// the invitation and LEAVES the entry at `invited`, so a prospect who opens
+// their link and never books sits in a position where release and expire both
+// answer `already_redeemed`, remove answers `release_required`, and requeue
+// answers `not_requeueable`. None of those commands is weakened to accommodate
+// it; this one acts only there.
+//
+// EVERY REFUSAL NAMES A COMMAND THAT WORKS, which is what stops this from
+// creating a second dead end:
+//   not_redeemed   -> Cancel invitation (release), or Record expired
+//   already_booked -> nothing to do; the booking is recorded
+//   booking_exists -> record the conversion instead; an appointment exists
+//   already_closed -> it is already done, and the row has already moved
+type CloseUnbookedInvitationResult =
+  | "closed"
+  | "not_found"
+  | "not_invited"
+  | "not_redeemed"
+  | "already_booked"
+  | "booking_exists"
+  | "already_closed"
+  | OwnerResolutionResult;
+
+const CLOSE_REFUSALS: Readonly<
+  Record<Exclude<CloseUnbookedInvitationResult, "closed" | "invalid_input">, string>
+> = {
+  not_found: "That waitlist entry no longer exists.",
+  not_invited: "There is no used invitation on that entry to close.",
+  not_redeemed:
+    "That invitation has not been used yet. Cancel it instead to end it early.",
+  already_booked: "They have already booked, so there is nothing to close.",
+  // NOT A GENERIC FAILURE. The command found an appointment booked after this
+  // invitation was opened, so closing the entry would hide a real booking
+  // behind a released row. Recording the conversion is the correct next step
+  // and the database accepts it from exactly this state.
+  booking_exists:
+    "There is already an appointment for this person from this invitation. Record the booking instead of closing it.",
+  already_closed: "That invitation has already been closed.",
+  ...AUTHORITY_REFUSALS,
+};
+
+export async function closeUnbookedWaitlistInvitationAction(
+  formData: FormData,
+): Promise<void> {
+  await runEntryLifecycleCommand({
+    rpc: "close_unbooked_new_client_waitlist_invitation",
+    entryId: requiredEntryId(formData),
+    successCode: "closed",
+    event: "waitlist_close_unbooked_failed",
+    refusals: CLOSE_REFUSALS,
+    genericError: "Could not close that invitation. Please try again.",
+  });
+}
+
 // --- CLAIM NEXT N ------------------------------------------------------------
 // 0189: `claim_new_client_waitlist_entries(p_studio_id, p_actor_user_id,
 // p_count)` returns TABLE (result text, entry_id uuid) — one row per claimed
