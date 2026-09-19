@@ -294,6 +294,17 @@ describe("UI-05: ESLint is the enforcement authority for native dialogs", () => 
         true,
       ],
       [
+        // The exact fixture named in the P2-02 thread at c110d9b2.
+        "declare global var window: Window & typeof globalThis -> BANNED",
+        'declare global { var window: Window & typeof globalThis }\nexport function r(){ return window.confirm("x"); }\nexport {};',
+        true,
+      ],
+      [
+        "same shape via self -> BANNED",
+        'declare global { var self: Window & typeof globalThis }\nexport function r(){ return self.confirm("x"); }\nexport {};',
+        true,
+      ],
+      [
         "local param self IN A FILE THAT ALSO HAS declare global -> LEGAL",
         'declare global { var self: { confirm: (m: string) => boolean } }\ntype D = { confirm: (m: string) => boolean };\nexport function q(self: D){ return self.confirm("x"); }\nexport {};',
         false,
