@@ -309,6 +309,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
       { column: "notes", reason: "pending_review", note: "General client note text." },
       { column: "created_by", reason: "pending_review", note: "Creator attribution; belongs with the wider actor-attribution export decision." },
       { column: "normalized_email", reason: "internal_state", note: "Generated from email, which is exported; a second copy carries no new fact." },
+      { column: "sms_phone", reason: "internal_state", note: "Generated from phone, which is exported; a second copy carries no new fact. Migration 0199 derives it so SMS eligibility is a fact the database owns rather than a predicate each caller re-invents." },
       { column: "archived_by", reason: "pending_review", note: "Archive attribution; see archived_at." },
     ],
     sourceCountCheck: { kind: "studio_scoped" },
