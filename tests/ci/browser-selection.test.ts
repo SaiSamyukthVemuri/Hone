@@ -121,7 +121,20 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     // viewports x three assertions, plus one motion check) at roughly 4-5s
     // each, so about 45s against a ~6 min target and a 15 min ceiling. The
     // margin is not the concern; the visibility is.
-    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(37);
+    //
+    // Now 38: SESSION-START-01's modality-acknowledgement proof joined
+    // `sessions` because /clients/[id]/sessions/new is a sessions route.
+    // RECORDED AS A DECISION, per the note above. Cost: EIGHT executed cases
+    // (seven test() declarations, one of which loops over desktop and 390px),
+    // at roughly 4-8s each — the three that hold the server action are the slow
+    // ones by design. That is well under a minute against a ~6 min target and a
+    // 15 min ceiling, so the margin is not the concern; the visibility is.
+    //
+    // The count was prose-only and said "three" through several revisions of
+    // this slice while the file already ran seven. A cost pin whose NUMBER is
+    // asserted and whose DESCRIPTION is not will drift exactly this way, so the
+    // description is now stated in terms a reader can check against the file.
+    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(38);
   });
 
   it("ONE unattributable app file forces extended, even when another file attributes a group", () => {
