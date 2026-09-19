@@ -122,6 +122,8 @@ beside them.
 | 1 | `components/ui/control-base.ts` — `CONTROL_MIN_TOUCH` (`inline-flex … min-h-[44px]`), `FOCUS_RING`, `CONTROL_COMPACT_FINE_POINTER` (`pointer-fine:min-h-8`) | LAW 6; **LAW 5 partially** — see below |
 | 2 | `components/ui/button.tsx` — `Button`, `buttonClasses`. `pending` is a **prop**: it disables the control, sets `aria-busy` and `data-pending`, and — **only when `busyLabel` is supplied** — swaps the visible label | LAW 4 |
 | 2b | `components/pending-button.tsx` — `PendingButton`, the **server-action leaf**: `useFormStatus()` + `type="submit"`, wrapping `Button`. **Omit `busyLabel`** for the geometry-stable spinner, which is the recommended default | LAW 4 |
+| 2c | `components/pending-link.tsx` — `PendingLink`, `PendingContainerLink`, the **navigation leaf**: `useLinkStatus()`, which must run inside the `<Link>` that owns the navigation. Correct wherever the control **survives its own activation** | LAW 4 |
+| 2d | **NAV-ACK-SHELL-HANDOFF** — the *transient-surface* case of 2c, and **bounded to `app/(app)/MobileMenu.tsx` + `app/(app)/GlobalSearch.tsx`**. Where a navigation control lives inside a panel that **intentionally unmounts on activation**, the acknowledgement is hosted on that **same surface's persistent retained root**, driven by a `useTransition()` that outlives the panel | LAW 4 |
 | 3 | `components/ui/section-label.tsx` — `SectionLabel` | LAW 1 |
 | 4 | `components/ui/status-pill.tsx` — `StatusPill`; primitive owns shape, caller owns meaning | LAW 9 |
 | 5 | `components/ui/field.tsx` | LAW 4, 6 |
@@ -132,7 +134,7 @@ beside them.
 | 9 | `pointer-fine:` for density; `focus-visible:` not `focus:`; `outline-hidden` not `outline-none` | LAW 3, 6 |
 | 10 | `dark:` is remapped to a `.dark` class that is never applied — automatic dark mode is **off by pilot decision** | LAW 16 |
 
-Two notes an agent will otherwise get wrong:
+Three notes an agent will otherwise get wrong:
 
 - **`--hone-duration-overlay` is declared and unspent.** It is reserved for the
   drawer/sheet primitive so overlay timing is decided once. Spend it; do not
@@ -144,6 +146,16 @@ Two notes an agent will otherwise get wrong:
   is a legitimate LAW 3 opt-in but means 44px is not universal even in height.
   **Do not read this row as "the touch floor is solved."** Closing the width half
   is the unresolved control-geometry debt — proposed as UX-04, not scheduled.
+- **2d is not a second mechanism, and must not become one.** It is 2c's
+  acknowledgement vocabulary — the same mark, the same always-mounted
+  `role="status"` region — relocated to the only host that still exists once the
+  panel has closed. `useLinkStatus` is a client hook that must run inside the
+  `<Link>` subtree, so on a surface that unmounts that subtree on activation,
+  2c can paint nothing at all: swapping in `PendingLink` there compiles, ships
+  and acknowledges **silently nothing**. 2d exists for exactly that case.
+  **Prefer 2c everywhere the control survives its own press**, and do not widen
+  2d beyond the two surfaces it names — a product-wide navigation vocabulary is
+  UX-03, which is not adopted.
 
 ---
 
@@ -200,9 +212,33 @@ It is stated **here rather than below** because the next section is defined as
 *not decided* — recording a decided item inside it would tell an agent both that
 UX-01 may proceed and that it may not.
 
-Nothing else in the UX programme is authorized. **UX-02 … UX-11 are PROPOSED and
-NOT SCHEDULED**, and MOTION-01 remains a **PILOT, not adopted**, with its
+Nothing else **in the UX programme** is authorized. **UX-02 … UX-11 are PROPOSED
+and NOT SCHEDULED**, and MOTION-01 remains a **PILOT, not adopted**, with its
 sequencing constraint intact.
+
+**NAV-ACK-01 is AUTHORIZED** — a **bounded LAW 4 repair**, by owner product
+ruling of 2026-09-18. It sits **outside** the UX programme and must not be
+re-recorded as part of it: UX-01's content does not reach these surfaces, which
+is precisely why it required a decision of its own.
+
+Its entire scope is:
+
+- `app/(app)/MobileMenu.tsx`
+- `app/(app)/GlobalSearch.tsx`
+- the minimum tests that prove it, and this bookkeeping
+
+Its mechanism is **contract 2d**, and the defect it repairs is specific: on both
+surfaces the activated control is inside a panel that **intentionally unmounts on
+activation**, so the acknowledgement had nowhere to live and the only visible
+change — the panel vanishing — was caused by the dismissal rather than by the
+navigation.
+
+**NAV-ACK-01 does NOT adopt UX-03 Navigation Identity**, which remains PROPOSED
+and NOT SCHEDULED. It creates **no product-wide navigation authority**: no global
+route-progress indicator, no shell-level navigation provider, no global
+navigation vocabulary, and no licence to convert the product's other links.
+Generalising this mechanism is UX-03's decision to make, and it has not been
+made.
 
 ---
 

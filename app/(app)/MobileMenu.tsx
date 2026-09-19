@@ -1,8 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { signOut } from "./dashboard/actions";
+import { cx, PRESS_TRANSITION } from "@/components/ui/control-base";
+import { spinnerClasses } from "@/components/ui/spinner";
 
 // PR #229: compact mobile menu, now a small client component instead
 // of PR #228's <details>/<summary>. The authenticated layout
@@ -56,20 +59,150 @@ export function MobileMenu({
 
   const close = () => setOpen(false);
 
+  // ---- NAV-ACK-01 · DESIGN.md contract 2d -----------------------------------
+  //
+  // WHY NOT `PendingLink` HERE. `useLinkStatus` must run inside the <Link> that
+  // owns the navigation (components/pending-link.tsx). The panel above is
+  // `{open && ...}` and every link closes it, so that subtree is unmounted by
+  // the same click that starts the navigation: contract 2c can paint nothing at
+  // all here, and would do so SILENTLY — it compiles and ships.
+  //
+  // So the acknowledgement is hosted on the trigger, which lives OUTSIDE the
+  // `open` guard and therefore survives. The panel still closes exactly as it
+  // did (the PR #229 contract above, including the current-page link).
+  //
+  // Deliberately spelled out here and in GlobalSearch rather than lifted into a
+  // shared primitive: a product-wide navigation vocabulary is UX-03, which is
+  // NOT adopted. Two named surfaces, two local copies, by decision.
+  const router = useRouter();
+  const [navPending, startNav] = useTransition();
+  const [navLabel, setNavLabel] = useState<string | null>(null);
+  const navLockRef = useRef(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+
+  // The lock is released on the pending EDGE, never by a timer. React settles a
+  // transition on success, on failure and on a same-route no-op alike, so there
+  // is no path that leaves the acknowledgement armed — which is what makes the
+  // current-page tap safe without predicting whether a route change will occur.
+  useEffect(() => {
+    if (!navPending) navLockRef.current = false;
+  }, [navPending]);
+
+  function navigate(
+    e: React.MouseEvent<HTMLAnchorElement>,
+    href: string,
+    label: string,
+  ) {
+    // Ordinary link semantics belong to the browser. Anything that is not a
+    // plain primary-button press — open in new tab/window, download, context
+    // menu — must reach the real `href` untouched. That is why these stay
+    // <Link>s with a real href and an intercepted click, and not buttons.
+    if (
+      e.defaultPrevented ||
+      e.button !== 0 ||
+      e.metaKey ||
+      e.ctrlKey ||
+      e.shiftKey ||
+      e.altKey
+    ) {
+      return;
+    }
+    // One navigation per activation. The panel unmounts on the first press, so
+    // the only way to press twice is a double-tap delivering two clicks before
+    // React commits — which `navPending` cannot catch, because it does not turn
+    // true until the next render. A ref can.
+    if (navLockRef.current) {
+      e.preventDefault();
+      return;
+    }
+    e.preventDefault();
+    setNavLabel(label);
+    close();
+    // Focus moves BEFORE the panel unmounts, so it is never left on a detached
+    // node and never falls to <body>. The trigger is always mounted.
+    triggerRef.current?.focus();
+    // THE CURRENT-PAGE TAP. React holds a transition pending until it COMMITS,
+    // and a push to the URL we are already on never produces one — measured:
+    // the mark stayed up for a full 30s timeout. That is exactly how a
+    // permanent busy state happens, so the no-op is detected by comparing the
+    // resolved target with the current location, which is exact rather than a
+    // guess about router behaviour.
+    //
+    // The panel still closes (the PR #229 contract), focus has already moved,
+    // and nothing is armed: there is no navigation to acknowledge, and painting
+    // progress for a navigation that is not happening is the thing PERF-UX-01
+    // forbids.
+    const target = new URL(href, window.location.href);
+    const samePage =
+      target.pathname === window.location.pathname &&
+      target.search === window.location.search;
+    // A HASH-ONLY CHANGE IS STILL A NAVIGATION. The navigation registry ships
+    // 34 anchored destinations (`/settings/booking#buffer`,
+    // `/settings/profile#calendar-feed`, …), so "already on this page" and
+    // "nothing to do" are NOT the same question. Comparing only pathname +
+    // search treats an anchor jump from the page it targets as a no-op and
+    // returns here — after preventDefault() — which closes the panel, never
+    // scrolls to the control and never updates the URL. The press would then
+    // do nothing at all, which is a worse LAW 4 failure than the silent
+    // acknowledgement this ticket exists to repair.
+    //
+    // It is pushed, but deliberately NOT armed: an in-page anchor jump commits
+    // synchronously, so there is no pending interval to acknowledge, and
+    // painting progress for it is exactly what PERF-UX-01 forbids. Arming it
+    // would also risk the permanent busy state described above, since a
+    // hash-only push need not produce a transition commit.
+    if (samePage && target.hash !== window.location.hash) {
+      router.push(href);
+      return;
+    }
+    if (samePage) {
+      return;
+    }
+    navLockRef.current = true;
+    startNav(() => {
+      router.push(href);
+    });
+  }
+
   return (
     // `lg:hidden`, matching the three header-mode classes in layout.tsx: the
     // compact shell owns every width below 1024px, where five primary items
     // plus search/bell/account could not fit on one line.
     <div ref={rootRef} className="relative lg:hidden">
       <button
+        ref={triggerRef}
         type="button"
         aria-label="Open navigation menu"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        className="flex min-h-[44px] cursor-pointer select-none items-center gap-2 rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium dark:border-neutral-700"
+        // `relative` is owned here: the mark is absolutely positioned so the
+        // trigger cannot change width mid-navigation.
+        className="relative flex min-h-[44px] cursor-pointer select-none items-center gap-2 rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium dark:border-neutral-700"
       >
-        Menu
+        {/* `opacity-0`, not `hidden`: the box is kept so the control cannot
+            resize, and the accessible name is `aria-label` above, so it does
+            not depend on this text either way. */}
+        <span className={cx(PRESS_TRANSITION, navPending && "opacity-0")}>
+          Menu
+        </span>
+        {navPending && (
+          <span
+            data-nav-pending="true"
+            aria-hidden="true"
+            className={cx(
+              "pointer-events-none absolute inset-0 m-auto",
+              spinnerClasses("sm"),
+            )}
+          />
+        )}
       </button>
+      {/* MOUNTED AT ALL TIMES, empty at rest; only the TEXT changes. A
+          role="status" inserted already containing its message is not reliably
+          announced. The mark above is aria-hidden, so this is the ONE voice —
+          no double announcement. */}
+      <span role="status" className="sr-only">
+        {navPending && navLabel ? `Opening ${navLabel}…` : ""}
+      </span>
       {open && (
         <nav
           aria-label="Mobile navigation"
@@ -119,7 +252,7 @@ export function MobileMenu({
             <Link
               key={item.href}
               href={item.href}
-              onClick={close}
+              onClick={(e) => navigate(e, item.href, item.label)}
               className="flex min-h-[44px] items-center rounded-md px-3 py-2 hover:bg-neutral-100 dark:hover:bg-neutral-900"
             >
               {item.label}
@@ -142,16 +275,49 @@ export function MobileMenu({
               <Link
                 key={item.href}
                 href={item.href}
-                onClick={close}
+                onClick={(e) => navigate(e, item.href, item.label)}
                 className="flex min-h-[44px] items-center rounded-md px-3 py-2 hover:bg-neutral-100 dark:hover:bg-neutral-900"
               >
                 {item.label}
               </Link>
             ))}
+            {/* SIGNOUT-01. There is deliberately NO onClick={close} on this
+                button, and its absence is load-bearing.
+
+                React flushes a discrete click update synchronously, so closing
+                the menu from this button's own handler detached the <form>
+                while the click was still propagating — before the submit
+                button's activation behaviour ran. The browser then cancelled
+                the submission against a disconnected form ("Form submission
+                canceled because the form is not connected"), so React's action
+                interception never fired and the Server Action never dispatched.
+                The panel vanished, which made the press LOOK like it worked,
+                while the session, the refresh token and the auth cookie all
+                stayed alive.
+
+                Nothing needs to close this menu. signOut() ends the session
+                server-side and redirects to /login, which replaces the whole
+                authenticated shell — this component with it. Let the real
+                logout remove the menu; do not race it.
+
+                The ordinary links above still dismiss the panel themselves,
+                because they navigate WITHIN the authenticated shell, which
+                persists. Since NAV-ACK-01 they do that inside navigate(),
+                which calls close() — but only AFTER preventDefault() has taken
+                the activation away from the browser, so the push is issued
+                programmatically and no longer depends on the <Link>'s own DOM
+                node surviving the click. That is precisely why unmounting a
+                link mid-click is safe here while unmounting this <form> was
+                not: a submit button's activation behaviour DOES depend on its
+                node still being connected. Do not "simplify" the two into one
+                rule.
+
+                Proved by e2e/signout-session-destruction.spec.ts on both
+                surfaces, pointer and keyboard; pinned in
+                tests/app/mobile-ux.test.ts. */}
             <form action={signOut}>
               <button
                 type="submit"
-                onClick={close}
                 className="flex min-h-[44px] w-full items-center rounded-md px-3 py-2 text-left hover:bg-neutral-100 dark:hover:bg-neutral-900"
               >
                 Sign out
