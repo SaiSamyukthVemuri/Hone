@@ -461,10 +461,10 @@ selling to additional studios · `Neither` = accepted, tracked, not blocking tod
 | **⚠️ CORRECTION 2026-09-19 — ACTIVATION WAS TAKEN** | The dated absence above was carried forward for three weeks as though it were a standing posture. It was not. A read-only hosted query on **2026-09-19** returned **31 rows**, **28 for `willow-electrolysis`** (27 `waiting`, 1 `removed`), oldest joined **2026-08-25T22:27Z**. Activation therefore occurred **on or before 2026-08-25** — a bound, not a timestamp. Established **structurally**: every row carries `source = 'public_booking'`, which 0193's CHECK constraints make exclusive to the public path, whose only caller runs only when **both** allowlists match. **The Sensitive allowlist value was not read, and none of this depends on reading it.** |
 | **What is actually open now** | **Not the disclosure, and not the activation — the GOVERNANCE RECORD of the activation.** Stage B2 required an explicit per-studio operator GO and a human activation smoke. **No release record, ledger entry or smoke result exists in this repository for either.** Whether they were performed off-repository is **not established and is not asserted either way**. Writing that record, or recording truthfully that it cannot be reconstructed, is the remaining work. |
 | **Second open item** | The public privacy policy covers the **three fields actually collected** (name, email, optional phone). It does **not** cover the profile fields WAIT-04B proposes. Those are not collected today, so the policy is currently correct; it becomes understated the moment WAIT-04B wires the join surface, which is why that policy edit must land in the **same change** as the collection. |
-| **What is NOT mitigated** | **Stage B2 — activation — is ungranted.** No studio has been enabled and no human activation smoke has been run. |
+| **What is NOT mitigated** | ⚠️ **CORRECTED 2026-09-19.** This row previously recorded Stage B2 activation as ungranted, with no studio enabled and no activation smoke run. **The first two of those are false** — activation was taken on or before 2026-08-25 and one studio is enabled, as the rows above record. What is NOT mitigated is the **missing governance record**: no release record, ledger entry or activation-smoke result exists in this repository, and whether a smoke was run off-repository is **not established and is not asserted either way**. |
 | **Owner** | Sam (engineering + release) · Product (activation GO) |
-| **Next gate** | **Stage B2**: explicit per-studio operator GO, then human activation smoke on that studio. |
-| **Blocks** | **Stage B2 only.** Neither Willow nor broader launch today — WAIT-01 is unaffected and remains live at Willow. **This limitation remains OPEN**, narrowed from disclosure to authorization. |
+| **Next gate** | **Write the activation record** — or record truthfully that it cannot be reconstructed. Stage B2's gate (explicit per-studio operator GO, then human activation smoke) was the gate *before* activation; activation has since happened, so the outstanding work is evidentiary, not permissive. |
+| **Blocks** | **Nothing operationally today** — the durable path is live at Willow and collecting. What it blocks is a clean launch record: a WAIT canary cannot cite an activation whose authorization is unevidenced. **This limitation remains OPEN**, narrowed twice — from disclosure, to authorization, and now to the RECORD of an authorization already exercised. |
 
 ## L26 — Four unresolved `ops_alerts` from failed live charge attempts
 
@@ -499,10 +499,15 @@ documentation, because no evidence supports them:
   wording:** whole-session copy *has* now been used in production 24 times (L2, CLOSED), and that
   is still not acceptance. Exercise and acceptance are independent, and only Chloe closes the
   second one.
-- Any claim that the durable new-client waitlist has been switched on, or is gathering prospect
-  data. It is **deployed and dormant**; its table held **0 rows** and no studio was enabled
-  **when last measured, 2026-08-23** (L25). Neither was re-measured after that date, so state
-  the dated evidence — not a present-tense zero.
+- ⚠️ **INVERTED 2026-09-19.** This bullet used to forbid claiming the durable new-client
+  waitlist had been switched on, and described it as deployed-and-dormant with an empty table.
+  **Production disproved that on 2026-08-25.** The bullet now forbids the opposite error: never
+  describe the durable new-client waitlist as dormant, dark or empty. It is **enabled for one studio
+  and gathering prospect data** — **31 rows, 28 of them Willow's, measured 2026-09-19** (L25).
+  The original lesson survives the inversion and is the reason this entry is rewritten rather
+  than deleted: **state the dated measurement, never a present-tense adjective.** A dated 31 is
+  no more a standing fact than a dated 0 was. And enabled is still not **exercised** — zero
+  invitations have ever been issued on that studio — nor **accepted**.
 - That real-customer activity figures include the Synthetic Twin. They do not, and an
   all-tenant total is never presented as a customer figure — see
   [current-state.md](./current-state.md) §0.

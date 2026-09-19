@@ -925,11 +925,32 @@ describe("canonical production docs: WAIT-02B's durable waitlist is recorded as 
       "current-state must record that the durable commit point is ACTIVATED for at least " +
         "one studio - production has been committing public waitlist joins since 2026-08-25",
     ).toMatch(/ACTIVATED/i);
+    // SCOPED TO THE SECTION, AND TO ITS DATE. Codex #740 P2: this previously
+    // scanned the WHOLE document for /[1-9]\d* rows/, and current-state.md
+    // carries several unrelated counts ("24 rows", "7 rows"). Every measured
+    // durable-waitlist number could have been deleted and this still passed on
+    // a sentence about something else entirely — a positive assertion that
+    // cannot detect loss of the evidence it names is not evidence of anything.
+    const stageA = cs.match(
+      /###\s+WAIT-02B Stage A[\s\S]*?(?=\n###\s|\n##\s|$)/,
+    )?.[0];
     expect(
-      cs,
-      "it must carry a measured, DATED row count rather than a bare adjective: a " +
-        "present-tense zero is exactly the defect this guard's previous polarity enforced",
+      stageA,
+      "current-state must still carry a WAIT-02B Stage A section for the durable-waitlist " +
+        "posture to live in",
+    ).toBeTruthy();
+    expect(
+      stageA,
+      "the Stage A section must carry a MEASURED, NON-ZERO row count. A bare adjective, or a " +
+        "count that lives somewhere else in the document, does not establish that production " +
+        "is collecting.",
     ).toMatch(/\b[1-9]\d*\s*rows\b/i);
+    expect(
+      stageA,
+      "...and the DATE it was measured, in the same section. A dated 31 is no more a standing " +
+        "fact than a dated 0 was; an undated count is the exact defect the previous polarity " +
+        "enforced, restated with the opposite number.",
+    ).toMatch(/\b20\d\d-\d\d-\d\d\b/);
   });
 
   it("no canonical doc still calls the durable waitlist dormant, dark or zero-rowed", () => {
@@ -940,8 +961,17 @@ describe("canonical production docs: WAIT-02B's durable waitlist is recorded as 
     const STALE: RegExp[] = [
       /durable[^.\n]{0,40}waitlist[^.\n]{0,40}\bis\s+(?:dormant|dark)\b/i,
       /\bNOT ENABLED anywhere\b/i,
-      /\bNo studio is enabled\b/i,
+      // EVERY CONJUGATION, not one. Codex #740 P2: the list previously held
+      // only "is enabled", so `known-limitations.md` sat green while its L25
+      // table still said "No studio HAS BEEN enabled" three rows below the
+      // correction that contradicted it. A stale-wording guard that matches one
+      // tense is a guard against one typo, not against the claim.
+      /\bNo studio (?:is|has been|was|had been) enabled\b/i,
       /\bWillow is\s+\*{0,2}not\s+enabled\*{0,2}/i,
+      // The activation-authorization claim, which is the same falsehood stated
+      // as a gate rather than as a count.
+      /activation\s+(?:—|-|--)?\s*is ungranted/i,
+      /Stage B2[^.\n]{0,40}\b(?:has not been granted|remains blocked|is ungranted)\b/i,
       /durable[^.\n]{0,60}\b0 rows\b/i,
     ];
     for (const [name, doc] of NO_CURRENT_MAX_DOCS) {

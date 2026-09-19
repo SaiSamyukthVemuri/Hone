@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import {
   fileForVersion,
@@ -15,7 +16,20 @@ import {
 
 const ROOT = path.resolve(__dirname, "../..");
 const VERSION = "0199";
-const SQL = readFileSync(path.join(ROOT, "supabase/migrations", fileForVersion(VERSION)), "utf8");
+const SQL_PATH = path.join(ROOT, "supabase/migrations", fileForVersion(VERSION));
+/** The RAW BYTES, not the decoded string: the digest below is over what was applied. */
+const SQL_BYTES = readFileSync(SQL_PATH);
+const SQL = SQL_BYTES.toString("utf8");
+
+/**
+ * The sha256 verified byte-for-byte immediately before the production write on
+ * 2026-09-18, from the reviewed #716 head `0b6e5f6f`.
+ *
+ * THIS IS THE FROZEN-HISTORY ANCHOR. 0199 is applied; its bytes are production
+ * truth and are never edited. Any correction is a NEW forward migration.
+ */
+const APPLIED_SHA256 =
+  "9561024b06311526ea04e91b81a006abd8dd92c89296cb761887e34a6d04fca5";
 /** Comment- and COMMENT ON-stripped, so prose can never satisfy an assertion. */
 const CODE = SQL.replace(/^\s*--.*$/gm, " ").replace(/comment on [\s\S]*?;/gi, " ");
 
@@ -55,14 +69,35 @@ describe("0199 position in the chain", () => {
     expect(state.repo_equals_hosted).toBe(true);
   });
 
+  it("THE FILE STILL HASHES TO THE APPLIED BYTES", () => {
+    // P1, Codex #740. The assertion below this one only proved that the expected
+    // checksum LITERAL appears in the ledger — a statement about prose, not about
+    // this file. Every structural regex in the rest of this suite is satisfiable
+    // by a file whose bytes have drifted from production, and a comment-only edit
+    // changes the digest while leaving all of them green.
+    //
+    // So the digest is COMPUTED here, over the raw bytes, and compared with the
+    // value verified immediately before the production write. This is the only
+    // assertion in the repository that can catch an edit to an applied migration.
+    //
+    // IF THIS GOES RED, DO NOT UPDATE THE CONSTANT. The file was edited and must
+    // be restored; applied history is frozen and any repair is a NEW migration.
+    expect(
+      createHash("sha256").update(SQL_BYTES).digest("hex"),
+      `${fileForVersion(VERSION)} no longer hashes to the bytes applied to ` +
+        `production on 2026-09-18. Applied migrations are FROZEN: restore the ` +
+        `file, and put any correction in a new forward migration.`,
+    ).toBe(APPLIED_SHA256);
+  });
+
   it("is recorded in the ledger's CURRENT block under its COMPLETE sha256, as APPLIED", () => {
     // A truncated or mis-transcribed hash is not a record — the 0197 apply was
     // refused once for exactly that. The equality claim and the current block
     // move together, so this assertion moved off 0198 with it.
     const ledger = readFileSync(path.join(ROOT, "docs/production/migration-ledger.md"), "utf8");
-    expect(ledger, "the ledger must carry 0199's COMPLETE sha256").toContain(
-      "9561024b06311526ea04e91b81a006abd8dd92c89296cb761887e34a6d04fca5",
-    );
+    // ONE literal, shared with the digest check above, so the record and the
+    // bytes can never be updated independently of each other.
+    expect(ledger, "the ledger must carry 0199's COMPLETE sha256").toContain(APPLIED_SHA256);
     expect(ledger, "the ledger's current block must record 0199 as APPLIED").toMatch(
       // Anchored by SECTION, not by a character count: the match must sit between
       // "## Current state" and the first "## Previous state", so a future apply
