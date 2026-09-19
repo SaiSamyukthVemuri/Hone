@@ -3,9 +3,11 @@
 import { useMemo, useState, useTransition } from "react";
 
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import type { PortalMessageForPractitioner } from "@/lib/portal-messages/queries";
 import type { PortalMessageReplyForPractitioner } from "@/lib/portal-messages/replies-queries";
 import { FormattedDateTime } from "@/components/formatted-date-time";
+import { useReturnFocus } from "@/components/use-return-focus";
 
 const SUBJECT_MAX = 160;
 const BODY_MAX = 5000;
@@ -87,6 +89,16 @@ export function PortalMessagesCard({
   const [pending, startTransition] = useTransition();
   const [archivePending, startArchiveTransition] = useTransition();
   const [archiveError, setArchiveError] = useState<string | null>(null);
+  // WHICH message the confirmation is for. A native confirm() carried this
+  // implicitly in its call stack; a mounted dialog has to be told.
+  const [archiveTarget, setArchiveTarget] = useState<string | null>(null);
+
+  // The destructive-action focus contract, shared with the tags card and the
+  // schedule editor. See components/use-return-focus.ts: the opener here is
+  // the row's Archive button, and a successful archive moves the row into the
+  // archived list, which renders `onArchive={null}`.
+  const { anchorRef: headingRef, arm: armHeadingFocus } =
+    useReturnFocus<HTMLHeadingElement>(archiveTarget);
 
   function submit() {
     const trimSubject = subject.trim();
@@ -124,17 +136,34 @@ export function PortalMessagesCard({
     });
   }
 
+  // UI-05. This was `window.confirm()`. confirm-dialog.tsx records why that is
+  // a correctness problem rather than a cosmetic one: iOS Safari can SUPPRESS a
+  // native confirm silently, and when it does the guard returns false and the
+  // archive never happens — a practitioner taps Archive, sees nothing, and
+  // cannot tell refusal from being ignored. This message is visible to a
+  // CLIENT, so "did that actually archive?" is a question with real stakes.
+  //
+  // The mutation is untouched and still owned here. The dialog adds what a
+  // native one cannot: role="alertdialog", a focus trap, focus restored to the
+  // opener, Escape that closes only while idle so an in-flight archive is never
+  // abandoned, and an error region that keeps the dialog open to be read.
   function archive(messageId: string) {
-    if (!window.confirm("Archive this message? The client will no longer see it.")) {
-      return;
-    }
+    setArchiveError(null);
+    setArchiveTarget(messageId);
+  }
+
+  function runArchive() {
+    if (!archiveTarget) return;
     const fd = new FormData();
     fd.set("client_id", clientId);
-    fd.set("message_id", messageId);
+    fd.set("message_id", archiveTarget);
     setArchiveError(null);
     startArchiveTransition(async () => {
       const r = await archiveAction(fd);
-      if (!r.ok) {
+      if (r.ok) {
+        armHeadingFocus();
+        setArchiveTarget(null);
+      } else {
         setArchiveError(r.error);
       }
     });
@@ -147,7 +176,13 @@ export function PortalMessagesCard({
     <section className="flex flex-col gap-4 rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-500">
+          <h2
+            ref={headingRef}
+            // Programmatic focus target only: -1 keeps it out of the Tab order,
+            // and `outline-hidden` (not `outline-none`) per DESIGN.md LAW 3/6.
+            tabIndex={-1}
+            className="text-sm font-medium uppercase tracking-wider text-neutral-500 outline-hidden"
+          >
             Portal messages
             {unseenReplyCount > 0 && (
               <span
@@ -266,11 +301,32 @@ export function PortalMessagesCard({
         </div>
       )}
 
-      {archiveError && (
+      {/* `!archiveTarget` so a failure is not rendered twice — the dialog owns
+          the message while open, this card owns it afterwards. */}
+      {archiveError && !archiveTarget && (
         <p className="text-xs text-red-700 dark:text-red-400" role="alert">
           {archiveError}
         </p>
       )}
+
+      {/* One dialog for the card, driven by WHICH message is targeted, rather
+          than one per row: only ever one confirmation is open, and a row that
+          disappears on success cannot take its own open dialog with it. */}
+      <ConfirmDialog
+        open={archiveTarget !== null}
+        title="Archive this message?"
+        description="The client will no longer see it in their portal. Replies already sent are not deleted."
+        confirmLabel="Archive message"
+        busyLabel="Archiving…"
+        tone="danger"
+        pending={archivePending}
+        error={archiveTarget ? archiveError : null}
+        onConfirm={runArchive}
+        onCancel={() => {
+          setArchiveTarget(null);
+          setArchiveError(null);
+        }}
+      />
 
       {activeMessages.length === 0 && archivedMessages.length === 0 ? (
         <p className="text-xs italic text-neutral-500">
