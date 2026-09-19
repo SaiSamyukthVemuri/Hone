@@ -149,7 +149,9 @@ export default async function SessionDetailPage({
       getRecentEntryForClient(studio.id, id, session.modality),
     ),
     session.modality === "laser"
-      ? getLaserTreatmentCountsForClient(studio.id, id)
+      ? timed("session-chart.treatment-counts", () =>
+          getLaserTreatmentCountsForClient(studio.id, id),
+        )
       : Promise.resolve({} as Awaited<ReturnType<typeof getLaserTreatmentCountsForClient>>),
     timed("session-chart.audit", () => getSessionAudit(session.id)),
     timed("session-chart.tags", () => getClientTags(studio.id, id)),
@@ -167,7 +169,9 @@ export default async function SessionDetailPage({
       }),
     ),
     linkedAppointmentId
-      ? getAppointmentSettlements(studio.id, [linkedAppointmentId])
+      ? timed("session-chart.settlements", () =>
+          getAppointmentSettlements(studio.id, [linkedAppointmentId]),
+        )
       : Promise.resolve(null),
   ]);
 

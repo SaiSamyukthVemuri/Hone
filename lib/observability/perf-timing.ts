@@ -123,6 +123,13 @@ export const PERF_SPAN_IDS = [
   "session-chart.clinical-notes",
   "session-chart.payment-eligibility",
   "session-chart.payment-amount",
+  // Both of these are CONDITIONAL reads inside the wave — laser-only, and
+  // linked-appointment-only. They were the two the first instrumentation pass
+  // missed entirely, and then the two left untimed when the wave was built, so
+  // the "slowest individual read" evidence covered 6 of 8. A conditional read is
+  // exactly the kind that regresses unnoticed.
+  "session-chart.treatment-counts",
+  "session-chart.settlements",
   "session-chart.appointment",
   "session-chart.plans",
   "session-chart.previous-note",

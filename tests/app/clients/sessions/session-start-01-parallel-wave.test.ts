@@ -89,16 +89,42 @@ describe("SESSION-START-01 2A: the eight independent reads are issued together",
 
   it("each read keeps its own span, so a regression stays attributable", () => {
     const wave = waveBlock();
+    // ALL EIGHT, not the six that are unconditional.
+    //
+    // This list held six while the wave held eight, so the two CONDITIONAL
+    // reads — laser-only treatment counts, linked-appointment-only settlements
+    // — ran inside the advertised wave with no span of their own. The source
+    // comment claimed "each read keeps its own timed() span" and this guard was
+    // supposed to hold it to that; enumerating a subset made the guard agree
+    // with the comment while both were wrong, and the measured "slowest
+    // individual read" evidence covered 6 of 8.
+    //
+    // A conditional read is exactly the kind that regresses unnoticed, because
+    // it is absent from the common path a reader checks.
     for (const span of [
       "session-chart.recent-entry",
+      "session-chart.treatment-counts",
       "session-chart.audit",
       "session-chart.tags",
       "session-chart.clinical-notes",
       "session-chart.payment-eligibility",
       "session-chart.payment-amount",
+      "session-chart.settlements",
     ]) {
       expect(wave).toContain(span);
     }
+  });
+
+  it("NEGATIVE CONTROL: the span list above is not a subset of the wave", () => {
+    // The previous version of this guard passed while missing two reads, so the
+    // guard now proves it enumerates EVERY element rather than merely some.
+    // One timed() call per element, and the count is read from the wave itself.
+    const wave = waveBlock();
+    const timedSpans = [...wave.matchAll(/timed\(\s*"([^"]+)"/g)].map((m) => m[1]);
+    expect(
+      new Set(timedSpans).size,
+      `every element of the wave must carry its own span — saw ${timedSpans.join(", ")}`,
+    ).toBe(8);
   });
 });
 
