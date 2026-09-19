@@ -1,4 +1,9 @@
 import Link from "next/link";
+// RESP-CLIENT-INTAKE-01. Only the back control was in the measured slice; the
+// "view current intake" and "assisted intake" links below stay bare <Link> on
+// purpose — they were not measured, and converting them would be exactly the
+// blanket adoption this slice is scoped against.
+import { PendingLink } from "@/components/pending-link";
 import { notFound } from "next/navigation";
 import {
   getCurrentPractitionerWithStudio,
@@ -187,12 +192,15 @@ export default async function ClientIntakePage({
   if (!intake) {
     return (
       <div className="flex flex-col gap-6">
-        <Link
+        {/* RESP-CLIENT-INTAKE-01 (1 of 2 — the no-intake branch). Both branches
+            render the same back control and must acknowledge identically. */}
+        <PendingLink
           href={`/clients/${id}`}
+          pendingLabel="Opening client…"
           className="text-sm text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
         >
           ← {client.name}
-        </Link>
+        </PendingLink>
         <h1 className="text-3xl font-semibold tracking-tight">Health intake</h1>
         <p className="text-sm text-neutral-600">
           No intake on file for this client. An intake link is sent
@@ -235,12 +243,14 @@ export default async function ClientIntakePage({
   return (
     <div className="flex flex-col gap-8">
       <div className="flex flex-col gap-2">
-        <Link
+        {/* RESP-CLIENT-INTAKE-01 (2 of 2 — the normal branch). */}
+        <PendingLink
           href={`/clients/${id}`}
+          pendingLabel="Opening client…"
           className="text-sm text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
         >
           ← {client.name}
-        </Link>
+        </PendingLink>
         <h1 className="text-3xl font-semibold tracking-tight">Health intake</h1>
         <p className="text-sm text-neutral-500">
           {intake.status === "in_progress" && (
