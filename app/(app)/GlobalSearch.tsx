@@ -137,10 +137,29 @@ export function GlobalSearch({ variant }: { variant: "desktop" | "mobile" }) {
     // progress for a navigation that is not happening is the thing PERF-UX-01
     // forbids.
     const target = new URL(href, window.location.href);
-    if (
+    const samePage =
       target.pathname === window.location.pathname &&
-      target.search === window.location.search
-    ) {
+      target.search === window.location.search;
+    // A HASH-ONLY CHANGE IS STILL A NAVIGATION. The navigation registry ships
+    // 34 anchored destinations (`/settings/booking#buffer`,
+    // `/settings/profile#calendar-feed`, …), so "already on this page" and
+    // "nothing to do" are NOT the same question. Comparing only pathname +
+    // search treats an anchor jump from the page it targets as a no-op and
+    // returns here — after preventDefault() — which closes the panel, never
+    // scrolls to the control and never updates the URL. The press would then
+    // do nothing at all, which is a worse LAW 4 failure than the silent
+    // acknowledgement this ticket exists to repair.
+    //
+    // It is pushed, but deliberately NOT armed: an in-page anchor jump commits
+    // synchronously, so there is no pending interval to acknowledge, and
+    // painting progress for it is exactly what PERF-UX-01 forbids. Arming it
+    // would also risk the permanent busy state described above, since a
+    // hash-only push need not produce a transition commit.
+    if (samePage && target.hash !== window.location.hash) {
+      router.push(href);
+      return;
+    }
+    if (samePage) {
       return;
     }
     navLockRef.current = true;

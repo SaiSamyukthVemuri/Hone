@@ -1279,3 +1279,53 @@ test.describe("NAV-ACK-01 GlobalSearch — desktop", () => {
     await expect(shellAcknowledgement(page)).toHaveCount(0);
   });
 });
+
+// NAV-ACK-01 · the anchored destination, on the page it targets.
+//
+// Codex P2 on #731. lib/search/navigation-registry.ts ships 34 anchored
+// entries, so "already on this pathname" does NOT mean "nothing to do". The
+// same-route guard runs AFTER preventDefault(), so treating an anchor jump as
+// a no-op made the press do literally nothing: panel closed, no scroll, no URL
+// change. This is the browser proof that it navigates — and, just as
+// deliberately, that it is NOT acknowledged, because an in-page jump commits
+// synchronously and has no pending interval to paint.
+test.describe("NAV-ACK-01 GlobalSearch anchor — desktop", () => {
+  test("an anchor on the CURRENT page still moves, and fabricates no progress", async ({
+    page,
+  }) => {
+    const seed = await seedE2eStudio();
+    await loginAsOwner(page, seed);
+
+    await page.goto("/settings/booking");
+    await expect(page).toHaveURL(/\/settings\/booking$/, { timeout: T });
+
+    const field = page.getByRole("searchbox", { name: "Search Hone" });
+    await expect(field).toBeVisible({ timeout: T });
+    await field.fill("buffer");
+
+    const result = page
+      .getByRole("link", { name: /Time between appointments/ })
+      .first();
+    await expect(result).toBeVisible({ timeout: T });
+    await result.click();
+
+    // THE REGRESSION, as a user would meet it: the URL must carry the anchor.
+    await expect(page).toHaveURL(/\/settings\/booking#buffer$/, { timeout: T });
+
+    // The panel still closes, exactly as for any other activation.
+    await expect(field).toHaveValue("");
+
+    // And nothing is armed — there is no navigation interval to acknowledge.
+    await expect(shellAcknowledgement(page)).toHaveCount(0);
+
+    // The control the entry names is actually on screen.
+    const anchored = page.locator("#buffer");
+    await expect(anchored).toBeVisible({ timeout: T });
+    expect(
+      await anchored.evaluate((el) => {
+        const r = el.getBoundingClientRect();
+        return r.top >= 0 && r.top <= window.innerHeight;
+      }),
+    ).toBe(true);
+  });
+});

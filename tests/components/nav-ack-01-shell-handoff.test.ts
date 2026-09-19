@@ -183,6 +183,41 @@ describe("NAV-ACK-01 · ordinary link semantics survive", () => {
       expect(lockAt).toBeGreaterThan(sameRouteAt);
     });
 
+    it(`${name}: an anchor on the CURRENT page still navigates, and is not armed`, () => {
+      const code = codeOnly(read(rel));
+      // Codex P2 on #731. lib/search/navigation-registry.ts ships 34 anchored
+      // destinations, so "same pathname + search" does NOT imply "nothing to
+      // do". Selecting /settings/booking#buffer while already on
+      // /settings/booking must still scroll to the control and update the URL
+      // — this path runs AFTER preventDefault(), so returning early makes the
+      // press do literally nothing.
+      expect(
+        code,
+        `${name}: the hash must take part in the no-op decision`,
+      ).toContain("target.hash !== window.location.hash");
+
+      const body = code.slice(code.indexOf("function navigate"));
+      const hashAt = body.indexOf("target.hash !== window.location.hash");
+      const lockAt = body.indexOf("navLockRef.current = true");
+      expect(hashAt).toBeGreaterThan(-1);
+      // Pushed, but NOT armed: an in-page anchor jump commits synchronously,
+      // so there is no pending interval to acknowledge and arming it could
+      // strand the mark exactly as a same-route push once did.
+      expect(
+        lockAt,
+        `${name}: the hash-only push must be issued before anything is armed`,
+      ).toBeGreaterThan(hashAt);
+      const hashBranch = body.slice(hashAt, lockAt);
+      expect(
+        hashBranch,
+        `${name}: the hash-only branch must push`,
+      ).toContain("router.push(href)");
+      expect(
+        hashBranch,
+        `${name}: the hash-only branch must not arm the acknowledgement`,
+      ).not.toContain("startNav(");
+    });
+
     it(`${name}: focus is moved to a persistent control before the panel unmounts`, () => {
       const code = codeOnly(read(rel));
       expect(code).toMatch(/\.focus\(\)/);
