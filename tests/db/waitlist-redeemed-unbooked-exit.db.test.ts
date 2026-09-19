@@ -354,11 +354,17 @@ describe("B — redeemed AND booked cannot use this escape hatch", () => {
     expect(await newEventsSince(p.entryId, before)).toHaveLength(0);
   });
 
-  it("an appointment booked after redemption without a conversion refuses too", async () => {
+  it("an appointment stranded by the pre-0195 flow is RECORDED, not refused over", async () => {
     // THE PRE-0195 SHAPE. Before the atomic command the flow was three
     // transactions, and a process death between the appointment and the
     // conversion left a durable appointment behind an entry still reading
-    // `invited`. Closing that would hide a real booking behind a released row.
+    // `invited`.
+    //
+    // THE FIRST REVISION REFUSED HERE, with `booking_exists`, and told the
+    // operator to record the booking instead — an operation NOTHING in the
+    // product invokes. The entry stayed `invited`, pressing Close again
+    // returned the same refusal, and the dead end came back wearing a different
+    // word. The repair is performed here instead.
     const f = await fixture("stranded");
     const p = await redeemedUnbooked(f, "st");
     const client = await q<{ client_id: string }>(
@@ -367,23 +373,75 @@ describe("B — redeemed AND booked cannot use this escape hatch", () => {
     );
     // The ORDINARY booking command — no waitlist entry, so no conversion is
     // recorded and the entry stays exactly where it was.
-    const appt = await q<{ result: string }>(
+    const appt = await q<{ result: string; appointment_id: string }>(
       `select * from public.create_public_appointment($1,$2,$3,$4::timestamptz,$5,null,null)`,
       [f.studioId, client[0].client_id, f.serviceId, await legalSlot(f, 0), tokenHash()],
     );
     expect(appt[0].result).toBe("created");
     expect(await statusOf(p.entryId)).toBe("invited");
 
-    expect(await close(f, p.entryId)).toBe("booking_exists");
-    expect((await inviteEvidence(p.entryId)).closed_at).toBeNull();
+    const before = await eventIdSet(p.entryId);
+    expect(await close(f, p.entryId)).toBe("converted_instead");
 
-    // AND THE REFUSAL IS NOT A NEW DEAD END. The command it points at accepts
-    // exactly this state.
-    const conv = await q<{ r: string }>(CONVERT, [f.studioId, p.entryId, client[0].client_id]);
-    expect(conv[0].r).toBe("converted");
+    // THE TRUTH IS RECORDED, and it is the conversion — not a close.
+    expect(await statusOf(p.entryId)).toBe("converted");
+    const entry = await q<{ converted_client_id: string | null; converted_at: string | null }>(
+      `select converted_client_id::text, converted_at::text from ${EN_T} where id = $1`,
+      [p.entryId],
+    );
+    expect(entry[0].converted_client_id).toBe(client[0].client_id);
+    expect(entry[0].converted_at).not.toBeNull();
+
+    // THE CYCLE IS NOT STAMPED CLOSED. It ended in a conversion, and `closed_at`
+    // means an operator close.
+    const ev = await inviteEvidence(p.entryId);
+    expect(ev.closed_at, "a conversion was recorded as an operator close").toBeNull();
+    expect(ev.redeemed_at).not.toBeNull();
+    expect(ev.released_at).toBeNull();
+
+    // ONE lifecycle event, and it is the transition that was made.
+    await expectExactlyOneNewEvent(p.entryId, before, "invited", "converted");
+
+    // THE APPOINTMENT STANDS — nothing was rolled back to make this tidy.
+    const appts = await q<{ c: number }>(
+      `select count(*)::int as c from public.appointments
+        where id = $1 and status <> 'cancelled'`,
+      [appt[0].appointment_id],
+    );
+    expect(appts[0].c).toBe(1);
+
+    // AND THE ROW IS NO LONGER STUCK: a retry says so rather than repeating.
+    expect(await close(f, p.entryId)).toBe("already_booked");
   });
 
-  it("a CANCELLED appointment strands nothing, so the exit still works", async () => {
+  it("the repair binds to the entry's OWN recipient, never to a neighbour", async () => {
+    // The conversion target is resolved on the same recipient binding 0195
+    // enforces — the entry's normalised address — so another client's
+    // appointment in the same studio cannot pull this prospect into a booking
+    // that is not theirs.
+    const f = await fixture("neighbour");
+    const p = await redeemedUnbooked(f, "nb");
+    const other = await q<{ client_id: string }>(
+      `select * from public.find_or_create_client_for_booking($1,$2,'Someone Else',null)`,
+      [f.studioId, `other-${f.studioId.slice(0, 8)}@example.com`],
+    );
+    const appt = await q<{ result: string }>(
+      `select * from public.create_public_appointment($1,$2,$3,$4::timestamptz,$5,null,null)`,
+      [f.studioId, other[0].client_id, f.serviceId, await legalSlot(f, 0), tokenHash()],
+    );
+    expect(appt[0].result).toBe("created");
+
+    // Someone else's booking is not this prospect's, so the ordinary close runs.
+    expect(await close(f, p.entryId)).toBe("closed");
+    expect(await statusOf(p.entryId)).toBe("released");
+    const entry = await q<{ converted_client_id: string | null }>(
+      `select converted_client_id::text from ${EN_T} where id = $1`,
+      [p.entryId],
+    );
+    expect(entry[0].converted_client_id, "the exit converted to the WRONG person").toBeNull();
+  });
+
+  it("a CANCELLED appointment strands nothing, so the ordinary close still runs", async () => {
     const f = await fixture("cancelled");
     const p = await redeemedUnbooked(f, "cx");
     const client = await q<{ client_id: string }>(
@@ -870,6 +928,123 @@ describe("K — the exit is ONE-WAY, because five consumers depend on that", () 
     // append-only trigger mid-suite — a table-wide ALTER that the db lane runs
     // files in parallel around, and a flake class this file will not introduce
     // for an arm that cannot fire.
+  });
+
+  it("RACE: a requeue overlapping a close cannot resurrect the entry", async () => {
+    // THE P1 REVIEW FINDING, REPRODUCED AS A TEST.
+    //
+    // The guard was an UNLOCKED pre-check. Overlap a close and a requeue on the
+    // same redeemed `invited` entry and the requeue read `invited`, fell
+    // through the guard (which is scoped to the states requeue accepts), then
+    // BLOCKED inside its own UPDATE on the close's row lock. Close committed
+    // `released`; the UPDATE re-evaluated its predicate under READ COMMITTED
+    // against the newly committed row, matched `status in ('released','expired')`
+    // and moved the entry to `waiting` — resurrecting the entry the close had
+    // just retired and handing it a route to a SECOND redeemed invitation.
+    //
+    // THE ORDER IS THE POINT: the requeue must START while the entry is still
+    // `invited`, or it is not this race at all.
+    const f = await fixture("race-requeue");
+    const p = await redeemedUnbooked(f, "rq");
+
+    const s1 = new Client({ connectionString: resolveLocalDbUrl() });
+    const s2 = new Client({ connectionString: resolveLocalDbUrl() });
+    await s1.connect();
+    await s2.connect();
+    let requeueResult: string | undefined;
+    try {
+      await s1.query("begin");
+      const closed = await s1.query(CLOSE, [f.studioId, p.entryId, f.userId]);
+      expect(closed.rows[0].r).toBe("closed");
+
+      // S2 begins its requeue while S1 is UNCOMMITTED, so S2's own snapshot
+      // still shows `invited` — the precondition of the defect.
+      const pid = (await s2.query("select pg_backend_pid() as pid")).rows[0].pid as number;
+      await s2.query("begin");
+      expect(
+        (
+          await s2.query(`select status from ${EN_T} where id = $1`, [p.entryId])
+        ).rows[0].status,
+        "S2 does not see the pre-close state, so this is not the race under test",
+      ).toBe("invited");
+
+      const requeue = s2.query(`select public.requeue_new_client_waitlist_entry($1,$2,$3) as r`, [
+        f.studioId,
+        p.entryId,
+        f.userId,
+      ]);
+      await expectBlockedOn(pid, "the requeue did not park on the entry mutex the close holds");
+
+      await s1.query("commit");
+      requeueResult = (await requeue).rows[0].r as string;
+      await s2.query("commit");
+    } finally {
+      await s1.query("rollback").catch(() => undefined);
+      await s2.query("rollback").catch(() => undefined);
+      await s1.end();
+      await s2.end();
+    }
+
+    expect(requeueResult, "the requeue was allowed through after the close").toBe(
+      "already_redeemed",
+    );
+    expect(
+      await statusOf(p.entryId),
+      "the entry was RESURRECTED — the one-way rule was bypassed",
+    ).toBe("released");
+    // And the resurrection route stays shut: nothing can re-invite it.
+    expect(
+      (
+        await q<{ result: string }>(
+          `select result from public.issue_new_client_waitlist_invitation($1,$2,$3,72)`,
+          [f.studioId, p.entryId, f.userId],
+        )
+      )[0].result,
+    ).toBe("not_claimed");
+  });
+
+  it("RACE: a close overlapping a requeue is decided the same way in reverse", async () => {
+    // The mirror. A requeue that STARTS first on a plain released entry is a
+    // legitimate requeue, and the close that follows must not corrupt it.
+    const f = await fixture("race-requeue-rev");
+    const p = await invitedProspect(f, "rr");
+    await q(`select public.release_new_client_waitlist_entry($1,$2,$3)`, [
+      f.studioId,
+      p.entryId,
+      f.userId,
+    ]);
+
+    const s1 = new Client({ connectionString: resolveLocalDbUrl() });
+    const s2 = new Client({ connectionString: resolveLocalDbUrl() });
+    await s1.connect();
+    await s2.connect();
+    let closeResult: string | undefined;
+    try {
+      await s1.query("begin");
+      const requeued = await s1.query(
+        `select public.requeue_new_client_waitlist_entry($1,$2,$3) as r`,
+        [f.studioId, p.entryId, f.userId],
+      );
+      expect(requeued.rows[0].r).toBe("requeued");
+
+      const pid = (await s2.query("select pg_backend_pid() as pid")).rows[0].pid as number;
+      await s2.query("begin");
+      const closing = s2.query(CLOSE, [f.studioId, p.entryId, f.userId]);
+      await expectBlockedOn(pid, "the close did not park on the entry mutex the requeue holds");
+
+      await s1.query("commit");
+      closeResult = (await closing).rows[0].r as string;
+      await s2.query("commit");
+    } finally {
+      await s1.query("rollback").catch(() => undefined);
+      await s2.query("rollback").catch(() => undefined);
+      await s1.end();
+      await s2.end();
+    }
+
+    // The entry is `waiting`; the close owns only `invited`.
+    expect(closeResult).toBe("not_invited");
+    expect(await statusOf(p.entryId)).toBe("waiting");
   });
 
   it("requeue keeps its own duplicate handling, untouched", async () => {

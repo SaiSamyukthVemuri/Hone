@@ -202,11 +202,23 @@ const RELEASE_LABEL: Partial<Record<WaitlistEntryStatus, string>> = {
 const ACTION_HELP: Partial<Record<string, string>> = {
   "release:claimed":
     "Move this person out of Ready to invite. You can return them to the waitlist later.",
-  // The verb says what ends; this says where they land, because "close" does not
-  // carry it and Released is two steps from the waitlist rather than one. The
-  // same reason "Set aside" needed a sentence beside it.
+  // THE VERB SAYS WHAT ENDS; THIS SAYS WHAT FOLLOWS -- and the first version of
+  // it promised the one thing this command makes impossible.
+  //
+  // It read "...moves them to Released, where you can return them to the
+  // waitlist or remove them." Whenever this help is shown the invitation is
+  // REDEEMED, so after Close the requeue guard answers `already_redeemed` and
+  // the control is withheld. The sentence was therefore misstating an
+  // IRREVERSIBLE consequence in the moment before the operator committed to it
+  // -- the worst possible place for a label to over-promise, and the same
+  // defect as "Return to waitlist" on a control that lands in `released`.
+  //
+  // IT ALSO DISCLOSES THE OTHER OUTCOME. If an appointment from this cycle
+  // already exists, 0200 records the missing conversion instead of closing. An
+  // operator who presses this must know both things can happen before they
+  // press it, not after.
   "close:invited":
-    "They opened this invitation and never booked. This ends it and moves them to Released, where you can return them to the waitlist or remove them.",
+    "They opened this invitation and never booked. This ends it and moves them to Released, where you can remove them — they cannot be put back on the waitlist, though they can join again themselves. If an appointment from this invitation already exists, their booking is recorded instead.",
 };
 
 /** Help text for a control, or null where the verb speaks for itself. */

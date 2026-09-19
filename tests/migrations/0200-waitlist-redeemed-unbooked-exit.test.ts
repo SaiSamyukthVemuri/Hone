@@ -205,10 +205,18 @@ describe("0200 does not weaken any shipped exit", () => {
       "status in ('released','expired')",
       "status in ('released','expired')",
     ]);
+    // SCOPED TO THE ACCEPTED STATES, AND FROM A VALUE READ UNDER THE LOCK.
+    // Both halves matter: the scope is what keeps `invited` answering
+    // `not_requeueable`, and reading it under the lock is what stops a
+    // concurrent close from changing the answer after the decision.
     const guard = fn.slice(0, fn.indexOf("return 'already_redeemed'"));
     expect(guard, "the guard is not scoped to the states requeue accepts").toMatch(
-      /e\.status\s+in \('released','expired'\)/,
+      /v_status in \('released','expired'\)/,
     );
+    expect(
+      guard.indexOf("v_status in ('released','expired')"),
+      "the guard reads the status before the row is locked",
+    ).toBeGreaterThan(guard.indexOf("for update"));
   });
 
   it("restates requeue's grant contract rather than leaving it implied", () => {
@@ -402,7 +410,11 @@ describe("0200 answers the states it refuses with distinguishable words", () => 
       [
         "already_booked",
         "already_closed",
-        "booking_exists",
+        // The stranded-appointment REPAIR, not a refusal. `booking_exists` was
+        // removed with the dead-end copy that named an operation the product
+        // has no control for.
+        "converted_instead",
+        "booking_unresolved",
         "closed",
         "invalid_input",
         "not_found",
@@ -410,6 +422,10 @@ describe("0200 answers the states it refuses with distinguishable words", () => 
         "not_redeemed",
       ].sort(),
     );
+    expect(
+      returned.has("booking_exists"),
+      "the refusal that named a nonexistent operator action is back",
+    ).toBe(false);
   });
 
   it("the action file declares exactly those, plus the propagated owner codes", () => {
@@ -423,11 +439,12 @@ describe("0200 answers the states it refuses with distinguishable words", () => 
     );
     for (const code of [
       "closed",
+      "converted_instead",
       "not_found",
       "not_invited",
       "not_redeemed",
       "already_booked",
-      "booking_exists",
+      "booking_unresolved",
       "already_closed",
     ]) {
       expect(union, `the action does not declare ${code}`).toContain(`"${code}"`);
@@ -469,12 +486,57 @@ describe("0200 answers the states it refuses with distinguishable words", () => 
     ).not.toMatch(/i\.closed_at\s+is not null/);
   });
 
-  it("refuses a booking it cannot rule out, rather than releasing over it", () => {
+  it("RECORDS a booking it finds, rather than refusing over it", () => {
+    // THE REVIEW FINDING THIS REPLACES: the old `booking_exists` refusal told
+    // the owner to record the booking, and nothing in the product invokes
+    // `record_new_client_waitlist_conversion` — so the entry stayed `invited`
+    // and Close kept returning the same refusal.
     const body = FN_BODY;
     const check = body.slice(body.indexOf("from public.appointments a"));
+    // The SAME recipient binding 0195 enforces, so a neighbour's appointment
+    // cannot convert this prospect.
     expect(check).toMatch(/c\.normalized_email\s*=\s*v_entry_email/);
     expect(check).toMatch(/a\.status\s*<>\s*'cancelled'/);
     expect(check).toMatch(/a\.created_at\s*>=\s*v_redeemed_at/);
-    expect(body).toMatch(/return 'booking_exists'/);
+    // COMPOSE, DO NOT DUPLICATE: the conversion is recorded by the command that
+    // owns it, and this file re-implements none of it.
+    expect(body).toMatch(/record_new_client_waitlist_conversion\(/);
+    expect(body).toMatch(/return 'converted_instead'/);
+    // AMBIGUITY REFUSES RATHER THAN GUESSING which client to convert to.
+    expect(body).toMatch(/v_booked_count > 1/);
+    expect(body).toMatch(/return 'booking_unresolved'/);
+    // And the repaired path never stamps an operator close over a conversion.
+    const repair = body.slice(body.indexOf("if v_booked_count = 1"));
+    expect(repair.slice(0, repair.indexOf("return 'converted_instead'"))).not.toMatch(
+      /closed_at\s*=/,
+    );
+  });
+
+  it("requeue decides UNDER the entry mutex, not from an unlocked pre-check", () => {
+    // THE P1 REVIEW FINDING. An unlocked guard is defeated by the command it
+    // guards against: a requeue that reads `invited`, falls through, then blocks
+    // inside its own UPDATE re-evaluates against a just-committed `released` row
+    // and resurrects the entry.
+    const body = CODE.slice(CODE.indexOf("function public.requeue_new_client_waitlist_entry"));
+    const fn = body.slice(0, body.indexOf("$$;"));
+
+    const lock = fn.indexOf("for update");
+    const guard = fn.indexOf("return 'already_redeemed'");
+    const write = fn.indexOf("update public.new_client_waitlist_entries");
+    expect(lock, "requeue takes no row lock at all").toBeGreaterThan(0);
+    expect(guard, "requeue has no redeemed guard").toBeGreaterThan(lock);
+    expect(write, "the write does not follow the guard").toBeGreaterThan(guard);
+
+    // The lock is on THIS entry, scoped by both id and studio.
+    const lockStmt = fn.slice(fn.lastIndexOf("select", lock), fn.indexOf(";", lock));
+    expect(lockStmt).toMatch(/new_client_waitlist_entries/);
+    expect(lockStmt).toMatch(/e\.id = p_entry_id and e\.studio_id = p_studio_id/);
+
+    // AND THE EXCLUSION IS RESTATED ON THE WRITE, so a guarded read can never
+    // sit beside an unguarded write.
+    const upd = fn.slice(write, fn.indexOf("returning id into v_hit", write));
+    expect(upd, "the UPDATE does not re-state the redeemed exclusion").toMatch(
+      /not exists[\s\S]{0,240}redeemed_at is not null/,
+    );
   });
 });

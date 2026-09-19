@@ -641,6 +641,40 @@ describe("close — the label may only promise what the command delivers", () =>
     expect(help).toMatch(/Released/);
   });
 
+  it("NEVER promises a return to the waitlist — the consequence is irreversible", () => {
+    // THE REGRESSION TEST FOR A REVIEW FINDING. This help used to end "...where
+    // you can return them to the waitlist or remove them". Whenever it is shown
+    // the invitation is REDEEMED, so after Close the requeue guard answers
+    // `already_redeemed` and the control is withheld — the sentence misstated an
+    // irreversible consequence in the moment before the operator committed to it.
+    const help = actionHelp("close", "invited") ?? "";
+    // NO POSITIVE PROMISE, in any of the shapes this copy has worn.
+    for (const promise of [
+      /return them to the waitlist/i,
+      /can (return|put) them back/i,
+      /you can return them/i,
+    ]) {
+      expect(help, `the help still promises: ${promise}`).not.toMatch(promise);
+    }
+    // AND IT STATES THE NEGATIVE OUTRIGHT, rather than leaving it to silence.
+    expect(help).toMatch(/cannot be put back on the waitlist/i);
+    // And it says what IS available instead.
+    expect(help).toMatch(/remove/i);
+    expect(help).toMatch(/join again/i);
+    // The copy and the model must agree: requeue really is withheld after this.
+    expect(
+      actionAvailability("requeue", ACTION_RESULT_STATUS.close, REDEEMED).available,
+      "the help is honest only while requeue is actually withheld",
+    ).toBe(false);
+  });
+
+  it("discloses the OTHER outcome before the operator commits to it", () => {
+    // 0200 records a missing conversion when an appointment from this cycle
+    // already exists, and answers `converted_instead`. A control whose outcome
+    // can be "their booking was recorded" must say so before it is pressed.
+    expect(actionHelp("close", "invited") ?? "").toMatch(/booking is recorded/i);
+  });
+
   it("never promises a return to the waitlist, which takes a second control", () => {
     expect(ACTION_LABEL.close).not.toMatch(/waitlist/i);
     expect(actionLabel("close", "invited")).toBe(ACTION_LABEL.close);

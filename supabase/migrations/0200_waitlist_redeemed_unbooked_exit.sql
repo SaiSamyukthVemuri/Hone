@@ -108,6 +108,13 @@
 -- release and expire both refuse one. It constrains exactly the state this
 -- migration creates and nothing else.
 --
+-- THE LOCK IS LOAD-BEARING, NOT TIDINESS. An unlocked pre-check is defeated by
+-- the very command it guards against: a requeue that reads `invited`, falls
+-- through, then blocks inside its own UPDATE and re-evaluates against a
+-- just-committed `released` row will move that row to `waiting`. Section 5
+-- states the reproduction; the DB suite drives it with two real sessions and a
+-- negative control that removes the lock and watches the proof go red.
+--
 -- The operator is not stranded: `remove` accepts `released` and is the coherent
 -- terminal exit, and the person can rejoin through the public form because
 -- `..._one_active_per_email` no longer holds their slot. What they cannot do is
@@ -362,6 +369,9 @@ declare
   v_redeemed_at timestamptz;
   v_decision_at timestamptz;
   v_hit         uuid;
+  v_booked_count integer;
+  v_booked_client uuid;
+  v_conversion  text;
 begin
   -- 1. AUTHORITY, re-derived from (studio, actor) by the same shared resolver
   -- every other command uses. Owner-only, own studio, active practitioner.
@@ -452,7 +462,7 @@ begin
     where i.id = v_inv
     for update;
 
-  -- 6. NO APPOINTMENT MAY BE STRANDED.
+  -- 6. A STRANDED APPOINTMENT IS RECORDED, NOT REFUSED OVER.
   --
   -- The authority for "no booking" is the entry itself: `invited` carries
   -- `converted_at is null` and `converted_client_id is null` by the
@@ -473,21 +483,77 @@ begin
   -- unrelated history cannot block the exit, and ignoring cancelled
   -- appointments, because a cancelled booking strands nothing.
   --
-  -- IT FAILS CLOSED INTO A COMMAND THAT WORKS, which is the whole point: the
-  -- operator is pointed at `record_new_client_waitlist_conversion`, which
-  -- accepts exactly this state (`invited` + redeemed). Refusing here therefore
-  -- cannot create a second dead end.
-  if exists (
-    select 1
-      from public.appointments a
-      join public.clients c
-        on c.id = a.client_id and c.studio_id = a.studio_id
-     where a.studio_id        = p_studio_id
-       and c.normalized_email = v_entry_email
-       and a.status          <> 'cancelled'
-       and a.created_at      >= v_redeemed_at)
-  then
-    return 'booking_exists';
+  -- IT REPAIRS RATHER THAN REFUSES, AND THAT IS A CORRECTION.
+  --
+  -- The first revision answered `booking_exists` and told the operator to
+  -- record the booking instead. Review was right to reject it: NOTHING invokes
+  -- `record_new_client_waitlist_conversion` from the product --
+  -- `recordInvitationConversion` has no caller anywhere in the application, and
+  -- `app/book/[slug]/actions.ts` says so in its own comment. So the refusal
+  -- named an operation the owner could not perform, the entry stayed `invited`,
+  -- and pressing Close again returned the same refusal: the dead end this
+  -- migration exists to remove, wearing a different word.
+  --
+  -- The truthful resolution is not a refusal at all. If an appointment exists
+  -- from this cycle, then the prospect DID convert and the record is simply
+  -- missing -- the pre-0195 shape, where the appointment and the conversion
+  -- were separate transactions and a process death between them left the entry
+  -- behind. So the conversion is recorded, here, in this transaction, and the
+  -- operator's stuck row resolves either way.
+  --
+  -- THE CLIENT IS UNIQUE BY CONSTRUCTION, NOT BY CHOICE.
+  -- `clients_studio_normalized_email_uniq` is UNIQUE on
+  -- (studio_id, normalized_email) where normalized_email is not null (0032), so
+  -- the join below can match at most ONE client per studio, and every appointment
+  -- it finds belongs to that one. The count is still taken, and more than one
+  -- REFUSES rather than picking a row -- a guess here would convert a prospect
+  -- to the wrong person, which is the one mistake worse than leaving them stuck.
+  --
+  -- NOTHING IS MANUFACTURED. This does not create a client and cannot; it
+  -- records that a client the canonical booking authority already created
+  -- corresponds to this prospect, on the SAME recipient binding 0195 enforces
+  -- for the atomic path (the entry's normalised address). The composite FK
+  -- refuses a client from another studio.
+  --
+  -- `array_agg(distinct ...)` RATHER THAN `min()`: PostgreSQL has no min(uuid),
+  -- and casting to text to borrow one would make "which client" depend on a
+  -- textual ordering that means nothing. The count decides; the element is only
+  -- ever read when the count is exactly one.
+  select count(distinct a.client_id)::int, (array_agg(distinct a.client_id))[1]
+    into v_booked_count, v_booked_client
+    from public.appointments a
+    join public.clients c
+      on c.id = a.client_id and c.studio_id = a.studio_id
+   where a.studio_id        = p_studio_id
+     and c.normalized_email = v_entry_email
+     and a.status          <> 'cancelled'
+     and a.created_at      >= v_redeemed_at;
+
+  if v_booked_count > 1 then
+    -- UNREACHABLE while the unique index above exists, and kept so that
+    -- dropping it fails loudly here instead of silently converting to whichever
+    -- client happened to sort first.
+    return 'booking_unresolved';
+  end if;
+
+  if v_booked_count = 1 then
+    -- COMPOSE, DO NOT DUPLICATE -- 0195's rule, for the same command. Every
+    -- precondition this callee checks is already true and already held under
+    -- this transaction's locks: the entry is `invited`, its invitation carries
+    -- `redeemed_at`, and the client is in this studio. A refusal is therefore
+    -- unreachable; it is still inspected, because a command that reported a
+    -- transition it did not make is the defect this whole file is about.
+    v_conversion := public.record_new_client_waitlist_conversion(
+      p_studio_id, p_entry_id, v_booked_client
+    );
+    if v_conversion <> 'converted' then
+      return 'booking_unresolved';
+    end if;
+    -- THE CYCLE IS NOT STAMPED CLOSED. It ended in a conversion, not in an
+    -- operator close, and `closed_at` means exactly the latter. The entry's own
+    -- `converted_at` + `converted_client_id` are the evidence, written by the
+    -- command that owns them.
+    return 'converted_instead';
   end if;
 
   -- 7. ONE CLOCK READ, after every lock this path required, so the invitation
@@ -542,9 +608,11 @@ $$;
 comment on function public.close_unbooked_new_client_waitlist_invitation(uuid, uuid, uuid) is
   'WAIT-P1-EXIT: the only exit from a REDEEMED-BUT-UNBOOKED waitlist entry, the '
   'one lifecycle state release, expire, requeue and remove all refuse. Requires '
-  'the entry at ''invited'' with an open redeemed invitation and NO appointment '
-  'attributable to this cycle; answers already_booked, not_redeemed, '
-  'booking_exists or already_closed otherwise. Records closed_at + '
+  'the entry at ''invited'' with an open redeemed invitation; answers '
+  'already_booked, not_redeemed or already_closed otherwise. If an appointment '
+  'from this cycle DOES exist -- the pre-0195 stranded shape -- it records the '
+  'missing conversion in this same transaction and answers converted_instead, '
+  'rather than refusing over a repair the product has no control for. Records closed_at + '
   'closed_by_practitioner_id on the invitation and moves the entry '
   'invited -> released in one transaction under the entry mutex, so a booking in '
   'flight and this exit cannot both succeed. Stamps NO terminal outcome on the '
@@ -592,14 +660,42 @@ security definer
 set search_path = pg_catalog, pg_temp
 as $$
 declare
-  v_actor uuid;
-  v_code  text;
-  v_hit   uuid;
+  v_actor  uuid;
+  v_code   text;
+  v_hit    uuid;
+  v_status text;
 begin
   select r.practitioner_id, r.code into v_actor, v_code
     from public.new_client_waitlist_resolve_owner(p_studio_id, p_actor_user_id) r;
   if v_code <> 'ok' then return v_code; end if;
   if p_entry_id is null then return 'invalid_input'; end if;
+
+  -- 0200. THE ENTRY MUTEX, TAKEN BEFORE THIS COMMAND DECIDES ANYTHING.
+  --
+  -- THE RACE THIS CLOSES, and it was a real one: the redeemed guard below used
+  -- to be an UNLOCKED pre-check. Overlap a close and a requeue on the same
+  -- redeemed `invited` entry and the requeue read `invited`, fell through the
+  -- guard (which is scoped to the states requeue accepts), then BLOCKED on the
+  -- close's row lock inside its own UPDATE. Close committed `released`; the
+  -- UPDATE re-evaluated its predicate under READ COMMITTED against the NEWLY
+  -- committed row, matched `status in ('released','expired')`, and moved the
+  -- entry to `waiting` -- resurrecting the exact entry the close had just
+  -- retired, and handing it a route to a SECOND redeemed invitation.
+  --
+  -- A pre-check cannot be made safe by reordering it; it has to stop being a
+  -- pre-check. The lock is taken FIRST, so a concurrent close is either wholly
+  -- before this decision (and the guard sees `released` + redeemed, and
+  -- refuses) or wholly after it. Every other waitlist command that touches this
+  -- entry -- release, expire, close, conversion, and 0195's booking -- already
+  -- takes this same lock first, so no lock order changes and no cycle appears.
+  --
+  -- A MISSING ROW IS NOT AN ERROR HERE. `v_status` stays null, the guard cannot
+  -- fire, the UPDATE matches nothing, and the answer is `not_requeueable` --
+  -- byte for byte what this command said before.
+  select e.status into v_status
+    from public.new_client_waitlist_entries e
+   where e.id = p_entry_id and e.studio_id = p_studio_id
+     for update;
 
   -- 0200. A SPENT CYCLE DOES NOT GO BACK IN THE QUEUE. See the header: putting
   -- this entry back would let it acquire a SECOND redeemed invitation, and five
@@ -620,15 +716,13 @@ begin
   -- only `released` can carry a redemption here -- and only by way of 0200's own
   -- close. It is written anyway so a later slice that makes `expired` reachable
   -- with a redemption finds this door already shut rather than silently open.
-  if exists (
-    select 1
-      from public.new_client_waitlist_entries e
-      join public.new_client_waitlist_invitations i
-        on i.entry_id = e.id and i.studio_id = e.studio_id
-     where e.id          = p_entry_id
-       and e.studio_id   = p_studio_id
-       and e.status      in ('released','expired')
-       and i.redeemed_at is not null)
+  if v_status in ('released','expired')
+     and exists (
+       select 1
+         from public.new_client_waitlist_invitations i
+        where i.entry_id    = p_entry_id
+          and i.studio_id   = p_studio_id
+          and i.redeemed_at is not null)
   then
     return 'already_redeemed';
   end if;
@@ -652,6 +746,19 @@ begin
            released_at                = null
      where id = p_entry_id and studio_id = p_studio_id
        and status in ('released','expired')
+       -- THE SAME EXCLUSION, RESTATED ON THE STATEMENT THAT ACTUALLY WRITES.
+       -- Defence in depth, and the doctrine 0188 and 0192 both apply to this
+       -- table: a guarded read beside an unguarded write is the asymmetry that
+       -- produced every stranding defect in this lifecycle. Under the entry
+       -- mutex taken above this predicate can never be the reason the UPDATE
+       -- matches nothing -- the guard has already returned -- so
+       -- `not_requeueable` below stays truthful for every reachable case.
+       and not exists (
+         select 1
+           from public.new_client_waitlist_invitations i
+          where i.entry_id    = p_entry_id
+            and i.studio_id   = p_studio_id
+            and i.redeemed_at is not null)
     returning id into v_hit;
   exception
     when unique_violation then
