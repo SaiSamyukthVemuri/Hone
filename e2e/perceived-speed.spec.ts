@@ -1345,11 +1345,48 @@ test.describe("NAV-ACK-01 GlobalSearch anchor — desktop", () => {
  * WORDMARK and the BELL, so that is what the phone test drives. Getting this
  * wrong is the standing trap on this file — the calendar-toolbar block above
  * records the same one.
+ *
+ * WHY `holdPrefetch` AND NOT `blockPrefetch` — MEASURED HERE, NOT ASSUMED.
+ * These five tests were first written with `blockPrefetch: true`, copying the
+ * UI-01B segment-change helper. All five failed in CI (run 35417482448, shard
+ * 3) the same way: `[data-link-pending]` never appeared and `gate.held()` was
+ * ZERO — no RSC request was made at all. That is the fallback `holdNavigation`
+ * already documents from `/calendar/<id>`: with the speculative fetch ABORTED,
+ * the tap stops performing a client navigation and issues a plain DOCUMENT
+ * request instead. A full page load replaces the tree wholesale, so there is
+ * no transition for `useLinkStatus` to report and no pending presentation of
+ * any kind could have passed.
+ *
+ * So the abort was testing a path production never takes. HOLDING the
+ * speculative request keeps the router cache just as empty while leaving every
+ * request successful, which is what makes the tap the ordinary soft navigation
+ * this file exists to observe. `blockPrefetch` is right for the `/clients/`
+ * segment above and wrong for these; the difference is per-destination and has
+ * to be measured, which is why every test below also asserts `tapHolds`.
  */
 
 /** The primary nav's own landmark, so a test binds to it and not to a position. */
 function primaryNav(page: Page): Locator {
   return page.getByRole("navigation", { name: "Primary navigation" });
+}
+
+/**
+ * The TAP's own held request, with the speculative one subtracted.
+ *
+ * These tests use `holdPrefetch`, and that makes the bare `gate.held()` check
+ * that serves the `blockPrefetch` tests too weak here: `held` counts the
+ * speculative fetch as well, so it is already non-zero before anything is
+ * pressed. Asserting it alone would pass on a tap that issued no request at
+ * all — precisely the failure this helper exists to catch.
+ *
+ * The difference is the real claim: at least one NON-prefetch request for this
+ * destination is in flight and this test is what is holding it.
+ */
+function tapHolds(gate: {
+  held: () => number;
+  prefetchesHeld: () => number;
+}): number {
+  return gate.held() - gate.prefetchesHeld();
 }
 
 test.describe("NAV-ACK-02 primary navigation — desktop", () => {
@@ -1373,7 +1410,7 @@ test.describe("NAV-ACK-02 primary navigation — desktop", () => {
     });
 
     const gate = await holdNavigation(page, (url) => url.pathname === "/records", {
-      blockPrefetch: true,
+      holdPrefetch: true,
     });
 
     await page.goto("/dashboard");
@@ -1409,8 +1446,8 @@ test.describe("NAV-ACK-02 primary navigation — desktop", () => {
     await test.step("acknowledged before the destination exists", async () => {
       await expect(tapAcknowledgement(tab)).toBeVisible({ timeout: T });
       // Anti-vacuity: if nothing was held, the window never opened.
-      expect(gate.held()).toBeGreaterThan(0);
-      expect(gate.prefetchesBlocked()).toBeGreaterThan(0);
+      expect(tapHolds(gate)).toBeGreaterThan(0);
+      expect(gate.prefetchesHeld()).toBeGreaterThan(0);
 
       // This is what a segment change does with no route boundary: the OLD
       // page is still mounted and fully painted. That is exactly why the
@@ -1484,7 +1521,7 @@ test.describe("NAV-ACK-02 primary navigation — desktop", () => {
     });
 
     const gate = await holdNavigation(page, (url) => url.pathname === "/clients", {
-      blockPrefetch: true,
+      holdPrefetch: true,
     });
 
     await page.goto("/dashboard");
@@ -1496,7 +1533,7 @@ test.describe("NAV-ACK-02 primary navigation — desktop", () => {
     await page.keyboard.press("Enter");
 
     await expect(tapAcknowledgement(tab)).toBeVisible({ timeout: T });
-    expect(gate.held()).toBeGreaterThan(0);
+    expect(tapHolds(gate)).toBeGreaterThan(0);
     await expect(tab.locator('[role="status"]')).toHaveText("Opening Clients…");
     // Focus is not stolen by the mark: the anchor still owns it.
     await expect(tab).toBeFocused();
@@ -1520,7 +1557,7 @@ test.describe("NAV-ACK-02 primary navigation — 390px compact shell", () => {
     const gate = await holdNavigation(
       page,
       (url) => url.pathname === "/notifications",
-      { blockPrefetch: true },
+      { holdPrefetch: true },
     );
 
     await page.goto("/records");
@@ -1560,7 +1597,7 @@ test.describe("NAV-ACK-02 primary navigation — 390px compact shell", () => {
 
     await test.step("the bell dims, and neither it nor its icon moves", async () => {
       await expect(tapAcknowledgement(bell)).toBeVisible({ timeout: T });
-      expect(gate.held()).toBeGreaterThan(0);
+      expect(tapHolds(gate)).toBeGreaterThan(0);
 
       // Dimmed, never blanked. The label form would have faded the icon out.
       await expect(icon).toBeVisible();
@@ -1588,7 +1625,7 @@ test.describe("NAV-ACK-02 primary navigation — 390px compact shell", () => {
     await loginAsOwner(page, seed);
 
     const gate = await holdNavigation(page, (url) => url.pathname === "/dashboard", {
-      blockPrefetch: true,
+      holdPrefetch: true,
     });
 
     await page.goto("/records");
@@ -1599,7 +1636,7 @@ test.describe("NAV-ACK-02 primary navigation — 390px compact shell", () => {
     await wordmark.click();
 
     await expect(tapAcknowledgement(wordmark)).toBeVisible({ timeout: T });
-    expect(gate.held()).toBeGreaterThan(0);
+    expect(tapHolds(gate)).toBeGreaterThan(0);
     await expect(wordmark.locator('[role="status"]')).toHaveText(
       "Opening Dashboard…",
     );
@@ -1626,7 +1663,7 @@ test.describe("NAV-ACK-02 reduced motion — desktop", () => {
     await loginAsOwner(page, seed);
 
     const gate = await holdNavigation(page, (url) => url.pathname === "/calendar", {
-      blockPrefetch: true,
+      holdPrefetch: true,
     });
 
     await page.goto("/dashboard");
@@ -1641,7 +1678,7 @@ test.describe("NAV-ACK-02 reduced motion — desktop", () => {
     // still on screen and the live region still speaks.
     const mark = tapAcknowledgement(tab);
     await expect(mark).toBeVisible({ timeout: T });
-    expect(gate.held()).toBeGreaterThan(0);
+    expect(tapHolds(gate)).toBeGreaterThan(0);
     await expect(tab.locator('[role="status"]')).toHaveText("Opening Calendar…");
     expect(await tab.boundingBox()).toEqual(resting);
 
