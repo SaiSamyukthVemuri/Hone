@@ -42,6 +42,40 @@ test.skip(
   "measurement rig: run with HONE_PERF_TIMING=1",
 );
 
+// FIRST USEFUL CONTENT, MEASURED RATHER THAN ASSERTED.
+//
+// The three scenarios below previously anchored on `page.locator("body")`,
+// described in the comment as "a real charting affordance". It is not one: the
+// body element is visible the instant the document begins parsing, so that wait
+// returned before any chart content existed and the rig produced NO
+// client-visible number at all — only the server-side region span.
+//
+// This route has NO Suspense boundary (the slice says so deliberately, and a
+// unit guard pins it), so the whole document renders in ONE pass: there is no
+// partial paint to race. First useful content is therefore gated on the entire
+// server critical path — identity, core, the wave, and the serial tail — and
+// any real content anchor measures the same thing. The session heading
+// ("<modality> session") is that anchor: it is chart content, not chrome.
+//
+// Reported from the browser's own Navigation Timing for the CHART document, so
+// it is the document's cost and not a Playwright stopwatch spanning the driver
+// round trip.
+async function recordFirstUsefulContent(page: import("@playwright/test").Page, label: string) {
+  const heading = page.getByRole("heading", { name: /session$/i }).first();
+  await expect(heading).toBeVisible({ timeout: T });
+  const nav = await page.evaluate(() => {
+    const n = performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined;
+    if (!n) return null;
+    return {
+      request_to_response_end_ms: Math.round(n.responseEnd - n.requestStart),
+      ttfb_ms: Math.round(n.responseStart - n.requestStart),
+      dom_content_loaded_ms: Math.round(n.domContentLoadedEventEnd - n.startTime),
+      dom_interactive_ms: Math.round(n.domInteractive - n.startTime),
+    };
+  });
+  console.log(`[FUC] ${JSON.stringify({ scenario: label, ...(nav ?? {}) })}`);
+}
+
 test.describe("SESSION-START-01 latency measurement", () => {
   test("scenario A — start a session with NO linked appointment", async ({
     page,
@@ -54,10 +88,7 @@ test.describe("SESSION-START-01 latency measurement", () => {
     await page.getByRole("button", { name: /electrolysis/i }).click();
     await page.waitForURL(/\/sessions\/[0-9a-f-]{36}/i, { timeout: T });
 
-    // The chart is what the practitioner is waiting for. Waiting on a real
-    // charting affordance rather than `load` keeps the measurement anchored to
-    // something the practitioner can actually use.
-    await expect(page.locator("body")).toBeVisible({ timeout: T });
+    await recordFirstUsefulContent(page, "A");
   });
 
   test("scenario B — start from a linked confirmed PAST appointment", async ({
@@ -98,7 +129,7 @@ test.describe("SESSION-START-01 latency measurement", () => {
     );
     await page.getByRole("button", { name: /electrolysis/i }).click();
     await page.waitForURL(/\/sessions\/[0-9a-f-]{36}/i, { timeout: T });
-    await expect(page.locator("body")).toBeVisible({ timeout: T });
+    await recordFirstUsefulContent(page, "B");
   });
   test("scenario C — postcare ARMED: auto_on_complete + non-consultation + aftercare", async ({
     page,
@@ -158,7 +189,7 @@ test.describe("SESSION-START-01 latency measurement", () => {
     await page.goto(`/clients/${clientId}/sessions/new?appointment_id=${apptId}`);
     await page.getByRole("button", { name: /electrolysis/i }).click();
     await page.waitForURL(/\/sessions\/[0-9a-f-]{36}/i, { timeout: T });
-    await expect(page.locator("body")).toBeVisible({ timeout: T });
+    await recordFirstUsefulContent(page, "C");
 
     // NOT ASSERTED: that a provider round-trip time was observed. Without a
     // real Resend key the transport fails fast, so this scenario measures the
