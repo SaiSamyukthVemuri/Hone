@@ -497,40 +497,69 @@ accepting brand-new consultations, because each new client consumes capacity alr
 - Default OFF, exact-slug match only. Clearing the env var is the entire kill switch.
 - Release record: [releases/2026-08-19-willow-new-client-waitlist.md](./releases/2026-08-19-willow-new-client-waitlist.md).
 
-### WAIT-02B Stage A — the durable waitlist. DEPLOYED DARK. Reachable by nobody.
+### WAIT-02B Stage A — the durable waitlist. ACTIVATED, and collecting.
 
 **Implemented · merged (PR #629, `48f02389`) · DB applied (migration 0185) · deployed ·
-NOT ENABLED · NOT production exercised.** Human acceptance is **not applicable** at this stage.
+ACTIVATED for `willow-electrolysis` · production exercised.** Owner device acceptance is
+**still outstanding** and is not implied by any row below.
+
+> ⚠️ **CORRECTED 2026-09-19 (WAIT-DOCS-RECON).** Every bullet in this subsection previously
+> recorded the durable waitlist as deployed-dark and enabled for nobody. Production had
+> disproved that for roughly three weeks. The superseded text is preserved verbatim in the
+> frozen block at the end of this subsection rather than deleted.
 
 - The durable table `new_client_waitlist_entries` and both commands
   (`join_new_client_waitlist`, `remove_new_client_waitlist_entry`) **exist in production
   schema**. Migration 0185 is applied and frozen — evidence in
   [migration-ledger.md](./migration-ledger.md).
-- **The table held 0 rows when last measured.** It held 0 at apply verification and **0 on
-  2026-08-23** *(read-only query)*, and **has not been re-measured since**. ⚠️ That is evidence
-  for 2026-08-23 and **not** a claim about today: it does not prove the table is empty now, nor
-  that no prospect entry has been created since.
-<!-- canonical-facts:ignore-start reason=quotes-the-superseded-present-tense-waitlist-row -->
-  This row used to read *"holds **0 now** … **No prospect data is being collected**"*, which
-  converted a dated measurement into a standing fact.
-<!-- canonical-facts:ignore-end -->
-  The second half compounded it, because the allowlist absence that would license that inference
-  is **also** only verified to 2026-08-23. A table existing is not data being collected; a dated
-  zero is not a present-tense one.
-- **`NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS` is absent from the Vercel Production
-  environment** *(verified 2026-08-23, variable names only)*. **No studio is enabled. Willow is
-  not enabled.** Willow's public booking page continues to serve the WAIT-01 behaviour above.
+- **The table held 31 rows when measured 2026-09-19** *(read-only hosted query)* — **28 of them
+  for `willow-electrolysis`**: 27 `waiting` and 1 `removed`, the remaining 3 on the controlled
+  test studio. ⚠️ That is evidence **for 2026-09-19** and is not a claim about today. It does
+  prove the table is **not** empty and that prospect data **is** being collected.
+- **Oldest durable Willow entry: 2026-08-25T22:27Z; most recent: 2026-09-15.** Activation
+  therefore happened on or before 2026-08-25 — a **bound**, not a timestamp. The activating act
+  itself was not recorded and **no production release record for it exists**; see
+  [known-limitations.md](./known-limitations.md) **L25**.
+- **`NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS` names `willow-electrolysis`, established
+  STRUCTURALLY rather than by reading the variable.** The value is Sensitive and was **not**
+  read. Every one of the 31 rows carries `source = 'public_booking'`, which migration 0193's
+  CHECK constraints make exclusive to the public path; its only writer is
+  `join_new_client_waitlist`, whose only caller is reached solely when **both**
+  `isNewClientWaitlistEnabled` and `isNewClientWaitlistDurableEnabled` return true. A committed
+  public row is therefore proof that both allowlists name that studio.
+- **Willow's public booking page serves the durable commit point**, not the WAIT-01 notification
+  behaviour described above.
 - **The application code shipped FIRST and DARK** — the reverse of the migration-first ordering
-  used for 0183/0184. That was deliberate: WAIT-01 is already live, so shipping the durable path
+  used for 0183/0184. That was deliberate: WAIT-01 was already live, so shipping the durable path
   on the existing flag would have moved a live studio's commit point with no operator GO in
   between, and clearing the gate list to keep it dark would have reopened new-client booking —
-  the exact failure the gate exists to prevent.
-- **The public privacy policy is unchanged.**
+  the exact failure the gate exists to prevent. **That dark period has ended.**
+- **The public privacy policy covers the three fields actually collected** (name, email, optional
+  phone) and no others. It is **not** yet widened for WAIT-04B's proposed profile fields, which
+  are not collected and must not be described as though they were.
 
-### WAIT-02B Stage B1 — disclosure shipped, activation still ungranted. SHIPPED · NOT ACTIVATED.
+<!-- canonical-facts:ignore-start reason=preserves-the-superseded-deployed-dark-waitlist-subsection-verbatim -->
+> **SUPERSEDED 2026-09-19, preserved verbatim.** This subsection formerly read:
+> *"WAIT-02B Stage A — the durable waitlist. DEPLOYED DARK. Reachable by nobody. … NOT ENABLED ·
+> NOT production exercised. … **The table held 0 rows when last measured.** It held 0 at apply
+> verification and **0 on 2026-08-23** (read-only query), and **has not been re-measured since**.
+> … This row used to read 'holds **0 now** … **No prospect data is being collected**', which
+> converted a dated measurement into a standing fact. … **`NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS`
+> is absent from the Vercel Production environment** (verified 2026-08-23, variable names only).
+> **No studio is enabled. Willow is not enabled.** Willow's public booking page continues to serve
+> the WAIT-01 behaviour above. … **The public privacy policy is unchanged.**"*
+>
+> It was true when written and false by 2026-08-25. The failure was not the measurement but the
+> **carrying forward of a dated absence as a standing posture** — the same defect this document
+> had already named one paragraph earlier and then committed again in the next bullet.
+<!-- canonical-facts:ignore-end -->
 
-**Implemented · merged (PR #637, `1013a97b`) · deployed · NO STUDIO ENABLED · NOT production
-exercised.** **No migration.** Merging it enabled nothing, for anybody.
+### WAIT-02B Stage B1 — disclosure shipped, and since ACTED ON. SHIPPED · ACTIVATION TAKEN.
+
+**Implemented · merged (PR #637, `1013a97b`) · deployed · ONE STUDIO ENABLED · production
+exercised.** **No migration.** Merging it enabled nothing by itself; the activation was a
+**separate, later operator act** against the runtime allowlist, bounded to on or before
+**2026-08-25** by the oldest durable Willow row.
 
 Stage B1 changed **two** things, and the difference between them matters:
 
@@ -558,18 +587,33 @@ durable variable selects the **commit point** for a studio that is *already* on 
 waitlist; it cannot by itself put a studio onto one. An empty durable allowlist leaves every
 studio on the non-durable (WAIT-01, email) path.
 
-**Current posture: NOT ACTIVATED.** `NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS` was **absent from
-the Vercel Production environment** when last read *(2026-08-23, variable names only)* and was
-**not re-read on 2026-08-26** — so absence is carried forward as dated evidence, not re-asserted.
-**Willow is not enabled on the durable path** and continues to serve WAIT-01.
+**Current posture: ACTIVATED for one studio.** Established from **committed rows**, not from
+configuration: 28 durable `willow-electrolysis` entries, all `source = 'public_booking'`, the
+oldest joined **2026-08-25T22:27Z** *(read-only hosted query, 2026-09-19)*. The allowlist value
+is Sensitive and was **not** read; see the structural derivation in Stage A above.
 
-**Stage B2 — activation — has not been granted and remains blocked.** It requires an explicit
-per-studio operator GO and human activation smoke. Tracked as **L25** in
+<!-- canonical-facts:ignore-start reason=preserves-the-superseded-not-activated-posture-paragraph -->
+> **SUPERSEDED 2026-09-19, preserved verbatim.** This paragraph formerly read:
+> *"**Current posture: NOT ACTIVATED.** `NEW_CLIENT_WAITLIST_DURABLE_STUDIO_SLUGS` was **absent
+> from the Vercel Production environment** when last read (2026-08-23, variable names only) and
+> was **not re-read on 2026-08-26** — so absence is carried forward as dated evidence, not
+> re-asserted. **Willow is not enabled on the durable path** and continues to serve WAIT-01."*
+>
+> And: *"**Stage B2 — activation — has not been granted and remains blocked.**"* Activation was
+> in fact taken. Whether it carried the explicit per-studio GO and activation smoke that Stage B2
+> required **is not established by any repository artefact**, and is not asserted either way here.
+<!-- canonical-facts:ignore-end -->
+
+**Stage B2 — activation — WAS TAKEN, and its governance record is missing.** Stage B2 required an
+explicit per-studio operator GO and a human activation smoke. The activation happened; **no
+release record, ledger entry or smoke result for it exists in this repository.** That gap is the
+open item — not the activation. Tracked as **L25** in
 [known-limitations.md](./known-limitations.md).
 
-> **Never describe the durable waitlist as "live".** It is *deployed*, *disclosed*, and
-> *dormant*. The capability live for new clients today is WAIT-01, and its commit point is an
-> email.
+> **The durable waitlist is ACTIVATED, and that is still not the same as ACCEPTED.** It is
+> *deployed*, *disclosed*, *enabled for one studio* and *collecting*. It has **not** been
+> exercised beyond joining on that studio — **zero invitations have ever been issued there** —
+> and owner device acceptance has not been given.
 
 ## 6. Client portal and intake
 

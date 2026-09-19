@@ -14,7 +14,7 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 [0156](../runbooks/0156-conditional-numbing-notes-rollout.md) ·
 [0157](../runbooks/0157-whole-session-copy-rollout.md)
 
-## Current state (verified 2026-09-16, post-0198 apply; `0198` APPLIED)
+## Current state (re-verified read-only 2026-09-19; DECLARED `0198`, OBSERVED `0199` — see the discrepancy row)
 
 > **PRIVILEGE ONLY.** This apply ran ONE statement — a single **column** grant —
 > and created nothing. **PR #713 was NOT merged and no application code was
@@ -25,11 +25,11 @@ per-rollout closeouts: [0155](../runbooks/0155-probe-inventory-linkage-rollout.m
 
 | Field | Value |
 |---|---|
-| **Hosted (production) migration max** | **0198** (`0198_waitlist_live_invitation_read.sql`) |
+| **Hosted (production) migration max** | **0198** (`0198_waitlist_live_invitation_read.sql`) — this is the **DECLARED** value, the one `docs/production/migration-state.json` carries and the only one this ledger is permitted to state. ⚠️ **It is knowingly BEHIND the OBSERVED value. See the discrepancy row below before relying on it.** |
 | **Repo migration max** | **0198** — `0198_waitlist_live_invitation_read.sql` (WAIT-LIVE-READ-01), derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. This row states the BRANCH-derived position; the hosted row above carries the production claim, and the Pending row below states how the two stand. |
-| **Remote-only migrations** | **none** — no migration exists on production that the repository lacks. |
+| **Remote-only migrations** | ⚠️ **ONE — `0199_reminder_sms_candidate_selection.sql`.** A read-only query on **2026-09-19** returned `max(version)` = **0199**, and all four of its objects (`reminder_sms_candidates`, `reminder_sms_unroutable_studios`, `sms_normalized_phone`, `sms_trimmable_whitespace`) are present in production. **The production tree does not contain that file.** It was applied 2026-09-18 from the reviewed **#716** head `0b6e5f6f`; #716 has not merged, so both the file and its apply record sit on `feat/wait-s3-studio-sender-routing` and nothing on the production branch can show a reviewer what production is running. **No runtime skew results** — production code calls none of the four, verified by search. **This row previously read "none — no migration exists on production that the repository lacks"; that became false on 2026-08-18.** |
 | **Pending migrations** | **none** — `0198` was the entire pending set, and it was applied on **2026-09-16**, so the repository no longer sits above hosted. Repository and hosted are at parity, which is the PARITY shape rather than MIGRATION-FIRST PENDING. `0192`–`0197` remain applied and every apply record below is untouched. This row remains the ledger's own exemption: the current block is the single place permitted to state that relationship. |
-| **Next free migration** | Next free number is **0199**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. **`0198` IS NO LONGER FREE** — it is allocated to WAIT-LIVE-READ-01 (S6), authored on this branch and now applied to production. `0199` is **not claimed** by this lane and **not allocated**: availability is not allocation. |
+| **Next free migration** | Next free number is **0199**, derived by `npm run migration:state` from this tree's `supabase/migrations/*.sql`. 🛑 **DO NOT AUTHOR 0199. THE DERIVATION IS BLIND HERE AND IS WRONG IN PRACTICE:** it reads filenames in *this* tree, and 0199 is already APPLIED TO PRODUCTION from an unmerged branch. **The next number an author may actually claim is `0200`.** **`0198` IS NO LONGER FREE** — it is allocated to WAIT-LIVE-READ-01 (S6), authored on this branch and now applied to production. `0199` is **not claimed** by this lane and **not allocated**: availability is not allocation. |
 | **Project ref** | `alhhybgqdmcdyzpybykj` — the canonical **Hone** production project, confirmed from the applying worktree's `supabase/.temp/project-ref` before every hosted command and distinct from **Hone Staging** (`ndcqadeirszuzmytvobk`), which was never contacted. |
 | **Reviewed release head** | `c3182292336d2a219fc8da57bd95e1024c12598a` (PR #713) — the exact authorized head, tree clean. **Still a draft, still unmerged.** The apply was authorized at this head and performed from it; **the merge did not cause the apply, and the apply does not merge the PR.** |
 | **CLI** | `supabase` **2.102.0**, the pinned version — a grants-parity invariant, not a convenience. |
