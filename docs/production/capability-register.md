@@ -12,7 +12,7 @@ production; neither document is evidence for the other.
   where production had falsified them.
 - **Runtime-bearing baseline:** the application HEAD recorded in
   [current-state.md](./current-state.md) *Reconciliation header* — **the single authority for
-  that SHA, which is deliberately not copied here.** On **2026-09-17** the branch HEAD and the
+  that SHA, which is deliberately not copied here.** On **2026-09-19** the branch HEAD and the
   runtime-bearing HEAD were again the **same commit** (at `d0123ec3`, as at `4cff4a43`, `e8dab8e6` and `6e264b57` before it — the coincidence has now held across four heads, which is still not a guarantee that it holds next time), which is worth stating rather than leaving
   implied — but note it is a coincidence that comes and goes: they were **apart** on 2026-08-30,
   and this bullet asserted the coincidence throughout, because it said "at this reconciliation"
@@ -274,7 +274,7 @@ currently dormant.** Do not describe it as active, syncing, or enabled.
 ## 14. New-client waitlist (admission control)
 
 Two capabilities, two stages. **Do not collapse them into one status.** WAIT-01 is live and its
-commit point is an email. WAIT-02B Stage A is deployed and — ⚠️ **corrected twice on 2026-09-17** — **enabled and
+commit point is an email. WAIT-02B Stage A is deployed and — ⚠️ **corrected on 2026-09-17 and again on 2026-09-19** — **enabled and
 exercised on the controlled test studio, and dark only AT WILLOW.** Its **owner** surface is
 reachable: `/settings/waitlist` writes durable rows through `0193`'s owner commands without
 consulting the durable allowlist. Its **public** commit point is enabled at the test studio too,
@@ -294,10 +294,16 @@ evidence. See [current-state.md](./current-state.md) §5b.
 | Waitlist | **WAIT-02B Stage B — durable collection enabled** | — | — | — | **NOT STARTED** | ❌ | — | — | Blocked on the public privacy disclosure for prospects, the policy's `lastUpdated` + a future `effectiveDate`, explicit studio-enablement GO, and human activation smoke |
 
 **Overall new-client waitlist posture: WAIT-01 enabled and exercised at one studio; WAIT-02B
-Stage A DB applied + deployed + DORMANT, with zero rows *when last measured 2026-08-23*; Stage B
-not started.** Never describe the durable waitlist as live, enabled, active, or collecting —
-and equally, do not restate that dated zero as a present-tense fact: it is evidence for
-2026-08-23, not for today.
+Stage A DB applied + deployed, ENABLED AND EXERCISED ON THE CONTROLLED TEST STUDIO and DORMANT
+AT WILLOW; Stage B not started.** 🔴 **Corrected 2026-09-19 — this summary said flatly
+`DORMANT` with zero rows, contradicting the Stage A row above it in this same section.** The
+roadmap's 12-of-12 canary invoked the public `join` seam on the test studio, so the dormancy is
+**Willow's** and nothing broader; every wider scope has been falsified.
+
+Never describe **Willow's** durable path as live, enabled, active or collecting — that remains
+true and is the claim this rule was written to protect. Equally, do not restate the
+`0 rows` figure as a present-tense fact: it is evidence for **2026-08-23**, superseded by the
+canary record, and never re-measured. Controlled-test exercise is **not** customer activity.
 
 ---
 
@@ -318,7 +324,7 @@ sixty-five decompose exactly, by `git log --first-parent --merges b9e0003f..d012
 | **Merges since `bf6f09c4`, added by the 2026-09-19 refresh — NOT CLASSIFIED for capability content** | **36** | **not derived** |
 | **Total** | **65** | **10 listed** |
 
-> ⚠️ **The fourth group is an open gap, stated rather than absorbed.** The 2026-09-17 refresh
+> ⚠️ **The fourth group is an open gap, stated rather than absorbed.** The 2026-09-19 refresh
 > re-derived the *merge count* to `d0123ec3` because the canonical guard checks it against the Git
 > graph. It did **not** decide which of those thirty-six merges carry a register capability —
 > that is an editorial judgement needing per-capability evidence, and none was gathered. **Zero
@@ -340,7 +346,7 @@ canonical docs reconciliation: documentation and `tests/docs/**` only. **`#660`*
 CI-HARDEN-01B: `.github/workflows/**`, `tests/ci/**`, `CLAUDE.md` and
 `docs/03_SECURITY_AND_PRIVACY.md`. Between them they touch **no** `app/`, `lib/`, `components/`
 or `supabase/` path, so neither adds a capability and neither moved the baseline — which is why
-the 2026-08-30 refresh recorded a pin *behind* the branch head. The 2026-09-17 refresh finds them
+the 2026-08-30 refresh recorded a pin *behind* the branch head. The 2026-09-19 refresh finds them
 level again; the authority for both values is
 [current-state.md](./current-state.md), never this sentence.
 
@@ -382,8 +388,8 @@ not satisfy it, so *ready* now means the intake will actually present a consent.
 |---|---|---|
 | Deployed + enabled + production-exercised + in routine operator use | ~21 | booking, charting core, portal, intake, consent, photos, live session payments, record keeping, **whole-session copy** |
 | Deployed + enabled + **human acceptance pending** | 8 | Phase A charting (unified box, galvanic retirement, 0.733 precision, pulse relabel, notes sizing), whole-session copy *(now also production-exercised — the two are independent)*, numbing notes, probe-lot linkage |
-| Deployed + **DB applied** + **never production-exercised** | 7 | refunds (current baseline), disputes, public-booking card collection, probe-lot linkage, **the durable new-client waitlist (WAIT-02B)**, **non-card appointment settlement (0187 — 0 rows)**, **`/dashboard/capacity` (no usage measured)**. **Whole-session copy has left this bucket** — 24 production operations |
-| Deployed + **dormant** (flag off / no worker / no eligible tenant) | 8 | all Google Calendar sync phases, capacity on Willow, onboarding v2 on Willow, **the durable new-client waitlist on every studio** *(dormant by allowlist configuration since Stage B1 — no longer by a build-time prohibition; see §14)* |
+| Deployed + **DB applied** + **never production-exercised** | 6 | refunds (current baseline), disputes, public-booking card collection, probe-lot linkage, **non-card appointment settlement (0187 — 0 rows)**, **`/dashboard/capacity` (no usage measured)**. **Whole-session copy left this bucket** — 24 production operations. 🔴 **The durable new-client waitlist (WAIT-02B) left it too, corrected 2026-09-19**: the roadmap records a 12-of-12 seam canary on the controlled test studio, so *never exercised* is false. The count falls 7 → 6 |
+| Deployed + **dormant** (flag off / no worker / no eligible tenant) | 8 | all Google Calendar sync phases, capacity on Willow, onboarding v2 on Willow, **the durable new-client waitlist AT WILLOW** *(🔴 corrected 2026-09-19 — this read "on every studio", which the controlled-test canary falsifies; the dormancy is Willow's alone, and the allowlist governs only the public commit point. See §14 and [current-state.md](./current-state.md) §5b)* |
 | **Held** behind a deliberate server-side gate | 3 | live manual fees, public-booking card collection, public practitioner assignment |
 | **Deferred** by product decision | 1 | direct new-client consultation booking route *(distinct from the WAIT-01 waitlist, which is live at Willow — see §14)* |
 | **RETIRED** by product decision (terminal; DB-enforced) | 5 | signed/finalized clinical records (0119), signed-record corrections/amendments (0120), amendment-path observability (PR #402), `clinical_audit_events`, finalized-photo content immutability — see §3 |

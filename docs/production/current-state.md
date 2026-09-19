@@ -87,8 +87,12 @@ over from `6e264b57`, `e8dab8e6` or `4cff4a43`**:**
 > [release-changelog.md](./release-changelog.md), which this refresh did extend. **Read the
 > absence of a section below as "not yet written up here", never as "not shipped"** — the
 > converse of the rule that governs the open-PR table, and the same class of error. Sections
-> **§12** and **§16** were corrected where `#647` made a standing claim false; no other section
-> was re-opened.
+> **Sections this refresh DID re-open, stated because an earlier draft of this very block
+> claimed only two and that was false:** **§5b** (waitlist reachability, enablement and
+> exercise), **§7** (a pointer recording that `#702` made the card receipt automatic), **§8**
+> (withdrawing "no per-studio sender strategy"), **§12** and **§16** (`#647` shipped
+> TRUTH-01B-1), and **§14** (the dormancy scope, which the §5b correction falsified in a second
+> place). Every other section was left alone.
 
 **NOT measured on 2026-09-19, and therefore carried forward with their original 2026-08-23
 stamps rather than restated as current:**
@@ -682,9 +686,11 @@ the Vercel Production environment** when last read *(2026-08-23, variable names 
 per-studio operator GO and human activation smoke. Tracked as **L25** in
 [known-limitations.md](./known-limitations.md).
 
-> **Never describe the durable waitlist as "live".** It is *deployed*, *disclosed*, and
-> *dormant*. The capability live for new clients today is WAIT-01, and its commit point is an
-> email.
+> **Never describe the durable waitlist as "live".** That rule stands. 🔴 **Corrected
+> 2026-09-19 — this block then called it flatly *dormant*, which the controlled-test canary
+> falsifies.** It is *deployed*, *disclosed*, **dormant AT WILLOW**, and **enabled and exercised
+> on the controlled test studio**. The capability live for new clients at Willow today is
+> WAIT-01, and its commit point is an email.
 
 ## 6. Client portal and intake
 
