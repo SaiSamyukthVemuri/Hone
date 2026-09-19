@@ -330,6 +330,12 @@ type RequeueEntryResult =
   | "requeued"
   | "already_active"
   | "not_requeueable"
+  // 0200 (WAIT-P1-EXIT). A spent cycle does not go back in the queue: returning
+  // an entry that already holds a REDEEMED invitation to the active set would
+  // let one entry acquire a second redeemed invitation, which the booking
+  // command reads as `scope_ambiguous`. Unreachable before 0200, because
+  // nothing could put a redeemed entry into `released` or `expired`.
+  | "already_redeemed"
   | OwnerResolutionResult;
 
 const REQUEUE_REFUSALS: Readonly<
@@ -337,6 +343,11 @@ const REQUEUE_REFUSALS: Readonly<
 > = {
   already_active: "That person is already on the waitlist again under the same email.",
   not_requeueable: "Only a released or expired entry can be returned to the queue.",
+  // NAMES THE REMEDY, like every other refusal on this surface. Removal accepts
+  // `released`, and the public form accepts them again once this entry leaves
+  // the active set.
+  already_redeemed:
+    "They already used an invitation, so this entry cannot go back on the waitlist. Remove it — they can join again themselves.",
   ...AUTHORITY_REFUSALS,
 };
 

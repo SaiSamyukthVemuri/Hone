@@ -635,3 +635,37 @@ describe("close — the sentence beside it agrees with it", () => {
     expect(statusMeaning("invited", REDEEMED)).not.toMatch(/sent|arriv|deliver|email/i);
   });
 });
+
+describe("close — the exit is one-way, and the surface says so before the command does", () => {
+  it("requeue is withheld on a released entry whose invitation was used", () => {
+    // 0200 answers `already_redeemed` there, because returning the entry to the
+    // active set would let it acquire a SECOND redeemed invitation — which the
+    // booking command reads as `scope_ambiguous`. Offering a control that can
+    // only refuse is what deriving availability from stored state prevents.
+    const verdict = actionAvailability("requeue", "released", REDEEMED);
+    expect(verdict.available).toBe(false);
+    const reason = verdict.available === false ? verdict.reason : "";
+    expect(reason).toMatch(/already used an invitation/i);
+    // AND IT NAMES THE REMEDY, like every other refusal on this surface.
+    expect(reason).toMatch(/remove/i);
+  });
+
+  it("and remove IS offered there, so the lifecycle still terminates", () => {
+    // The whole point: withholding requeue must not recreate a dead end.
+    expect(actionAvailability("remove", "released", REDEEMED).available).toBe(true);
+  });
+
+  it("an ORDINARY released entry is still requeueable — the narrowing is not a ban", () => {
+    // NON-VACUITY. Set-aside-without-redemption is the far commoner way to
+    // reach `released`, and it is untouched.
+    expect(actionAvailability("requeue", "released", LIVE).available).toBe(true);
+    expect(actionAvailability("requeue", "released", {}).available).toBe(true);
+    expect(actionAvailability("requeue", "expired", REDEEMED).available).toBe(true);
+  });
+
+  it("FAILS CLOSED on a released entry whose invitation could not be read", () => {
+    const verdict = actionAvailability("requeue", "released", UNKNOWN);
+    expect(verdict.available).toBe(false);
+    expect(verdict.available === false && verdict.reason).toMatch(/could not be checked/i);
+  });
+});

@@ -366,6 +366,34 @@ export function actionAvailability(
       return { available: true };
 
     case "requeue":
+      // WAIT-P1-EXIT NARROWED THIS, AND THE NARROWING IS NOT COSMETIC.
+      //
+      // 0200 refuses to requeue an entry holding a REDEEMED invitation, with
+      // `already_redeemed`. Returning it to the active set would let ONE entry
+      // acquire a SECOND redeemed invitation, and five shipped consumers read
+      // "any redeemed invitation for this entry" as "the current one" — the
+      // booking command would answer `scope_ambiguous` and the prospect could
+      // never book again.
+      //
+      // Before 0200 no requeueable entry could hold a redeemed invitation at
+      // all, because release and expire both refuse one. So this branch
+      // describes exactly the state `close` creates, and nothing older.
+      if (status === "released" && context.invitationFactsUnknown) {
+        // FAIL CLOSED, as release and close both do. An unread invitation might
+        // be redeemed, and the command would then answer `already_redeemed`.
+        return {
+          available: false,
+          reason:
+            "This entry's invitation could not be checked just now, so it cannot be returned to the waitlist safely. Try again shortly.",
+        };
+      }
+      if (status === "released" && context.invitationRedeemed) {
+        return {
+          available: false,
+          reason:
+            "They already used an invitation, so this entry cannot go back on the waitlist. Remove it — they can join again themselves.",
+        };
+      }
       if (status === "released" || status === "expired") return { available: true };
       if (status === "waiting") {
         return { available: false, reason: "They are already in the queue." };

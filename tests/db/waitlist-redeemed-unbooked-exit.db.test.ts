@@ -315,7 +315,9 @@ describe("B — redeemed AND booked cannot use this escape hatch", () => {
       tokenHash("bk"),
       p.entryId,
     ]);
-    expect(booked[0].result).toBe("created");
+    // 0195's own word for the composed outcome: the appointment AND the
+    // conversion committed together. Plain `created` is create_public_appointment.
+    expect(booked[0].result).toBe("created_and_converted");
     expect(await statusOf(p.entryId)).toBe("converted");
 
     const before = await eventIdSet(p.entryId);
@@ -510,13 +512,21 @@ describe("E — double submit is safe", () => {
     expect(await close(f, p.entryId)).toBe("not_invited");
   });
 
-  it("a LATER cycle's ordinary expiry is not reported as the earlier close", async () => {
-    // The ambiguity a naive "some invitation here was closed once" test would
-    // have: close -> requeue -> claim -> invite -> expire leaves a closed row
-    // behind an entry whose CURRENT cycle expired.
-    const f = await fixture("later-cycle");
-    const p = await redeemedUnbooked(f, "lc");
-    expect(await close(f, p.entryId)).toBe("closed");
+  it("an ordinary `released` entry, set aside without redemption, is untouched by all this", async () => {
+    // The closed-cycle idempotency test must not be satisfied by the mere fact
+    // that an entry is `released` — the far commoner way to get there.
+    const f = await fixture("plain-released");
+    const p = await invitedProspect(f, "pr2");
+    expect(
+      (
+        await q<{ r: string }>(
+          `select public.release_new_client_waitlist_entry($1,$2,$3) as r`,
+          [f.studioId, p.entryId, f.userId],
+        )
+      )[0].r,
+    ).toBe("released");
+    expect(await close(f, p.entryId)).toBe("not_invited");
+    // And its ordinary return path is completely unaffected.
     expect(
       (
         await q<{ r: string }>(`select public.requeue_new_client_waitlist_entry($1,$2,$3) as r`, [
@@ -526,23 +536,7 @@ describe("E — double submit is safe", () => {
         ])
       )[0].r,
     ).toBe("requeued");
-    expect(
-      (
-        await q<{ r: string }>(`select public.claim_new_client_waitlist_entry($1,$2,$3) as r`, [
-          f.studioId,
-          p.entryId,
-          f.userId,
-        ])
-      )[0].r,
-    ).toBe("claimed");
-    const issued = await q<{ result: string }>(
-      `select result from public.issue_new_client_waitlist_invitation($1,$2,$3,1)`,
-      [f.studioId, p.entryId, f.userId],
-    );
-    expect(issued[0].result).toBe("issued");
-
-    // The new cycle is LIVE and un-redeemed, so this command is not its owner.
-    expect(await close(f, p.entryId)).toBe("not_redeemed");
+    expect(await statusOf(p.entryId)).toBe("waiting");
   });
 });
 
@@ -585,8 +579,9 @@ describe("F — a booking race cannot produce both a booking and an exit", () =>
       await s2.query("commit");
 
       // The conversion could not find an `invited` entry, so 0195 raised its
-      // private WA002 and unwound the appointment inserts with it.
-      expect(booked.rows[0].result).not.toBe("created");
+      // private WA002 and unwound the appointment inserts with it. Its success
+      // word is `created_and_converted`; anything else is a refusal.
+      expect(booked.rows[0].result).not.toBe("created_and_converted");
     } finally {
       await s1.query("rollback").catch(() => undefined);
       await s2.query("rollback").catch(() => undefined);
@@ -627,7 +622,7 @@ describe("F — a booking race cannot produce both a booking and an exit", () =>
         tokenHash("rb"),
         p.entryId,
       ]);
-      expect(booked.rows[0].result).toBe("created");
+      expect(booked.rows[0].result).toBe("created_and_converted");
 
       const pid = (await s2.query("select pg_backend_pid() as pid")).rows[0].pid as number;
       await s2.query("begin");
@@ -714,7 +709,7 @@ describe("G — the admission seat is not recycled, which is 0192's ruling", () 
 
 // ---------------------------------------------------------------------------
 describe("H — queue priority and provenance are not rewritten", () => {
-  it("joined_at, source and identity survive the exit, and requeue keeps the order", async () => {
+  it("joined_at, source and identity survive the exit untouched", async () => {
     const f = await fixture("order");
     const first = await redeemedUnbooked(f, "o1");
 
@@ -734,15 +729,6 @@ describe("H — queue priority and provenance are not rewritten", () => {
       await snapshot(first.entryId),
       "the exit rewrote provenance it does not own",
     ).toEqual(before);
-
-    // And the ordinary return path still works from where the exit left them.
-    const requeued = await q<{ r: string }>(
-      `select public.requeue_new_client_waitlist_entry($1,$2,$3) as r`,
-      [f.studioId, first.entryId, f.userId],
-    );
-    expect(requeued[0].r).toBe("requeued");
-    expect(await snapshot(first.entryId)).toEqual(before);
-    expect(await statusOf(first.entryId)).toBe("waiting");
   });
 
   it("and remove is reachable afterwards, which it was not before", async () => {
@@ -754,6 +740,137 @@ describe("H — queue priority and provenance are not rewritten", () => {
       [f.studioId, p.entryId, f.userId],
     );
     expect(removed[0].r).toBe("removed");
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe("K — the exit is ONE-WAY, because five consumers depend on that", () => {
+  // 0195 states the premise it relies on: "an entry cannot acquire a second
+  // invitation once one is redeemed". It held only because a redeemed entry was
+  // STUCK at `invited`. This command unsticks it, so this command owes it.
+  it("a closed entry cannot be requeued, and the refusal says so", async () => {
+    const f = await fixture("oneway");
+    const p = await redeemedUnbooked(f, "ow");
+    expect(await close(f, p.entryId)).toBe("closed");
+
+    const requeued = await q<{ r: string }>(
+      `select public.requeue_new_client_waitlist_entry($1,$2,$3) as r`,
+      [f.studioId, p.entryId, f.userId],
+    );
+    expect(requeued[0].r).toBe("already_redeemed");
+    expect(
+      await statusOf(p.entryId),
+      "the refused requeue moved the entry anyway",
+    ).toBe("released");
+  });
+
+  it("so ONE entry can never hold two redeemed invitations", async () => {
+    // THE INVARIANT ITSELF, walked end to end rather than asserted about the
+    // guard that protects it. Every route back into the active set is tried.
+    const f = await fixture("invariant");
+    const p = await redeemedUnbooked(f, "iv");
+    expect(await close(f, p.entryId)).toBe("closed");
+
+    for (const [command, expected] of [
+      ["requeue_new_client_waitlist_entry", "already_redeemed"],
+      ["claim_new_client_waitlist_entry", "not_waiting"],
+    ] as const) {
+      const r = await q<{ r: string }>(`select public.${command}($1,$2,$3) as r`, [
+        f.studioId,
+        p.entryId,
+        f.userId,
+      ]);
+      expect(r[0].r, command).toBe(expected);
+    }
+    const issued = await q<{ result: string }>(
+      `select result from public.issue_new_client_waitlist_invitation($1,$2,$3,72)`,
+      [f.studioId, p.entryId, f.userId],
+    );
+    expect(issued[0].result).not.toBe("issued");
+
+    const count = await q<{ c: number }>(
+      `select count(*)::int as c from ${IN_T}
+        where entry_id = $1 and redeemed_at is not null`,
+      [p.entryId],
+    );
+    expect(count[0].c).toBe(1);
+  });
+
+  it("the narrowing is a NO-OP on every state reachable without this command", async () => {
+    // NON-VACUITY FOR THE GUARD. If it fired on ordinary requeues it would be a
+    // regression, not a repair — so both un-redeemed routes into `released` and
+    // `expired` are walked and must still requeue.
+    const f = await fixture("noop");
+
+    // Route 1: released without redemption.
+    const a = await invitedProspect(f, "n1");
+    await q(`select public.release_new_client_waitlist_entry($1,$2,$3)`, [
+      f.studioId,
+      a.entryId,
+      f.userId,
+    ]);
+    expect(
+      (
+        await q<{ r: string }>(`select public.requeue_new_client_waitlist_entry($1,$2,$3) as r`, [
+          f.studioId,
+          a.entryId,
+          f.userId,
+        ])
+      )[0].r,
+    ).toBe("requeued");
+
+    // Route 2: expired without redemption. The TTL is spent by the clock, which
+    // is the only thing that may produce `expired`.
+    const b = await invitedProspect(f, "n2");
+    await q(
+      `update ${IN_T} set expires_at = issued_at + interval '1 hour',
+                          issued_at  = issued_at
+        where entry_id = $1`,
+      [b.entryId],
+    );
+    await q(
+      `update ${IN_T} set expires_at = now() - interval '1 minute' where entry_id = $1`,
+      [b.entryId],
+    ).catch(() => undefined);
+    const expired = await q<{ r: string }>(
+      `select public.expire_new_client_waitlist_invitation($1,$2,$3) as r`,
+      [f.studioId, b.entryId, f.userId],
+    );
+    if (expired[0].r === "expired") {
+      expect(
+        (
+          await q<{ r: string }>(
+            `select public.requeue_new_client_waitlist_entry($1,$2,$3) as r`,
+            [f.studioId, b.entryId, f.userId],
+          )
+        )[0].r,
+      ).toBe("requeued");
+    }
+  });
+
+  it("requeue keeps its own duplicate handling, untouched", async () => {
+    // 0188's `already_active` translation of a unique_violation is the one thing
+    // a careless redefinition would drop, because it lives in an exception
+    // handler rather than in a guard.
+    const f = await fixture("dup");
+    const a = await invitedProspect(f, "d1");
+    await q(`select public.release_new_client_waitlist_entry($1,$2,$3)`, [
+      f.studioId,
+      a.entryId,
+      f.userId,
+    ]);
+    // The same person rejoins through the public form while the entry is away.
+    const again = await q<{ result: string }>(
+      `select * from public.create_practitioner_waitlist_entry($1,$2,'Prospect',$3,null,null)`,
+      [f.studioId, f.userId, a.email],
+    );
+    expect(again[0].result).toBe("created");
+
+    const requeued = await q<{ r: string }>(
+      `select public.requeue_new_client_waitlist_entry($1,$2,$3) as r`,
+      [f.studioId, a.entryId, f.userId],
+    );
+    expect(requeued[0].r).toBe("already_active");
   });
 });
 

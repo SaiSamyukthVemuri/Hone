@@ -611,12 +611,24 @@ export default async function WaitlistSettingsPage({
   // operator's way to end a live invitation early is Release. So the elapsed
   // fact is read rather than assumed, and only for the entries that could use
   // it.
-  const invitedIds = rows.filter((r) => r.status === "invited").map((r) => r.id);
+  // WAIT-P1-EXIT. `released` ROWS NEED THE INVITATION FACTS TOO, NOW.
+  //
+  // 0200 refuses to requeue an entry holding a redeemed invitation, so
+  // "Return to waitlist" on such a row could only ever fail. Deciding that from
+  // the status alone is impossible: a `released` entry that was merely set
+  // aside IS requeueable, and one whose used invitation was closed is not. The
+  // two are distinguished by exactly the fact this read already fetches.
+  //
+  // It rides the SAME two queries — one `.in()` list, no new round trip, no new
+  // policy — and the read is still owner-RLS-scoped.
+  const cycleIds = rows
+    .filter((r) => r.status === "invited" || r.status === "released")
+    .map((r) => r.id);
   /** Recorded provider outcome per invited entry. ABSENT means never recorded,
    *  which is NOT the same as the observed verdict `unknown`. */
   const deliveryByEntry = new Map<string, InvitationDeliveryState>();
   let cycleByEntry: Map<string, { elapsed: boolean; redeemed: boolean }> | null = new Map();
-  if (invitedIds.length > 0) {
+  if (cycleIds.length > 0) {
     // THE LIVE INVITATION IS A SCHEMA INVARIANT, NOT A CHRONOLOGY GUESS.
     //
     // `new_client_waitlist_invitations` is append-only, so an entry that went
@@ -647,7 +659,7 @@ export default async function WaitlistSettingsPage({
           // no new policy and no service-role path.
         .select("entry_id,expires_at,delivery_disposition")
         .eq("studio_id", studio.id)
-        .in("entry_id", invitedIds)
+        .in("entry_id", cycleIds)
         .is("redeemed_at", null)
         .is("expired_at", null)
         .is("released_at", null)
@@ -681,7 +693,7 @@ export default async function WaitlistSettingsPage({
         .from("new_client_waitlist_invitations")
         .select("entry_id")
         .eq("studio_id", studio.id)
-        .in("entry_id", invitedIds)
+        .in("entry_id", cycleIds)
         .not("redeemed_at", "is", null),
     ]);
 
@@ -702,10 +714,12 @@ export default async function WaitlistSettingsPage({
       const redeemedIds = new Set(
         ((redeemed.data ?? []) as Array<{ entry_id: string }>).map((r) => r.entry_id),
       );
-      // Default every invited entry to "no live invitation": an entry with
-      // neither a live nor a redeemed row offers nothing, which is the safe
-      // direction.
-      for (const id of invitedIds) {
+      // Default every entry in the census to "no live invitation": an entry
+      // with neither a live nor a redeemed row offers nothing, which is the
+      // safe direction. A `released` row that was merely set aside lands here
+      // with `redeemed: false` and stays requeueable, which is what separates
+      // it from one whose used invitation was closed.
+      for (const id of cycleIds) {
         cycleByEntry.set(id, { elapsed: false, redeemed: redeemedIds.has(id) });
       }
       for (const inv of (live.data ?? []) as Array<{

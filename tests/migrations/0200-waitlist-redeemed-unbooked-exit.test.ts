@@ -27,6 +27,23 @@ const CODE = SQL.replace(/^\s*--.*$/gm, " ").replace(/comment on [\s\S]*?;/gi, "
 const FN = "close_unbooked_new_client_waitlist_invitation";
 const SIG = `public.${FN}(uuid, uuid, uuid)`;
 
+/**
+ * THE CLOSE COMMAND'S OWN BODY, BOUNDED AT ITS TERMINATOR.
+ *
+ * An earlier revision sliced from the function header to the END OF FILE, which
+ * silently swallowed the `requeue` redefinition that follows it — so the
+ * result-code census reported requeue's codes as the close command's, and a
+ * per-statement assertion could match the wrong function entirely. Bounded at
+ * the first `$$;` after the header, which is this function's own.
+ */
+const FN_BODY = (() => {
+  const from = CODE.indexOf(`function public.${FN}`);
+  if (from < 0) throw new Error(`0200 no longer defines ${FN}`);
+  const end = CODE.indexOf("$$;", from);
+  if (end < 0) throw new Error(`${FN} has no terminator`);
+  return CODE.slice(from, end);
+})();
+
 describe("0200 position in the chain", () => {
   it("is the repository maximum", () => {
     // Taken over from 0198 (and 0199 before it, whose own file lives on the
@@ -117,20 +134,26 @@ describe("0200 adds no table rewrite and no destructive statement", () => {
       (m) => m[1],
     );
     expect(redefined.sort()).toEqual(
-      [FN, "new_client_waitlist_invitations_append_only"].sort(),
+      [
+        FN,
+        "new_client_waitlist_invitations_append_only",
+        // NARROWED, NOT WEAKENED — see the dedicated block below.
+        "requeue_new_client_waitlist_entry",
+      ].sort(),
     );
   });
 });
 
 describe("0200 does not weaken any shipped exit", () => {
-  it("redefines none of release, expire, remove, requeue or conversion", () => {
+  it("redefines none of release, expire, remove, conversion or booking", () => {
     // THE RULING THIS SLICE WAS GIVEN: the state is closed by ADDING a command,
     // never by relaxing a guard that exists because relaxing it caused a defect.
+    // `requeue` is the single exception and it is NARROWED, never relaxed —
+    // proved separately below.
     for (const fn of [
       "release_new_client_waitlist_entry",
       "expire_new_client_waitlist_invitation",
       "remove_new_client_waitlist_entry",
-      "requeue_new_client_waitlist_entry",
       "record_new_client_waitlist_conversion",
       "issue_new_client_waitlist_invitation",
       "redeem_new_client_waitlist_invitation",
@@ -141,6 +164,48 @@ describe("0200 does not weaken any shipped exit", () => {
         new RegExp(`create or replace function\\s+public\\.${fn}\\b`, "i"),
       );
     }
+  });
+
+  it("narrows requeue by ADDING a refusal, and relaxes nothing it already had", () => {
+    // WHY REQUEUE AT ALL. 0195's premise — "an entry cannot acquire a second
+    // invitation once one is redeemed" — held only because a redeemed entry was
+    // stuck at `invited`. This migration unsticks it, so it owes the premise at
+    // the one door that would break it.
+    const body = CODE.slice(CODE.indexOf("function public.requeue_new_client_waitlist_entry"));
+    const fn = body.slice(0, body.indexOf("$$;"));
+
+    // THE ADDED GUARD.
+    expect(fn).toMatch(/redeemed_at is not null/);
+    expect(fn).toMatch(/return 'already_redeemed'/);
+
+    // AND 0188'S BODY, INTACT. Each of these is a line a careless redefinition
+    // drops — the duplicate handler most of all, because it lives in an
+    // exception block rather than in a guard.
+    for (const kept of [
+      "new_client_waitlist_resolve_owner(p_studio_id, p_actor_user_id)",
+      "when unique_violation then",
+      "return 'already_active'",
+      "return 'not_requeueable'",
+      "return 'requeued'",
+      "claimed_by_practitioner_id = null",
+      "status in ('released','expired')",
+    ]) {
+      expect(fn, `the requeue redefinition dropped: ${kept}`).toContain(kept);
+    }
+
+    // It accepts no MORE states than before — the guard adds a refusal, so the
+    // accepted set is unchanged.
+    expect([...fn.matchAll(/status in \('[a-z',]+'\)/g)].map((m) => m[0])).toEqual([
+      "status in ('released','expired')",
+    ]);
+  });
+
+  it("restates requeue's grant contract rather than leaving it implied", () => {
+    const sig = "public.requeue_new_client_waitlist_entry(uuid, uuid, uuid)";
+    for (const grantee of ["public", "anon", "authenticated", "service_role"]) {
+      expect(CODE).toContain(`revoke execute on function ${sig} from ${grantee};`);
+    }
+    expect(CODE).toContain(`grant  execute on function ${sig} to service_role;`);
   });
 
   it("does not touch the consumed-count definition or the admission round", () => {
@@ -161,10 +226,9 @@ describe("0200 does not weaken any shipped exit", () => {
     // follows it, which legitimately writes `released_at` — the assertion was
     // reading the wrong statement and would have gone green on a real defect
     // somewhere else. The invitation UPDATE ends at its own semicolon.
-    const fnBody = CODE.slice(CODE.indexOf(`function public.${FN}`));
-    const from = fnBody.indexOf("update public.new_client_waitlist_invitations");
+    const from = FN_BODY.indexOf("update public.new_client_waitlist_invitations");
     expect(from, "the command no longer updates the invitation at all").toBeGreaterThan(0);
-    const stmt = fnBody.slice(from, fnBody.indexOf(";", from));
+    const stmt = FN_BODY.slice(from, FN_BODY.indexOf(";", from));
     expect(stmt).toMatch(/set\s+closed_at\s*=/);
     for (const terminal of ["expired_at", "declined_at", "redeemed_at", "released_at"]) {
       expect(
@@ -185,7 +249,7 @@ describe("0200 does not weaken any shipped exit", () => {
 
 describe("0200's command is owner-authorised, server-only and clock-owning", () => {
   it("is SECURITY DEFINER with a pinned search_path", () => {
-    const body = CODE.slice(CODE.indexOf(`function public.${FN}`));
+    const body = FN_BODY;
     expect(body).toMatch(/security definer/);
     expect(body).toMatch(/set search_path = pg_catalog, pg_temp/);
   });
@@ -196,7 +260,7 @@ describe("0200's command is owner-authorised, server-only and clock-owning", () 
   });
 
   it("takes the entry mutex before it reads anything about the invitation", () => {
-    const body = CODE.slice(CODE.indexOf(`function public.${FN}`));
+    const body = FN_BODY;
     const entryLock = body.indexOf("from public.new_client_waitlist_entries e");
     const inviteRead = body.indexOf("from public.new_client_waitlist_invitations i");
     expect(entryLock).toBeGreaterThan(0);
@@ -205,7 +269,7 @@ describe("0200's command is owner-authorised, server-only and clock-owning", () 
   });
 
   it("scopes every entry lookup by BOTH id and studio_id", () => {
-    const body = CODE.slice(CODE.indexOf(`function public.${FN}`));
+    const body = FN_BODY;
     const bare = [...body.matchAll(/new_client_waitlist_entries\b[\s\S]{0,300}?;/g)].filter(
       (m) => !/studio_id/.test(m[0]),
     );
@@ -215,7 +279,7 @@ describe("0200's command is owner-authorised, server-only and clock-owning", () 
   });
 
   it("reads its own clock and accepts none from the caller", () => {
-    const body = CODE.slice(CODE.indexOf(`function public.${FN}`));
+    const body = FN_BODY;
     expect(body).toMatch(/v_decision_at\s*:=\s*clock_timestamp\(\)/);
     // One read, used for both stamps.
     expect([...body.matchAll(/clock_timestamp\(\)/g)]).toHaveLength(1);
@@ -319,7 +383,7 @@ describe("0200 answers the states it refuses with distinguishable words", () => 
     // The action's union and this list are the same contract read from two
     // sides; a code added to one and not the other is how a real refusal falls
     // through to "please try again".
-    const body = CODE.slice(CODE.indexOf(`function public.${FN}`));
+    const body = FN_BODY;
     const returned = new Set(
       [...body.matchAll(/return '([a-z_]+)'/g)].map((m) => m[1]),
     );
@@ -361,7 +425,7 @@ describe("0200 answers the states it refuses with distinguishable words", () => 
   });
 
   it("refuses a booking it cannot rule out, rather than releasing over it", () => {
-    const body = CODE.slice(CODE.indexOf(`function public.${FN}`));
+    const body = FN_BODY;
     const check = body.slice(body.indexOf("from public.appointments a"));
     expect(check).toMatch(/c\.normalized_email\s*=\s*v_entry_email/);
     expect(check).toMatch(/a\.status\s*<>\s*'cancelled'/);

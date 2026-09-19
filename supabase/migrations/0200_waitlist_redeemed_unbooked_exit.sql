@@ -63,10 +63,55 @@
 -- the same shape of outcome reached by silence instead of by an answer, and it
 -- should not invent a second vocabulary for it.
 --
--- From `released` the ordinary commands resume: requeue returns the prospect to
--- `waiting` with `joined_at` untouched (it is immutable), and remove reaches
--- `removed`. This file adds no second path to either, and rewrites no queue
--- ordering, provenance or evidence.
+-- From `released` the operator finishes with the ordinary `remove` command,
+-- which already accepts that state. This file adds no second path to it, and
+-- rewrites no queue ordering, provenance or evidence.
+--
+-- ---------------------------------------------------------------------------
+-- THE EXIT IS ONE-WAY, AND THAT IS NOT A LIMITATION -- IT IS THE INVARIANT
+-- FIVE SHIPPED CONSUMERS ALREADY DEPEND ON
+-- ---------------------------------------------------------------------------
+--
+-- 0195 states the premise in its own words: "an entry cannot acquire a second
+-- invitation once one is redeemed", because redemption closes the live row and
+-- admit accepts only `waiting` or `claimed`. It holds today for one reason
+-- only: a redeemed entry is STUCK at `invited` and can never re-enter the
+-- active set.
+--
+-- THIS COMMAND UNSTICKS IT, SO THIS COMMAND OWES THE PREMISE. Left alone, the
+-- obvious next step -- requeue the released prospect, claim them, invite them
+-- again -- would give ONE entry two redeemed invitations, and five shipped
+-- consumers all ask "has ANY invitation for this entry been redeemed?":
+--
+--   create_waitlist_public_appointment  counts them, and answers
+--                                       `scope_ambiguous` at two -- the
+--                                       prospect could never book again
+--   record_new_client_waitlist_conversion  would convert an entry whose
+--                                       CURRENT invitation was never accepted,
+--                                       on a previous cycle's evidence
+--   release_new_client_waitlist_entry   would answer `already_redeemed` about a
+--                                       live invitation nobody has opened
+--   expire_new_client_waitlist_invitation  the same, for an elapsed one
+--   the practitioner surface            would read a historical cycle as the
+--                                       current one and decide the row's
+--                                       controls from it
+--
+-- Teaching all five to ask about the CURRENT cycle is a real and worthwhile
+-- slice. It is not this one, and doing it here would mean re-authoring four
+-- commands whose guards each exist because of a past production defect.
+--
+-- SO THE PREMISE IS PRESERVED INSTEAD, at the one door that would break it:
+-- `requeue_new_client_waitlist_entry` is redefined below to refuse an entry
+-- holding a redeemed invitation. That refusal is a NO-OP ON EVERY EXISTING ROW
+-- AND EVERY EXISTING PATH -- requeue accepts only `released` and `expired`, and
+-- before this file NOTHING could put a redeemed entry into either state, since
+-- release and expire both refuse one. It constrains exactly the state this
+-- migration creates and nothing else.
+--
+-- The operator is not stranded: `remove` accepts `released` and is the coherent
+-- terminal exit, and the person can rejoin through the public form because
+-- `..._one_active_per_email` no longer holds their slot. What they cannot do is
+-- be re-offered on the SAME entry, which is the thing the premise forbids.
 --
 -- ---------------------------------------------------------------------------
 -- THE ADMISSION SEAT IS NOT RECYCLED, AND THAT IS 0192'S RULING, NOT A GAP
@@ -509,7 +554,110 @@ comment on function public.close_unbooked_new_client_waitlist_invitation(uuid, u
   'browser supplies an entry id and nothing else.';
 
 -- ---------------------------------------------------------------------------
--- 5. GRANTS
+-- 5. REQUEUE LEARNS THAT A SPENT CYCLE DOES NOT GO BACK IN THE QUEUE
+-- ---------------------------------------------------------------------------
+--
+-- FORWARD REDEFINITION. 0188's body is carried through unchanged -- the
+-- authority resolution, the cleared cycle evidence, and the unique_violation
+-- handler that translates a collision into `already_active` rather than letting
+-- an exception escape -- with ONE guard added ahead of the write.
+--
+-- WHY IT CANNOT REGRESS ANYTHING. Requeue accepts only `released` and
+-- `expired`. Before this migration, NO entry holding a redeemed invitation
+-- could be in either state: release answers `already_redeemed`, expire answers
+-- `already_redeemed`, and removal has no edge from `invited`. So the new guard
+-- matches zero existing rows and zero existing paths, and constrains exactly
+-- the state section 4 above creates.
+--
+-- `already_redeemed` IS THE EXISTING WORD, DELIBERATELY REUSED. Release and
+-- expire both answer it for the same underlying fact, and the practitioner copy
+-- for it already says the invitation has been used. A new synonym would make
+-- three commands describe one fact in two vocabularies.
+--
+-- THE GUARD IS A PRE-CHECK, AND HERE THAT IS SAFE. 0188 argues at length that
+-- the DUPLICATE test must be handled rather than pre-checked, because a
+-- conflicting row can commit between a check and a write. That argument does
+-- not transfer: `redeemed_at` is write-once on an undeletable row with an
+-- immutable `entry_id`, so this fact cannot be created or destroyed by a
+-- concurrent transaction, and the duplicate handler below is untouched.
+create or replace function public.requeue_new_client_waitlist_entry(
+  p_studio_id     uuid,
+  p_entry_id      uuid,
+  p_actor_user_id uuid
+)
+returns text
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog, pg_temp
+as $$
+declare
+  v_actor uuid;
+  v_code  text;
+  v_hit   uuid;
+begin
+  select r.practitioner_id, r.code into v_actor, v_code
+    from public.new_client_waitlist_resolve_owner(p_studio_id, p_actor_user_id) r;
+  if v_code <> 'ok' then return v_code; end if;
+  if p_entry_id is null then return 'invalid_input'; end if;
+
+  -- 0200. A SPENT CYCLE DOES NOT GO BACK IN THE QUEUE. See the header: putting
+  -- this entry back would let it acquire a SECOND redeemed invitation, and five
+  -- shipped consumers read "any redeemed invitation for this entry" as "the
+  -- current one". Unreachable before 0200 and reachable only through it.
+  if exists (
+    select 1
+      from public.new_client_waitlist_invitations i
+     where i.entry_id    = p_entry_id
+       and i.studio_id   = p_studio_id
+       and i.redeemed_at is not null)
+  then
+    return 'already_redeemed';
+  end if;
+
+  -- 0188'S BODY, UNCHANGED FROM HERE DOWN.
+  --
+  -- REQUEUE IS THE ONLY COMMAND THAT RE-ENTERS THE ACTIVE DUPLICATE INDEX, so
+  -- only this one can collide with a row that arrived while the entry was away.
+  -- That collision is REACHABLE WITHOUT CONCURRENCY, the index correctly
+  -- refuses it, and the refusal arrives as unique_violation -- which 0185
+  -- forbade these commands to raise. HANDLED, NOT PRE-CHECKED: a `select`
+  -- before the update would reintroduce the read-then-write window, because the
+  -- conflicting row can commit between the check and the write.
+  begin
+    update public.new_client_waitlist_entries
+       set status                     = 'waiting',
+           claimed_at                 = null,
+           claimed_by_practitioner_id = null,
+           invited_at                 = null,
+           expired_at                 = null,
+           released_at                = null
+     where id = p_entry_id and studio_id = p_studio_id
+       and status in ('released','expired')
+    returning id into v_hit;
+  exception
+    when unique_violation then
+      return 'already_active';
+  end;
+
+  if v_hit is null then return 'not_requeueable'; end if;
+  return 'requeued';
+end;
+$$;
+
+comment on function public.requeue_new_client_waitlist_entry(uuid, uuid, uuid) is
+  'WAIT-02/0188, narrowed by 0200. Returns a released or expired prospect to the '
+  'pool and clears the cycle evidence, because ''waiting'' asserts no claim and no '
+  'invitation. REFUSES an entry holding a REDEEMED invitation with '
+  '''already_redeemed'': that entry has spent an admission seat, and returning it '
+  'to the active set would let one entry acquire a second redeemed invitation -- '
+  'which create_waitlist_public_appointment, record_new_client_waitlist_conversion, '
+  'release, expire and the practitioner surface all read as the CURRENT cycle. '
+  'The guard matched no row reachable before 0200. The coherent exit from that '
+  'state is remove_new_client_waitlist_entry, which accepts ''released''.';
+
+-- ---------------------------------------------------------------------------
+-- 6. GRANTS
 -- ---------------------------------------------------------------------------
 --
 -- REVOKED FROM ALL FOUR BY NAME BEFORE THE ONE GRANT. Supabase's ALTER DEFAULT
@@ -523,6 +671,19 @@ revoke execute on function public.close_unbooked_new_client_waitlist_invitation(
 revoke execute on function public.close_unbooked_new_client_waitlist_invitation(uuid, uuid, uuid) from authenticated;
 revoke execute on function public.close_unbooked_new_client_waitlist_invitation(uuid, uuid, uuid) from service_role;
 grant  execute on function public.close_unbooked_new_client_waitlist_invitation(uuid, uuid, uuid) to service_role;
+
+-- THE REDEFINED REQUEUE KEEPS ITS EXACT ACL, RESTATED RATHER THAN ASSUMED.
+--
+-- `CREATE OR REPLACE FUNCTION` retains an existing function's ACL, so this is
+-- belt and braces -- but the grant guards read this file TEXTUALLY, and a
+-- redefinition with no visible grant contract reads as one that dropped it.
+-- 0192 restated every signature it redefined for the same reason. Same four
+-- revokes by name, same single grant, same grantee as 0188 gave it.
+revoke execute on function public.requeue_new_client_waitlist_entry(uuid, uuid, uuid) from public;
+revoke execute on function public.requeue_new_client_waitlist_entry(uuid, uuid, uuid) from anon;
+revoke execute on function public.requeue_new_client_waitlist_entry(uuid, uuid, uuid) from authenticated;
+revoke execute on function public.requeue_new_client_waitlist_entry(uuid, uuid, uuid) from service_role;
+grant  execute on function public.requeue_new_client_waitlist_entry(uuid, uuid, uuid) to service_role;
 
 -- THE OPERATOR SURFACE HAS TO BE ABLE TO SEE A CLOSED CYCLE.
 --
