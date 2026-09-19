@@ -174,6 +174,119 @@ test.describe("SESSION-START-01 — pressing a modality is acknowledged", () => 
     await page.waitForURL(/\/sessions\/[0-9a-f-]{36}/i, { timeout: T });
   });
 
+  // IMMEDIACY + TRUTHFULNESS, at both surfaces.
+  //
+  // The tests above prove the acknowledgement EXISTS. They cannot prove LAW 4,
+  // whose claim is narrower and stronger: "a press is confirmed BEFORE ITS
+  // RESULT ARRIVES". Every assertion above carries `timeout: T` (20s), so an
+  // implementation that acknowledged three seconds after the press would
+  // satisfy all of them while failing the law outright.
+  //
+  // MEASURED IN THE PAGE, NOT ACROSS THE WIRE. A Playwright-side stopwatch
+  // measures the driver round trip as much as the application. A capture-phase
+  // listener plus a MutationObserver timestamp the click dispatch and the
+  // aria-busy commit against the SAME clock, inside the browser, so the number
+  // is the application's own.
+  //
+  // The bound is deliberately of two kinds. RELATIONAL is the real proof and
+  // owes nothing to hardware: the action is held open for a known interval, so
+  // an acknowledgement inside a small fraction of it is confirmed before the
+  // result by construction. The ABSOLUTE ceiling is the flake-resistant
+  // sanity limit on top, not the definition of "immediate".
+  for (const surface of [
+    { name: "desktop", width: 1280, height: 800 },
+    { name: "mobile 390px", width: 390, height: 844 },
+  ] as const) {
+    test(`${surface.name}: the press is confirmed before its result arrives`, async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width: surface.width, height: surface.height });
+      await openPicker(page);
+
+      const electro = page.locator('[data-modality="electrolysis"]');
+      await expect(electro).toBeVisible({ timeout: T });
+      // The island must be HYDRATED before the clock starts, otherwise this
+      // measures React bootstrap rather than the acknowledgement. An
+      // unhydrated card still submits — natively, acknowledging nothing — and
+      // that failure is what the aria-busy assertion below catches.
+      await expect(electro).toBeEnabled();
+
+      await page.evaluate(() => {
+        const el = document.querySelector('[data-modality="electrolysis"]');
+        if (!el) throw new Error("no electrolysis card");
+        const w = window as unknown as {
+          __ack: { pressedAt: number | null; busyAt: number | null };
+        };
+        w.__ack = { pressedAt: null, busyAt: null };
+        el.addEventListener(
+          "click",
+          () => {
+            w.__ack.pressedAt = performance.now();
+          },
+          { capture: true, once: true },
+        );
+        const mo = new MutationObserver(() => {
+          if (el.getAttribute("aria-busy") === "true" && w.__ack.busyAt === null) {
+            w.__ack.busyAt = performance.now();
+            mo.disconnect();
+          }
+        });
+        mo.observe(el, { attributes: true, attributeFilter: ["aria-busy"] });
+      });
+
+      const HELD_MS = 3_000;
+      await withSlowAction(page, HELD_MS, async () => {
+        await electro.click();
+
+        // TRUTHFUL, AND BOTH HALVES MATTER. Resolving the control BY ITS
+        // ACCESSIBLE NAME and only then reading aria-busy proves in one
+        // assertion that the card still says what it is while it says it is
+        // busy. The earlier revision hid the description outright, which
+        // collapsed the accessible name to empty for exactly the duration the
+        // control was busy — announcing "busy" about a control that no longer
+        // named itself. A bare attribute check cannot see that.
+        await expect(
+          page.getByRole("button", { name: /Electrolysis/i }),
+        ).toHaveAttribute("aria-busy", "true", { timeout: T });
+
+        const ack = await page.evaluate(() => {
+          const w = window as unknown as {
+            __ack: { pressedAt: number | null; busyAt: number | null };
+          };
+          return w.__ack;
+        });
+        expect(ack.pressedAt, "the press was never observed").not.toBeNull();
+        expect(ack.busyAt, "aria-busy never committed").not.toBeNull();
+        const elapsed = (ack.busyAt as number) - (ack.pressedAt as number);
+        console.log(`[SESSION-START-01] ${surface.name} press -> aria-busy: ${elapsed.toFixed(1)}ms`);
+
+        // ONE numeric bound, not two. An earlier revision asserted BOTH
+        // `elapsed < HELD_MS / 10` and `elapsed < 250`, which reads as two
+        // proofs and is one: 250 is the tighter number, so the relational
+        // limb could never fail on its own and was decoration.
+        //
+        // The relational half is proved STRUCTURALLY instead, and better: this
+        // assertion runs INSIDE `withSlowAction`, before `waitForURL`, so the
+        // acknowledgement is observed while the action is provably still in
+        // flight. That is "confirmed before its result arrives" as a fact about
+        // ordering rather than as a second inequality.
+        expect(
+          elapsed,
+          `press -> aria-busy took ${elapsed.toFixed(1)}ms; LAW 4 requires this to be imperceptible`,
+        ).toBeLessThan(250);
+
+        // The VISUAL cue is present and is a cue only: aria-busy is the one
+        // voice, so the overlay must not become a second one.
+        const overlay = electro.locator('span[aria-hidden="true"]', {
+          hasText: "Starting session",
+        });
+        await expect(overlay).toBeVisible();
+      });
+
+      await page.waitForURL(/\/sessions\/[0-9a-f-]{36}/i, { timeout: T });
+    });
+  }
+
   test("the card is keyboard-reachable and shows its focus", async ({ page }) => {
     await openPicker(page);
     const electro = page.locator('[data-modality="electrolysis"]');
