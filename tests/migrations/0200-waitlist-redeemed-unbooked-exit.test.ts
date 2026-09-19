@@ -435,6 +435,40 @@ describe("0200 answers the states it refuses with distinguishable words", () => 
     expect(union).toContain("OwnerResolutionResult");
   });
 
+  it("PINS THE TWO INVARIANTS NO BEHAVIOUR CAN REACH", () => {
+    // BOTH OF THESE CAME OUT OF THE NEGATIVE-CONTROL CAMPAIGN, which found them
+    // by NOT going red. A mutation that a test suite cannot observe is not a
+    // free pass — it means the property has to be pinned where it can be seen,
+    // or the next person simplifies it away as dead weight.
+    //
+    // 1. THE ENTRY UPDATE'S `status = 'invited'` PREDICATE.
+    //    Deleting it changes nothing observable, because step 3 has already
+    //    returned for every non-invited status under the entry mutex — exactly
+    //    what the line's own comment claims, now measured rather than asserted.
+    //    It stays as the backstop 0188 and 0192 both keep for the same reason:
+    //    a guarded invitation statement beside an unguarded entry statement is
+    //    the asymmetry that produced the original stranding defect.
+    const move = FN_BODY.slice(FN_BODY.indexOf("update public.new_client_waitlist_entries"));
+    expect(move.slice(0, move.indexOf("returning"))).toMatch(/and status = 'invited'/);
+
+    // 2. IDEMPOTENCY'S EXACT-INSTANT COMPARISON.
+    //    `i.closed_at = v_released_at` cannot be told from `i.closed_at is not
+    //    null` by any reachable state, because the one-way rule means an entry
+    //    with a closed cycle can never be released a SECOND time — so the
+    //    ambiguous history the equality defends against is unreachable TODAY.
+    //    It is defence for the slice that makes re-invitation possible, and
+    //    that slice will not think to add it.
+    const gate = FN_BODY.slice(0, FN_BODY.indexOf("return 'already_closed'"));
+    expect(
+      gate,
+      "the retry test no longer compares the two stamps that share one clock read",
+    ).toMatch(/i\.closed_at\s*=\s*v_released_at/);
+    expect(
+      gate,
+      "the retry test degraded to 'any closed invitation on this entry'",
+    ).not.toMatch(/i\.closed_at\s+is not null/);
+  });
+
   it("refuses a booking it cannot rule out, rather than releasing over it", () => {
     const body = FN_BODY;
     const check = body.slice(body.indexOf("from public.appointments a"));
