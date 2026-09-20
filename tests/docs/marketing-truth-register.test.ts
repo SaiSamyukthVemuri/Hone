@@ -147,12 +147,26 @@ if (process.env.MARKETING_INVENTORY === "write") {
   // the equality check and the `length <= 1` ceiling would then have passed. A
   // set that calls itself shrink-only has to refuse growth everywhere it is
   // written, not only where it is convenient.
+  // FILE-QUALIFIED, AND WITH MULTIPLICITY. Flattening every file's entries into
+  // one set of text meant moving an existing sentence to a different page, or
+  // repeating it in the same file, counted as no addition at all — so the
+  // documented command would have recorded a new public-copy occurrence and
+  // every later comparison would have agreed with it.
   const additions = (current: string[], recorded: string[]): string[] => {
-    const known = new Set(recorded);
-    return current.filter((x) => !known.has(x));
+    const left = new Map<string, number>();
+    for (const item of recorded) left.set(item, (left.get(item) ?? 0) + 1);
+    const added: string[] = [];
+    for (const item of current) {
+      const remaining = left.get(item) ?? 0;
+      if (remaining === 0) added.push(item);
+      else left.set(item, remaining - 1);
+    }
+    return added;
   };
+  const qualify = (entries: Record<string, string[]>): string[] =>
+    Object.entries(entries).flatMap(([f, items]) => items.map((item) => `${f} :: ${item}`));
   const added = [
-    ...additions(Object.values(inventory).flat(), Object.values(INVENTORY.inventory).flat()),
+    ...additions(qualify(inventory), qualify(INVENTORY.inventory)),
     ...additions(exceptions, INVENTORY.exceptions),
   ];
   if (added.length) {
@@ -1473,6 +1487,69 @@ describe("NEGATIVE CONTROLS: each refusal is red on the defect it claims to catc
     );
     expect(block).toContain("INVENTORY = JSON.parse(read(INVENTORY_PATH))");
     expect(source).toContain("let INVENTORY");
+  });
+
+  it("REFUSED — a literal array whose fragments concatenate into a claim", () => {
+    // React renders array children with NOTHING between them, so
+    // `<p>{["Every change ", "is tracked"]}</p>` shows the forbidden sentence
+    // while each two-word literal is harmless alone — and the array is "proven"
+    // precisely because every element is a literal, so no shape rule fires.
+    // Judgement now reads any literal inside a child expression, at any depth.
+    const texts = judgeableText(
+      "app/probe/page.tsx",
+      probe('<p>{["Every change ", "is tracked"]}</p>'),
+    );
+    expect(texts.some((t) => FORBIDDEN.some((r) => r.pattern.test(t)))).toBe(true);
+    // An ATTRIBUTE array is not rendered text and stays out of the corpus.
+    expect(
+      judgeableText("app/probe/page.tsx", probe('<Chart labels={["Every change ", "is tracked"]} />'))
+        .some((t) => FORBIDDEN.some((r) => r.pattern.test(t))),
+    ).toBe(false);
+  });
+
+  it("REFUSED — a JSX element nested inside an expression", () => {
+    // `isProvenStatic` treated every JSX node as static, so
+    // `<p>Every {<strong>{NOUN}</strong>} is tracked</p>` had a complete value in
+    // the middle rather than a hole, and the sentence read as finished. An
+    // element is proven only when everything it can render is.
+    const incomplete = (body: string) =>
+      incompleteClaimViolations("app/_components/marketing/P.tsx", probe(body)).map((v) => v.rule);
+    expect(incomplete("<p>Every {<strong>{NOUN}</strong>} is tracked</p>")).toEqual([
+      "copy/incomplete-claim",
+    ]);
+    // Still static when it really is: no expression inside means nothing to fill.
+    expect(incomplete("<p>Every {<strong>change</strong>} is tracked</p>")).toEqual([]);
+  });
+
+  it("REFUSED — a declared barrel forwarding from an undeclared module", () => {
+    // `export { Hero } from "@/components/hero"` launders the origin: a route
+    // imports `Hero` from the barrel, which IS declared, so the import check is
+    // satisfied while the component itself is judged by nothing.
+    const barrel = (spec: string) =>
+      undeclaredCopyImportViolations(
+        "app/_components/marketing/index.tsx",
+        DECLARED,
+        `export { Hero } from "${spec}";\n`,
+      ).map((v) => v.rule);
+    expect(barrel("@/components/hero")).toEqual(["copy/undeclared-copy-import"]);
+    expect(barrel("@/lib/marketing/content")).toEqual([]);
+    expect(barrel("react")).toEqual([]);
+  });
+
+  it("the addition guard is file-qualified and counts occurrences", () => {
+    // Flattening every file's entries into one set meant moving an existing
+    // sentence to a different page, or repeating it in the same file, counted as
+    // no addition at all — so the documented command would have recorded a new
+    // public-copy occurrence and every later comparison would have agreed.
+    const source = read("tests/docs/marketing-truth-register.test.ts");
+    const block = source.slice(
+      source.indexOf('if (process.env.MARKETING_INVENTORY === "write")'),
+      source.indexOf('describe("R1.'),
+    );
+    expect(block).toContain("qualify(");
+    expect(block).toContain(":: ${item}");
+    // Multiplicity, not set membership.
+    expect(block).toContain("remaining - 1");
   });
 
   it("the prose heuristic still separates copy from class names", () => {

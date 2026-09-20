@@ -317,7 +317,20 @@ export function isProvenStatic(node: ts.Node): boolean {
   ) {
     return true;
   }
-  if (ts.isJsxElement(e) || ts.isJsxFragment(e) || ts.isJsxSelfClosingElement(e)) return true;
+  // JSX IS NOT PROVEN JUST FOR BEING JSX. `<p>Every {<strong>{NOUN}</strong>} is
+  // tracked</p>` put an element inside an expression, and treating every JSX
+  // node as static made that expression a complete value — so it was not a hole,
+  // and the sentence around it read as finished. An element is proven only when
+  // everything it can render is.
+  if (ts.isJsxElement(e) || ts.isJsxFragment(e) || ts.isJsxSelfClosingElement(e)) {
+    let proven = true;
+    const check = (x: ts.Node) => {
+      if (ts.isJsxExpression(x) && x.expression && !isProvenStatic(x.expression)) proven = false;
+      ts.forEachChild(x, check);
+    };
+    ts.forEachChild(e, check);
+    return proven;
+  }
   if (ts.isArrayLiteralExpression(e)) return e.elements.every(isProvenStatic);
   if (ts.isObjectLiteralExpression(e)) {
     return e.properties.every(
@@ -590,17 +603,8 @@ export function undeclaredCopyImportViolations(
   const origin = new Map<string, string>();
   const collectImports = (n: ts.Node) => {
     if (ts.isImportDeclaration(n) && ts.isStringLiteral(n.moduleSpecifier)) {
-      const spec = n.moduleSpecifier.text;
-      const rel = spec.startsWith("@/")
-        ? spec.slice(2)
-        : spec.startsWith(".")
-          ? relative(REPO_ROOT, join(REPO_ROOT, dirname(file), spec))
-          : null;
-      if (rel === null || rel.startsWith("..")) return;
-      const resolved =
-        [".ts", ".tsx", "/index.ts", "/index.tsx"]
-          .map((ext) => rel + ext)
-          .find((candidate) => existsSync(join(REPO_ROOT, candidate))) ?? rel;
+      const resolved = resolveSpecifier(n.moduleSpecifier.text, file);
+      if (resolved === null) return;
       const clause = n.importClause;
       if (clause?.name) origin.set(clause.name.text, resolved);
       if (clause?.namedBindings && ts.isNamedImports(clause.namedBindings)) {
@@ -616,6 +620,28 @@ export function undeclaredCopyImportViolations(
 
   const out: CopyViolation[] = [];
   const seen = new Set<string>();
+
+  // A DECLARED BARREL MAY NOT FORWARD FROM AN UNDECLARED MODULE.
+  // `export { Hero } from "@/components/hero"` in a declared file launders the
+  // origin: a route imports `Hero` from the barrel, which IS declared, so the
+  // import check is satisfied while the component itself is judged by nothing.
+  // Refused here rather than followed — the specifier is read, the module is
+  // not opened, exactly as with imports.
+  const forwards = (n: ts.Node) => {
+    if (ts.isExportDeclaration(n) && n.moduleSpecifier && ts.isStringLiteral(n.moduleSpecifier)) {
+      const from = resolveSpecifier(n.moduleSpecifier.text, file);
+      if (from !== null && !known.has(from)) {
+        out.push({
+          file,
+          line: lineOf(sf, n),
+          rule: "copy/undeclared-copy-import",
+          detail: `re-export from ${from}`,
+        });
+      }
+    }
+    ts.forEachChild(n, forwards);
+  };
+  forwards(sf);
   // EVERY IDENTIFIER INSIDE JSX, rather than a list of positions.
   //
   // Enumerating positions cost three rounds: child, then attribute, then tag,
@@ -656,6 +682,27 @@ export function undeclaredCopyImportViolations(
   };
   visit(sf);
   return out;
+}
+
+/**
+ * A module specifier as a repository path, or null for a package.
+ *
+ * Reads the string; never opens the file. A first-party path that does not exist
+ * on disk still resolves, which is what keeps a missing module refused rather
+ * than silently allowed.
+ */
+function resolveSpecifier(spec: string, from: string): string | null {
+  const rel = spec.startsWith("@/")
+    ? spec.slice(2)
+    : spec.startsWith(".")
+      ? relative(REPO_ROOT, join(REPO_ROOT, dirname(from), spec))
+      : null;
+  if (rel === null || rel.startsWith("..")) return null;
+  return (
+    [".ts", ".tsx", "/index.ts", "/index.tsx"]
+      .map((ext) => rel + ext)
+      .find((candidate) => existsSync(join(REPO_ROOT, candidate))) ?? rel
+  );
 }
 
 /** The leftmost identifier of `A.b.c`, or null. */
@@ -797,14 +844,32 @@ export function judgeableText(file: string, source?: string): string[] {
   // an extra candidate fails closed — a build failure a human looks at, rather
   // than a silent pass. That asymmetry is why concatenation is safe here and
   // interpretation was not.
+  const inChildExpression = (node: ts.Node): boolean => {
+    for (let cur: ts.Node | undefined = node.parent; cur; cur = cur.parent) {
+      if (ts.isJsxAttribute(cur)) return false;
+      if (
+        ts.isJsxExpression(cur) &&
+        cur.parent &&
+        (ts.isJsxElement(cur.parent) || ts.isJsxFragment(cur.parent))
+      ) {
+        return true;
+      }
+    }
+    return false;
+  };
+
   const subtreeText = (node: ts.Node): string => {
     let text = "";
     const gather = (x: ts.Node) => {
       if (ts.isJsxText(x)) text += ` ${decodeEntities(x.text)}`;
+      // Any literal ANYWHERE inside a child expression, not only one that is the
+      // expression itself. `<p>{["Every change ", "is tracked"]}</p>` renders
+      // those fragments with nothing between them — React concatenates array
+      // children — while each two-word literal is harmless alone and the array
+      // is "proven" because every element is a literal.
       if (
         (ts.isStringLiteral(x) || ts.isNoSubstitutionTemplateLiteral(x)) &&
-        x.parent &&
-        ts.isJsxExpression(x.parent)
+        inChildExpression(x)
       ) {
         text += ` ${x.text}`;
       }
