@@ -296,7 +296,7 @@ restate a dated measurement as a present-tense fact. A dated 31 is no more a sta
 the dated 0 was. And enabled is **exercised only as far as joining** — the phrasing
 `current-state.md` uses. Zero invitations have ever been issued on that studio, so every stage
 after the join is unexercised, and none of it is acceptance. **Do not round that down to
-“unexercised”**: the durable join path is live and taking real prospects.
+“unexercised”**: the durable join path was live and taking real prospects at every measured instant.
 
 ---
 
@@ -370,7 +370,7 @@ not satisfy it, so *ready* now means the intake will actually present a consent.
 | Deployed + **DB applied** + **never production-exercised** | 6 | refunds (current baseline), disputes, public-booking card collection, probe-lot linkage, **non-card appointment settlement (0187 — 0 rows)**, **`/dashboard/capacity` (no usage measured)**. **Whole-session copy has left this bucket** — 24 production operations. **The durable new-client waitlist (WAIT-02B) has ALSO left this bucket** *(corrected 2026-09-19)* — 31 rows measured 2026-09-19 |
 | Deployed + **dormant** (flag off / no worker / no eligible tenant) | 7 | all Google Calendar sync phases, capacity on Willow, onboarding v2 on Willow. **The durable new-client waitlist is NO LONGER IN THIS BUCKET** *(corrected 2026-09-19; it was listed here as dormant on every studio)* — it was enabled for one studio and collecting at every measured instant, 2026-08-25T22:27Z through 2026-09-15; see §14 |
 | **Held** behind a deliberate server-side gate | 3 | live manual fees, public-booking card collection, public practitioner assignment |
-| **Deferred** by product decision | 1 | direct new-client consultation booking route *(distinct from the new-client waitlist, which is live at Willow on the **durable** commit point — see §14; corrected 2026-09-19, this named WAIT-01)* |
+| **Deferred** by product decision | 1 | direct new-client consultation booking route *(distinct from the new-client waitlist, which was live at Willow on the **durable** commit point at every measured instant — see §14; corrected 2026-09-19, this named WAIT-01)* |
 | **RETIRED** by product decision (terminal; DB-enforced) | 5 | signed/finalized clinical records (0119), signed-record corrections/amendments (0120), amendment-path observability (PR #402), `clinical_audit_events`, finalized-photo content immutability — see §3 |
 | **Not built** | 5 | deposits/packages/partial payments, broad self-serve live payments, inbound-busy/two-way calendar, broad-SaaS SMS, self-serve studio creation |
 

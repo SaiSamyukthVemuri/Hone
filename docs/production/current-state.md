@@ -486,7 +486,9 @@ measured instant · its EMAIL COMMIT POINT no longer served any studio.**
 
 > ⚠️ **CORRECTED 2026-09-19.** This section was headed *LIVE at Willow* and read as though the
 > email were still Willow's commit point. The **admission gate** below is indeed still on for
-> Willow — that part is unchanged and is why new-client booking is still refused. What changed is
+> Willow at every measured instant — that part is unchanged and is why new-client booking was
+> refused throughout. (`isNewClientWaitlistEnabled` re-reads that variable per call too, so rows
+> bound the gate's state exactly as weakly as they bound the durable flag's.) What changed is
 > what happens next: `app/book/[slug]/waitlist-actions.ts:562` routes a studio named on **both**
 > allowlists to the durable branch, and Willow was on both at every measured instant from on or
 > before 2026-08-25 to 2026-09-15.
@@ -496,7 +498,8 @@ measured instant · its EMAIL COMMIT POINT no longer served any studio.**
 > statement about route occupancy now.** Clearing the allowlist re-routes Willow through WAIT-01
 > on the very next request, because the configuration is re-read per call.
 
-New-client booking at Willow is **refused and routed to a waitlist**. This is admission control:
+New-client booking at Willow was **refused and routed to a waitlist** at every measured instant.
+This is admission control:
 a studio whose existing treatment clients cannot be served on a clinically useful cadence stops
 accepting brand-new consultations, because each new client consumes capacity already spoken for.
 
@@ -641,7 +644,8 @@ release record, ledger entry or smoke result for it exists in this repository.**
 open item — not the activation. Tracked as **L25** in
 [known-limitations.md](./known-limitations.md).
 
-> **The durable waitlist is ACTIVATED, and that is still not the same as ACCEPTED.** It is
+> **The durable waitlist WAS ACTIVATED at every measured instant, and that is still not the same
+> as ACCEPTED.** It was
 > *deployed*, *disclosed*, *was enabled for one studio at every measured instant* and
 > *collecting*. It has **not** been
 > exercised beyond joining on that studio — **zero invitations have ever been issued there** —
@@ -1058,7 +1062,7 @@ independent dimensions, and only an explicit statement from Chloe closes the sec
    P1 framing was withdrawn. Sequenced after a complete export and jointly with offboarding.
 
 The direct new-client consultation booking route is **not** on this list. It is deferred by
-product decision — a separate matter from the waitlist that is live today (§5b).
+product decision — a separate matter from the waitlist measured live in §5b.
 
 ---
 
