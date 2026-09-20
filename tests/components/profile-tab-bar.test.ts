@@ -58,6 +58,14 @@ vi.mock("next/link", async () => {
         { href: props.href, className: props.className },
         props.children,
       ),
+    // RESP-CLIENT-INTAKE-01. The Treatment Photos control is now a
+    // `PendingLink`, which reads Next's own navigation state through this hook.
+    // It is stubbed AT REST and never driven: this file pins the TAB BUTTONS'
+    // state machine, and the link owns a different navigation with its own
+    // proof (the held-navigation browser test). Reporting `pending: true` here
+    // would make the link announce during a tab change, which is precisely the
+    // confusion the assertions below exist to catch.
+    useLinkStatus: () => ({ pending: false }),
   };
 });
 
@@ -105,8 +113,24 @@ function tabs(html: string): Tab[] {
   return out;
 }
 
-const liveRegion = (html: string) =>
-  html.match(/role="status"[^>]*>([^<]*)</)?.[1] ?? null;
+// RESP-CLIENT-INTAKE-01. The bar now renders MORE than one `role="status"`:
+// its own, plus one inside the Treatment Photos `PendingLink`. Matching only
+// the FIRST would have silently started asserting against whichever region the
+// markup happened to emit first — the mobile link's, which is empty in this
+// file — and every "the bar announced X" assertion below would have passed on
+// an empty string forever.
+//
+// So this reads every region and asserts the bar never announces two things at
+// once. That is a STRONGER claim than the single-match version it replaces: a
+// change that made the link speak during a tab change now fails here rather
+// than going unnoticed.
+const liveRegion = (html: string) => {
+  const spoken = [...html.matchAll(/role="status"[^>]*>([^<]*)</g)]
+    .map((m) => m[1])
+    .filter((text) => text !== "");
+  expect(spoken.length).toBeLessThanOrEqual(1);
+  return spoken[0] ?? "";
+};
 const markCount = (html: string) => (html.match(/animate-spin/g) ?? []).length;
 const selectDisabled = (html: string) =>
   /\sdisabled(?:=""|\s|$)/.test(html.match(/<select([^>]*)>/)?.[1] ?? "");

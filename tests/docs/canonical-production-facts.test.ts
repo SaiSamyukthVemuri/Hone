@@ -883,51 +883,495 @@ describe("canonical production docs: synthetic rows are never customer activity"
   });
 });
 
-describe("canonical production docs: WAIT-02B is never described as live", () => {
-  it("the durable waitlist is recorded as deployed-but-dormant, with zero rows", () => {
+// ===========================================================================
+// WAIT-02B — POLARITY CORRECTED 2026-09-19 (WAIT-DOCS-RECON).
+//
+// THIS BLOCK USED TO MANDATE A CLAIM PRODUCTION HAD ALREADY DISPROVED.
+//
+// It required current-state.md to say the durable waitlist is "NOT ENABLED"
+// with "0 rows" and an "absent" allowlist, and it forbade any canonical
+// document from calling the feature enabled. Every one of those was true when
+// written. None of them was true when this was corrected.
+//
+// A read-only hosted query on 2026-09-19 returned 31 rows in
+// `new_client_waitlist_entries`, 28 of them for `willow-electrolysis`, the
+// oldest joined 2026-08-25. The guard was therefore not merely stale: it was
+// actively holding the canonical documentation at a falsehood, and a lane that
+// tried to tell the truth would have gone red for doing so.
+//
+// THE ACTIVATION IS PROVEN STRUCTURALLY, WITHOUT READING ANY ENV VALUE - which
+// matters, because that value is Sensitive and no record may depend on reading
+// it. Migration 0193's CHECK constraints make `source = 'public_booking'`
+// exclusive to the public path (it holds if and only if
+// `joined_at_provenance = 'form'` AND `created_by_practitioner_id IS NULL`); a
+// practitioner-created entry is `'practitioner'` and an imported one is
+// `'legacy_import'`. The only writer of `'public_booking'` is
+// `join_new_client_waitlist`, whose only caller is
+// `app/book/[slug]/waitlist-actions.ts`, reached only after BOTH
+// `isNewClientWaitlistEnabled` and `isNewClientWaitlistDurableEnabled` return
+// true. One durable public row therefore proves both allowlists name that
+// studio.
+//
+// THE GUARD'S PURPOSE IS UNCHANGED - canonical documents must match production
+// - so only its polarity moves. It now refuses the STALE posture rather than
+// requiring it, which keeps the same class of drift caught in the direction
+// drift can now travel.
+// ===========================================================================
+describe("canonical production docs: WAIT-02B's durable waitlist is recorded as ACTIVATED", () => {
+  /**
+   * The documents these rules read.
+   *
+   * The roadmap is here but NOT in NO_CURRENT_MAX_DOCS, and the distinction is
+   * deliberate: it is not a production-state document, so it must not be held to
+   * the migration-number rules — but it IS what operators and the migration
+   * allocator plan from, and it carried the disproved posture inside its own
+   * "CURRENT SNAPSHOT" for three weeks while every guard stayed green.
+   */
+  /** Read the durable-waitlist flag name from the module that owns it. */
+  function durableFlagName(): string {
+    const name = read("lib/booking/new-client-waitlist.ts").match(
+      /DURABLE_SLUGS_ENV\s*=\s*\n?\s*"([A-Z0-9_]+)"/,
+    )?.[1];
+    expect(name, "the durable-waitlist env var name must be derivable").toBeTruthy();
+    return name as string;
+  }
+
+  const SCANNED_DOCS = [
+    ...NO_CURRENT_MAX_DOCS,
+    ["docs/roadmap/CANONICAL_ROADMAP.md", read("docs/roadmap/CANONICAL_ROADMAP.md")],
+    // ADDED after Codex #740 observed that the security and deployment docs
+    // carried the same disproved claims and were not scanned AT ALL. A guard
+    // that reads three documents while the claim lives in five is a guard
+    // against three documents.
+    ["docs/03_SECURITY_AND_PRIVACY.md", read("docs/03_SECURITY_AND_PRIVACY.md")],
+    ["docs/10_DEPLOYMENT_AND_ENV.md", read("docs/10_DEPLOYMENT_AND_ENV.md")],
+  ] as const;
+
+  it("current-state records the durable activation as a DATED BOUND, with a non-zero row count", () => {
     const cs = currentProse(CURRENT_STATE);
-    expect(cs, "current-state must carry the durable-waitlist posture").toMatch(
-      /NOT ENABLED/i,
-    );
+    // THIS RULE USED TO REQUIRE THE WORD "ACTIVATED", FULL STOP.
+    //
+    // That was the last place the original defect was still living. The guard
+    // this branch began by inverting MANDATED "NOT ENABLED"; replacing it with
+    // one that MANDATES a present-tense "ACTIVATED" reproduces the same failure
+    // with the sign flipped -- if an operator cleared the allowlist after the
+    // last measured row, every persisted row would remain, no studio would be
+    // activated, and CI would still be demanding the document say otherwise.
+    //
+    // So the requirement is now the BOUND, which stays true forever: one studio
+    // WAS activated at every measured instant. A bound is a historical fact and
+    // cannot rot; a posture is a reading of configuration and rots the moment
+    // the configuration changes.
     expect(
       cs,
-      "it must state that the durable table holds no rows — a table existing is not " +
-        "data being collected",
-    ).toMatch(/holds \*\*0 rows\*\*|=\s*\*\*0 rows\*\*|\b0 rows\b/i);
-    // The flag NAME is read from the module that owns it rather than written
-    // here. tests/app/book/new-client-waitlist-durable-commit.test.ts keeps a
-    // deliberately CLOSED list of non-markdown files naming that variable —
-    // the mechanism that stops a config file or seed switching a studio on
-    // quietly. This guard has no business widening that list to check a
-    // sentence, and deriving the name also means a rename cannot leave the
-    // documentation assertion silently pointing at a variable nobody reads.
+      "current-state must record the durable activation as a DATED BOUND -- one studio was " +
+        "activated at the measured instants -- never as a current posture. Rows outlive the " +
+        "flag, so they can bound an activation in time and can never report configuration now.",
+    ).toMatch(/\bWAS activated at every measured instant\b/i);
+    // SCOPED TO THE SECTION, AND TO ITS DATE. Codex #740 P2: this previously
+    // scanned the WHOLE document for /[1-9]\d* rows/, and current-state.md
+    // carries several unrelated counts ("24 rows", "7 rows"). Every measured
+    // durable-waitlist number could have been deleted and this still passed on
+    // a sentence about something else entirely — a positive assertion that
+    // cannot detect loss of the evidence it names is not evidence of anything.
+    const stageA = cs.match(
+      /###\s+WAIT-02B Stage A[\s\S]*?(?=\n###\s|\n##\s|$)/,
+    )?.[0];
+    expect(
+      stageA,
+      "current-state must still carry a WAIT-02B Stage A section for the durable-waitlist " +
+        "posture to live in",
+    ).toBeTruthy();
+    expect(
+      stageA,
+      "the Stage A section must carry a MEASURED, NON-ZERO row count. A bare adjective, or a " +
+        "count that lives somewhere else in the document, does not establish that production " +
+        "is collecting.",
+    ).toMatch(/\b[1-9]\d*\s*rows\b/i);
+    expect(
+      stageA,
+      "...and the DATE it was measured, in the same section. A dated 31 is no more a standing " +
+        "fact than a dated 0 was; an undated count is the exact defect the previous polarity " +
+        "enforced, restated with the opposite number.",
+    ).toMatch(/\b20\d\d-\d\d-\d\d\b/);
+  });
+
+  it("no canonical doc still calls the durable waitlist dormant, dark or zero-rowed", () => {
+    // The stale shapes, in the exact phrasings the canonical set actually used.
+    // Historical rows stay legal: `currentProse` strips every explicitly-marked
+    // frozen region first, so a superseded claim preserved inside an auditable
+    // ignore block is untouched by this rule.
+    const STALE: RegExp[] = [
+      // THE CLAIM CLASS, NOT ONE PHRASING. Codex #740, second round: the list
+      // below previously held only "durable … waitlist … is dormant/dark", and
+      // the canonical set was carrying the same disproved posture in at least
+      // six other wordings — "reachable by nobody", "unreachable", "NO STUDIO
+      // ENABLED", "enabled for nobody", "NOT STARTED", and the durable waitlist
+      // sitting inside a Dormant list. A blacklist that matches one phrasing is
+      // a guard against one sentence, not against the claim.
+      //
+      // SCOPED TO THE SUBJECT so unrelated capabilities keep their own honest
+      // "unreachable" and "not started" — clinical finalization, whole-session
+      // copy and the retired corrections backend are all legitimately those.
+      /durable[^.\n]{0,40}waitlist[^.\n]{0,40}\bis\s+(?:dormant|dark)\b/i,
+      /durable[^.\n]{0,60}\b(?:reachable by nobody|unreachable|enabled for nobody)\b/i,
+      /\b(?:reachable by nobody|enabled for nobody)[^.\n]{0,60}(?:durable|waitlist)/i,
+      /waitlist[^.\n]{0,60}\bdormant and enabled for nobody\b/i,
+      /\bNO STUDIO ENABLED\b/,
+      /durable[^\n]{0,80}\bNOT STARTED\b/i,
+      // The same claim as a SWITCH rather than a state. Codex #740, third
+      // round: the roadmap said "Willow durable WAIT is deliberately OFF" in
+      // its own CURRENT SNAPSHOT, and an operator planning from that row would
+      // have re-performed a cutover that had already happened.
+      // PRESENT-TENSE STANDING CLAIMS ONLY. A first draft of this matched any
+      // "durable WAIT ... OFF" and produced two false positives that are worth
+      // recording, because both are shapes a stale-wording guard must tolerate:
+      //   * a genuine PAST observation -- "the navigation disappeared while
+      //     durable WAIT was intentionally OFF" -- which is true history; and
+      //   * a CONDITIONAL -- "navigation can disappear when the durable flag is
+      //     off" -- which describes a behaviour, not a current state.
+      // Neither asserts that the flag is off now, and banning them would push
+      // real history out of the document to satisfy a regex.
+      /durable\s+WAIT\s+(?:is|remains|stays)\s+(?:deliberately\s+|intentionally\s+)?OFF\b/i,
+      /Willow[^.\n]{0,40}durable[^.\n]{0,40}\b(?:is|remains|stays)\s+(?:deliberately\s+|intentionally\s+)?off\b/i,
+      // ADJECTIVE FORM, where OFF modifies "durable" instead of following the
+      // verb: "Willow remains legacy-enabled and durable-OFF". Codex #740,
+      // fourth round, found this after the narrowing above -- the hole was
+      // real, and it sat in an active roadmap row. Still anchored on a
+      // present-tense verb, so "was durable-OFF" stays legal history.
+      /\b(?:is|remains|stays)\b[^.\n]{0,60}\bdurable[-\u2011\s]?OFF\b/i,
+      /\bNOT ENABLED anywhere\b/i,
+      /durable[^.\n]{0,60}\b0 rows\b/i,
+    ];
+
+    /**
+     * DISABLED-STATE CLAIMS, which are stale ONLY while undated.
+     *
+     * Codex #740, sixth round, and it is the same defect one last time. These
+     * shapes were in the list above, rejected unconditionally, in every scanned
+     * document, forever. But the committed rows bound an activation INTERVAL --
+     * 2026-08-25T22:27Z through 2026-09-15 -- and say nothing about what
+     * follows it. If an operator clears the allowlist tomorrow, "no studio was
+     * enabled as of <tomorrow>" becomes the truthful observation, every
+     * persisted row still exists, and CI would have forbidden recording it.
+     *
+     * A guard that forbids the opposite claim PINS THE POSTURE just as surely as
+     * one that mandates it. So these are rejected only as STANDING claims: carry
+     * a date, in either direction within the sentence, and the observation is
+     * admissible.
+     */
+    const DISABLED_STATE: RegExp[] = [
+      // EVERY CONJUGATION, not one. Codex #740 P2: the list previously held
+      // only "is enabled", so `known-limitations.md` sat green while its L25
+      // table still said "No studio HAS BEEN enabled" three rows below the
+      // correction that contradicted it.
+      /\bNo studio (?:is|has been|was|had been) enabled\b/i,
+      /\bWillow is\s+\*{0,2}not\s+enabled\*{0,2}/i,
+      // The activation-authorization claim, which is the same falsehood stated
+      // as a gate rather than as a count.
+      /activation\s+(?:—|-|--)?\s*is ungranted/i,
+      /Stage B2[^.\n]{0,40}\b(?:has not been granted|remains blocked|is ungranted)\b/i,
+      // ROUTE OCCUPANCY. Codex #740, sixth direction on this class: "WAIT-01
+      // currently serves NO studio" and "applies only to ... — currently none".
+      // Which route a studio occupies is decided by configuration re-read on
+      // every request, so persisted rows cannot establish it either way. Same
+      // rule as the rest: date it and it is an observation.
+      /WAIT-01[^.\n]{0,60}\b(?:currently\s+)?serves\s+(?:NO|no|nobody|any)\b/i,
+      /\bcurrently serves\s+(?:NO|no|nobody)\s+studio\b/i,
+      // BROADENED: the first draft required an em-dash immediately before
+      // "currently none", so "of which there are currently none" and "the
+      // allowlist names none" both walked past it. Membership and occupancy are
+      // the same claim class -- what the environment holds RIGHT NOW -- and
+      // neither is derivable from rows.
+      // SCOPED TO THE SUBJECT. Codex #740: the first draft of these two was
+      // SUBJECT-FREE -- any "currently none" or "there are none" anywhere in six
+      // canonical documents would have failed a WAIT-specific test, including a
+      // perfectly legitimate statement about alerts, migrations or any other
+      // capability. An over-broad guard does not merely annoy; it taxes
+      // unrelated work with a failure whose message names the wrong subject.
+      // Punctuation support is kept; WAIT context is now required.
+      //
+      // AND `studio` IS NOT WAIT CONTEXT. A second pass by Codex showed the
+      // token was still too generic -- "The studio has unresolved payment
+      // alerts; currently none remain" matches within 70 characters and fails a
+      // WAIT test about an absence of alerts. Only allowlist / WAIT-01 /
+      // durable / waitlist count.
+      /(?:allowlist|WAIT-01|durable|waitlist)[^.\n]{0,70}\bcurrently none\b/i,
+      /\bcurrently none\b[^.\n]{0,70}(?:allowlist|WAIT-01|durable|waitlist)/i,
+      /(?:allowlist|WAIT-01|durable|waitlist)[^.\n]{0,70}\bthere are\s+(?:currently\s+)?none\b/i,
+      /\bthere are\s+(?:currently\s+)?none\b[^.\n]{0,70}(?:allowlist|WAIT-01|durable|waitlist)/i,
+      /\ballowlist\s+names\s+(?:none|no studio)\b/i,
+      /\ballowlist\s+(?:is|remains)\s+empty\b/i,
+    ];
+
+    /** A date anywhere in the surrounding sentence makes it an observation. */
+    const DATED = /\b(?:as of|as at|20\d\d-\d\d-\d\d)\b/i;
+    const sentenceAround = (text: string, at: number): string => {
+      const start = Math.max(0, text.lastIndexOf(".", at) + 1, text.lastIndexOf("\n", at) + 1);
+      const dot = text.indexOf(".", at);
+      const nl = text.indexOf("\n", at);
+      const ends = [dot, nl].filter((n) => n !== -1);
+      return text.slice(start, ends.length > 0 ? Math.min(...ends) : text.length);
+    };
+    // (SCANNED_DOCS is defined once for the whole block, below.)
+    // THE ROADMAP IS IN SCOPE FOR THIS RULE, THOUGH NOT FOR THE MIGRATION-NUMBER
+    // RULES ABOVE. It is not a production-state document, so it is correctly
+    // absent from NO_CURRENT_MAX_DOCS — but it IS what operators and the
+    // migration allocator plan from, and it carried the disproved posture in its
+    // own "CURRENT SNAPSHOT" for three weeks while every guard stayed green.
+    for (const [name, doc] of SCANNED_DOCS) {
+      const prose = currentProse(doc);
+      for (const shape of STALE) {
+        expect(
+          prose.match(shape)?.[0] ?? null,
+          `${name} still describes the durable waitlist with a posture production has ` +
+            `disproved. Correct it, or move the sentence into an auditable ` +
+            `canonical-facts:ignore block if it is being preserved as history.`,
+        ).toBeNull();
+      }
+      for (const shape of DISABLED_STATE) {
+        const hit = [...prose.matchAll(new RegExp(shape.source, `${shape.flags}g`))].find(
+          (m) => !DATED.test(sentenceAround(prose, m.index ?? 0)),
+        );
+        expect(
+          hit?.[0] ?? null,
+          `${name} states a disabled posture as a STANDING claim. The committed rows bound the ` +
+            `activation to 2026-08-25T22:27Z - 2026-09-15 and say nothing about what follows, ` +
+            `so a later observation is legitimate -- DATE IT ("as of <date>") and it is ` +
+            `admissible. What is banned is the undated standing form.`,
+        ).toBeNull();
+      }
+    }
+  });
+
+  it("no canonical doc presents WAIT-01's email as Willow's commit point", () => {
+    // CLASS, NOT INSTANCE. Codex #740 found this in one table row; a sweep by
+    // CLAIM found it in four places across three documents. `waitlist-actions.ts`
+    // routes a studio on BOTH allowlists to the durable branch, so for Willow the
+    // email is a notification and the row is the record. Getting it backwards
+    // hands an operator the wrong commit point AND the wrong kill switch.
+    for (const [name, doc] of SCANNED_DOCS) {
+      const prose = currentProse(doc);
+      for (const shape of [
+        // BROADENED after Codex #740 found two survivors: the first draft could
+        // not cross the period before "LIVE" and accepted only "at Willow", so
+        // a heading reading "WAIT-01 - the email-delivered waitlist. LIVE at
+        // Willow." and a row reading "LIVE for Willow" both slipped through.
+        // `[\s\S]` spans sentences; at|for covers both prepositions.
+        /WAIT-01[\s\S]{0,90}?\b(?:enabled|live)\b[^\n]{0,40}?\b(?:at|for)\s+Willow\b/i,
+        /\bWillow\b[^.\n]{0,50}\bWAIT-01\b[^.\n]{0,40}\bcommit point\b/i,
+        /WAIT-01[^.\n]{0,40}\bcommit point\b[^.\n]{0,40}\bWillow\b/i,
+      ]) {
+        expect(
+          prose.match(shape)?.[0] ?? null,
+          `${name} still presents WAIT-01's email as Willow's commit point. Willow has been ` +
+            `on the durable commit point since on or before 2026-08-25.`,
+        ).toBeNull();
+      }
+    }
+  });
+
+  it("the durable waitlist is never rounded down to flatly unexercised", () => {
+    // Zero invitations proves the LATER STAGES are unexercised. The join path is
+    // live and taking real prospects, and a rollup that erases that is how an
+    // active collection surface gets planned as if it were dark.
+    for (const [name, doc] of SCANNED_DOCS) {
+      const prose = currentProse(doc);
+      const shape =
+        /durable[^.\n]{0,50}(?:waitlist|path)[^.\n]{0,60}\b(?:is|remains)\s+(?:still\s+)?not\s+(?:production-)?exercised\b/i;
+      expect(
+        prose.match(shape)?.[0] ?? null,
+        `${name} calls the durable waitlist unexercised. Say "not exercised beyond joining" — ` +
+          `31 rows were measured on 2026-09-19.`,
+      ).toBeNull();
+    }
+  });
+
+  it("no canonical doc still instructs enabling durable WAIT for Willow as future work", () => {
+    // PRE-CUTOVER INSTRUCTIONS OUTLIVE THE CUTOVER. Two rows still told an
+    // operator to durable-enable Willow after reconciliation; the enable happened
+    // first, in August, before any of it. Following them would mean manipulating
+    // an activation that already exists.
+    for (const [name, doc] of SCANNED_DOCS) {
+      const prose = currentProse(doc);
+      for (const shape of [
+        /\bthen\s+explicitly\s+enable\s+durable\b/i,
+        /\b(?:before|prior to)\s+Willow\s+migration\b/i,
+        /\bsilently\s+durable-enabling\s+Willow\b/i,
+        // Codex #740, eighth round: the same instruction phrased as a CUTOVER
+        // rather than an enable. Five active sections still sequenced work
+        // "before" or "only then authorize" a cutover performed in August.
+        /\b(?:before|prior to)\s+(?:Willow\s+)?durable\s+cutover\b/i,
+        /\bonly then\s+authoriz\w*[^.\n]{0,40}\bcutover\b/i,
+        /\bauthorize\s+Willow\s+durable\s+cutover\b/i,
+        // GENERIC "before migration", with no Willow or durable token in the
+        // sentence at all. Codex #740, twelfth direction: an acceptance-debt row
+        // told operators to close WAIT-CONTINUITY-01 "before migration". Scoped
+        // to WAIT work items so unrelated migrations keep their own ordering
+        // language.
+        /\b(?:WAIT|waitlist|continuity)[^.\n]{0,60}\bbefore migration\b/i,
+        /\bbefore migration\b[^.\n]{0,60}\b(?:WAIT|waitlist|rollout state)\b/i,
+        // BARE WORDING. Codex #740, ninth round: "then Willow cutover" listed as
+        // remaining work, with no "durable" and no verb to anchor on. The guard
+        // had been matching the decorated forms only.
+        /\bthen\s+Willow\s+cutover\b/i,
+        /\bWillow\s+cutover\b[^.\n]{0,30}\bremain\w*/i,
+        /\bremain\w*[^.\n]{0,40}\bWillow\s+cutover\b/i,
+      ]) {
+        expect(
+          prose.match(shape)?.[0] ?? null,
+          `${name} carries a pre-cutover Willow instruction. The durable enable happened on ` +
+            `or before 2026-08-25; what remains is retrospective reconciliation.`,
+        ).toBeNull();
+      }
+    }
+  });
+
+  it("no doc presents 0199 as claimable — it is applied and frozen", () => {
+    // THE ONE FINDING IN THIS FAMILY WITH A CONCRETE HAZARD. An allocator
+    // reading "0199 is unclaimed" from an ACTIVE allocation section would author
+    // against a number already applied to production and frozen. Codex #740
+    // found it in two such sections -- "Current allocation" and "Current
+    // assigned WIP" -- after four earlier rounds had corrected the same claim
+    // elsewhere in the same file.
+    //
+    // Scoped to CLAIMABILITY, not to the literal. Apply records, checksums and
+    // historical rows must keep saying 0199 freely; what is banned is calling it
+    // free.
+    for (const [name, doc] of SCANNED_DOCS) {
+      const prose = currentProse(doc);
+      for (const shape of [
+        /`?0199`?[^.\n]{0,40}\b(?:is|remains|stays)\s+(?:still\s+)?(?:unclaimed|unallocated|not claimed|not allocated|available|free)\b/i,
+        /\bnext[- ]free[^.\n]{0,30}\b0199\b/i,
+        /\bnext free (?:number|migration)[^.\n]{0,25}\b0199\b/i,
+        /\b0199\b[^.\n]{0,30}\bclaimable\b/i,
+      ]) {
+        expect(
+          prose.match(shape)?.[0] ?? null,
+          `${name} presents 0199 as claimable. It was APPLIED to production on 2026-09-18 and ` +
+            `is frozen; the next free number is 0200. An allocator acting on this collides ` +
+            `with a live migration.`,
+        ).toBeNull();
+      }
+    }
+  });
+
+  it("no doc infers CURRENT allowlist configuration from persisted rows", () => {
+    // THE SYMMETRY THIS GUARD EXISTS TO HOLD. The original version of this block
+    // mandated "NOT ENABLED" and carried a dated ABSENCE forward as a standing
+    // posture for three weeks. Correcting it to mandate a present-tense ENABLED
+    // would be the same error wearing the other sign, and Codex #740 caught the
+    // documents doing exactly that.
+    //
+    // A durable row proves both allowlists matched AT THE INSTANT IT WAS
+    // WRITTEN. It proves nothing about now: rows outlive the flag, and
+    // lib/booking/new-client-waitlist.ts re-reads process.env on every call, so
+    // clearing the variable returns new submissions to WAIT-01 immediately while
+    // every existing row stays put.
+    //
+    // So the documents may state a DATED BOUND and must not state a current
+    // configuration. This rule bans the inference; the row-count rule above
+    // requires the date that makes the bound legible.
+    for (const [name, doc] of SCANNED_DOCS) {
+      const prose = currentProse(doc);
+      for (const shape of [
+        /\brows?\b[^.\n]{0,70}\b(?:prove|proves|proof|shows?|confirms?)\b[^.\n]{0,50}\b(?:currently|right now|today)\b[^.\n]{0,40}\b(?:named?|enabled|configured)\b/i,
+        // THE FLAG NAME IS DERIVED, NEVER WRITTEN HERE.
+        // tests/app/book/new-client-waitlist-durable-commit.test.ts keeps a
+        // deliberately CLOSED census of non-markdown files naming that variable
+        // — the mechanism that stops a config file or seed switching a studio on
+        // quietly. Writing the literal in this regex ADDED THIS FILE to that
+        // census and went red, which is the census working exactly as intended.
+        // Deriving it keeps the census closed and survives a rename.
+        //
+        // No \b before the identifier: it is preceded by "_" in the full name,
+        // "_" is a word character, and \b never matches there. A negative
+        // control caught that too.
+        new RegExp(`${durableFlagName()}\`?\\s+(?:currently\\s+)?names\\b`, "i"),
+        /\bproduction\s+(?:currently\s+)?names\s+one\s+studio\b/i,
+        // PRESENT-TENSE ENABLEMENT IN ANY WORDING. Codex #740: the first draft
+        // rejected only "names one studio" and an explicit rows-to-currently
+        // phrase, while the register said "ENABLED for one studio" and the
+        // security doc "PRODUCTION ENABLES ONE STUDIO". All are the same
+        // inference. Past tense ("was enabled", "at every measured instant")
+        // stays legal -- that is the bound the documents are supposed to state.
+        /\bPRODUCTION\s+ENABLES\s+ONE\s+STUDIO\b/,
+        /\b(?:is|are)\s+ENABLED\s+for\s+one\s+studio\b/i,
+        // CASE-INSENSITIVE LOOKBEHIND. A negative control caught this: the
+        // lookbehinds were written lowercase with no `i` flag, so documents
+        // writing "WAS ENABLED" in caps -- which several of these tables do --
+        // would have tripped the rule for using the LEGAL past-tense form.
+        /(?<!\bwas\s)(?<!\bwere\s)\bENABLED\s+for\s+one\s+studio\b(?![^.\n]{0,60}\bat every measured instant\b)/i,
+        /\bone studio (?:is|remains) on the durable allowlist\b/i,
+        // BARE NOUN PHRASES, with no verb at all to anchor tense on. Codex
+        // #740: status cells are written as pipe-separated fragments --
+        // "Deployed · ONE STUDIO ENABLED · exercised" -- so every shape above
+        // that keys on is/are/was walked straight past them. A sweep found the
+        // same fragment in a second document Codex had not named.
+        //
+        // The negative lookahead is what keeps the LEGAL form legal: the claim
+        // is admissible the moment it carries its dated boundary, which is the
+        // whole point of the rule rather than a loophole in it.
+        /\bONE STUDIO ENABLED\b(?![^.\n|]{0,80}\b(?:at every measured instant|dated bound|20\d\d-\d\d-\d\d)\b)/i,
+        /\bONE STUDIO ON THE DURABLE ALLOWLIST\b(?![^.\n|]{0,80}\b(?:at every measured instant|dated bound|20\d\d-\d\d-\d\d)\b)/i,
+        // THE ADJECTIVE FORM, AND THE POSTURE NOUN. Codex #740's fifth family:
+        // "Current posture: ACTIVATED for one studio", derived explicitly from
+        // committed rows. Same lookahead, so the dated form stays admissible.
+        /(?<!\bwas\s)(?<!\bwere\s)\bACTIVATED\s+for\s+one\s+studio\b(?![^.\n|]{0,80}\b(?:at every measured instant|dated bound|20\d\d-\d\d-\d\d)\b)/i,
+        /\bCurrent posture:\s*ACTIVATED\b/i,
+      ]) {
+        expect(
+          prose.match(shape)?.[0] ?? null,
+          `${name} infers CURRENT allowlist configuration from persisted rows. Rows prove the ` +
+            `allowlists matched WHEN THEY WERE WRITTEN — state that dated bound, and confirm ` +
+            `present configuration in the product instead.`,
+        ).toBeNull();
+      }
+    }
+  });
+
+  it("the activation is never recorded as read from the environment variable", () => {
+    // The allowlist VALUE is Sensitive and is never read back. A record that
+    // claimed to have read it would be unreproducible by the next reader, which
+    // is how the previous "absent from Vercel Production" line survived three
+    // weeks past the activation it described.
+    const cs = currentProse(CURRENT_STATE);
     const durableFlag = read("lib/booking/new-client-waitlist.ts").match(
       /DURABLE_SLUGS_ENV\s*=\s*\n?\s*"([A-Z0-9_]+)"/,
     )?.[1];
     expect(durableFlag, "the durable-waitlist env var name must be derivable").toBeTruthy();
     expect(
       cs,
-      "and that the production allowlist is absent, so no studio is enabled",
-    ).toMatch(new RegExp(`${durableFlag}[\\s\\S]{0,120}absent`, "i"));
-  });
-
-  it("no canonical doc calls the durable waitlist live or enabled", () => {
-    for (const [name, doc] of NO_CURRENT_MAX_DOCS) {
-      expect(
-        currentProse(doc),
-        `${name} must not describe the durable waitlist as live`,
-      ).not.toMatch(/durable[^.\n]{0,40}waitlist[^.\n]{0,30}\bis\s+(?:live|enabled|active)\b/i);
-    }
+      `current-state must not assert that ${durableFlag}'s VALUE was read. Activation is ` +
+        `established from committed rows, not from configuration.`,
+    ).not.toMatch(new RegExp(`${durableFlag}[\\s\\S]{0,80}\\bvalue (?:was |is )?read\\b`, "i"));
   });
 });
 
 describe("canonical production docs: frozen-region markers are explicit and justified", () => {
+  /**
+   * EVERY DOCUMENT WHOSE IGNORE BLOCKS ARE VALIDATED.
+   *
+   * Codex #740: the marker tests inspected NO_CURRENT_MAX_DOCS, the changelog
+   * and the ledger, while the durable-waitlist rules had since grown to scan the
+   * roadmap, the security doc and the deployment doc too. A balanced block
+   * without `reason=` in any of those three would have silently exempted
+   * arbitrary text -- the exact invariant the helper header says is
+   * non-negotiable -- and nothing would have gone red. An exemption mechanism
+   * that is itself unguarded in half the documents it applies to is not an
+   * exemption mechanism.
+   */
+  const MARKER_VALIDATED_DOCS = [
+    ...NO_CURRENT_MAX_DOCS,
+    ["docs/production/release-changelog.md", RELEASE_CHANGELOG],
+    ["docs/production/migration-ledger.md", MIGRATION_LEDGER],
+    ["docs/roadmap/CANONICAL_ROADMAP.md", read("docs/roadmap/CANONICAL_ROADMAP.md")],
+    ["docs/03_SECURITY_AND_PRIVACY.md", read("docs/03_SECURITY_AND_PRIVACY.md")],
+    ["docs/10_DEPLOYMENT_AND_ENV.md", read("docs/10_DEPLOYMENT_AND_ENV.md")],
+  ] as const;
+
   it("every ignore marker declares a reason", () => {
-    for (const [name, doc] of [
-      ...NO_CURRENT_MAX_DOCS,
-      ["docs/production/release-changelog.md", RELEASE_CHANGELOG],
-      ["docs/production/migration-ledger.md", MIGRATION_LEDGER],
-    ] as const) {
+    for (const [name, doc] of MARKER_VALIDATED_DOCS) {
       for (const marker of ignoreMarkers(doc)) {
         expect(
           marker,
@@ -939,11 +1383,7 @@ describe("canonical production docs: frozen-region markers are explicit and just
   });
 
   it("every ignore block is closed", () => {
-    for (const [name, doc] of [
-      ...NO_CURRENT_MAX_DOCS,
-      ["docs/production/release-changelog.md", RELEASE_CHANGELOG],
-      ["docs/production/migration-ledger.md", MIGRATION_LEDGER],
-    ] as const) {
+    for (const [name, doc] of MARKER_VALIDATED_DOCS) {
       const starts = (doc.match(/canonical-facts:ignore-start/g) ?? []).length;
       const ends = (doc.match(/canonical-facts:ignore-end/g) ?? []).length;
       expect(starts, `${name} has unbalanced ignore markers`).toBe(ends);

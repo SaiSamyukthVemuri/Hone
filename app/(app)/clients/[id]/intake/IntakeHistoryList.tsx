@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { PendingLink } from "@/components/pending-link";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import {
   getIntakeLinkAction,
@@ -129,12 +130,18 @@ function IntakeHistoryRow({
             </span>
           )}
         </div>
-        <a
+        {/* RESP-CLIENT-INTAKE-01 RANK 3. This was a raw <a>, so switching
+            between intake versions — a QUERY-ONLY change on the page you are
+            already on — replaced the whole document: measured, zero RSC
+            requests, one document request, and the live document destroyed.
+            The href is byte-identical; only the element changed. */}
+        <PendingLink
           href={`/clients/${clientId}/intake?intake=${row.id}`}
+          pendingLabel="Opening intake version…"
           className="text-xs font-medium text-neutral-700 hover:underline dark:text-neutral-300"
         >
           View →
-        </a>
+        </PendingLink>
       </div>
       <div className="flex flex-col gap-0.5 text-xs text-neutral-600 dark:text-neutral-400">
         <span>
