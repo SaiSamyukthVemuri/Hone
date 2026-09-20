@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { buttonClasses } from "@/components/ui/button";
 import { PendingLink } from "@/components/pending-link";
 import {
   getClientsForStudio,
@@ -242,9 +243,13 @@ export default async function RecordKeepingPage({
             {s.label}
           </PendingLink>
         ))}
+        {/* UX-01 QW3. Hand-rolled bordered button at `py-2 text-sm` ≈ 36px,
+            below the 44px floor. `ml-auto` is preserved through `className`
+            because it is this control's LAYOUT role in the nav row — pushing
+            it to the trailing edge — and has nothing to do with its geometry. */}
         <Link
           href={`/records/print?section=${section}${section === "procedures" ? procedureFilterQuery : ""}`}
-          className="ml-auto rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-700 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
+          className={buttonClasses({ variant: "secondary", className: "ml-auto" })}
         >
           Print / Export
         </Link>

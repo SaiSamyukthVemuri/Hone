@@ -46,6 +46,17 @@ export function CalendarViewToggle({
       aria-label="Calendar view"
       className="flex w-fit gap-1 rounded-md border border-neutral-200 bg-neutral-50 p-1 text-sm dark:border-neutral-800 dark:bg-neutral-900"
     >
+      {/* UX-01 QW5. These segments carried `rounded-[5px]`, an off-system
+          radius that existed in exactly four places app-wide — here twice and
+          in QuickBookDrawer twice — and nowhere else. It is now the system
+          `rounded-md`, which the app uses 489 times; `rounded-sm` was the other
+          candidate and was rejected because it has 2 uses and would trade one
+          rare dialect for another. The visual delta is 1px.
+
+          SCOPE: the radius only. Reconciling this toggle's GEOMETRY with the
+          other six tab dialects is UX-03 Navigation Identity, which is not
+          scheduled, and collapsing control heights is UX-04. Neither is started
+          here. */}
       {tabs.map((tab) => {
         const active = tab.value === currentView;
         return (
@@ -57,8 +68,8 @@ export function CalendarViewToggle({
             pendingLabel="Loading view…"
             className={
               active
-                ? "rounded-[5px] bg-white px-3 py-1 font-medium text-neutral-900 shadow-sm dark:bg-neutral-950 dark:text-neutral-100"
-                : "rounded-[5px] px-3 py-1 text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
+                ? "rounded-md bg-white px-3 py-1 font-medium text-neutral-900 shadow-sm dark:bg-neutral-950 dark:text-neutral-100"
+                : "rounded-md px-3 py-1 text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
             }
           >
             {tab.label}
