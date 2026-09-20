@@ -1090,6 +1090,94 @@ describe("negative controls: the guard bites", () => {
     expect(couldCompleteForbidden("corded on every visit", [rule])?.source).toBe(rule.source);
   });
 
+  it("reassembles a COMPLETE static concatenation outside JSX", () => {
+    // Class 1. A copy module is not a component, and nothing here is JSX, so
+    // neither the sentence walk nor the prop check ever looked. Both operands
+    // are readable, so this is not an unreconstructable sentence — it is a
+    // sentence nobody reassembled, and the repair belongs in collectClaims.
+    const src = `export const title = "Energy settings have an append-" + "only edit history";`;
+    const claims = collectClaims(src, "lib/marketing/content.ts");
+    expect(claims).toContain("Energy settings have an append-only edit history");
+    expect(
+      judgeAppendOnlyClaim("Energy settings have an append-only edit history", SANCTIONED).kind,
+      "precondition: the joined sentence is the unsanctioned one",
+    ).toBe("unsanctioned");
+
+    // NEGATIVE: a concatenation that joins into nothing claimable stays quiet.
+    expect(
+      collectClaims(`export const t = "Request a walkthrough" + " today";`, "lib/marketing/content.ts")
+        .filter((c) => APPEND_ONLY_TRIGGER.test(c)),
+    ).toEqual([]);
+  });
+
+  it("rejects an append-only completion outside JSX when the suffix is a value", () => {
+    // Class 2. The completion sweep only ever consulted §0.4's forbidden rules,
+    // and a generic append-only promise is refused on a DIFFERENT path — the
+    // trigger plus the sanctioned allow-list. So this completed into a claim no
+    // rule names, and nothing fired.
+    const src = `const suffix = "only edit history";\nexport const title = "Energy settings have an append-" + suffix;`;
+    expect(
+      FORBIDDEN.some((r) => r.pattern.test("Energy settings have an append-")),
+      "precondition: the readable half trips no forbidden rule",
+    ).toBe(false);
+    expect(unreconstructableIn(src, "lib/marketing/content.ts", FORBIDDEN)).toHaveLength(1);
+
+    // The other direction: the hole comes first, the trigger's tail is authored.
+    expect(
+      unreconstructableIn(
+        `export const t = { s: prefix + "only edit history" };`,
+        "lib/marketing/content.ts",
+        FORBIDDEN,
+      ),
+    ).toHaveLength(1);
+
+    // NEGATIVE: an incomplete concatenation that cannot assemble the trigger.
+    expect(
+      unreconstructableIn(
+        `export const t = { s: "Photos open through short-lived " + kind };`,
+        "lib/marketing/content.ts",
+        FORBIDDEN,
+      ),
+    ).toEqual([]);
+  });
+
+  it("does not read a nested technical attribute as public copy", () => {
+    // Class 3, and a false positive the class-1 repair introduced: the exclusion
+    // looked only at the DIRECT parent, so a conditional between the
+    // concatenation and the attribute hid the attribute from it.
+    const styling = `export const A = () => <div className={active ? "append-" + "only" : ""} />;`;
+    expect(
+      collectClaims(styling, "sections.tsx").filter((c) => APPEND_ONLY_TRIGGER.test(c)),
+      "a class name is not a promise to a reader",
+    ).toEqual([]);
+    expect(unreconstructableIn(styling, "sections.tsx", FORBIDDEN)).toEqual([]);
+
+    // `data-*` is a machine hook by definition, matched by prefix.
+    expect(
+      collectClaims(
+        `export const A = () => <div data-testid={cond ? "append-" + "only" : ""} />;`,
+        "sections.tsx",
+      ).filter((c) => APPEND_ONLY_TRIGGER.test(c)),
+    ).toEqual([]);
+
+    // POSITIVE COUNTERWEIGHT, and the reason this is a walk rather than a
+    // blanket skip: the SAME shape as a JSX CHILD is copy, and is still read.
+    // An exclusion that swallowed this would disable the guard, not narrow it.
+    const copy = `export const A = () => <p>{active ? "append-" + "only edit history" : ""}</p>;`;
+    expect(
+      collectClaims(copy, "sections.tsx")
+        .filter((c) => APPEND_ONLY_TRIGGER.test(c))
+        .map((c) => judgeAppendOnlyClaim(c, SANCTIONED).kind),
+    ).toContain("unsanctioned");
+
+    // And a copy-bearing PROP is still read, so the walk excludes by attribute
+    // NAME rather than by "is inside an attribute".
+    const prop = `export const A = () => <Card title={active ? "append-" + "only edit history" : ""} />;`;
+    expect(
+      collectClaims(prop, "sections.tsx").filter((c) => APPEND_ONLY_TRIGGER.test(c)),
+    ).not.toEqual([]);
+  });
+
   it("splits a group whose alternatives carry an optional plural", () => {
     // Codex, at 3d9c93f4. Refusing any alternative with a `?` in it threw away
     // the whole N1 verb group `(keeps?|retains?|holds?|preserves?|has|have)`,

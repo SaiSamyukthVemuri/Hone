@@ -268,10 +268,56 @@ const NON_COPY_ATTRIBUTES = new Set(
   ].map((a) => a.toLowerCase()),
 );
 
-/** Is this attribute one of the technical ones that never carries copy? */
+/**
+ * The JSX attribute an expression ultimately belongs to, however deeply nested.
+ *
+ * Checking only the DIRECT parent was not enough. `className={active ? "append-"
+ * + "only" : ""}` puts a conditional between the concatenation and the attribute,
+ * so the technical value read as public copy and was rejected as an unsanctioned
+ * append-only claim — a false positive on styling.
+ *
+ * The walk stops at a JSX element or fragment, because reaching one means the
+ * expression is a CHILD of that element rather than part of an attribute's value,
+ * and a child expression is exactly the copy this scan must keep reading.
+ */
+function enclosingJsxAttribute(node: ts.Node): ts.JsxAttribute | null {
+  let current: ts.Node | undefined = node.parent;
+  while (current) {
+    if (ts.isJsxAttribute(current)) return current;
+    if (
+      ts.isJsxElement(current) ||
+      ts.isJsxSelfClosingElement(current) ||
+      ts.isJsxFragment(current) ||
+      ts.isSourceFile(current)
+    ) {
+      return null;
+    }
+    current = current.parent;
+  }
+  return null;
+}
+
+/** Does this expression sit inside a technical attribute that never carries copy? */
+function insideNonCopyAttribute(node: ts.Node): boolean {
+  const attr = enclosingJsxAttribute(node);
+  return attr !== null && isNonCopyAttribute(attr);
+}
+
+/**
+ * Is this attribute one of the technical ones that never carries copy?
+ *
+ * `data-*` is matched by prefix rather than by enumeration. It is a machine hook
+ * by definition — `data-testid`, `data-state`, `data-variant` — and no visitor
+ * reads one. Reassembling concatenations made this matter: before, a testid built
+ * as `"append-" + "only"` contributed two harmless fragments; joined, it reads as
+ * an unsanctioned append-only claim and would fail the guard on a string nobody
+ * can see. Named attributes stay enumerated, because that list is a deliberate
+ * allow-list and widening it by guesswork is how a real claim gets excused.
+ */
 function isNonCopyAttribute(attr: ts.JsxAttribute): boolean {
   const name = ts.isIdentifier(attr.name) ? attr.name.text : attr.name.getText();
-  return NON_COPY_ATTRIBUTES.has(name.toLowerCase());
+  const lowered = name.toLowerCase();
+  return lowered.startsWith("data-") || NON_COPY_ATTRIBUTES.has(lowered);
 }
 
 type JsxContainer = ts.JsxElement | ts.JsxFragment | ts.JsxSelfClosingElement;
@@ -577,14 +623,7 @@ export function collectClaims(src: string, fileName = "input.tsx"): string[] {
         node.operatorToken.kind === ts.SyntaxKind.PlusToken) ||
       ts.isTemplateExpression(node)
     ) {
-      const parent = node.parent;
-      const inNonCopyAttribute =
-        parent &&
-        ts.isJsxExpression(parent) &&
-        parent.parent &&
-        ts.isJsxAttribute(parent.parent) &&
-        isNonCopyAttribute(parent.parent);
-      if (!inNonCopyAttribute) {
+      if (!insideNonCopyAttribute(node)) {
         const joined = readExpression(node);
         if (joined?.complete) push(joined.text);
       }
@@ -812,6 +851,23 @@ export const APPEND_ONLY_OVERREACH =
 
 /** "append-only" and "append only" are the same promise to a reader. */
 export const APPEND_ONLY_TRIGGER = /append[-\s]only/i;
+
+/**
+ * The append-only trigger, in the shape the completion sweep consumes.
+ *
+ * §0.4's `forbidden-public-wording` rules are not the whole of what may not ship:
+ * a generic append-only promise is refused by the TRIGGER plus the sanctioned
+ * allow-list, on a different path. The completion sweep only ever consulted the
+ * forbidden rules, so `"Energy settings have an append-" + suffix` in a copy
+ * module completed into an unsanctioned claim that no rule names, and nothing
+ * fired. The trigger is a pattern like any other, so it is handed to the same
+ * machinery rather than given a second code path.
+ */
+export const APPEND_ONLY_COMPLETION_RULE: ForbiddenWording = {
+  id: "APPEND_ONLY",
+  source: "append[-\\s]only",
+  pattern: APPEND_ONLY_TRIGGER,
+};
 
 export type SanctionedWording = { readonly id: string; readonly text: string };
 
@@ -1366,17 +1422,13 @@ export function unreconstructableIn(
         n.operatorToken.kind === ts.SyntaxKind.PlusToken;
       if (isConcat || ts.isTemplateExpression(n)) {
         const authored = readExpression(n as ts.Expression);
-        if (authored && !authored.complete) {
-          const parent = n.parent;
-          const inNonCopyAttribute =
-            parent &&
-            ts.isJsxExpression(parent) &&
-            parent.parent &&
-            ts.isJsxAttribute(parent.parent) &&
-            isNonCopyAttribute(parent.parent);
-          if (!inNonCopyAttribute && couldCompleteForbidden(authored.text, rules)) {
-            emitFinding(normalise(authored.text), n);
-          }
+        if (
+          authored &&
+          !authored.complete &&
+          !insideNonCopyAttribute(n) &&
+          couldCompleteForbidden(authored.text, [...rules, APPEND_ONLY_COMPLETION_RULE])
+        ) {
+          emitFinding(normalise(authored.text), n);
         }
       }
       ts.forEachChild(n, sweepForCompletions);
