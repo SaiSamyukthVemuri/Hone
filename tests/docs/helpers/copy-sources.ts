@@ -259,7 +259,7 @@ const tagNameOf = (node: ts.JsxElement | ts.JsxSelfClosingElement): string =>
 
 /** The attribute this node sits in, however deeply nested, or null. */
 function enclosingAttributeName(node: ts.Node): string | null {
-  let cur: ts.Node | undefined = node.parent;
+  let cur: ts.Node | undefined = parentPastWrappers(node);
   while (cur) {
     if (ts.isJsxAttribute(cur)) {
       return ts.isIdentifier(cur.name) ? cur.name.text : cur.name.getText();
@@ -272,7 +272,7 @@ function enclosingAttributeName(node: ts.Node): string | null {
     ) {
       return null;
     }
-    cur = cur.parent;
+    cur = parentPastWrappers(cur);
   }
   return null;
 }
@@ -376,6 +376,29 @@ function staticFragments(node: ts.Node): string[] {
  * One `unwrap`, applied wherever an expression is classified, ends that family:
  * a wrapper cannot hide an assembly if nothing ever sees the wrapper.
  */
+/**
+ * The first ancestor that is not a wrapper.
+ *
+ * `unwrap` normalises DOWNWARD; ancestor walks needed the mirror and did not
+ * have it, so `{("Every change is tracked")}` failed the "already counted as
+ * part of a claim" test and was emitted twice, and an attribute lookup could not
+ * see past a parenthesis either.
+ */
+function parentPastWrappers(node: ts.Node): ts.Node | undefined {
+  let p = node.parent;
+  while (
+    p &&
+    (ts.isParenthesizedExpression(p) ||
+      ts.isAsExpression(p) ||
+      ts.isSatisfiesExpression(p) ||
+      ts.isNonNullExpression(p) ||
+      ts.isTypeAssertionExpression(p))
+  ) {
+    p = p.parent;
+  }
+  return p;
+}
+
 function unwrap(node: ts.Node): ts.Node {
   let n = node;
   while (
@@ -552,7 +575,9 @@ export function componentProseViolations(file: string, source?: string): CopyVio
           // so one declared exception could be swapped for another that differs
           // only after the cut. Callers truncate for display; the value carries
           // the whole sentence.
-          detail: normalise(parts.text || parts.textWithHoles),
+          // The IDENTITY, holes included as their source, so a swapped value
+          // changes the recorded sentence.
+          detail: normalise(parts.identityText || parts.textWithHoles),
         });
       }
     }
@@ -561,7 +586,12 @@ export function componentProseViolations(file: string, source?: string): CopyVio
       isSubstantiveProse(n.text)
     ) {
       const attr = enclosingAttributeName(n);
-      const insideJsxText = ts.isJsxExpression(n.parent) && isClaimContainer(n.parent.parent);
+      const jsxParent = parentPastWrappers(n);
+      const insideJsxText =
+        jsxParent !== undefined &&
+        ts.isJsxExpression(jsxParent) &&
+        jsxParent.parent !== undefined &&
+        isClaimContainer(jsxParent.parent);
       if ((!attr || !isPlumbingAttribute(attr)) && !insideJsxText) {
         out.push({
           file,
@@ -685,6 +715,15 @@ type ClaimParts = {
    * green.
    */
   readonly textWithHoles: string;
+  /**
+   * The sentence with each hole shown as its SOURCE.
+   *
+   * `textWithHoles` renders every hole as the same placeholder word, which is
+   * right for deciding "is this a claim" and wrong for an identity: two
+   * different hole-bearing sentences compared equal, so one declared exception
+   * could be swapped for another that differs only in the value it interpolates.
+   */
+  readonly identityText: string;
   /** Expressions inside the claim that are not complete literals. */
   readonly holes: ts.Node[];
   /**
@@ -770,6 +809,7 @@ const isClaimContainer = (n: ts.Node): n is ClaimContainer =>
 function claimParts(node: ClaimContainer, approved: Set<string> = new Set()): ClaimParts {
   let text = "";
   let textWithHoles = "";
+  let identityText = "";
   const holes: ts.Node[] = [];
   const approvedHoles: ts.Node[] = [];
   const undeclared: ts.Node[] = [];
@@ -781,12 +821,14 @@ function claimParts(node: ClaimContainer, approved: Set<string> = new Set()): Cl
       const t = decodeEntities(child.text);
       text += t;
       textWithHoles += t;
+      identityText += t;
       sequence.push({ words: t.trim().split(/\s+/).filter((w) => /[A-Za-z]/.test(w)).length });
     } else if (ts.isJsxExpression(child) && child.expression) {
       const e = unwrap(child.expression) as ts.Expression;
       if (ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e)) {
         text += e.text;
         textWithHoles += e.text;
+        identityText += e.text;
         sequence.push({ words: e.text.trim().split(/\s+/).filter((w) => /[A-Za-z]/.test(w)).length });
       } else {
         const root = rootIdentifier(e);
@@ -794,6 +836,7 @@ function claimParts(node: ClaimContainer, approved: Set<string> = new Set()): Cl
         // around it already carries the spacing, and adding any detached the
         // full stop from the last word so the sentence stopped reading as one.
         textWithHoles += "something";
+        identityText += `{${child.expression.getText().replace(/\s+/g, " ")}}`;
         sequence.push({ hole: child });
         if (root && approved.has(root)) approvedHoles.push(child);
         else holes.push(child);
@@ -806,6 +849,7 @@ function claimParts(node: ClaimContainer, approved: Set<string> = new Set()): Cl
       const inner = claimParts(child, approved);
       text += inner.text;
       textWithHoles += inner.textWithHoles;
+      identityText += inner.identityText;
       sequence.push(...inner.sequence);
       holes.push(...inner.holes);
       approvedHoles.push(...inner.approvedHoles);
@@ -818,11 +862,13 @@ function claimParts(node: ClaimContainer, approved: Set<string> = new Set()): Cl
         // "Everychange is tracked" — which no rule matches.
         text += " ";
         textWithHoles += " ";
+        identityText += " ";
         sequence.push({ words: 0 });
       } else if (ts.isJsxElement(child) && INLINE_IN_CLAIM.includes(tagNameOf(child))) {
         const inner = claimParts(child, approved);
         text += inner.text;
         textWithHoles += inner.textWithHoles;
+        identityText += inner.identityText;
         sequence.push(...inner.sequence);
         holes.push(...inner.holes);
         approvedHoles.push(...inner.approvedHoles);
@@ -843,7 +889,7 @@ function claimParts(node: ClaimContainer, approved: Set<string> = new Set()): Cl
     const before = sequence.slice(0, i).some((x) => "words" in x && x.words > 0);
     return before ? [item.hole] : [];
   });
-  return { text, textWithHoles, holes, approvedHoles, undeclared, completing, sequence };
+  return { text, textWithHoles, identityText, holes, approvedHoles, undeclared, completing, sequence };
 }
 
 const claimText = (node: ClaimContainer, approved?: Set<string>): string =>
@@ -959,8 +1005,12 @@ export function pageClaims(file: string, source?: string): string[] {
     }
     if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) {
       const attr = enclosingAttributeName(n);
+      const jsxParent = parentPastWrappers(n);
       const insideClaimElement =
-        ts.isJsxExpression(n.parent) && isClaimContainer(n.parent.parent);
+        jsxParent !== undefined &&
+        ts.isJsxExpression(jsxParent) &&
+        jsxParent.parent !== undefined &&
+        isClaimContainer(jsxParent.parent);
       if ((!attr || !isPlumbingAttribute(attr)) && !insideClaimElement) {
         const value = normalise(n.text);
         if (value) out.push(value);

@@ -1082,12 +1082,14 @@ describe("B. SHAPE GUARD: refusal, never interpretation", () => {
   });
 
   it("EVERY guard is wrapper-invariant — the property, not the instances", () => {
-    // Four consecutive rounds found a wrapped variant of the previous fix, and
-    // the `unwrap` sweep that was meant to end it still missed two call sites.
-    // Enumerating call sites by hand does not converge, so the INVARIANT is
-    // asserted instead: wrapping an expression must not change any guard's
-    // answer. A site that forgets to normalise fails here, without anyone
-    // having to remember it exists.
+    // Five consecutive rounds found a wrapped variant of the previous fix, and
+    // the `unwrap` sweep meant to end it still missed call sites. Enumerating by
+    // hand does not converge, so the INVARIANT is asserted: wrapping an
+    // expression must not change any guard's answer.
+    //
+    // The FIRST version of this test covered two guards, and the next round
+    // found the gap in the two it did not cover. It now runs EVERY exported
+    // guard, because a property asserted over a subset is an enumeration again.
     const wrap = (src: string, how: (e: string) => string) =>
       src.replace(/"([^"]*)"/g, (_m, inner) => how(`"${inner}"`));
 
@@ -1097,31 +1099,64 @@ describe("B. SHAPE GUARD: refusal, never interpretation", () => {
       (e) => `((${e}))`,
     ];
 
+    const guards: Array<[string, (file: string, src: string) => unknown]> = [
+      ["copyModuleViolations", (f, src) => copyModuleViolations(f, src).map((v) => v.rule)],
+      ["assembledClaimViolations", (f, src) => assembledClaimViolations(f, src).map((v) => v.rule)],
+      ["componentProseViolations", (f, src) => componentProseViolations(f, src).map((v) => v.detail)],
+      ["pageClaims", (f, src) => pageClaims(f, src)],
+      ["pageProse", (f, src) => pageProse(f, src)],
+      ["moduleClaims", (f, src) => moduleClaims(f, src)],
+      ["jsxHoles", (f, src) => jsxHoles(f, src).map((h) => h.rule)],
+    ];
+
     const cases = [
       `export const d = "Every change".concat(" is tracked");`,
       `export const d = ["Every change", "is tracked"].join(" ");`,
       `export const P = ["Built for electrolysis records", "History by treated area"];`,
       `export const t = "Every change is tracked";`,
+      `export const A = () => <p>{"Every change is tracked"}</p>;`,
+      `export const A = () => <p>Every <strong>change is tracked</strong>.</p>;`,
+      `export const A = () => <div className={cond ? "flex items-center gap-2 rounded-md border" : ""} />;`,
+      // PROSE inside a plumbing attribute. Nonsense as a class name, and the
+      // only shape that exercises the ATTRIBUTE ancestor walk: with the
+      // attribute found the string is excluded, without it the string is
+      // emitted. A class-soup case cannot tell the two apart, because it is not
+      // prose either way — which is why mutating that walk passed until this
+      // case existed.
+      `export const A = () => <div className={cond ? "Every treated area keeps its own history in Hone" : ""} />;`,
+      `export const A = () => <div data-label={cond ? "Every treated area keeps its own history" : ""} />;`,
+      `export default () => <div><p>{"plain text here"}</p></div>;`,
     ];
 
-    for (const src of cases) {
-      const base = copyModuleViolations("lib/marketing/probe.ts", src).map((v) => v.rule);
-      for (const w of wrappers) {
-        expect(
-          copyModuleViolations("lib/marketing/probe.ts", wrap(src, w)).map((v) => v.rule),
-          `${src.slice(0, 50)} changed answer when wrapped`,
-        ).toEqual(base);
+    for (const [name, guard] of guards) {
+      for (const src of cases) {
+        const base = guard("app/probe/page.tsx", src);
+        for (const w of wrappers) {
+          expect(
+            guard("app/probe/page.tsx", wrap(src, w)),
+            `${name} changed answer when wrapped: ${src.slice(0, 46)}`,
+          ).toEqual(base);
+        }
       }
     }
+  });
 
-    // The same property for the JSX guards, where the wrapper sits in a hole.
-    const jsx = (e: string) => `export default () => <div><p>{${e}}</p></div>;`;
-    for (const w of wrappers) {
-      expect(
-        jsxHoles("app/privacy/page.tsx", jsx(w('"plain text"'))),
-        "a wrapped complete literal read as a hole",
-      ).toEqual(jsxHoles("app/privacy/page.tsx", jsx('"plain text"')));
-    }
+  it("a component identity keeps its holes", () => {
+    // The recorded sentence used the hole-free text, so
+    // `<p>Every change is {x} here now</p>` and `…{y}…` compared equal — one
+    // declared exception swappable for another differing only in the value it
+    // interpolates. Holes now appear as their source.
+    const withX = componentProseViolations(
+      "app/_components/marketing/Probe.tsx",
+      `export const A = () => <p>Every change is {x} here now</p>;`,
+    );
+    const withY = componentProseViolations(
+      "app/_components/marketing/Probe.tsx",
+      `export const A = () => <p>Every change is {y} here now</p>;`,
+    );
+    expect(withX).toHaveLength(1);
+    expect(withX[0].detail).toContain("{x}");
+    expect(withX[0].detail).not.toEqual(withY[0].detail);
   });
 
   it("the component identity baseline compares whole sentences", () => {

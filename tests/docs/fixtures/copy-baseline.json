@@ -241,11 +241,11 @@
     ],
     "app/_components/marketing/SiteFooter.tsx": [
       "Operated from Canada.",
-      "© Hone. ."
+      "© {year} Hone. {POSITIONING.category}."
     ],
     "app/_components/marketing/article.tsx": [
-      "By · Published · Last reviewed ·",
-      "Spotted something that needs a correction, or have a question? Email and we'll review it."
+      "By {article.author} · Published {fmt(article.datePublished)} · Last reviewed {fmt(article.dateModified)} · {article.readingTime}",
+      "Spotted something that needs a correction, or have a question? Email {CONTACT_EMAIL} and we'll review it."
     ]
   }
 }
