@@ -561,6 +561,73 @@ describe("0200 — KNOWN LIMITATION, recorded because the file is now FROZEN", (
     expect(stmt).toMatch(/c\.normalized_email\s*=\s*v_entry_email/);
   });
 
+  // TWO COMMENTS INSIDE THE FROZEN FILE ARE WRONG, AND A READER WILL BELIEVE
+  // THEM. Raised at ce6583a2. Both are mine, both predate changes I made to the
+  // same file before the apply, and neither can now be edited. The corrections
+  // live here because this is maintained and the migration is not.
+  //
+  // ── CORRECTION 1 — 0200:142 ──────────────────────────────────────────────
+  // The header says the entry's own lifecycle is restored such that "a later
+  // cycle can issue a genuinely new invitation once the entry is REQUEUED AND
+  // CLAIMED".
+  //
+  // THAT IS FALSE, and it is contradicted by this very migration. Section 5
+  // narrows `requeue_new_client_waitlist_entry` to REFUSE any entry holding a
+  // redeemed invitation, which is precisely the entry a close produces. The
+  // paragraph was written before that guard existed and was never revisited.
+  //
+  // THE TRUE PATH after a close is: `remove_new_client_waitlist_entry` (which
+  // accepts `released`), after which the person may rejoin through the public
+  // form as a NEW entry with a new `joined_at`. The same entry is never
+  // re-offered -- that is the one-way invariant the guard exists to hold.
+  //
+  // ── CORRECTION 2 — 0200:686 ──────────────────────────────────────────────
+  // The requeue section header says "THE GUARD IS A PRE-CHECK, AND HERE THAT IS
+  // SAFE", and argues 0188's handled-not-pre-checked rule does not transfer.
+  //
+  // THAT IS THE ABANDONED DESIGN, left behind in the file. The implementation
+  // twenty lines below deliberately puts `not exists (...)` ON THE UPDATE,
+  // because the unlocked pre-check WAS racy: a close committing between the
+  // guard's statement and the UPDATE's was invisible to the first and visible
+  // to the second, and the entry was resurrected to `waiting`. That was
+  // reproduced end to end with the window forced open before the shape changed.
+  //
+  // THE TRUE CONTRACT is the one 0188 states and this file follows in code:
+  // handled, not pre-checked. One statement decides and writes; the reads
+  // around it only report.
+  it("both wrong comments are still present in the frozen file, exactly as applied", () => {
+    // ASSERTED, NOT JUST DESCRIBED. If either string disappears, someone edited
+    // an applied migration -- which the digest test below also catches, but this
+    // says WHICH line and why it mattered.
+    expect(
+      SQL,
+      "0200:142's requeue claim changed — an applied migration was edited",
+      // Matched across the comment's line wrap, so a re-flow of the same words
+      // does not read as an edit while a changed CLAIM still does.
+    ).toMatch(/a later cycle can issue a genuinely new invitation once the entry is[\s\S]{0,12}requeued and claimed/);
+    expect(
+      SQL,
+      "0200:686's pre-check claim changed — an applied migration was edited",
+    ).toContain("THE GUARD IS A PRE-CHECK, AND HERE THAT IS SAFE.");
+  });
+
+  it("and the CODE contradicts both of them, which is what makes them wrong", () => {
+    // CORRECTION 1: requeue refuses a redeemed entry, so "requeued and claimed"
+    // is unreachable for a closed one.
+    const rq = CODE.slice(CODE.indexOf("function public.requeue_new_client_waitlist_entry"));
+    const fn = rq.slice(0, rq.indexOf("$$;"));
+    expect(fn).toMatch(/redeemed_at is not null/);
+    expect(fn).toMatch(/return 'already_redeemed'/);
+
+    // CORRECTION 2: the exclusion is on the UPDATE, and nothing tests
+    // `redeemed_at` before it — the opposite of "the guard is a pre-check".
+    const write = fn.indexOf("update public.new_client_waitlist_entries");
+    expect(fn.slice(0, write), "a pre-check exists after all").not.toMatch(/redeemed_at/);
+    expect(
+      fn.slice(write, fn.indexOf("returning id into v_hit", write)),
+    ).toMatch(/not exists[\s\S]{0,240}redeemed_at is not null/);
+  });
+
   it("the file still hashes to the applied bytes, so this window cannot be patched in place", () => {
     // The same digest the apply was gated on. If someone "fixes" the window by
     // editing this file, this goes red and the frozen-history rule is enforced.
