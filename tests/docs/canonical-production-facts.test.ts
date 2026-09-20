@@ -1104,6 +1104,12 @@ describe("canonical production docs: WAIT-02B's durable waitlist is recorded as 
         /\b(?:before|prior to)\s+(?:Willow\s+)?durable\s+cutover\b/i,
         /\bonly then\s+authoriz\w*[^.\n]{0,40}\bcutover\b/i,
         /\bauthorize\s+Willow\s+durable\s+cutover\b/i,
+        // BARE WORDING. Codex #740, ninth round: "then Willow cutover" listed as
+        // remaining work, with no "durable" and no verb to anchor on. The guard
+        // had been matching the decorated forms only.
+        /\bthen\s+Willow\s+cutover\b/i,
+        /\bWillow\s+cutover\b[^.\n]{0,30}\bremain\w*/i,
+        /\bremain\w*[^.\n]{0,40}\bWillow\s+cutover\b/i,
       ]) {
         expect(
           prose.match(shape)?.[0] ?? null,
