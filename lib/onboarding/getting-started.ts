@@ -119,36 +119,52 @@ function review(
 /**
  * MAY THIS CHECKLIST CLAIM TO KNOW WHAT COMES NEXT?
  *
- * THERE ARE TWO ONBOARDING ORDERS IN THIS REPOSITORY, and only one of them
- * governs a given studio:
+ * Two independent reasons it may not, and the CTA needs BOTH to clear.
  *
- *   this legacy checklist   basics -> booking -> charting -> records ->
- *                           daily -> payments
- *   ONBOARDING_STEP_ORDER   welcome -> service -> availability -> booking ->
- *   (lib/onboarding/steps)  payments -> done
+ * 1. IT IS AN OWNER AFFORDANCE, because the sequence contains owner-only work.
  *
- * The dashboard hands onboarding to the v2 wizard for an owner whose studio has
- * `onboarding_v2_enabled`. `/getting-started` stays reachable regardless — via
- * AccountMenu, MobileMenu and search — so without this gate it would answer
- * "what is next?" from the LEGACY order while the studio's actual onboarding
- * ran the v2 one. Two authorities, two different answers, and the operator has
- * no way to tell which is lying.
+ *    `nextSetupStep` walks studio-wide setup tasks, and four of the
+ *    checklist's destinations refuse a non-owner outright —
+ *    `/settings/consent` answers "Only studio owners can manage consent
+ *    forms", and services, payments and profile gate the same way. Handing a
+ *    practitioner an authoritative "Next step" that dead-ends in a refusal is
+ *    worse than offering none: it asserts the app knows what they should do
+ *    next and is wrong about who they are.
  *
- * So the CTA is suppressed exactly where v2 owns the flow. The checklist itself
- * still renders: it remains a useful readiness view, and a status display that
- * claims no sequence cannot contradict one.
+ *    A non-owner still sees the whole Getting Started page. The checklist is a
+ *    readiness VIEW and remains useful to anyone; only the directive CTA is
+ *    withheld.
  *
- * MIRRORS THE DASHBOARD'S OWN PREDICATE (`isOwner && onboarding_v2_enabled ===
- * true`) rather than inventing a second reading of the flag, and treats an
- * absent column as "not enabled" because the type is optional for schema-skew
- * tolerance — failing toward the legacy flow, which is what a studio without
- * the column is actually on.
+ * 2. V2 OWNS THE SEQUENCE WHERE IT IS ENABLED. There are two onboarding orders:
+ *
+ *      this legacy checklist   basics -> booking -> charting -> records ->
+ *                              daily -> payments
+ *      ONBOARDING_STEP_ORDER   welcome -> service -> availability -> booking ->
+ *      (lib/onboarding/steps)  payments -> done
+ *
+ *    The dashboard hands onboarding to the v2 wizard for an owner whose studio
+ *    has `onboarding_v2_enabled`, while `/getting-started` stays reachable via
+ *    AccountMenu, MobileMenu and search. Without this the page would answer
+ *    "what is next?" from the LEGACY order while the studio ran the v2 one —
+ *    two authorities, two answers, and no way for the operator to tell which is
+ *    lying.
+ *
+ * AN ABSENT COLUMN READS AS NOT-ENABLED. The type is optional for schema-skew
+ * tolerance, and a studio without the column is genuinely on the legacy flow;
+ * failing the other way would strand its owner in silence.
+ *
+ * ORDER IS UNTOUCHED. This decides only whether the question may be ASKED;
+ * `nextSetupStep` still answers it from the sequence `buildGettingStarted`
+ * already emits.
  */
 export function legacyChecklistMayOfferNextStep(opts: {
   isOwner: boolean;
   onboardingV2Enabled?: boolean | null;
 }): boolean {
-  return !(opts.isOwner && opts.onboardingV2Enabled === true);
+  // Owner-only: the sequence contains tasks a practitioner cannot perform.
+  if (!opts.isOwner) return false;
+  // And only where the legacy checklist, not the v2 wizard, owns the sequence.
+  return opts.onboardingV2Enabled !== true;
 }
 
 export function nextSetupStep(checklist: GettingStarted): ChecklistItem | null {
