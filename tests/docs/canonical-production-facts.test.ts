@@ -947,13 +947,27 @@ describe("canonical production docs: WAIT-02B's durable waitlist is recorded as 
     ["docs/10_DEPLOYMENT_AND_ENV.md", read("docs/10_DEPLOYMENT_AND_ENV.md")],
   ] as const;
 
-  it("current-state records the durable waitlist as activated, with a non-zero row count", () => {
+  it("current-state records the durable activation as a DATED BOUND, with a non-zero row count", () => {
     const cs = currentProse(CURRENT_STATE);
+    // THIS RULE USED TO REQUIRE THE WORD "ACTIVATED", FULL STOP.
+    //
+    // That was the last place the original defect was still living. The guard
+    // this branch began by inverting MANDATED "NOT ENABLED"; replacing it with
+    // one that MANDATES a present-tense "ACTIVATED" reproduces the same failure
+    // with the sign flipped -- if an operator cleared the allowlist after the
+    // last measured row, every persisted row would remain, no studio would be
+    // activated, and CI would still be demanding the document say otherwise.
+    //
+    // So the requirement is now the BOUND, which stays true forever: one studio
+    // WAS activated at every measured instant. A bound is a historical fact and
+    // cannot rot; a posture is a reading of configuration and rots the moment
+    // the configuration changes.
     expect(
       cs,
-      "current-state must record that the durable commit point is ACTIVATED for at least " +
-        "one studio - production has been committing public waitlist joins since 2026-08-25",
-    ).toMatch(/ACTIVATED/i);
+      "current-state must record the durable activation as a DATED BOUND -- one studio was " +
+        "activated at the measured instants -- never as a current posture. Rows outlive the " +
+        "flag, so they can bound an activation in time and can never report configuration now.",
+    ).toMatch(/\bWAS activated at every measured instant\b/i);
     // SCOPED TO THE SECTION, AND TO ITS DATE. Codex #740 P2: this previously
     // scanned the WHOLE document for /[1-9]\d* rows/, and current-state.md
     // carries several unrelated counts ("24 rows", "7 rows"). Every measured
@@ -1222,6 +1236,11 @@ describe("canonical production docs: WAIT-02B's durable waitlist is recorded as 
         // whole point of the rule rather than a loophole in it.
         /\bONE STUDIO ENABLED\b(?![^.\n|]{0,80}\b(?:at every measured instant|dated bound|20\d\d-\d\d-\d\d)\b)/i,
         /\bONE STUDIO ON THE DURABLE ALLOWLIST\b(?![^.\n|]{0,80}\b(?:at every measured instant|dated bound|20\d\d-\d\d-\d\d)\b)/i,
+        // THE ADJECTIVE FORM, AND THE POSTURE NOUN. Codex #740's fifth family:
+        // "Current posture: ACTIVATED for one studio", derived explicitly from
+        // committed rows. Same lookahead, so the dated form stays admissible.
+        /(?<!\bwas\s)(?<!\bwere\s)\bACTIVATED\s+for\s+one\s+studio\b(?![^.\n|]{0,80}\b(?:at every measured instant|dated bound|20\d\d-\d\d-\d\d)\b)/i,
+        /\bCurrent posture:\s*ACTIVATED\b/i,
       ]) {
         expect(
           prose.match(shape)?.[0] ?? null,

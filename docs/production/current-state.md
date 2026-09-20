@@ -604,10 +604,17 @@ durable variable selects the **commit point** for a studio that is *already* on 
 waitlist; it cannot by itself put a studio onto one. An empty durable allowlist leaves every
 studio on the non-durable (WAIT-01, email) path.
 
-**Current posture: ACTIVATED for one studio.** Established from **committed rows**, not from
-configuration: 28 durable `willow-electrolysis` entries, all `source = 'public_booking'`, the
-oldest joined **2026-08-25T22:27Z** *(read-only hosted query, 2026-09-19)*. The allowlist value
-is Sensitive and was **not** read; see the structural derivation in Stage A above.
+**Activation bound: one studio WAS activated at every measured instant**, 2026-08-25T22:27Z
+through 2026-09-15. Established from **committed rows**: 28 durable `willow-electrolysis`
+entries, all `source = 'public_booking'` *(read-only hosted query, 2026-09-19)*. The allowlist
+value is Sensitive and was **not** read; see the structural derivation in Stage A above.
+
+⚠️ **THERE IS NO CURRENT POSTURE RECORDED HERE, AND THAT IS DELIBERATE.** This paragraph opened by naming a
+current posture — activated, one studio — and derived it from those rows. Rows are durable
+and outlive the flag, and `lib/booking/new-client-waitlist.ts` re-reads `process.env` on every
+call — so if the variable was cleared after 2026-09-15, every row above still exists while no
+studio is activated at all. **Committed rows can bound an activation in time; they can never
+report present configuration.** Confirm that in the product.
 
 <!-- canonical-facts:ignore-start reason=preserves-the-superseded-not-activated-posture-paragraph -->
 > **SUPERSEDED 2026-09-19, preserved verbatim.** This paragraph formerly read:
