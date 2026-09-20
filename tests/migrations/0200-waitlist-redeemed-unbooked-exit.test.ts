@@ -460,7 +460,24 @@ describe("0200's close record cannot drift from its own rules", () => {
   });
 });
 
-describe("0200 — KNOWN LIMITATION, recorded because the file is now FROZEN", () => {
+describe("0200 — SUPERSEDED BY 0201, recorded and not deleted", () => {
+  // ⚠️ STATUS AS OF 2026-09-20: ALL THREE MANIFESTATIONS BELOW ARE FIXED.
+  //
+  // `0201_waitlist_exit_authority_contraction.sql` landed through #747 and is
+  // APPLIED to production. It does not patch 0200 -- 0200 is frozen and its
+  // bytes are unchanged -- it forward-redefines the command so that Close
+  // STOPS READING `public.appointments` at all. Verified against production
+  // itself: the live `close_unbooked_new_client_waitlist_invitation` contains
+  // no reference to that table, no `scope_*` predicate and no conversion call.
+  //
+  // A decision that does not depend on appointments cannot race appointment
+  // writers in either commit order, so 1 and 2 are ELIMINATED rather than
+  // mitigated, and 3 has no second scope predicate left to disagree with 0195.
+  //
+  // THE ANALYSIS BELOW IS KEPT because it is why 0201 is shaped the way it is,
+  // and because the assertions in this block still pin 0200's FROZEN bytes --
+  // which must never change, superseded or not. Read it as history.
+  //
   // ONE ROOT CAUSE, THREE MANIFESTATIONS, ALL RAISED AFTER 0200 WAS APPLIED.
   //
   // THE ROOT CAUSE: the repair path's appointment aggregate is an UNLOCKED READ,
@@ -468,7 +485,8 @@ describe("0200 — KNOWN LIMITATION, recorded because the file is now FROZEN", (
   // the atomic invitation-booking path, ordinary booking and cancellation do not
   // take the waitlist-entry mutex, so they neither block on this read nor are
   // blocked by it. Everything below follows from that one fact, and a successor
-  // migration should fix THAT rather than any one symptom.
+  // migration should fix THAT rather than any one symptom. 0201 did exactly
+  // that: it removed the read instead of trying to serialise it.
   //
   //   1. CANCELLATION AFTER THE READ (raised 05476154). The aggregate observes
   //      `status <> 'cancelled'`; a cancellation commits; Close answers
@@ -490,7 +508,7 @@ describe("0200 — KNOWN LIMITATION, recorded because the file is now FROZEN", (
   // cancel later, and the entry stays `converted` with a cancelled appointment
   // and `remove_` answering `not_removable`. The defect there is the
   // non-determinism, not an otherwise-unreachable state. Manifestation 2 has no
-  // such mitigation and is the one to weight when scoping the successor.
+  // such mitigation and was the one that weighed most when 0201 was scoped.
   //
   // WHAT IT IS AND IS NOT — measured, not assumed:
   //
