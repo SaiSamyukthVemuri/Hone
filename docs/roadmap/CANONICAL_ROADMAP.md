@@ -2183,7 +2183,22 @@ explicit `THEN`/`After` sequencing, so a row number would assert a rank against
 those items that **has not been decided**. UX-01's position relative to rows 2–8
 is **unordered**; only the row-1 rule below applies to it.
 
-UX-02 … UX-11 are `PROPOSED_DESIGN`: **PROPOSED / NOT SCHEDULED**, carrying **no
+`ACCEPTED_PRIORITY`: **UX-02 Primitive Adoption + anti-regression is
+AUTHORIZED**, by owner product decision of 2026-09-20, for **bounded**
+implementation in parallel with WAIT. It is recorded outside the numbered rows
+for the same reason UX-01 is — a row number would assert a rank against rows 2–8
+that has not been decided — and its position relative to those rows is likewise
+**unordered**.
+
+Its bound: implementation reaches **only exact-equivalent replacement of a
+hand-rolled control by an existing approved primitive** — same rendered output,
+same behaviour. Anything differing in geometry, colour or semantics is outside
+it, and no new primitive or variant is authorized by this entry.
+
+**WAIT retains production priority. UX-02 does not take the WAIT production
+slot**; the row-1 rule below applies to it exactly as it does to UX-01.
+
+UX-03 … UX-11 are `PROPOSED_DESIGN`: **PROPOSED / NOT SCHEDULED**, carrying **no
 implementation authority**. **Appearing in the sequence never authorizes a
 stage** — each needs its own acceptance recorded here. MOTION-01 remains a
 **PILOT, not adopted**, and keeps its sequencing constraint. The contract and the
