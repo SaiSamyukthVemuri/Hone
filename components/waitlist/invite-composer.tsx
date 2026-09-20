@@ -9,9 +9,14 @@ import { cx } from "@/components/ui/control-base";
 import { fieldControlClass } from "@/components/ui/field";
 import { SectionLabel } from "@/components/ui/section-label";
 import {
+  TTL_HOURS_MAX,
+  TTL_HOURS_MIN,
+  TTL_PRESETS,
+  ttlBoundLabel,
+} from "@/lib/waitlist/invitation-window";
+import {
   ALLOWED_DAYS_PRESET_LABEL,
   BOOKING_WINDOW_PRESETS,
-  TTL_PRESETS,
   WEEKDAYS_IN_DISPLAY_ORDER,
   activeAllowedDaysPreset,
   activeTtlPreset,
@@ -655,13 +660,21 @@ export function InviteComposerView({
                 enforced silently: it REFUSES an out-of-range window instead of
                 clamping it, so a practitioner who types 200 needs to know why
                 nothing happened. */}
-            <span className="text-xs text-fg-muted">Hours, from 1 hour to 7 days</span>
+            <span className="text-xs text-fg-muted">{ttlBoundLabel()}</span>
             <input
               type="number"
               name={COMPOSER_FIELD_NAMES.expiresInHoursCustom}
               inputMode="numeric"
-              min={1}
-              max={168}
+              // ADVERTISED FROM THE CONSTANTS, not typed here. These read
+              // `min={1} max={168}`, which made this input a FOURTH statement of
+              // a bound already written in three other places. The drift it
+              // invites is one-directional and silent: narrow the real bound and
+              // this input still advertises — and accepts — the old range, so a
+              // practitioner types a number the browser approves and the adapter
+              // then refuses as `invalid_ttl`, which reads as the product being
+              // broken rather than as the input being wrong.
+              min={TTL_HOURS_MIN}
+              max={TTL_HOURS_MAX}
               data-testid="composer-expiry-hours"
               value={Number.isFinite(draft.expiresInHours) ? draft.expiresInHours : ""}
               onChange={(event) =>
